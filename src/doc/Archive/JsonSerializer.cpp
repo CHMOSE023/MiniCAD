@@ -2,6 +2,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+#include <math/Vector.hpp>
+#include <string_view>
+#include <string>
+#include <math/MathDefs.hpp>
 
 namespace MiniCAD {
 

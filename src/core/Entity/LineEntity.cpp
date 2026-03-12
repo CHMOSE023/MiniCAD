@@ -7,6 +7,12 @@
 #include "doc/Archive/Serializer.h"
 #include "math/MathDefs.hpp"
 #include <cstring>
+#include <core/Object/Object.hpp>
+#include <math/Box.hpp>
+#include <math/Point.hpp>
+#include <vector>
+#include <cstdint>
+#include <math/Vector.hpp>
 
 namespace MiniCAD { 
 

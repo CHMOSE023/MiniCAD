@@ -9,8 +9,8 @@
 #include "math/Vector.hpp"
 #include "math/MathDefs.hpp"
 #include <map>
-#include <string>
-#include <sstream>
+#include <string> 
+#include <string_view>
 
 namespace MiniCAD {
 
