@@ -22,8 +22,10 @@ namespace MiniCAD {
 
         const Line& GetLine()   const { return m_line; }
         void        SetLine(const Line& line) { m_line = line; }
-        EntityAttr& GetAttr() { return m_attr; }
+        EntityAttr& GetAttr() { return m_attr; } //  直接通过 getter 的非 const 引用修改
         const EntityAttr& GetAttr()   const { return m_attr; }
+
+        void SetAttr(const EntityAttr& a) { m_attr = a; }   // 用 SetAttr 一次性替换整个 EntityAttr
 
         Box GetBoundingBox() const;
 
