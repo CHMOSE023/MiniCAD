@@ -13,12 +13,19 @@ endif()
 include_directories("${CMAKE_SOURCE_DIR}/src")
 
 # ── 只收集 src/ 下的 .cpp，绝不扫到 out/ ──────
+file(GLOB_RECURSE APP_SRC "${CMAKE_SOURCE_DIR}/src/app/*.cpp")
 file(GLOB_RECURSE CORE_SRC "${CMAKE_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB_RECURSE DOC_SRC  "${CMAKE_SOURCE_DIR}/src/doc/*.cpp")
-
+  
 set(MINICAD_CORE_SOURCES
-    ${CORE_SRC}
+    ${APP_SRC}
+    ${CORE_SRC} 
     ${DOC_SRC}
+)
+
+# 排除 Main.cpp，避免 UnitTests 出现重复 main 符号
+list(REMOVE_ITEM MINICAD_CORE_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/app/Main.cpp"
 )
 
 # ── 主程序 ────────────────────────────────────
