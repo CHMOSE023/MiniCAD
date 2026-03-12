@@ -10,6 +10,45 @@
 
 namespace MiniCAD {
 
+    // ─────────────────────────────────────────────────────────
+    // Vec2 — 2D 向量（屏幕坐标 / UV）
+    // ─────────────────────────────────────────────────────────
+    struct Vec2 {
+        Real x, y;
+
+        Vec2() : x(0), y(0) {}
+        Vec2(Real x, Real y) : x(x), y(y) {}
+
+        static Vec2 Zero() { return { 0, 0 }; }
+        static Vec2 UnitX() { return { 1, 0 }; }
+        static Vec2 UnitY() { return { 0, 1 }; }
+
+        Vec2 operator+(const Vec2& o) const { return { x + o.x, y + o.y }; }
+        Vec2 operator-(const Vec2& o) const { return { x - o.x, y - o.y }; }
+        Vec2 operator*(Real s)        const { return { x * s,   y * s }; }
+        Vec2 operator/(Real s)        const { return { x / s,   y / s }; }
+
+        Vec2& operator+=(const Vec2& o) { x += o.x; y += o.y; return *this; }
+        Vec2& operator-=(const Vec2& o) { x -= o.x; y -= o.y; return *this; }
+        Vec2& operator*=(Real s) { x *= s;   y *= s;   return *this; }
+
+        bool operator==(const Vec2& o) const {
+            return RealEqual(x, o.x) && RealEqual(y, o.y);
+        }
+        bool operator!=(const Vec2& o) const { return !(*this == o); }
+
+        Real Dot(const Vec2& o)  const { return x * o.x + y * o.y; }
+        Real LengthSq()          const { return Dot(*this); }
+        Real Length()            const { return std::sqrt(LengthSq()); }
+
+        Vec2 Normalized() const {
+            Real l = Length();
+            return RealLess(0, l) ? (*this) / l : Zero();
+        }
+    };
+
+    inline Vec2 operator*(Real s, const Vec2& v) { return v * s; }
+
     // -----------------------------------------------------------------
     struct Vec3 {
         Real x, y, z;
