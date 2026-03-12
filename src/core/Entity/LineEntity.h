@@ -10,6 +10,8 @@
 #include "core/GeomKernel/Line.hpp"
 #include "core/Entity/EntityAttr.h"
 #include "math/Box.hpp"
+#include <vector>
+#include <doc/Archive/Serializer.h>
 
 namespace MiniCAD { 
     class LineEntity : public Object {
@@ -29,6 +31,9 @@ namespace MiniCAD {
         void Serialize(ISerializer& s) const override;
         void Deserialize(ISerializer& s) override;
           
+    public:
+        static const RuntimeTypeInfo s_typeInfo;  // 只声明
+
     private:
         Line       m_line;
         EntityAttr m_attr;

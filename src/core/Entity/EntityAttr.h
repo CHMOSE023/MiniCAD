@@ -5,8 +5,8 @@
 // 约束：POD-friendly，可直接序列化
 // ============================================================
 #pragma once
-#include <cstdint>
-#include <string>
+#include <cstdint> 
+#include <math/MathDefs.hpp>
 
 namespace MiniCAD {
 
@@ -30,7 +30,7 @@ namespace MiniCAD {
         Color4   color;
         uint32_t layerId = 0;
         LineType lineType = LineType::SOLID;
-        float    lineWidth = 1.0f;
+        Real     lineWidth = 1.0f;
         bool     visible = true;
 
         EntityAttr() = default;

@@ -14,8 +14,7 @@
 #include <cstdint>
 #include <math/Vector.hpp>
 
-namespace MiniCAD { 
-
+namespace MiniCAD {  
     LineEntity::LineEntity(ObjectID id, const Point3& start, const Point3& end)
         : Object(id), m_line(start, end), m_attr{}
     {
@@ -28,9 +27,8 @@ namespace MiniCAD {
         return b;
     }
 
-    std::vector<uint8_t> LineEntity::Snapshot() const {
-        // Simple raw byte snapshot: 6 floats (start xyz, end xyz)
-        std::vector<uint8_t> data(6 * sizeof(float));
+    std::vector<uint8_t> LineEntity::Snapshot() const { 
+        std::vector<uint8_t> data(6 * sizeof(Real));
         Real vals[6] = {
             m_line.start.x, m_line.start.y, m_line.start.z,
             m_line.end.x,   m_line.end.y,   m_line.end.z
@@ -40,9 +38,9 @@ namespace MiniCAD {
     }
 
     void LineEntity::RestoreSnapshot(const std::vector<uint8_t>& data) {
-        if (data.size() < 6 * sizeof(float)) return;
-        float vals[6];
-        std::memcpy(vals, data.data(), 6 * sizeof(float));
+        if (data.size() < 6 * sizeof(Real)) return;
+        Real vals[6];
+        std::memcpy(vals, data.data(), 6 * sizeof(Real));
         m_line.start = { vals[0], vals[1], vals[2] };
         m_line.end = { vals[3], vals[4], vals[5] };
     }
