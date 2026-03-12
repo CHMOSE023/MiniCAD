@@ -7,9 +7,7 @@
 #pragma once
 #include "Point.hpp"
 #include "Vector.hpp"
-#include "MathDefs.hpp"
-#include <cmath>
-#include <vector>
+#include "MathDefs.hpp" 
 
 namespace MiniCAD {
 
@@ -17,7 +15,7 @@ namespace MiniCAD {
     inline Point3 ClosestPointOnSegment(const Point3& p, const Point3& a, const Point3& b) {
         Vec3 ab = b - a;
         float len2 = ab.LengthSq();
-        if (FLOAT_EQ(len2, 0.f)) return a;
+        if (RealEqual(len2, 0.f)) return a;
         float t = (p - a).Dot(ab) / len2;
         if (t < 0.f) t = 0.f;
         if (t > 1.f) t = 1.f;
@@ -37,9 +35,9 @@ namespace MiniCAD {
         float& outT)
     {
         float denom = planeNormal.Dot(rayDir);
-        if (FLOAT_EQ(denom, 0.f)) return false;
+        if (RealEqual(denom, 0.f)) return false;
         outT = planeNormal.Dot(planePoint - rayOrigin) / denom;
-        return FLOAT_GE(outT, 0.f);
+        return RealGreaterEqual(outT, 0.f);
     }
  
 

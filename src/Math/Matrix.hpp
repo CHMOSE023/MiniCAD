@@ -15,7 +15,7 @@ namespace MiniCAD {
     struct Mat4 {
         Real m[4][4]; // m[col][row]
 
-        Mat4() { for (auto& c : m) for (auto& r : c) r = 0.f; }
+        Mat4() : m{} {}
 
         static Mat4 Identity() {
             Mat4 r;
@@ -70,7 +70,7 @@ namespace MiniCAD {
             Real det = 0.f;
             for (int i = 0; i < 4; i++) {
                 // cofactor
-                Real sub[3][3];
+                Real sub[3][3] = {};
                 for (int c2 = 1; c2 < 4; c2++) {
                     int sc = c2 - 1;
                     int sr = 0;
@@ -89,7 +89,7 @@ namespace MiniCAD {
 
         Mat4  Inverse() const {
             // Gauss-Jordan elimination
-            Real aug[4][8];
+            Real aug[4][8] = {};
             for (int row = 0; row < 4; row++) {
                 for (int col = 0; col < 4; col++) aug[row][col] = m[col][row];
                 for (int col = 0; col < 4; col++) aug[row][col + 4] = (row == col) ? 1.f : 0.f;

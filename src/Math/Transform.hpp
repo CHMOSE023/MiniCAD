@@ -6,8 +6,7 @@
 // ============================================================
 #pragma once
 #include "MathDefs.hpp"
-#include "Matrix.hpp"
-#include "Quaternion.hpp"
+#include "Matrix.hpp" 
 
 namespace MiniCAD {
 
@@ -25,19 +24,7 @@ namespace MiniCAD {
 
         // Combined MVP matrix (column-major: P * V * M)
         Mat4 MVP() const { return projection * view * model; }
-
-        // Transform a point through the full pipeline → NDC
-        Vec4 TransformToNDC(const Point3& p) const {
-            return MVP() * p.ToHomogeneous();
-        }
-
-        // Helper: perspective division
-        static Point3 PerspectiveDivide(const Vec4& clip) {
-            if (!Real_EQ(clip.w, 0.f))
-                return { clip.x / clip.w, clip.y / clip.w, clip.z / clip.w };
-            return { clip.x, clip.y, clip.z };
-        }
-
+          
         // Build orthographic projection
         // left/right/bottom/top/near/far
         static Mat4 Orthographic(Real l, Real r, Real b, Real t, Real n, Real f) {
