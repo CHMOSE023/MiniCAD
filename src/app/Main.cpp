@@ -1,4 +1,12 @@
-#include <stdio.h>
+#include "app/Editor.h"
+#include <cstdio>
+
 int main() {
-	printf("MiniCAD");
+    auto& editor = MiniCAD::Editor::Instance();
+
+    editor.Initialize();   
+    printf("MiniCAD");
+    editor.Shutdown();
+
+    return 0;
 }
