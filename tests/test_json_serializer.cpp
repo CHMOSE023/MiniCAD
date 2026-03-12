@@ -1,6 +1,9 @@
 // tests/doc/Archive/JsonSerializerTest.cpp
 #include <gtest/gtest.h>
 #include "doc/Archive/JsonSerializer.h"
+#include <string_view>
+#include <math/Vector.hpp>
+#include <string>
 
 using namespace MiniCAD;
 

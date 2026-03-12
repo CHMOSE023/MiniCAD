@@ -30,19 +30,13 @@ namespace MiniCAD {
 // ============================================================
 #define DECLARE_RUNTIME_TYPE(ThisClass, ParentClass)                        \
 public:                                                                      \
-    inline static const ::MiniCAD::RuntimeTypeInfo s_typeInfo;              \
+    inline static const ::MiniCAD::RuntimeTypeInfo s_typeInfo {             \
+        #ThisClass, &ParentClass::s_typeInfo                                 \
+    };                                                                       \
     virtual const ::MiniCAD::RuntimeTypeInfo* GetTypeInfo() const {         \
         return &s_typeInfo;                                                  \
     }                                                                        \
     template<typename T>                                                     \
     bool IsKindOf() const {                                                  \
         return GetTypeInfo()->IsKindOf(&T::s_typeInfo);                      \
-    }
-
-// ============================================================
-// 宏：实现运行时类型
-// ============================================================
-#define IMPLEMENT_RUNTIME_TYPE(ThisClass, ParentClass)                      \
-    const ::MiniCAD::RuntimeTypeInfo ThisClass::s_typeInfo {                \
-        #ThisClass, &ParentClass::s_typeInfo                                 \
-    };
+    } 

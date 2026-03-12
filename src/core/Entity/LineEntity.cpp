@@ -12,8 +12,7 @@
 #include <math/Point.hpp>
 #include <vector>
 #include <cstdint>
-#include <math/Vector.hpp>
-
+#include <math/Vector.hpp> 
 namespace MiniCAD {  
     LineEntity::LineEntity(ObjectID id, const Point3& start, const Point3& end)
         : Object(id), m_line(start, end), m_attr{}

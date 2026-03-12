@@ -10,6 +10,12 @@
 #include "doc/Archive/JsonSerializer.h"
 #include "math/MathDefs.hpp"
 #include <core/GeomKernel/Line.hpp>
+#include <math/Point.hpp>
+#include <math/Box.hpp>
+#include <vector>
+#include <cstdint>
+#include <math/Vector.hpp>
+#include <string>
 using namespace MiniCAD;
 
 // ════════════════════════════════════════════════════════════

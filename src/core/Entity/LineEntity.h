@@ -12,6 +12,8 @@
 #include "math/Box.hpp"
 #include <vector>
 #include <doc/Archive/Serializer.h>
+#include <math/Point.hpp>
+#include <cstdint>
 
 namespace MiniCAD { 
     class LineEntity : public Object {
@@ -30,13 +32,11 @@ namespace MiniCAD {
         void RestoreSnapshot(const std::vector<uint8_t>& data) override;
         void Serialize(ISerializer& s) const override;
         void Deserialize(ISerializer& s) override;
-          
-    public:
-        static const RuntimeTypeInfo s_typeInfo;  // 只声明
-
+            
+        DECLARE_RUNTIME_TYPE(LineEntity, Object)
     private:
         Line       m_line;
-        EntityAttr m_attr;
+        EntityAttr m_attr; 
     };
 
 } // namespace MiniCAD
