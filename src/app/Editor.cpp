@@ -5,6 +5,10 @@
 // 约束：不持有 Renderer；ui/ 层只能通过此接口操作
 // ============================================================
 #include "Editor.h"
+#include "InputEvent.h"
+#include <doc/UndoRedo/ICommand.h>
+#include <memory>
+#include "Tools/ITool.h"
 
 namespace MiniCAD {
 
@@ -44,16 +48,16 @@ void Editor::Redo() {
 void Editor::HandleInput(const InputEvent& evt) {
     if (!m_activeTool) return;
     switch (evt.type) {
-    case InputEvent::Type::MouseDown:
+    case InputEventType::MOUSE_DOWN:
         m_activeTool->OnMouseDown(evt.screenPos, evt.button);
         break;
-    case InputEvent::Type::MouseMove:
+    case InputEventType::MOUSE_MOVE:
         m_activeTool->OnMouseMove(evt.screenPos);
         break;
-    case InputEvent::Type::MouseUp:
+    case InputEventType::MOUSE_UP:
         m_activeTool->OnMouseUp(evt.screenPos, evt.button);
         break;
-    case InputEvent::Type::KeyDown:
+    case InputEventType::KEY_DOWN:
         if (evt.keyCode == KEY_ESCAPE) m_activeTool->OnCancel();
         else m_activeTool->OnKeyDown(evt.keyCode);
         break;

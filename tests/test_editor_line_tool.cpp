@@ -28,7 +28,7 @@ namespace {
 
     InputEvent MakeMouseDown(float x, float y, int btn = 0) {
         InputEvent e{};
-        e.type = InputEvent::Type::MouseDown;
+        e.type = InputEventType::MOUSE_DOWN;
         e.screenPos = { x, y };
         e.button = btn;
         return e;
@@ -36,14 +36,14 @@ namespace {
 
     InputEvent MakeMouseMove(float x, float y) {
         InputEvent e{};
-        e.type = InputEvent::Type::MouseMove;
+        e.type = InputEventType::MOUSE_MOVE;
         e.screenPos = { x, y };
         return e;
     }
 
     InputEvent MakeMouseUp(float x, float y, int btn = 0) {
         InputEvent e{};
-        e.type = InputEvent::Type::MouseUp;
+        e.type = InputEventType::MOUSE_UP;
         e.screenPos = { x, y };
         e.button = btn;
         return e;
@@ -51,7 +51,7 @@ namespace {
 
     InputEvent MakeKeyDown(int keyCode) {
         InputEvent e{};
-        e.type = InputEvent::Type::KeyDown;
+        e.type = InputEventType::KEY_DOWN;
         e.keyCode = keyCode;
         return e;
     }
@@ -193,7 +193,7 @@ TEST_F(LineToolTest, GetNameReturnsLineTool) {
 
 TEST_F(LineToolTest, FirstClickSetsStartPoint) {
     InputEvent evt{};
-    evt.type = InputEvent::Type::MouseDown;
+    evt.type = InputEventType::MOUSE_DOWN;
     evt.screenPos = { 10, 20 };
     evt.button = 0;
     editor.HandleInput(evt);
@@ -206,12 +206,12 @@ TEST_F(LineToolTest, FirstClickSetsStartPoint) {
 
 TEST_F(LineToolTest, SecondClickCreatesLine) {
     InputEvent evt1{};
-    evt1.type = InputEvent::Type::MouseDown;
+    evt1.type = InputEventType::MOUSE_DOWN;
     evt1.screenPos = { 0, 0 };
     evt1.button = 0;
 
     InputEvent evt2{};
-    evt2.type = InputEvent::Type::MouseDown;
+    evt2.type = InputEventType::MOUSE_DOWN;
     evt2.screenPos = { 100, 0 };
     evt2.button = 0;
 
@@ -237,16 +237,16 @@ TEST_F(LineToolTest, SecondClickCreatesLine) {
 
 TEST_F(LineToolTest, EscapeCancelsDrawing) {
     InputEvent evt1{};
-    evt1.type = InputEvent::Type::MouseDown;
+    evt1.type = InputEventType::MOUSE_DOWN;
     evt1.screenPos = { 10, 10 };
     evt1.button = 0;
 
     InputEvent esc{};
-    esc.type = InputEvent::Type::KeyDown;
+    esc.type = InputEventType::KEY_DOWN;  
     esc.keyCode = KEY_ESCAPE;
 
     InputEvent evt2{};
-    evt2.type = InputEvent::Type::MouseDown;
+    evt2.type = InputEventType::MOUSE_DOWN;
     evt2.screenPos = { 100, 100 };
     evt2.button = 0;
 
