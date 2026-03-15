@@ -16,11 +16,15 @@ include_directories("${CMAKE_SOURCE_DIR}/src")
 file(GLOB_RECURSE APP_SRC "${CMAKE_SOURCE_DIR}/src/app/*.cpp")
 file(GLOB_RECURSE CORE_SRC "${CMAKE_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB_RECURSE DOC_SRC  "${CMAKE_SOURCE_DIR}/src/doc/*.cpp")
+file(GLOB_RECURSE UI_SRC "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
+# file(GLOB_RECURSE RENDER_SRC "${CMAKE_SOURCE_DIR}/src/render/*.cpp")
   
 set(MINICAD_CORE_SOURCES
+    ${UI_SRC}
     ${APP_SRC}
     ${CORE_SRC} 
     ${DOC_SRC}
+    ${RENDER_SRC}
 )
 
 # 排除 Main.cpp，避免 UnitTests 出现重复 main 符号

@@ -1,1 +1,1 @@
-#define DECLARE_RUNTIME_TYPE(ThisClass, ParentClass)
+#define DECLARE_RUNTIME_TYPE(ThisClass, ParentClass)#define CALLBACK
