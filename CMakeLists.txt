@@ -19,6 +19,8 @@ file(GLOB_RECURSE DOC_SRC    "${CMAKE_SOURCE_DIR}/src/doc/*.cpp")
 file(GLOB_RECURSE UI_SRC     "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
 file(GLOB_RECURSE RENDER_SRC "${CMAKE_SOURCE_DIR}/src/render/*.cpp")
   
+file(GLOB_RECURSE D3D11_SRC "${CMAKE_SOURCE_DIR}/d3d11/*.cpp")
+
 set(MINICAD_CORE_SOURCES
     ${UI_SRC}
     ${APP_SRC}
@@ -37,6 +39,8 @@ add_executable(MiniCAD
     ${MINICAD_CORE_SOURCES}
     "${CMAKE_SOURCE_DIR}/src/app/Main.cpp"
 )
+
+add_executable(D3D11   ${D3D11_SRC}  )
 
 # ── 单元测试 ──────────────────────────────────
 find_package(GTest CONFIG REQUIRED)
