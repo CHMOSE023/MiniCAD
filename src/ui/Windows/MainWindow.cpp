@@ -193,8 +193,7 @@ namespace MiniCAD {
 
     LRESULT MainWindow::OnPaint() {
         PAINTSTRUCT ps = {};
-        HDC hdc = BeginPaint(m_hwnd, &ps);
-        FillRect(hdc, &ps.rcPaint, reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1));
+        HDC hdc = BeginPaint(m_hwnd, &ps); 
         EndPaint(m_hwnd, &ps);
         return 0;
     }
