@@ -1,24 +1,20 @@
 // ============================================================
-// MainWindow.cpp — 闪烁修复版
-//
-// 修复点汇总：
-//  1. WM_MOUSEMOVE  → 只更新 StatusBar 数据，不触发渲染
-//  2. WM_ERASEBKGND → 返回 1，阻止系统刷白背景
-//  3. OnPaint       → 只 ValidateRect + FillRect，不调用 RenderFrame
-//  4. SetRedrawCallback → 只标 m_needsRedraw，不立即渲染
-//  5. OnTimer       → 唯一渲染入口，每帧统一驱动
+// MainWindow.cpp — 加入 MenuBar 版
+// 关键改动：
+//   1. OnCreate 注册 MenuBar 的文件回调
+//   2. OnTimer Draw 顺序：MenuBar 最先（它用 BeginMainMenuBar 占顶部）
+//   3. ScreenToWorld 使用 UILayout::kCanvasY 作为偏移
 // ============================================================
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include "ui/Windows/MainWindow.h"
+#include "ui/imgui/UILayout.h"
 #include "app/Editor.h"
 #include <filesystem>
 #include <cassert>
-
+#include "ui/Windows/WindowsDefs.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-static constexpr float kToolBarLogicalHeight = 40.f;
 
 namespace MiniCAD {
 
@@ -39,7 +35,8 @@ namespace MiniCAD {
         Editor::Instance().Shutdown();
     }
 
-    bool MainWindow::Create(HINSTANCE hInstance, const wchar_t* title, int width, int height) {
+    bool MainWindow::Create(HINSTANCE hInstance, const wchar_t* title,
+        int width, int height) {
         m_hInstance = hInstance;
         if (!RegisterWindowClass(hInstance)) return false;
         RECT rc = { 0, 0, width, height };
@@ -62,14 +59,15 @@ namespace MiniCAD {
         wc.lpfnWndProc = StaticWndProc;
         wc.hInstance = hInstance;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = nullptr;          // ★ 不设背景刷，防止系统刷白
+        wc.hbrBackground = nullptr;
         wc.lpszClassName = WINDOW_CLASS_NAME;
         wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
         wc.hIconSm = wc.hIcon;
         return RegisterClassExW(&wc) != 0;
     }
 
-    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg,
+        WPARAM wParam, LPARAM lParam) {
         MainWindow* pThis = nullptr;
         if (msg == WM_NCCREATE) {
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
@@ -89,13 +87,10 @@ namespace MiniCAD {
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
                 return true;
 
-        // ★ 修复1：WM_MOUSEMOVE 只更新坐标数据，绝不触发渲染
         if (msg == WM_MOUSEMOVE) {
             const bool imguiWants = m_imguiReady && ImGui::GetIO().WantCaptureMouse;
             if (!imguiWants)
                 OnMouseMoveUI(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-            // 不 return，让 EventHandler 处理工具逻辑（如预览线）
-            // 但工具的 OnMouseMove 内部不能调用 RequestRedraw
         }
 
         const bool blockInput = m_imguiReady &&
@@ -110,7 +105,6 @@ namespace MiniCAD {
         case WM_PAINT:       return OnPaint();
         case WM_TIMER:       return OnTimer(static_cast<unsigned int>(wParam));
         case WM_MOUSEWHEEL:  return OnMouseWheel(wParam, lParam);
-            // ★ 修复2：拦截背景擦除，阻止系统刷白
         case WM_ERASEBKGND:  return 1;
         case WM_CLOSE:       return OnClose();
         case WM_DESTROY:     return OnDestroy();
@@ -124,81 +118,57 @@ namespace MiniCAD {
         const int w = rc.right - rc.left, h = rc.bottom - rc.top;
 
         Editor::Instance().Initialize();
-
         if (!m_sceneRenderer.Initialize(hwnd, w, h)) {
             PostQuitMessage(-1); return -1;
         }
 
-        // ── ImGui 初始化 ──────────────────────────────────────────
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::GetIO().IniFilename = nullptr;
 
+        // 中文字体
         ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        io.IniFilename = nullptr;
-
-        // ── 中文字体加载（三选一）────────────────────────────────
-
-        // 方案A：系统字体（Windows 自带，零依赖）
-        // 缺点：只能在 Windows 运行
-        static const ImWchar ranges_cn[] = {
-            0x0020, 0x00FF,   // ASCII + Latin
-            0x2000, 0x206F,   // 通用标点
-            0x3000, 0x30FF,   // CJK 标点 + 假名
-            0x31F0, 0x31FF,   // 片假名语音扩展
-            0xFF00, 0xFFEF,   // 全角字符
-            0x4e00, 0x9FAF,   // CJK 统一汉字（常用6763字）
-            0,
-        };
-
+        static const ImWchar ranges_cn[] = { 0x0020, 0x00FF, 0x2000, 0x206F, 0x3000, 0x30FF,   0x4e00, 0x9FAF, 0xFF00, 0xFFEF, 0, };
         bool fontLoaded = false;
-
-        // 优先尝试项目内嵌字体（方案B）
         if (std::filesystem::exists("assets/fonts/NotoSansSC-Regular.ttf")) {
-            io.Fonts->AddFontFromFileTTF(
-                "assets/fonts/NotoSansSC-Regular.ttf",
-                16.0f,
-                nullptr,
-                ranges_cn
-            );
+            io.Fonts->AddFontFromFileTTF("assets/fonts/NotoSansSC-Regular.ttf",
+                16.f, nullptr, ranges_cn);
             fontLoaded = true;
         }
-
-        // fallback：系统微软雅黑（方案A）
-        if (!fontLoaded) {
-            const char* sysFont = "C:/Windows/Fonts/msyh.ttc";
-            if (std::filesystem::exists(sysFont)) {
-                ImFontConfig cfg;
-                cfg.OversampleH = 2;    // 抗锯齿
-                cfg.OversampleV = 2;
-                io.Fonts->AddFontFromFileTTF(sysFont, 16.0f, &cfg, ranges_cn);
-                fontLoaded = true;
-            }
+        if (!fontLoaded && std::filesystem::exists("C:/Windows/Fonts/msyh.ttc")) {
+            ImFontConfig cfg; cfg.OversampleH = cfg.OversampleV = 2;
+            io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc",
+                16.f, &cfg, ranges_cn);
+            fontLoaded = true;
         }
-
-        // 最终 fallback：内置 ASCII 字体（中文会显示方框，但不崩溃）
-        if (!fontLoaded) {
-            io.Fonts->AddFontDefault();
-        }
-
+        if (!fontLoaded) io.Fonts->AddFontDefault();
         io.Fonts->Build();
 
-        // ── 主题 ──────────────────────────────────────────────────
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.f;
         style.WindowBorderSize = 0.f;
         style.FrameRounding = 3.f;
+          
+        // 深灰色，和 SceneRenderer 的清屏色 (0.15, 0.15, 0.15) 协调
+        ImVec4 panelBg = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
 
-        // ── backend 初始化 ────────────────────────────────────────
+        style.Colors[ImGuiCol_WindowBg] = panelBg;
+        style.Colors[ImGuiCol_MenuBarBg] = panelBg;
+        style.Colors[ImGuiCol_PopupBg] = panelBg;
+
         ImGui_ImplWin32_Init(hwnd);
         ImGui_ImplDX11_Init(m_sceneRenderer.GetDevice(), m_sceneRenderer.GetDeviceContext());
         m_imguiReady = true;
 
-        // ── 回调注册 ──────────────────────────────────────────────
-        Editor::Instance().SetRedrawCallback([this]() {
-            m_needsRedraw = true;
-            });
+        // ★ 注册 MenuBar 文件回调
+        m_menuBar.SetOnFileNew([this]() { OnFileNew();    });
+        m_menuBar.SetOnFileOpen([this]() { OnFileOpen();   });
+        m_menuBar.SetOnFileSave([this]() { OnFileSave();   });
+        m_menuBar.SetOnFileSaveAs([this]() { OnFileSaveAs(); });
+
+        Editor::Instance().SetRedrawCallback([this]() { m_needsRedraw = true; });
         m_toolBar.SetToolChangedCallback(
             [this](const std::string& name, const std::string& hint) {
                 m_statusBar.UpdateToolName(name);
@@ -221,37 +191,31 @@ namespace MiniCAD {
         return 0;
     }
 
-    // ★ 修复4：OnPaint 只 ValidateRect，不渲染
     LRESULT MainWindow::OnPaint() {
         PAINTSTRUCT ps = {};
         HDC hdc = BeginPaint(m_hwnd, &ps);
-        // 用窗口背景色填充，防止首帧出现白色
-        FillRect(hdc, &ps.rcPaint,
-            reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1));
+        FillRect(hdc, &ps.rcPaint, reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1));
         EndPaint(m_hwnd, &ps);
-        // ★ 不调用 RenderFrame，渲染完全由 OnTimer 驱动
         return 0;
     }
 
-    // ★ 修复5：OnTimer 是唯一渲染驱动
     LRESULT MainWindow::OnTimer(unsigned int id) {
         if (id != RENDER_TIMER_ID || !m_imguiReady) return 0;
 
-        // ImGui 需要每帧重绘（坐标显示、悬停状态等持续变化）
-        // 即使场景没变化也要渲染，否则 UI 会冻结
         m_sceneRenderer.BeginFrame();
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        // ★ Draw 顺序：MenuBar 最先，它会占据顶部一行
+        m_menuBar.Draw();
         m_toolBar.Draw();
         m_statusBar.Draw();
         m_propertyPanel.Draw();
 
         ImGui::Render();
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-
         m_sceneRenderer.EndFrame();
         m_needsRedraw = false;
         return 0;
@@ -268,7 +232,7 @@ namespace MiniCAD {
             static_cast<Real>(m_sceneRenderer.GetViewport().GetWidth()),
             static_cast<Real>(m_sceneRenderer.GetViewport().GetHeight()),
             newZoom, Real(-100), Real(100));
-        m_needsRedraw = true;   // ★ 标脏即可，定时器下一帧渲染
+        m_needsRedraw = true;
         return 0;
     }
 
@@ -276,10 +240,8 @@ namespace MiniCAD {
     LRESULT MainWindow::OnDestroy() { PostQuitMessage(0); return 0; }
 
     void MainWindow::OnMouseMoveUI(int sx, int sy) {
-        // 只更新数据缓存，下一帧定时器渲染时 StatusBar::Draw 读取
         m_statusBar.UpdateCoordinates(ScreenToWorld(sx, sy));
     }
-
     void MainWindow::OnSelectionChanged() { m_propertyPanel.Refresh(); }
 
     Point3 MainWindow::ScreenToWorld(int sx, int sy) {
@@ -288,15 +250,55 @@ namespace MiniCAD {
         const float vw = static_cast<float>(vp.GetWidth());
         const float vh = static_cast<float>(vp.GetHeight());
         if (vw <= 0.f || vh <= 0.f) return {};
-        const float viewY = static_cast<float>(sy) - kToolBarLogicalHeight;
-        const Real  orthoW = cam.GetOrthoWidth();
-        const Real  orthoH = cam.GetOrthoHeight();
+        // ★ 使用 UILayout::kCanvasY 作为偏移
+        const float viewY = static_cast<float>(sy) - UILayout::kCanvasY;
+        const Real orthoW = cam.GetOrthoWidth();
+        const Real orthoH = cam.GetOrthoHeight();
         const Point3 camPos = cam.GetPosition();
         return {
             static_cast<float>(camPos.x - orthoW * Real(0.5) + (static_cast<Real>(sx) / vw) * orthoW),
             static_cast<float>(camPos.y + orthoH * Real(0.5) - (static_cast<Real>(viewY) / vh) * orthoH),
             0.f
         };
+    }
+
+    // ── 文件对话框（Win32 CommonDialog）─────────────────────────
+    void MainWindow::OnFileNew() {
+        // Phase 2: 提示保存 → Editor::Instance().NewDocument()
+        Editor::Instance().RequestRedraw();
+    }
+
+    void MainWindow::OnFileOpen() {
+        //wchar_t path[MAX_PATH] = {};
+        //OPENFILENAMEW ofn = {};
+        //ofn.lStructSize = sizeof(ofn);
+        //ofn.hwndOwner = m_hwnd;
+        //ofn.lpstrFilter = L"MiniCAD 文件 (*.mcd)\0*.mcd\0所有文件 (*.*)\0*.*\0";
+        //ofn.lpstrFile = path;
+        //ofn.nMaxFile = MAX_PATH;
+        //ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        //if (GetOpenFileNameW(&ofn)) {
+        //    // Phase 2: Editor::Instance().OpenDocument(path);
+        //}
+    }
+
+    void MainWindow::OnFileSave() {
+        // Phase 2: Editor::Instance().SaveDocument();
+    }
+
+    void MainWindow::OnFileSaveAs() {
+        //wchar_t path[MAX_PATH] = {};
+        //OPENFILENAMEW ofn = {};
+        //ofn.lStructSize = sizeof(ofn);
+        //ofn.hwndOwner = m_hwnd;
+        //ofn.lpstrFilter = L"MiniCAD 文件 (*.mcd)\0*.mcd\0";
+        //ofn.lpstrFile = path;
+        //ofn.nMaxFile = MAX_PATH;
+        //ofn.Flags = OFN_OVERWRITEPROMPT;
+        //ofn.lpstrDefExt = L"mcd";
+        //if (GetSaveFileNameW(&ofn)) {
+        //    // Phase 2: Editor::Instance().SaveDocumentAs(path);
+        //}
     }
 
 } // namespace MiniCAD

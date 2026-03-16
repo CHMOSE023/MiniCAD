@@ -1,9 +1,10 @@
 // ============================================================
-// MainWindow.h — 闪烁修复版
-// 新增 m_needsRedraw 脏标记
+// MiniCAD — ui/win32/MainWindow.h  (加入 MenuBar 版)
+// 新增：m_menuBar 成员
 // ============================================================
 #pragma once
 #include "ui/Windows/EventHandler.h"
+#include "ui/imgui/MenuBar.h"
 #include "ui/imgui/ToolBar.h"
 #include "ui/imgui/StatusBar.h"
 #include "ui/imgui/PropertyPanel.h"
@@ -51,14 +52,22 @@ namespace MiniCAD {
         bool   RegisterWindowClass(HINSTANCE hInstance);
         Point3 ScreenToWorld(int sx, int sy);
 
+        // 文件对话框（Win32 API，由 MenuBar 回调触发）
+        void OnFileNew();
+        void OnFileOpen();
+        void OnFileSave();
+        void OnFileSaveAs();
+
         HWND      m_hwnd = nullptr;
         HINSTANCE m_hInstance = nullptr;
-
-        bool m_imguiReady = false;
-        bool m_needsRedraw = false;   // ★ 脏标记，避免场景变化直接触发渲染
+        bool      m_imguiReady = false;
+        bool      m_needsRedraw = false;
 
         EventHandler  m_eventHandler;
         SceneRenderer m_sceneRenderer;
+
+        // ★ 新增 MenuBar，Draw 顺序必须在 ToolBar 之前
+        MenuBar       m_menuBar;
         ToolBar       m_toolBar;
         StatusBar     m_statusBar;
         PropertyPanel m_propertyPanel;
