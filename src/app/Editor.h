@@ -52,6 +52,11 @@ namespace MiniCAD {
         void RequestRedraw();
         void SetRedrawCallback(RedrawCallback cb) { m_redrawCb = std::move(cb); }
 
+        // ★ 新增：选择集变化通知（修复 C2039）
+        void SetSelectionChangedCallback(std::function<void()> cb) {
+            m_selectionChangedCb = std::move(cb);
+        }
+
         // ── 访问器 ───────────────────────────────────────────────
         Scene& GetScene() { return m_scene; }
         LayerManager& GetLayerManager() { return m_layerManager; }
@@ -69,6 +74,7 @@ namespace MiniCAD {
         CommandStack     m_commandStack;
         std::unique_ptr<ITool> m_activeTool;
         RedrawCallback   m_redrawCb;
+        std::function<void()>  m_selectionChangedCb;
     };
 
 } // namespace MiniCAD

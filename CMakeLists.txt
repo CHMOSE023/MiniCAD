@@ -40,10 +40,21 @@ add_executable(MiniCAD
 
 # ── 单元测试 ──────────────────────────────────
 find_package(GTest CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+
 file(GLOB TEST_SOURCES "${CMAKE_SOURCE_DIR}/tests/*.cpp")
- 
 add_executable(UnitTests
     ${TEST_SOURCES}
     ${MINICAD_CORE_SOURCES}
 )
+
 target_link_libraries(UnitTests PRIVATE GTest::gtest GTest::gtest_main)
+target_link_libraries(MiniCAD PRIVATE imgui::imgui)
+
+add_custom_command(
+    TARGET MiniCAD POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:MiniCAD>/assets"
+    COMMENT "Copying assets to output directory"
+)

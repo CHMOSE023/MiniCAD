@@ -1,17 +1,12 @@
 // ============================================================
 // MiniCAD — render/D3D11/Renderer.cpp
-// 职责：D3D11Renderer 完整实现；D3D11 头文件严禁外泄
-// 依赖：render/D3D11/Renderer.h, render/D3D11/RenderState.h,
-//       render/D3D11/DrawPrimitives.h, render/D3D11/ShaderManager.h
-// 约束：d3d11.h / dxgi.h 只在本文件出现
+// d3d11.h 只在此文件出现
 // ============================================================
-
 #include "render/D3D11/Renderer.h"
 #include "render/D3D11/RenderState.h"
 #include "render/D3D11/DrawPrimitives.h"
 #include "render/D3D11/ShaderManager.h"
 
-// D3D11 头文件严禁出现在此文件以外的 render/ 路径下
 #include <d3d11.h>
 #include <dxgi.h>
 #pragma comment(lib, "d3d11.lib")
@@ -22,15 +17,11 @@
 
 namespace MiniCAD {
 
-    // ============================================================
-    // D3D11Impl — D3D11 具体资源包（Pimpl）
-    // ============================================================
     struct D3D11Renderer::D3D11Impl {
         ID3D11Device* device = nullptr;
         ID3D11DeviceContext* context = nullptr;
         IDXGISwapChain* swapChain = nullptr;
         ID3D11RenderTargetView* renderTargetView = nullptr;
-
         StateCache              stateCache;
 
         void Release() {
@@ -41,24 +32,11 @@ namespace MiniCAD {
         }
     };
 
-    // ============================================================
-    // D3D11Renderer
-    // ============================================================
-
-    D3D11Renderer::D3D11Renderer()
-        : m_impl(new D3D11Impl{}) {
-    }
-
-    D3D11Renderer::~D3D11Renderer() {
-        Shutdown();
-        delete m_impl;
-        m_impl = nullptr;
-    }
+    D3D11Renderer::D3D11Renderer() : m_impl(new D3D11Impl{}) {}
+    D3D11Renderer::~D3D11Renderer() { Shutdown(); delete m_impl; m_impl = nullptr; }
 
     bool D3D11Renderer::Initialize(void* hwnd, int width, int height) {
         assert(!m_initialized && "D3D11Renderer::Initialize called twice");
-
-        HWND nativeHwnd = static_cast<HWND>(hwnd);
 
         DXGI_SWAP_CHAIN_DESC scDesc = {};
         scDesc.BufferCount = 1;
@@ -68,7 +46,7 @@ namespace MiniCAD {
         scDesc.BufferDesc.RefreshRate.Numerator = 60;
         scDesc.BufferDesc.RefreshRate.Denominator = 1;
         scDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        scDesc.OutputWindow = nativeHwnd;
+        scDesc.OutputWindow = static_cast<HWND>(hwnd);
         scDesc.SampleDesc.Count = 1;
         scDesc.SampleDesc.Quality = 0;
         scDesc.Windowed = TRUE;
@@ -85,31 +63,20 @@ namespace MiniCAD {
             &featureLevel, 1, D3D11_SDK_VERSION,
             &scDesc, &m_impl->swapChain,
             &m_impl->device, &outFeature, &m_impl->context);
+        if (FAILED(hr)) return false;
 
-        if (FAILED(hr)) {
-            return false;
-        }
-
-        // 创建 RenderTargetView
         ID3D11Texture2D* backBuffer = nullptr;
-        hr = m_impl->swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
-            reinterpret_cast<void**>(&backBuffer));
-        if (FAILED(hr)) {
-            m_impl->Release();
-            return false;
-        }
+        hr = m_impl->swapChain->GetBuffer(
+            0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer));
+        if (FAILED(hr)) { m_impl->Release(); return false; }
 
-        hr = m_impl->device->CreateRenderTargetView(backBuffer, nullptr, &m_impl->renderTargetView);
+        hr = m_impl->device->CreateRenderTargetView(
+            backBuffer, nullptr, &m_impl->renderTargetView);
         backBuffer->Release();
-
-        if (FAILED(hr)) {
-            m_impl->Release();
-            return false;
-        }
+        if (FAILED(hr)) { m_impl->Release(); return false; }
 
         m_impl->context->OMSetRenderTargets(1, &m_impl->renderTargetView, nullptr);
 
-        // 初始化视口
         D3D11_VIEWPORT vp = {};
         vp.Width = static_cast<float>(width);
         vp.Height = static_cast<float>(height);
@@ -117,18 +84,14 @@ namespace MiniCAD {
         vp.MaxDepth = 1.0f;
         m_impl->context->RSSetViewports(1, &vp);
 
-        // 初始化子系统
         ShaderManager::Instance().Initialize(m_impl->device, m_impl->context);
 
-        m_width = width;
-        m_height = height;
-        m_initialized = true;
+        m_width = width; m_height = height; m_initialized = true;
         return true;
     }
 
     void D3D11Renderer::Shutdown() {
         if (!m_initialized) return;
-
         ShaderManager::Instance().Shutdown();
         m_impl->Release();
         m_initialized = false;
@@ -136,47 +99,35 @@ namespace MiniCAD {
 
     void D3D11Renderer::BeginFrame(const Vec4& clearColor) {
         assert(m_initialized);
-
         float color[4] = {
-            static_cast<float>(clearColor.x),
-            static_cast<float>(clearColor.y),
-            static_cast<float>(clearColor.z),
-            static_cast<float>(clearColor.w)
+            static_cast<float>(clearColor.x), static_cast<float>(clearColor.y),
+            static_cast<float>(clearColor.z), static_cast<float>(clearColor.w)
         };
-
         m_impl->context->ClearRenderTargetView(m_impl->renderTargetView, color);
         m_impl->stateCache.Reset();
     }
 
     void D3D11Renderer::EndFrame() {
         assert(m_initialized);
-        m_impl->swapChain->Present(1, 0);   // VSync 开启
+        m_impl->swapChain->Present(1, 0);
     }
 
     void D3D11Renderer::Submit(const RenderItem& item) {
         assert(m_initialized);
-
-        // 跳过不可见图层
-        if (!item.state.layerVisible) return;
-        if (item.vertices.empty())    return;
-
+        if (!item.state.layerVisible || item.vertices.empty()) return;
         DrawItem(item);
     }
 
     void D3D11Renderer::DrawItem(const RenderItem& item) {
-        // 状态变化时重新绑定
         bool stateChanged = m_impl->stateCache.Apply(item.state);
-        (void)stateChanged;   // DrawPrimitives 内部按需读取 StateCache
-
+        (void)stateChanged;
         DrawPrimitives::Draw(m_impl->device, m_impl->context,
             item.vertices, item.topology, item.state);
     }
 
     void D3D11Renderer::Resize(int width, int height) {
-        if (!m_initialized) return;
-        if (width == m_width && height == m_height) return;
+        if (!m_initialized || (width == m_width && height == m_height)) return;
 
-        // 释放旧 RTV，再 ResizeBuffers
         m_impl->context->OMSetRenderTargets(0, nullptr, nullptr);
         if (m_impl->renderTargetView) {
             m_impl->renderTargetView->Release();
@@ -189,11 +140,11 @@ namespace MiniCAD {
 
         if (SUCCEEDED(hr)) {
             ID3D11Texture2D* backBuffer = nullptr;
-            hr = m_impl->swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
-                reinterpret_cast<void**>(&backBuffer));
+            hr = m_impl->swapChain->GetBuffer(
+                0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer));
             if (SUCCEEDED(hr)) {
-                m_impl->device->CreateRenderTargetView(backBuffer, nullptr,
-                    &m_impl->renderTargetView);
+                m_impl->device->CreateRenderTargetView(
+                    backBuffer, nullptr, &m_impl->renderTargetView);
                 backBuffer->Release();
             }
         }
@@ -201,14 +152,20 @@ namespace MiniCAD {
         m_impl->context->OMSetRenderTargets(1, &m_impl->renderTargetView, nullptr);
 
         D3D11_VIEWPORT vp = {};
-        vp.Width = static_cast<float>(width);
-        vp.Height = static_cast<float>(height);
-        vp.MinDepth = 0.0f;
-        vp.MaxDepth = 1.0f;
+        vp.Width = static_cast<float>(width); vp.Height = static_cast<float>(height);
+        vp.MinDepth = 0.0f; vp.MaxDepth = 1.0f;
         m_impl->context->RSSetViewports(1, &vp);
 
-        m_width = width;
-        m_height = height;
+        m_width = width; m_height = height;
+    }
+
+    // ★ 修复：返回 void*，d3d11.h 类型只在 .cpp 内部使用
+    void* D3D11Renderer::GetDevice() const {
+        return m_impl ? m_impl->device : nullptr;
+    }
+
+    void* D3D11Renderer::GetDeviceContext() const {
+        return m_impl ? m_impl->context : nullptr;
     }
 
 } // namespace MiniCAD
