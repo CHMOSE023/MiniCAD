@@ -2,14 +2,6 @@
 // MiniCAD — app/SceneRenderer.h
 // 职责：持有 IRenderer / Camera / Viewport / RenderQueue，
 //       负责将 Scene 几何数据转化为每帧画面
-//
-// ★ ImGui 迁移变化（对比原版）：
-//   新增 GetDevice() / GetDeviceContext()
-//     → ImGui DX11 backend 初始化时需要设备对象
-//   RenderFrame() 拆分为 BeginFrame() + EndFrame()
-//     → BeginFrame : 清屏 + 场景几何提交（不 Present）
-//     → EndFrame   : Present，在 ImGui 叠加之后由 MainWindow 调用
-//   其余接口、成员、约束完全不变
 // ============================================================
 #pragma once
 
@@ -41,7 +33,7 @@ namespace MiniCAD {
         // ── 初始化 / 关闭 ──────────────────────────────────────────
         bool Initialize(void* hwnd, int width, int height);
         void Shutdown();
-                
+
         void BeginFrame();   // 清屏 + 场景几何提交（不 Present）
         void EndFrame();     // SwapChain::Present
         void RenderFrame();  // = BeginFrame() + EndFrame()（兼容旧调用）
@@ -65,9 +57,10 @@ namespace MiniCAD {
 
     private:
         void FlushSceneToRenderQueue();
+        void FlushPreviewToRenderQueue();   // ★ 预览线（橡皮筋）
         void UpdateFrameConstants();
 
-        IRenderer* m_renderer = nullptr;
+        IRenderer*         m_renderer = nullptr;
         RenderQueue        m_renderQueue;
         SelectionHighlight m_selectionHighlight;
         Camera             m_camera;

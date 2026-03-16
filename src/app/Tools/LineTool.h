@@ -12,25 +12,29 @@
 
 namespace MiniCAD {
 
-class LineTool : public ITool {
-public:
-    LineTool() = default;
+    class LineTool : public ITool {
+    public:
+        LineTool() = default;
 
-    void OnMouseDown(const Point2& screenPos, int button) override;
-    void OnMouseMove(const Point2& screenPos) override;
-    void OnMouseUp(const Point2& screenPos, int button) override;
-    void OnKeyDown(int keyCode) override;
-    void OnCancel() override;
-    std::string GetName() const override { return "LineTool"; }
+        void OnMouseDown(const Point2& screenPos, int button) override;
+        void OnMouseMove(const Point2& screenPos) override;
+        void OnMouseUp(const Point2& screenPos, int button) override;
+        void OnKeyDown(int keyCode) override;
+        void OnCancel() override;
+        std::string GetName() const override { return "LineTool"; }
 
-private:
-    enum class State { WaitingFirst, WaitingSecond };
-    State  m_state    = State::WaitingFirst;
-    Point2 m_firstPt;
-    Point2 m_currentPt;
+        // ── 预览线查询（供 SceneRenderer 在每帧读取）────────────────
+        // 仅在 WaitingSecond 阶段返回 true，此时 outStart/outEnd 有效
+        bool GetPreviewLine(Point2& outStart, Point2& outEnd) const;
 
-    void CommitLine(const Point2& second);
-    void Reset();
-};
+    private:
+        enum class State { WaitingFirst, WaitingSecond };
+        State  m_state = State::WaitingFirst;
+        Point2 m_firstPt;
+        Point2 m_currentPt;
+
+        void CommitLine(const Point2& second);
+        void Reset();
+    };
 
 } // namespace MiniCAD

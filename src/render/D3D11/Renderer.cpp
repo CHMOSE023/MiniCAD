@@ -121,8 +121,7 @@ namespace MiniCAD {
     void D3D11Renderer::DrawItem(const RenderItem& item) {
         bool stateChanged = m_impl->stateCache.Apply(item.state);
         (void)stateChanged;
-        DrawPrimitives::Draw(m_impl->device, m_impl->context,
-            item.vertices, item.topology, item.state);
+        DrawPrimitives::Draw(m_impl->device, m_impl->context, item.vertices, item.topology, item.state);
     }
 
     void D3D11Renderer::Resize(int width, int height) {

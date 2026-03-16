@@ -12,8 +12,8 @@
 #include "ui/imgui/UILayout.h"
 #include "app/Editor.h"
 #include <filesystem>
-#include <cassert>
 #include "ui/Windows/WindowsDefs.h"
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace MiniCAD {
@@ -66,8 +66,7 @@ namespace MiniCAD {
         return RegisterClassExW(&wc) != 0;
     }
 
-    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg,
-        WPARAM wParam, LPARAM lParam) {
+    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         MainWindow* pThis = nullptr;
         if (msg == WM_NCCREATE) {
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
@@ -81,8 +80,7 @@ namespace MiniCAD {
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
-    LRESULT MainWindow::WndProc(HWND hwnd, UINT msg,
-        WPARAM wParam, LPARAM lParam) {
+    LRESULT MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (m_imguiReady)
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
                 return true;
@@ -133,13 +131,13 @@ namespace MiniCAD {
         bool fontLoaded = false;
         if (std::filesystem::exists("assets/fonts/NotoSansSC-Regular.ttf")) {
             io.Fonts->AddFontFromFileTTF("assets/fonts/NotoSansSC-Regular.ttf",
-                16.f, nullptr, ranges_cn);
+                20, nullptr, ranges_cn);
             fontLoaded = true;
         }
         if (!fontLoaded && std::filesystem::exists("C:/Windows/Fonts/msyh.ttc")) {
             ImFontConfig cfg; cfg.OversampleH = cfg.OversampleV = 2;
             io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc",
-                16.f, &cfg, ranges_cn);
+                20.0f, &cfg, ranges_cn);
             fontLoaded = true;
         }
         if (!fontLoaded) io.Fonts->AddFontDefault();
@@ -149,7 +147,7 @@ namespace MiniCAD {
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.f;
         style.WindowBorderSize = 0.f;
-        style.FrameRounding = 3.f;
+        style.FrameRounding = 3.f; 
           
         // 深灰色，和 SceneRenderer 的清屏色 (0.15, 0.15, 0.15) 协调
         ImVec4 panelBg = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
@@ -265,9 +263,12 @@ namespace MiniCAD {
     void MainWindow::OnFileNew() {
         // Phase 2: 提示保存 → Editor::Instance().NewDocument()
         Editor::Instance().RequestRedraw();
+        printf("OnFileNew\r\n");
     }
 
     void MainWindow::OnFileOpen() {
+
+        printf("OnFileOpen\r\n");
         //wchar_t path[MAX_PATH] = {};
         //OPENFILENAMEW ofn = {};
         //ofn.lStructSize = sizeof(ofn);
@@ -283,9 +284,11 @@ namespace MiniCAD {
 
     void MainWindow::OnFileSave() {
         // Phase 2: Editor::Instance().SaveDocument();
+        printf("OnFileSave\r\n");
     }
 
     void MainWindow::OnFileSaveAs() {
+        printf("OnFileSaveAs\r\n");
         //wchar_t path[MAX_PATH] = {};
         //OPENFILENAMEW ofn = {};
         //ofn.lStructSize = sizeof(ofn);

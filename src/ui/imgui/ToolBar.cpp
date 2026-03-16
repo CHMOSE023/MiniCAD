@@ -72,6 +72,7 @@ namespace MiniCAD {
         std::unique_ptr<ITool> tool;
         if (id == ToolButtonID::LINE)
             tool = std::make_unique<LineTool>();
+
         if (tool) Editor::Instance().SetActiveTool(std::move(tool));
 
         if (m_toolChangedCb) {
