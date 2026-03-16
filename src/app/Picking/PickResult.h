@@ -11,11 +11,11 @@
 
 namespace MiniCAD {
 
-struct PickResult {
-    Object::ObjectID entityId  = Object::INVALID_ID;
-    Point3           hitPoint;
-    float            hitDist   = 1e38f;
-    bool             hit       = false;
-};
+    struct PickResult {
+        Object::ObjectID entityId = Object::INVALID_ID;
+        Point3           hitPoint;
+        float            hitDist = 1e38f;
+        bool             hit = false;
+    };
 
 } // namespace MiniCAD

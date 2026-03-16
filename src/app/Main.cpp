@@ -1,23 +1,26 @@
 #include "app/Editor.h"
-#include "ui/Windows/MainWindow.h"
+#include "ui/Windows/MainWindow.h" 
+#include <windows.h>
 #include <cstdio>
 
 int main() {
-    // auto& editor = MiniCAD::Editor::Instance();
 
-    // editor.Initialize();   
-   
+    // GetModuleHandleW(nullptr) 返回当前进程的 HINSTANCE
+    HINSTANCE hInstance = GetModuleHandle(nullptr);
 
-    //editor.Shutdown();
+    MiniCAD::MainWindow window;
+    if (!window.Create(hInstance, L"MiniCAD", 1280, 720)) {
+        return -1;
+    }
 
-	MiniCAD::MainWindow mainWindow;
+    window.Show(SW_SHOWDEFAULT);   // SW_SHOWDEFAULT 比 NULL 语义更清晰
 
-	mainWindow.Initialize( L"MiniCAD", 800, 600);
+    // 消息循环
+    MSG msg = {};
+    while (GetMessage(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
 
-    printf("Run->MiniCAD");
-
-    mainWindow.Run();
-
-    
-    return 0;
+    return static_cast<int>(msg.wParam);
 }

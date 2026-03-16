@@ -45,10 +45,12 @@ void Editor::Redo() {
     RequestRedraw();
 }
 
-void Editor::HandleInput(const InputEvent& evt) {
+void Editor::HandleInput(const InputEvent& evt) { 
+
     if (!m_activeTool) return;
+
     switch (evt.type) {
-    case InputEventType::MOUSE_DOWN:
+    case InputEventType::MOUSE_DOWN: 
         m_activeTool->OnMouseDown(evt.screenPos, evt.button);
         break;
     case InputEventType::MOUSE_MOVE:

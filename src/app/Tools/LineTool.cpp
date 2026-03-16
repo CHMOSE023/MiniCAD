@@ -12,6 +12,7 @@
 namespace MiniCAD {
 
 void LineTool::OnMouseDown(const Point2& screenPos, int button) {
+
     if (button != 0) return;  // 仅响应左键
     if (m_state == State::WaitingFirst) {
         m_firstPt = screenPos;

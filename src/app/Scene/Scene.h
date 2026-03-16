@@ -15,42 +15,42 @@
 
 namespace MiniCAD {
 
-class Scene {
-public:
-    using ObjectID    = Object::ObjectID;
-    using DirtyCallback = std::function<void()>;
+    class Scene {
+    public:
+        using ObjectID = Object::ObjectID;
+        using DirtyCallback = std::function<void()>;
 
-    Scene() = default;
+        Scene() = default;
 
-    // ── 实体管理 ─────────────────────────────────────────────
-    void    AddEntity(std::unique_ptr<Object> entity);
-    // 移除并返回所有权（供 Undo 使用）
-    std::unique_ptr<Object> RemoveEntity(ObjectID id);
+        // ── 实体管理 ─────────────────────────────────────────────
+        void    AddEntity(std::unique_ptr<Object> entity);
+        // 移除并返回所有权（供 Undo 使用）
+        std::unique_ptr<Object> RemoveEntity(ObjectID id);
 
-    Object*       GetEntity(ObjectID id);
-    const Object* GetEntity(ObjectID id) const;
+        Object* GetEntity(ObjectID id);
+        const Object* GetEntity(ObjectID id) const;
 
-    bool Has(ObjectID id) const;
+        bool Has(ObjectID id) const;
 
-    // 返回所有实体 ID
-    std::vector<ObjectID> GetAllIDs() const;
+        // 返回所有实体 ID
+        std::vector<ObjectID> GetAllIDs() const;
 
-    // AABB 框选：返回与 box 相交的实体 ID
-    std::vector<ObjectID> QueryByBox(const Box& box) const;
+        // AABB 框选：返回与 box 相交的实体 ID
+        std::vector<ObjectID> QueryByBox(const Box& box) const;
 
-    // ── DirtyFlag ────────────────────────────────────────────
-    bool IsDirty()       const { return m_dirty; }
-    void MarkDirty()           { m_dirty = true; if (m_onDirty) m_onDirty(); }
-    void ClearDirty()          { m_dirty = false; }
+        // ── DirtyFlag ────────────────────────────────────────────
+        bool IsDirty()       const { return m_dirty; }
+        void MarkDirty() { m_dirty = true; if (m_onDirty) m_onDirty(); }
+        void ClearDirty() { m_dirty = false; }
 
-    void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
+        void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
 
-    int EntityCount() const { return (int)m_entities.size(); }
+        int EntityCount() const { return (int)m_entities.size(); }
 
-private:
-    std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
-    bool         m_dirty = false;
-    DirtyCallback m_onDirty;
-};
+    private:
+        std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
+        bool         m_dirty = false;
+        DirtyCallback m_onDirty;
+    };
 
 } // namespace MiniCAD

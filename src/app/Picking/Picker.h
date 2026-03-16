@@ -16,27 +16,27 @@
 
 namespace MiniCAD {
 
-class Picker {
-public:
-    // Camera 依赖通过回调注入，不 include Camera.h
-    using ScreenToRayFn = std::function<Ray(const Vec2& screenPos)>;
+    class Picker {
+    public:
+        // Camera 依赖通过回调注入，不 include Camera.h
+        using ScreenToRayFn = std::function<Ray(const Vec2& screenPos)>;
 
-    Picker(Scene& scene, ScreenToRayFn screenToRay);
+        Picker(Scene& scene, ScreenToRayFn screenToRay);
 
-    // 单点拾取：返回最近命中的实体
-    PickResult PickAt(const Vec2& screenPos) const;
+        // 单点拾取：返回最近命中的实体
+        PickResult PickAt(const Vec2& screenPos) const;
 
-    // 框选：返回与屏幕矩形对应的世界包围盒相交的所有实体
-    std::vector<Object::ObjectID> BoxSelect(const Box2D& screenRect) const;
+        // 框选：返回与屏幕矩形对应的世界包围盒相交的所有实体
+        std::vector<Object::ObjectID> BoxSelect(const Box2D& screenRect) const;
 
-    // 拾取容差（屏幕像素）
-    void  SetPickTolerance(float pixels) { m_tolerance = pixels; }
-    float GetPickTolerance()       const { return m_tolerance; }
+        // 拾取容差（屏幕像素）
+        void  SetPickTolerance(float pixels) { m_tolerance = pixels; }
+        float GetPickTolerance()       const { return m_tolerance; }
 
-private:
+    private:
     Scene&         m_scene;
-    ScreenToRayFn  m_screenToRay;
-    float          m_tolerance = 5.0f; // 像素容差
-};
+        ScreenToRayFn  m_screenToRay;
+        float          m_tolerance = 5.0f; // 像素容差
+    };
 
 } // namespace MiniCAD

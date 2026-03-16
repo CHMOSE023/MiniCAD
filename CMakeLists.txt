@@ -13,11 +13,11 @@ endif()
 include_directories("${CMAKE_SOURCE_DIR}/src")
 
 # ── 只收集 src/ 下的 .cpp，绝不扫到 out/ ──────
-file(GLOB_RECURSE APP_SRC "${CMAKE_SOURCE_DIR}/src/app/*.cpp")
-file(GLOB_RECURSE CORE_SRC "${CMAKE_SOURCE_DIR}/src/core/*.cpp")
-file(GLOB_RECURSE DOC_SRC  "${CMAKE_SOURCE_DIR}/src/doc/*.cpp")
-file(GLOB_RECURSE UI_SRC "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
-# file(GLOB_RECURSE RENDER_SRC "${CMAKE_SOURCE_DIR}/src/render/*.cpp")
+file(GLOB_RECURSE APP_SRC    "${CMAKE_SOURCE_DIR}/src/app/*.cpp")
+file(GLOB_RECURSE CORE_SRC   "${CMAKE_SOURCE_DIR}/src/core/*.cpp")
+file(GLOB_RECURSE DOC_SRC    "${CMAKE_SOURCE_DIR}/src/doc/*.cpp")
+file(GLOB_RECURSE UI_SRC     "${CMAKE_SOURCE_DIR}/src/ui/*.cpp")
+file(GLOB_RECURSE RENDER_SRC "${CMAKE_SOURCE_DIR}/src/render/*.cpp")
   
 set(MINICAD_CORE_SOURCES
     ${UI_SRC}

@@ -17,6 +17,21 @@ namespace MiniCAD {
 
         Mat4() : m{} {}
 
+        // 按数学书写惯例（行优先）传入，内部自动按列主序存储
+        static Mat4 FromRows(
+            Real r00, Real r01, Real r02, Real r03,
+            Real r10, Real r11, Real r12, Real r13,
+            Real r20, Real r21, Real r22, Real r23,
+            Real r30, Real r31, Real r32, Real r33)
+        {
+            Mat4 mat;
+            mat.m[0][0] = r00; mat.m[1][0] = r01; mat.m[2][0] = r02; mat.m[3][0] = r03;
+            mat.m[0][1] = r10; mat.m[1][1] = r11; mat.m[2][1] = r12; mat.m[3][1] = r13;
+            mat.m[0][2] = r20; mat.m[1][2] = r21; mat.m[2][2] = r22; mat.m[3][2] = r23;
+            mat.m[0][3] = r30; mat.m[1][3] = r31; mat.m[2][3] = r32; mat.m[3][3] = r33;
+            return mat;
+        }
+
         static Mat4 Identity() {
             Mat4 r;
             r.m[0][0] = r.m[1][1] = r.m[2][2] = r.m[3][3] = 1.f;
@@ -56,6 +71,15 @@ namespace MiniCAD {
                     for (int k = 0; k < 4; k++)
                         r.m[c][row] += m[k][row] * o.m[c][k];
             return r;
+        }
+
+        Vec4 operator*(const Vec4& v) const {
+            return {
+                m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
+                m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
+                m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
+                m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w
+            };
         }
          
         Mat4 Transpose() const {

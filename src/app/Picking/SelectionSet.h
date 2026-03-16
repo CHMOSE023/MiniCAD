@@ -13,28 +13,28 @@
 
 namespace MiniCAD {
 
-class SelectionSet {
-public:
-    using ObjectID = Object::ObjectID;
-    using ChangedCallback = std::function<void()>;
+    class SelectionSet {
+    public:
+        using ObjectID = Object::ObjectID;
+        using ChangedCallback = std::function<void()>;
 
-    void Select(ObjectID id);
-    void Deselect(ObjectID id);
-    void ToggleSelect(ObjectID id);
-    void Clear();
+        void Select(ObjectID id);
+        void Deselect(ObjectID id);
+        void ToggleSelect(ObjectID id);
+        void Clear();
 
-    bool IsSelected(ObjectID id) const;
+        bool IsSelected(ObjectID id) const;
 
-    const std::vector<ObjectID>& GetSelected() const { return m_selected; }
-    int Count() const { return (int)m_selected.size(); }
+        const std::vector<ObjectID>& GetSelected() const { return m_selected; }
+        int Count() const { return (int)m_selected.size(); }
 
-    void SetChangedCallback(ChangedCallback cb) { m_onChanged = std::move(cb); }
+        void SetChangedCallback(ChangedCallback cb) { m_onChanged = std::move(cb); }
 
-private:
-    std::vector<ObjectID> m_selected;
-    ChangedCallback        m_onChanged;
+    private:
+        std::vector<ObjectID> m_selected;
+        ChangedCallback        m_onChanged;
 
-    void Notify() { if (m_onChanged) m_onChanged(); }
-};
+        void Notify() { if (m_onChanged) m_onChanged(); }
+    };
 
 } // namespace MiniCAD

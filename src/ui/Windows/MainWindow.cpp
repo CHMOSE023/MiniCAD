@@ -1,17 +1,16 @@
 // ============================================================
 // MiniCAD — ui/win32/MainWindow.cpp
-// 职责：主窗口实现；通过 Editor 接口驱动渲染与业务逻辑
+// 职责：主窗口实现；通过 Editor / SceneRenderer 协调数据与渲染
 // 依赖：ui/win32/MainWindow.h, app/Editor.h
-// 约束：不直接调用 render / core，所有操作通过 Editor
-// ============================================================ 
+// 约束：不直接调用 render / core，所有操作通过 Editor / SceneRenderer
+// ============================================================
+
+#include "ui/Windows/MainWindow.h" 
 #include "app/Editor.h"
-#include "ui/Windows/MainWindow.h"
+ 
+#include <cassert>
 
 namespace MiniCAD {
-
-    // ============================================================
-    // 构造 / 析构
-    // ============================================================
 
     MainWindow::MainWindow() = default;
 
@@ -21,6 +20,7 @@ namespace MiniCAD {
             DestroyWindow(m_hwnd);
             m_hwnd = nullptr;
         }
+        m_sceneRenderer.Shutdown();   // ← 名称更新
         Editor::Instance().Shutdown();
     }
 
@@ -28,52 +28,25 @@ namespace MiniCAD {
     // Create
     // ============================================================
 
-    bool MainWindow::Initialize(const wchar_t* title, int width, int height) {
-        m_hInstance = GetModuleHandleW(nullptr);
+    bool MainWindow::Create(HINSTANCE hInstance, const wchar_t* title,  int width, int height) {
+        m_hInstance = hInstance;
+        if (!RegisterWindowClass(hInstance)) return false;
 
-        if (!RegisterWindowClass(m_hInstance)) return false;
-
-        // 根据客户区尺寸计算窗口实际尺寸（含标题栏 / 边框）
         RECT rc = { 0, 0, width, height };
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);  // TRUE = 有菜单栏
+        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
 
         m_hwnd = CreateWindowExW(
-            0,
-            WINDOW_CLASS_NAME,
-            title,
+            0, WINDOW_CLASS_NAME, title,
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            rc.right - rc.left,
-            rc.bottom - rc.top,
-            nullptr, nullptr,
-            m_hInstance,
-            this   // 通过 CREATESTRUCT::lpCreateParams 传递 this
+            rc.right - rc.left, rc.bottom - rc.top,
+            nullptr, nullptr, hInstance, this
         );
-
-        if (m_hwnd) {
-            ShowWindow(m_hwnd, SW_SHOW);
-            UpdateWindow(m_hwnd);
-        }
-
         return m_hwnd != nullptr;
     }
 
-    void MainWindow::Run() {
-        MSG msg = { 0 };
-        while (true)
-        {
-            if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
-            {
-                if (msg.message == WM_QUIT) break;
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-            else
-            {
-                // m_OpenGLDC->Render(); 	// 无消息时渲染，保证画面持续更新
-
-            }
-        }
+    void MainWindow::Show(int nCmdShow) {
+        if (m_hwnd) { ShowWindow(m_hwnd, nCmdShow); UpdateWindow(m_hwnd); }
     }
 
     // ============================================================
@@ -84,28 +57,25 @@ namespace MiniCAD {
         WNDCLASSEXW wc = {};
         wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = WndProc;
+        wc.lpfnWndProc = StaticWndProc;
         wc.hInstance = hInstance;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = nullptr;  // 不填充背景，由 D3D11 清屏
-        wc.lpszMenuName = nullptr; //MAKEINTRESOURCEW(IDR_MAINMENU);  // 菜单资源
+        wc.hbrBackground = nullptr;
+        wc.lpszMenuName = nullptr;//MAKEINTRESOURCEW(IDR_MAINMENU);
         wc.lpszClassName = WINDOW_CLASS_NAME;
         wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
         wc.hIconSm = wc.hIcon;
-
         return RegisterClassExW(&wc) != 0;
     }
 
     // ============================================================
-    // 实例窗口过程 → 转发到实例方法
+    // 静态 → 实例窗口过程
     // ============================================================
 
-    LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-
+    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg,
+        WPARAM wParam, LPARAM lParam) {
         MainWindow* pThis = nullptr;
-
         if (msg == WM_NCCREATE) {
-            // 首次消息：从 CREATESTRUCT 取出 this 指针，绑定到 GWLP_USERDATA
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
             pThis = reinterpret_cast<MainWindow*>(cs->lpCreateParams);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
@@ -113,42 +83,23 @@ namespace MiniCAD {
         else {
             pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         }
-
-        if (pThis) return pThis->EventProc(hwnd, msg, wParam, lParam);
-
+        if (pThis) return pThis->WndProc(hwnd, msg, wParam, lParam);
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
-
-    LRESULT MainWindow::EventProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-
-        // 先交给 EventHandler 处理输入消息
-        if (m_eventHandler.ProcessMessage(hwnd, msg, wParam, lParam)) {
-            return 0;
-        }
+    LRESULT MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+        // 输入消息先交 EventHandler 处理
+        if (m_eventHandler.ProcessMessage(hwnd, msg, wParam, lParam)) return 0;
 
         switch (msg) {
-        case WM_CREATE:
-            return OnCreate(hwnd);
-            break;
-        case WM_SIZE:
-            return OnSize(LOWORD(lParam), HIWORD(lParam));
-            break;
-        case WM_PAINT:
-            return OnPaint();
-            break;
-        case WM_TIMER:
-            return OnTimer(static_cast<unsigned int>(wParam));
-            break;
-        case WM_CLOSE:
-            return OnClose();
-            break;
-        case WM_DESTROY:
-            return OnDestroy();
-            break;
-        default:
-            return DefWindowProcW(hwnd, msg, wParam, lParam);
-            break;
+        case WM_CREATE:      return OnCreate(hwnd);
+        case WM_SIZE:        return OnSize(LOWORD(lParam), HIWORD(lParam));
+        case WM_PAINT:       return OnPaint();
+        case WM_TIMER:       return OnTimer(static_cast<unsigned int>(wParam));
+        case WM_MOUSEWHEEL:  return OnMouseWheel(wParam, lParam);
+        case WM_CLOSE:       return OnClose();
+        case WM_DESTROY:     return OnDestroy();
+        default:             return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
     }
 
@@ -156,53 +107,82 @@ namespace MiniCAD {
     // 消息处理
     // ============================================================
 
-    LRESULT MainWindow::OnCreate(HWND hwnd)const {
-        // 获取客户区尺寸
+    LRESULT MainWindow::OnCreate(HWND hwnd) {
         RECT rc = {};
         GetClientRect(hwnd, &rc);
         const int w = rc.right - rc.left;
         const int h = rc.bottom - rc.top;
 
-        // 初始化 Editor（渲染器在此创建）
+        // 1. 初始化 Editor（数据层，不持有 Renderer）
         Editor::Instance().Initialize();
 
-        // 启动渲染定时器（约 60 FPS）
+        // 2. 初始化 SceneRenderer（渲染层）
+        if (!m_sceneRenderer.Initialize(hwnd, w, h)) {
+            PostQuitMessage(-1);
+            return -1;
+        }
+
+        // 3. Editor 重绘回调 → 触发 SceneRenderer 渲染
+        Editor::Instance().SetRedrawCallback([this]() {
+            m_sceneRenderer.RenderFrame();
+            });
+
+        // 4. 启动渲染定时器（约 60 FPS）
         SetTimer(hwnd, RENDER_TIMER_ID, RENDER_TIMER_MS, nullptr);
-
         return 0;
     }
 
-    LRESULT MainWindow::OnSize(int width, int height)const {
+    LRESULT MainWindow::OnSize(int width, int height) {
         if (width <= 0 || height <= 0) return 0;
-
-        // 通知 Editor 视口尺寸变化（内部同步相机 + Renderer::Resize）
-		// Editor::Instance().SetRedrawCallback([this]() { InvalidateRect(m_hwnd, nullptr, FALSE); }); // 设置重绘回调
+        // Editor 不感知尺寸变化，只通知 SceneRenderer
+        m_sceneRenderer.OnResize(width, height);
         return 0;
     }
 
-    LRESULT MainWindow::OnPaint() const {
-        // ValidateRect 抑制 WM_PAINT 重复触发；实际渲染由定时器驱动
+    LRESULT MainWindow::OnPaint() {
         PAINTSTRUCT ps = {};
         BeginPaint(m_hwnd, &ps);
-        EndPaint(m_hwnd, &ps); 
-        // Editor::Instance().RenderFrame();
+        EndPaint(m_hwnd, &ps);
+        // 实际渲染由定时器驱动，此处只做 ValidateRect
+        m_sceneRenderer.RenderFrame();
         return 0;
     }
 
-    LRESULT MainWindow::OnTimer(unsigned int timerId) const {
+    LRESULT MainWindow::OnTimer(unsigned int timerId) {
         if (timerId == RENDER_TIMER_ID) {
-           //  Editor::Instance().RenderFrame();
+            m_sceneRenderer.RenderFrame();
         }
         return 0;
     }
 
-    LRESULT MainWindow::OnClose() const {
+    LRESULT MainWindow::OnMouseWheel(WPARAM wParam, LPARAM lParam) {
+        (void)lParam;
+        // 滚轮缩放：直接操作相机，不经过 Editor 命令栈
+        // （视图变换不需要 Undo/Redo）
+        const float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / 120.0f;
+        const Real  factor = delta > 0 ? Real(1.25) : Real(0.8);
+        const Real  newZoom = m_sceneRenderer.GetCamera().GetZoom() * factor;
+        m_sceneRenderer.GetCamera().SetZoom(newZoom);
+
+        // 同步正交范围
+        m_sceneRenderer.GetCamera().SetOrthoFromViewport(
+            static_cast<Real>(m_sceneRenderer.GetViewport().GetWidth()),
+            static_cast<Real>(m_sceneRenderer.GetViewport().GetHeight()),
+            newZoom,
+            Real(-100), Real(100)
+        );
+
+        Editor::Instance().RequestRedraw();
+        return 0;
+    }
+
+    LRESULT MainWindow::OnClose() {
         KillTimer(m_hwnd, RENDER_TIMER_ID);
         DestroyWindow(m_hwnd);
         return 0;
     }
 
-    LRESULT MainWindow::OnDestroy() const {
+    LRESULT MainWindow::OnDestroy() {
         PostQuitMessage(0);
         return 0;
     }
