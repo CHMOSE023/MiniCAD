@@ -3,10 +3,9 @@
 #include <wrl/client.h>
 #include <DirectXMath.h>
 #include <string>
-#include <wrl/client.h>
+#include <wrl/client.h>  
 
-// 链接lib文件
-
+// 链接lib文件 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib")
@@ -14,8 +13,7 @@
 #pragma comment(lib, "winmm.lib")
 using namespace DirectX;
 class   DX11Context
-{
-
+{ 
 public:
 	int                     m_winWidth;
 	int                     m_winHeight;
@@ -75,8 +73,7 @@ public:
 		swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
 
-		hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, NULL, NULL, NULL,
-			D3D11_SDK_VERSION, &swapChainDesc, m_SwapChain.GetAddressOf(), m_d3d11Device.GetAddressOf(), NULL, m_d3d11DevCon.GetAddressOf());
+		hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, NULL, NULL, NULL, D3D11_SDK_VERSION, &swapChainDesc, m_SwapChain.GetAddressOf(), m_d3d11Device.GetAddressOf(), NULL, m_d3d11DevCon.GetAddressOf());
 
 
 		if (FAILED(hr))
@@ -115,19 +112,21 @@ public:
 
 	}
 
-	void UpdateCameraBuffer(const XMMATRIX& viewMatrix)
+
+	void UpdateCameraBuffer(const XMMATRIX& viewMatrix, const XMMATRIX& projMatrix)
 	{
-		struct CameraData { XMFLOAT4X4 view; };
+		struct CameraData { XMFLOAT4X4 view; XMFLOAT4X4 projection; };
+
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		if (SUCCEEDED(m_d3d11DevCon->Map(m_constantBuffer.Get(), 0,
-			D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+		if (SUCCEEDED(m_d3d11DevCon->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
 		{
-			CameraData* cb = (CameraData*)mapped.pData; 
-			// 现在：直接存，配合行向量乘法
-			XMStoreFloat4x4(&cb->view, viewMatrix);
+			CameraData* cb = (CameraData*)mapped.pData;
+			XMStoreFloat4x4(&cb->view, XMMatrixTranspose(viewMatrix));         // HLSL 默认列主序
+			XMStoreFloat4x4(&cb->projection, XMMatrixTranspose(projMatrix));   // 转置
 			m_d3d11DevCon->Unmap(m_constantBuffer.Get(), 0);
 		}
 		m_d3d11DevCon->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+
 	}
 
 
