@@ -29,9 +29,9 @@ namespace MiniCAD {
         bool Create(HINSTANCE hInstance, const wchar_t* title, int width, int height);
         void Show(int nCmdShow);
 
-        HWND     GetHWND()   const { return m_hwnd; }
-        bool     IsCreated() const { return m_hwnd != nullptr; }
-        Camera& GetCamera() { return m_sceneRenderer.GetCamera(); }
+        HWND      GetHWND()   const { return m_hwnd; }
+        bool      IsCreated() const { return m_hwnd != nullptr; }
+        Camera&   GetCamera() { return m_sceneRenderer.GetCamera(); }
         Viewport& GetViewport() { return m_sceneRenderer.GetViewport(); }
 
         void OnMouseMoveUI(int sx, int sy);
@@ -57,6 +57,9 @@ namespace MiniCAD {
         void OnFileOpen();
         void OnFileSave();
         void OnFileSaveAs();
+
+        void InstanceImgui(HWND hwnd);
+        void RenderImgui();
 
         HWND      m_hwnd = nullptr;
         HINSTANCE m_hInstance = nullptr;

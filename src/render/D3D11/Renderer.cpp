@@ -112,15 +112,20 @@ namespace MiniCAD {
         m_impl->swapChain->Present(1, 0);
     }
 
-    void D3D11Renderer::Submit(const RenderItem& item) {
+    void D3D11Renderer::Submit(const RenderItem& item) 
+    {
         assert(m_initialized);
-        if (!item.state.layerVisible || item.vertices.empty()) return;
+        if (!item.state.layerVisible || item.vertices.empty()) 
+            return;
+
         DrawItem(item);
     }
 
-    void D3D11Renderer::DrawItem(const RenderItem& item) {
+    void D3D11Renderer::DrawItem(const RenderItem& item)
+    {
         bool stateChanged = m_impl->stateCache.Apply(item.state);
         (void)stateChanged;
+
         DrawPrimitives::Draw(m_impl->device, m_impl->context, item.vertices, item.topology, item.state);
     }
 

@@ -55,10 +55,15 @@ add_executable(UnitTests
 target_link_libraries(UnitTests PRIVATE GTest::gtest GTest::gtest_main)
 target_link_libraries(MiniCAD PRIVATE imgui::imgui)
 
-add_custom_command(
-    TARGET MiniCAD POST_BUILD
+ 
+add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets"
-        "$<TARGET_FILE_DIR:MiniCAD>/assets"
-    COMMENT "Copying assets to output directory"
+        "${CMAKE_BINARY_DIR}/assets"
+
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/src/render/D3D11/shaders"
+        "${CMAKE_BINARY_DIR}/shaders"
 )
+
+add_dependencies(MiniCAD copy_assets)

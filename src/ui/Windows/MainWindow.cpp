@@ -19,40 +19,54 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace MiniCAD {
 
     MainWindow::MainWindow() = default;
-    MainWindow::~MainWindow() {
-        if (m_imguiReady) {
+    MainWindow::~MainWindow() 
+    {
+        if (m_imguiReady) 
+        {
             ImGui_ImplDX11_Shutdown();
             ImGui_ImplWin32_Shutdown();
             ImGui::DestroyContext();
             m_imguiReady = false;
         }
-        if (m_hwnd) {
+
+        if (m_hwnd)
+        {
             KillTimer(m_hwnd, RENDER_TIMER_ID);
             DestroyWindow(m_hwnd);
             m_hwnd = nullptr;
         }
+
         m_sceneRenderer.Shutdown();
+
         Editor::Instance().Shutdown();
     }
 
-    bool MainWindow::Create(HINSTANCE hInstance, const wchar_t* title,
-        int width, int height) {
+    bool MainWindow::Create(HINSTANCE hInstance, const wchar_t* title, int width, int height)
+    {
         m_hInstance = hInstance;
         if (!RegisterWindowClass(hInstance)) return false;
         RECT rc = { 0, 0, width, height };
         AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
+
         m_hwnd = CreateWindowExW(0, WINDOW_CLASS_NAME, title,
             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
             rc.right - rc.left, rc.bottom - rc.top,
             nullptr, nullptr, hInstance, this);
+
         return m_hwnd != nullptr;
     }
 
-    void MainWindow::Show(int nCmdShow) {
-        if (m_hwnd) { ShowWindow(m_hwnd, nCmdShow); UpdateWindow(m_hwnd); }
+    void MainWindow::Show(int nCmdShow) 
+    {
+        if (m_hwnd) 
+        { 
+            ShowWindow(m_hwnd, nCmdShow);
+            UpdateWindow(m_hwnd); 
+        }
     }
 
-    bool MainWindow::RegisterWindowClass(HINSTANCE hInstance) {
+    bool MainWindow::RegisterWindowClass(HINSTANCE hInstance) 
+    {
         WNDCLASSEXW wc = {};
         wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -66,36 +80,47 @@ namespace MiniCAD {
         return RegisterClassExW(&wc) != 0;
     }
 
-    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    LRESULT CALLBACK MainWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
+    {
         MainWindow* pThis = nullptr;
-        if (msg == WM_NCCREATE) {
+        if (msg == WM_NCCREATE) 
+        {
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
             pThis = reinterpret_cast<MainWindow*>(cs->lpCreateParams);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
         }
-        else {
+        else
+        {
             pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         }
+
         if (pThis) return pThis->WndProc(hwnd, msg, wParam, lParam);
+
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
-    LRESULT MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    LRESULT MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    {
         if (m_imguiReady)
+        {
             if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
                 return true;
+        }
 
-        if (msg == WM_MOUSEMOVE) {
+        if (msg == WM_MOUSEMOVE)
+        {
             const bool imguiWants = m_imguiReady && ImGui::GetIO().WantCaptureMouse;
             if (!imguiWants)
                 OnMouseMoveUI(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         }
 
-        const bool blockInput = m_imguiReady &&
-            (ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard);
+        const bool blockInput = m_imguiReady && (ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard);
+
         if (!blockInput)
+        {
             if (m_eventHandler.ProcessMessage(hwnd, msg, wParam, lParam))
                 return 0;
+        }
 
         switch (msg) {
         case WM_CREATE:      return OnCreate(hwnd);
@@ -110,7 +135,8 @@ namespace MiniCAD {
         }
     }
 
-    LRESULT MainWindow::OnCreate(HWND hwnd) {
+    LRESULT MainWindow::OnCreate(HWND hwnd)
+    {
         RECT rc = {};
         GetClientRect(hwnd, &rc);
         const int w = rc.right - rc.left, h = rc.bottom - rc.top;
@@ -119,6 +145,18 @@ namespace MiniCAD {
         if (!m_sceneRenderer.Initialize(hwnd, w, h)) {
             PostQuitMessage(-1); return -1;
         }
+
+        InstanceImgui(hwnd);
+
+        Editor::Instance().SetRedrawCallback([this]() {   });
+        SetTimer(hwnd, RENDER_TIMER_ID, RENDER_TIMER_MS, nullptr);
+        return 0;
+    }
+
+
+
+    void MainWindow::InstanceImgui(HWND hwnd)
+    {
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -147,8 +185,8 @@ namespace MiniCAD {
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.f;
         style.WindowBorderSize = 0.f;
-        style.FrameRounding = 3.f; 
-          
+        style.FrameRounding = 3.f;
+
         // 深灰色，和 SceneRenderer 的清屏色 (0.15, 0.15, 0.15) 协调
         ImVec4 panelBg = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
 
@@ -160,13 +198,12 @@ namespace MiniCAD {
         ImGui_ImplDX11_Init(m_sceneRenderer.GetDevice(), m_sceneRenderer.GetDeviceContext());
         m_imguiReady = true;
 
-        // ★ 注册 MenuBar 文件回调
+        // 注册 MenuBar 文件回调
         m_menuBar.SetOnFileNew([this]() { OnFileNew();    });
         m_menuBar.SetOnFileOpen([this]() { OnFileOpen();   });
         m_menuBar.SetOnFileSave([this]() { OnFileSave();   });
         m_menuBar.SetOnFileSaveAs([this]() { OnFileSaveAs(); });
 
-        Editor::Instance().SetRedrawCallback([this]() { m_needsRedraw = true; });
         m_toolBar.SetToolChangedCallback(
             [this](const std::string& name, const std::string& hint) {
                 m_statusBar.UpdateToolName(name);
@@ -179,46 +216,60 @@ namespace MiniCAD {
         m_statusBar.UpdateToolName(u8"选择");
         m_statusBar.UpdateLayerName("0");
         m_statusBar.UpdateHint(u8"点击画布开始绘制");
+	}
 
-        SetTimer(hwnd, RENDER_TIMER_ID, RENDER_TIMER_MS, nullptr);
+
+    void MainWindow::RenderImgui()
+    {
+        if (!m_imguiReady)
+            return;
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+
+        ImGui::NewFrame();
+        m_menuBar.Draw();
+        m_toolBar.Draw();
+        m_statusBar.Draw();
+        m_propertyPanel.Draw();
+        ImGui::Render(); 
+
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    LRESULT MainWindow::OnSize(int w, int h)
+    {
+        if (w > 0 && h > 0)
+        {
+            m_sceneRenderer.OnResize(w, h);
+        }
         return 0;
     }
 
-    LRESULT MainWindow::OnSize(int w, int h) {
-        if (w > 0 && h > 0) m_sceneRenderer.OnResize(w, h);
-        return 0;
-    }
-
-    LRESULT MainWindow::OnPaint() {
+    LRESULT MainWindow::OnPaint() 
+    {
         PAINTSTRUCT ps = {};
         HDC hdc = BeginPaint(m_hwnd, &ps); 
         EndPaint(m_hwnd, &ps);
         return 0;
     }
 
-    LRESULT MainWindow::OnTimer(unsigned int id) {
-        if (id != RENDER_TIMER_ID || !m_imguiReady) return 0;
+	// !!! 定时器回调，触发场景和 ImGui 的绘制
+    LRESULT MainWindow::OnTimer(unsigned int id) 
+    {
+        if (id != RENDER_TIMER_ID || !m_imguiReady)
+            return 0;
 
         m_sceneRenderer.BeginFrame();
 
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+		RenderImgui();
 
-        // ★ Draw 顺序：MenuBar 最先，它会占据顶部一行
-        m_menuBar.Draw();
-        m_toolBar.Draw();
-        m_statusBar.Draw();
-        m_propertyPanel.Draw();
-
-        ImGui::Render();
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        m_sceneRenderer.EndFrame();
-        m_needsRedraw = false;
+        m_sceneRenderer.EndFrame(); 
         return 0;
     }
+     
 
-    LRESULT MainWindow::OnMouseWheel(WPARAM wParam, LPARAM lParam) {
+    LRESULT MainWindow::OnMouseWheel(WPARAM wParam, LPARAM lParam) 
+    {
         (void)lParam;
         if (m_imguiReady && ImGui::GetIO().WantCaptureMouse) return 0;
         const float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / 120.f;
@@ -229,78 +280,73 @@ namespace MiniCAD {
             static_cast<Real>(m_sceneRenderer.GetViewport().GetWidth()),
             static_cast<Real>(m_sceneRenderer.GetViewport().GetHeight()),
             newZoom, Real(-100), Real(100));
-        m_needsRedraw = true;
+         
         return 0;
     }
 
-    LRESULT MainWindow::OnClose() { KillTimer(m_hwnd, RENDER_TIMER_ID); DestroyWindow(m_hwnd); return 0; }
-    LRESULT MainWindow::OnDestroy() { PostQuitMessage(0); return 0; }
+    LRESULT MainWindow::OnClose() 
+    { 
+        KillTimer(m_hwnd, RENDER_TIMER_ID); 
+        DestroyWindow(m_hwnd); return 0; 
+    }
 
-    void MainWindow::OnMouseMoveUI(int sx, int sy) {
+    LRESULT MainWindow::OnDestroy() 
+    {
+        PostQuitMessage(0);
+        return 0;
+    }
+
+    void MainWindow::OnMouseMoveUI(int sx, int sy)
+    {
         m_statusBar.UpdateCoordinates(ScreenToWorld(sx, sy));
     }
-    void MainWindow::OnSelectionChanged() { m_propertyPanel.Refresh(); }
 
-    Point3 MainWindow::ScreenToWorld(int sx, int sy) {
+    void MainWindow::OnSelectionChanged()
+    {
+        m_propertyPanel.Refresh();
+    }
+
+	// 屏幕坐标 (sx, sy) 转世界坐标，考虑了 Camera 的位置和缩放，以及 Viewport 的大小
+    Point3 MainWindow::ScreenToWorld(int sx, int sy) 
+    {
         Camera& cam = m_sceneRenderer.GetCamera();
         Viewport& vp = m_sceneRenderer.GetViewport();
         const float vw = static_cast<float>(vp.GetWidth());
         const float vh = static_cast<float>(vp.GetHeight());
-        if (vw <= 0.f || vh <= 0.f) return {};
-        // ★ 使用 UILayout::kCanvasY 作为偏移
-        const float viewY = static_cast<float>(sy) - UILayout::kCanvasY;
-        const Real orthoW = cam.GetOrthoWidth();
-        const Real orthoH = cam.GetOrthoHeight();
+        if (vw <= 0.f || vh <= 0.f) return {}; 
+
+        const float viewY   = static_cast<float>(sy) - UILayout::kCanvasY;
+        const Real orthoW   = cam.GetOrthoWidth();
+        const Real orthoH   = cam.GetOrthoHeight();
         const Point3 camPos = cam.GetPosition();
-        return {
+        return 
+        {
             static_cast<float>(camPos.x - orthoW * Real(0.5) + (static_cast<Real>(sx) / vw) * orthoW),
             static_cast<float>(camPos.y + orthoH * Real(0.5) - (static_cast<Real>(viewY) / vh) * orthoH),
-            0.f
+            0.0f
         };
     }
-
-    // ── 文件对话框（Win32 CommonDialog）─────────────────────────
-    void MainWindow::OnFileNew() {
-        // Phase 2: 提示保存 → Editor::Instance().NewDocument()
+     
+    void MainWindow::OnFileNew() 
+    { 
         Editor::Instance().RequestRedraw();
         printf("OnFileNew\r\n");
     }
 
-    void MainWindow::OnFileOpen() {
-
+    void MainWindow::OnFileOpen() 
+    { 
         printf("OnFileOpen\r\n");
-        //wchar_t path[MAX_PATH] = {};
-        //OPENFILENAMEW ofn = {};
-        //ofn.lStructSize = sizeof(ofn);
-        //ofn.hwndOwner = m_hwnd;
-        //ofn.lpstrFilter = L"MiniCAD 文件 (*.mcd)\0*.mcd\0所有文件 (*.*)\0*.*\0";
-        //ofn.lpstrFile = path;
-        //ofn.nMaxFile = MAX_PATH;
-        //ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-        //if (GetOpenFileNameW(&ofn)) {
-        //    // Phase 2: Editor::Instance().OpenDocument(path);
-        //}
+        
     }
 
-    void MainWindow::OnFileSave() {
-        // Phase 2: Editor::Instance().SaveDocument();
+    void MainWindow::OnFileSave() 
+    { 
         printf("OnFileSave\r\n");
     }
 
-    void MainWindow::OnFileSaveAs() {
-        printf("OnFileSaveAs\r\n");
-        //wchar_t path[MAX_PATH] = {};
-        //OPENFILENAMEW ofn = {};
-        //ofn.lStructSize = sizeof(ofn);
-        //ofn.hwndOwner = m_hwnd;
-        //ofn.lpstrFilter = L"MiniCAD 文件 (*.mcd)\0*.mcd\0";
-        //ofn.lpstrFile = path;
-        //ofn.nMaxFile = MAX_PATH;
-        //ofn.Flags = OFN_OVERWRITEPROMPT;
-        //ofn.lpstrDefExt = L"mcd";
-        //if (GetSaveFileNameW(&ofn)) {
-        //    // Phase 2: Editor::Instance().SaveDocumentAs(path);
-        //}
+    void MainWindow::OnFileSaveAs()
+    {
+        printf("OnFileSaveAs\r\n");         
     }
 
 } // namespace MiniCAD

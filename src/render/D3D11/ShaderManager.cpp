@@ -18,9 +18,9 @@
 namespace MiniCAD {
 
     // HLSL Shader 路径约定（相对于工作目录）
-    static constexpr const char* PATH_LINE_HLSL      = "render/D3D11/shaders/Line.hlsl";
-    static constexpr const char* PATH_FILL_HLSL      = "render/D3D11/shaders/Fill.hlsl";
-    static constexpr const char* PATH_HIGHLIGHT_HLSL = "render/D3D11/shaders/Highlight.hlsl";
+    static constexpr const char* PATH_LINE_HLSL      = "shaders/Line.hlsl";
+    static constexpr const char* PATH_FILL_HLSL      = "shaders/Fill.hlsl";
+    static constexpr const char* PATH_HIGHLIGHT_HLSL = "shaders/Highlight.hlsl";
 
     // 初始动态顶点缓冲大小（字节），按需扩容
     static constexpr uint32_t INITIAL_VB_SIZE = 1024 * 1024;   // 1 MB
@@ -98,28 +98,34 @@ namespace MiniCAD {
     // 顶点上传 & 绘制
     // ============================================================
 
-    void ShaderManager::UploadAndDraw(ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        const void* vertexData,
-        uint32_t            vertexCount,
-        uint32_t            vertexStride,
-        unsigned int        topology) {
+    void ShaderManager::UploadAndDraw(ID3D11Device*        device,
+                                      ID3D11DeviceContext* context,
+                                      const void*          vertexData,
+                                      uint32_t             vertexCount,
+                                      uint32_t             vertexStride,
+                                      unsigned int         topology)
+    {
         const uint32_t required = vertexCount * vertexStride;
+
         EnsureDynamicBuffer(device, required);
 
         // Map → 写入 → Unmap
         D3D11_MAPPED_SUBRESOURCE mapped = {};
+
         HRESULT hr = context->Map(m_dynamicVB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+
         if (FAILED(hr)) return;
 
         memcpy(mapped.pData, vertexData, required);
+
         context->Unmap(m_dynamicVB, 0);
 
         // 绑定顶点缓冲
         UINT offset = 0;
+
         context->IASetVertexBuffers(0, 1, &m_dynamicVB, &vertexStride, &offset);
-        context->IASetPrimitiveTopology(
-            static_cast<D3D11_PRIMITIVE_TOPOLOGY>(topology));
+
+        context->IASetPrimitiveTopology(static_cast<D3D11_PRIMITIVE_TOPOLOGY>(topology));
 
         context->Draw(vertexCount, 0);
     }
@@ -127,16 +133,16 @@ namespace MiniCAD {
     // ============================================================
     // 动态顶点缓冲管理
     // ============================================================
-
-    void ShaderManager::EnsureDynamicBuffer(ID3D11Device* device,
-        uint32_t      requiredBytes) {
+    void ShaderManager::EnsureDynamicBuffer(ID3D11Device* device, uint32_t requiredBytes) 
+    {
         if (m_dynamicVB && m_dynamicVBSize >= requiredBytes) return;
 
         // 扩容策略：至少翻倍
         uint32_t newSize = m_dynamicVBSize ? m_dynamicVBSize * 2 : INITIAL_VB_SIZE;
         while (newSize < requiredBytes) newSize *= 2;
 
-        if (m_dynamicVB) {
+        if (m_dynamicVB) 
+        {
             m_dynamicVB->Release();
             m_dynamicVB = nullptr;
         }
@@ -155,14 +161,14 @@ namespace MiniCAD {
     // ============================================================
     // Shader 编译
     // ============================================================
-
     bool ShaderManager::CompileShader(ID3D11Device* device,
-        const std::string& srcPath,
-        const std::string& entryVS,
-        const std::string& entryPS,
-        ID3D11VertexShader** outVS,
-        ID3D11PixelShader** outPS,
-        ID3D11InputLayout** outLayout) {
+                                      const std::string& srcPath,
+                                      const std::string& entryVS,
+                                      const std::string& entryPS,
+                                      ID3D11VertexShader** outVS,
+                                      ID3D11PixelShader** outPS,
+                                      ID3D11InputLayout** outLayout) 
+    {
         UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #ifdef _DEBUG
         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
@@ -174,8 +180,16 @@ namespace MiniCAD {
         ID3DBlob* vsBlob = nullptr;
         ID3DBlob* errBlob = nullptr;
         HRESULT hr = D3DCompileFromFile(wSrcPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryVS.c_str(), "vs_5_0", flags, 0, &vsBlob, &errBlob);
-        if (FAILED(hr)) {
-            if (errBlob) errBlob->Release();
+
+        if (FAILED(hr)) 
+        {
+            if (errBlob)
+            {
+                errBlob->Release();
+            }
+
+            MessageBox(0, wSrcPath.c_str(), L"CompileShader Failed", 0);
+
             return false;
         }
 
@@ -184,23 +198,28 @@ namespace MiniCAD {
         if (FAILED(hr)) { vsBlob->Release(); return false; }
 
         // 创建输入布局（VS 字节码提供反射信息）
-        hr = device->CreateInputLayout(k_inputDesc, 2,
-            vsBlob->GetBufferPointer(),
-            vsBlob->GetBufferSize(), outLayout);
+        hr = device->CreateInputLayout(k_inputDesc, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), outLayout);
+
         vsBlob->Release();
+
         if (FAILED(hr)) return false;
 
         // 编译 PS
         ID3DBlob* psBlob = nullptr;
-        hr = D3DCompileFromFile(wSrcPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-            entryPS.c_str(), "ps_5_0", flags, 0, &psBlob, &errBlob);
-        if (FAILED(hr)) {
-            if (errBlob) errBlob->Release();
+
+        hr = D3DCompileFromFile(wSrcPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entryPS.c_str(), "ps_5_0", flags, 0, &psBlob, &errBlob);
+        if (FAILED(hr)) 
+        {
+            if (errBlob)
+            {
+                errBlob->Release();
+            }
+            
             return false;
         }
 
-        hr = device->CreatePixelShader(psBlob->GetBufferPointer(),
-            psBlob->GetBufferSize(), nullptr, outPS);
+        hr = device->CreatePixelShader(psBlob->GetBufferPointer(),  psBlob->GetBufferSize(), nullptr, outPS);
+
         psBlob->Release();
 
         return SUCCEEDED(hr);
@@ -210,15 +229,19 @@ namespace MiniCAD {
     // Debug 热重载
     // ============================================================
 #ifdef _DEBUG
-    void ShaderManager::HotReload(ID3D11Device* device, ID3D11DeviceContext* context) {
+    void ShaderManager::HotReload(ID3D11Device* device, ID3D11DeviceContext* context)
+    {
         (void)context;
+
         Shutdown();
+
         // 重新编译所有 Shader（保留已有 VB 容量）
-        CompileShader(device, PATH_LINE_HLSL, "VS", "PS",  &m_lineVS, &m_linePS, &m_lineLayout);
-        CompileShader(device, PATH_FILL_HLSL, "VS", "PS",  &m_fillVS, &m_fillPS, &m_fillLayout);
-        CompileShader(device, PATH_HIGHLIGHT_HLSL, "VS", "PS",  &m_hlVS, &m_hlPS, &m_hlLayout);
+        CompileShader(device, PATH_LINE_HLSL,      "VS", "PS",  &m_lineVS, &m_linePS, &m_lineLayout);
+        CompileShader(device, PATH_FILL_HLSL,      "VS", "PS",  &m_fillVS, &m_fillPS, &m_fillLayout);
+        CompileShader(device, PATH_HIGHLIGHT_HLSL, "VS", "PS",  &m_hlVS,   &m_hlPS,   &m_hlLayout);
         EnsureDynamicBuffer(device, INITIAL_VB_SIZE);
         m_initialized = true;
+
     }
 #endif
 

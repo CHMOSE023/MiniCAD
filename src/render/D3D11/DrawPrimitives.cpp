@@ -47,7 +47,8 @@ namespace MiniCAD {
                               RenderItem::Topology       topology,
                               const RenderState& state) 
     {
-        switch (topology) {
+        switch (topology)
+        {
         case RenderItem::Topology::LineList:
             DrawLineList(device, context, vertices, state);
             break;
@@ -84,10 +85,8 @@ namespace MiniCAD {
         return true;
     }
 
-    void DrawPrimitives::DrawLineList(ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        const std::vector<Point3>& vertices,
-        const RenderState& state) {
+    void DrawPrimitives::DrawLineList(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, const RenderState& state)
+    {
         if (vertices.size() < 2) return;
 
         ShaderManager& sm = ShaderManager::Instance();
@@ -95,16 +94,15 @@ namespace MiniCAD {
 
         // 构建 GPU 顶点数组
         std::vector<GpuVertex> gpuVerts;
+
         gpuVerts.reserve(vertices.size());
 
-        for (const auto& p : vertices) {
+        for (const auto& p : vertices) 
+        {
             gpuVerts.push_back(ToGpuVertex(p, state.color));  // double→float 在此发生
         }
 
-        sm.UploadAndDraw(device, context, gpuVerts.data(),
-            static_cast<UINT>(gpuVerts.size()),
-            sizeof(GpuVertex),
-            D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        sm.UploadAndDraw(device, context, gpuVerts.data(), static_cast<UINT>(gpuVerts.size()), sizeof(GpuVertex), D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
     }
 
     void DrawPrimitives::DrawLineStrip(ID3D11Device* device,

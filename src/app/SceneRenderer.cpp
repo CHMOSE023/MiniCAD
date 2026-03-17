@@ -37,20 +37,32 @@ namespace MiniCAD {
         if (m_renderer) { m_renderer->Shutdown(); delete m_renderer; m_renderer = nullptr; }
     }
 
-    void SceneRenderer::BeginFrame() {
-        if (!IsInitialized()) return;
+    void SceneRenderer::BeginFrame() 
+    {
+        if (!IsInitialized())
+            return;
+
         m_renderQueue.Clear();
         m_selectionHighlight.Clear();
+
         UpdateFrameConstants();
         FlushSceneToRenderQueue();
-        FlushPreviewToRenderQueue();        // ★ 预览线叠加在场景几何之上
-        m_renderer->BeginFrame(Vec4{ Real(0.15), Real(0.15), Real(0.15), Real(1) });
+        FlushPreviewToRenderQueue();      
+
+        m_renderer->BeginFrame(Vec4{ Real(0.0), Real(0.0), Real(0.0), Real(1) });
+
+		// 提交本帧所有 RenderItem 给 Renderer，
+        // Renderer 内部会根据 RenderState 进行排序和分批绘制
         for (const RenderItem& item : m_renderQueue.Items())
+        { 
             m_renderer->Submit(item);
+        }
     }
 
     void SceneRenderer::EndFrame() {
-        if (!IsInitialized()) return;
+        if (!IsInitialized()) 
+            return;
+
         m_renderer->EndFrame();
     }
 
