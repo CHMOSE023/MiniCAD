@@ -102,53 +102,28 @@ namespace MiniCAD
 
 	void MainWindow::RenderFrame()
 	{
-		auto context = m_device->GetContext();
-
-		auto rtv = m_swapChain->GetRTV();
-		auto dsv = m_swapChain->GetDSV();
-
-		context->OMSetRenderTargets(1, &rtv, dsv);
-
-		float color[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
-
-		context->ClearRenderTargetView(rtv, color);
-
-		context->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
-
-
-		// MVP（先用一个简单的）
+		auto target = m_swapChain->GetRenderTarget();
+		
+		// 相机
 		XMMATRIX world = XMMatrixIdentity();
 
-		XMMATRIX view = XMMatrixLookAtLH(
-			XMVectorSet(3, 3, -3, 1),
-			XMVectorZero(),
-			XMVectorSet(0, 1, 0, 0)
-		);
+		XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(3, 3, -3, 1), XMVectorZero(), XMVectorSet(0, 1, 0, 0));
 
 		auto viewport = m_swapChain->GetViewport();
 
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(
-			XM_PIDIV4,
-			viewport.Width / viewport.Height,
-			0.1f,
-			100.0f
-		);
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, viewport.Width / viewport.Height, 0.1f, 100.0f);
 
 		XMMATRIX mvp = world * view * proj;
-		
-		auto target = m_swapChain->GetRenderTarget();
-
-		// ===== 渲染开始 =====
+		  
+		// ===== 渲染 =====
 		m_renderer->Begin(target, mvp);
 
-		// 画内容（CAD核心）
 		m_renderer->DrawLine({ 0,0,0 }, { 1,0,0 }, { 1,0,0,1 }); // X
 		m_renderer->DrawLine({ 0,0,0 }, { 0,1,0 }, { 0,1,0,1 }); // Y
 		m_renderer->DrawLine({ 0,0,0 }, { 0,0,1 }, { 0,0,1,1 }); // Z
 
 		m_renderer->End();
 
-		// ===== 渲染结束 =====
 		m_swapChain->Present();
 
 	}

@@ -26,12 +26,7 @@ namespace MiniCAD
 
             if (dsv)
             {
-                ctx->ClearDepthStencilView(
-                    dsv.Get(),
-                    D3D11_CLEAR_DEPTH,
-                    1.0f,
-                    0
-                );
+                ctx->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
             }
         }
     };
