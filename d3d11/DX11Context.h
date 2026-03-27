@@ -145,7 +145,7 @@ public:
 	*/
 	void    SwapBuffer()
 	{
-		m_SwapChain->Present(0, 0);
+		m_SwapChain->Present(1, 0);
 	}
 
 };

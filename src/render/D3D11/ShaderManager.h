@@ -27,7 +27,7 @@ namespace MiniCAD {
         static ShaderManager& Instance();
 
         // 不可拷贝
-        ShaderManager(const ShaderManager&) = delete;
+        ShaderManager(const ShaderManager&)            = delete;
         ShaderManager& operator=(const ShaderManager&) = delete;
 
         void Initialize(ID3D11Device* device, ID3D11DeviceContext* context);
@@ -40,12 +40,12 @@ namespace MiniCAD {
 
         // --- 顶点缓冲上传并绘制 ---
         // topology 为 D3D11_PRIMITIVE_TOPOLOGY 值（unsigned int）
-        void UploadAndDraw(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const void* vertexData,
-            uint32_t            vertexCount,
-            uint32_t            vertexStride,
-            unsigned int        topology);
+        void UploadAndDraw( ID3D11Device*         device,
+                            ID3D11DeviceContext*  context,
+                            const void*           vertexData,
+                            uint32_t              vertexCount,
+                            uint32_t              vertexStride,
+                            unsigned int          topology);
 
         // --- Debug 热重载 ---
 #ifdef _DEBUG
@@ -56,37 +56,36 @@ namespace MiniCAD {
         ShaderManager() = default;
         ~ShaderManager() = default;
 
-        bool CompileShader(ID3D11Device* device,
-            const std::string& srcPath,
-            const std::string& entryVS,
-            const std::string& entryPS,
-            ID3D11VertexShader** outVS,
-            ID3D11PixelShader** outPS,
-            ID3D11InputLayout** outLayout);
+        bool CompileShader(ID3D11Device*        device,
+                           const std::string&   srcPath,
+                           const std::string&   entryVS,
+                           const std::string&   entryPS,
+                           ID3D11VertexShader** outVS,
+                           ID3D11PixelShader**  outPS,
+                           ID3D11InputLayout**  outLayout);
 
-        void EnsureDynamicBuffer(ID3D11Device* device,
-            uint32_t      requiredBytes);
+        void EnsureDynamicBuffer(ID3D11Device* device, uint32_t requiredBytes);
 
         // Line shader
-        ID3D11VertexShader* m_lineVS = nullptr;
-        ID3D11PixelShader*  m_linePS = nullptr;
+        ID3D11VertexShader* m_lineVS     = nullptr;
+        ID3D11PixelShader*  m_linePS     = nullptr;
         ID3D11InputLayout*  m_lineLayout = nullptr;
 
         // Fill shader
-        ID3D11VertexShader* m_fillVS = nullptr;
-        ID3D11PixelShader*  m_fillPS = nullptr;
+        ID3D11VertexShader* m_fillVS     = nullptr;
+        ID3D11PixelShader*  m_fillPS     = nullptr;
         ID3D11InputLayout*  m_fillLayout = nullptr;
 
         // Highlight shader
-        ID3D11VertexShader* m_hlVS = nullptr;
-        ID3D11PixelShader*  m_hlPS = nullptr;
+        ID3D11VertexShader* m_hlVS     = nullptr;
+        ID3D11PixelShader*  m_hlPS     = nullptr;
         ID3D11InputLayout*  m_hlLayout = nullptr;
 
         // 共享动态顶点缓冲（环形复用）
-        ID3D11Buffer*       m_dynamicVB = nullptr;
+        ID3D11Buffer*       m_dynamicVB     = nullptr;
         uint32_t            m_dynamicVBSize = 0;
 
-        bool                m_initialized = false;
+        bool                m_initialized   = false;
     };
 
-} // namespace MiniCAD
+} // namespace MiniCAD 

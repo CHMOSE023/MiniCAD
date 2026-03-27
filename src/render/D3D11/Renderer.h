@@ -36,7 +36,8 @@ namespace MiniCAD {
     // ============================================================
     // D3D11Renderer
     // ============================================================
-    class D3D11Renderer : public IRenderer {
+    class D3D11Renderer : public IRenderer
+    {
     public:
         D3D11Renderer();
         ~D3D11Renderer() override;

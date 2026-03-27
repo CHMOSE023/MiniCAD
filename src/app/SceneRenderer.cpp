@@ -45,9 +45,9 @@ namespace MiniCAD {
         m_renderQueue.Clear();
         m_selectionHighlight.Clear();
 
-        UpdateFrameConstants();
-        FlushSceneToRenderQueue();
-        FlushPreviewToRenderQueue();      
+		UpdateFrameConstants();      // 更新常量缓冲区（相机矩阵等），供后续 RenderItem 使用
+		FlushSceneToRenderQueue();   // 将 Scene 中的实体几何数据转换为 RenderItem 入队
+		FlushPreviewToRenderQueue(); // ★ 根据当前工具状态生成预览 RenderItem 入队（如橡皮筋线）     
 
         m_renderer->BeginFrame(Vec4{ Real(0.0), Real(0.0), Real(0.0), Real(1) });
 

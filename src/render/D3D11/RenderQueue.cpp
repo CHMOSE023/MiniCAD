@@ -10,9 +10,8 @@
 
 namespace MiniCAD {
 
-    RenderQueue::RenderQueue() {
-        // 预分配容量，CAD 场景通常有数千个实体
-        m_items.reserve(4096);
+    RenderQueue::RenderQueue() { 
+        m_items.reserve(4096); // 预分配容量，CAD 场景通常有数千个实体
     }
 
     void RenderQueue::Push(RenderItem item) {

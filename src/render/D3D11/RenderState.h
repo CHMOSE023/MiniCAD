@@ -29,7 +29,8 @@ namespace MiniCAD {
     // ============================================================
     // RenderState — 单次绘制调用的渲染状态
     // ============================================================
-    struct RenderState {
+    struct RenderState
+    {
         Vec4      color = { 1.0f, 1.0f, 1.0f, 1.0f };  // RGBA
         float     lineWidth = 1.0f;
         LineStyle lineStyle = LineStyle::SOLID;
@@ -44,7 +45,8 @@ namespace MiniCAD {
     // ============================================================
     // StateCache — 避免冗余状态切换
     // ============================================================
-    class StateCache {
+    class StateCache
+    {
     public:
         StateCache();
 

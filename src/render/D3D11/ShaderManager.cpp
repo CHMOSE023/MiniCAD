@@ -28,7 +28,8 @@ namespace MiniCAD {
     // ============================================================
     // 顶点输入布局描述（Position + Color，与 GpuVertex 对齐）
     // ============================================================
-    static const D3D11_INPUT_ELEMENT_DESC k_inputDesc[] = {
+    static const D3D11_INPUT_ELEMENT_DESC k_inputDesc[] = 
+    {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
         { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT,  0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
     };
@@ -37,12 +38,14 @@ namespace MiniCAD {
     // ShaderManager
     // ============================================================
 
-    ShaderManager& ShaderManager::Instance() {
+    ShaderManager& ShaderManager::Instance() 
+    {
         static ShaderManager s_instance;
         return s_instance;
     }
 
-    void ShaderManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+    void ShaderManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) 
+    {
         assert(!m_initialized);
         assert(device && context);
         (void)context;
@@ -58,7 +61,8 @@ namespace MiniCAD {
         m_initialized = true;
     }
 
-    void ShaderManager::Shutdown() {
+    void ShaderManager::Shutdown() 
+    {
         if (!m_initialized) return;
 
         auto SafeRelease = [](auto*& p) { if (p) { p->Release(); p = nullptr; } };
@@ -76,19 +80,22 @@ namespace MiniCAD {
     // Shader 绑定
     // ============================================================
 
-    void ShaderManager::BindLineShader(ID3D11DeviceContext* context) {
+    void ShaderManager::BindLineShader(ID3D11DeviceContext* context) 
+    {
         context->VSSetShader(m_lineVS, nullptr, 0);
         context->PSSetShader(m_linePS, nullptr, 0);
         context->IASetInputLayout(m_lineLayout);
     }
 
-    void ShaderManager::BindFillShader(ID3D11DeviceContext* context) {
+    void ShaderManager::BindFillShader(ID3D11DeviceContext* context) 
+    {
         context->VSSetShader(m_fillVS, nullptr, 0);
         context->PSSetShader(m_fillPS, nullptr, 0);
         context->IASetInputLayout(m_fillLayout);
     }
 
-    void ShaderManager::BindHighlightShader(ID3D11DeviceContext* context) {
+    void ShaderManager::BindHighlightShader(ID3D11DeviceContext* context)
+    {
         context->VSSetShader(m_hlVS, nullptr, 0);
         context->PSSetShader(m_hlPS, nullptr, 0);
         context->IASetInputLayout(m_hlLayout);
@@ -97,7 +104,6 @@ namespace MiniCAD {
     // ============================================================
     // 顶点上传 & 绘制
     // ============================================================
-
     void ShaderManager::UploadAndDraw(ID3D11Device*        device,
                                       ID3D11DeviceContext* context,
                                       const void*          vertexData,
@@ -161,13 +167,13 @@ namespace MiniCAD {
     // ============================================================
     // Shader 编译
     // ============================================================
-    bool ShaderManager::CompileShader(ID3D11Device* device,
-                                      const std::string& srcPath,
-                                      const std::string& entryVS,
-                                      const std::string& entryPS,
-                                      ID3D11VertexShader** outVS,
-                                      ID3D11PixelShader** outPS,
-                                      ID3D11InputLayout** outLayout) 
+    bool ShaderManager::CompileShader(ID3D11Device*         device,
+                                      const std::string&    srcPath,
+                                      const std::string&    entryVS,
+                                      const std::string&    entryPS,
+                                      ID3D11VertexShader**  outVS,
+                                      ID3D11PixelShader**   outPS,
+                                      ID3D11InputLayout**   outLayout) 
     {
         UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #ifdef _DEBUG
@@ -193,8 +199,8 @@ namespace MiniCAD {
             return false;
         }
 
-        hr = device->CreateVertexShader(vsBlob->GetBufferPointer(),
-            vsBlob->GetBufferSize(), nullptr, outVS);
+        hr = device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, outVS);
+
         if (FAILED(hr)) { vsBlob->Release(); return false; }
 
         // 创建输入布局（VS 字节码提供反射信息）

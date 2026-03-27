@@ -21,43 +21,29 @@ namespace MiniCAD {
     // ============================================================
     // DrawPrimitives — 无状态工具类，所有方法均为静态
     // ============================================================
-    class DrawPrimitives {
+    class DrawPrimitives
+    {
     public:
         DrawPrimitives() = delete;
         ~DrawPrimitives() = delete;
 
         // 统一入口：由 D3D11Renderer::DrawItem() 调用
-        static void Draw(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const std::vector<Point3>& vertices,
-            RenderItem::Topology       topology,
-            const RenderState& state);
+        static void Draw(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, RenderItem::Topology topology, const RenderState& state);
 
         // --- 具体图元 ---
 
         // 绘制线段列表（LineList：每两点一条线）
-        static void DrawLineList(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const std::vector<Point3>& vertices,
-            const RenderState& state);
+        static void DrawLineList(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, const RenderState& state);
 
         // 绘制折线（LineStrip：相邻点连线）
-        static void DrawLineStrip(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const std::vector<Point3>& vertices,
-            const RenderState& state);
+        static void DrawLineStrip(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, const RenderState& state);
 
         // 绘制填充三角形列表
-        static void DrawTriangleList(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const std::vector<Point3>& vertices,
-            const RenderState& state);
+        static void DrawTriangleList(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, const RenderState& state);
 
     private:
         // 内部：创建临时顶点缓冲并绑定
-        static bool UploadVertices(ID3D11Device* device,
-            ID3D11DeviceContext* context,
-            const std::vector<Point3>& vertices);
+        static bool UploadVertices(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices);
     };
 
 } // namespace MiniCAD

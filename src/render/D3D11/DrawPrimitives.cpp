@@ -18,12 +18,14 @@ namespace MiniCAD {
     // ============================================================
     namespace {
 
-        struct GpuVertex {
+        struct GpuVertex 
+        {
             float  x, y, z;
             float  r, g, b, a;
         };
 
-        inline GpuVertex ToGpuVertex(const Point3& p, const Vec4& color) {
+        inline GpuVertex ToGpuVertex(const Point3& p, const Vec4& color) 
+        {
             return {
                 static_cast<float>(p.x),
                 static_cast<float>(p.y),
@@ -40,12 +42,7 @@ namespace MiniCAD {
     // ============================================================
     // DrawPrimitives
     // ============================================================
-
-    void DrawPrimitives::Draw(ID3D11Device* device,
-                              ID3D11DeviceContext* context,
-                              const std::vector<Point3>& vertices,
-                              RenderItem::Topology       topology,
-                              const RenderState& state) 
+    void DrawPrimitives::Draw(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<Point3>& vertices, RenderItem::Topology topology, const RenderState& state)
     {
         switch (topology)
         {
@@ -68,11 +65,10 @@ namespace MiniCAD {
     // 内部：上传顶点缓冲
     // ============================================================
 
-    bool DrawPrimitives::UploadVertices(ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        const std::vector<Point3>& vertices) {
+    bool DrawPrimitives::UploadVertices(ID3D11Device* device,   ID3D11DeviceContext* context,  const std::vector<Point3>& vertices) 
+    {
         // 此处创建动态顶点缓冲并立即绑定
-        // 真实项目应使用环形缓冲池，此处 Phase 1 实现简单版本
+        // 真实项目应使用环形缓冲池，此处 Phase 1 实现简单版本  
 
         if (vertices.empty()) return false;
 
@@ -96,19 +92,21 @@ namespace MiniCAD {
         std::vector<GpuVertex> gpuVerts;
 
         gpuVerts.reserve(vertices.size());
+         
+        gpuVerts.push_back(ToGpuVertex(Point3(-1000, -1000, 0), Vec4(1, 0, 0, 0)));
+        gpuVerts.push_back(ToGpuVertex(Point3(1000, 1000, 0), Vec4(1, 0, 0, 0)));
 
         for (const auto& p : vertices) 
         {
             gpuVerts.push_back(ToGpuVertex(p, state.color));  // double→float 在此发生
         }
 
+
         sm.UploadAndDraw(device, context, gpuVerts.data(), static_cast<UINT>(gpuVerts.size()), sizeof(GpuVertex), D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
     }
 
-    void DrawPrimitives::DrawLineStrip(ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        const std::vector<Point3>& vertices,
-        const RenderState& state) {
+    void DrawPrimitives::DrawLineStrip(ID3D11Device* device,  ID3D11DeviceContext* context, const std::vector<Point3>& vertices,  const RenderState& state)
+    {
         if (vertices.size() < 2) return;
 
         ShaderManager& sm = ShaderManager::Instance();
@@ -117,20 +115,16 @@ namespace MiniCAD {
         std::vector<GpuVertex> gpuVerts;
         gpuVerts.reserve(vertices.size());
 
-        for (const auto& p : vertices) {
+        for (const auto& p : vertices) 
+        {
             gpuVerts.push_back(ToGpuVertex(p, state.color));  // double→float 在此发生
-        }
+        } 
 
-        sm.UploadAndDraw(device, context, gpuVerts.data(),
-            static_cast<UINT>(gpuVerts.size()),
-            sizeof(GpuVertex),
-            D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP);
+        sm.UploadAndDraw(device, context, gpuVerts.data(), static_cast<UINT>(gpuVerts.size()), sizeof(GpuVertex), D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP);
     }
 
-    void DrawPrimitives::DrawTriangleList(ID3D11Device* device,
-        ID3D11DeviceContext* context,
-        const std::vector<Point3>& vertices,
-        const RenderState& state) {
+    void DrawPrimitives::DrawTriangleList(ID3D11Device* device, ID3D11DeviceContext* context,  const std::vector<Point3>& vertices,  const RenderState& state)
+    {
         if (vertices.size() < 3) return;
 
         ShaderManager& sm = ShaderManager::Instance();
@@ -139,7 +133,8 @@ namespace MiniCAD {
         std::vector<GpuVertex> gpuVerts;
         gpuVerts.reserve(vertices.size());
 
-        for (const auto& p : vertices) {
+        for (const auto& p : vertices)
+        {
             gpuVerts.push_back(ToGpuVertex(p, state.color));  // double→float 在此发生
         }
 
