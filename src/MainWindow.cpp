@@ -20,8 +20,7 @@ namespace MiniCAD
 		wc.hbrBackground = nullptr;
 		wc.lpszClassName = L"MiniCADMainWindows";
 		wc.hIcon         = LoadIcon(nullptr, IDI_APPLICATION);
-		wc.hIconSm       = wc.hIcon;
-
+		wc.hIconSm       = wc.hIcon; 
 
 		RegisterClassEx(&wc);
 
@@ -45,7 +44,16 @@ namespace MiniCAD
 		m_device = std::make_unique<Device>();
 
 		m_device->Initialize();
-		 
+
+		m_swapChain = std::make_unique<SwapChain>();
+
+		SwapChain::Options opt;
+		opt.enableVSync = true;
+		opt.allowTearing = false;
+		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
+
+		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());	 
+
 		return m_hwnd != nullptr;
 	}
 
@@ -72,21 +80,92 @@ namespace MiniCAD
 	{
 		switch (msg)
 		{
+		case WM_SIZE:
+		{
+			UINT w = LOWORD(lParam);
+			UINT h = HIWORD(lParam);
+
+			if (m_swapChain)
+			{
+				m_swapChain->Resize(w, h);
+			}
+		}
+		break;
 		case WM_DESTROY:
 			PostQuitMessage(0);
 			return 0;
 		default:
 			return DefWindowProcW(hwnd, msg, wParam, lParam);
 		}
+
 	}
 
+	void MainWindow::RenderFrame()
+	{
+		auto context = m_device->GetContext();
+
+		auto rtv = m_swapChain->GetRTV();
+		auto dsv = m_swapChain->GetDSV();
+
+		context->OMSetRenderTargets(1, &rtv, dsv);
+
+		float color[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
+
+		context->ClearRenderTargetView(rtv, color);
+
+		context->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+
+		// MVP（先用一个简单的）
+		XMMATRIX world = XMMatrixIdentity();
+
+		XMMATRIX view = XMMatrixLookAtLH(
+			XMVectorSet(3, 3, -3, 1),
+			XMVectorZero(),
+			XMVectorSet(0, 1, 0, 0)
+		);
+
+		auto viewport = m_swapChain->GetViewport();
+
+		XMMATRIX proj = XMMatrixPerspectiveFovLH(
+			XM_PIDIV4,
+			viewport.Width / viewport.Height,
+			0.1f,
+			100.0f
+		);
+
+		XMMATRIX mvp = world * view * proj;
+		
+		auto target = m_swapChain->GetRenderTarget();
+
+		// ===== 渲染开始 =====
+		m_renderer->Begin(target, mvp);
+
+		// 画内容（CAD核心）
+		m_renderer->DrawLine({ 0,0,0 }, { 1,0,0 }, { 1,0,0,1 }); // X
+		m_renderer->DrawLine({ 0,0,0 }, { 0,1,0 }, { 0,1,0,1 }); // Y
+		m_renderer->DrawLine({ 0,0,0 }, { 0,0,1 }, { 0,0,1,1 }); // Z
+
+		m_renderer->End();
+
+		// ===== 渲染结束 =====
+		m_swapChain->Present();
+
+	}
 	void MainWindow::Run()
 	{
 		MSG msg = {};
-		while (GetMessage(&msg, nullptr, 0, 0))
+
+		while (WM_QUIT != msg.message)
 		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+			if (GetMessage(&msg, nullptr, 0, 0))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+
+			RenderFrame();
+
 		}
 	}
 	 

@@ -1,9 +1,7 @@
 #include "Device.h"
-#include <dxgi1_3.h>
-#include <dxgi1_6.h>
-#include <d3d11.h> 
-
+ 
 using Microsoft::WRL::ComPtr;
+  
 namespace MiniCAD
 {  
     Device::Device(D3D_FEATURE_LEVEL minFeatureLevel) noexcept: 
@@ -26,7 +24,10 @@ namespace MiniCAD
 #else
         UINT flags = 0;
 #endif
-        CreateDXGIFactory2(flags, IID_PPV_ARGS(m_dxgiFactory.ReleaseAndGetAddressOf()));
+        ThrowIfFailed(CreateDXGIFactory2(
+            flags,
+            IID_PPV_ARGS(m_dxgiFactory.ReleaseAndGetAddressOf())
+        ));
     }
 
     void Device::GetHardwareAdapter(IDXGIAdapter1** adapter)
@@ -122,9 +123,12 @@ namespace MiniCAD
             );
         }
 #endif
-        device.As(&m_d3dDevice);
-        context.As(&m_d3dContext);
-        context.As(&m_annotation);        
+
+        ThrowIfFailed(hr);
+
+        ThrowIfFailed(device.As(&m_d3dDevice));
+        ThrowIfFailed(context.As(&m_d3dContext));
+        context.As(&m_annotation);
     }
 
     void Device::HandleDeviceLost()

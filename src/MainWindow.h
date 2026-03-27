@@ -1,6 +1,8 @@
 #pragma once
 #include "pch.h"
 #include "Device.h"	
+#include "SwapChain.h"	
+#include "Renderer.h"	
 namespace MiniCAD 
 {
 	class MainWindow
@@ -12,11 +14,14 @@ namespace MiniCAD
 		void Run();
 
 	private:
-		
+		void RenderFrame();
 		static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 		LRESULT EventProc(HWND, UINT, WPARAM, LPARAM);
 		HWND m_hwnd;
 
-		std::unique_ptr<Device>    m_device;
+		std::unique_ptr<Device>       m_device;
+		std::unique_ptr<SwapChain>    m_swapChain;
+		std::unique_ptr<Renderer>     m_renderer;
+
 	};
 }

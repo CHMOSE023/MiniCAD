@@ -10,12 +10,20 @@ endif()
 
 find_package(directxtk CONFIG REQUIRED)
 
-file(GLOB_RECURSE SRC "${CMAKE_SOURCE_DIR}/src/*.cpp")    
- 
-add_executable(MiniCAD  ${SRC} )
- 
-target_link_libraries(MiniCAD  PRIVATE  Microsoft::DirectXTK d3d11 dxgi) 
+file(GLOB_RECURSE SRC    "${CMAKE_SOURCE_DIR}/src/*.cpp")    
+file(GLOB_RECURSE ASSETS "${CMAKE_SOURCE_DIR}/src/*.hlsl") 
 
+add_executable(MiniCAD  ${SRC} )
+target_link_libraries(MiniCAD  PRIVATE  Microsoft::DirectXTK d3d11 dxgi D3DCompiler) 
+
+# 输出目录
+set_target_properties(MiniCAD PROPERTIES  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/MiniCAD")
+
+add_custom_command(TARGET MiniCAD  POST_BUILD           
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different  ${ASSETS}  "$<TARGET_FILE_DIR:MiniCAD>"
+            COMMENT "Copy assets for MiniCAD"
+) 
  
+
 
  
