@@ -80,34 +80,48 @@ namespace MiniCAD
 	{
 		switch (msg)
 		{
+		case WM_MBUTTONDOWN:
+		{
+			SetCapture(hwnd);
+			m_isPanning = true;
+
+			m_lastMousePos.x = LOWORD(lParam);
+			m_lastMousePos.y = HIWORD(lParam);
+		}
+		break;
+
+		case WM_MBUTTONUP:
+		{
+			m_isPanning = false;
+			ReleaseCapture();
+		}
+		break; 
+		  
 		case WM_MOUSEMOVE:
 		{
-			static POINT lastPos = { 0,0 };
 			POINT currentPos;
 			currentPos.x = LOWORD(lParam);
 			currentPos.y = HIWORD(lParam);
 
-			int dx = currentPos.x - lastPos.x;
-			int dy = currentPos.y - lastPos.y;
+			int dx = currentPos.x - m_lastMousePos.x;
+			int dy = currentPos.y - m_lastMousePos.y;
 
-			bool isRotating = (wParam & MK_RBUTTON) != 0;
-			bool isPanning = (wParam & MK_MBUTTON) != 0;
-
-			if (isRotating || isPanning)
+			if (m_isPanning)
 			{
-				m_camera->Update(-(float)dx, (float)dy, 0.0f, isRotating, isPanning);
+				m_camera->Update((float)dx, (float)dy, 0.0f, m_isPanning);
 			}
 
-			lastPos = currentPos;
+			m_lastMousePos = currentPos;
 		}
-		break;
+		break;  
 
 		case WM_MOUSEWHEEL:
 		{
 			short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-			m_camera->Update(0, 0, (float)delta / WHEEL_DELTA, false, false);
+			m_camera->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false);
 		}
 		break;
+
 		case WM_SIZE:
 		{
 			UINT w = LOWORD(lParam);
@@ -117,29 +131,33 @@ namespace MiniCAD
 			{
 				m_swapChain->Resize(w, h);
 			}
+
 			if (m_camera)
 			{
 				m_camera->Resize((float)w, (float)h);
 			}
 		}
 		break;
+
 		case WM_DESTROY:
 			PostQuitMessage(0);
 			return 0;
+
 		default:
 			return DefWindowProcW(hwnd, msg, wParam, lParam);
 		}
 
+		return 0;
 	}
+
 
 	void MainWindow::RenderFrame()
 	{
 		auto target = m_swapChain->GetRenderTarget();
-		
-		// 相机
+		 		
 		XMMATRIX world = XMMatrixIdentity();
  
-		XMMATRIX mvp = world; //* m_camera->GetViewProj();
+		XMMATRIX mvp = world* m_camera->GetViewProj();
 		  
 		Grid grid; 
 
@@ -170,9 +188,11 @@ namespace MiniCAD
 			{
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
+				
 			}
 
 			RenderFrame();
+			
 
 		}
 	}

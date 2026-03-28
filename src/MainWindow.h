@@ -27,5 +27,8 @@ namespace MiniCAD
 		std::unique_ptr<Renderer>     m_renderer;
 		std::unique_ptr<Camera>       m_camera;	
 
+		POINT m_lastMousePos = { 0, 0 };
+		bool  m_isPanning    = false; 
+
 	};
 }
