@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include <DirectXMath.h>
 #include <algorithm>
 
 namespace MiniCAD
@@ -16,11 +17,16 @@ namespace MiniCAD
         m_screenHeight = height;
     }
 
-    void Camera::Update(float dx, float dy, float scroll, bool isPanning)
+    void Camera::Update(float dx, float dy, float scroll, bool isPanning, int mouseX, int mouseY)
     {
-        const float zoomSpeed = 1.0f;
+        const float zoomFactor = 1.1f;
+        XMVECTOR target = XMLoadFloat3(&m_target); // 3D 向量
 
-        // Pan（屏幕 → 世界）
+        float oldZoom = m_zoom;
+
+        // --------------------
+        // Pan（平移，只在 XY 平面）
+        // --------------------
         if (isPanning)
         {
             float viewHeight = m_zoom;
@@ -29,17 +35,48 @@ namespace MiniCAD
             float worldPerPixelX = viewWidth / m_screenWidth;
             float worldPerPixelY = viewHeight / m_screenHeight;
 
-            // Top 视图：Right = X轴，Up = Y轴
-            m_target.x -= dx * worldPerPixelX;
-            m_target.y += dy * worldPerPixelY;
+            XMVECTOR delta = XMVectorSet(-dx * worldPerPixelX, dy * worldPerPixelY, 0.f, 0.f);
+            target = XMVectorAdd(target, delta);
         }
 
-        //  Zoom（只影响投影体积）
+        // --------------------
+        // Zoom（以鼠标为中心）
+        // --------------------
         if (scroll != 0)
         {
-            m_zoom -= scroll * zoomSpeed;
+            float viewHeight = m_zoom;
+            float viewWidth = m_zoom * m_aspect;
+
+            float worldPerPixelX = viewWidth / m_screenWidth;
+            float worldPerPixelY = viewHeight / m_screenHeight;
+
+            // 1. 计算鼠标对应的世界坐标（只影响 XY）
+            XMVECTOR mouseOffset = XMVectorSet(
+                (mouseX - m_screenWidth / 2) * worldPerPixelX,
+                (m_screenHeight / 2 - mouseY) * worldPerPixelY,
+                0.f, 0.f);
+
+            XMVECTOR mouseWorldPos = XMVectorAdd(target, mouseOffset);
+
+            // 2. 缩放
+            if (scroll > 0)
+                m_zoom /= zoomFactor;
+            else
+                m_zoom *= zoomFactor;
+
             m_zoom = std::max(0.01f, m_zoom);
+
+            // 3. 调整 target 保证鼠标点位置不动（只调整 XY）
+            float scale = m_zoom / oldZoom;
+            XMVECTOR newOffset = XMVectorScale(mouseOffset, scale);
+            target = XMVectorSubtract(mouseWorldPos, newOffset);
+
+            // Z 保持不变
+            XMVECTOR z = XMVectorSetZ(XMLoadFloat3(&m_target), XMVectorGetZ(XMLoadFloat3(&m_target)));
+            target = XMVectorSetZ(target, XMVectorGetZ(z));
         }
+
+        XMStoreFloat3(&m_target, target);
     }
 
     XMFLOAT3 Camera::GetCameraPos() const

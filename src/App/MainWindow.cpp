@@ -156,7 +156,7 @@ namespace MiniCAD
 		{
 			short delta = GET_WHEEL_DELTA_WPARAM(wParam);
 
-			m_scene->GetCamera()->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false);
+			m_scene->GetCamera()->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false, LOWORD(lParam), HIWORD(lParam));
 		}
 		break;
 

@@ -10,7 +10,7 @@ namespace MiniCAD {
     public:
         Camera(float width, float height);
 
-        void Update(float dx, float dy, float scroll, bool isPanning);
+        void Update(float dx, float dy, float scroll, bool isPanning, int mouseX = 1, int mouseY = 1);
 
         XMMATRIX GetView() const;
         XMMATRIX GetProj() const;
