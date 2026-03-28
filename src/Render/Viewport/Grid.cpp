@@ -20,11 +20,11 @@ namespace MiniCAD
         {
             float s = i * step;
 
-            // Z方向线
-            m_lines.push_back({ {s,  -size,0.0}, {s, size,0.0 },(i == 0) ? XMFLOAT4(1,0,0,1) : XMFLOAT4(0.5f,0.5f,0.5f,1) });
-
             // X方向线
             m_lines.push_back({ {-size, s, 0.0},{size, s, 0.0},(i == 0) ? XMFLOAT4(0,0,1,1) : XMFLOAT4(0.5f,0.5f,0.5f,1) });
+
+            // Y方向线
+            m_lines.push_back({ {s,  -size,0.0}, {s, size,0.0 },(i == 0) ? XMFLOAT4(1,0,0,1) : XMFLOAT4(0.5f,0.5f,0.5f,1) });
         }
     }
 }

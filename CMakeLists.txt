@@ -7,10 +7,13 @@ if(MSVC)
     add_definitions("-DUNICODE" "-D_UNICODE")  # Windows API 使用宽字符版本
     add_compile_options(/utf-8)                # 源文件按 UTF-8 解析
 endif()
+# include 路径
+include_directories("${CMAKE_SOURCE_DIR}/src")
 
 find_package(directxtk CONFIG REQUIRED)
 
-file(GLOB_RECURSE SRC    "${CMAKE_SOURCE_DIR}/src/*.cpp")    
+file(GLOB_RECURSE SRC  "${CMAKE_SOURCE_DIR}/src/*.cpp"  
+                       "${CMAKE_SOURCE_DIR}/src/*.hpp")    
 file(GLOB_RECURSE ASSETS "${CMAKE_SOURCE_DIR}/src/*.hlsl") 
 
 add_executable(MiniCAD  ${SRC} )

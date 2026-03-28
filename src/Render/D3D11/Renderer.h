@@ -1,8 +1,7 @@
 #pragma once 
-
 #include "pch.h"
 #include "RenderTarget.h"
-#include "Grid.h"
+#include "Render/Viewport/Grid.h"
 using namespace DirectX;
 
 namespace MiniCAD

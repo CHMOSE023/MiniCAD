@@ -1,10 +1,11 @@
 #pragma once
 #include "pch.h"
-#include "Device.h"	
-#include "SwapChain.h"	
-#include "Renderer.h"	
+#include "Render/D3D11/Device.h"	
+#include "Render/D3D11/SwapChain.h"	
+#include "Render/D3D11/Renderer.h"	
+#include "Render/Viewport/Camera.h"	
+#include "Render/Viewport/Grid.h"	
 #include "Scene.h"	
-#include "Camera.h"	
 
 namespace MiniCAD 
 {
@@ -14,6 +15,7 @@ namespace MiniCAD
 		MainWindow();
 		~MainWindow(); 
 		bool Initialize( const wchar_t* title, int width, int height);
+		void AddEntity();
 		void Run();
 
 	private:
@@ -24,8 +26,8 @@ namespace MiniCAD
 
 		std::unique_ptr<Device>       m_device;
 		std::unique_ptr<SwapChain>    m_swapChain;
-		std::unique_ptr<Renderer>     m_renderer;
-		std::unique_ptr<Camera>       m_camera;	
+		std::unique_ptr<Renderer>     m_renderer; 
+		std::unique_ptr<Scene>        m_scene;
 
 		POINT m_lastMousePos = { 0, 0 };
 		bool  m_isPanning    = false; 

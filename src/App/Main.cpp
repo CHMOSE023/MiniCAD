@@ -8,6 +8,7 @@ int main()
 	auto mainWindow = std::make_unique<MainWindow>();
 
 	mainWindow->Initialize( L"MiniCAD", 800, 600);
+
 	mainWindow->Run(); 
 
 	mainWindow.reset(); 
