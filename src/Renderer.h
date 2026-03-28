@@ -2,7 +2,7 @@
 
 #include "pch.h"
 #include "RenderTarget.h"
-
+#include "Grid.h"
 using namespace DirectX;
 
 namespace MiniCAD
@@ -20,6 +20,7 @@ namespace MiniCAD
 
         void Begin(const RenderTarget& target, const XMMATRIX& mvp);
         void DrawLine(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color);
+        void DrawGrad(const Grid& grid);
         void End();
 
     private:

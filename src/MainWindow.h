@@ -3,6 +3,9 @@
 #include "Device.h"	
 #include "SwapChain.h"	
 #include "Renderer.h"	
+#include "Scene.h"	
+#include "Camera.h"	
+
 namespace MiniCAD 
 {
 	class MainWindow
@@ -22,6 +25,7 @@ namespace MiniCAD
 		std::unique_ptr<Device>       m_device;
 		std::unique_ptr<SwapChain>    m_swapChain;
 		std::unique_ptr<Renderer>     m_renderer;
+		std::unique_ptr<Camera>       m_camera;	
 
 	};
 }

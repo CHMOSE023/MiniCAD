@@ -53,7 +53,7 @@ namespace MiniCAD
 		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
 
 		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());	 
-
+		m_camera   = std::make_unique<Camera>(width, height);
 		return m_hwnd != nullptr;
 	}
 
@@ -80,6 +80,34 @@ namespace MiniCAD
 	{
 		switch (msg)
 		{
+		case WM_MOUSEMOVE:
+		{
+			static POINT lastPos = { 0,0 };
+			POINT currentPos;
+			currentPos.x = LOWORD(lParam);
+			currentPos.y = HIWORD(lParam);
+
+			int dx = currentPos.x - lastPos.x;
+			int dy = currentPos.y - lastPos.y;
+
+			bool isRotating = (wParam & MK_RBUTTON) != 0;
+			bool isPanning = (wParam & MK_MBUTTON) != 0;
+
+			if (isRotating || isPanning)
+			{
+				m_camera->Update(-(float)dx, (float)dy, 0.0f, isRotating, isPanning);
+			}
+
+			lastPos = currentPos;
+		}
+		break;
+
+		case WM_MOUSEWHEEL:
+		{
+			short delta = GET_WHEEL_DELTA_WPARAM(wParam);
+			m_camera->Update(0, 0, (float)delta / WHEEL_DELTA, false, false);
+		}
+		break;
 		case WM_SIZE:
 		{
 			UINT w = LOWORD(lParam);
@@ -88,6 +116,10 @@ namespace MiniCAD
 			if (m_swapChain)
 			{
 				m_swapChain->Resize(w, h);
+			}
+			if (m_camera)
+			{
+				m_camera->Resize((float)w, (float)h);
 			}
 		}
 		break;
@@ -106,23 +138,24 @@ namespace MiniCAD
 		
 		// 相机
 		XMMATRIX world = XMMatrixIdentity();
-
-		XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(3, 3, -3, 1), XMVectorZero(), XMVectorSet(0, 1, 0, 0));
-
-		auto viewport = m_swapChain->GetViewport();
-
-		XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, viewport.Width / viewport.Height, 0.1f, 100.0f);
-
-		XMMATRIX mvp = world * view * proj;
+ 
+		XMMATRIX mvp = world; //* m_camera->GetViewProj();
 		  
+		Grid grid; 
+
+		grid.Generate(XMFLOAT3());
+
+		Scene scene;
+
 		// ===== 渲染 =====
 		m_renderer->Begin(target, mvp);
+		 
+		scene.SetGrid(grid); 
 
-		m_renderer->DrawLine({ 0,0,0 }, { 1,0,0 }, { 1,0,0,1 }); // X
-		m_renderer->DrawLine({ 0,0,0 }, { 0,1,0 }, { 0,1,0,1 }); // Y
-		m_renderer->DrawLine({ 0,0,0 }, { 0,0,1 }, { 0,0,1,1 }); // Z
+		scene.Draw(m_renderer.get());	
 
 		m_renderer->End();
+	
 
 		m_swapChain->Present();
 

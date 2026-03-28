@@ -94,6 +94,14 @@ namespace MiniCAD
         }
     }
 
+    void Renderer::DrawGrad(const Grid& grid)
+    {
+        for (auto&line : grid.GetLines())
+        {
+            DrawLine(line.a, line.b, line.color);
+        }
+    }
+
     //  提交 GPU
     void Renderer::Flush()
     {
