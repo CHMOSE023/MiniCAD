@@ -7,14 +7,14 @@ namespace MiniCAD
 		// 1. 取 MVP
 		XMMATRIX mvp = m_camera->GetViewProj(); 
 
-		m_renderer->Begin(target, mvp);
-		 
-		m_renderer->DrawGrad(*m_grid); // *m_grid 返回 Grid&
+		m_renderer->Begin(target, mvp); 
 
-		for (auto id : scene.GetAllIDs()) {
+		for (auto id : scene.GetAllIDs()) 
+		{
 			DrawObject(scene.GetEntity(id));
 		}
 
+		m_renderer->DrawGrad(*m_grid); // *m_grid 返回 Grid&
 		m_renderer->End();
 		 
 	}
