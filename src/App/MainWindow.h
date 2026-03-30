@@ -5,8 +5,7 @@
 #include "Render/D3D11/Renderer.h"	 
 #include "Render/Viewport/Viewport.h"	
 #include "App/Scene/Scene.h"	
-#include "App/Document/Document.h"	
-
+#include "App/Document/Document.h"
 
 namespace MiniCAD 
 {
@@ -16,7 +15,6 @@ namespace MiniCAD
 		MainWindow();
 		~MainWindow(); 
 		bool Initialize( const wchar_t* title, int width, int height);
-		void AddEntity();
 		void Run();
 
 	private:
@@ -27,7 +25,7 @@ namespace MiniCAD
 		// ── 初始化分步 ────────────────────────────────────────
 		bool InitWindow(const wchar_t* title, int width, int height);
 		bool InitD3D11(int width, int height);
-		bool InitScene(int width, int height);
+		bool InitViewportAndDocument(int width, int height);
 
 		// ── 渲染 ──────────────────────────────────────────────
 		void RenderFrame();
@@ -35,6 +33,8 @@ namespace MiniCAD
 		// ── 输入转换 ──────────────────────────────────────────
 		// InputEvent     BuildEvent(UINT msg, WPARAM wParam, LPARAM lParam);
 		// static uint8_t GetModifiers();
+
+		// void AddEntity();
 	private:
 		// 窗口
 		HWND m_hwnd;
@@ -45,8 +45,8 @@ namespace MiniCAD
 		std::unique_ptr<Renderer>     m_renderer; 
 
 		// ── 应用层 ────────────────────────────────────────────
-		std::unique_ptr<Scene>        m_scene;
 		std::unique_ptr<Viewport>     m_viewport;
+		std::unique_ptr<Document>     m_document;
 
 		// ── UI 层（预留）─────────────────────────────────────
 		// std::unique_ptr<IUILayer>  m_uiLayer;

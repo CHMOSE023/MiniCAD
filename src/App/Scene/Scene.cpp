@@ -16,6 +16,7 @@ namespace MiniCAD
 		auto it = m_entities.find(id);
 		if (it == m_entities.end()) 
 			return nullptr;
+
 		std::unique_ptr<Object> ret = std::move(it->second);
 		m_entities.erase(it);
 		MarkDirty();
@@ -41,9 +42,7 @@ namespace MiniCAD
 	std::vector<Scene::ObjectID> Scene::GetAllIDs() const
 	{
 		std::vector<ObjectID> ids;
-
 		ids.reserve(m_entities.size());
-
 		for (auto& kv : m_entities) 
 			ids.push_back(kv.first);
 

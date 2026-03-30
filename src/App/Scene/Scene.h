@@ -8,7 +8,7 @@
 #include <memory>
 #include <unordered_map>
 #include <functional>
-
+#include "App/Scene/LayerManager.h"
 namespace MiniCAD
 { 
 	class Scene
@@ -16,9 +16,8 @@ namespace MiniCAD
 	public:
 		using ObjectID = Object::ObjectID;
 		using DirtyCallback = std::function<void()>;
-
-
-		Scene() = default;   // 显式要回默认构造, 生成默认构造函数 
+		 
+		Scene() = default;   
 
 		void AddEntity(std::unique_ptr<Object> entity);     // 添加实体 	
 		std::unique_ptr<Object> RemoveEntity(ObjectID id); 	// 移除并返回所有权（供 Undo 使用）
@@ -29,7 +28,9 @@ namespace MiniCAD
 		bool Has(ObjectID id) const;
 
 		std::vector<ObjectID> GetAllIDs() const;            // 返回所有实体 ID
-		 
+
+		LayerManager& GetLayerManager() { return m_layerManager; }
+		const LayerManager& GetLayerManager() const { return m_layerManager; }
 
 		// ── DirtyFlag ── 
 		bool IsDirty() const { return m_dirty; }
@@ -39,10 +40,13 @@ namespace MiniCAD
 		void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
 
 		int EntityCount() const { return (int)m_entities.size(); }
+
+		const std::unordered_map<ObjectID, std::unique_ptr<Object>>& GetEntities() const { return m_entities; }
 	private:     
 
 		std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
 
+		LayerManager  m_layerManager;
 		bool          m_dirty = false;
 		DirtyCallback m_onDirty;
 	};

@@ -8,7 +8,7 @@ namespace MiniCAD
 
 	bool MainWindow::Initialize(const wchar_t* title, int width, int height)
 	{
-		return InitWindow(title, width, height) && InitD3D11(width, height) && InitScene(width, height);		
+		return InitWindow(title, width, height) && InitD3D11(width, height) && InitViewportAndDocument(width, height);
 	}
 
 	bool MainWindow::InitWindow(const wchar_t* title, int width, int height)
@@ -68,48 +68,22 @@ namespace MiniCAD
 	};
 
 
-	bool MainWindow::InitScene(int width, int height)
-	{
-		m_scene = std::make_unique<Scene>();
-
+	bool MainWindow::InitViewportAndDocument(int width, int height)
+	{ 
 		m_viewport = std::make_unique<Viewport>(m_renderer.get(), width, height); // 传入m_renderer
 
-		AddEntity();
+		m_document = std::make_unique<Document>();
 
-		return m_hwnd != nullptr;
-	}
+		m_document->GetEditor()->SetCamera(m_viewport->GetCamera()); 
+	  
+		// 添加直线
+		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0), XMFLOAT4(1, 0, 0, 1));
+		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0), XMFLOAT4(0, 1, 0, 1));
+		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0), XMFLOAT4(1, 1, 0, 1));
 
-	void MainWindow::AddEntity()
-	{
-		if (!m_scene)return;
-		 // 添加直线
-		using ObjectID = MiniCAD::Object::ObjectID;
-		static ObjectID nextId = 1;
+		return true;
 
-		// 1️ X 轴正方向直线 (红色)
-		{
-			
-			auto lineX = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
-			lineX->GetAttr().Color = XMFLOAT4(1, 0, 0, 1); // 红色
-			m_scene->AddEntity(std::move(lineX));
-		}
-
-		// 2 Y 轴正方向直线 (绿色)
-		{
-			auto lineY = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
-			lineY->GetAttr().Color = XMFLOAT4(0, 1, 0, 1); // 绿色
-			m_scene->AddEntity(std::move(lineY));
-		}
-
-		// 3️ 对角线 (黄色)
-		{
-			auto lineDiag = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0) );
-			lineDiag->GetAttr().Color = XMFLOAT4(1, 1, 0, 1); // 黄色
-			m_scene->AddEntity(std::move(lineDiag));
-		}
-
-
-	}
+	} 
 
 	LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
@@ -215,7 +189,9 @@ namespace MiniCAD
 	{
 		auto target = m_swapChain->GetRenderTarget();	
 		 
-		m_viewport->Draw(*m_scene, target);
+		const auto scene = m_document->GetScene();
+
+		m_viewport->Draw(*scene, target);
 		 
 		m_swapChain->Present();         // 显示帧
 

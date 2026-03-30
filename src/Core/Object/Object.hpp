@@ -8,7 +8,11 @@ namespace MiniCAD
 	{
 	public :
 		using ObjectID = uint64_t;
+
+		static constexpr ObjectID InvalidID = 0;
+
 		ObjectID GetID() const { return m_id; }
+
 		// --- Serialization 接口 ---
 	    // 将对象写入序列化器
 		virtual void Serialize(ISerializer& s) const = 0;

@@ -19,6 +19,8 @@ namespace MiniCAD {
         XMFLOAT3 GetCameraPos() const;
         void Resize(float width, float height);
 
+        float GetWidth()  const { return m_screenWidth; }
+        float GetHeight() const { return m_screenHeight; }
     private:
         // 观察中心
         XMFLOAT3 m_target = { 0, 0, 0 };
