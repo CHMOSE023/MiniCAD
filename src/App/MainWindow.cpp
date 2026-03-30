@@ -122,8 +122,8 @@ namespace MiniCAD
 			SetCapture(hwnd);
 			m_isPanning = true;
 
-			m_lastMousePos.x = LOWORD(lParam);
-			m_lastMousePos.y = HIWORD(lParam);
+			m_lastMousePos.x = GET_X_LPARAM(lParam);
+			m_lastMousePos.y = GET_Y_LPARAM(lParam);
 		}
 		break;
 
@@ -137,8 +137,9 @@ namespace MiniCAD
 		case WM_MOUSEMOVE:
 		{
 			POINT currentPos;
-			currentPos.x = LOWORD(lParam);
-			currentPos.y = HIWORD(lParam);
+
+			currentPos.x = GET_X_LPARAM(lParam);
+			currentPos.y = GET_Y_LPARAM(lParam);
 
 			int dx = currentPos.x - m_lastMousePos.x;
 			int dy = currentPos.y - m_lastMousePos.y;
@@ -154,9 +155,15 @@ namespace MiniCAD
 
 		case WM_MOUSEWHEEL:
 		{
+		
 			short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-
-			m_scene->GetCamera()->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false, LOWORD(lParam), HIWORD(lParam));
+			// ***微软设计***   	 
+			// WM_MOUSEWHEEL -> LOWORD/HIWORD(lParam) 是屏幕坐标！ 
+			POINT pt;
+			pt.x = GET_X_LPARAM(lParam);   // GET_X/Y_LPARAM，避免负坐标截断
+			pt.y = GET_Y_LPARAM(lParam);
+			ScreenToClient(hwnd, &pt);     // 转换为客户区坐标 
+			m_scene->GetCamera()->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false, pt.x, pt.y);
 		}
 		break;
 
