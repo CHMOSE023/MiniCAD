@@ -16,6 +16,10 @@ namespace MiniCAD
     class Grid
     {
     public:
+        Grid(const XMFLOAT3& cameraPos)
+        {
+            Generate(cameraPos);
+        }
         void Generate(const XMFLOAT3& cameraPos);
 
         const std::vector<GridLine>& GetLines() const { return m_lines; }

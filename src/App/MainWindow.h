@@ -4,8 +4,8 @@
 #include "Render/D3D11/SwapChain.h"	
 #include "Render/D3D11/Renderer.h"	
 #include "Render/Viewport/Camera.h"	
-#include "Render/Viewport/Grid.h"	
-#include "Scene.h"	
+#include "Render/Viewport/Viewport.h"	
+#include "App/Scene/Scene.h"	
 
 namespace MiniCAD 
 {
@@ -28,9 +28,9 @@ namespace MiniCAD
 		std::unique_ptr<SwapChain>    m_swapChain;
 		std::unique_ptr<Renderer>     m_renderer; 
 		std::unique_ptr<Scene>        m_scene;
+		std::unique_ptr<Viewport>     m_viewport;
 
-		POINT m_lastMousePos = { 0, 0 };
-		bool  m_isPanning    = false; 
+		POINT m_lastMousePos = { 0, 0 }; 
 
 	};
 }

@@ -49,14 +49,16 @@ namespace MiniCAD
 		m_swapChain = std::make_unique<SwapChain>();
 
 		SwapChain::Options opt;
-		opt.enableVSync = true;
+		opt.enableVSync  = false;
 		opt.allowTearing = false;
 
 		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
 
-		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());	 
+		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());	  
 
-		m_scene    = std::make_unique<Scene>(width, height);
+		m_scene    = std::make_unique<Scene>();
+		
+		m_viewport = std::make_unique<Viewport>(m_renderer.get(), width, height); // 传入m_renderer
 
 		AddEntity();
 
@@ -70,25 +72,26 @@ namespace MiniCAD
 		using ObjectID = MiniCAD::Object::ObjectID;
 		static ObjectID nextId = 1;
 
-		// 1️⃣ X 轴正方向直线 (红色)
+		// 1️ X 轴正方向直线 (红色)
 		{
-			auto lineX = std::make_shared<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
+			
+			auto lineX = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
 			lineX->GetAttr().Color = XMFLOAT4(1, 0, 0, 1); // 红色
-			m_scene->AddEntity(lineX);
+			m_scene->AddEntity(std::move(lineX));
 		}
 
-		// 2️⃣ Y 轴正方向直线 (绿色)
+		// 2 Y 轴正方向直线 (绿色)
 		{
-			auto lineY = std::make_shared<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
+			auto lineY = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
 			lineY->GetAttr().Color = XMFLOAT4(0, 1, 0, 1); // 绿色
-			m_scene->AddEntity(lineY);
+			m_scene->AddEntity(std::move(lineY));
 		}
 
-		// 3️⃣ 对角线 (黄色)
+		// 3️ 对角线 (黄色)
 		{
-			auto lineDiag = std::make_shared<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0) );
+			auto lineDiag = std::make_unique<LineEntity>(nextId++, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0) );
 			lineDiag->GetAttr().Color = XMFLOAT4(1, 1, 0, 1); // 黄色
-			m_scene->AddEntity(lineDiag);
+			m_scene->AddEntity(std::move(lineDiag));
 		}
 
 
@@ -119,8 +122,8 @@ namespace MiniCAD
 		{
 		case WM_MBUTTONDOWN:
 		{
-			SetCapture(hwnd);
-			m_isPanning = true;
+			SetCapture(hwnd); 
+			m_viewport->BeginPan();
 
 			m_lastMousePos.x = GET_X_LPARAM(lParam);
 			m_lastMousePos.y = GET_Y_LPARAM(lParam);
@@ -129,7 +132,7 @@ namespace MiniCAD
 
 		case WM_MBUTTONUP:
 		{
-			m_isPanning = false;
+			m_viewport->EndPan();
 			ReleaseCapture();
 		}
 		break; 
@@ -144,11 +147,8 @@ namespace MiniCAD
 			int dx = currentPos.x - m_lastMousePos.x;
 			int dy = currentPos.y - m_lastMousePos.y;
 
-			if (m_isPanning)
-			{
-				m_scene->GetCamera()->Update((float)dx, (float)dy, 0.0f, m_isPanning);
-			}
-
+			m_viewport->Pan((float)dx, (float)dy);
+			 
 			m_lastMousePos = currentPos;
 		}
 		break;  
@@ -162,8 +162,8 @@ namespace MiniCAD
 			POINT pt;
 			pt.x = GET_X_LPARAM(lParam);   // GET_X/Y_LPARAM，避免负坐标截断
 			pt.y = GET_Y_LPARAM(lParam);
-			ScreenToClient(hwnd, &pt);     // 转换为客户区坐标 
-			m_scene->GetCamera()->Update(0.0f, 0.0f, (float)delta / WHEEL_DELTA, false, pt.x, pt.y);
+			ScreenToClient(hwnd, &pt);     // 转换为客户区坐标  
+			m_viewport->Zoom((float)delta / WHEEL_DELTA,  pt.x, pt.y);
 		}
 		break;
 
@@ -177,13 +177,9 @@ namespace MiniCAD
 				m_swapChain->Resize(w, h);
 			}
 
-			if (m_scene)
+			if (m_viewport)
 			{
-				auto camera = m_scene->GetCamera();
-				if (camera)
-				{
-					camera->Resize((float)w, (float)h);
-				}
+				m_viewport->Resize((float)w, (float)h);
 			}
 			
 		}
@@ -204,19 +200,9 @@ namespace MiniCAD
 	void MainWindow::RenderFrame()
 	{
 		auto target = m_swapChain->GetRenderTarget();	
-
-		XMMATRIX world = XMMatrixIdentity(); 
-		auto viewProj  = m_scene->GetCamera()->GetViewProj();
-
-		XMMATRIX mvp   = world* viewProj; 
-
-		// ===== 渲染 =====
-		m_renderer->Begin(target, mvp);  // 开始收集顶点并绑定 pipeline	
-
-		m_scene->Draw(m_renderer.get()); // Scene 内部调用 DrawGrad、DrawLine 绘制网格和实体
-
-		m_renderer->End();              // 结束 提交 GPU
-
+		 
+		m_viewport->Draw(*m_scene, target);
+		 
 		m_swapChain->Present();         // 显示帧
 
 	}

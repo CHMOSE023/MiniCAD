@@ -17,7 +17,8 @@ namespace MiniCAD
 
 		void SetLine(const Line& line) { m_line = line; }
 
-		EntityAttr& GetAttr() { return m_attr; } 
+		EntityAttr& GetAttr() { return m_attr; }             // 修改用
+		const EntityAttr& GetAttr() const { return m_attr; } // 只读用
 		void SetAttr(const EntityAttr& a) { m_attr = a; } 
 
 		AABB GetBoundingBox() const { return m_line.GetBounds(); };

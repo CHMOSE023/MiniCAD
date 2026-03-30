@@ -118,7 +118,12 @@ namespace MiniCAD
 
     void SwapChain::Present()
     {
-        m_swapChain->Present(1, 0);
+        UINT syncInterval = m_opt.enableVSync ? 1 : 0;
+        UINT flags = (!m_opt.enableVSync && m_opt.allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+        m_swapChain->Present(syncInterval, flags);
+
+        // m_swapChain->Present(1, 0);// 跟随显示器刷新率
+        // m_swapChain->Present(0, 0);   // 不等待，尽可能快，可能撕裂
     }
 
 

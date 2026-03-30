@@ -15,8 +15,7 @@ namespace MiniCAD
     class Renderer
     {
     public:
-        Renderer(ID3D11Device* device, ID3D11DeviceContext* context);
-
+        Renderer(ID3D11Device* device, ID3D11DeviceContext* context); 
         void Begin(const RenderTarget& target, const XMMATRIX& mvp);
         void DrawLine(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color);
         void DrawGrad(const Grid& grid);
