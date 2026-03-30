@@ -8,40 +8,48 @@ namespace MiniCAD
 
 	bool MainWindow::Initialize(const wchar_t* title, int width, int height)
 	{
+		return InitWindow(title, width, height) && InitD3D11(width, height) && InitScene(width, height);		
+	}
+
+	bool MainWindow::InitWindow(const wchar_t* title, int width, int height)
+	{
 		HINSTANCE hInstance = GetModuleHandle(NULL);
 
 		WNDCLASSEXW wc = {};
 
-		wc.cbSize        = sizeof(wc);
-		wc.style         = CS_HREDRAW | CS_VREDRAW;
-		wc.lpfnWndProc   = WndProc;
-		wc.hInstance     = hInstance;
-		wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+		wc.cbSize = sizeof(wc);
+		wc.style = CS_HREDRAW | CS_VREDRAW;
+		wc.lpfnWndProc = WndProc;
+		wc.hInstance = hInstance;
+		wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
 		wc.hbrBackground = nullptr;
 		wc.lpszClassName = L"MiniCADMainWindows";
-		wc.hIcon         = LoadIcon(nullptr, IDI_APPLICATION);
-		wc.hIconSm       = wc.hIcon; 
+		wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+		wc.hIconSm = wc.hIcon;
 
 		RegisterClassEx(&wc);
 
 		RECT rc = { 0, 0, width, height };
 		AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
 
-		m_hwnd = CreateWindowEx(0, 
-			L"MiniCADMainWindows", 
-			title, 
-			WS_OVERLAPPEDWINDOW, 
-			CW_USEDEFAULT, 
-			CW_USEDEFAULT, 
-			rc.right - rc.left, rc.bottom - rc.top, 
+		m_hwnd = CreateWindowEx(0,
+			L"MiniCADMainWindows",
+			title,
+			WS_OVERLAPPEDWINDOW,
+			CW_USEDEFAULT,
+			CW_USEDEFAULT,
+			rc.right - rc.left, rc.bottom - rc.top,
 			nullptr, nullptr, hInstance, this);
 
 		ShowWindow(m_hwnd, SW_SHOW);
 
 		UpdateWindow(m_hwnd);
 
-		//--- 初始化：Device、SwapChain、Renderer、Scene
+		return m_hwnd != nullptr;
+	}
 
+	bool MainWindow::InitD3D11(int width, int height)
+	{   
 		m_device = std::make_unique<Device>();
 
 		m_device->Initialize();
@@ -49,15 +57,21 @@ namespace MiniCAD
 		m_swapChain = std::make_unique<SwapChain>();
 
 		SwapChain::Options opt;
-		opt.enableVSync  = false;
+		opt.enableVSync = false;
 		opt.allowTearing = false;
 
 		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
 
-		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());	  
+		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());
 
-		m_scene    = std::make_unique<Scene>();
-		
+		return true;
+	};
+
+
+	bool MainWindow::InitScene(int width, int height)
+	{
+		m_scene = std::make_unique<Scene>();
+
 		m_viewport = std::make_unique<Viewport>(m_renderer.get(), width, height); // 传入m_renderer
 
 		AddEntity();
