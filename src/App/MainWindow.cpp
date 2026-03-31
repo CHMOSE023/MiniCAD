@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "Input/InputEvent.h"
+#include "App/Command/AddEntityCommand.h"
 
 namespace MiniCAD
 {
@@ -75,14 +77,28 @@ namespace MiniCAD
 		m_document = std::make_unique<Document>();
 
 		m_document->GetEditor()->SetCamera(m_viewport->GetCamera()); 
-	  
+	 
 		// 添加直线
 		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0), XMFLOAT4(1, 0, 0, 1));
 		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0), XMFLOAT4(0, 1, 0, 1));
-		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0), XMFLOAT4(1, 1, 0, 1));
+		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0), XMFLOAT4(1, 1, 0, 1)); 
 
-		return true;
+		auto entity = std::make_unique<LineEntity>(18,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
+		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
+		auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
 
+		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+
+		// ── 输入系统初始化 ──────────────────────────────
+		m_input.SetViewport(m_viewport.get());
+
+		// 责任链：优先级从前到后 ,UI Layer 就在最前面 PushHandler
+		m_input.PushHandler(m_viewport.get());        // pan / zoom
+		m_input.PushHandler(m_document.get());        // 文档输入
+		m_input.PushHandler(m_document->GetEditor()); // 绘图逻辑
+
+
+		return true; 
 	} 
 
 	LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -107,71 +123,52 @@ namespace MiniCAD
 	LRESULT MainWindow::EventProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
 		switch (msg)
+		{ 
+		case WM_SIZE: // ── 窗口生命周期（MainWindow 自己处理）────────────
 		{
-		case WM_MBUTTONDOWN:
-		{
-			SetCapture(hwnd); 
-			m_viewport->BeginPan();
-
-			m_lastMousePos.x = GET_X_LPARAM(lParam);
-			m_lastMousePos.y = GET_Y_LPARAM(lParam);
+			UINT w = LOWORD(lParam), h = HIWORD(lParam);
+			if (m_swapChain) m_swapChain->Resize(w, h);
+			if (m_viewport)  m_viewport->Resize((float)w, (float)h);
+			return 0;
 		}
-		break;
+		case WM_MBUTTONDOWN: // ── 中键 pan 的平台职责（SetCapture 必须在 Win32 层）─
+			SetCapture(hwnd);
+			m_lastMousePos = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			m_input.Dispatch(hwnd, msg, wParam, lParam);
+			return 0;
 
 		case WM_MBUTTONUP:
-		{
-			m_viewport->EndPan();
+			m_input.Dispatch(hwnd, msg, wParam, lParam);
 			ReleaseCapture();
-		}
-		break; 
-		  
+			return 0;
+
 		case WM_MOUSEMOVE:
 		{
-			POINT currentPos;
+			// delta 计算在 EventProc 层，pan 的物理位移只有这里能算
+			POINT cur = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			int dx = cur.x - m_lastMousePos.x;
+			int dy = cur.y - m_lastMousePos.y;
+			m_lastMousePos = cur;
 
-			currentPos.x = GET_X_LPARAM(lParam);
-			currentPos.y = GET_Y_LPARAM(lParam);
+			// 把 dx/dy 注入 Viewport（pan 需要），
+			// 然后再走正常的 Dispatch 让 Editor 也收到 MouseMove
+			if (GetAsyncKeyState(VK_MBUTTON) & 0x8000)
+				m_viewport->Pan((float)dx, (float)dy);
 
-			int dx = currentPos.x - m_lastMousePos.x;
-			int dy = currentPos.y - m_lastMousePos.y;
-
-			m_viewport->Pan((float)dx, (float)dy);
-			 
-			m_lastMousePos = currentPos;
+			m_input.Dispatch(hwnd, msg, wParam, lParam);
+			return 0;
 		}
-		break;  
 
+		// ── 其余所有输入消息交给 InputSystem ─────────────
+		case WM_LBUTTONDOWN:
+		case WM_LBUTTONUP:
+		case WM_RBUTTONDOWN:
+		case WM_RBUTTONUP:
 		case WM_MOUSEWHEEL:
-		{
-		
-			short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-			// ***微软设计***   	 
-			// WM_MOUSEWHEEL -> LOWORD/HIWORD(lParam) 是屏幕坐标！ 
-			POINT pt;
-			pt.x = GET_X_LPARAM(lParam);   // GET_X/Y_LPARAM，避免负坐标截断
-			pt.y = GET_Y_LPARAM(lParam);
-			ScreenToClient(hwnd, &pt);     // 转换为客户区坐标  
-			m_viewport->Zoom((float)delta / WHEEL_DELTA,  pt.x, pt.y);
-		}
-		break;
-
-		case WM_SIZE:
-		{
-			UINT w = LOWORD(lParam);
-			UINT h = HIWORD(lParam);
-
-			if (m_swapChain)
-			{
-				m_swapChain->Resize(w, h);
-			}
-
-			if (m_viewport)
-			{
-				m_viewport->Resize((float)w, (float)h);
-			}
-			
-		}
-		break;
+		case WM_KEYDOWN:
+		case WM_KEYUP:
+			m_input.Dispatch(hwnd, msg, wParam, lParam);
+			return 0;
 
 		case WM_DESTROY:
 			PostQuitMessage(0);
@@ -180,8 +177,6 @@ namespace MiniCAD
 		default:
 			return DefWindowProcW(hwnd, msg, wParam, lParam);
 		}
-
-		return 0;
 	}
 
 
@@ -195,24 +190,37 @@ namespace MiniCAD
 		 
 		m_swapChain->Present();         // 显示帧
 
-	}
+	} 
 
 	void MainWindow::Run()
 	{
 		MSG msg = {};
 
-		while (WM_QUIT != msg.message)
+		bool needsRedraw = true;
+		int a = 0;
+		while (msg.message != WM_QUIT)
 		{
-			if (GetMessage(&msg, nullptr, 0, 0))
+			if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 			{
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
-				
+				needsRedraw = true;  // 有任何消息都标记需要重绘
 			}
-
-			RenderFrame();
-			
-
+			else
+			{
+				// 空闲时只在需要时渲染一帧
+				if (needsRedraw)
+				{
+					//printf("%d\n",a++);
+					RenderFrame();
+					needsRedraw = false;
+				}
+				else
+				{
+					// 真正空闲：让出 CPU，等待下一条消息
+					WaitMessage();
+				}
+			}
 		}
 	}
 	 

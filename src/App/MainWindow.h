@@ -3,9 +3,9 @@
 #include "Render/D3D11/Device.h"	
 #include "Render/D3D11/SwapChain.h"	
 #include "Render/D3D11/Renderer.h"	 
-#include "Render/Viewport/Viewport.h"	
-#include "App/Scene/Scene.h"	
-#include "App/Document/Document.h"
+#include "Render/Viewport/Viewport.h"	 
+#include "App/Document/Document.h" 
+#include "App/Input/InputSystem.h" 
 
 namespace MiniCAD 
 {
@@ -28,13 +28,8 @@ namespace MiniCAD
 		bool InitViewportAndDocument(int width, int height);
 
 		// ── 渲染 ──────────────────────────────────────────────
-		void RenderFrame();
-
-		// ── 输入转换 ──────────────────────────────────────────
-		// InputEvent     BuildEvent(UINT msg, WPARAM wParam, LPARAM lParam);
-		// static uint8_t GetModifiers();
-
-		// void AddEntity();
+		void RenderFrame(); 
+  
 	private:
 		// 窗口
 		HWND m_hwnd;
@@ -46,8 +41,10 @@ namespace MiniCAD
 
 		// ── 应用层 ────────────────────────────────────────────
 		std::unique_ptr<Viewport>     m_viewport;
-		std::unique_ptr<Document>     m_document;
+		std::unique_ptr<Document>     m_document; 
 
+		InputSystem                   m_input;
+		 
 		// ── UI 层（预留）─────────────────────────────────────
 		// std::unique_ptr<IUILayer>  m_uiLayer;
 		POINT m_lastMousePos = { 0, 0 }; 

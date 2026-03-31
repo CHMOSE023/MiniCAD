@@ -4,6 +4,7 @@
 #include "App/Command/AddEntityCommand.h"
 #include "App/Command/DeleteEntityCommand.h"
 #include "Core/Entity/LineEntity.hpp"
+#include <App/Input/InputEvent.h>
 
 namespace MiniCAD 
 {
@@ -14,19 +15,21 @@ namespace MiniCAD
     {
     }
 
-    void Editor::OnInput(const InputEvent& e)
+    bool Editor::OnInput(const InputEvent& e)
     {
         switch (e.type)
         {
         case InputEventType::MouseButtonDown:
             OnMouseButtonDown(e);
-            break;
+            return true;
         case InputEventType::KeyDown:
             OnKeyDown(e);
-            break;
+            return true;
         default:
-            break;
+            return false;
         }
+
+        return false;
     }
 
     void Editor::OnMouseButtonDown(const InputEvent& e)
@@ -37,15 +40,26 @@ namespace MiniCAD
         // 点选
         auto id = m_picking.PickPoint(*m_scene, *m_camera, (float)e.mouseX, (float)e.mouseY);
 
-        if (!e.HasShift()) m_selection.clear(); // 没按 Shift 清空选择
+        if (!e.HasModifier(ModifierKey::Shift)) m_selection.clear(); // 没按 Shift 清空选择
         if (id != Object::InvalidID) m_selection.insert(id);
     }
 
     void Editor::OnKeyDown(const InputEvent& e)
     {
-       if (e.keyCode == VK_DELETE)           DeleteSelected();
-       if (e.HasCtrl() && e.keyCode == 'Z')  m_cmdStack->Undo(*m_scene);
-       if (e.HasCtrl() && e.keyCode == 'Y')  m_cmdStack->Redo(*m_scene);
+        if (e.keyCode == VK_DELETE)
+        {
+            DeleteSelected();
+        }
+
+        if (e.HasModifier(ModifierKey::Ctrl) && e.keyCode == 'Z')
+        {
+            m_cmdStack->Undo(*m_scene);
+        }
+
+        if (e.HasModifier(ModifierKey::Ctrl) && e.keyCode == 'Y')
+        {
+            m_cmdStack->Redo(*m_scene);
+        }
     }
       
     void Editor::AddLine(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end, const DirectX::XMFLOAT4& color)

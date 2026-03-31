@@ -1,9 +1,9 @@
-#pragma once
-#include "App/Input/IEventHandler.h"
+#pragma once 
 #include "App/Picking/Picking.h"
 #include "Core/Object/Object.hpp"
 #include <unordered_set> 
 #include <DirectXMath.h>
+#include <App/Input/IInputHandler.h>
 
 namespace MiniCAD
 {
@@ -11,13 +11,13 @@ namespace MiniCAD
     class CommandStack;
     class Camera;
 
-    class Editor : public IEventHandler
+    class Editor : public IInputHandler
     {
     public:
         Editor(Scene* scene, CommandStack* cmdStack);
 
         // ── IEventHandler ─────────────────────────────────────
-        void OnInput(const InputEvent& e) override;
+        bool OnInput(const InputEvent& e) override; 
 
         // ── 实体操作 ──────────────────────────────────────────
         void AddLine(

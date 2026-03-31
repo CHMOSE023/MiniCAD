@@ -15,9 +15,10 @@ namespace MiniCAD
         m_editor   = std::make_unique<Editor>(m_scene.get(), m_cmdStack.get());
     }
 
-    void Document::OnInput(const InputEvent& e) 
-    {
-        m_editor->OnInput(e);
+    bool Document::OnInput(const InputEvent& e) 
+    { 
+
+        return false;
     }
 
     void Document::Save(const std::string& path)

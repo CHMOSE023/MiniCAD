@@ -3,9 +3,10 @@
 #include "Render/D3D11/Renderer.h"
 #include "Render/Viewport/Camera.h"
 #include "Render/Viewport/Grid.h"  
+#include <App/Input/IInputHandler.h>
 namespace MiniCAD
 {
-	class Viewport
+	class Viewport : public IInputHandler
 	{
 	public:
 		Viewport(Renderer* renderer, float width, float height) :
@@ -29,6 +30,35 @@ namespace MiniCAD
 		void Zoom(float delta, float mouseX, float mouseY); // 缩放
 		void BeginPan();                                    // 开始平移
 		void EndPan();                                      // 结束平移	
+
+		bool OnInput(const InputEvent& e) override
+		{
+			switch (e.type)
+			{
+			case InputEventType::MouseWheel:
+				Zoom(e.wheelDelta, e.mouseX, e.mouseY);
+				return true;   // 消费
+			case InputEventType::MouseButtonDown:
+				if (e.button == MouseButton::Middle)
+				{
+					BeginPan(); 
+					return true;
+				}
+				break;
+			case InputEventType::MouseButtonUp:
+				if (e.button == MouseButton::Middle) 
+				{
+					EndPan(); 
+					return true;
+				}
+				break;
+			case InputEventType::MouseMove:
+				return false;  // 不消费，Editor 也需要 MouseMove
+			}
+			return false;
+		}
+		 
+		XMFLOAT2 ScreenToWorld(int px, int py) const;
 
 	private:
 		void DrawObject(const Object* obj);

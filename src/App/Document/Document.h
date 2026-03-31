@@ -2,8 +2,7 @@
 #include "App/Scene/Scene.h"
 #include "App/Scene/LayerManager.h"
 #include "App/Editor/Editor.h"
-#include "App/CommandStack/CommandStack.h"
-#include "App/Input/IEventHandler.h"
+#include "App/CommandStack/CommandStack.h" 
 #include "Core/Object/Object.hpp"
 #include <unordered_set>
 #include <string>
@@ -11,7 +10,7 @@
 
 namespace MiniCAD
 {
-	class Document : public IEventHandler
+	class Document : public IInputHandler
 	{
     public:
         Document();
@@ -20,13 +19,13 @@ namespace MiniCAD
         void New();
 
         // ── IEventHandler ─────────────────────────────────────
-        void OnInput(const InputEvent& e) override;
+        bool OnInput(const InputEvent& e) override;
 
         // ── 数据访问 ──────────────────────────────────────────
         Scene*        GetScene() { return m_scene.get(); }
         Editor*       GetEditor() { return m_editor.get(); }
         LayerManager* GetLayerManager() { return &m_scene->GetLayerManager(); }
-
+        CommandStack* GetCommandStack() { return m_cmdStack.get(); }
         const std::unordered_set<Object::ObjectID>& GetSelection() const
         { 
             return m_editor->GetSelection(); 

@@ -100,10 +100,10 @@ namespace MiniCAD
 
 		float DistanceToPoint(const XMFLOAT3& p) const
 		{
-			XMVECTOR cp = XMLoadFloat3(&ClosestPoint(p));
-			XMVECTOR pt = XMLoadFloat3(&p);
-
-			return XMVectorGetX(XMVector3Length(XMVectorSubtract(pt, cp)));
+			XMFLOAT3 cp  = ClosestPoint(p);           // 先存到具名变量
+			XMVECTOR vcp = XMLoadFloat3(&cp);        // 再取地址
+			XMVECTOR vpt = XMLoadFloat3(&p);
+			return XMVectorGetX(XMVector3Length(XMVectorSubtract(vpt, vcp)));
 		}
 
 		// =============================
