@@ -5,82 +5,72 @@
 using namespace DirectX;
 
 namespace MiniCAD
-{
-    // 将屏幕坐标转成世界空间
-    Ray Picking::ScreenPointToRay(const Camera& camera, float mouseX, float mouseY) const
-    {
-        float width  = camera.GetWidth();
-        float height = camera.GetHeight();
-
-        // 屏幕 → NDC
-        float ndcX = (2.0f * mouseX / width - 1.0f);
-        float ndcY = (1.0f - 2.0f * mouseY / height);
-
-        XMMATRIX invViewProj = XMMatrixInverse(nullptr, camera.GetViewProj());
-
-        XMVECTOR nearPoint = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), invViewProj);
-        XMVECTOR farPoint  = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), invViewProj);
-
-        Ray ray;
-        ray.origin = nearPoint;
-        ray.direction = XMVector3Normalize(farPoint - nearPoint);
-
-        return ray;
-    }
-
+{ 
     // 点选：返回离相机最近的对象ID
-    Object::ObjectID Picking::PickPoint(const Scene& scene, const Camera& camera, float mouseX, float mouseY) const
+    Object::ObjectID Picking::PickPoint(const Scene& scene, const IViewContext& view, float mouseX, float mouseY) const
     {
-        Ray ray = ScreenPointToRay(camera, mouseX, mouseY);
+        // 屏幕坐标 → 世界坐标
+        XMFLOAT3 worldPos = view.ScreenToWorld(mouseX, mouseY);
+        XMVECTOR mouse    = XMVectorSet(worldPos.x, worldPos.y, 0.f, 0.f);
 
-        float closestDist = FLT_MAX;
-        Object::ObjectID picked = Object::InvalidID;
 
-        // 选择
-        const float threshold = 0.1f; // 世界单位阈值
+        // 拾取容忍阈值（世界空间单位）
+        // 需要根据缩放换算：屏幕 5 像素对应多少世界单位
+        constexpr float kPixelTolerance = 5.f;
+        XMFLOAT3 p0 = view.ScreenToWorld(mouseX, mouseY);
+        XMFLOAT3 p1 = view.ScreenToWorld(mouseX + kPixelTolerance, mouseY);
+        float tolerance = fabsf(p1.x - p0.x); // 5 像素对应的世界单位
 
-        for (const auto& pair : scene.GetEntities())
+        Object::ObjectID bestID = Object::InvalidID;
+        float            bestDist = FLT_MAX;
+
+        for (auto id : scene.GetAllIDs())
         {
-            Object* obj = pair.second.get();
+            const auto* obj = scene.GetEntity(id);
             if (!obj) continue;
 
             if (obj->IsKindOf<LineEntity>())
             {
-                auto line = static_cast<LineEntity*>(obj);
-                XMVECTOR p0 = XMLoadFloat3(&line->GetLine().Start);
-                XMVECTOR p1 = XMLoadFloat3(&line->GetLine().End);
+                const auto* line = static_cast<const LineEntity*>(obj);
+                const auto& geo = line->GetLine();
 
-                XMVECTOR u = p1 - p0;
-                XMVECTOR d = ray.direction;
-                XMVECTOR w0 = ray.origin - p0;
+                float dist = PointToSegmentDistance(
+                    mouse,
+                    XMVectorSet(geo.Start.x, geo.Start.y, 0.f, 0.f),
+                    XMVectorSet(geo.End.x, geo.End.y, 0.f, 0.f));
 
-                float a = XMVectorGetX(XMVector3Dot(d, d));
-                float b = XMVectorGetX(XMVector3Dot(d, u));
-                float c = XMVectorGetX(XMVector3Dot(u, u));
-                float d_ = XMVectorGetX(XMVector3Dot(d, w0));
-                float e = XMVectorGetX(XMVector3Dot(u, w0));
-
-                float denom = a * c - b * b;
-                if (fabs(denom) < 1e-6f) continue; // 平行，忽略
-
-                float s = (b * d_ - a * e) / denom;
-                float t = (b * e - c * d_) / denom;
-
-                s = std::clamp(s, 0.0f, 1.0f);
-                if (t < 0) t = 0.0f;
-
-                XMVECTOR closestLinePoint = p0 + s * u;
-                XMVECTOR closestRayPoint = ray.origin + t * d;
-                float dist = XMVectorGetX(XMVector3Length(closestLinePoint - closestRayPoint));
-
-                if (dist < threshold && t < closestDist)
+                if (dist < tolerance && dist < bestDist)
                 {
-                    closestDist = t;
-                    picked = pair.first;
+                    bestDist = dist;
+                    bestID = id;
                 }
             }
         }
 
-        return picked;
+        return bestID; 
+    }
+
+    // 点到线段的最短距离
+    float Picking::PointToSegmentDistance(XMVECTOR p, XMVECTOR a, XMVECTOR b) const
+    {
+        XMVECTOR ab = XMVectorSubtract(b, a);
+        XMVECTOR ap = XMVectorSubtract(p, a);
+
+        float lenSq = XMVectorGetX(XMVector2Dot(ab, ab));
+        if (lenSq < 1e-10f)
+        {
+            // 线段退化为点
+            return XMVectorGetX(XMVector2Length(ap));
+        }
+
+        // t = dot(ap, ab) / dot(ab, ab)，clamp 到 [0,1]
+        float t = XMVectorGetX(XMVector2Dot(ap, ab)) / lenSq;
+        t = std::clamp(t, 0.f, 1.f);
+
+        // 最近点
+        XMVECTOR closest = XMVectorAdd(a, XMVectorScale(ab, t));
+        XMVECTOR diff = XMVectorSubtract(p, closest);
+
+        return XMVectorGetX(XMVector2Length(diff));
     }
 }

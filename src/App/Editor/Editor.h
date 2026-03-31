@@ -52,8 +52,15 @@ namespace MiniCAD
     private:
         void OnMouseButtonDown(const InputEvent& e);
         void OnKeyDown(const InputEvent& e);
+        void OnMouseMove(const InputEvent& e);
 
         void ActivateLastTool();
+
+        void UpdateHoverPreview(Object::ObjectID id);
+        void UpdateSelectPreview();
+
+    private:
+        Object::ObjectID m_hoveredID = Object::InvalidID;
 
         enum class ToolType { None, Line /*, Circle, Rect ... */ };
         ToolType m_lastToolType = ToolType::None; 
@@ -68,6 +75,8 @@ namespace MiniCAD
         // 持有
         Picking                              m_picking;
         std::unordered_set<Object::ObjectID> m_selection; 
+
+      
 
     };
 }

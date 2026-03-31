@@ -1,7 +1,7 @@
 #pragma once
 #include <DirectXMath.h>
 #include "Core/Object/Object.hpp"
-
+#include "App/Abstractions/IViewContext.h"
 namespace MiniCAD
 {
     class Scene;
@@ -19,10 +19,9 @@ namespace MiniCAD
         using ObjectID = Object::ObjectID;
 
         // 从鼠标屏幕位置选择最近对象
-        ObjectID PickPoint(const Scene& scene, const Camera& camera, float mouseX, float mouseY) const;
-
+        ObjectID PickPoint(const Scene& scene, const IViewContext& view, float mouseX, float mouseY) const;
     private:
-        Ray ScreenPointToRay(const Camera& camera, float mouseX, float mouseY) const;
+        float  PointToSegmentDistance(XMVECTOR p, XMVECTOR a, XMVECTOR b) const; 
 
 	};
 }

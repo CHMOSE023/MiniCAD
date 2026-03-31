@@ -67,20 +67,41 @@ namespace MiniCAD
 				return false;  // 不消费，Editor 也需要 MouseMove
 			}
 			return false;
-		}
-		 
-		
-		void SetPreview(PreviewPrimitive primitive) override // 设置预览图元
+		} 
+
+		// 绘制预览图元
+		void SetPreview(PreviewPrimitive primitive) override  
 		{
-			m_preview = std::move(primitive);
-			m_hasPreview = true;
+			m_toolPreview = std::move(primitive);
+			m_hasToolPreview = true;
 		}
 
-		void ClearPreview() override { m_hasPreview = false; } // 清空预览图元
+		// 清空绘制预览图元
+		void ClearPreview() override { m_hasToolPreview = false; }
 
+		// Viewport.h 接口实现
+		void SetHoverPreview(PreviewPrimitive primitive) override
+		{
+			m_hoverPreview = std::move(primitive);
+			m_hasHoverPreview = true;
+		}
+		void ClearHoverPreview() override { m_hasHoverPreview = false; }
+
+		void SetSelectPreview(std::vector<PreviewPrimitive> primitives) override
+		{
+			m_selectPreviews = std::move(primitives);
+			m_hasSelectPreview = !m_selectPreviews.empty();
+		}
+		void ClearSelectPreview() override
+		{
+			m_selectPreviews.clear();
+			m_hasSelectPreview = false;
+		}
 	private:
 		void DrawObject(const Object* obj);
-		void DrawPreview();                      // 绘制预览图形
+
+		void DrawPreviewPrimitive(const PreviewPrimitive& p); // 绘制预览图形
+
 		std::unique_ptr<Grid>    m_grid;         // 辅助轴网
 		std::unique_ptr<Camera>  m_camera;       // 持有 相机
 		Renderer*                m_renderer;     // 借用 渲染 
@@ -89,8 +110,14 @@ namespace MiniCAD
 		float                    m_height;
 
 		// 预览
-		PreviewPrimitive m_preview;
-		bool             m_hasPreview = false;
+		// Viewport.h 私有成员
+		PreviewPrimitive              m_toolPreview;           // 工具预览
+		PreviewPrimitive              m_hoverPreview;          // 悬停预览
+		std::vector<PreviewPrimitive> m_selectPreviews;        // 选中预览（多选）
+
+		bool m_hasToolPreview   = false;
+		bool m_hasHoverPreview  = false;
+		bool m_hasSelectPreview = false;
 	};
 
 	

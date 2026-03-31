@@ -35,21 +35,10 @@ namespace MiniCAD
         {
             switch (e.type)
             {
-            case InputEventType::MouseButtonDown:
-                m_tool->OnMouseDown(e);
-                return true;
-
-            case InputEventType::MouseButtonUp:
-                m_tool->OnMouseUp(e);
-                return true;
-
-            case InputEventType::MouseMove:
-                m_tool->OnMouseMove(e);
-                return true;
-
-            case InputEventType::KeyDown:
-                m_tool->OnKeyDown(e);
-                return true;
+            case InputEventType::MouseButtonDown: m_tool->OnMouseDown(e); return true;
+            case InputEventType::MouseButtonUp:   m_tool->OnMouseUp(e);   return true;
+            case InputEventType::MouseMove:       m_tool->OnMouseMove(e); return true;
+            case InputEventType::KeyDown:         m_tool->OnKeyDown(e);   return true;
             }
         }
 
@@ -59,6 +48,9 @@ namespace MiniCAD
         case InputEventType::MouseButtonDown:
             OnMouseButtonDown(e);
             return true;
+        case InputEventType::MouseMove:
+            OnMouseMove(e);      // ← 新增
+            return false;        // 不消费，Viewport 也需要
         case InputEventType::KeyDown:
             OnKeyDown(e);
             return true;
@@ -68,6 +60,7 @@ namespace MiniCAD
 
         return false;
     }
+     
      
     void Editor::OnKeyDown(const InputEvent& e)
     {  
@@ -122,18 +115,101 @@ namespace MiniCAD
         }
     }
 
+    void Editor::OnMouseMove(const InputEvent& e)
+    {
+        // Picking 找到鼠标下的实体
+        auto id = m_picking.PickPoint(*m_scene, *m_view, (float)e.mouseX, (float)e.mouseY);
+
+        printf("Picking 找到鼠标下的实体:%d\n", id);
+
+        if (id == m_hoveredID)
+            return; // 没变化，不刷新
+
+        m_hoveredID = id;
+
+        if (id != Object::InvalidID)
+        {
+            UpdateHoverPreview(id);
+        }
+        else
+        {
+            m_view->ClearHoverPreview();
+        }
+    }
+
+
     void Editor::OnMouseButtonDown(const InputEvent& e)
     {
         if (e.button != MouseButton::Left)
             return;
 
         // 点选
-        auto id = m_picking.PickPoint(*m_scene, *m_view->GetCamera(), (float)e.mouseX, (float)e.mouseY);
+        auto id = m_picking.PickPoint(*m_scene, *m_view, (float)e.mouseX, (float)e.mouseY);
 
-        if (!e.HasModifier(ModifierKey::Shift)) m_selection.clear(); // 没按 Shift 清空选择
-        if (id != Object::InvalidID) m_selection.insert(id);
+        if (!e.HasModifier(ModifierKey::Shift))
+        {
+            m_selection.clear(); // 没按 Shift 清空选择
+        }
+
+        if (id != Object::InvalidID)
+        {
+            m_selection.insert(id);
+        }
+
+        UpdateSelectPreview();  // 选中后刷新高亮
     }
       
+
+    void Editor::UpdateHoverPreview(Object::ObjectID id)
+    {
+        const auto* obj = m_scene->GetEntity(id);
+        if (!obj) return;
+
+        if (obj->IsKindOf<LineEntity>())
+        {
+            const auto* line = static_cast<const LineEntity*>(obj);
+            const auto& geo = line->GetLine();
+
+            PreviewPrimitive p;
+            p.Type = PreviewPrimitiveType::LineList;
+            p.Points = { geo.Start, geo.End };
+            p.Color = XMFLOAT4(0.3f, 0.6f, 1.f, 1.f); // 蓝色 hover
+            m_view->SetHoverPreview(std::move(p));
+        }
+    }
+
+    void Editor::UpdateSelectPreview()
+    {
+        std::vector<PreviewPrimitive> previews;
+
+        for (auto id : m_selection)
+        {
+            const auto* obj = m_scene->GetEntity(id);
+            if (!obj) continue;
+
+            if (obj->IsKindOf<LineEntity>())
+            {
+                const auto* line = static_cast<const LineEntity*>(obj);
+                const auto& geo = line->GetLine();
+
+                PreviewPrimitive p;
+                p.Type = PreviewPrimitiveType::LineList;
+                p.Points = { geo.Start, geo.End };
+                p.Color = XMFLOAT4(0.f, 1.f, 1.f, 1.f); // 青色 selected
+                previews.push_back(std::move(p));
+            }
+        }
+
+        if (previews.empty())
+        {
+            m_view->ClearSelectPreview();
+        }
+        else
+        {
+            m_view->SetSelectPreview(std::move(previews));
+        }
+    }
+
     void Editor::AddLine(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end, const DirectX::XMFLOAT4& color)
     {
         auto id = ObjectIDGenerator::Get().Next();
@@ -151,6 +227,7 @@ namespace MiniCAD
             auto cmd = std::make_unique<DeleteEntityCommand>(id);
             m_cmdStack->Execute(std::move(cmd), *m_scene);
         }
+
         m_selection.clear();
     }
 

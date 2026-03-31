@@ -8,52 +8,47 @@ namespace MiniCAD
 		// 1. 取 MVP
 		XMMATRIX mvp = m_camera->GetViewProj(); 
 
-		m_renderer->Begin(target, mvp); 
+		m_renderer->Begin(target, mvp);  
+
+		// 2. 选中高亮（青色，叠在实体上面）
+		if (m_hasSelectPreview)
+			for (auto& p : m_selectPreviews)
+				DrawPreviewPrimitive(p);
+
+		// 3. 悬停高亮（蓝色，叠在选中上面）
+		if (m_hasHoverPreview)
+			DrawPreviewPrimitive(m_hoverPreview);
+
+		// 4. 工具预览（灰色，最顶层）
+		if (m_hasToolPreview && !m_toolPreview.Points.empty())
+			DrawPreviewPrimitive(m_toolPreview);
 
 		// 1. 正常渲染 Scene 实体
-		for (auto id : scene.GetAllIDs()) 
+		for (auto id : scene.GetAllIDs())
 		{
 			DrawObject(scene.GetEntity(id));
 		}
-
-		// 2. 渲染网格
-		m_renderer->DrawGrad(*m_grid); // *m_grid 返回 Grid&
-
-		// 3. 渲染预览层
-		if (m_hasPreview && !m_preview.Points.empty())
-		{
-			DrawPreview();
-		}
-
+		m_renderer->DrawGrad(*m_grid);  
 		m_renderer->End();
 		 
 	}
 
-	void Viewport::DrawPreview()
+	void Viewport::DrawPreviewPrimitive(const PreviewPrimitive& p)
 	{
-		const auto& pts = m_preview.Points;
-		const auto& color = m_preview.Color;
-
-		switch (m_preview.Type)
+		const auto& pts = p.Points;
+		switch (p.Type)
 		{
 		case PreviewPrimitiveType::LineList:
-			// 每两个点一条线
 			for (size_t i = 0; i + 1 < pts.size(); i += 2)
-			{
-				m_renderer->DrawLine(pts[i], pts[i + 1], color);
-			}
+				m_renderer->DrawLine(pts[i], pts[i + 1], p.Color);
 			break;
-
 		case PreviewPrimitiveType::LineStrip:
-			// 相邻点连线
 			for (size_t i = 0; i + 1 < pts.size(); ++i)
-			{
-				m_renderer->DrawLine(pts[i], pts[i + 1], color);
-			}
+				m_renderer->DrawLine(pts[i], pts[i + 1], p.Color);
 			break;
 		}
-	}
-	  
+	} 
+	 
 	void Viewport::DrawObject(const Object* obj)
 	{
 		if (!obj) return;
