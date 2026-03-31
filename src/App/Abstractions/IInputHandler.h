@@ -1,5 +1,5 @@
 #pragma once
-#include "InputEvent.h"
+#include "App/Input/InputEvent.h"
 
 namespace MiniCAD
 {
