@@ -22,32 +22,16 @@ namespace MiniCAD
         // ── IEventHandler ─────────────────────────────────────
         bool OnInput(const InputEvent& e) override; 
 
-        void SetTool(std::unique_ptr<ITool> tool) 
-        { 
-            m_tool = std::move(tool);
-        }
-
-
-        // ── 实体操作 ──────────────────────────────────────────
-        void AddLine(
-            const DirectX::XMFLOAT3& start,
-            const DirectX::XMFLOAT3& end,
-            const DirectX::XMFLOAT4& color = DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f));
-
+        void SetTool(std::unique_ptr<ITool> tool)    {  m_tool = std::move(tool); }
+        void SetViewContext(IViewContext* ctx)   { m_view = ctx; }
+          
         void DeleteSelected();
 
         // ── 选择集 ────────────────────────────────────────────
-        const std::unordered_set<Object::ObjectID>& GetSelection() const
-        {
-            return m_selection;
-        }
+        const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }
         void  ClearSelection() { m_selection.clear(); }
-        bool  IsSelected(Object::ObjectID id) const
-        {
-            return m_selection.count(id) > 0;
-        }
+        bool  IsSelected(Object::ObjectID id) const { return m_selection.count(id) > 0; }
          
-        void SetViewContext(IViewContext* ctx)   { m_view = ctx; }
 
     private:
         void OnMouseButtonDown(const InputEvent& e);
@@ -55,26 +39,19 @@ namespace MiniCAD
         void OnMouseMove(const InputEvent& e);
 
         void ActivateLastTool();
-
-        void UpdateHoverPreview(Object::ObjectID id);
-        void UpdateSelectPreview();
-
-    private:
-        Object::ObjectID m_hoveredID = Object::InvalidID;
-
+  
+    private: 
         enum class ToolType { None, Line /*, Circle, Rect ... */ };
         ToolType m_lastToolType = ToolType::None; 
-
-        // 借用
-        Scene*        m_scene    = nullptr;
+         
+        Scene*        m_scene    = nullptr;      
         CommandStack* m_cmdStack = nullptr; 
-        IViewContext* m_view = nullptr;
+        IViewContext* m_view     = nullptr;
 
-        std::unique_ptr<ITool>  m_tool = nullptr;
-
-        // 持有
-        Picking                              m_picking;
+        std::unique_ptr<ITool>               m_tool = nullptr;  
+        Picking                              m_picking;   
         std::unordered_set<Object::ObjectID> m_selection; 
+        Object::ObjectID                     m_hoveredID = Object::InvalidID;
 
       
 

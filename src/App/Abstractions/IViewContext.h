@@ -2,6 +2,7 @@
 #include <DirectXMath.h>
 #include "Render/Viewport/Camera.h"
 #include "App/Preview/PreviewPrimitive.h"
+#include <unordered_set>
 namespace MiniCAD
 {
     class IViewContext
@@ -14,14 +15,12 @@ namespace MiniCAD
 
         // 绘制预览（LineTool 等绘制时用）
         virtual void SetPreview(PreviewPrimitive primitive) = 0;
-        virtual void ClearPreview() = 0;
+        virtual void ClearPreview() = 0; 
 
-        // 悬停高亮（单个实体，蓝色）
-        virtual void SetHoverPreview(PreviewPrimitive primitive) = 0;
-        virtual void ClearHoverPreview() = 0;
-
-        // 选中高亮（多个实体叠加，青色）
-        virtual void SetSelectPreview(std::vector<PreviewPrimitive> primitives) = 0;
-        virtual void ClearSelectPreview() = 0;
+        // 语义通知，怎么渲染由实现自己决定
+        virtual void SetHoveredIDs   (const std::unordered_set<Object::ObjectID>& ids) = 0;
+        virtual void SetSelectedIDs  (const std::unordered_set<Object::ObjectID>& ids) = 0;
+        virtual void ClearHoveredIDs () = 0;
+        virtual void ClearSelectedIDs() = 0;
     };
 }

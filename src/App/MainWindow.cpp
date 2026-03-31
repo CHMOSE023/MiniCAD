@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "Input/InputEvent.h"
 #include "App/Command/AddEntityCommand.h"
+#include "Core/Object/ObjectIDGenerator.hpp"
 
 namespace MiniCAD
 {
@@ -78,16 +79,34 @@ namespace MiniCAD
 
 		m_document->GetEditor()->SetViewContext(m_viewport.get());
 	 
-		// 添加直线
-		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0), XMFLOAT4(1, 0, 0, 1));
-		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0), XMFLOAT4(0, 1, 0, 1));
-		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0), XMFLOAT4(1, 1, 0, 1)); 
-
-		auto entity = std::make_unique<LineEntity>(18,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
+		// 直线1
+		auto id = ObjectIDGenerator::Get().Next();
+		auto entity = std::make_unique<LineEntity>(id,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
 		auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-
 		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+		
+		// 直线2
+		id = ObjectIDGenerator::Get().Next();
+		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
+		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
+		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+
+		// 直线3
+		id = ObjectIDGenerator::Get().Next();
+		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
+		entity->GetAttr().Color = XMFLOAT4(0, 1, 0, 1);
+		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+
+		// 直线4
+		id = ObjectIDGenerator::Get().Next();
+		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0));
+		entity->GetAttr().Color = XMFLOAT4(1, 1, 0, 1);
+		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+
 
 		// ── 输入系统初始化 ──────────────────────────────
 		m_input.SetViewport(m_viewport.get());

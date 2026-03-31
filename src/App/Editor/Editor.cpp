@@ -128,13 +128,9 @@ namespace MiniCAD
         m_hoveredID = id;
 
         if (id != Object::InvalidID)
-        {
-            UpdateHoverPreview(id);
-        }
+            m_view->SetHoveredIDs({ id });
         else
-        {
-            m_view->ClearHoverPreview();
-        }
+            m_view->ClearHoveredIDs();
     }
 
 
@@ -146,79 +142,18 @@ namespace MiniCAD
         // 点选
         auto id = m_picking.PickPoint(*m_scene, *m_view, (float)e.mouseX, (float)e.mouseY);
 
-        if (!e.HasModifier(ModifierKey::Shift))
-        {
-            m_selection.clear(); // 没按 Shift 清空选择
-        }
+        if (!e.HasModifier(ModifierKey::Ctrl)) // 没有按 Ctrl 清空
+            m_selection.clear();
 
         if (id != Object::InvalidID)
-        {
             m_selection.insert(id);
-        }
-
-        UpdateSelectPreview();  // 选中后刷新高亮
-    }
-      
-
-    void Editor::UpdateHoverPreview(Object::ObjectID id)
-    {
-        const auto* obj = m_scene->GetEntity(id);
-        if (!obj) return;
-
-        if (obj->IsKindOf<LineEntity>())
-        {
-            const auto* line = static_cast<const LineEntity*>(obj);
-            const auto& geo = line->GetLine();
-
-            PreviewPrimitive p;
-            p.Type = PreviewPrimitiveType::LineList;
-            p.Points = { geo.Start, geo.End };
-            p.Color = XMFLOAT4(0.3f, 0.6f, 1.f, 1.f); // 蓝色 hover
-            m_view->SetHoverPreview(std::move(p));
-        }
-    }
-
-    void Editor::UpdateSelectPreview()
-    {
-        std::vector<PreviewPrimitive> previews;
-
-        for (auto id : m_selection)
-        {
-            const auto* obj = m_scene->GetEntity(id);
-            if (!obj) continue;
-
-            if (obj->IsKindOf<LineEntity>())
-            {
-                const auto* line = static_cast<const LineEntity*>(obj);
-                const auto& geo = line->GetLine();
-
-                PreviewPrimitive p;
-                p.Type = PreviewPrimitiveType::LineList;
-                p.Points = { geo.Start, geo.End };
-                p.Color = XMFLOAT4(0.f, 1.f, 1.f, 1.f); // 青色 selected
-                previews.push_back(std::move(p));
-            }
-        }
-
-        if (previews.empty())
-        {
-            m_view->ClearSelectPreview();
-        }
+         
+        if (m_selection.empty())
+            m_view->ClearSelectedIDs();
         else
-        {
-            m_view->SetSelectPreview(std::move(previews));
-        }
-    }
-
-    void Editor::AddLine(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end, const DirectX::XMFLOAT4& color)
-    {
-        auto id = ObjectIDGenerator::Get().Next();
-        auto lineEntity = std::make_unique<LineEntity>(id, start, end);
-        lineEntity->GetAttr().Color = color;
-
-        auto cmd = std::make_unique<AddEntityCommand>(std::move(lineEntity));
-        m_cmdStack->Execute(std::move(cmd), *m_scene);
-    }
+            m_view->SetSelectedIDs(m_selection);
+         
+    } 
 
     void Editor::DeleteSelected()
     {
@@ -229,6 +164,7 @@ namespace MiniCAD
         }
 
         m_selection.clear();
+        m_view->ClearSelectedIDs();
     }
 
 }  

@@ -2,7 +2,16 @@
 #include "App/Preview/PreviewPrimitive.h"
 
 namespace MiniCAD
-{  
+{
+	Viewport::Viewport(Renderer* renderer, float width, float height) :
+		m_renderer(renderer),
+		m_grid(std::make_unique<Grid>(XMFLOAT3())),
+		m_camera(std::make_unique<Camera>(width, height)),
+		m_width(0.f),
+		m_height(0.f),
+		m_isPanning(false)
+	{
+	}
 	void Viewport::Draw(const Scene& scene, const RenderTarget& target)
 	{
 		// 1. 取 MVP
@@ -10,29 +19,51 @@ namespace MiniCAD
 
 		m_renderer->Begin(target, mvp);  
 
-		// 2. 选中高亮（青色，叠在实体上面）
-		if (m_hasSelectPreview)
-			for (auto& p : m_selectPreviews)
-				DrawPreviewPrimitive(p);
+		// 1. 绘制实体，跳过 Hover/Selected
+		for (auto id : scene.GetAllIDs())
+		{
+			if (m_hoveredIDs.count(id))  continue;
+			if (m_selectedIDs.count(id)) continue; 
+			DrawObject(scene.GetEntity(id));
+		}
 
-		// 3. 悬停高亮（蓝色，叠在选中上面）
-		if (m_hasHoverPreview)
-			DrawPreviewPrimitive(m_hoverPreview);
+		m_renderer->DrawGrad(*m_grid);
+		 
+		// 2.绘制选中
+		for (auto id : m_selectedIDs)
+			DrawObject(scene.GetEntity(id), XMFLOAT4(0.0f, 0.2f, 0.8f, 1.0f));    
+		
+		// 3.绘制悬浮
+		for (auto id : m_hoveredIDs)
+			DrawObject(scene.GetEntity(id), XMFLOAT4(0.0f, 0.3f, 0.8f,1.0f));   
 
 		// 4. 工具预览（灰色，最顶层）
 		if (m_hasToolPreview && !m_toolPreview.Points.empty())
 			DrawPreviewPrimitive(m_toolPreview);
 
-		// 1. 正常渲染 Scene 实体
-		for (auto id : scene.GetAllIDs())
-		{
-			DrawObject(scene.GetEntity(id));
-		}
+		
 		m_renderer->DrawGrad(*m_grid);  
 		m_renderer->End();
 		 
 	}
 
+	void Viewport::ClearPreview() { m_hasToolPreview = false; } 
+
+	void Viewport::SetHoveredIDs(const std::unordered_set<Object::ObjectID>& ids){m_hoveredIDs = ids;}
+
+	void Viewport::SetSelectedIDs(const std::unordered_set<Object::ObjectID>& ids) { m_selectedIDs = ids; }
+
+	void Viewport::ClearHoveredIDs() { m_hoveredIDs.clear(); }
+
+	void Viewport::ClearSelectedIDs() { m_selectedIDs.clear(); }
+
+	DirectX::XMFLOAT3 Viewport::ScreenToWorld(float px, float py) const  { return m_camera->ScreenToWorld(px, py); }
+
+	Camera* Viewport::GetCamera() const { return m_camera.get(); }
+	   
+	/// <summary>
+	/// 绘制预览
+	/// </summary>
 	void Viewport::DrawPreviewPrimitive(const PreviewPrimitive& p)
 	{
 		const auto& pts = p.Points;
@@ -53,24 +84,64 @@ namespace MiniCAD
 	{
 		if (!obj) return;
 
-		 if (obj->IsKindOf<LineEntity>()) {
-		 	const auto* line = static_cast<const LineEntity*>(obj);
+		if (obj->IsKindOf<LineEntity>())
+		{
+			const auto* line = static_cast<const LineEntity*>(obj);
 			const auto& attr = line->GetAttr();
-		 	const auto& geo = line->GetLine();
-		 	m_renderer->DrawLine(geo.Start, geo.End, attr.Color);
-		 	return;
-		 }
- 
+			const auto& geo = line->GetLine();
+			m_renderer->DrawLine(geo.Start, geo.End, attr.Color);
+			return;
+		}
+
 	}
 
-	void Viewport::BeginPan() 
+	void Viewport::DrawObject(const Object* obj, const DirectX::XMFLOAT4& color)
 	{
-		m_isPanning = true;
+		if (obj->IsKindOf<LineEntity>()) 
+		{
+			const auto* line = static_cast<const LineEntity*>(obj);		 
+			const auto& geo = line->GetLine();
+			m_renderer->DrawLine(geo.Start, geo.End, color);
+			return;
+		}
 	}
 
-	void Viewport::EndPan()
+	void Viewport::BeginPan() { m_isPanning = true; }
+
+	void Viewport::EndPan() { m_isPanning = false; }
+
+	bool Viewport::OnInput(const InputEvent& e)
 	{
-		m_isPanning = false;
+		switch (e.type)
+		{
+		case InputEventType::MouseWheel:
+			Zoom(e.wheelDelta, e.mouseX, e.mouseY);
+			return true;   // 消费
+		case InputEventType::MouseButtonDown:
+			if (e.button == MouseButton::Middle)
+			{
+				BeginPan();
+				return true;
+			}
+			break;
+		case InputEventType::MouseButtonUp:
+			if (e.button == MouseButton::Middle)
+			{
+				EndPan();
+				return true;
+			}
+			break;
+		case InputEventType::MouseMove:
+			return false;  // 不消费，Editor 也需要 MouseMove
+		}
+		return false;
+	}
+
+	// 绘制预览图元
+	void Viewport::SetPreview(PreviewPrimitive primitive)
+	{
+		m_toolPreview = std::move(primitive);
+		m_hasToolPreview = true;
 	}
 
 	void Viewport::Pan(float dx, float dy)
