@@ -1,7 +1,7 @@
 #pragma once
 #include "pch.h"
 #include "InputEvent.h"
-#include "IInputHandler.h"
+#include "App/Abstractions/IInputHandler.h"
 #include <vector>
 
 namespace MiniCAD

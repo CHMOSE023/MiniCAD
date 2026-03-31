@@ -1,5 +1,5 @@
 #pragma once
-#include "App/Command/ICommand.h"
+#include "App/Abstractions/ICommand.h"
 #include <stack>
 #include <memory>
 namespace MiniCAD

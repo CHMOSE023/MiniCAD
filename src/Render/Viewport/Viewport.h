@@ -3,10 +3,12 @@
 #include "Render/D3D11/Renderer.h"
 #include "Render/Viewport/Camera.h"
 #include "Render/Viewport/Grid.h"  
-#include <App/Input/IInputHandler.h>
+#include "App/Abstractions/IInputHandler.h"
+#include "App/Abstractions/IViewContext.h"
+#include <App/Preview/PreviewPrimitive.h>
 namespace MiniCAD
 {
-	class Viewport : public IInputHandler
+	class Viewport : public IInputHandler, public IViewContext
 	{
 	public:
 		Viewport(Renderer* renderer, float width, float height) :
@@ -18,11 +20,20 @@ namespace MiniCAD
 			m_isPanning(false) 
 		{
 		}
-
+		 
 		void Draw(const Scene& scene, const RenderTarget& target);
 
-		Camera* GetCamera() const { return m_camera.get(); }
 		Grid*   GetGrid()   const { return m_grid.get(); }
+
+		DirectX::XMFLOAT3 ScreenToWorld(float px, float py) const override
+		{
+			return m_camera->ScreenToWorld(px, py);
+		}
+
+		Camera* GetCamera() const override
+		{
+			return m_camera.get();
+		}
 
 		// ── 交互操作 ── 
 		void Resize(float width, float height);              
@@ -58,17 +69,28 @@ namespace MiniCAD
 			return false;
 		}
 		 
-		XMFLOAT2 ScreenToWorld(int px, int py) const;
+		
+		void SetPreview(PreviewPrimitive primitive) override // 设置预览图元
+		{
+			m_preview = std::move(primitive);
+			m_hasPreview = true;
+		}
+
+		void ClearPreview() override { m_hasPreview = false; } // 清空预览图元
 
 	private:
 		void DrawObject(const Object* obj);
-
+		void DrawPreview();                      // 绘制预览图形
 		std::unique_ptr<Grid>    m_grid;         // 辅助轴网
 		std::unique_ptr<Camera>  m_camera;       // 持有 相机
 		Renderer*                m_renderer;     // 借用 渲染 
 		bool                     m_isPanning;    // 是否平移
 		float                    m_width;  
 		float                    m_height;
+
+		// 预览
+		PreviewPrimitive m_preview;
+		bool             m_hasPreview = false;
 	};
 
 	

@@ -1,5 +1,5 @@
 #include "CommandStack.h"
-#include "App/Command/ICommand.h"
+#include "App/Abstractions/ICommand.h"
 #include "App/Scene/Scene.h"
 
 namespace MiniCAD 

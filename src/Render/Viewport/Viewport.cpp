@@ -1,4 +1,5 @@
 #include "Render/Viewport/Viewport.h"
+#include "App/Preview/PreviewPrimitive.h"
 
 namespace MiniCAD
 {  
@@ -9,40 +10,50 @@ namespace MiniCAD
 
 		m_renderer->Begin(target, mvp); 
 
+		// 1. 正常渲染 Scene 实体
 		for (auto id : scene.GetAllIDs()) 
 		{
 			DrawObject(scene.GetEntity(id));
 		}
 
+		// 2. 渲染网格
 		m_renderer->DrawGrad(*m_grid); // *m_grid 返回 Grid&
+
+		// 3. 渲染预览层
+		if (m_hasPreview && !m_preview.Points.empty())
+		{
+			DrawPreview();
+		}
+
 		m_renderer->End();
 		 
 	}
 
-
-	// 矩阵逆变换的通用写法
-	XMFLOAT2 Viewport::ScreenToWorld(int px, int py) const
+	void Viewport::DrawPreview()
 	{
-		const Camera* cam = GetCamera();
+		const auto& pts = m_preview.Points;
+		const auto& color = m_preview.Color;
 
-		// 屏幕像素 → NDC（-1 ~ +1）
-		float ndcX  = (2.f * px / cam->GetWidth()) - 1.f;
-		float ndcY = -(2.f * py / cam->GetHeight()) + 1.f; // Y 轴翻转
+		switch (m_preview.Type)
+		{
+		case PreviewPrimitiveType::LineList:
+			// 每两个点一条线
+			for (size_t i = 0; i + 1 < pts.size(); i += 2)
+			{
+				m_renderer->DrawLine(pts[i], pts[i + 1], color);
+			}
+			break;
 
-		// NDC 点（z=0 对应近平面，正交投影里 z 无所谓，取 0）
-		XMVECTOR ndcPos = XMVectorSet(ndcX, ndcY, 0.f, 1.f);
-
-		// 逆变换矩阵
-		XMMATRIX invViewProj = XMMatrixInverse(nullptr, cam->GetViewProj());
-
-		// 变换到世界空间
-		XMVECTOR worldPos = XMVector3TransformCoord(ndcPos, invViewProj);
-
-		XMFLOAT3 result;
-		XMStoreFloat3(&result, worldPos);
-		return XMFLOAT2(result.x, result.y);
+		case PreviewPrimitiveType::LineStrip:
+			// 相邻点连线
+			for (size_t i = 0; i + 1 < pts.size(); ++i)
+			{
+				m_renderer->DrawLine(pts[i], pts[i + 1], color);
+			}
+			break;
+		}
 	}
-
+	  
 	void Viewport::DrawObject(const Object* obj)
 	{
 		if (!obj) return;

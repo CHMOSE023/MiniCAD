@@ -76,7 +76,7 @@ namespace MiniCAD
 
 		m_document = std::make_unique<Document>();
 
-		m_document->GetEditor()->SetCamera(m_viewport->GetCamera()); 
+		m_document->GetEditor()->SetViewContext(m_viewport.get());
 	 
 		// 添加直线
 		m_document->GetEditor()->AddLine(XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0), XMFLOAT4(1, 0, 0, 1));

@@ -17,6 +17,28 @@ namespace MiniCAD
         m_screenHeight = height;
     }
 
+    // 矩阵逆变换的通用写法
+    XMFLOAT3 Camera::ScreenToWorld(int px, int py) const
+    { 
+         
+        // 屏幕像素 → NDC（-1 ~ +1）
+        float ndcX = (2.f * px / GetWidth()) - 1.f;
+        float ndcY = -(2.f * py / GetHeight()) + 1.f; // Y 轴翻转
+
+        // NDC 点（z=0 对应近平面，正交投影里 z 无所谓，取 0）
+        XMVECTOR ndcPos = XMVectorSet(ndcX, ndcY, 0.f, 1.f);
+
+        // 逆变换矩阵
+        XMMATRIX invViewProj = XMMatrixInverse(nullptr, GetViewProj());
+
+        // 变换到世界空间
+        XMVECTOR worldPos = XMVector3TransformCoord(ndcPos, invViewProj);
+
+        XMFLOAT3 result;
+        XMStoreFloat3(&result, worldPos);
+        return XMFLOAT3(result.x, result.y, 0.f); // !!! 强制 Z=0，CAD 永远在 XY 平面
+    }
+
     void Camera::Update(float dx, float dy, float scroll, bool isPanning, int mouseX, int mouseY)
     {
         const float zoomFactor = 1.1f;

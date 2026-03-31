@@ -21,6 +21,8 @@ namespace MiniCAD {
 
         float GetWidth()  const { return m_screenWidth; }
         float GetHeight() const { return m_screenHeight; }
+
+        XMFLOAT3 ScreenToWorld(int px, int py) const;
     private:
         // 观察中心
         XMFLOAT3 m_target = { 0, 0, 0 };
