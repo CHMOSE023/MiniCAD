@@ -11,52 +11,45 @@ namespace MiniCAD
 		m_height(0.f),
 		m_isPanning(false)
 	{
-	}
-	void Viewport::Draw(const Scene& scene, const RenderTarget& target)
-	{
+	} 
+
+	void Viewport::Draw(const Scene& scene,
+		const std::unordered_set<Object::ObjectID>& selected,
+		const std::unordered_set<Object::ObjectID>& hovered,
+		const RenderTarget& target)
+	{	
 		// 1. 取 MVP
-		XMMATRIX mvp = m_camera->GetViewProj(); 
+		XMMATRIX mvp = m_camera->GetViewProj();
 
-		m_renderer->Begin(target, mvp);  
-
-		// 1. 绘制实体，跳过 Hover/Selected
-		for (auto id : scene.GetAllIDs())
+		m_renderer->Begin(target, mvp);
+		  
+		for (auto& id : scene.GetAllIDs())
 		{
-			if (m_hoveredIDs.count(id))  continue;
-			if (m_selectedIDs.count(id)) continue; 
-			DrawObject(scene.GetEntity(id));
+			auto obj = scene.GetEntity(id);
+
+			if (selected.count(id))
+			{
+				DrawObject(obj, DirectX::XMFLOAT4(1, 1, 0, 1)); // 选中：黄
+			}
+			else if (hovered.count(id))
+			{
+				DrawObject(obj, DirectX::XMFLOAT4(0, 1, 1, 1)); // Hover：青
+			}
+			else
+			{
+				DrawObject(obj);
+			}
 		}
 
-		m_renderer->DrawGrad(*m_grid);
-		 
-		// 2.绘制选中
-		for (auto id : m_selectedIDs)
-			DrawObject(scene.GetEntity(id), XMFLOAT4(0.0f, 0.2f, 0.8f, 1.0f));    
-		
-		// 3.绘制悬浮
-		for (auto id : m_hoveredIDs)
-			DrawObject(scene.GetEntity(id), XMFLOAT4(0.0f, 0.3f, 0.8f,1.0f));   
-
-		// 4. 工具预览（灰色，最顶层）
-		if (m_hasToolPreview && !m_toolPreview.Points.empty())
+		if (m_hasToolPreview)
 			DrawPreviewPrimitive(m_toolPreview);
 
-		
-		m_renderer->DrawGrad(*m_grid);  
+		m_renderer->DrawGrad(*m_grid);
 		m_renderer->End();
-		 
 	}
 
 	void Viewport::ClearPreview() { m_hasToolPreview = false; } 
-
-	void Viewport::SetHoveredIDs(const std::unordered_set<Object::ObjectID>& ids){m_hoveredIDs = ids;}
-
-	void Viewport::SetSelectedIDs(const std::unordered_set<Object::ObjectID>& ids) { m_selectedIDs = ids; }
-
-	void Viewport::ClearHoveredIDs() { m_hoveredIDs.clear(); }
-
-	void Viewport::ClearSelectedIDs() { m_selectedIDs.clear(); }
-
+	  
 	DirectX::XMFLOAT3 Viewport::ScreenToWorld(float px, float py) const  { return m_camera->ScreenToWorld(px, py); }
 
 	Camera* Viewport::GetCamera() const { return m_camera.get(); }

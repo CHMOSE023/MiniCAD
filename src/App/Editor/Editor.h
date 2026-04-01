@@ -28,10 +28,12 @@ namespace MiniCAD
         void DeleteSelected();
 
         // ── 选择集 ────────────────────────────────────────────
+        // const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }
+        // void  ClearSelection() { m_selection.clear(); }
+        // bool  IsSelected(Object::ObjectID id) const { return m_selection.count(id) > 0; }
+        // 状态输出（给 Viewport）
         const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }
-        void  ClearSelection() { m_selection.clear(); }
-        bool  IsSelected(Object::ObjectID id) const { return m_selection.count(id) > 0; }
-         
+        const std::unordered_set<Object::ObjectID>& GetHovered()  const { return m_hovered; }
 
     private:
         void OnMouseButtonDown(const InputEvent& e);
@@ -39,7 +41,7 @@ namespace MiniCAD
         void OnMouseMove(const InputEvent& e);
 
         void ActivateLastTool();
-  
+        void SyncSelectionWithScene();
     private: 
         enum class ToolType { None, Line /*, Circle, Rect ... */ };
         ToolType m_lastToolType = ToolType::None; 
@@ -50,7 +52,10 @@ namespace MiniCAD
 
         std::unique_ptr<ITool>               m_tool = nullptr;  
         Picking                              m_picking;   
+
         std::unordered_set<Object::ObjectID> m_selection; 
+        std::unordered_set<Object::ObjectID> m_hovered;
+
         Object::ObjectID                     m_hoveredID = Object::InvalidID;
 
       

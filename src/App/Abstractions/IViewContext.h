@@ -16,11 +16,6 @@ namespace MiniCAD
         // 绘制预览（LineTool 等绘制时用）
         virtual void SetPreview(PreviewPrimitive primitive) = 0;
         virtual void ClearPreview() = 0; 
-
-        // 语义通知，怎么渲染由实现自己决定
-        virtual void SetHoveredIDs   (const std::unordered_set<Object::ObjectID>& ids) = 0;
-        virtual void SetSelectedIDs  (const std::unordered_set<Object::ObjectID>& ids) = 0;
-        virtual void ClearHoveredIDs () = 0;
-        virtual void ClearSelectedIDs() = 0;
+         
     };
 }

@@ -14,13 +14,13 @@ namespace MiniCAD
 	public:
 		Viewport(Renderer* renderer, float width, float height);
 		 
-		void Draw(const Scene& scene, const RenderTarget& target);  
-		   
-		virtual void SetHoveredIDs(const std::unordered_set<Object::ObjectID>& ids)  override;
-		virtual void SetSelectedIDs(const std::unordered_set<Object::ObjectID>& ids) override;
-		virtual void ClearHoveredIDs() override;
-		virtual void ClearSelectedIDs() override;
+		// void Draw(const Scene& scene, const RenderTarget& target);    
 
+		void Draw(const Scene& scene,
+			const std::unordered_set<Object::ObjectID>& selected,
+			const std::unordered_set<Object::ObjectID>& hovered,
+			const RenderTarget& target);
+		 
 
 		virtual void SetPreview(PreviewPrimitive primitive) override; // 绘制预览图元		
 		virtual void ClearPreview() override;                         // 清空绘制预览图元
@@ -50,10 +50,7 @@ namespace MiniCAD
 
 		PreviewPrimitive    m_toolPreview; 	// 预览 	
 		bool                m_hasToolPreview = false;
-
-		// 高亮 ID（由 Editor 通知，Viewport 自己决定渲染方式）
-		std::unordered_set<Object::ObjectID> m_hoveredIDs;
-		std::unordered_set<Object::ObjectID> m_selectedIDs;
+		 
 	};
 
 	

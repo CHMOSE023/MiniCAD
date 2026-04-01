@@ -60,7 +60,7 @@ namespace MiniCAD
 		m_swapChain = std::make_unique<SwapChain>();
 
 		SwapChain::Options opt;
-		opt.enableVSync = false;
+		opt.enableVSync  = false;
 		opt.allowTearing = false;
 
 		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
@@ -84,28 +84,28 @@ namespace MiniCAD
 		auto entity = std::make_unique<LineEntity>(id,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
 		auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
 		
 		// 直线2
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
 
 		// 直线3
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
 		entity->GetAttr().Color = XMFLOAT4(0, 1, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
 
 		// 直线4
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 1, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), *m_document->GetScene());
+		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
 
 
 		// ── 输入系统初始化 ──────────────────────────────
@@ -203,9 +203,12 @@ namespace MiniCAD
 	{
 		auto target = m_swapChain->GetRenderTarget();	
 		 
-		const auto scene = m_document->GetScene();
+		const auto& scene = m_document->GetScene();
 
-		m_viewport->Draw(*scene, target);
+		auto selection   = m_document->GetEditor()->GetSelection();
+		auto hovered     = m_document->GetEditor()->GetHovered();
+
+		m_viewport->Draw(scene, selection, hovered,target);
 		 
 		m_swapChain->Present();         // 显示帧
 

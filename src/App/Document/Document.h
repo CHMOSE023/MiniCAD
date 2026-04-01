@@ -22,7 +22,8 @@ namespace MiniCAD
         bool OnInput(const InputEvent& e) override;
 
         // ── 数据访问 ──────────────────────────────────────────
-        Scene*        GetScene() { return m_scene.get(); }
+        Scene&        GetScene()       { return *m_scene; }
+        const Scene&  GetScene() const { return *m_scene; }
         Editor*       GetEditor() { return m_editor.get(); }
         LayerManager* GetLayerManager() { return &m_scene->GetLayerManager(); }
         CommandStack* GetCommandStack() { return m_cmdStack.get(); }

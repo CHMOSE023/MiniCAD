@@ -90,6 +90,7 @@ namespace MiniCAD
         if (e.HasModifier(ModifierKey::Ctrl) && e.keyCode == 'Z')
         {
             m_cmdStack->Undo(*m_scene);
+            SyncSelectionWithScene();
             return;
         }
 
@@ -97,6 +98,7 @@ namespace MiniCAD
         if (e.HasModifier(ModifierKey::Ctrl) && e.keyCode == 'Y')
         {
             m_cmdStack->Redo(*m_scene);
+            SyncSelectionWithScene();
             return;
         }
     }
@@ -126,11 +128,10 @@ namespace MiniCAD
             return; // 没变化，不刷新
 
         m_hoveredID = id;
-
+         
+        m_hovered.clear();
         if (id != Object::InvalidID)
-            m_view->SetHoveredIDs({ id });
-        else
-            m_view->ClearHoveredIDs();
+            m_hovered.insert(id);
     }
 
 
@@ -147,12 +148,7 @@ namespace MiniCAD
 
         if (id != Object::InvalidID)
             m_selection.insert(id);
-         
-        if (m_selection.empty())
-            m_view->ClearSelectedIDs();
-        else
-            m_view->SetSelectedIDs(m_selection);
-         
+           
     } 
 
     void Editor::DeleteSelected()
@@ -163,8 +159,26 @@ namespace MiniCAD
             m_cmdStack->Execute(std::move(cmd), *m_scene);
         }
 
-        m_selection.clear();
-        m_view->ClearSelectedIDs();
+        m_selection.clear();  
+        SyncSelectionWithScene();  
     }
 
+    void Editor::SyncSelectionWithScene()
+    {
+        std::unordered_set<Object::ObjectID> valid; // 有效
+
+        for (auto id : m_selection)
+        {
+            if (m_scene->Has(id))
+                valid.insert(id);
+        }
+
+        m_selection = std::move(valid);
+
+        if (!m_scene->Has(m_hoveredID))
+        {
+            m_hoveredID = Object::InvalidID;
+            m_hovered.clear();
+        }
+    }
 }  
