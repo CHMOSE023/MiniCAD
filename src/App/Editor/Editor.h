@@ -26,11 +26,7 @@ namespace MiniCAD
         void SetViewContext(IViewContext* ctx)   { m_view = ctx; }
           
         void DeleteSelected();
-
-        // ── 选择集 ────────────────────────────────────────────
-        // const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }
-        // void  ClearSelection() { m_selection.clear(); }
-        // bool  IsSelected(Object::ObjectID id) const { return m_selection.count(id) > 0; }
+         
         // 状态输出（给 Viewport）
         const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }
         const std::unordered_set<Object::ObjectID>& GetHovered()  const { return m_hovered; }

@@ -22,11 +22,18 @@ namespace MiniCAD
         bool OnInput(const InputEvent& e) override;
 
         // ── 数据访问 ──────────────────────────────────────────
-        Scene&        GetScene()       { return *m_scene; }
-        const Scene&  GetScene() const { return *m_scene; }
-        Editor*       GetEditor() { return m_editor.get(); }
-        LayerManager* GetLayerManager() { return &m_scene->GetLayerManager(); }
-        CommandStack* GetCommandStack() { return m_cmdStack.get(); }
+        Scene&         GetScene()        { return *m_scene; }
+        const Scene&   GetScene()  const { return *m_scene; }
+
+        Editor&        GetEditor()       { return *m_editor; }
+        const  Editor& GetEditor() const { return *m_editor; }
+
+        CommandStack&       GetCommandStack()       { return *m_cmdStack; }
+        const CommandStack& GetCommandStack() const { return *m_cmdStack; }
+
+        LayerManager&       GetLayerManager()       { return m_scene->GetLayerManager(); }
+        const LayerManager& GetLayerManager() const { return m_scene->GetLayerManager(); }
+
         const std::unordered_set<Object::ObjectID>& GetSelection() const
         { 
             return m_editor->GetSelection(); 
@@ -37,7 +44,7 @@ namespace MiniCAD
         void Redo() { m_cmdStack->Redo(*m_scene); }
         bool CanUndo() const { return m_cmdStack->CanUndo(); }
         bool CanRedo() const { return m_cmdStack->CanRedo(); }
-
+           
         // ── 文件操作 ──────────────────────────────────────────
         void Save(const std::string& path);
         void Load(const std::string& path);

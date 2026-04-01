@@ -77,46 +77,47 @@ namespace MiniCAD
 
 		m_document = std::make_unique<Document>();
 
-		m_document->GetEditor()->SetViewContext(m_viewport.get());
-	 
+		m_document->GetEditor().SetViewContext(m_viewport.get());
+		 
+		auto& scene = m_document->GetScene();
+
 		// 直线1
 		auto id = ObjectIDGenerator::Get().Next();
 		auto entity = std::make_unique<LineEntity>(id,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
 		auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
+		m_document->GetCommandStack().Execute(std::move(cmd), scene);
 		
 		// 直线2
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
+		m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
 		// 直线3
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
 		entity->GetAttr().Color = XMFLOAT4(0, 1, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
+		m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
 		// 直线4
 		id = ObjectIDGenerator::Get().Next();
 		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0));
 		entity->GetAttr().Color = XMFLOAT4(1, 1, 0, 1);
 		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack()->Execute(std::move(cmd), m_document->GetScene());
+		m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
 
 		// ── 输入系统初始化 ──────────────────────────────
 		m_input.SetViewport(m_viewport.get());
 
 		// 责任链：优先级从前到后 ,UI Layer 就在最前面 PushHandler
-		m_input.PushHandler(m_viewport.get());        // pan / zoom
-		m_input.PushHandler(m_document.get());        // 文档输入
-		m_input.PushHandler(m_document->GetEditor()); // 绘图逻辑
-
-
+		m_input.PushHandler(m_viewport.get());         // pan / zoom
+		m_input.PushHandler(m_document.get());         // 文档输入
+		m_input.PushHandler(&m_document->GetEditor()); // 绘图逻辑
+		 
 		return true; 
 	} 
 
@@ -205,8 +206,8 @@ namespace MiniCAD
 		 
 		const auto& scene = m_document->GetScene();
 
-		auto selection   = m_document->GetEditor()->GetSelection();
-		auto hovered     = m_document->GetEditor()->GetHovered();
+		auto selection   = m_document->GetEditor().GetSelection();
+		auto hovered     = m_document->GetEditor().GetHovered();
 
 		m_viewport->Draw(scene, selection, hovered,target);
 		 
