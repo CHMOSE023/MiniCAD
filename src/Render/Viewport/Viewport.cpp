@@ -26,19 +26,20 @@ namespace MiniCAD
 		for (auto& id : scene.GetAllIDs())
 		{
 			auto obj = scene.GetEntity(id);
+			auto layer = scene.GetLayerManager().GetLayer(obj->GetLayerID());
+
+			DirectX::XMFLOAT4 color = layer ? layer->GetColor() : DirectX::XMFLOAT4{ 1,1,1,1 };
 
 			if (selected.count(id))
 			{
-				DrawObject(obj, DirectX::XMFLOAT4(1, 1, 0, 1)); // 选中：黄
+				color = DirectX::XMFLOAT4(0, 0.4, 0.9, 1);			 
 			}
 			else if (hovered.count(id))
 			{
-				DrawObject(obj, DirectX::XMFLOAT4(0, 1, 1, 1)); // Hover：青
+				color = DirectX::XMFLOAT4(0, 0.5, 1, 1); // Hover：青 
 			}
-			else
-			{
-				DrawObject(obj);
-			}
+
+			DrawObject(obj, color);
 		}
 
 		if (m_hasToolPreview)

@@ -3,12 +3,12 @@
 #include <cstdint>
 #include <utility>
 #include <DirectXMath.h>
-
+#include "Core/Object/Object.hpp"
 namespace MiniCAD
 { 
     class Layer {
     public:
-        using LayerID = uint64_t;
+        using LayerID = Object::LayerID;
 
         Layer(LayerID id, std::string name)
             : m_id(id)

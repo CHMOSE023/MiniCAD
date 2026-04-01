@@ -42,6 +42,10 @@ namespace MiniCAD
 		int EntityCount() const { return (int)m_entities.size(); }
 
 		const std::unordered_map<ObjectID, std::unique_ptr<Object>>& GetEntities() const { return m_entities; }
+
+		// ── 序列化 ───────────────────────────────────────────
+		void Serialize(ISerializer& s) const;
+		void Deserialize(ISerializer& s);
 	private:     
 
 		std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
