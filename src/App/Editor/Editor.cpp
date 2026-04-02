@@ -121,11 +121,14 @@ namespace MiniCAD
     {
         // Picking 找到鼠标下的实体
         auto id = m_picking.PickPoint(*m_scene, *m_view, (float)e.mouseX, (float)e.mouseY);
-
-        printf("Picking 找到鼠标下的实体:%d\n", id);
-
+    
         if (id == m_hoveredID)
             return; // 没变化，不刷新
+
+        if (id != Object::InvalidID)
+        {
+            printf("Picking 找到鼠标下的实体:%d\n", (int)id);
+        }
 
         m_hoveredID = id;
          
@@ -146,9 +149,25 @@ namespace MiniCAD
         if (!e.HasModifier(ModifierKey::Ctrl)) // 没有按 Ctrl 清空
             m_selection.clear();
 
-        if (id != Object::InvalidID)
+        // 点到了实体，就选中它（如果之前没选过的话）
+        if (!e.HasModifier(ModifierKey::Ctrl))
+        {
+            // 单选
+            m_selection.clear();
             m_selection.insert(id);
-           
+        }
+        else
+        {
+            // Ctrl 多选（toggle）
+            auto it = m_selection.find(id);
+            if (it == m_selection.end())
+                m_selection.insert(id);     // 没选过 → 加入
+            else
+                m_selection.erase(it);      // 已选 → 取消选中
+        }
+
+        printf("Picking 选中实体:%d\n", (int)id);
+
     } 
 
     void Editor::DeleteSelected()
