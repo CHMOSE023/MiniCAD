@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <functional>
 #include "App/Scene/LayerManager.h"
+#include <atomic>
 namespace MiniCAD
 { 
 	class Scene
@@ -46,9 +47,16 @@ namespace MiniCAD
 		// ── 序列化 ───────────────────────────────────────────
 		void Serialize(ISerializer& s) const;
 		void Deserialize(ISerializer& s);
+
+		// ── ID 分配 ──────────────────────────────────────────
+		// 创建新实体时调用，保证 ID 全局唯一且不与已加载数据冲突
+		ObjectID NextObjectID() { return m_nextObjectID.fetch_add(1, std::memory_order_relaxed); }
 	private:     
+		void SyncNextObjectID();
 
 		std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
+
+		std::atomic<ObjectID>    m_nextObjectID{ 1 };   // 0 保留为 InvalidID
 
 		LayerManager  m_layerManager;
 		bool          m_dirty = false;
