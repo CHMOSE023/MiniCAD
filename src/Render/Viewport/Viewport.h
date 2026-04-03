@@ -37,7 +37,7 @@ namespace MiniCAD
 		void EndPan();                                      // 结束平移		
 
 	private:
-		void DrawObject(const Object* obj);
+		void DrawObject(const Object* obj, const Scene& scene);
 		void DrawObject(const Object* obj, const DirectX::XMFLOAT4& color);
 		void DrawPreviewPrimitive(const PreviewPrimitive& p); // 绘制预览图形 
 

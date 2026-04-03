@@ -23,23 +23,26 @@ namespace MiniCAD
 
 		m_renderer->Begin(target, mvp);
 		  
-		for (auto& id : scene.GetAllIDs())
-		{
-			auto obj = scene.GetEntity(id);
-			auto layer = scene.GetLayerManager().GetLayer(obj->GetLayerID());
-
-			DirectX::XMFLOAT4 color = layer ? layer->GetColor() : DirectX::XMFLOAT4{ 1,1,1,1 };
+		//for (auto& id : scene.GetAllIDs())
+		for (auto& [id, obj] : scene.GetEntities())
+		{  
+			DirectX::XMFLOAT4 color = DirectX::XMFLOAT4{ 1,1,1,1 };
 
 			if (selected.count(id))
 			{
 				color = DirectX::XMFLOAT4(0, 0.4, 0.9, 1);			 
+				DrawObject(obj.get(), color);
 			}
 			else if (hovered.count(id))
 			{
 				color = DirectX::XMFLOAT4(0, 0.5, 1, 1); // Hover：青 
+				DrawObject(obj.get(), color);
 			}
-
-			DrawObject(obj, color);
+			else
+			{
+				DrawObject(obj.get(), scene);
+			} 
+			
 		}
 
 		if (m_hasToolPreview)
@@ -74,7 +77,7 @@ namespace MiniCAD
 		}
 	} 
 	 
-	void Viewport::DrawObject(const Object* obj)
+	void Viewport::DrawObject(const Object* obj, const Scene& scene)
 	{
 		if (!obj) return;
 
@@ -83,7 +86,12 @@ namespace MiniCAD
 			const auto* line = static_cast<const LineEntity*>(obj);
 			const auto& attr = line->GetAttr();
 			const auto& geo = line->GetLine();
-			m_renderer->DrawLine(geo.Start, geo.End, attr.Color);
+			const auto& layerId = line->GetAttr().LayerId;
+
+			const auto* layer = scene.GetLayerManager().GetLayer(layerId);
+			const auto& color = layer ? layer->GetColor() : DirectX::XMFLOAT4{ 1, 1, 1, 1 };
+
+			m_renderer->DrawLine(geo.Start, geo.End, color);
 			return;
 		}
 
@@ -91,6 +99,8 @@ namespace MiniCAD
 
 	void Viewport::DrawObject(const Object* obj, const DirectX::XMFLOAT4& color)
 	{
+		if (!obj) return; // 漏了这行
+
 		if (obj->IsKindOf<LineEntity>()) 
 		{
 			const auto* line = static_cast<const LineEntity*>(obj);		 

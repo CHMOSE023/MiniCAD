@@ -1,7 +1,6 @@
 #include "MainWindow.h"
 #include "Input/InputEvent.h"
-#include "App/Command/AddEntityCommand.h"
-#include "Core/Object/ObjectIDGenerator.hpp"
+#include "App/Command/AddEntityCommand.h" 
 
 namespace MiniCAD
 {
@@ -81,33 +80,33 @@ namespace MiniCAD
 		 
 		auto& scene = m_document->GetScene();
 
-		// 直线1
-		auto id = ObjectIDGenerator::Get().Next();
-		auto entity = std::make_unique<LineEntity>(id,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
-		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
-		auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack().Execute(std::move(cmd), scene);
-		
-		// 直线2
-		id = ObjectIDGenerator::Get().Next();
-		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
-		entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
-		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack().Execute(std::move(cmd), scene);
+		//// 直线1
+		//auto id = scene.NextObjectID();
+		//auto entity = std::make_unique<LineEntity>(id,XMFLOAT3(1.5, 1.5, 0), XMFLOAT3(1.5, 0, 0));
+		//entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
+		//auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		//m_document->GetCommandStack().Execute(std::move(cmd), scene);
+		//
+		//// 直线2
+		//id = scene.NextObjectID();
+		//entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 0, 0));
+		//entity->GetAttr().Color = XMFLOAT4(1, 0, 0, 1);
+		//cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		//m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
-		// 直线3
-		id = ObjectIDGenerator::Get().Next();
-		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
-		entity->GetAttr().Color = XMFLOAT4(0, 1, 0, 1);
-		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack().Execute(std::move(cmd), scene);
+		//// 直线3
+		//id = scene.NextObjectID();
+		//entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(0, 1, 0));
+		//entity->GetAttr().Color = XMFLOAT4(0, 1, 0, 1);
+		//cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		//m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
-		// 直线4
-		id = ObjectIDGenerator::Get().Next();
-		entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0));
-		entity->GetAttr().Color = XMFLOAT4(1, 1, 0, 1);
-		cmd = std::make_unique<AddEntityCommand>(std::move(entity));
-		m_document->GetCommandStack().Execute(std::move(cmd), scene);
+		//// 直线4
+		//id = scene.NextObjectID();
+		//entity = std::make_unique<LineEntity>(id, XMFLOAT3(0.5, 0.5, 0), XMFLOAT3(1, 1, 0));
+		//entity->GetAttr().Color = XMFLOAT4(1, 1, 0, 1);
+		//cmd = std::make_unique<AddEntityCommand>(std::move(entity));
+		//m_document->GetCommandStack().Execute(std::move(cmd), scene);
 
 
 		// ── 输入系统初始化 ──────────────────────────────

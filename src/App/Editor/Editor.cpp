@@ -5,8 +5,7 @@
 #include "App/Command/DeleteEntityCommand.h"
 #include "Core/Entity/LineEntity.hpp"
 #include <App/Input/InputEvent.h> 
-#include "App/Tools/LineTool.h"
-#include <Core/Object/ObjectIDGenerator.hpp>
+#include "App/Tools/LineTool.h" 
 
 namespace MiniCAD 
 {

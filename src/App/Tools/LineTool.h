@@ -5,8 +5,7 @@
 #include "App/CommandStack/CommandStack.h"
 #include "App/Input/InputEvent.h"
 #include "Core/Entity/LineEntity.hpp"
-#include "App/Command/AddEntityCommand.h"
-#include "Core/Object/ObjectIDGenerator.hpp"
+#include "App/Command/AddEntityCommand.h" 
 #include "App/Preview/PreviewPrimitive.h"
 #include <optional>
 
@@ -131,10 +130,14 @@ namespace MiniCAD
         {
             m_view->ClearPreview();
 
-            auto id = ObjectIDGenerator::Get().Next();
+            auto id = m_scene->NextObjectID(); 
             auto line = std::make_unique<LineEntity>(id, start, end);
+
+            auto layerId = m_scene->GetLayerManager().GetActiveLayerID();
+
             line->GetAttr().Visible = true;
-            line->GetAttr().Color = XMFLOAT4(1.f, 1.f, 0.f, 1.f);
+            line->GetAttr().Color = XMFLOAT4(1.f, 1.f, 0.f, 1.f); 
+			line->SetLayerId(layerId); 
 
             auto cmd = std::make_unique<AddEntityCommand>(std::move(line));
             m_cmd->Execute(std::move(cmd), *m_scene);
