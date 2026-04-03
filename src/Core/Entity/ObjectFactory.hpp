@@ -1,29 +1,46 @@
-#include "LineEntity.hpp"
+#pragma once
+#include "Core/Object/Object.hpp"
+#include "Serialization/ISerializer.h"
 #include <memory>
 #include <string>
-#include <stdexcept>
+#include <unordered_map>
+#include <functional>
 
 namespace MiniCAD
 {
     class ObjectFactory
     {
     public:
-        // 根据序列化器创建对象
-        static std::unique_ptr<Object> CreateFromSerializer(ISerializer& s)
+        using Creator = std::function<std::unique_ptr<Object>(ISerializer&)>;
+
+        static ObjectFactory& Get()
         {
-            // 读取类型名
+            static ObjectFactory instance;
+            return instance;
+        }
+
+        void Register(const std::string& typeName, Creator creator)
+        {
+            m_creators[typeName] = std::move(creator);
+        }
+
+        std::unique_ptr<Object> CreateFromSerializer(ISerializer& s) const
+        {
             std::string type = s.ReadString();
 
-            if (type == "LineEntity")
+            auto it = m_creators.find(type);
+            if (it == m_creators.end())
             {
-                // 创建一个临时对象（ID 后续设置）
-                auto obj = std::make_unique<LineEntity>(0, XMFLOAT3{}, XMFLOAT3{});
-                obj->Deserialize(s);
-                return obj;
+                // 跳过未知类型，而不是崩溃
+                // TODO: 可以加日志
+                return nullptr;
             }
 
-            // TODO: 其他类型可以在这里扩展
-            throw std::runtime_error("Unknown object type: " + type);
+            return it->second(s);
         }
+
+    private:
+        ObjectFactory() = default;
+        std::unordered_map<std::string, Creator> m_creators;
     };
 }
