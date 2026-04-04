@@ -7,8 +7,8 @@ namespace MiniCAD
 		m_renderer(renderer),
 		m_grid(std::make_unique<Grid>(XMFLOAT3())),
 		m_camera(std::make_unique<Camera>(width, height)),
-		m_width(0.f),
-		m_height(0.f),
+		m_width(width),
+		m_height(height),
 		m_isPanning(false)
 	{
 	} 
@@ -22,7 +22,7 @@ namespace MiniCAD
 		XMMATRIX mvp = m_camera->GetViewProj();
 
 		m_renderer->Begin(target, mvp);
-		  
+		    
 		//for (auto& id : scene.GetAllIDs())
 		for (auto& [id, obj] : scene.GetEntities())
 		{  
@@ -48,7 +48,12 @@ namespace MiniCAD
 		if (m_hasToolPreview)
 			DrawPreviewPrimitive(m_toolPreview);
 
-		m_renderer->DrawGrad(*m_grid);
+		m_renderer->DrawGrad(*m_grid); 
+		if (m_mouseX >= 0.f && m_mouseY >= 0.f)
+		{
+			m_renderer->DrawCursor(m_mouseX, m_mouseY, m_width, m_height);
+		}
+
 		m_renderer->End();
 	}
 
@@ -99,7 +104,7 @@ namespace MiniCAD
 
 	void Viewport::DrawObject(const Object* obj, const DirectX::XMFLOAT4& color)
 	{
-		if (!obj) return; // 漏了这行
+		if (!obj) return;  
 
 		if (obj->IsKindOf<LineEntity>()) 
 		{
@@ -136,6 +141,8 @@ namespace MiniCAD
 			}
 			break;
 		case InputEventType::MouseMove:
+			m_mouseX = (float)e.mouseX;
+			m_mouseY = (float)e.mouseY;
 			return false;  // 不消费，Editor 也需要 MouseMove
 		}
 		return false;
@@ -162,7 +169,7 @@ namespace MiniCAD
 
 	void Viewport::Resize(float width, float height)
 	{
-		m_width = width;
+		m_width  = width;
 		m_height = height;
 		m_camera->Resize(width, height);
 	}

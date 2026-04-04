@@ -50,6 +50,9 @@ namespace MiniCAD
 
 		PreviewPrimitive    m_toolPreview; 	// 预览 	
 		bool                m_hasToolPreview = false;
+
+		float               m_mouseX = -9999.f; // 当前鼠标屏幕坐标
+		float               m_mouseY = -9999.f;
 		 
 	};
 

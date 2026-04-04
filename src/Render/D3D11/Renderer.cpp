@@ -110,8 +110,7 @@ namespace MiniCAD
         D3D11_MAPPED_SUBRESOURCE mapped;
         m_context->Map(m_vb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 
-        memcpy(mapped.pData, m_cpuBuffer.data(),
-            sizeof(LineVertex) * m_cpuBuffer.size());
+        memcpy(mapped.pData, m_cpuBuffer.data(), sizeof(LineVertex) * m_cpuBuffer.size());
 
         m_context->Unmap(m_vb.Get(), 0);
 
@@ -121,6 +120,90 @@ namespace MiniCAD
         m_context->IASetVertexBuffers(0, 1, m_vb.GetAddressOf(), &stride, &offset);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
 
+        m_context->Draw((UINT)m_cpuBuffer.size(), 0);
+
+        m_cpuBuffer.clear();
+    }
+     
+    void Renderer::DrawCursor(float screenX, float screenY, float screenW, float screenH)
+    { 
+        Flush();   // 1. 先把当前世界空间批次提交
+
+        assert(screenW > 0 && screenH > 0);  
+	
+        // 2. 构建屏幕空间正交 MVP 
+        XMMATRIX screenMVP = XMMatrixOrthographicOffCenterLH(0.f, screenW, screenH, 0.f, -1.f, 1.f);
+  
+        float x = screenX;
+        float y = screenY;
+ 
+        XMFLOAT4 color(1.f, 1.f, 1.f, 1.f);
+
+        // ================================
+        // 1️ 十字线（贯穿屏幕）
+        // ================================
+
+        // 横线
+        m_cpuBuffer.push_back({ {0.f, y, 0.f}, color });
+        m_cpuBuffer.push_back({ {screenW, y, 0.f}, color });
+
+        // 竖线
+        m_cpuBuffer.push_back({ {x, 0.f, 0.f}, color });
+        m_cpuBuffer.push_back({ {x, screenH, 0.f}, color });
+
+        // ================================
+        // 2️ 中心 10x10 矩形（空心）
+        // ================================
+
+
+        const float half = 6.f; // 10x10
+
+        float left = x - half;
+        float right = x + half;
+        float top = y - half;
+        float bottom = y + half;
+
+        // 上
+        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
+
+        // 下
+        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
+
+        // 左
+        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
+
+        // 右
+        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
+
+        FlushWithMVP(screenMVP);
+
+        XMMATRIX mat = XMMatrixTranspose(m_worldMVP);
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
+
+		return;  
+    }
+
+    void Renderer::FlushWithMVP(const XMMATRIX& mvp)
+    {
+        if (m_cpuBuffer.empty()) return;
+
+        // 切换 MVP
+        XMMATRIX mat = XMMatrixTranspose(mvp);
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        m_context->Map(m_vb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        memcpy(mapped.pData, m_cpuBuffer.data(), sizeof(LineVertex) * m_cpuBuffer.size());
+        m_context->Unmap(m_vb.Get(), 0);
+
+        UINT stride = sizeof(LineVertex);
+        UINT offset = 0;
+        m_context->IASetVertexBuffers(0, 1, m_vb.GetAddressOf(), &stride, &offset);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
         m_context->Draw((UINT)m_cpuBuffer.size(), 0);
 
         m_cpuBuffer.clear();

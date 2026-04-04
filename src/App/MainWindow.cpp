@@ -10,7 +10,16 @@ namespace MiniCAD
 
 	bool MainWindow::Initialize(const wchar_t* title, int width, int height)
 	{
-		return InitWindow(title, width, height) && InitD3D11(width, height) && InitViewportAndDocument(width, height);
+		if (!InitWindow(title, width, height))
+			return false;
+
+		RECT rc;
+		GetClientRect(m_hwnd, &rc);
+
+		int clientW = rc.right  - rc.left;
+		int clientH = rc.bottom - rc.top;
+
+		return InitD3D11(clientW, clientH) && InitViewportAndDocument(clientW, clientH);
 	}
 
 	bool MainWindow::InitWindow(const wchar_t* title, int width, int height)
@@ -158,6 +167,18 @@ namespace MiniCAD
 			if (m_swapChain) m_swapChain->Resize(w, h);
 			if (m_viewport)  m_viewport->Resize((float)w, (float)h);
 			return 0;
+		}
+		case WM_SETCURSOR:
+		{
+			if (LOWORD(lParam) == HTCLIENT)
+			{
+				SetCursor(nullptr); // 客户区隐藏
+				return TRUE;
+			}
+			else
+			{			
+				return DefWindowProc(hwnd, msg, wParam, lParam);// 非客户区：用系统默认
+			}
 		}
 		case WM_MBUTTONDOWN: // ── 中键 pan 的平台职责（SetCapture 必须在 Win32 层）─
 			SetCapture(hwnd);
