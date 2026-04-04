@@ -1,6 +1,8 @@
 #include "Document.h"
 #include "Serialization/AsciiSerializer.h"
 #include <fstream>
+#include <format> 
+#include "App/ErrorReporter.h"
 namespace MiniCAD
 {
 
@@ -24,14 +26,14 @@ namespace MiniCAD
             if (e.keyCode == 'S' && e.HasModifier(ModifierKey::Ctrl))  // 判断 Ctrl+S
             { 
                 // MessageBox(0, L"Ctrl+S", L"保存文件", 0);
-                Save("autosave.cad"); // 保存文档（可改成实际路径或弹窗选择）
+                Save("autosave.mcad"); // 保存文档（可改成实际路径或弹窗选择）
                 return true; // 拦截事件
             }
            
             if (e.keyCode == 'O' && e.HasModifier(ModifierKey::Ctrl))  // 判断 Ctrl+O
             {
                 // MessageBox(0, L"Ctrl+O", L"打开文件", 0);
-                Load("autosave.cad"); // 保存文档（可改成实际路径或弹窗选择）                 
+                Load("autosave.mcad"); // 保存文档（可改成实际路径或弹窗选择）                 
                 return true; // 拦截事件
             }
             
@@ -44,30 +46,44 @@ namespace MiniCAD
         return false;
     }
 
-    void Document::Save(const std::string& path)
+    bool Document::Save(const std::filesystem::path& path)
     {
-        std::ofstream ofs(path, std::ios::binary);
-        if (!ofs.is_open())
+        auto tmpPath = path;
+        tmpPath.replace_extension(".tmp");
+
         {
-            throw std::runtime_error("无法打开文件保存");
+            std::ofstream ofs(tmpPath);
+            if (!ofs.is_open())
+            {
+                ReportError(std::format("无法创建临时文件: {}", tmpPath.string()));
+                return false;
+            }
+
+            AsciiSerializer serializer(ofs);
+            m_scene->Serialize(serializer);
         }
 
-        // 创建序列化器
-        AsciiSerializer serializer(ofs);
+        std::error_code ec;
+        std::filesystem::rename(tmpPath, path, ec);
+        if (ec)
+        {
+            std::filesystem::remove(tmpPath);
+            ReportError(std::format("无法保存文件: {}", ec.message()));
+            return false;
+        }
 
-        // 保存场景
-        m_scene->Serialize(serializer); 
-
-        ofs.close();
+        return true;
          
     }
 
-    void Document::Load(const std::string& path)
+    bool Document::Load(const std::filesystem::path& path)
     {
-        std::ifstream ifs(path, std::ios::binary);
+        std::ifstream ifs(path);
         if (!ifs.is_open())
         {
-            throw std::runtime_error("无法打开文件加载");
+            auto msg = std::format("无法打开文件: {}", path.string());
+            ReportError(msg);
+			return false;
         }
 
         AsciiSerializer serializer(ifs);
@@ -78,6 +94,7 @@ namespace MiniCAD
         //m_editor->ClearSelection();
 
         ifs.close();
+		return true;
     }
 
 }

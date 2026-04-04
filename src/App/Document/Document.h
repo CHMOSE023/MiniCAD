@@ -6,6 +6,7 @@
 #include "Core/Object/Object.hpp"
 #include <unordered_set>
 #include <string>
+#include <filesystem>
 #include <memory>
 
 namespace MiniCAD
@@ -46,8 +47,8 @@ namespace MiniCAD
         bool CanRedo() const { return m_cmdStack->CanRedo(); }
            
         // ── 文件操作 ──────────────────────────────────────────
-        void Save(const std::string& path);
-        void Load(const std::string& path);
+        bool Save(const std::filesystem::path& path);
+        bool Load(const std::filesystem::path& path);
 
     private:
         std::unique_ptr<Scene>        m_scene;

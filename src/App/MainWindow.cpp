@@ -1,7 +1,7 @@
 #include "MainWindow.h"
 #include "Input/InputEvent.h"
 #include "App/Command/AddEntityCommand.h" 
-
+#include "ErrorReporter.h"
 namespace MiniCAD
 {
 	MainWindow::MainWindow() :m_hwnd(0) {}
@@ -47,6 +47,15 @@ namespace MiniCAD
 
 		UpdateWindow(m_hwnd);
 
+		// 设置错误处理器，直接弹窗显示错误信息
+		SetErrorHandler([this](const std::string& msg)
+			{   
+				int len = MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, nullptr, 0);
+				std::wstring wmsg(len, 0);
+				MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, wmsg.data(), len); 
+
+				MessageBox(m_hwnd, wmsg.c_str(), L"错误", MB_OK | MB_ICONERROR);
+			});
 		return m_hwnd != nullptr;
 	}
 

@@ -9,7 +9,7 @@ if(MSVC)
 endif()
 # include 路径
 include_directories("${CMAKE_SOURCE_DIR}/src")
-
+  
 find_package(directxtk CONFIG REQUIRED)
 
 file(GLOB_RECURSE SRC  "${CMAKE_SOURCE_DIR}/src/*.cpp"  
