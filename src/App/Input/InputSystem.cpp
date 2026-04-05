@@ -2,7 +2,6 @@
 #include "InputSystem.h"
 #include "Render/Viewport/Viewport.h"
 #include <algorithm>
-#include "InputEvent.h"
 
 namespace MiniCAD
 {
@@ -18,27 +17,38 @@ namespace MiniCAD
 
     bool InputSystem::Dispatch(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
-        // 中键 pan 由 Viewport 自身在 OnInput 里处理，
-        // 这里只需要把 SetCapture / ReleaseCapture 的平台职责留在外面 
-
         InputEvent e = BuildEvent(hwnd, msg, wParam, lParam);
-
         if (e.type == InputEventType::None)
             return false;
 
-        // 责任链分发
         for (auto* handler : m_chain)
         {
-            if (handler && handler->OnInput(e)) // 
+            if (handler && handler->OnInput(e))
                 return true;
         }
         return false;
+    }
+
+    bool InputSystem::IsMouseButtonDown(MouseButton button) const
+    {
+        switch (button)
+        {
+        case MouseButton::Left:
+            return (m_mouseButtons & static_cast<uint8_t>(MouseButtonState::Left)) != 0;
+        case MouseButton::Middle:
+            return (m_mouseButtons & static_cast<uint8_t>(MouseButtonState::Middle)) != 0;
+        case MouseButton::Right:
+            return (m_mouseButtons & static_cast<uint8_t>(MouseButtonState::Right)) != 0;
+        default:
+            return false;
+        }
     }
 
     InputEvent InputSystem::BuildEvent(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         InputEvent e{};
         e.modifiers = GetModifiers();
+        e.mouseButtons = GetMouseButtons();
 
         POINT curPx = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 
@@ -62,6 +72,12 @@ namespace MiniCAD
             e.mouseX = curPx.x; e.mouseY = curPx.y;
             break;
 
+        case WM_RBUTTONUP:
+            e.type = InputEventType::MouseButtonUp;
+            e.button = MouseButton::Right;
+            e.mouseX = curPx.x; e.mouseY = curPx.y;
+            break;
+
         case WM_MBUTTONDOWN:
             e.type = InputEventType::MouseButtonDown;
             e.button = MouseButton::Middle;
@@ -81,13 +97,12 @@ namespace MiniCAD
 
         case WM_MOUSEWHEEL:
         {
-            // WM_MOUSEWHEEL 的 lParam 是屏幕坐标，需要转换
             POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hwnd, &pt);
             e.type = InputEventType::MouseWheel;
             e.mouseX = pt.x; e.mouseY = pt.y;
             e.wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
-            curPx = pt;  // 后面 worldPos 用转换后的坐标
+            curPx = pt;
             break;
         }
 
@@ -102,23 +117,42 @@ namespace MiniCAD
             break;
 
         default:
-            return e; // type == None，外层忽略
+            return e;
         }
 
-        // 统一做像素 → 世界坐标反变换
-        // Viewport 暴露一个 ScreenToWorld 接口即可
+        if (e.button == MouseButton::Left)
+        {
+            if (e.type == InputEventType::MouseButtonDown)
+                e.mouseButtons |= static_cast<uint8_t>(MouseButtonState::Left);
+            else if (e.type == InputEventType::MouseButtonUp)
+                e.mouseButtons &= ~static_cast<uint8_t>(MouseButtonState::Left);
+        }
+        else if (e.button == MouseButton::Middle)
+        {
+            if (e.type == InputEventType::MouseButtonDown)
+                e.mouseButtons |= static_cast<uint8_t>(MouseButtonState::Middle);
+            else if (e.type == InputEventType::MouseButtonUp)
+                e.mouseButtons &= ~static_cast<uint8_t>(MouseButtonState::Middle);
+        }
+        else if (e.button == MouseButton::Right)
+        {
+            if (e.type == InputEventType::MouseButtonDown)
+                e.mouseButtons |= static_cast<uint8_t>(MouseButtonState::Right);
+            else if (e.type == InputEventType::MouseButtonUp)
+                e.mouseButtons &= ~static_cast<uint8_t>(MouseButtonState::Right);
+        }
+
+        m_mouseButtons = e.mouseButtons;
+
         if (m_viewport && e.type != InputEventType::KeyDown && e.type != InputEventType::KeyUp)
         {
-            auto world = m_viewport->ScreenToWorld(e.mouseX, e.mouseY);
+            auto world = m_viewport->ScreenToWorld((float)e.mouseX, (float)e.mouseY);
             e.worldX = world.x;
             e.worldY = world.y;
         }
 
-        // 更新最后鼠标位置（MouseMove 才更新，避免 key 事件污染）
         if (e.type == InputEventType::MouseMove || e.type == InputEventType::MouseButtonDown)
-        {
             m_lastMousePos = curPx;
-        }
 
         return e;
     }
@@ -126,9 +160,18 @@ namespace MiniCAD
     uint8_t InputSystem::GetModifiers()
     {
         uint8_t m = 0;
-        if (GetKeyState(VK_SHIFT) & 0x8000) m   |= static_cast<uint8_t>(ModifierKey::Shift);
+        if (GetKeyState(VK_SHIFT) & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Shift);
         if (GetKeyState(VK_CONTROL) & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Ctrl);
-        if (GetKeyState(VK_MENU) & 0x8000) m    |= static_cast<uint8_t>(ModifierKey::Alt);
+        if (GetKeyState(VK_MENU) & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Alt);
         return m;
+    }
+
+    uint8_t InputSystem::GetMouseButtons()
+    {
+        uint8_t buttons = 0;
+        if (GetKeyState(VK_LBUTTON) & 0x8000) buttons |= static_cast<uint8_t>(MouseButtonState::Left);
+        if (GetKeyState(VK_MBUTTON) & 0x8000) buttons |= static_cast<uint8_t>(MouseButtonState::Middle);
+        if (GetKeyState(VK_RBUTTON) & 0x8000) buttons |= static_cast<uint8_t>(MouseButtonState::Right);
+        return buttons;
     }
 }

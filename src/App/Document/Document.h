@@ -11,8 +11,8 @@
 
 namespace MiniCAD
 {
-	class Document : public IInputHandler
-	{
+    class Document : public IInputHandler
+    {
     public:
         Document();
 
@@ -48,12 +48,30 @@ namespace MiniCAD
            
         // ── 文件操作 ──────────────────────────────────────────
         bool Save(const std::filesystem::path& path);
+        bool Save();
+        bool SaveAs();
         bool Load(const std::filesystem::path& path);
+        bool Open();
+
+        const std::filesystem::path& GetPath() const { return m_currentPath; }
+        bool HasPath() const { return !m_currentPath.empty(); }
+        bool IsDirty() const { return m_scene && m_scene->IsDirty(); }
 
     private:
+        bool CreateLayerAndActivate();
+        bool CycleActiveLayer(int direction);
+        bool ToggleActiveLayerVisibility();
+        bool ToggleActiveLayerLock();
+        bool DeleteActiveLayer();
+        void RefreshEditorAfterLayerChange(bool cancelActiveTool = false);
+
+        bool PromptSavePath(std::filesystem::path& path) const;
+        bool PromptOpenPath(std::filesystem::path& path) const;
+        void ResetEditorState();
+
         std::unique_ptr<Scene>        m_scene;
         std::unique_ptr<CommandStack> m_cmdStack;
         std::unique_ptr<Editor>       m_editor;
-	};
-}
- 
+        std::filesystem::path         m_currentPath;
+    };
+} 

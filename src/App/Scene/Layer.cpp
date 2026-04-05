@@ -14,10 +14,46 @@ namespace MiniCAD
     bool Layer::IsVisible() const { return m_visible; }
     bool Layer::IsLocked() const { return m_locked; }
 
-    void Layer::SetColor(const DirectX::XMFLOAT4& c) { m_color = c; }
-    void Layer::SetName(std::string n) { m_name = std::move(n); }
-    void Layer::SetVisible(bool v) { m_visible = v; }
-    void Layer::SetLocked(bool l) { m_locked = l; }
+    void Layer::SetColor(const DirectX::XMFLOAT4& c)
+    {
+        if (m_color.x == c.x && m_color.y == c.y && m_color.z == c.z && m_color.w == c.w)
+            return;
+
+        m_color = c;
+        NotifyChanged();
+    }
+
+    void Layer::SetName(std::string n)
+    {
+        if (m_name == n)
+            return;
+
+        m_name = std::move(n);
+        NotifyChanged();
+    }
+
+    void Layer::SetVisible(bool v)
+    {
+        if (m_visible == v)
+            return;
+
+        m_visible = v;
+        NotifyChanged();
+    }
+
+    void Layer::SetLocked(bool l)
+    {
+        if (m_locked == l)
+            return;
+
+        m_locked = l;
+        NotifyChanged();
+    }
+
+    void Layer::SetChangeCallback(ChangeCallback cb)
+    {
+        m_onChange = std::move(cb);
+    }
 
     void Layer::Serialize(ISerializer& s) const
     {
@@ -48,5 +84,11 @@ namespace MiniCAD
 
         m_visible = s.ReadBool();
         m_locked = s.ReadBool();
+    }
+
+    void Layer::NotifyChanged()
+    {
+        if (m_onChange)
+            m_onChange();
     }
 }

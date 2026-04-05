@@ -26,6 +26,9 @@ namespace MiniCAD
 		//for (auto& id : scene.GetAllIDs())
 		for (auto& [id, obj] : scene.GetEntities())
 		{  
+			if (!scene.IsEntityVisible(id))
+				continue;
+
 			DirectX::XMFLOAT4 color = DirectX::XMFLOAT4{ 1,1,1,1 };
 
 			if (selected.count(id))

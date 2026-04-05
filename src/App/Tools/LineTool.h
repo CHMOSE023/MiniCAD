@@ -7,6 +7,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "App/Command/AddEntityCommand.h" 
 #include "App/Preview/PreviewPrimitive.h"
+#include "App/ErrorReporter.h"
 #include <optional>
 
 namespace MiniCAD
@@ -130,10 +131,17 @@ namespace MiniCAD
         {
             m_view->ClearPreview();
 
+            auto layerId = m_scene->GetLayerManager().GetActiveLayerID();
+            const auto* layer = m_scene->GetLayerManager().GetLayer(layerId);
+            if (layer && layer->IsLocked())
+            {
+                ReportError("Cannot create entities on a locked layer.");
+                m_state = State::WaitFirstPoint;
+                return;
+            }
+
             auto id = m_scene->NextObjectID(); 
             auto line = std::make_unique<LineEntity>(id, start, end);
-
-            auto layerId = m_scene->GetLayerManager().GetActiveLayerID();
 
             line->GetAttr().Visible = true;
             line->GetAttr().Color = XMFLOAT4(1.f, 1.f, 0.f, 1.f); 

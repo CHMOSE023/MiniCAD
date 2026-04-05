@@ -1,44 +1,49 @@
-#pragma once 
+#pragma once
 #include "App/Scene/Layer.h"
-#include <atomic> 
+#include <atomic>
 #include <vector>
 #include <unordered_map>
 #include <memory>
-#include <string>  
-#include "Core/Object/Object.hpp"
+#include <string>
+#include <functional>
 #include "Serialization/ISerializer.h"
+
 namespace MiniCAD
 {
-	class ISerializer; 
+    class ISerializer;
 
-	class LayerManager
-	{
-	public:
-		LayerManager();
-		LayerID AddLayer(const std::string& name);      // 添加图层，返回新图层 ID
-		LayerID AddLayer(std::unique_ptr<Layer> layer);
+    class LayerManager
+    {
+    public:
+        LayerManager();
 
-		bool RemoveLayer(LayerID id);                   // 移除图层（不能移除默认图层 0）
+        LayerID AddLayer(const std::string& name);
+        LayerID AddLayer(std::unique_ptr<Layer> layer);
 
-		Layer*       GetLayer(LayerID id);
-		const Layer* GetLayer(LayerID id) const;
+        bool RemoveLayer(LayerID id);
+        bool HasLayer(LayerID id) const;
 
-		std::vector<LayerID> GetAllLayerIDs() const;    // 所有图层 ID 列表
+        Layer* GetLayer(LayerID id);
+        const Layer* GetLayer(LayerID id) const;
 
-		LayerID GetActiveLayerID() const { return m_activeLayerID; }
-		void    SetActiveLayerID( LayerID id); 
+        std::vector<LayerID> GetAllLayerIDs() const;
 
-		// --- Serialization 接口 ---
-		// 将对象写入序列化器
-		void Serialize(ISerializer& s) const;
+        LayerID GetActiveLayerID() const { return m_activeLayerID; }
+        void SetActiveLayerID(LayerID id);
 
-		// 从序列化器读取对象状态
-		void Deserialize(ISerializer& s) ;
+        using ChangeCallback = std::function<void()>;
+        void SetChangeCallback(ChangeCallback cb);
 
-	private:
-		std::unordered_map< LayerID, std::unique_ptr<Layer>> m_layers;
+        void Serialize(ISerializer& s) const;
+        void Deserialize(ISerializer& s);
 
-		 LayerID                m_activeLayerID = Layer::DefaultLayerID;
-		std::atomic< LayerID>   m_nextID{ 1 };
-	};
+    private:
+        void NotifyChanged();
+        void WireLayerCallbacks(Layer& layer);
+
+        std::unordered_map<LayerID, std::unique_ptr<Layer>> m_layers;
+        LayerID m_activeLayerID = Layer::DefaultLayerID;
+        std::atomic<LayerID> m_nextID{ 1 };
+        ChangeCallback m_onChange;
+    };
 }

@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdint>
 #include <DirectXMath.h>
+#include <functional>
 
 namespace MiniCAD
 {
@@ -28,14 +29,20 @@ namespace MiniCAD
         void SetVisible(bool v);
         void SetLocked(bool l);
 
+        using ChangeCallback = std::function<void()>;
+        void SetChangeCallback(ChangeCallback cb);
+
         void Serialize(ISerializer& s) const;
         void Deserialize(ISerializer& s);
 
     private:
+        void NotifyChanged();
+
         LayerID            m_id = 0;
         std::string        m_name;
         DirectX::XMFLOAT4  m_color{1,1,1,1};
         bool               m_visible = true;
         bool               m_locked  = false;
+        ChangeCallback     m_onChange;
     };
 }

@@ -26,6 +26,9 @@ namespace MiniCAD
 
         for (auto id : scene.GetAllIDs())
         {
+            if (!scene.IsEntitySelectable(id))
+                continue;
+
             const auto* obj = scene.GetEntity(id);
             if (!obj) continue;
 
@@ -156,6 +159,9 @@ namespace MiniCAD
 
         for (auto id : scene.GetAllIDs())
         {
+            if (!scene.IsEntitySelectable(id))
+                continue;
+
             const auto* obj = scene.GetEntity(id);
             if (!obj) continue;
 

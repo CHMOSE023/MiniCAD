@@ -1,5 +1,6 @@
 #include "Renderer.h" 
 #include <d3dcompiler.h>
+#include <format>
 
 using Microsoft::WRL::ComPtr;
 
@@ -17,9 +18,21 @@ namespace MiniCAD
         // ==== Shader 编译 ====
         ComPtr<ID3DBlob> vsBlob, psBlob;
 
-        ThrowIfFailed(D3DCompileFromFile(L"Basic.hlsl", nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, vsBlob.GetAddressOf(), nullptr));
+        auto compileShader = [](const wchar_t* file, const char* entry, const char* target, ID3DBlob** shaderBlob)
+        {
+            ComPtr<ID3DBlob> errorBlob;
+            HRESULT hr = D3DCompileFromFile(file, nullptr, nullptr, entry, target, 0, 0, shaderBlob, errorBlob.GetAddressOf());
+            if (FAILED(hr))
+            {
+                std::string details = errorBlob
+                    ? static_cast<const char*>(errorBlob->GetBufferPointer())
+                    : std::format("HRESULT=0x{:08X}", static_cast<unsigned int>(hr));
+                throw std::runtime_error(std::format("Shader compile failed: {} [{} -> {}]", details, entry, target));
+            }
+        };
 
-        ThrowIfFailed(D3DCompileFromFile(L"Basic.hlsl", nullptr, nullptr,   "PSMain", "ps_5_0", 0, 0, psBlob.GetAddressOf(), nullptr));
+        compileShader(L"Basic.hlsl", "VSMain", "vs_5_0", vsBlob.GetAddressOf());
+        compileShader(L"Basic.hlsl", "PSMain", "ps_5_0", psBlob.GetAddressOf());
 
         m_device->CreateVertexShader(
             vsBlob->GetBufferPointer(),

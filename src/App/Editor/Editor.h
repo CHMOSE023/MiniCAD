@@ -24,8 +24,14 @@ namespace MiniCAD
 
         void SetTool(std::unique_ptr<ITool> tool) { m_tool = std::move(tool); }
         void SetViewContext(IViewContext* ctx) { m_view = ctx; }
+        IViewContext* GetViewContext() const { return m_view; }
 
         void DeleteSelected();
+        void ClearSelection();
+        void ClearHovered();
+        void CancelActiveTool();
+        void ResetTransientState();
+        void RefreshSceneState(bool cancelActiveTool = false);
 
         // 状态输出（给 Viewport）
         const std::unordered_set<Object::ObjectID>& GetSelection() const { return m_selection; }

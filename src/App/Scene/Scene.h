@@ -1,65 +1,64 @@
 #pragma once
-#include "Render/Viewport/Grid.h"
-#include "Render/D3D11/Renderer.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/LineEntity.hpp"
-#include "Core/Object/Object.hpp"
+#include "App/Scene/LayerManager.h"
 #include <vector>
 #include <memory>
 #include <unordered_map>
 #include <functional>
-#include "App/Scene/LayerManager.h"
 #include <atomic>
+
 namespace MiniCAD
-{ 
-	class Scene
-	{ 
-	public:
-		using ObjectID = Object::ObjectID;
-		using DirtyCallback = std::function<void()>;
-		 
-		Scene() = default;   
+{
+    class ISerializer;
 
-		void AddEntity(std::unique_ptr<Object> entity);     // 添加实体 	
-		std::unique_ptr<Object> RemoveEntity(ObjectID id); 	// 移除并返回所有权（供 Undo 使用）
-		 
-		Object* GetEntity(ObjectID id);                     // 通过ID查询
-		const Object* GetEntity(ObjectID id) const;
+    class Scene
+    {
+    public:
+        using ObjectID = Object::ObjectID;
+        using DirtyCallback = std::function<void()>;
 
-		bool Has(ObjectID id) const;
+        Scene();
 
-		std::vector<ObjectID> GetAllIDs() const;            // 返回所有实体 ID
+        void AddEntity(std::unique_ptr<Object> entity);
+        std::unique_ptr<Object> RemoveEntity(ObjectID id);
 
-		LayerManager& GetLayerManager() { return m_layerManager; }
-		const LayerManager& GetLayerManager() const { return m_layerManager; }
+        Object* GetEntity(ObjectID id);
+        const Object* GetEntity(ObjectID id) const;
 
-		// ── DirtyFlag ── 
-		bool IsDirty() const { return m_dirty; }
-		void MarkDirty()     { m_dirty = true; if (m_onDirty) m_onDirty(); }
-		void ClearDirty()    { m_dirty = false; }
+        bool Has(ObjectID id) const;
+        bool IsEntityVisible(ObjectID id) const;
+        bool IsEntitySelectable(ObjectID id) const;
+        bool IsEntityEditable(ObjectID id) const;
+        bool ReassignEntitiesToLayer(LayerID fromLayer, LayerID toLayer);
+        bool RemoveLayer(LayerID id, LayerID fallbackLayer = Layer::DefaultLayerID);
 
-		void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
+        std::vector<ObjectID> GetAllIDs() const;
 
-		int EntityCount() const { return (int)m_entities.size(); }
+        LayerManager& GetLayerManager() { return m_layerManager; }
+        const LayerManager& GetLayerManager() const { return m_layerManager; }
 
-		const std::unordered_map<ObjectID, std::unique_ptr<Object>>& GetEntities() const { return m_entities; }
+        bool IsDirty() const { return m_dirty; }
+        void MarkDirty() { m_dirty = true; if (m_onDirty) m_onDirty(); }
+        void ClearDirty() { m_dirty = false; }
 
-		// ── 序列化 ───────────────────────────────────────────
-		void Serialize(ISerializer& s) const;
-		void Deserialize(ISerializer& s);
+        void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
 
-		// ── ID 分配 ──────────────────────────────────────────
-		// 创建新实体时调用，保证 ID 全局唯一且不与已加载数据冲突
-		ObjectID NextObjectID() { return m_nextObjectID.fetch_add(1, std::memory_order_relaxed); }
-	private:     
-		void SyncNextObjectID();
+        int EntityCount() const { return (int)m_entities.size(); }
+        const std::unordered_map<ObjectID, std::unique_ptr<Object>>& GetEntities() const { return m_entities; }
 
-		std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
+        void Serialize(ISerializer& s) const;
+        void Deserialize(ISerializer& s);
 
-		std::atomic<ObjectID>    m_nextObjectID{ 1 };   // 0 保留为 InvalidID
+        ObjectID NextObjectID() { return m_nextObjectID.fetch_add(1, std::memory_order_relaxed); }
 
-		LayerManager  m_layerManager;
-		bool          m_dirty = false;
-		DirtyCallback m_onDirty;
-	};
+    private:
+        void SyncNextObjectID();
+
+        std::unordered_map<ObjectID, std::unique_ptr<Object>> m_entities;
+        std::atomic<ObjectID> m_nextObjectID{ 1 };
+        LayerManager m_layerManager;
+        bool m_dirty = false;
+        DirtyCallback m_onDirty;
+    };
 }

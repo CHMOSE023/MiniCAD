@@ -16,13 +16,16 @@
 #include <vector>
 #include <memory>
 #include <stdexcept>
+#include <cstdio>
 
 #ifndef ThrowIfFailed
 inline void ThrowIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
     {
-        throw std::runtime_error("HRESULT failed");
+        char buffer[64] = {};
+        std::snprintf(buffer, sizeof(buffer), "HRESULT failed: 0x%08X", static_cast<unsigned int>(hr));
+        throw std::runtime_error(buffer);
     }
 }
 #endif
