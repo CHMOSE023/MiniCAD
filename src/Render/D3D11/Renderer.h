@@ -12,6 +12,14 @@ namespace MiniCAD
         XMFLOAT4 color;
     };
 
+    struct CursorConfig
+    {
+        float sizeX = 12.f;              // 矩形宽度
+        float sizeY = 12.f;              // 矩形高度
+        XMFLOAT4 color = {1.f, 1.f, 1.f, 1.f};  // 光标颜色
+        bool enabled = true;             // 是否显示
+    };
+
     class Renderer
     {
     public:
@@ -19,13 +27,16 @@ namespace MiniCAD
         void Begin(const RenderTarget& target, const XMMATRIX& mvp);
         void DrawLine(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color);
         void DrawGrad(const Grid& grid);       
-        void DrawCursor(float screenX, float screenY, float screenW, float screenH); // 绘制鼠标光标（屏幕像素坐标，Y轴向下）
+        void SetCursor(float screenX, float screenY, float screenW, float screenH, 
+                      const CursorConfig& config = CursorConfig());
+        void SetCursorConfig(const CursorConfig& config);
         void End();
 
     private:
         void Initialize();
         void Flush();  
-        void FlushWithMVP(const XMMATRIX& mvp);       // 用屏幕空间 MVP 提交一批线段，绘制完恢复世界 MVP
+        void FlushWithMVP(const XMMATRIX& mvp);
+        void DrawCursorImpl();
 
     private:
         ID3D11Device*        m_device = nullptr;
@@ -35,16 +46,23 @@ namespace MiniCAD
         Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
         Microsoft::WRL::ComPtr<ID3D11PixelShader>  m_ps;
         Microsoft::WRL::ComPtr<ID3D11InputLayout>  m_layout;
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthStateEnabled;
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthStateDisabled;
 
         // Buffers
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_vb;
         Microsoft::WRL::ComPtr<ID3D11Buffer> m_cb;
 
         UINT m_maxVertices = 65536;
-
         std::vector<LineVertex> m_cpuBuffer;
 
-        XMMATRIX m_worldMVP = XMMatrixIdentity();   // 世界空间 MVP，DrawCursor 后恢复用
+        XMMATRIX m_worldMVP = XMMatrixIdentity();
+
+        // 光标参数
+        bool  m_hasCursor = false;
+        float m_cursorX = 0.f, m_cursorY = 0.f;
+        float m_screenW = 0.f, m_screenH = 0.f;
+        CursorConfig m_cursorConfig;
     };
 
 }

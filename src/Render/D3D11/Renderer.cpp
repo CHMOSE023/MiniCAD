@@ -75,6 +75,20 @@ namespace MiniCAD
         cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 
         m_device->CreateBuffer(&cbDesc, nullptr, m_cb.GetAddressOf());
+
+        // ==== 深度状态 ====
+        // 深度测试启用（用于一般绘制）
+        D3D11_DEPTH_STENCIL_DESC depthEnableDesc = {};
+        depthEnableDesc.DepthEnable = TRUE;
+        depthEnableDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        depthEnableDesc.DepthFunc = D3D11_COMPARISON_LESS;
+        m_device->CreateDepthStencilState(&depthEnableDesc, m_depthStateEnabled.GetAddressOf());
+
+        // 深度测试禁用（用于光标，确保总是显示）
+        D3D11_DEPTH_STENCIL_DESC depthDisableDesc = {};
+        depthDisableDesc.DepthEnable = FALSE;
+        depthDisableDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        m_device->CreateDepthStencilState(&depthDisableDesc, m_depthStateDisabled.GetAddressOf());
     }
 
     void Renderer::Begin(const RenderTarget& target, const XMMATRIX& mvp)
@@ -88,11 +102,15 @@ namespace MiniCAD
         m_context->VSSetShader(m_vs.Get(), nullptr, 0);
         m_context->PSSetShader(m_ps.Get(), nullptr, 0);
 
+        // 启用深度测试（用于一般绘制）
+        m_context->OMSetDepthStencilState(m_depthStateEnabled.Get(), 0);
+
         XMMATRIX mat = XMMatrixTranspose(mvp);
         m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
         m_context->VSSetConstantBuffers(0, 1, m_cb.GetAddressOf());
 
         m_cpuBuffer.clear();
+        m_hasCursor = false;  // 重置光标标志
     }
 
     // 只收集
@@ -138,67 +156,21 @@ namespace MiniCAD
         m_cpuBuffer.clear();
     }
      
-    void Renderer::DrawCursor(float screenX, float screenY, float screenW, float screenH)
-    { 
-        Flush();   // 1. 先把当前世界空间批次提交
+	void Renderer::SetCursor(float screenX, float screenY, float screenW, float screenH, 
+							const CursorConfig& config)
+	{ 
+		m_cursorX = screenX;
+		m_cursorY = screenY;
+		m_screenW = screenW;
+		m_screenH = screenH;
+		m_cursorConfig = config;
+		m_hasCursor = config.enabled;
+	}
 
-        assert(screenW > 0 && screenH > 0);  
-	
-        // 2. 构建屏幕空间正交 MVP 
-        XMMATRIX screenMVP = XMMatrixOrthographicOffCenterLH(0.f, screenW, screenH, 0.f, -1.f, 1.f);
-  
-        float x = screenX;
-        float y = screenY;
- 
-        XMFLOAT4 color(1.f, 1.f, 1.f, 1.f);
-
-        // ================================
-        // 1️ 十字线（贯穿屏幕）
-        // ================================
-
-        // 横线
-        m_cpuBuffer.push_back({ {0.f, y, 0.f}, color });
-        m_cpuBuffer.push_back({ {screenW, y, 0.f}, color });
-
-        // 竖线
-        m_cpuBuffer.push_back({ {x, 0.f, 0.f}, color });
-        m_cpuBuffer.push_back({ {x, screenH, 0.f}, color });
-
-        // ================================
-        // 2️ 中心 10x10 矩形（空心）
-        // ================================
-
-
-        const float half = 6.f; // 10x10
-
-        float left = x - half;
-        float right = x + half;
-        float top = y - half;
-        float bottom = y + half;
-
-        // 上
-        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
-
-        // 下
-        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
-
-        // 左
-        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
-
-        // 右
-        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
-
-        FlushWithMVP(screenMVP);
-
-        XMMATRIX mat = XMMatrixTranspose(m_worldMVP);
-        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
-
-		return;  
-    }
+	void Renderer::SetCursorConfig(const CursorConfig& config)
+	{
+		m_cursorConfig = config;
+	}
 
     void Renderer::FlushWithMVP(const XMMATRIX& mvp)
     {
@@ -222,8 +194,74 @@ namespace MiniCAD
         m_cpuBuffer.clear();
     }
 
+    void Renderer::DrawCursorImpl()
+    {
+        if (!m_hasCursor || !m_cursorConfig.enabled) return;
+
+        assert(m_screenW > 0 && m_screenH > 0);
+
+        // 构建屏幕空间正交 MVP 
+        XMMATRIX screenMVP = XMMatrixOrthographicOffCenterLH(0.f, m_screenW, m_screenH, 0.f, -1.f, 1.f);
+
+        float x = m_cursorX;
+        float y = m_cursorY;
+        const auto& color = m_cursorConfig.color;
+
+        // ================================
+        // 1️ 十字线（贯穿屏幕）
+        // ================================
+
+        // 横线
+        m_cpuBuffer.push_back({ {0.f, y, 0.f}, color });
+        m_cpuBuffer.push_back({ {m_screenW, y, 0.f}, color });
+
+        // 竖线
+        m_cpuBuffer.push_back({ {x, 0.f, 0.f}, color });
+        m_cpuBuffer.push_back({ {x, m_screenH, 0.f}, color });
+
+        // ================================
+        // 2️ 中心矩形（空心）
+        // ================================
+
+        float halfX = m_cursorConfig.sizeX / 2.f;
+        float halfY = m_cursorConfig.sizeY / 2.f;
+
+        float left = x - halfX;
+        float right = x + halfX;
+        float top = y - halfY;
+        float bottom = y + halfY;
+
+        // 上
+        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
+
+        // 下
+        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
+
+        // 左
+        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
+
+        // 右
+        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
+        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
+
+        // 禁用深度测试，确保光标总是显示
+        m_context->OMSetDepthStencilState(m_depthStateDisabled.Get(), 0);
+
+        FlushWithMVP(screenMVP);
+
+        // 恢复深度测试和世界空间 MVP
+        m_context->OMSetDepthStencilState(m_depthStateEnabled.Get(), 0);
+
+        XMMATRIX mat = XMMatrixTranspose(m_worldMVP);
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
+    }
+
     void Renderer::End()
     {
         Flush();
+        DrawCursorImpl();  // 最后绘制光标（保证在最上层）
     }
 }

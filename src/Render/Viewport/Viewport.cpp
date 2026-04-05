@@ -52,9 +52,10 @@ namespace MiniCAD
 			DrawPreviewPrimitive(m_toolPreview);
 
 		m_renderer->DrawGrad(*m_grid); 
+
 		if (m_mouseX >= 0.f && m_mouseY >= 0.f)
 		{
-			m_renderer->DrawCursor(m_mouseX, m_mouseY, m_width, m_height);
+			m_renderer->SetCursor(m_mouseX, m_mouseY, m_width, m_height);
 		}
 
 		m_renderer->End();
