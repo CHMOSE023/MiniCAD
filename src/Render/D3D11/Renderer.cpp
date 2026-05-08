@@ -1,267 +1,154 @@
 #include "Renderer.h" 
-#include <d3dcompiler.h>
-#include <format>
-
-using Microsoft::WRL::ComPtr;
+#include "Shader.h"
+#include "RenderTarget.h"
+#include <d3d11.h>
 
 namespace MiniCAD
 {
-    Renderer::Renderer(ID3D11Device* device, ID3D11DeviceContext* context): 
-        m_device(device),
-        m_context(context)
+    Renderer::Renderer(ID3D11Device* device, ID3D11DeviceContext* context)
+        : m_device(device)
+        , m_context(context)
     {
         Initialize();
+        m_lineShader.Initialize(m_device);
     }
 
     void Renderer::Initialize()
     {
-        // ==== Shader 编译 ====
-        ComPtr<ID3DBlob> vsBlob, psBlob;
+        // ===== VB =====
+        D3D11_BUFFER_DESC vb = {};
+        vb.ByteWidth      = sizeof(Vertex_P3_C4) * m_maxVertices;
+        vb.Usage          = D3D11_USAGE_DYNAMIC;
+        vb.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
+        vb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        m_device->CreateBuffer(&vb, nullptr, m_vb.GetAddressOf());
 
-        auto compileShader = [](const wchar_t* file, const char* entry, const char* target, ID3DBlob** shaderBlob)
-        {
-            ComPtr<ID3DBlob> errorBlob;
-            HRESULT hr = D3DCompileFromFile(file, nullptr, nullptr, entry, target, 0, 0, shaderBlob, errorBlob.GetAddressOf());
-            if (FAILED(hr))
-            {
-                std::string details = errorBlob
-                    ? static_cast<const char*>(errorBlob->GetBufferPointer())
-                    : std::format("HRESULT=0x{:08X}", static_cast<unsigned int>(hr));
-                throw std::runtime_error(std::format("Shader compile failed: {} [{} -> {}]", details, entry, target));
-            }
-        };
+        // ===== CB =====
+        D3D11_BUFFER_DESC cb = {};
+        cb.ByteWidth = sizeof(XMMATRIX);
+        cb.Usage     = D3D11_USAGE_DEFAULT;
+        cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        m_device->CreateBuffer(&cb, nullptr, m_cb.GetAddressOf());
 
-        compileShader(L"Basic.hlsl", "VSMain", "vs_5_0", vsBlob.GetAddressOf());
-        compileShader(L"Basic.hlsl", "PSMain", "ps_5_0", psBlob.GetAddressOf());
+        // ===== Depth =====
+        D3D11_DEPTH_STENCIL_DESC d0 = {};
+        d0.DepthEnable              = TRUE;
+        d0.DepthWriteMask           = D3D11_DEPTH_WRITE_MASK_ALL;
+        d0.DepthFunc                = D3D11_COMPARISON_LESS;
+        m_device->CreateDepthStencilState(&d0, m_depthEnabled.GetAddressOf());
 
-        m_device->CreateVertexShader(
-            vsBlob->GetBufferPointer(),
-            vsBlob->GetBufferSize(),
-            nullptr,
-            m_vs.GetAddressOf());
+        D3D11_DEPTH_STENCIL_DESC d1 = {};
+        d1.DepthEnable              = FALSE;
+        d1.DepthWriteMask           = D3D11_DEPTH_WRITE_MASK_ZERO;
+        m_device->CreateDepthStencilState(&d1, m_depthDisabled.GetAddressOf());
 
-        m_device->CreatePixelShader(
-            psBlob->GetBufferPointer(),
-            psBlob->GetBufferSize(),
-            nullptr,
-            m_ps.GetAddressOf());
+        // 透明：只测不写
+        D3D11_DEPTH_STENCIL_DESC d2 = {};
+        d2.DepthEnable              = TRUE;
+        d2.DepthWriteMask           = D3D11_DEPTH_WRITE_MASK_ZERO;
+        d2.DepthFunc                = D3D11_COMPARISON_LESS;
+        m_device->CreateDepthStencilState(&d2, m_depthReadOnly.GetAddressOf());
 
-        // ==== InputLayout ====
-        D3D11_INPUT_ELEMENT_DESC layout[] =
-        {
-            {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
-            {"COLOR",  0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},
-        };
+        // ===== Rasterizer =====
+        D3D11_RASTERIZER_DESC rs    = {};
+        rs.FillMode                 = D3D11_FILL_SOLID;
+        rs.CullMode                 = D3D11_CULL_NONE;
+        rs.DepthClipEnable          = TRUE;
+        m_device->CreateRasterizerState(&rs, m_rsNoCull.GetAddressOf());
 
-        m_device->CreateInputLayout(
-            layout, 2,
-            vsBlob->GetBufferPointer(),
-            vsBlob->GetBufferSize(),
-            m_layout.GetAddressOf());
+        // ===== Blend =====
+        D3D11_BLEND_DESC bd = {};
+        bd.RenderTarget[0].BlendEnable    = TRUE;
+        bd.RenderTarget[0].SrcBlend       = D3D11_BLEND_SRC_ALPHA;
+        bd.RenderTarget[0].DestBlend      = D3D11_BLEND_INV_SRC_ALPHA;
+        bd.RenderTarget[0].BlendOp        = D3D11_BLEND_OP_ADD;
+        bd.RenderTarget[0].SrcBlendAlpha  = D3D11_BLEND_ONE;
+        bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+        bd.RenderTarget[0].BlendOpAlpha   = D3D11_BLEND_OP_ADD;
 
-        // ==== 动态顶点缓冲（关键优化）====
-        D3D11_BUFFER_DESC vbDesc = {};
-        vbDesc.ByteWidth = sizeof(LineVertex) * m_maxVertices;
-        vbDesc.Usage = D3D11_USAGE_DYNAMIC;
-        vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        vbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
-        m_device->CreateBuffer(&vbDesc, nullptr, m_vb.GetAddressOf());
-
-        // ==== 常量缓冲 ====
-        D3D11_BUFFER_DESC cbDesc = {};
-        cbDesc.ByteWidth = sizeof(XMMATRIX);
-        cbDesc.Usage = D3D11_USAGE_DEFAULT;
-        cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-
-        m_device->CreateBuffer(&cbDesc, nullptr, m_cb.GetAddressOf());
-
-        // ==== 深度状态 ====
-        // 深度测试启用（用于一般绘制）
-        D3D11_DEPTH_STENCIL_DESC depthEnableDesc = {};
-        depthEnableDesc.DepthEnable = TRUE;
-        depthEnableDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-        depthEnableDesc.DepthFunc = D3D11_COMPARISON_LESS;
-        m_device->CreateDepthStencilState(&depthEnableDesc, m_depthStateEnabled.GetAddressOf());
-
-        // 深度测试禁用（用于光标，确保总是显示）
-        D3D11_DEPTH_STENCIL_DESC depthDisableDesc = {};
-        depthDisableDesc.DepthEnable = FALSE;
-        depthDisableDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-        m_device->CreateDepthStencilState(&depthDisableDesc, m_depthStateDisabled.GetAddressOf());
+        m_device->CreateBlendState(&bd, m_blendAlpha.GetAddressOf());
     }
 
-    void Renderer::Begin(const RenderTarget& target, const XMMATRIX& mvp)
+    void Renderer::BeginFrame(const RenderTarget& target  , const D3D11_VIEWPORT& viewport)
+    {  
+        ID3D11RenderTargetView* rtv = target.GetRTV();
+        float clear[4] = { 0.1f, 0.1f, 0.15f, 1.0f }; 
+        auto pso       = m_lineShader.GetPipeline(); 
+
+        m_context->RSSetViewports(1, &viewport);    
+        m_context->OMSetRenderTargets(1, &rtv, nullptr); // nullptr 深度缓冲区
+        m_context->ClearRenderTargetView(rtv, clear);    // 清空
+        m_context->IASetInputLayout(pso.layout);
+        m_context->VSSetShader(pso.shader->vs.Get(), nullptr, 0);
+        m_context->PSSetShader(pso.shader->ps.Get(), nullptr, 0);
+        m_context->RSSetState(m_rsNoCull.Get());
+    }
+
+    void Renderer::Submit(std::span<const Vertex_P3_C4> verts, const XMMATRIX& viewProj, PrimitiveType type, bool depth, bool blend)
     {
-        target.Bind(m_context);
+        if (verts.empty()) return;
 
-        float clear[4] = { 0.1f, 0.1f, 0.15f, 1 };
-        target.Clear(m_context, clear);
+        // ===== topology =====
+        m_context->IASetPrimitiveTopology(type == PrimitiveType::Line ? D3D11_PRIMITIVE_TOPOLOGY_LINELIST : D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        m_context->IASetInputLayout(m_layout.Get());
-        m_context->VSSetShader(m_vs.Get(), nullptr, 0);
-        m_context->PSSetShader(m_ps.Get(), nullptr, 0);
+        // ===== depth =====
+        if (!depth)
+        {
+            m_context->OMSetDepthStencilState(m_depthDisabled.Get(), 0);
+        }
+        else if (blend)
+        {
+            m_context->OMSetDepthStencilState(m_depthReadOnly.Get(), 0); // 关键
+        }
+        else
+        {
+            m_context->OMSetDepthStencilState(m_depthEnabled.Get(), 0);
+        }
 
-        // 启用深度测试（用于一般绘制）
-        m_context->OMSetDepthStencilState(m_depthStateEnabled.Get(), 0);
+        // ===== blend =====
+        if (blend)
+        {
+            float f[4] = { 0,0,0,0 };
+            m_context->OMSetBlendState(m_blendAlpha.Get(), f, 0xffffffff);
+        }
+        else
+        {
+            m_context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        }
 
-        XMMATRIX mat = XMMatrixTranspose(mvp);
-        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
+        // ===== matrix =====
+        XMMATRIX vp = XMMatrixTranspose(viewProj);
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &vp, 0, 0);
         m_context->VSSetConstantBuffers(0, 1, m_cb.GetAddressOf());
 
-        m_cpuBuffer.clear();
-        m_hasCursor = false;  // 重置光标标志
-    }
-
-    // 只收集
-    void Renderer::DrawLine(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color)
-    {
-        m_cpuBuffer.push_back({ a, color });
-        m_cpuBuffer.push_back({ b, color });
-
-        if (m_cpuBuffer.size() >= m_maxVertices)
-        {
-            Flush();
-        }
-    }
-
-    void Renderer::DrawGrad(const Grid& grid)
-    {
-        for (auto&line : grid.GetLines())
-        {
-            DrawLine(line.a, line.b, line.color);
-        }
-    }
-
-    //  提交 GPU
-    void Renderer::Flush()
-    {
-        if (m_cpuBuffer.empty()) return;
-
+        // ===== upload =====
         D3D11_MAPPED_SUBRESOURCE mapped;
         m_context->Map(m_vb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-
-        memcpy(mapped.pData, m_cpuBuffer.data(), sizeof(LineVertex) * m_cpuBuffer.size());
-
+        memcpy(mapped.pData, verts.data(), verts.size_bytes());
         m_context->Unmap(m_vb.Get(), 0);
 
-        UINT stride = sizeof(LineVertex);
-        UINT offset = 0;
-
-        m_context->IASetVertexBuffers(0, 1, m_vb.GetAddressOf(), &stride, &offset);
-        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-
-        m_context->Draw((UINT)m_cpuBuffer.size(), 0);
-
-        m_cpuBuffer.clear();
-    }
-     
-	void Renderer::SetCursor(float screenX, float screenY, float screenW, float screenH, 
-							const CursorConfig& config)
-	{ 
-		m_cursorX = screenX;
-		m_cursorY = screenY;
-		m_screenW = screenW;
-		m_screenH = screenH;
-		m_cursorConfig = config;
-		m_hasCursor = config.enabled;
-	}
-
-	void Renderer::SetCursorConfig(const CursorConfig& config)
-	{
-		m_cursorConfig = config;
-	}
-
-    void Renderer::FlushWithMVP(const XMMATRIX& mvp)
-    {
-        if (m_cpuBuffer.empty()) return;
-
-        // 切换 MVP
-        XMMATRIX mat = XMMatrixTranspose(mvp);
-        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
-
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        m_context->Map(m_vb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-        memcpy(mapped.pData, m_cpuBuffer.data(), sizeof(LineVertex) * m_cpuBuffer.size());
-        m_context->Unmap(m_vb.Get(), 0);
-
-        UINT stride = sizeof(LineVertex);
+        UINT stride = sizeof(Vertex_P3_C4);
         UINT offset = 0;
         m_context->IASetVertexBuffers(0, 1, m_vb.GetAddressOf(), &stride, &offset);
-        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-        m_context->Draw((UINT)m_cpuBuffer.size(), 0);
 
-        m_cpuBuffer.clear();
+        // ===== draw =====
+        m_context->Draw((UINT)verts.size(), 0);
     }
 
-    void Renderer::DrawCursorImpl()
+    ID3D11Device* Renderer::GetDevice()
     {
-        if (!m_hasCursor || !m_cursorConfig.enabled) return;
-
-        assert(m_screenW > 0 && m_screenH > 0);
-
-        // 构建屏幕空间正交 MVP 
-        XMMATRIX screenMVP = XMMatrixOrthographicOffCenterLH(0.f, m_screenW, m_screenH, 0.f, -1.f, 1.f);
-
-        float x = m_cursorX;
-        float y = m_cursorY;
-        const auto& color = m_cursorConfig.color;
-
-        // ================================
-        // 1️ 十字线（贯穿屏幕）
-        // ================================
-
-        // 横线
-        m_cpuBuffer.push_back({ {0.f, y, 0.f}, color });
-        m_cpuBuffer.push_back({ {m_screenW, y, 0.f}, color });
-
-        // 竖线
-        m_cpuBuffer.push_back({ {x, 0.f, 0.f}, color });
-        m_cpuBuffer.push_back({ {x, m_screenH, 0.f}, color });
-
-        // ================================
-        // 2️ 中心矩形（空心）
-        // ================================
-
-        float halfX = m_cursorConfig.sizeX / 2.f;
-        float halfY = m_cursorConfig.sizeY / 2.f;
-
-        float left = x - halfX;
-        float right = x + halfX;
-        float top = y - halfY;
-        float bottom = y + halfY;
-
-        // 上
-        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
-
-        // 下
-        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
-
-        // 左
-        m_cpuBuffer.push_back({ {left, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {left, bottom, 0.f}, color });
-
-        // 右
-        m_cpuBuffer.push_back({ {right, top, 0.f}, color });
-        m_cpuBuffer.push_back({ {right, bottom, 0.f}, color });
-
-        // 禁用深度测试，确保光标总是显示
-        m_context->OMSetDepthStencilState(m_depthStateDisabled.Get(), 0);
-
-        FlushWithMVP(screenMVP);
-
-        // 恢复深度测试和世界空间 MVP
-        m_context->OMSetDepthStencilState(m_depthStateEnabled.Get(), 0);
-
-        XMMATRIX mat = XMMatrixTranspose(m_worldMVP);
-        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &mat, 0, 0);
+        return m_device;
     }
 
-    void Renderer::End()
+    void Renderer::EndFrame()
     {
-        Flush();
-        DrawCursorImpl();  // 最后绘制光标（保证在最上层）
+        ID3D11RenderTargetView* nullRT[1] = { nullptr };
+        m_context->OMSetRenderTargets(1, nullRT, nullptr);
+
+        ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+        m_context->PSSetShaderResources(0, 1, nullSRV);
     }
 }
+

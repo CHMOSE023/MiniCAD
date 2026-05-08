@@ -5,23 +5,28 @@
 using namespace DirectX;
 
 namespace MiniCAD
-{ 
-	class Line
-	{
-	public:
-		Line() = default;
-		/// <summary>
-		/// 直线
-		/// </summary>
-		/// <param name="start"></param>
-		/// <param name="end"></param>
-		/// <param name="isSegment"></param>
+{
+	struct Line
+	{ 
+		Line() : Start(0.f, 0.f, 0.f)
+			   , End(0.f, 0.f, 0.f)
+			   , IsSegment(true)
+		{
+		}
+
 		Line(const XMFLOAT3& start, const XMFLOAT3& end, bool isSegment = true)
-			: Start(start), End(end), IsSegment(isSegment) { }
+			: Start(start)
+			, End(end)
+			, IsSegment(isSegment)
+		{
+		}
 
-	public:
+		XMFLOAT3 Start;
+		XMFLOAT3 End;
+		bool IsSegment = true;
 
-		// =============================
+		static constexpr float EPSILON = 1e-6f;
+
 		// 基础属性
 		// =============================
 		XMVECTOR Direction() const
@@ -41,21 +46,20 @@ namespace MiniCAD
 			return XMVectorGetX(XMVector3LengthSq(Vector()));
 		}
 
+
 		XMFLOAT3 Midpoint() const
 		{
-			XMVECTOR mid = XMVectorScale(
-				XMVectorAdd(XMLoadFloat3(&Start), XMLoadFloat3(&End)), 0.5f);
-
+			XMVECTOR mid = XMVectorScale(XMVectorAdd(XMLoadFloat3(&Start), XMLoadFloat3(&End)), 0.5f);
 			XMFLOAT3 result;
 			XMStoreFloat3(&result, mid);
 			return result;
 		}
 
+
 		// =============================
 		// 参数化表达
 		// P(t) = Start + t*(End-Start)
 		// =============================
-
 		XMVECTOR PointAt(float t) const
 		{
 			XMVECTOR s = XMLoadFloat3(&Start);
@@ -71,15 +75,13 @@ namespace MiniCAD
 			XMVECTOR pt = XMLoadFloat3(&p);
 
 			float lenSq = XMVectorGetX(XMVector3LengthSq(v));
-			if (lenSq < EPSILON) return 0.0f;
 
-			float t = XMVectorGetX(
-				XMVector3Dot(XMVectorSubtract(pt, s), v)) / lenSq;
+			if (lenSq < EPSILON)
+				return 0.0f;
 
-			if (IsSegment)
-			{
-				t = std::clamp(t, 0.0f, 1.0f);
-			}
+			float t = XMVectorGetX(XMVector3Dot(XMVectorSubtract(pt, s), v)) / lenSq;
+
+			if (IsSegment) { t = std::clamp(t, 0.0f, 1.0f); }
 
 			return t;
 		}
@@ -87,7 +89,6 @@ namespace MiniCAD
 		// =============================
 		// 几何计算
 		// =============================
-
 		XMFLOAT3 ClosestPoint(const XMFLOAT3& p) const
 		{
 			float t = ProjectParam(p);
@@ -100,8 +101,8 @@ namespace MiniCAD
 
 		float DistanceToPoint(const XMFLOAT3& p) const
 		{
-			XMFLOAT3 cp  = ClosestPoint(p);           // 先存到具名变量
-			XMVECTOR vcp = XMLoadFloat3(&cp);        // 再取地址
+			XMFLOAT3 cp = ClosestPoint(p);           // 先存到具名变量
+			XMVECTOR vcp = XMLoadFloat3(&cp);         // 再取地址
 			XMVECTOR vpt = XMLoadFloat3(&p);
 			return XMVectorGetX(XMVector3Length(XMVectorSubtract(vpt, vcp)));
 		}
@@ -109,50 +110,25 @@ namespace MiniCAD
 		// =============================
 		// 包围盒
 		// =============================
-
 		AABB GetBounds() const
 		{
 			AABB box;
-
-			box.Min = {
-				std::min(Start.x, End.x),
-				std::min(Start.y, End.y),
-				std::min(Start.z, End.z)
-			};
-
-			box.Max = {
-				std::max(Start.x, End.x),
-				std::max(Start.y, End.y),
-				std::max(Start.z, End.z)
-			};
-
+			box.Min = { std::min(Start.x, End.x), std::min(Start.y, End.y), std::min(Start.z, End.z) };
+			box.Max = { std::max(Start.x, End.x), std::max(Start.y, End.y), std::max(Start.z, End.z) };
 			return box;
 		}
 
 		// =============================
-		// 工具函数
-		// =============================
-
+	   // 工具函数
+	   // =============================
 		bool IsValid() const
 		{
 			return LengthSq() > EPSILON;
 		}
-
-	private:
-
+	 
 		XMVECTOR Vector() const
 		{
 			return XMVectorSubtract(XMLoadFloat3(&End), XMLoadFloat3(&Start));
 		}
-
-	public:
-		XMFLOAT3 Start;
-		XMFLOAT3 End;
-
-		// true = 线段，false = 无限直线
-		bool IsSegment = true;
-
-		static constexpr float EPSILON = 1e-6f;
 	};
-
-} // namespace MiniCAD
+}

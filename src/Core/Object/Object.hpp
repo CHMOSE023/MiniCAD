@@ -1,40 +1,32 @@
 #pragma once
-#include "RuntimeType.hpp" 
+#include "RuntimeType.hpp"
+#include <cstdint>   //  uint64_t
 namespace MiniCAD
 {
-	class ISerializer;
-
 	class Object
 	{
 	public:
-		using ObjectID = unsigned long long;  //uint64_t 
-
+		using ObjectID = uint64_t;
 		static constexpr ObjectID InvalidID = 0;
 
 		ObjectID GetID() const { return m_id; }
+		void     SetID(ObjectID id) { m_id = id; }
 
-		void  SetID(ObjectID id) { m_id = id; }
-
-		// --- Serialization 接口 ---
-		// 将对象写入序列化器
-		virtual void Serialize(ISerializer& s) const = 0;
-
-		// 从序列化器读取对象状态
-		virtual void Deserialize(ISerializer& s) = 0;
 
 		virtual const RuntimeTypeInfo* GetTypeInfo() const = 0;
 
 		template<typename T>
-		bool IsKindOf() const
+		bool IsKindOf() const noexcept
 		{
-			return GetTypeInfo()->IsKindOf(&T::s_typeInfo);
+			return GetTypeInfo()->IsKindOf(&T::TypeInfo);
 		}
 
-		inline static const RuntimeTypeInfo s_typeInfo{ "Object", nullptr };
-	protected:
-		explicit Object(ObjectID id) : m_id(id) {} 	// 构造函数，指定对象 ID
+		inline static const RuntimeTypeInfo TypeInfo{ "Object", nullptr }; // 允许变量在多个翻译单元中出现定义，但它们被视为同一个实体
+
+	protected:                                                             // 
+		explicit Object(ObjectID id) : m_id(id) {} 	                       // 构造函数，指定对象 ID
 	private:
-		ObjectID m_id; // 对象唯一标识 
+		ObjectID m_id;
 	};
 
 }

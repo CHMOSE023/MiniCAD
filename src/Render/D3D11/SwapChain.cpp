@@ -1,4 +1,8 @@
-#include "SwapChain.h"
+﻿#include "SwapChain.h"
+#include "Device.h"
+#include <wrl/client.h>
+#include <dxgi1_2.h>
+#include <pch.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -6,14 +10,14 @@ namespace MiniCAD
 {
     void SwapChain::Initialize(Device* device, HWND hwnd, UINT width, UINT height, const Options& opt)
     {
-         m_device = device;
-         m_hwnd   = hwnd;
-         m_width  = (width  > 0) ? width  : 1;
-         m_height = (height > 0) ? height : 1;
-         m_opt    = opt;
-         
-         CreateSwapChain();
-         CreateSizeDependent();
+        m_device = device;
+        m_hwnd   = hwnd;
+        m_width  = (width > 0) ? width : 1;
+        m_height = (height > 0) ? height : 1;
+        m_opt    = opt;
+
+        CreateSwapChain();
+        CreateSizeDependent();
     }
 
     void SwapChain::CreateSwapChain()
@@ -22,11 +26,11 @@ namespace MiniCAD
         auto device = m_device->GetDevice();
 
         DXGI_SWAP_CHAIN_DESC1 desc = {};
-        desc.Width = m_width;
-        desc.Height = m_height;
-        desc.Format = m_opt.backBufferFormat;
-        desc.BufferCount = m_opt.bufferCount;
-        desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        desc.Width            = m_width;
+        desc.Height           = m_height;
+        desc.Format           = m_opt.backBufferFormat;
+        desc.BufferCount      = m_opt.bufferCount;
+        desc.BufferUsage      = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         desc.SampleDesc.Count = 1;
 
         // 推荐 Flip Model
@@ -42,7 +46,7 @@ namespace MiniCAD
 
     void SwapChain::CreateSizeDependent()
     {
-        auto device = m_device->GetDevice();
+        auto device  = m_device->GetDevice();
         auto context = m_device->GetContext();
 
         // 清理旧资源
@@ -79,12 +83,12 @@ namespace MiniCAD
         // Viewport
         m_viewport = {};
 
-        m_viewport.TopLeftX  = 0;
-        m_viewport.TopLeftY  = 0;
-        m_viewport.Width     = static_cast<float>(m_width);
-        m_viewport.Height    = static_cast<float>(m_height);
-        m_viewport.MinDepth  = 0.0f;
-        m_viewport.MaxDepth  = 1.0f;
+        m_viewport.TopLeftX = 0;
+        m_viewport.TopLeftY = 0;
+        m_viewport.Width    = static_cast<float>(m_width);
+        m_viewport.Height   = static_cast<float>(m_height);
+        m_viewport.MinDepth = 0.0f;
+        m_viewport.MaxDepth = 1.0f;
 
     }
 
@@ -106,11 +110,11 @@ namespace MiniCAD
         m_depth.Reset();
 
         ThrowIfFailed(m_swapChain->ResizeBuffers(
-                      m_opt.bufferCount,
-                      m_width,
-                      m_height,
-                      m_opt.backBufferFormat,
-                      m_opt.allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0 )
+            m_opt.bufferCount,
+            m_width,
+            m_height,
+            m_opt.backBufferFormat,
+            m_opt.allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0)
         );
 
         CreateSizeDependent();
@@ -122,10 +126,9 @@ namespace MiniCAD
         UINT flags = (!m_opt.enableVSync && m_opt.allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0;
         m_swapChain->Present(syncInterval, flags);
 
-        // m_swapChain->Present(1, 0);// 跟随显示器刷新率
+        // m_swapChain->Present(1, 0);   // 跟随显示器刷新率
         // m_swapChain->Present(0, 0);   // 不等待，尽可能快，可能撕裂
     }
-
-
+     
 }
 

@@ -1,33 +1,28 @@
-#pragma once 
-#include "pch.h"
-
+﻿#pragma once 
+#include <wrl/client.h>
+#include <d3d11.h>
+ 
 namespace MiniCAD
 {
     class RenderTarget
     {
     public:
-        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv;
-        Microsoft::WRL::ComPtr<ID3D11DepthStencilView> dsv;
-        D3D11_VIEWPORT viewport{};
+        void Create(ID3D11Device* device, int width, int height);
+        void Resize(ID3D11Device* device, int width, int height);
+        void Release();
 
-    public:
-        void Bind(ID3D11DeviceContext* ctx) const
-        {
-            ID3D11RenderTargetView* rt = rtv.Get();
-            ID3D11DepthStencilView* ds = dsv.Get();
+        ID3D11ShaderResourceView* GetSRV() const { return m_srv.Get(); }
+        ID3D11RenderTargetView*   GetRTV() const { return m_rtv.Get(); } 
 
-            ctx->OMSetRenderTargets(1, &rt, ds);
-            ctx->RSSetViewports(1, &viewport);
-        }
+        int GetWidth()  const { return m_width; }
+        int GetHeight() const { return m_height; }
 
-        void Clear(ID3D11DeviceContext* ctx, const float color[4]) const
-        {
-            ctx->ClearRenderTargetView(rtv.Get(), color);
+    private:
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>          m_texture;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView>   m_rtv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srv;   
 
-            if (dsv)
-            {
-                ctx->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-            }
-        }
+        int m_width = 0;
+        int m_height = 0;
     };
 }

@@ -1,15 +1,15 @@
-#include "Device.h"
- 
+﻿#include "Device.h"
+#include <wrl/client.h>
+
 using Microsoft::WRL::ComPtr;
-  
+
 namespace MiniCAD
-{  
-    Device::Device(D3D_FEATURE_LEVEL minFeatureLevel) noexcept: 
+{
+    Device::Device(D3D_FEATURE_LEVEL minFeatureLevel) noexcept :
         m_featureLevel(D3D_FEATURE_LEVEL_9_1),
         m_minFeatureLevel(minFeatureLevel),
         m_deviceNotify(nullptr)
-    {
-    }
+    {}
 
     void Device::Initialize()
     {
@@ -38,8 +38,8 @@ namespace MiniCAD
 
         if (SUCCEEDED(m_dxgiFactory.As(&factory6)))
         {
-            for (UINT i = 0; 
-                SUCCEEDED(factory6->EnumAdapterByGpuPreference( i,  DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(adapter)));
+            for (UINT i = 0;
+                SUCCEEDED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(adapter)));
                 ++i)
             {
                 DXGI_ADAPTER_DESC1 desc;

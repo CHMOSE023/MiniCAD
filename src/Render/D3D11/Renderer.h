@@ -1,68 +1,56 @@
-#pragma once 
+#pragma once
 #include "pch.h"
 #include "RenderTarget.h"
-#include "Render/Viewport/Grid.h"
-using namespace DirectX;
+#include "Shader.h"
+#include <span>
+#include <DirectXMath.h>
+#include <wrl/client.h>
+#include <d3d11.h>
 
 namespace MiniCAD
 {
-    struct LineVertex
+    enum class PrimitiveType
     {
-        XMFLOAT3 pos;
-        XMFLOAT4 color;
-    };
-
-    struct CursorConfig
-    {
-        float sizeX = 12.f;              // 矩形宽度
-        float sizeY = 12.f;              // 矩形高度
-        XMFLOAT4 color = {1.f, 1.f, 1.f, 1.f};  // 光标颜色
-        bool enabled = true;             // 是否显示
+        Line,
+        Triangle
     };
 
     class Renderer
     {
     public:
-        Renderer(ID3D11Device* device, ID3D11DeviceContext* context); 
-        void Begin(const RenderTarget& target, const XMMATRIX& mvp);
-        void DrawLine(const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT4& color);
-        void DrawGrad(const Grid& grid);       
-        void SetCursor(float screenX, float screenY, float screenW, float screenH, 
-                      const CursorConfig& config = CursorConfig());
-        void SetCursorConfig(const CursorConfig& config);
-        void End();
+        Renderer(ID3D11Device* device, ID3D11DeviceContext* context);
 
+        void BeginFrame(const RenderTarget& target, const D3D11_VIEWPORT& viewport);
+        void EndFrame();
+
+        void Submit(std::span<const Vertex_P3_C4> verts,
+            const XMMATRIX&   viewProj,
+            PrimitiveType     type,
+            bool              depth = true,
+            bool              blend = false);
+    public:
+        ID3D11Device* GetDevice();
+            
     private:
         void Initialize();
-        void Flush();  
-        void FlushWithMVP(const XMMATRIX& mvp);
-        void DrawCursorImpl();
 
     private:
         ID3D11Device*        m_device = nullptr;
         ID3D11DeviceContext* m_context = nullptr;
 
-        // Pipeline
-        Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
-        Microsoft::WRL::ComPtr<ID3D11PixelShader>  m_ps;
-        Microsoft::WRL::ComPtr<ID3D11InputLayout>  m_layout;
-        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthStateEnabled;
-        Microsoft::WRL::ComPtr<ID3D11DepthStencilState> m_depthStateDisabled;
+        ComPtr<ID3D11Buffer> m_vb;
+        ComPtr<ID3D11Buffer> m_cb;
 
-        // Buffers
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_vb;
-        Microsoft::WRL::ComPtr<ID3D11Buffer> m_cb;
+        int m_maxVertices = 65536;
 
-        UINT m_maxVertices = 65536;
-        std::vector<LineVertex> m_cpuBuffer;
+        // ===== states =====
+        ComPtr<ID3D11DepthStencilState> m_depthEnabled;
+        ComPtr<ID3D11DepthStencilState> m_depthDisabled;
+        ComPtr<ID3D11DepthStencilState> m_depthReadOnly;  // 透明用
 
-        XMMATRIX m_worldMVP = XMMatrixIdentity();
+        ComPtr<ID3D11RasterizerState>   m_rsNoCull;
+        ComPtr<ID3D11BlendState>        m_blendAlpha;
 
-        // 光标参数
-        bool  m_hasCursor = false;
-        float m_cursorX = 0.f, m_cursorY = 0.f;
-        float m_screenW = 0.f, m_screenH = 0.f;
-        CursorConfig m_cursorConfig;
+        LineShader m_lineShader;
     };
-
 }
