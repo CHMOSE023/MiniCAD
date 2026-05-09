@@ -5,6 +5,7 @@
 #include "Render/D3D11/SwapChain.h"
 #include "Render/D3D11/Renderer.h" 
 #include "Editor/Input/InputSystem.h" 
+#include "Editor/Input/ViewportInputAdapter.h"
 #include "UI/UIManager.h" 
 #include "Document/DocumentManager.h"
 namespace MiniCAD
@@ -40,6 +41,7 @@ namespace MiniCAD
 		 
 		DocumentManager               m_docManager;
 		InputSystem                   m_inputSystem; 
+		ViewportInputAdapter          m_viewportInputAdapter;
 		UIManager                     m_uiManager; 
 	};
 }  

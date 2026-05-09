@@ -316,128 +316,24 @@ namespace MiniCAD
 
 	void MainWindow::DocumentInput()
 	{
-		if(m_docManager.GetActive() == nullptr)
+		auto* doc = m_docManager.GetActive();
+		if (doc == nullptr)
 			return;
 
-		auto imgState = m_uiManager.GetDocImageState();
+		const auto& uiInput = m_uiManager.GetViewportInput();
+		if (!uiInput.Valid)
+			return;
 
-        if (!imgState.Hovered)
-            return;
-	     
-
-        ImGuiIO& io = ImGui::GetIO();
-	    
-        const int  mx      = static_cast<int>(imgState.Local.x);
-        const int  my      = static_cast<int>(imgState.Local.y);
-        const int  lastMx  = static_cast<int>(imgState.Local.x - imgState.Delta.x);
-        const int  lastMy  = static_cast<int>(imgState.Local.y - imgState.Delta.y);
-	    
-        // ── 持久化：记录按下时的鼠标位置（框选起点） ───────────────────
-        static int s_pressMx = 0;
-        static int s_pressMy = 0;
-	    
-        const uint8_t mods = BuildModifiersFromIO(io);
-        const uint8_t btns = BuildMouseButtonsFromIO(io);
-	    
-        // ── 工厂：填充公共字段，分发给活跃文档 ────────────────────────
-        auto Dispatch = [&](InputEventType type,
-                            MouseButton    btn   = MouseButton::None,
-                            float          wheel = 0.f,
-                            uint32_t       key   = 0)
-        {
-            InputEvent e;
-            e.Type         = type;
-            e.Button       = btn;
-            e.Modifiers    = mods;
-            e.MouseButtons = btns;
-            e.MouseX       = mx;
-            e.MouseY       = my;
-            e.LastMouseX   = lastMx;
-            e.LastMouseY   = lastMy;
-            e.PressMouseX  = s_pressMx;
-            e.PressMouseY  = s_pressMy;
-            e.WheelDelta   = wheel;
-            e.KeyCode      = key;
-	    
-			if (auto* doc = m_docManager.GetActive())
-			{
-				// 如果宽高不一致 则更新文档宽高
-				auto& viewport = doc->GetViewport();
-
-				if (viewport.GetWidth()!= imgState.Size.x || viewport.GetHight()!= imgState.Size.y)
-				{
-					viewport.Resize(imgState.Size.x, imgState.Size.y);
-				}
-
-				doc->OnInput(e);
-				//printf("doc->OnInput(e); \n");
-			}
-        };
-	    
-        // ── 1. 鼠标按下 ────────────────────────────────────────────────
-        struct BtnMap { ImGuiMouseButton imgui; MouseButton btn; };
-        static constexpr BtnMap k_btns[] = {
-            { ImGuiMouseButton_Left,   MouseButton::Left   },
-            { ImGuiMouseButton_Middle, MouseButton::Middle },
-            { ImGuiMouseButton_Right,  MouseButton::Right  },
-        };
-	    
-        for (const auto& b : k_btns)
-        {
-            if (io.MouseClicked[b.imgui])
-            {
-                s_pressMx = mx;   // 记录按下起点
-                s_pressMy = my;
-                Dispatch(InputEventType::MouseButtonDown, b.btn);
-            }
-        }
-	    
-        // ── 2. 鼠标移动 ────────────────────────────────────────────────
-        if (imgState.Delta.x != 0.f || imgState.Delta.y != 0.f)
-        {
-            Dispatch(InputEventType::MouseMove);
-        }
-	    
-        // ── 3. 鼠标抬起 ────────────────────────────────────────────────
-        for (const auto& b : k_btns)
-        {
-            if (io.MouseReleased[b.imgui])
-            {
-                Dispatch(InputEventType::MouseButtonUp, b.btn);
-            }
-        }
-	    
-        // ── 4. 滚轮缩放 ────────────────────────────────────────────────
-        if (io.MouseWheel != 0.f)
-        {
-            Dispatch(InputEventType::MouseWheel, MouseButton::None, io.MouseWheel);
-        }
-	    
-        // ── 5. 键盘 ────────────────────────────────────────────────────
-        // ImGui 键 → VK 码 映射表（仅关心 InputEvent 用到的键）
-        struct KeyMap { ImGuiKey imgui; uint32_t vk; };
-        static constexpr KeyMap k_keys[] = 
+		auto& viewport = doc->GetViewport();
+		if (viewport.GetWidth() != uiInput.Size.x || viewport.GetHight() != uiInput.Size.y)
 		{
-            { ImGuiKey_Escape, VK_ESCAPE },
-            { ImGuiKey_Z,      'Z'       },
-            { ImGuiKey_Y,      'Y'       },
-            { ImGuiKey_L,      'L'       },
-			{ ImGuiKey_Delete, VK_DELETE },
-			{ ImGuiKey_F3,	   VK_F3     },
-			{ ImGuiKey_F8,     VK_F8     },
-		
-        };
-	    
-        for (const auto& k : k_keys)
-        {
-            // repeat=false：每次物理按下只触发一次
-            if (ImGui::IsKeyPressed(k.imgui, /*repeat=*/false))
-                Dispatch(InputEventType::KeyDown, MouseButton::None, 0.f, k.vk);
-	    
-            if (ImGui::IsKeyReleased(k.imgui))
-                Dispatch(InputEventType::KeyUp,   MouseButton::None, 0.f, k.vk);
-        } 
+			viewport.Resize(uiInput.Size.x, uiInput.Size.y);
+		}
 
+		for (const auto& e : m_viewportInputAdapter.BuildEvents(uiInput))
+		{
+			doc->OnInput(e);
+		}
 	}
 
 	void MainWindow::RenderFrame()
@@ -449,7 +345,8 @@ namespace MiniCAD
 
 		if (auto doc = m_docManager.GetActive())
 		{  
-			doc->Render(); // 离屏幕渲染
+			DocumentInput(); // 处理文档输入
+			doc->Render();   // 离屏幕渲染
 		}  
 
 		// 需要重新设置
@@ -457,9 +354,7 @@ namespace MiniCAD
 
 		m_uiManager.BeginFrame();
 
-		m_uiManager.Render(m_docManager);
-
-		DocumentInput();
+		m_uiManager.Render(m_docManager); 
 
 		m_uiManager.EndFrame();
 

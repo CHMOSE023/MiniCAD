@@ -3,6 +3,7 @@
 #include "imgui_internal.h"
 #include "Document/Document.h"
 #include "Document/DocumentManager.h"
+#include "Editor/Input/InputEvent.h"
 #include <memory>
 #include <vector>
 #include <filesystem>
@@ -28,11 +29,7 @@ namespace MiniCAD
             const char* tooltip;
             std::function<void(DocumentManager&)> onActivate;
         };
-        
-        //if (ImGui::MenuItem("复制", "Copy")) { editor.StartCopyTool(); }
-        //if (ImGui::MenuItem("移动", "Move")) { editor.StartMoveTool(); }
-        //if (ImGui::MenuItem("镜像", "Mirror")) { editor.StartMirrorTool(); }
-        //if (ImGui::MenuItem("旋转", "Rotate")) { editor.StartRotateTool(); }
+         
         inline  ToolMeta kTools[] =
         {
             { Tool::Select,     "Cursor",  "选择 (Esc)"   , [](DocumentManager& dm) {}   },
@@ -522,6 +519,8 @@ namespace MiniCAD
      
     void UIManager::DrawDocumentTabs(DocumentManager& dm)
     {
+        m_viewportInput = {}; // 每帧重置，确保输入状态只在当前帧有效
+
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
         if (!ImGui::BeginTabBar("MiniCAD##Main"))
         {
@@ -547,8 +546,7 @@ namespace MiniCAD
                 if (doc != active)
                 {
                     dm.SetActive(doc);
-                    // ImGui::EndTabItem();
-                    // continue; 
+                    active = doc;
                 }
                  
                 // 去掉内边距
@@ -556,48 +554,84 @@ namespace MiniCAD
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
 
                 ImVec2 size = ImGui::GetContentRegionAvail();
+                size.x = ImMax(size.x, 1.0f);
+                size.y = ImMax(size.y, 1.0f);
 
                 docPtr->GetViewport().Resize(size.x, size.y);
 
-                auto   srv  = doc->GetViewport().GetRenderTarget().GetSRV();
+                auto srv = doc->GetViewport().GetRenderTarget().GetSRV();
 
+                ImVec2 imageMin = ImGui::GetCursorScreenPos();
                 ImGui::Image(srv, size);
 
+                // Image 只负责显示；叠一个交互 item，稳定提供 hover/active 状态。
+                ImGui::SetCursorScreenPos(imageMin);
+                ImGui::InvisibleButton("##DocumentViewportInput", size,
+                    ImGuiButtonFlags_MouseButtonLeft   |
+                    ImGuiButtonFlags_MouseButtonMiddle |
+                    ImGuiButtonFlags_MouseButtonRight  );
 
-                ImGui::PopStyleVar(2);
-                if (doc == dm.GetActive())
+                const bool hovered = ImGui::IsItemHovered();
+                const bool activeItem = ImGui::IsItemActive();
+
+                if (doc == dm.GetActive()) // 构建交互状态（仅限活动文档）
                 {
-                    m_docImageState.Size = size;
-                    m_docImageState.Min  = ImGui::GetItemRectMin();
-                    m_docImageState.Max  = ImGui::GetItemRectMax();
+                    ImGuiIO& io = ImGui::GetIO();
+                    ImVec2 mouse = io.MousePos;
+                    if (!ImGui::IsMousePosValid(&mouse))
+                        mouse = ImVec2(0.f, 0.f);
 
-                    ImVec2 mp = ImGui::GetMousePos();
-                    if (!ImGui::IsMousePosValid(&mp)) mp = ImVec2(0.f, 0.f);
-                    m_docImageState.MousePos = mp;
+                    ImVec2 local = ImVec2(mouse.x - imageMin.x, mouse.y - imageMin.y);
 
-                    bool hov = ImGui::IsItemHovered();
-                    m_docImageState.Hovered = hov;
+                    m_viewportInput.Valid      = true;
+                    m_viewportInput.Hovered    = hovered;
+                    m_viewportInput.Active     = activeItem;
+                    m_viewportInput.Focused    = hovered || activeItem;
+                    m_viewportInput.Size       = { size.x, size.y };
+                    m_viewportInput.ScreenMin  = { imageMin.x, imageMin.y };
+                    m_viewportInput.ScreenMax  = { imageMin.x + size.x, imageMin.y + size.y };
+                    m_viewportInput.MouseLocal = { local.x, local.y };
+                    m_viewportInput.MouseDelta = { local.x - m_lastLocal.x, local.y - m_lastLocal.y };
+                    m_viewportInput.Wheel      = (hovered || activeItem) ? io.MouseWheel : 0.f;
 
-                    if (hov)
+                    for (int i = 0; i < 3; ++i)
                     {
-                        // 隐藏鼠标
+                        m_viewportInput.MouseClicked[i]  = hovered && io.MouseClicked[i];
+                        m_viewportInput.MouseReleased[i] = io.MouseReleased[i];
+                        m_viewportInput.MouseDown[i]     = io.MouseDown[i];
+                    }
+
+                    if (io.KeyShift) m_viewportInput.Modifiers |= static_cast<uint8_t>(ModifierKey::Shift);
+                    if (io.KeyCtrl)  m_viewportInput.Modifiers |= static_cast<uint8_t>(ModifierKey::Ctrl);
+                    if (io.KeyAlt)   m_viewportInput.Modifiers |= static_cast<uint8_t>(ModifierKey::Alt);
+
+                    auto setKeyState = [&](ImGuiKey imguiKey, uint32_t vk)
+                    {
+                        if (vk >= 512)
+                            return;
+
+                        m_viewportInput.KeyPressed[vk]  = m_viewportInput.Focused && ImGui::IsKeyPressed(imguiKey, false);
+                        m_viewportInput.KeyReleased[vk] = m_viewportInput.Focused && ImGui::IsKeyReleased(imguiKey);
+                    };
+
+                    setKeyState(ImGuiKey_Escape, VK_ESCAPE);
+                    setKeyState(ImGuiKey_Z, 'Z');
+                    setKeyState(ImGuiKey_Y, 'Y');
+                    setKeyState(ImGuiKey_L, 'L');
+                    setKeyState(ImGuiKey_Delete, VK_DELETE);
+                    setKeyState(ImGuiKey_F3, VK_F3);
+                    setKeyState(ImGuiKey_F8, VK_F8);
+
+                    if (hovered || activeItem)
                         ImGui::SetMouseCursor(ImGuiMouseCursor_None);
 
-                        ImVec2 local {
-                            ImClamp(mp.x - m_docImageState.Min.x, 0.f, size.x),
-                            ImClamp(mp.y - m_docImageState.Min.y, 0.f, size.y)
-                        };
-                        m_docImageState.Delta = { local.x - m_lastLocal.x,
-                                                  local.y - m_lastLocal.y };
-                        m_docImageState.Local = local;
+                    if (hovered || activeItem)
                         m_lastLocal = local;
-                    }
                     else
-                    {
-                        m_docImageState.Delta = ImVec2(0.f, 0.f);
-                    }
+                        m_viewportInput.MouseDelta = { 0.f, 0.f };
                 }
 
+                ImGui::PopStyleVar(2);
                 ImGui::EndTabItem();
             }
 
@@ -611,8 +645,8 @@ namespace MiniCAD
             }
         }
 
-        ImGui::PopStyleVar();
         ImGui::EndTabBar();
+        ImGui::PopStyleVar();
     } 
 
     void UIManager::DrawStatusBar(DocumentManager& dm)
@@ -645,11 +679,11 @@ namespace MiniCAD
         ImGui::SameLine();
 
         // ── 鼠标坐标 ─────────────────────────────────────────────
-        const auto& state = m_docImageState;
+        const auto& state = m_viewportInput;
         ImGui::TextDisabled("坐标:");
         ImGui::SameLine();
         if (state.Hovered)
-            ImGui::Text("X: %.1f  Y: %.1f", state.Local.x, state.Local.y);
+            ImGui::Text("X: %.1f  Y: %.1f", state.MouseLocal.x, state.MouseLocal.y);
         else
             ImGui::TextDisabled("---");
 
