@@ -661,6 +661,8 @@ namespace MiniCAD
                     // =========================
                     setKey(ImGuiKey_Escape, KeyCode::Escape);
                     setKey(ImGuiKey_Delete, KeyCode::Delete);
+                    setKey(ImGuiKey_Space,  KeyCode::Space);
+                    setKey(ImGuiKey_Enter,  KeyCode::Enter);
 
                     setKey(ImGuiKey_A, KeyCode::A);
                     setKey(ImGuiKey_B, KeyCode::B);

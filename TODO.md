@@ -43,13 +43,33 @@
 > 预估工期：1 ~ 2 周
 > README 阶段 4 的全部内容。这些是后续所有功能的地基，跳过会导致越来越多的边界 bug。
 
-- [ ] **P1-1** `ToolStateMachine` — 工具状态协议
-  - 文件：新建 `Editor/Tools/ToolStateMachine.h`
-  - 现在 `m_tool` 是裸 `unique_ptr`，切换工具只做 `reset()`，没有 suspend/resume 语义
-  - 实现 `IToolState` 枚举（`Idle` / `Active` / `Suspended` / `Finished`）和 `ToolStateMachine`
-  - 统一处理：工具切换时先调 `Cancel()`；Undo 打断绘制中工具；Snap 失效时的状态回退
-  - 避免当前「画线中按 Undo，Overlay 不清空」等边界 bug
-  - 预估：3 天 · 风险：中
+- [X] **P1-1** 工具生命周期协议 + 工具注册表
+  - 涉及文件：`Editor/Tools/ITool.h`、`EditorContext.h`、`EditorContext.cpp`
+
+  - **① ITool 加生命周期钩子**
+    - `OnSceneChanged()`  — Undo / Redo / Delete 后调用，清理依赖 Scene 的中间状态
+    - `OnFocusLost()`     — 中键平移开始，清空 Overlay 预览
+    - `OnFocusRestored()` — 中键平移结束，归还输入焦点
+    - 三个方法默认空实现，按需 override
+
+  - **② EditorContext 加工具注册表**
+    - `RegisterTool(toolId, factory)`   — 注册工具工厂函数
+    - `RegisterShortcut(key, toolId)`   — 注册快捷键绑定
+    - `ActivateToolById(toolId)`        — 按 ID 激活工具（内部调 ActivateTool）
+    - 内置工具在构造时通过 `RegisterBuiltinTools()` 自注册
+    - `StartXxxTool()` 便捷方法保留，内部改为 `ActivateToolById("Line")` 一行
+    - 插件只需拿到 `EditorContext&`，调 `RegisterTool` / `RegisterShortcut` 即可挂载新工具，
+      无需改动任何引擎头文件
+
+  - **③ EditorContext 加 ActivateTool() 私有方法**
+    - 提取所有工具启动前的 boilerplate：Cancel 旧工具、清 Overlay、清 Selection、
+      MarkDirty、ReBuildGrip、注册 OnFinished、重置 m_toolSuspended
+
+  - **④ HandleGlobal 调用时机**
+    - Undo / Redo / Delete 前先调 `m_tool->OnSceneChanged()`
+    - 中键按下调 `m_tool->OnFocusLost()`，中键抬起调 `m_tool->OnFocusRestored()`
+  - 预估：1 天 · 风险：低
+  - ~~删除原方案：`ToolStateMachine` / `IToolState` 枚举不再需要，问题已被上述四点分别消化~~
 
 - [ ] **P1-2** `TwoPhaseExecutor` — Command 两阶段提交
   - 文件：新建 `Document/Transaction/TwoPhaseExecutor.h`

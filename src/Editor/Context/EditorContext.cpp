@@ -1,4 +1,4 @@
-#include "EditorContext.h" 
+#include "EditorContext.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Document/Command/BatchDeleteCommand.h"
 #include "Editor/Viewport/Viewport.h"
@@ -6,21 +6,44 @@
 #include "Editor/Picking/Picking.h"
 #include "Editor/Snap/SnapResult.h"
 #include "Editor/Snap/SnapEngine.h"
-#include "Editor/Tools/LineTool.h"
-#include "Editor/Tools/PointTool.h"
 #include "Editor/Input/KeyCode.h"
 #include "Scene/Scene.h"
-#include <memory>
+
+// ── 绘制工具 ──────────────────────────────────────────────────
+#include "Editor/Tools/LineTool.h"
+#include "Editor/Tools/PointTool.h"
+//#include "Editor/Tools/Draw/RectangleTool.h"
+//#include "Editor/Tools/Draw/CircleTool.h"
+//#include "Editor/Tools/Draw/ArcTool.h"
+//#include "Editor/Tools/Draw/EllipseTool.h"
+//#include "Editor/Tools/Draw/PolylineTool.h"
+//#include "Editor/Tools/Draw/SplineTool.h"
+
+// ── 编辑工具 ──────────────────────────────────────────────────
+//#include "Editor/Tools/Modify/MoveTool.h"
+//#include "Editor/Tools/Modify/CopyTool.h"
+//#include "Editor/Tools/Modify/MirrorTool.h"
+//#include "Editor/Tools/Modify/RotateTool.h"
+
+// ── 几何编辑工具 ──────────────────────────────────────────────
+//#include "Editor/Tools/Modify/TrimTool.h"
+//#include "Editor/Tools/Modify/ExtendTool.h"
+//#include "Editor/Tools/Modify/BreakTool.h"
+
 #include <cstdio>
+#include <memory>
 
 namespace MiniCAD
 {
-    EditorContext::EditorContext(Scene&        scene, 
+    // ─────────────────────────────────────────────────────────────
+    //  构造
+    // ─────────────────────────────────────────────────────────────
+    EditorContext::EditorContext(Scene&        scene,
                                  CommandStack& cmdStack,
-                                 Viewport&     viewport,  
-                                 Overlay&      overlay, 
+                                 Viewport&     viewport,
+                                 Overlay&      overlay,
                                  Picking&      picking,
-                                 SnapEngine&   snap, 
+                                 SnapEngine&   snap,
                                  SnapResult&   currentSnap)
         : m_scene(scene)
         , m_cmdStack(cmdStack)
@@ -29,11 +52,213 @@ namespace MiniCAD
         , m_picking(picking)
         , m_snap(snap)
         , m_currentSnap(currentSnap)
-        , m_gripEditor(m_viewport, m_scene, m_cmdStack, m_picking) 
+        , m_gripEditor(m_viewport, m_scene, m_cmdStack, m_picking)
         , m_anchorLine({}, {})
     {
+        RegisterBuiltinTools();
     }
 
+    // ─────────────────────────────────────────────────────────────
+    //  RegisterBuiltinTools
+    //  内置工具 + 快捷键在这里统一注册。
+    //  新增内置工具只改这一个函数，EditorContext.h 不需要动。
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::RegisterBuiltinTools()
+    {
+        // ── 绘制工具 ──────────────────────────────────────────
+        RegisterTool("Line",      [this] { return std::make_unique<LineTool>     (m_scene, m_cmdStack, m_viewport, m_overlay);});
+        RegisterTool("Point",     [this] { return std::make_unique<PointTool>    (m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Rectangle", [this] { return std::make_unique<RectangleTool>(m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Circle",    [this] { return std::make_unique<CircleTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Arc",       [this] { return std::make_unique<ArcTool>      (m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Ellipse",   [this] { return std::make_unique<EllipseTool>  (m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Polyline",  [this] { return std::make_unique<PolylineTool> (m_scene, m_cmdStack, m_viewport, m_overlay);});
+       // RegisterTool("Spline",    [this] { return std::make_unique<SplineTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
+
+        /*
+      
+        // ── 编辑工具 ──────────────────────────────────────────
+        // 工厂内部检查选择集，空时返回 nullptr，ActivateToolById 会静默忽略
+        RegisterTool("Move", [this] -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty()) return nullptr;
+            return std::make_unique<MoveTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        RegisterTool("Copy", [this] -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty()) return nullptr;
+            return std::make_unique<CopyTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        RegisterTool("Mirror", [this] -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty()) return nullptr;
+            return std::make_unique<MirrorTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        RegisterTool("Rotate", [this] -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty()) return nullptr;
+            return std::make_unique<RotateTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+
+        // ── 几何编辑工具 ──────────────────────────────────────
+        RegisterTool("Trim", [this]{
+            return std::make_unique<TrimTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        RegisterTool("Extend", [this]{
+            return std::make_unique<ExtendTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        RegisterTool("Break", [this]{
+            return std::make_unique<BreakTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+        });
+        
+        */
+
+        // ── 快捷键绑定 ──────────────────────────────────────── 
+        RegisterAlias("L",   "Line");
+        RegisterAlias("LI",  "Line");
+        RegisterAlias("P",   "Polyline");
+        RegisterAlias("PL",  "Polyline");
+        RegisterAlias("MI",  "Mirror");
+        RegisterAlias("RO",  "Rotate"); 
+        RegisterAlias("PT",  "Point");       
+        RegisterAlias("C",   "Circle");
+        RegisterAlias("A",   "Arc");
+        RegisterAlias("EL",  "Ellipse");
+        RegisterAlias("SP",  "Spline");
+        RegisterAlias("M",   "Move");
+        RegisterAlias("CO",  "Copy");
+        RegisterAlias("MI",  "Mirror");
+        RegisterAlias("RO",  "Rotate");
+        RegisterAlias("TR",  "Trim");
+        RegisterAlias("EX",  "Extend");
+        RegisterAlias("BR",  "Break");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  工具注册表 — 对外接口
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::RegisterTool(const std::string& toolId, std::function<std::unique_ptr<ITool>()> factory)
+    {
+        m_toolRegistry[toolId] = std::move(factory);
+    }
+       
+    void EditorContext::RegisterAlias(const std::string& alias, const std::string& toolId)
+    {
+        m_aliasRegistry[alias] = toolId;
+    }
+
+    void EditorContext::ActivateToolByAlias(const std::string& alias)
+    {
+        auto it = m_aliasRegistry.find(alias);
+        if (it == m_aliasRegistry.end())
+        {
+            printf("[Editor] Unknown command: %s\n", alias.c_str());
+            return;
+        }
+
+        ActivateToolById(it->second);
+    }
+
+    char EditorContext::ToCommandChar(KeyCode key)
+    {
+        if (key >= KeyCode::A && key <= KeyCode::Z)
+        {
+            return static_cast<char>('A' + (static_cast<int>(key) - static_cast<int>(KeyCode::A)));
+        }
+
+        if (key >= KeyCode::Num0 && key <= KeyCode::Num9)
+        {
+            return static_cast<char>('0' + (static_cast<int>(key) - static_cast<int>(KeyCode::Num0)));
+        }
+
+        return '\0';
+    }
+     
+    void EditorContext::ActivateToolById(const std::string& toolId)
+    {
+        auto it = m_toolRegistry.find(toolId);
+        if (it == m_toolRegistry.end())
+        {
+            printf("[Editor] Unknown tool: %s\n", toolId.c_str());
+            return;
+        }
+
+        auto tool = it->second();   // 调工厂
+
+        if (!tool)                  // 工厂返回 nullptr（如编辑类工具选择集为空）
+        {
+            printf("[Editor] Tool '%s' has no targets, skipped.\n", toolId.c_str());
+            return;
+        }
+
+        printf("[Editor] Start %s\n", toolId.c_str());
+        ActivateTool(std::move(tool));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  ActivateTool — 工具切换核心（私有）
+    //  所有工具启动前的 boilerplate 集中在这里。
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::ActivateTool(std::unique_ptr<ITool> tool)
+    {
+        // 1. 停止旧工具
+        if (m_tool)
+        {
+            m_tool->Cancel();
+            m_tool.reset();
+        }
+
+        // 2. 清理编辑器状态
+        m_toolSuspended = false;
+        m_overlay.Clear();
+        m_picking.ClearSelection();
+        m_scene.MarkDirty();
+        m_picking.MarkDirty();
+        m_gripEditor.ReBuildGrip();
+
+        // 3. 接管新工具，注册完成回调
+        m_tool = std::move(tool);
+        m_tool->OnFinished = [this]()
+        {
+            m_toolSuspended = false;
+            m_overlay.Clear();
+            m_tool.reset();
+        };
+    }
+
+   
+
+    // ─────────────────────────────────────────────────────────────
+    //  绘制工具便捷方法
+    //  UI 层直接调用，内部只委托给 ActivateToolById，不含任何逻辑。
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::StartLineTool()      { ActivateToolById("Line");      }
+    void EditorContext::StartPointTool()     { ActivateToolById("Point");     }
+    void EditorContext::StartRectangleTool() { ActivateToolById("Rectangle"); }
+    void EditorContext::StartCircleTool()    { ActivateToolById("Circle");    }
+    void EditorContext::StartArcTool()       { ActivateToolById("Arc");       }
+    void EditorContext::StartEllipseTool()   { ActivateToolById("Ellipse");   }
+    void EditorContext::StartPolylineTool()  { ActivateToolById("Polyline");  }
+    void EditorContext::StartSplineTool()    { ActivateToolById("Spline");    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  编辑工具便捷方法
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::StartMoveTool()   { ActivateToolById("Move");   }
+    void EditorContext::StartCopyTool()   { ActivateToolById("Copy");   }
+    void EditorContext::StartMirrorTool() { ActivateToolById("Mirror"); }
+    void EditorContext::StartRotateTool() { ActivateToolById("Rotate"); }
+
+    // ─────────────────────────────────────────────────────────────
+    //  几何编辑工具便捷方法
+    // ─────────────────────────────────────────────────────────────
+    void EditorContext::StartTrimTool()   { ActivateToolById("Trim");   }
+    void EditorContext::StartExtendTool() { ActivateToolById("Extend"); }
+    void EditorContext::StartBreakTool()  { ActivateToolById("Break");  }
+
+    // ─────────────────────────────────────────────────────────────
+    //  OnInput — 消息路由主干
+    // ─────────────────────────────────────────────────────────────
     bool EditorContext::OnInput(const InputEvent& inputEvent)
     {
         UpdateSnap(inputEvent);
@@ -43,114 +268,169 @@ namespace MiniCAD
         if (HandleGlobal(e))
             return true;
 
-        // 获取约束修改后的 事件。
+        // 2. 约束（正交）
         e = ApplyConstraints(e);
 
-        // 2. Tool 激活时完全屏蔽后续系统
-        if (m_tool)
+        // 3. Tool 激活时完全接管后续消息
+        //    m_toolSuspended 为 true 时（中键平移中）消息不下发，
+        //    避免工具在视图移动期间误响应坐标
+        if (m_tool && !m_toolSuspended)
             return m_tool->OnInput(e);
 
-        // 3. 夹点拖拽编辑 
+        // 4. 夹点拖拽编辑
         if (m_gripEditor.OnInput(e))
             return true;
-         
-        // 4. Picking（选择系统） 
-        if (!m_gripEditor.IsDragging()) //拖拽进行中完全跳过：避免 hover / selection 被误改，
-        {  
+
+        // 5. Picking（选择系统）
+        //    拖拽进行中跳过，避免 hover / selection 被误改
+        if (!m_gripEditor.IsDragging())
+        {
             if (m_picking.OnInput(e))
-            {  
-                m_gripEditor.MarkDirty();   
+            {
+                m_gripEditor.MarkDirty();
                 return true;
             }
-
         }
 
-        // 5. 默认处理
+        // 6. 默认处理
         return HandleDefault(e);
     }
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
     //  HandleGlobal
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
     bool EditorContext::HandleGlobal(const InputEvent& e)
     {
+        // ── Undo ────────────────────────────────────────────────
         if (e.IsUndo())
-        {
+        { 
+            if (m_tool) m_tool->OnSceneChanged();   // !!!先通知 tool：Scene 即将被修改，清理依赖 Scene 的中间状态
+
             m_cmdStack.Undo(m_scene);
-            m_gripEditor.MarkDirty();  // 线段数据已变，夹点需要重建
+            m_gripEditor.MarkDirty();
             m_scene.MarkDirty();
             return true;
         }
 
+        // ── Redo ────────────────────────────────────────────────
         if (e.IsRedo())
         {
+            if (m_tool) m_tool->OnSceneChanged();
+
             m_cmdStack.Redo(m_scene);
-            m_gripEditor.MarkDirty();  // 同上
+            m_gripEditor.MarkDirty();
             m_scene.MarkDirty();
             return true;
         }
 
+        // ── Cancel ──────────────────────────────────────────────
         if (e.IsCancel())
         {
             if (m_tool)
             {
                 m_tool->Cancel();
                 m_tool.reset();
+                m_toolSuspended = false;
                 m_overlay.Clear();
             }
-            else if (m_gripEditor.IsDragging())  // 取消拖动恢复样式
+            else if (m_gripEditor.IsDragging())
             {
                 m_gripEditor.CancelDrag();
-                m_gripEditor.MarkDirty();   
+                m_gripEditor.MarkDirty();
             }
             return true;
         }
 
-        // Delete：删除选中
-        if (e.KeyCode == KeyCode::Delete)
-        {
-            DeleteSelected();
-
-            m_gripEditor.ReBuildGrip(); // 重建夹点
-            return true;
-        }
-
-        if (e.IsStartLineTool())
-        {
-            StartLineTool();
-            return true;
-        }
-        
-        if (e.Type == InputEventType::KeyDown && e.KeyCode == KeyCode::F3)  // F3 启用或关闭正交
-        {
-            ToggleSnap();
-        }
-
-        if (e.Type == InputEventType::KeyDown && e.KeyCode == KeyCode::F8)  // F8 启用或关闭正交
-        {
-            m_orthoEnabled = !m_orthoEnabled;
-
-            printf("[Editor] Ortho: %s\n", m_orthoEnabled ? "ON" : "OFF");
-
-            return true;
-        }
-
-        switch (e.Type)
-        {
-        case InputEventType::MouseMove:
-            if (e.IsMouseButtonDown(MouseButton::Middle))
+        if (e.Type == InputEventType::KeyDown)
+        {  
+			// A~Z 的按键进入命令缓冲，直到 Enter / Space 触发工具切换，或 Escape 清空缓冲。
+            if (e.KeyCode >= KeyCode::A && e.KeyCode <= KeyCode::Z)
             {
-                m_viewport.Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+                m_cmdBuffer += ToCommandChar(e.KeyCode);   
+                printf("m_cmdBuffer: %s",m_cmdBuffer.c_str()); 
                 return true;
             }
-            break;
 
-        case InputEventType::MouseWheel:
+            if (e.KeyCode == KeyCode::Enter || e.KeyCode == KeyCode::Space)
+            {
+                if (!m_cmdBuffer.empty())   // 当前命令
+                {
+                    ActivateToolByAlias(m_cmdBuffer);
+                    m_lastCommand = m_cmdBuffer;  
+                    m_cmdBuffer.clear(); 
+
+                    return true;
+                }
+
+				if (!m_lastCommand.empty()) // 重复上一个命令
+                {
+                    ActivateToolByAlias(m_lastCommand);
+                    return true;
+                }
+                return true;
+            }
+
+            if (e.KeyCode == KeyCode::Escape)
+            {
+                m_cmdBuffer.clear();   // 清空缓冲 
+
+            }
+
+            if (e.KeyCode == KeyCode::Delete)
+            {
+                if (m_tool) m_tool->OnSceneChanged();
+
+                DeleteSelected();
+                m_gripEditor.ReBuildGrip();
+                return true;
+            }
+  
+            if (e.KeyCode == KeyCode::F3) // 捕捉开关  
+            {
+                ToggleSnap();
+                return true;
+            }
+             
+            if (e.KeyCode == KeyCode::F8) // 正交开关 
+            {
+                ToggleOrtho();
+                return true;
+            }
+        }
+       
+
+        // ── 中键平移：通知 tool Suspend / Resume ────────────────
+        if (e.Type == InputEventType::MouseButtonDown && e.Button == MouseButton::Middle)
+        {
+            if (m_tool && !m_toolSuspended)
+            {
+                m_tool->OnFocusLost();
+                m_toolSuspended = true;
+            }
+            return true;
+        }
+
+        if (e.Type == InputEventType::MouseButtonUp && e.Button == MouseButton::Middle)
+        {
+            if (m_tool && m_toolSuspended)
+            {
+                m_toolSuspended = false;
+                m_tool->OnFocusRestored();
+            }
+            return false;   // 不吃掉，让后续系统也能感知中键释放
+        }
+
+        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle))
+        {
+            m_viewport.Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+            return true;
+        }
+
+        // ── 滚轮缩放 ────────────────────────────────────────────
+        if (e.Type == InputEventType::MouseWheel)
+        {
             m_viewport.Zoom(e.WheelDelta, e.MouseX, e.MouseY);
             return true;
-
-        default:
-            break;
         }
 
         return false;
@@ -161,6 +441,9 @@ namespace MiniCAD
         return false;
     }
 
+    // ─────────────────────────────────────────────────────────────
+    //  Picking / 选择
+    // ─────────────────────────────────────────────────────────────
     const std::unordered_set<Object::ObjectID>& EditorContext::GetSelection()
     {
         return m_picking.GetSelection();
@@ -175,114 +458,53 @@ namespace MiniCAD
     {
         const auto& sel = m_picking.GetSelection();
         if (sel.empty()) return nullptr;
-
-        auto id = *sel.begin(); // 先简单取第一个
-
-        return m_scene.GetEntity(id);
+        return m_scene.GetEntity(*sel.begin());
     }
 
     std::vector<Object*> EditorContext::GetSelectedObjects()
     {
         std::vector<Object*> result;
-
         for (auto id : m_picking.GetSelection())
         {
             if (auto* obj = m_scene.GetEntity(id))
-            {
                 result.push_back(obj);
-            }
         }
-
         return result;
     }
 
-    // ─────────────────────────────────────────────
-    //  StartLineTool
-    // ─────────────────────────────────────────────    
-    void EditorContext::StartLineTool()
-    {
-        if (m_tool)
-            m_tool->Cancel();
-
-        m_overlay.Clear();       
-        m_picking.ClearSelection(); // 
-       
-
-        m_scene.MarkDirty();
-        m_picking.MarkDirty();   
-        m_gripEditor.ReBuildGrip(); // 重建夹点
-
-        m_tool = std::make_unique<LineTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-        m_tool->OnFinished = [this]()
-            {
-                m_overlay.Clear();
-                m_tool.reset();
-            };
-
-        printf("[Editor] Start LineTool\n");
-    }
-
-    // ─────────────────────────────────────────────
-    //  StartPointTool
-    // ─────────────────────────────────────────────
-    void EditorContext::StartPointTool()
-    {
-        if (m_tool)
-            m_tool->Cancel();
-
-        m_overlay.Clear();
-        m_picking.ClearSelection(); 
-         
-        m_scene.MarkDirty();
-        m_picking.MarkDirty();
-        m_gripEditor.ReBuildGrip(); // 重建夹点
-
-        m_tool = std::make_unique<PointTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-        m_tool->OnFinished = [this]()
-            {
-                m_overlay.Clear();
-                m_tool.reset();
-            };
-
-        printf("[Editor] Start PointTool\n");
-    }
-
-    // ─────────────────────────────────────────────
-    //  Snap
-    // ───────────────────────────────────────────── 
+    // ─────────────────────────────────────────────────────────────
+    //  删除
+    // ─────────────────────────────────────────────────────────────
     void EditorContext::DeleteSelected()
     {
-        auto ids = m_picking.GetSelection(); // 获取选中对象 ID 列表
-        if (ids.empty())
-            return;
+        auto ids = m_picking.GetSelection();
+        if (ids.empty()) return;
 
-        std::vector<Object::ObjectID> idsVec(ids.begin(), ids.end()); // 转换为 vector
-
+        std::vector<Object::ObjectID> idsVec(ids.begin(), ids.end());
         auto cmd = std::make_unique<BatchDeleteCommand>(idsVec);
-
         m_cmdStack.Execute(std::move(cmd), m_scene);
-
     }
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
     //  Snap
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
     void EditorContext::UpdateSnap(const InputEvent& e)
     {
-        if (!ShouldSnap())
-            return;
+        if (!ShouldSnap()) return;
 
-        const Camera& cam = m_viewport.GetCamera();
-
-        // 夹点拖拽时排除选中对象，避免捕捉到自身端点
-        const auto& exclude = m_gripEditor.IsDragging() ? m_picking.GetSelection() : std::unordered_set<Object::ObjectID>{};
+        const Camera& cam     = m_viewport.GetCamera();
+        const auto&   exclude = m_gripEditor.IsDragging()
+            ? m_picking.GetSelection()
+            : std::unordered_set<Object::ObjectID>{};
 
         switch (e.Type)
         {
         case InputEventType::MouseMove:
         case InputEventType::MouseButtonDown:
         case InputEventType::MouseButtonUp:
-            m_currentSnap = m_snap.Query( { static_cast<float>(e.MouseX), static_cast<float>(e.MouseY) },m_scene, cam, exclude);
+            m_currentSnap = m_snap.Query(
+                { static_cast<float>(e.MouseX), static_cast<float>(e.MouseY) },
+                m_scene, cam, exclude);
             break;
         default:
             break;
@@ -291,48 +513,47 @@ namespace MiniCAD
 
     bool EditorContext::ShouldSnap() const
     {
-        if (!m_snapEnabled)
-            return false;
-
-        if (m_tool) return true;                        // 绘制工具激活时捕捉
-        if (m_gripEditor.IsDragging()) return true;     // 夹点拖拽时也捕捉
+        if (!m_snapEnabled)              return false;
+        if (m_tool)                      return true;   // 绘制工具激活时捕捉
+        if (m_gripEditor.IsDragging())   return true;   // 夹点拖拽时也捕捉
         return false;
     }
 
     InputEvent EditorContext::InjectSnap(const InputEvent& e)
     {
         InputEvent out = e;
-        out.HasSnap    = false; 
+        out.HasSnap    = false;
 
         if (m_currentSnap.IsValid())
-        { 
-            out.HasSnap = true;
+        {
+            out.HasSnap   = true;
             out.SnapWorld = m_currentSnap.WorldPos;
         }
 
         return out;
     }
 
+    // ─────────────────────────────────────────────────────────────
+    //  正交约束
+    // ─────────────────────────────────────────────────────────────
     InputEvent EditorContext::ApplyConstraints(const InputEvent& e)
     {
         InputEvent out = e;
 
         if (!m_orthoEnabled)
         {
-            m_anchorLine = { {},{} };  // 清空约束辅助线
+            m_anchorLine = { {}, {} };
             return out;
         }
 
         DirectX::XMFLOAT3 anchor;
-
-        if (!TryGetAnchor(anchor))     // 获取约束点
+        if (!TryGetAnchor(anchor))
         {
-            m_anchorLine = { {},{} };  // 清空约束辅助线
+            m_anchorLine = { {}, {} };
             return out;
         }
 
         DirectX::XMFLOAT3 input;
-
         if (e.HasSnap)
         {
             input = e.SnapWorld;
@@ -340,104 +561,81 @@ namespace MiniCAD
         else
         {
             auto p = m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
-            input = DirectX::XMFLOAT3(p.x, p.y, 0.f);
+            input  = DirectX::XMFLOAT3(p.x, p.y, 0.f);
         }
 
         float dx = input.x - anchor.x;
         float dy = input.y - anchor.y;
 
         DirectX::XMFLOAT3 result;
-
-        if (fabs(dx) > fabs(dy))
+        if (std::fabs(dx) > std::fabs(dy))
             result = { input.x, anchor.y, 0.f };
         else
             result = { anchor.x, input.y, 0.f };
 
-        out.HasSnap = true;
+        out.HasSnap   = true;
         out.SnapWorld = result;
+        m_anchorLine  = { anchor, result };
 
-		m_anchorLine = { anchor, result }; // 更新约束辅助线
-      
         return out;
-
     }
 
     bool EditorContext::TryGetAnchor(DirectX::XMFLOAT3& out) const
     {
-        if (m_tool && m_tool->HasAnchor()) // 锚点，约束点
+        if (m_tool && m_tool->HasAnchor())
         {
             out = m_tool->GetAnchor();
             return true;
         }
-
         if (m_gripEditor.IsDragging())
         {
             out = m_gripEditor.GetDragBase();
             return true;
         }
-
         return false;
     }
 
-    bool EditorContext::IsOrthoEnabled() const
-    {
-        return m_orthoEnabled;
-    }
+    // ─────────────────────────────────────────────────────────────
+    //  正交 / 捕捉开关
+    // ─────────────────────────────────────────────────────────────
+    bool EditorContext::IsOrthoEnabled() const { return m_orthoEnabled; }
 
     void EditorContext::SetOrthoEnabled(bool enabled)
     {
-        if (m_orthoEnabled == enabled)
-            return;
-
+        if (m_orthoEnabled == enabled) return;
         m_orthoEnabled = enabled;
-
         printf("[Editor] Ortho: %s\n", enabled ? "ON" : "OFF");
-
     }
 
-    void EditorContext::ToggleOrtho()
-    {
-        SetOrthoEnabled(!m_orthoEnabled);
-    }
+    void EditorContext::ToggleOrtho() { SetOrthoEnabled(!m_orthoEnabled); }
 
-
-    bool EditorContext::IsSnapEnabled()
-    {
-        return m_snapEnabled;
-    }
+    bool EditorContext::IsSnapEnabled() const { return m_snapEnabled; }
 
     void EditorContext::SetSnapEnabled(bool enabled)
     {
-        if (m_snapEnabled == enabled)
-            return;
-
+        if (m_snapEnabled == enabled) return;
         m_snapEnabled = enabled;
-
         printf("[Editor] Snap: %s\n", enabled ? "ON" : "OFF");
     }
 
-    void EditorContext::ToggleSnap()
-    {
-        SetSnapEnabled(!m_snapEnabled);
-    }
+    void EditorContext::ToggleSnap() { SetSnapEnabled(!m_snapEnabled); }
 
-
+    // ─────────────────────────────────────────────────────────────
+    //  Undo / Redo / Command
+    // ─────────────────────────────────────────────────────────────
     void EditorContext::Undo()
-    { 
+    {
         m_cmdStack.Undo(m_scene);
-
-        //OnSelectionChanged();
     }
 
     void EditorContext::Redo()
-    { 
+    {
         m_cmdStack.Redo(m_scene);
-
-        //OnSelectionChanged();
     }
 
     void EditorContext::ExecuteCommand(std::unique_ptr<ICommand> cmd)
     {
         m_cmdStack.Execute(std::move(cmd), m_scene);
     }
-}  
+
+} 

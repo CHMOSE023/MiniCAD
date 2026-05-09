@@ -48,7 +48,7 @@ namespace MiniCAD
         int            PressMouseY  = 0; 
         float          WheelDelta   = 0.f;
 
-        KeyCode KeyCode = KeyCode::Unknown;
+        KeyCode KeyCode = KeyCode::Unknown; 
 
         bool               HasSnap = false;  // 是否捕获
         DirectX::XMFLOAT3  SnapWorld;        // 捕获点
