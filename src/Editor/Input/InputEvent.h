@@ -2,6 +2,7 @@
 #include"pch.h"
 #include <cstdint> 
 #include <DirectXMath.h>
+#include "KeyCode.h"
 namespace MiniCAD
 {
     enum class InputEventType : uint8_t
@@ -19,39 +20,35 @@ namespace MiniCAD
 
     enum class MouseButtonState : uint8_t
     {
-        None = 0,
-        Left = 1 << 0,
+        None   = 0,
+        Left   = 1 << 0,
         Middle = 1 << 1,
-        Right = 1 << 2,
+        Right  = 1 << 2,
     };
 
     enum class ModifierKey : uint8_t
     {
-        None = 0,
+        None  = 0,
         Shift = 1 << 0,
-        Ctrl = 1 << 1,
-        Alt = 1 << 2,
+        Ctrl  = 1 << 1,
+        Alt   = 1 << 2,
     };
 
     struct InputEvent
     {
-        InputEventType Type = InputEventType::None;
-        MouseButton    Button = MouseButton::None;
-        uint8_t        Modifiers = 0;                    // ModifierKey 位掩码
-        uint8_t        MouseButtons = 0;
+        InputEventType Type         = InputEventType::None;
+        MouseButton    Button       = MouseButton::None;
+        uint8_t        Modifiers    = 0;  // ModifierKey 位掩码
+        uint8_t        MouseButtons = 0; 
+        int            MouseX       = 0;  // 客户区像素坐标
+        int            MouseY       = 0; 
+        int            LastMouseX   = 0;  // 上一次 MouseMove 的位置（用于 pan delta）
+        int            LastMouseY   = 0; 
+        int            PressMouseX  = 0;  // 鼠标按下时的位置（用于框选起点）
+        int            PressMouseY  = 0; 
+        float          WheelDelta   = 0.f;
 
-        int      MouseX = 0;          // 客户区像素坐标
-        int      MouseY = 0;
-
-        int      LastMouseX = 0;     // 上一次 MouseMove 的位置（用于 pan delta）
-        int      LastMouseY = 0;
-
-        int      PressMouseX = 0;    // 鼠标按下时的位置（用于框选起点）
-        int      PressMouseY = 0;
-
-        float    WheelDelta = 0.f;
-
-        uint32_t KeyCode = 0;
+        KeyCode KeyCode = KeyCode::Unknown;
 
         bool               HasSnap = false;  // 是否捕获
         DirectX::XMFLOAT3  SnapWorld;        // 捕获点
@@ -74,8 +71,7 @@ namespace MiniCAD
             default:
                 return false;
             }
-        }
-
+        } 
 
         bool IsLeftClick() const  // 左键点击（按下瞬间）
         {
@@ -101,25 +97,25 @@ namespace MiniCAD
 
         bool IsCancel() const   // ESC 取消
         {
-            return Type == InputEventType::KeyDown && KeyCode == VK_ESCAPE;
+            return Type == InputEventType::KeyDown && KeyCode == KeyCode::Escape;
         }
 
 
         bool IsUndo() const   // Undo（Ctrl + Z）
         {
-            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && (KeyCode == 'Z' || KeyCode == 'z');
+            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && KeyCode == KeyCode::Z;
         }
 
 
         bool IsRedo() const  // Redo（Ctrl + Y）
         {
-            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && (KeyCode == 'Y' || KeyCode == 'y');
+            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && KeyCode == KeyCode::Y;
         }
 
 
         bool IsStartLineTool() const // 启动画线工具（L）
         {
-            return Type == InputEventType::KeyDown && (KeyCode == 'L' || KeyCode == 'l');
+            return Type == InputEventType::KeyDown && KeyCode == KeyCode::L;
         }
 
         bool IsDrag(int threshold = 2) const // 是否在拖拽

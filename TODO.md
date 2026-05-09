@@ -10,12 +10,12 @@
 > 预估工期：1 ~ 2 天
 > 消除已知的 bug 和死代码，不新增功能，让主干保持干净可编译。
 
-- [ ] **P0-1** 修复 `StartPointTool` 的复制粘贴 bug
+- [x] **P0-1** 修复 `StartPointTool` 的复制粘贴 bug
   - 文件：`EditorContext.cpp`
   - `StartPointTool()` 里误打 `"[Editor] Start LineTool"`，改为 `"[Editor] Start PointTool"`
   - 预估：10 分钟 · 风险：低
 
-- [ ] **P0-2** 清理死代码 `InputSystem`
+- [x] **P0-2** 清理死代码 `InputSystem`
   - 文件：`MainWindow.h` / `MainWindow.cpp`
   - `m_inputSystem` 声明但从未调用，`EventProc` 里也没有接入
   - 选择：① 彻底删除；② 等平台层抽象时按 `Platform/IInput` 接口重新设计
@@ -24,15 +24,16 @@
 
 - [ ] **P0-3** 实现 `SaveToFile` / `Open`
   - 文件：`Document.cpp` / `DocumentManager.cpp`
-  - `SaveToFile` 目前是空壳（TODO 注释），`Open` / `CopySelected` 是 printf 占位
+  - `SaveToFile` 目前是空壳（TODO 注释），`Open` / `CopySelected` 是 printf 占位 
   - 先实现最简单的自定义二进制格式：写入实体数量 + 每个实体的类型标识 + 坐标数据
   - 对齐 README 中 `NativeFormat` 的方向
   - 预估：1 天 · 风险：中
 
-- [ ] **P0-4** 统一 Redo 快捷键大小写
+- [x] **P0-4** 统一 Redo 快捷键大小写 
   - 文件：`InputEvent.h`
   - `IsRedo()` 检测 `'Y'` 和 `'y'`，但 `ViewportInputAdapter` 只注册了大写 VK 码
   - 确认 `setKeyState` 里 `'Y'` 和 `'Z'` 对应的 `ImGuiKey` 是否覆盖小写场景，必要时补齐
+  - 抽象编辑器帧消息输入， Abstraction Editor Input Framework 。
   - 预估：30 分钟 · 风险：低
 
 ---

@@ -8,6 +8,7 @@
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Tools/LineTool.h"
 #include "Editor/Tools/PointTool.h"
+#include "Editor/Input/KeyCode.h"
 #include "Scene/Scene.h"
 #include <memory>
 #include <cstdio>
@@ -106,7 +107,7 @@ namespace MiniCAD
         }
 
         // Delete：删除选中
-        if (e.KeyCode == VK_DELETE)
+        if (e.KeyCode == KeyCode::Delete)
         {
             DeleteSelected();
 
@@ -120,12 +121,12 @@ namespace MiniCAD
             return true;
         }
         
-        if (e.Type == InputEventType::KeyDown && e.KeyCode == VK_F3)  // F3 启用或关闭正交
+        if (e.Type == InputEventType::KeyDown && e.KeyCode == KeyCode::F3)  // F3 启用或关闭正交
         {
             ToggleSnap();
         }
 
-        if (e.Type == InputEventType::KeyDown && e.KeyCode == VK_F8)  // F8 启用或关闭正交
+        if (e.Type == InputEventType::KeyDown && e.KeyCode == KeyCode::F8)  // F8 启用或关闭正交
         {
             m_orthoEnabled = !m_orthoEnabled;
 
@@ -243,7 +244,7 @@ namespace MiniCAD
                 m_tool.reset();
             };
 
-        printf("[Editor] Start LineTool\n");
+        printf("[Editor] Start PointTool\n");
     }
 
     // ─────────────────────────────────────────────

@@ -22,9 +22,9 @@ namespace MiniCAD
 	private:
 		static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 		LRESULT EventProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-		bool InitWindow(const wchar_t* title, int width, int height);
-		bool InitD3D11(int width, int height);  
-		bool InitDocument(Renderer& renderer, int width, int height);
+		bool    InitWindow(const wchar_t* title, int width, int height);
+		bool    InitD3D11(int width, int height);  
+		bool    InitDocument(Renderer& renderer, int width, int height);
 
 		void DocumentInput();
 		// ── 渲染 ──────────────────────────────────────────────
@@ -39,8 +39,7 @@ namespace MiniCAD
 		std::unique_ptr<SwapChain>    m_swapChain;
 		std::unique_ptr<Renderer>     m_renderer;
 		 
-		DocumentManager               m_docManager;
-		InputSystem                   m_inputSystem; 
+		DocumentManager               m_docManager; 
 		ViewportInputAdapter          m_viewportInputAdapter;
 		UIManager                     m_uiManager; 
 	};

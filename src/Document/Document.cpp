@@ -54,7 +54,9 @@ namespace MiniCAD
     bool Document::Save()
     {
         if (!HasPath())
+        { 
             return false;
+        }
 
         return SaveToFile(m_path);
     }
@@ -73,6 +75,7 @@ namespace MiniCAD
     bool Document::SaveToFile(const std::string& path)
     {
         // TODO: Scene 序列化
+		printf("Saving to %s ... (not implemented)\n", path.c_str());
         m_dirty = false;
         return true;
     }

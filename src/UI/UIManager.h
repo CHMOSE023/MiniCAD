@@ -59,7 +59,7 @@ namespace MiniCAD
         ImTextureID LoadTextureFromFile(const char* path);
 
     private:
-		std::unique_ptr<ImGuiLayer> m_imgui         = nullptr;
+        std::unique_ptr<ImGuiLayer> m_imgui         = nullptr;
         HWND                        m_hwnd          = nullptr;
         ID3D11Device*               m_device        = nullptr;
         ViewportInput               m_viewportInput = {};

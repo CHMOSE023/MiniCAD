@@ -14,32 +14,24 @@ namespace MiniCAD
 
         void Close(Document* doc); 
 
-        Document* GetActive()const { return m_active; } 
+        Document* GetActive()const;
          
-        void SetActive(Document* doc)
-        {
-            m_active = doc;
-        } 
+        void SetActive(Document* doc);
 
-        std::vector<std::unique_ptr<Document>>& GetAll() { return m_docs; }
+        std::vector<std::unique_ptr<Document>>& GetAll();
 
-        void  SetRenderer(Renderer* renderer) { m_renderer = renderer; }
-    public:
-        void New()   
-        {
-            if (!m_renderer)
-                return;
+        void SetRenderer(Renderer* renderer); 
 
-            Create(*m_renderer, m_defaultWidth, m_defaultHeight);
-        }
-        void Open()   { printf("Open\n"); }
-        void Save()   { printf("Save\n"); }
-		void SaveAs() { printf("Save As\n"); }
-		void Undo() const  { GetActive()->Undo(); }
-		void Redo() const  { GetActive()->Redo(); }
-		void Paste()  { printf("Paste\n"); }
+        void New();
+        void Open();
+        void Save();
+		void SaveAs();
+		void SaveAll();
+		void Undo() const;
+		void Redo() const;
+		void Paste();
 
-		void CopySelected()   { printf("Copy Selected\n"); }
+		void CopySelected();
     private:
         std::string GenerateUniqueName();
 

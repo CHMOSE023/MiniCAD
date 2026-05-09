@@ -48,8 +48,8 @@ namespace MiniCAD
 		 
 		 
 		// ── Undo / Redo ───────────────────────────────────────
-		void Undo() { m_cmdStack.Undo(m_scene); }
-		void Redo() { m_cmdStack.Redo(m_scene); }
+		void Undo()          { m_cmdStack.Undo(m_scene); }
+		void Redo()          { m_cmdStack.Redo(m_scene); }
 		bool CanUndo() const { return m_cmdStack.CanUndo(); }
 		bool CanRedo() const { return m_cmdStack.CanRedo(); }
 		 
@@ -61,8 +61,8 @@ namespace MiniCAD
 		void SetName(const std::string& name);
 
 		bool IsDirty() const { return m_dirty; }
-		void MarkDirty() { m_dirty = true; }
-		void MarkSaved() { m_dirty = false; }
+		void MarkDirty()     { m_dirty = true; }
+		void MarkSaved()     { m_dirty = false; }
 
 		bool HasPath() const { return !m_path.empty(); }
 

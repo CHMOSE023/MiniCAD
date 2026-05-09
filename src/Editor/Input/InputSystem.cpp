@@ -2,6 +2,7 @@
 #include "InputSystem.h" 
 #include "InputEvent.h"
 #include "IInputHandler.h"
+#include "KeyCodeUtils.h"  
 #include <vector>
 namespace MiniCAD
 {
@@ -100,14 +101,14 @@ namespace MiniCAD
 
         case WM_KEYDOWN:
             e.Type    = InputEventType::KeyDown;
-            e.KeyCode = static_cast<uint32_t>(wParam);
+            e.KeyCode = FromWin32Key(wParam);  
             e.MouseX  = m_lastMousePos.x;  // ！！！ 按键没有鼠标位置
             e.MouseY  = m_lastMousePos.y;  // ！！！ 按键没有鼠标位置
             break;
 
         case WM_KEYUP:
             e.Type    = InputEventType::KeyUp;
-            e.KeyCode = static_cast<uint32_t>(wParam);
+            e.KeyCode = FromWin32Key(wParam);
             e.MouseX  = m_lastMousePos.x;   // ！！！ 按键没有鼠标位置
             e.MouseY  = m_lastMousePos.y;   // ！！！ 按键没有鼠标位置
             break;
@@ -138,9 +139,9 @@ namespace MiniCAD
     uint8_t InputSystem::GetModifiers()
     {
         uint8_t m = 0;
-        if (GetKeyState(VK_SHIFT) & 0x8000) m   |= static_cast<uint8_t>(ModifierKey::Shift);
+        if (GetKeyState(VK_SHIFT)   & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Shift);
         if (GetKeyState(VK_CONTROL) & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Ctrl);
-        if (GetKeyState(VK_MENU) & 0x8000) m    |= static_cast<uint8_t>(ModifierKey::Alt);
+        if (GetKeyState(VK_MENU)    & 0x8000) m |= static_cast<uint8_t>(ModifierKey::Alt);
         return m;
     }
 

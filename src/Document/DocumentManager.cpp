@@ -35,6 +35,87 @@ namespace MiniCAD
             m_active = m_docs.back().get();
     }
 
+    Document* DocumentManager::GetActive() const
+    {
+        return m_active;
+    }
+
+    void DocumentManager::SetActive(Document* doc)
+    {
+        m_active = doc;
+    }
+
+    std::vector<std::unique_ptr<Document>>& DocumentManager::GetAll()
+    {
+        return m_docs; 
+    }
+
+    void DocumentManager::SetRenderer(Renderer* renderer)
+    {
+        m_renderer = renderer; 
+    }
+
+    void DocumentManager::New()
+    {
+        if (!m_renderer)
+            return;
+
+        Create(*m_renderer, m_defaultWidth, m_defaultHeight);
+    }
+
+    void DocumentManager::Open()
+    {
+		// 这里直接创建一个新文档，实际应用中应该弹出文件对话框让用户选择文件
+        // New();
+        printf("Open\n"); 
+    }
+
+    void DocumentManager::Save()
+    {
+        if (m_active)
+        {
+            m_active->Save();
+        }
+    }
+
+    void DocumentManager::SaveAs()
+    {
+        if (m_active)
+        {
+			// 这里直接调用 SaveAs，实际应用中应该弹出文件对话框让用户选择路径
+            m_active->SaveAs("");
+        }
+    }
+
+    void DocumentManager::SaveAll()
+    {
+        for (auto& doc : m_docs)
+        {
+            doc->Save();
+        }
+    }
+
+    void DocumentManager::Undo() const
+    {
+        GetActive()->Undo(); 
+    }
+
+    void DocumentManager::Redo() const
+    {
+        GetActive()->Redo();
+    }
+
+
+    void DocumentManager::Paste()
+    {
+        printf("Paste\n"); 
+    }
+
+    void DocumentManager::CopySelected() 
+    {
+        printf("Copy Selected\n"); 
+    }
+
     std::string DocumentManager::GenerateUniqueName()
     {
         int index = 0;
@@ -60,7 +141,6 @@ namespace MiniCAD
 
             index++;
         }
-    }
-
+    } 
 
 }

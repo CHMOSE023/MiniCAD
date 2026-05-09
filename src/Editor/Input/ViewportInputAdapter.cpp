@@ -1,21 +1,11 @@
 #include "ViewportInputAdapter.h"
+#include "InputEvent.h"
+#include "ViewportInput.h"
 #include <array>
+#include <vector>
 
 namespace MiniCAD
 {
-    namespace
-    {
-        constexpr std::array<uint32_t, 7> kInputKeys = {
-            VK_ESCAPE,
-            'Z',
-            'Y',
-            'L',
-            VK_DELETE,
-            VK_F3,
-            VK_F8,
-        };
-    }
-
     std::vector<InputEvent> ViewportInputAdapter::BuildEvents(const ViewportInput& input)
     {
         std::vector<InputEvent> events;
@@ -23,58 +13,66 @@ namespace MiniCAD
         if (!input.Valid || !ShouldDispatch(input))
             return events;
 
+        // Mouse Down
         for (int i = 0; i < 3; ++i)
         {
-            if (!input.MouseClicked[i])
+            if (!input.MouseButtons[i].Pressed)
                 continue;
 
             m_captured = true;
-            m_pressX = static_cast<int>(input.MouseLocal.x);
-            m_pressY = static_cast<int>(input.MouseLocal.y);
+            m_pressX   = static_cast<int>(input.MouseLocal.x);
+            m_pressY   = static_cast<int>(input.MouseLocal.y);
+
             events.push_back(MakeEvent(input, InputEventType::MouseButtonDown, ToMouseButton(i)));
         }
 
+        // Mouse Move
         if (input.MouseDelta.x != 0.f || input.MouseDelta.y != 0.f)
         {
             events.push_back(MakeEvent(input, InputEventType::MouseMove));
         }
 
+        // Mouse Up
         for (int i = 0; i < 3; ++i)
         {
-            if (!input.MouseReleased[i])
+            if (!input.MouseButtons[i].Released)
                 continue;
 
             events.push_back(MakeEvent(input, InputEventType::MouseButtonUp, ToMouseButton(i)));
         }
 
-        if (!input.MouseDown[0] && !input.MouseDown[1] && !input.MouseDown[2])
+        // release capture
+        if (!input.MouseButtons[0].Down &&  !input.MouseButtons[1].Down &&   !input.MouseButtons[2].Down)
         {
             m_captured = false;
         }
 
+        // Wheel
         if (input.Wheel != 0.f)
         {
             events.push_back(MakeEvent(input, InputEventType::MouseWheel, MouseButton::None, input.Wheel));
         }
 
-        if (input.Focused)
+        // Keyboard
+        for (size_t i = 0; i < input.Keys.size(); ++i)
         {
-            for (uint32_t key : kInputKeys)
+            const auto& key = input.Keys[i];
+
+            if (key.Pressed)
             {
-                if (key >= 512)
-                    continue;
-
-                if (input.KeyPressed[key])
-                    events.push_back(MakeEvent(input, InputEventType::KeyDown, MouseButton::None, 0.f, key));
-
-                if (input.KeyReleased[key])
-                    events.push_back(MakeEvent(input, InputEventType::KeyUp, MouseButton::None, 0.f, key));
+                events.push_back(MakeEvent(input, InputEventType::KeyDown, MouseButton::None, 0.f, static_cast<KeyCode>(i)));
             }
-        }
+
+            if (key.Released)
+            {
+                events.push_back(MakeEvent(input, InputEventType::KeyUp, MouseButton::None, 0.f, static_cast<KeyCode>(i)));
+            }
+        } 
 
         return events;
     }
 
+    // Mouse mapping
     MouseButton ViewportInputAdapter::ToMouseButton(int index)
     {
         switch (index)
@@ -86,39 +84,55 @@ namespace MiniCAD
         }
     }
 
+    // Mouse mapping
     uint8_t ViewportInputAdapter::BuildMouseButtons(const ViewportInput& input)
     {
         uint8_t buttons = 0;
-        if (input.MouseDown[0]) buttons |= static_cast<uint8_t>(MouseButtonState::Left);
-        if (input.MouseDown[1]) buttons |= static_cast<uint8_t>(MouseButtonState::Right);
-        if (input.MouseDown[2]) buttons |= static_cast<uint8_t>(MouseButtonState::Middle);
+
+        if (input.MouseButtons[0].Down)
+            buttons |= static_cast<uint8_t>(MouseButtonState::Left);
+
+        if (input.MouseButtons[1].Down)
+            buttons |= static_cast<uint8_t>(MouseButtonState::Right);
+
+        if (input.MouseButtons[2].Down)
+            buttons |= static_cast<uint8_t>(MouseButtonState::Middle);
+
         return buttons;
     }
 
+    // Dispatch rule
     bool ViewportInputAdapter::ShouldDispatch(const ViewportInput& input) const
     {
-        const bool hasMouseRelease = input.MouseReleased[0]    || input.MouseReleased[1] || input.MouseReleased[2];
-        const bool hasMouseClick   = input.MouseClicked[0]     || input.MouseClicked[1]  || input.MouseClicked[2];
-        const bool hasMouseMove    = input.MouseDelta.x != 0.f || input.MouseDelta.y     != 0.f;
-        const bool hasWheel        = input.Wheel != 0.f;
+        const bool hasMouse =
+            input.MouseButtons[0].Pressed  ||
+            input.MouseButtons[1].Pressed  ||
+            input.MouseButtons[2].Pressed  ||
+            input.MouseButtons[0].Released ||
+            input.MouseButtons[1].Released ||
+            input.MouseButtons[2].Released ;
 
-        return input.Hovered   ||
-               input.Active    ||
-               input.Focused   ||
-               m_captured      ||
-               hasMouseRelease ||
-               hasMouseClick   ||
-               hasMouseMove    ||
+        const bool hasMove  = input.MouseDelta.x != 0.f || input.MouseDelta.y != 0.f;
+
+        const bool hasWheel = input.Wheel != 0.f;
+
+        return input.Hovered ||
+               input.Active  ||
+               input.Focused ||
+               m_captured    ||
+               hasMouse      ||
+               hasMove       ||
                hasWheel;
     }
 
+    // Event factory
     InputEvent ViewportInputAdapter::MakeEvent(const ViewportInput& input,
                                                InputEventType       type,
                                                MouseButton          button,
                                                float                wheel,
-                                               uint32_t             key) const
-    {
-        InputEvent e;
+                                               KeyCode              key) const
+    { 
+        InputEvent e   = {};
         e.Type         = type;
         e.Button       = button;
         e.Modifiers    = input.Modifiers;
