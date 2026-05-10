@@ -11,10 +11,14 @@ namespace MiniCAD
     public:
         explicit AddEntityCommand(std::unique_ptr<Object> entity) : m_entity(std::move(entity)) {}
 
-        void Execute(Scene& scene) override
+        bool Execute(Scene& scene) override
         {
+            if (!m_entity)
+                return false;
+
             m_id = m_entity->GetID();
             scene.AddEntity(std::move(m_entity));
+            return true;
         }
 
         void Undo(Scene& scene) override

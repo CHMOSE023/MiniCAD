@@ -4,7 +4,8 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
-#include <memory> 
+#include <memory>
+
 namespace MiniCAD
 {
     struct DragEntityEntry
@@ -30,9 +31,13 @@ namespace MiniCAD
         explicit DragEntitiesCommand(std::vector<DragEntityEntry> entries)
             : m_entries(std::move(entries)) {}
 
-        void Execute(Scene& scene) override
+        bool Execute(Scene& scene) override
         {
+            if (m_entries.empty())
+                return false;
+
             Apply(scene, /*useAfter=*/true);
+            return true;
         }
 
         void Undo(Scene& scene) override
@@ -56,7 +61,7 @@ namespace MiniCAD
                 {
                     auto* line = static_cast<LineEntity*>(obj);
                     const auto& seg = useAfter ? e.AfterLine : e.BeforeLine;
-                    line->SetLine({ seg.Start,seg.End });
+                    line->SetLine({ seg.Start, seg.End });
                 }
                 else if (e.Kind == DragEntityEntry::Kind::Point)
                 {
@@ -64,7 +69,7 @@ namespace MiniCAD
                     const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
                     pt->SetPoint({ p });
                 }
-            } 
+            }
         }
     };
 }

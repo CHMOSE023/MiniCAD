@@ -13,10 +13,22 @@ namespace MiniCAD
         {
         }
 
-        void Execute(Scene& scene) override
+        // 任意子命令失败则整批失败，已执行的部分逆序回滚
+        bool Execute(Scene& scene) override
         {
+            int executed = 0;
             for (auto& cmd : m_commands)
-                cmd->Execute(scene);
+            {
+                if (!cmd->Execute(scene))
+                {
+                    // 回滚已成功的部分
+                    for (int i = executed - 1; i >= 0; --i)
+                        m_commands[i]->Undo(scene);
+                    return false;
+                }
+                ++executed;
+            }
+            return true;
         }
 
         void Undo(Scene& scene) override

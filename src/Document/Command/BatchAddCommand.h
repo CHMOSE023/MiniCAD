@@ -15,8 +15,11 @@ namespace MiniCAD
             : m_entities(std::move(entities))
         {}
 
-        void Execute(Scene& scene) override
+        bool Execute(Scene& scene) override
         {
+            if (m_entities.empty())
+                return false;
+
             m_ids.clear();
             for (auto& e : m_entities)
             {
@@ -24,6 +27,7 @@ namespace MiniCAD
                 scene.AddEntity(std::move(e));
             }
             m_entities.clear();
+            return true;
         }
 
         void Undo(Scene& scene) override

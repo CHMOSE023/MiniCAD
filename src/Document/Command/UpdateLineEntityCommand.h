@@ -23,9 +23,14 @@ namespace MiniCAD
         {
         }
 
-        void Execute(Scene& scene) override
+        bool Execute(Scene& scene) override
         {
+            auto* obj = scene.GetEntity(m_id);
+            if (!obj || !obj->IsKindOf<LineEntity>())
+                return false;
+
             Apply(scene, m_after);
+            return true;
         }
 
         void Undo(Scene& scene) override
@@ -46,10 +51,9 @@ namespace MiniCAD
         void Apply(Scene& scene, const LineEntityState& state) const
         {
             auto* obj = scene.GetEntity(m_id);
-
             if (!obj) return;
 
-            if(obj->IsKindOf<LineEntity>())
+            if (obj->IsKindOf<LineEntity>())
             {
                 auto* line = static_cast<LineEntity*>(obj);
                 if (!line) return;
@@ -57,8 +61,6 @@ namespace MiniCAD
                 line->SetLine(state.line);
                 line->SetAttr(state.attr);
             }
-           
- 
         }
     };
 }

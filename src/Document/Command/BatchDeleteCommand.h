@@ -15,8 +15,11 @@ namespace MiniCAD
             : m_ids(std::move(ids))
         {}
 
-        void Execute(Scene& scene) override
+        bool Execute(Scene& scene) override
         {
+            if (m_ids.empty())
+                return false;
+
             // 顺序删除，保存实体所有权供 Undo
             m_saved.clear();
             for (auto id : m_ids)
@@ -24,6 +27,7 @@ namespace MiniCAD
                 auto entity = scene.RemoveEntity(id);
                 if (entity) m_saved.push_back(std::move(entity));
             }
+            return true;
         }
 
         void Undo(Scene& scene) override

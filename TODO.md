@@ -71,12 +71,12 @@
   - 预估：1 天 · 风险：低
   - ~~删除原方案：`ToolStateMachine` / `IToolState` 枚举不再需要，问题已被上述四点分别消化~~
 
-- [ ] **P1-2** `TwoPhaseExecutor` — Command 两阶段提交
-  - 文件：新建 `Document/Transaction/TwoPhaseExecutor.h`
-  - 当前 Execute = 直接写入，没有 `prepare()` 校验阶段
-  - 实现：① `prepare()` 做合法性校验，失败直接返回 `Failure`，不写入任何数据；② `commit()` 写入；③ 失败时自动 `rollback()`
-  - `CommandResult<T>`（`Success` / `Failure` / `PartialFailure`）一并实现，替换目前 `void` 返回
-  - 预估：3 天 · 风险：中
+- [x] **P1-2** 命令堆栈 `Execute` 返回 bool — Command 执行结果
+  - 文件：`ICommand.h` / `CommandStack.h/.cpp` / 全部 Command 子类（6 个）
+  - 将 `ICommand::Execute` 由 `void` 改为 `bool`，失败返回 `false`
+  - `CommandStack::Execute` 收到 `false` 时不入 Undo 栈，Scene 保持原状
+  - `BatchCommand` 新增子命令失败时的逆序回滚
+  - 各 Command 子类在 `Execute` 头部加前置校验（空指针、空列表）
 
 - [ ] **P1-3** `EventBus` — per-Document 事件总线
   - 文件：新建 `Document/Runtime/EventBus.h` / `EventBus.cpp`
