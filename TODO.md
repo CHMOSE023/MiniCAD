@@ -78,30 +78,22 @@
   - `BatchCommand` 新增子命令失败时的逆序回滚
   - 各 Command 子类在 `Execute` 头部加前置校验（空指针、空列表）
 
-- [ ] **P1-3** `EventBus` — per-Document 事件总线
-  - 文件：新建 `Document/Runtime/EventBus.h` / `EventBus.cpp`
-  - 当前脏标记是直接在 Scene/Picking 上设布尔值，耦合严重
-  - 实现泛型 EventBus：`Subscribe<T>(handler)` / `Publish<T>(event)`，类型擦除用 `std::function`
-  - Document 持有独立实例（非全局单例）
-  - 事件类型先实现：`EntityAdded` / `EntityRemoved` / `EntityModified` / `SelectionChanged`
-  - 后续 `Render/DirtyPropagator` 订阅此总线触发增量重建
-  - 预估：2 天 · 风险：中
+- [x] **P1-3** ~~`EventBus` — per-Document 事件总线~~ → 不做
+  - 当前脏标记方案简单且灵活，已满足需求
+  - EventBus 引入模板/类型擦除，复杂度收益比不划算
+  - 若后续系统数量超过 4-5 个再评估
 
-- [ ] **P1-4** `EntityHandle` — ID + 版本号句柄
-  - 文件：新建 `Scene/EntityHandle.h`，改造 `Scene`
-  - 当前用裸 `ObjectID (uint64_t)` 当句柄，实体删除后 ID 悬空
-  - `EntityHandle = { ObjectID id; uint32_t version; }`
-  - `EntityDatabase` 对每个槽维护 version 计数器，删除时递增
-  - `GetEntity(handle)` 版本不匹配返回 `nullptr`
-  - `GripEditor` / `Picking` 里所有存 `ObjectID` 的地方迁移到 `EntityHandle`
-  - 预估：2 天 · 风险：高
+- [x] **P1-4** ~~`EntityHandle` — ID + 版本号句柄~~ → 不做
+  - `ObjectID` 为 `uint64_t` 单调递增（`fetch_add`），ID 永不复用，悬空问题不成立
+  - 现有 `if (!obj) continue` 防御已足够
 
-- [ ] **P1-5** `SelectionSet` 迁移至 `Editor/Context`
-  - 文件：新建 `Editor/Context/SelectionSet.h`，`Picking` 解耦
-  - 当前选中集合存在 `Picking` 内部（`m_selection`），`EditorContext` 要通过 `GetPicking().GetSelection()` 拿数据
-  - README 明确选择状态属于视图层（per-Viewport），应移到 `EditorContext`
-  - `Picking` 改为只做「命中测试」，结果回调给 `EditorContext` 更新 `SelectionSet`
-  - 预估：2 天 · 风险：中
+- [ ] **P1-5** `SelectionSet` 迁移至 `EditorContext` 
+  - 将 m_selection / m_hovered 从 Picking 移到 EditorContext
+  - Picking 改为纯命中测试，结果返回给 EditorContext 更新
+  - 触发条件：需要绕过 Picking 直接操控选中状态时再做
+  - 例1：需要在未经过的Picking情况下修改选中状态（比如从代码里直接选中某个实体）
+  - 例2：多视口时，每个视口都有独立选中的集合，但消耗一个Picking逻辑
+  - 预估：1 天 · 风险：低
 
 ---
 
@@ -299,4 +291,4 @@
 
 ---
 
-_生成日期：2026-05-09_
+_更新日期：2026-05-10_
