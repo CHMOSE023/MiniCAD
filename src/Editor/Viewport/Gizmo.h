@@ -1,9 +1,9 @@
 #pragma once
 #include <vector>
-#include <DirectXMath.h>
 #include "Camera.h"   
 #include "Render/D3D11/Shader.h"  
-
+#include "Render/VertexTypes.hpp"
+#include "Core/Math/PackedTypes.hpp"
 namespace MiniCAD
 {
     class Gizmo
@@ -13,11 +13,13 @@ namespace MiniCAD
         {
             std::vector<Vertex_P3_C4>   verts = {};
 
-            XMFLOAT4 gridColor = { 0.15f, 0.20f, 0.25f, 1.0f };
-            XMFLOAT4 gridColor5 = { 0.20f, 0.30f, 0.40f, 1.0f };
+            Math::Float4 gridColor  = { 0.15f, 0.20f, 0.25f, 1.0f };
+            Math::Float4 gridColor5 = { 0.20f, 0.30f, 0.40f, 1.0f };
 
-            XMFLOAT3 worldTL = camera.ScreenToWorld(0, 0);
-            XMFLOAT3 worldBR = camera.ScreenToWorld(screenWidth, screenHeight);
+            auto s2w = camera.ScreenToWorld(0, 0);
+            Math::Float3 worldTL = { static_cast<float>(s2w.x), static_cast<float>(s2w.y), static_cast<float>(s2w.z) };
+            s2w = camera.ScreenToWorld(screenWidth, screenHeight);
+            Math::Float3 worldBR = { static_cast<float>(s2w.x), static_cast<float>(s2w.y), static_cast<float>(s2w.z) };
 
             float worldLeft   = worldTL.x;
             float worldRight  = worldBR.x;
@@ -37,12 +39,13 @@ namespace MiniCAD
             if (showGizmo)
             {
                
+				auto w2s = camera.WorldToScreen({ 0, 0, 0 });
                 // 坐标轴图标
-                XMFLOAT2 origin = camera.WorldToScreen({ 0, 0, 0 });
-                XMFLOAT4 color = { 1.0f, 1.0f, 1.0f, 1.0f };
-                float len = 50.0f;
-                float boxSize = 5.0f;
-                float s = 15.0f;
+                Math::Float2 origin   = { static_cast<float>(w2s.x), static_cast<float>(w2s.y) };
+                Math::Float4 color    = { 1.0f, 1.0f, 1.0f, 1.0f };
+                float len       = 50.0f;
+                float boxSize   = 5.0f;
+                float s         = 15.0f;
 
                 bool originVisible = origin.x >= 0 && origin.x <= screenWidth
                     && origin.y >= 0 && origin.y <= screenHeight;
@@ -74,12 +77,12 @@ namespace MiniCAD
                 verts.push_back({ {ax, ay - len, 0}, color });
                 // 手绘 Y
                 float yx = ax + 4.0f, yy = ay - len - s - 4.0f;
-                verts.push_back({ {yx,         yy,         0}, color });
+                verts.push_back({ {yx,           yy,           0}, color });
                 verts.push_back({ {yx + s / 2,   yy + s / 2,   0}, color });
-                verts.push_back({ {yx + s,     yy,         0}, color });
+                verts.push_back({ {yx + s,       yy,           0}, color });
                 verts.push_back({ {yx + s / 2,   yy + s / 2,   0}, color });
                 verts.push_back({ {yx + s / 2,   yy + s / 2,   0}, color });
-                verts.push_back({ {yx + s / 2,   yy + s,     0}, color });
+                verts.push_back({ {yx + s / 2,   yy + s,       0}, color });
 
                 
             }

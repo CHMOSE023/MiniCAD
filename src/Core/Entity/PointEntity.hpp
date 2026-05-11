@@ -1,15 +1,14 @@
 #pragma once  
-#include <DirectXMath.h> 
+#include "../Math/Point3.hpp"
 #include "Core/GeomKernel/Point.hpp" 
-#include "Entity.hpp"
-using namespace DirectX;
+#include "Entity.hpp" 
 
 namespace MiniCAD
 {
 	class PointEntity : public Entity
 	{
 	public:
-		PointEntity(ObjectID id, const XMFLOAT3& position) : Entity(id), m_point(position) {};
+		PointEntity(ObjectID id, const  Math::Point3& position) : Entity(id), m_point(position) {};
 
 		void         SetPoint(const Point& point) { m_point = point; }
 		const Point& GetPoint() const             { return m_point; };

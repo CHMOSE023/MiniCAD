@@ -5,22 +5,11 @@
 #include <d3d11.h>
 #include <d3dcommon.h>
 #include <Windows.h>
-using  Microsoft::WRL::ComPtr;
-using namespace DirectX;
+
+using  Microsoft::WRL::ComPtr;  
 
 namespace MiniCAD
-{
-    struct Vertex_P3_C4                      // 顶点位置 + 颜色
-    {
-        XMFLOAT3 pos;                        // 顶点位置
-        XMFLOAT4 color;                      // 顶点颜色
-    };
-     
-    struct Vertex_P3
-    {
-        XMFLOAT3 pos;                       // 顶点位置 
-    };
-
+{ 
     struct ShaderProgram                    // 着色器程序
     {
         ComPtr<ID3D11VertexShader> vs;      // 顶点着色器

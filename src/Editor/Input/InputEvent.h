@@ -1,8 +1,8 @@
 #pragma once
-#include"pch.h"
-#include <cstdint> 
-#include <DirectXMath.h>
+#include "pch.h"
+#include "Core/Math/Point3.hpp"
 #include "KeyCode.h"
+#include <cstdint>  
 namespace MiniCAD
 {
     enum class InputEventType : uint8_t
@@ -51,7 +51,7 @@ namespace MiniCAD
         KeyCode KeyCode = KeyCode::Unknown; 
 
         bool               HasSnap = false;  // 是否捕获
-        DirectX::XMFLOAT3  SnapWorld;        // 捕获点
+        Math::Point3       SnapWorld;        // 捕获点
 
         bool HasModifier(ModifierKey k) const
         {

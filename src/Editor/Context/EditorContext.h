@@ -88,7 +88,7 @@ namespace MiniCAD
         void DeleteSelected();
 
         // ── 正交 ─────────────────────────────────────────────
-        bool TryGetAnchor(DirectX::XMFLOAT3& out) const;
+        bool TryGetAnchor(Math::Point3& out) const;
         bool IsOrthoEnabled() const;
         void SetOrthoEnabled(bool enabled);
         void ToggleOrtho();
@@ -127,21 +127,21 @@ namespace MiniCAD
         std::unique_ptr<ITool> m_tool;
         bool                   m_toolSuspended = false;  // 中键平移期间为 true
 
-        Scene&        m_scene;
-        CommandStack& m_cmdStack;
-        Viewport&     m_viewport;
-        Overlay&      m_overlay;
-        Picking&      m_picking;
-        SnapEngine&   m_snap;
-        SnapResult&   m_currentSnap;
-        GripEditor    m_gripEditor;
+        Scene&         m_scene;
+        CommandStack&  m_cmdStack;
+        Viewport&      m_viewport;
+        Overlay&       m_overlay;
+        Picking&       m_picking;
+        SnapEngine&    m_snap;
+        SnapResult&    m_currentSnap;
+        GripEditor     m_gripEditor;
 
         Line m_anchorLine;
         bool m_snapEnabled  = true;
         bool m_orthoEnabled = false;
          
         std::unordered_map<std::string,
-            std::function<std::unique_ptr<ITool>()>> m_toolRegistry;   
+        std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;   
         std::unordered_map<std::string, std::string> m_aliasRegistry;
         std::string                                  m_cmdBuffer;
         std::string                                  m_lastCommand;

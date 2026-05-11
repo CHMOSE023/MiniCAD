@@ -1,36 +1,28 @@
 #pragma once
-#include "pch.h"
-#include "RenderTarget.h"
+#include "pch.h" 
 #include "Shader.h"
+#include "Core/Math/Mat4.hpp"
+#include "../IRenderer.h"
+#include "../VertexTypes.hpp"
 #include <span>
-#include <DirectXMath.h>
 #include <wrl/client.h>
 #include <d3d11.h>
 
 namespace MiniCAD
 {
-    enum class PrimitiveType
-    {
-        Line,
-        Triangle
-    };
-
-    class Renderer
+   
+	class D3D11Renderer : public IRenderer
     {
     public:
-        Renderer(ID3D11Device* device, ID3D11DeviceContext* context);
+        D3D11Renderer(ID3D11Device* device, ID3D11DeviceContext* context);
 
-        void BeginFrame(const RenderTarget& target, const D3D11_VIEWPORT& viewport);
-        void EndFrame();
-
-        void Submit(std::span<const Vertex_P3_C4> verts,
-            const XMMATRIX&   viewProj,
-            PrimitiveType     type,
-            bool              depth = true,
-            bool              blend = false);
-    public:
-        ID3D11Device* GetDevice();
-            
+        virtual void BeginFrame(IRenderTarget& target, const ViewportDesc& viewport) override;
+        virtual void EndFrame() override;
+        virtual void Submit(std::span<const Vertex_P3_C4> verts, const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) override;
+        
+        virtual void* GetNativeDevice() override;
+ 
+        ID3D11Device* GetDevice() { return m_device; }
     private:
         void Initialize();
 

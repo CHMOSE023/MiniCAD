@@ -4,6 +4,7 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Math/Point3.hpp"
 #include <memory>
 
 namespace MiniCAD
@@ -21,8 +22,8 @@ namespace MiniCAD
         LineSegment BeforeLine;
         LineSegment AfterLine;
 
-        XMFLOAT3   BeforePoint;
-        XMFLOAT3   AfterPoint;
+        Math::Point3  BeforePoint;
+        Math::Point3  AfterPoint;
     };
 
     class DragEntitiesCommand : public ICommand

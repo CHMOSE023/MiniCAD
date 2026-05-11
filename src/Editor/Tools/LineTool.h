@@ -4,12 +4,11 @@
 #include "Editor/Viewport/Viewport.h"
 #include "Document/CommandStack/CommandStack.h" 
 #include "Document/Command/AddEntityCommand.h" 
-#include <cstdio>
-#include <DirectXMath.h>
+#include "Core/Math/Point3.hpp"
+#include <cstdio> 
 #include <optional>   // 可选值容器
 namespace MiniCAD
-{
-    using namespace DirectX;
+{ 
 
     class LineTool : public ITool
     {
@@ -71,27 +70,26 @@ namespace MiniCAD
         }
 
         // 返回锚点
-        DirectX::XMFLOAT3 GetAnchor() const override
+        Math::Point3 GetAnchor() const override
         {
-            return DirectX::XMFLOAT3(m_start.x, m_start.y, 0.f);
+            return Math::Point3(m_start.x, m_start.y, 0.f);
         }
 
     private: 
 
-        DirectX::XMFLOAT3 GetPoint(const InputEvent& e)
+        Math::Point3 GetPoint(const InputEvent& e)
         {
             if (e.HasSnap) return e.SnapWorld;   // 获取捕获点
 
             return m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
         }
 
-        void Commit(const XMFLOAT3& a, const XMFLOAT3& b)
+        void Commit(const Math::Point3& a, const Math::Point3& b)
         {
-            auto id = m_scene.NextObjectID();
+            auto id   = m_scene.NextObjectID(); 
+            auto line = std::make_unique<LineEntity>(id, a, b); 
+            auto cmd  = std::make_unique<AddEntityCommand>(std::move(line));
 
-            auto line = std::make_unique<LineEntity>(id, a, b);
-
-            auto cmd = std::make_unique<AddEntityCommand>(std::move(line));
             m_cmdStack.Execute(std::move(cmd), m_scene);
 
             printf("线段 Id %d  (%.3f,%.3f) (%.3f,%.3f)\n",static_cast<int>(id), a.x, a.y, b.x, b.y);
@@ -103,8 +101,8 @@ namespace MiniCAD
         Viewport&     m_viewport;
         Overlay&      m_overlay;  
         bool          m_hasStart = false;
-        XMFLOAT3      m_start{};
-        XMFLOAT3      m_preview{};  // 动态预览（MiniCAD关键）
+        Math::Point3  m_start{};
+        Math::Point3  m_preview{};  // 动态预览（MiniCAD关键）
 
     };
 }

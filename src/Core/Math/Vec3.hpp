@@ -16,10 +16,10 @@ namespace MiniCAD::Math
         Vec3 operator/(double s)        const { return { x / s,    y / s,    z / s   }; }
         Vec3 operator-()                const { return { -x,       -y,       -z      }; }
 
-        Vec3& operator+=(const Vec3& r)       { x += r.x; y += r.y;  z += r.z;  return *this; }
-        Vec3& operator-=(const Vec3& r)       { x -= r.x; y -= r.y;  z -= r.z;  return *this; }
-        Vec3& operator*=(double s)            { x *= s;    y *= s;   z *= s;    return *this; }
-        Vec3& operator/=(double s)            { x /= s;    y /= s;   z /= s;    return *this; }
+        Vec3& operator+=(const Vec3& r)       { x += r.x;  y += r.y;  z += r.z;  return *this; }
+        Vec3& operator-=(const Vec3& r)       { x -= r.x;  y -= r.y;  z -= r.z;  return *this; }
+        Vec3& operator*=(double s)            { x *= s;    y *= s;    z *= s;    return *this; }
+        Vec3& operator/=(double s)            { x /= s;    y /= s;    z /= s;    return *this; }
 
         double LengthSq()   const { return x * x + y * y + z * z; }
         double Length()     const { return std::sqrt(LengthSq()); }

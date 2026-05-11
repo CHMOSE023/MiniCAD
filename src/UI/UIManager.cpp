@@ -565,7 +565,7 @@ namespace MiniCAD
 
                 docPtr->GetViewport().Resize(size.x, size.y);
 
-                auto srv = doc->GetViewport().GetRenderTarget().GetSRV();
+                auto srv = doc->GetViewport().GetRenderTarget()->GetNativeShaderResource();
 
                 ImVec2 imageMin = ImGui::GetCursorScreenPos();
                 ImGui::Image(srv, size);

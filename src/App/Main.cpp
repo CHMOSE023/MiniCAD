@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "MainWindow.h"
+#include "Core/GeomKernel/XLine.hpp"
 using namespace MiniCAD;
 int main()
 {

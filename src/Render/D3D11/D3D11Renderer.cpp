@@ -1,11 +1,18 @@
-#include "Renderer.h" 
-#include "Shader.h"
-#include "RenderTarget.h"
+#include "Shader.h" 
+#include "D3D11Renderer.h" 
+#include "D3D11RenderTarget.h"
 #include <d3d11.h>
-
+#include "../GpuTypes.hpp"
+#include "../IRenderer.h"
 namespace MiniCAD
 {
-    Renderer::Renderer(ID3D11Device* device, ID3D11DeviceContext* context)
+    void checkOverrides()
+    {
+        // 编译器会在这里报出所有缺失的 override
+        D3D11Renderer r(nullptr, nullptr);
+    }
+
+    D3D11Renderer::D3D11Renderer(ID3D11Device* device, ID3D11DeviceContext* context)
         : m_device(device)
         , m_context(context)
     {
@@ -13,7 +20,7 @@ namespace MiniCAD
         m_lineShader.Initialize(m_device);
     }
 
-    void Renderer::Initialize()
+    void D3D11Renderer::Initialize()
     {
         // ===== VB =====
         D3D11_BUFFER_DESC vb = {};
@@ -25,7 +32,7 @@ namespace MiniCAD
 
         // ===== CB =====
         D3D11_BUFFER_DESC cb = {};
-        cb.ByteWidth = sizeof(XMMATRIX);
+        cb.ByteWidth = sizeof(Float4x4);
         cb.Usage     = D3D11_USAGE_DEFAULT;
         cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         m_device->CreateBuffer(&cb, nullptr, m_cb.GetAddressOf());
@@ -71,13 +78,24 @@ namespace MiniCAD
         m_device->CreateBlendState(&bd, m_blendAlpha.GetAddressOf());
     }
 
-    void Renderer::BeginFrame(const RenderTarget& target  , const D3D11_VIEWPORT& viewport)
+    void D3D11Renderer::BeginFrame(IRenderTarget& target, const ViewportDesc& vp)
     {  
-        ID3D11RenderTargetView* rtv = target.GetRTV();
+        auto& d3dTarget = static_cast<D3D11RenderTarget&>(target);
+        auto* rtv       = static_cast<ID3D11RenderTargetView*>(d3dTarget.GetNativeHandle());
+
         float clear[4] = { 0.1f, 0.1f, 0.15f, 1.0f }; 
         auto pso       = m_lineShader.GetPipeline(); 
 
-        m_context->RSSetViewports(1, &viewport);    
+        D3D11_VIEWPORT d3dVp = {};
+
+        d3dVp.TopLeftX = vp.x;
+        d3dVp.TopLeftY = vp.y;
+        d3dVp.Width    = vp.width;
+        d3dVp.Height   = vp.height;
+        d3dVp.MinDepth = vp.minDepth;
+        d3dVp.MaxDepth = vp.maxDepth;
+
+        m_context->RSSetViewports(1, &d3dVp);
         m_context->OMSetRenderTargets(1, &rtv, nullptr); // nullptr 深度缓冲区
         m_context->ClearRenderTargetView(rtv, clear);    // 清空
         m_context->IASetInputLayout(pso.layout);
@@ -86,7 +104,7 @@ namespace MiniCAD
         m_context->RSSetState(m_rsNoCull.Get());
     }
 
-    void Renderer::Submit(std::span<const Vertex_P3_C4> verts, const XMMATRIX& viewProj, PrimitiveType type, bool depth, bool blend)
+    void D3D11Renderer::Submit(std::span<const Vertex_P3_C4> verts, const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {
         if (verts.empty()) return;
 
@@ -117,10 +135,11 @@ namespace MiniCAD
         {
             m_context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         }
+ 
+        Float4x4 gpuMat = Float4x4::FromMat4(viewProj.Transposed()); 
 
-        // ===== matrix =====
-        XMMATRIX vp = XMMatrixTranspose(viewProj);
-        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, &vp, 0, 0);
+        // ===== matrix ===== 
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, gpuMat.m, 0, 0);
         m_context->VSSetConstantBuffers(0, 1, m_cb.GetAddressOf());
 
         // ===== upload =====
@@ -137,12 +156,12 @@ namespace MiniCAD
         m_context->Draw((UINT)verts.size(), 0);
     }
 
-    ID3D11Device* Renderer::GetDevice()
+    void* D3D11Renderer::GetNativeDevice()
     {
         return m_device;
     }
 
-    void Renderer::EndFrame()
+    void D3D11Renderer::EndFrame()
     {
         ID3D11RenderTargetView* nullRT[1] = { nullptr };
         m_context->OMSetRenderTargets(1, nullRT, nullptr);

@@ -1,12 +1,11 @@
 #include "DocumentManager.h"
-#include "Document.h"
-#include "Render/D3D11/Renderer.h"
+#include "Document.h" 
 #include <utility>
 #include <memory>
 #include <string>
 namespace MiniCAD
 {
-    Document& DocumentManager::Create(Renderer& r, float w, float h)
+    Document& DocumentManager::Create(IRenderer& r, float w, float h)
     {
         auto doc = std::make_unique<Document>(r, w, h);
 
@@ -50,7 +49,7 @@ namespace MiniCAD
         return m_docs; 
     }
 
-    void DocumentManager::SetRenderer(Renderer* renderer)
+    void DocumentManager::SetRenderer(IRenderer* renderer)
     {
         m_renderer = renderer; 
     }

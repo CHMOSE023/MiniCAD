@@ -1,51 +1,48 @@
 #include "Camera.h"
-#include <DirectXMath.h>
 #include <algorithm>
+#include <cmath>
 
 namespace MiniCAD
-{
+{  
+    Camera::Camera(double width, double height) { Resize(width, height); }
 
-    Camera::Camera(float width, float height)
+    void Camera::Resize(double width, double height)
     {
-        Resize(width, height);
-    }
-
-    void Camera::Resize(float width, float height)
-    {
-        m_aspect       = width / height;
-        m_screenWidth  = width;
+        m_aspect = width / height;
+        m_screenWidth = width;
         m_screenHeight = height;
 
         UpdateViewProj();
     }
 
-    void  Camera::Pan(float dx, float dy)
+    void Camera::Pan(double dx, double dy)
     {
-        float worldPerPixelX = (m_zoom * m_aspect) / m_screenWidth;
-        float worldPerPixelY = m_zoom              / m_screenHeight;
+        double worldPerPixelX = (m_zoom * m_aspect) / m_screenWidth;
+        double worldPerPixelY = m_zoom / m_screenHeight;
 
         m_target.x -= dx * worldPerPixelX;
         m_target.y += dy * worldPerPixelY;
-        
+
         UpdateViewProj();
     }
 
-    void  Camera::Zoom(float delta, int mouseX, int mouseY)
+    void Camera::Zoom(double delta, int mouseX, int mouseY)
     {
         // 1. 缩放前：记录鼠标对应的世界坐标
-        XMFLOAT3 worldBefore = ScreenToWorld(mouseX, mouseY);
+        Math::Point3 worldBefore = ScreenToWorld(mouseX, mouseY);
 
         // 2. 更新缩放
-        constexpr float zoomFactor = 1.1f;
+        constexpr double zoomFactor = 1.1;
         if (delta > 0) m_zoom /= zoomFactor;
         else           m_zoom *= zoomFactor;
-		m_zoom = std::clamp(m_zoom, 0.01f, 10000.0f); // 缩放范围限制
+
+        m_zoom = std::clamp(m_zoom, 0.01, 10000.0);
 
         // 3. zoom 变了，先刷新矩阵
         UpdateViewProj();
 
         // 4. 缩放后：同一屏幕点对应的新世界坐标
-        XMFLOAT3 worldAfter = ScreenToWorld(mouseX, mouseY);
+        Math::Point3 worldAfter = ScreenToWorld(mouseX, mouseY);
 
         // 5. 平移 target，使鼠标下的世界点保持不动
         m_target.x += worldBefore.x - worldAfter.x;
@@ -54,56 +51,56 @@ namespace MiniCAD
         // 6. target 变了，再刷新一次
         UpdateViewProj();
     }
-     
-    // ─── 矩阵 ───────────────────────────────────────────────────────────────── 
-    XMMATRIX Camera::GetView() const
-    {  
-        return XMMatrixTranslation(-m_target.x, -m_target.y, 0.0f); 
-    }
 
-    XMMATRIX Camera::GetProj() const
+    // ─── 矩阵 ────────────────────────────────────────────────────────────────────
+
+    Math::Mat4 Camera::GetView() const
     {
-        float viewWidth  = m_zoom * m_aspect; 
-        float viewHeight = m_zoom;
-
-        return XMMatrixOrthographicLH(viewWidth, viewHeight, 0.0f, 1000.0f);
+        // 正交俯视：仅做平移，把 target 移到原点
+        return Math::Mat4::Translation({ -m_target.x, -m_target.y, 0.0 });
     }
-      
+
+    Math::Mat4 Camera::GetProj() const
+    {
+        double viewWidth  = m_zoom * m_aspect;
+        double viewHeight = m_zoom;
+
+        return Math::Mat4::OrthoLH(viewWidth, viewHeight, 0.0, 1000.0);
+    }
+
     void Camera::UpdateViewProj()
     {
-        m_viewProj    = GetView()* GetProj();
-        m_invViewProj = XMMatrixInverse(nullptr, m_viewProj);
+        m_viewProj    = GetView() * GetProj();
+        m_invViewProj = Math::Mat4::Inverse(m_viewProj);
     }
 
-    // ─── 坐标转换 ─────────────────────────────────────────────────────────────
+    // ─── 坐标转换 ─────────────────────────────────────────────────────────────────
 
-    XMFLOAT3 Camera::ScreenToWorld(int px, int py) const
+    Math::Point3 Camera::ScreenToWorld(int px, int py) const
     {
-        float ndcX = ( 2.f * px / m_screenWidth)  - 1.f;
-        float ndcY = (-2.f * py / m_screenHeight) + 1.f;
- 
-        XMVECTOR ndcPos   = XMVectorSet(ndcX, ndcY, 0.f, 1.f);
-        XMVECTOR worldPos = XMVector3TransformCoord(ndcPos, m_invViewProj);
- 
-        XMFLOAT3 result;
-        XMStoreFloat3(&result, worldPos);
+        // 屏幕像素 → NDC [-1, 1]
+        double ndcX = (2.0 * px / m_screenWidth) - 1.0;
+        double ndcY = (-2.0 * py / m_screenHeight) + 1.0;
 
-        return { result.x, result.y, 0.f };   // 强制 Z=0，CAD 在 XY 平面 m_target.z
+        // NDC → 世界空间（正交投影 w 恒为 1，无需透视除法）
+        Math::Point3 worldPos = m_invViewProj.TransformPoint({ ndcX, ndcY, 0.0 });
+
+        return { worldPos.x, worldPos.y, 0.0 };   // CAD 在 XY 平面，强制 Z=0
     }
- 
-    XMFLOAT2 Camera::WorldToScreen(const XMFLOAT3& worldPos) const
+
+    Math::Point2 Camera::WorldToScreen(const Math::Point3& worldPos) const
     {
-        XMVECTOR pos  = XMLoadFloat3(&worldPos);
-        XMVECTOR clip = XMVector3TransformCoord(pos, m_viewProj);
- 
-        float sx = ( XMVectorGetX(clip) * 0.5f + 0.5f) * m_screenWidth;
-        float sy = (-XMVectorGetY(clip) * 0.5f + 0.5f) * m_screenHeight;
+        Math::Point3 clip = m_viewProj.TransformPoint(worldPos);
+
+        double sx = (clip.x * 0.5 + 0.5) * m_screenWidth;
+        double sy = (-clip.y * 0.5 + 0.5) * m_screenHeight;
         return { sx, sy };
     }
 
-    XMFLOAT3 Camera::GetCameraPos() const
+    Math::Point3 Camera::GetCameraPos() const
     {
         // Top View：相机在 Z 轴上方
-        return XMFLOAT3(m_target.x, m_target.y, m_height);
+        return { m_target.x, m_target.y, m_height };
     }
-}
+
+} 

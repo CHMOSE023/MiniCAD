@@ -1,14 +1,15 @@
 #include "Document.h"    
-#include "Render/D3D11/Renderer.h"
+#include "Render/IRenderer.h"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Object/Object.hpp"
+#include "Core/Math/Color4.hpp"
 #include <vector> 
 #include <memory>
 #include <utility>
 namespace MiniCAD
 {
-    Document::Document(Renderer& render, float width, float height)
+    Document::Document(IRenderer& render, float width, float height)
         : m_scene()
         , m_cmdStack()
         , m_viewport(render, width, height)
@@ -124,8 +125,26 @@ namespace MiniCAD
         const auto& hoverIds     = m_picking.GetHovered();
         const auto& selectionIds = m_picking.GetSelection();
 
-        const DirectX::XMFLOAT4 hoverColor     = { 0,  0.5, 0.8, 0.9 };
-        const DirectX::XMFLOAT4 selectionColor = { 0,  0.3, 0.8, 0.9 };
+        const Math::Color4 hoverColor     = { 0,  0.5, 0.8, 0.9 };
+        const Math::Color4 selectionColor = { 0,  0.3, 0.8, 0.9 };
+
+        auto toVertex = [&](const Math::Point3& pt, const Math::Color4& color) -> Vertex_P3_C4 
+        {
+                return 
+                {
+                    {
+                        static_cast<float>(pt.x),
+                        static_cast<float>(pt.y),
+                        static_cast<float>(pt.z)
+                    },
+                    {
+                        static_cast<float>(color.r),
+                        static_cast<float>(color.g),
+                        static_cast<float>(color.b),
+                        static_cast<float>(color.a)
+                    }
+                };
+        };
 
         m_scene.ForEachObject([&](const Object& obj)
             {
@@ -142,9 +161,9 @@ namespace MiniCAD
 
                     // ===== Base：只画普通 =====
                     if (!isSelected && !isHovered)
-                    {
-                        m_sceneVertices.push_back({ geom.Start, attr.Color });
-                        m_sceneVertices.push_back({ geom.End,   attr.Color });
+                    {  
+                        m_sceneVertices.push_back(toVertex(geom.Start, attr.Color)); 
+                        m_sceneVertices.push_back(toVertex(geom.End, attr.Color));
                     }
 
                     // ===== Overlay：画高亮 =====
@@ -175,22 +194,27 @@ namespace MiniCAD
                     // ===== Base：只画普通 =====
                     if (!isSelected && !isHovered)
                     {  
-                        m_sceneVertices.push_back({ {p.x - s ,p.y,p.z}, attr.Color });
-                        m_sceneVertices.push_back({ {p.x + s ,p.y,p.z}, attr.Color });
+						Math::Point3 p1 = { p.x - s ,p.y,p.z } ;
+						Math::Point3 p2 = { p.x + s ,p.y,p.z } ;
+						Math::Point3 p3 = { p.x ,p.y - s,p.z } ;
+						Math::Point3 p4 = { p.x ,p.y + s,p.z } ; 
 
-                        m_sceneVertices.push_back({ {p.x  ,p.y - s,p.z}, attr.Color });
-                        m_sceneVertices.push_back({ {p.x  ,p.y + s,p.z}, attr.Color });
+                        m_sceneVertices.push_back(toVertex(p1, attr.Color));
+                        m_sceneVertices.push_back(toVertex(p2, attr.Color)); 
+                        m_sceneVertices.push_back(toVertex(p3, attr.Color)); 
+                        m_sceneVertices.push_back(toVertex(p4, attr.Color));  
+
                     }
 
                     // ===== Overlay：画高亮 =====
                     if (isSelected)
                     { 
-                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z }, selectionColor);
+                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z },   selectionColor);
                         m_overlay.AddLine({ p.x  ,p.y - s,p.z }, { p.x  ,p.y + s,p.z }, selectionColor);
                     }
                     else if (isHovered)
                     {
-                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z }, hoverColor);
+                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z },   hoverColor);
                         m_overlay.AddLine({ p.x  ,p.y - s,p.z }, { p.x  ,p.y + s,p.z }, hoverColor); 
                     }
                 }

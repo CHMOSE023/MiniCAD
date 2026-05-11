@@ -1,17 +1,19 @@
 #pragma once 
 #include "Render/D3D11/Shader.h"
 #include <span>
-#include <vector>
-#include <DirectXMath.h>
+#include <vector> 
+#include "Core/Math/Point2.hpp"
+#include "Core/Math/Color4.hpp"
+#include "Render/VertexTypes.hpp"
 namespace MiniCAD
 {
     struct DragRect
     {
-        bool     Active = false;
-        XMFLOAT2 Start  = { .0f,.0f };                // 鼠标按下
-        XMFLOAT2 End    = { .0f,.0f };                // 当前鼠标
-        XMFLOAT4 Color  = { 0.3f, 0.6f, 1.0f, 0.2f }; // 填充
-        XMFLOAT4 Border = { 0.3f, 0.6f, 1.0f, 1.0f }; // 边框
+        bool         Active = false;
+        Math::Point2 Start  = { .0,.0 };                // 鼠标按下
+        Math::Point2 End    = { .0,.0 };                // 当前鼠标
+        Math::Color4 Color  = { 0.3, 0.6, 1.0, 0.2 };   // 填充
+        Math::Color4 Border = { 0.3, 0.6, 1.0, 1.0 };   // 边框
     };
 
     struct GripDraw
@@ -26,16 +28,16 @@ namespace MiniCAD
             Tangent     // 曲线控制点
         };
 
-        DirectX::XMFLOAT2 Pos;
-        Type              GripType;
-        bool              Hovered; // 悬浮上方的
+        Math::Point2 Pos;
+        Type         GripType;
+        bool         Hovered;  // 悬浮上方的
     };
 
     struct SnapDraw
     {
         enum class Type : uint8_t { None, Endpoint, Midpoint, Nearest, Grid };
         Type              SnapType = Type::None;
-        DirectX::XMFLOAT2 Pos = {};
+        Math::Point2      Pos = {};
         bool              IsValid() const { return SnapType != Type::None; }
     };
 
@@ -47,8 +49,8 @@ namespace MiniCAD
         std::vector<GripDraw>         Grips;   // 夹点 
 
         DragRect  Selection;          // 选择框  
-        float MouseX = 0;             // 客户区像素坐标
-        float MouseY = 0;
+        double    MouseX = 0;             // 客户区像素坐标
+        double    MouseY = 0;
         // ===== Render flags =====
         bool ShowGrid       = true;    // 轴网
         bool ShowGizmo      = true;    //  

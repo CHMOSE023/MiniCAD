@@ -4,9 +4,7 @@
 #include "Document/Command/DragEntitiesCommand.h"
 #include <memory>
 #include <Core/GeomKernel/Line.hpp>
- 
-using namespace DirectX;
-
+   
 namespace MiniCAD
 {
     // ─────────────────────────────────────────────
@@ -51,7 +49,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     bool GripEditor::OnMouseDown(const InputEvent& e)
     {
-        XMFLOAT2 sp((float)e.MouseX, (float)e.MouseY);
+        Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
         auto hits = HitTestAll(sp);
         if (hits.empty()) return false;
 
@@ -70,7 +68,7 @@ namespace MiniCAD
             if (!obj) continue;
 
             DragState::Entry entry;
-            entry.Id = grip.OwnerID;
+            entry.Id   = grip.OwnerID;
             entry.Type = grip.GripType;
 
             // 关键：按类型存快照，而不是强行 Line
@@ -107,12 +105,12 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     bool GripEditor::OnMouseMove(const InputEvent& e)
     {
-        XMFLOAT2 sp((float)e.MouseX, (float)e.MouseY);
+        Math::Point2  sp((double)e.MouseX, (double)e.MouseY);
         m_hoveredIdxs = HitTestAll(sp);
 
         if (!m_dragging) return false;
 
-        XMFLOAT3 worldPos = e.HasSnap
+        Math::Point3 worldPos = e.HasSnap
             ? e.SnapWorld
             : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
 
@@ -185,9 +183,8 @@ namespace MiniCAD
             {
             case Grip::Type::Start: grip.WorldPos = seg.Start; break;
             case Grip::Type::End:   grip.WorldPos = seg.End;   break;
-            case Grip::Type::Mid:
-                grip.WorldPos = { (seg.Start.x + seg.End.x) * 0.5f,
-                                  (seg.Start.y + seg.End.y) * 0.5f, 0 };
+            case Grip::Type::Mid:   grip.WorldPos = { (seg.Start.x + seg.End.x) * 0.5f,
+                                                      (seg.Start.y + seg.End.y) * 0.5f, 0 };
                 break;
             }
         }
@@ -247,7 +244,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     //  MoveGrip  — 基于 Base 快照计算新线段
     // ─────────────────────────────────────────────
-    LineSegment GripEditor::MoveGrip(const LineSegment& seg,  Grip::Type type,  const XMFLOAT3& p)
+    LineSegment GripEditor::MoveGrip(const LineSegment& seg,  Grip::Type type,  const  Math::Point3& p)
     {
         LineSegment out = seg;  // 从 Base 复制，避免误差累积
 
@@ -263,10 +260,10 @@ namespace MiniCAD
 
         case Grip::Type::Mid:
         {
-            XMFLOAT3 mid{
-                (seg.Start.x + seg.End.x) * 0.5f,
-                (seg.Start.y + seg.End.y) * 0.5f,
-                0.0f
+            Math::Point3 mid{
+                (seg.Start.x + seg.End.x) * 0.5,
+                (seg.Start.y + seg.End.y) * 0.5,
+                0.0
             };
             float dx = p.x - mid.x;
             float dy = p.y - mid.y;
@@ -290,7 +287,7 @@ namespace MiniCAD
         m_dirty = false;
         m_grips.clear();
 
-        auto selectionIds = m_picking.GetSelection();
+        auto& selectionIds = m_picking.GetSelection();
         if (selectionIds.empty())
             return false;
 
@@ -327,14 +324,14 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     //  HitTest  — 屏幕坐标命中测试
     // ─────────────────────────────────────────────
-    int GripEditor::HitTest(const XMFLOAT2& screenPt, float thresh) const
+    int GripEditor::HitTest(const  Math::Point2& screenPt, float thresh) const
     {
         int   bestIdx = -1;
         float bestDist = FLT_MAX;
 
         for (int i = 0; i < (int)m_grips.size(); ++i)
         {
-            XMFLOAT2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
+            Math::Point2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
             float d = std::hypot(screenPt.x - sc.x, screenPt.y - sc.y);
 
             if (d < thresh && d < bestDist)
@@ -347,12 +344,12 @@ namespace MiniCAD
         return bestIdx;
     }
 
-    std::vector<int> GripEditor::HitTestAll(const XMFLOAT2& screenPt, float thresh) const
+    std::vector<int> GripEditor::HitTestAll(const  Math::Point2& screenPt, float thresh) const
     {
         std::vector<int> results;
         for (int i = 0; i < (int)m_grips.size(); ++i)
         {
-            XMFLOAT2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
+            Math::Point2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
             float d = std::hypot(screenPt.x - sc.x, screenPt.y - sc.y);
             if (d < thresh)
                 results.push_back(i);
@@ -361,7 +358,7 @@ namespace MiniCAD
     }
 
 
-    DirectX::XMFLOAT3 GripEditor::GetDragBase() const
+    Math::Point3 GripEditor::GetDragBase() const
     {
         if (!m_dragging)
             return {};
@@ -395,10 +392,11 @@ namespace MiniCAD
             }
         }
 
-        m_dragging = false;
+        m_dragging  = false;
         m_activeIdx = -1;
         m_drag.Clear();
         m_scene.MarkDirty();
-    }
+    } 
 
 }  
+

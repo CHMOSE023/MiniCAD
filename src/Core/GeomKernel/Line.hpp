@@ -1,134 +1,103 @@
 #pragma once 
-#include <DirectXMath.h>
+#include "../Math/Point3.hpp"
+#include "../Math/Vec3.hpp"
+#include "../Math/Constants.hpp"
+#include "../Math/MathUtils.hpp"
+#include "AABB.hpp" 
 #include <algorithm>
-#include "AABB.hpp"
-using namespace DirectX;
-
+#include <cmath> 
 namespace MiniCAD
 {
-	struct Line
-	{ 
-		Line() : Start(0.f, 0.f, 0.f)
-			   , End(0.f, 0.f, 0.f)
-			   , IsSegment(true)
-		{
-		}
+    struct Line
+    {
+        Math::Point3 Start;
+        Math::Point3 End;
+         
+        Line() = default;
 
-		Line(const XMFLOAT3& start, const XMFLOAT3& end, bool isSegment = true)
-			: Start(start)
-			, End(end)
-			, IsSegment(isSegment)
-		{
-		}
+        constexpr Line(const Math::Point3& start, const Math::Point3& end)
+            : Start(start)
+            , End(end) 
+        {
+        } 
+		
+        Math::Vec3 Vector() const     // 从 Start 指向 End 的向量
+        {
+            return End - Start;
+        }
+         
+		Math::Vec3 Direction() const // 归一化的方向向量
+        {
+            return Vector().Normalized();
+        }
+         
+		double Length() const       // 线段长度（如果是无限直线则没有意义）
+        {  
+            return Vector().Length();
+        }
+         
+		double LengthSq() const    // 线段长度的平方（如果是无限直线则没有意义）
+        {
+            return Vector().LengthSq();
+        }
+         
+		Math::Point3 Midpoint() const  // 线段中点坐标（如果是无限直线则没有意义）
+        {
+            return {
+                (Start.x + End.x) * 0.5,
+                (Start.y + End.y) * 0.5,
+                (Start.z + End.z) * 0.5
+            };
+        }
+         
+        Math::Point3 PointAt(double t) const // P(t) = Start + t*(End-Start) 参数 t 对应的点坐标
+        {
+            return Start + Vector() * t;
+        }
+         
+		double ProjectParam(const Math::Point3& p) const  // 计算点 p 在直线上的投影参数 t，使得 PointAt(t) 是 p 在直线上的投影点
+        {
+            Math::Vec3 v = Vector();
 
-		XMFLOAT3 Start;
-		XMFLOAT3 End;
-		bool IsSegment = true;
+            double lenSq = v.LengthSq();
 
-		static constexpr float EPSILON = 1e-6f;
+            if (lenSq < Math::LengthEPS)
+                return 0.0;
 
-		// 基础属性
-		// =============================
-		XMVECTOR Direction() const
-		{
-			XMVECTOR s = XMLoadFloat3(&Start);
-			XMVECTOR e = XMLoadFloat3(&End);
-			return XMVector3Normalize(XMVectorSubtract(e, s));
-		}
+            double t = Math::Dot(p - Start, v) / lenSq;
+  
+            return t;
+        }
+         
+		Math::Point3 ClosestPoint(const Math::Point3& p) const  // 计算点 p 在直线上的最近点坐标（如果是线段则限制在 [Start, End] 上）
+        {
+            return PointAt(ProjectParam(p));
+        }
+         
+		double DistanceToPoint(const  Math::Point3& p) const    // 计算点 p 到直线的距离（如果是线段则限制在 [Start, End] 上）
+        {
+            return (p - ClosestPoint(p)).Length();
+        } 
 
-		float Length() const
-		{
-			return XMVectorGetX(XMVector3Length(Vector()));
-		}
+		AABB GetBounds() const  // 计算线段的轴对齐包围盒 
+        {
+            return {
+                {
+                    std::min(Start.x, End.x),
+                    std::min(Start.y, End.y),
+                    std::min(Start.z, End.z)
+                },
+                {
+                    std::max(Start.x, End.x),
+                    std::max(Start.y, End.y),
+                    std::max(Start.z, End.z)
+                }
+            };
+        } 
 
-		float LengthSq() const
-		{
-			return XMVectorGetX(XMVector3LengthSq(Vector()));
-		}
-
-
-		XMFLOAT3 Midpoint() const
-		{
-			XMVECTOR mid = XMVectorScale(XMVectorAdd(XMLoadFloat3(&Start), XMLoadFloat3(&End)), 0.5f);
-			XMFLOAT3 result;
-			XMStoreFloat3(&result, mid);
-			return result;
-		}
-
-
-		// =============================
-		// 参数化表达
-		// P(t) = Start + t*(End-Start)
-		// =============================
-		XMVECTOR PointAt(float t) const
-		{
-			XMVECTOR s = XMLoadFloat3(&Start);
-			XMVECTOR dir = Vector();
-			return XMVectorAdd(s, XMVectorScale(dir, t));
-		}
-
-		// 投影参数 t
-		float ProjectParam(const XMFLOAT3& p) const
-		{
-			XMVECTOR s = XMLoadFloat3(&Start);
-			XMVECTOR v = Vector();
-			XMVECTOR pt = XMLoadFloat3(&p);
-
-			float lenSq = XMVectorGetX(XMVector3LengthSq(v));
-
-			if (lenSq < EPSILON)
-				return 0.0f;
-
-			float t = XMVectorGetX(XMVector3Dot(XMVectorSubtract(pt, s), v)) / lenSq;
-
-			if (IsSegment) { t = std::clamp(t, 0.0f, 1.0f); }
-
-			return t;
-		}
-
-		// =============================
-		// 几何计算
-		// =============================
-		XMFLOAT3 ClosestPoint(const XMFLOAT3& p) const
-		{
-			float t = ProjectParam(p);
-			XMVECTOR point = PointAt(t);
-
-			XMFLOAT3 result;
-			XMStoreFloat3(&result, point);
-			return result;
-		}
-
-		float DistanceToPoint(const XMFLOAT3& p) const
-		{
-			XMFLOAT3 cp = ClosestPoint(p);           // 先存到具名变量
-			XMVECTOR vcp = XMLoadFloat3(&cp);         // 再取地址
-			XMVECTOR vpt = XMLoadFloat3(&p);
-			return XMVectorGetX(XMVector3Length(XMVectorSubtract(vpt, vcp)));
-		}
-
-		// =============================
-		// 包围盒
-		// =============================
-		AABB GetBounds() const
-		{
-			AABB box;
-			box.Min = { std::min(Start.x, End.x), std::min(Start.y, End.y), std::min(Start.z, End.z) };
-			box.Max = { std::max(Start.x, End.x), std::max(Start.y, End.y), std::max(Start.z, End.z) };
-			return box;
-		}
-
-		// =============================
-	   // 工具函数
-	   // =============================
-		bool IsValid() const
-		{
-			return LengthSq() > EPSILON;
-		}
-	 
-		XMVECTOR Vector() const
-		{
-			return XMVectorSubtract(XMLoadFloat3(&End), XMLoadFloat3(&Start));
-		}
-	};
+		bool IsValid() const   // 检查线段是否有效 
+        {
+            return Vector().LengthSq() > Math::LengthEPS;
+        }
+    };
 }

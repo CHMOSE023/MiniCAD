@@ -1,36 +1,40 @@
-#include "Viewport.h"
-#include <DirectXMath.h>
-#include "Render/D3D11/Renderer.h"  
+#include "Viewport.h"  
+#include "Render/VertexTypes.hpp"
+#include "Render/RenderTargetFactory.hpp"
 #include "Camera.h"
-#include <cmath>
-using namespace DirectX;
+#include <cmath> 
 
 namespace MiniCAD
 {    
-    Viewport::Viewport(Renderer& renderer,float width, float height)
+    Viewport::Viewport(IRenderer& renderer,float width, float height)
         : m_renderer(renderer) 
         , m_camera(width, height)
         , m_width(width)
         , m_height(height)
-    {  
-        m_d3dViewport.Width    = width;
-        m_d3dViewport.Height   = height;
-        m_d3dViewport.TopLeftX = 0;
-        m_d3dViewport.TopLeftY = 0; 
-        m_d3dViewport.MinDepth = 0.0f;
-        m_d3dViewport.MaxDepth = 1.0f;
+    {     
+        RenderTargetCreateInfo info;      
 
-        auto device = renderer.GetDevice();
-        m_renderTarget.Create(device, width, height);
+#ifdef _WIN32
+        info.device = renderer.GetNativeDevice();   // 取出 ID3D11Device*
+#endif 
+        m_renderTarget = std::move(CreateRenderTarget(info));
+        m_renderTarget->Create(width, height);
+
+        m_viewportDesc.width    = width;
+        m_viewportDesc.height   = height;
+        m_viewportDesc.x        = 0;
+        m_viewportDesc.y        = 0; 
+        m_viewportDesc.minDepth = 0.0f;
+        m_viewportDesc.maxDepth = 1.0f;
+
         Resize(width, height);  
     }
      
     void Viewport::Render(const ViewState& viewState)
-    {   
-        XMMATRIX vp   = m_camera.GetViewProj();        
-        auto screenVP = XMMatrixOrthographicOffCenterLH(0.0f, m_width,m_height, 0.0f, 0.0f, 1.0f);
+    {       
+        auto screenVP = Math::Mat4::OrthoOffCenterLH(0.0f, m_width,m_height, 0.0f, 0.0f, 1.0f);
           
-        m_renderer.BeginFrame(m_renderTarget,m_d3dViewport);
+        m_renderer.BeginFrame(*m_renderTarget, m_viewportDesc);
         {  
             if (m_showGrid)
             {
@@ -89,6 +93,8 @@ namespace MiniCAD
                 }
             }
 
+            Math::Mat4 vp = m_camera.GetViewProj();
+
             { // 渲染场景及预览
                 m_renderer.Submit(viewState.Scene, vp, PrimitiveType::Line, true, true);
                 m_renderer.Submit(viewState.Overlay, vp, PrimitiveType::Line, true, true);
@@ -107,11 +113,12 @@ namespace MiniCAD
         }
 
         m_width  = width;
-        m_height = height; 
-        m_d3dViewport.Width  = width;
-        m_d3dViewport.Height = height;
-        auto device = m_renderer.GetDevice();
-        m_renderTarget.Resize(device,width,height);
+        m_height = height;
+
+        m_viewportDesc.width  = width;
+        m_viewportDesc.height = height;
+
+        m_renderTarget->Resize(width,height);
 		m_camera.Resize(width, height);
     }
      
@@ -143,13 +150,8 @@ namespace MiniCAD
 
         bool cross = (x1 < x0);
 
-        DirectX::XMFLOAT4 fillColor =
-            cross ? DirectX::XMFLOAT4(0.0f, 1.0f, 0.0f, 0.25f)
-            : DirectX::XMFLOAT4(0.0f, 0.4f, 1.0f, 0.25f);
-
-        DirectX::XMFLOAT4 lineColor =
-            cross ? DirectX::XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)
-            : DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+        Math::Float4 fillColor = cross ? Math::Float4(0.0f, 1.0f, 0.0f, 0.25f) : Math::Float4(0.0f, 0.4f, 1.0f, 0.25f);
+        Math::Float4 lineColor = cross ? Math::Float4(0.0f, 1.0f, 0.0f, 1.00f) : Math::Float4(1.0f, 1.0f, 1.0f, 1.00f);
 
         // fill
         g.fill = {
@@ -162,10 +164,10 @@ namespace MiniCAD
             {{left,  bottom, 0}, fillColor},
         };
 
-        DirectX::XMFLOAT3 p0{ left,  top,    0 };
-        DirectX::XMFLOAT3 p1{ right, top,    0 };
-        DirectX::XMFLOAT3 p2{ right, bottom, 0 };
-        DirectX::XMFLOAT3 p3{ left,  bottom, 0 };
+        Math::Float3 p0{ left,  top,    0 };
+        Math::Float3 p1{ right, top,    0 };
+        Math::Float3 p2{ right, bottom, 0 };
+        Math::Float3 p3{ left,  bottom, 0 };
 
         // border
         if (cross)
@@ -189,35 +191,31 @@ namespace MiniCAD
     }
 
     // 添加点画线
-    void Viewport::AddDashedLine(std::vector<Vertex_P3_C4>& out, XMFLOAT3& a, XMFLOAT3& b, XMFLOAT4& color, float dashLen, float gapLen)
+    void Viewport::AddDashedLine(std::vector<Vertex_P3_C4>& out, Math::Float3& a, Math::Float3& b, Math::Float4& color, float dashLen, float gapLen)
     {
-        using namespace DirectX;
+        float dx = b.x - a.x;
+        float dy = b.y - a.y;
+        float dz = b.z - a.z;
 
-        XMVECTOR A = XMLoadFloat3(&a);
-        XMVECTOR B = XMLoadFloat3(&b);
-
-        XMVECTOR dir = B - A;
-        float len = XMVectorGetX(XMVector3Length(dir));
-
+        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (len < 0.001f) return;
 
-        dir = XMVector3Normalize(dir);
+        // 单位方向向量
+        float invLen = 1.0f / len;
+        float nx     = dx * invLen;
+        float ny     = dy * invLen;
+        float nz     = dz * invLen;
 
         float t = 0.0f;
-
         while (t < len)
         {
             float t2 = std::min(t + dashLen, len);
 
-            XMVECTOR p0 = A + dir * t;
-            XMVECTOR p1 = A + dir * t2;
+             Math::Float3 p0 = { a.x + nx * t,  a.y + ny * t,  a.z + nz * t };
+             Math::Float3 p1 = { a.x + nx * t2, a.y + ny * t2, a.z + nz * t2 };
 
-            DirectX::XMFLOAT3 p0f, p1f;
-            XMStoreFloat3(&p0f, p0);
-            XMStoreFloat3(&p1f, p1);
-
-            out.push_back({ p0f, color });
-            out.push_back({ p1f, color });
+            out.push_back({ p0, color });
+            out.push_back({ p1, color });
 
             t += dashLen + gapLen;
         }
@@ -234,8 +232,8 @@ namespace MiniCAD
             const float x = grip.Pos.x;
             const float y = grip.Pos.y;
 
-            DirectX::XMFLOAT4 color       = { 0.0f, 0.2f, 0.9f, 0.9f }; 
-            DirectX::XMFLOAT4 borderColor = { 0.3,0.3,0.3,1 };
+             Math::Float4 color       = { 0.0f, 0.2f, 0.9f, 0.9f }; 
+             Math::Float4 borderColor = { 0.3,0.3,0.3,1 };
 
             if (grip.Hovered)
             {
@@ -269,9 +267,9 @@ namespace MiniCAD
         return g;
     }
 
-    const RenderTarget& Viewport::GetRenderTarget() const
+    const IRenderTarget*  Viewport::GetRenderTarget() const
     {
-        return m_renderTarget;
+        return m_renderTarget.get();
     }
  
 
@@ -289,8 +287,8 @@ namespace MiniCAD
             case SnapDraw::Type::Endpoint:
             {
                 // 黄色方框，比夹点稍大
-                const float size = 7.0f;
-                DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+                const float  size  = 7.0f;
+                Math::Float4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
                 g.border.push_back({ {x - size, y - size, 0}, color });
                 g.border.push_back({ {x + size, y - size, 0}, color });
                 g.border.push_back({ {x + size, y - size, 0}, color });
@@ -304,8 +302,8 @@ namespace MiniCAD
             case SnapDraw::Type::Midpoint:
             {
                 // 黄色三角形
-                const float size = 7.0f;
-                DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+                const float  size = 7.0f;
+                Math::Float4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
                 g.border.push_back({ {x,      y - size, 0}, color });
                 g.border.push_back({ {x + size, y + size, 0}, color });
                 g.border.push_back({ {x + size, y + size, 0}, color });
@@ -317,8 +315,8 @@ namespace MiniCAD
             case SnapDraw::Type::Nearest:
             {
                 // 黄色十字
-                const float size = 7.0f;
-                DirectX::XMFLOAT4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+                const float   size  = 7.0f;
+                Math::Float4  color = { 1.0f, 1.0f, 0.0f, 1.0f };
                 g.border.push_back({ {x - size, y, 0}, color });
                 g.border.push_back({ {x + size, y, 0}, color });
                 g.border.push_back({ {x, y - size, 0}, color });

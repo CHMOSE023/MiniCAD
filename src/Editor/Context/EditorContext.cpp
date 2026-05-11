@@ -8,6 +8,7 @@
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Input/KeyCode.h"
 #include "Scene/Scene.h"
+#include "Core/Math/Point3.hpp"
 
 // ── 绘制工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/LineTool.h"
@@ -477,7 +478,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     void EditorContext::DeleteSelected()
     {
-        auto ids = m_picking.GetSelection();
+        auto& ids = m_picking.GetSelection();
         if (ids.empty()) return;
 
         std::vector<Object::ObjectID> idsVec(ids.begin(), ids.end());
@@ -502,9 +503,7 @@ namespace MiniCAD
         case InputEventType::MouseMove:
         case InputEventType::MouseButtonDown:
         case InputEventType::MouseButtonUp:
-            m_currentSnap = m_snap.Query(
-                { static_cast<float>(e.MouseX), static_cast<float>(e.MouseY) },
-                m_scene, cam, exclude);
+            m_currentSnap = m_snap.Query({ (double)e.MouseX, (double)e.MouseY }, m_scene, cam, exclude);
             break;
         default:
             break;
@@ -546,14 +545,14 @@ namespace MiniCAD
             return out;
         }
 
-        DirectX::XMFLOAT3 anchor;
+        Math::Point3 anchor;
         if (!TryGetAnchor(anchor))
         {
             m_anchorLine = { {}, {} };
             return out;
         }
 
-        DirectX::XMFLOAT3 input;
+        Math::Point3 input;
         if (e.HasSnap)
         {
             input = e.SnapWorld;
@@ -561,13 +560,13 @@ namespace MiniCAD
         else
         {
             auto p = m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
-            input  = DirectX::XMFLOAT3(p.x, p.y, 0.f);
+            input  = Math::Point3(p.x, p.y, 0.f);
         }
 
         float dx = input.x - anchor.x;
         float dy = input.y - anchor.y;
 
-        DirectX::XMFLOAT3 result;
+        Math::Point3 result;
         if (std::fabs(dx) > std::fabs(dy))
             result = { input.x, anchor.y, 0.f };
         else
@@ -580,7 +579,7 @@ namespace MiniCAD
         return out;
     }
 
-    bool EditorContext::TryGetAnchor(DirectX::XMFLOAT3& out) const
+    bool EditorContext::TryGetAnchor(Math::Point3& out) const
     {
         if (m_tool && m_tool->HasAnchor())
         {

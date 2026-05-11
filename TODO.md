@@ -93,8 +93,11 @@
   - 触发条件：需要绕过 Picking 直接操控选中状态时再做
   - 例1：需要在未经过的Picking情况下修改选中状态（比如从代码里直接选中某个实体）
   - 例2：多视口时，每个视口都有独立选中的集合，但消耗一个Picking逻辑
-  - 预估：1 天 · 风险：低
-
+  - 预估：1 天 · 风险：低 
+  - 
+ - [x] **P1-6**  `Core/ Math` 补充数学库 
+  - `Core/Math/` 新增 MiniCAD核心数学库
+  - `MiniCAD::Math` 替换现有 `DirectXMath` 依赖 
 ---
 
 ## P2 · 阶段 5A — 补全绘图 / 修改工具
@@ -153,13 +156,12 @@
 > 预估工期：2 ~ 3 周
 > 把当前 D3D11 硬耦合的渲染层抽象为 `IRenderer`/`IDevice` 接口，为后续多后端铺路，同时实现增量重建优化。
 
-- [ ] **P3-1** `IRenderer` / `IDevice` 接口抽象
-  - 文件：新建 `Render/Core/IRenderer.h`，`IDevice.h`，`RenderTypes.h`
-  - 从现有 `Renderer` / `Device` 中提取纯虚接口
-  - `IDevice`：创建资源（Buffer / Texture / Shader / Pipeline）
+- [x] **P3-1** `IRenderer` `IRenderTarget`   接口抽象   
+  - 从现有 `Renderer` / `RenderTarget` 中提取纯虚接口
+  - D3D11 实现挪到 `Render/D3D11/` 并实现接口
   - `IRenderer`：帧循环（`BeginFrame` / `EndFrame` / `Submit`）
-  - D3D11 实现挪到 `Render/Backend/D3D11/` 并实现接口
   - `Document` 和 `Viewport` 改持 `IRenderer*` 而非 `Renderer*`
+  - `IDevice`：创建资源（Buffer / Texture / Shader / Pipeline）
   - 预估：3 天 · 风险：高
 
 - [ ] **P3-2** `RenderScene` / `RenderEntity` 分离

@@ -11,7 +11,7 @@
 #include "Editor/Context/ViewState.h"
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Snap/SnapResult.h"
-#include "Render/D3D11/Renderer.h"  
+#include "Render/IRenderer.h"  
 #include "Render/D3D11/Shader.h"
 #include <vector>
 #include <string>
@@ -21,7 +21,7 @@ namespace MiniCAD
 	class Document : public IInputHandler
 	{
 	public:
-		Document(Renderer& render, float width = 600, float height = 400); 
+		Document(IRenderer& render, float width = 600, float height = 400);
 
 		// ── IEventHandler ─────────────────────────────────────
 		bool OnInput(const InputEvent& e) override;

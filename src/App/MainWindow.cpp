@@ -1,6 +1,7 @@
 #include "MainWindow.h"  
 #include "Document/DocumentManager.h"
 #include "Render/D3D11/SwapChain.h"
+#include "Render/RendererFactory.hpp"
 #include <imgui.h>  
 #include <dwmapi.h>
 #include <cstdint>
@@ -60,7 +61,7 @@ namespace MiniCAD
 		if (!InitD3D11(clientW, clientH))
 			return false;
 
-		if (!InitDocument(*m_renderer, clientW, clientH))
+		if (!InitDocument(clientW, clientH))
 			return false;   
 
 		return  m_uiManager.Init(m_hwnd, m_device->GetDevice(), m_device->GetContext());
@@ -286,30 +287,33 @@ namespace MiniCAD
 
 	bool MainWindow::InitD3D11(int width, int height)
 	{
-		m_device = std::make_unique<Device>();       // 设备
+		// 1. 硬件设备（D3D11 专属）
+		m_device = std::make_unique<Device>();
 		m_device->Initialize();
 
-		m_swapChain = std::make_unique<SwapChain>(); // 交换链
-
+		// 2. 交换链（D3D11 专属）
+		m_swapChain = std::make_unique<SwapChain>();
 		SwapChain::Options opt;
-		opt.enableVSync  = false;  // 禁止垂直同步，允许撕裂（仅限窗口模式）
-		opt.allowTearing = false; // 允许撕裂（仅限窗口模式）
+		opt.enableVSync = false;
+		opt.allowTearing = false;
+		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
 
+		// 3. 通过工厂创建 Renderer，外部只看 IRenderer 接口
+		RendererCreateInfo info;
+		info.device  = m_device->GetDevice();
+		info.context = m_device->GetContext();
+		m_renderer   =  CreateRenderer(info);
 
-		m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);// 初始化交换链
-		m_renderer = std::make_unique<Renderer>(m_device->GetDevice(), m_device->GetContext());
-
-
-		return true;
+		return m_renderer != nullptr;
 	}
 	 
-	bool MainWindow::InitDocument(Renderer& renderer, int width, int height)
+	bool MainWindow::InitDocument(int width, int height)
 	{ 
-		m_docManager.Create(renderer, width, height); // 创建1个文档 
-		m_docManager.Create(renderer, width, height); // 创建2个文档 
-		m_docManager.Create(renderer, width, height); // 创建3个文档 
+		m_docManager.Create(*m_renderer, width, height); // 创建1个文档 
+		m_docManager.Create(*m_renderer, width, height); // 创建2个文档 
+		m_docManager.Create(*m_renderer, width, height); // 创建3个文档 
 
-		m_docManager.SetRenderer(&renderer);
+		m_docManager.SetRenderer(m_renderer.get());
 
 		return true;
 	}

@@ -3,7 +3,7 @@
 #include "Editor/Viewport/Viewport.h"
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
-#include <DirectXMath.h>
+#include "Core/Math/Point2.hpp"
 #include <unordered_set>
 
 namespace MiniCAD
@@ -19,17 +19,17 @@ namespace MiniCAD
         bool OnInput(const InputEvent& e);
 
         // 查询接口
-        ObjectID HitTest(const DirectX::XMFLOAT2& pt, float thresh);
-        std::unordered_set<ObjectID> BoxSelect(const DirectX::XMFLOAT2& a, const DirectX::XMFLOAT2& b);
+        ObjectID HitTest(const Math::Point2& pt, double thresh);
+        std::unordered_set<ObjectID> BoxSelect(const Math::Point2& a, const Math::Point2& b);
 
         // 状态访问
         const std::unordered_set<ObjectID>& GetSelection() const { return m_selection; }
         const std::unordered_set<ObjectID>& GetHovered()   const { return m_hovered; }
 
         // 选择范围框
-        DirectX::XMFLOAT2 GetBoxStart()    const;
-        DirectX::XMFLOAT2 GetBoxEnd()     const;
-        bool              IsBoxSelecting() const;
+        Math::Point2 GetBoxStart()    const;
+        Math::Point2 GetBoxEnd()      const;
+        bool         IsBoxSelecting() const;
 
         // Dirty
         void MarkDirty()     { m_dirty = true; }

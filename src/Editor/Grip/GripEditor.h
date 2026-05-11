@@ -5,7 +5,8 @@
 #include "Editor/Viewport/Viewport.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Core/Object/Object.hpp"
-#include <DirectXMath.h>
+#include "Core/Math/Point2.hpp" 
+#include "Core/Math/Point3.hpp" 
 #include <cstdint>
 #include <vector>
 
@@ -13,8 +14,8 @@ namespace MiniCAD
 {
     struct LineSegment
     {
-        DirectX::XMFLOAT3 Start;
-        DirectX::XMFLOAT3 End;
+        Math::Point3 Start;
+        Math::Point3 End;
     };
 
     struct Grip
@@ -31,7 +32,7 @@ namespace MiniCAD
 
         Object::ObjectID   OwnerID;
         Type               GripType;
-        DirectX::XMFLOAT3  WorldPos;
+        Math::Point3       WorldPos;
     };
 
     struct DragState
@@ -47,13 +48,13 @@ namespace MiniCAD
                 Point
             } Kind;
 
-            LineSegment BaseLine;
-            XMFLOAT3    BasePoint;
+            LineSegment  BaseLine;
+            Math::Point3 BasePoint;
         };
 
         std::vector<Entry> Entries;
         bool Active = false;
-        XMFLOAT3 DirtyBase = { 0,0,0 };
+        Math::Point3 DirtyBase = { 0,0,0 };
 
         void Clear()
         {
@@ -84,7 +85,7 @@ namespace MiniCAD
 
         const std::vector<Grip>& GetGrips()     const { return m_grips; }       // 获取夹点 
         const std::vector<int>&  HoveredGrips() const { return m_hoveredIdxs; }
-        DirectX::XMFLOAT3        GetDragBase()  const;
+        Math::Point3             GetDragBase()  const;
           
         const std::vector<DragState::Entry>& GetDragEntries() const { return m_drag.Entries; }
         void CancelDrag();
@@ -95,12 +96,11 @@ namespace MiniCAD
         bool OnMouseUp  (const InputEvent& e); 
    
         bool Rebuild      ();     // 仅在 selection 变化时重建（内部比较上次 selection）
-        int  HitTest      (const DirectX::XMFLOAT2& screenPt, float thresh = 8.f) const; 
+        int  HitTest      (const Math::Point2& screenPt, float thresh = 8.f) const;
         void UpdateGripPos(Object::ObjectID id, const LineSegment& seg);          // 辅助更新夹点
 
-        LineSegment      MoveGrip  (const LineSegment& seg, Grip::Type type, const DirectX::XMFLOAT3& p);
-        std::vector<int> HitTestAll(const DirectX::XMFLOAT2& screenPt, float thresh = 8.f) const;
-
+        LineSegment      MoveGrip  (const LineSegment& seg, Grip::Type type, const Math::Point3& p);
+        std::vector<int> HitTestAll(const Math::Point2& screenPt, float thresh = 8.f) const;
     private:
         Scene&             m_scene;
         Viewport&          m_viewport;

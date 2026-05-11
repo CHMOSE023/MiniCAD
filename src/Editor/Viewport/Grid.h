@@ -1,10 +1,10 @@
 #pragma once 
 #include "Camera.h"   
 #include "Render/D3D11/Shader.h"  
+#include "Render/VertexTypes.hpp"
+#include "Core/Math/PackedTypes.hpp"
 #include <vector>
-#include <cmath>
-#include <DirectXMath.h>
-
+#include <cmath> 
 namespace MiniCAD
 {
     class Grid
@@ -14,21 +14,25 @@ namespace MiniCAD
         {
             std::vector<Vertex_P3_C4>   verts = {};
 
-            XMFLOAT4 gridColor = { 0.15f, 0.20f, 0.25f, 1.0f };
-            XMFLOAT4 gridColor5 = { 0.20f, 0.30f, 0.40f, 1.0f };
+            Math::Float4 gridColor  = { 0.15f, 0.20f, 0.25f, 1.0f };
+            Math::Float4 gridColor5 = { 0.20f, 0.30f, 0.40f, 1.0f };
 
-            XMFLOAT3 worldTL = camera.ScreenToWorld(0, 0);
-            XMFLOAT3 worldBR = camera.ScreenToWorld(screenWidth, screenHeight);
+			auto s2w = camera.ScreenToWorld(0, 0); 
+            
+            Math::Float3 worldTL = { static_cast<float>(s2w.x), static_cast<float>(s2w.y), static_cast<float>(s2w.z) };
 
-            float worldLeft = worldTL.x;
-            float worldRight = worldBR.x;
-            float worldTop = worldTL.y;
+			s2w = camera.ScreenToWorld(screenWidth, screenHeight);
+
+            Math::Float3 worldBR = { static_cast<float>(s2w.x), static_cast<float>(s2w.y), static_cast<float>(s2w.z) };
+            float worldLeft   = worldTL.x;
+            float worldRight  = worldBR.x;
+            float worldTop    = worldTL.y;
             float worldBottom = worldBR.y;
 
             float pixelsPerUnit = screenWidth / (worldRight - worldLeft);
-            float rawStep = 60.0f / pixelsPerUnit;
-            float magnitude = std::pow(10.0f, std::floor(std::log10(rawStep)));
-            float normalized = rawStep / magnitude;
+            float rawStep       = 60.0f / pixelsPerUnit;
+            float magnitude     = std::pow(10.0f, std::floor(std::log10(rawStep)));
+            float normalized    = rawStep / magnitude;
 
             float step;
             if (normalized < 2.0f) step = magnitude;
@@ -43,22 +47,25 @@ namespace MiniCAD
                 for (float wx = startX; wx <= endX; wx += step)
                 {
                     int  index = (int)std::round(wx / step);
-                    auto color = (index % 5 == 0) ? gridColor5 : gridColor;
-                    XMFLOAT2 top = camera.WorldToScreen({ wx, worldTop, 0 });
-                    verts.push_back({ {top.x, 0,            0}, color });
-                    verts.push_back({ {top.x, screenHeight, 0}, color });
+                    auto color = (index % 5 == 0) ? gridColor5 : gridColor; 
+                    auto top   = camera.WorldToScreen({ wx, worldTop, 0 }); 
+                     
+                    verts.push_back({ {static_cast<float>(top.x), 0,            0}, color });
+                    verts.push_back({ {static_cast<float>(top.x), screenHeight, 0}, color });
                 }
 
                 // 水平网格线
                 float startY = std::floor(worldBottom / step) * step;
-                float endY = std::ceil(worldTop / step) * step;
+                float endY   = std::ceil(worldTop / step) * step;
                 for (float wy = startY; wy <= endY; wy += step)
                 {
                     int  index = (int)std::round(wy / step);
                     auto color = (index % 5 == 0) ? gridColor5 : gridColor;
-                    XMFLOAT2 left = camera.WorldToScreen({ worldLeft, wy, 0 });
-                    verts.push_back({ {0,           left.y, 0}, color });
-                    verts.push_back({ {screenWidth, left.y, 0}, color });
+
+                    auto left  = camera.WorldToScreen({ worldLeft, wy, 0 });
+
+                    verts.push_back({ {0,           static_cast<float>(left.y), 0}, color });
+                    verts.push_back({ {screenWidth, static_cast<float>(left.y), 0}, color });
                 }
                 return verts;
             
