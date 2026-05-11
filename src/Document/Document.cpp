@@ -1,9 +1,11 @@
 #include "Document.h"    
 #include "Render/IRenderer.h"
-#include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
+#include "Core/Entity/CircleEntity.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Color4.hpp"
+#include "Core/Math/Constants.hpp"
 #include <vector> 
 #include <memory>
 #include <utility>
@@ -18,8 +20,7 @@ namespace MiniCAD
         , m_snap()
         , m_currentSnap() 
         , m_editor(m_scene, m_cmdStack, m_viewport, m_overlay,m_picking, m_snap, m_currentSnap)
-    {
-      
+    { 
     }
 
     bool Document::OnInput(const InputEvent& e)
@@ -124,104 +125,23 @@ namespace MiniCAD
 
         const auto& hoverIds     = m_picking.GetHovered();
         const auto& selectionIds = m_picking.GetSelection();
+         
+        DrawContext ctx(m_sceneVertices, m_overlay);
 
-        const Math::Color4 hoverColor     = { 0,  0.5, 0.8, 0.9 };
-        const Math::Color4 selectionColor = { 0,  0.3, 0.8, 0.9 };
-
-        auto toVertex = [&](const Math::Point3& pt, const Math::Color4& color) -> Vertex_P3_C4 
-        {
-                return 
-                {
-                    {
-                        static_cast<float>(pt.x),
-                        static_cast<float>(pt.y),
-                        static_cast<float>(pt.z)
-                    },
-                    {
-                        static_cast<float>(color.r),
-                        static_cast<float>(color.g),
-                        static_cast<float>(color.b),
-                        static_cast<float>(color.a)
-                    }
-                };
-        };
-
-        m_scene.ForEachObject([&](const Object& obj)
-            {
-                if (obj.IsKindOf<LineEntity>())  // 线
-                {
-                    const auto& line = static_cast<const LineEntity&>(obj);
-                    const auto& attr = line.GetAttr();
-                    const auto& geom = line.GetLine();
-
-                    const auto id = obj.GetID();
-
-                    const bool isSelected = selectionIds.contains(id);
-                    const bool isHovered = hoverIds.contains(id);
-
-                    // ===== Base：只画普通 =====
-                    if (!isSelected && !isHovered)
-                    {  
-                        m_sceneVertices.push_back(toVertex(geom.Start, attr.Color)); 
-                        m_sceneVertices.push_back(toVertex(geom.End, attr.Color));
-                    }
-
-                    // ===== Overlay：画高亮 =====
-                    if (isSelected)
-                    {
-                        m_overlay.AddLine(geom.Start, geom.End, selectionColor);
-                    }
-                    else if (isHovered)
-                    {
-                        m_overlay.AddLine(geom.Start, geom.End, hoverColor);
-                    }
-                }
-
-                if (obj.IsKindOf<PointEntity>())  // 使用线模拟点
-                {
-                    const auto& point = static_cast<const PointEntity&>(obj);
-                    const auto& attr  = point.GetAttr();
-                    const auto& geom  = point.GetPoint();
-
-                    const auto id         = obj.GetID(); 
-                    const bool isSelected = selectionIds.contains(id);
-                    const bool isHovered  = hoverIds.contains(id);
-
-                    // 绘制为十字
-                    const float s = 0.2f;
-                    auto        p = geom.Position;
-
-                    // ===== Base：只画普通 =====
-                    if (!isSelected && !isHovered)
-                    {  
-						Math::Point3 p1 = { p.x - s ,p.y,p.z } ;
-						Math::Point3 p2 = { p.x + s ,p.y,p.z } ;
-						Math::Point3 p3 = { p.x ,p.y - s,p.z } ;
-						Math::Point3 p4 = { p.x ,p.y + s,p.z } ; 
-
-                        m_sceneVertices.push_back(toVertex(p1, attr.Color));
-                        m_sceneVertices.push_back(toVertex(p2, attr.Color)); 
-                        m_sceneVertices.push_back(toVertex(p3, attr.Color)); 
-                        m_sceneVertices.push_back(toVertex(p4, attr.Color));  
-
-                    }
-
-                    // ===== Overlay：画高亮 =====
-                    if (isSelected)
-                    { 
-                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z },   selectionColor);
-                        m_overlay.AddLine({ p.x  ,p.y - s,p.z }, { p.x  ,p.y + s,p.z }, selectionColor);
-                    }
-                    else if (isHovered)
-                    {
-                        m_overlay.AddLine({ p.x - s ,p.y,p.z }, { p.x + s ,p.y,p.z },   hoverColor);
-                        m_overlay.AddLine({ p.x  ,p.y - s,p.z }, { p.x  ,p.y + s,p.z }, hoverColor); 
-                    }
-                }
-            });
-
+        m_scene.ForEachObject([&](const Object& obj) 
+        {  
+           if (obj.IsKindOf<Entity>())
+           {
+               const auto& entity = static_cast<const Entity&>(obj);
+          
+		 	auto isSelected = selectionIds.contains(obj.GetID());
+		 	auto isHovered  = hoverIds.contains(obj.GetID());
+		 	entity.Draw(ctx, isSelected, isHovered);
+           }
+                
+        }); 
         m_scene.ClearDirty();
-        m_picking.ClearDirty(); 
+        m_picking.ClearDirty();  
     }
 
     ViewState Document::BuildViewState()
@@ -275,6 +195,5 @@ namespace MiniCAD
         } 
 
         return vs;
-    }
- 
+    } 
 }

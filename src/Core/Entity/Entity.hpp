@@ -2,6 +2,7 @@
 #include "Core/Object/Object.hpp"  
 #include "EntityAttr.hpp"
 #include "Core/GeomKernel/AABB.hpp"
+#include "Core/Draw/IDrawSink.hpp"
 namespace MiniCAD
 {
 	class Entity : public Object
@@ -13,7 +14,8 @@ namespace MiniCAD
 		LayerID           GetLayerID() const           { return m_attr.LayerId; }
 		void              SetLayerId(LayerID id)       { m_attr.LayerId = id; }
 
-		virtual AABB      GetBoundingBox() const       = 0;
+		virtual AABB      GetBoundingBox() const= 0;
+		virtual void      Draw(IDrawSink& sink, bool isSelected, bool isHovered) const = 0;
 
 		DECLARE_RUNTIME_TYPE(Entity, Object)
 

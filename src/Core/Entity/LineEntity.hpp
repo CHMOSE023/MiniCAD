@@ -15,8 +15,18 @@ namespace MiniCAD
 		const Line&  GetLine() const           { return m_line; };
 
 		virtual	AABB GetBoundingBox()  const override { return m_line.GetBounds(); };
+		 
+		virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered)  const override
+		{
+			 const auto& attr = GetAttr();
+			 
+			 const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
 
-		DECLARE_RUNTIME_TYPE(LineEntity, Object)
+			 sink.DrawLine(m_line.Start, m_line.End, color, isSelected || isHovered);
+
+		}
+
+		DECLARE_RUNTIME_TYPE(LineEntity, Entity)
 
 	private:
 		Line       m_line; 

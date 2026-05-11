@@ -106,10 +106,12 @@
 > 把 `EditorContext` 里所有 printf 占位工具变成真实实现，按使用频率排序。
 
 - [ ] **P2-1** `Circle` 工具（圆）
-  - 文件：新建 `Editor/Tools/Draw/CircleTool.h`
+  - 文件：新建 `Core/GeomKernel/Circle.hpp` `Core/Entity/CircleEntity.hpp` `Editor/Tools/CircleTool.h`
   - 三步状态机：① 点击圆心；② 移动预览半径；③ 点击确认
   - Commit 生成 `CircleEntity`（需先在 `Core/GeomKernel` 补 `Circle.hpp`）
   - 吸附和正交约束复用现有 `SnapEngine` + `ApplyConstraints`
+  - 绘制时候`Overlay`预览，选中后正常渲染
+  - 参考 `LineTool` 实现， 
   - 预估：2 天 · 风险：低
 
 - [ ] **P2-2** `Rectangle` 工具（矩形）
