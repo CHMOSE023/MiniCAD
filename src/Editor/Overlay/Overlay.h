@@ -54,6 +54,25 @@ namespace MiniCAD
             m_lines.push_back({ a, b, color });
         }
 
+        // ===== Rect =====
+        void AddRect(const Math::Point3& a, const Math::Point3& b, const Math::Color4& mcolor)
+        {
+            // 规范化矩形：计算四个顶点
+            Math::Point3 p1 = { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) }; // BottomLeft
+            Math::Point3 p3 = { std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z) }; // TopRight
+			Math::Point3 p2 = { p3.x, p1.y, p1.z }; // BottomRight
+            Math::Point3 p4 = { p1.x, p3.y, p3.z }; // TopLeft
+			AddRect(p1, p2, p3, p4, mcolor);
+        }
+        void AddRect(const Math::Point3& p1, const Math::Point3& p2, const Math::Point3& p3, const Math::Point3& p4, const Math::Color4& mcolor)
+        {
+            
+            AddLine(p1, p2, mcolor);
+            AddLine(p2, p3, mcolor);
+            AddLine(p3, p4, mcolor);
+			AddLine(p4, p1, mcolor);
+        }
+
         // ===== Point =====
         void AddPoint(const  Math::Point3& p, const  Math::Color4& color)
         {

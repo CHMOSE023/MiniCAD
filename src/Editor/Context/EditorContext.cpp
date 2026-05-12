@@ -14,7 +14,7 @@
 #include "Editor/Tools/LineTool.h"
 #include "Editor/Tools/PointTool.h"
 #include "Editor/Tools/CircleTool.h"
-//#include "Editor/Tools/RectangleTool.h"
+#include "Editor/Tools/RectangleTool.h"
 //#include "Editor/Tools/ArcTool.h"
 //#include "Editor/Tools/EllipseTool.h"
 //#include "Editor/Tools/PolylineTool.h"
@@ -70,7 +70,7 @@ namespace MiniCAD
         RegisterTool("Line",      [this] { return std::make_unique<LineTool>     (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Point",     [this] { return std::make_unique<PointTool>    (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Circle",    [this] { return std::make_unique<CircleTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
-       // RegisterTool("Rectangle", [this] { return std::make_unique<RectangleTool>(m_scene, m_cmdStack, m_viewport, m_overlay);});
+        RegisterTool("Rectangle", [this] { return std::make_unique<RectangleTool>(m_scene, m_cmdStack, m_viewport, m_overlay);});
        // RegisterTool("Arc",       [this] { return std::make_unique<ArcTool>      (m_scene, m_cmdStack, m_viewport, m_overlay);});
        // RegisterTool("Ellipse",   [this] { return std::make_unique<EllipseTool>  (m_scene, m_cmdStack, m_viewport, m_overlay);});
        // RegisterTool("Polyline",  [this] { return std::make_unique<PolylineTool> (m_scene, m_cmdStack, m_viewport, m_overlay);});
@@ -117,6 +117,7 @@ namespace MiniCAD
         // ── 快捷键绑定 ──────────────────────────────────────── 
         RegisterAlias("L",   "Line");
         RegisterAlias("LI",  "Line");
+        RegisterAlias("REC", "Rectangle");
         RegisterAlias("P",   "Polyline");
         RegisterAlias("PL",  "Polyline");
         RegisterAlias("MI",  "Mirror");
