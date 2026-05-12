@@ -16,6 +16,7 @@ namespace MiniCAD
         bool   EnableEndpoint = true;
         bool   EnableMidpoint = true;
         bool   EnableNearest  = true;
+		bool   EnableQuadrant = true;   // 圆的象限点捕捉（仅当 EnableEndpoint 也启用时才有效）
         bool   EnableGrid     = false;
         double GridSize       = 1.0;    // 世界单位
         double SnapRadiusPx   = 12.0;   // 屏幕像素捕捉半径
@@ -34,6 +35,8 @@ namespace MiniCAD
                                const std::unordered_set<Object::ObjectID>& exclude) const;
         SnapResult TryNearest (const Math::Point2& sp, const Scene&, const Camera&,
                                const std::unordered_set<Object::ObjectID>& exclude) const;
+        SnapResult TryQuadrant(const Math::Point2&, const Scene&, const Camera&,   // ← 新增
+                               const std::unordered_set<Object::ObjectID>&) const;
         SnapResult TryGrid    (const Math::Point2& sp, const Camera&) const;
     };
 }

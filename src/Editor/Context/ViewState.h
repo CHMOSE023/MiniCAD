@@ -35,7 +35,16 @@ namespace MiniCAD
 
     struct SnapDraw
     {
-        enum class Type : uint8_t { None, Endpoint, Midpoint, Nearest, Grid };
+		// 与 SnapResult::Type 保持一致
+        enum class Type : uint8_t
+        {
+            None,
+            Endpoint,
+            Midpoint,
+            Nearest,
+            Quadrant,   // 象限点
+            Grid,
+        };
         Type              SnapType = Type::None;
         Math::Point2      Pos = {};
         bool              IsValid() const { return SnapType != Type::None; }

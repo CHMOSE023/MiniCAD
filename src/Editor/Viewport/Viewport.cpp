@@ -73,24 +73,21 @@ namespace MiniCAD
                 m_renderer.Submit(snop.border, screenVP, PrimitiveType::Line, true, true);
             }
 
-            {   // 选择框
-                if (viewState.Selection.Active) 
-                {
-                    auto sel = BuildSelectionGeometry(viewState);
+         
+            if (viewState.Selection.Active)    // 选择框
+            {
+                auto sel = BuildSelectionGeometry(viewState);
 
-                    m_renderer.Submit(sel.fill, screenVP, PrimitiveType::Triangle, true, true);
-                    m_renderer.Submit(sel.border, screenVP, PrimitiveType::Line, true, true);
-                }
+                m_renderer.Submit(sel.fill, screenVP, PrimitiveType::Triangle, true, true);
+                m_renderer.Submit(sel.border, screenVP, PrimitiveType::Line, true, true);
             }
 
-            { // 渲染夹点
-                if (viewState.Grips.size() > 0)
-                {
-                    auto grips = BuildGripGeometry(viewState);
+            if (viewState.Grips.size() > 0)   // 渲染夹点
+            {
+                auto grips = BuildGripGeometry(viewState);
 
-                    m_renderer.Submit(grips.fill, screenVP, PrimitiveType::Triangle, true, true);
-                    m_renderer.Submit(grips.border, screenVP, PrimitiveType::Line, true, true);
-                }
+                m_renderer.Submit(grips.fill, screenVP, PrimitiveType::Triangle, true, true);
+                m_renderer.Submit(grips.border, screenVP, PrimitiveType::Line, true, true);
             }
 
             Math::Mat4 vp = m_camera.GetViewProj();
@@ -323,6 +320,21 @@ namespace MiniCAD
                 g.border.push_back({ {x, y + size, 0}, color });
                 break;
             }
+            case SnapDraw::Type::Quadrant:
+            {
+                // 黄色圆点
+                const float   size  = 7.0f;
+                Math::Float4  color = { 1.0f, 1.0f, 0.0f, 1.0f };
+                g.border.push_back({ {x - size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y + size, 0}, color });
+                g.border.push_back({ {x - size, y - size, 0}, color });
+                g.border.push_back({ {x - size, y + size, 0}, color });
+                g.border.push_back({ {x + size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y + size, 0}, color });
+                g.border.push_back({ {x - size, y + size, 0}, color });
+                break;
+			}
             default: break; // Grid 不画
             }
         }
