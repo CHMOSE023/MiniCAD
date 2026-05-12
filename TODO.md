@@ -105,7 +105,7 @@
 > 预估工期：2 ~ 3 周
 > 把 `EditorContext` 里所有 printf 占位工具变成真实实现，按使用频率排序。
 
-- [ ] **P2-1** `Circle` 工具（圆）
+- [x] **P2-1** `Circle` 工具（圆）
   - 文件：新建 `Core/GeomKernel/Circle.hpp` `Core/Entity/CircleEntity.hpp` `Editor/Tools/CircleTool.h`
   - 三步状态机：① 点击圆心；② 移动预览半径；③ 点击确认
   - Commit 生成 `CircleEntity`（需先在 `Core/GeomKernel` 补 `Circle.hpp`）
@@ -115,7 +115,8 @@
   - 预估：2 天 · 风险：低
 
 - [ ] **P2-2** `Rectangle` 工具（矩形）
-  - 文件：新建 `Editor/Tools/Draw/RectangleTool.h`
+  - 文件：新建 `Core/GeomKernel/Rectangle.hpp` `Core/Entity/RectangleEntity.hpp` `Editor/Tools/RectangleTool.h`  
+  - 三步状态机：（1）点击矩形起点；（2）移动预览矩形；（3）点击确认
   - 两点对角线定义矩形，生成 4 条 `LineEntity`（复用 `BatchAddCommand`）
   - 预估：1 天 · 风险：低
 
