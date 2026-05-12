@@ -87,26 +87,59 @@ namespace MiniCAD
         m_overlayVertices.clear();
 
         UpdateSceneVerties();
-
-        // 判断是否需要绘制约束辅助线 
-
+         
+		// ！！！拖拽夹点时显示约束线（正交或原位），其他工具不显示
         if (m_editor.GetGripEditor().IsDragging())
         {
             if (m_editor.IsOrthoEnabled()) // 1.正交 显示约束线
             {
-                const Line& anchorLine = m_editor.GetAnchorLine();
+                const Line& anchorLine = m_editor.GetAnchorLine(); 
 
                 m_overlay.AddLine(anchorLine.Start, anchorLine.End, { 0.1, 0.7, 0.1,0.6 });
             }
-            else                          //  2.拖动 显示原来位置
+            else                          //  2.拖动 显示原始位置
             {
+                constexpr Math::Color4 ghostColor = { 0.6f, 0.6f, 0.6f, 0.6f };
+
                 for (const auto& entry : m_editor.GetGripEditor().GetDragEntries())
                 {
-                    m_overlay.AddLine(entry.BaseLine.Start, entry.BaseLine.End, { 0.6, 0.6, 0.6,0.6 });
+                    switch (entry.Kind)
+                    {
+                    case DragState::Entry::Kind::Line:
+                    {
+                        m_overlay.AddLine(entry.BaseLine.Start, entry.BaseLine.End, ghostColor);
+                        break;
+                    } 
+                    case DragState::Entry::Kind::Circle:
+                    {
+                        m_overlay.AddCircle(entry.BaseCircle.Center, entry.BaseCircle.Radius, ghostColor); 
+                         
+                        const Math::Point3& cur      = m_editor.GetGripEditor().GetCurrentWorldPos();
+                        const Grip::Type    gripType = m_editor.GetGripEditor().GetActiveGripType();
+
+                        if (gripType == Grip::Type::Center)
+                        { 
+                            m_overlay.AddLine(entry.BaseCircle.Center, cur,  { 0.4f, 0.8f, 1.0f, 0.7f });  // 拖圆心：画位移向量（旧圆心 → 新圆心/光标）
+                        }
+                        else if (gripType == Grip::Type::Quadrant)
+                        {
+                            // 拖象限点：画半径辅助线（圆心 → 光标，直观显示新半径）  取当前圆心（拖象限时圆心不变，直接用 BaseCircle.Center）
+                            m_overlay.AddLine(entry.BaseCircle.Center, cur,   { 1.0f, 0.6f, 0.2f, 0.7f });   // 橙色与位移线区分
+                        } 
+                        break;
+                    } 
+                    case DragState::Entry::Kind::Point:
+                    {
+                        m_overlay.AddPoint(entry.BasePoint, ghostColor);
+                        break; 
+                    }
+                    default:
+                        break;
+                    }
                 }
             }
         }
-
+        
            
         m_overlay.ToVertices(m_overlayVertices);      // 每帧分配 
 
@@ -117,7 +150,7 @@ namespace MiniCAD
       
     void Document::UpdateSceneVerties()
     { 
-        if (!m_scene.IsDirty() && !m_picking.IsDirty())
+       if (!m_scene.IsDirty() && !m_picking.IsDirty())
             return;
          
         m_sceneVertices.clear();

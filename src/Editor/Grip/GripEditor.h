@@ -18,6 +18,13 @@ namespace MiniCAD
         Math::Point3 End;
     };
 
+    // 圆快照
+    struct CircleSnapshot
+    {
+        Math::Point3 Center;
+        double       Radius = 0.0;
+    };
+
     struct Grip
     { 
         enum class Type : uint8_t
@@ -27,7 +34,8 @@ namespace MiniCAD
             End,
             Corner,     // 多段线
             Center,     // CAD 圆心
-            Tangent     // 曲线控制点
+			Quadrant,   // CAD 圆象限点
+            Tangent,    // 曲线控制点
         };
 
         Object::ObjectID   OwnerID;
@@ -45,21 +53,26 @@ namespace MiniCAD
             enum class Kind
             {
                 Line,
-                Point
+                Point,
+                Circle
             } Kind;
 
-            LineSegment  BaseLine;
-            Math::Point3 BasePoint;
+            LineSegment    BaseLine;
+            Math::Point3   BasePoint;
+            CircleSnapshot BaseCircle;
+
+            //  每个 Quadrant 夹点对应的初始角度（按 m_grips 索引存）
+            std::unordered_map<int, double> QuadrantAngles;
         };
 
         std::vector<Entry> Entries;
-        bool Active = false;
-        Math::Point3 DirtyBase = { 0,0,0 };
+        bool               Active = false;
+        Math::Point3       DirtyBase = { 0,0,0 };
 
         void Clear()
         {
             Entries.clear();
-            Active = false;
+            Active    = false;
             DirtyBase = { 0,0,0 };
         }
     };
@@ -86,6 +99,9 @@ namespace MiniCAD
         const std::vector<Grip>& GetGrips()     const { return m_grips; }       // 获取夹点 
         const std::vector<int>&  HoveredGrips() const { return m_hoveredIdxs; }
         Math::Point3             GetDragBase()  const;
+
+        const Grip::Type    GetActiveGripType()  const { return m_grips[m_activeIdx].GripType; }
+        const Math::Point3  GetCurrentWorldPos() const { return m_grips[m_activeIdx].WorldPos; }
           
         const std::vector<DragState::Entry>& GetDragEntries() const { return m_drag.Entries; }
         void CancelDrag();
@@ -100,6 +116,10 @@ namespace MiniCAD
         void UpdateGripPos(Object::ObjectID id, const LineSegment& seg);          // 辅助更新夹点
 
         LineSegment      MoveGrip  (const LineSegment& seg, Grip::Type type, const Math::Point3& p);
+
+		// 圆的特殊夹点（CAD 圆心、象限点、切线点）
+        CircleSnapshot   MoveCircleGrip(const CircleSnapshot& base,  Grip::Type type, const Math::Point3& p);
+
         std::vector<int> HitTestAll(const Math::Point2& screenPt, float thresh = 8.f) const;
     private:
         Scene&             m_scene;

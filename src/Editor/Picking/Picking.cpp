@@ -3,6 +3,7 @@
 #include "Editor/Viewport/Viewport.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Math/MathUtils.hpp"
+#include "Core/Entity/CircleEntity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -63,6 +64,27 @@ namespace MiniCAD
                     }
                 }
 
+                if (obj.IsKindOf<CircleEntity>())
+                {
+                    auto  circle = static_cast<const CircleEntity*>(&obj);
+                    auto& c = circle->GetCircle();
+
+                    // 圆心投影到屏幕
+                    auto centerSS = camera.WorldToScreen(c.Center);
+
+                    // 用圆心 +X 偏移一个半径的世界点换算屏幕半径
+                    Math::Point3 edgeWorld{ c.Center.x + c.Radius, c.Center.y, c.Center.z };
+                    double screenRadius = Math::Distance(centerSS, camera.WorldToScreen(edgeWorld));
+
+                    // 点到圆环的距离 = |点到圆心距 − 屏幕半径|
+                    double d = std::abs(Math::Distance(pt, centerSS) - screenRadius);
+                    if (d < thresh && d < bestDist)
+                    {
+                        bestDist = d;
+                        best = obj.GetID();
+                    }
+                }
+
                 if (obj.IsKindOf<PointEntity>())
                 {
                     auto point = static_cast<const PointEntity*>(&obj);
@@ -105,6 +127,58 @@ namespace MiniCAD
                         ? (s.x >= xMin && s.x <= xMax && s.y >= yMin && s.y <= yMax &&
                             e.x >= xMin && e.x <= xMax && e.y >= yMin && e.y <= yMax)
                         : Math::SegmentIntersectsRect(s, e, xMin, yMin, xMax, yMax);
+
+                    if (hit)
+                        result.insert(obj.GetID());
+                }
+
+                if (obj.IsKindOf<CircleEntity>())
+                {
+                    auto  circle = static_cast<const CircleEntity*>(&obj);
+                    auto& c = circle->GetCircle();
+
+                    auto centerSS = camera.WorldToScreen(c.Center);
+
+                    Math::Point3 edgeWorld{ c.Center.x + c.Radius, c.Center.y, c.Center.z };
+                    double sr = Math::Distance(centerSS, camera.WorldToScreen(edgeWorld));
+
+                    bool hit = false;
+                    if (fullyContain)
+                    {
+                        // 右框：圆的包围盒整体在选框内
+                        hit = (centerSS.x - sr >= xMin && centerSS.x + sr <= xMax && centerSS.y - sr >= yMin && centerSS.y + sr <= yMax);
+                    }
+                    else
+                    {
+                        // 左框：圆与选框有 命中规则
+						// BOX 四个顶点 点距离，之至少1个大于半径 且 至少1个小于半径 即相交 
+                        Math::Point2 corners[4] =
+                        {
+                            {xMin, yMin},
+                            {xMax, yMin},
+                            {xMax, yMax},
+                            {xMin, yMax}
+                        };
+
+                        int insideCount = 0;
+                        int outsideCount = 0;
+
+                        for (const auto& p : corners)
+                        {
+                            double dx = centerSS.x - p.x;
+                            double dy = centerSS.y - p.y;
+                            double dist2 = dx * dx + dy * dy;
+
+                            if (dist2 <= sr * sr)
+                                insideCount++;
+                            else
+                                outsideCount++;
+                        }
+
+                        // 规则： 至少1个点在圆内 && 至少1个点在圆外 => 相交
+                        hit = (insideCount > 0 && outsideCount > 0);
+  
+                    }
 
                     if (hit)
                         result.insert(obj.GetID());

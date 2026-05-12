@@ -16,11 +16,15 @@ namespace MiniCAD
         enum class Kind
         {
             Line,
-            Point
+            Point,
+            Circle
         } Kind;
 
         LineSegment BeforeLine;
         LineSegment AfterLine;
+
+        CircleSnapshot BeforeCircle;
+        CircleSnapshot AfterCircle;
 
         Math::Point3  BeforePoint;
         Math::Point3  AfterPoint;
@@ -64,12 +68,21 @@ namespace MiniCAD
                     const auto& seg = useAfter ? e.AfterLine : e.BeforeLine;
                     line->SetLine({ seg.Start, seg.End });
                 }
-                else if (e.Kind == DragEntityEntry::Kind::Point)
+                
+                if (e.Kind == DragEntityEntry::Kind::Point)
                 {
                     auto* pt = static_cast<PointEntity*>(obj);
                     const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
                     pt->SetPoint({ p });
                 }
+
+                if (e.Kind == DragEntityEntry::Kind::Circle)
+                {
+                    auto* circle = static_cast<CircleEntity*>(obj);
+                    const auto& snap = useAfter ? e.AfterCircle : e.BeforeCircle;
+                    circle->SetCircle({ snap.Center,snap.Radius });
+                }
+
             }
         }
     };

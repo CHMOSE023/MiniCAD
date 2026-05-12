@@ -1,9 +1,10 @@
 #include "GripEditor.h"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp" 
+#include "Core/GeomKernel/Line.hpp"
+#include "Core/Entity/CircleEntity.hpp"
 #include "Document/Command/DragEntitiesCommand.h"
 #include <memory>
-#include <Core/GeomKernel/Line.hpp>
    
 namespace MiniCAD
 {
@@ -65,6 +66,7 @@ namespace MiniCAD
         {
             const Grip& grip = m_grips[idx];
             auto obj = m_scene.GetEntity(grip.OwnerID);
+
             if (!obj) continue;
 
             DragState::Entry entry;
@@ -77,25 +79,42 @@ namespace MiniCAD
                 entry.Kind = DragState::Entry::Kind::Line;   
                 auto& L = static_cast<LineEntity*>(obj)->GetLine();
                 entry.BaseLine = { L.Start,L.End };
-            }
-            else if (obj->IsKindOf<PointEntity>())
+            } 
+            else  if (obj->IsKindOf<PointEntity>())
             {
                 entry.Kind = DragState::Entry::Kind::Point;
                 auto& p = static_cast<PointEntity*>(obj)->GetPoint();
                 entry.BasePoint = p.Position;
+            } 
+            else if (obj->IsKindOf<CircleEntity>())
+            {
+                entry.Kind = DragState::Entry::Kind::Circle;
+                auto& C = static_cast<CircleEntity*>(obj)->GetCircle();
+                entry.BaseCircle = { C.Center, C.Radius };
+
+                // 记录每个属于这个圆的 Quadrant 夹点的初始角度
+                for (int i = 0; i < (int)m_grips.size(); ++i)
+                {
+                    const auto& g = m_grips[i];
+                    if (g.OwnerID != grip.OwnerID) continue;
+                    if (g.GripType != Grip::Type::Quadrant) continue;
+
+                    double dx = g.WorldPos.x - C.Center.x;
+                    double dy = g.WorldPos.y - C.Center.y;
+                    entry.QuadrantAngles[i] = std::atan2(dy, dx);  // 只算一次
+                }
             }
             else
-            {
-                continue;
-            }
-
+            { 
+                continue;   // ★ 未知类型直接跳过，不 push 垃圾 entry
+            } 
             m_drag.Entries.push_back(entry);
         }
 
         if (m_drag.Entries.empty())
             return false;
 
-        m_dragging = true;
+        m_dragging  = true;
         m_activeIdx = hits[0];
         return true;
     }
@@ -110,18 +129,15 @@ namespace MiniCAD
 
         if (!m_dragging) return false;
 
-        Math::Point3 worldPos = e.HasSnap
-            ? e.SnapWorld
-            : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
+        Math::Point3 worldPos = e.HasSnap ? e.SnapWorld : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
 
         for (auto& entry : m_drag.Entries)
         {
             auto obj = m_scene.GetEntity(entry.Id);
+
             if (!obj) continue;
 
-            // ─────────────────────────────
-            // LINE
-            // ─────────────────────────────
+            // ── Line ──────────────────────────────────────────────────
             if (entry.Kind == DragState::Entry::Kind::Line)
             {
                 if (!obj->IsKindOf<LineEntity>()) continue;
@@ -149,12 +165,10 @@ namespace MiniCAD
                         break;
                     }
                 }
-            }
+            } 
 
-            // ─────────────────────────────
-            // POINT
-            // ─────────────────────────────
-            else if (entry.Kind == DragState::Entry::Kind::Point)
+            // ── Point ─────────────────────────────────────────────────
+            else  if (entry.Kind == DragState::Entry::Kind::Point)
             {
                 if (!obj->IsKindOf<PointEntity>()) continue;
 
@@ -165,6 +179,49 @@ namespace MiniCAD
                     if (grip.OwnerID == entry.Id)
                     {
                         grip.WorldPos = worldPos;
+                    }
+                }
+            }
+
+            // ── Circle ──────────────────────────────────────────────
+            else  if (entry.Kind == DragState::Entry::Kind::Circle)
+            {
+                if (!obj->IsKindOf<CircleEntity>()) continue;
+
+                auto newC = MoveCircleGrip(entry.BaseCircle, entry.Type, worldPos);
+                static_cast<CircleEntity*>(obj)->SetCircle({ newC.Center, newC.Radius });
+
+                // 同步夹点坐标
+                for (auto& grip : m_grips)
+                {
+                    if (grip.OwnerID != entry.Id) continue;
+                    const double r = newC.Radius;
+
+                    switch (grip.GripType)
+                    {
+                    case Grip::Type::Center:
+                    {
+                        grip.WorldPos = newC.Center;
+                        break;
+                    }
+                    case Grip::Type::Quadrant:
+                    {
+                        // 用 OnMouseDown 时存好的角度，与 grip.WorldPos 完全无关
+                        auto it = entry.QuadrantAngles.find((int)(&grip - m_grips.data()));   // 计算当前 grip 的索引
+
+                        if (it == entry.QuadrantAngles.end()) break;
+
+                        double angle = it->second;
+                        const double r = newC.Radius;
+                        grip.WorldPos = {
+                            newC.Center.x + r * std::cos(angle),
+                            newC.Center.y + r * std::sin(angle),
+                            newC.Center.z
+                        };
+                        break;
+                    }
+                    break;
+                    default: break;
                     }
                 }
             }
@@ -206,36 +263,44 @@ namespace MiniCAD
 
             DragEntityEntry out;
             out.Id = entry.Id;
-
-            if (obj->IsKindOf<LineEntity>())
-            {
-                out.Kind = DragEntityEntry::Kind::Line;
-            }
-            else if (obj->IsKindOf<PointEntity>())
-            {
-                out.Kind = DragEntityEntry::Kind::Point;
-            }
-
+             
             if (obj->IsKindOf<LineEntity>())
             {
                 auto& L = static_cast<LineEntity*>(obj)->GetLine();
+                out.Kind       = DragEntityEntry::Kind::Line;
                 out.BeforeLine = entry.BaseLine;
-                out.AfterLine = { L.Start, L.End };
-            }
+                out.AfterLine  = { L.Start, L.End };
+            } 
             else if (obj->IsKindOf<PointEntity>())
             {
                 auto& p = static_cast<PointEntity*>(obj)->GetPoint();
+                out.Kind        = DragEntityEntry::Kind::Point;
                 out.BeforePoint = entry.BasePoint;
-                out.AfterPoint = p.Position;
+                out.AfterPoint  = p.Position;
+            } 
+            else if (obj->IsKindOf<CircleEntity>())
+            {
+                out.Kind  = DragEntityEntry::Kind::Circle;
+                auto& C   = static_cast<CircleEntity*>(obj)->GetCircle();
+                out.Kind  = DragEntityEntry::Kind::Circle;
+
+                out.BeforeCircle = entry.BaseCircle;
+                out.AfterCircle  = { C.Center, C.Radius };
+            }
+            else
+            {
+                continue;   //  未知类型不入命令栈
             }
 
             entries.push_back(out);
         }
 
         if (!entries.empty())
+        {
             m_cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(entries)));
-
-        m_dragging = false;
+			m_scene.MarkDirty();
+        }
+        m_dragging  = false;
         m_activeIdx = -1;
         m_drag.Clear();
         return true;
@@ -296,6 +361,7 @@ namespace MiniCAD
             auto obj = m_scene.GetEntity(objId);
             if (obj != nullptr)
             { 
+                // ── Line ──────────────────────────────────────
                 if (obj->IsKindOf<LineEntity>())
                 {
                     auto* line = static_cast<const LineEntity*>(obj);
@@ -306,6 +372,7 @@ namespace MiniCAD
                     m_grips.push_back({ objId, Grip::Type::End,   L.End });
                 }
 
+                // ── Point ─────────────────────────────────────
                 if (obj->IsKindOf<PointEntity>())
                 {
                     auto* pointEntity = static_cast<const PointEntity*>(obj);
@@ -313,6 +380,22 @@ namespace MiniCAD
 
                     m_grips.push_back({ objId, Grip::Type::Start, p.Position });
                   
+                }
+
+                // ── Circle  ──────────────────────────────────
+                if (obj->IsKindOf<CircleEntity>())
+                {
+                    auto& C = static_cast<const CircleEntity*>(obj)->GetCircle();
+
+                    // 圆心夹点
+                    m_grips.push_back({ objId, Grip::Type::Center, C.Center });
+
+                    // 四个象限夹点（0° / 90° / 180° / 270°）
+                    const double r = C.Radius;
+                    m_grips.push_back({ objId, Grip::Type::Quadrant,  { C.Center.x + r, C.Center.y,     C.Center.z } });
+                    m_grips.push_back({ objId, Grip::Type::Quadrant,  { C.Center.x,     C.Center.y + r, C.Center.z } });
+                    m_grips.push_back({ objId, Grip::Type::Quadrant,  { C.Center.x - r, C.Center.y,     C.Center.z } });
+                    m_grips.push_back({ objId, Grip::Type::Quadrant,  { C.Center.x,     C.Center.y - r, C.Center.z } });
                 }
               
             }
@@ -342,6 +425,34 @@ namespace MiniCAD
         }
 
         return bestIdx;
+    }
+
+    CircleSnapshot GripEditor::MoveCircleGrip(const CircleSnapshot& base, Grip::Type type, const Math::Point3& p)
+    {
+        CircleSnapshot out = base;   // 从快照出发，避免误差累积
+
+        switch (type)
+        {
+        case Grip::Type::Center:
+            // 平移：圆心跟随光标，半径不变
+            out.Center = p;
+            break;
+
+        case Grip::Type::Quadrant:
+        {
+            // 拉伸：半径 = 光标到基准圆心的距离，圆心不动
+            double dx  = p.x - base.Center.x;
+            double dy  = p.y - base.Center.y;
+            double r   = std::sqrt(dx * dx + dy * dy);
+            out.Radius = (r > 1e-9) ? r : 1e-9;   // 防止半径退化为 0
+            break;
+        }
+
+        default:
+            break;
+        }
+
+        return out;
     }
 
     std::vector<int> GripEditor::HitTestAll(const  Math::Point2& screenPt, float thresh) const
@@ -389,6 +500,12 @@ namespace MiniCAD
                 if (!obj->IsKindOf<PointEntity>()) continue;
 
                 static_cast<PointEntity*>(obj) ->SetPoint(entry.BasePoint);
+            }
+            else if (entry.Kind == DragState::Entry::Kind::Circle)
+            {
+                if (!obj->IsKindOf<CircleEntity>()) continue;
+                static_cast<CircleEntity*>(obj)->SetCircle(
+                    { entry.BaseCircle.Center, entry.BaseCircle.Radius });
             }
         }
 
