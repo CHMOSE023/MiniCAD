@@ -310,29 +310,38 @@ namespace MiniCAD
                 break;
             }
             case SnapDraw::Type::Nearest:
-            {
-                // 黄色十字
+            { 
+				// 黄色沙漏（两个重叠的三角形）
                 const float   size  = 7.0f;
                 Math::Float4  color = { 1.0f, 1.0f, 0.0f, 1.0f };
-                g.border.push_back({ {x - size, y, 0}, color });
-                g.border.push_back({ {x + size, y, 0}, color });
-                g.border.push_back({ {x, y - size, 0}, color });
-                g.border.push_back({ {x, y + size, 0}, color });
+                g.border.push_back({ {x - size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y + size, 0}, color });
+                g.border.push_back({ {x - size, y - size, 0}, color });
+                g.border.push_back({ {x - size, y + size, 0}, color });
+                g.border.push_back({ {x + size, y - size, 0}, color });
+                g.border.push_back({ {x + size, y + size, 0}, color });
+                g.border.push_back({ {x - size, y + size, 0}, color });
                 break;
             }
             case SnapDraw::Type::Quadrant:
             {
-                // 黄色圆点
+                // 黄色菱形
                 const float   size  = 7.0f;
-                Math::Float4  color = { 1.0f, 1.0f, 0.0f, 1.0f };
-                g.border.push_back({ {x - size, y - size, 0}, color });
-                g.border.push_back({ {x + size, y - size, 0}, color });
-                g.border.push_back({ {x + size, y + size, 0}, color });
-                g.border.push_back({ {x - size, y - size, 0}, color });
-                g.border.push_back({ {x - size, y + size, 0}, color });
-                g.border.push_back({ {x + size, y - size, 0}, color });
-                g.border.push_back({ {x + size, y + size, 0}, color });
-                g.border.push_back({ {x - size, y + size, 0}, color });
+                Math::Float4 color = { 1.0f, 1.0f, 0.0f, 1.0f };
+                g.border.push_back({ {x, y - size, 0}, color });
+                g.border.push_back({ {x + size, y, 0}, color });
+
+                g.border.push_back({ {x + size, y, 0}, color });
+                g.border.push_back({ {x, y + size, 0}, color });
+
+                g.border.push_back({ {x, y + size, 0}, color });
+                g.border.push_back({ {x - size, y, 0}, color });
+
+                g.border.push_back({ {x - size, y, 0}, color });
+                g.border.push_back({ {x, y - size, 0}, color });
+
+
                 break;
 			}
             default: break; // Grid 不画

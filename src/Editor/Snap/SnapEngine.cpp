@@ -135,7 +135,6 @@ namespace MiniCAD
                     }
                 }
 
-
                 if (obj.IsKindOf<RectangleEntity>())
                 {
                     auto* rectangleEntity = static_cast<const RectangleEntity*>(&obj);
@@ -143,19 +142,22 @@ namespace MiniCAD
 
                     const auto& rect = rectangleEntity->GetRectangle();
 
+					auto mid12 = Math::Midpoint(rect.P1, rect.P2);
+					auto mid23 = Math::Midpoint(rect.P2, rect.P3);
+					auto mid34 = Math::Midpoint(rect.P3, rect.P4);
+					auto mid41 = Math::Midpoint(rect.P4, rect.P1); 
 
-                    
-
-                    for (const auto& p : { rect.P1, rect.P2, rect.P3, rect.P4 })
+                    for (const auto& p : { mid12, mid23, mid34, mid41 })
                     {
                         double d = Math::Distance(sp, cam.WorldToScreen(p));
                         if (d < SnapRadiusPx && d < bestDist)
                         {
                             bestDist = d;
                             best = { SnapResult::Type::Midpoint, p, obj.GetID() };
-                        }
+                        } 
                     }
-                }
+                } 
+               
             });
 
         return best;
@@ -188,6 +190,29 @@ namespace MiniCAD
                         bestDist = d;
                         best = { SnapResult::Type::Nearest, closest, obj.GetID() };
                     }
+                }
+
+                if (obj.IsKindOf<RectangleEntity>())
+                {
+                    auto* rectangleEntity = static_cast<const RectangleEntity*>(&obj);
+                    if (!rectangleEntity) return;
+                    const auto& rect = rectangleEntity->GetRectangle();
+
+                    // 计算矩形四条边的最近点
+                    Math::Point3 closest12 = Math::ClosestPointOnSegment(worldMouse, rect.P1, rect.P2);
+                    Math::Point3 closest23 = Math::ClosestPointOnSegment(worldMouse, rect.P2, rect.P3);
+                    Math::Point3 closest34 = Math::ClosestPointOnSegment(worldMouse, rect.P3, rect.P4);
+                    Math::Point3 closest41 = Math::ClosestPointOnSegment(worldMouse, rect.P4, rect.P1);
+                    for (const auto& p : { closest12, closest23, closest34, closest41 })
+                    {
+                        double d = Math::Distance(sp, cam.WorldToScreen(p));
+                        if (d < SnapRadiusPx && d < bestDist)
+                        {
+                            bestDist = d;
+                            best = { SnapResult::Type::Nearest, p, obj.GetID() };
+                        }
+					}
+
                 }
 
 				// 圆上最近点：鼠标世界坐标 → 圆心方向单位向量 → 投影到圆上
