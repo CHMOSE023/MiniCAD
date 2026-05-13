@@ -3,7 +3,10 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Object/Object.hpp"
+#include "Core/Math/Point3.hpp"
+#include "Core/Math/Constants.hpp"
 #include "Scene/Scene.h"
 #include "Editor/Viewport/Camera.h"
 #include "Core/Math/MathUtils.hpp"
@@ -35,7 +38,22 @@ namespace MiniCAD
 
         scene.ForEachObject([&](const Object& obj)
             {
-                if (exclude.contains(obj.GetID())) return;
+                if (exclude.contains(obj.GetID())) 
+                    return;
+                  
+                if (obj.IsKindOf<PointEntity>())
+                {
+                    auto* point = static_cast<const PointEntity*>(&obj);
+                    if (!point) return;
+
+                    auto&  p = point->GetPoint();
+                    double d = Math::Distance(sp, cam.WorldToScreen(p.Position));
+                    if (d < SnapRadiusPx && d < bestDist)
+                    {
+                        bestDist = d;
+                        best = { SnapResult::Type::Endpoint, p.Position, obj.GetID() }; 
+                    }
+                }
 
                 if (obj.IsKindOf<LineEntity>())
                 {
@@ -48,23 +66,27 @@ namespace MiniCAD
                         if (d < SnapRadiusPx && d < bestDist)
                         {
                             bestDist = d;
-                            best = { SnapResult::Type::Endpoint, wp, obj.GetID() };
+                            best = { SnapResult::Type::Endpoint, wp, obj.GetID() }; 
                         }
                     }
                 }
 
-                if (obj.IsKindOf<PointEntity>())
+                if (obj.IsKindOf<RectangleEntity>())
                 {
-                    auto* point = static_cast<const PointEntity*>(&obj);
-                    if (!point) return;
+                    auto* rectangleEntity = static_cast<const RectangleEntity*>(&obj);
+                    if (!rectangleEntity) return;
 
-                    auto& p = point->GetPoint();
-                    double d = Math::Distance(sp, cam.WorldToScreen(p.Position));
-                    if (d < SnapRadiusPx && d < bestDist)
+                    const auto& rect = rectangleEntity->GetRectangle();
+
+                    for (const auto& p : { rect.P1, rect.P2, rect.P3, rect.P4 })
                     {
-                        bestDist = d;
-                        best = { SnapResult::Type::Endpoint, p.Position, obj.GetID() };
-                    }
+                        double d = Math::Distance(sp, cam.WorldToScreen(p));
+                        if (d < SnapRadiusPx && d < bestDist)
+                        {
+                            bestDist = d;
+                            best = { SnapResult::Type::Endpoint, p, obj.GetID() };
+                        }
+                    } 
                 }
 
                 // ── 圆心捕捉 ──────────────────────────────────────────
@@ -78,7 +100,7 @@ namespace MiniCAD
                     if (d < SnapRadiusPx && d < bestDist)
                     {
                         bestDist = d;
-                        best = { SnapResult::Type::Endpoint, center, obj.GetID() };
+                        best = { SnapResult::Type::Endpoint, center, obj.GetID() }; 
                     }
                 }
             });
@@ -110,6 +132,28 @@ namespace MiniCAD
                     {
                         bestDist = d;
                         best = { SnapResult::Type::Midpoint, mid, obj.GetID() };
+                    }
+                }
+
+
+                if (obj.IsKindOf<RectangleEntity>())
+                {
+                    auto* rectangleEntity = static_cast<const RectangleEntity*>(&obj);
+                    if (!rectangleEntity) return;
+
+                    const auto& rect = rectangleEntity->GetRectangle();
+
+
+                    
+
+                    for (const auto& p : { rect.P1, rect.P2, rect.P3, rect.P4 })
+                    {
+                        double d = Math::Distance(sp, cam.WorldToScreen(p));
+                        if (d < SnapRadiusPx && d < bestDist)
+                        {
+                            bestDist = d;
+                            best = { SnapResult::Type::Midpoint, p, obj.GetID() };
+                        }
                     }
                 }
             });

@@ -2,12 +2,19 @@
 #include "Scene/Scene.h"
 #include "Editor/Viewport/Viewport.h"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Math/Box2.hpp"
 #include "Core/Math/MathUtils.hpp"
+#include "Core/Math/Vec3.hpp"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
+#include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Object/Object.hpp"
+#include "Core/Math/Point2.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <Core/Math/Circle2.hpp>
 
 namespace MiniCAD
 {
@@ -48,7 +55,7 @@ namespace MiniCAD
 
         auto& camera = m_viewport.GetCamera();
 
-        m_scene.ForEachObject([&](const Object& obj)
+        m_scene.ForEachObject([&](const Object& obj)  
             {
                 if (obj.IsKindOf<LineEntity>())
                 {
@@ -60,10 +67,36 @@ namespace MiniCAD
                     if (d < thresh && d < bestDist)
                     {
                         bestDist = d;
-                        best = obj.GetID();
+                        best = obj.GetID();  
                     }
                 }
+              
+                if (obj.IsKindOf<RectangleEntity>())
+                {
+                    auto rectEntity = static_cast<const RectangleEntity*>(&obj);
+                    auto& rect = rectEntity->GetRectangle();
+                    auto p1 = camera.WorldToScreen(rect.P1);
+                    auto p2 = camera.WorldToScreen(rect.P2);
+                    auto p3 = camera.WorldToScreen(rect.P3);
+                    auto p4 = camera.WorldToScreen(rect.P4);
 
+                    auto testEdge = [&](const Math::Point2& a, const Math::Point2& b)
+                        {
+                            double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b));
+                            if (d < thresh && d < bestDist)
+                            {
+                                bestDist = d;
+                                best = obj.GetID();
+                            }
+                        };
+
+                    testEdge(p1, p2);
+                    testEdge(p2, p3);
+                    testEdge(p3, p4);
+                    testEdge(p4, p1);
+
+                }
+              
                 if (obj.IsKindOf<CircleEntity>())
                 {
                     auto  circle = static_cast<const CircleEntity*>(&obj);
@@ -97,6 +130,7 @@ namespace MiniCAD
                         best = obj.GetID();
                     }
                 }
+               
             });
 
         return best;
@@ -110,88 +144,144 @@ namespace MiniCAD
         double yMin = std::min(a.y, b.y);
         double yMax = std::max(a.y, b.y);
 
+        Box2 box({ std::min(a.x, b.x), std::min(a.y, b.y) }, { std::max(a.x, b.x), std::max(a.y, b.y) });
+
         bool fullyContain = (b.x > a.x);
 
         auto& camera = m_viewport.GetCamera();
         std::unordered_set<ObjectID> result;
 
-        m_scene.ForEachObject([&](const Object& obj)
+        m_scene.ForEachObject([&](const Object& obj) 
             {
+                if (obj.IsKindOf<PointEntity>())
+                {
+                    auto point = static_cast<const PointEntity*>(&obj);
+                    auto s     = camera.WorldToScreen(point->GetPoint().Position);
+
+                    if (box.Contains(s))
+                    {
+                        result.insert(obj.GetID());
+                    }
+
+                }
+
                 if (obj.IsKindOf<LineEntity>())
                 {
                     auto line = static_cast<const LineEntity*>(&obj);
-                    auto s = camera.WorldToScreen(line->GetLine().Start);
-                    auto e = camera.WorldToScreen(line->GetLine().End);
+                    auto s    = camera.WorldToScreen(line->GetLine().Start);
+                    auto e    = camera.WorldToScreen(line->GetLine().End);
 
-                    bool hit = fullyContain
-                        ? (s.x >= xMin && s.x <= xMax && s.y >= yMin && s.y <= yMax &&
-                            e.x >= xMin && e.x <= xMax && e.y >= yMin && e.y <= yMax)
-                        : Math::SegmentIntersectsRect(s, e, xMin, yMin, xMax, yMax);
+                    bool hit = fullyContain  ? box.Contains(s) && box.Contains(e)   
+                                             : Math::SegmentIntersectsBox2(s, e, box);
 
                     if (hit)
                         result.insert(obj.GetID());
+                }
+
+                if (obj.IsKindOf<RectangleEntity>())
+                {
+                    auto rectEntity = static_cast<const RectangleEntity*>(&obj);
+                    auto& rect      = rectEntity->GetRectangle();
+
+                    auto p1 = camera.WorldToScreen(rect.P1);
+                    auto p2 = camera.WorldToScreen(rect.P2);
+                    auto p3 = camera.WorldToScreen(rect.P3);
+                    auto p4 = camera.WorldToScreen(rect.P4);
+
+                    Point2 pts[4] = { p1, p2, p3, p4 };
+
+                    bool hit = false;
+
+                    if (fullyContain)
+                    { 
+                        hit = Math::AllPointsInBox2(pts, 4, box);
+                    }
+                    else
+                    {
+                        hit =
+                            Math::AnyPointsInBox2(pts, 4, box) ||
+                            Math::SegmentIntersectsBox2(p1, p2, box) ||
+                            Math::SegmentIntersectsBox2(p2, p3, box) ||
+                            Math::SegmentIntersectsBox2(p3, p4, box) ||
+                            Math::SegmentIntersectsBox2(p4, p1, box);
+                    }
+
+                    if (hit)
+                    {
+                        result.insert(obj.GetID());
+                    }
+                       
                 }
 
                 if (obj.IsKindOf<CircleEntity>())
                 {
-                    auto  circle = static_cast<const CircleEntity*>(&obj);
-                    auto& c = circle->GetCircle();
+                    auto circle = static_cast<const CircleEntity*>(&obj);
+                    const auto& c = circle->GetCircle();
 
+                    // 圆心屏幕坐标
                     auto centerSS = camera.WorldToScreen(c.Center);
 
-                    Math::Point3 edgeWorld{ c.Center.x + c.Radius, c.Center.y, c.Center.z };
-                    double sr = Math::Distance(centerSS, camera.WorldToScreen(edgeWorld));
+                    // 用 screen-space 近似半径（避免透视误差）
+                    Math::Vec3 offset = { c.Radius, 0.0, 0.0 };
+                    double sr = Math::Distance(centerSS, camera.WorldToScreen(c.Center + offset));
+
+                    // 圆包围球
+                    Math::Circle2 circle2(centerSS,sr);
 
                     bool hit = false;
+
+                    Point2 corners[4] =
+                    {
+                        { xMin, yMin },
+                        { xMax, yMin },
+                        { xMax, yMax },
+                        { xMin, yMax }
+                    };
+
                     if (fullyContain)
                     {
-                        // 右框：圆的包围盒整体在选框内
-                        hit = (centerSS.x - sr >= xMin && centerSS.x + sr <= xMax && centerSS.y - sr >= yMin && centerSS.y + sr <= yMax);
+                        // 屏幕包围盒完全包含圆
+                        hit = (centerSS.x - sr >= xMin) && (centerSS.x + sr <= xMax) && (centerSS.y - sr >= yMin) && (centerSS.y + sr <= yMax);
                     }
                     else
-                    {
-                        // 左框：圆与选框有 命中规则
-						// BOX 四个顶点 点距离，之至少1个大于半径 且 至少1个小于半径 即相交 
-                        Math::Point2 corners[4] =
-                        {
-                            {xMin, yMin},
-                            {xMax, yMin},
-                            {xMax, yMax},
-                            {xMin, yMax}
-                        };
-
-                        int insideCount = 0;
-                        int outsideCount = 0;
+                    { 
+                        // 1. 选择框四个角是否全部在圆内 
+                        bool allInside = true;
 
                         for (const auto& p : corners)
                         {
-                            double dx = centerSS.x - p.x;
-                            double dy = centerSS.y - p.y;
-                            double dist2 = dx * dx + dy * dy;
+                            double dx = p.x - centerSS.x;
+                            double dy = p.y - centerSS.y;
 
-                            if (dist2 <= sr * sr)
-                                insideCount++;
-                            else
-                                outsideCount++;
+                            if (dx * dx + dy * dy > sr * sr)
+                            {
+                                allInside = false;
+                                break;
+                            }
                         }
 
-                        // 规则： 至少1个点在圆内 && 至少1个点在圆外 => 相交
-                        hit = (insideCount > 0 && outsideCount > 0);
-  
+                        // 2.选择框在圆内 
+                        if (allInside)
+                        {
+                            hit = false;
+                            if (box.Contains(centerSS))
+                            {
+                                hit = true;
+                            }
+                        }
+                        else  // 3. 判断圆边线是否与选择框相交
+                        {
+                           
+                            hit = Math::CircleIntersectsBoxEdges(centerSS, sr, box);
+                        }
                     }
 
                     if (hit)
+                    {
                         result.insert(obj.GetID());
+                    }
                 }
 
-                if (obj.IsKindOf<PointEntity>())
-                {
-                    auto point = static_cast<const PointEntity*>(&obj);
-                    auto s = camera.WorldToScreen(point->GetPoint().Position);
-
-                    if (Math::PointIntersectsRect(s, xMin, yMin, xMax, yMax))
-                        result.insert(obj.GetID());
-                }
             });
 
         return result;

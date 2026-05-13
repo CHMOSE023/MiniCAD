@@ -6,8 +6,13 @@
 #include "Constants.hpp"
 #include <cmath>
 #include <algorithm>
+#include "Box2.hpp"
+#include "Circle2.hpp"
 namespace MiniCAD::Math
 {  
+	/*
+	* Intersects  A ∩ B ≠ ∅  →  Intersects（相交成立）
+	*/
 	inline bool   NearlyEqual(double a, double b, double eps = LengthEPS) { return std::abs(a - b) <= eps; }  
 
 	// Length
@@ -66,14 +71,16 @@ namespace MiniCAD::Math
 	// 最近点
 	inline Point3 ClosestPointOnSegment(const Point3& p, const Point3& a, const Point3& b)
 	{
-		double dx    = b.x - a.x;
-		double dy    = b.y - a.y;
-		double lenSq = dx * dx + dy * dy;
+		Vec3 ab = b - a;
 
-		if (lenSq < LengthEPS * LengthEPS) return a;
+		double lenSq = Dot(ab, ab);
 
-		double t = std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq, 0.0, 1.0);
-		return { a.x + t * dx, a.y + t * dy, 0.0 };
+		if (lenSq < LengthEPS * LengthEPS)
+			return a;
+
+		double t = std::clamp(Dot(p - a, ab) / lenSq, 0.0, 1.0);
+
+		return a + ab * t;
 	}
 
 	inline Point2 ClosestPointOnSegment(const Point2& p, const Point2& a, const Point2& b)
@@ -98,22 +105,107 @@ namespace MiniCAD::Math
 		return (d1 * d2 < 0.0) && (d3 * d4 < 0.0);
 	}
 
-	// Segment vs AABB（框选触碰检测）
-	inline bool SegmentIntersectsRect(const Point2& a, const Point2& b, double xMin, double yMin, double xMax, double yMax)
+ 
+
+	// 线段与圆相交 
+	inline bool SegmentIntersectsCircle( const Point2& a, const Point2& b, const Point2& center, double radius)
 	{
-		auto inRect = [&](const Point2& p) {
-				return p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax;
-		};
-		if (inRect(a) || inRect(b)) return true;
-		Point2 r1{ xMin, yMin }, r2{ xMax, yMin };
-		Point2 r3{ xMax, yMax }, r4{ xMin, yMax };
-		return SegmentIntersect(a, b, r1, r2) || SegmentIntersect(a, b, r2, r3) || SegmentIntersect(a, b, r3, r4) || SegmentIntersect(a, b, r4, r1);
+		Point2 closest = ClosestPointOnSegment(center, a, b);
+
+		double dx = closest.x - center.x;
+		double dy = closest.y - center.y;
+
+		return (dx * dx + dy * dy) <= radius * radius;
 	}
 
-	// Point vs AABB（点选容差检测）
-	inline bool PointIntersectsRect(const Point2& p, double xMin, double yMin, double xMax, double yMax, double padding = 2.0)
+	// 圆与包围盒边相交
+	inline bool CircleIntersectsBoxEdges( const Point2& center, double radius, 	const Box2& box)
 	{
-		return p.x >= xMin - padding && p.x <= xMax + padding && p.y >= yMin - padding && p.y <= yMax + padding;
+		Point2 p0{ box.Min.x, box.Min.y };
+		Point2 p1{ box.Max.x, box.Min.y };
+		Point2 p2{ box.Max.x, box.Max.y };
+		Point2 p3{ box.Min.x, box.Max.y };
+
+		return
+			SegmentIntersectsCircle(p0, p1, center, radius) ||
+			SegmentIntersectsCircle(p1, p2, center, radius) ||
+			SegmentIntersectsCircle(p2, p3, center, radius) ||
+			SegmentIntersectsCircle(p3, p0, center, radius);
+	}
+	 
+
+	// 所有点在二维包围盒内
+	inline bool AllPointsInBox2(const Point2* pts, size_t n, const Box2& box)
+	{
+		for (size_t i = 0; i < n; ++i)
+		{
+			if (!box.Contains(pts[i]))
+				return false;
+		}
+		return true;
 	} 
+
+	// 所有点在二维包围球内
+	inline bool AllPointsInCircle2(const Point2* pts, size_t n, const Circle2& circle)
+	{
+		for (size_t i = 0; i < n; ++i)
+		{
+			if (!circle.Contains(pts[i]))
+				return false;
+		}
+		return true;
+	} 
+	  
+	// 任意点在包围盒
+	inline bool AnyPointsInBox2(const Point2* pts, size_t n, const Box2& box)
+	{
+		for (size_t i = 0; i < n; ++i)
+		{
+			if (!box.Contains(pts[i]))
+				return true;
+		}
+		return false;
+	}
+
+	// 任意点在包围球
+	inline bool AnyPointsInCircle2(const Point2* pts, size_t n, const Circle2& circle)
+	{
+		for (size_t i = 0; i < n; ++i)
+		{
+			if (!circle.Contains(pts[i]))
+				return true;
+		}
+		return false;
+	}
+
+	// 线段与包围盒相交
+	inline bool SegmentIntersectsBox2(const Point2& a, 	const Point2& b, const Box2& box) 
+	{ 
+		// 1. 端点在盒内
+		if (box.Contains(a) || box.Contains(b))
+			return true;
+
+		// 2. Cohen–Sutherland 类似快速剪裁（slab test）
+		double minX = std::min(a.x, b.x);
+		double maxX = std::max(a.x, b.x);
+		double minY = std::min(a.y, b.y);
+		double maxY = std::max(a.y, b.y);
+
+		if (maxX < box.Min.x || minX > box.Max.x ||
+			maxY < box.Min.y || minY > box.Max.y)
+			return false;
+
+		// 3. 边相交测试
+		Point2 r1{ box.Min.x, box.Min.y };
+		Point2 r2{ box.Max.x, box.Min.y };
+		Point2 r3{ box.Max.x, box.Max.y };
+		Point2 r4{ box.Min.x, box.Max.y };
+
+		return SegmentIntersect(a, b, r1, r2) ||
+			   SegmentIntersect(a, b, r2, r3) ||
+			   SegmentIntersect(a, b, r3, r4) ||
+			   SegmentIntersect(a, b, r4, r1);
+
+	}
 
 }

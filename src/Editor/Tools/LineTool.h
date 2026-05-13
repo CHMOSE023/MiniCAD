@@ -56,7 +56,8 @@ namespace MiniCAD
             {
                 m_preview = GetPoint(e); // 预览终点
                 m_overlay.Clear(); 
-                m_overlay.AddLine(m_start, m_preview, { 0.6,0.6,0.6,0.6 }); 
+                const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
+                m_overlay.AddLine(m_start, m_preview, layer.GetColor());
                 return false; // 交给渲染
             }
 

@@ -3,6 +3,7 @@
 #include "../Math/Constants.hpp"
 #include "AABB.hpp"
 #include <cmath>
+#include <cstdlib>
 
 namespace MiniCAD
 {

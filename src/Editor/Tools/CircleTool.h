@@ -65,9 +65,13 @@ namespace MiniCAD
             {
                 auto  cursor = GetPoint(e);
                 double r = Distance2D(m_center, cursor);
-                m_overlay.Clear();
-                m_overlay.AddCircle(m_center, r, { 0.6, 0.6, 0.6, 0.6 });  // 预览圆
-                m_overlay.AddLine(m_center, cursor, { 0.6, 0.6, 0.6, 0.4 }); // 半径辅助线
+                m_overlay.Clear(); 
+
+                const  auto& layer = m_scene.GetLayerManager().GetActiveLayer(); 
+
+                m_overlay.AddCircle(m_center, r, layer.GetColor());            // 预览圆
+                m_overlay.AddLine  (m_center, cursor, { 0.6, 0.6, 0.6, 0.4 }); // 半径辅助线
+
                 return false; // 交给渲染
             }
 

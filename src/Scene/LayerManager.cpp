@@ -1,11 +1,12 @@
 #include "LayerManager.h"   
 #include "Layer.h"
 #include <utility>
+#include <memory>
 namespace MiniCAD
 {
     LayerManager::LayerManager()
-    {
-        m_layers[Layer::DefaultLayerID] = std::make_unique<Layer>(Layer::DefaultLayerID, "Default");  // 默认图层
+    { 
+        m_layers[Layer::DefaultLayerID] = std::make_unique<Layer>(Layer::DefaultLayerID, "Default");  // 默认图层 
     }
 
     LayerID LayerManager::AddLayer(const std::string& name)

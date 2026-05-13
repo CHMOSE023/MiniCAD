@@ -1,7 +1,7 @@
 #pragma once
 #include "Core/Math/Point3.hpp"
-#include <algorithm>
-#include <cmath>
+#include <algorithm> 
+#include "AABB.hpp"
 
 namespace MiniCAD
 {
@@ -31,8 +31,7 @@ namespace MiniCAD
             : P1(p1), P2(p2), P3(p3), P4(p4)
         {
 		}
-
-
+          
         AABB GetBounds() const
         {
             auto Min = Math::Point3

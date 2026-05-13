@@ -1,5 +1,6 @@
 #pragma once 
 #include "Scene/Layer.h"
+#include  "Core/Entity/EntityAttr.hpp"
 #include <atomic> 
 #include <vector>
 #include <unordered_map>
@@ -21,8 +22,9 @@ namespace MiniCAD
 
 		std::vector<LayerID> GetAllLayerIDs() const;    // 所有图层 ID 列表
 
-		LayerID GetActiveLayerID() const { return m_activeLayerID; }
-		void    SetActiveLayerID(LayerID id);
+		const Layer&  GetActiveLayer()   const { return *m_layers.at(m_activeLayerID); };
+		const LayerID GetActiveLayerID() const { return m_activeLayerID; }
+		void          SetActiveLayerID(LayerID id);
 
 	private:
 		std::unordered_map< LayerID, std::unique_ptr<Layer>> m_layers;
