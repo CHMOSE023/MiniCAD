@@ -216,7 +216,7 @@ namespace MiniCAD
         m_picking.ClearSelection();
         m_scene.MarkDirty();
         m_picking.MarkDirty();
-        m_gripEditor.ReBuildGrip();
+        m_gripEditor.RebuildGrips();
 
         // 3. 接管新工具，注册完成回调
         m_tool = std::move(tool);
@@ -383,7 +383,7 @@ namespace MiniCAD
                 if (m_tool) m_tool->OnSceneChanged();
 
                 DeleteSelected();
-                m_gripEditor.ReBuildGrip();
+                m_gripEditor.RebuildGrips();
                 return true;
             }
   
@@ -587,9 +587,10 @@ namespace MiniCAD
             out = m_tool->GetAnchor();
             return true;
         }
+
         if (m_gripEditor.IsDragging())
         {
-            out = m_gripEditor.GetDragBase();
+            // out = m_gripEditor.GetDragBase();
             return true;
         }
         return false;

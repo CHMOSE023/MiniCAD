@@ -1,137 +1,94 @@
-#pragma once
+#pragma once 
 #include "Scene/Scene.h"
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Picking/Picking.h"
 #include "Editor/Viewport/Viewport.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Core/Object/Object.hpp"
-#include "Core/Math/Point2.hpp" 
-#include "Core/Math/Point3.hpp" 
-#include <cstdint>
+#include "Core/Entity/Entity.hpp"
+#include "Core/Math/Point2.hpp"
+#include "Core/Math/Point3.hpp"
+#include "IEntityGripHandler.h"
 #include <vector>
+#include <memory>
+#include <unordered_map>
+#include <cstdint>
+#include "GripType.h"
 
 namespace MiniCAD
 {
-    struct LineSegment
-    {
-        Math::Point3 Start;
-        Math::Point3 End;
-    };
-
-    // 圆快照
-    struct CircleSnapshot
-    {
-        Math::Point3 Center;
-        double       Radius = 0.0;
-    };
-
-    struct Grip
-    { 
-        enum class Type : uint8_t
-        {
-            Start,
-            Mid,
-            End,
-            Corner,     // 多段线
-            Center,     // CAD 圆心
-			Quadrant,   // CAD 圆象限点
-            Tangent,    // 曲线控制点
-        };
-
-        Object::ObjectID   OwnerID;
-        Type               GripType;
-        Math::Point3       WorldPos;
-    };
-
-    struct DragState
-    {
-        struct Entry
-        {
-            Object::ObjectID Id;
-            Grip::Type       Type;
-
-            enum class Kind
-            {
-                Line,
-                Point,
-                Circle
-            } Kind;
-
-            LineSegment    BaseLine;
-            Math::Point3   BasePoint;
-            CircleSnapshot BaseCircle;
-
-            //  每个 Quadrant 夹点对应的初始角度（按 m_grips 索引存）
-            std::unordered_map<int, double> QuadrantAngles;
-        };
-
-        std::vector<Entry> Entries;
-        bool               Active = false;
-        Math::Point3       DirtyBase = { 0,0,0 };
-
-        void Clear()
-        {
-            Entries.clear();
-            Active    = false;
-            DirtyBase = { 0,0,0 };
-        }
-    };
-
     class GripEditor
     {
-    public:
-        GripEditor(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking)
-            : m_viewport(viewport)
-            , m_scene(scene)
-            , m_cmdStack(cmdStack)
-            , m_picking(picking)
-        {
-        }
+    public: 
+        GripEditor(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking);
 
     public:
-        bool OnInput     (const InputEvent& e);
+        bool OnInput(const InputEvent& e);
 
-        bool IsDragging  () const { return m_dragging; }
-        bool IsGripsEmpty() const { return m_grips.empty(); }
-        void ReBuildGrip ()       { Rebuild(); };
-        void MarkDirty   ()       { m_dirty = true; }   // selection 变化后由 Editor 通知
+        bool IsDragging()    const { return m_dragging; }
+        bool IsGripsEmpty()  const { return m_grips.empty(); }
+        void MarkDirty()           { m_dirty = true; }
+         
+        const std::vector<GripDragEntry>& GetDragEntries() const { return m_dragEntries; }
 
-        const std::vector<Grip>& GetGrips()     const { return m_grips; }       // 获取夹点 
-        const std::vector<int>&  HoveredGrips() const { return m_hoveredIdxs; }
-        Math::Point3             GetDragBase()  const;
-
-        const Grip::Type    GetActiveGripType()  const { return m_grips[m_activeIdx].GripType; }
-        const Math::Point3  GetCurrentWorldPos() const { return m_grips[m_activeIdx].WorldPos; }
-          
-        const std::vector<DragState::Entry>& GetDragEntries() const { return m_drag.Entries; }
+        void RebuildGrips();
         void CancelDrag();
 
+    public:
+
+        const std::vector<Grip>& GetGrips()       const { return m_grips; } 
+        const std::vector<int>&  HoveredGrips()   const { return m_hoveredIdxs; } 
+        const Grip*              GetActiveGrip()  const { return m_activeGrip; }
+
+    public:
+
+        template<typename T>   
+        void RegisterHandler(std::unique_ptr<IEntityGripHandler> handler)
+        {
+            static_assert(std::is_base_of_v<Entity, T>, "T must derive from Entity");
+
+            m_handlers[&T::TypeInfo] = std::move(handler);
+        }
+
     private:
-        bool OnMouseDown(const InputEvent& e);
-        bool OnMouseMove(const InputEvent& e);
-        bool OnMouseUp  (const InputEvent& e); 
-   
-        bool Rebuild      ();     // 仅在 selection 变化时重建（内部比较上次 selection）
-        int  HitTest      (const Math::Point2& screenPt, float thresh = 8.f) const;
-        void UpdateGripPos(Object::ObjectID id, const LineSegment& seg);          // 辅助更新夹点
 
-        LineSegment      MoveGrip  (const LineSegment& seg, Grip::Type type, const Math::Point3& p);
+        bool OnMouseDown(const InputEvent& e); 
+        bool OnMouseMove(const InputEvent& e); 
+        bool OnMouseUp  (const InputEvent& e);
 
-		// 圆的特殊夹点（CAD 圆心、象限点、切线点）
-        CircleSnapshot   MoveCircleGrip(const CircleSnapshot& base,  Grip::Type type, const Math::Point3& p);
+    private: 
+        IEntityGripHandler* FindHandler(Entity* entity);
+
+    private:
+
+        int HitTest(const Math::Point2& screenPt, float thresh = 8.f) const; 
 
         std::vector<int> HitTestAll(const Math::Point2& screenPt, float thresh = 8.f) const;
-    private:
-        Scene&             m_scene;
-        Viewport&          m_viewport;
-        CommandStack&      m_cmdStack;
-        Picking&           m_picking;                           
-        DragState          m_drag       = { };
-        std::vector<int>   m_hoveredIdxs;
-        std::vector<Grip>  m_grips;
 
-        bool               m_dragging   = false;
-        int                m_activeIdx  = -1;
-        bool               m_dirty    = true;   // true = 需要重建夹点  
+    private: 
+        bool Rebuild();
+
+    private: 
+        Scene&        m_scene; 
+        Viewport&     m_viewport; 
+        CommandStack& m_cmdStack; 
+        Picking&      m_picking;
+
+    private:  
+        std::unordered_map<const RuntimeTypeInfo*, std::unique_ptr<IEntityGripHandler>> m_handlers;
+
+    private: 
+        std::vector<Grip> m_grips; 
+        std::vector<int>  m_hoveredIdxs;
+
+    private: 
+        // 当前拖拽条目（支持未来多对象 drag）
+        std::vector<GripDragEntry> m_dragEntries;
+
+    private: 
+        // 当前 active grip
+        const Grip* m_activeGrip = nullptr; 
+        bool        m_dragging = false; 
+        bool        m_dirty = true;
     };
 }

@@ -161,7 +161,7 @@ namespace MiniCAD::Math
 	{
 		for (size_t i = 0; i < n; ++i)
 		{
-			if (!box.Contains(pts[i]))
+			if (box.Contains(pts[i]))
 				return true;
 		}
 		return false;
