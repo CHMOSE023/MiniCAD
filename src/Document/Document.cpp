@@ -154,11 +154,17 @@ namespace MiniCAD
             return;
          
         m_sceneVertices.clear();
-        m_overlay.Clear();  
-
+      
         const auto& hoverIds     = m_picking.GetHovered();
         const auto& selectionIds = m_picking.GetSelection();
-         
+
+		// 优化：当没有悬停和选择时，清除预览数据并重建夹点，避免残留和状态错误
+        if (hoverIds.empty() || selectionIds.empty())
+        {
+            m_overlay.Clear(); 
+			m_editor.GetGripEditor().RebuildGrips(); // 确保夹点状态正确
+        }
+
         DrawContext ctx(m_sceneVertices, m_overlay);
 
         m_scene.ForEachObject([&](const Object& obj) 
@@ -166,13 +172,14 @@ namespace MiniCAD
            if (obj.IsKindOf<Entity>())
            {
                const auto& entity = static_cast<const Entity&>(obj);
-          
-		 	auto isSelected = selectionIds.contains(obj.GetID());
-		 	auto isHovered  = hoverIds.contains(obj.GetID());
-		 	entity.Draw(ctx, isSelected, isHovered);
+
+               auto isSelected = selectionIds.contains(obj.GetID());
+               auto isHovered = hoverIds.contains(obj.GetID());
+               entity.Draw(ctx, isSelected, isHovered);
            }
                 
         }); 
+
         m_scene.ClearDirty();
         m_picking.ClearDirty();  
     }

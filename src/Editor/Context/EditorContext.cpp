@@ -53,7 +53,7 @@ namespace MiniCAD
         , m_picking(picking)
         , m_snap(snap)
         , m_currentSnap(currentSnap)
-        , m_gripEditor(m_viewport, m_scene, m_cmdStack, m_picking)
+        , m_gripEditor(viewport, scene, cmdStack, picking, overlay)
         , m_anchorLine({}, {})
     {
         RegisterBuiltinTools();

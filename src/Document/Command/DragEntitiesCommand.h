@@ -3,33 +3,14 @@
 #include "Editor/Grip/GripEditor.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/LineEntity.hpp"
+#include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Math/Point3.hpp"
+#include "Editor/Grip/GripType.h"
 #include <memory>
 
 namespace MiniCAD
-{
-    struct DragEntityEntry
-    {
-        Object::ObjectID Id;
-
-        enum class Kind
-        {
-            Line,
-            Point,
-            Circle
-        } Kind;
-
-        LineSegment BeforeLine;
-        LineSegment AfterLine;
-
-        CircleSnapshot BeforeCircle;
-        CircleSnapshot AfterCircle;
-
-        Math::Point3  BeforePoint;
-        Math::Point3  AfterPoint;
-    };
-
+{ 
     class DragEntitiesCommand : public ICommand
     {
     public:

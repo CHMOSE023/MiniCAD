@@ -1,6 +1,6 @@
 #pragma once
 #include "Vec3.hpp"
-
+#include "Constants.hpp"
 namespace MiniCAD::Math
 {
     struct Point3
@@ -20,4 +20,16 @@ namespace MiniCAD::Math
 
     inline Point3& operator+=(Point3& p, const Vec3& v)        { p.x += v.x;  p.y += v.y; p.z += v.z; return p;}
     inline Point3& operator-=(Point3& p, const Vec3& v)        { p.x -= v.x;p.y -= v.y;   p.z -= v.z; return p;} 
+
+    inline bool operator==(const Point3& a, const Point3& b)
+    { 
+        return std::abs(a.x - b.x) < LengthEPS
+            && std::abs(a.y - b.y) < LengthEPS
+            && std::abs(a.z - b.z) < LengthEPS;  
+    }
+
+    inline bool operator!=(const Point3& a, const Point3& b)
+    {
+        return !(a == b);
+    }
 }
