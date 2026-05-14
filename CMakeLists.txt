@@ -26,7 +26,16 @@ target_include_directories(Imgui PUBLIC
 
 file(GLOB_RECURSE SRC  "${CMAKE_SOURCE_DIR}/src/*.cpp")   
 
-add_executable(MiniCAD  ${SRC} ) 
+ # ON 使用 Win32 GUI 子系统, OFF 使用控制台子系统
+option(USE_WIN32 "Use Win32 GUI subsystem" OFF)
+
+if(USE_WIN32)
+    add_executable(MiniCAD WIN32 ${SRC})
+    target_compile_definitions(MiniCAD PRIVATE USE_WIN32)
+else()
+    add_executable(MiniCAD ${SRC})
+endif() 
+
 
 target_include_directories(MiniCAD PRIVATE
     "${CMAKE_SOURCE_DIR}/src"

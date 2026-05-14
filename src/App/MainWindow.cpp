@@ -128,9 +128,24 @@ namespace MiniCAD
 		wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
 		wc.hbrBackground = nullptr;
 		wc.lpszClassName = L"MiniCADMainWindows1";
-		wc.hIcon         = LoadIcon(nullptr, IDI_APPLICATION);
-		wc.hIconSm       = wc.hIcon;
+		 
+		wc.hIcon = (HICON)LoadImageW(
+			nullptr,
+			L"icons/app.ico",
+			IMAGE_ICON,
+			0,
+			0,
+			LR_LOADFROMFILE | LR_DEFAULTSIZE
+		);
 
+		wc.hIconSm = (HICON)LoadImageW(
+			nullptr,
+			L"icons/app.ico",
+			IMAGE_ICON,
+			GetSystemMetrics(SM_CXSMICON),
+			GetSystemMetrics(SM_CYSMICON),
+			LR_LOADFROMFILE
+		);
 		// 1. 注册窗口
 		RegisterClassEx(&wc);
 
