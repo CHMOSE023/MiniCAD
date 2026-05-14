@@ -3,6 +3,9 @@
 #include "LineGripHandler.h"
 #include "CircleGripHandler.h"
 #include "PointGripHandler.h"
+#include "Core/Entity/RectangleEntity.hpp"
+#include "RectangleGripHandler.h"
+
 
 #include <cfloat>
 #include <cmath>
@@ -23,6 +26,7 @@ namespace MiniCAD
         RegisterHandler<LineEntity>(std::make_unique<LineGripHandler>());
         RegisterHandler<CircleEntity>(std::make_unique<CircleGripHandler>());
         RegisterHandler<PointEntity>(std::make_unique<PointGripHandler>());
+        RegisterHandler<RectangleEntity>(std::make_unique<RectangleGripHandler>());
     }
 
     // ─────────────────────────────────────────────
@@ -158,14 +162,27 @@ namespace MiniCAD
         if (!m_dragging)
             return false;
 
+        std::vector<DragEntityEntry> allEntries;
+
         for (auto& entry : m_dragEntries)
         {
             auto obj = m_scene.GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
-            if (!entity || !entry.Handler) continue;
 
-            // Handler 负责构建并 Push 命令
-            entry.Handler->EndDrag(entity, entry.DragState.get(), m_cmdStack);
+            if (!entity || !entry.Handler)
+                continue;
+
+            DragEntityEntry cmdEntry; 
+
+            if (entry.Handler->EndDrag(entity, entry.DragState.get(), cmdEntry))
+            {
+                allEntries.push_back(std::move(cmdEntry));
+            }
+        }
+
+        if (!allEntries.empty())
+        {
+            m_cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(allEntries)));
         }
 
         m_dragEntries.clear();
@@ -173,8 +190,8 @@ namespace MiniCAD
         m_dragging      = false;
 		m_overlay.Clear(); // 清除预览几何
 		m_picking.ClearDirty(); // 确保拖动结束后拾取状态正确
-        m_scene.MarkDirty();
-		//m_scene.ClearDirty(); // 强制刷新场景，确保命令执行后几何更新
+        m_scene.MarkDirty(); 
+
         // 拖拽结束后强制重建夹点（几何已变）
         m_dirty = true;
         Rebuild();

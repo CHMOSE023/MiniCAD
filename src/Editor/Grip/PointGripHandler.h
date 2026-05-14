@@ -72,10 +72,13 @@ namespace MiniCAD
         // ─────────────────────────────────────────
         // EndDrag — 推入 CommandStack
         // ─────────────────────────────────────────
-        void EndDrag(Entity* entity, IGripDragState* baseState, CommandStack& cmdStack) override
+        bool EndDrag(Entity* entity, IGripDragState* baseState, DragEntityEntry& outEntry) override
         {
             auto* pointEntity = static_cast<PointEntity*>(entity);
             auto* state       = static_cast<PointDragState*>(baseState);
+
+            if (!pointEntity || !state)
+                return false;
 
             const Math::Point3 after = pointEntity->GetPoint().Position;
 
@@ -83,18 +86,14 @@ namespace MiniCAD
             if (std::abs(after.x - state->Base.x) < Math::LengthEPS &&
                 std::abs(after.y - state->Base.y) < Math::LengthEPS &&
                 std::abs(after.z - state->Base.z) < Math::LengthEPS)
-                return;
+                return false;
+             
+            outEntry.Id          = entity->GetID();
+            outEntry.Kind        = DragEntityEntry::Kind::Point;
+            outEntry.BeforePoint = state->Base;
+            outEntry.AfterPoint  = after;
 
-            DragEntityEntry entry;
-            entry.Id          = entity->GetID();
-            entry.Kind        = DragEntityEntry::Kind::Point;
-            entry.BeforePoint = state->Base;
-            entry.AfterPoint  = after;
-
-            std::vector<DragEntityEntry> entries;
-            entries.push_back(std::move(entry));
-
-            cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(entries)));
+			return true;
         }
 
         // ─────────────────────────────────────────

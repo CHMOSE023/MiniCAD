@@ -21,7 +21,7 @@ namespace MiniCAD
     struct CircleDragState : public IGripDragState
     {
         Object::ObjectID EntityId = Object::InvalidID;
-        CircleSnapshot   Base;      // 拖拽开始时的快照，用于：
+        Circle           Base;      // 拖拽开始时的快照，用于：
                                     //   UpdateDrag  — 基于快照增量计算
                                     //   CancelDrag  — 还原到此状态
                                     //   EndDrag     — before 数据写入命令
@@ -88,7 +88,7 @@ namespace MiniCAD
             auto* state  = static_cast<CircleDragState*>(baseState);
 
             // 从快照出发，避免误差累积
-            CircleSnapshot out = state->Base;
+            Circle   out = state->Base;
 
             switch (activeGrip.GripType)
             {
@@ -141,33 +141,31 @@ namespace MiniCAD
         // ─────────────────────────────────────────
         // EndDrag — 推入 CommandStack
         // ─────────────────────────────────────────
-        void EndDrag(Entity* entity, IGripDragState* baseState, CommandStack& cmdStack) override
+        bool EndDrag(Entity* entity, IGripDragState* baseState,   DragEntityEntry& outEntry) override
         {
             auto* circle = static_cast<CircleEntity*>(entity);
             auto* state  = static_cast<CircleDragState*>(baseState);
 
+            if (!circle || !state)
+                return false;
+            
             const auto& C = circle->GetCircle();
-            CircleSnapshot after = { C.Center, C.Radius };
+            Circle after  = { C.Center, C.Radius };
 
-            // 位置和半径都未变，不产生命令
-            constexpr double kEps = 1e-10;
+            // 位置和半径都未变，不产生命令 
             auto& b = state->Base;
-            if (std::abs(after.Center.x - b.Center.x) < kEps &&
-                std::abs(after.Center.y - b.Center.y) < kEps &&
-                std::abs(after.Center.z - b.Center.z) < kEps &&
-                std::abs(after.Radius   - b.Radius)   < kEps)
-                return;
+            if (std::abs(after.Center.x - b.Center.x) < Math::LengthEPS &&
+                std::abs(after.Center.y - b.Center.y) < Math::LengthEPS &&
+                std::abs(after.Center.z - b.Center.z) < Math::LengthEPS &&
+                std::abs(after.Radius   - b.Radius)   < Math::LengthEPS)
+                return false;
 
-            DragEntityEntry entry;
-            entry.Id           = entity->GetID();
-            entry.Kind         = DragEntityEntry::Kind::Circle;
-            entry.BeforeCircle = state->Base;
-            entry.AfterCircle  = after;
+            outEntry.Id           = entity->GetID();
+            outEntry.Kind         = DragEntityEntry::Kind::Circle;
+            outEntry.BeforeCircle = state->Base;
+            outEntry.AfterCircle  = after;
 
-            std::vector<DragEntityEntry> entries;
-            entries.push_back(std::move(entry));
-
-            cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(entries)));
+			return true;
         }
 
         // ─────────────────────────────────────────
@@ -192,7 +190,7 @@ namespace MiniCAD
         //   2 → 180° → (-r,  0)
         //   3 → 270° → ( 0, -r)
         // ─────────────────────────────────────────
-        static void SyncGrips(Object::ObjectID ownerId,    const CircleSnapshot& snap,  std::vector<Grip>& grips)
+        static void SyncGrips(Object::ObjectID ownerId,    const Circle& snap,  std::vector<Grip>& grips)
         {
             const double r  = snap.Radius;
             const auto&  c  = snap.Center;

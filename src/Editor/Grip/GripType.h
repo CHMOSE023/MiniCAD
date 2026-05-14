@@ -5,24 +5,13 @@
 #include "Core/Entity/Entity.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/Object/Object.hpp"
+#include "Core/GeomKernel/Circle.hpp"
+#include "Core/GeomKernel/Line.hpp"
+#include "Core/GeomKernel/Rectangle.hpp"
 #include "Editor/Viewport/Viewport.h"
 
 namespace MiniCAD
-{
-    // 线段快照
-    struct LineSegment
-    {
-        Math::Point3 Start;
-        Math::Point3 End;
-    };
-
-    // 圆快照
-    struct CircleSnapshot
-    {
-        Math::Point3 Center;
-        double       Radius = 0.0;
-    };
-
+{ 
     struct Grip
     {
         enum class Type : uint8_t
@@ -68,17 +57,22 @@ namespace MiniCAD
         {
             Line,
             Point,
-            Circle
+            Circle,
+            Rectangle    
         } Kind;
 
-        LineSegment BeforeLine;
-        LineSegment AfterLine;
+        Line    BeforeLine;
+        Line    AfterLine;
 
-        CircleSnapshot BeforeCircle;
-        CircleSnapshot AfterCircle;
+        Circle  BeforeCircle;
+        Circle  AfterCircle;
 
-        Math::Point3  BeforePoint;
-        Math::Point3  AfterPoint;
+        Rectangle      BeforeRect;  //  新增
+        Rectangle      AfterRect;   //  新增
+
+        Math::Point3   BeforePoint;
+        Math::Point3   AfterPoint; 
+
     };
 
     // ─────────────────────────────────────────────

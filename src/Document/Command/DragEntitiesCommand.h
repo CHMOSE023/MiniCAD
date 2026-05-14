@@ -5,6 +5,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Editor/Grip/GripType.h"
 #include <memory>
@@ -62,6 +63,13 @@ namespace MiniCAD
                     auto* circle = static_cast<CircleEntity*>(obj);
                     const auto& snap = useAfter ? e.AfterCircle : e.BeforeCircle;
                     circle->SetCircle({ snap.Center,snap.Radius });
+                }
+
+                if (e.Kind == DragEntityEntry::Kind::Rectangle)
+                {
+                    auto* rect = static_cast<RectangleEntity*>(obj);
+                    const auto& snap = useAfter ? e.AfterRect : e.BeforeRect; 
+                    rect->SetRectangle(snap);
                 }
 
             }

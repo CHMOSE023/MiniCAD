@@ -10,6 +10,7 @@ namespace MiniCAD
 {
     // 前置声明
     struct Grip;
+    struct DragEntityEntry;
     class  Overlay;
     // ─────────────────────────────────────────────
     // IGripDragState
@@ -83,7 +84,7 @@ namespace MiniCAD
         //
         // 默认空实现（不可 undo 的场景可不覆盖）
         // ─────────────────────────────────────────
-        virtual void EndDrag(Entity* entity, IGripDragState* dragState, CommandStack& cmdStack) {}
+        virtual bool EndDrag(Entity* entity, IGripDragState* dragState, DragEntityEntry& outEntry) { return false; }
 
         // ─────────────────────────────────────────
         // 取消拖拽 — ESC / 右键，恢复快照
