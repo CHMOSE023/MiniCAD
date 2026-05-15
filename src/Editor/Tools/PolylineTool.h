@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/Viewport/Viewport.h"
@@ -80,17 +80,17 @@ namespace MiniCAD
 
             if (e.IsKeyPressed(KeyCode::L))
             {
-                m_mode = DrawMode::Line; 
+                m_mode = DrawMode::Line;
                 printf("[PolylineTool] Mode = LINE\n"); 
-                RefreshOverlay();  
+                RefreshOverlay();
                 return true;
             }
 
             if (e.IsKeyPressed(KeyCode::A))
             {
-                m_mode = DrawMode::Arc; 
+                m_mode = DrawMode::Arc;
                 printf("[PolylineTool] Mode = ARC\n"); 
-                RefreshOverlay(); 
+                RefreshOverlay();
                 return true;
             }
 
@@ -100,8 +100,8 @@ namespace MiniCAD
 
             if (e.Type == InputEventType::MouseMove)
             {
-                m_cursor = GetPoint(e); 
-                RefreshOverlay(); 
+                m_cursor = GetPoint(e);
+                RefreshOverlay();
                 return false;
             }
 
@@ -125,37 +125,29 @@ namespace MiniCAD
 
                     return true;
                 }
-  
+
                 if (m_mode == DrawMode::Line)     // line segment
                 {
-                    m_points.push_back(pt); 
-                    m_bulges.push_back(0.0); 
-                    printf("[PolylineTool] Line Segment "  "End=(%.3f %.3f)\n", pt.x, pt.y);
-                } 
+                    m_points.push_back(pt);
+                    m_bulges.push_back(0.0);
+                }
                 else  // arc segment
                 {
-                    double bulge = ComputeArcBulge(m_points.back(), pt, m_cursor); 
-                    m_points.push_back(pt); 
-                    m_bulges.push_back(bulge); 
+                    double bulge = ComputeBulge(m_points.back(), pt, m_cursor);
+                    m_points.push_back(pt);
+                    m_bulges.push_back(bulge);
                     printf("[PolylineTool] Arc Segment  End=(%.3f %.3f) Bulge=%.6f\n", pt.x, pt.y, bulge);
                 }
 
                 RefreshOverlay();
-
                 return true;
             }
 
-            // ================================================================
-            // right click
-            // ================================================================
-
             if (e.IsRightClick())
             {
-                TryCommit(); 
-                Reset(); 
-                if (OnFinished)
-                    OnFinished();
-
+                Commit();
+                Reset();
+                if (OnFinished) OnFinished();
                 return true;
             }
 
@@ -167,16 +159,11 @@ namespace MiniCAD
             {
                 Reset();
 
-                if (OnFinished)
-                    OnFinished();
-
                 return true;
             }
 
             return false;
         }
-
-    public:
 
         bool HasAnchor() const override
         {
@@ -195,82 +182,53 @@ namespace MiniCAD
 
     private:
 
-        // ====================================================================
-        // current input point
-        // ====================================================================
-
         Math::Point3 GetPoint(const InputEvent& e) const
         {
             if (e.HasSnap)
                 return e.SnapWorld;
 
-            return
-                m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
+            auto p = m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
+            return { p.x, p.y, 0.0f };
         }
 
-        // ====================================================================
-        // Compute Bulge
-        //
-        // A = previous point
-        // B = clicked endpoint
-        // M = current mouse
-        //
-        // Bulge determined by which side M lies relative to chord A→B.
-        //
-        // ====================================================================
-
-        static double ComputeArcBulge(const Math::Point3& A, const Math::Point3& B, const Math::Point3& M)
+        // ============================================================
+        // Stable bulge (CAD-style)
+        // bulge = tan(theta / 4)
+        // theta from triangle A-M-B
+        // ============================================================
+        static double ComputeBulge(const Math::Point3& A, const Math::Point3& B, const Math::Point3& M)
         {
-            double abx = B.x - A.x;
-            double aby = B.y - A.y;
+            double ax = A.x - M.x;
+            double ay = A.y - M.y;
+            double bx = B.x - M.x;
+            double by = B.y - M.y;
 
-            double amx = M.x - A.x;
-            double amy = M.y - A.y;
+            double la = std::sqrt(ax * ax + ay * ay);
+            double lb = std::sqrt(bx * bx + by * by);
 
-            double chord = std::sqrt(abx * abx + aby * aby);
-
-            if (chord < Math::LengthEPS)
+            if (la < 1e-9 || lb < 1e-9)
                 return 0.0;
 
-            // ------------------------------------------------------------
-            // signed side test
-            // >0 : left
-            // <0 : right
-            // ------------------------------------------------------------
+            double dot = ax * bx + ay * by;
+            double cosv = dot / (la * lb);
 
-            double cross = abx * amy - aby * amx;
+            cosv = std::clamp(cosv, -1.0, 1.0);
 
-            // ------------------------------------------------------------
-            // perpendicular distance from M to chord
-            // ------------------------------------------------------------
+            double angle = std::acos(cosv);
 
-            double sagitta = std::abs(cross) / chord;
+            double cross = ax * by - ay * bx;
 
-            // ------------------------------------------------------------
-            // convert sagitta -> bulge
-            //
-            // bulge = 2s / chord
-            //
-            // stable small-angle approximation
-            // ------------------------------------------------------------
-
-            double bulge = (2.0 * sagitta) / chord;
-
-            // clamp extreme values
-            bulge = std::clamp(bulge, 0.0, 10.0);
-
-            // sign:
-            // left  -> CCW -> positive
-            // right -> CW  -> negative
+            double bulge = std::tan(angle * 0.25);
 
             if (cross < 0.0)
                 bulge = -bulge;
 
-            return bulge;
+            return std::clamp(bulge, -10.0, 10.0);
         }
 
-    private:
-
+        // ============================================================
+        // overlay
+        // ============================================================
         void RefreshOverlay()
         {
             m_overlay.Clear();
@@ -280,20 +238,13 @@ namespace MiniCAD
 
             const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
 
-            Math::Color4 layerColor  = layer.GetColor(); 
-            Math::Color4 rubberColor = { 0.6,  0.6,   0.6,  0.5 };
+            Math::Color4 layerColor = layer.GetColor();
+            Math::Color4 rubberColor = { 0.6, 0.6, 0.6, 0.5 };
 
-            // ------------------------------------------------------------
-            // committed polyline
-            // ------------------------------------------------------------ 
-            Polyline pl(m_points, m_bulges); 
+            Polyline pl(m_points, m_bulges);
             m_overlay.AddPolyline(pl, layerColor);
-             
-            // ------------------------------------------------------------
-            // rubber preview
-            // ------------------------------------------------------------
 
-            if (!m_points.empty())
+            if (m_points.size() >= 1)
             {
                 if (m_mode == DrawMode::Line)
                 {
@@ -301,66 +252,40 @@ namespace MiniCAD
                 }
                 else
                 {
-                    // preview arc 
-                    std::vector<Math::Point3> tmpPts =
+                    if (!m_points.empty())
                     {
-                        m_points.back(),
-                        m_cursor
-                    };
+                        Math::Point3 A = m_points.back();
+                        Math::Point3 B = m_cursor;
 
-                    std::vector<double> tmpBulges =
-                    {
-                        ComputeArcBulge(m_points.back(),  m_cursor,  m_cursor)
-                    };
+                        std::vector<Math::Point3> pts = { A, B };
+                        std::vector<double> bulges = { 0.0 }; // preview用0避免误导
 
-                    Polyline preview(std::move(tmpPts), std::move(tmpBulges)); 
-                    m_overlay.AddPolyline(preview, rubberColor);
+                        Polyline preview(pts, bulges);
+                        m_overlay.AddPolyline(preview, rubberColor);
+                    }
                 }
             }
-
-           
-        }
-
-        // ====================================================================
-        // commit
-        // ====================================================================
-
-        void TryCommit()
-        {
-            if (m_points.size() < 2)
-            {
-                printf("[PolylineTool] Not enough points\n");
-
-                return;
-            }
-
-            Commit();
         }
 
         void Commit()
         {
-            auto id =  m_scene.NextObjectID();
+            if (m_points.size() < 2)
+                return;
 
+            auto id = m_scene.NextObjectID();
             auto entity = std::make_unique<PolylineEntity>(id, m_points, m_bulges);
-
             auto cmd = std::make_unique<AddEntityCommand>(std::move(entity));
 
             m_cmdStack.Execute(std::move(cmd), m_scene);
 
-            Polyline pl(m_points, m_bulges);
-
-            printf("[PolylineTool] Commit Segments=%d  Length=%.3f\n", pl.SegCount(), pl.Length());
+            printf("[PolylineTool] Commit Seg=%zu\n", m_points.size() - 1);
         }
-
-        // ====================================================================
-        // reset
-        // ====================================================================
 
         void Reset()
         {
-            m_points.clear(); 
-            m_bulges.clear(); 
-            m_cursor = {}; 
+            m_points.clear();
+            m_bulges.clear();
+            m_cursor = {};
             m_overlay.Clear();
         }
 

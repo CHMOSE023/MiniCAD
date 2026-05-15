@@ -124,7 +124,7 @@ namespace MiniCAD
         RegisterAlias("RO",  "Rotate"); 
         RegisterAlias("PT",  "Point");       
         RegisterAlias("C",   "Circle");
-        RegisterAlias("A",   "Arc");
+        RegisterAlias("ARC", "Arc");
         RegisterAlias("EL",  "Ellipse");
         RegisterAlias("SP",  "Spline");
         RegisterAlias("M",   "Move");
@@ -265,6 +265,13 @@ namespace MiniCAD
     {
         UpdateSnap(inputEvent);
         InputEvent e = InjectSnap(inputEvent);
+
+        // 先给 tool
+        if (m_tool && !m_toolSuspended)
+        {
+            if (m_tool->OnInput(e))
+                return true;
+        }
 
         // 1. 全局快捷键（Undo / Redo / Cancel / 工具切换 / 视图操作）
         if (HandleGlobal(e))
