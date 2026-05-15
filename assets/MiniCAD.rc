@@ -1,0 +1,63 @@
+#include "resource.h"
+#include <winver.h>
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+#pragma code_page(65001)
+#ifdef APSTUDIO_INVOKED
+
+1 TEXTINCLUDE
+BEGIN
+"resource.h\0"
+END
+
+2 TEXTINCLUDE
+BEGIN
+"\0"
+END
+
+3 TEXTINCLUDE
+BEGIN
+"\r\n"
+"\0"
+END
+
+#endif
+
+IDI_ICON ICON "icons\\app.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1, 0, 0, 0
+PRODUCTVERSION 1, 0, 0, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+
+#ifdef _DEBUG
+FILEFLAGS VS_FF_DEBUG
+#else
+FILEFLAGS 0x0L
+#endif
+
+FILEOS VOS__WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+
+BEGIN
+BLOCK "StringFileInfo"
+BEGIN
+BLOCK "080404B0"
+BEGIN
+VALUE "FileDescription", "二维绘图程序\0"
+VALUE "FileVersion", "0.0.0.1\0"
+VALUE "ProductVersion", "0.0.0.1\0"
+VALUE "ProductName", "MiniCAD\0"
+VALUE "CompanyName", "Hello\0"
+VALUE "LegalCopyright", "Hello\0"
+END
+END
+
+BLOCK "VarFileInfo"
+BEGIN
+VALUE "Translation", 0x0804, 1200
+END
+END
+
+#endif
