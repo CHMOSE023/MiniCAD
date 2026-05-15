@@ -48,7 +48,7 @@ namespace MiniCAD
         int            PressMouseY  = 0; 
         float          WheelDelta   = 0.f;
 
-        KeyCode KeyCode = KeyCode::Unknown; 
+        KeyCode        Key = KeyCode::Unknown; 
 
         bool               HasSnap = false;  // 是否捕获
         Math::Point3       SnapWorld;        // 捕获点
@@ -72,6 +72,12 @@ namespace MiniCAD
                 return false;
             }
         } 
+
+        
+        bool IsKeyPressed(KeyCode k) const
+        {
+            return Type == InputEventType::KeyDown && Key == k;
+        }
 
         bool IsLeftClick() const  // 左键点击（按下瞬间）
         {
@@ -97,25 +103,25 @@ namespace MiniCAD
 
         bool IsCancel() const   // ESC 取消
         {
-            return Type == InputEventType::KeyDown && KeyCode == KeyCode::Escape;
+            return Type == InputEventType::KeyDown && Key == KeyCode::Escape;
         }
 
 
         bool IsUndo() const   // Undo（Ctrl + Z）
         {
-            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && KeyCode == KeyCode::Z;
+            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && Key == KeyCode::Z;
         }
 
 
         bool IsRedo() const  // Redo（Ctrl + Y）
         {
-            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && KeyCode == KeyCode::Y;
+            return Type == InputEventType::KeyDown && HasModifier(ModifierKey::Ctrl) && Key == KeyCode::Y;
         }
 
 
         bool IsStartLineTool() const // 启动画线工具（L）
         {
-            return Type == InputEventType::KeyDown && KeyCode == KeyCode::L;
+            return Type == InputEventType::KeyDown && Key == KeyCode::L;
         }
 
         bool IsDrag(int threshold = 2) const // 是否在拖拽

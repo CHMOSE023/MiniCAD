@@ -144,7 +144,7 @@ namespace MiniCAD
         e.PressMouseX  = m_pressX;
         e.PressMouseY  = m_pressY;
         e.WheelDelta   = wheel;
-        e.KeyCode      = key;
+        e.Key          = key;
         return e;
     }
 }

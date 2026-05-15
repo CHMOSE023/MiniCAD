@@ -101,14 +101,14 @@ namespace MiniCAD
 
         case WM_KEYDOWN:
             e.Type    = InputEventType::KeyDown;
-            e.KeyCode = FromWin32Key(wParam);  
+            e.Key = FromWin32Key(wParam);  
             e.MouseX  = m_lastMousePos.x;  // ！！！ 按键没有鼠标位置
             e.MouseY  = m_lastMousePos.y;  // ！！！ 按键没有鼠标位置
             break;
 
         case WM_KEYUP:
             e.Type    = InputEventType::KeyUp;
-            e.KeyCode = FromWin32Key(wParam);
+            e.Key = FromWin32Key(wParam);
             e.MouseX  = m_lastMousePos.x;   // ！！！ 按键没有鼠标位置
             e.MouseY  = m_lastMousePos.y;   // ！！！ 按键没有鼠标位置
             break;

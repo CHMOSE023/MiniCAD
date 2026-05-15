@@ -9,6 +9,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Core/Math/Constants.hpp"
+#include "Core/GeomKernel/Polyline.hpp"
 namespace MiniCAD
 {
     /// <summary>
@@ -25,6 +26,27 @@ namespace MiniCAD
             m_lines.clear();
             m_points.clear();
         } 
+
+        // ===== Point =====
+        void AddPoint(const  Math::Point3& p, const  Math::Color4& color)
+        {
+            Float3 fp =
+            {
+                static_cast<float>(p.x),
+                static_cast<float>(p.y),
+                static_cast<float>(p.z),
+            };
+
+            Float4 fcolor =
+            {
+                static_cast<float>(color.r),
+                static_cast<float>(color.g),
+                static_cast<float>(color.b),
+                static_cast<float>(color.a),
+            };
+
+            m_points.push_back({ fp, fcolor });
+        }
 
         // ===== Line =====
         void AddLine(const Math::Point3& aa, const Math::Point3& bb, const Math::Color4& mcolor)
@@ -73,27 +95,95 @@ namespace MiniCAD
 			AddLine(p4, p1, mcolor);
         }
 
-        // ===== Point =====
-        void AddPoint(const  Math::Point3& p, const  Math::Color4& color)
+        // ===== Arc =====
+        void AddArc(const Math::Point3& center, double radius, double startAngle, double endAngle,  const Math::Color4& mcolor, int segments = 64)
         {
-            Float3 fp =
-            {
-                static_cast<float>(p.x),
-                static_cast<float>(p.y),
-                static_cast<float>(p.z),
-			};
+            if (radius <= 0.0 || segments < 1)
+                return;
 
-            Float4 fcolor =
-            {
-                static_cast<float>(color.r),
-                static_cast<float>(color.g),
-                static_cast<float>(color.b),
-                static_cast<float>(color.a),
-			};
+            // 计算逆时针角跨度，与 Arc::SweepAngle() 保持一致
+            double sweep = endAngle - startAngle;
+            if (sweep <= 0.0)
+                sweep += Math::TwoPI;
 
-            m_points.push_back({ fp, fcolor });
+            if (sweep < Math::AngleEPS)
+                return;
+
+            Float4 color =
+            {
+                static_cast<float>(mcolor.r),
+                static_cast<float>(mcolor.g),
+                static_cast<float>(mcolor.b),
+                static_cast<float>(mcolor.a),
+            };
+
+            m_lines.reserve(m_lines.size() + segments);
+
+            for (int i = 0; i < segments; ++i)
+            {
+                double a0 = startAngle + sweep * i / segments;
+                double a1 = startAngle + sweep * (i + 1) / segments;
+
+                Float3 p0 =
+                {
+                    static_cast<float>(center.x + std::cos(a0) * radius),
+                    static_cast<float>(center.y + std::sin(a0) * radius),
+                    static_cast<float>(center.z),
+                };
+
+                Float3 p1 =
+                {
+                    static_cast<float>(center.x + std::cos(a1) * radius),
+                    static_cast<float>(center.y + std::sin(a1) * radius),
+                    static_cast<float>(center.z),
+                };
+
+                m_lines.push_back({ p0, p1, color });
+            }
         }
+     
 
+        // ===== Ellipse =====
+        void AddEllipse(const Math::Point3& center,  double rx, double ry, double rotation,  const Math::Color4& mcolor, int segments = 64)
+        {
+            if (rx <= 0.0 || ry <= 0.0 || segments < 3)
+                return;
+
+            Float4 color =
+            {
+                static_cast<float>(mcolor.r),
+                static_cast<float>(mcolor.g),
+                static_cast<float>(mcolor.b),
+                static_cast<float>(mcolor.a),
+            };
+
+            double cosR = std::cos(rotation);
+            double sinR = std::sin(rotation);
+
+            m_lines.reserve(m_lines.size() + segments);
+
+            for (int i = 0; i < segments; ++i)
+            {
+                double t0 = Math::TwoPI * i / segments;
+                double t1 = Math::TwoPI * (i + 1) / segments;
+
+                // 参数方程（与 Ellipse::PointAt 完全一致）
+                Float3 p0 =
+                {
+                    static_cast<float>(center.x + rx * std::cos(t0) * cosR - ry * std::sin(t0) * sinR),
+                    static_cast<float>(center.y + rx * std::cos(t0) * sinR + ry * std::sin(t0) * cosR),
+                    static_cast<float>(center.z),
+                };
+                Float3 p1 =
+                {
+                    static_cast<float>(center.x + rx * std::cos(t1) * cosR - ry * std::sin(t1) * sinR),
+                    static_cast<float>(center.y + rx * std::cos(t1) * sinR + ry * std::sin(t1) * cosR),
+                    static_cast<float>(center.z),
+                };
+
+                m_lines.push_back({ p0, p1, color });
+            }
+        }
         // ===== Circle =====
         void AddCircle(const Math::Point3& center, double radius, const Math::Color4& mcolor, int segments = 64)
         {
@@ -133,7 +223,20 @@ namespace MiniCAD
                 m_lines.push_back({ p0, p1, color });
             }
         }
-       
+
+        void AddPolyline(const Polyline& pl, const Math::Color4& color)
+        {
+            auto pts = pl.Tessellate();
+
+            if (pts.size() < 2)
+                return;
+
+            for (size_t i = 0; i + 1 < pts.size(); ++i)
+            {
+                AddLine(pts[i], pts[i + 1], color);
+            }
+        }
+
         // ===== Export to GPU vertices =====
         void ToVertices(std::vector<Vertex_P3_C4>& out) const
         {

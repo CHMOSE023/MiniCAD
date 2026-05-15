@@ -325,8 +325,8 @@ namespace MiniCAD
 	bool MainWindow::InitDocument(int width, int height)
 	{ 
 		m_docManager.Create(*m_renderer, width, height); // 创建1个文档 
-		m_docManager.Create(*m_renderer, width, height); // 创建2个文档 
-		m_docManager.Create(*m_renderer, width, height); // 创建3个文档 
+		//m_docManager.Create(*m_renderer, width, height); // 创建2个文档 
+		//m_docManager.Create(*m_renderer, width, height); // 创建3个文档 
 
 		m_docManager.SetRenderer(m_renderer.get());
 
