@@ -8,6 +8,10 @@
 #include "Core/GeomKernel/Circle.hpp"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/GeomKernel/Rectangle.hpp"
+#include "Core/GeomKernel/Arc.hpp"
+#include "Core/GeomKernel/Ellipse.hpp"
+#include "Core/GeomKernel/Polyline.hpp"
+#include "Core/GeomKernel/Spline.hpp" 
 #include "Editor/Viewport/Viewport.h"
 
 namespace MiniCAD
@@ -55,23 +59,41 @@ namespace MiniCAD
 
         enum class Kind
         {
-            Line,
             Point,
+            Line,
             Circle,
-            Rectangle    
+            Rectangle,
+            Arc,        
+            Ellipse,    
+            Polyline,   
+            Spline,     
         } Kind;
 
-        Line    BeforeLine;
-        Line    AfterLine;
-
-        Circle  BeforeCircle;
-        Circle  AfterCircle;
-
-        Rectangle      BeforeRect;  //  新增
-        Rectangle      AfterRect;   //  新增
 
         Math::Point3   BeforePoint;
-        Math::Point3   AfterPoint; 
+        Math::Point3   AfterPoint;
+
+        Line     BeforeLine;
+        Line     AfterLine;
+
+        Arc      BeforeArc;
+        Arc      AfterArc;
+
+        Ellipse  BeforeEllipse;
+        Ellipse  AfterEllipse;
+
+        Polyline BeforePolyline;
+        Polyline AfterPolyline;
+
+        Spline   BeforeSpline;
+        Spline   AfterSpline;
+
+        Circle   BeforeCircle;
+        Circle   AfterCircle;
+
+        Rectangle      BeforeRect;  
+        Rectangle      AfterRect;   
+
 
     };
 

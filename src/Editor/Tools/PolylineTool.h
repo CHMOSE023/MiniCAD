@@ -270,8 +270,8 @@ namespace MiniCAD
             }
         
 			// 已确认顶点
-            // for (const auto& pt : m_points)
-            //     m_overlay.AddPoint(pt, layerColor);
+            for (const auto& pt : m_points)
+                m_overlay.AddPoint(pt, midColor);
         
             const Math::Point3& last = m_points.back();
         

@@ -18,7 +18,7 @@
 #include "Editor/Tools/ArcTool.h"
 #include "Editor/Tools/EllipseTool.h"
 #include "Editor/Tools/PolylineTool.h"
-//#include "Editor/Tools/SplineTool.h"
+#include "Editor/Tools/SplineTool.h"
 
 // ── 编辑工具 ──────────────────────────────────────────────────
 //#include "Editor/Tools/Modify/MoveTool.h"
@@ -74,7 +74,7 @@ namespace MiniCAD
         RegisterTool("Arc",       [this] { return std::make_unique<ArcTool>      (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Ellipse",   [this] { return std::make_unique<EllipseTool>  (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Polyline",  [this] { return std::make_unique<PolylineTool> (m_scene, m_cmdStack, m_viewport, m_overlay);});
-       // RegisterTool("Spline",    [this] { return std::make_unique<SplineTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
+        RegisterTool("Spline",    [this] { return std::make_unique<SplineTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
 
         /*
       

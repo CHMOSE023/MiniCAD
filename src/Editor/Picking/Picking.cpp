@@ -8,6 +8,10 @@
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/ArcEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
+#include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/SplineEntity.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
 #include <algorithm>
@@ -130,9 +134,171 @@ namespace MiniCAD
                         best = obj.GetID();
                     }
                 }
-               
-            });
+              
+                // ── ArcEntity 点选 ─────────────────────────────────────────────────────
+                if (obj.IsKindOf<ArcEntity>())
+                {
+                    auto        arcEnt = static_cast<const ArcEntity*>(&obj);
+                    const auto& arc = arcEnt->GetArc();
 
+                    // ── 屏幕空间圆心 + 屏幕半径 ──────────────────────────────────────
+                    auto         centerSS = camera.WorldToScreen(arc.Center);
+                    Math::Point3 edgeW = { arc.Center.x + arc.Radius, arc.Center.y, arc.Center.z };
+                    double       sr = Math::Distance(centerSS, camera.WorldToScreen(edgeW));
+
+                    // ── 点到圆心的屏幕距离 ───────────────────────────────────────────
+                    double distToCenter = Math::Distance(pt, centerSS);
+
+                    // 点到弧线的径向距离（点是否在弧所在圆环附近）
+                    double radialDist = std::abs(distToCenter - sr);
+
+                    // 径向距离超出阈值，直接跳过（不可能命中弧线）
+                    if (radialDist >= thresh)
+                        return false;   // ForEachObject 用 lambda，此处用 goto / return false 替代
+
+                    // ── 关键修复：将屏幕坐标反投影到世界空间再判断角度 ──────────────
+                    //
+                    // 直接用屏幕空间的 atan2 与世界空间的 StartAngle/EndAngle 比较会
+                    // 在摄像机有缩放/旋转时出错。
+                    // 正确做法：把光标对应的"圆上最近点"反投影到世界空间，
+                    // 再求该世界点相对圆心的角度，用 Arc::ContainsAngle 判断。
+                    //
+                    // 屏幕空间：光标在圆上的投影点
+                    double screenAngle = std::atan2(pt.y - centerSS.y, pt.x - centerSS.x);
+                    Math::Point2 circlePointSS =
+                    {
+                        centerSS.x + sr * std::cos(screenAngle),
+                        centerSS.y + sr * std::sin(screenAngle)
+                    };
+
+                    // 反投影到世界空间，求世界角度
+                    Math::Point3 circlePointW = camera.ScreenToWorld(circlePointSS.x, circlePointSS.y);
+                    double worldAngle = std::atan2(circlePointW.y - arc.Center.y,
+                        circlePointW.x - arc.Center.x);
+
+                    if (arc.ContainsAngle(worldAngle))
+                    {
+                        // 光标投影落在弧段范围内：径向距离即为命中距离
+                        if (radialDist < thresh && radialDist < bestDist)
+                        {
+                            bestDist = radialDist;
+                            best = obj.GetID();
+                        }
+                    }
+                    else
+                    {
+                        // 光标投影落在弧段之外：检测是否在端点附近（沿弧线方向）
+                        // 使用端点在屏幕上的位置，但只有径向距离也满足时才命中，
+                        // 避免在端点"外侧"误选
+                        auto startSS = camera.WorldToScreen(arc.StartPoint());
+                        auto endSS = camera.WorldToScreen(arc.EndPoint());
+
+                        double dStart = Math::Distance(pt, startSS);
+                        double dEnd = Math::Distance(pt, endSS);
+                        double dNearest = std::min(dStart, dEnd);
+
+                        // 端点命中：需要同时满足
+                        //   1. 距端点屏幕距离 < 阈值
+                        //   2. 径向距离 < 阈值（确保是沿弧线方向靠近，而不是从外侧靠近）
+                        if (dNearest < thresh && radialDist < thresh && dNearest < bestDist)
+                        {
+                            bestDist = dNearest;
+                            best = obj.GetID();
+                        }
+                    }
+                   
+                }
+                
+                // ── EllipseEntity 点选 ────────────────────────────────────────────────
+                if (obj.IsKindOf<EllipseEntity>())
+                {
+                    auto  ellEnt   = static_cast<const EllipseEntity*>(&obj);
+                    const auto& el = ellEnt->GetEllipse();
+                
+                    // 椭圆细分为折线后，逐段判断距离（屏幕空间）
+                    constexpr int kSeg = 64;
+                    double minD = std::numeric_limits<double>::max();
+                
+                    for (int i = 0; i < kSeg; ++i)
+                    {
+                        double t0 = Math::TwoPI *  i      / kSeg;
+                        double t1 = Math::TwoPI * (i + 1) / kSeg;
+                
+                        auto a0 = camera.WorldToScreen(el.PointAt(t0));
+                        auto a1 = camera.WorldToScreen(el.PointAt(t1));
+                
+                        double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
+                        minD = std::min(minD, d);
+                    }
+                
+                    if (minD < thresh && minD < bestDist)
+                    {
+                        bestDist = minD;
+                        best     = obj.GetID();
+                    }
+                }
+                
+                // ── PolylineEntity 点选 ───────────────────────────────────────────────
+                if (obj.IsKindOf<PolylineEntity>())
+                {
+                    auto  plEnt = static_cast<const PolylineEntity*>(&obj);
+                    const auto& pl = plEnt->GetPolyline();
+                
+                    // 使用 Polyline::Tessellate 细分（含弧段），逐段检测
+                    auto pts = pl.Tessellate();
+                    double minD = std::numeric_limits<double>::max();
+                
+                    for (size_t i = 0; i + 1 < pts.size(); ++i)
+                    {
+                        auto a0 = camera.WorldToScreen(pts[i]);
+                        auto a1 = camera.WorldToScreen(pts[i + 1]);
+                
+                        double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
+                        minD = std::min(minD, d);
+                    }
+                
+                    if (minD < thresh && minD < bestDist)
+                    {
+                        bestDist = minD;
+                        best     = obj.GetID();
+                    }
+                }
+                
+                // ── SplineEntity 点选 ─────────────────────────────────────────────────
+                if (obj.IsKindOf<SplineEntity>())
+                {
+                    auto  spEnt = static_cast<const SplineEntity*>(&obj);
+                    const auto& sp = spEnt->GetSpline();
+                
+                    if (sp.IsValid())
+                    {
+                        // 细分后逐段检测
+                        auto pts = sp.Tessellate(32);
+                        double minD = std::numeric_limits<double>::max();
+                
+                        for (size_t i = 0; i + 1 < pts.size(); ++i)
+                        {
+                            auto a0 = camera.WorldToScreen(pts[i]);
+                            auto a1 = camera.WorldToScreen(pts[i + 1]);
+                
+                            double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
+                            minD = std::min(minD, d);
+                        }
+                
+                        if (minD < thresh && minD < bestDist)
+                        {
+                            bestDist = minD;
+                            best     = obj.GetID();
+                        }
+                    }
+                }
+                
+        });
+
+        if (best > 0)
+        { 
+            printf("[Picking] HitTest at (%.1f, %.1f)  BestDist=%.2f  HitID=%d\n", pt.x, pt.y, bestDist, static_cast<int>(best));
+        }
         return best;
     }
 
@@ -152,7 +318,7 @@ namespace MiniCAD
         std::unordered_set<ObjectID> result;
 
         m_scene.ForEachObject([&](const Object& obj) 
-            {
+        {
                 if (obj.IsKindOf<PointEntity>())
                 {
                     auto point = static_cast<const PointEntity*>(&obj);
@@ -224,10 +390,7 @@ namespace MiniCAD
                     // 用 screen-space 近似半径（避免透视误差）
                     Math::Vec3 offset = { c.Radius, 0.0, 0.0 };
                     double sr = Math::Distance(centerSS, camera.WorldToScreen(c.Center + offset));
-
-                    // 圆包围球
-                    Math::Circle2 circle2(centerSS,sr);
-
+                     
                     bool hit = false;
 
                     Point2 corners[4] =
@@ -245,36 +408,51 @@ namespace MiniCAD
                     }
                     else
                     { 
-                        // 1. 选择框四个角是否全部在圆内 
-                        bool allInside = true;
+						// 一、如果选择框完全包含圆，则直接选中
+                        bool boxContainsCircle =
+                            (centerSS.x - sr >= xMin) &&
+                            (centerSS.x + sr <= xMax) &&
+                            (centerSS.y - sr >= yMin) &&
+                            (centerSS.y + sr <= yMax);
 
-                        for (const auto& p : corners)
+                        if (boxContainsCircle)
                         {
-                            double dx = p.x - centerSS.x;
-                            double dy = p.y - centerSS.y;
+                            hit = true;
+                        }
+                        else   // 二、如果选择框不完全包含圆，则满足以下任一条件即可：
+                        { 
+                            // 1. 选择框四个角是否全部在圆内 
+                            bool allInside = true;
 
-                            if (dx * dx + dy * dy > sr * sr)
+                            for (const auto& p : corners)
                             {
-                                allInside = false;
-                                break;
-                            }
-                        }
+                                double dx = p.x - centerSS.x;
+                                double dy = p.y - centerSS.y;
 
-                        // 2.选择框在圆内 
-                        if (allInside)
-                        {
-                            hit = false;
-                            if (box.Contains(centerSS))
-                            {
-                                hit = true;
+                                if (dx * dx + dy * dy > sr * sr)
+                                {
+                                    allInside = false;
+                                    break;
+                                }
                             }
-                        }
-                        else  // 3. 判断圆边线是否与选择框相交
-                        {
-                           
-                            hit = Math::CircleIntersectsBoxEdges(centerSS, sr, box);
-                        }
-                    }
+
+                            // 2.选择框在圆内 
+                            if (allInside)
+                            {
+                                hit = false;
+                                if (box.Contains(centerSS))
+                                {
+                                    hit = true;
+                                }
+                            }
+                            else  // 3. 判断圆边线是否与选择框相交
+                            {
+
+                                hit = Math::CircleIntersectsBoxEdges(centerSS, sr, box);
+                            }
+                        } 
+						
+                    } 
 
                     if (hit)
                     {
@@ -282,8 +460,232 @@ namespace MiniCAD
                     }
                 }
 
-            });
+                // ── ArcEntity 框选 ────────────────────────────────────────────────────
+                if (obj.IsKindOf<ArcEntity>())
+                {
+                    auto  arcEnt = static_cast<const ArcEntity*>(&obj);
+                    const auto& arc = arcEnt->GetArc();
 
+                    auto   centerSS = camera.WorldToScreen(arc.Center);
+                    Math::Point3 edgeW = { arc.Center.x + arc.Radius, arc.Center.y, arc.Center.z };
+                    double sr = Math::Distance(centerSS, camera.WorldToScreen(edgeW));
+
+                    auto startSS = camera.WorldToScreen(arc.StartPoint());
+                    auto endSS = camera.WorldToScreen(arc.EndPoint());
+
+                    bool hit = false;
+
+                    if (fullyContain)
+                    {
+                        // 右向框选：弧段包围盒完全在框内
+                        // 用弧的 AABB（世界空间）投影到屏幕近似判断
+                        auto boundsMin = camera.WorldToScreen(
+                            Math::Point3{ arc.GetBounds().Min.x, arc.GetBounds().Min.y, arc.Center.z });
+                        auto boundsMax = camera.WorldToScreen(
+                            Math::Point3{ arc.GetBounds().Max.x, arc.GetBounds().Max.y, arc.Center.z });
+
+                        hit = box.Contains(boundsMin) && box.Contains(boundsMax);
+                    }
+                    else
+                    {
+                        // 左向框选：
+                        // 1. 端点在框内
+                        if (box.Contains(startSS) || box.Contains(endSS))
+                        {
+                            hit = true;
+                        }
+                        // 2. 圆心在框内且弧在框范围内有角度经过
+                        if (!hit)
+                        {
+                            // 圆弧与框任意一边相交：用圆与框的相交检测 + 角度范围过滤
+                            // 先检测圆是否与框相交
+                            double cx2 = std::clamp(centerSS.x, xMin, xMax);
+                            double cy2 = std::clamp(centerSS.y, yMin, yMax);
+                            double dx = centerSS.x - cx2;
+                            double dy = centerSS.y - cy2;
+                            bool circleHitsBox = (dx * dx + dy * dy) <= (sr * sr);
+
+                            if (circleHitsBox)
+                            {
+                                // 再用框四角和框中心检测对应角度是否在弧内
+                                // 框对圆心方向中有落在弧范围内的点，则相交
+                                Math::Point2 testPts[5] =
+                                {
+                                    { xMin, yMin }, { xMax, yMin },
+                                    { xMax, yMax }, { xMin, yMax },
+                                    { (xMin + xMax) * 0.5, (yMin + yMax) * 0.5 }
+                                };
+                                for (const auto& tp : testPts)
+                                {
+                                    double ang = std::atan2(tp.y - centerSS.y, tp.x - centerSS.x);
+                                    if (arc.ContainsAngle(ang)) { hit = true; break; }
+                                }
+
+                                // 若框完全在圆内（所有角在弧扫过范围），也命中
+                                if (!hit)
+                                {
+                                    bool allAnglesInArc = true;
+                                    for (const auto& tp : testPts)
+                                    {
+                                        double ang = std::atan2(tp.y - centerSS.y, tp.x - centerSS.x);
+                                        if (!arc.ContainsAngle(ang)) { allAnglesInArc = false; break; }
+                                    }
+                                    if (allAnglesInArc) hit = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (hit)
+                        result.insert(obj.GetID());
+                }
+
+                // ── EllipseEntity 框选 ────────────────────────────────────────────────
+                if (obj.IsKindOf<EllipseEntity>())
+                {
+                    auto  ellEnt   = static_cast<const EllipseEntity*>(&obj);
+                    const auto& el = ellEnt->GetEllipse();
+
+                    // 细分椭圆为折线，复用折线框选逻辑
+                    constexpr int kSeg = 64;
+                    std::vector<Math::Point2> screenPts;
+                    screenPts.reserve(kSeg + 1);
+
+                    for (int i = 0; i <= kSeg; ++i)
+                    {
+                        double t = Math::TwoPI * i / kSeg;
+                        screenPts.push_back(camera.WorldToScreen(el.PointAt(t)));
+                    }
+
+                    bool hit = false;
+
+                    if (fullyContain)
+                    {
+                        // 所有采样点在框内
+                        hit = true;
+                        for (const auto& sp : screenPts)
+                            if (!box.Contains(sp)) { hit = false; break; }
+                    }
+                    else
+                    {
+                        // 任一采样点在框内，或相邻段与框相交
+                        for (size_t i = 0; i + 1 < screenPts.size() && !hit; ++i)
+                        {
+                            if (box.Contains(screenPts[i]))
+                            {
+                                hit = true;
+                            }
+                            else if (Math::SegmentIntersectsBox2(screenPts[i], screenPts[i + 1], box))
+                            {
+                                hit = true;
+                            }
+                        }
+
+                        // 椭圆完全包含选择框：用框中心检测
+                        if (!hit)
+                        {
+                            Math::Point2 boxCenter = { (xMin + xMax) * 0.5, (yMin + yMax) * 0.5 };
+                            // 把框中心变换到椭圆局部坐标，判断是否在椭圆内
+                            auto centerSS = camera.WorldToScreen(el.Center);
+                            // 近似：若框中心到椭圆中心距离小于最小屏幕半径，则在椭圆内
+                            // 精确判断：世界空间转换
+                            auto worldCenter = camera.ScreenToWorld(boxCenter.x, boxCenter.y);
+                            if (el.DistanceToPoint(worldCenter) < Math::LengthEPS * 100)
+                                hit = true;
+                        }
+                    }
+
+                    if (hit)
+                        result.insert(obj.GetID());
+                }
+
+                // ── PolylineEntity 框选 ───────────────────────────────────────────────
+                if (obj.IsKindOf<PolylineEntity>())
+                {
+                    auto  plEnt = static_cast<const PolylineEntity*>(&obj);
+                    const auto& pl = plEnt->GetPolyline();
+
+                    auto worldPts = pl.Tessellate();
+
+                    // 投影到屏幕
+                    std::vector<Math::Point2> screenPts;
+                    screenPts.reserve(worldPts.size());
+                    for (const auto& wp : worldPts)
+                        screenPts.push_back(camera.WorldToScreen(wp));
+
+                    bool hit = false;
+
+                    if (fullyContain)
+                    {
+                        // 所有顶点都在框内
+                        hit = true;
+                        for (const auto& sp : screenPts)
+                            if (!box.Contains(sp)) { hit = false; break; }
+                    }
+                    else
+                    {
+                        // 任一顶点在框内，或任一段与框相交
+                        for (size_t i = 0; i + 1 < screenPts.size() && !hit; ++i)
+                        {
+                            if (box.Contains(screenPts[i]))
+                                hit = true;
+                            else if (Math::SegmentIntersectsBox2(screenPts[i], screenPts[i + 1], box))
+                                hit = true;
+                        }
+                        // 检查最后一个顶点
+                        if (!hit && !screenPts.empty() && box.Contains(screenPts.back()))
+                            hit = true;
+                    }
+
+                    if (hit)
+                        result.insert(obj.GetID());
+                }
+
+                // ── SplineEntity 框选 ─────────────────────────────────────────────────
+                if (obj.IsKindOf<SplineEntity>())
+                {
+                    auto  spEnt = static_cast<const SplineEntity*>(&obj);
+                    const auto& sp = spEnt->GetSpline();
+
+                    if (!sp.IsValid()) return;
+
+                    auto worldPts = sp.Tessellate(32);
+
+                    std::vector<Math::Point2> screenPts;
+                    screenPts.reserve(worldPts.size());
+                    for (const auto& wp : worldPts)
+                        screenPts.push_back(camera.WorldToScreen(wp));
+
+                    bool hit = false;
+
+                    if (fullyContain)
+                    {
+                        // 所有拟合点在框内（用拟合点而不是细分点，与 AutoCAD 行为一致）
+                        hit = true;
+                        for (const auto& fp : sp.FitPoints)
+                        {
+                            auto ss = camera.WorldToScreen(fp);
+                            if (!box.Contains(ss)) { hit = false; break; }
+                        }
+                    }
+                    else
+                    {
+                        // 任一细分段顶点在框内，或与框相交
+                        for (size_t i = 0; i + 1 < screenPts.size() && !hit; ++i)
+                        {
+                            if (box.Contains(screenPts[i]))
+                                hit = true;
+                            else if (Math::SegmentIntersectsBox2(screenPts[i], screenPts[i + 1], box))
+                                hit = true;
+                        }
+                        if (!hit && !screenPts.empty() && box.Contains(screenPts.back()))
+                            hit = true;
+                    }
+
+                    if (hit)
+                        result.insert(obj.GetID());
+                }
+        });
         return result;
     }
 

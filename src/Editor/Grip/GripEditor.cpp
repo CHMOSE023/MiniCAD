@@ -1,11 +1,18 @@
 #include "GripEditor.h"
-#include "Core/Entity/Entity.hpp"
 #include "LineGripHandler.h"
 #include "CircleGripHandler.h"
-#include "PointGripHandler.h"
-#include "Core/Entity/RectangleEntity.hpp"
+#include "PointGripHandler.h" 
 #include "RectangleGripHandler.h"
-
+#include "ArcGripHandler.h"
+#include "EllipseGripHandler.h"
+#include "PolylineGripHandler.h"
+#include "SplineGripHandler.h"
+#include "Core/Entity/Entity.hpp"
+#include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/ArcEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
+#include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/SplineEntity.hpp"
 
 #include <cfloat>
 #include <cmath>
@@ -27,6 +34,10 @@ namespace MiniCAD
         RegisterHandler<CircleEntity>(std::make_unique<CircleGripHandler>());
         RegisterHandler<PointEntity>(std::make_unique<PointGripHandler>());
         RegisterHandler<RectangleEntity>(std::make_unique<RectangleGripHandler>());
+        RegisterHandler<ArcEntity>(std::make_unique<ArcGripHandler>());
+        RegisterHandler<EllipseEntity>(std::make_unique<EllipseGripHandler>());
+        RegisterHandler<PolylineEntity>(std::make_unique<PolylineGripHandler>());
+        RegisterHandler<SplineEntity>(std::make_unique<SplineGripHandler>());
     }
 
     // ─────────────────────────────────────────────
