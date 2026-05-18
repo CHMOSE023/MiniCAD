@@ -29,7 +29,7 @@ namespace MiniCAD
     bool Picking::OnInput(const InputEvent& e)
     {
         switch (e.Type)
-        { 
+        {
         case InputEventType::MouseButtonDown:
             if (e.Button == MouseButton::Left) { OnMouseDown(e); return true; }
             break;
@@ -37,7 +37,7 @@ namespace MiniCAD
         case InputEventType::MouseMove:
             OnMouseMove(e); return true;
 
-        case InputEventType::MouseButtonUp:   
+        case InputEventType::MouseButtonUp:
             if (e.Button == MouseButton::Left) { OnMouseUp(e); return true; }
             break;
 
@@ -54,12 +54,12 @@ namespace MiniCAD
     // 点选命中测试：返回距离最近且在阈值内的对象 ID
     Picking::ObjectID Picking::HitTest(const Math::Point2& pt, double thresh)
     {
-        ObjectID best     = Object::InvalidID;
+        ObjectID best = Object::InvalidID;
         double   bestDist = std::numeric_limits<double>::max();
 
         auto& camera = m_viewport.GetCamera();
 
-        m_scene.ForEachObject([&](const Object& obj)  
+        m_scene.ForEachObject([&](const Object& obj)
             {
                 if (obj.IsKindOf<LineEntity>())
                 {
@@ -71,10 +71,10 @@ namespace MiniCAD
                     if (d < thresh && d < bestDist)
                     {
                         bestDist = d;
-                        best = obj.GetID();  
+                        best = obj.GetID();
                     }
                 }
-              
+
                 if (obj.IsKindOf<RectangleEntity>())
                 {
                     auto rectEntity = static_cast<const RectangleEntity*>(&obj);
@@ -100,7 +100,7 @@ namespace MiniCAD
                     testEdge(p4, p1);
 
                 }
-              
+
                 if (obj.IsKindOf<CircleEntity>())
                 {
                     auto  circle = static_cast<const CircleEntity*>(&obj);
@@ -134,7 +134,7 @@ namespace MiniCAD
                         best = obj.GetID();
                     }
                 }
-              
+
                 // ── ArcEntity 点选 ─────────────────────────────────────────────────────
                 if (obj.IsKindOf<ArcEntity>())
                 {
@@ -206,85 +206,85 @@ namespace MiniCAD
                             best = obj.GetID();
                         }
                     }
-                   
+
                 }
-                
+
                 // ── EllipseEntity 点选 ────────────────────────────────────────────────
                 if (obj.IsKindOf<EllipseEntity>())
                 {
                     auto  ellEnt   = static_cast<const EllipseEntity*>(&obj);
                     const auto& el = ellEnt->GetEllipse();
-                
+
                     // 椭圆细分为折线后，逐段判断距离（屏幕空间）
                     constexpr int kSeg = 64;
                     double minD = std::numeric_limits<double>::max();
-                
+
                     for (int i = 0; i < kSeg; ++i)
                     {
                         double t0 = Math::TwoPI *  i      / kSeg;
                         double t1 = Math::TwoPI * (i + 1) / kSeg;
-                
+
                         auto a0 = camera.WorldToScreen(el.PointAt(t0));
                         auto a1 = camera.WorldToScreen(el.PointAt(t1));
-                
+
                         double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
                         minD = std::min(minD, d);
                     }
-                
+
                     if (minD < thresh && minD < bestDist)
                     {
                         bestDist = minD;
                         best     = obj.GetID();
                     }
                 }
-                
+
                 // ── PolylineEntity 点选 ───────────────────────────────────────────────
                 if (obj.IsKindOf<PolylineEntity>())
                 {
                     auto  plEnt = static_cast<const PolylineEntity*>(&obj);
                     const auto& pl = plEnt->GetPolyline();
-                
+
                     // 使用 Polyline::Tessellate 细分（含弧段），逐段检测
                     auto pts = pl.Tessellate();
                     double minD = std::numeric_limits<double>::max();
-                
+
                     for (size_t i = 0; i + 1 < pts.size(); ++i)
                     {
                         auto a0 = camera.WorldToScreen(pts[i]);
                         auto a1 = camera.WorldToScreen(pts[i + 1]);
-                
+
                         double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
                         minD = std::min(minD, d);
                     }
-                
+
                     if (minD < thresh && minD < bestDist)
                     {
                         bestDist = minD;
                         best     = obj.GetID();
                     }
                 }
-                
+
                 // ── SplineEntity 点选 ─────────────────────────────────────────────────
                 if (obj.IsKindOf<SplineEntity>())
                 {
                     auto  spEnt = static_cast<const SplineEntity*>(&obj);
                     const auto& sp = spEnt->GetSpline();
-                
+
                     if (sp.IsValid())
                     {
                         // 细分后逐段检测
                         auto pts = sp.Tessellate(32);
                         double minD = std::numeric_limits<double>::max();
-                
+
                         for (size_t i = 0; i + 1 < pts.size(); ++i)
                         {
                             auto a0 = camera.WorldToScreen(pts[i]);
                             auto a1 = camera.WorldToScreen(pts[i + 1]);
-                
+
                             double d = Math::Distance(pt, Math::ClosestPointOnSegment(pt, a0, a1));
                             minD = std::min(minD, d);
                         }
-                
+
                         if (minD < thresh && minD < bestDist)
                         {
                             bestDist = minD;
@@ -292,11 +292,11 @@ namespace MiniCAD
                         }
                     }
                 }
-                
-        });
+
+            });
 
         if (best > 0)
-        { 
+        {
             printf("[Picking] HitTest at (%.1f, %.1f)  BestDist=%.2f  HitID=%d\n", pt.x, pt.y, bestDist, static_cast<int>(best));
         }
         return best;
@@ -317,8 +317,8 @@ namespace MiniCAD
         auto& camera = m_viewport.GetCamera();
         std::unordered_set<ObjectID> result;
 
-        m_scene.ForEachObject([&](const Object& obj) 
-        {
+        m_scene.ForEachObject([&](const Object& obj)
+            {
                 if (obj.IsKindOf<PointEntity>())
                 {
                     auto point = static_cast<const PointEntity*>(&obj);
@@ -338,7 +338,7 @@ namespace MiniCAD
                     auto e    = camera.WorldToScreen(line->GetLine().End);
 
                     bool hit = fullyContain  ? box.Contains(s) && box.Contains(e)   
-                                             : Math::SegmentIntersectsBox2(s, e, box);
+                        : Math::SegmentIntersectsBox2(s, e, box);
 
                     if (hit)
                         result.insert(obj.GetID());
@@ -359,7 +359,7 @@ namespace MiniCAD
                     bool hit = false;
 
                     if (fullyContain)
-                    { 
+                    {
                         hit = Math::AllPointsInBox2(pts, 4, box);
                     }
                     else
@@ -376,7 +376,7 @@ namespace MiniCAD
                     {
                         result.insert(obj.GetID());
                     }
-                       
+
                 }
 
                 if (obj.IsKindOf<CircleEntity>())
@@ -390,7 +390,7 @@ namespace MiniCAD
                     // 用 screen-space 近似半径（避免透视误差）
                     Math::Vec3 offset = { c.Radius, 0.0, 0.0 };
                     double sr = Math::Distance(centerSS, camera.WorldToScreen(c.Center + offset));
-                     
+
                     bool hit = false;
 
                     Point2 corners[4] =
@@ -407,8 +407,8 @@ namespace MiniCAD
                         hit = (centerSS.x - sr >= xMin) && (centerSS.x + sr <= xMax) && (centerSS.y - sr >= yMin) && (centerSS.y + sr <= yMax);
                     }
                     else
-                    { 
-						// 一、如果选择框完全包含圆，则直接选中
+                    {
+                        // 一、如果选择框完全包含圆，则直接选中
                         bool boxContainsCircle =
                             (centerSS.x - sr >= xMin) &&
                             (centerSS.x + sr <= xMax) &&
@@ -420,7 +420,7 @@ namespace MiniCAD
                             hit = true;
                         }
                         else   // 二、如果选择框不完全包含圆，则满足以下任一条件即可：
-                        { 
+                        {
                             // 1. 选择框四个角是否全部在圆内 
                             bool allInside = true;
 
@@ -450,9 +450,9 @@ namespace MiniCAD
 
                                 hit = Math::CircleIntersectsBoxEdges(centerSS, sr, box);
                             }
-                        } 
-						
-                    } 
+                        }
+
+                    }
 
                     if (hit)
                     {
@@ -685,7 +685,7 @@ namespace MiniCAD
                     if (hit)
                         result.insert(obj.GetID());
                 }
-        });
+            });
         return result;
     }
 
@@ -700,9 +700,11 @@ namespace MiniCAD
     // ───────────────── 输入处理 ─────────────────
     void Picking::OnMouseDown(const InputEvent& e)
     {
-       
-      
-
+        m_drag = DragState::Pressing;
+        m_pressX = e.MouseX;
+        m_pressY = e.MouseY;
+        m_currX = e.MouseX;
+        m_currY = e.MouseY;
     }
 
     void Picking::OnMouseMove(const InputEvent& e)
@@ -723,48 +725,21 @@ namespace MiniCAD
     }
 
     void Picking::OnMouseUp(const InputEvent& e)
-    { 
-        if (m_drag == DragState::Idle)
-        {
-            Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
-            ObjectID hitId = HitTest(pt, PICK_THRESH);
-
+    {
+        if (m_drag == DragState::Pressing)
             DoPointPick(e);
-
-            if (hitId != Object::InvalidID)
-            {
-                m_drag = DragState::Idle;
-            }
-            else
-            {
-                // 有修饰键时也进入框选等待，方便框选添加/减选
-                m_drag = DragState::Pressing;
-                m_pressX = e.MouseX;
-                m_pressY = e.MouseY;
-                m_currX = e.MouseX;
-                m_currY = e.MouseY;
-            }
-        }
-        else if (m_drag == DragState::Pressing)
-        {
-            DoPointPick(e);
-            m_drag = DragState::Idle;
-        }
         else if (m_drag == DragState::BoxSelecting)
-        {
             DoBoxPick(e);
-            m_drag = DragState::Idle;
-        }
 
+        m_drag = DragState::Idle;
     }
 
     void Picking::OnKeyDown(const InputEvent& e)
-    { 
+    {
         if (e.IsCancel())
         {
             if (!m_selection.empty())
             {
-                m_lastSelection = m_selection;  // 保存上次
                 m_selection.clear();
                 MarkDirty();
             }
@@ -849,12 +824,12 @@ namespace MiniCAD
         bool ctrl  = e.HasModifier(ModifierKey::Ctrl);
         bool alt   = e.HasModifier(ModifierKey::Alt);
         bool shift = e.HasModifier(ModifierKey::Shift);
-        
+
         Math::Point2 a{ (double)m_pressX, (double)m_pressY };
         Math::Point2 b{ (double)e.MouseX, (double)e.MouseY };
-        
+
         auto result = BoxSelect(a, b);
-        
+
         std::unordered_set<ObjectID> newSel;
         
         if (alt)
@@ -881,7 +856,7 @@ namespace MiniCAD
             // 无修饰键：替换
             newSel = std::move(result);
         }
-        
+
         if (!SetEquals(newSel, m_selection))
         {
             m_lastSelection = m_selection;  // 保存上次
@@ -905,6 +880,6 @@ namespace MiniCAD
 
     Math::Point2 Picking::GetBoxStart()    const { return { (double)m_pressX, (double)m_pressY }; }
     Math::Point2 Picking::GetBoxEnd()      const { return { (double)m_currX,  (double)m_currY }; }
-    bool         Picking::IsBoxSelecting() const { return m_drag == DragState::BoxSelecting; } 
+    bool         Picking::IsBoxSelecting() const { return m_drag == DragState::BoxSelecting; }
 
-}  
+}

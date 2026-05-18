@@ -15,6 +15,13 @@ namespace MiniCAD
 
 		virtual	AABB GetBoundingBox()  const override { return m_point.GetBounds(); };
 
+		std::unique_ptr<Entity> Clone(ObjectID newId) const override
+		{
+			auto e = std::make_unique<PointEntity>(newId, m_point.Position);
+			e->SetAttr(GetAttr());
+			return e;
+		} 
+
 		virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered)   const override
 		{
 			const auto& attr = GetAttr();

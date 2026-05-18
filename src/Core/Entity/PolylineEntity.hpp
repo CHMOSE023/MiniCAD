@@ -79,6 +79,13 @@ namespace MiniCAD
             return m_polyline.GetBounds();
         }
 
+        std::unique_ptr<Entity> Clone(ObjectID newId) const override
+        {
+            auto e = std::make_unique<PolylineEntity>(newId, m_polyline);
+            e->SetAttr(GetAttr());
+            return e;
+        }
+         
         virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             if (!m_polyline.IsValid()) return;

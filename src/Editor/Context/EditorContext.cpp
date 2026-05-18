@@ -22,7 +22,7 @@
 
 // ── 编辑工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/Modify/MoveTool.h"
-//#include "Editor/Tools/Modify/CopyTool.h"
+#include "Editor/Tools/Modify/CopyTool.h"
 //#include "Editor/Tools/Modify/MirrorTool.h"
 //#include "Editor/Tools/Modify/RotateTool.h"
 
@@ -85,6 +85,17 @@ namespace MiniCAD
                 return nullptr;
             }
             return std::make_unique<MoveTool>(std::move(targets),
+                m_scene, m_cmdStack, m_viewport, m_overlay);
+            });
+
+        RegisterTool("Copy", [this]() -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty())
+            {
+                printf("[Editor] Copy: 请先选择对象\n");
+                return nullptr;
+            }
+            return std::make_unique<CopyTool>(std::move(targets),
                 m_scene, m_cmdStack, m_viewport, m_overlay);
             });
 

@@ -23,6 +23,13 @@ namespace MiniCAD
 
         virtual AABB GetBoundingBox() const override { return m_circle.GetBounds(); }
 
+        std::unique_ptr<Entity> Clone(ObjectID newId) const override
+        {
+            auto e = std::make_unique<CircleEntity>(newId, m_circle.Center, m_circle.Radius);
+            e->SetAttr(GetAttr());
+            return e;
+        }
+
         virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             const auto& attr = GetAttr();

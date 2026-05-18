@@ -27,6 +27,13 @@ namespace MiniCAD
             return ArcEntity(id, *arc);
         }
 
+        std::unique_ptr<Entity> Clone(ObjectID newId) const override
+        {
+            auto e = std::make_unique<ArcEntity>(newId, m_arc.Center, m_arc.Radius, m_arc.StartAngle, m_arc.EndAngle);
+            e->SetAttr(GetAttr());
+            return e;
+        } 
+
         // ── 访问 / 修改 ───────────────────────────────────────────────
         void       SetArc(const Arc& arc) { m_arc = arc; }
         const Arc& GetArc() const         { return m_arc; }

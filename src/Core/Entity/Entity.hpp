@@ -3,6 +3,7 @@
 #include "EntityAttr.hpp"
 #include "Core/GeomKernel/AABB.hpp"
 #include "Core/Draw/IDrawSink.hpp"
+#include <memory>
 namespace MiniCAD
 {
 	class Entity : public Object
@@ -16,6 +17,8 @@ namespace MiniCAD
 
 		virtual AABB      GetBoundingBox() const= 0;
 		virtual void      Draw(IDrawSink& sink, bool isSelected, bool isHovered) const = 0;
+
+		virtual std::unique_ptr<Entity> Clone(ObjectID newId) const = 0;
 
 		DECLARE_RUNTIME_TYPE(Entity, Object)
 
