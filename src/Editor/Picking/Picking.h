@@ -39,6 +39,8 @@ namespace MiniCAD
         // 清空选择
         void ClearSelection() { m_selection.clear(); }
 
+        void RestoreLastSelection();
+       
     private:
         // 输入分发
         void OnMouseDown  (const InputEvent& e);
@@ -63,6 +65,8 @@ namespace MiniCAD
 
         Scene&    m_scene;
         Viewport& m_viewport;
+
+        std::unordered_set<ObjectID> m_lastSelection;  // 上次选择集快照 
 
         std::unordered_set<ObjectID> m_selection;
         std::unordered_set<ObjectID> m_hovered;

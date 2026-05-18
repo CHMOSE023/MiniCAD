@@ -29,7 +29,7 @@ namespace MiniCAD
     bool Picking::OnInput(const InputEvent& e)
     {
         switch (e.Type)
-        {
+        { 
         case InputEventType::MouseButtonDown:
             if (e.Button == MouseButton::Left) { OnMouseDown(e); return true; }
             break;
@@ -37,7 +37,7 @@ namespace MiniCAD
         case InputEventType::MouseMove:
             OnMouseMove(e); return true;
 
-        case InputEventType::MouseButtonUp:
+        case InputEventType::MouseButtonUp:   
             if (e.Button == MouseButton::Left) { OnMouseUp(e); return true; }
             break;
 
@@ -689,15 +689,20 @@ namespace MiniCAD
         return result;
     }
 
-    // ───────────────── 输入处理 ─────────────────
 
+    void Picking::RestoreLastSelection()
+    {
+        if (m_lastSelection.empty()) return;
+        m_selection = m_lastSelection;
+        MarkDirty();
+    }
+
+    // ───────────────── 输入处理 ─────────────────
     void Picking::OnMouseDown(const InputEvent& e)
     {
-        m_drag = DragState::Pressing;
-        m_pressX = e.MouseX;
-        m_pressY = e.MouseY;
-        m_currX = e.MouseX;
-        m_currY = e.MouseY;
+       
+      
+
     }
 
     void Picking::OnMouseMove(const InputEvent& e)
@@ -718,21 +723,48 @@ namespace MiniCAD
     }
 
     void Picking::OnMouseUp(const InputEvent& e)
-    {
-        if (m_drag == DragState::Pressing)
-            DoPointPick(e);
-        else if (m_drag == DragState::BoxSelecting)
-            DoBoxPick(e);
+    { 
+        if (m_drag == DragState::Idle)
+        {
+            Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
+            ObjectID hitId = HitTest(pt, PICK_THRESH);
 
-        m_drag = DragState::Idle;
+            DoPointPick(e);
+
+            if (hitId != Object::InvalidID)
+            {
+                m_drag = DragState::Idle;
+            }
+            else
+            {
+                // 有修饰键时也进入框选等待，方便框选添加/减选
+                m_drag = DragState::Pressing;
+                m_pressX = e.MouseX;
+                m_pressY = e.MouseY;
+                m_currX = e.MouseX;
+                m_currY = e.MouseY;
+            }
+        }
+        else if (m_drag == DragState::Pressing)
+        {
+            DoPointPick(e);
+            m_drag = DragState::Idle;
+        }
+        else if (m_drag == DragState::BoxSelecting)
+        {
+            DoBoxPick(e);
+            m_drag = DragState::Idle;
+        }
+
     }
 
     void Picking::OnKeyDown(const InputEvent& e)
-    {
+    { 
         if (e.IsCancel())
         {
             if (!m_selection.empty())
             {
+                m_lastSelection = m_selection;  // 保存上次
                 m_selection.clear();
                 MarkDirty();
             }
@@ -767,6 +799,8 @@ namespace MiniCAD
     void Picking::DoPointPick(const InputEvent& e)
     {
         bool ctrl = e.HasModifier(ModifierKey::Ctrl);
+        bool alt = e.HasModifier(ModifierKey::Alt);
+        bool shift = e.HasModifier(ModifierKey::Shift);
 
         Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
         ObjectID id = HitTest(pt, PICK_THRESH);
@@ -775,23 +809,36 @@ namespace MiniCAD
 
         if (id == Object::InvalidID)
         {
-            if (!ctrl) newSel.clear();
+            if (!ctrl && !alt && !shift) newSel.clear();
         }
         else
         {
-            if (ctrl)
+            if (alt)
             {
+                // Alt：添加到选择集
+                newSel.insert(id);
+            }
+            else if (shift)
+            {
+                // Shift：从选择集移除
+                newSel.erase(id);
+            }
+            else if (ctrl)
+            {
+                // Ctrl：切换
                 if (newSel.contains(id)) newSel.erase(id);
                 else                     newSel.insert(id);
             }
             else
             {
+                // 无修饰键：替换
                 newSel = { id };
             }
         }
 
         if (!SetEquals(newSel, m_selection))
         {
+            m_lastSelection = m_selection; // 保存上次
             m_selection = std::move(newSel);
             MarkDirty();
         }
@@ -799,26 +846,45 @@ namespace MiniCAD
 
     void Picking::DoBoxPick(const InputEvent& e)
     {
-        bool ctrl = e.HasModifier(ModifierKey::Ctrl);
-
+        bool ctrl  = e.HasModifier(ModifierKey::Ctrl);
+        bool alt   = e.HasModifier(ModifierKey::Alt);
+        bool shift = e.HasModifier(ModifierKey::Shift);
+        
         Math::Point2 a{ (double)m_pressX, (double)m_pressY };
         Math::Point2 b{ (double)e.MouseX, (double)e.MouseY };
-
+        
         auto result = BoxSelect(a, b);
-
+        
         std::unordered_set<ObjectID> newSel;
-        if (ctrl)
+        
+        if (alt)
         {
+            // Alt：添加到选择集
+            newSel = m_selection;
+            newSel.insert(result.begin(), result.end());
+        }
+        else if (shift)
+        {
+            // Shift：从选择集移除
+            newSel = m_selection;
+            for (const auto& id : result)
+                newSel.erase(id);
+        }
+        else if (ctrl)
+        {
+            // Ctrl：添加到选择集（与原来保持一致）
             newSel = m_selection;
             newSel.insert(result.begin(), result.end());
         }
         else
         {
+            // 无修饰键：替换
             newSel = std::move(result);
         }
-
+        
         if (!SetEquals(newSel, m_selection))
         {
+            m_lastSelection = m_selection;  // 保存上次
             m_selection = std::move(newSel);
             MarkDirty();
         }

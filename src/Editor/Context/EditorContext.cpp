@@ -115,10 +115,11 @@ namespace MiniCAD
         */
 
         // ── 快捷键绑定 ──────────────────────────────────────── 
+        RegisterAlias("P",   "Previous"); // 上次选择
         RegisterAlias("L",   "Line");
         RegisterAlias("LI",  "Line");
         RegisterAlias("REC", "Rectangle");
-        RegisterAlias("P",   "Polyline");
+        RegisterAlias("PL",   "Polyline");
         RegisterAlias("PL",  "Polyline");
         RegisterAlias("MI",  "Mirror");
         RegisterAlias("RO",  "Rotate"); 
@@ -151,14 +152,29 @@ namespace MiniCAD
 
     void EditorContext::ActivateToolByAlias(const std::string& alias)
     {
-        auto it = m_aliasRegistry.find(alias);
-        if (it == m_aliasRegistry.end())
+        // 特殊命令：恢复上次选择
+        if (alias == "Previous" || alias == "PREVIOUS")
         {
-            printf("[Editor] Unknown command: %s\n", alias.c_str());
+            m_picking.RestoreLastSelection();
+            m_gripEditor.MarkDirty();
             return;
         }
 
-        ActivateToolById(it->second);
+        auto it = m_aliasRegistry.find(alias);
+        if (it != m_aliasRegistry.end())
+        {
+            ActivateToolById(it->second);
+            return;
+        }
+
+        // 找不到别名，直接尝试作为 toolId
+        if (m_toolRegistry.contains(alias))
+        {
+            ActivateToolById(alias);
+            return;
+        }
+
+        printf("[Editor] Unknown command: %s\n", alias.c_str());
     }
 
     char EditorContext::ToCommandChar(KeyCode key)
@@ -177,7 +193,15 @@ namespace MiniCAD
     }
      
     void EditorContext::ActivateToolById(const std::string& toolId)
-    {
+    { 
+        // 特殊命令拦截
+        if (toolId == "Previous")
+        {
+            m_picking.RestoreLastSelection();
+            m_gripEditor.MarkDirty();
+            return;
+        }
+
         auto it = m_toolRegistry.find(toolId);
         if (it == m_toolRegistry.end())
         {
@@ -194,6 +218,7 @@ namespace MiniCAD
         }
 
         printf("[Editor] Start %s\n", toolId.c_str());
+        m_lastCommand = toolId;
         ActivateTool(std::move(tool));
     }
 
@@ -281,8 +306,19 @@ namespace MiniCAD
                 if (m_tool->OnInput(e))
                     return true;    // 工具消费了，结束
             }
-            // 工具不消费（或无工具），交给全局处理
-            return HandleGlobal(e);
+
+            //  交给全局处理 
+            if (HandleGlobal(e))
+                return true;
+
+            // HandleGlobal 不消费时，让 Picking 处理（如 Esc 清空选择）
+            if (m_picking.OnInput(e))
+            {
+                m_gripEditor.MarkDirty();
+                return true;
+            }
+
+            return false;
         }
 
         // ── 3. 鼠标事件：全局快捷键（中键/滚轮）→ 工具 → 夹点 → 选择 ────
@@ -343,13 +379,16 @@ namespace MiniCAD
                 m_tool.reset();
                 m_toolSuspended = false;
                 m_overlay.Clear();
+                return true;
             }
             else if (m_gripEditor.IsDragging())
             {
                 m_gripEditor.CancelDrag();
                 m_gripEditor.MarkDirty();
+                return true;
             }
-            return true;
+
+            return false;
         }
 
         if (e.Type == InputEventType::KeyDown)
@@ -364,6 +403,9 @@ namespace MiniCAD
 
             if (e.Key == KeyCode::Enter || e.Key == KeyCode::Space)
             {
+                printf("[Editor] Enter/Space: cmdBuffer='%s' lastCommand='%s'\n",
+                    m_cmdBuffer.c_str(), m_lastCommand.c_str());
+
                 if (!m_cmdBuffer.empty())   // 当前命令
                 {
                     ActivateToolByAlias(m_cmdBuffer);
