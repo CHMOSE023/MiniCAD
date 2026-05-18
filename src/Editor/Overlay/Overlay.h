@@ -96,12 +96,14 @@ namespace MiniCAD
         }
 
         // ===== Arc =====
-        void AddArc(const Math::Point3& center, double radius, double startAngle, double endAngle,  const Math::Color4& mcolor, int segments = 64)
+        // startAngle / endAngle 均为弧度，始终按 CCW 方向从 startAngle 画到 endAngle
+        // 适用于 ArcTool（Arc::FromThreePoints 返回的 StartAngle / EndAngle，约定 CCW）
+        void AddArc(const Math::Point3& center, double radius, double startAngle, double endAngle, const Math::Color4& mcolor, int segments = 64)
         {
             if (radius <= 0.0 || segments < 1)
                 return;
 
-            // 计算逆时针角跨度，与 Arc::SweepAngle() 保持一致
+            // CCW 角跨度，始终为正
             double sweep = endAngle - startAngle;
             if (sweep <= 0.0)
                 sweep += Math::TwoPI;
@@ -109,39 +111,23 @@ namespace MiniCAD
             if (sweep < Math::AngleEPS)
                 return;
 
-            Float4 color =
-            {
-                static_cast<float>(mcolor.r),
-                static_cast<float>(mcolor.g),
-                static_cast<float>(mcolor.b),
-                static_cast<float>(mcolor.a),
-            };
-
-            m_lines.reserve(m_lines.size() + segments);
-
-            for (int i = 0; i < segments; ++i)
-            {
-                double a0 = startAngle + sweep * i / segments;
-                double a1 = startAngle + sweep * (i + 1) / segments;
-
-                Float3 p0 =
-                {
-                    static_cast<float>(center.x + std::cos(a0) * radius),
-                    static_cast<float>(center.y + std::sin(a0) * radius),
-                    static_cast<float>(center.z),
-                };
-
-                Float3 p1 =
-                {
-                    static_cast<float>(center.x + std::cos(a1) * radius),
-                    static_cast<float>(center.y + std::sin(a1) * radius),
-                    static_cast<float>(center.z),
-                };
-
-                m_lines.push_back({ p0, p1, color });
-            }
+            AddArcInternal(center, radius, startAngle, sweep, mcolor, segments);
         }
      
+        // ===== ArcGeom =====
+        // 直接接受 ArcGeom，SweepAngle 为有符号值（正=CCW，负=CW）
+        // 适用于 PolylineTool（Polyline::ComputeArc 返回的 ArcGeom）
+        void AddArcGeom(const ArcGeom& arc, const Math::Color4& mcolor, int segments = 64)
+        {
+            if (arc.Radius <= 0.0 || segments < 1)
+                return;
+
+            if (std::abs(arc.SweepAngle) < Math::AngleEPS)
+                return;
+
+            // 直接使用有符号 sweep，不做任何归一化
+            AddArcInternal(arc.Center, arc.Radius, arc.StartAngle, arc.SweepAngle, mcolor, segments);
+        }
 
         // ===== Ellipse =====
         void AddEllipse(const Math::Point3& center,  double rx, double ry, double rotation,  const Math::Color4& mcolor, int segments = 64)
@@ -306,6 +292,42 @@ namespace MiniCAD
         }
           
     private:
+
+        // 底层绘制：按有符号 sweepAngle 方向画弧（正=CCW，负=CW）
+        void AddArcInternal(const Math::Point3& center, double radius, double startAngle, double sweepAngle, const Math::Color4& mcolor, int segments)
+        {
+            Float4 color =
+            {
+                static_cast<float>(mcolor.r),
+                static_cast<float>(mcolor.g),
+                static_cast<float>(mcolor.b),
+                static_cast<float>(mcolor.a),
+            };
+
+            m_lines.reserve(m_lines.size() + segments);
+
+            for (int i = 0; i < segments; ++i)
+            {
+                double a0 = startAngle + sweepAngle * i / segments;
+                double a1 = startAngle + sweepAngle * (i + 1) / segments;
+
+                Float3 p0 =
+                {
+                    static_cast<float>(center.x + std::cos(a0) * radius),
+                    static_cast<float>(center.y + std::sin(a0) * radius),
+                    static_cast<float>(center.z),
+                };
+                Float3 p1 =
+                {
+                    static_cast<float>(center.x + std::cos(a1) * radius),
+                    static_cast<float>(center.y + std::sin(a1) * radius),
+                    static_cast<float>(center.z),
+                };
+
+                m_lines.push_back({ p0, p1, color });
+            }
+        }
+
         struct Float3
         {
             float x;
