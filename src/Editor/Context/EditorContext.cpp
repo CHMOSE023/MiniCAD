@@ -263,35 +263,38 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     bool EditorContext::OnInput(const InputEvent& inputEvent)
     {
+        // ── 1. Snap + 正交约束 ───────────────────────────────────────────
         UpdateSnap(inputEvent);
         InputEvent e = InjectSnap(inputEvent);
+        e = ApplyConstraints(e);
 
-        // 先给 tool
-        if (m_tool && !m_toolSuspended)
+        // ── 2. 键盘事件：工具优先，不消费再走全局 ────────────────────────
+        //
+        //   PolylineTool 等工具需要响应 A / L / C / Z 等按键切换模式。
+        //   必须在 HandleGlobal 之前给工具处理机会，
+        //   否则 HandleGlobal 的命令缓冲会把这些键吃掉。
+        //
+        if (e.Type == InputEventType::KeyDown || e.Type == InputEventType::KeyUp)
         {
-            if (m_tool->OnInput(e))
-                return true;
+            if (m_tool && !m_toolSuspended)
+            {
+                if (m_tool->OnInput(e))
+                    return true;    // 工具消费了，结束
+            }
+            // 工具不消费（或无工具），交给全局处理
+            return HandleGlobal(e);
         }
 
-        // 1. 全局快捷键（Undo / Redo / Cancel / 工具切换 / 视图操作）
+        // ── 3. 鼠标事件：全局快捷键（中键/滚轮）→ 工具 → 夹点 → 选择 ────
         if (HandleGlobal(e))
             return true;
 
-        // 2. 约束（正交）
-        e = ApplyConstraints(e);
-
-        // 3. Tool 激活时完全接管后续消息
-        //    m_toolSuspended 为 true 时（中键平移中）消息不下发，
-        //    避免工具在视图移动期间误响应坐标
         if (m_tool && !m_toolSuspended)
             return m_tool->OnInput(e);
 
-        // 4. 夹点拖拽编辑
         if (m_gripEditor.OnInput(e))
             return true;
 
-        // 5. Picking（选择系统）
-        //    拖拽进行中跳过，避免 hover / selection 被误改
         if (!m_gripEditor.IsDragging())
         {
             if (m_picking.OnInput(e))
@@ -301,7 +304,6 @@ namespace MiniCAD
             }
         }
 
-        // 6. 默认处理
         return HandleDefault(e);
     }
 

@@ -221,16 +221,15 @@ namespace MiniCAD
     GripGeometry Viewport::BuildGripGeometry( const ViewState& vs)
     {
         GripGeometry g;
-
-        float size = 4.0f; // grip 半径（屏幕像素）
-
+         
         for (const auto& grip : vs.Grips)
         {
             const float x = grip.Pos.x;
             const float y = grip.Pos.y;
-
-             Math::Float4 color       = { 0.0f, 0.2f, 0.9f, 0.9f }; 
-             Math::Float4 borderColor = { 0.3,0.3,0.3,1 };
+            
+            float        size        = 4.0f;  // 默认夹点大小
+            Math::Float4 color       = { 0.0f, 0.2f, 0.9f, 0.9f }; 
+            Math::Float4 borderColor = { 0.3,0.3,0.3,1 };
 
             if (grip.Hovered)
             {
@@ -251,7 +250,7 @@ namespace MiniCAD
 
             // =========================
             // 2. 边框（Line list）
-            // =========================
+            // ========================= 
 
             g.border.insert(g.border.end(), {
                 {v0.pos, borderColor}, {v1.pos, borderColor},
