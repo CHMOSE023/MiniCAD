@@ -1,7 +1,7 @@
 #include "GripEditor.h"
 #include "LineGripHandler.h"
 #include "CircleGripHandler.h"
-#include "PointGripHandler.h" 
+#include "PointGripHandler.h"
 #include "RectangleGripHandler.h"
 #include "ArcGripHandler.h"
 #include "EllipseGripHandler.h"
@@ -30,23 +30,23 @@ namespace MiniCAD
         , m_picking (picking)
         , m_overlay (overlay)
     {
-        RegisterHandler<LineEntity>(std::make_unique<LineGripHandler>());
-        RegisterHandler<CircleEntity>(std::make_unique<CircleGripHandler>());
-        RegisterHandler<PointEntity>(std::make_unique<PointGripHandler>());
+        RegisterHandler<LineEntity>     (std::make_unique<LineGripHandler>());
+        RegisterHandler<CircleEntity>   (std::make_unique<CircleGripHandler>());
+        RegisterHandler<PointEntity>    (std::make_unique<PointGripHandler>());
         RegisterHandler<RectangleEntity>(std::make_unique<RectangleGripHandler>());
-        RegisterHandler<ArcEntity>(std::make_unique<ArcGripHandler>());
-        RegisterHandler<EllipseEntity>(std::make_unique<EllipseGripHandler>());
-        RegisterHandler<PolylineEntity>(std::make_unique<PolylineGripHandler>());
-        RegisterHandler<SplineEntity>(std::make_unique<SplineGripHandler>());
+        RegisterHandler<ArcEntity>      (std::make_unique<ArcGripHandler>());
+        RegisterHandler<EllipseEntity>  (std::make_unique<EllipseGripHandler>());
+        RegisterHandler<PolylineEntity> (std::make_unique<PolylineGripHandler>());
+        RegisterHandler<SplineEntity>   (std::make_unique<SplineGripHandler>());
     }
 
     // ─────────────────────────────────────────────
-    // OnInput — 修复：正确路由三种鼠标事件
+    // OnInput
     // ─────────────────────────────────────────────
     bool GripEditor::OnInput(const InputEvent& e)
     {
-        // 非拖拽状态才 Rebuild，避免几何数据被实时修改污染
-        if (!m_dragging)
+        // 空闲状态才 Rebuild，避免跟随过程中几何被污染
+        if (!m_activated && !m_following)
             Rebuild();
 
         if (m_grips.empty())
@@ -57,8 +57,8 @@ namespace MiniCAD
         case InputEventType::MouseButtonDown:
             if (e.Button == MouseButton::Left)
                 return OnMouseDown(e);
-            // 拖拽中右键 → 取消
-            if (e.Button == MouseButton::Right && m_dragging)
+            // 右键随时取消
+            if (e.Button == MouseButton::Right && (m_activated || m_following))
             {
                 CancelDrag();
                 return true;
@@ -81,9 +81,78 @@ namespace MiniCAD
     }
 
     // ─────────────────────────────────────────────
-    // OnMouseDown — 修复：存索引而非指针
+    // OnMouseDown
+    //   空闲状态  → DoActivate（第一次点击，激活夹点）
+    //   跟随状态  → DoConfirm （第二次点击，确认提交）
     // ─────────────────────────────────────────────
     bool GripEditor::OnMouseDown(const InputEvent& e)
+    {
+        if (m_following)
+            return DoConfirm(e);
+
+        if (!m_activated)
+            return DoActivate(e);
+
+        // m_activated=true 但 m_following=false：
+        // 说明 MouseDown 已触发但 MouseUp 还未到来，不重复处理
+        return false;
+    }
+
+    // ─────────────────────────────────────────────
+    // OnMouseUp
+    //   MouseDown 激活后松开 → 进入跟随模式
+    // ─────────────────────────────────────────────
+    bool GripEditor::OnMouseUp(const InputEvent& e)
+    {
+        if (!m_activated || m_following)
+            return false;
+
+        // 激活完成，松开鼠标 → 开始跟随
+        m_following = true;
+        return true;
+    }
+
+    // ─────────────────────────────────────────────
+    // OnMouseMove
+    //   跟随模式下实时更新几何 + 预览
+    // ─────────────────────────────────────────────
+    bool GripEditor::OnMouseMove(const InputEvent& e)
+    {
+        Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
+        m_hoveredIdxs = HitTestAll(sp);
+
+        if (!m_following)
+            return false;
+
+        Math::Point3 worldPos = e.HasSnap
+            ? e.SnapWorld
+            : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
+
+        m_overlay.Clear();
+
+        for (auto& entry : m_dragEntries)
+        {
+            auto obj = m_scene.GetEntity(entry.Id);
+            auto* entity = static_cast<Entity*>(obj);
+            if (!entity || !entry.Handler) continue;
+
+            // 实时更新 Entity 几何 + m_grips 中对应夹点坐标
+            entry.Handler->UpdateDrag(entity, entry.DragState.get(),
+                                      entry.ActiveGrip, worldPos, m_grips);
+
+            // 绘制预览
+            entry.Handler->DrawPreview(entity, entry.DragState.get(),
+                                       entry.ActiveGrip, m_overlay);
+        }
+
+        m_scene.MarkDirty();
+        return true;
+    }
+
+    // ─────────────────────────────────────────────
+    // DoActivate — 第一次 MouseDown，激活夹点
+    // ─────────────────────────────────────────────
+    bool GripEditor::DoActivate(const InputEvent& e)
     {
         Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
 
@@ -111,7 +180,7 @@ namespace MiniCAD
 
             GripDragEntry entry;
             entry.Id         = grip.OwnerID;
-            entry.ActiveGrip = grip;                // 值拷贝，安全
+            entry.ActiveGrip = grip;        // 值拷贝，安全
             entry.Handler    = handler;
             entry.DragState  = std::move(dragState);
 
@@ -121,29 +190,21 @@ namespace MiniCAD
         if (m_dragEntries.empty())
             return false;
 
-        // 修复：存索引，不存指向 vector 内部的裸指针
         m_activeGripIdx = hits[0];
-        m_dragging      = true;
+        m_activated     = true;
+        // m_following 在 MouseUp 后才置 true
 
         return true;
     }
 
     // ─────────────────────────────────────────────
-    // OnMouseMove — 修复：
-    //   1. 拖拽中不调用 Rebuild()（会清空 m_grips）
-    //   2. UpdateDrag 负责同步夹点坐标
+    // DoConfirm — 跟随中再次左键，确认提交 Command
     // ─────────────────────────────────────────────
-    bool GripEditor::OnMouseMove(const InputEvent& e)
+    bool GripEditor::DoConfirm(const InputEvent& e)
     {
+        // 用当前鼠标位置（含 snap）做最后一次更新，确保落点精准
         Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
-        m_hoveredIdxs = HitTestAll(sp);
-
-        if (!m_dragging)
-            return false;
-
-        Math::Point3 worldPos = e.HasSnap ? e.SnapWorld : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y); 
-
-		m_overlay.Clear(); // 清除上一次的预览几何
+        Math::Point3 worldPos = e.HasSnap ? e.SnapWorld : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
 
         for (auto& entry : m_dragEntries)
         {
@@ -151,59 +212,38 @@ namespace MiniCAD
             auto* entity = static_cast<Entity*>(obj);
             if (!entity || !entry.Handler) continue;
 
-            // Handler 内部同时更新 Entity 几何 + m_grips 中的夹点坐标   // 拖拽时使用的是开始时的值拷贝，不受 vector 重分配影响
-            entry.Handler->UpdateDrag(entity, entry.DragState.get(), entry.ActiveGrip, worldPos, m_grips);
-		  
-			// 绘制预览（Handler 内部实现）
-            entry.Handler->DrawPreview(entity, entry.DragState.get(), entry.ActiveGrip, m_overlay);
-
+            entry.Handler->UpdateDrag(entity, entry.DragState.get(),
+                                      entry.ActiveGrip, worldPos, m_grips);
         }
 
-        m_scene.MarkDirty();
-
-        // 注意：拖拽中不 Rebuild，夹点由 Handler::UpdateDrag 实时同步
-        return true;
-    }
-
-    // ─────────────────────────────────────────────
-    // OnMouseUp — 修复：将操作推入 CommandStack
-    // ─────────────────────────────────────────────
-    bool GripEditor::OnMouseUp(const InputEvent& e)
-    {
-        if (!m_dragging)
-            return false;
-
+        // 收集并提交 Command
         std::vector<DragEntityEntry> allEntries;
 
         for (auto& entry : m_dragEntries)
         {
             auto obj = m_scene.GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
+            if (!entity || !entry.Handler) continue;
 
-            if (!entity || !entry.Handler)
-                continue;
-
-            DragEntityEntry cmdEntry; 
-
+            DragEntityEntry cmdEntry;
             if (entry.Handler->EndDrag(entity, entry.DragState.get(), cmdEntry))
-            {
                 allEntries.push_back(std::move(cmdEntry));
-            }
         }
 
         if (!allEntries.empty())
-        {
             m_cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(allEntries)));
-        }
 
+        // 重置所有状态
         m_dragEntries.clear();
         m_activeGripIdx = -1;
-        m_dragging      = false;
-		m_overlay.Clear(); // 清除预览几何
-		m_picking.ClearDirty(); // 确保拖动结束后拾取状态正确
-        m_scene.MarkDirty(); 
+        m_activated     = false;
+        m_following     = false;
 
-        // 拖拽结束后强制重建夹点（几何已变）
+        m_overlay.Clear(); 
+
+        m_scene.MarkDirty();
+
+        // 提交后重建夹点（几何已变）
         m_dirty = true;
         Rebuild();
 
@@ -211,26 +251,27 @@ namespace MiniCAD
     }
 
     // ─────────────────────────────────────────────
-    // CancelDrag — 还原所有 Entity 到快照
+    // CancelDrag — 右键或外部调用，还原所有 Entity 到快照
     // ─────────────────────────────────────────────
     void GripEditor::CancelDrag()
     {
-        if (!m_dragging)
+        if (!m_activated && !m_following)
             return;
 
         for (auto& entry : m_dragEntries)
         {
             auto obj = m_scene.GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
-            if (!entity || !entry.Handler) continue;
-
-            entry.Handler->CancelDrag(entity, entry.DragState.get());
+            if (entity && entry.Handler)
+                entry.Handler->CancelDrag(entity, entry.DragState.get());
         }
 
         m_dragEntries.clear();
         m_activeGripIdx = -1;
-        m_dragging      = false;
+        m_activated     = false;
+        m_following     = false;
 
+        m_overlay.Clear();
         m_scene.MarkDirty();
 
         // 还原后重建夹点到原始位置
