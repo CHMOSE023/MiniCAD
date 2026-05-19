@@ -219,8 +219,26 @@ namespace
         return EM_TRUE;
     }
 
+    // 浏览器保留键：F5 刷新 / F11 全屏 / F12 DevTools / Ctrl+R / Ctrl+Shift+I 等
+    // 不能 preventDefault，否则用户无法刷新、打开调试器
+    bool IsBrowserReservedKey(const EmscriptenKeyboardEvent* e)
+    {
+        const auto code = e->keyCode;
+        if (code == 116) return true;                  // F5
+        if (code == 122) return true;                  // F11
+        if (code == 123) return true;                  // F12
+        if (e->ctrlKey && code == 82) return true;     // Ctrl+R
+        if (e->ctrlKey && e->shiftKey && code == 73) return true; // Ctrl+Shift+I
+        if (e->ctrlKey && e->shiftKey && code == 74) return true; // Ctrl+Shift+J
+        if (e->ctrlKey && e->shiftKey && code == 67) return true; // Ctrl+Shift+C
+        return false;
+    }
+
     EM_BOOL OnKey(int eventType, const EmscriptenKeyboardEvent* e, void*)
     {
+        if (IsBrowserReservedKey(e))
+            return EM_FALSE;   // 不消费 → 浏览器接管
+
         MiniCAD::InputEvent input = {};
         input.Type = eventType == EMSCRIPTEN_EVENT_KEYDOWN
             ? MiniCAD::InputEventType::KeyDown

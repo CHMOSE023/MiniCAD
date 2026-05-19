@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cmd /c \"D:\\\\dev\\\\emsdk\\\\emsdk_env.bat && emcmake cmake -S . -B out\\\\web -G Ninja -DCMAKE_MAKE_PROGRAM=\"\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Enterprise\\\\Common7\\\\IDE\\\\CommonExtensions\\\\Microsoft\\\\CMake\\\\Ninja\\\\ninja.exe\"\"\")",
+      "PowerShell(cmd /c \"D:\\\\dev\\\\emsdk\\\\emsdk_env.bat && cmake --build out\\\\web --target MiniCADWeb 2>&1\" ; Write-Host \"Exit code: $LASTEXITCODE\")",
+      "Bash(cmd /c \"D:\\\\dev\\\\emsdk\\\\emsdk_env.bat && cmake --build out\\\\web --target MiniCADWeb 2>&1\")",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"D:\\\\code\\\\MiniCAD\\\\build_web.bat\"\\) | Select-Object -First 3; $bytes | ForEach-Object { \"{0:X2}\" -f $_ })"
+    ]
+  }
+}

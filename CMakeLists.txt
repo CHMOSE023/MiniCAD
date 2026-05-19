@@ -14,6 +14,31 @@ if(WIN32)
 endif()
 
 if(EMSCRIPTEN)
+    # Force Debug-style build for browser debugging (no optimization, full DWARF).
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
+    endif()
+
+    # -fexceptions          : 启用 C++ 异常（throw 不变成 unreachable）
+    # -g3                   : 最完整的 DWARF 调试信息（变量名、行号、类型）
+    # -O0                   : 不做优化，行号/变量与源码 1:1
+    add_compile_options(-fexceptions -g3 -O0)
+
+    # -sASSERTIONS=2        : 运行时安全检查（含内存对齐、参数校验）
+    # -sSAFE_HEAP=1         : 堆访问越界检查
+    # -sSTACK_OVERFLOW_CHECK=2 : 栈溢出检测
+    # -gseparate-dwarf      : 把 DWARF 输出到独立 .debug.wasm 文件（更快加载）
+    add_link_options(
+        -fexceptions
+        -g3
+        -O0
+        -gseparate-dwarf=index.debug.wasm
+        -sASSERTIONS=2
+        -sSAFE_HEAP=1
+        -sSTACK_OVERFLOW_CHECK=2
+        -sNO_DISABLE_EXCEPTION_CATCHING
+    )
+
     file(GLOB_RECURSE MINICAD_CORE_SRC CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/Core/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
@@ -44,6 +69,8 @@ if(EMSCRIPTEN)
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
         "-sALLOW_MEMORY_GROWTH=1"
+        "-sSTACK_SIZE=5242880"
+        "-sINITIAL_MEMORY=33554432"
         "-sWASM=1"
         "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel']"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
@@ -54,6 +81,13 @@ if(EMSCRIPTEN)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/MiniCADWeb"
         OUTPUT_NAME "index"
         SUFFIX ".html"
+    )
+
+    add_custom_command(TARGET MiniCADWeb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/assets/icons"
+                "${CMAKE_BINARY_DIR}/MiniCADWeb/icons"
+        COMMENT "Copy icons for MiniCADWeb"
     )
 else()
     add_library(Imgui

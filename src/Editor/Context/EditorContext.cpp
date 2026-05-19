@@ -266,12 +266,14 @@ namespace MiniCAD
         m_gripEditor.RebuildGrips();
 
         // 3. 接管新工具，注册完成回调
+        //    OnFinished 由工具在自己方法里调用，不能同步 reset 自己 → 标记延迟销毁
         m_tool = std::move(tool);
+        m_pendingToolReset = false;
         m_tool->OnFinished = [this]()
         {
-            m_toolSuspended = false;
+            m_toolSuspended    = false;
             m_overlay.Clear();
-            m_tool.reset();
+            m_pendingToolReset = true;
         };
     }
 
@@ -310,6 +312,13 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     bool EditorContext::OnInput(const InputEvent& inputEvent)
     {
+        // ── 0. 延迟销毁前一工具（OnFinished 不能在工具方法内同步 reset 自己）─
+        if (m_pendingToolReset)
+        {
+            m_pendingToolReset = false;
+            m_tool.reset();
+        }
+
         // ── 1. Snap + 正交约束 ───────────────────────────────────────────
         UpdateSnap(inputEvent);
         InputEvent e = InjectSnap(inputEvent);
@@ -498,6 +507,7 @@ namespace MiniCAD
         if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle))
         {
             m_viewport.Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+            m_scene.MarkDirty();
             return true;
         }
 
@@ -505,6 +515,7 @@ namespace MiniCAD
         if (e.Type == InputEventType::MouseWheel)
         {
             m_viewport.Zoom(e.WheelDelta, e.MouseX, e.MouseY);
+            m_scene.MarkDirty();
             return true;
         }
 

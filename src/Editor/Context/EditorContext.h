@@ -125,7 +125,8 @@ namespace MiniCAD
 
     private:
         std::unique_ptr<ITool> m_tool;
-        bool                   m_toolSuspended = false;  // 中键平移期间为 true
+        bool                   m_toolSuspended    = false;  // 中键平移期间为 true
+        bool                   m_pendingToolReset = false;  // 延迟销毁，避免工具在自己方法内同步 reset 导致 UAF
 
         Scene&         m_scene;
         CommandStack&  m_cmdStack;

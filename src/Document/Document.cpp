@@ -33,6 +33,7 @@ namespace MiniCAD
     void Document::Resize(float width, float height)
     {
         m_viewport.Resize(width, height);
+        m_scene.MarkDirty();
     }
 
     void Document::SetPath(const std::string& path)

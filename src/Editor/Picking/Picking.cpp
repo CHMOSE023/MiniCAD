@@ -153,8 +153,11 @@ namespace MiniCAD
                     double radialDist = std::abs(distToCenter - sr);
 
                     // 径向距离超出阈值，直接跳过（不可能命中弧线）
+                    // 注意：lambda 必须保持 void 返回类型，不能 `return false;`
+                    // 否则 clang 会把 lambda 返回类型推导为 bool，其他分支缺少 return
+                    // 在 wasm 下会被插入 `unreachable` trap。
                     if (radialDist >= thresh)
-                        return false;   // ForEachObject 用 lambda，此处用 goto / return false 替代
+                        return;
 
                     // ── 关键修复：将屏幕坐标反投影到世界空间再判断角度 ──────────────
                     //
