@@ -7,6 +7,7 @@
 #endif
 
 #include "Render/GpuTypes.hpp"
+#include "Render/VertexTypes.hpp"
 
 #include <array>
 #include <cstddef>
@@ -17,6 +18,7 @@ namespace MiniCAD
 {
     namespace
     {
+        // ── 普通几何着色器（线段/三角形）──────────────────────────
         constexpr const char* kVertexShader = R"(#version 300 es
             precision highp float;
 
@@ -45,6 +47,44 @@ namespace MiniCAD
                 fragColor = vColor;
             }
         )";
+
+        // ── 贴图文字着色器 ─────────────────────────────────────────
+        constexpr const char* kTexVertexShader = R"(#version 300 es
+            precision highp float;
+
+            layout(location = 0) in vec3 aPosition;
+            layout(location = 1) in vec4 aColor;
+            layout(location = 2) in vec2 aUV;
+
+            uniform mat4 uViewProj;
+
+            out vec4 vColor;
+            out vec2 vUV;
+
+            void main()
+            {
+                gl_Position = uViewProj * vec4(aPosition, 1.0);
+                vColor = aColor;
+                vUV    = aUV;
+            }
+        )";
+
+        // 采样 R8 纹理的红通道作为透明度
+        constexpr const char* kTexFragmentShader = R"(#version 300 es
+            precision highp float;
+
+            uniform sampler2D uFont;
+
+            in vec4 vColor;
+            in vec2 vUV;
+            out vec4 fragColor;
+
+            void main()
+            {
+                float alpha = texture(uFont, vUV).r;
+                fragColor = vec4(vColor.rgb, vColor.a * alpha);
+            }
+        )";
     }
 
     WebGLRenderer::WebGLRenderer()
@@ -55,12 +95,13 @@ namespace MiniCAD
     WebGLRenderer::~WebGLRenderer()
     {
 #if defined(__EMSCRIPTEN__)
-        if (m_vbo != 0)
-            glDeleteBuffers(1, &m_vbo);
-        if (m_vao != 0)
-            glDeleteVertexArrays(1, &m_vao);
-        if (m_program != 0)
-            glDeleteProgram(m_program);
+        if (m_vbo != 0)      glDeleteBuffers(1, &m_vbo);
+        if (m_vao != 0)      glDeleteVertexArrays(1, &m_vao);
+        if (m_program != 0)  glDeleteProgram(m_program);
+
+        if (m_texVbo != 0)     glDeleteBuffers(1, &m_texVbo);
+        if (m_texVao != 0)     glDeleteVertexArrays(1, &m_texVao);
+        if (m_texProgram != 0) glDeleteProgram(m_texProgram);
 #endif
     }
 
@@ -91,6 +132,40 @@ namespace MiniCAD
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDisable(GL_DEPTH_TEST);
+
+        InitializeTextured();
+#endif
+    }
+
+    void WebGLRenderer::InitializeTextured()
+    {
+#if defined(__EMSCRIPTEN__)
+        const unsigned vs = CompileShader(GL_VERTEX_SHADER, kTexVertexShader);
+        const unsigned fs = CompileShader(GL_FRAGMENT_SHADER, kTexFragmentShader);
+        m_texProgram = LinkProgram(vs, fs);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+
+        m_texUViewProj = glGetUniformLocation(m_texProgram, "uViewProj");
+        m_texUFont     = glGetUniformLocation(m_texProgram, "uFont");
+
+        glGenVertexArrays(1, &m_texVao);
+        glBindVertexArray(m_texVao);
+        glGenBuffers(1, &m_texVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_texVbo);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex_P3_C4_UV),
+                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4_UV, pos)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex_P3_C4_UV),
+                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4_UV, color)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex_P3_C4_UV),
+                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4_UV, uv)));
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
 #endif
     }
 
@@ -186,11 +261,47 @@ namespace MiniCAD
 #endif
     }
 
+    void WebGLRenderer::SubmitTextured(std::span<const Vertex_P3_C4_UV> verts,
+                                       const Math::Mat4& viewProj,
+                                       void* nativeSRV,
+                                       bool  /*depth*/,
+                                       bool  /*blend*/)
+    {
+        if (verts.empty() || !nativeSRV)
+            return;
+
+#if defined(__EMSCRIPTEN__)
+        const GLuint tex     = static_cast<GLuint>(reinterpret_cast<uintptr_t>(nativeSRV));
+        const auto   gpuMat  = Float4x4::FromMat4(viewProj);
+
+        glUseProgram(m_texProgram);
+        glUniformMatrix4fv(m_texUViewProj, 1, GL_FALSE, gpuMat.m);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glUniform1i(m_texUFont, 0);
+
+        glBindVertexArray(m_texVao);
+        glBindBuffer(GL_ARRAY_BUFFER, m_texVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(verts.size_bytes()),
+                     verts.data(),
+                     GL_DYNAMIC_DRAW);
+
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+#endif
+    }
+
     void WebGLRenderer::EndFrame()
     {
 #if defined(__EMSCRIPTEN__)
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
+        glUseProgram(0);
 #endif
     }
 }

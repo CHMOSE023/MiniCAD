@@ -9,6 +9,9 @@
 #include "Editor/Input/KeyCode.h"
 #include "Scene/Scene.h"
 #include "Core/Math/Point3.hpp"
+#ifdef MINICAD_WEB
+#include <emscripten.h>
+#endif
 
 // ── 绘制工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/LineTool.h"
@@ -85,6 +88,10 @@ namespace MiniCAD
             {
                 m_textRequest.Active    = true;
                 m_textRequest.InsertPos = pos;
+#ifdef MINICAD_WEB
+                // 通知 JS 弹出文字输入面板
+                EM_ASM({ if (typeof window._minicadShowTextInput === 'function') window._minicadShowTextInput(); });
+#endif
             };
             return tool;
         });

@@ -344,6 +344,25 @@ extern "C"
         if (g_document) g_document->GetEditor().StartRotateTool();
     }
 
+    // ── 文字工具 ───────────────────────────────────────────────────
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartText()
+    {
+        if (g_document) g_document->GetEditor().StartTextTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_SubmitText(const char* text, float height)
+    {
+        if (g_document && text)
+        {
+            g_document->GetEditor().GetTextInputRequest().Height = height;
+            g_document->GetEditor().SubmitTextInput(std::string(text));
+        }
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_CancelText()
+    {
+        if (g_document)
+            g_document->GetEditor().SubmitTextInput("");
+    }
+
     // ── 通用操作 ───────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Delete()
     {

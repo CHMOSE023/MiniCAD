@@ -72,7 +72,7 @@ if(EMSCRIPTEN)
         "-sSTACK_SIZE=5242880"
         "-sINITIAL_MEMORY=33554432"
         "-sWASM=1"
-        "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel']"
+        "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel','_MiniCAD_StartText','_MiniCAD_SubmitText','_MiniCAD_CancelText']"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
         "--shell-file=${CMAKE_SOURCE_DIR}/web/index.html"
     )

@@ -648,6 +648,133 @@
              }
          }
 
+         /* ── 文字输入浮层 ─────────────────────────────────────────── */
+         #text-input-overlay {
+             display: none;
+             position: fixed;
+             inset: 0;
+             z-index: 1000;
+             align-items: center;
+             justify-content: center;
+             background: rgba(0, 0, 0, 0.55);
+             backdrop-filter: blur(3px);
+         }
+
+         #text-input-overlay.visible {
+             display: flex;
+         }
+
+         .text-panel {
+             background: linear-gradient(160deg, var(--bg-2) 0%, var(--bg-1) 100%);
+             border: 1px solid var(--border-hi);
+             border-radius: var(--radius-lg);
+             box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,163,255,0.08);
+             padding: 18px 20px 16px;
+             width: 320px;
+             max-width: calc(100vw - 32px);
+             display: flex;
+             flex-direction: column;
+             gap: 12px;
+         }
+
+         .text-panel-title {
+             font-size: 13px;
+             font-weight: 600;
+             color: var(--text);
+             letter-spacing: 0.3px;
+             display: flex;
+             align-items: center;
+             gap: 8px;
+         }
+
+         .text-panel-title::before {
+             content: "";
+             display: inline-block;
+             width: 3px;
+             height: 14px;
+             background: var(--accent);
+             border-radius: 2px;
+             box-shadow: 0 0 8px var(--accent-glow);
+         }
+
+         #text-input-field {
+             width: 100%;
+             height: 36px;
+             padding: 0 10px;
+             background: var(--bg-0);
+             border: 1px solid var(--border-hi);
+             border-radius: var(--radius-md);
+             color: var(--text);
+             font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+             outline: none;
+             transition: border-color 0.15s ease, box-shadow 0.15s ease;
+         }
+
+         #text-input-field:focus {
+             border-color: var(--accent);
+             box-shadow: 0 0 0 2px var(--accent-glow);
+         }
+
+         .text-panel-hint {
+             font-size: 11px;
+             color: var(--text-dim);
+         }
+
+         .text-panel-actions {
+             display: flex;
+             gap: 8px;
+             justify-content: flex-end;
+         }
+
+         .text-panel-actions button {
+             height: 28px;
+             padding: 0 14px;
+             font-size: 12px;
+         }
+
+         #text-btn-ok {
+             background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
+             border-color: #3a93ec;
+             color: #fff;
+             box-shadow: 0 0 0 1px rgba(78,163,255,0.2);
+         }
+
+         #text-btn-ok:hover {
+             background: linear-gradient(180deg, #3a8ee8 0%, #2d72c3 100%);
+         }
+
+         .text-panel-row {
+             display: flex;
+             align-items: center;
+             gap: 8px;
+         }
+
+         .text-panel-row label {
+             font-size: 12px;
+             color: var(--text-mute);
+             white-space: nowrap;
+             flex-shrink: 0;
+             width: 28px;
+         }
+
+         #text-height-field {
+             width: 80px;
+             height: 32px;
+             padding: 0 8px;
+             background: var(--bg-0);
+             border: 1px solid var(--border-hi);
+             border-radius: var(--radius-md);
+             color: var(--text);
+             font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+             outline: none;
+             transition: border-color 0.15s ease, box-shadow 0.15s ease;
+         }
+
+         #text-height-field:focus {
+             border-color: var(--accent);
+             box-shadow: 0 0 0 2px var(--accent-glow);
+         }
+
          /* ── 横屏手机（高 ≤ 480px）：尽量给画布腾空间 ─────────────── */
          @media (max-height: 480px) and (orientation: landscape) {
              :root {
@@ -678,7 +805,7 @@
                 <span class="brand-name">MiniCAD</span>
             </div>
 
-            <div class="tb-group"> 
+            <div class="tb-group">
                 <button id="btn-point" title="点 (PT)">           <span class="tb-icon icon-point"></span> 点</button>
                 <button id="btn-line" title="直线 (L)">           <img class="tb-icon" src="icons/Line.png" alt=""> 直线</button>
                 <button id="btn-rectangle" title="矩形 (REC)">    <img class="tb-icon" src="icons/Rect.png" alt=""> 矩形</button>
@@ -687,6 +814,7 @@
                 <button id="btn-ellipse" title="椭圆 (EL)">       <img class="tb-icon" src="icons/Ellipse.png" alt=""> 椭圆</button>
                 <button id="btn-polyline" title="多段线 (PL)">    <img class="tb-icon" src="icons/Pline.png" alt=""> 多段线</button>
                 <button id="btn-spline" title="样条曲线 (SP)">    <img class="tb-icon" src="icons/Spline.png" alt=""> 样条</button>
+                <button id="btn-text" title="文字 (T)">           <img class="tb-icon" src="icons/Text.png" alt=""> 文字</button>
             </div>
 
             <div class="tb-sep"></div>
@@ -721,6 +849,24 @@
         <!-- ── Canvas ──────────────────────────────────────────────── -->
         <div id="canvas-wrap">
             <canvas id="minicad-canvas" tabindex="0" oncontextmenu="return false"></canvas>
+        </div>
+
+        <!-- ── 文字输入浮层 ────────────────────────────────────────── -->
+        <div id="text-input-overlay" role="dialog" aria-modal="true" aria-labelledby="text-panel-title">
+            <div class="text-panel">
+                <div class="text-panel-title" id="text-panel-title">输入文字</div>
+                <input id="text-input-field" type="text" placeholder="请输入文字内容…"
+                       autocomplete="off" spellcheck="false" maxlength="256">
+                <div class="text-panel-row">
+                    <label for="text-height-field">字高</label>
+                    <input id="text-height-field" type="number" value="2.5" min="0.1" max="1000" step="0.5">
+                </div>
+                <div class="text-panel-hint">按 <kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 取消</div>
+                <div class="text-panel-actions">
+                    <button id="text-btn-cancel">取消</button>
+                    <button id="text-btn-ok">确定</button>
+                </div>
+            </div>
         </div>
 
         <!-- ── Status bar ──────────────────────────────────────────── -->
@@ -799,15 +945,63 @@
                 window.addEventListener('resize', syncCanvasCssSize);
                 Module.runtimeReady = true;
 
+                // ── 文字输入浮层 ─────────────────────────────────────
+                const textOverlay   = document.getElementById('text-input-overlay');
+                const textField     = document.getElementById('text-input-field');
+                const textHeightFld = document.getElementById('text-height-field');
+
+                function showTextOverlay() {
+                    textField.value = '';
+                    textOverlay.classList.add('visible');
+                    window._textInputActive = true;
+                    requestAnimationFrame(() => textField.focus());
+                }
+
+                function hideTextOverlay() {
+                    textOverlay.classList.remove('visible');
+                    window._textInputActive = false;
+                    canvas.focus();
+                }
+
+                function submitText() {
+                    const text   = textField.value.trim();
+                    const height = parseFloat(textHeightFld.value) || 2.5;
+                    hideTextOverlay();
+                    if (text) {
+                        Module.ccall('MiniCAD_SubmitText', null, ['string', 'number'], [text, height]);
+                    } else {
+                        Module.ccall('MiniCAD_CancelText', null, [], []);
+                    }
+                    setMode('就绪');
+                    activateBtn(null);
+                }
+
+                function cancelText() {
+                    hideTextOverlay();
+                    Module.ccall('MiniCAD_CancelText', null, [], []);
+                    setMode('就绪');
+                    activateBtn(null);
+                }
+
+                // 供 pre-WASM 捕获监听器调用（在 WASM 加载前注册，需通过 window 引用）
+                window._minicadSubmitText    = submitText;
+                window._minicadCancelText    = cancelText;
+                // C++ 通过 EM_ASM 调用此函数弹出浮层
+                window._minicadShowTextInput = showTextOverlay;
+
+                document.getElementById('text-btn-ok').onclick     = submitText;
+                document.getElementById('text-btn-cancel').onclick  = cancelText;
+
                 // Draw tools
-                toolBtn('btn-line', 'MiniCAD_StartLine', '直线');
-                toolBtn('btn-polyline', 'MiniCAD_StartPolyline', '多段线');
-                toolBtn('btn-circle', 'MiniCAD_StartCircle', '圆');
-                toolBtn('btn-arc', 'MiniCAD_StartArc', '圆弧');
-                toolBtn('btn-ellipse', 'MiniCAD_StartEllipse', '椭圆');
+                toolBtn('btn-line',      'MiniCAD_StartLine',      '直线');
+                toolBtn('btn-polyline',  'MiniCAD_StartPolyline',  '多段线');
+                toolBtn('btn-circle',    'MiniCAD_StartCircle',    '圆');
+                toolBtn('btn-arc',       'MiniCAD_StartArc',       '圆弧');
+                toolBtn('btn-ellipse',   'MiniCAD_StartEllipse',   '椭圆');
                 toolBtn('btn-rectangle', 'MiniCAD_StartRectangle', '矩形');
-                toolBtn('btn-spline', 'MiniCAD_StartSpline', '样条');
-                toolBtn('btn-point', 'MiniCAD_StartPoint', '点');
+                toolBtn('btn-spline',    'MiniCAD_StartSpline',    '样条');
+                toolBtn('btn-point',     'MiniCAD_StartPoint',     '点');
+                toolBtn('btn-text',      'MiniCAD_StartText',      '文字 · 点击插入点');
 
                 // Edit tools
                 toolBtn('btn-move', 'MiniCAD_StartMove', '移动');
@@ -868,6 +1062,16 @@
                 canvas.focus();
             }
         };
+    </script>
+    <script>
+        // 在 WASM keydown 捕获监听器注册之前先占位，阻止文字输入期间的按键被 C++ 命令系统消费
+        window._textInputActive = false;
+        window.addEventListener('keydown', function(e) {
+            if (!window._textInputActive) return;
+            e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
+            if (e.key === 'Enter')  { e.preventDefault(); if (window._minicadSubmitText) window._minicadSubmitText(); }
+            if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelText) window._minicadCancelText(); }
+        }, true /* capture */);
     </script>
     {{{ SCRIPT }}}
 </body>

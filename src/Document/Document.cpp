@@ -10,7 +10,9 @@
 #include <vector>
 #include <memory>
 #include <utility>
-#ifndef MINICAD_WEB
+#ifdef MINICAD_WEB
+#include "Render/WebGL/WebFontAtlas.hpp"
+#else
 #include <imgui.h>
 #endif
 namespace MiniCAD
@@ -195,7 +197,12 @@ namespace MiniCAD
             return true;
         };
 #else
-        GlyphProvider glyphProvider = nullptr; // Web 端暂不支持文字渲染
+        // Web 端：用内嵌 8x8 位图字体 atlas
+        static WebFontAtlas s_fontAtlas;
+        if (!m_fontTexture)
+            m_fontTexture = reinterpret_cast<void*>(static_cast<uintptr_t>(s_fontAtlas.GetTexture()));
+
+        GlyphProvider glyphProvider = s_fontAtlas.MakeProvider();
 #endif
         DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider);
 
