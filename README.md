@@ -152,11 +152,10 @@ MiniCAD 是一个面向工程师和开发者的**跨平台 CAD 编辑器框架**
 ### 阶段规划
 
 ```
-[×]  阶段 0  基础设施                              
-[×]  ├── CMake 多目标工程搭建
-[×]  ├── Core/Math + Core/Geom 实现与测试
-[×]  ├── Core/Base（Result<T>、错误码）
-[×]  └── Platform 接口 + Desktop 实现（窗口 + 输入）
+[√]  阶段 0  基础设施                              
+[√]  ├── CMake 多目标工程搭建
+[√]  ├── Core/Math + Core/Geom 实现与测试 
+[×]  └── Editor/Input 接口 + Desktop 实现（窗口 + 输入）
      
 [·]  阶段 1  数据层 MVP                             
 [√]  ├── Scene（EntityDatabase + EntityHandle + Layer）
@@ -188,14 +187,12 @@ MiniCAD 是一个面向工程师和开发者的**跨平台 CAD 编辑器框架**
 [×]  └── Tests/Integration 第一批
      
 [×]  阶段 5  功能完善                              
-[×]  ├── Modify 类 Tool（Move、Rotate、Trim）
-[×]  ├── Document/Constraint（DOFAnalyzer + 基础 Solver）
-[×]  ├── Document/IO/Formats（Native + SVG）
-[×]  ├── 第二渲染后端（WebGPU 或 Vulkan）
+[√]  ├── Modify 类 Tool（Move、Rotate、Trim） 
+[√]  ├── 第二渲染后端（WebGL2）
 [×]  └── Plugin 框架骨架
      
 [×]  阶段 6  双端 + 发布质量                         
-[×]  ├── Platform/Web + MainWasm.cpp
+[√]  ├── Platform/Web + MainWasm.cpp
 [×]  ├── 剩余渲染后端
 [×]  ├── DXF 格式支持
 [×]  ├── 完整 Tests 覆盖
@@ -209,9 +206,9 @@ MiniCAD 是一个面向工程师和开发者的**跨平台 CAD 编辑器框架**
 |---|---|---|
 | 能显示线段 | **√** | 技术可行性验证完成 |
 | 可交互 MVP | √ | 可以画线、Grip 编辑、撤销、保存 |
-| 内部可用版 | × | 稳定到可以每天使用 |
-| 功能完整版 | × | 对标基础 CAD 功能集 |
-| 双端发布版 | × | Desktop + Web 同时可用 |
+| 内部可用版 | √ | 稳定到可以每天使用 |
+| 功能完整版 | √ | 对标基础 CAD 功能集 |
+| 双端发布版 | √ | Desktop + Web 同时可用 |
 
  
 ---
@@ -409,8 +406,4 @@ MiniCAD
     └── Integration/                                # 跨层联合测试：画线→Undo→渲染验证、Grip 编辑→约束求解、多文档事件隔离
 ```
  
-
----
- 
-
-*日期：2026-05-08* 
+  
