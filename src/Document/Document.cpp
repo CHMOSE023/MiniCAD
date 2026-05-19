@@ -1,4 +1,5 @@
-#include "Document.h"    
+#include "Document.h"
+#include "DrawContext.hpp"
 #include "Render/IRenderer.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -150,11 +151,12 @@ namespace MiniCAD
     } 
       
     void Document::UpdateSceneVerties()
-    { 
-       if (!m_scene.IsDirty() && !m_picking.IsDirty())
+    {
+        if (!m_scene.IsDirty() && !m_picking.IsDirty())
             return;
-         
+
         m_sceneVertices.clear();
+        m_textVertices.clear();
       
         const auto& hoverIds     = m_picking.GetHovered();
         const auto& selectionIds = m_picking.GetSelection();
@@ -168,7 +170,7 @@ namespace MiniCAD
             m_editor.GetGripEditor().RebuildGrips();
         }
 
-        DrawContext ctx(m_sceneVertices, m_overlay);
+        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay);
 
         m_scene.ForEachObject([&](const Object& obj) 
         {  
@@ -192,8 +194,10 @@ namespace MiniCAD
         ViewState vs; 
 
         // 场景点
-        vs.Scene            = m_sceneVertices;
-        vs.Overlay          = m_overlayVertices; 
+        vs.Scene       = m_sceneVertices;
+        vs.Overlay     = m_overlayVertices;
+        vs.TextScene   = m_textVertices;
+        vs.FontTexture = m_fontTexture;
 
         // 选择范围框
         vs.Selection.Active = m_picking.IsBoxSelecting();

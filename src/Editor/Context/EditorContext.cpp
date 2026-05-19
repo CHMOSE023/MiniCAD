@@ -19,6 +19,9 @@
 #include "Editor/Tools/EllipseTool.h"
 #include "Editor/Tools/PolylineTool.h"
 #include "Editor/Tools/SplineTool.h"
+#include "Editor/Tools/TextTool.h"
+#include "Core/Entity/TextEntity.hpp"
+#include "Document/Command/AddEntityCommand.h"
 
 // ── 编辑工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/Modify/MoveTool.h"
@@ -75,6 +78,16 @@ namespace MiniCAD
         RegisterTool("Ellipse",   [this] { return std::make_unique<EllipseTool>  (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Polyline",  [this] { return std::make_unique<PolylineTool> (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Spline",    [this] { return std::make_unique<SplineTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
+        RegisterTool("Text",      [this]
+        {
+            auto tool = std::make_unique<TextTool>(m_viewport, m_overlay);
+            tool->OnInsertPointPicked = [this](Math::Point3 pos)
+            {
+                m_textRequest.Active    = true;
+                m_textRequest.InsertPos = pos;
+            };
+            return tool;
+        });
 
 
         // ── 编辑工具 ────────────────────────────────────────── 
@@ -153,7 +166,9 @@ namespace MiniCAD
         RegisterAlias("EL",  "Ellipse");
         RegisterAlias("SP",  "Spline");
         RegisterAlias("M",   "Move");
-        RegisterAlias("CO",  "Copy");  
+        RegisterAlias("CO",  "Copy");
+        RegisterAlias("T",   "Text");
+        RegisterAlias("DT",  "Text");
         RegisterAlias("TR",  "Trim");
         RegisterAlias("EX",  "Extend");
         RegisterAlias("BR",  "Break");
@@ -291,6 +306,37 @@ namespace MiniCAD
     void EditorContext::StartEllipseTool()   { ActivateToolById("Ellipse");   }
     void EditorContext::StartPolylineTool()  { ActivateToolById("Polyline");  }
     void EditorContext::StartSplineTool()    { ActivateToolById("Spline");    }
+    void EditorContext::StartTextTool()     { ActivateToolById("Text");      }
+
+    void EditorContext::SubmitTextInput(const std::string& utf8Text)
+    {
+        if (!m_textRequest.Active || utf8Text.empty())
+        {
+            m_textRequest.Active = false;
+            return;
+        }
+
+        const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
+
+        auto id  = m_scene.NextObjectID();
+        auto ent = std::make_unique<TextEntity>(
+            id,
+            m_textRequest.InsertPos,
+            utf8Text,
+            m_textRequest.Height,
+            m_textRequest.Rotation);
+
+        EntityAttr attr;
+        attr.Color   = layer.GetColor();
+        attr.LayerId = layer.GetID();
+        ent->SetAttr(attr);
+
+        auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
+        m_cmdStack.Execute(std::move(cmd), m_scene);
+
+        m_textRequest.Active = false;
+        printf("[TextTool] 文字已添加: %s\n", utf8Text.c_str());
+    }
 
     // ─────────────────────────────────────────────────────────────
     //  编辑工具便捷方法

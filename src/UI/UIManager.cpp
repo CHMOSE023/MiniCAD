@@ -41,7 +41,8 @@ namespace MiniCAD
             { Tool::Ellipse,    "Ellipse", "椭圆 (E)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartEllipseTool(); }  },
             { Tool::Polyline,   "Pline",   "多段线 (Pl)"   ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartPolylineTool(); }  },
             { Tool::Spline,     "Spline",  "样条曲线 (SPL)",[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartSplineTool(); }   },
-            /*---------------------------------------------*/ 
+            { Tool::Text,       "Text",    "文字 (T)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartTextTool(); }     },
+            /*---------------------------------------------*/
             { Tool::Copy,       "Copy",    "复制 (co)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartCopyTool(); }},
             { Tool::Move,       "Move",    "移动 (mv)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMoveTool(); }},
             { Tool::Mirror,     "Mirror",  "镜像 (mi)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMirrorTool(); }},
@@ -165,6 +166,15 @@ namespace MiniCAD
     void UIManager::Shutdown()  { m_imgui->Shutdown(); }
     void UIManager::BeginFrame(){ m_imgui->Begin(); }
     void UIManager::EndFrame()  { m_imgui->End(); }
+
+    void UIManager::SyncFonts(DocumentManager& dm)
+    {
+        // BeginFrame 之后才能拿到有效的 TexID；在 doc->Render() 之前同步，
+        // 保证本帧 SubmitTextured 用的是最新字体纹理。
+        void* fontTex = (void*)(uintptr_t)ImGui::GetIO().Fonts->TexRef.GetTexID();
+        if (auto* doc = dm.GetActive())
+            doc->SetFontTexture(fontTex);
+    }
      
     void UIManager::Render(DocumentManager& dm)
     {    
@@ -208,13 +218,58 @@ namespace MiniCAD
         }
 
         // ── 4. 状态栏 ────────────────────────────────────────────
-        DrawStatusBar(dm); 
+        DrawStatusBar(dm);
+
+        // ── 5. 文字输入弹窗 ───────────────────────────────────────
+        DrawTextInputPopup(dm);
 
         ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
         ImGui::DockSpace(dockspace_id, ImVec2(0, 0), ImGuiDockNodeFlags_PassthruCentralNode); 
         ImGui::End();
     }
   
+    void UIManager::DrawTextInputPopup(DocumentManager& dm)
+    {
+        auto* doc = dm.GetActive();
+        if (!doc) return;
+
+        auto& req = doc->GetEditor().GetTextInputRequest();
+        if (req.Active)
+            ImGui::OpenPopup("##TextInput");
+
+        ImGui::SetNextWindowSize(ImVec2(360, 0));
+        if (ImGui::BeginPopupModal("##TextInput", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        {
+            ImGui::TextUnformatted("输入文字 (Enter 确认 / Esc 取消):");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            static char s_buf[512] = {};
+            ImGui::SetNextItemWidth(-1.f);
+            if (ImGui::IsWindowAppearing())
+                ImGui::SetKeyboardFocusHere();
+            bool confirm = ImGui::InputText("##textbuf", s_buf, sizeof(s_buf),
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::Spacing();
+
+            if (confirm || ImGui::Button("确认", ImVec2(120, 0)))
+            {
+                doc->GetEditor().SubmitTextInput(s_buf);
+                s_buf[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("取消", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+            {
+                doc->GetEditor().GetTextInputRequest().Active = false;
+                s_buf[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
     void UIManager::DrawMenubar(DocumentManager& dm)
     { 
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.f, 6.f)); // 菜单栏高度 
@@ -296,6 +351,7 @@ namespace MiniCAD
             if (ImGui::MenuItem("圆",       "Circle"))    { editor.StartCircleTool(); }
             if (ImGui::MenuItem("圆弧",     "Arc"))       { editor.StartArcTool(); }
             if (ImGui::MenuItem("旋转",     "Rotate"))    { editor.StartRotateTool(); }
+            if (ImGui::MenuItem("文字",     "T"))         { editor.StartTextTool(); }
             
             ImGui::EndMenu();
         }
@@ -482,7 +538,7 @@ namespace MiniCAD
             ImGui::PopStyleColor(3); 
             ImGui::SameLine(); 
             // 分隔线
-            if (meta.id == Tool::Select || meta.id == Tool::Spline || meta.id == Tool::Rotate)
+            if (meta.id == Tool::Select || meta.id == Tool::Text || meta.id == Tool::Rotate)
             {
                 ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
                 ImGui::SameLine();
@@ -789,7 +845,7 @@ namespace MiniCAD
           
         // ── 当前工具 ─────────────────────────────────────────────
         const char* toolNames[] = {
-            "选择", "直线", "圆", "矩形", "圆弧", "椭圆", "多段线", "样条曲线", "复制", "移动", "镜像", "旋转", "撤销", "重做"
+            "选择", "直线", "圆", "矩形", "圆弧", "椭圆", "多段线", "样条曲线", "文字", "复制", "移动", "镜像", "旋转", "撤销", "重做"
         };
         ImGui::TextDisabled("工具:");
         ImGui::SameLine();
@@ -906,9 +962,10 @@ namespace MiniCAD
                 "icons/Rect.png",
                 "icons/Rotate.png",
                 "icons/Spline.png",
+                "icons/Text.png",
                 "icons/Redo.png",
                 "icons/Undo.png",
-        }; 
+        };
 
         m_toolIcons.clear(); 
 

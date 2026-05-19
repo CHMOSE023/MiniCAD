@@ -94,11 +94,16 @@ namespace MiniCAD
             Math::Mat4 vp = m_camera.GetViewProj();
 
             { // 渲染场景及预览
-                m_renderer.Submit(viewState.Scene, vp, PrimitiveType::Line, true, true);
+                m_renderer.Submit(viewState.Scene,   vp, PrimitiveType::Line, true, true);
                 m_renderer.Submit(viewState.Overlay, vp, PrimitiveType::Line, true, true);
             }
-        } 
-        m_renderer.EndFrame(); 
+
+            { // 渲染文字（贴图四边形）
+                if (!viewState.TextScene.empty() && viewState.FontTexture)
+                    m_renderer.SubmitTextured(viewState.TextScene, vp, viewState.FontTexture, false, true);
+            }
+        }
+        m_renderer.EndFrame();
     } 
 
     void Viewport::Resize(float width, float height)

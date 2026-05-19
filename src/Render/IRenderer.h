@@ -26,7 +26,8 @@ namespace MiniCAD
         // IRenderTarget 替换原来的 D3D11_VIEWPORT + RenderTarget
         virtual void BeginFrame(IRenderTarget& target, const ViewportDesc& viewport) = 0;
         virtual void EndFrame  () = 0; 
-        virtual void Submit    (std::span<const Vertex_P3_C4> verts, const Math::Mat4& viewProj, PrimitiveType  type, bool depth = true, bool blend = false) = 0; 
+        virtual void Submit    (std::span<const Vertex_P3_C4>    verts, const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) = 0;
+        virtual void SubmitTextured(std::span<const Vertex_P3_C4_UV> verts, const Math::Mat4& viewProj, void* nativeSRV, bool depth = false, bool blend = true) = 0;
         virtual void* GetNativeDevice() = 0;
     };
 }

@@ -72,6 +72,7 @@ namespace MiniCAD
         void StartEllipseTool();
         void StartPolylineTool();
         void StartSplineTool();
+        void StartTextTool();
 
         // ── 编辑工具便捷方法 ─────────────────────────────────
         void StartMoveTool();
@@ -83,6 +84,19 @@ namespace MiniCAD
         void StartTrimTool();
         void StartExtendTool();
         void StartBreakTool();
+
+        // ── 文字输入请求（由 TextTool 发起，UIManager 响应）─────
+        struct TextInputRequest
+        {
+            bool         Active    = false;
+            Math::Point3 InsertPos;
+            float        Height    = 2.5f;
+            float        Rotation  = 0.f;
+        };
+
+        TextInputRequest&       GetTextInputRequest()       { return m_textRequest; }
+        const TextInputRequest& GetTextInputRequest() const { return m_textRequest; }
+        void SubmitTextInput(const std::string& utf8Text);
 
         // ── 删除 ─────────────────────────────────────────────
         void DeleteSelected();
@@ -142,10 +156,12 @@ namespace MiniCAD
         bool m_orthoEnabled = false;
          
         std::unordered_map<std::string,
-        std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;   
+        std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;
         std::unordered_map<std::string, std::string> m_aliasRegistry;
         std::string                                  m_cmdBuffer;
         std::string                                  m_lastCommand;
+
+        TextInputRequest m_textRequest;
     };
 
 } 

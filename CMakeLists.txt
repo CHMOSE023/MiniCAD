@@ -19,15 +19,15 @@ if(EMSCRIPTEN)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
     endif()
 
-    # -fexceptions          : 启用 C++ 异常（throw 不变成 unreachable）
-    # -g3                   : 最完整的 DWARF 调试信息（变量名、行号、类型）
-    # -O0                   : 不做优化，行号/变量与源码 1:1
+    # -fexceptions             : 启用 C++ 异常（throw 不变成 unreachable）
+    # -g3                      : 最完整的 DWARF 调试信息（变量名、行号、类型）
+    # -O0                      : 不做优化，行号/变量与源码 1:1
     add_compile_options(-fexceptions -g3 -O0)
 
-    # -sASSERTIONS=2        : 运行时安全检查（含内存对齐、参数校验）
-    # -sSAFE_HEAP=1         : 堆访问越界检查
-    # -sSTACK_OVERFLOW_CHECK=2 : 栈溢出检测
-    # -gseparate-dwarf      : 把 DWARF 输出到独立 .debug.wasm 文件（更快加载）
+    # -sASSERTIONS=2            : 运行时安全检查（含内存对齐、参数校验）
+    # -sSAFE_HEAP=1             : 堆访问越界检查
+    # -sSTACK_OVERFLOW_CHECK=2  : 栈溢出检测
+    # -gseparate-dwarf          : 把 DWARF 输出到独立 .debug.wasm 文件（更快加载）
     add_link_options(
         -fexceptions
         -g3

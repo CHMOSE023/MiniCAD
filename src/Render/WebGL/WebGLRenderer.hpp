@@ -19,6 +19,11 @@ namespace MiniCAD
                     PrimitiveType type,
                     bool depth = true,
                     bool blend = false) override;
+        void SubmitTextured(std::span<const Vertex_P3_C4_UV> /*verts*/,
+                            const Math::Mat4& /*viewProj*/,
+                            void* /*nativeSRV*/,
+                            bool  /*depth*/ = false,
+                            bool  /*blend*/ = true) override {}
         void* GetNativeDevice() override { return nullptr; }
 
     private:

@@ -356,24 +356,30 @@ namespace MiniCAD
 	}
 
 	void MainWindow::RenderFrame()
-	{   
-		auto* rtv = m_swapChain->GetRTV();        
+	{
+		auto* rtv = m_swapChain->GetRTV();
 		float clear[4] = { 0.1f, 0.1f, 0.1f, 1.f };
 		m_device->GetContext()->ClearRenderTargetView(rtv, clear);
 		m_device->GetContext()->OMSetRenderTargets   (1, &rtv, nullptr);
 
+		// BeginFrame 先于 doc->Render，保证 ImGui 帧已激活，
+		// DrawContext::EmitText 内的 GetFontBaked() 才能取到有效字体数据。
+		m_uiManager.BeginFrame();
+
+		// 同步字体纹理：必须在 BeginFrame 之后、doc->Render 之前，
+		// 确保 SubmitTextured 用的是本帧最新的字体 atlas SRV。
+		m_uiManager.SyncFonts(m_docManager);
+
 		if (auto doc = m_docManager.GetActive())
-		{  
+		{
 			DocumentInput(); // 处理文档输入
-			doc->Render();   // 离屏幕渲染
-		}  
+			doc->Render();   // 场景渲染
+		}
 
 		// 需要重新设置
 		m_device->GetContext()->OMSetRenderTargets(1, &rtv, nullptr);
 
-		m_uiManager.BeginFrame();
-
-		m_uiManager.Render(m_docManager); 
+		m_uiManager.Render(m_docManager);
 
 		m_uiManager.EndFrame();
 

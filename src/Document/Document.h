@@ -11,8 +11,7 @@
 #include "Editor/Context/ViewState.h"
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Snap/SnapResult.h"
-#include "Render/IRenderer.h"  
-#include "DrawContext.hpp"
+#include "Render/IRenderer.h"
 #include <vector>
 #include <string>
 
@@ -71,30 +70,35 @@ namespace MiniCAD
 		bool SaveAs(const std::string& path);
 		bool SaveToFile(const std::string& path);  
 
-		ViewState BuildViewState();// 构建渲染状态
+		ViewState BuildViewState(); // 构建渲染状态
+
+		// 由 UIManager 在每帧渲染前设置 ImGui 字体图集 SRV
+		void SetFontTexture(void* srv) { m_fontTexture = srv; }
 
 	private:
-		void UpdateSceneVerties(); // 更新屏幕渲染数据   
+		void UpdateSceneVerties(); // 更新屏幕渲染数据
 
 	private:
 		EditorContext  m_editor;
-		Scene          m_scene; 
+		Scene          m_scene;
 		CommandStack   m_cmdStack;
 		Viewport       m_viewport;
-		Overlay        m_overlay; 
-		Picking        m_picking; 
+		Overlay        m_overlay;
+		Picking        m_picking;
 		SnapEngine     m_snap;
 		SnapResult     m_currentSnap;
 
 		// 鼠标位置
-		int            m_mouseX = 0; 
-		int            m_mouseY = 0; 
+		int            m_mouseX = 0;
+		int            m_mouseY = 0;
 		std::string    m_name = "Untitled";
 		std::string    m_path;
 		bool           m_dirty = false;
-		 
-		std::vector<Vertex_P3_C4> m_sceneVertices;   // 场景数据 
-		std::vector<Vertex_P3_C4> m_overlayVertices; // 预览数据
-		std::vector<Vertex_P3_C4> m_gripVertices;    // 夹点数据  
+
+		std::vector<Vertex_P3_C4>    m_sceneVertices;   // 场景线段
+		std::vector<Vertex_P3_C4_UV> m_textVertices;    // 场景文字四边形
+		std::vector<Vertex_P3_C4>    m_overlayVertices; // 预览数据
+		std::vector<Vertex_P3_C4>    m_gripVertices;    // 夹点数据
+		void*                        m_fontTexture = nullptr;
 	};
 }

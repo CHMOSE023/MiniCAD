@@ -14,7 +14,7 @@ namespace MiniCAD
     enum class Tool : int
     {
         Select = 0, // Cursor
-        /*-----*/ 
+        /*-----*/
         Line,
         Circle,
         Rectangle,  // Rect
@@ -22,6 +22,7 @@ namespace MiniCAD
         Ellipse,
         Polyline,
         Spline,
+        Text,
         /*-----*/
         Copy,
         Move,
@@ -41,6 +42,7 @@ namespace MiniCAD
 
         void BeginFrame();
         void EndFrame  ();
+        void SyncFonts (DocumentManager& dm); // 在 BeginFrame 之后、doc->Render 之前调用
 
         void Render (DocumentManager& dm); 
 
@@ -50,10 +52,11 @@ namespace MiniCAD
         Tool GetActiveTool() const { return m_activeTool; }
 
     private:
-        void DrawMenubar     (DocumentManager& dm);    
-        void DrawToolbar     (DocumentManager& dm);
-        void DrawDocumentTabs(DocumentManager& dm);
-        void DrawStatusBar   (DocumentManager& dm);
+        void DrawMenubar       (DocumentManager& dm);
+        void DrawToolbar       (DocumentManager& dm);
+        void DrawDocumentTabs  (DocumentManager& dm);
+        void DrawStatusBar     (DocumentManager& dm);
+        void DrawTextInputPopup(DocumentManager& dm);
         void InitToolIcons   ();
 
         ImTextureID LoadTextureFromFile(const char* path);

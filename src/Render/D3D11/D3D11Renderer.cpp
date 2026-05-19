@@ -18,6 +18,7 @@ namespace MiniCAD
     {
         Initialize();
         m_lineShader.Initialize(m_device);
+        m_textShader.Initialize(m_device);
     }
 
     void D3D11Renderer::Initialize()
@@ -62,6 +63,22 @@ namespace MiniCAD
         rs.CullMode                 = D3D11_CULL_NONE;
         rs.DepthClipEnable          = TRUE;
         m_device->CreateRasterizerState(&rs, m_rsNoCull.GetAddressOf());
+
+        // ===== Text VB =====
+        D3D11_BUFFER_DESC tvb = {};
+        tvb.ByteWidth      = sizeof(Vertex_P3_C4_UV) * m_maxTextVertices;
+        tvb.Usage          = D3D11_USAGE_DYNAMIC;
+        tvb.BindFlags      = D3D11_BIND_VERTEX_BUFFER;
+        tvb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        m_device->CreateBuffer(&tvb, nullptr, m_textVB.GetAddressOf());
+
+        // ===== Sampler =====
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter   = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        m_device->CreateSamplerState(&sd, m_sampler.GetAddressOf());
 
         // ===== Blend =====
         D3D11_BLEND_DESC bd = {};
@@ -153,6 +170,43 @@ namespace MiniCAD
         m_context->IASetVertexBuffers(0, 1, m_vb.GetAddressOf(), &stride, &offset);
 
         // ===== draw =====
+        m_context->Draw((UINT)verts.size(), 0);
+    }
+
+    void D3D11Renderer::SubmitTextured(std::span<const Vertex_P3_C4_UV> verts,
+                                       const Math::Mat4& viewProj,
+                                       void* nativeSRV,
+                                       bool depth, bool blend)
+    {
+        if (verts.empty() || !nativeSRV) return;
+
+        auto pso = m_textShader.GetPipeline();
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_context->IASetInputLayout(pso.layout);
+        m_context->VSSetShader(pso.shader->vs.Get(), nullptr, 0);
+        m_context->PSSetShader(pso.shader->ps.Get(), nullptr, 0);
+        m_context->RSSetState(m_rsNoCull.Get());
+
+        m_context->OMSetDepthStencilState(depth ? m_depthEnabled.Get() : m_depthDisabled.Get(), 0);
+        float f[4] = {};
+        m_context->OMSetBlendState(blend ? m_blendAlpha.Get() : nullptr, f, 0xffffffff);
+
+        Float4x4 gpuMat = Float4x4::FromMat4(viewProj.Transposed());
+        m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, gpuMat.m, 0, 0);
+        m_context->VSSetConstantBuffers(0, 1, m_cb.GetAddressOf());
+
+        auto* srv = static_cast<ID3D11ShaderResourceView*>(nativeSRV);
+        m_context->PSSetShaderResources(0, 1, &srv);
+        m_context->PSSetSamplers(0, 1, m_sampler.GetAddressOf());
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        m_context->Map(m_textVB.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        memcpy(mapped.pData, verts.data(), verts.size_bytes());
+        m_context->Unmap(m_textVB.Get(), 0);
+
+        UINT stride = sizeof(Vertex_P3_C4_UV);
+        UINT offset = 0;
+        m_context->IASetVertexBuffers(0, 1, m_textVB.GetAddressOf(), &stride, &offset);
         m_context->Draw((UINT)verts.size(), 0);
     }
 
