@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MiniCAD Web</title>
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     html, body {
       margin: 0;
       width: 100%;
@@ -12,45 +14,109 @@
       overflow: hidden;
       background: #15171b;
       color: #f0f3f6;
-      font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
     }
 
     #app {
       display: grid;
-      grid-template-rows: 30px 1fr 20px;
+      grid-template-rows: 40px 1fr 22px;
       width: 100vw;
       height: 100vh;
     }
 
+    /* ── Toolbar ────────────────────────────────── */
     #toolbar {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 6px;
-      background: #20242a;
-      border-bottom: 1px solid #343a44;
-      box-sizing: border-box;
+      gap: 2px;
+      padding: 4px 8px;
+      background: #1e2229;
+      border-bottom: 1px solid #2e333d;
+      overflow-x: auto;
+    }
+
+    .tb-sep {
+      width: 1px;
+      height: 20px;
+      background: #3a414d;
+      margin: 0 4px;
+      flex-shrink: 0;
+    }
+
+    .tb-label {
+      font-size: 10px;
+      color: #6b7280;
+      padding: 0 4px;
+      flex-shrink: 0;
     }
 
     button {
-      height: 24px;
-      padding: 0 8px;
-      border: 1px solid #4d5663;
-      border-radius: 4px;
-      background: #2b3139;
-      color: #f4f6f8;
+      height: 28px;
+      padding: 0 7px;
+      border: 1px solid #3a414d;
+      border-radius: 3px;
+      background: #272c34;
+      color: #d8dde5;
       cursor: pointer;
-      font: 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 11px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      white-space: nowrap;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: background 0.1s, border-color 0.1s;
     }
 
-    button:hover {
-      background: #37404a;
+    button:hover { background: #333a44; border-color: #5a6270; }
+    button:active { background: #1e6fb5; border-color: #2a8ad4; }
+
+    button.active {
+      background: #1a5fa0;
+      border-color: #2a8ad4;
+      color: #ffffff;
     }
 
+    button.toggle-on {
+      background: #1a5f40;
+      border-color: #2a9d6a;
+      color: #7effd4;
+    }
+
+    button.danger { border-color: #7a3030; }
+    button.danger:hover { background: #5a2525; }
+
+    .tb-icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      pointer-events: none;
+      display: block;
+    }
+
+    /* ── SVG icon fallbacks ─────────────────────── */
+    .icon-point {
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='3.5' fill='%23c0c8d0'/></svg>") center/contain no-repeat;
+    }
+    .icon-delete {
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23c0c8d0' stroke-width='1.3'><line x1='2' y1='4' x2='14' y2='4'/><path d='M5 4V3h6v1'/><rect x='3' y='4.5' width='10' height='9' rx='1'/><line x1='6.5' y1='7' x2='6.5' y2='11'/><line x1='9.5' y1='7' x2='9.5' y2='11'/></svg>") center/contain no-repeat;
+    }
+    .icon-snap {
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23c0c8d0' stroke-width='1.5'><path d='M4 9a4 4 0 0 1 8 0'/><line x1='4' y1='9' x2='4' y2='13'/><line x1='12' y1='9' x2='12' y2='13'/><line x1='3' y1='13' x2='5' y2='13'/><line x1='11' y1='13' x2='13' y2='13'/></svg>") center/contain no-repeat;
+    }
+    .icon-ortho {
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23c0c8d0' stroke-width='1.5' fill='none'><polyline points='3 3 3 13 13 13'/><rect x='3' y='9' width='4' height='4'/></svg>") center/contain no-repeat;
+    }
+    .icon-cancel {
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23c0c8d0' stroke-width='2'><line x1='3' y1='3' x2='13' y2='13'/><line x1='13' y1='3' x2='3' y2='13'/></svg>") center/contain no-repeat;
+    }
+
+    /* ── Canvas area ────────────────────────────── */
     #canvas-wrap {
       position: relative;
       min-width: 0;
       min-height: 0;
+      overflow: hidden;
     }
 
     canvas {
@@ -62,75 +128,241 @@
       touch-action: none;
     }
 
+    /* ── Status bar ─────────────────────────────── */
     #status {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 0;
       padding: 0 8px;
-      background: #20242a;
-      border-top: 1px solid #343a44;
-      color: #c5cbd3;
-      box-sizing: border-box;
-      white-space: nowrap;
-      font-size: 12px;
+      background: #1a1e25;
+      border-top: 1px solid #2a2f38;
+      color: #8a9099;
+      font-size: 11px;
+      overflow: hidden;
     }
 
-    #mode {
-      color: #8fd3ff;
+    #status .seg {
+      padding: 0 10px;
+      border-right: 1px solid #2e333d;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
     }
+
+    #status .seg:first-child { padding-left: 0; }
+
+    #mode-label { color: #60b8ff; font-weight: 600; }
+    #snap-label { color: #50d890; }
+    #ortho-label { color: #ffa050; }
+    .hint { color: #5a6270; }
   </style>
 </head>
 <body>
   <div id="app">
+
+    <!-- ── Toolbar ───────────────────────────────────────────── -->
     <div id="toolbar">
-      <button id="line">Line</button>
-      <button id="undo">Undo</button>
-      <button id="redo">Redo</button>
-      <button id="cancel">Esc</button>
+
+      <!-- Draw tools -->
+      <span class="tb-label">绘制</span>
+      <button id="btn-line"      title="直线 (L)"><img class="tb-icon" id="ico-line" alt=""> 直线</button>
+      <button id="btn-polyline"  title="多段线 (PL)"><img class="tb-icon" id="ico-polyline" alt=""> 多段线</button>
+      <button id="btn-circle"    title="圆 (C)"><img class="tb-icon" id="ico-circle" alt=""> 圆</button>
+      <button id="btn-arc"       title="圆弧 (ARC)"><img class="tb-icon" id="ico-arc" alt=""> 圆弧</button>
+      <button id="btn-ellipse"   title="椭圆 (EL)"><img class="tb-icon" id="ico-ellipse" alt=""> 椭圆</button>
+      <button id="btn-rectangle" title="矩形 (REC)"><img class="tb-icon" id="ico-rectangle" alt=""> 矩形</button>
+      <button id="btn-spline"    title="样条曲线 (SP)"><img class="tb-icon" id="ico-spline" alt=""> 样条</button>
+      <button id="btn-point"     title="点 (PT)"><span class="tb-icon icon-point"></span> 点</button>
+
+      <div class="tb-sep"></div>
+
+      <!-- Edit tools -->
+      <span class="tb-label">编辑</span>
+      <button id="btn-move"   title="移动 (M)"><img class="tb-icon" id="ico-move" alt=""> 移动</button>
+      <button id="btn-copy"   title="复制 (CO)"><img class="tb-icon" id="ico-copy" alt=""> 复制</button>
+      <button id="btn-mirror" title="镜像 (MI)"><img class="tb-icon" id="ico-mirror" alt=""> 镜像</button>
+      <button id="btn-rotate" title="旋转 (RO)"><img class="tb-icon" id="ico-rotate" alt=""> 旋转</button>
+      <button id="btn-delete" title="删除 (Del)" class="danger"><span class="tb-icon icon-delete"></span> 删除</button>
+
+      <div class="tb-sep"></div>
+
+      <!-- Toggles -->
+      <button id="btn-snap"  title="捕捉开关 (F3)"><span class="tb-icon icon-snap"></span> 捕捉</button>
+      <button id="btn-ortho" title="正交开关 (F8)"><span class="tb-icon icon-ortho"></span> 正交</button>
+
+      <div class="tb-sep"></div>
+
+      <!-- History + misc -->
+      <button id="btn-undo"   title="撤销 (Ctrl+Z)"><img class="tb-icon" id="ico-undo" alt=""> 撤销</button>
+      <button id="btn-redo"   title="重做 (Ctrl+Y)"><img class="tb-icon" id="ico-redo" alt=""> 重做</button>
+      <button id="btn-cancel" title="取消 / ESC"><span class="tb-icon icon-cancel"></span> 取消</button>
     </div>
+
+    <!-- ── Canvas ─────────────────────────────────────────────── -->
     <div id="canvas-wrap">
       <canvas id="minicad-canvas" tabindex="0" oncontextmenu="return false"></canvas>
     </div>
+
+    <!-- ── Status bar ────────────────────────────────────────── -->
     <div id="status">
-      <span id="mode">Ready</span>
-      <span>Left click: draw/select</span>
-      <span>Middle drag: pan</span>
-      <span>Wheel: zoom</span>
-      <span>Ctrl+Z / Ctrl+Y</span>
+      <span class="seg"><span id="mode-label">就绪</span></span>
+      <span class="seg hint">左键: 绘制/选择</span>
+      <span class="seg hint">中键拖动: 平移</span>
+      <span class="seg hint">滚轮: 缩放</span>
+      <span class="seg hint">右键/Esc: 结束</span>
+      <span class="seg hint">Enter/Space: 重复命令</span>
+      <span class="seg"><span id="snap-label">捕捉: ON</span></span>
+      <span class="seg"><span id="ortho-label" style="color:#5a6270">正交: OFF</span></span>
     </div>
-  </div>
+
+  </div><!-- #app -->
 
   <script>
-    const canvas = document.getElementById('minicad-canvas');
-    const mode = document.getElementById('mode');
+    // ── PNG icon data URIs (embedded) ──────────────────────────
+    const PNG_ICONS = {
+      'ico-line':      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAAmxJREFUeAHtmk1rE1EUht87KRgsymwU242pKzdCwL1NcCMS0K0rK7gV6s5dp0sXov/A+g8q+QGTgj9A0KWQdBUXLgpatGAy3nOmES1N7ymdj3vofSDk63BvnpeZOQM5QCAQCAQC5xYDzaTDGGg+RBRdtyojTCc76C6NTrOE3gDSr+swZgPI4v8+z7JNG0IiXUZnAOk4yeXnkE2fo7v8BgL0BZCOW1Z+eHJRtofs1wq6K3twEEEfHXeJiREtPoAAfQHwBU9C1pJU6QtgOt2VFdquIEDhKdDctnLOc5tbogB1AfR/fFh/erAbn1hkTCK9H2hAEf1+P7FPGzcn+7Z9GXxauHSkwh4ZBi+weu2ldE01bXAmP3tvjNnqLd7eBHWFv3eC++8lre9fVARwrHyv9wQF4H0AZcrzevCYsuV5TXhKFfK8LjykKnleG55RpTyvD4+oWp73gCfUIc/7wAPqkue9UDN1yvN+qJG65XlP1IQP8rwvasAXed4bFeOTPO+PCvFNnn8DKsJHef4dqABf5YnSA/BZnig1AN/lidIC0CBPlBKAFnmi8AA0yROFBqBNnigsAI3yRCEBaJUnzhyAZnliQVyZjjv5WIppH87lDO79/jbCz+HarESbPCH7czSfyXlrX7Xso3n4aetLdLFNx9CtyXeV8oQ7gHS8Zu1ez/v6c+MylnGw/ez+3UdQiHs+wJjHrpJXF27EUIpkQKLjLsnaUIogAME4Ck1lKUUQQPbRXYMBlOIOgEZPXZhoC0pxB9BdGvDQ0Tzou9Wr76AU+Z1g3g6pI3Ty64I9NaJGgjtXdhAIBAKBQCAQCKjjD7Y+706gev7kAAAAAElFTkSuQmCC',
+      'ico-polyline':  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAA+FJREFUeAHtms1u00AQx2edpI3oJT0ABSHVeQAk+gRNVAkh9SPJE5A+AekTJLlwbThwRKQPUCX9kMot7okjRXDg1JoLbQ+QSKi0oNjLTD6Kmw+v0zitcfYnVfZux7L3752d8U4AJBKJRCKRSCTjCQMvUTmKAISToCiz+Gg6mMY+xB/oMEK8I0DlJAOMZQF45Eo/53kUIQcjwhsCVI5zzcH3gZtrEH9YgBFw+wJUjlUc/JG9Ea8Bv4hCPFoDl1Hg9omJTVjkmXG2vrOz48B2MIJw29CCx7nQbNr4ncZDGkWgZpkxVl5aWtqAIfGCC6TRBd6KzDLnh7BQ/36lj3OuoxAb9Xq9mEqldLgGHnCBcBnfg9C3Z83zIh4OrH04eBUP2UAgUNnd3X0O18AjUeAbhkBlve//GcvB/P08ne7t7an4xhN4msE/1WqGM6KwsrKyBgPgnTxg/zSLI8hd7cSZwbBvfuZVr0u2t7fTrBk+VUv3AQoUR5dwFDE8lgliSKSocJkJnm2JQl+pVIqgC2RRiIylW1teXo6DA7wlwBBgdKCZkGu30R3W0B2EyZNvBCA6RKihK8yJooMXEiHXwGlPC6XWajZcQ3SNrwRokW+f4LqQpDXCzth3AuAs0MAyC0KhUMLO3o8zgCi3T0zTjNkZ+lWAj+0TdIMndoa+FABXf93SVO1sfSlAR+gbr0VwUHwpgCj0WfGlABMTE6qleWBn60sBDMOwrvy6na0vBcDQZ01+NDtb3wlAGyZ4SLbbGBK37Ox9JwBOf+sHkDZWX4O0bY77AOl2G12hKLrGNwK0pv7l7jIKUXSybe4LAejNo69/gFbaS9vl6Ap5J9fa7wjdZLW2eS8qkNL2tgqN8MU0rAvm+92TEp5gMJjD0xeWbkc7QW36C3CT1dpmfbACvT9cdLxn3CpCa+C0CUoDj/x7NK7jLlBqcXHRNvmxwvo80M1Wa7UTKo6qdhal6vtVHDTFdwpxsV42+OZXB60QdQvgsFr75uxz4Z55AcPyLnRXfR1W0yK7l7++wGPjZ1c/vXU80A5wGa5Br+JoDISwyCdlKrfgggA/WMiR3aFyp1MADXd7ColEYguGoFsAh9XaU2US3GCKG47sqkqICiQaNKf6htPKj4huAUzzK7qA6DqoBiaLIPjQcARjtIhlRGab4UfJzadz++AyPdaAagTYn6Ou1b8TzqOuhUTthCJAzMZCh9hMFEZAdyIUn64BFyQRVK11Mx/gfBX6z6ZmGBwRvTNBCnE0yC6oWovTtVWqdg0SszHIRu6ut3r1xjPw87lR/lROkAkOXq2VSCQSiUQikUgkEsl/wF/+rm9fIKo+AwAAAABJRU5ErkJggg==',
+      'ico-circle':    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABSlJREFUeAHtmr1u20gQx4eWEaS4QsEVh8sVxxRXx3kCUbXlDz2BfcD11j2BmfoK009gubrS33ApGtdflCcIEwRwuihFgkS2pfxH2lVWjBPtB0kLCH8AwSWl5e7Mzu7O7g5RSUlJSUlJyY+KRwVwcHBQrVQqAZI1z/N83JdwVcUl6eLqDYdDvl/c3NzEzWazRzmTqwKOj4/XIfAWkgHZESN/u9Fo7FNO5KKA09PTFlpym6Zb2Bp8K1lYWAjzUESmCjg5OQlw26GxiaeJ2bxxxYuLi91+v/9Omjh3Edx8CPk7WjzAxfmD9AdYEegadeRLKCMyUwCED3HbTr1mAaPr6+td0/58fn7uI98Gkpu4/NTPT1dWVkLKAGcFiAEuQqttKK+tBb8NKJcV26LpLnWI7//p+n0nBbDwMOcOTZt8LCqWUIYIizhIldXFu7qLEhbJgVuED2GaTykHBoPBaJxIvV5CHVgpdbJkgSyBWUZUkPBnZ2dLUAArW3YBtcUDTLc7ZImVAlDgJm5byqvChOeZAGb/hMuU/8H400KdWmSB8Rgg+iJXyBcVilZXV/+mHLhNeHUa5JZn4cXfe6jXI9PxwNgCUAEekX2lQoW1fNoHEGXLZ56NjLuCkQWI1n8hn1HB9bW1tSPKGB3hJcL56iiv6uiOMWliZAGi9UlUqn3XwjNC2Fip1wYZoK0Abn18fFM+o1K7lDGmwitMuiHGhHXhWmuhrYCrq6tAeeyiUl3KEAfh01bAzpm2FWg7QtDsmpKOyJbOCwh4f52w8MGXEhrcXJx9+L9qK7zCIX1ZQPFdy0JNPMFAJmANz8mGzpsWtIdxZFiFlHgxZG3S3r2HvY2Pr12EJwzOR2j5KF3XWWjNAsI8n4nHHkzuAZnSuQzHwt/OX59e0eqnN07LXcwIb0lYEZbW/vLy8stZebTGAOGHS8z7fufS/57wzL/3fqP/Kj83HRdRsUzAIpZ0MugOgo9lgk2UzAlm/eG9V6F/fvrjMTmAsWniBcIp0poJdBVQVQpJyJTRgKfD0CcH1MZB2tfJY70aNGIwmNkXx1go15FiFED3MUV5sxcpmBKpYLQUAHN6qaR9MqX+oEfDGYsmzwup/mtCDogzB4nWqlDXAnpKIXZb3fWH0UjIr4BleNjvq/3ivKpUG0ccsMxEyxHC3NyFkyEfA7KFhexc7o++MfEE3x9R8Mh541QwmfpQ53c6GbSXwzZORpHYOmsmg2AsE7wPQHMGWnxqZ1ozm50CwNwpQJxByvShbj5tBcC15L4r+2ogdmLmAjZ/Uvo/Fmva06m2AnizMaXZbZoTMOJvKem2yXrCyBHCx9XT2bmwAj6CT+1UGU2nRgrgnRc+r5fPKHjPZPspa7hs1GdHqU/bdDVp7Aqjf/EZwGgsYM8Lq6476wrwTUJy3KI3VoAYC9RNyJY4Gi8UUeak73MAhc1egtViqNFoRHwipLzaLlIJ6VgErotu9IjT8TgqwhuZgfIqs8CF75QZ0vQM1EWZT8gSp+Nx+AbN1BE5W0Itx/iAPZpW+Cg+gBzIJEIESuCKqd4hD5K7WViD+H6Lxv1d3Zlq84B8pxEiKiKMJVTf8ciMiu6jlYynp28JLsjsOD7TKLH00XmKWAZBYupM+v1+kooS49Nd7kq1b0WJAY4ya+E4PrOdo1ziBDmAwhtvg/uUDawobvXMzyPzjhTdFNFjAdkRY+kd5XEKLSksVhiOSk0JgmSTV9fvPXGxiSccTAnBL4qIFS4pKSkpKSkpKSn5QfkMa2rp6pU3gCUAAAAASUVORK5CYII=',
+      'ico-arc':       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAA6tJREFUeAHtms9O1EAcx7/T3axGOfQi4skSryYsN0/Sjd4I4B49CU/gvgHrRU8m8ATiEyxCCMcWX0DwYDyYWC+uf0NjCAbudvwNZUmzabudItDp9pOQmdmZLPv7dub3m99MgYKCgoIhhkE1rLYJrTQBcB2et4XaDRunQB0BrLYBxl5QzezrccB5jYRwkAI1BPCNt6hmRIwgEX5PojbuQhINKsC0RUQbj6M+7cpjpPlqZIBWq6VXKhWj2+1WGWM3OecGlTp8o/WHI5P6HivrA77GgTk2DknKuCDW19dNMnSODK1S0/Q8j2a5/zx6ZQ8yPslXGkjBuQoQMHqemnq/oVGM8gN8Y5cGDXOQgnMRQBhOhVjHZozRDoljU78j/mg5uFS6pVLJobnRoP5G/H9hNlJwpj4gaHhIt0sGr1C5Ssbu1Ov1aA9u7epgB28QGwXShcIzE4CMX6Ki3zMLo1epXJmdnd2CDNGh0CbjFzKzD9jc3DQ6nU6LqtW+riZ9vhz7pJPw+vsUuGfST3dJkG3cvSYnZB//VYCNjY0qeXNhvBH42CbDF8hwBxkknRO0PlJMvtygJ/AIvrGOcEKf994+GMOfYLxuzMzMLCPDyM+AmG3pde8QT/ffi7DlappWm56e3kbGkd8Kx+zJv2oVPLtyy6UpP6mC8QI5AUQqOmDH9UG7qtf1O7FjsoScAJo2lWwcm4AiSC4BljCEsUGJS2aQE8Dr7iQaxzQbiiAfBewvwgmaMSNSpaUXhXwUoG3nCO9ELQV/T64Q8gLQnvv5/jv33t8fR2nqMQ6Fx6Z/LJVuT35RSC+BtbW1eeYfTtLD5g4lNcpM9zCkZwDzt7+9+hIUR0oAcXaHgAOkHd8rKI6UAHQ6Ywaa21nN8GSQEoASnLlAcxU5QEoAcnrVQN1GDkgcBcT6L5fLu7025fnq3SuGkHgGkPHBIy4lUt0kyCyBYIbnICckFkBcVwWawzcDaNNj9Op08DmUS+Akxxc3NsgJMgIYvYq4rkJOSCUAHXh+Qk5Q4wWJMySRAMdJUC5JOgNOBBBnAMgRxRLAkBN/OSpughhbrEO8x8Nxu/sL9w9/GsgR0Rmd1W4K40P7OH9Ch59N5IBwAaz2/PFbmdH4r6TYUJxwHxA4+IwkanYoRpQTNDEQXkUOiBAgSbKjzgVoHBEC8CTpro0cEC6A8PKDYNoKckC4AMK7i7u+KETf1OhL5ID4k10/HIqIYPp+gZaGVmqe9t28goKCgoKCgoIs8A+wTikpdaxbmAAAAABJRU5ErkJggg==',
+      'ico-ellipse':   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABMRJREFUeAHtmktv20YQx2cpK06BouGlSdMCBQMDvRWVv0BFHXry+5heIgO9x/0EltEPEPteIPKlPVrxA74UFX0PEOWWW5gAifO4CHnHlsTMUEuHWS3FlURRRLI/QKC0Sy5n/px9cFYAGo1Go9FoNBrNFwmDSVC/bwKcXwPGruEvCz8umuKA19mA0mUXUiR9AerHFjpeh67jIi54XilNEQxIm2jnwS9n7CakSKoCzPx3fxminQ+wZ/5/uAQpMbYusLOzY05NTRU8z1tijBWwqPDPue/Nf6d/iL32j3cPYen0aRO/NvD6Bl5/a2FhwYExkLgAe3t7Nhp9DY2mp22G627lL8Hf53+MbePq+0fw+8ljsbiJ7daw3e0kxUhMgN3d3TLrjup21Dm3py64G1/9ZEEMf7251yy0X5pR9SiEaxhGZX5+fhtGZGQB6InjoQd+CpJql54afpxOp3O0srLSBOcJDYJ2nyZdsL+7Ql0InSyiqDaPJks8kYTAutVRImJoAXgfr+DX60IVhWoVj7XFxcWjnguHnAbxfoV8Pn8d27bFa7Fss91ub/gCD8hQAhweHlqtVkt0gm6+ieVbsYb4IhjraLoNwUKIsSp03mxB6UpT4d7U1coQuj9FA4pQwnu7MAADCxDhfA3LVod5AsNCdqDD6+h4OSgbRoSBBJA4Tw5XsA9uwYTY399fQ8dvBL8HFUFZAJnzOEiV5ubmGjBhDg4OCjjIkm3+zMFFmFWJSOWVIIUbZNB5guwge6AbkTicMCuXy62rXKsUAXyqq59dxFg5iTk4afhaJPwuUYqbIlUj4ExNmuKy6DyB026V0WzykdgoiBWA+j6EFi4030KGOT09/RN4V0BsHr2R9O8CmLiY7bRuPjLOLT9j0/C112q+YvnaJBIXytSP7Rnv7c4TNm2+Zjn4xms3Xhj5TShelEYt69NQphIXStSPK2izPOw9jx5aRSyO7gIZS1zEUj8uRzpPUB1Gh1hsRDRGJ1rQH1vW4MTovonGndMjkFwAfAsDFQz2C2QHO/4Ur+eNNaILMMU1PTMhM6jY3GuvXIBO+y4o3dNwIDN4KqtSRyyQC1C67MhOFnDh12+PICvQKB8HM6pikdGnwVXwNyykdKfBLEEPjbFKZD3VSdYCRp8GuZP+0tKlooud9/DbyfMGeG9nM7kQKl7auHry2Pm59ZIX+OOCA0bOpjrZJZ/1yxClz6RpuRBKL0P0RkV5t1DDm/QODhmC7EHnw4mRapzzxCD5AAahl/80KQGRFREiEiJKL23KAlB2BbPANPC5vIhEuINhtwYThFJiEueTT4kFyJKiFG48Le1CSvC0PPX35ZAd402KBkSIQJsU21heHacQ3HGKOtqPMMP3TyUtHjaE8m7o9CddgAzBg4N1W0nmDPmeI220lkHYc0x9Y0Q0DA8UipZYx8Wo4ecIDXQGMZALbOPXYtTWGHR3j9dURvsokt4cDWeOZQRb3i59x/PPBMEyeqom30o3Y9pxKPeXic1RERSiiCnqMjrUsz0+Iv72OB6rozxxkcQFCENi4GE5+IMEDCbI2R8k8FjDLnR3HFtvYxVAhHZ4sV9fwAixgpAPVftdAh2l9UYDB9AHoNFoNBqNRqPRaDQazVj4ALn8fqH/imttAAAAAElFTkSuQmCC',
+      'ico-rectangle': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAAeFJREFUeAHt2TFOwzAUBuDfKQgkJNSFCph6ABBwAQgH6M5GuQE3ICzcgBFRJg6QhS3hBgwMTNCtwAAIBIihNXYCEip1HMqSOP8nNVIdZ3hPz3HkBxAREREREVH1CLgiuqkD07sQYlv9a6pfV4UXQw72sbnQNT3mRgKiXlMFHiENfFgXUm6akuDBBebgkYwLcWx8FDmFYbiHAjqbnGseTjfb1olpFcTDwxPIL0ABPYjJfBM9saKu8a9hlNyM7OecKeqjRv9SAT8FKAqRBLZrn+fFo4bHSkCr1dpHkcS3q+rqZ8zoYn3ufNQNN3YBKXeQ7PsjpduggRsJ0Ht8EqToNORHMtQYfOjlEUC+r2V9CI37DiieNMidozBsfw/lWapuVMA/MAGoOCYAFccEoOKYAFQcE4CKYwJQcUwAKs5+HhD1fHWwsLelDh9fRQ1L/Wfg/H4bG40TOCC7AqJe8NV08HXw2mVtVh1BDTrJPQeYGyNRr53VUdEO3q6w3H9BUakTIWvjx1wBaZMx0+nUIsouawn4sLj2ZlB25hKJ7x7VYq/Dxp8vdYc5owLkBexilJw5AVLauz/C66DkzAnQrWTdWDDR9xz4FrCv33Q71DuCr6Y/JUvDqwWmXhsRERERERFR8X0CtCpvMqRvvJ8AAAAASUVORK5CYII=',
+      'ico-spline':    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAAzFJREFUeAHtmtlx2zAQhldHAXIHcgWmKwjzrMNWBZErMFOB5ApiV2C5Ajk6Ro+iKnA6sDqI3nXlXxvQIBxKBEEmMRF8MxwCJBcmfiyWWFhEDofD4XA4HA6H43+kRBYyGo2+ieJiu92GnU5ndezZKllIqVTq4lTDEeA4O/VsmSxjOp169N552u/3y1Ojz1gnAFzek2V4wo+k560ToFwuf1KqYeLzZBlwe08pJ3qAVV+B4XBYq1arP2W91Wol9s8qD6hUKr5SDXVsrBIA8/9KlnXc/82GLAKd9pXqs46NNTFgNpvVN5vNq6iuMP/PdOys8YD1eu0r1ZA0sUYALHq+KGUt92esEIDdHydf1uENC11bKwTA3L9Sqpz9LTVN/1w2OB6PfZx6OH5LTnAK4aJPCFIh5UcgC2h7QCnI/SsgVmNDUlwyDhYD3+1+s9l8ogwg9++i04+yzXa7fZ7GPtcpwHMRnX+hhM4zeOk6XngAT3mBaHUyBO30lPKAUpKbADzymItzFOvyGjp4j1Gu85qcD9y/FC+5VEw9iPYKIfqUEh599e+h/dTelNsUQAfucbo9NIxdmWPuzZ6CSH2LZwL1Orsw8vnPOkFMLHxUwfsQ+Y5SkosAGIlrdGaoXArwMg9JdqITbOep13lqQIi7Y0KIODOXdkK4y6TdnzhyEQCjz0vQuniZAQLRTQpzmkwmAex4LtfkNREkn+EpD6oQcaJxDoC/qf3tV8ksQDQK67pwFO4YbHtooxtzmzO7Jb2L7EXuGbm+JLMA6uhnfRlGCNpT2jyF1lQ7RSYBxGJnLqorjvImox+HEILX937M7RDT42uj0dDK+U+RSQDM3UfpsiZzXwcOeNjpuUD7b/Fht9stTILdMYwFiOTf/A0+z2v0/ybGC6Fo/l3EzjPGAkTy7wEVFCMBsuTfHw0jAWxxf8ZIALi8ugGhvf30ETGNAb4sIPoX1v2Z1AKIxY/67+fMi5F/iYkHXCjlkAqOiQDXB+NyOaSCYyLAIRsr8udPkkqAmJ+fLKngpBIAicjh1xc6Pz8pAqkEQKfVzYiQLCCVANjkvOGcH8UA5+/kcDgcDofD4XA4isovJLR1MGVRjdQAAAAASUVORK5CYII=',
+      'ico-move':      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAA2JJREFUeAHtWk1y2jAUfjLO3qv+rOoj0BOErBmY4QQlJwicAHICyAlKTkBnGNYhJ2h6A3fVaVfpGrD6XrAzxJWxZesnGeubYSwLydL79PN+JAAHBwcHBweHpoKBJSyXy6DVak0wGez3+/FgMHgEC7BCAAnv+/4dJttJ1sNut7uwQYJxAgTCp7BCglECTgifwjgJHhiCQPhjIdN0m8pQWTAEIwSI1jzn/DL9P47jIeUlr0ZJ0E5A3obHGHueAZSmPLBAglYCZHZ7yrNBglYCZFVdHgmgEdoIWK/XJLi0nheRgLOgDZqgjYBut0sb3Zx+sqotJQH3hgW+TvH9ATTBB43o9/tjqIiEsEvQDGN2wGtF4wlQgmTDe5Nt1vIFMnp+2uv1rsAArVbrHxAruqBqKSTKtfVJPjJo8+oI6KVCCJiACrCL41IAvRJNhegcD2lZ7T2+VWApK9YzL2bwbAVoCbV0Raa4ZNYQaSfKSgB5vFkLJaO4C2RRiIylW1teXo6DA7wlwBBgdKCZkGu30R3W0B2EyZNvBCA6RKihK8yJooMXEiHXwGlPC6XWajZcQ3SNrwRokW+f4LqQpDXCzth3AuAs0MAyC0KhUMLO3o8zgCi3T0zTjNkZ+lWAj+0TdIMndoa+FABXf93SVO1sfSlAR+gbr0VwUHwpgCj0WfGlABMTE6qleWBn60sBDMOwrvy6na0vBcDQZ01+NDtb3wlAGyZ4SLbbGBK37Ox9JwBOf+sHkDZWX4O0bY77AOl2G12hKLrGNwK0pv7l7jIKUXSybe4LAejNo69/gFbaS9vl6Ap5J9fa7wjdZLW2eS8qkNL2tgqN8MU0rAvm+92TEp5gMJjD0xeWbkc7QW36C3CT1dpmfbACvT9cdLxn3CpCa+C0CUoDj/x7NK7jLlBqcXHRNvmxwvo80M1Wa7UTKo6qdhal6vtVHDTFdwpxsV42+OZXB60QdQvgsFr75uxz4Z55AcPyLnRXfR1W0yK7l7++wGPjZ1c/vXU80A5wGa5Br+JoDISwyCdlKrfgggA/WMiR3aFyp1MADXd7ColEYguGoFsAh9XaU2US3GCKG47sqkqICiQaNKf6htPKj4huAUzzK7qA6DqoBiaLIPjQcARjtIhlRGab4UfJzadz++AyPdaAagTYn6Ou1b8TzqOuhUTthCJAzMZCh9hMFEZAdyIUn64BFyQRVK11Mx/gfBX6z6ZmGBwRvTNBCnE0yC6oWovTtVWqdg0SszHIRu6ut3r1xjPw87lR/lROkAkOXq2VSCQSiUQikUgkEsl/wF/+rm9fIKo+AwAAAABJRU5ErkJggg==',
+      'ico-copy':      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABMhJREFUeAHtmk1y20YQhRuQkipXNtIiVfGOOoGTCyTgUqUfOycIdQLJJxB1AkknsHMC0fopLUWfwPQJiJ2zCzcuLyQRfo8aUAMQAIEBOCDL+KpYwBADlfqhp6e7QZGGhoYfGafI5KurKw+HV/hs4DPC5/Pe3l5fVphcAlxfXx8FQXAsT4ZHwPe+67rd3d3df2UFyRTg4uJiY319/QKnnsyn//Dw8DcYyQrhZl0sYDzx1PyVIlWAy8vLjuQ3PsTDfUeyQqQK4DjOsRhgel9dJAqgon1LzNhQ968EaR7wSspR9n5rpAmwIeUoe7810gQou5VN7sc22uJHlpg0AT5LCZAcDXjktojPEDvDu2WNC6mJEP7h/8XAlZkZ7u/vb93c3Pw+Ho8/xa8tW9aYtQ2eiMkfhIE8wniK14/9zRZEeA+PGFIgWQIyU2F4wZ0US4b6KI7a+he3t7etx8fHYxjeiU+mGLj2ts70OTMVZm4vsaeYQV/Nj7C9ve3D5Q8QC7Yw7OrX4BGdtbW1T3UGylzVINNileG1Ei7z6XXx5M8lBykeMcLSae/s7Azm3QuRT1WceSsVUKgfACH+ghBcu5N+AKM9/pGPYoAS9VSeA+1cEbAkWWy94TmE+ANLZyAlKSRA1agnyjjT4phPFt7RhmF+ytxhOMb5VtK8orhSI4wPiA0Mmj7H3CUwfpc09/7+3tOG/SqMJ7UKQCgCDgfaV4klNcT5Rzt/LxVRuwCEfUW4/1k4ZsBlNyoc0/1F247hDUZxJ4mlEIBg7TPx8tWQrbjD8Nqi3J8sjQBMhuAFevZ5FHoBPGIqRpXuP/l7YgnVYOU6zmyl6zWISpQ+xqL/ZpWZ47pYAsZzu5vk/whyPg59GHeesO8zFnR5wmQJBusFWa/qtNmaAKL1GLjd4dBBwdShGBifwdAPXNs4nkMs7gI03BMlmrqvJxVjbQloKbAn6f3GAcXAHGZ7b2LXRlg6m1IxtWSCTKmR9naUobl6DqwckXYfSMXUmgoTVRO8ltknHoGeY1p3ZFG7ACFcItzvVcbn6dfCLpMsgKURQCcmBoNg7nK7KEspQGHuvnjiYhkFk2XUUt9ie3UGEoxPpP3ST7t1tQW4GyKAvujCisPMeY57JuOvEGJrJodYXQFovPNimlzlAN7wrR0XwWYiFIHvCRDcXmOdR9yWXSYWRvMLHjz5/MbLZK77C9t6kVaadQ9QNUEXp5luy/JYCTGb+t59aSEtHIoJQQAveNkPh1arQWU83fZw3lx4xhHn6n2B54uu+St4d5JzPA/FIurJF3JbFExJxpq/VAmiCZfVWkAvawvSjpTQ/f8CKYP369Ruax7AQkgMYbCUBWFNABhh7razdYIvxjiR/oPNGGAsgOofaF+4ZfoCtQlQHePHD2IKU2MNmwL4Yk60bcZ9nOltURy022J1gc0YYOy24S9OIox/Oomv5zkMZPxt5jcP1gTAOjZ2W/XOIEp7cyTBz+1cnsAnn1AHPF2yCLo/p8zwitzDlHjuq/BJajzJDhFop7uND+t64qz15M9fUztJVoshPklkg54UqOASn36cp3Vt1C+0uguwsEE22NbfA6bBOZy76J/P1NYP0Nrk9Iap26pg2VtEA7ShoaGhoaGhoaHhme/BaSj0rJaIcgAAAABJRU5ErkJggg==',
+      'ico-mirror':    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAAvRJREFUeAHtm01u2kAUgB8GIZbcoD4Ce4RqTlBuUN+A3CDtyWhBiG2O0K4SZZUlv3bei8aJNAr2/LznccR8EkJpFcf+ZvwZzSQAkUgkEgnI6jGHv88/4Sahi//zVL69AklIICRJ8u3jizKFAIQV0AGiABBmtVqNwROOY1xDXEC/31+AJ4PBQCyQ4gJ6vd49+OMt8RqiAjabTYZvKfiTqWOxIyoAR59t6pZl+QMEEBOw2+1SPOkc+MglYigm4HQ6ZcfjEbjA440xhktgRkwAxY9TgDoWewxFBFCwiqJIz+czcEHHwteEO4YiAih++/0euMHbgN44HqvvsAug+OHo5+pkWaHbAMOaccaQXQDFjy4eTxS4oWOSBM4Ysgug+B0OB5BCzaw7YIJVwHq9XlwulxRfIIWK4ZgrhqwCKH6So1/BGUM2ASp+C85n/zU4Y8gmAKf9kvO5XwdnDNkE4EktJJ7911AzzTuGLAIwfjmOPt0C0BYUWo4Ysgig+LVx7+uo4HrF0FuAil8WQgA1h2K43W4n4Ii3AJyK923FT4diSLMAB8B5scRbAI1Am/HTUbfBnesj0UtAiPjp0CygGA6Hw+/ggJeAUPHToRmIg+D0SHQWEDJ+OlUMXR6JzgIofl24+ApqgcvKsZMACg4Z75oAvCWtV46dBNB2F1580PjpVDG03UZzEoCml10a/Qr1OLZaObYWQJ+6cOQnoT781OESQ2sB+AOWIT/4NGEbQysB1XZXF0e/Qn0yNI6hlYBqu6tL8dOxjaGVAO7tLinULDCKobEAie0uKdTKsVEMjQVIbXdJoVaOG9cMjQR8hfjpmK4cGwn4CvHTUSvHjb9TYCRAertLCpNttEYBFBLp7S4pTLbRGgW0td0lRdM22gBqoPihwTxJEhiNRhAS15+PA0hvbzGcz+cv+v/XCsDoUUF/hb54jnPANcMU3x70f68VMJ1OHz77praZzWa/QYj42+Jw44QVUBT/P77o/YOb5Kb/aCoSiUQC8wo1UgeKGHiLkwAAAABJRU5ErkJggg==',
+      'ico-rotate':    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABBxJREFUeAHtmk1S2zAUx19CJt10puw60y6aG5AbIJYMgZITEE7QcIKYEwAnADbtMnwOy4ob0BPUXXami3TLV/p/IKXChNaSZeME/WY8lpTYlv56+nwiCgQCgUAg8FKp0KRy/rNHw2E0ilcqEc2/3SRLqvTCqVGB9Pv92Xq93ri5uWlWKpU3SJpVPw2Gw+EPpA2ur68v2u32gAoidwFOT0+bt7e3qwjO4xIIw1oftzydVqvV6Pj4WCIoIcY+xIgpR3ITAIUQuPVQYEH2CL4gRsRiQJy9Vqu1TzngXQBV41t0X4hxxDB3ifuATZ4TEJ9FuIEgX83E/wV+FxCiA4tY920RXgU4OTnpqsInkUjfxnX+v/bN/US1Wp2fmZlZRcE7xk9sEd8hxOby8nJEnvAyDHKmkbk+Pa71CLW249qpnZ2dcYfZSwjBHKy/not/VerdUYrjMJhZAM4kCvmV7s1XI32aq/rGLhkCf66/oy+v3v/9k6MAmZoA1/yYwkcwUeuM/IvFxcUYtwWYf4/fTx7JNBGC2XOtNHQcHVnHd+FN+N34xgZ5xNkCUBsRbqtGUjfzUJWc3o6hRX5xsgBuk7j1jCQ2+x2aQJwEQLvvG1GZp9nnjbUAR0dHHTImK9zb0wRjPQyi7XOvLziM8XlvZWVlogWwsgDV9oWOY5IysaavsRIA5r6mw1z7ea/UisC2DxA6AAEOaApILQDP+sgQgBc2NAWkFgCzPnOZWuiuTZ6kFoDX7EY0pikhtQCYg3/QYYgR05Rg0wmOLEDv5EwDhe4K50liqZx6SW5jAaNaT/QHpSCRp9QWatMJ/jaipRNAbaregSE6TvtcagGwSXlhRAWVj4YO2PRRqQW4vLyMjQ811MSoFKi8jOYpWKN8S/tsagHUxEeOHsTWNZUEWKcwotJmkma7FpCjB6vVLpUE5OWjEZVkgZUA+NChERVlaAa8RDf9BuxPJAusBFhaWuKOUOo41gef6Jlhx4kRlbZLdJc9QXOCEcEKGvRMJGufnahkibUAmGFJemgFu/RMKG+R5sJlW95pVxh9gemcEMpHUCjqm0LHIUabHHASgPuChIemB8/wGhUEe6Ep4Zdw3Z7L5Bw1d4gZtMcN7BJvU47wtjzEN03/AM3SqfaZTL5BZXaxjiNjW3k2B363WXjel8jql5hY9zgXHkPgQtZv+DwgwRk0naV3W+fsO3DNpHpvsr0zLHDbx76k14OST/nvWQjcDiGGTHNEhuf2MHWeZIkxf+n6dMR6PymqzJWdp80n/sKzST4oFZuHpHDjg1KCHjYlE8nDr5qNeiO3o7Kqt+ahUVA2JASKMLrk4ofI/aywsggthEj5mFQXD3Gp1/YuFHpYWrXvOTZ5mHODjKOy3Byurq64sPG0OF0CgUAgEAgEAmXmD0HS7DcMiNR7AAAAAElFTkSuQmCC',
+      'ico-undo':      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABFxJREFUeAHtms1u20YUhc9Q6g+QjbKomwIFQvcFqn2BiNrV8P8TxF13UfsJIj9BnCeIsutOig3DS9GLblt1021ZoEDQtIC9aAInksicS5MSrVhyJHJGUswPMDRDDkjPmXvvzNwhkJOTk5OTk5OTk3MrUZhXWn+WYN15iMDf4r9ZhlJ1VJb2kDHzJUDr7zJQ2GJnK6w5793/5DMb3939CxlSxKxpvXBgqU0E4EjDHt1QNbPufPhUmEZMG586UMVN1tjpoDSmtQtlNeG/eobq8jk0YEaAYX8e2WklnWzSBVx2+rmuTl95I3TSesng5Tcw3rTPoYI6VKGJB1+cwjB6Y4AKfsL1nXfDUVaWO4tOJ9EsAEc3CMLil/4bfN/59/xB9+xgyb847Xa77e3tbe0mfhOaXYARXqmWFL/pvcKT138Mt3D516QYzymGhxmgWYCzEtSbs7j68/+/4k7QG9XaVVzsrK2tPYNB9M8C7j+/MeqXpfjjhVdf6f5Hrwjr5eua855nWVbNlBD6BTh9+ZjT3270tgNU7oXL2UajUSoUClsc9Wg9cBURotfrVXW7hn4BWi92GAeeRjUXzr3qcJOTkxObcUCEEKHsodv76+vrNWjCgADJOBBwVrhYHrfAOTo6esSf2tDlNgXa1mENFnRTvSud9S4riivAz8vjmnO094vF4jIuZ4iYMt2lRbexkTH6BQjhoqf/RvXtTa1XVlY8CiGuUus/QSlbhwhmBAj8wWovuGabOwKxBgbDH1gMXSYhQgkZYcgCkuYcOJiAjY2NOqdFsYa+CHSRBjLCjADVr7xop4cwDoSJjw9ndXW1TUtIZoOcw8PDXWSAKQsQmoO3FiuYELEEijAQ12kJj7KIB+YEUKrdLwdqIguIoQhiBfFzSnSFp0iJOQH8t4lt72RxYIgrrsB1g4MUmBOg+nV7EAe42vvl7D6mgDODi0RQpVtsIgUmYwAJBm7Q7TiYnv24wFiwgxSYFUASnH38qeKAEFlBbE2lNG5gVgAfpwM3sNpIAU2/nqjeuLochVkBqkttBK+XwwOOylLa/f7vcSHKL0yF+YORy51gFrnA/jNkdYgpMRwEs0MplUlCdWEFyIpFFqAf+CR9hilZZAGcuKCSy+wJ+SgEYLps6tOlhRSAW+Ed/oRJETF/5gpvjwVIBlm2wnFdzhCQgoUTgOb+GFHqXEY/7QHKQglA06/j6iHKDlIy+09kPoDoFOmApv8wcbnGBEnqo/X5/UosItrpSebHTlyuScYYGTC3AkQdl2DnDN3KrPPCXAmQODAVU3eGbp/z+m7Wp8YzFUA6zMSmbGVlWSvBTcrvHXrI3p8nxXs6vijRJsDx8XHZ9/14sWKHL1PqPsulaPsqnbVveIzL9pkEu1FoEYD+W8Ol/06DK3+c75+Y+IZI1zQ4SYrK4yjL5zFtruqaPAXK/GvQcWgRgH69xxHs+3JiuyqBzJNkRqfTkZSWNw9fiuXk5OTk5NxS3gE3oILbazmGYQAAAABJRU5ErkJggg==',
+      'ico-redo':      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAWJAAAFiQFtaJ36AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABB9JREFUeAHtmk9u2kAUxr/BVM2ilVBVVW1VqWSXXbhBzDp/gBOUnCDkBCEnSHKCknUXQBIpS0x7gBKpi+7iSpWi0g2LtIsAdt9g40woUIJnzET1b+Px2Fi8z29m3nseICYmJiYmJiYmJua/hCFqGlcVMPaOWhZYogKn30T2lY0FEa0Ajas0GX855goXowbnhsR400KERO8BzfYBXKc05Q6b/pZF9xyTZ1hQTPQCcLgnAKY/FMwpd9qeGL06cGMhu9yBZBYjgEjjMgUs5WkIrNFZHnBTU+6WPm8sXoBRPv5cg+MUSQiTztJT7myRZ2yHnTP0E0Ck0c4g4ebgDjwjM+aOGsyXBYQgCZ3JvmhVq1U7mUw2vxpPcjZbKn5Yep1qs8fedcbniHBoKQAZnSaji9Tk84LJ+1b611jBNZrOc7SNoQBGDSHRSoCTk5M8Y2wHE1aGX8zAF+PpbUf/+gIh0UIAMrxIhu9h8qTXcl279enRM94uel2sJWNZXKgAp6enJh244eaYyxaJUul2u/VCoeAZ2vyxB9f1rjLXggQWJgAZf0iHnZFubuhhr9c7CowWcQdLowdLWpBA5ALQBJeiCa6Ku299uuEBjJZC3wP63dDjnxOpAOfn52kysoG7Y92ivm0y3J7644YdWYQoB3KiEYLsBnRsTKzHqjnvJyQ58x6eYaQN2lLTKeWxhR3Gk4ySEVvJymkZXhfkHiI60FAhCZLtPKA1aqJOLYJYKpAjzA5b08DXSwOYs3qY/ZzCkqVNBRJoCdBXg68/MhUmDkRd9p0tqHUb7cVxakc2+PBb2x4pKqW1M9+OGYiCiGNz5s1+tVy3aBWL+0uFgHlhRkCuiTBpg1jvnZ+UvhHZuOIyXjzMoXIA0AmMHgvkEVoCeK7hgkaqmAJBjiwFiN9s4I1xKZzM5BmUEhqBqF4UdmOaXOWAcg7ABmHbJ77Bp0ACFIJIboNfQqjXJuN5NByf1v0RcD+JJFAPv6wPeipNiASwPCo0U72/UJq1CqFlnxCsOCLq0mHOl6GQLA0N0D9k7kJDNXxXvHJh2T98SRUIJ7nFvJW0sM7TDKZ1M8XiAEhFxC/bJpIEHx3yPl1NwCjcBQbPAIaS5bOG7u2kfq+oVv1hnHpEP+rWyOyh78g4WbFNyZK8F6bMXCbfTi1UKBCnBJhh7E3GcDXNAjAiuFQ6ydKL8XuHdSzBLNdRYuFNYa2T8CQ1mW0h8VJpVHDAAfJqMD0oBULjbDELlICHnBXSFbdRPLX7gp3FelTz7BDo2Q5E0wO9pOd3tO6s0cM+Y1jA0KP8vP0E1O0oyCCFaWVnqj5yqiHPYr/aYLo1TBivE4EiJR43pXRU1K7GFHIF+mFlWISjv8KvELiDvdMr0CCwOL0GUZQF3cLcFzuJh9eFUKu8yOGxOcT1u6Tll64dH4ZsGmN5Oqt/h0ztlOmEQnRMd1MlkWrCY2JRKS9xvqCANJB06+RaWEtgAAAABJRU5ErkJggg==',
+    };
 
+    // Apply PNG icons immediately (before WASM loads)
+    for (const [id, src] of Object.entries(PNG_ICONS)) {
+      const el = document.getElementById(id);
+      if (el) el.src = src;
+    }
+
+    const canvas    = document.getElementById('minicad-canvas');
+    const modeLabel = document.getElementById('mode-label');
+    const snapLabel = document.getElementById('snap-label');
+    const orthoLabel= document.getElementById('ortho-label');
+
+    let snapOn  = true;
+    let orthoOn = false;
+    let activeTool = null;
+
+    // ── Canvas CSS size sync ──────────────────────────────
     function syncCanvasCssSize() {
       const wrap = document.getElementById('canvas-wrap');
       const rect = wrap.getBoundingClientRect();
-      canvas.style.width = `${Math.max(1, Math.floor(rect.width))}px`;
+      canvas.style.width  = `${Math.max(1, Math.floor(rect.width))}px`;
       canvas.style.height = `${Math.max(1, Math.floor(rect.height))}px`;
     }
 
-    function callExport(name, nextMode) {
-      return () => {
+    // ── Call a WASM export ────────────────────────────────
+    function call(name) {
+      if (!Module.runtimeReady) return;
+      Module.ccall(name, null, [], []);
+    }
+
+    function setMode(label) {
+      modeLabel.textContent = label;
+    }
+
+    function activateBtn(id) {
+      if (activeTool) {
+        const prev = document.getElementById(activeTool);
+        if (prev) prev.classList.remove('active');
+      }
+      activeTool = id;
+      if (id) {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.add('active');
+      }
+    }
+
+    function toolBtn(btnId, exportName, label) {
+      document.getElementById(btnId).onclick = () => {
         canvas.focus();
-        if (!Module.runtimeReady) return;
-        Module.ccall(name, null, [], []);
-        mode.textContent = nextMode;
+        call(exportName);
+        setMode(label);
+        activateBtn(btnId);
       };
     }
 
+    function actionBtn(btnId, exportName, label) {
+      document.getElementById(btnId).onclick = () => {
+        canvas.focus();
+        call(exportName);
+        setMode(label);
+      };
+    }
+
+    // ── Module ─────────────────────────────────────────────
     var Module = {
       canvas,
       onRuntimeInitialized() {
         syncCanvasCssSize();
         window.addEventListener('resize', syncCanvasCssSize);
         Module.runtimeReady = true;
-        document.getElementById('line').onclick = callExport('MiniCAD_StartLine', 'Line');
-        document.getElementById('undo').onclick = callExport('MiniCAD_Undo', 'Undo');
-        document.getElementById('redo').onclick = callExport('MiniCAD_Redo', 'Redo');
-        document.getElementById('cancel').onclick = callExport('MiniCAD_Cancel', 'Ready');
-        mode.textContent = 'Ready';
+
+        // Draw tools
+        toolBtn('btn-line',      'MiniCAD_StartLine',      '直线');
+        toolBtn('btn-polyline',  'MiniCAD_StartPolyline',  '多段线');
+        toolBtn('btn-circle',    'MiniCAD_StartCircle',    '圆');
+        toolBtn('btn-arc',       'MiniCAD_StartArc',       '圆弧');
+        toolBtn('btn-ellipse',   'MiniCAD_StartEllipse',   '椭圆');
+        toolBtn('btn-rectangle', 'MiniCAD_StartRectangle', '矩形');
+        toolBtn('btn-spline',    'MiniCAD_StartSpline',    '样条');
+        toolBtn('btn-point',     'MiniCAD_StartPoint',     '点');
+
+        // Edit tools
+        toolBtn('btn-move',   'MiniCAD_StartMove',   '移动');
+        toolBtn('btn-copy',   'MiniCAD_StartCopy',   '复制');
+        toolBtn('btn-mirror', 'MiniCAD_StartMirror', '镜像');
+        toolBtn('btn-rotate', 'MiniCAD_StartRotate', '旋转');
+
+        // Delete
+        document.getElementById('btn-delete').onclick = () => {
+          canvas.focus();
+          call('MiniCAD_Delete');
+          setMode('就绪');
+          activateBtn(null);
+        };
+
+        // Snap toggle
+        document.getElementById('btn-snap').onclick = () => {
+          canvas.focus();
+          call('MiniCAD_ToggleSnap');
+          snapOn = !snapOn;
+          snapLabel.textContent = `捕捉: ${snapOn ? 'ON' : 'OFF'}`;
+          snapLabel.style.color  = snapOn ? '#50d890' : '#5a6270';
+          document.getElementById('btn-snap').classList.toggle('toggle-on', snapOn);
+        };
+        document.getElementById('btn-snap').classList.add('toggle-on');
+
+        // Ortho toggle
+        document.getElementById('btn-ortho').onclick = () => {
+          canvas.focus();
+          call('MiniCAD_ToggleOrtho');
+          orthoOn = !orthoOn;
+          orthoLabel.textContent = `正交: ${orthoOn ? 'ON' : 'OFF'}`;
+          orthoLabel.style.color  = orthoOn ? '#ffa050' : '#5a6270';
+          document.getElementById('btn-ortho').classList.toggle('toggle-on', orthoOn);
+        };
+
+        // History & misc
+        actionBtn('btn-undo', 'MiniCAD_Undo', '撤销');
+        actionBtn('btn-redo', 'MiniCAD_Redo', '重做');
+
+        document.getElementById('btn-cancel').onclick = () => {
+          canvas.focus();
+          call('MiniCAD_Cancel');
+          setMode('就绪');
+          activateBtn(null);
+        };
+
+        setMode('就绪');
         canvas.focus();
       }
     };

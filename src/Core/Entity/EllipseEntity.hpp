@@ -49,7 +49,7 @@ namespace MiniCAD
                 double t0 = Math::TwoPI *  i      / kSegments;
                 double t1 = Math::TwoPI * (i + 1) / kSegments;
                 sink.DrawLine(m_ellipse.PointAt(t0), m_ellipse.PointAt(t1),
-                              color, isSelected || isHovered);
+                              color, false);
             }
         }
 

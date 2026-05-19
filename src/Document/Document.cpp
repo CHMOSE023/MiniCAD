@@ -159,10 +159,10 @@ namespace MiniCAD
         const auto& selectionIds = m_picking.GetSelection();
 
 		// 优化：当没有悬停和选择时，清除预览数据并重建夹点，避免残留和状态错误
-        if (hoverIds.empty() || selectionIds.empty())
+        if (!m_editor.IsActiveTool())
         {
-            m_overlay.Clear(); 
-			m_editor.GetGripEditor().RebuildGrips(); // 确保夹点状态正确
+            m_overlay.Clear();
+            m_editor.GetGripEditor().RebuildGrips();
         }
 
         DrawContext ctx(m_sceneVertices, m_overlay);

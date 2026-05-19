@@ -92,14 +92,6 @@ namespace MiniCAD
 
             const auto& attr  = GetAttr();
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
-            const bool highlight = isSelected || isHovered;
-
-            // Draw each segment:
-            //  line segment → single DrawLine call (cheap, exact)
-            //  arc segment  → tessellate into polyline, then DrawLine per sub-segment
-            //
-            // angleTol = 5° gives visually smooth curves at typical zoom levels.
-            // For very large arcs you could adjust based on viewport scale.
             constexpr double kAngleTol = Math::PI / 36.0;   // 5°
 
             for (int i = 0; i < m_polyline.SegCount(); ++i)
@@ -109,17 +101,16 @@ namespace MiniCAD
 
                 if (m_polyline.SegIsLine(i))
                 {
-                    sink.DrawLine(A, B, color, highlight);
+                    sink.DrawLine(A, B, color, false);
                 }
                 else
                 {
-                    // Tessellate the arc into a dense point list and draw as lines.
                     std::vector<Math::Point3> pts;
                     Polyline::TessellateArc(A, B, m_polyline.SegBulge(i), pts, kAngleTol);
-                    pts.push_back(B);   // close the last sub-segment
+                    pts.push_back(B);
 
                     for (size_t k = 0; k + 1 < pts.size(); ++k)
-                        sink.DrawLine(pts[k], pts[k + 1], color, highlight);
+                        sink.DrawLine(pts[k], pts[k + 1], color, false);
                 }
             }
         }

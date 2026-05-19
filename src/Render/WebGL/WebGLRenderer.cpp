@@ -18,33 +18,33 @@ namespace MiniCAD
     namespace
     {
         constexpr const char* kVertexShader = R"(#version 300 es
-precision highp float;
+            precision highp float;
 
-layout(location = 0) in vec3 aPosition;
-layout(location = 1) in vec4 aColor;
+            layout(location = 0) in vec3 aPosition;
+            layout(location = 1) in vec4 aColor;
 
-uniform mat4 uViewProj;
+            uniform mat4 uViewProj;
 
-out vec4 vColor;
+            out vec4 vColor;
 
-void main()
-{
-    gl_Position = uViewProj * vec4(aPosition, 1.0);
-    vColor = aColor;
-}
-)";
+            void main()
+            {
+                gl_Position = uViewProj * vec4(aPosition, 1.0);
+                vColor = aColor;
+            }
+        )";
 
         constexpr const char* kFragmentShader = R"(#version 300 es
-precision highp float;
+            precision highp float;
 
-in vec4 vColor;
-out vec4 fragColor;
+            in vec4 vColor;
+            out vec4 fragColor;
 
-void main()
-{
-    fragColor = vColor;
-}
-)";
+            void main()
+            {
+                fragColor = vColor;
+            }
+        )";
     }
 
     WebGLRenderer::WebGLRenderer()
@@ -57,6 +57,8 @@ void main()
 #if defined(__EMSCRIPTEN__)
         if (m_vbo != 0)
             glDeleteBuffers(1, &m_vbo);
+        if (m_vao != 0)
+            glDeleteVertexArrays(1, &m_vao);
         if (m_program != 0)
             glDeleteProgram(m_program);
 #endif
@@ -72,7 +74,19 @@ void main()
         glDeleteShader(fs);
 
         m_uViewProj = glGetUniformLocation(m_program, "uViewProj");
+
+        glGenVertexArrays(1, &m_vao);
+        glBindVertexArray(m_vao);
         glGenBuffers(1, &m_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex_P3_C4),
+                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4, pos)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex_P3_C4),
+                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4, color)));
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -157,6 +171,7 @@ void main()
 #if defined(__EMSCRIPTEN__)
         const auto gpuMat = Float4x4::FromMat4(viewProj);
 
+        glBindVertexArray(m_vao);
         glUseProgram(m_program);
         glUniformMatrix4fv(m_uViewProj, 1, GL_FALSE, gpuMat.m);
 
@@ -165,22 +180,6 @@ void main()
                      static_cast<GLsizeiptr>(verts.size_bytes()),
                      verts.data(),
                      GL_DYNAMIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0,
-                              3,
-                              GL_FLOAT,
-                              GL_FALSE,
-                              sizeof(Vertex_P3_C4),
-                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4, pos)));
-
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1,
-                              4,
-                              GL_FLOAT,
-                              GL_FALSE,
-                              sizeof(Vertex_P3_C4),
-                              reinterpret_cast<void*>(offsetof(Vertex_P3_C4, color)));
 
         const GLenum mode = type == PrimitiveType::Line ? GL_LINES : GL_TRIANGLES;
         glDrawArrays(mode, 0, static_cast<GLsizei>(verts.size()));
@@ -191,6 +190,7 @@ void main()
     {
 #if defined(__EMSCRIPTEN__)
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
 #endif
     }
 }

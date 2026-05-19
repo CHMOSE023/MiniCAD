@@ -27,8 +27,9 @@ namespace MiniCAD
         unsigned LinkProgram(unsigned vertexShader, unsigned fragmentShader);
 
     private:
-        unsigned m_program = 0;
-        unsigned m_vbo = 0;
-        int m_uViewProj = -1;
+        unsigned m_program  = 0;
+        unsigned m_vbo      = 0;
+        unsigned m_vao      = 0;
+        int      m_uViewProj = -1;
     };
 }

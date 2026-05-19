@@ -72,14 +72,11 @@ namespace MiniCAD
             const Math::Color4& curveColor = isSelected ? IDrawSink::kSelectionColor
                 : isHovered ? IDrawSink::kHoverColor
                 : attr.Color;
-            const bool highlight = isSelected || isHovered;
-
-            // 绘制样条曲线主体（细分折线）
             constexpr int kSamplesPerSeg = 32;
             auto pts = m_spline.Tessellate(kSamplesPerSeg);
 
             for (size_t i = 0; i + 1 < pts.size(); ++i)
-                sink.DrawLine(pts[i], pts[i + 1], curveColor, highlight);
+                sink.DrawLine(pts[i], pts[i + 1], curveColor, false);
 
             // 选中时显示控制点标记
             // if (isSelected)

@@ -274,29 +274,84 @@ namespace
 
 extern "C"
 {
+    // ── 绘制工具 ───────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartLine()
     {
-        if (g_document)
-            g_document->GetEditor().StartLineTool();
+        if (g_document) g_document->GetEditor().StartLineTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartPoint()
+    {
+        if (g_document) g_document->GetEditor().StartPointTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartCircle()
+    {
+        if (g_document) g_document->GetEditor().StartCircleTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartRectangle()
+    {
+        if (g_document) g_document->GetEditor().StartRectangleTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartArc()
+    {
+        if (g_document) g_document->GetEditor().StartArcTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartEllipse()
+    {
+        if (g_document) g_document->GetEditor().StartEllipseTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartPolyline()
+    {
+        if (g_document) g_document->GetEditor().StartPolylineTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartSpline()
+    {
+        if (g_document) g_document->GetEditor().StartSplineTool();
     }
 
+    // ── 编辑工具 ───────────────────────────────────────────────────
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMove()
+    {
+        if (g_document) g_document->GetEditor().StartMoveTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartCopy()
+    {
+        if (g_document) g_document->GetEditor().StartCopyTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMirror()
+    {
+        if (g_document) g_document->GetEditor().StartMirrorTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartRotate()
+    {
+        if (g_document) g_document->GetEditor().StartRotateTool();
+    }
+
+    // ── 通用操作 ───────────────────────────────────────────────────
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_Delete()
+    {
+        if (g_document) g_document->GetEditor().DeleteSelected();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_ToggleSnap()
+    {
+        if (g_document) g_document->GetEditor().ToggleSnap();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_ToggleOrtho()
+    {
+        if (g_document) g_document->GetEditor().ToggleOrtho();
+    }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Undo()
     {
-        if (g_document)
-            g_document->Undo();
+        if (g_document) g_document->Undo();
     }
-
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Redo()
     {
-        if (g_document)
-            g_document->Redo();
+        if (g_document) g_document->Redo();
     }
-
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Cancel()
     {
         MiniCAD::InputEvent e = {};
         e.Type = MiniCAD::InputEventType::KeyDown;
-        e.Key = MiniCAD::KeyCode::Escape;
+        e.Key  = MiniCAD::KeyCode::Escape;
         Dispatch(e);
     }
 }

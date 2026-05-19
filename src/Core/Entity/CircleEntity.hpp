@@ -60,7 +60,7 @@ namespace MiniCAD
                     center.z
                 }; 
 
-                sink.DrawLine(p0, p1, color, isSelected || isHovered);
+                sink.DrawLine(p0, p1, color, false);
             }
 
         }

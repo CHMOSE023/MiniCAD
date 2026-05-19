@@ -66,7 +66,7 @@ namespace MiniCAD
             {
                 double a0 = m_arc.StartAngle + sweep *  i      / kSegments;
                 double a1 = m_arc.StartAngle + sweep * (i + 1) / kSegments;
-                sink.DrawLine(m_arc.PointAt(a0), m_arc.PointAt(a1), color, isSelected || isHovered);
+                sink.DrawLine(m_arc.PointAt(a0), m_arc.PointAt(a1), color, false);
             }
         }
 

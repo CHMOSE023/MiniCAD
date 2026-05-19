@@ -37,10 +37,10 @@ namespace MiniCAD
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
 
 			// 绘制矩形边框（4 条线段）
-            sink.DrawLine(m_rect.P1, m_rect.P2, color, isSelected || isHovered);
-            sink.DrawLine(m_rect.P2, m_rect.P3, color, isSelected || isHovered);
-            sink.DrawLine(m_rect.P3, m_rect.P4, color, isSelected || isHovered);
-			sink.DrawLine(m_rect.P4, m_rect.P1, color, isSelected || isHovered);
+            sink.DrawLine(m_rect.P1, m_rect.P2, color, false);
+            sink.DrawLine(m_rect.P2, m_rect.P3, color, false);
+            sink.DrawLine(m_rect.P3, m_rect.P4, color, false);
+			sink.DrawLine(m_rect.P4, m_rect.P1, color, false);
         };
 
         DECLARE_RUNTIME_TYPE(RectangleEntity, Entity)

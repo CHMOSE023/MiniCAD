@@ -30,7 +30,7 @@ namespace MiniCAD
 			 
 			 const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
 
-			 sink.DrawLine(m_line.Start, m_line.End, color, isSelected || isHovered);
+			 sink.DrawLine(m_line.Start, m_line.End, color, false);
 
 		}
 

@@ -35,8 +35,8 @@ namespace MiniCAD
 			Math::Point3 p3 = { p.x ,p.y - s,p.z };
 			Math::Point3 p4 = { p.x ,p.y + s,p.z };
 
-			sink.DrawLine(p1, p2, color, isSelected || isHovered);
-			sink.DrawLine(p3, p4, color, isSelected || isHovered); 
+			sink.DrawLine(p1, p2, color, false);
+			sink.DrawLine(p3, p4, color, false); 
 
 		}
 
