@@ -143,32 +143,7 @@
 
              #toolbar::-webkit-scrollbar-corner {
                  background: transparent;
-             }
-
-             /* 滚动时左右两端渐变阴影，提示有更多内容 */
-             #toolbar::before,
-             #toolbar::after {
-                 content: "";
-                 position: sticky;
-                 top: 0;
-                 width: 18px;
-                 height: 100%;
-                 pointer-events: none;
-                 flex-shrink: 0;
-                 z-index: 1;
-             }
-
-             #toolbar::before {
-                 left: 0;
-                 margin-right: -18px;
-                 background: linear-gradient(90deg, var(--bg-2) 0%, transparent 100%);
-             }
-
-             #toolbar::after {
-                 right: 0;
-                 margin-left: -18px;
-                 background: linear-gradient(90deg, transparent 0%, var(--bg-1) 100%);
-             }
+             } 
 
          /* Brand */
          .brand {
@@ -183,13 +158,13 @@
          }
 
              .brand img {
-                 width: 24px;
-                 height: 24px;
+                 width: 26px;
+                 height: 26px;
              }
 
          .brand-name {
-             font-size: 13px;
-             font-weight: 600;
+             font-size: 16px;
+             font-weight: 900;
              letter-spacing: 0.4px;
              background: linear-gradient(180deg, #ffffff 0%, #b8c5d6 100%);
              -webkit-background-clip: text;
@@ -205,15 +180,18 @@
              padding: 0 4px;
              flex-shrink: 0;
          }
-
-         .tb-label {
-             font-size: 10px;
-             color: var(--text-dim);
-             padding: 0 6px;
-             text-transform: uppercase;
-             letter-spacing: 0.6px;
-             flex-shrink: 0;
-         }
+            .tb-group button {
+                font-size: 12px;
+            }
+            
+            .tb-label {
+                font-size: 14px;
+                color: var(--text-dim);
+                padding: 0 6px;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                flex-shrink: 0;
+            }
 
          .tb-sep {
              width: 1px;
@@ -282,8 +260,8 @@
                  }
 
          .tb-icon {
-             width: 16px;
-             height: 16px;
+             width: 18px;
+             height: 18px;
              flex-shrink: 0;
              pointer-events: none;
              opacity: 0.85;
@@ -486,6 +464,34 @@
                  color: var(--text-dim);
              }
 
+             /* 可点击切换的胶囊（捕捉 / 正交）─ hover 高亮、active 缩放、on 状态发光 */
+             .pill.toggleable {
+                 cursor: pointer;
+                 user-select: none;
+                 transition: background 0.15s ease, border-color 0.15s ease,
+                             color 0.15s ease, box-shadow 0.15s ease,
+                             transform 0.05s ease;
+             }
+             .pill.toggleable:hover {
+                 background: var(--bg-3);
+                 border-color: var(--border-hi);
+                 filter: brightness(1.15);
+             }
+             .pill.toggleable:active {
+                 transform: scale(0.96);
+             }
+             .pill.toggleable:focus-visible {
+                 outline: none;
+                 box-shadow: 0 0 0 2px var(--accent-glow);
+             }
+             /* on 状态发光 */
+             .pill.toggleable.snap-on {
+                 box-shadow: 0 0 8px rgba(95,227,154,0.25);
+             }
+             .pill.toggleable.ortho-on {
+                 box-shadow: 0 0 8px rgba(255,167,96,0.25);
+             }
+
          #status .seg.right {
              margin-left: auto;
              gap: 6px;
@@ -572,8 +578,8 @@
              }
 
                  button .tb-icon {
-                     width: 20px;
-                     height: 20px;
+                     width: 24px;
+                     height: 24px;
                  }
 
              /* GitHub 链接也变图标 */
@@ -672,22 +678,20 @@
                 <span class="brand-name">MiniCAD</span>
             </div>
 
-            <div class="tb-group">
-                <span class="tb-label">绘制</span>
-                <button id="btn-line" title="直线 (L)">      <img class="tb-icon" src="icons/Line.png" alt=""> 直线</button>
-                <button id="btn-polyline" title="多段线 (PL)">    <img class="tb-icon" src="icons/Pline.png" alt=""> 多段线</button>
-                <button id="btn-circle" title="圆 (C)">        <img class="tb-icon" src="icons/Circle.png" alt=""> 圆</button>
-                <button id="btn-arc" title="圆弧 (ARC)">    <img class="tb-icon" src="icons/Arc.png" alt=""> 圆弧</button>
-                <button id="btn-ellipse" title="椭圆 (EL)">     <img class="tb-icon" src="icons/Ellipse.png" alt=""> 椭圆</button>
+            <div class="tb-group"> 
+                <button id="btn-point" title="点 (PT)">           <span class="tb-icon icon-point"></span> 点</button>
+                <button id="btn-line" title="直线 (L)">           <img class="tb-icon" src="icons/Line.png" alt=""> 直线</button>
                 <button id="btn-rectangle" title="矩形 (REC)">    <img class="tb-icon" src="icons/Rect.png" alt=""> 矩形</button>
-                <button id="btn-spline" title="样条曲线 (SP)">  <img class="tb-icon" src="icons/Spline.png" alt=""> 样条</button>
-                <button id="btn-point" title="点 (PT)">       <span class="tb-icon icon-point"></span> 点</button>
+                <button id="btn-circle" title="圆 (C)">           <img class="tb-icon" src="icons/Circle.png" alt=""> 圆</button>
+                <button id="btn-arc" title="圆弧 (ARC)">          <img class="tb-icon" src="icons/Arc.png" alt=""> 圆弧</button>
+                <button id="btn-ellipse" title="椭圆 (EL)">       <img class="tb-icon" src="icons/Ellipse.png" alt=""> 椭圆</button>
+                <button id="btn-polyline" title="多段线 (PL)">    <img class="tb-icon" src="icons/Pline.png" alt=""> 多段线</button>
+                <button id="btn-spline" title="样条曲线 (SP)">    <img class="tb-icon" src="icons/Spline.png" alt=""> 样条</button>
             </div>
 
             <div class="tb-sep"></div>
 
-            <div class="tb-group">
-                <span class="tb-label">编辑</span>
+            <div class="tb-group"> 
                 <button id="btn-move" title="移动 (M)">         <img class="tb-icon" src="icons/Move.png" alt=""> 移动</button>
                 <button id="btn-copy" title="复制 (CO)">        <img class="tb-icon" src="icons/Copy.png" alt=""> 复制</button>
                 <button id="btn-mirror" title="镜像 (MI)">        <img class="tb-icon" src="icons/Mirror.png" alt=""> 镜像</button>
@@ -697,16 +701,7 @@
 
             <div class="tb-sep"></div>
 
-            <div class="tb-group">
-                <span class="tb-label">辅助</span>
-                <button id="btn-snap" title="捕捉开关 (F3)"><span class="tb-icon icon-snap"></span> 捕捉</button>
-                <button id="btn-ortho" title="正交开关 (F8)"><span class="tb-icon icon-ortho"></span> 正交</button>
-            </div>
-
-            <div class="tb-sep"></div>
-
-            <div class="tb-group">
-                <span class="tb-label">历史</span>
+            <div class="tb-group"> 
                 <button id="btn-undo" title="撤销 (Ctrl+Z)"><img class="tb-icon" src="icons/Undo.png" alt=""> 撤销</button>
                 <button id="btn-redo" title="重做 (Ctrl+Y)"><img class="tb-icon" src="icons/Redo.png" alt=""> 重做</button>
                 <button id="btn-cancel" title="取消 / ESC"><span class="tb-icon icon-cancel"></span> 取消</button>
@@ -737,15 +732,9 @@
             <span class="seg hint">滚轮缩放 · 中键拖动平移</span>
             <span class="seg hint"><kbd>Esc</kbd>结束 · <kbd>Enter</kbd>重复</span>
             <span class="seg right">
-                <span id="snap-pill" class="pill snap-on">捕捉 · ON</span>
-                <span id="ortho-pill" class="pill ortho-off">正交 · OFF</span>
+                <span id="snap-pill"  class="pill toggleable snap-on"  title="点击切换捕捉 (F3)" role="switch" tabindex="0" aria-checked="true">捕捉 · ON</span>
+                <span id="ortho-pill" class="pill toggleable ortho-off" title="点击切换正交 (F8)" role="switch" tabindex="0" aria-checked="false">正交 · OFF</span>
             </span>
-
-            <div class="tb-group">
-                <span class="tb-label">辅助</span>
-                <button id="btn-snap" title="捕捉开关 (F3)"><span class="tb-icon icon-snap"></span> 捕捉</button>
-                <button id="btn-ortho" title="正交开关 (F8)"><span class="tb-icon icon-ortho"></span> 正交</button>
-            </div>
         </div>
 
     </div><!-- #app -->
@@ -834,28 +823,35 @@
                     activateBtn(null);
                 };
 
-                // Snap toggle
-                document.getElementById('btn-snap').onclick = () => {
+                // Snap 胶囊：单击切换 + 键盘 Space/Enter
+                const toggleSnap = () => {
                     canvas.focus();
                     call('MiniCAD_ToggleSnap');
                     snapOn = !snapOn;
                     snapPill.textContent = `捕捉 · ${snapOn ? 'ON' : 'OFF'}`;
-                    snapPill.classList.toggle('snap-on', snapOn);
+                    snapPill.classList.toggle('snap-on',  snapOn);
                     snapPill.classList.toggle('snap-off', !snapOn);
-                    document.getElementById('btn-snap').classList.toggle('toggle-on', snapOn);
+                    snapPill.setAttribute('aria-checked', snapOn ? 'true' : 'false');
                 };
-                document.getElementById('btn-snap').classList.add('toggle-on');
+                snapPill.addEventListener('click', toggleSnap);
+                snapPill.addEventListener('keydown', (e) => {
+                    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSnap(); }
+                });
 
-                // Ortho toggle
-                document.getElementById('btn-ortho').onclick = () => {
+                // Ortho 胶囊：单击切换 + 键盘 Space/Enter
+                const toggleOrtho = () => {
                     canvas.focus();
                     call('MiniCAD_ToggleOrtho');
                     orthoOn = !orthoOn;
                     orthoPill.textContent = `正交 · ${orthoOn ? 'ON' : 'OFF'}`;
-                    orthoPill.classList.toggle('ortho-on', orthoOn);
+                    orthoPill.classList.toggle('ortho-on',  orthoOn);
                     orthoPill.classList.toggle('ortho-off', !orthoOn);
-                    document.getElementById('btn-ortho').classList.toggle('toggle-on', orthoOn);
+                    orthoPill.setAttribute('aria-checked', orthoOn ? 'true' : 'false');
                 };
+                orthoPill.addEventListener('click', toggleOrtho);
+                orthoPill.addEventListener('keydown', (e) => {
+                    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleOrtho(); }
+                });
 
                 // History & misc
                 actionBtn('btn-undo', 'MiniCAD_Undo', '撤销');

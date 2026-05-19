@@ -159,8 +159,10 @@ namespace MiniCAD
         const auto& hoverIds     = m_picking.GetHovered();
         const auto& selectionIds = m_picking.GetSelection();
 
-		// 优化：当没有悬停和选择时，清除预览数据并重建夹点，避免残留和状态错误
-        if (!m_editor.IsActiveTool())
+        // 只在「空闲态」（没有工具且没在拖夹点）清 overlay 并重建夹点。
+        // 工具运行中：tool 自己往 overlay 加预览。
+        // 夹点拖拽中：GripEditor::OnMouseMove 已往 overlay 加预览，不能清。
+        if (!m_editor.IsActiveTool() && !m_editor.GetGripEditor().IsDragging())
         {
             m_overlay.Clear();
             m_editor.GetGripEditor().RebuildGrips();
