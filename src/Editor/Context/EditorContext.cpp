@@ -674,8 +674,13 @@ namespace MiniCAD
 
         if (m_gripEditor.IsDragging())
         {
-            // out = m_gripEditor.GetDragBase();
-            return true;
+            // 夹点拖拽时，用激活夹点的世界坐标作为锚点
+            if (const Grip* g = m_gripEditor.GetActiveGrip())
+            {
+                out = g->WorldPos;
+                return true;
+            }
+            return false;
         }
         return false;
     }
