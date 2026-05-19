@@ -24,7 +24,7 @@
 #include "Editor/Tools/Modify/MoveTool.h"
 #include "Editor/Tools/Modify/CopyTool.h"
 #include "Editor/Tools/Modify/MirrorTool.h"
-//#include "Editor/Tools/Modify/RotateTool.h"
+#include "Editor/Tools/Modify/RotateTool.h"
 
 // ── 几何编辑工具 ──────────────────────────────────────────────
 //#include "Editor/Tools/Modify/TrimTool.h"
@@ -108,6 +108,17 @@ namespace MiniCAD
                 return nullptr;
             }
             return std::make_unique<MirrorTool>(std::move(targets),
+                m_scene, m_cmdStack, m_viewport, m_overlay);
+            });
+
+        RegisterTool("Rotate", [this]() -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty())
+            {
+                printf("[Editor] Rotate: 请先选择对象\n");
+                return nullptr;
+            }
+            return std::make_unique<RotateTool>(std::move(targets),
                 m_scene, m_cmdStack, m_viewport, m_overlay);
             });
 
