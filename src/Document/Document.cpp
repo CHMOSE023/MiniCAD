@@ -7,9 +7,12 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Core/Math/Constants.hpp"
-#include <vector> 
+#include <vector>
 #include <memory>
 #include <utility>
+#ifndef MINICAD_WEB
+#include <imgui.h>
+#endif
 namespace MiniCAD
 {
     Document::Document(IRenderer& render, float width, float height)
@@ -170,7 +173,31 @@ namespace MiniCAD
             m_editor.GetGripEditor().RebuildGrips();
         }
 
-        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay);
+#ifndef MINICAD_WEB
+        // 桌面端：用 ImGui 128px baked font 做字形查询（按需加载，DX11 RendererHasTextures）
+        GlyphProvider glyphProvider = [](uint32_t cp, GlyphInfo& out, float& fallback) -> bool
+        {
+            constexpr float kBakeSize = 128.f;
+            ImFontBaked* font = ImGui::GetFont()->GetFontBaked(kBakeSize);
+            if (!font || font->Size <= 0.f) { fallback = 0.f; return false; }
+
+            const float inv = 1.f / font->Size; // 归一化因子
+            fallback = font->FallbackAdvanceX * inv;
+
+            const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(cp));
+            if (!g) return false;
+
+            out.X0 = g->X0 * inv;  out.Y0 = g->Y0 * inv;
+            out.X1 = g->X1 * inv;  out.Y1 = g->Y1 * inv;
+            out.U0 = g->U0;        out.V0 = g->V0;
+            out.U1 = g->U1;        out.V1 = g->V1;
+            out.AdvanceX = g->AdvanceX * inv;
+            return true;
+        };
+#else
+        GlyphProvider glyphProvider = nullptr; // Web 端暂不支持文字渲染
+#endif
+        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider);
 
         m_scene.ForEachObject([&](const Object& obj) 
         {  
