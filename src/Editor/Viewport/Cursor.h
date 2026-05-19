@@ -1,6 +1,7 @@
 #pragma once
 #include <vector> 
-#include "Render/D3D11/Shader.h"  // Vertex_P3_C4
+#include <algorithm>
+#include "Render/VertexTypes.hpp"
 #include "Editor/Context/ViewState.h"
 namespace MiniCAD
 {

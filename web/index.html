@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiniCAD Web</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #15171b;
+      color: #f0f3f6;
+      font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #app {
+      display: grid;
+      grid-template-rows: 30px 1fr 20px;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      background: #20242a;
+      border-bottom: 1px solid #343a44;
+      box-sizing: border-box;
+    }
+
+    button {
+      height: 24px;
+      padding: 0 8px;
+      border: 1px solid #4d5663;
+      border-radius: 4px;
+      background: #2b3139;
+      color: #f4f6f8;
+      cursor: pointer;
+      font: 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button:hover {
+      background: #37404a;
+    }
+
+    #canvas-wrap {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    #status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px;
+      background: #20242a;
+      border-top: 1px solid #343a44;
+      color: #c5cbd3;
+      box-sizing: border-box;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    #mode {
+      color: #8fd3ff;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <button id="line">Line</button>
+      <button id="undo">Undo</button>
+      <button id="redo">Redo</button>
+      <button id="cancel">Esc</button>
+    </div>
+    <div id="canvas-wrap">
+      <canvas id="minicad-canvas" tabindex="0" oncontextmenu="return false"></canvas>
+    </div>
+    <div id="status">
+      <span id="mode">Ready</span>
+      <span>Left click: draw/select</span>
+      <span>Middle drag: pan</span>
+      <span>Wheel: zoom</span>
+      <span>Ctrl+Z / Ctrl+Y</span>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('minicad-canvas');
+    const mode = document.getElementById('mode');
+
+    function syncCanvasCssSize() {
+      const wrap = document.getElementById('canvas-wrap');
+      const rect = wrap.getBoundingClientRect();
+      canvas.style.width = `${Math.max(1, Math.floor(rect.width))}px`;
+      canvas.style.height = `${Math.max(1, Math.floor(rect.height))}px`;
+    }
+
+    function callExport(name, nextMode) {
+      return () => {
+        canvas.focus();
+        if (!Module.runtimeReady) return;
+        Module.ccall(name, null, [], []);
+        mode.textContent = nextMode;
+      };
+    }
+
+    var Module = {
+      canvas,
+      onRuntimeInitialized() {
+        syncCanvasCssSize();
+        window.addEventListener('resize', syncCanvasCssSize);
+        Module.runtimeReady = true;
+        document.getElementById('line').onclick = callExport('MiniCAD_StartLine', 'Line');
+        document.getElementById('undo').onclick = callExport('MiniCAD_Undo', 'Undo');
+        document.getElementById('redo').onclick = callExport('MiniCAD_Redo', 'Redo');
+        document.getElementById('cancel').onclick = callExport('MiniCAD_Cancel', 'Ready');
+        mode.textContent = 'Ready';
+        canvas.focus();
+      }
+    };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

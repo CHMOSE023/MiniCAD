@@ -1,6 +1,7 @@
 #pragma once
 #include "IRenderer.h"
 #include <memory>
+
 #if defined(_WIN32)
 #include <d3d11.h> 
 #include "D3D11/D3D11Renderer.h"
@@ -21,7 +22,7 @@ namespace MiniCAD
 #endif
     };
 
-    std::unique_ptr<IRenderer> CreateRenderer(const RendererCreateInfo& info) 
+    inline std::unique_ptr<IRenderer> CreateRenderer(const RendererCreateInfo& info) 
     {
 #if defined(_WIN32)
         auto* device  = static_cast<ID3D11Device*>       (info.device);
@@ -30,8 +31,10 @@ namespace MiniCAD
         return std::make_unique<D3D11Renderer>(device, context);
 
 #elif defined(__EMSCRIPTEN__)
+        (void)info;
         return std::make_unique<WebGLRenderer>();
 #else
+        (void)info;
         return std::make_unique<GLRenderer>();
 #endif
     };

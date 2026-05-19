@@ -1,5 +1,6 @@
 #include "DocumentManager.h"
 #include "Document.h" 
+#include <algorithm>
 #include <utility>
 #include <memory>
 #include <string>

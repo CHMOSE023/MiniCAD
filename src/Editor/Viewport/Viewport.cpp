@@ -2,6 +2,7 @@
 #include "Render/VertexTypes.hpp"
 #include "Render/RenderTargetFactory.hpp"
 #include "Camera.h"
+#include <algorithm>
 #include <cmath> 
 
 namespace MiniCAD

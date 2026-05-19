@@ -1,5 +1,4 @@
 #pragma once 
-#include "Render/D3D11/Shader.h"
 #include <span>
 #include <vector> 
 #include "Core/Math/Point2.hpp"

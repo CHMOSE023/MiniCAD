@@ -8,7 +8,8 @@
 #include "Core/Math/PackedTypes.hpp"
 #include "Render/IRenderTarget.h"
 #include "Render/IRenderer.h"
-#include <d3d11.h>
+#include <memory>
+
 namespace MiniCAD
 { 
     // 选择范围框

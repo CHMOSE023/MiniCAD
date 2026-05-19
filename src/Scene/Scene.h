@@ -10,6 +10,7 @@
 #include <atomic>
 namespace MiniCAD
 {
+	class ISerializer;
 	class Scene 
 	{
 	public:

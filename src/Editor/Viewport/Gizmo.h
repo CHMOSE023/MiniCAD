@@ -1,7 +1,6 @@
 #pragma once
 #include <vector>
 #include "Camera.h"   
-#include "Render/D3D11/Shader.h"  
 #include "Render/VertexTypes.hpp"
 #include "Core/Math/PackedTypes.hpp"
 namespace MiniCAD

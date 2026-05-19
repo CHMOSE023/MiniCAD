@@ -9,6 +9,8 @@ namespace MiniCAD
 		using ObjectID = uint64_t;
 		static constexpr ObjectID InvalidID = 0;
 
+		virtual ~Object() = default;
+
 		ObjectID GetID() const { return m_id; }
 		void     SetID(ObjectID id) { m_id = id; }
 

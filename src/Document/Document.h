@@ -12,7 +12,6 @@
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Snap/SnapResult.h"
 #include "Render/IRenderer.h"  
-#include "Render/D3D11/Shader.h"
 #include "DrawContext.hpp"
 #include <vector>
 #include <string>
