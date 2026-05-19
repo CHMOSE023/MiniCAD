@@ -23,7 +23,7 @@
 // ── 编辑工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/Modify/MoveTool.h"
 #include "Editor/Tools/Modify/CopyTool.h"
-//#include "Editor/Tools/Modify/MirrorTool.h"
+#include "Editor/Tools/Modify/MirrorTool.h"
 //#include "Editor/Tools/Modify/RotateTool.h"
 
 // ── 几何编辑工具 ──────────────────────────────────────────────
@@ -76,6 +76,7 @@ namespace MiniCAD
         RegisterTool("Polyline",  [this] { return std::make_unique<PolylineTool> (m_scene, m_cmdStack, m_viewport, m_overlay);});
         RegisterTool("Spline",    [this] { return std::make_unique<SplineTool>   (m_scene, m_cmdStack, m_viewport, m_overlay);});
 
+
         // ── 编辑工具 ────────────────────────────────────────── 
         RegisterTool("Move",     [this]() -> std::unique_ptr<ITool> {
             auto targets = GetSelectedObjects();
@@ -98,48 +99,41 @@ namespace MiniCAD
             return std::make_unique<CopyTool>(std::move(targets),
                 m_scene, m_cmdStack, m_viewport, m_overlay);
             });
+         
+        RegisterTool("Mirror", [this]() -> std::unique_ptr<ITool> {
+            auto targets = GetSelectedObjects();
+            if (targets.empty())
+            {
+                printf("[Editor] Mirror: 请先选择对象\n");
+                return nullptr;
+            }
+            return std::make_unique<MirrorTool>(std::move(targets),
+                m_scene, m_cmdStack, m_viewport, m_overlay);
+            });
 
         /*
       
-        // ── 编辑工具 ──────────────────────────────────────────
-        // 工厂内部检查选择集，空时返回 nullptr，ActivateToolById 会静默忽略
-      
-        RegisterTool("Copy", [this] -> std::unique_ptr<ITool> {
-            auto targets = GetSelectedObjects();
-            if (targets.empty()) return nullptr;
-            return std::make_unique<CopyTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
-        RegisterTool("Mirror", [this] -> std::unique_ptr<ITool> {
-            auto targets = GetSelectedObjects();
-            if (targets.empty()) return nullptr;
-            return std::make_unique<MirrorTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
-        RegisterTool("Rotate", [this] -> std::unique_ptr<ITool> {
-            auto targets = GetSelectedObjects();
-            if (targets.empty()) return nullptr;
-            return std::make_unique<RotateTool>(targets, m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
-
-        // ── 几何编辑工具 ──────────────────────────────────────
-        RegisterTool("Trim", [this]{
-            return std::make_unique<TrimTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
-        RegisterTool("Extend", [this]{
-            return std::make_unique<ExtendTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
-        RegisterTool("Break", [this]{
-            return std::make_unique<BreakTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-        });
+           // ── 编辑工具 ────────────────────────────────────────── 
+          
+           // ── 几何编辑工具 ──────────────────────────────────────
+           RegisterTool("Trim", [this]{
+               return std::make_unique<TrimTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+           });
+           RegisterTool("Extend", [this]{
+               return std::make_unique<ExtendTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+           });
+           RegisterTool("Break", [this]{
+               return std::make_unique<BreakTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
+           });
         
         */
 
         // ── 快捷键绑定 ──────────────────────────────────────── 
-        RegisterAlias("P",   "Previous"); // 上次选择
+        RegisterAlias("P",   "Previous");  
         RegisterAlias("L",   "Line");
         RegisterAlias("LI",  "Line");
         RegisterAlias("REC", "Rectangle");
-        RegisterAlias("PL",   "Polyline");
-        RegisterAlias("PL",  "Polyline");
+        RegisterAlias("PL",  "Polyline"); 
         RegisterAlias("MI",  "Mirror");
         RegisterAlias("RO",  "Rotate"); 
         RegisterAlias("PT",  "Point");       
@@ -148,9 +142,7 @@ namespace MiniCAD
         RegisterAlias("EL",  "Ellipse");
         RegisterAlias("SP",  "Spline");
         RegisterAlias("M",   "Move");
-        RegisterAlias("CO",  "Copy");
-        RegisterAlias("MI",  "Mirror");
-        RegisterAlias("RO",  "Rotate");
+        RegisterAlias("CO",  "Copy");  
         RegisterAlias("TR",  "Trim");
         RegisterAlias("EX",  "Extend");
         RegisterAlias("BR",  "Break");
