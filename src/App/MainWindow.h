@@ -9,6 +9,7 @@
 #include "Editor/Input/ViewportInputAdapter.h"
 #include "UI/UIManager.h" 
 #include "Document/DocumentManager.h"
+#include "Text/FontSystem.h"
 namespace MiniCAD
 {
 	class MainWindow
@@ -42,6 +43,7 @@ namespace MiniCAD
 		// ── 接口层，跨平台 ──────────────────────────────────
 		std::unique_ptr<IRenderer>    m_renderer;
 		 
+		FontSystem                    m_fontSystem;
 		DocumentManager               m_docManager; 
 		ViewportInputAdapter          m_viewportInputAdapter;
 		UIManager                     m_uiManager; 

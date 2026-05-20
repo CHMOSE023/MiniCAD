@@ -4,6 +4,8 @@
 #include <utility>
 #include <memory>
 #include <string>
+#include "Text/FontSystem.h"
+
 namespace MiniCAD
 {
     Document& DocumentManager::Create(IRenderer& r, float w, float h)
@@ -44,6 +46,11 @@ namespace MiniCAD
     {
         m_active = doc;
     }
+
+    void DocumentManager::SetFontSystem(FontSystem* fontSystem)
+    {
+        m_fontSystem = fontSystem; 
+    } 
 
     std::vector<std::unique_ptr<Document>>& DocumentManager::GetAll()
     {

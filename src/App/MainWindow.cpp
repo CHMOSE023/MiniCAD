@@ -45,7 +45,9 @@ namespace MiniCAD
 	{}
 
 	MainWindow::~MainWindow()
-	{}
+	{
+		m_fontSystem.Shutdown();
+	}
 
 	bool MainWindow::Initialize(const wchar_t* title, int width, int height)
 	{
@@ -63,6 +65,10 @@ namespace MiniCAD
 
 		if (!InitDocument(clientW, clientH))
 			return false;   
+
+		// 初始化字体
+		m_fontSystem.Initialize();
+		m_fontSystem.PreloadDefaultFonts();
 
 		return  m_uiManager.Init(m_hwnd, m_device->GetDevice(), m_device->GetContext());
 	}
@@ -329,6 +335,7 @@ namespace MiniCAD
 		//m_docManager.Create(*m_renderer, width, height); // 创建3个文档 
 
 		m_docManager.SetRenderer(m_renderer.get());
+		m_docManager.SetFontSystem(&m_fontSystem);
 
 		return true;
 	}

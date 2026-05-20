@@ -12,7 +12,7 @@ namespace MiniCAD
 
         virtual ~IDrawSink() = default;
         virtual void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) = 0;
-
+         
         // pos: baseline-left insertion point（世界坐标）
         // height: 字高（世界单位）
         // rotation: 旋转角（弧度）
