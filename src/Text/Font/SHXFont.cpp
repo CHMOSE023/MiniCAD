@@ -64,18 +64,14 @@ namespace MiniCAD
 
     Glyph SHXFont::GetGlyph(uint32_t codepoint)
     {
-        // 1. 缓存命中(无论 HIT 还是 MISS,后续查询都不再打日志)
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
 
-        // 2. 解析 key
         const uint32_t key = ResolveShxKey(codepoint);
+        const bool     hit = (m_parser && m_parser->HasGlyph(key));   // 只查一次
 
-        // 3. 一次查询,记录结果
-        const bool hit = (m_parser && m_parser->HasGlyph(key));
-        printf("[SHX] U+%04X → key=0x%04X %s\n", codepoint, key,  hit ? "HIT" : "MISS");
+        printf("[SHX] U+%04X → key=0x%04X %s\n", codepoint, key, hit ? "HIT" : "MISS");
 
-        // 4. HIT 才走 BuildGlyph;MISS 缓存空 Glyph,后续可由上层 fallback 处理
         Glyph g;
         if (hit) g = m_parser->BuildGlyph(key);
 
