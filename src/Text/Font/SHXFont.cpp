@@ -13,51 +13,48 @@ namespace MiniCAD
 
     void SHXFont::LoadFont(const std::string& filePath)
     {
-        if (!m_parser->Load(filePath)) // 加载失败了
+        if (!m_parser->Load(filePath))
             return;
 
-        // SHX通常是固定比例字体，这里给默认值
-        m_height         = 1.0;
+        // 拿 parser 真实解出来的 height,而不是硬编码 1.0
+        double h = m_parser->GetFontHeight();
+        m_height = (h > 0) ? h : 1.0;
         m_defaultAdvance = 0.6;
 
-        // 诊断:打印格式 + 字数
         const char* kindStr[] = { "Unknown","Shapes","BigFont","Unifont" };
-        printf("[SHX] %s  kind=%s  name='%s'  glyphs=%zu\n",
+        printf("[SHX] %s  kind=%s  name='%s'  glyphs=%zu  h=%.2f\n",
             filePath.c_str(),
             kindStr[(int)m_parser->GetKind()],
             m_parser->GetFontName().c_str(),
-            /* 给 parser 加个 GetGlyphCount() 也行,或直接看 m_shapes.size() */
-            (size_t)0);
+            m_parser->GetGlyphCount(),    // ← 不再硬编码 0
+            m_height);
     }
 
     uint32_t SHXFont::ResolveShxKey(uint32_t cp) const
     {
         if (!m_parser) return cp;
-        if (cp < 0x80) return cp;                            // ASCII 通用
+        if (cp < 0x80) return cp;
 
         auto it = m_codeMap.find(cp);
         if (it != m_codeMap.end()) return it->second;
 
         uint32_t key = cp;
-        const auto kind = m_parser->GetKind();
 
-        if (kind == SHXParser::Kind::BigFont)
+        if (m_parser->GetKind() == SHXParser::Kind::BigFont)
         {
 #ifdef _WIN32
-            // Unicode → GBK 字节流
-            wchar_t       wc = (wchar_t)cp;
+            wchar_t wc = (wchar_t)cp;
             unsigned char mb[4] = {};
-            int           n = ::WideCharToMultiByte(
-                936 /*CP_GBK*/, 0,
-                &wc, 1,
+            int n = ::WideCharToMultiByte(936, 0, &wc, 1,
                 (char*)mb, sizeof(mb),
                 nullptr, nullptr);
-            if (n == 2) key = ((uint32_t)mb[0] << 8) | mb[1];   // 双字节合成 u16
+            if (n == 2) key = ((uint32_t)mb[0] << 8) | mb[1];
             else if (n == 1) key = mb[0];
-            // n<=0:转换失败,key 保持 cp(parser 会 miss → 显示问号)
 #else
-            // 非 Windows:这里需要替代方案,见文末
-            key = cp;
+            // 非 Windows:调用统一的 Unicode → GBK 转换
+            // 实现见下文(EncodingGBK.cpp)
+            uint16_t gbk = 0;
+            if (UnicodeToGBK(cp, gbk)) key = gbk;
 #endif
         }
 
@@ -67,20 +64,20 @@ namespace MiniCAD
 
     Glyph SHXFont::GetGlyph(uint32_t codepoint)
     {
-        // 缓存仍然用 Unicode codepoint(对外口径一致)
+        // 1. 缓存命中(无论 HIT 还是 MISS,后续查询都不再打日志)
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
 
+        // 2. 解析 key
+        const uint32_t key = ResolveShxKey(codepoint);
 
+        // 3. 一次查询,记录结果
+        const bool hit = (m_parser && m_parser->HasGlyph(key));
+        printf("[SHX] U+%04X → key=0x%04X %s\n", codepoint, key,  hit ? "HIT" : "MISS");
 
-        const uint32_t key = ResolveShxKey(codepoint);     
-
-        bool hit = (m_parser && m_parser->HasGlyph(key));
-        printf("[SHX] U+%04X → key=0x%04X %s\n",  codepoint, key, hit ? "HIT" : "MISS");
-
+        // 4. HIT 才走 BuildGlyph;MISS 缓存空 Glyph,后续可由上层 fallback 处理
         Glyph g;
-        if (m_parser && m_parser->HasGlyph(key))
-            g = m_parser->BuildGlyph(key);
+        if (hit) g = m_parser->BuildGlyph(key);
 
         m_glyphCache[codepoint] = g;
         return g;
