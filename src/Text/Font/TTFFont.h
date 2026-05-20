@@ -25,6 +25,7 @@ namespace MiniCAD
         const char* GetName   ()   const override { return m_name.c_str(); }
         bool        IsLoaded  ()   const          { return m_stbFont != nullptr; }
 
+        bool        HasGlyph(uint32_t codepoint) override { return  m_glyphCache[codepoint].empty() ? false : true; }
     private:
         void  Load(const std::string& filePath);
         Glyph BuildGlyph(uint32_t codepoint);

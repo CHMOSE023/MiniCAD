@@ -11,6 +11,13 @@ namespace MiniCAD
         LoadFont(filePath);
     }
 
+    bool SHXFont::HasGlyph(uint32_t codepoint)
+    {
+        if (!m_parser) return false;
+        const uint32_t key = ResolveShxKey(codepoint);
+        return m_parser->HasGlyph(key);
+    }
+
     void SHXFont::LoadFont(const std::string& filePath)
     {
         if (!m_parser->Load(filePath))

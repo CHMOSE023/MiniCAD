@@ -102,53 +102,11 @@ namespace MiniCAD
             if (m_editor.IsOrthoEnabled()) // 1.正交 显示约束线
             {
                 const Line& anchorLine = m_editor.GetAnchorLine(); 
-
                 m_overlay.AddLine(anchorLine.Start, anchorLine.End, { 0.1, 0.7, 0.1,0.6 });
             }
-            else                          //  2.拖动 显示原始位置
-            {
-               // constexpr Math::Color4 ghostColor = { 0.6f, 0.6f, 0.6f, 0.6f };
-               //
-               // for (const auto& entry : m_editor.GetGripEditor().GetDragEntries())
-               // {
-               //     // switch (entry.Kind)
-               //     // {
-               //     // case DragState::Entry::Kind::Line:
-               //     // {
-               //     //     m_overlay.AddLine(entry.BaseLine.Start, entry.BaseLine.End, ghostColor);
-               //     //     break;
-               //     // } 
-               //     // case DragState::Entry::Kind::Circle:
-               //     // {
-               //     //     m_overlay.AddCircle(entry.BaseCircle.Center, entry.BaseCircle.Radius, ghostColor); 
-               //     //      
-               //     //     const Math::Point3& cur      = m_editor.GetGripEditor().GetCurrentWorldPos();
-               //     //     const Grip::Type    gripType = m_editor.GetGripEditor().GetActiveGripType();
-               //        
-               //     //     if (gripType == Grip::Type::Center)
-               //     //     { 
-               //     //         m_overlay.AddLine(entry.BaseCircle.Center, cur,  { 0.4f, 0.8f, 1.0f, 0.7f });  // 拖圆心：画位移向量（旧圆心 → 新圆心/光标）
-               //     //     }
-               //     //     else if (gripType == Grip::Type::Quadrant)
-               //     //     {
-               //     //         // 拖象限点：画半径辅助线（圆心 → 光标，直观显示新半径）  取当前圆心（拖象限时圆心不变，直接用 BaseCircle.Center）
-               //     //         m_overlay.AddLine(entry.BaseCircle.Center, cur,   { 1.0f, 0.6f, 0.2f, 0.7f });   // 橙色与位移线区分
-               //     //     } 
-               //     //     break;
-               //     // } 
-               //     // case DragState::Entry::Kind::Point:
-               //     // {
-               //     //     m_overlay.AddPoint(entry.BasePoint, ghostColor);
-               //     //     break; 
-               //     // }
-               //     // default:
-               //     //     break;
-               //     // }
-               // }
-            }
-        }
-        
-           
+          
+        }  
+
         m_overlay.ToVertices(m_overlayVertices);      // 每帧分配 
 
         auto vs = BuildViewState();
@@ -208,13 +166,17 @@ namespace MiniCAD
         // 矢量字体解析器：styleId → IFont*（FontSystem 由 DocumentManager 注入）
         FontResolver fontResolver;
         if (m_fontSystem && m_fontSystem->IsReady())
-        {
+        { 
             fontResolver = [this](uint32_t styleId) -> IFont*
             {
                 const FontStyle* style = m_fontSystem->FindStyle(styleId);
-                if (!style) return nullptr;
-                try { return &m_fontSystem->ResolveFont(*style); }
-                catch (...) { return nullptr; }
+
+                if (!style)
+                {
+                    return m_fontSystem->GetTssdSHXCompositeFont();
+                } 
+
+                return &m_fontSystem->ResolveFont(*style);  
             };
         }
 

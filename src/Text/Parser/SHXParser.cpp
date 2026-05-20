@@ -366,64 +366,61 @@ namespace MiniCAD
 
 
     //==================================================================
-    // UNIFONT 1.0
-    //  After 0x1A:
-    //    u16 nshape
-    //    u8  below_baseline
-    //    u8  above_baseline
-    //    u8  modes        (0=H, 2=H+V)
-    //    u8  encoding     (0=ASCII, 1=Packed multibyte, 2=Unicode)
-    //    u8  embedded
-    //    u8  reserved
-    //    [u16 code, u16 datalen, u32 offset] * nshape
+    // Unifont 1.0 binary layout (after 0x1A):
+    //   u16 nshapes
+    //   Then sequentially for each shape:
+    //     u16 code
+    //     u16 length
+    //     u8[length] bytecode      (ends with 0x00 END opcode)
+    //
+    //   Shape 0 conventionally carries: NUL-terminated font name,
+    //   followed by 6 bytes (above, below, modes, encoding, embedded,
+    //   reserved).  ExtractFontMeta() already knows how to read it.
     //==================================================================
     bool SHXParser::ParseUnifontContent(const uint8_t* p, const uint8_t* end)
     {
-        if (p + 8 > end) {
+        if (p + 2 > end) {
             printf("[SHX] unifont: header too short\n");
             return false;
         }
-        uint16_t nshape = RdU16LE(p);  p += 2;
-        uint8_t  below = *p++;
-        uint8_t  above = *p++;
-        /*u8 modes    =*/ *p++;
-        /*u8 encoding =*/ *p++;
-        /*u8 embedded =*/ *p++;
-        /*u8 reserved =*/ *p++;
 
-        // Best-guess height from baseline metrics; refined later if glyph-0 has it.
-        if (above + below > 0)
-            m_fontHeight = double(above) + double(below);
+        uint16_t nshapes = RdU16LE(p);  p += 2;
+        printf("[SHX] unifont: nshapes=%u\n", nshapes);
 
-        if (nshape == 0 || nshape > 200000) {
-            printf("[SHX] unifont: implausible nshape=%u\n", nshape);
+        if (nshapes == 0 || nshapes > 200000) {
+            printf("[SHX] unifont: implausible nshapes=%u\n", nshapes);
             return false;
         }
 
-        const size_t   fileSize = m_fileData.size();
-        const uint8_t* base = m_fileData.data();
-        size_t         bad = 0;
+        size_t good = 0, bad = 0;
 
-        for (uint32_t i = 0; i < nshape; ++i) {
-            if (p + 8 > end) {
-                printf("[SHX] unifont: dispatch truncated at i=%u\n", i);
-                return false;
+        for (uint16_t i = 0; i < nshapes; ++i) {
+            if (p + 4 > end) {
+                printf("[SHX] unifont: dispatch header truncated at i=%u\n", i);
+                break;
             }
             uint16_t code = RdU16LE(p); p += 2;
             uint16_t len = RdU16LE(p); p += 2;
-            uint32_t offset = RdU32LE(p); p += 4;
 
-            if (len == 0) continue;
-            if (offset >= fileSize || offset + len > fileSize) {
+            if (p + len > end) {
                 if (++bad <= 4)
-                    printf("[SHX] unifont: bad entry i=%u code=U+%04X "
-                        "len=%u off=%u\n", i, code, len, offset);
-                continue;
+                    printf("[SHX] unifont: data truncated i=%u code=U+%04X len=%u "
+                        "remaining=%zu\n",
+                        i, code, len, size_t(end - p));
+                break;
             }
-            m_shapes[code] = { base + offset, size_t(len) };
+
+            if (len > 0) {
+                m_shapes[code] = { p, size_t(len) };
+                ++good;
+            }
+            p += len;
         }
-        if (bad) printf("[SHX] unifont: %zu bad entries skipped\n", bad);
-        return !m_shapes.empty();
+
+        printf("[SHX] unifont: parsed: %zu good, %zu bad, %u total\n",
+            good, bad, nshapes);
+
+        return good > 0;
     }
 
     //==================================================================

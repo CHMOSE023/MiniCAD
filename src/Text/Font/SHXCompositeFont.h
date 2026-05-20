@@ -25,6 +25,8 @@ namespace MiniCAD
         uint64_t    GetFontId () const             override;
         const char* GetName   () const             override;
 
+        virtual bool HasGlyph(uint32_t codepoint) override { return true; };   // 新增
+
     private:
         // 决定一个 cp 最终该用哪个 IFont 渲染;两边都查不到返回 nullptr
         IFont* PickFontFor(uint32_t cp);

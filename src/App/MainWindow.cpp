@@ -339,30 +339,11 @@ namespace MiniCAD
 
 			/* 注册字体 */
 			FontStyle fontStyle; 
-			fontStyle.fontFile = "GB2312.ttf";  
-			fontStyle.id       = 1;
+			fontStyle.fontFile = "GB2312.ttf";   
 			fontStyle.name     = "GB2312";
-			fontStyle.isShx    = false; 
+			fontStyle.isShx    = false;  
 
-			FontStyle fontStyle1; 
-			fontStyle1.fontFile = "TSSDCHN.SHX"; 
-			fontStyle1.id       = 2;
-			fontStyle1.name     = "TSSDCHN";
-			fontStyle1.isShx    = true;
-
-		    FontStyle fontStyle2; 
-			fontStyle2.fontFile = "tssdeng.shx";  
-			fontStyle2.id       = 3;
-			fontStyle2.name     = "tssdeng";
-			fontStyle2.isShx    = true;
-
-			m_docManager.RegisterFontStyle(fontStyle);
-			m_docManager.RegisterFontStyle(fontStyle1);
-			m_docManager.RegisterFontStyle(fontStyle2);
-			 
-			auto mainFont  = std::make_shared<SHXFont>("tssdeng", "fonts/tssdeng.shx", /*fontId*/ 100); // 英文
-			auto bigFont   = std::make_shared<SHXFont>("tssdchn", "fonts/TSSDCHN.SHX", /*fontId*/ 101); // 中文
-			auto composite = std::make_shared<SHXCompositeFont>("tssdeng+tssdchn", mainFont, bigFont, /*fontId*/ 200); // 英文 + 中文
+			m_docManager.RegisterFontStyle(fontStyle); 
 
 			m_docManager.Create(*m_renderer, width, height);   // 创建1个文档  
 		} 

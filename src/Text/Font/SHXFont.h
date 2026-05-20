@@ -23,6 +23,7 @@ namespace MiniCAD
 
         const char* GetName() const override;
 
+        bool HasGlyph(uint32_t codepoint) override;
     private:
         void LoadFont(const std::string& filePath);
 

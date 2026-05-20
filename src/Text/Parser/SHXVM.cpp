@@ -143,14 +143,16 @@ namespace MiniCAD
             case 0x07:                                          // SUBSHAPE
             {
                 uint32_t code = 0;
-                if (isUnifont) {
-                    if (p + 1 >= end) return;
-                    code = ((uint32_t)p[0] << 8) | (uint32_t)p[1]; // 大端
+                if (isUnifont)
+                {
+                    code = ((uint32_t)p[0] << 8) | (uint32_t)p[1];   // 2 字节
                     p += 2;
-                } else {
-                    if (p >= end) return;
-                    code = *p++;
                 }
+                else 
+                {
+                    code = *p++;                                     // 1 字节  ← BigFont 走这条
+                }
+
                 if (fetcher) {
                     const uint8_t* sd = nullptr; size_t sl = 0;
                     if (fetcher(code, sd, sl) && sd && sl > 0)

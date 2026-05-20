@@ -21,28 +21,15 @@ namespace MiniCAD
         auto it = m_routeCache.find(cp);
         if (it != m_routeCache.end()) return it->second;
 
-        IFont* primary  = (cp < 0x80) ? m_mainFont.get() : m_bigFont.get();
-        IFont* fallback = (cp < 0x80) ? m_bigFont.get()  : m_mainFont.get();
+        IFont* primary = (cp < 0x80) ? m_mainFont.get() : m_bigFont.get();
+        IFont* fallback = (cp < 0x80) ? m_bigFont.get() : m_mainFont.get();
 
         IFont* picked = nullptr;
-
-        if (primary)
-        {
-            Glyph g = primary->GetGlyph(cp);
-            if (!g.Lines.empty()) picked = primary;
-        }
-
-        if (!picked && fallback) 
-        {
-            Glyph g = fallback->GetGlyph(cp);
-            if (!g.Lines.empty()) picked = fallback;
-        }
+        if (primary && primary->HasGlyph(cp))  picked = primary;
+        else if (fallback && fallback->HasGlyph(cp)) picked = fallback;
 
         m_routeCache[cp] = picked;
-
-        // 路由日志:只在第一次解析时打,后续命中缓存就不重复了
-        printf("[Composite] U+%04X → %s\n", cp, picked ? picked->GetName() : "(none, MISS in both)");
-
+        printf("[Composite] U+%04X → %s\n", cp, picked ? picked->GetName() : "(none)");
         return picked;
     }
 

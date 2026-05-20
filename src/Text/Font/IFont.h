@@ -23,5 +23,7 @@ namespace MiniCAD
 
         // 字体名称
         virtual const char* GetName() const = 0;
+
+        virtual bool HasGlyph(uint32_t codepoint) = 0;   // 新增
     };
 }
