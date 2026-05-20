@@ -63,12 +63,12 @@ namespace MiniCAD
 		if (!InitD3D11(clientW, clientH))
 			return false;
 
-		if (!InitDocument(clientW, clientH))
-			return false;   
-
-		// 初始化字体
+		// 初始化字体,在InitInitDocument前。
 		m_fontSystem.Initialize();
-		m_fontSystem.PreloadDefaultFonts();
+		m_fontSystem.PreloadDefaultFonts(); 
+
+		if (!InitDocument(clientW, clientH)) 
+			return false; 
 
 		return  m_uiManager.Init(m_hwnd, m_device->GetDevice(), m_device->GetContext());
 	}
@@ -329,13 +329,37 @@ namespace MiniCAD
 	}
 	 
 	bool MainWindow::InitDocument(int width, int height)
-	{ 
-		m_docManager.Create(*m_renderer, width, height); // 创建1个文档 
-		//m_docManager.Create(*m_renderer, width, height); // 创建2个文档 
-		//m_docManager.Create(*m_renderer, width, height); // 创建3个文档 
+	{  
+		m_docManager.SetRenderer(m_renderer.get()); 
 
-		m_docManager.SetRenderer(m_renderer.get());
-		m_docManager.SetFontSystem(&m_fontSystem);
+		if (m_fontSystem.IsReady())
+		{
+			m_docManager.SetFontSystem(&m_fontSystem);
+			/* 注册字体 */
+			FontStyle fontStyle; 
+			fontStyle.fontFile = "GB2312.ttf";  
+			fontStyle.id       = 1;
+			fontStyle.name     = "GB2312";
+			fontStyle.isShx    = false; 
+
+			FontStyle fontStyle1; 
+			fontStyle1.fontFile = "TSSDCHN.SHX"; 
+			fontStyle1.id       = 2;
+			fontStyle1.name     = "TSSDCHN";
+			fontStyle1.isShx    = true;
+
+		   FontStyle fontStyle2; 
+			fontStyle2.fontFile = "tssdeng.shx";  
+			fontStyle2.id       = 3;
+			fontStyle2.name     = "tssdeng";
+			fontStyle2.isShx    = true;
+
+			m_docManager.RegisterFontStyle(fontStyle);
+			m_docManager.RegisterFontStyle(fontStyle1);
+			m_docManager.RegisterFontStyle(fontStyle2);
+			 
+			m_docManager.Create(*m_renderer, width, height);   // 创建1个文档  
+		} 
 
 		return true;
 	}

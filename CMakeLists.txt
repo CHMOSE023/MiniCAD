@@ -44,6 +44,7 @@ if(EMSCRIPTEN)
         "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Document/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Editor/*.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Text/*.cpp"
     )
 
     list(FILTER MINICAD_CORE_SRC EXCLUDE REGEX ".*[\\\\/]Editor[\\\\/]Input[\\\\/]InputSystem\\.cpp$")

@@ -25,6 +25,12 @@ namespace MiniCAD
 
         void SetRenderer(IRenderer* renderer);
 
+        // --- 字体样式管理（代理 FontSystem）---
+
+        FontStyle::FontStyleId RegisterFontStyle(FontStyle style);
+        const FontStyle*       FindFontStyle(const std::string& name) const;
+        const FontStyle*       FindFontStyle(FontStyle::FontStyleId id) const;
+
         void New();
         void Open();
         void Save();

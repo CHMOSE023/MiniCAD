@@ -20,11 +20,11 @@ namespace MiniCAD
 
         struct GlyphInstance
         {
-            const Glyph* m_glyph = nullptr;
+            Glyph        m_glyph;
 
             Math::Point3 m_position;
             double       m_rotation = 0.0;
-            double       m_scale = 1.0;
+            double       m_scale    = 1.0;
         };
 
         struct LayoutResult
@@ -41,6 +41,7 @@ namespace MiniCAD
             double boxWidth,
             HAlign align = HAlign::Left);
 
+        std::vector<uint32_t> DecodeLine(const std::string& line);
     private:
         void BreakLines(const std::string& text,
             IFont* font,

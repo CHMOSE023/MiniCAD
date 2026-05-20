@@ -1,4 +1,5 @@
 #include "TextLayoutEngine.h"
+#include "Text/Font/Utf8Iterator.h"
 #include <cmath>
 
 namespace MiniCAD
@@ -26,7 +27,11 @@ namespace MiniCAD
 
         for (const auto& line : lines)
         {
-            double lineWidth = ComputeLineWidth(line, font, widthFactor);
+            auto codepoints = DecodeLine(line);
+
+            double lineWidth = 0.0;
+            for (auto cp : codepoints)
+                lineWidth += font->GetAdvance(cp) * widthFactor * height;
 
             double cursorX = 0.0;
 
@@ -35,29 +40,39 @@ namespace MiniCAD
             else if (align == HAlign::Right)
                 cursorX = -lineWidth;
 
-            for (char c : line)
+            for (auto cp : codepoints)
             {
-                uint32_t codepoint = static_cast<uint8_t>(c);
-
-                Glyph glyph = font->GetGlyph(codepoint);
+                Glyph glyph = font->GetGlyph(cp);
 
                 GlyphInstance instance;
-                instance.m_glyph = new Glyph(glyph); // ⚠️ 简化（实际建议用 cache pointer）
+                instance.m_glyph = std::move(glyph);
                 instance.m_scale = height;
                 instance.m_rotation = rotation;
-
-                // 基础位置（未旋转）
                 instance.m_position = Math::Point3(cursorX, cursorY, 0.0);
 
                 result.m_glyphs.push_back(instance);
 
-                cursorX += font->GetAdvance(codepoint) * widthFactor * height;
+                cursorX += font->GetAdvance(cp) * widthFactor * height;
             }
 
             cursorY -= lineHeight;
         }
 
         return result;
+    }
+
+    std::vector<uint32_t> TextLayoutEngine::DecodeLine(const std::string& line)
+    {
+        Utf8Iterator it(line); 
+
+        std::vector<uint32_t> cps;
+        while (it.HasNext())
+        {
+            uint32_t cp = it.Next();
+            if (cp != 0)
+                cps.push_back(cp);
+        }
+        return cps;
     }
 
     void TextLayoutEngine::BreakLines(const std::string& text,

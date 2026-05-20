@@ -1,6 +1,8 @@
 #pragma once
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <stdexcept>
 
 #include "Text/Font/FontEngine.h"
 
@@ -9,6 +11,11 @@ namespace MiniCAD
     class FontSystem
     {
     public:
+        using FontStyleId = FontStyle::FontStyleId;
+
+        // Built-in style IDs
+        static constexpr FontStyleId kStandardStyleId = 1;
+
         enum class State
         {
             Uninitialized,
@@ -19,14 +26,9 @@ namespace MiniCAD
 
     public:
         FontSystem() = default;
-        ~FontSystem()
-        {
-            Shutdown();
-        }
+        ~FontSystem() { Shutdown(); }
 
-        // =========================
-        // 生命周期
-        // =========================
+        // --- Lifecycle ---
 
         void Initialize()
         {
@@ -34,11 +36,8 @@ namespace MiniCAD
                 return;
 
             m_state = State::Initializing;
-
             InitFontEngine();
-            InitGlobalStyles();
-            InitRenderState();
-
+            InitDefaultStyles();
             m_state = State::Ready;
         }
 
@@ -48,18 +47,12 @@ namespace MiniCAD
                 return;
 
             m_fontEngine.reset();
-
             m_state = State::Shutdown;
         }
 
-        bool IsReady() const
-        {
-            return m_state == State::Ready;
-        }
+        bool IsReady() const { return m_state == State::Ready; }
 
-        // =========================
-        // Subsystems Access
-        // =========================
+        // --- Subsystem access ---
 
         FontEngine& GetFontEngine()
         {
@@ -67,77 +60,98 @@ namespace MiniCAD
             return *m_fontEngine;
         }
 
-        const FontEngine& GetFontEngine() const
+        // --- Style registry ---
+
+        // Register a new style; assigns an ID if style.id == 0. Returns the assigned ID.
+        FontStyleId RegisterStyle(FontStyle style)
         {
             EnsureReady();
-            return *m_fontEngine;
+            if (style.id == 0)
+                style.id = m_nextStyleId++;
+            m_stylesByName[style.name] = style.id;
+            m_styles[style.id]         = std::move(style);
+            return m_styles[style.id].id;
         }
 
-        // =========================
-        // Lazy Loading API
-        // =========================
+        const FontStyle* FindStyle(const std::string& name) const
+        {
+            auto it = m_stylesByName.find(name);
+            if (it == m_stylesByName.end()) return nullptr;
+            return FindStyle(it->second);
+        }
 
-        void PreloadDefaultFonts()
+        const FontStyle* FindStyle(FontStyleId id) const
+        {
+            auto it = m_styles.find(id);
+            return it != m_styles.end() ? &it->second : nullptr;
+        }
+
+        // Resolve IFont for a registered style (lazy-loads via FontEngine).
+        IFont& ResolveFont(FontStyleId id)
         {
             EnsureReady();
-
-            // SHX fallback
-            // m_fontEngine->LoadFont("simplex", "simplex.shx");
-
-            // TTF fallback
-            // m_fontEngine->LoadFont("arial", "arial.ttf");
+            const FontStyle* style = FindStyle(id);
+            if (!style)
+                throw std::runtime_error("FontStyle ID not registered");
+            return ResolveFont(*style);
         }
 
-        // =========================
-        // Global Settings
-        // =========================
+        IFont& ResolveFont(const FontStyle& style)
+        {
+            EnsureReady();
+            return m_fontEngine->Resolve(style);
+        }
+
+        // --- Global parameters ---
 
         double GetDefaultTextHeight() const { return m_defaultTextHeight; }
         void   SetDefaultTextHeight(double h) { m_defaultTextHeight = h; }
 
-    private:
-        // =========================
-        // Init steps
-        // =========================
+        // --- Lazy preload ---
 
+        void PreloadDefaultFonts()
+        {
+            EnsureReady();
+            // Example: m_fontEngine->Resolve(*FindStyle(kStandardStyleId));
+        }
+
+    private:
         void InitFontEngine()
         {
             m_fontEngine = std::make_unique<FontEngine>();
-
-            // 不在这里加载字体（避免启动卡顿）
-            // 改为 lazy / Preload
         }
 
-        void InitGlobalStyles()
+        void InitDefaultStyles()
         {
             m_defaultTextHeight = 1.0;
-        }
+            m_nextStyleId       = kStandardStyleId + 1;
 
-        IFont& Resolve(const FontStyle& style);
+            // "Standard" — mirrors AutoCAD's default text style.
+            // Prefers simplex.shx; fall back to a TTF when not found.
+            FontStyle standard;
+            standard.id       = kStandardStyleId;
+            standard.name     = "Standard";
+            standard.fontFile = "simplex.shx";
+            standard.isShx    = true;
 
-        void InitRenderState()
-        {
-            // reserved: DPI, lineweight scale, etc.
+            m_styles[standard.id]         = standard;
+            m_stylesByName[standard.name] = standard.id;
         }
 
         void EnsureReady() const
         {
             if (m_state != State::Ready)
-                throw std::runtime_error("CoreContext not initialized");
+                throw std::runtime_error("FontSystem not initialized");
         }
 
     private:
         State m_state = State::Uninitialized;
 
-        // =========================
-        // Subsystems
-        // =========================
-
         std::unique_ptr<FontEngine> m_fontEngine;
 
-        // =========================
-        // Global parameters
-        // =========================
+        std::unordered_map<FontStyleId, FontStyle>    m_styles;
+        std::unordered_map<std::string, FontStyleId>  m_stylesByName;
+        FontStyleId                                    m_nextStyleId = kStandardStyleId + 1;
 
         double m_defaultTextHeight = 1.0;
     };

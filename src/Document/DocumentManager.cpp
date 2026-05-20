@@ -5,18 +5,24 @@
 #include <memory>
 #include <string>
 #include "Text/FontSystem.h"
-
+#include "Core/Entity/MTextEntity.hpp"
+#include "Core/Math/Point3.hpp"
 namespace MiniCAD
 {
     Document& DocumentManager::Create(IRenderer& r, float w, float h)
     {
         auto doc = std::make_unique<Document>(r, w, h);
-
         doc->SetName(GenerateUniqueName());
+        doc->SetFontSystem(m_fontSystem); // 注入字体系统
+         
+        auto styleId = m_fontSystem->FindStyle("GB2312")->id; 
+        auto styleId1 = m_fontSystem->FindStyle("TSSDCHN")->id; 
+  
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId,  "MyMiniCAD GB2312  仿宋字体",  Math::Point3(1, 2, 0), 1, 0, 100));
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "MyMiniCAD TSSDCHN 探索者",    Math::Point3(1, 1, 0), 1, 0, 100));
 
         m_active = doc.get();
         m_docs.push_back(std::move(doc));
-
         return *m_active;
     }
 
@@ -49,8 +55,26 @@ namespace MiniCAD
 
     void DocumentManager::SetFontSystem(FontSystem* fontSystem)
     {
-        m_fontSystem = fontSystem; 
-    } 
+        m_fontSystem = fontSystem;
+    }
+
+    FontStyle::FontStyleId DocumentManager::RegisterFontStyle(FontStyle style)
+    {
+        if (!m_fontSystem) return 0;
+        return m_fontSystem->RegisterStyle(std::move(style));
+    }
+
+    const FontStyle* DocumentManager::FindFontStyle(const std::string& name) const
+    {
+        if (!m_fontSystem) return nullptr;
+        return m_fontSystem->FindStyle(name);
+    }
+
+    const FontStyle* DocumentManager::FindFontStyle(FontStyle::FontStyleId id) const
+    {
+        if (!m_fontSystem) return nullptr;
+        return m_fontSystem->FindStyle(id);
+    }
 
     std::vector<std::unique_ptr<Document>>& DocumentManager::GetAll()
     {

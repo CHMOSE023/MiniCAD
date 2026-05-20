@@ -1,6 +1,10 @@
 #pragma once
-#include "Scene/Scene.h" 
-#include "Scene/LayerManager.h" 
+
+// FontSystem 只在 Document.cpp 中需要完整定义，这里前向声明即可
+namespace MiniCAD { class FontSystem; }
+
+#include "Scene/Scene.h"
+#include "Scene/LayerManager.h"
 #include "Editor/Context/EditorContext.h"
 #include "Document/CommandStack/CommandStack.h" 
 #include "Editor/Input/IInputHandler.h" 
@@ -75,6 +79,9 @@ namespace MiniCAD
 		// 由 UIManager 在每帧渲染前设置 ImGui 字体图集 SRV
 		void SetFontTexture(void* srv) { m_fontTexture = srv; }
 
+		// 由 DocumentManager 在创建文档后注入，用于矢量文字渲染
+		void SetFontSystem(FontSystem* fs) { m_fontSystem = fs; }
+
 	private:
 		void UpdateSceneVerties(); // 更新屏幕渲染数据
 
@@ -95,10 +102,11 @@ namespace MiniCAD
 		std::string    m_path;
 		bool           m_dirty = false;
 
-		std::vector<Vertex_P3_C4>    m_sceneVertices;   // 场景线段
-		std::vector<Vertex_P3_C4_UV> m_textVertices;    // 场景文字四边形
+		std::vector<Vertex_P3_C4>    m_sceneVertices;   // 场景线段（含矢量文字笔划）
+		std::vector<Vertex_P3_C4_UV> m_textVertices;    // 纹理文字四边形（ImGui / Web 路径）
 		std::vector<Vertex_P3_C4>    m_overlayVertices; // 预览数据
 		std::vector<Vertex_P3_C4>    m_gripVertices;    // 夹点数据
 		void*                        m_fontTexture = nullptr;
+		FontSystem*                  m_fontSystem  = nullptr; // 非拥有，由 DocumentManager 注入
 	};
 }

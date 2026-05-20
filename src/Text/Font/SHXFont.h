@@ -26,6 +26,7 @@ namespace MiniCAD
     private:
         void LoadFont(const std::string& filePath);
 
+        uint32_t ResolveShxKey(uint32_t codepoint) const;
     private:
         std::string m_name;
         std::string m_filePath;
@@ -36,7 +37,9 @@ namespace MiniCAD
 
         std::unique_ptr<SHXParser> m_parser;
 
-        std::unordered_map<uint32_t, Glyph> m_glyphCache;
+        std::unordered_map<uint32_t, Glyph>  m_glyphCache;
         std::unordered_map<uint32_t, double> m_advanceCache;
+
+        mutable std::unordered_map<uint32_t, uint32_t> m_codeMap;
     };
 }

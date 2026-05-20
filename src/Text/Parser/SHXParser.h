@@ -1,24 +1,28 @@
 #pragma once
+
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cstdint>
 
 #include "../Glyph/Glyph.h"
-#include "Core/Math/Point3.hpp"
-#include "Core/GeomKernel/Line.hpp"
 
 namespace MiniCAD
 {
     class SHXParser
     {
     public:
-        struct SHXGlyphRaw
+
+        enum class Kind
         {
-            std::vector<Line> m_lines;
-            double            m_advance = 0.0;
+            Unknown,
+            Shapes,
+            BigFont,
+            Unifont
         };
 
     public:
+
         bool Load(const std::string& filePath);
 
         bool HasGlyph(uint32_t codepoint) const;
@@ -27,23 +31,68 @@ namespace MiniCAD
 
         double GetAdvance(uint32_t codepoint) const;
 
+        Kind GetKind() const
+        {
+            return m_kind;
+        }
+
+        const std::string& GetFontName() const
+        {
+            return m_fontName;
+        }
+
+        size_t GetGlyphCount() const
+        {
+            return m_shapes.size();
+        }
+
     private:
-        void ParseFile();
 
-        void ParseGlyphData(const std::vector<uint8_t>& data);
-
-        void AddLine(double x1, double y1, double x2, double y2);
-
-        void AddArc(double cx, double cy, double r,
-            double startAngle, double endAngle);
+        struct RawShape
+        {
+            const uint8_t* data = nullptr;
+            size_t         len = 0;
+        };
 
     private:
-        std::string m_filePath;
 
-        // SHX glyph table（原始解析结果）
-        std::unordered_map<uint32_t, SHXGlyphRaw> m_glyphTable;
+        Kind DetectKind(const uint8_t* hdr,
+            size_t hdrLen) const;
 
-        double m_defaultAdvance = 0.6;
-        double m_height = 1.0;
+        bool ParseShapes(const uint8_t* p,
+            const uint8_t* end);
+
+        bool ParseBigFont(const uint8_t* p,
+            const uint8_t* end);
+
+        bool ParseUnifont(const uint8_t* p,
+            const uint8_t* end);
+
+        bool ParseDispatchTable(const uint8_t* p,
+            const uint8_t* end);
+
+        bool TryParseDispatch(const uint8_t* p,
+            const uint8_t* end,
+            uint32_t testCount);
+
+        bool FetchShapeBytes(uint32_t code,
+            const uint8_t*& data,
+            size_t& len) const;
+
+    private:
+
+        Kind m_kind = Kind::Unknown;
+
+        bool m_loaded = false;
+
+        std::vector<uint8_t> m_fileData;
+
+        std::unordered_map<uint32_t, RawShape> m_shapes;
+
+        std::string m_fontName;
+
+        double m_fontHeight = 1.0;
+
+        double m_defaultAdvance = 1.0;
     };
 }

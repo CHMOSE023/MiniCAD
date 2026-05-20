@@ -1,5 +1,6 @@
 #include "Document.h"
 #include "DrawContext.hpp"
+#include "Text/FontSystem.h"
 #include "Render/IRenderer.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -204,7 +205,20 @@ namespace MiniCAD
 
         GlyphProvider glyphProvider = s_fontAtlas.MakeProvider();
 #endif
-        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider);
+        // 矢量字体解析器：styleId → IFont*（FontSystem 由 DocumentManager 注入）
+        FontResolver fontResolver;
+        if (m_fontSystem && m_fontSystem->IsReady())
+        {
+            fontResolver = [this](uint32_t styleId) -> IFont*
+            {
+                const FontStyle* style = m_fontSystem->FindStyle(styleId);
+                if (!style) return nullptr;
+                try { return &m_fontSystem->ResolveFont(*style); }
+                catch (...) { return nullptr; }
+            };
+        }
+
+        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider, fontResolver);
 
         m_scene.ForEachObject([&](const Object& obj) 
         {  
@@ -213,7 +227,7 @@ namespace MiniCAD
                const auto& entity = static_cast<const Entity&>(obj);
 
                auto isSelected = selectionIds.contains(obj.GetID());
-               auto isHovered = hoverIds.contains(obj.GetID());
+               auto isHovered  = hoverIds.contains(obj.GetID());
                entity.Draw(ctx, isSelected, isHovered);
            }
                 
