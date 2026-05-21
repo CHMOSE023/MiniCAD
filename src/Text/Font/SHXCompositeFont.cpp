@@ -40,17 +40,40 @@ namespace MiniCAD
     {
         IFont* f = PickFontFor(cp);
         if (!f) return Glyph{};
-        return f->GetGlyph(cp);
+
+        Glyph g = f->GetGlyph(cp);
+
+        // 把来源字体的 SHX 单元空间归一到参考(西文)字体单元空间,
+        // 否则中英文混排时各自原生 fontHeight 不同会导致字高不一致
+        double k = NormFactor(f);
+        if (k != 1.0)
+        {
+            for (auto& line : g.Lines)
+            {
+                line.Start.x *= k; line.Start.y *= k;
+                line.End.x   *= k; line.End.y   *= k;
+            }
+            g.Advance *= k;
+            ComputeBounds(g);
+        }
+        return g;
     }
 
     double SHXCompositeFont::GetAdvance(uint32_t cp)
     {
         IFont* f = PickFontFor(cp);
-        if (f) return f->GetAdvance(cp);
+        if (f) return f->GetAdvance(cp) * NormFactor(f);
 
         // 两边都 MISS:给一个合理的默认宽度,避免文本布局崩
         double h = GetHeight();
         return h * 0.6;
+    }
+
+    double SHXCompositeFont::NormFactor(IFont* f) const
+    {
+        double ref = GetHeight();          // 参考(西文)字体单元高度
+        double src = f ? f->GetHeight() : ref;
+        return (src > 0.0) ? ref / src : 1.0;
     }
 
     double SHXCompositeFont::GetHeight() const

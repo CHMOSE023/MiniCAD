@@ -29,10 +29,12 @@ namespace MiniCAD
     public:
         // 一次性执行一段已切好的 shape 字节流
         // isUnifont:0x07 后跟 2 字节大端 codepoint(否则 1 字节 shape number)
+        // outAdvanceX: 执行完成后笔的 X 坐标（即字符前进宽度，SHX 单位）
         bool Execute(const uint8_t* data, size_t size,
                      std::vector<Line>& out,
                      bool isUnifont,
-                     SHXSubshapeFetcher fetcher);
+                     SHXSubshapeFetcher fetcher,
+                     double* outAdvanceX = nullptr);
 
     private:
         void ExecuteOn(const uint8_t* data, size_t size,

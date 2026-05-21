@@ -21,9 +21,14 @@ namespace MiniCAD
         std::vector<std::string> lines;
         BreakLines(text, font, height, widthFactor, boxWidth, lines);
 
-        double cursorY = 0.0;
+        // SHX 字形坐标在 SHX 单位空间 (0..fontHeight)
+        // scale 将其转换为世界坐标: worldCoord = shxCoord * scale
+        double fontH     = font->GetHeight();
+        double norm      = (fontH > 0.0) ? 1.0 / fontH : 1.0;
+        double scale     = height * norm;      // SHX单位 → 世界单位
+        double lineHeight = height;            // 一行占用的世界高度
 
-        double lineHeight = font->GetHeight() * height;
+        double cursorY = 0.0;
 
         for (const auto& line : lines)
         {
@@ -31,7 +36,7 @@ namespace MiniCAD
 
             double lineWidth = 0.0;
             for (auto cp : codepoints)
-                lineWidth += font->GetAdvance(cp) * widthFactor * height;
+                lineWidth += font->GetAdvance(cp) * scale * widthFactor;
 
             double cursorX = 0.0;
 
@@ -46,13 +51,13 @@ namespace MiniCAD
 
                 GlyphInstance instance;
                 instance.m_glyph = std::move(glyph);
-                instance.m_scale = height;
+                instance.m_scale = scale;
                 instance.m_rotation = rotation;
                 instance.m_position = Math::Point3(cursorX, cursorY, 0.0);
 
                 result.m_glyphs.push_back(instance);
 
-                cursorX += font->GetAdvance(cp) * widthFactor * height;
+                cursorX += font->GetAdvance(cp) * scale * widthFactor;
             }
 
             cursorY -= lineHeight;
@@ -83,8 +88,11 @@ namespace MiniCAD
         std::vector<std::string>& outLines)
     {
         std::string current;
-
         double currentWidth = 0.0;
+
+        double fontH = font->GetHeight();
+        double norm  = (fontH > 0.0) ? 1.0 / fontH : 1.0;
+        double scale = height * norm;
 
         for (char c : text)
         {
@@ -97,9 +105,7 @@ namespace MiniCAD
             }
 
             uint32_t codepoint = static_cast<uint8_t>(c);
-            double advance = font->GetAdvance(codepoint)
-                * widthFactor
-                * height;
+            double advance = font->GetAdvance(codepoint) * scale * widthFactor;
 
             if (boxWidth > 0.0 && currentWidth + advance > boxWidth)
             {
