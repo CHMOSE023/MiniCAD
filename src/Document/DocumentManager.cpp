@@ -18,9 +18,8 @@ namespace MiniCAD
         auto styleId  = m_fontSystem->FindStyle("GB2312")->id; 
         auto styleId1 = 0; 
   
-        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId,  "MyMiniCAD GB2312  仿宋字体",  Math::Point3(1, 2, 0), 1, 0, 100));
-        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "MyMiniCAD 探索者字体中文",    Math::Point3(1, 1, 0), 1, 0, 100));
-
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId,  "TTF >>> 仿宋字体  GB2312.ttf  ",  Math::Point3(1, 2, 0), 1, 0, 100));
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "SHX >>> 探索者中文字体 %%% %%p %%c20 %%p0.5 %%13225 %%1318@200  4%%132 %%132   %%132%%131%%130 TSSDCHN.SHX L1 梁 %%132 25 @ 200mm  ",    Math::Point3(1,0.5, 0), 1, 0, 100));
         m_active = doc.get();
         m_docs.push_back(std::move(doc));
         return *m_active;

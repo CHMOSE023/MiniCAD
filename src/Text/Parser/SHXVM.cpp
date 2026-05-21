@@ -83,11 +83,13 @@ namespace MiniCAD
     // ─── 公共入口 ──────────────────────────────────────────────────
     bool SHXVM::Execute(const uint8_t* data, size_t size,
                         std::vector<Line>& out,
-                        bool isUnifont, SHXSubshapeFetcher fetcher)
+                        bool isUnifont, SHXSubshapeFetcher fetcher,
+                        double* outAdvanceX)
     {
         SHXContext ctx;
         ExecuteOn(data, size, ctx, isUnifont, fetcher, 0);
         out = std::move(ctx.lines);
+        if (outAdvanceX) *outAdvanceX = ctx.x;
         return true;
     }
 
@@ -116,9 +118,9 @@ namespace MiniCAD
             uint8_t op = *p++;
             switch (op)
             {
-            case 0x00: return;                                  // END
-            case 0x01: ctx.pen = false; break;                  // PEN UP
-            case 0x02: ctx.pen = true;  break;                  // PEN DOWN
+            case 0x00: break;                                   // shape reset/nop (not a hard exit)
+            case 0x01: ctx.pen = true;  break;                  // PEN DOWN (001 = activate draw)
+            case 0x02: ctx.pen = false; break;                  // PEN UP   (002 = deactivate draw)
 
             case 0x03:                                          // DIV scale
                 if (p < end) { uint8_t d = *p++; if (d) ctx.scale /= (double)d; }
@@ -128,9 +130,39 @@ namespace MiniCAD
                 break;
 
             case 0x05:
-            case 0x0E:                                  // 别名 push
                 ctx.posStack.push_back({ ctx.x, ctx.y });
                 break;
+
+            case 0x0E:                                  // VERTICAL TEXT: skip next opcode + params
+            {
+                if (p >= end) break;
+                uint8_t next = *p++;
+                switch (next)
+                {
+                case 0x03: case 0x04:
+                    if (p < end) ++p; break;
+                case 0x07:
+                    if (isUnifont) { if (p + 1 < end) p += 2; else p = end; }
+                    else {
+                        if (p < end) { uint8_t sc = *p++; if (sc == 0 && p + 1 < end) p += 2; }
+                    }
+                    break;
+                case 0x08:
+                    if (p + 1 < end) p += 2; else p = end; break;
+                case 0x09:
+                    while (p + 1 < end) { uint8_t x = *p++, y = *p++; if (!x && !y) break; } break;
+                case 0x0A:
+                    if (p + 1 < end) p += 2; else p = end; break;
+                case 0x0B:
+                    if (p + 4 < end) p += 5; else p = end; break;
+                case 0x0C:
+                    if (p + 2 < end) p += 3; else p = end; break;
+                case 0x0D:
+                    while (p + 2 < end) { uint8_t bg = *p++, dx = *p++, dy = *p++; if (!dx && !dy) break; } break;
+                default: break;  // no-param opcodes or unknown
+                }
+                break;
+            }
 
             case 0x06:
             case 0x0F:                                  // 别名 pop
@@ -145,15 +177,25 @@ namespace MiniCAD
                 uint32_t code = 0;
                 if (isUnifont)
                 {
-                    code = ((uint32_t)p[0] << 8) | (uint32_t)p[1];   // 2 字节
+                    if (p + 1 >= end) break;
+                    code = ((uint32_t)p[0] << 8) | (uint32_t)p[1];   // 2 字节大端
                     p += 2;
                 }
-                else 
+                else
                 {
-                    code = *p++;                                     // 1 字节  ← BigFont 走这条
+                    if (p >= end) break;
+                    code = *p++;                                       // BigFont: 1 字节
+                    if (code == 0 && p + 1 < end)
+                    {
+                        // BigFont 扩展格式: 0x07 0x00 HI LO DX DY [W H]
+                        // code==0 表示后跟 2 字节扩展码 + 偏移参数
+                        code = ((uint32_t)p[0] << 8) | (uint32_t)p[1];
+                        p += 2;
+                        if (p + 1 < end) p += 2;  // 跳过插入点偏移 dx, dy
+                    }
                 }
 
-                if (fetcher) {
+                if (fetcher && code != 0) {
                     const uint8_t* sd = nullptr; size_t sl = 0;
                     if (fetcher(code, sd, sl) && sd && sl > 0)
                         ExecuteOn(sd, sl, ctx, isUnifont, fetcher, depth + 1);
@@ -241,11 +283,22 @@ namespace MiniCAD
             }
               
             default:
-                if (op >= 0x10) {                               // 方向向量 (dir<<4)|len
-                    int dir   = (op >> 4) & 0xF;
-                    int len   = op & 0xF;
-                    double a  = dir * 22.5 * Math::PI / 180.0;
-                    moveBy(len * std::cos(a), len * std::sin(a));
+                if (op >= 0x10)
+                {
+                    // SHX 向量字节格式: (len << 4) | dir
+                    // 高 nibble = 长度, 低 nibble = 方向(0-15)
+                    // 方向表来自 SHX 规范, 非匀角 22.5° 单位向量
+                    static constexpr double kDx[16] = {
+                         1.0, 1.0, 1.0, 0.5, 0.0,-0.5,-1.0,-1.0,
+                        -1.0,-1.0,-1.0,-0.5, 0.0, 0.5, 1.0, 1.0
+                    };
+                    static constexpr double kDy[16] = {
+                         0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5,
+                         0.0,-0.5,-1.0,-1.0,-1.0,-1.0,-1.0,-0.5
+                    };
+                    int len = (op >> 4) & 0xF;   // 高 nibble = 长度
+                    int dir = op & 0xF;           // 低 nibble = 方向
+                    moveBy(len * kDx[dir], len * kDy[dir]);
                 }
                 break;
             }

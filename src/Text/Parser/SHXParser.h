@@ -44,11 +44,14 @@ namespace MiniCAD
         std::vector<uint8_t>                   m_fileData;
         std::unordered_map<uint32_t, RawShape> m_shapes;
 
-        std::string m_headerLine;       // NEW: "AutoCAD-86 bigfont 1.0"
-        std::string m_version;          // NEW: "1.0"
+        std::string m_headerLine;
+        std::string m_version;
         std::string m_fontName;
 
         double      m_fontHeight = 1.0;
         double      m_defaultAdvance = 1.0;
+
+        // 每个 shape code 执行后的前进宽度（SHX 单位），由 BuildGlyph 填充
+        mutable std::unordered_map<uint32_t, double> m_advanceCache;
     };
 }

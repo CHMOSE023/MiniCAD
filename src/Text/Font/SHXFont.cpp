@@ -40,6 +40,10 @@ namespace MiniCAD
     uint32_t SHXFont::ResolveShxKey(uint32_t cp) const
     {
         if (!m_parser) return cp;
+
+        // %%nnn 等控制码:低位已是字体内原始 shape 编号,直接用,跳过 GBK 转换
+        if (cp & kRawShapeFlag) return cp & ~kRawShapeFlag;
+
         if (cp < 0x80) return cp;
 
         auto it = m_codeMap.find(cp);

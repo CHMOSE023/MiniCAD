@@ -363,3 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 # Claude Code local user settings
 .claude/settings.local.json
+
+thirdParty/shx-parser/

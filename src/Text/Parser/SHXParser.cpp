@@ -477,16 +477,23 @@ namespace MiniCAD
             return FetchShapeBytes(c, d, l);
             };
 
-        // Unifont uses 2-byte subshape codes; BigFont/Shapes use 1-byte.
         const bool isUnifont = (m_kind == Kind::Unifont);
-        vm.Execute(it->second.data, it->second.len, lines, isUnifont, fetcher);
+        double advX = 0.0;
+        vm.Execute(it->second.data, it->second.len, lines, isUnifont, fetcher, &advX);
 
-        g.Lines = std::move(lines);
-        g.Advance = 1.0;
+        g.Lines   = std::move(lines);
+        g.Advance = advX;                    // SHX 单位，由上层除以 fontHeight 归一化
+        m_advanceCache[code] = advX;
         return g;
     }
 
-    double SHXParser::GetAdvance(uint32_t code) const {
-        return HasGlyph(code) ? 1.0 : m_defaultAdvance;
+    double SHXParser::GetAdvance(uint32_t code) const
+    {
+        auto it = m_advanceCache.find(code);
+        if (it != m_advanceCache.end()) return it->second;
+        // 尚未执行过: 触发 BuildGlyph 填充缓存，再读取
+        BuildGlyph(code);
+        auto it2 = m_advanceCache.find(code);
+        return (it2 != m_advanceCache.end()) ? it2->second : m_defaultAdvance;
     }
 }

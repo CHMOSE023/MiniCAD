@@ -31,6 +31,9 @@ namespace MiniCAD
         // 决定一个 cp 最终该用哪个 IFont 渲染;两边都查不到返回 nullptr
         IFont* PickFontFor(uint32_t cp);
 
+        // 把来源字体单元空间归一到参考(西文)字体单元空间的比例因子
+        double NormFactor(IFont* f) const;
+
     private:
         std::string m_name;
         uint64_t    m_fontId = 0;

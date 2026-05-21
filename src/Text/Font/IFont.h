@@ -4,6 +4,12 @@
 
 namespace MiniCAD
 {
+    // 直接 shape 编号标志位。
+    // DecodeLine 解析 AutoCAD 控制码(%%nnn / %%c / %%d / %%p)后,
+    // 用此高位标记「该码点是字体内的原始 shape 编号」,
+    // 字体实现需跳过 Unicode→GBK 转换,直接拿低位查字形。
+    constexpr uint32_t kRawShapeFlag = 0x80000000u;
+
     class IFont
     {
     public:
