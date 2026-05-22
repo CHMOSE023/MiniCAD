@@ -12,6 +12,8 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
 #include <algorithm>
@@ -292,6 +294,37 @@ namespace MiniCAD
                         {
                             bestDist = minD;
                             best     = obj.GetID();
+                        }
+                    }
+                }
+
+                // ── TextEntity / MTextEntity 点选 ────────────────────────────────────
+                // 区域型实体：点在包围盒屏幕投影内即命中，用点到中心距离竞争
+                {
+                    const Entity* textEnt = nullptr;
+                    if      (obj.IsKindOf<TextEntity>())  textEnt = static_cast<const TextEntity*>(&obj);
+                    else if (obj.IsKindOf<MTextEntity>()) textEnt = static_cast<const MTextEntity*>(&obj);
+
+                    if (textEnt)
+                    {
+                        auto bbox  = textEnt->GetBoundingBox();
+                        auto ss_bl = camera.WorldToScreen({ bbox.Min.x, bbox.Min.y, bbox.Min.z });
+                        auto ss_tr = camera.WorldToScreen({ bbox.Max.x, bbox.Max.y, bbox.Max.z });
+
+                        double sx0 = std::min(ss_bl.x, ss_tr.x), sy0 = std::min(ss_bl.y, ss_tr.y);
+                        double sx1 = std::max(ss_bl.x, ss_tr.x), sy1 = std::max(ss_bl.y, ss_tr.y);
+
+                        // 扩展 thresh 像素，与线段类实体手感一致
+                        if (pt.x >= sx0 - thresh && pt.x <= sx1 + thresh &&
+                            pt.y >= sy0 - thresh && pt.y <= sy1 + thresh)
+                        {
+                            Math::Point2 center = { (sx0 + sx1) * 0.5, (sy0 + sy1) * 0.5 };
+                            double d = Math::Distance(pt, center);
+                            if (d < bestDist)
+                            {
+                                bestDist = d;
+                                best     = obj.GetID();
+                            }
                         }
                     }
                 }
@@ -688,6 +721,43 @@ namespace MiniCAD
                     if (hit)
                         result.insert(obj.GetID());
                 }
+
+                // ── TextEntity / MTextEntity 框选 ────────────────────────────────────
+                {
+                    const Entity* textEnt = nullptr;
+                    if      (obj.IsKindOf<TextEntity>())  textEnt = static_cast<const TextEntity*>(&obj);
+                    else if (obj.IsKindOf<MTextEntity>()) textEnt = static_cast<const MTextEntity*>(&obj);
+
+                    if (textEnt)
+                    {
+                        auto bbox  = textEnt->GetBoundingBox();
+                        // 包围盒4角（世界→屏幕）
+                        Math::Point2 corners[4] = {
+                            camera.WorldToScreen({ bbox.Min.x, bbox.Min.y, bbox.Min.z }),
+                            camera.WorldToScreen({ bbox.Max.x, bbox.Min.y, bbox.Min.z }),
+                            camera.WorldToScreen({ bbox.Max.x, bbox.Max.y, bbox.Min.z }),
+                            camera.WorldToScreen({ bbox.Min.x, bbox.Max.y, bbox.Min.z }),
+                        };
+
+                        bool hit = false;
+                        if (fullyContain)
+                        {
+                            hit = Math::AllPointsInBox2(corners, 4, box);
+                        }
+                        else
+                        {
+                            hit = Math::AnyPointsInBox2(corners, 4, box)         ||
+                                  Math::SegmentIntersectsBox2(corners[0], corners[1], box) ||
+                                  Math::SegmentIntersectsBox2(corners[1], corners[2], box) ||
+                                  Math::SegmentIntersectsBox2(corners[2], corners[3], box) ||
+                                  Math::SegmentIntersectsBox2(corners[3], corners[0], box);
+                        }
+
+                        if (hit)
+                            result.insert(obj.GetID());
+                    }
+                }
+
             });
         return result;
     }

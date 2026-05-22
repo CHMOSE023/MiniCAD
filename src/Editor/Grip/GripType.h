@@ -53,6 +53,13 @@ namespace MiniCAD
         std::unique_ptr<IGripDragState> DragState;
     };
 
+    // MText 拖拽快照（位置 + 宽度）
+    struct MTextSnapshot
+    {
+        Math::Point3 Position;
+        double       BoxWidth = 0.0;
+    };
+
     struct DragEntityEntry
     {
         Object::ObjectID Id;
@@ -63,10 +70,12 @@ namespace MiniCAD
             Line,
             Circle,
             Rectangle,
-            Arc,        
-            Ellipse,    
-            Polyline,   
-            Spline,     
+            Arc,
+            Ellipse,
+            Polyline,
+            Spline,
+            Text,
+            MText,
         } Kind;
 
 
@@ -91,10 +100,11 @@ namespace MiniCAD
         Circle   BeforeCircle;
         Circle   AfterCircle;
 
-        Rectangle      BeforeRect;  
-        Rectangle      AfterRect;   
+        Rectangle      BeforeRect;
+        Rectangle      AfterRect;
 
-
+        MTextSnapshot  BeforeMText;
+        MTextSnapshot  AfterMText;
     };
 
     // ─────────────────────────────────────────────

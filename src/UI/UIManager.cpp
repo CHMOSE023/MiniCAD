@@ -42,7 +42,7 @@ namespace MiniCAD
             { Tool::Polyline,   "Pline",   "多段线 (Pl)"   ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartPolylineTool(); }  },
             { Tool::Spline,     "Spline",  "样条曲线 (SPL)",[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartSplineTool(); }   },
             { Tool::Text,       "Text",    "文字 (T)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartTextTool();  }    },
-            { Tool::MText,      "Text",    "多行文字 (MT)" ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMTextTool(); }    },
+            { Tool::MText,      "MText",    "多行文字 (MT)" ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMTextTool(); }    },
             /*---------------------------------------------*/
             { Tool::Copy,       "Copy",    "复制 (co)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartCopyTool(); }},
             { Tool::Move,       "Move",    "移动 (mv)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMoveTool(); }},
@@ -1017,6 +1017,7 @@ namespace MiniCAD
                 "icons/Rotate.png",
                 "icons/Spline.png",
                 "icons/Text.png",
+                "icons/MText.png",
                 "icons/Redo.png",
                 "icons/Undo.png",
         };

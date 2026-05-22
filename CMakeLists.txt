@@ -14,30 +14,34 @@ if(WIN32)
 endif()
 
 if(EMSCRIPTEN)
-    # Force Debug-style build for browser debugging (no optimization, full DWARF).
-    if(NOT CMAKE_BUILD_TYPE)
+    option(MINICAD_WEB_DEBUG "Enable debug build for Web" OFF)
+
+    if(MINICAD_WEB_DEBUG)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
+
+        add_compile_options(-fexceptions -g3 -O0)
+
+        add_link_options(
+            -g3
+            -O0
+            -sASSERTIONS=2
+            -sSAFE_HEAP=1
+            -sSTACK_OVERFLOW_CHECK=2
+        )
+
+    else()
+        set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+
+        add_compile_options(-O3 -DNDEBUG)
+
+        add_link_options(
+            -O3
+            -sASSERTIONS=0
+            -sSAFE_HEAP=0
+            -sSTACK_OVERFLOW_CHECK=0
+        )
+
     endif()
-
-    # -fexceptions             : 启用 C++ 异常（throw 不变成 unreachable）
-    # -g3                      : 最完整的 DWARF 调试信息（变量名、行号、类型）
-    # -O0                      : 不做优化，行号/变量与源码 1:1
-    add_compile_options(-fexceptions -g3 -O0)
-
-    # -sASSERTIONS=2            : 运行时安全检查（含内存对齐、参数校验）
-    # -sSAFE_HEAP=1             : 堆访问越界检查
-    # -sSTACK_OVERFLOW_CHECK=2  : 栈溢出检测
-    # -gseparate-dwarf          : 把 DWARF 输出到独立 .debug.wasm 文件（更快加载）
-    add_link_options(
-        -fexceptions
-        -g3
-        -O0
-        -gseparate-dwarf=index.debug.wasm
-        -sASSERTIONS=2
-        -sSAFE_HEAP=1
-        -sSTACK_OVERFLOW_CHECK=2
-        -sNO_DISABLE_EXCEPTION_CATCHING
-    )
 
     file(GLOB_RECURSE MINICAD_CORE_SRC CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/src/Core/*.cpp"
@@ -73,9 +77,10 @@ if(EMSCRIPTEN)
         "-sSTACK_SIZE=5242880"
         "-sINITIAL_MEMORY=33554432"
         "-sWASM=1"
-        "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel','_MiniCAD_StartText','_MiniCAD_SubmitText','_MiniCAD_CancelText']"
+        "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel','_MiniCAD_StartText','_MiniCAD_SubmitText','_MiniCAD_CancelText','_MiniCAD_StartMText','_MiniCAD_SubmitMText','_MiniCAD_CancelMText']"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
         "--shell-file=${CMAKE_SOURCE_DIR}/web/index.html"
+        "--preload-file=${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
     )
 
     set_target_properties(MiniCADWeb PROPERTIES

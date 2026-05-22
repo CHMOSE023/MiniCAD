@@ -1,5 +1,6 @@
 #include "SHXFont.h"
 #include "pch.h"
+#include "EncodingGBK.h"
 namespace MiniCAD
 {
     SHXFont::SHXFont(const std::string& name, const std::string& filePath, uint64_t fontId)

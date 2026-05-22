@@ -4,8 +4,9 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/AABB.hpp"
 #include "Core/Object/Object.hpp"
-#include <string> 
+#include <string>
 #include <cstdint>
+#include <cmath>
 
 namespace MiniCAD
 {
@@ -46,13 +47,59 @@ namespace MiniCAD
 
         // --- Entity 接口 ---
 
-        // 近似包围盒（精确版由 Document 层在字体加载后计算）
+        // 近似包围盒（锚点为左上角；精确版由 Document 层在字体加载后计算）
+        // 宽度估算：字节数 × 0.6 × height（中文 3 字节/字会高估，ASCII 准确）
+        // 行数估算：对每个 \n 分段，若段宽超过 BoxWidth 则按 ceil 折行
         AABB GetBoundingBox() const override
         {
-            double w = m_text.empty() ? m_height : m_text.size() * m_height * 0.6;
+            if (m_text.empty())
+            {
+                return AABB(
+                    { m_position.x,            m_position.y - m_height, m_position.z },
+                    { m_position.x + m_height, m_position.y,            m_position.z }
+                );
+            }
+
+            const double avgCharW = m_height * 0.6;
+            int    totalLines = 0;
+            double maxW       = 0.0;
+
+            // 逐 \n 分段统计行数与最大宽度
+            const char* p    = m_text.c_str();
+            const char* pEnd = p + m_text.size();
+            const char* seg  = p;
+
+            auto processSeg = [&](const char* s, const char* e)
+            {
+                double segW = static_cast<double>(e - s) * avgCharW;
+
+                if (m_boxWidth > 0.0 && segW > m_boxWidth)
+                {
+                    // 自动折行：按字节估算折行数（保守上界）
+                    totalLines += static_cast<int>(std::ceil(segW / m_boxWidth));
+                }
+                else
+                {
+                    totalLines += 1;
+                    if (segW > maxW) maxW = segW;
+                }
+            };
+
+            for (const char* c = p; c <= pEnd; ++c)
+            {
+                if (c == pEnd || *c == '\n')
+                {
+                    processSeg(seg, c);
+                    seg = c + 1;
+                }
+            }
+
+            double w      = (m_boxWidth > 0.0) ? m_boxWidth : maxW;
+            double totalH = totalLines * m_height;
+
             return AABB(
-                { m_position.x,     m_position.y,            m_position.z },
-                { m_position.x + w, m_position.y + m_height, m_position.z }
+                { m_position.x,     m_position.y - totalH, m_position.z },
+                { m_position.x + w, m_position.y,          m_position.z }
             );
         }
 
@@ -64,7 +111,9 @@ namespace MiniCAD
                               : isHovered  ? IDrawSink::kHoverColor
                               : GetAttr().Color;
 
-            sink.EmitMText(m_position, m_text, m_styleId, m_height, m_rotation, m_boxWidth, color);
+            // 锚点为左上角：EmitMText 原点在首行底部，故下移一个字高使顶部对齐 m_position
+            Math::Point3 drawPos{ m_position.x, m_position.y - m_height, m_position.z };
+            sink.EmitMText(drawPos, m_text, m_styleId, m_height, m_rotation, m_boxWidth, color);
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override

@@ -7,7 +7,11 @@
 #include "EllipseGripHandler.h"
 #include "PolylineGripHandler.h"
 #include "SplineGripHandler.h"
+#include "TextGripHandler.h"
+#include "MTextGripHandler.h"
 #include "Core/Entity/Entity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
@@ -38,6 +42,8 @@ namespace MiniCAD
         RegisterHandler<EllipseEntity>  (std::make_unique<EllipseGripHandler>());
         RegisterHandler<PolylineEntity> (std::make_unique<PolylineGripHandler>());
         RegisterHandler<SplineEntity>   (std::make_unique<SplineGripHandler>());
+        RegisterHandler<TextEntity>     (std::make_unique<TextGripHandler>());
+        RegisterHandler<MTextEntity>    (std::make_unique<MTextGripHandler>());
     }
 
     // ─────────────────────────────────────────────
@@ -90,24 +96,31 @@ namespace MiniCAD
         if (m_following)
             return DoConfirm(e);
 
-        if (!m_activated)
-            return DoActivate(e);
-
-        // m_activated=true 但 m_following=false：
-        // 说明 MouseDown 已触发但 MouseUp 还未到来，不重复处理
-        return false;
+        // 激活推迟到 MouseUp，此处仅检查是否有可命中夹点
+        // 避免 Down 和 Up 位置不同时用了错误的命中点
+        Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
+        m_pendingActivate = !HitTestAll(sp).empty();
+        return m_pendingActivate;
     }
 
     // ─────────────────────────────────────────────
     // OnMouseUp
-    //   MouseDown 激活后松开 → 进入跟随模式
+    //   以抬键位置为准做 HitTest → DoActivate → 进入跟随模式
     // ─────────────────────────────────────────────
     bool GripEditor::OnMouseUp(const InputEvent& e)
     {
-        if (!m_activated || m_following)
+        if (m_following)
             return false;
 
-        // 激活完成，松开鼠标 → 开始跟随
+        if (!m_pendingActivate)
+            return false;
+
+        m_pendingActivate = false;
+
+        if (!DoActivate(e))
+            return false;
+
+        // 激活成功，立即进入跟随模式
         m_following = true;
         return true;
     }

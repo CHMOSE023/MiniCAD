@@ -6,6 +6,8 @@
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Editor/Grip/GripType.h"
 #include <memory>
@@ -68,10 +70,24 @@ namespace MiniCAD
                 if (e.Kind == DragEntityEntry::Kind::Rectangle)
                 {
                     auto* rect = static_cast<RectangleEntity*>(obj);
-                    const auto& snap = useAfter ? e.AfterRect : e.BeforeRect; 
+                    const auto& snap = useAfter ? e.AfterRect : e.BeforeRect;
                     rect->SetRectangle(snap);
                 }
 
+                if (e.Kind == DragEntityEntry::Kind::Text)
+                {
+                    auto* text = static_cast<TextEntity*>(obj);
+                    const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
+                    text->SetPosition(p);
+                }
+
+                if (e.Kind == DragEntityEntry::Kind::MText)
+                {
+                    auto* mtext = static_cast<MTextEntity*>(obj);
+                    const auto& snap = useAfter ? e.AfterMText : e.BeforeMText;
+                    mtext->SetPosition(snap.Position);
+                    mtext->SetBoxWidth(snap.BoxWidth);
+                }
             }
         }
     };

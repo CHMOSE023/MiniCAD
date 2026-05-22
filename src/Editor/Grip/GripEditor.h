@@ -22,8 +22,8 @@ namespace MiniCAD
     // GripEditor
     //
     // CAD 风格夹点编辑流程：
-    //   1. MouseDown  命中夹点 → 激活（m_activated = true）
-    //   2. MouseUp             → 进入跟随模式（m_following = true）
+    //   1. MouseDown  命中夹点 → 记录待激活标记（m_pendingActivate）
+    //   2. MouseUp    以抬键位置为准 HitTest → DoActivate → 进入跟随模式
     //   3. MouseMove           → 所有激活夹点实时跟随鼠标
     //   4. MouseDown  左键     → 确认，提交 Command，回到空闲
     //      MouseDown  右键     → 取消，还原，回到空闲
@@ -112,10 +112,13 @@ namespace MiniCAD
         // 用索引而非指针，避免 vector 重分配后悬空
         int  m_activeGripIdx = -1;
 
-        // 已命中夹点并完成 BeginDrag（MouseDown 后置位）
+        // MouseDown 时检测到命中夹点，等待 MouseUp 才正式激活
+        bool m_pendingActivate = false;
+
+        // 已命中夹点并完成 BeginDrag（MouseUp 后置位）
         bool m_activated = false;
 
-        // MouseUp 后进入跟随模式，MouseMove 实时更新几何
+        // MouseUp 激活后立即进入跟随模式，MouseMove 实时更新几何
         bool m_following = false;
 
         bool m_dirty     = true;

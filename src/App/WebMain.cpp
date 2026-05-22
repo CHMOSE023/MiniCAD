@@ -2,18 +2,21 @@
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Input/KeyCode.h"
 #include "Render/RendererFactory.hpp"
+#include "Text/FontSystem.h"
 
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
 
 #include <memory>
+#include <stdexcept>
 
 namespace
 {
     constexpr const char* kCanvas = "#minicad-canvas";
 
     std::unique_ptr<MiniCAD::IRenderer> g_renderer;
-    std::unique_ptr<MiniCAD::Document> g_document;
+    std::unique_ptr<MiniCAD::Document>  g_document;
+    MiniCAD::FontSystem                 g_fontSystem;
 
     int g_width = 1;
     int g_height = 1;
@@ -344,7 +347,7 @@ extern "C"
         if (g_document) g_document->GetEditor().StartRotateTool();
     }
 
-    // ── 文字工具 ───────────────────────────────────────────────────
+    // ── 单行文字工具 ────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartText()
     {
         if (g_document) g_document->GetEditor().StartTextTool();
@@ -361,6 +364,27 @@ extern "C"
     {
         if (g_document)
             g_document->GetEditor().SubmitTextInput("");
+    }
+
+    // ── 多行文字工具 ────────────────────────────────────────────────
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMText()
+    {
+        if (g_document) g_document->GetEditor().StartMTextTool();
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_SubmitMText(const char* text, float height, float boxWidth)
+    {
+        if (g_document && text)
+        {
+            auto& req    = g_document->GetEditor().GetMTextInputRequest();
+            req.Height   = static_cast<double>(height);
+            req.BoxWidth = static_cast<double>(boxWidth);
+            g_document->GetEditor().SubmitMTextInput(std::string(text));
+        }
+    }
+    EMSCRIPTEN_KEEPALIVE void MiniCAD_CancelMText()
+    {
+        if (g_document)
+            g_document->GetEditor().SubmitMTextInput("");
     }
 
     // ── 通用操作 ───────────────────────────────────────────────────
@@ -416,6 +440,19 @@ int main()
     g_document = std::make_unique<MiniCAD::Document>(*g_renderer,
                                                      static_cast<float>(g_width),
                                                      static_cast<float>(g_height));
+
+    // 初始化矢量字体系统（SHX 字体已通过 --preload-file 嵌入虚拟 FS /fonts/）
+    g_fontSystem.Initialize();
+    try
+    {
+        g_fontSystem.PreloadDefaultFonts();
+        g_document->SetFontSystem(&g_fontSystem);
+    }
+    catch (const std::exception& ex)
+    {
+        printf("[FontSystem] 字体加载失败: %s\n", ex.what());
+        // 不阻断启动；文字实体在此情况下不显示笔划
+    }
 
     emscripten_set_mousedown_callback(kCanvas, nullptr, EM_TRUE, OnMouse);
     emscripten_set_mouseup_callback(kCanvas, nullptr, EM_TRUE, OnMouse);

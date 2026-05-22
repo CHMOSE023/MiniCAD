@@ -649,7 +649,8 @@
          }
 
          /* ── 文字输入浮层 ─────────────────────────────────────────── */
-         #text-input-overlay {
+         #text-input-overlay,
+         #mtext-input-overlay {
              display: none;
              position: fixed;
              inset: 0;
@@ -660,7 +661,8 @@
              backdrop-filter: blur(3px);
          }
 
-         #text-input-overlay.visible {
+         #text-input-overlay.visible,
+         #mtext-input-overlay.visible {
              display: flex;
          }
 
@@ -697,7 +699,8 @@
              box-shadow: 0 0 8px var(--accent-glow);
          }
 
-         #text-input-field {
+         #text-input-field,
+         #mtext-input-field {
              width: 100%;
              height: 36px;
              padding: 0 10px;
@@ -710,7 +713,16 @@
              transition: border-color 0.15s ease, box-shadow 0.15s ease;
          }
 
-         #text-input-field:focus {
+         #mtext-input-field {
+             height: 96px;
+             padding: 8px 10px;
+             line-height: 1.4;
+             resize: vertical;
+             box-sizing: border-box;
+         }
+
+         #text-input-field:focus,
+         #mtext-input-field:focus {
              border-color: var(--accent);
              box-shadow: 0 0 0 2px var(--accent-glow);
          }
@@ -732,14 +744,16 @@
              font-size: 12px;
          }
 
-         #text-btn-ok {
+         #text-btn-ok,
+         #mtext-btn-ok {
              background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
              border-color: #3a93ec;
              color: #fff;
              box-shadow: 0 0 0 1px rgba(78,163,255,0.2);
          }
 
-         #text-btn-ok:hover {
+         #text-btn-ok:hover,
+         #mtext-btn-ok:hover {
              background: linear-gradient(180deg, #3a8ee8 0%, #2d72c3 100%);
          }
 
@@ -757,7 +771,9 @@
              width: 28px;
          }
 
-         #text-height-field {
+         #text-height-field,
+         #mtext-height-field,
+         #mtext-width-field {
              width: 80px;
              height: 32px;
              padding: 0 8px;
@@ -770,7 +786,9 @@
              transition: border-color 0.15s ease, box-shadow 0.15s ease;
          }
 
-         #text-height-field:focus {
+         #text-height-field:focus,
+         #mtext-height-field:focus,
+         #mtext-width-field:focus {
              border-color: var(--accent);
              box-shadow: 0 0 0 2px var(--accent-glow);
          }
@@ -815,6 +833,7 @@
                 <button id="btn-polyline" title="多段线 (PL)">    <img class="tb-icon" src="icons/Pline.png" alt=""> 多段线</button>
                 <button id="btn-spline" title="样条曲线 (SP)">    <img class="tb-icon" src="icons/Spline.png" alt=""> 样条</button>
                 <button id="btn-text" title="文字 (T)">           <img class="tb-icon" src="icons/Text.png" alt=""> 文字</button>
+                <button id="btn-mtext" title="多行文字 (MT)">     <img class="tb-icon" src="icons/Text.png" alt=""> 多行文字</button>
             </div>
 
             <div class="tb-sep"></div>
@@ -865,6 +884,26 @@
                 <div class="text-panel-actions">
                     <button id="text-btn-cancel">取消</button>
                     <button id="text-btn-ok">确定</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── 多行文字输入浮层 ────────────────────────────────────── -->
+        <div id="mtext-input-overlay" role="dialog" aria-modal="true" aria-labelledby="mtext-panel-title">
+            <div class="text-panel">
+                <div class="text-panel-title" id="mtext-panel-title">输入多行文字</div>
+                <textarea id="mtext-input-field" placeholder="请输入多行文字内容…"
+                          autocomplete="off" spellcheck="false"></textarea>
+                <div class="text-panel-row">
+                    <label for="mtext-height-field">字高</label>
+                    <input id="mtext-height-field" type="number" value="2.5" min="0.1" max="1000" step="0.5">
+                    <label for="mtext-width-field">框宽</label>
+                    <input id="mtext-width-field" type="number" value="0" min="0" max="100000" step="1">
+                </div>
+                <div class="text-panel-hint">框宽 0 表示不限宽 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 取消</div>
+                <div class="text-panel-actions">
+                    <button id="mtext-btn-cancel">取消</button>
+                    <button id="mtext-btn-ok">确定</button>
                 </div>
             </div>
         </div>
@@ -992,6 +1031,54 @@
                 document.getElementById('text-btn-ok').onclick     = submitText;
                 document.getElementById('text-btn-cancel').onclick  = cancelText;
 
+                // ── 多行文字输入浮层 ─────────────────────────────────
+                const mtextOverlay   = document.getElementById('mtext-input-overlay');
+                const mtextField     = document.getElementById('mtext-input-field');
+                const mtextHeightFld = document.getElementById('mtext-height-field');
+                const mtextWidthFld  = document.getElementById('mtext-width-field');
+
+                function showMTextOverlay() {
+                    mtextField.value = '';
+                    mtextOverlay.classList.add('visible');
+                    window._mtextInputActive = true;
+                    requestAnimationFrame(() => mtextField.focus());
+                }
+
+                function hideMTextOverlay() {
+                    mtextOverlay.classList.remove('visible');
+                    window._mtextInputActive = false;
+                    canvas.focus();
+                }
+
+                function submitMText() {
+                    const text     = mtextField.value.replace(/\s+$/, '');
+                    const height   = parseFloat(mtextHeightFld.value) || 2.5;
+                    const boxWidth = parseFloat(mtextWidthFld.value)  || 0;
+                    hideMTextOverlay();
+                    if (text) {
+                        Module.ccall('MiniCAD_SubmitMText', null,
+                            ['string', 'number', 'number'], [text, height, boxWidth]);
+                    } else {
+                        Module.ccall('MiniCAD_CancelMText', null, [], []);
+                    }
+                    setMode('就绪');
+                    activateBtn(null);
+                }
+
+                function cancelMText() {
+                    hideMTextOverlay();
+                    Module.ccall('MiniCAD_CancelMText', null, [], []);
+                    setMode('就绪');
+                    activateBtn(null);
+                }
+
+                window._minicadSubmitMText    = submitMText;
+                window._minicadCancelMText    = cancelMText;
+                window._minicadShowMTextInput = showMTextOverlay;
+
+                document.getElementById('mtext-btn-ok').onclick     = submitMText;
+                document.getElementById('mtext-btn-cancel').onclick = cancelMText;
+
                 // Draw tools
                 toolBtn('btn-line',      'MiniCAD_StartLine',      '直线');
                 toolBtn('btn-polyline',  'MiniCAD_StartPolyline',  '多段线');
@@ -1002,6 +1089,7 @@
                 toolBtn('btn-spline',    'MiniCAD_StartSpline',    '样条');
                 toolBtn('btn-point',     'MiniCAD_StartPoint',     '点');
                 toolBtn('btn-text',      'MiniCAD_StartText',      '文字 · 点击插入点');
+                toolBtn('btn-mtext',     'MiniCAD_StartMText',     '多行文字 · 点击插入点');
 
                 // Edit tools
                 toolBtn('btn-move', 'MiniCAD_StartMove', '移动');
@@ -1066,11 +1154,24 @@
     <script>
         // 在 WASM keydown 捕获监听器注册之前先占位，阻止文字输入期间的按键被 C++ 命令系统消费
         window._textInputActive = false;
+        window._mtextInputActive = false;
         window.addEventListener('keydown', function(e) {
-            if (!window._textInputActive) return;
-            e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
-            if (e.key === 'Enter')  { e.preventDefault(); if (window._minicadSubmitText) window._minicadSubmitText(); }
-            if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelText) window._minicadCancelText(); }
+            if (window._textInputActive) {
+                e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
+                if (e.key === 'Enter')  { e.preventDefault(); if (window._minicadSubmitText) window._minicadSubmitText(); }
+                if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelText) window._minicadCancelText(); }
+                return;
+            }
+            if (window._mtextInputActive) {
+                e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
+                // Ctrl/Cmd+Enter 提交；单独 Enter 在文本域内换行
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    if (window._minicadSubmitMText) window._minicadSubmitMText();
+                }
+                if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelMText) window._minicadCancelMText(); }
+                return;
+            }
         }, true /* capture */);
     </script>
     {{{ SCRIPT }}}
