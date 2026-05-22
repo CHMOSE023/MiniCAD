@@ -60,7 +60,7 @@ if(EMSCRIPTEN)
 
     target_include_directories(MiniCADWeb PRIVATE
         "${CMAKE_SOURCE_DIR}/src"
-        "${CMAKE_SOURCE_DIR}/thirdParty"
+        "${CMAKE_SOURCE_DIR}/3rd"
     )
 
     target_compile_definitions(MiniCADWeb PRIVATE MINICAD_WEB)
@@ -92,18 +92,18 @@ if(EMSCRIPTEN)
     )
 else()
     add_library(Imgui
-        thirdParty/imgui/imgui.cpp
-        thirdParty/imgui/imgui_draw.cpp
-        thirdParty/imgui/imgui_widgets.cpp
-        thirdParty/imgui/imgui_tables.cpp
-        thirdParty/imgui/imgui_demo.cpp
-        thirdParty/imgui/backends/imgui_impl_win32.cpp
-        thirdParty/imgui/backends/imgui_impl_dx11.cpp
+        3rd/imgui/imgui.cpp
+        3rd/imgui/imgui_draw.cpp
+        3rd/imgui/imgui_widgets.cpp
+        3rd/imgui/imgui_tables.cpp
+        3rd/imgui/imgui_demo.cpp
+        3rd/imgui/backends/imgui_impl_win32.cpp
+        3rd/imgui/backends/imgui_impl_dx11.cpp
     )
 
     target_include_directories(Imgui PUBLIC
-        thirdParty/imgui
-        thirdParty/imgui/backends
+        3rd/imgui
+        3rd/imgui/backends
     )
 
     file(GLOB_RECURSE SRC
@@ -125,7 +125,7 @@ else()
 
     target_include_directories(MiniCAD PRIVATE
         "${CMAKE_SOURCE_DIR}/src"
-        "${CMAKE_SOURCE_DIR}/thirdParty"
+        "${CMAKE_SOURCE_DIR}/3rd"
     )
 
     target_link_libraries(MiniCAD PRIVATE Imgui d3d11 dxgi D3DCompiler)
