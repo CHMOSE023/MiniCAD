@@ -8,6 +8,7 @@
 #include "Editor/Grip/GripEditor.h"
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Input/KeyCode.h"
+#include "Editor/Constraint/ConstraintEngine.h"
 #include "Scene/Scene.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Core/GeomKernel/Line.hpp"
@@ -42,8 +43,10 @@ namespace MiniCAD
         std::vector<Object*> GetSelectedObjects();
 
         // ── 夹点 ─────────────────────────────────────────────
-        GripEditor& GetGripEditor()       { return m_gripEditor; }
-        const Line& GetAnchorLine() const { return m_anchorLine; }
+        GripEditor&        GetGripEditor()      { return m_gripEditor; }
+        const Line&        GetAnchorLine() const { return m_constraintEngine.GetGuideLine(); }
+        bool               IsConstraintActive() const { return m_constraintEngine.IsAnyActive(); }
+        ConstraintEngine&  GetConstraintEngine()      { return m_constraintEngine; }
         bool        IsActiveTool()  const { return m_tool != nullptr; }
 
         // ── 工具注册表（插件 / 内置工具统一入口）─────────────
@@ -116,11 +119,20 @@ namespace MiniCAD
         // ── 删除 ─────────────────────────────────────────────
         void DeleteSelected();
 
-        // ── 正交 ─────────────────────────────────────────────
+        // ── 约束 ─────────────────────────────────────────────
         bool TryGetAnchor(Math::Point3& out) const;
+
+        // 正交约束（F8）
         bool IsOrthoEnabled() const;
         void SetOrthoEnabled(bool enabled);
         void ToggleOrtho();
+
+        // 极轴约束（F10）
+        bool   IsPolarEnabled() const;
+        void   SetPolarEnabled(bool enabled);
+        void   TogglePolar();
+        double GetPolarAngle() const;
+        void   SetPolarAngle(double deg);
 
         // ── 捕捉 ─────────────────────────────────────────────
         bool IsSnapEnabled() const;
@@ -164,11 +176,10 @@ namespace MiniCAD
         Picking&       m_picking;
         SnapEngine&    m_snap;
         SnapResult&    m_currentSnap;
-        GripEditor     m_gripEditor;
+        GripEditor        m_gripEditor;
+        ConstraintEngine  m_constraintEngine;
 
-        Line m_anchorLine;
-        bool m_snapEnabled  = true;
-        bool m_orthoEnabled = false;
+        bool m_snapEnabled = true;
          
         std::unordered_map<std::string,
         std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;

@@ -96,15 +96,13 @@ namespace MiniCAD
 
         UpdateSceneVerties();
          
-		// ！！！拖拽夹点时显示约束线（正交或原位），其他工具不显示
-        if (m_editor.GetGripEditor().IsDragging())
+        // 约束辅助线：工具激活或夹点拖拽期间，任意约束（正交/极轴）生效时绘制
+        if (m_editor.IsConstraintActive() &&
+            (m_editor.IsActiveTool() || m_editor.GetGripEditor().IsDragging()))
         {
-            if (m_editor.IsOrthoEnabled()) // 1.正交 显示约束线
-            {
-                const Line& anchorLine = m_editor.GetAnchorLine(); 
-                m_overlay.AddLine(anchorLine.Start, anchorLine.End, { 0.1, 0.7, 0.1,0.6 });
-            }
-          
+            const Line& guideLine = m_editor.GetAnchorLine();
+            if (guideLine.IsValid())
+                m_overlay.AddLine(guideLine.Start, guideLine.End, { 0.1, 0.7, 0.1, 0.6 });
         }  
 
         m_overlay.ToVertices(m_overlayVertices);      // 每帧分配 

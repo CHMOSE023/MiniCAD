@@ -62,7 +62,6 @@ namespace MiniCAD
         , m_snap(snap)
         , m_currentSnap(currentSnap)
         , m_gripEditor(viewport, scene, cmdStack, picking, overlay)
-        , m_anchorLine({}, {})
     {
         RegisterBuiltinTools();
     }
@@ -576,9 +575,15 @@ namespace MiniCAD
                 return true;
             }
              
-            if (e.Key == KeyCode::F8) // 正交开关 
+            if (e.Key == KeyCode::F8) // 正交开关
             {
                 ToggleOrtho();
+                return true;
+            }
+
+            if (e.Key == KeyCode::F10) // 极轴开关
+            {
+                TogglePolar();
                 return true;
             }
         }
@@ -719,48 +724,34 @@ namespace MiniCAD
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  正交约束
+    //  约束应用（正交 / 极轴）
     // ─────────────────────────────────────────────────────────────
     InputEvent EditorContext::ApplyConstraints(const InputEvent& e)
     {
         InputEvent out = e;
 
-        if (!m_orthoEnabled)
-        {
-            m_anchorLine = { {}, {} };
+        if (!m_constraintEngine.IsAnyActive())
             return out;
-        }
 
         Math::Point3 anchor;
         if (!TryGetAnchor(anchor))
-        {
-            m_anchorLine = { {}, {} };
             return out;
-        }
 
         Math::Point3 input;
         if (e.HasSnap)
-        {
             input = e.SnapWorld;
-        }
         else
         {
             auto p = m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
-            input  = Math::Point3(p.x, p.y, 0.f);
+            input  = { p.x, p.y, 0.0 };
         }
 
-        float dx = input.x - anchor.x;
-        float dy = input.y - anchor.y;
-
-        Math::Point3 result;
-        if (std::fabs(dx) > std::fabs(dy))
-            result = { input.x, anchor.y, 0.f };
-        else
-            result = { anchor.x, input.y, 0.f };
-
-        out.HasSnap   = true;
-        out.SnapWorld = result;
-        m_anchorLine  = { anchor, result };
+        ConstraintContext ctx{ anchor, input };
+        if (m_constraintEngine.Apply(ctx))
+        {
+            out.HasSnap   = true;
+            out.SnapWorld = m_constraintEngine.GetConstrainedPoint();
+        }
 
         return out;
     }
@@ -787,18 +778,34 @@ namespace MiniCAD
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  正交 / 捕捉开关
+    //  约束 / 捕捉开关
     // ─────────────────────────────────────────────────────────────
-    bool EditorContext::IsOrthoEnabled() const { return m_orthoEnabled; }
+    bool EditorContext::IsOrthoEnabled() const { return m_constraintEngine.IsOrthoEnabled(); }
 
     void EditorContext::SetOrthoEnabled(bool enabled)
     {
-        if (m_orthoEnabled == enabled) return;
-        m_orthoEnabled = enabled;
+        if (m_constraintEngine.IsOrthoEnabled() == enabled) return;
+        m_constraintEngine.EnableOrtho(enabled);
         printf("[Editor] Ortho: %s\n", enabled ? "ON" : "OFF");
     }
 
-    void EditorContext::ToggleOrtho() { SetOrthoEnabled(!m_orthoEnabled); }
+    void EditorContext::ToggleOrtho() { SetOrthoEnabled(!IsOrthoEnabled()); }
+
+    bool EditorContext::IsPolarEnabled() const { return m_constraintEngine.IsPolarEnabled(); }
+
+    void EditorContext::SetPolarEnabled(bool enabled)
+    {
+        if (m_constraintEngine.IsPolarEnabled() == enabled) return;
+        m_constraintEngine.EnablePolar(enabled);
+        printf("[Editor] Polar: %s (%.1f deg)\n", enabled ? "ON" : "OFF",
+               m_constraintEngine.GetPolar().GetAngleDeg());
+    }
+
+    void EditorContext::TogglePolar() { SetPolarEnabled(!IsPolarEnabled()); }
+
+    double EditorContext::GetPolarAngle() const { return m_constraintEngine.GetPolar().GetAngleDeg(); }
+
+    void EditorContext::SetPolarAngle(double deg) { m_constraintEngine.GetPolar().SetAngleDeg(deg); }
 
     bool EditorContext::IsSnapEnabled() const { return m_snapEnabled; }
 
