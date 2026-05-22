@@ -3,8 +3,9 @@
 #include "Entity.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/AABB.hpp"
-#include <string>
-#include <cmath>
+#include "Core/Object/Object.hpp"
+#include <string> 
+#include <cstdint>
 
 namespace MiniCAD
 {

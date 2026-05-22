@@ -23,7 +23,9 @@
 #include "Editor/Tools/PolylineTool.h"
 #include "Editor/Tools/SplineTool.h"
 #include "Editor/Tools/TextTool.h"
+#include "Editor/Tools/MTextTool.h"
 #include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 
 // ── 编辑工具 ──────────────────────────────────────────────────
@@ -89,15 +91,27 @@ namespace MiniCAD
                 m_textRequest.Active    = true;
                 m_textRequest.InsertPos = pos;
 #ifdef MINICAD_WEB
-                // 通知 JS 弹出文字输入面板
                 EM_ASM({ if (typeof window._minicadShowTextInput === 'function') window._minicadShowTextInput(); });
 #endif
             };
             return tool;
         });
 
+        RegisterTool("MText", [this]
+        {
+            auto tool = std::make_unique<MTextTool>(m_viewport, m_overlay);
+            tool->OnInsertPointPicked = [this](Math::Point3 pos)
+            {
+                m_mtextRequest.Active    = true;
+                m_mtextRequest.InsertPos = pos;
+#ifdef MINICAD_WEB
+                EM_ASM({ if (typeof window._minicadShowMTextInput === 'function') window._minicadShowMTextInput(); });
+#endif
+            };
+            return tool;
+        });
 
-        // ── 编辑工具 ────────────────────────────────────────── 
+        // ── 编辑工具 ──────────────────────────────────────────
         RegisterTool("Move",     [this]() -> std::unique_ptr<ITool> {
             auto targets = GetSelectedObjects();
             if (targets.empty())
@@ -176,6 +190,7 @@ namespace MiniCAD
         RegisterAlias("CO",  "Copy");
         RegisterAlias("T",   "Text");
         RegisterAlias("DT",  "Text");
+        RegisterAlias("MT",  "MText");
         RegisterAlias("TR",  "Trim");
         RegisterAlias("EX",  "Extend");
         RegisterAlias("BR",  "Break");
@@ -313,7 +328,8 @@ namespace MiniCAD
     void EditorContext::StartEllipseTool()   { ActivateToolById("Ellipse");   }
     void EditorContext::StartPolylineTool()  { ActivateToolById("Polyline");  }
     void EditorContext::StartSplineTool()    { ActivateToolById("Spline");    }
-    void EditorContext::StartTextTool()     { ActivateToolById("Text");      }
+    void EditorContext::StartTextTool()  { ActivateToolById("Text");  }
+    void EditorContext::StartMTextTool() { ActivateToolById("MText"); }
 
     void EditorContext::SubmitTextInput(const std::string& utf8Text)
     {
@@ -343,6 +359,38 @@ namespace MiniCAD
 
         m_textRequest.Active = false;
         printf("[TextTool] 文字已添加: %s\n", utf8Text.c_str());
+    }
+
+    void EditorContext::SubmitMTextInput(const std::string& utf8Text)
+    {
+        if (!m_mtextRequest.Active || utf8Text.empty())
+        {
+            m_mtextRequest.Active = false;
+            return;
+        }
+
+        const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
+
+        auto id  = m_scene.NextObjectID();
+        auto ent = std::make_unique<MTextEntity>(
+            id,
+            0,   // styleId: 使用默认字体样式
+            utf8Text,
+            m_mtextRequest.InsertPos,
+            m_mtextRequest.Height,
+            m_mtextRequest.Rotation,
+            m_mtextRequest.BoxWidth);
+
+        EntityAttr attr;
+        attr.Color   = layer.GetColor();
+        attr.LayerId = layer.GetID();
+        ent->SetAttr(attr);
+
+        auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
+        m_cmdStack.Execute(std::move(cmd), m_scene);
+
+        m_mtextRequest.Active = false;
+        printf("[MTextTool] 多行文字已添加: %s\n", utf8Text.c_str());
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -73,6 +73,7 @@ namespace MiniCAD
         void StartPolylineTool();
         void StartSplineTool();
         void StartTextTool();
+        void StartMTextTool();
 
         // ── 编辑工具便捷方法 ─────────────────────────────────
         void StartMoveTool();
@@ -97,6 +98,20 @@ namespace MiniCAD
         TextInputRequest&       GetTextInputRequest()       { return m_textRequest; }
         const TextInputRequest& GetTextInputRequest() const { return m_textRequest; }
         void SubmitTextInput(const std::string& utf8Text);
+
+        // ── 多行文字输入请求（由 MTextTool 发起，UIManager 响应）─
+        struct MTextInputRequest
+        {
+            bool         Active   = false;
+            Math::Point3 InsertPos;
+            double       Height   = 2.5;
+            double       Rotation = 0.0;
+            double       BoxWidth = 0.0;   // 0 = 不限宽
+        };
+
+        MTextInputRequest&       GetMTextInputRequest()       { return m_mtextRequest; }
+        const MTextInputRequest& GetMTextInputRequest() const { return m_mtextRequest; }
+        void SubmitMTextInput(const std::string& utf8Text);
 
         // ── 删除 ─────────────────────────────────────────────
         void DeleteSelected();
@@ -161,7 +176,8 @@ namespace MiniCAD
         std::string                                  m_cmdBuffer;
         std::string                                  m_lastCommand;
 
-        TextInputRequest m_textRequest;
+        TextInputRequest  m_textRequest;
+        MTextInputRequest m_mtextRequest;
     };
 
 } 

@@ -54,7 +54,7 @@ namespace MiniCAD
             const Math::Color4& col = isSelected ? IDrawSink::kSelectionColor
                                     : isHovered  ? IDrawSink::kHoverColor
                                                  : attr.Color;
-            sink.EmitText(m_position, m_text, m_height, m_rotation, col);
+            sink.EmitMText(m_position, m_text, 0, m_height, m_rotation, 0.0, col);
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override

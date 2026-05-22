@@ -23,6 +23,7 @@ namespace MiniCAD
         Polyline,
         Spline,
         Text,
+        MText,
         /*-----*/
         Copy,
         Move,
@@ -56,7 +57,8 @@ namespace MiniCAD
         void DrawToolbar       (DocumentManager& dm);
         void DrawDocumentTabs  (DocumentManager& dm);
         void DrawStatusBar     (DocumentManager& dm);
-        void DrawTextInputPopup(DocumentManager& dm);
+        void DrawTextInputPopup (DocumentManager& dm);
+        void DrawMTextInputPopup(DocumentManager& dm);
         void InitToolIcons   ();
 
         ImTextureID LoadTextureFromFile(const char* path);
