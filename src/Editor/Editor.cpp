@@ -1,4 +1,4 @@
-#include "EditorContext.h"
+#include "Editor.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Document/Command/BatchDeleteCommand.h"
 #include "Editor/Viewport/Viewport.h"
@@ -47,7 +47,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  构造
     // ─────────────────────────────────────────────────────────────
-    EditorContext::EditorContext(Scene&        scene,
+    Editor::Editor(Scene&        scene,
                                  CommandStack& cmdStack,
                                  Viewport&     viewport,
                                  Overlay&      overlay,
@@ -69,9 +69,9 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  RegisterBuiltinTools
     //  内置工具 + 快捷键在这里统一注册。
-    //  新增内置工具只改这一个函数，EditorContext.h 不需要动。
+    //  新增内置工具只改这一个函数，Editor.h 不需要动。
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::RegisterBuiltinTools()
+    void Editor::RegisterBuiltinTools()
     {
         // ── 绘制工具 ──────────────────────────────────────────
         RegisterTool("Line",      [] { return std::make_unique<LineTool>();      });
@@ -194,17 +194,17 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  工具注册表 — 对外接口
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::RegisterTool(const std::string& toolId, std::function<std::unique_ptr<ITool>()> factory)
+    void Editor::RegisterTool(const std::string& toolId, std::function<std::unique_ptr<ITool>()> factory)
     {
         m_toolRegistry[toolId] = std::move(factory);
     }
        
-    void EditorContext::RegisterAlias(const std::string& alias, const std::string& toolId)
+    void Editor::RegisterAlias(const std::string& alias, const std::string& toolId)
     {
         m_aliasRegistry[alias] = toolId;
     }
 
-    void EditorContext::ActivateToolByAlias(const std::string& alias)
+    void Editor::ActivateToolByAlias(const std::string& alias)
     {
         // 特殊命令：恢复上次选择
         if (alias == "Previous" || alias == "PREVIOUS")
@@ -231,7 +231,7 @@ namespace MiniCAD
         printf("[Editor] Unknown command: %s\n", alias.c_str());
     }
 
-    char EditorContext::ToCommandChar(KeyCode key)
+    char Editor::ToCommandChar(KeyCode key)
     {
         if (key >= KeyCode::A && key <= KeyCode::Z)
         {
@@ -246,7 +246,7 @@ namespace MiniCAD
         return '\0';
     }
      
-    void EditorContext::ActivateToolById(const std::string& toolId)
+    void Editor::ActivateToolById(const std::string& toolId)
     { 
         // 特殊命令拦截
         if (toolId == "Previous")
@@ -280,7 +280,7 @@ namespace MiniCAD
     //  ActivateTool — 工具切换核心（私有）
     //  所有工具启动前的 boilerplate 集中在这里。
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::ActivateTool(std::unique_ptr<ITool> tool)
+    void Editor::ActivateTool(std::unique_ptr<ITool> tool)
     {
         // 1. 停止旧工具
         if (m_tool)
@@ -315,18 +315,18 @@ namespace MiniCAD
     //  绘制工具便捷方法
     //  UI 层直接调用，内部只委托给 ActivateToolById，不含任何逻辑。
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::StartLineTool()      { ActivateToolById("Line");      }
-    void EditorContext::StartPointTool()     { ActivateToolById("Point");     }
-    void EditorContext::StartRectangleTool() { ActivateToolById("Rectangle"); }
-    void EditorContext::StartCircleTool()    { ActivateToolById("Circle");    }
-    void EditorContext::StartArcTool()       { ActivateToolById("Arc");       }
-    void EditorContext::StartEllipseTool()   { ActivateToolById("Ellipse");   }
-    void EditorContext::StartPolylineTool()  { ActivateToolById("Polyline");  }
-    void EditorContext::StartSplineTool()    { ActivateToolById("Spline");    }
-    void EditorContext::StartTextTool()  { ActivateToolById("Text");  }
-    void EditorContext::StartMTextTool() { ActivateToolById("MText"); }
+    void Editor::StartLineTool()      { ActivateToolById("Line");      }
+    void Editor::StartPointTool()     { ActivateToolById("Point");     }
+    void Editor::StartRectangleTool() { ActivateToolById("Rectangle"); }
+    void Editor::StartCircleTool()    { ActivateToolById("Circle");    }
+    void Editor::StartArcTool()       { ActivateToolById("Arc");       }
+    void Editor::StartEllipseTool()   { ActivateToolById("Ellipse");   }
+    void Editor::StartPolylineTool()  { ActivateToolById("Polyline");  }
+    void Editor::StartSplineTool()    { ActivateToolById("Spline");    }
+    void Editor::StartTextTool()  { ActivateToolById("Text");  }
+    void Editor::StartMTextTool() { ActivateToolById("MText"); }
 
-    void EditorContext::SubmitTextInput(const std::string& utf8Text)
+    void Editor::SubmitTextInput(const std::string& utf8Text)
     {
         if (!m_textRequest.Active || utf8Text.empty())
         {
@@ -356,7 +356,7 @@ namespace MiniCAD
         printf("[TextTool] 文字已添加: %s\n", utf8Text.c_str());
     }
 
-    void EditorContext::SubmitMTextInput(const std::string& utf8Text)
+    void Editor::SubmitMTextInput(const std::string& utf8Text)
     {
         if (!m_mtextRequest.Active || utf8Text.empty())
         {
@@ -391,22 +391,22 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  编辑工具便捷方法
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::StartMoveTool()   { ActivateToolById("Move");   }
-    void EditorContext::StartCopyTool()   { ActivateToolById("Copy");   }
-    void EditorContext::StartMirrorTool() { ActivateToolById("Mirror"); }
-    void EditorContext::StartRotateTool() { ActivateToolById("Rotate"); }
+    void Editor::StartMoveTool()   { ActivateToolById("Move");   }
+    void Editor::StartCopyTool()   { ActivateToolById("Copy");   }
+    void Editor::StartMirrorTool() { ActivateToolById("Mirror"); }
+    void Editor::StartRotateTool() { ActivateToolById("Rotate"); }
 
     // ─────────────────────────────────────────────────────────────
     //  几何编辑工具便捷方法
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::StartTrimTool()   { ActivateToolById("Trim");   }
-    void EditorContext::StartExtendTool() { ActivateToolById("Extend"); }
-    void EditorContext::StartBreakTool()  { ActivateToolById("Break");  }
+    void Editor::StartTrimTool()   { ActivateToolById("Trim");   }
+    void Editor::StartExtendTool() { ActivateToolById("Extend"); }
+    void Editor::StartBreakTool()  { ActivateToolById("Break");  }
 
     // ─────────────────────────────────────────────────────────────
     //  OnInput — 消息路由主干
     // ─────────────────────────────────────────────────────────────
-    bool EditorContext::OnInput(const InputEvent& inputEvent)
+    bool Editor::OnInput(const InputEvent& inputEvent)
     {
         // ── 0. 延迟销毁前一工具（OnFinished 不能在工具方法内同步 reset 自己）─
         if (m_pendingToolReset)
@@ -505,7 +505,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  HandleGlobal
     // ─────────────────────────────────────────────────────────────
-    bool EditorContext::HandleGlobal(const InputEvent& e)
+    bool Editor::HandleGlobal(const InputEvent& e)
     {
         // ── Undo ────────────────────────────────────────────────
         if (e.IsUndo())
@@ -656,7 +656,7 @@ namespace MiniCAD
         return false;
     }
 
-    bool EditorContext::HandleDefault(const InputEvent& /*e*/)
+    bool Editor::HandleDefault(const InputEvent& /*e*/)
     {
         return false;
     }
@@ -664,24 +664,24 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  Picking / 选择
     // ─────────────────────────────────────────────────────────────
-    const std::unordered_set<Object::ObjectID>& EditorContext::GetSelection()
+    const std::unordered_set<Object::ObjectID>& Editor::GetSelection()
     {
         return m_picking.GetSelection();
     }
 
-    const std::unordered_set<Object::ObjectID>& EditorContext::GetHovered()
+    const std::unordered_set<Object::ObjectID>& Editor::GetHovered()
     {
         return m_picking.GetHovered();
     }
 
-    Object* EditorContext::GetPrimarySelectedObject()
+    Object* Editor::GetPrimarySelectedObject()
     {
         const auto& sel = m_picking.GetSelection();
         if (sel.empty()) return nullptr;
         return m_scene.GetEntity(*sel.begin());
     }
 
-    std::vector<Object*> EditorContext::GetSelectedObjects()
+    std::vector<Object*> Editor::GetSelectedObjects()
     {
         std::vector<Object*> result;
         for (auto id : m_picking.GetSelection())
@@ -695,7 +695,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  删除
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::DeleteSelected()
+    void Editor::DeleteSelected()
     {
         auto& ids = m_picking.GetSelection();
         if (ids.empty()) return;
@@ -709,7 +709,7 @@ namespace MiniCAD
     //  TryGetAnchor（约束辅助线绘制等仍需要）
     // ─────────────────────────────────────────────────────────────
 
-    bool EditorContext::TryGetAnchor(Math::Point3& out) const
+    bool Editor::TryGetAnchor(Math::Point3& out) const
     {
         if (m_tool && m_tool->HasAnchor())
         {
@@ -733,20 +733,20 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     //  约束 / 捕捉开关
     // ─────────────────────────────────────────────────────────────
-    bool EditorContext::IsOrthoEnabled() const { return m_constraintEngine.IsOrthoEnabled(); }
+    bool Editor::IsOrthoEnabled() const { return m_constraintEngine.IsOrthoEnabled(); }
 
-    void EditorContext::SetOrthoEnabled(bool enabled)
+    void Editor::SetOrthoEnabled(bool enabled)
     {
         if (m_constraintEngine.IsOrthoEnabled() == enabled) return;
         m_constraintEngine.EnableOrtho(enabled);
         printf("[Editor] Ortho: %s\n", enabled ? "ON" : "OFF");
     }
 
-    void EditorContext::ToggleOrtho() { SetOrthoEnabled(!IsOrthoEnabled()); }
+    void Editor::ToggleOrtho() { SetOrthoEnabled(!IsOrthoEnabled()); }
 
-    bool EditorContext::IsPolarEnabled() const { return m_constraintEngine.IsPolarEnabled(); }
+    bool Editor::IsPolarEnabled() const { return m_constraintEngine.IsPolarEnabled(); }
 
-    void EditorContext::SetPolarEnabled(bool enabled)
+    void Editor::SetPolarEnabled(bool enabled)
     {
         if (m_constraintEngine.IsPolarEnabled() == enabled) return;
         m_constraintEngine.EnablePolar(enabled);
@@ -754,37 +754,37 @@ namespace MiniCAD
                m_constraintEngine.GetPolar().GetAngleDeg());
     }
 
-    void EditorContext::TogglePolar() { SetPolarEnabled(!IsPolarEnabled()); }
+    void Editor::TogglePolar() { SetPolarEnabled(!IsPolarEnabled()); }
 
-    double EditorContext::GetPolarAngle() const { return m_constraintEngine.GetPolar().GetAngleDeg(); }
+    double Editor::GetPolarAngle() const { return m_constraintEngine.GetPolar().GetAngleDeg(); }
 
-    void EditorContext::SetPolarAngle(double deg) { m_constraintEngine.GetPolar().SetAngleDeg(deg); }
+    void Editor::SetPolarAngle(double deg) { m_constraintEngine.GetPolar().SetAngleDeg(deg); }
 
-    bool EditorContext::IsSnapEnabled() const { return m_snap.IsEnabled(); }
+    bool Editor::IsSnapEnabled() const { return m_snap.IsEnabled(); }
 
-    void EditorContext::SetSnapEnabled(bool enabled)
+    void Editor::SetSnapEnabled(bool enabled)
     {
         if (m_snap.IsEnabled() == enabled) return;
         m_snap.SetEnableSnap(enabled);
         printf("[Editor] Snap: %s\n", enabled ? "ON" : "OFF");
     }
 
-    void EditorContext::ToggleSnap() { SetSnapEnabled(!m_snap.IsEnabled()); }
+    void Editor::ToggleSnap() { SetSnapEnabled(!m_snap.IsEnabled()); }
 
     // ─────────────────────────────────────────────────────────────
     //  Undo / Redo / Command
     // ─────────────────────────────────────────────────────────────
-    void EditorContext::Undo()
+    void Editor::Undo()
     {
         m_cmdStack.Undo(m_scene);
     }
 
-    void EditorContext::Redo()
+    void Editor::Redo()
     {
         m_cmdStack.Redo(m_scene);
     }
 
-    void EditorContext::ExecuteCommand(std::unique_ptr<ICommand> cmd)
+    void Editor::ExecuteCommand(std::unique_ptr<ICommand> cmd)
     {
         m_cmdStack.Execute(std::move(cmd), m_scene);
     }

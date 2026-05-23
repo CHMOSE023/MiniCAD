@@ -9,9 +9,10 @@ namespace MiniCAD
     class Resolver
     {
     public:
-        ResolvedInput BuidResolver(const InputContext& ctx);
+        ResolvedInput GetResolve(const InputContext& ctx);
 
     private:
         Math::Point3 ScreenToWorld(const InputContext& ctx) const;
+        bool         ShouldSnap   (const InputContext& ctx) const;
     };
 }

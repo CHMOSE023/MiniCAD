@@ -1,33 +1,31 @@
 #pragma once
-#include "Scene/Scene.h" 
-#include "Editor/Tools/ITool.h" 
-#include "Editor/Viewport/Viewport.h"
-#include "Document/CommandStack/CommandStack.h" 
-#include "Document/Command/AddEntityCommand.h" 
+#include "Scene/Scene.h"
+#include "Editor/Tools/ITool.h"
+#include "Editor/Input/InputContext.h"
+#include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
-#include <cstdio> 
-#include <optional>   // 可选值容器
-namespace MiniCAD
-{ 
+#include <cstdio>
+#include <optional>
 
+namespace MiniCAD
+{
     class LineTool : public ITool
     {
     public:
-        LineTool(Scene& scene, CommandStack& cmdStack, Viewport& viewport, Overlay& overlay)
-            : m_scene(scene)
-            , m_cmdStack(cmdStack)
-            , m_viewport(viewport)
-            , m_overlay(overlay)
+        LineTool()
         {
             printf("[LineTool] 左键起点 | 左键延续 | 右键结束段 | 空格继续 | ESC 退出\n");
-        } 
+        }
         ~LineTool()
         {
             printf("退出绘制\n");
         }
 
-        bool OnInput(const InputEvent& e) override
+        bool OnInput(const InputContext& ctx) override
         {
+            m_ctx = &ctx;
+            const auto& e = ctx.event;
+
             if (e.IsLeftClick())
             {
                 auto pt = GetPoint(e);
@@ -40,70 +38,63 @@ namespace MiniCAD
                 else
                 {
                     Commit(m_start, pt);
-                    m_start = pt; // 连续画
+                    m_start = pt;
                 }
                 return true;
             }
 
-            if (e.IsRightClick() || e.IsCancel()) // 结束绘制
+            if (e.IsRightClick() || e.IsCancel())
             {
-                m_overlay.Clear(); 
+                m_ctx->overlay.Clear();
                 if (OnFinished) OnFinished();
                 return true;
             }
 
             if (e.Type == InputEventType::MouseMove && m_hasStart)
             {
-                m_preview = GetPoint(e); // 预览终点
-                m_overlay.Clear(); 
-                const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
-                m_overlay.AddLine(m_start, m_preview, layer.GetColor());
-                return false; // 交给渲染
+                m_preview = GetPoint(e);
+                m_ctx->overlay.Clear();
+                const auto& layer = m_ctx->scene.GetLayerManager().GetActiveLayer();
+                m_ctx->overlay.AddLine(m_start, m_preview, layer.GetColor());
+                return false;
             }
 
             return false;
         }
 
-        // 是否有“锚点”
         bool HasAnchor() const override
         {
             return m_hasStart;
         }
 
-        // 返回锚点
         Math::Point3 GetAnchor() const override
         {
             return Math::Point3(m_start.x, m_start.y, 0.f);
         }
 
-    private: 
-
+    private:
         Math::Point3 GetPoint(const InputEvent& e)
         {
-            if (e.HasSnap) return e.SnapWorld;   // 获取捕获点
+            if (e.HasSnap) return e.SnapWorld;
 
-            return m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
+            return m_ctx->viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
         }
 
         void Commit(const Math::Point3& a, const Math::Point3& b)
         {
-            auto id   = m_scene.NextObjectID(); 
-            auto line = std::make_unique<LineEntity>(id, a, b); 
+            auto id   = m_ctx->scene.NextObjectID();
+            auto line = std::make_unique<LineEntity>(id, a, b);
             auto cmd  = std::make_unique<AddEntityCommand>(std::move(line));
 
-            m_cmdStack.Execute(std::move(cmd), m_scene);
+            m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
             printf("线段 Id %d  (%.3f,%.3f) (%.3f,%.3f)\n",static_cast<int>(id), a.x, a.y, b.x, b.y);
         }
-         
+
     private:
-        Scene&        m_scene;
-        CommandStack& m_cmdStack;
-        Viewport&     m_viewport;
-        Overlay&      m_overlay;  
+        const InputContext* m_ctx = nullptr;
         bool          m_hasStart = false;
         Math::Point3  m_start{};
-        Math::Point3  m_preview{};  // 动态预览（MiniCAD关键）
-
+        Math::Point3  m_preview{};
     };
 }

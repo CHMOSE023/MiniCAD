@@ -1,11 +1,8 @@
 #pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Viewport/Viewport.h"
-#include "Editor/Overlay/Overlay.h"
-#include "Editor/Input/InputEvent.h"
+#include "Editor/Input/InputContext.h"
 #include "Editor/Input/KeyCode.h"
-#include "Document/CommandStack/CommandStack.h"
 #include "Document/Command/RotateMoveCommand.h"
 #include "Document/Command/RotateCopyCommand.h"
 #include "Document/Command/EntityRotate.h"
@@ -28,24 +25,11 @@
 
 namespace MiniCAD
 {
-    // ─────────────────────────────────────────────────────────────
-    //  RotateTool  (仿 AutoCAD ROTATE)
-    //    1. 左键 -> 旋转基点
-    //    2. 询问保留源? [Y/N] <N>
-    //       (这里 Y=保留源做副本/RotateCopy, N=原地旋转/RotateMove)
-    //    3. 鼠标移动 -> 实时预览旋转
-    //    4. 左键 -> 角度参考点 -> 提交
-    //    右键/ESC 任意阶段取消
-    // ─────────────────────────────────────────────────────────────
     class RotateTool : public ITool
     {
     public:
-        RotateTool(std::vector<Object*> targets, Scene& scene, CommandStack& cmdStack, Viewport& viewport, Overlay& overlay)
+        RotateTool(std::vector<Object*> targets)
             : m_targets(std::move(targets))
-            , m_scene(scene)
-            , m_cmdStack(cmdStack)
-            , m_viewport(viewport)
-            , m_overlay(overlay)
         {
             m_sourceIds.reserve(m_targets.size());
             for (auto* o : m_targets)
@@ -56,8 +40,11 @@ namespace MiniCAD
 
         ~RotateTool() { printf("[RotateTool] 退出\n"); }
 
-        bool OnInput(const InputEvent& e) override
+        bool OnInput(const InputContext& ctx) override
         {
+            m_ctx = &ctx;
+            const auto& e = ctx.event;
+
             if (e.IsRightClick() || e.IsCancel())
             {
                 Cancel();
@@ -110,7 +97,6 @@ namespace MiniCAD
                 {
                     auto cur = GetPoint(e);
 
-                    // 第一次进入 Angle 阶段时,记录参考方向起点
                     if (!m_hasRef0)
                     {
                         m_ref0    = cur;
@@ -129,12 +115,12 @@ namespace MiniCAD
 
         void Cancel() override
         {
-            m_overlay.Clear();
+            if (m_ctx) m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();
         }
 
         void OnSceneChanged()  override { Cancel(); }
-        void OnFocusLost()     override { m_overlay.Clear(); }
+        void OnFocusLost()     override { if (m_ctx) m_ctx->overlay.Clear(); }
         void OnFocusRestored() override {}
 
         bool         HasAnchor() const override { return m_phase == Phase::Angle; }
@@ -146,7 +132,7 @@ namespace MiniCAD
         void EnterAngleInput()
         {
             m_phase   = Phase::Angle;
-            m_hasRef0 = false;   // 下一次 MouseMove 设置参考起点
+            m_hasRef0 = false;
             printf("[RotateTool] 移动鼠标设定旋转角度,左键确定%s\n",
                    m_keepSource ? "(保留源)" : "");
         }
@@ -154,10 +140,9 @@ namespace MiniCAD
         Math::Point3 GetPoint(const InputEvent& e) const
         {
             if (e.HasSnap) return e.SnapWorld;
-            return m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
+            return m_ctx->viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
         }
 
-        // 旋转角度 = angle(pivot -> cur) - angle(pivot -> ref0)
         double ComputeAngle(const Math::Point3& cur) const
         {
             if (!m_hasRef0) return 0.0;
@@ -168,22 +153,18 @@ namespace MiniCAD
 
         void RebuildPreview(const Math::Point3& cur, double angle)
         {
-            m_overlay.Clear();
+            m_ctx->overlay.Clear();
 
             static const Math::Color4 rotateColor = { 0.6,0.6,0.6,0.6 };
-            const auto& color = m_scene.GetLayerManager().GetActiveLayer().GetColor();
+            const auto& color = m_ctx->scene.GetLayerManager().GetActiveLayer().GetColor();
 
-            // 参考线:pivot -> 当前鼠标
-            m_overlay.AddLine(m_pivot, cur, rotateColor);
+            m_ctx->overlay.AddLine(m_pivot, cur, rotateColor);
 
-            // 起始参考线(虚拟标记,用同色画一条更短的辅助线也行;
-            // 这里简单画 pivot->ref0 作为 0 度参考)
             if (m_hasRef0)
             {
-                m_overlay.AddLine(m_pivot, m_ref0, color);
+                m_ctx->overlay.AddLine(m_pivot, m_ref0, color);
             }
 
-            // 每个目标:克隆 + 旋转到 overlay
             for (Object* obj : m_targets)
             {
                 if (!obj || !obj->IsKindOf<Entity>()) continue;
@@ -193,47 +174,46 @@ namespace MiniCAD
             }
         }
 
-        // 同 MirrorTool::DrawEntityToOverlay,把任意 Entity 画到 overlay
         void DrawEntityToOverlay(Entity* entity, const Math::Color4& color)
         {
             if (entity->IsKindOf<PointEntity>())
             {
-                m_overlay.AddPoint(static_cast<PointEntity*>(entity)->GetPoint().Position, color);
+                m_ctx->overlay.AddPoint(static_cast<PointEntity*>(entity)->GetPoint().Position, color);
                 return;
             }
             if (entity->IsKindOf<LineEntity>())
             {
                 const auto& l = static_cast<LineEntity*>(entity)->GetLine();
-                m_overlay.AddLine(l.Start, l.End, color);
+                m_ctx->overlay.AddLine(l.Start, l.End, color);
                 return;
             }
             if (entity->IsKindOf<CircleEntity>())
             {
                 const auto& c = static_cast<CircleEntity*>(entity)->GetCircle();
-                m_overlay.AddCircle(c.Center, c.Radius, color);
+                m_ctx->overlay.AddCircle(c.Center, c.Radius, color);
                 return;
             }
             if (entity->IsKindOf<RectangleEntity>())
             {
                 const auto& r = static_cast<RectangleEntity*>(entity)->GetRectangle();
-                m_overlay.AddRect(r.P1, r.P2, r.P3, r.P4, color);
+                m_ctx->overlay.AddRect(r.P1, r.P2, r.P3, r.P4, color);
                 return;
             }
             if (entity->IsKindOf<ArcEntity>())
             {
                 const auto& a = static_cast<ArcEntity*>(entity)->GetArc();
-                m_overlay.AddArc(a.Center, a.Radius, a.StartAngle, a.EndAngle, color);
+                m_ctx->overlay.AddArc(a.Center, a.Radius, a.StartAngle, a.EndAngle, color);
                 return;
             }
             if (entity->IsKindOf<EllipseEntity>())
             {
                 const auto& el = static_cast<EllipseEntity*>(entity)->GetEllipse();
-                m_overlay.AddEllipse(el.Center, el.RadiusX, el.RadiusY, el.Rotation, color);
+                m_ctx->overlay.AddEllipse(el.Center, el.RadiusX, el.RadiusY, el.Rotation, color);
                 return;
             }
             if (entity->IsKindOf<PolylineEntity>())
             {
-                m_overlay.AddPolyline(static_cast<PolylineEntity*>(entity)->GetPolyline(), color);
+                m_ctx->overlay.AddPolyline(static_cast<PolylineEntity*>(entity)->GetPolyline(), color);
                 return;
             }
             if (entity->IsKindOf<SplineEntity>())
@@ -242,7 +222,7 @@ namespace MiniCAD
                 if (!sp.IsValid()) return;
                 auto pts = sp.Tessellate(32);
                 for (size_t i = 0; i + 1 < pts.size(); ++i)
-                    m_overlay.AddLine(pts[i], pts[i + 1], color);
+                    m_ctx->overlay.AddLine(pts[i], pts[i + 1], color);
                 return;
             }
         }
@@ -259,19 +239,19 @@ namespace MiniCAD
             if (m_keepSource)
             {
                 auto cmd = std::make_unique<RotateCopyCommand>(m_sourceIds, m_pivot, angle);
-                m_cmdStack.Execute(std::move(cmd), m_scene);
+                m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
                 printf("[RotateTool] 旋转 %zu 个对象,源保留,angle=%.3f deg\n",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
             else
             {
-                auto cmd = std::make_unique<RotateMoveCommand>(m_sourceIds, m_pivot, angle, m_scene);
-                m_cmdStack.Execute(std::move(cmd), m_scene);
+                auto cmd = std::make_unique<RotateMoveCommand>(m_sourceIds, m_pivot, angle, m_ctx->scene);
+                m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
                 printf("[RotateTool] 旋转 %zu 个对象,源原地修改,angle=%.3f deg\n",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
 
-            m_overlay.Clear();
+            m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();
         }
 
@@ -279,10 +259,7 @@ namespace MiniCAD
         std::vector<Object*>          m_targets;
         std::vector<Object::ObjectID> m_sourceIds;
 
-        Scene&        m_scene;
-        CommandStack& m_cmdStack;
-        Viewport&     m_viewport;
-        Overlay&      m_overlay;
+        const InputContext* m_ctx = nullptr;
 
         Phase        m_phase = Phase::Base;
         Math::Point3 m_pivot{};

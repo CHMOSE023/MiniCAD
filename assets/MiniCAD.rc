@@ -45,7 +45,7 @@ BLOCK "StringFileInfo"
 BEGIN
 BLOCK "080404B0"
 BEGIN
-VALUE "FileDescription", "二维绘图程序\0"
+VALUE "FileDescription", "MiniCAD\0"
 VALUE "FileVersion", "0.0.0.1\0"
 VALUE "ProductVersion", "0.0.0.1\0"
 VALUE "ProductName", "MiniCAD\0"

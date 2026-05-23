@@ -4,11 +4,14 @@
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Constraint/ConstraintEngine.h"
 #include "Editor/Picking/Picking.h"
+#include "Document/CommandStack/CommandStack.h"
+#include "Editor/Overlay/Overlay.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/Grip/GripEditor.h"
 
 namespace MiniCAD
-{
+{ 
+
     struct InputContext
     {
         const InputEvent& event;
@@ -17,6 +20,8 @@ namespace MiniCAD
         SnapEngine&       snap;
         ConstraintEngine& constraint;
         Picking&          picking;
+        CommandStack&     cmdStack;
+        Overlay&          overlay;
 
         ITool*            tool = nullptr;
         GripEditor*       grip = nullptr;

@@ -12,7 +12,12 @@ namespace MiniCAD
         return { p.x, p.y, 0.0 };
     }
 
-    ResolvedInput Resolver::BuidResolver(const InputContext& ctx)
+    bool Resolver::ShouldSnap(const InputContext& ctx) const
+    {
+        return false;
+    }
+
+    ResolvedInput Resolver::GetResolve(const InputContext& ctx)
     {
         ResolvedInput out;
 

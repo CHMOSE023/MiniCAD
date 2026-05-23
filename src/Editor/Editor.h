@@ -11,7 +11,7 @@
 #include "Editor/Constraint/ConstraintEngine.h"
 #include "Editor/Resolver/Resolver.h"
 #include "Scene/Scene.h"
-#include "Document/CommandStack/CommandStack.h"
+#include "Document/Document.h"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/Object/Object.hpp"
 #include <unordered_map>
@@ -23,16 +23,16 @@
 
 namespace MiniCAD
 { 
-    class EditorContext
+    class Editor
     {
     public:
-        EditorContext(Scene&        scene,
-                      CommandStack& cmdStack,
-                      Viewport&     viewport,
-                      Overlay&      overlay,
-                      Picking&      picking,
-                      SnapEngine&   snap,
-                      SnapResult&   currentSnap);
+        Editor(Scene& scene,
+               CommandStack& cmdStack,
+               Viewport& viewport,
+               Overlay& overlay,
+               Picking& picking,
+               SnapEngine& snap,
+               SnapResult& currentSnap);
 
         bool OnInput(const InputEvent& e);
 
@@ -44,20 +44,13 @@ namespace MiniCAD
         std::vector<Object*> GetSelectedObjects();
 
         // ── 夹点 ─────────────────────────────────────────────
-        GripEditor&        GetGripEditor()      { return m_gripEditor; }
-        const Line&        GetAnchorLine() const { return m_constraintEngine.GetGuideLine(); }
+        GripEditor&        GetGripEditor()            { return m_gripEditor; }
+        const Line&        GetAnchorLine()      const { return m_constraintEngine.GetGuideLine(); }
         bool               IsConstraintActive() const { return m_constraintEngine.IsAnyActive(); }
         ConstraintEngine&  GetConstraintEngine()      { return m_constraintEngine; }
-        bool        IsActiveTool()  const { return m_tool != nullptr; }
+        bool               IsActiveTool()       const { return m_tool != nullptr; }
 
-        // ── 工具注册表（插件 / 内置工具统一入口）─────────────
-        //
-        // 插件在 load() 里调这两个方法挂载自己的工具，
-        // 无需改动任何引擎头文件。
-        //
-        // toolId 命名约定：
-        //   内置工具  →  "Line" / "Circle" / "Move" ...
-        //   插件工具  →  "MyPlugin.Cloud" / "MyPlugin.Hatch" ...
+        
         void RegisterTool(const std::string&  toolId,  std::function<std::unique_ptr<ITool>()> factory);
 
 		//void RegisterShortcut(KeyCode key, const std::string& toolId);          // 单键快捷键（KeyCode）  F3 / F8 / Delete / ESC 这类功能键
@@ -165,13 +158,13 @@ namespace MiniCAD
         bool                   m_toolSuspended    = false;  // 中键平移期间为 true
         bool                   m_pendingToolReset = false;  // 延迟销毁，避免工具在自己方法内同步 reset 导致 UAF
 
-        Scene&         m_scene;
-        CommandStack&  m_cmdStack;
-        Viewport&      m_viewport;
-        Overlay&       m_overlay;
-        Picking&       m_picking;
-        SnapEngine&    m_snap;
-        SnapResult&    m_currentSnap;
+        Scene&            m_scene;
+        CommandStack&     m_cmdStack;
+        Viewport&         m_viewport;
+        Overlay&          m_overlay;
+        Picking&          m_picking;
+        SnapEngine&       m_snap;
+        SnapResult&       m_currentSnap;
         GripEditor        m_gripEditor;
         ConstraintEngine  m_constraintEngine;
 

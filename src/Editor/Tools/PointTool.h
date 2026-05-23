@@ -1,24 +1,18 @@
-#pragma once 
+#pragma once
 #include "Scene/Scene.h"
-#include "Document/CommandStack/CommandStack.h"
-#include "Document/Command/AddEntityCommand.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Viewport/Viewport.h"
-#include "Editor/Overlay/Overlay.h" 
+#include "Editor/Input/InputContext.h"
+#include "Document/Command/AddEntityCommand.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Math/Point3.hpp"
 
 namespace MiniCAD
-{ 
+{
 
     class PointTool : public ITool
     {
     public:
-        PointTool(Scene& scene, CommandStack& cmdStack, Viewport& viewport, Overlay& overlay)
-            : m_scene(scene)
-            , m_cmdStack(cmdStack)
-            , m_viewport(viewport)
-            , m_overlay(overlay)
+        PointTool()
         {
             printf("[PointTool] 左键放点 | 右键退出\n");
         }
@@ -28,11 +22,11 @@ namespace MiniCAD
             printf("退出点绘制工具\n");
         }
 
-        bool OnInput(const InputEvent& e) override
+        bool OnInput(const InputContext& ctx) override
         {
-            // ─────────────────────────────
-            // 左键：创建点
-            // ─────────────────────────────
+            m_ctx = &ctx;
+            const auto& e = ctx.event;
+
             if (e.IsLeftClick())
             {
                 auto pt = GetPoint(e);
@@ -40,39 +34,27 @@ namespace MiniCAD
                 return true;
             }
 
-            // ─────────────────────────────
-            // 右键 / ESC：退出工具
-            // ─────────────────────────────
             if (e.IsRightClick() || e.IsCancel())
             {
-                m_overlay.Clear();
+                m_ctx->overlay.Clear();
                 if (OnFinished) OnFinished();
                 return true;
             }
 
-            // ─────────────────────────────
-            // 鼠标移动：预览点
-            // ─────────────────────────────
             if (e.Type == InputEventType::MouseMove)
             {
                 auto pt = GetPoint(e);
-
-                m_overlay.Clear();  
-
-                m_overlay.AddPoint(pt, { 0.6,0.6,0.6,0.6 });// 位置和颜色 预览 
-
+                m_ctx->overlay.Clear();
+                m_ctx->overlay.AddPoint(pt, { 0.6,0.6,0.6,0.6 });
                 return false;
             }
 
             return false;
         }
 
-        // ─────────────────────────────
-        // ITool 接口
-        // ─────────────────────────────
         bool HasAnchor() const override
         {
-            return false; // PointTool 没有持续锚点
+            return false;
         }
 
         Math::Point3 GetAnchor() const override
@@ -87,25 +69,22 @@ namespace MiniCAD
             if (e.HasSnap)
                 return e.SnapWorld;
 
-            return m_viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
+            return m_ctx->viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
         }
 
         void Commit(const  Math::Point3& p)
         {
-            auto id = m_scene.NextObjectID();
+            auto id = m_ctx->scene.NextObjectID();
 
             auto pointEntity = std::make_unique<PointEntity>(id, p);
 
             auto cmd = std::make_unique<AddEntityCommand>(std::move(pointEntity));
-            m_cmdStack.Execute(std::move(cmd), m_scene);
+            m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
             printf("点 Id %d  (%.3f, %.3f, %.3f)\n", static_cast<int>(id), p.x, p.y, p.z);
         }
 
     private:
-        Scene&        m_scene;
-        CommandStack& m_cmdStack;
-        Viewport&     m_viewport;
-        Overlay&      m_overlay;
+        const InputContext* m_ctx = nullptr;
     };
 }
