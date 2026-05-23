@@ -1,5 +1,5 @@
 #include "DocumentManager.h"
-#include "Document.h" 
+#include "Document.h"
 #include <algorithm>
 #include <utility>
 #include <memory>
@@ -9,20 +9,33 @@
 #include "Core/Math/Point3.hpp"
 namespace MiniCAD
 {
-    Document& DocumentManager::Create(IRenderer& r, float w, float h)
+    Document& DocumentManager::Create()
     {
-        auto doc = std::make_unique<Document>(r, w, h);
+        auto doc = std::make_unique<Document>();
         doc->SetName(GenerateUniqueName());
-        doc->SetFontSystem(m_fontSystem); // 注入字体系统
-         
-        auto styleId  = m_fontSystem->FindStyle("GB2312")->id; 
-        auto styleId1 = 0; 
-  
+        doc->SetFontSystem(m_fontSystem);
+
+        auto styleId  = m_fontSystem->FindStyle("GB2312")->id;
+        auto styleId1 = 0;
+
         doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId,  "TTF >>> 仿宋字体  GB2312.ttf  ",  Math::Point3(1, 2, 0), 1, 0, 100));
         doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "SHX >>> 探索者中文字体 %%% %%p %%c20 %%p0.5 %%13225 %%1318@200  4%%132 %%132   %%132%%131%%130 TSSDCHN.SHX L1 梁 %%132 25 @ 200mm  ",    Math::Point3(1,0.5, 0), 1, 0, 100));
+
         m_active = doc.get();
         m_docs.push_back(std::move(doc));
+
+        if (m_viewport)
+            m_editor.Bind(*m_active, *m_viewport);
+
         return *m_active;
+    }
+
+    void DocumentManager::InitViewport(IRenderer& renderer, float w, float h)
+    {
+        m_viewport = std::make_unique<Viewport>(renderer, w, h);
+
+        if (m_active)
+            m_editor.Bind(*m_active, *m_viewport);
     }
 
     void DocumentManager::Close(Document* doc)
@@ -34,12 +47,19 @@ namespace MiniCAD
             return;
 
         if (m_active == doc)
+        {
+            m_editor.Unbind();
             m_active = nullptr;
+        }
 
         m_docs.erase(it);
 
         if (!m_docs.empty() && m_active == nullptr)
+        {
             m_active = m_docs.back().get();
+            if (m_viewport)
+                m_editor.Bind(*m_active, *m_viewport);
+        }
     }
 
     Document* DocumentManager::GetActive() const
@@ -49,7 +69,13 @@ namespace MiniCAD
 
     void DocumentManager::SetActive(Document* doc)
     {
+        if (m_active == doc) return;
+
+        m_editor.Unbind();
         m_active = doc;
+
+        if (m_active && m_viewport)
+            m_editor.Bind(*m_active, *m_viewport);
     }
 
     void DocumentManager::SetFontSystem(FontSystem* fontSystem)
@@ -77,12 +103,12 @@ namespace MiniCAD
 
     std::vector<std::unique_ptr<Document>>& DocumentManager::GetAll()
     {
-        return m_docs; 
+        return m_docs;
     }
 
     void DocumentManager::SetRenderer(IRenderer* renderer)
     {
-        m_renderer = renderer; 
+        m_renderer = renderer;
     }
 
     void DocumentManager::New()
@@ -90,14 +116,12 @@ namespace MiniCAD
         if (!m_renderer)
             return;
 
-        Create(*m_renderer, m_defaultWidth, m_defaultHeight);
+        Create();
     }
 
     void DocumentManager::Open()
     {
-		// 这里直接创建一个新文档，实际应用中应该弹出文件对话框让用户选择文件
-        // New();
-        printf("Open\n"); 
+        printf("Open\n");
     }
 
     void DocumentManager::Save()
@@ -112,7 +136,6 @@ namespace MiniCAD
     {
         if (m_active)
         {
-			// 这里直接调用 SaveAs，实际应用中应该弹出文件对话框让用户选择路径
             m_active->SaveAs("");
         }
     }
@@ -127,7 +150,7 @@ namespace MiniCAD
 
     void DocumentManager::Undo() const
     {
-        GetActive()->Undo(); 
+        GetActive()->Undo();
     }
 
     void DocumentManager::Redo() const
@@ -135,15 +158,14 @@ namespace MiniCAD
         GetActive()->Redo();
     }
 
-
     void DocumentManager::Paste()
     {
-        printf("Paste\n"); 
+        printf("Paste\n");
     }
 
-    void DocumentManager::CopySelected() 
+    void DocumentManager::CopySelected()
     {
-        printf("Copy Selected\n"); 
+        printf("Copy Selected\n");
     }
 
     std::string DocumentManager::GenerateUniqueName()
@@ -171,6 +193,6 @@ namespace MiniCAD
 
             index++;
         }
-    } 
+    }
 
 }

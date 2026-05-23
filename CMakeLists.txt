@@ -48,6 +48,7 @@ if(EMSCRIPTEN)
         "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Document/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Editor/*.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Viewport/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/Text/*.cpp"
     )
 

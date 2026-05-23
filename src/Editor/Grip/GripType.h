@@ -12,7 +12,7 @@
 #include "Core/GeomKernel/Ellipse.hpp"
 #include "Core/GeomKernel/Polyline.hpp"
 #include "Core/GeomKernel/Spline.hpp" 
-#include "Editor/Viewport/Viewport.h"
+#include "Viewport/Viewport.h"
 
 namespace MiniCAD
 { 

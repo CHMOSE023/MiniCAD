@@ -34,20 +34,20 @@ namespace MiniCAD
         {
             { Tool::Select,     "Cursor",  "选择 (Esc)"   , [](DocumentManager& dm) {}   },
             /*---------------------------------------------*/
-            { Tool::Line,       "Line",    "直线 (L)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartLineTool(); }  },
-            { Tool::Circle,     "Circle",  "圆 (C)"        ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartCircleTool(); }  },
-            { Tool::Rectangle,  "Rect",    "矩形 (R)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartRectangleTool(); }  },
-            { Tool::Arc,        "Arc",     "圆弧 (A)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartArcTool(); }  },
-            { Tool::Ellipse,    "Ellipse", "椭圆 (E)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartEllipseTool(); }  },
-            { Tool::Polyline,   "Pline",   "多段线 (Pl)"   ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartPolylineTool(); }  },
-            { Tool::Spline,     "Spline",  "样条曲线 (SPL)",[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartSplineTool(); }   },
-            { Tool::Text,       "Text",    "文字 (T)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartTextTool();  }    },
-            { Tool::MText,      "MText",    "多行文字 (MT)" ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMTextTool(); }    },
+            { Tool::Line,       "Line",    "直线 (L)"      ,[](DocumentManager& dm) {dm.GetEditor().StartLineTool(); }  },
+            { Tool::Circle,     "Circle",  "圆 (C)"        ,[](DocumentManager& dm) {dm.GetEditor().StartCircleTool(); }  },
+            { Tool::Rectangle,  "Rect",    "矩形 (R)"      ,[](DocumentManager& dm) {dm.GetEditor().StartRectangleTool(); }  },
+            { Tool::Arc,        "Arc",     "圆弧 (A)"      ,[](DocumentManager& dm) {dm.GetEditor().StartArcTool(); }  },
+            { Tool::Ellipse,    "Ellipse", "椭圆 (E)"      ,[](DocumentManager& dm) {dm.GetEditor().StartEllipseTool(); }  },
+            { Tool::Polyline,   "Pline",   "多段线 (Pl)"   ,[](DocumentManager& dm) {dm.GetEditor().StartPolylineTool(); }  },
+            { Tool::Spline,     "Spline",  "样条曲线 (SPL)",[](DocumentManager& dm) {dm.GetEditor().StartSplineTool(); }   },
+            { Tool::Text,       "Text",    "文字 (T)"      ,[](DocumentManager& dm) {dm.GetEditor().StartTextTool();  }    },
+            { Tool::MText,      "MText",    "多行文字 (MT)" ,[](DocumentManager& dm) {dm.GetEditor().StartMTextTool(); }    },
             /*---------------------------------------------*/
-            { Tool::Copy,       "Copy",    "复制 (co)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartCopyTool(); }},
-            { Tool::Move,       "Move",    "移动 (mv)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMoveTool(); }},
-            { Tool::Mirror,     "Mirror",  "镜像 (mi)"     ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartMirrorTool(); }},
-            { Tool::Rotate,     "Rotate",  "旋转 (R)"      ,[](DocumentManager& dm) {dm.GetActive()->GetEditor().StartRotateTool(); }}, 
+            { Tool::Copy,       "Copy",    "复制 (co)"     ,[](DocumentManager& dm) {dm.GetEditor().StartCopyTool(); }},
+            { Tool::Move,       "Move",    "移动 (mv)"     ,[](DocumentManager& dm) {dm.GetEditor().StartMoveTool(); }},
+            { Tool::Mirror,     "Mirror",  "镜像 (mi)"     ,[](DocumentManager& dm) {dm.GetEditor().StartMirrorTool(); }},
+            { Tool::Rotate,     "Rotate",  "旋转 (R)"      ,[](DocumentManager& dm) {dm.GetEditor().StartRotateTool(); }}, 
             /*---------------------------------------------*/ 
             { Tool::Undo,       "Undo",    "撤销"          ,[](DocumentManager& dm) {dm.Undo();}},
             { Tool::Redo,       "Redo",    "重做"          ,[](DocumentManager& dm) {dm.Redo();}},
@@ -173,8 +173,7 @@ namespace MiniCAD
         // BeginFrame 之后才能拿到有效的 TexID；在 doc->Render() 之前同步，
         // 保证本帧 SubmitTextured 用的是最新字体纹理。
         void* fontTex = (void*)(uintptr_t)ImGui::GetIO().Fonts->TexRef.GetTexID();
-        if (auto* doc = dm.GetActive())
-            doc->SetFontTexture(fontTex);
+        dm.GetEditor().SetFontTexture(fontTex);
     }
      
     void UIManager::Render(DocumentManager& dm)
@@ -235,7 +234,7 @@ namespace MiniCAD
         auto* doc = dm.GetActive();
         if (!doc) return;
 
-        auto& req = doc->GetEditor().GetTextInputRequest();
+        auto& req = dm.GetEditor().GetTextInputRequest();
         if (req.Active)
             ImGui::OpenPopup("##TextInput");
 
@@ -260,14 +259,14 @@ namespace MiniCAD
 
             if (confirm || ImGui::Button("确认", ImVec2(120, 0)))
             {
-                doc->GetEditor().SubmitTextInput(s_buf);
+                dm.GetEditor().SubmitTextInput(s_buf);
                 s_buf[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("取消", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
             {
-                doc->GetEditor().GetTextInputRequest().Active = false;
+                dm.GetEditor().GetTextInputRequest().Active = false;
                 s_buf[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }
@@ -280,7 +279,7 @@ namespace MiniCAD
         auto* doc = dm.GetActive();
         if (!doc) return;
 
-        auto& req = doc->GetEditor().GetMTextInputRequest();
+        auto& req = dm.GetEditor().GetMTextInputRequest();
         if (req.Active)
             ImGui::OpenPopup("##MTextInput");
 
@@ -309,14 +308,14 @@ namespace MiniCAD
             bool confirm = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter);
             if (confirm || ImGui::Button("确认", ImVec2(140, 0)))
             {
-                doc->GetEditor().SubmitMTextInput(s_buf);
+                dm.GetEditor().SubmitMTextInput(s_buf);
                 s_buf[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("取消", ImVec2(140, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
             {
-                doc->GetEditor().GetMTextInputRequest().Active = false;
+                dm.GetEditor().GetMTextInputRequest().Active = false;
                 s_buf[0] = '\0';
                 ImGui::CloseCurrentPopup();
             }
@@ -388,7 +387,7 @@ namespace MiniCAD
             if (ImGui::MenuItem("旋转", "Rotate")) {}
             ImGui::EndMenu();
         }
-        auto& editor = dm.GetActive()->GetEditor();
+        auto& editor = dm.GetEditor();
         /***auto* active = dm.GetActive();
         if (!active)
         {
@@ -412,7 +411,7 @@ namespace MiniCAD
 
         if (ImGui::BeginMenu("视图"))
         {
-            auto& viewport = dm.GetActive()->GetViewport();
+            auto& viewport = dm.GetViewport();
             static bool showGrid = true, showAxis = true, showGizmo = true;
             ImGui::MenuItem("显示网格",   nullptr, &showGrid);   { viewport.ShowGrid(showGrid); }
             ImGui::MenuItem("显示坐标轴", nullptr, &showAxis);   { viewport.ShowAxis(showAxis); }
@@ -673,9 +672,9 @@ namespace MiniCAD
                 size.x = ImMax(size.x, 1.0f);
                 size.y = ImMax(size.y, 1.0f);
 
-                docPtr->GetViewport().Resize(size.x, size.y);
+                dm.GetViewport().Resize(size.x, size.y);
 
-                auto srv = doc->GetViewport().GetRenderTarget()->GetNativeShaderResource();
+                auto srv = dm.GetViewport().GetRenderTarget()->GetNativeShaderResource();
 
                 ImVec2 imageMin = ImGui::GetCursorScreenPos();
                 ImGui::Image(srv, size);
@@ -930,7 +929,7 @@ namespace MiniCAD
         ImGui::BeginChild("status_snap", ImVec2(80, 0), false);
         {
 
-            bool snapEnabled = dm.GetActive()->GetEditor().IsSnapEnabled();
+            bool snapEnabled = dm.GetEditor().IsSnapEnabled();
             ImVec2 btnPos = ImGui::GetCursorPos();
             ImGui::TextColored(snapEnabled ? colorActive : colorInactive, "捕捉(F3): ");
             ImGui::SameLine();
@@ -939,7 +938,7 @@ namespace MiniCAD
             ImGui::InvisibleButton("snap_toggle", ImVec2(80, ImGui::GetTextLineHeight()));
             if (ImGui::IsItemClicked())
             {
-                dm.GetActive()->GetEditor().ToggleSnap();
+                dm.GetEditor().ToggleSnap();
             }
         }
         ImGui::EndChild();
@@ -949,7 +948,7 @@ namespace MiniCAD
         // 正交状态
         ImGui::BeginChild("status_ortho", ImVec2(80, 0), false);
         {
-            bool orthoEnabled = dm.GetActive()->GetEditor().IsOrthoEnabled();
+            bool orthoEnabled = dm.GetEditor().IsOrthoEnabled();
 
             ImVec2 btnPos = ImGui::GetCursorPos();
             ImGui::TextColored(orthoEnabled ? colorActive : colorInactive, "正交(F8): ");
@@ -959,7 +958,7 @@ namespace MiniCAD
             ImGui::InvisibleButton("ortho_toggle", ImVec2(80, ImGui::GetTextLineHeight()));
             if (ImGui::IsItemClicked())
             {
-                dm.GetActive()->GetEditor().ToggleOrtho();
+                dm.GetEditor().ToggleOrtho();
             }
         }
         ImGui::EndChild();

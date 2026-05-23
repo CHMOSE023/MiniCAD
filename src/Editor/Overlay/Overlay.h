@@ -4,7 +4,7 @@
 #include <cmath>
 #include <functional>
 #include "Core/Object/Object.hpp"
-#include "Editor/Viewport/Viewport.h" 
+#include "Viewport/Viewport.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Core/Math/Constants.hpp"
@@ -17,7 +17,8 @@ namespace MiniCAD
     class Overlay
     {
     public:
-        Overlay(Viewport& viewport) :m_viewport(viewport) {};
+        Overlay() = default;
+        void Bind(Viewport& viewport) { m_viewport = &viewport; }
 
         // 清空
         void Clear()
@@ -241,7 +242,7 @@ namespace MiniCAD
                 const float radius   = 6.0f;
                 const int   segments = 24;
 
-                auto& camera = m_viewport.GetCamera();
+                auto& camera = m_viewport->GetCamera();
 
                 auto point = camera.WorldToScreen({ pt.p.x, pt.p.y, pt.p.z });
 
@@ -361,6 +362,6 @@ namespace MiniCAD
 
     private:
 
-        Viewport& m_viewport;
+        Viewport* m_viewport = nullptr;
     }; 
 }

@@ -2,7 +2,7 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/LineEntity.hpp" 
 #include "Scene/LayerManager.h"
-#include "Editor/Viewport/Camera.h"
+#include "Viewport/Camera.h"
 #include <vector>
 #include <memory>
 #include <unordered_map>

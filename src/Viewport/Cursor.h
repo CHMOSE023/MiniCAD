@@ -2,7 +2,7 @@
 #include <vector> 
 #include <algorithm>
 #include "Render/VertexTypes.hpp"
-#include "Editor/Context/ViewState.h"
+#include "Viewport/ViewState.h"
 namespace MiniCAD
 {
     class Cursor

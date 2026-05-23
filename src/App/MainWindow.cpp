@@ -330,23 +330,24 @@ namespace MiniCAD
 	}
 	 
 	bool MainWindow::InitDocument(int width, int height)
-	{  
-		m_docManager.SetRenderer(m_renderer.get()); 
+	{
+		m_docManager.SetRenderer(m_renderer.get());
+		m_docManager.InitViewport(*m_renderer, static_cast<float>(width), static_cast<float>(height));
 
 		if (m_fontSystem.IsReady())
 		{
 			m_docManager.SetFontSystem(&m_fontSystem);
 
 			/* 注册字体 */
-			FontStyle fontStyle; 
-			fontStyle.fontFile = "GB2312.ttf";   
+			FontStyle fontStyle;
+			fontStyle.fontFile = "GB2312.ttf";
 			fontStyle.name     = "GB2312";
-			fontStyle.isShx    = false;  
+			fontStyle.isShx    = false;
 
-			m_docManager.RegisterFontStyle(fontStyle); 
+			m_docManager.RegisterFontStyle(fontStyle);
 
-			m_docManager.Create(*m_renderer, width, height);   // 创建1个文档  
-		} 
+			m_docManager.Create();
+		}
 
 		return true;
 	}
@@ -360,16 +361,17 @@ namespace MiniCAD
 		const auto& uiInput = m_uiManager.GetViewportInput();
 		if (!uiInput.Valid)
 			return;
-		
-		auto& viewport = doc->GetViewport();
+
+		auto& viewport = m_docManager.GetViewport();
 		if (viewport.GetWidth() != uiInput.Size.x || viewport.GetHight() != uiInput.Size.y)
 		{
 			viewport.Resize(uiInput.Size.x, uiInput.Size.y);
 		}
 
+		auto& editor = m_docManager.GetEditor();
 		for (const auto& e : m_viewportInputAdapter.BuildEvents(uiInput))
 		{
-			doc->OnInput(e);
+			editor.OnInput(e);
 		}
 	}
 
@@ -388,10 +390,10 @@ namespace MiniCAD
 		// 确保 SubmitTextured 用的是本帧最新的字体 atlas SRV。
 		m_uiManager.SyncFonts(m_docManager);
 
-		if (auto doc = m_docManager.GetActive())
+		if (m_docManager.GetActive())
 		{
-			DocumentInput(); // 处理文档输入
-			doc->Render();   // 场景渲染
+			DocumentInput();
+			m_docManager.GetEditor().Render();
 		}
 
 		// 需要重新设置

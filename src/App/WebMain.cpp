@@ -1,4 +1,6 @@
 #include "Document/Document.h"
+#include "Editor/Editor.h"
+#include "Viewport/Viewport.h"
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Input/KeyCode.h"
 #include "Render/RendererFactory.hpp"
@@ -16,6 +18,8 @@ namespace
 
     std::unique_ptr<MiniCAD::IRenderer> g_renderer;
     std::unique_ptr<MiniCAD::Document>  g_document;
+    std::unique_ptr<MiniCAD::Viewport>  g_viewport;
+    MiniCAD::Editor                     g_editor;
     MiniCAD::FontSystem                 g_fontSystem;
 
     int g_width = 1;
@@ -122,8 +126,7 @@ namespace
 
     void Dispatch(const MiniCAD::InputEvent& e)
     {
-        if (g_document)
-            g_document->OnInput(e);
+        g_editor.OnInput(e);
     }
 
     MiniCAD::InputEvent MakePointerEvent(MiniCAD::InputEventType type,
@@ -222,8 +225,6 @@ namespace
         return EM_TRUE;
     }
 
-    // 浏览器保留键：F5 刷新 / F11 全屏 / F12 DevTools / Ctrl+R / Ctrl+Shift+I 等
-    // 不能 preventDefault，否则用户无法刷新、打开调试器
     bool IsBrowserReservedKey(const EmscriptenKeyboardEvent* e)
     {
         const auto code = e->keyCode;
@@ -240,7 +241,7 @@ namespace
     EM_BOOL OnKey(int eventType, const EmscriptenKeyboardEvent* e, void*)
     {
         if (IsBrowserReservedKey(e))
-            return EM_FALSE;   // 不消费 → 浏览器接管
+            return EM_FALSE;
 
         MiniCAD::InputEvent input = {};
         input.Type = eventType == EMSCRIPTEN_EVENT_KEYDOWN
@@ -281,15 +282,17 @@ namespace
         g_height = height;
         emscripten_set_canvas_element_size(kCanvas, g_width, g_height);
 
+        if (g_viewport)
+            g_viewport->Resize(static_cast<float>(g_width), static_cast<float>(g_height));
+
         if (g_document)
-            g_document->Resize(static_cast<float>(g_width), static_cast<float>(g_height));
+            g_document->GetScene().MarkDirty();
     }
 
     void MainLoop()
     {
         ResizeIfNeeded();
-        if (g_document)
-            g_document->Render();
+        g_editor.Render();
     }
 }
 
@@ -298,107 +301,105 @@ extern "C"
     // ── 绘制工具 ───────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartLine()
     {
-        if (g_document) g_document->GetEditor().StartLineTool();
+        g_editor.StartLineTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartPoint()
     {
-        if (g_document) g_document->GetEditor().StartPointTool();
+        g_editor.StartPointTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartCircle()
     {
-        if (g_document) g_document->GetEditor().StartCircleTool();
+        g_editor.StartCircleTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartRectangle()
     {
-        if (g_document) g_document->GetEditor().StartRectangleTool();
+        g_editor.StartRectangleTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartArc()
     {
-        if (g_document) g_document->GetEditor().StartArcTool();
+        g_editor.StartArcTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartEllipse()
     {
-        if (g_document) g_document->GetEditor().StartEllipseTool();
+        g_editor.StartEllipseTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartPolyline()
     {
-        if (g_document) g_document->GetEditor().StartPolylineTool();
+        g_editor.StartPolylineTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartSpline()
     {
-        if (g_document) g_document->GetEditor().StartSplineTool();
+        g_editor.StartSplineTool();
     }
 
     // ── 编辑工具 ───────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMove()
     {
-        if (g_document) g_document->GetEditor().StartMoveTool();
+        g_editor.StartMoveTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartCopy()
     {
-        if (g_document) g_document->GetEditor().StartCopyTool();
+        g_editor.StartCopyTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMirror()
     {
-        if (g_document) g_document->GetEditor().StartMirrorTool();
+        g_editor.StartMirrorTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartRotate()
     {
-        if (g_document) g_document->GetEditor().StartRotateTool();
+        g_editor.StartRotateTool();
     }
 
     // ── 单行文字工具 ────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartText()
     {
-        if (g_document) g_document->GetEditor().StartTextTool();
+        g_editor.StartTextTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_SubmitText(const char* text, float height)
     {
-        if (g_document && text)
+        if (text)
         {
-            g_document->GetEditor().GetTextInputRequest().Height = height;
-            g_document->GetEditor().SubmitTextInput(std::string(text));
+            g_editor.GetTextInputRequest().Height = height;
+            g_editor.SubmitTextInput(std::string(text));
         }
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_CancelText()
     {
-        if (g_document)
-            g_document->GetEditor().SubmitTextInput("");
+        g_editor.SubmitTextInput("");
     }
 
     // ── 多行文字工具 ────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_StartMText()
     {
-        if (g_document) g_document->GetEditor().StartMTextTool();
+        g_editor.StartMTextTool();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_SubmitMText(const char* text, float height, float boxWidth)
     {
-        if (g_document && text)
+        if (text)
         {
-            auto& req    = g_document->GetEditor().GetMTextInputRequest();
+            auto& req    = g_editor.GetMTextInputRequest();
             req.Height   = static_cast<double>(height);
             req.BoxWidth = static_cast<double>(boxWidth);
-            g_document->GetEditor().SubmitMTextInput(std::string(text));
+            g_editor.SubmitMTextInput(std::string(text));
         }
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_CancelMText()
     {
-        if (g_document)
-            g_document->GetEditor().SubmitMTextInput("");
+        g_editor.SubmitMTextInput("");
     }
 
     // ── 通用操作 ───────────────────────────────────────────────────
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Delete()
     {
-        if (g_document) g_document->GetEditor().DeleteSelected();
+        g_editor.DeleteSelected();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_ToggleSnap()
     {
-        if (g_document) g_document->GetEditor().ToggleSnap();
+        g_editor.ToggleSnap();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_ToggleOrtho()
     {
-        if (g_document) g_document->GetEditor().ToggleOrtho();
+        g_editor.ToggleOrtho();
     }
     EMSCRIPTEN_KEEPALIVE void MiniCAD_Undo()
     {
@@ -437,9 +438,13 @@ int main()
 
     MiniCAD::RendererCreateInfo info;
     g_renderer = MiniCAD::CreateRenderer(info);
-    g_document = std::make_unique<MiniCAD::Document>(*g_renderer,
-                                                     static_cast<float>(g_width),
-                                                     static_cast<float>(g_height));
+
+    g_viewport = std::make_unique<MiniCAD::Viewport>(*g_renderer,
+                                                      static_cast<float>(g_width),
+                                                      static_cast<float>(g_height));
+    g_document = std::make_unique<MiniCAD::Document>();
+
+    g_editor.Bind(*g_document, *g_viewport);
 
     // 初始化矢量字体系统（SHX 字体已通过 --preload-file 嵌入虚拟 FS /fonts/）
     g_fontSystem.Initialize();
@@ -451,7 +456,6 @@ int main()
     catch (const std::exception& ex)
     {
         printf("[FontSystem] 字体加载失败: %s\n", ex.what());
-        // 不阻断启动；文字实体在此情况下不显示笔划
     }
 
     emscripten_set_mousedown_callback(kCanvas, nullptr, EM_TRUE, OnMouse);

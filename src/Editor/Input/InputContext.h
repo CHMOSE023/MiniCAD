@@ -1,6 +1,6 @@
 #pragma once
 #include "Scene/Scene.h"
-#include "Editor/Viewport/Viewport.h"
+#include "Viewport/Viewport.h"
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Constraint/ConstraintEngine.h"
 #include "Editor/Picking/Picking.h"

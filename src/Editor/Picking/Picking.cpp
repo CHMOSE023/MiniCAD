@@ -1,6 +1,6 @@
 #include "Picking.h"
 #include "Scene/Scene.h"
-#include "Editor/Viewport/Viewport.h"
+#include "Viewport/Viewport.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Math/Box2.hpp"
 #include "Core/Math/MathUtils.hpp"
@@ -24,8 +24,8 @@
 
 namespace MiniCAD
 {
-    // ───────────────── 构造 ─────────────────
-    Picking::Picking(Scene& scene, Viewport& viewport) : m_scene(scene), m_viewport(viewport) {}
+    // ───────────────── 绑定 ─────────────────
+    void Picking::Bind(Scene& scene, Viewport& viewport) { m_scene = &scene; m_viewport = &viewport; }
 
     // ───────────────── 输入入口 ─────────────────
     bool Picking::OnInput(const InputEvent& e)
@@ -59,9 +59,9 @@ namespace MiniCAD
         ObjectID best = Object::InvalidID;
         double   bestDist = std::numeric_limits<double>::max();
 
-        auto& camera = m_viewport.GetCamera();
+        auto& camera = m_viewport->GetCamera();
 
-        m_scene.ForEachObject([&](const Object& obj)
+        m_scene->ForEachObject([&](const Object& obj)
             {
                 if (obj.IsKindOf<LineEntity>())
                 {
@@ -350,10 +350,10 @@ namespace MiniCAD
 
         bool fullyContain = (b.x > a.x);
 
-        auto& camera = m_viewport.GetCamera();
+        auto& camera = m_viewport->GetCamera();
         std::unordered_set<ObjectID> result;
 
-        m_scene.ForEachObject([&](const Object& obj)
+        m_scene->ForEachObject([&](const Object& obj)
             {
                 if (obj.IsKindOf<PointEntity>())
                 {

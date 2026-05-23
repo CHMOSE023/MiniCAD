@@ -2,7 +2,6 @@
 #include "Editor/Tools/ITool.h"
 #include "Editor/Overlay/Overlay.h"
 #include "Editor/Picking/Picking.h"
-#include "Editor/Viewport/Viewport.h"
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Snap/SnapResult.h"
 #include "Editor/Grip/GripEditor.h"
@@ -10,10 +9,13 @@
 #include "Editor/Input/KeyCode.h"
 #include "Editor/Constraint/ConstraintEngine.h"
 #include "Editor/Resolver/Resolver.h"
+#include "Viewport/Viewport.h"
+#include "Viewport/ViewState.h"
 #include "Scene/Scene.h"
-#include "Document/Document.h"
+#include "Document/CommandStack/CommandStack.h"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/Object/Object.hpp"
+#include "Render/VertexTypes.hpp"
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -22,19 +24,25 @@
 #include <vector>
 
 namespace MiniCAD
-{ 
+{
+    class Document;
+    class FontSystem;
+
     class Editor
     {
     public:
-        Editor(Scene& scene,
-               CommandStack& cmdStack,
-               Viewport& viewport,
-               Overlay& overlay,
-               Picking& picking,
-               SnapEngine& snap,
-               SnapResult& currentSnap);
+        Editor();
 
+        // ── 绑定 / 解绑文档与视口 ────────────────────────────
+        void Bind(Document& doc, Viewport& viewport);
+        void Unbind();
+        bool IsBound() const { return m_doc != nullptr; }
+
+        // ── 输入 ─────────────────────────────────────────────
         bool OnInput(const InputEvent& e);
+
+        // ── 渲染：收集顶点 + 提交到 Viewport ─────────────────
+        void Render();
 
         // ── Picking / 选择 ────────────────────────────────────
         const std::unordered_set<Object::ObjectID>& GetSelection();
@@ -44,23 +52,18 @@ namespace MiniCAD
         std::vector<Object*> GetSelectedObjects();
 
         // ── 夹点 ─────────────────────────────────────────────
-        GripEditor&        GetGripEditor()            { return m_gripEditor; }
-        const Line&        GetAnchorLine()      const { return m_constraintEngine.GetGuideLine(); }
+        GripEditor&        GetGripEditor()       { return m_gripEditor; }
+        const Line&        GetAnchorLine() const { return m_constraintEngine.GetGuideLine(); }
         bool               IsConstraintActive() const { return m_constraintEngine.IsAnyActive(); }
-        ConstraintEngine&  GetConstraintEngine()      { return m_constraintEngine; }
-        bool               IsActiveTool()       const { return m_tool != nullptr; }
+        ConstraintEngine&  GetConstraintEngine() { return m_constraintEngine; }
+        bool               IsActiveTool() const  { return m_tool != nullptr; }
 
-        
-        void RegisterTool(const std::string&  toolId,  std::function<std::unique_ptr<ITool>()> factory);
-
-		//void RegisterShortcut(KeyCode key, const std::string& toolId);          // 单键快捷键（KeyCode）  F3 / F8 / Delete / ESC 这类功能键
-		void RegisterAlias(const std::string& alias, const std::string& toolId);// 命令别名（Alias）      L / PL / C / MI / TR 这类字母序列
-
-        // 按 ID 激活工具；工厂返回 nullptr 时静默忽略（如编辑类工具选择集为空）
+        // ── 工具注册表 ───────────────────────────────────────
+        void RegisterTool(const std::string& toolId, std::function<std::unique_ptr<ITool>()> factory);
+        void RegisterAlias(const std::string& alias, const std::string& toolId);
         void ActivateToolById(const std::string& toolId);
 
-        // ── 绘制工具便捷方法（UI 层直接调用）────────────────
-        // 内部均委托给 ActivateToolById，不含任何逻辑
+        // ── 绘制工具便捷方法 ────────────────────────────────
         void StartLineTool();
         void StartPointTool();
         void StartRectangleTool();
@@ -83,7 +86,7 @@ namespace MiniCAD
         void StartExtendTool();
         void StartBreakTool();
 
-        // ── 文字输入请求（由 TextTool 发起，UIManager 响应）─────
+        // ── 文字输入请求 ─────────────────────────────────────
         struct TextInputRequest
         {
             bool         Active    = false;
@@ -96,14 +99,14 @@ namespace MiniCAD
         const TextInputRequest& GetTextInputRequest() const { return m_textRequest; }
         void SubmitTextInput(const std::string& utf8Text);
 
-        // ── 多行文字输入请求（由 MTextTool 发起，UIManager 响应）─
+        // ── 多行文字输入请求 ─────────────────────────────────
         struct MTextInputRequest
         {
             bool         Active   = false;
             Math::Point3 InsertPos;
             double       Height   = 2.5;
             double       Rotation = 0.0;
-            double       BoxWidth = 0.0;   // 0 = 不限宽
+            double       BoxWidth = 0.0;
         };
 
         MTextInputRequest&       GetMTextInputRequest()       { return m_mtextRequest; }
@@ -116,12 +119,10 @@ namespace MiniCAD
         // ── 约束 ─────────────────────────────────────────────
         bool TryGetAnchor(Math::Point3& out) const;
 
-        // 正交约束（F8）
         bool IsOrthoEnabled() const;
         void SetOrthoEnabled(bool enabled);
         void ToggleOrtho();
 
-        // 极轴约束（F10）
         bool   IsPolarEnabled() const;
         void   SetPolarEnabled(bool enabled);
         void   TogglePolar();
@@ -138,46 +139,59 @@ namespace MiniCAD
         void Redo();
         void ExecuteCommand(std::unique_ptr<ICommand> cmd);
 
-    private:
-        // ── 消息处理 ─────────────────────────────────────────
-        bool       HandleGlobal    (const InputEvent& e);
-        bool       HandleDefault   (const InputEvent& e);
-         
+        // ── 字体纹理（由 UIManager 注入）─────────────────────
+        void  SetFontTexture(void* srv) { m_fontTexture = srv; }
 
-        // ── 工具生命周期核心 ──────────────────────────────────
-        // 负责：Cancel 旧工具、清 Overlay、清 Selection、MarkDirty、ReBuildGrip、注册 OnFinished、重置标志
+    private:
+        bool HandleGlobal (const InputEvent& e);
+        bool HandleDefault(const InputEvent& e);
+
         void ActivateTool(std::unique_ptr<ITool> tool);
         void ActivateToolByAlias(const std::string& alias);
         char ToCommandChar(KeyCode key);
 
-        // ── 内置工具 / 快捷键注册 ─────────────────────────────
-        void RegisterBuiltinTools(); 
+        void RegisterBuiltinTools();
+
+        // ── 渲染辅助 ─────────────────────────────────────────
+        void UpdateSceneVertices();
+        ViewState BuildViewState();
 
     private:
-        std::unique_ptr<ITool> m_tool;
-        bool                   m_toolSuspended    = false;  // 中键平移期间为 true
-        bool                   m_pendingToolReset = false;  // 延迟销毁，避免工具在自己方法内同步 reset 导致 UAF
+        // 绑定目标（非拥有）
+        Document*  m_doc      = nullptr;
+        Viewport*  m_viewport = nullptr;
 
-        Scene&            m_scene;
-        CommandStack&     m_cmdStack;
-        Viewport&         m_viewport;
-        Overlay&          m_overlay;
-        Picking&          m_picking;
-        SnapEngine&       m_snap;
-        SnapResult&       m_currentSnap;
-        GripEditor        m_gripEditor;
-        ConstraintEngine  m_constraintEngine;
+        // Editor 拥有的子系统
+        Overlay          m_overlay;
+        Picking          m_picking;
+        SnapEngine       m_snap;
+        SnapResult       m_currentSnap;
+        GripEditor       m_gripEditor;
+        ConstraintEngine m_constraintEngine;
+        Resolver         m_resolver;
+
+        // 工具
+        std::unique_ptr<ITool> m_tool;
+        bool                   m_toolSuspended    = false;
+        bool                   m_pendingToolReset = false;
 
         std::unordered_map<std::string,
-        std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;
-        std::unordered_map<std::string, std::string> m_aliasRegistry;
-        std::string                                  m_cmdBuffer;
-        std::string                                  m_lastCommand;
+            std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;
+        std::unordered_map<std::string, std::string>     m_aliasRegistry;
+        std::string                                      m_cmdBuffer;
+        std::string                                      m_lastCommand;
 
         TextInputRequest  m_textRequest;
         MTextInputRequest m_mtextRequest;
-        Resolver          m_resolver;
+
+        // 鼠标位置（每帧更新）
+        double m_mouseX = 0;
+        double m_mouseY = 0;
+
+        // 渲染数据（每帧收集）
+        std::vector<Vertex_P3_C4>    m_sceneVertices;
+        std::vector<Vertex_P3_C4_UV> m_textVertices;
+        std::vector<Vertex_P3_C4>    m_overlayVertices;
+        void*                        m_fontTexture = nullptr;
     };
-
-} 
-
+}

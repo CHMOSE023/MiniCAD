@@ -1,59 +1,24 @@
 #include "Document.h"
-#include "DrawContext.hpp"
 #include "Text/FontSystem.h"
-#include "Render/IRenderer.h"
-#include "Core/Entity/PointEntity.hpp"
-#include "Core/Entity/LineEntity.hpp"
-#include "Core/Entity/CircleEntity.hpp"
-#include "Core/Object/Object.hpp"
-#include "Core/Math/Color4.hpp"
-#include "Core/Math/Constants.hpp"
-#include <vector>
-#include <memory>
-#include <utility>
-#ifdef MINICAD_WEB
-#include "Render/WebGL/WebFontAtlas.hpp"
-#else
-#include <imgui.h>
-#endif
+#include <cstdio>
+
 namespace MiniCAD
 {
-    Document::Document(IRenderer& render, float width, float height)
+    Document::Document()
         : m_scene()
         , m_cmdStack()
-        , m_viewport(render, width, height)
-        , m_overlay(m_viewport)
-        , m_picking(m_scene, m_viewport)
-        , m_snap()
-        , m_currentSnap() 
-        , m_editor(m_scene, m_cmdStack, m_viewport, m_overlay,m_picking, m_snap, m_currentSnap)
-    { 
-    }
-
-    bool Document::OnInput(const InputEvent& e)
-    {   
-        m_mouseX = e.MouseX; // 保存鼠标位置
-        m_mouseY = e.MouseY; 
-        return m_editor.OnInput(e); 
-    }
-
-    void Document::Resize(float width, float height)
     {
-        m_viewport.Resize(width, height);
-        m_scene.MarkDirty();
     }
 
     void Document::SetPath(const std::string& path)
     {
         m_path = path;
 
-        // 提取文件名
         auto pos = path.find_last_of("/\\");
         if (pos != std::string::npos)
             m_name = path.substr(pos + 1);
         else
             m_name = path;
-
     }
 
     void Document::SetName(const std::string& name)
@@ -64,9 +29,7 @@ namespace MiniCAD
     bool Document::Save()
     {
         if (!HasPath())
-        { 
             return false;
-        }
 
         return SaveToFile(m_path);
     }
@@ -85,170 +48,8 @@ namespace MiniCAD
     bool Document::SaveToFile(const std::string& path)
     {
         // TODO: Scene 序列化
-		printf("Saving to %s ... (not implemented)\n", path.c_str());
+        printf("Saving to %s ... (not implemented)\n", path.c_str());
         m_dirty = false;
         return true;
     }
-
-    void Document::Render()
-    { 
-        m_overlayVertices.clear();
-
-        UpdateSceneVerties();
-         
-        // 约束辅助线：工具激活或夹点拖拽期间，任意约束（正交/极轴）生效时绘制
-        if (m_editor.IsConstraintActive() &&
-            (m_editor.IsActiveTool() || m_editor.GetGripEditor().IsDragging()))
-        {
-            const Line& guideLine = m_editor.GetAnchorLine();
-            if (guideLine.IsValid())
-                m_overlay.AddLine(guideLine.Start, guideLine.End, { 0.1, 0.7, 0.1, 0.6 });
-        }  
-
-        m_overlay.ToVertices(m_overlayVertices);      // 每帧分配 
-
-        auto vs = BuildViewState();
-        m_viewport.Render(vs);
-         
-    } 
-      
-    void Document::UpdateSceneVerties()
-    {
-        if (!m_scene.IsDirty() && !m_picking.IsDirty())
-            return;
-
-        m_sceneVertices.clear();
-        m_textVertices.clear();
-      
-        const auto& hoverIds     = m_picking.GetHovered();
-        const auto& selectionIds = m_picking.GetSelection();
-
-        // 只在「空闲态」（没有工具且没在拖夹点）清 overlay 并重建夹点。
-        // 工具运行中：tool 自己往 overlay 加预览。
-        // 夹点拖拽中：GripEditor::OnMouseMove 已往 overlay 加预览，不能清。
-        if (!m_editor.IsActiveTool() && !m_editor.GetGripEditor().IsDragging())
-        {
-            m_overlay.Clear();
-            m_editor.GetGripEditor().RebuildGrips();
-        }
-
-#ifndef MINICAD_WEB
-        // 桌面端：用 ImGui 128px baked font 做字形查询（按需加载，DX11 RendererHasTextures）
-        GlyphProvider glyphProvider = [](uint32_t cp, GlyphInfo& out, float& fallback) -> bool
-        {
-            constexpr float kBakeSize = 128.f;
-            ImFontBaked* font = ImGui::GetFont()->GetFontBaked(kBakeSize);
-            if (!font || font->Size <= 0.f) { fallback = 0.f; return false; }
-
-            const float inv = 1.f / font->Size; // 归一化因子
-            fallback = font->FallbackAdvanceX * inv;
-
-            const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(cp));
-            if (!g) return false;
-
-            out.X0 = g->X0 * inv;  out.Y0 = g->Y0 * inv;
-            out.X1 = g->X1 * inv;  out.Y1 = g->Y1 * inv;
-            out.U0 = g->U0;        out.V0 = g->V0;
-            out.U1 = g->U1;        out.V1 = g->V1;
-            out.AdvanceX = g->AdvanceX * inv;
-            return true;
-        };
-#else
-        // Web 端：用内嵌 8x8 位图字体 atlas
-        static WebFontAtlas s_fontAtlas;
-        if (!m_fontTexture)
-            m_fontTexture = reinterpret_cast<void*>(static_cast<uintptr_t>(s_fontAtlas.GetTexture()));
-
-        GlyphProvider glyphProvider = s_fontAtlas.MakeProvider();
-#endif
-        // 矢量字体解析器：styleId → IFont*（FontSystem 由 DocumentManager 注入）
-        FontResolver fontResolver;
-        if (m_fontSystem && m_fontSystem->IsReady())
-        { 
-            fontResolver = [this](uint32_t styleId) -> IFont*
-            {
-                const FontStyle* style = m_fontSystem->FindStyle(styleId);
-
-                if (!style)
-                {
-                    return m_fontSystem->GetTssdSHXCompositeFont();
-                } 
-
-                return &m_fontSystem->ResolveFont(*style);  
-            };
-        }
-
-        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider, fontResolver);
-
-        m_scene.ForEachObject([&](const Object& obj) 
-        {  
-           if (obj.IsKindOf<Entity>())
-           {
-               const auto& entity = static_cast<const Entity&>(obj);
-
-               auto isSelected = selectionIds.contains(obj.GetID());
-               auto isHovered  = hoverIds.contains(obj.GetID());
-               entity.Draw(ctx, isSelected, isHovered);
-           }
-                
-        }); 
-
-        m_scene.ClearDirty();
-        m_picking.ClearDirty();  
-    }
-
-    ViewState Document::BuildViewState()
-    {
-        ViewState vs; 
-
-        // 场景点
-        vs.Scene       = m_sceneVertices;
-        vs.Overlay     = m_overlayVertices;
-        vs.TextScene   = m_textVertices;
-        vs.FontTexture = m_fontTexture;
-
-        // 选择范围框
-        vs.Selection.Active = m_picking.IsBoxSelecting();
-        vs.Selection.Start  = m_picking.GetBoxStart();
-        vs.Selection.End    = m_picking.GetBoxEnd();  
-        
-        // 光标位置
-        vs.MouseX    = static_cast<float>(m_mouseX);
-        vs.MouseY    = static_cast<float>(m_mouseY);  
-
-        // 辅助网格
-        vs.ShowGrid  = true;  
-
-        // 最近点 
-        vs.Snap.SnapType = static_cast<SnapDraw::Type>(m_currentSnap.SnapType);
-        vs.Snap.Pos      = m_viewport.GetCamera().WorldToScreen(m_currentSnap.WorldPos); 
-		if (!m_editor.IsActiveTool())
-        {
-            m_currentSnap = {};// 重置最近点
-        }
-        // 光标中间方框
-        vs.ShowCurrorBox = !m_editor.IsActiveTool();
-
-        // 夹点
-        vs.ShowGizmo = true;
-        if (vs.ShowGizmo)
-        { 
-            auto& hoveredIdxs = m_editor.GetGripEditor().HoveredGrips();
-            auto& grips = m_editor.GetGripEditor().GetGrips();
-
-            for (int i = 0; i < (int)grips.size(); ++i)
-            {
-                const auto& g    = grips[i];
-                auto        s    = m_viewport.GetCamera().WorldToScreen(g.WorldPos);
-				auto        type = static_cast<GripDraw::Type>(g.GripType); // 直接转换枚举类型，必须保持一致
-
-                // 在列表里找，而不是判断单个 index
-                bool hovered = std::find(hoveredIdxs.begin(), hoveredIdxs.end(), i) != hoveredIdxs.end();
-
-                vs.Grips.push_back({ s, type, hovered });
-            }
-        } 
-
-        return vs;
-    } 
 }

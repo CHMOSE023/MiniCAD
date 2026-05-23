@@ -2,7 +2,7 @@
 #include "Scene/Scene.h"
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Picking/Picking.h"
-#include "Editor/Viewport/Viewport.h"
+#include "Viewport/Viewport.h"
 #include "Editor/Overlay/Overlay.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Core/Object/Object.hpp"
@@ -31,7 +31,8 @@ namespace MiniCAD
     class GripEditor
     {
     public:
-        GripEditor(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay);
+        GripEditor();
+        void Bind(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay);
 
     public:
         bool OnInput      (const InputEvent& e);
@@ -89,11 +90,11 @@ namespace MiniCAD
         bool Rebuild();
 
     private:
-        Scene&        m_scene;
-        Viewport&     m_viewport;
-        CommandStack& m_cmdStack;
-        Picking&      m_picking;
-        Overlay&      m_overlay;
+        Scene*        m_scene    = nullptr;
+        Viewport*     m_viewport = nullptr;
+        CommandStack* m_cmdStack = nullptr;
+        Picking*      m_picking  = nullptr;
+        Overlay*      m_overlay  = nullptr;
 
     private:
         // RuntimeTypeInfo* → Handler

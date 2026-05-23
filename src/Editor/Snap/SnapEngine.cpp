@@ -12,7 +12,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Constants.hpp"
 #include "Scene/Scene.h"
-#include "Editor/Viewport/Camera.h"
+#include "Viewport/Camera.h"
 #include "Core/Math/MathUtils.hpp"
 #include <cmath>
 #include <algorithm>

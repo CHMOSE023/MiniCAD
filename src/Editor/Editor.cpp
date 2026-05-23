@@ -1,16 +1,27 @@
 #include "Editor.h"
+#include "Document/Document.h"
+#include "Document/DrawContext.hpp"
 #include "Document/CommandStack/CommandStack.h"
 #include "Document/Command/BatchDeleteCommand.h"
-#include "Editor/Viewport/Viewport.h"
+#include "Document/Command/AddEntityCommand.h"
+#include "Viewport/Viewport.h"
 #include "Editor/Overlay/Overlay.h"
 #include "Editor/Picking/Picking.h"
 #include "Editor/Snap/SnapResult.h"
 #include "Editor/Snap/SnapEngine.h"
 #include "Editor/Input/KeyCode.h"
 #include "Scene/Scene.h"
+#include "Text/FontSystem.h"
 #include "Core/Math/Point3.hpp"
+#include "Core/Entity/Entity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
+
 #ifdef MINICAD_WEB
 #include <emscripten.h>
+#include "Render/WebGL/WebFontAtlas.hpp"
+#else
+#include <imgui.h>
 #endif
 
 // ── 绘制工具 ──────────────────────────────────────────────────
@@ -24,9 +35,6 @@
 #include "Editor/Tools/SplineTool.h"
 #include "Editor/Tools/TextTool.h"
 #include "Editor/Tools/MTextTool.h"
-#include "Core/Entity/TextEntity.hpp"
-#include "Core/Entity/MTextEntity.hpp"
-#include "Document/Command/AddEntityCommand.h"
 
 // ── 编辑工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/Modify/MoveTool.h"
@@ -34,42 +42,56 @@
 #include "Editor/Tools/Modify/MirrorTool.h"
 #include "Editor/Tools/Modify/RotateTool.h"
 
-// ── 几何编辑工具 ──────────────────────────────────────────────
-//#include "Editor/Tools/Modify/TrimTool.h"
-//#include "Editor/Tools/Modify/ExtendTool.h"
-//#include "Editor/Tools/Modify/BreakTool.h"
-
 #include <cstdio>
-#include <memory> 
+#include <memory>
+#include <algorithm>
 
 namespace MiniCAD
 {
     // ─────────────────────────────────────────────────────────────
     //  构造
     // ─────────────────────────────────────────────────────────────
-    Editor::Editor(Scene&        scene,
-                                 CommandStack& cmdStack,
-                                 Viewport&     viewport,
-                                 Overlay&      overlay,
-                                 Picking&      picking,
-                                 SnapEngine&   snap,
-                                 SnapResult&   currentSnap)
-        : m_scene(scene)
-        , m_cmdStack(cmdStack)
-        , m_viewport(viewport)
-        , m_overlay(overlay)
-        , m_picking(picking)
-        , m_snap(snap)
-        , m_currentSnap(currentSnap)
-        , m_gripEditor(viewport, scene, cmdStack, picking, overlay)
+    Editor::Editor()
     {
         RegisterBuiltinTools();
     }
 
     // ─────────────────────────────────────────────────────────────
+    //  Bind / Unbind
+    // ─────────────────────────────────────────────────────────────
+    void Editor::Bind(Document& doc, Viewport& viewport)
+    {
+        Unbind();
+
+        m_doc      = &doc;
+        m_viewport = &viewport;
+
+        auto& scene    = doc.GetScene();
+        auto& cmdStack = doc.GetCommandStack();
+
+        m_overlay.Bind(viewport);
+        m_picking.Bind(scene, viewport);
+        m_gripEditor.Bind(viewport, scene, cmdStack, m_picking, m_overlay);
+    }
+
+    void Editor::Unbind()
+    {
+        if (m_tool)
+        {
+            m_tool->Cancel();
+            m_tool.reset();
+        }
+        m_toolSuspended    = false;
+        m_pendingToolReset = false;
+        m_overlay.Clear();
+        m_currentSnap = {};
+
+        m_doc      = nullptr;
+        m_viewport = nullptr;
+    }
+
+    // ─────────────────────────────────────────────────────────────
     //  RegisterBuiltinTools
-    //  内置工具 + 快捷键在这里统一注册。
-    //  新增内置工具只改这一个函数，Editor.h 不需要动。
     // ─────────────────────────────────────────────────────────────
     void Editor::RegisterBuiltinTools()
     {
@@ -151,32 +173,15 @@ namespace MiniCAD
             return std::make_unique<RotateTool>(std::move(targets));
         });
 
-        /*
-      
-           // ── 编辑工具 ────────────────────────────────────────── 
-          
-           // ── 几何编辑工具 ──────────────────────────────────────
-           RegisterTool("Trim", [this]{
-               return std::make_unique<TrimTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-           });
-           RegisterTool("Extend", [this]{
-               return std::make_unique<ExtendTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-           });
-           RegisterTool("Break", [this]{
-               return std::make_unique<BreakTool>(m_scene, m_cmdStack, m_viewport, m_overlay);
-           });
-        
-        */
-
-        // ── 快捷键绑定 ──────────────────────────────────────── 
-        RegisterAlias("P",   "Previous");  
+        // ── 快捷键绑定 ────────────────────────────────────────
+        RegisterAlias("P",   "Previous");
         RegisterAlias("L",   "Line");
         RegisterAlias("LI",  "Line");
         RegisterAlias("REC", "Rectangle");
-        RegisterAlias("PL",  "Polyline"); 
+        RegisterAlias("PL",  "Polyline");
         RegisterAlias("MI",  "Mirror");
-        RegisterAlias("RO",  "Rotate"); 
-        RegisterAlias("PT",  "Point");       
+        RegisterAlias("RO",  "Rotate");
+        RegisterAlias("PT",  "Point");
         RegisterAlias("C",   "Circle");
         RegisterAlias("ARC", "Arc");
         RegisterAlias("EL",  "Ellipse");
@@ -198,7 +203,7 @@ namespace MiniCAD
     {
         m_toolRegistry[toolId] = std::move(factory);
     }
-       
+
     void Editor::RegisterAlias(const std::string& alias, const std::string& toolId)
     {
         m_aliasRegistry[alias] = toolId;
@@ -206,7 +211,6 @@ namespace MiniCAD
 
     void Editor::ActivateToolByAlias(const std::string& alias)
     {
-        // 特殊命令：恢复上次选择
         if (alias == "Previous" || alias == "PREVIOUS")
         {
             m_picking.RestoreLastSelection();
@@ -221,7 +225,6 @@ namespace MiniCAD
             return;
         }
 
-        // 找不到别名，直接尝试作为 toolId
         if (m_toolRegistry.contains(alias))
         {
             ActivateToolById(alias);
@@ -234,21 +237,16 @@ namespace MiniCAD
     char Editor::ToCommandChar(KeyCode key)
     {
         if (key >= KeyCode::A && key <= KeyCode::Z)
-        {
             return static_cast<char>('A' + (static_cast<int>(key) - static_cast<int>(KeyCode::A)));
-        }
 
         if (key >= KeyCode::Num0 && key <= KeyCode::Num9)
-        {
             return static_cast<char>('0' + (static_cast<int>(key) - static_cast<int>(KeyCode::Num0)));
-        }
 
         return '\0';
     }
-     
+
     void Editor::ActivateToolById(const std::string& toolId)
-    { 
-        // 特殊命令拦截
+    {
         if (toolId == "Previous")
         {
             m_picking.RestoreLastSelection();
@@ -263,9 +261,9 @@ namespace MiniCAD
             return;
         }
 
-        auto tool = it->second();   // 调工厂
+        auto tool = it->second();
 
-        if (!tool)                  // 工厂返回 nullptr（如编辑类工具选择集为空）
+        if (!tool)
         {
             printf("[Editor] Tool '%s' has no targets, skipped.\n", toolId.c_str());
             return;
@@ -277,28 +275,23 @@ namespace MiniCAD
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  ActivateTool — 工具切换核心（私有）
-    //  所有工具启动前的 boilerplate 集中在这里。
+    //  ActivateTool
     // ─────────────────────────────────────────────────────────────
     void Editor::ActivateTool(std::unique_ptr<ITool> tool)
     {
-        // 1. 停止旧工具
         if (m_tool)
         {
             m_tool->Cancel();
             m_tool.reset();
         }
 
-        // 2. 清理编辑器状态
         m_toolSuspended = false;
         m_overlay.Clear();
         m_picking.ClearSelection();
-        m_scene.MarkDirty();
+        m_doc->GetScene().MarkDirty();
         m_picking.MarkDirty();
         m_gripEditor.RebuildGrips();
 
-        // 3. 接管新工具，注册完成回调
-        //    OnFinished 由工具在自己方法里调用，不能同步 reset 自己 → 标记延迟销毁
         m_tool = std::move(tool);
         m_pendingToolReset = false;
         m_tool->OnFinished = [this]()
@@ -309,11 +302,8 @@ namespace MiniCAD
         };
     }
 
-   
-
     // ─────────────────────────────────────────────────────────────
     //  绘制工具便捷方法
-    //  UI 层直接调用，内部只委托给 ActivateToolById，不含任何逻辑。
     // ─────────────────────────────────────────────────────────────
     void Editor::StartLineTool()      { ActivateToolById("Line");      }
     void Editor::StartPointTool()     { ActivateToolById("Point");     }
@@ -323,8 +313,8 @@ namespace MiniCAD
     void Editor::StartEllipseTool()   { ActivateToolById("Ellipse");   }
     void Editor::StartPolylineTool()  { ActivateToolById("Polyline");  }
     void Editor::StartSplineTool()    { ActivateToolById("Spline");    }
-    void Editor::StartTextTool()  { ActivateToolById("Text");  }
-    void Editor::StartMTextTool() { ActivateToolById("MText"); }
+    void Editor::StartTextTool()      { ActivateToolById("Text");      }
+    void Editor::StartMTextTool()     { ActivateToolById("MText");     }
 
     void Editor::SubmitTextInput(const std::string& utf8Text)
     {
@@ -334,9 +324,11 @@ namespace MiniCAD
             return;
         }
 
-        const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
+        auto& scene = m_doc->GetScene();
+        auto& cmdStack = m_doc->GetCommandStack();
+        const auto& layer = scene.GetLayerManager().GetActiveLayer();
 
-        auto id  = m_scene.NextObjectID();
+        auto id  = scene.NextObjectID();
         auto ent = std::make_unique<TextEntity>(
             id,
             m_textRequest.InsertPos,
@@ -350,7 +342,7 @@ namespace MiniCAD
         ent->SetAttr(attr);
 
         auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
-        m_cmdStack.Execute(std::move(cmd), m_scene);
+        cmdStack.Execute(std::move(cmd), scene);
 
         m_textRequest.Active = false;
         printf("[TextTool] 文字已添加: %s\n", utf8Text.c_str());
@@ -364,12 +356,14 @@ namespace MiniCAD
             return;
         }
 
-        const auto& layer = m_scene.GetLayerManager().GetActiveLayer();
+        auto& scene = m_doc->GetScene();
+        auto& cmdStack = m_doc->GetCommandStack();
+        const auto& layer = scene.GetLayerManager().GetActiveLayer();
 
-        auto id  = m_scene.NextObjectID();
+        auto id  = scene.NextObjectID();
         auto ent = std::make_unique<MTextEntity>(
             id,
-            0,   // styleId: 使用默认字体样式
+            0,
             utf8Text,
             m_mtextRequest.InsertPos,
             m_mtextRequest.Height,
@@ -382,7 +376,7 @@ namespace MiniCAD
         ent->SetAttr(attr);
 
         auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
-        m_cmdStack.Execute(std::move(cmd), m_scene);
+        cmdStack.Execute(std::move(cmd), scene);
 
         m_mtextRequest.Active = false;
         printf("[MTextTool] 多行文字已添加: %s\n", utf8Text.c_str());
@@ -404,26 +398,33 @@ namespace MiniCAD
     void Editor::StartBreakTool()  { ActivateToolById("Break");  }
 
     // ─────────────────────────────────────────────────────────────
-    //  OnInput — 消息路由主干
+    //  OnInput
     // ─────────────────────────────────────────────────────────────
     bool Editor::OnInput(const InputEvent& inputEvent)
     {
-        // ── 0. 延迟销毁前一工具（OnFinished 不能在工具方法内同步 reset 自己）─
+        if (!m_doc || !m_viewport) return false;
+
+        m_mouseX = inputEvent.MouseX;
+        m_mouseY = inputEvent.MouseY;
+
+        auto& scene    = m_doc->GetScene();
+        auto& cmdStack = m_doc->GetCommandStack();
+
         if (m_pendingToolReset)
         {
             m_pendingToolReset = false;
             m_tool.reset();
         }
 
-        // ── 1. Resolver：Snap + 约束统一处理（使用原始事件）────────────
+        // Resolver
         InputContext resolverCtx {
                 .event      = inputEvent,
-                .scene      = m_scene,
-                .viewport   = m_viewport,
+                .scene      = scene,
+                .viewport   = *m_viewport,
                 .snap       = m_snap,
                 .constraint = m_constraintEngine,
                 .picking    = m_picking,
-                .cmdStack   = m_cmdStack,
+                .cmdStack   = cmdStack,
                 .overlay    = m_overlay,
                 .tool       = m_tool.get(),
                 .grip       = &m_gripEditor
@@ -438,39 +439,30 @@ namespace MiniCAD
         if (e.HasSnap)
             e.SnapWorld = resolved.point;
 
-        // ── 2. 构建已解析上下文（工具/GripEditor 使用）─────────────────
         InputContext ctx {
                 .event      = e,
-                .scene      = m_scene,
-                .viewport   = m_viewport,
+                .scene      = scene,
+                .viewport   = *m_viewport,
                 .snap       = m_snap,
                 .constraint = m_constraintEngine,
                 .picking    = m_picking,
-                .cmdStack   = m_cmdStack,
+                .cmdStack   = cmdStack,
                 .overlay    = m_overlay,
                 .tool       = m_tool.get(),
                 .grip       = &m_gripEditor
         };
 
-        // ── 3. 键盘事件：工具优先，不消费再走全局 ────────────────────────
-        //
-        //   PolylineTool 等工具需要响应 A / L / C / Z 等按键切换模式。
-        //   必须在 HandleGlobal 之前给工具处理机会，
-        //   否则 HandleGlobal 的命令缓冲会把这些键吃掉。
-        //
         if (e.Type == InputEventType::KeyDown || e.Type == InputEventType::KeyUp)
         {
             if (m_tool && !m_toolSuspended)
             {
                 if (m_tool->OnInput(ctx))
-                    return true;    // 工具消费了，结束
+                    return true;
             }
 
-            //  交给全局处理
             if (HandleGlobal(e))
                 return true;
 
-            // HandleGlobal 不消费时，让 Picking 处理（如 Esc 清空选择）
             if (m_picking.OnInput(e))
             {
                 m_gripEditor.MarkDirty();
@@ -480,7 +472,6 @@ namespace MiniCAD
             return false;
         }
 
-        // ── 4. 鼠标事件：全局快捷键（中键/滚轮）→ 工具 → 夹点 → 选择 ────
         if (HandleGlobal(e))
             return true;
 
@@ -507,29 +498,27 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     bool Editor::HandleGlobal(const InputEvent& e)
     {
-        // ── Undo ────────────────────────────────────────────────
-        if (e.IsUndo())
-        { 
-            if (m_tool) m_tool->OnSceneChanged();   // !!!先通知 tool：Scene 即将被修改，清理依赖 Scene 的中间状态
+        auto& scene    = m_doc->GetScene();
+        auto& cmdStack = m_doc->GetCommandStack();
 
-            m_cmdStack.Undo(m_scene);
+        if (e.IsUndo())
+        {
+            if (m_tool) m_tool->OnSceneChanged();
+            cmdStack.Undo(scene);
             m_gripEditor.MarkDirty();
-            m_scene.MarkDirty();
+            scene.MarkDirty();
             return true;
         }
 
-        // ── Redo ────────────────────────────────────────────────
         if (e.IsRedo())
         {
             if (m_tool) m_tool->OnSceneChanged();
-
-            m_cmdStack.Redo(m_scene);
+            cmdStack.Redo(scene);
             m_gripEditor.MarkDirty();
-            m_scene.MarkDirty();
+            scene.MarkDirty();
             return true;
         }
 
-        // ── Cancel ──────────────────────────────────────────────
         if (e.IsCancel())
         {
             if (m_tool)
@@ -546,17 +535,15 @@ namespace MiniCAD
                 m_gripEditor.MarkDirty();
                 return true;
             }
-
             return false;
         }
 
         if (e.Type == InputEventType::KeyDown)
-        {  
-			// A~Z 的按键进入命令缓冲，直到 Enter / Space 触发工具切换，或 Escape 清空缓冲。
+        {
             if (e.Key >= KeyCode::A && e.Key <= KeyCode::Z)
             {
-                m_cmdBuffer += ToCommandChar(e.Key);   
-                printf("m_cmdBuffer: %s",m_cmdBuffer.c_str()); 
+                m_cmdBuffer += ToCommandChar(e.Key);
+                printf("m_cmdBuffer: %s",m_cmdBuffer.c_str());
                 return true;
             }
 
@@ -565,16 +552,15 @@ namespace MiniCAD
                 printf("[Editor] Enter/Space: cmdBuffer='%s' lastCommand='%s'\n",
                     m_cmdBuffer.c_str(), m_lastCommand.c_str());
 
-                if (!m_cmdBuffer.empty())   // 当前命令
+                if (!m_cmdBuffer.empty())
                 {
                     ActivateToolByAlias(m_cmdBuffer);
-                    m_lastCommand = m_cmdBuffer;  
-                    m_cmdBuffer.clear(); 
-
+                    m_lastCommand = m_cmdBuffer;
+                    m_cmdBuffer.clear();
                     return true;
                 }
 
-				if (!m_lastCommand.empty()) // 重复上一个命令
+                if (!m_lastCommand.empty())
                 {
                     ActivateToolByAlias(m_lastCommand);
                     return true;
@@ -584,40 +570,37 @@ namespace MiniCAD
 
             if (e.Key == KeyCode::Escape)
             {
-                m_cmdBuffer.clear();   // 清空缓冲 
-
+                m_cmdBuffer.clear();
             }
 
             if (e.Key == KeyCode::Delete)
             {
                 if (m_tool) m_tool->OnSceneChanged();
-
                 DeleteSelected();
                 m_gripEditor.RebuildGrips();
                 return true;
             }
-  
-            if (e.Key == KeyCode::F3) // 捕捉开关  
+
+            if (e.Key == KeyCode::F3)
             {
                 ToggleSnap();
                 return true;
             }
-             
-            if (e.Key == KeyCode::F8) // 正交开关
+
+            if (e.Key == KeyCode::F8)
             {
                 ToggleOrtho();
                 return true;
             }
 
-            if (e.Key == KeyCode::F10) // 极轴开关
+            if (e.Key == KeyCode::F10)
             {
                 TogglePolar();
                 return true;
             }
         }
-       
 
-        // ── 中键平移：通知 tool Suspend / Resume ────────────────
+        // ── 中键平移 ────────────────────────────────────────────
         if (e.Type == InputEventType::MouseButtonDown && e.Button == MouseButton::Middle)
         {
             if (m_tool && !m_toolSuspended)
@@ -635,21 +618,21 @@ namespace MiniCAD
                 m_toolSuspended = false;
                 m_tool->OnFocusRestored();
             }
-            return false;   // 不吃掉，让后续系统也能感知中键释放
+            return false;
         }
 
         if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle))
         {
-            m_viewport.Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
-            m_scene.MarkDirty();
+            m_viewport->Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+            scene.MarkDirty();
             return true;
         }
 
         // ── 滚轮缩放 ────────────────────────────────────────────
         if (e.Type == InputEventType::MouseWheel)
         {
-            m_viewport.Zoom(e.WheelDelta, e.MouseX, e.MouseY);
-            m_scene.MarkDirty();
+            m_viewport->Zoom(e.WheelDelta, e.MouseX, e.MouseY);
+            scene.MarkDirty();
             return true;
         }
 
@@ -678,15 +661,16 @@ namespace MiniCAD
     {
         const auto& sel = m_picking.GetSelection();
         if (sel.empty()) return nullptr;
-        return m_scene.GetEntity(*sel.begin());
+        return m_doc->GetScene().GetEntity(*sel.begin());
     }
 
     std::vector<Object*> Editor::GetSelectedObjects()
     {
         std::vector<Object*> result;
+        auto& scene = m_doc->GetScene();
         for (auto id : m_picking.GetSelection())
         {
-            if (auto* obj = m_scene.GetEntity(id))
+            if (auto* obj = scene.GetEntity(id))
                 result.push_back(obj);
         }
         return result;
@@ -702,13 +686,12 @@ namespace MiniCAD
 
         std::vector<Object::ObjectID> idsVec(ids.begin(), ids.end());
         auto cmd = std::make_unique<BatchDeleteCommand>(idsVec);
-        m_cmdStack.Execute(std::move(cmd), m_scene);
+        m_doc->GetCommandStack().Execute(std::move(cmd), m_doc->GetScene());
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  TryGetAnchor（约束辅助线绘制等仍需要）
+    //  TryGetAnchor
     // ─────────────────────────────────────────────────────────────
-
     bool Editor::TryGetAnchor(Math::Point3& out) const
     {
         if (m_tool && m_tool->HasAnchor())
@@ -719,7 +702,6 @@ namespace MiniCAD
 
         if (m_gripEditor.IsDragging())
         {
-            // 夹点拖拽时，用激活夹点的世界坐标作为锚点
             if (const Grip* g = m_gripEditor.GetActiveGrip())
             {
                 out = g->WorldPos;
@@ -776,17 +758,169 @@ namespace MiniCAD
     // ─────────────────────────────────────────────────────────────
     void Editor::Undo()
     {
-        m_cmdStack.Undo(m_scene);
+        m_doc->GetCommandStack().Undo(m_doc->GetScene());
     }
 
     void Editor::Redo()
     {
-        m_cmdStack.Redo(m_scene);
+        m_doc->GetCommandStack().Redo(m_doc->GetScene());
     }
 
     void Editor::ExecuteCommand(std::unique_ptr<ICommand> cmd)
     {
-        m_cmdStack.Execute(std::move(cmd), m_scene);
+        m_doc->GetCommandStack().Execute(std::move(cmd), m_doc->GetScene());
     }
 
-} 
+    // ─────────────────────────────────────────────────────────────
+    //  渲染
+    // ─────────────────────────────────────────────────────────────
+    void Editor::Render()
+    {
+        if (!m_doc || !m_viewport) return;
+
+        m_overlayVertices.clear();
+
+        UpdateSceneVertices();
+
+        if (m_constraintEngine.IsAnyActive() &&
+            (IsActiveTool() || m_gripEditor.IsDragging()))
+        {
+            const Line& guideLine = GetAnchorLine();
+            if (guideLine.IsValid())
+                m_overlay.AddLine(guideLine.Start, guideLine.End, { 0.1, 0.7, 0.1, 0.6 });
+        }
+
+        m_overlay.ToVertices(m_overlayVertices);
+
+        auto vs = BuildViewState();
+        m_viewport->Render(vs);
+    }
+
+    void Editor::UpdateSceneVertices()
+    {
+        auto& scene = m_doc->GetScene();
+
+        if (!scene.IsDirty() && !m_picking.IsDirty())
+            return;
+
+        m_sceneVertices.clear();
+        m_textVertices.clear();
+
+        const auto& hoverIds     = m_picking.GetHovered();
+        const auto& selectionIds = m_picking.GetSelection();
+
+        if (!IsActiveTool() && !m_gripEditor.IsDragging())
+        {
+            m_overlay.Clear();
+            m_gripEditor.RebuildGrips();
+        }
+
+#ifndef MINICAD_WEB
+        GlyphProvider glyphProvider = [](uint32_t cp, GlyphInfo& out, float& fallback) -> bool
+        {
+            constexpr float kBakeSize = 128.f;
+            ImFontBaked* font = ImGui::GetFont()->GetFontBaked(kBakeSize);
+            if (!font || font->Size <= 0.f) { fallback = 0.f; return false; }
+
+            const float inv = 1.f / font->Size;
+            fallback = font->FallbackAdvanceX * inv;
+
+            const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(cp));
+            if (!g) return false;
+
+            out.X0 = g->X0 * inv;  out.Y0 = g->Y0 * inv;
+            out.X1 = g->X1 * inv;  out.Y1 = g->Y1 * inv;
+            out.U0 = g->U0;        out.V0 = g->V0;
+            out.U1 = g->U1;        out.V1 = g->V1;
+            out.AdvanceX = g->AdvanceX * inv;
+            return true;
+        };
+#else
+        static WebFontAtlas s_fontAtlas;
+        if (!m_fontTexture)
+            m_fontTexture = reinterpret_cast<void*>(static_cast<uintptr_t>(s_fontAtlas.GetTexture()));
+
+        GlyphProvider glyphProvider = s_fontAtlas.MakeProvider();
+#endif
+
+        FontResolver fontResolver;
+        auto* fontSystem = m_doc->GetFontSystem();
+        if (fontSystem && fontSystem->IsReady())
+        {
+            fontResolver = [fontSystem](uint32_t styleId) -> IFont*
+            {
+                const FontStyle* style = fontSystem->FindStyle(styleId);
+                if (!style)
+                    return fontSystem->GetTssdSHXCompositeFont();
+                return &fontSystem->ResolveFont(*style);
+            };
+        }
+
+        DrawContext ctx(m_sceneVertices, m_textVertices, m_overlay, glyphProvider, fontResolver);
+
+        scene.ForEachObject([&](const Object& obj)
+        {
+           if (obj.IsKindOf<Entity>())
+           {
+               const auto& entity = static_cast<const Entity&>(obj);
+               auto isSelected = selectionIds.contains(obj.GetID());
+               auto isHovered  = hoverIds.contains(obj.GetID());
+               entity.Draw(ctx, isSelected, isHovered);
+           }
+        });
+
+        scene.ClearDirty();
+        m_picking.ClearDirty();
+    }
+
+    ViewState Editor::BuildViewState()
+    {
+        auto& scene = m_doc->GetScene();
+
+        ViewState vs;
+
+        vs.Scene       = m_sceneVertices;
+        vs.Overlay     = m_overlayVertices;
+        vs.TextScene   = m_textVertices;
+        vs.FontTexture = m_fontTexture;
+
+        vs.Selection.Active = m_picking.IsBoxSelecting();
+        vs.Selection.Start  = m_picking.GetBoxStart();
+        vs.Selection.End    = m_picking.GetBoxEnd();
+
+        vs.MouseX    = static_cast<float>(m_mouseX);
+        vs.MouseY    = static_cast<float>(m_mouseY);
+
+        vs.ShowGrid  = true;
+
+        vs.Snap.SnapType = static_cast<SnapDraw::Type>(m_currentSnap.SnapType);
+        vs.Snap.Pos      = m_viewport->GetCamera().WorldToScreen(m_currentSnap.WorldPos);
+        if (!IsActiveTool())
+        {
+            m_currentSnap = {};
+        }
+
+        vs.ShowCurrorBox = !IsActiveTool();
+
+        vs.ShowGizmo = true;
+        if (vs.ShowGizmo)
+        {
+            auto& hoveredIdxs = m_gripEditor.HoveredGrips();
+            auto& grips = m_gripEditor.GetGrips();
+
+            for (int i = 0; i < (int)grips.size(); ++i)
+            {
+                const auto& g    = grips[i];
+                auto        s    = m_viewport->GetCamera().WorldToScreen(g.WorldPos);
+                auto        type = static_cast<GripDraw::Type>(g.GripType);
+
+                bool hovered = std::find(hoveredIdxs.begin(), hoveredIdxs.end(), i) != hoveredIdxs.end();
+
+                vs.Grips.push_back({ s, type, hovered });
+            }
+        }
+
+        return vs;
+    }
+
+}

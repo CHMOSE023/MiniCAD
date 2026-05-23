@@ -27,12 +27,7 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     // ctor
     // ─────────────────────────────────────────────
-    GripEditor::GripEditor(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay)
-        : m_scene   (scene)
-        , m_viewport(viewport)
-        , m_cmdStack(cmdStack)
-        , m_picking (picking)
-        , m_overlay (overlay)
+    GripEditor::GripEditor()
     {
         RegisterHandler<LineEntity>     (std::make_unique<LineGripHandler>());
         RegisterHandler<CircleEntity>   (std::make_unique<CircleGripHandler>());
@@ -44,6 +39,15 @@ namespace MiniCAD
         RegisterHandler<SplineEntity>   (std::make_unique<SplineGripHandler>());
         RegisterHandler<TextEntity>     (std::make_unique<TextGripHandler>());
         RegisterHandler<MTextEntity>    (std::make_unique<MTextGripHandler>());
+    }
+
+    void GripEditor::Bind(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay)
+    {
+        m_scene    = &scene;
+        m_viewport = &viewport;
+        m_cmdStack = &cmdStack;
+        m_picking  = &picking;
+        m_overlay  = &overlay;
     }
 
     // ─────────────────────────────────────────────
@@ -139,13 +143,13 @@ namespace MiniCAD
 
         Math::Point3 worldPos = e.HasSnap
             ? e.SnapWorld
-            : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
+            : m_viewport->GetCamera().ScreenToWorld(sp.x, sp.y);
 
-        m_overlay.Clear();
+        m_overlay->Clear();
 
         for (auto& entry : m_dragEntries)
         {
-            auto obj = m_scene.GetEntity(entry.Id);
+            auto obj = m_scene->GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
             if (!entity || !entry.Handler) continue;
 
@@ -155,10 +159,10 @@ namespace MiniCAD
 
             // 绘制预览
             entry.Handler->DrawPreview(entity, entry.DragState.get(),
-                                       entry.ActiveGrip, m_overlay);
+                                       entry.ActiveGrip, *m_overlay);
         }
 
-        m_scene.MarkDirty();
+        m_scene->MarkDirty();
         return true;
     }
 
@@ -181,7 +185,7 @@ namespace MiniCAD
                 continue;
 
             const Grip& grip = m_grips[idx];
-            auto obj = m_scene.GetEntity(grip.OwnerID);
+            auto obj = m_scene->GetEntity(grip.OwnerID);
             auto* entity = static_cast<Entity*>(obj);
             if (!entity) continue;
 
@@ -217,11 +221,11 @@ namespace MiniCAD
     {
         // 用当前鼠标位置（含 snap）做最后一次更新，确保落点精准
         Math::Point2 sp((double)e.MouseX, (double)e.MouseY);
-        Math::Point3 worldPos = e.HasSnap ? e.SnapWorld : m_viewport.GetCamera().ScreenToWorld(sp.x, sp.y);
+        Math::Point3 worldPos = e.HasSnap ? e.SnapWorld : m_viewport->GetCamera().ScreenToWorld(sp.x, sp.y);
 
         for (auto& entry : m_dragEntries)
         {
-            auto obj = m_scene.GetEntity(entry.Id);
+            auto obj = m_scene->GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
             if (!entity || !entry.Handler) continue;
 
@@ -234,7 +238,7 @@ namespace MiniCAD
 
         for (auto& entry : m_dragEntries)
         {
-            auto obj = m_scene.GetEntity(entry.Id);
+            auto obj = m_scene->GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
             if (!entity || !entry.Handler) continue;
 
@@ -244,7 +248,7 @@ namespace MiniCAD
         }
 
         if (!allEntries.empty())
-            m_cmdStack.Push(std::make_unique<DragEntitiesCommand>(std::move(allEntries)));
+            m_cmdStack->Push(std::make_unique<DragEntitiesCommand>(std::move(allEntries)));
 
         // 重置所有状态
         m_dragEntries.clear();
@@ -252,9 +256,9 @@ namespace MiniCAD
         m_activated     = false;
         m_following     = false;
 
-        m_overlay.Clear(); 
+        m_overlay->Clear(); 
 
-        m_scene.MarkDirty();
+        m_scene->MarkDirty();
 
         // 提交后重建夹点（几何已变）
         m_dirty = true;
@@ -273,7 +277,7 @@ namespace MiniCAD
 
         for (auto& entry : m_dragEntries)
         {
-            auto obj = m_scene.GetEntity(entry.Id);
+            auto obj = m_scene->GetEntity(entry.Id);
             auto* entity = static_cast<Entity*>(obj);
             if (entity && entry.Handler)
                 entry.Handler->CancelDrag(entity, entry.DragState.get());
@@ -284,8 +288,8 @@ namespace MiniCAD
         m_activated     = false;
         m_following     = false;
 
-        m_overlay.Clear();
-        m_scene.MarkDirty();
+        m_overlay->Clear();
+        m_scene->MarkDirty();
 
         // 还原后重建夹点到原始位置
         m_dirty = true;
@@ -312,13 +316,13 @@ namespace MiniCAD
         m_dirty = false;
         m_grips.clear();
 
-        auto& selection = m_picking.GetSelection();
+        auto& selection = m_picking->GetSelection();
         if (selection.empty())
             return false;
 
         for (auto id : selection)
         {
-            auto obj = m_scene.GetEntity(id);
+            auto obj = m_scene->GetEntity(id);
             if (!obj) continue;
 
             auto* entity = static_cast<Entity*>(obj);
@@ -362,7 +366,7 @@ namespace MiniCAD
 
         for (int i = 0; i < (int)m_grips.size(); ++i)
         {
-            Math::Point2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
+            Math::Point2 sc = m_viewport->GetCamera().WorldToScreen(m_grips[i].WorldPos);
             float d = std::hypot(screenPt.x - sc.x, screenPt.y - sc.y);
 
             if (d < thresh && d < bestDist)
@@ -384,7 +388,7 @@ namespace MiniCAD
 
         for (int i = 0; i < (int)m_grips.size(); ++i)
         {
-            Math::Point2 sc = m_viewport.GetCamera().WorldToScreen(m_grips[i].WorldPos);
+            Math::Point2 sc = m_viewport->GetCamera().WorldToScreen(m_grips[i].WorldPos);
             float d = std::hypot(screenPt.x - sc.x, screenPt.y - sc.y);
 
             if (d < thresh)

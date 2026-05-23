@@ -3,7 +3,7 @@
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
-#include "Editor/Viewport/Camera.h"
+#include "Viewport/Camera.h"
 #include <unordered_set>
 
 namespace MiniCAD

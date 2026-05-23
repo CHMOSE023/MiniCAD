@@ -1,6 +1,6 @@
 #pragma once
 #include "Editor/Input/InputEvent.h"
-#include "Editor/Viewport/Viewport.h"
+#include "Viewport/Viewport.h"
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
@@ -13,7 +13,8 @@ namespace MiniCAD
     public:
         using ObjectID = Object::ObjectID;
 
-        Picking(Scene& scene, Viewport& viewport);
+        Picking() = default;
+        void Bind(Scene& scene, Viewport& viewport);
 
         // 输入入口
         bool OnInput(const InputEvent& e);
@@ -63,8 +64,8 @@ namespace MiniCAD
         static constexpr float HOVER_THRESH = 6.0f; // 像素阈值：悬浮检测半径（屏幕空间）     一般略大于 PICK_THRESH，提高可用性（更容易“扫到”）
         static constexpr float PICK_THRESH  = 5.0f; // 像素阈值：点击选中检测半径（屏幕空间） 通常略小于 HOVER_THRESH，避免“看起来没选中却点中了”
 
-        Scene&    m_scene;
-        Viewport& m_viewport;
+        Scene*    m_scene    = nullptr;
+        Viewport* m_viewport = nullptr;
 
         std::unordered_set<ObjectID> m_lastSelection;  // 上次选择集快照 
 

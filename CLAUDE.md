@@ -37,6 +37,8 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 
 输出：`out/web/MiniCADWeb/index.html`。重新构建后需强制刷新浏览器（`Ctrl+F5`）清除缓存。
 
+CMake 选项 `MINICAD_WEB_DEBUG=ON` 可启用 WASM 调试构建（`-g3 -O0`、ASSERTIONS=2、SAFE_HEAP）。
+
 **无测试框架**：项目暂无单元测试。验证靠编译 + 手动运行。
 
 ## 核心架构（八层）
@@ -46,7 +48,8 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 | **Core** | 纯计算库，无 I/O 无副作用：Math（向量、矩阵）、Geom（几何基元）、Entity（实体定义） |
 | **Scene** | 只读运行时快照，持有 EntityDatabase、LayerManager |
 | **Document** | 数据库内核，唯一的 Scene 写入口，持有 CommandStack |
-| **Editor** | 交互层：工具系统、输入处理、吸附、拾取、Grip 编辑、约束、视口 |
+| **Viewport** | 视图层：Camera、Grid、Axis、Cursor，接收 ViewState 并驱动 IRenderer |
+| **Editor** | 交互层：工具系统、输入处理、吸附、拾取、Grip 编辑、约束、顶点缓冲 |
 | **Render** | 渲染层：D3D11（Windows）和 WebGL（WASM）后端 |
 | **Text** | 文本与字体系统：TTF/SHX 字体、字形缓存、虚拟机执行、排版引擎 |
 | **UI** | ImGui 界面层：菜单栏、工具栏、文档选项卡、状态栏 |
@@ -65,13 +68,25 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 
 **核心不变量：Scene 对 Document 以外的所有层都只读。所有修改必须经过 `ICommand` → `CommandStack`。**
 
+### 三模块分离
+
+项目将运行时分为三个独立模块：
+
+- **Document**（纯数据）：持有 Scene、CommandStack、名称/路径/脏标记、FontSystem 指针。不依赖 Editor 或 Viewport。
+- **Viewport**（视图与渲染）：持有 Camera、Grid、Axis、Cursor、RenderTarget。接收 `ViewState` 快照并调用 `IRenderer` 绘制。
+- **Editor**（交互）：持有工具系统、Picking、Snap、Overlay、GripEditor、ConstraintEngine、Resolver、四组顶点缓冲。通过 `Bind(Document&, Viewport&)` / `Unbind()` 绑定到具体文档和视口。
+
+**DocumentManager** 拥有唯一的 `Editor` 实例和 `Viewport`。切换文档时调用 `Editor::Unbind()` + `Editor::Bind(newDoc, viewport)` 实现重绑定（类似 AutoCAD 模式）。
+
+**延迟绑定模式**：Editor 的子系统（Overlay、Picking、GripEditor）使用默认构造函数 + `Bind()` 方法（指针成员），因为构造时 Document/Viewport 尚不可用。
+
 ## 实体类型系统
 
 `Object`（根）→ `Entity`（基类）→ 10 个具体实体：Line、Point、Circle、Arc、Ellipse、Rectangle、Polyline、Spline、Text、MText。
 
 - **运行时类型**：`DECLARE_RUNTIME_TYPE` 宏提供编译期 RTTI，每个实体类有 `static const RuntimeTypeInfo TypeInfo`，可通过 `IsKindOf<T>()` 做类型判断
 - **实体属性**：所有实体持有 `EntityAttr`（Color、LayerID、LineType、LineWidth、Visible）
-- **绘制接口**：实体通过 `Draw(IDrawSink&, isSelected, isHovered)` 向 sink 发射几何（`DrawLine`）或文字（`EmitText`/`EmitMText`），不直接依赖渲染器
+- **绘制接口**：实体通过 `Draw(IDrawSink&, isSelected, isHovered)` 向 sink 发射几何（`DrawLine`）或文字（`EmitText`/`EmitMText`），不直接依赖渲染器。选中/悬停颜色定义在 `IDrawSink::kSelectionColor` / `kHoverColor`
 - **克隆**：`Clone(newId)` 用于复制操作
 
 ## Command 模式
@@ -91,11 +106,11 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 - `OnInput()` 返回 true 表示事件已消费
 - `OnFinished` 回调通知工具完成（右键、ESC）
 - `OnSceneChanged()` 在 Undo/Redo/Delete 后被调用以重置工具状态
-- **注册机制**：`EditorContext::RegisterTool(toolId, factory)` 注册工厂函数，`RegisterAlias(alias, toolId)` 支持键盘快捷别名（如 "L" → "Line"）
+- **注册机制**：`Editor::RegisterTool(toolId, factory)` 注册工厂函数，`RegisterAlias(alias, toolId)` 支持键盘快捷别名（如 "L" → "Line"）
 
 ## 输入处理管线（Resolver）
 
-`EditorContext` 通过 `Resolver` 将原始输入转化为语义化结果：
+`Editor` 通过 `Resolver` 将原始输入转化为语义化结果：
 
 1. **Raw**：屏幕坐标 → 世界坐标（通过 Camera）
 2. **Snap**：查询 SnapEngine（支持端点、中点、最近点、象限点、网格吸附）
@@ -118,17 +133,25 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 
 ## 渲染管线
 
-1. `Entity::Draw(IDrawSink&)` 发射几何到 `DrawContext`（IDrawSink 实现）
+1. `Entity::Draw(IDrawSink&)` 发射几何到 `DrawContext`（IDrawSink 实现，位于 `src/Document/DrawContext.hpp`）
 2. `DrawContext` 路由到 `m_verts`（场景线段，`Vertex_P3_C4`）、`m_textVerts`（文字纹理四边形，`Vertex_P3_C4_UV`）、`m_overlay`（临时预览）
 3. `IRenderer::Submit()` 提交线段，`SubmitTextured()` 提交文字
 4. D3D11/WebGL 后端各自实现 IRenderer
+
+**两条文字渲染路径**：
+- `EmitText`（纹理路径）：通过 `GlyphProvider` 回调查询 ImGui/WebFontAtlas 中的字形 UV，生成纹理四边形到 `m_textVerts`
+- `EmitMText`（矢量路径）：通过 `FontResolver` 回调获取 `IFont*`（SHX/TTF），经 `TextLayoutEngine` 排版后输出线段到 `m_verts`
+
+`DrawContext` 的 `FontResolver` 来自 `Document::GetFontSystem()`，由 `Editor::UpdateSceneVertices()` 注入。
+
+**Editor 持有四组顶点缓冲**：`m_sceneVertices`（场景 + 矢量文字）、`m_textVertices`（纹理文字）、`m_overlayVertices`（工具预览）、`m_gripVertices`（夹点）。
 
 **Overlay**：工具预览等临时几何通过 `overlay.AddLine()`/`AddPoint()` 绘制，不进入 Scene。
 
 ## 数据流示例：画一条线
 
 1. 鼠标点击 → `ViewportInputAdapter` → `InputEvent`
-2. `EditorContext.OnInput()` → `Resolver` 产生 `ResolvedInput` → 分派到当前 `LineTool`
+2. `Editor.OnInput()` → `Resolver` 产生 `ResolvedInput` → 分派到当前 `LineTool`
 3. `LineTool` 累积点位 → 产生 `AddEntityCommand`
 4. Command 执行：`Execute()` 写入 `EntityDatabase`
 5. `Scene::MarkDirty()` → 触发重绘
@@ -138,10 +161,15 @@ build_web.bat serve        # 构建并在 http://localhost:8080 启动服务器
 
 - **桌面端** — `src/App/Main.cpp`
 - **WASM** — `src/App/WebMain.cpp`（通过 `ccall` 导出 `_MiniCAD_*` C 函数）
-- **文档根对象** — `src/Document/Document.h`（持有 Scene、CommandStack、EventBus、DirtyTracker）
-- **编辑器上下文** — `src/Editor/Context/EditorContext.h`（工具管理、选择、输入分派）
+- **文档根对象** — `src/Document/Document.h`（持有 Scene、CommandStack、名称/路径/脏标记）
+- **编辑器** — `src/Editor/Editor.h`（工具管理、选择、输入分派、顶点缓冲、Bind/Unbind）
+- **文档管理器** — `src/Document/DocumentManager.h`（拥有 Editor + Viewport，管理多文档切换）
+- **输入上下文** — `src/Editor/Input/InputContext.h`（打包一帧输入所需的所有引用）
 - **UI 管理器** — `src/UI/UIManager.h`（菜单、工具栏、文档选项卡）
 - **渲染器接口** — `src/Render/IRenderer.h`
+- **视口** — `src/Viewport/Viewport.h`（Camera、Grid、接收 ViewState 驱动渲染）
+- **绘制汇聚点** — `src/Document/DrawContext.hpp`（IDrawSink 实现，路由几何/文字到顶点缓冲）
+- **绘制接口** — `src/Core/Draw/IDrawSink.hpp`（实体绘制的抽象接口）
 
 ## Web 端注意事项
 
