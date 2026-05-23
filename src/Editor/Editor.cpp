@@ -903,10 +903,11 @@ namespace MiniCAD
         vs.ShowCurrorBox = !IsActiveTool();
 
         vs.ShowGizmo = true;
+        m_gripVertices.clear();
         if (vs.ShowGizmo)
         {
             auto& hoveredIdxs = m_gripEditor.HoveredGrips();
-            auto& grips = m_gripEditor.GetGrips();
+            auto& grips       = m_gripEditor.GetGrips();
 
             for (int i = 0; i < (int)grips.size(); ++i)
             {
@@ -916,9 +917,10 @@ namespace MiniCAD
 
                 bool hovered = std::find(hoveredIdxs.begin(), hoveredIdxs.end(), i) != hoveredIdxs.end();
 
-                vs.Grips.push_back({ s, type, hovered });
+                m_gripVertices.push_back({ s, type, hovered });
             }
         }
+        vs.Grips = m_gripVertices;
 
         return vs;
     }

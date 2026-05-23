@@ -56,7 +56,7 @@ namespace MiniCAD
         std::span<const Vertex_P3_C4>    Overlay;     // 预览线段
         std::span<const Vertex_P3_C4_UV> TextScene;   // 场景文字四边形
         void*                            FontTexture = nullptr; // ImGui 字体图集 SRV
-        std::vector<GripDraw>            Grips;       // 夹点
+        std::span<const GripDraw>        Grips;       // 夹点
 
         DragRect  Selection;          // 选择框  
         double    MouseX = 0;             // 客户区像素坐标

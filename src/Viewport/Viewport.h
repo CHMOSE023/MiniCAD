@@ -77,7 +77,6 @@ namespace MiniCAD
         std::unique_ptr<IRenderTarget> m_renderTarget;
 
         std::vector<Vertex_P3_C4> m_vertices;
-        std::vector<Vertex_P3_C4> m_vertices1;  
     private:
         bool m_showGizmo = true;
         bool m_showGrid = true;

@@ -192,6 +192,7 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4>    m_sceneVertices;
         std::vector<Vertex_P3_C4_UV> m_textVertices;
         std::vector<Vertex_P3_C4>    m_overlayVertices;
+        std::vector<GripDraw>        m_gripVertices;
         void*                        m_fontTexture = nullptr;
     };
 }
