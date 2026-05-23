@@ -1,8 +1,8 @@
 #include "pch.h"
-#include "InputSystem.h" 
-#include "InputEvent.h"
-#include "IInputHandler.h"
-#include "KeyCodeUtils.h"  
+#include "Editor/Input/InputSystem.h"
+#include "Editor/Input/InputEvent.h"
+#include "Editor/Input/IInputHandler.h"
+#include "Editor/Input/KeyCodeUtils.h"
 #include <vector>
 namespace MiniCAD
 {

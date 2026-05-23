@@ -1,4 +1,4 @@
-#include "MainWindow.h"  
+#include "MainWindow.h"
 #include "Document/DocumentManager.h"
 #include "Render/D3D11/SwapChain.h"
 #include "Render/RendererFactory.hpp"

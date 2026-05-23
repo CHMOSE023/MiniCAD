@@ -1,6 +1,6 @@
-#include "ViewportInputAdapter.h"
-#include "InputEvent.h"
-#include "ViewportInput.h"
+#include "Editor/Input/ViewportInputAdapter.h"
+#include "Editor/Input/InputEvent.h"
+#include "Editor/Input/ViewportInput.h"
 #include <array>
 #include <vector>
 

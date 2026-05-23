@@ -13,52 +13,60 @@ if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+# ── Cross-platform core sources ───────────────────────────────────────────────
+file(GLOB_RECURSE MINICAD_CORE_SRC CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/Core/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Document/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Viewport/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Text/*.cpp"
+)
+
+# Editor: shared subsystems only — Input/Win is platform-specific
+file(GLOB MINICAD_EDITOR_SRC CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/Editor/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Editor/Constraint/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Editor/Grip/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Editor/Picking/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Editor/Resolver/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Editor/Snap/*.cpp"
+)
+list(APPEND MINICAD_CORE_SRC ${MINICAD_EDITOR_SRC})
+
+# ─────────────────────────────────────────────────────────────────────────────
 if(EMSCRIPTEN)
+# ── Web (WASM / WebGL) build ──────────────────────────────────────────────────
+
     option(MINICAD_WEB_DEBUG "Enable debug build for Web" OFF)
 
     if(MINICAD_WEB_DEBUG)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
-
         add_compile_options(-fexceptions -g3 -O0)
-
-        add_link_options(
-            -g3
-            -O0
-            -sASSERTIONS=2
-            -sSAFE_HEAP=1
-            -sSTACK_OVERFLOW_CHECK=2
-        )
-
+        add_link_options(-g3 -O0 -sASSERTIONS=2 -sSAFE_HEAP=1 -sSTACK_OVERFLOW_CHECK=2)
     else()
         set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
-
         add_compile_options(-O3 -DNDEBUG)
-
-        add_link_options(
-            -O3
-            -sASSERTIONS=0
-            -sSAFE_HEAP=0
-            -sSTACK_OVERFLOW_CHECK=0
-        )
-
+        add_link_options(-O3 -sASSERTIONS=0 -sSAFE_HEAP=0 -sSTACK_OVERFLOW_CHECK=0)
     endif()
 
-    file(GLOB_RECURSE MINICAD_CORE_SRC CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/src/Core/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Document/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Editor/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Viewport/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Text/*.cpp"
+    # Exported C symbols — one entry per line, easy to add/remove
+    set(MINICAD_EXPORTS
+        _main
+        _MiniCAD_StartLine      _MiniCAD_StartPoint     _MiniCAD_StartCircle
+        _MiniCAD_StartRectangle _MiniCAD_StartArc       _MiniCAD_StartEllipse
+        _MiniCAD_StartPolyline  _MiniCAD_StartSpline
+        _MiniCAD_StartMove      _MiniCAD_StartCopy      _MiniCAD_StartMirror    _MiniCAD_StartRotate
+        _MiniCAD_Delete
+        _MiniCAD_ToggleSnap     _MiniCAD_ToggleOrtho
+        _MiniCAD_Undo           _MiniCAD_Redo           _MiniCAD_Cancel
+        _MiniCAD_StartText      _MiniCAD_SubmitText     _MiniCAD_CancelText
+        _MiniCAD_StartMText     _MiniCAD_SubmitMText    _MiniCAD_CancelMText
     )
-
-    list(FILTER MINICAD_CORE_SRC EXCLUDE REGEX ".*[\\\\/]Editor[\\\\/]Input[\\\\/]InputSystem\\.cpp$")
-    list(FILTER MINICAD_CORE_SRC EXCLUDE REGEX ".*[\\\\/]Editor[\\\\/]Input[\\\\/]KeyCodeUtils\\.cpp$")
-    list(FILTER MINICAD_CORE_SRC EXCLUDE REGEX ".*[\\\\/]Editor[\\\\/]Input[\\\\/]ViewportInputAdapter\\.cpp$")
+    list(JOIN MINICAD_EXPORTS "','" MINICAD_EXPORTS_JOINED)
 
     add_executable(MiniCADWeb
         ${MINICAD_CORE_SRC}
-        src/App/WebMain.cpp
+        src/App/Web/WebMain.cpp
         src/Render/WebGL/WebGLRenderer.cpp
         src/Render/WebGL/WebGLRenderTarget.cpp
     )
@@ -78,7 +86,7 @@ if(EMSCRIPTEN)
         "-sSTACK_SIZE=5242880"
         "-sINITIAL_MEMORY=33554432"
         "-sWASM=1"
-        "-sEXPORTED_FUNCTIONS=['_main','_MiniCAD_StartLine','_MiniCAD_StartPoint','_MiniCAD_StartCircle','_MiniCAD_StartRectangle','_MiniCAD_StartArc','_MiniCAD_StartEllipse','_MiniCAD_StartPolyline','_MiniCAD_StartSpline','_MiniCAD_StartMove','_MiniCAD_StartCopy','_MiniCAD_StartMirror','_MiniCAD_StartRotate','_MiniCAD_Delete','_MiniCAD_ToggleSnap','_MiniCAD_ToggleOrtho','_MiniCAD_Undo','_MiniCAD_Redo','_MiniCAD_Cancel','_MiniCAD_StartText','_MiniCAD_SubmitText','_MiniCAD_CancelText','_MiniCAD_StartMText','_MiniCAD_SubmitMText','_MiniCAD_CancelMText']"
+        "-sEXPORTED_FUNCTIONS=['${MINICAD_EXPORTS_JOINED}']"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
         "--shell-file=${CMAKE_SOURCE_DIR}/web/index.html"
         "--preload-file=${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
@@ -96,7 +104,10 @@ if(EMSCRIPTEN)
                 "${CMAKE_BINARY_DIR}/MiniCADWeb/icons"
         COMMENT "Copy icons for MiniCADWeb"
     )
+
 else()
+# ── Win (Win / D3D11) build ─────────────────────────────────────────────
+
     add_library(Imgui
         3rd/imgui/imgui.cpp
         3rd/imgui/imgui_draw.cpp
@@ -106,27 +117,33 @@ else()
         3rd/imgui/backends/imgui_impl_win32.cpp
         3rd/imgui/backends/imgui_impl_dx11.cpp
     )
+    target_include_directories(Imgui PUBLIC 3rd/imgui 3rd/imgui/backends)
 
-    target_include_directories(Imgui PUBLIC
-        3rd/imgui
-        3rd/imgui/backends
+    file(GLOB_RECURSE MINICAD_WIN32_SRC CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/UI/*.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Render/D3D11/*.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Editor/Input/Win/*.cpp"
     )
 
-    file(GLOB_RECURSE SRC
-        "${CMAKE_SOURCE_DIR}/src/*.cpp"
-        "${CMAKE_SOURCE_DIR}/assets/MiniCAD.rc"
-    )
-
-    list(FILTER SRC EXCLUDE REGEX ".*[\\\\/]src[\\\\/]App[\\\\/]WebMain\\.cpp$")
-    list(FILTER SRC EXCLUDE REGEX ".*[\\\\/]src[\\\\/]Render[\\\\/]WebGL[\\\\/].*")
-
-    option(USE_WIN32 "Use Win32 GUI subsystem" OFF)
+    option(USE_WIN32 "Use Win GUI subsystem" OFF)
 
     if(USE_WIN32)
-        add_executable(MiniCAD WIN32 ${SRC})
+        add_executable(MiniCAD WIN32
+            ${MINICAD_CORE_SRC}
+            ${MINICAD_WIN32_SRC}
+            src/App/Win/Main.cpp
+            src/App/Win/MainWindow.cpp
+            assets/MiniCAD.rc
+        )
         target_compile_definitions(MiniCAD PRIVATE USE_WIN32)
     else()
-        add_executable(MiniCAD ${SRC})
+        add_executable(MiniCAD
+            ${MINICAD_CORE_SRC}
+            ${MINICAD_WIN32_SRC}
+            src/App/Win/Main.cpp
+            src/App/Win/MainWindow.cpp
+            assets/MiniCAD.rc
+        )
     endif()
 
     target_include_directories(MiniCAD PRIVATE
@@ -151,4 +168,5 @@ else()
             COMMENT "Copy assets contents for MiniCAD"
         )
     endif()
+
 endif()
