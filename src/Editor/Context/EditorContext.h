@@ -9,6 +9,7 @@
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Input/KeyCode.h"
 #include "Editor/Constraint/ConstraintEngine.h"
+#include "Editor/Resolver/Resolver.h"
 #include "Scene/Scene.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Core/GeomKernel/Line.hpp"
@@ -189,6 +190,7 @@ namespace MiniCAD
 
         TextInputRequest  m_textRequest;
         MTextInputRequest m_mtextRequest;
+        Resolver          m_resolver;
     };
 
 } 

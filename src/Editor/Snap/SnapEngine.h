@@ -11,22 +11,16 @@ namespace MiniCAD
 	// 捕捉引擎：提供捕捉查询接口，支持多种捕捉类型（端点、中心点、最近点、网格等）
     class SnapEngine
     {
-    public:
-        // ─── 开关 ───────────────────────────────
-        bool   EnableEndpoint = true;
-        bool   EnableMidpoint = true;
-        bool   EnableNearest  = true;
-		bool   EnableQuadrant = true;   // 圆的象限点捕捉（仅当 EnableEndpoint 也启用时才有效）
-        bool   EnableGrid     = false;
-        double GridSize       = 1.0;    // 世界单位
-        double SnapRadiusPx   = 12.0;   // 屏幕像素捕捉半径
-
+    public: 
         // ─── 主接口 ─────────────────────────────
         // exclude: 需要跳过的对象（夹点拖拽时传入当前选中集合，避免捕捉自身）
         SnapResult Query(const Math::Point2&                             screenPt,
                          const Scene&                                    scene,
                          const Camera&                                   cam,
                          const std::unordered_set<Object::ObjectID>&     exclude = {}) const;
+
+        bool  IsEnabled() const { return m_enableEngine; }
+        void  SetEnableSnap(bool enable) { m_enableEngine = enable; }
 
     private:
         SnapResult TryEndpoint(const Math::Point2& sp, const Scene&, const Camera&,
@@ -38,5 +32,19 @@ namespace MiniCAD
         SnapResult TryQuadrant(const Math::Point2&, const Scene&, const Camera&,   // ← 新增
                                const std::unordered_set<Object::ObjectID>&) const;
         SnapResult TryGrid    (const Math::Point2& sp, const Camera&) const;
+
+
+    private:
+        // ─── 开关 ───────────────────────────────
+        bool   m_enableEngine   = true;
+        bool   m_enableEndpoint = true;
+        bool   m_enableMidpoint = true;
+        bool   m_enableNearest  = true;
+        bool   m_enableQuadrant = true;   // 圆的象限点捕捉（仅当 EnableEndpoint 也启用时才有效）
+        bool   m_enableGrid     = false;
+
+        double m_gridSize       = 1.0;    // 世界单位
+        double m_snapRadiusPx   = 12.0;   // 屏幕像素捕捉半径
+
     };
 }

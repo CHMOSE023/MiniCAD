@@ -419,6 +419,19 @@ namespace MiniCAD
             m_tool.reset();
         }
 
+        InputContext ctx {
+                .event      = inputEvent,
+                .scene      = m_scene,
+                .viewport   = m_viewport,
+                .snap       = m_snap,
+                .constraint = m_constraintEngine,
+                .picking    = m_picking,
+                .tool       = m_tool.get(),
+                .grip       = &m_gripEditor
+        };
+
+        ResolvedInput input = m_resolver.BuidResolver(ctx);
+
         // ── 1. Snap + 正交约束 ───────────────────────────────────────────
         UpdateSnap(inputEvent);
         InputEvent e = InjectSnap(inputEvent);

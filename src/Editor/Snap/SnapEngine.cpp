@@ -52,11 +52,11 @@ namespace MiniCAD
         const Camera& cam,
         const std::unordered_set<Object::ObjectID>& exclude) const
     {
-        if (EnableEndpoint) { auto r = TryEndpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (EnableMidpoint) { auto r = TryMidpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (EnableQuadrant) { auto r = TryQuadrant(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (EnableNearest)  { auto r = TryNearest(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (EnableGrid)     return TryGrid(sp, cam);
+        if (m_enableEndpoint) { auto r = TryEndpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
+        if (m_enableMidpoint) { auto r = TryMidpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
+        if (m_enableQuadrant) { auto r = TryQuadrant(sp, scene, cam, exclude); if (r.IsValid()) return r; }
+        if (m_enableNearest)  { auto r = TryNearest(sp, scene, cam, exclude); if (r.IsValid()) return r; }
+        if (m_enableGrid)     return TryGrid(sp, cam);
         return {};
     }
 
@@ -89,15 +89,15 @@ namespace MiniCAD
                 if (obj.IsKindOf<PointEntity>())
                 {
                     auto* e = static_cast<const PointEntity*>(&obj);
-                    TryUpdateBest(e->GetPoint().Position, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetPoint().Position, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Line ───────────────────────────────────────────────────────
                 if (obj.IsKindOf<LineEntity>())
                 {
                     auto* e = static_cast<const LineEntity*>(&obj);
-                    TryUpdateBest(e->GetLine().Start, sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(e->GetLine().End, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetLine().Start, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetLine().End, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Rectangle ──────────────────────────────────────────────────
@@ -106,14 +106,14 @@ namespace MiniCAD
                     auto* e = static_cast<const RectangleEntity*>(&obj);
                     const auto& r = e->GetRectangle();
                     for (const auto& p : { r.P1, r.P2, r.P3, r.P4 })
-                        TryUpdateBest(p, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(p, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Circle：圆心 ───────────────────────────────────────────────
                 if (obj.IsKindOf<CircleEntity>())
                 {
                     auto* e = static_cast<const CircleEntity*>(&obj);
-                    TryUpdateBest(e->GetCircle().Center, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetCircle().Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Arc：StartPoint / EndPoint / Center ────────────────────────
@@ -121,16 +121,16 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const ArcEntity*>(&obj);
                     const auto& arc = e->GetArc();
-                    TryUpdateBest(arc.StartPoint(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(arc.EndPoint(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(arc.Center, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(arc.StartPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(arc.EndPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(arc.Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Ellipse：Center ────────────────────────────────────────────
                 if (obj.IsKindOf<EllipseEntity>())
                 {
                     auto* e = static_cast<const EllipseEntity*>(&obj);
-                    TryUpdateBest(e->GetEllipse().Center, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetEllipse().Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Polyline：所有顶点 ─────────────────────────────────────────
@@ -138,7 +138,7 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const PolylineEntity*>(&obj);
                     for (const auto& pt : e->GetPolyline().Points)
-                        TryUpdateBest(pt, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(pt, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Spline：所有拟合点 ────────────────────────────────────────────
@@ -148,7 +148,7 @@ namespace MiniCAD
                     const auto& spline = e->GetSpline();
 
                     for (const auto& fp : spline.FitPoints)
-                        TryUpdateBest(fp, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(fp, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
             });
@@ -185,7 +185,7 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const LineEntity*>(&obj);
                     TryUpdateBest(Math::Midpoint(e->GetLine().Start, e->GetLine().End),
-                        sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Rectangle：四条边中点 ───────────────────────────────────────
@@ -193,17 +193,17 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const RectangleEntity*>(&obj);
                     const auto& r = e->GetRectangle();
-                    TryUpdateBest(Math::Midpoint(r.P1, r.P2), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P2, r.P3), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P3, r.P4), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P4, r.P1), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(Math::Midpoint(r.P1, r.P2), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(Math::Midpoint(r.P2, r.P3), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(Math::Midpoint(r.P3, r.P4), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(Math::Midpoint(r.P4, r.P1), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Arc：弧段中点 ──────────────────────────────────────────────
                 if (obj.IsKindOf<ArcEntity>())
                 {
                     auto* e = static_cast<const ArcEntity*>(&obj);
-                    TryUpdateBest(e->GetArc().MidPoint(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(e->GetArc().MidPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Ellipse：四段弧的中点（t = π/4 * (2k+1)，k=0..3）─────────
@@ -221,7 +221,7 @@ namespace MiniCAD
                         Math::PI * 1.75
                     };
                     for (double t : kMidAngles)
-                        TryUpdateBest(el.PointAt(t), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(el.PointAt(t), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Polyline：每段中点 ────────────────────────────────────────
@@ -250,7 +250,7 @@ namespace MiniCAD
                             // 直线段：几何中点
                             mid = Math::Midpoint(pl.SegStart(i), pl.SegEnd(i));
                         }
-                        TryUpdateBest(mid, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(mid, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                     }
                 }
 
@@ -262,7 +262,7 @@ namespace MiniCAD
                     if (!spline.IsValid()) return;
 
                     for (const auto& seg : spline.Segments)
-                        TryUpdateBest(seg.Evaluate(0.5), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(seg.Evaluate(0.5), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
             });
 
@@ -304,7 +304,7 @@ namespace MiniCAD
                         { c.Center.x,            c.Center.y - c.Radius, c.Center.z }
                     };
                     for (const auto& qp : qpts)
-                        TryUpdateBest(qp, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(qp, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Arc：只捕捉弧角度范围内的象限点 ──────────────────────────
@@ -324,7 +324,7 @@ namespace MiniCAD
                     for (double qa : kQuadAngles)
                     {
                         if (!arc.ContainsAngle(qa)) continue;   // 不在弧范围内则跳过
-                        TryUpdateBest(arc.PointAt(qa), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                        TryUpdateBest(arc.PointAt(qa), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                     }
                 }
 
@@ -334,10 +334,10 @@ namespace MiniCAD
                     auto* e = static_cast<const EllipseEntity*>(&obj);
                     const auto& el = e->GetEllipse();
 
-                    TryUpdateBest(el.VertexE(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexN(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexW(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexS(), sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(el.VertexE(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(el.VertexN(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(el.VertexW(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(el.VertexS(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
             });
 
@@ -377,7 +377,7 @@ namespace MiniCAD
                     auto* e = static_cast<const LineEntity*>(&obj);
                     auto& L = e->GetLine();
                     Math::Point3 closest = Math::ClosestPointOnSegment(worldMouse, L.Start, L.End);
-                    TryUpdateBest(closest, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Rectangle ──────────────────────────────────────────────────
@@ -390,7 +390,7 @@ namespace MiniCAD
                         std::pair{r.P1, r.P2}, {r.P2, r.P3}, {r.P3, r.P4}, {r.P4, r.P1} })
                     {
                         TryUpdateBest(Math::ClosestPointOnSegment(worldMouse, a, b),
-                            sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                            sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                     }
                 }
 
@@ -411,7 +411,7 @@ namespace MiniCAD
                         c.Center.y + c.Radius * (dy / len),
                         c.Center.z
                     };
-                    TryUpdateBest(onCircle, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(onCircle, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Arc：弧上最近点（考虑角度范围）────────────────────────────
@@ -419,7 +419,7 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const ArcEntity*>(&obj);
                     Math::Point3 closest = e->GetArc().ClosestPoint(worldMouse);
-                    TryUpdateBest(closest, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Ellipse：椭圆周最近点（牛顿迭代）─────────────────────────
@@ -427,7 +427,7 @@ namespace MiniCAD
                 {
                     auto* e = static_cast<const EllipseEntity*>(&obj);
                     Math::Point3 closest = e->GetEllipse().ClosestPoint(worldMouse);
-                    TryUpdateBest(closest, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Polyline：Tessellate 后逐段最近点 ────────────────────────
@@ -438,7 +438,7 @@ namespace MiniCAD
 
                     // 直接用 Polyline 的几何最近点查询（内部处理弧段）
                     Math::Point3 closest = pl.ClosestPoint(worldMouse);
-                    TryUpdateBest(closest, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── Spline：Tessellate 后逐段最近点 ──────────────────────────
@@ -450,7 +450,7 @@ namespace MiniCAD
 
                     // 用 Spline::ClosestPoint（内部逐段采样）
                     Math::Point3 closest = sp_.ClosestPoint(worldMouse);
-                    TryUpdateBest(closest, sp, cam, SnapRadiusPx, bestDist, best, T, id);
+                    TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
             });
 
@@ -467,8 +467,8 @@ namespace MiniCAD
         {
             SnapResult::Type::Grid,
             {
-                std::round(w.x / GridSize) * GridSize,
-                std::round(w.y / GridSize) * GridSize,
+                std::round(w.x / m_gridSize) * m_gridSize,
+                std::round(w.y / m_gridSize) * m_gridSize,
                 0.0
             },
             Object::InvalidID
