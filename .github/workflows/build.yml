@@ -25,7 +25,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MiniCAD-Windows
-          path: out/win/Release/
+          path: out/win/MiniCAD/
           retention-days: 7
 
   # ── WebAssembly / WebGL2 ───────────────────────────────────────────────────
