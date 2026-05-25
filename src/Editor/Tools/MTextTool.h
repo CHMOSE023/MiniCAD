@@ -1,6 +1,6 @@
 #pragma once
 #include "Editor/Tools/ITool.h"
-#include "Editor/Input/InputContext.h"
+#include "Editor/EditorContext.h"
 #include "Core/Math/Point3.hpp"
 #include <functional>
 #include <cstdio>
@@ -19,7 +19,7 @@ namespace MiniCAD
 
         std::function<void(Math::Point3)> OnInsertPointPicked;
 
-        bool OnInput(const InputContext& ctx) override
+        bool OnInput(const EditorContext& ctx) override
         {
             const auto& e = ctx.event;
 

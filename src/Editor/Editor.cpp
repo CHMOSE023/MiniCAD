@@ -1,4 +1,5 @@
 #include "Editor.h"
+#include "Editor/EditorContext.h"
 #include "Document/Document.h"
 #include "Document/DrawContext.hpp"
 #include "Document/CommandStack/CommandStack.h"
@@ -35,6 +36,7 @@
 #include "Editor/Tools/SplineTool.h"
 #include "Editor/Tools/TextTool.h"
 #include "Editor/Tools/MTextTool.h"
+#include "Document/Command/EditTextCommand.h"
 
 // ── 编辑工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/Modify/MoveTool.h"
@@ -318,16 +320,33 @@ namespace MiniCAD
 
     void Editor::SubmitTextInput(const std::string& utf8Text)
     {
-        if (!m_textRequest.Active || utf8Text.empty())
+        if (!m_textRequest.Active)
+            return;
+
+        m_textRequest.Active = false;
+
+        if (utf8Text.empty())
         {
-            m_textRequest.Active = false;
+            m_textRequest.EditTargetId = Object::InvalidID;
             return;
         }
 
-        auto& scene = m_doc->GetScene();
+        auto& scene    = m_doc->GetScene();
         auto& cmdStack = m_doc->GetCommandStack();
-        const auto& layer = scene.GetLayerManager().GetActiveLayer();
 
+        if (m_textRequest.EditTargetId != Object::InvalidID)
+        {
+            auto cmd = std::make_unique<EditTextCommand>(
+                m_textRequest.EditTargetId,
+                m_textRequest.InitialText,
+                utf8Text);
+            cmdStack.Execute(std::move(cmd), scene);
+            m_textRequest.EditTargetId = Object::InvalidID;
+            printf("[TextEdit] 文字已修改: %s\n", utf8Text.c_str());
+            return;
+        }
+
+        const auto& layer = scene.GetLayerManager().GetActiveLayer();
         auto id  = scene.NextObjectID();
         auto ent = std::make_unique<TextEntity>(
             id,
@@ -344,22 +363,38 @@ namespace MiniCAD
         auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
         cmdStack.Execute(std::move(cmd), scene);
 
-        m_textRequest.Active = false;
         printf("[TextTool] 文字已添加: %s\n", utf8Text.c_str());
     }
 
     void Editor::SubmitMTextInput(const std::string& utf8Text)
     {
-        if (!m_mtextRequest.Active || utf8Text.empty())
+        if (!m_mtextRequest.Active)
+            return;
+
+        m_mtextRequest.Active = false;
+
+        if (utf8Text.empty())
         {
-            m_mtextRequest.Active = false;
+            m_mtextRequest.EditTargetId = Object::InvalidID;
             return;
         }
 
-        auto& scene = m_doc->GetScene();
+        auto& scene    = m_doc->GetScene();
         auto& cmdStack = m_doc->GetCommandStack();
-        const auto& layer = scene.GetLayerManager().GetActiveLayer();
 
+        if (m_mtextRequest.EditTargetId != Object::InvalidID)
+        {
+            auto cmd = std::make_unique<EditMTextCommand>(
+                m_mtextRequest.EditTargetId,
+                m_mtextRequest.InitialText,
+                utf8Text);
+            cmdStack.Execute(std::move(cmd), scene);
+            m_mtextRequest.EditTargetId = Object::InvalidID;
+            printf("[MTextEdit] 多行文字已修改: %s\n", utf8Text.c_str());
+            return;
+        }
+
+        const auto& layer = scene.GetLayerManager().GetActiveLayer();
         auto id  = scene.NextObjectID();
         auto ent = std::make_unique<MTextEntity>(
             id,
@@ -378,7 +413,6 @@ namespace MiniCAD
         auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
         cmdStack.Execute(std::move(cmd), scene);
 
-        m_mtextRequest.Active = false;
         printf("[MTextTool] 多行文字已添加: %s\n", utf8Text.c_str());
     }
 
@@ -416,30 +450,10 @@ namespace MiniCAD
             m_tool.reset();
         }
 
-        // Resolver
-        InputContext resolverCtx {
-                .event      = inputEvent,
-                .scene      = scene,
-                .viewport   = *m_viewport,
-                .snap       = m_snap,
-                .constraint = m_constraintEngine,
-                .picking    = m_picking,
-                .cmdStack   = cmdStack,
-                .overlay    = m_overlay,
-                .tool       = m_tool.get(),
-                .grip       = &m_gripEditor
-        };
+        // 事件副本 e：ctx.event 绑定到它，Resolve 会就地回填捕获点，工具再经 ctx 读取
+        InputEvent e = inputEvent;
 
-        ResolvedInput resolved = m_resolver.GetResolve(resolverCtx);
-
-        m_currentSnap = resolved.hasSnap ? resolved.snap : SnapResult{};
-
-        InputEvent e  = inputEvent;
-        e.HasSnap     = resolved.hasPoint && (resolved.hasSnap || resolved.hasConstraint);
-        if (e.HasSnap)
-            e.SnapWorld = resolved.point;
-
-        InputContext ctx {
+        EditorContext ctx{
                 .event      = e,
                 .scene      = scene,
                 .viewport   = *m_viewport,
@@ -451,6 +465,10 @@ namespace MiniCAD
                 .tool       = m_tool.get(),
                 .grip       = &m_gripEditor
         };
+
+        m_resolver.Resolve(ctx);
+        m_currentSnap = ctx.resolved.hasSnap ? ctx.resolved.snap : SnapResult{};
+
 
         if (e.Type == InputEventType::KeyDown || e.Type == InputEventType::KeyUp)
         {
@@ -483,6 +501,49 @@ namespace MiniCAD
 
         if (!m_gripEditor.IsDragging())
         {
+            // 二次点击已选中的文字实体 → 触发编辑（必须在 Picking 消费事件之前检测）
+            if (e.IsLeftClick())
+            {
+                Math::Point2 screenPt{ static_cast<double>(e.MouseX), static_cast<double>(e.MouseY) };
+                Object::ObjectID hit = m_picking.HitTest(screenPt, 5.0);
+                if (hit != Object::InvalidID && m_picking.GetSelection().count(hit))
+                {
+                    auto* obj = scene.GetEntity(hit);
+                    if (obj && obj->IsKindOf<TextEntity>())
+                    {
+                        auto* te = static_cast<TextEntity*>(obj);
+                        m_textRequest.Active       = true;
+                        m_textRequest.EditTargetId = hit;
+                        m_textRequest.InitialText  = te->GetText();
+                        printf("[Editor] 编辑文字 id=%u\n", static_cast<int>(hit));
+#ifdef MINICAD_WEB
+                        EM_ASM({
+                            var t = UTF8ToString($0);
+                            if (typeof window._minicadShowTextEdit === 'function')
+                                window._minicadShowTextEdit(t);
+                        }, te->GetText().c_str());
+#endif
+                        return true;
+                    }
+                    if (obj && obj->IsKindOf<MTextEntity>())
+                    {
+                        auto* me = static_cast<MTextEntity*>(obj);
+                        m_mtextRequest.Active       = true;
+                        m_mtextRequest.EditTargetId = hit;
+                        m_mtextRequest.InitialText  = me->GetText();
+                        printf("[Editor] 编辑多行文字 id=%u\n",  static_cast<int>(hit));
+#ifdef MINICAD_WEB
+                        EM_ASM({
+                            var t = UTF8ToString($0);
+                            if (typeof window._minicadShowMTextEdit === 'function')
+                                window._minicadShowMTextEdit(t);
+                        }, me->GetText().c_str());
+#endif
+                        return true;
+                    }
+                }
+            }
+
             if (m_picking.OnInput(e))
             {
                 m_gripEditor.MarkDirty();

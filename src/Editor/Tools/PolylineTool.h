@@ -1,7 +1,7 @@
 #pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Input/InputContext.h"
+#include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
@@ -37,7 +37,7 @@ namespace MiniCAD
 
     public:
 
-        bool OnInput(const InputContext& ctx) override
+        bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
             const auto& e = ctx.event;
@@ -302,7 +302,7 @@ namespace MiniCAD
 
     private:
 
-        const InputContext* m_ctx = nullptr;
+        const EditorContext* m_ctx = nullptr;
 
         DrawMode m_mode = DrawMode::Line;
 

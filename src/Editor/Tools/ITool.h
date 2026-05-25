@@ -5,14 +5,14 @@
 
 namespace MiniCAD
 {
-    struct InputContext;
+    struct EditorContext;
 
     class ITool
     {
     public:
         virtual ~ITool() = default;
 
-        virtual bool     OnInput(const InputContext& ctx) = 0;
+        virtual bool     OnInput(const EditorContext& ctx) = 0;
         virtual void     Cancel()          {}
         virtual void     OnSceneChanged()  {}                 // Undo / Redo / Delete 后
         virtual void     OnFocusLost()     {}                 // 中键平移开始

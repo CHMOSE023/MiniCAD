@@ -990,11 +990,20 @@
                 const textHeightFld = document.getElementById('text-height-field');
 
                 function showTextOverlay() {
+                    document.getElementById('text-panel-title').textContent = '输入文字';
                     textField.value = '';
                     textOverlay.classList.add('visible');
                     window._textInputActive = true;
                     requestAnimationFrame(() => textField.focus());
                 }
+
+                window._minicadShowTextEdit = function(initialText) {
+                    document.getElementById('text-panel-title').textContent = '编辑文字';
+                    textField.value = initialText || '';
+                    textOverlay.classList.add('visible');
+                    window._textInputActive = true;
+                    requestAnimationFrame(() => { textField.focus(); textField.select(); });
+                };
 
                 function hideTextOverlay() {
                     textOverlay.classList.remove('visible');
@@ -1038,11 +1047,20 @@
                 const mtextWidthFld  = document.getElementById('mtext-width-field');
 
                 function showMTextOverlay() {
+                    document.getElementById('mtext-panel-title').textContent = '输入多行文字';
                     mtextField.value = '';
                     mtextOverlay.classList.add('visible');
                     window._mtextInputActive = true;
                     requestAnimationFrame(() => mtextField.focus());
                 }
+
+                window._minicadShowMTextEdit = function(initialText) {
+                    document.getElementById('mtext-panel-title').textContent = '编辑多行文字';
+                    mtextField.value = initialText || '';
+                    mtextOverlay.classList.add('visible');
+                    window._mtextInputActive = true;
+                    requestAnimationFrame(() => { mtextField.focus(); mtextField.select(); });
+                };
 
                 function hideMTextOverlay() {
                     mtextOverlay.classList.remove('visible');

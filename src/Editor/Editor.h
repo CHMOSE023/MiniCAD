@@ -8,7 +8,7 @@
 #include "Editor/Input/InputEvent.h"
 #include "Editor/Input/KeyCode.h"
 #include "Editor/Constraint/ConstraintEngine.h"
-#include "Editor/Resolver/Resolver.h"
+#include "Editor/Resolver/InputResolver.h"
 #include "Viewport/Viewport.h"
 #include "Viewport/ViewState.h"
 #include "Scene/Scene.h"
@@ -89,10 +89,12 @@ namespace MiniCAD
         // ── 文字输入请求 ─────────────────────────────────────
         struct TextInputRequest
         {
-            bool         Active    = false;
-            Math::Point3 InsertPos;
-            float        Height    = 2.5f;
-            float        Rotation  = 0.f;
+            bool             Active       = false;
+            Math::Point3     InsertPos;
+            float            Height       = 2.5f;
+            float            Rotation     = 0.f;
+            Object::ObjectID EditTargetId = Object::InvalidID;
+            std::string      InitialText;
         };
 
         TextInputRequest&       GetTextInputRequest()       { return m_textRequest; }
@@ -102,11 +104,13 @@ namespace MiniCAD
         // ── 多行文字输入请求 ─────────────────────────────────
         struct MTextInputRequest
         {
-            bool         Active   = false;
-            Math::Point3 InsertPos;
-            double       Height   = 2.5;
-            double       Rotation = 0.0;
-            double       BoxWidth = 0.0;
+            bool             Active       = false;
+            Math::Point3     InsertPos;
+            double           Height       = 2.5;
+            double           Rotation     = 0.0;
+            double           BoxWidth     = 0.0;
+            Object::ObjectID EditTargetId = Object::InvalidID;
+            std::string      InitialText;
         };
 
         MTextInputRequest&       GetMTextInputRequest()       { return m_mtextRequest; }
@@ -168,7 +172,7 @@ namespace MiniCAD
         SnapResult       m_currentSnap;
         GripEditor       m_gripEditor;
         ConstraintEngine m_constraintEngine;
-        Resolver         m_resolver;
+        InputResolver    m_resolver;        // 输入解析器
 
         // 工具
         std::unique_ptr<ITool> m_tool;

@@ -252,7 +252,19 @@ namespace MiniCAD
             static char s_buf[512] = {};
             ImGui::SetNextItemWidth(-1.f);
             if (ImGui::IsWindowAppearing())
+            {
                 ImGui::SetKeyboardFocusHere();
+                const auto& req = dm.GetEditor().GetTextInputRequest();
+                if (req.EditTargetId != Object::InvalidID)
+                {
+                    auto len = req.InitialText.copy(s_buf, sizeof(s_buf) - 1);
+                    s_buf[len] = '\0';
+                }
+                else
+                {
+                    s_buf[0] = '\0';
+                }
+            }
             bool confirm = ImGui::InputText("##textbuf", s_buf, sizeof(s_buf),
                                             ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::Spacing();
@@ -299,7 +311,16 @@ namespace MiniCAD
             if (ImGui::IsWindowAppearing())
             {
                 ImGui::SetKeyboardFocusHere();
-                s_buf[0] = '\0';
+                const auto& req = dm.GetEditor().GetMTextInputRequest();
+                if (req.EditTargetId != Object::InvalidID)
+                {
+                    auto len = req.InitialText.copy(s_buf, sizeof(s_buf) - 1);
+                    s_buf[len] = '\0';
+                }
+                else
+                {
+                    s_buf[0] = '\0';
+                }
             }
             ImGui::InputTextMultiline("##mtextbuf", s_buf, sizeof(s_buf),
                                       ImVec2(-1.f, ImGui::GetTextLineHeight() * 6));

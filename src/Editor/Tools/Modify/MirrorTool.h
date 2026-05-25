@@ -1,7 +1,7 @@
 #pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Input/InputContext.h"
+#include "Editor/EditorContext.h"
 #include "Editor/Input/KeyCode.h"
 #include "Document/Command/MirrorCopyCommand.h"
 #include "Document/Command/MirrorMoveCommand.h"
@@ -41,7 +41,7 @@ namespace MiniCAD
 
         ~MirrorTool() { printf("[MirrorTool] 退出\n"); }
 
-        bool OnInput(const InputContext& ctx) override
+        bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
             const auto& e = ctx.event;
@@ -249,7 +249,7 @@ namespace MiniCAD
         std::vector<Object*>          m_targets;
         std::vector<Object::ObjectID> m_sourceIds;
 
-        const InputContext* m_ctx = nullptr;
+        const EditorContext* m_ctx = nullptr;
 
         Phase        m_phase = Phase::P0;
         Math::Point3 m_p0{}, m_p1{};

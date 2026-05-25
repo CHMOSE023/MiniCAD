@@ -1,7 +1,7 @@
 #pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Input/InputContext.h"
+#include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Math/Point3.hpp"
@@ -22,7 +22,7 @@ namespace MiniCAD
             printf("退出点绘制工具\n");
         }
 
-        bool OnInput(const InputContext& ctx) override
+        bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
             const auto& e = ctx.event;
@@ -85,6 +85,6 @@ namespace MiniCAD
         }
 
     private:
-        const InputContext* m_ctx = nullptr;
+        const EditorContext* m_ctx = nullptr;
     };
 }

@@ -1,7 +1,7 @@
 #pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
-#include "Editor/Input/InputContext.h"
+#include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/Spline.hpp"
@@ -26,7 +26,7 @@ namespace MiniCAD
             printf("[SplineTool] 退出\n");
         }
 
-        bool OnInput(const InputContext& ctx) override
+        bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
             const auto& e = ctx.event;
@@ -228,7 +228,7 @@ namespace MiniCAD
     private:
         static constexpr double kDoubleClickPx = 6.0;
 
-        const InputContext* m_ctx = nullptr;
+        const EditorContext* m_ctx = nullptr;
 
         std::vector<Math::Point3> m_fitPoints;
         bool                      m_closed = false;

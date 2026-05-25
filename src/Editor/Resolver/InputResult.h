@@ -7,7 +7,7 @@ namespace MiniCAD
     /// <summary>
     /// 最终语义输入
     /// </summary>
-    struct ResolvedInput
+    struct InputResult
     {
         bool hasPoint = false;
         Math::Point3 point;        // 最终用于 Tool 的点
