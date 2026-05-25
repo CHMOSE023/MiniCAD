@@ -55,6 +55,7 @@ namespace MiniCAD
 
             // ── 提示 + 输入框 ──────────────────────────────────
             const std::string& prompt = cl.Prompt();
+            ImGui::AlignTextToFramePadding();   // 提示文本与输入框垂直居中对齐
             ImGui::TextUnformatted(prompt.empty() ? "命令:" : prompt.c_str());
             ImGui::SameLine();
 

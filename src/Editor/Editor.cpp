@@ -17,6 +17,7 @@
 #include "Core/Entity/Entity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include <algorithm>
 #include <cctype>
 
 #ifdef MINICAD_WEB
@@ -255,12 +256,13 @@ namespace MiniCAD
 
     std::vector<std::string> Editor::GetCommandNames() const
     {
+        // 仅返回工具全名用于补全：别名是缩写、本就用于快速输入，无需补全；
+        // 混入会污染候选、使公共前缀补全几乎失效。补全到全名后直接回车即可。
         std::vector<std::string> names;
-        names.reserve(m_aliasRegistry.size() + m_toolRegistry.size());
-        for (const auto& [alias, id] : m_aliasRegistry)
-            names.push_back(alias);
+        names.reserve(m_toolRegistry.size());
         for (const auto& [id, factory] : m_toolRegistry)
             names.push_back(id);
+        std::sort(names.begin(), names.end());
         return names;
     }
 

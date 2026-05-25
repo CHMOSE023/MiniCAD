@@ -210,27 +210,44 @@ namespace MiniCAD
         // ── 2. 工具栏 ────────────────────────────────────────────
         DrawToolbar(dm);
 
-        // ── 3. 绘图区（剩余高度 - 命令行 - 分隔条 - 状态栏） ──────
+        // ── 3. 绘图区 + 拖动条 + 命令行（零间距，使分隔条紧贴绘图区底边） ──
         constexpr float kCmdSplitterH = 5.f;
-        {
-            ImGui::BeginChild("##DocArea", ImVec2(0, -(m_cmdLineHeight + kCmdSplitterH + kStatusBarHeight)),  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
-            DrawDocumentTabs(dm);
-            ImGui::EndChild();
-        }
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, 0.f));
 
-        // ── 4. 拖动条：上下拖动调整命令行高度 ────────────────────
+        ImGui::BeginChild("##DocArea", ImVec2(0, -(m_cmdLineHeight + kCmdSplitterH + kStatusBarHeight)),  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
+        DrawDocumentTabs(dm);
+        ImGui::EndChild();
+
+        // 拖动条：上下拖动调整命令行高度
         ImGui::InvisibleButton("##cmdSplitter", ImVec2(-1.f, kCmdSplitterH));
-        if (ImGui::IsItemActive())
-            m_cmdLineHeight -= ImGui::GetIO().MouseDelta.y;   // 向上拖增大命令行
-        if (ImGui::IsItemHovered() || ImGui::IsItemActive())
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        {
+            const bool active  = ImGui::IsItemActive();
+            const bool hovered = ImGui::IsItemHovered();
+            if (active)
+                m_cmdLineHeight -= ImGui::GetIO().MouseDelta.y;   // 向上拖增大命令行
+            if (active || hovered)
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+
+            // 在拖动条中线画一条分隔线，明示可拖动
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            const float  cy = (mn.y + mx.y) * 0.5f;
+            const ImU32  col = ImGui::GetColorU32((active || hovered) ? ImGuiCol_SeparatorActive : ImGuiCol_Separator);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x, cy), ImVec2(mx.x, cy), col, 1.0f);
+
+            // 渲染循环是事件驱动（WaitMessage 阻塞）；拖动期间持续请求重绘，
+            // 否则 viewport resize 后这一帧可能来不及重新渲染，绘图区显示空 RT 变黑
+            if (active && m_hwnd)
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
         if (m_cmdLineHeight < 60.f)  m_cmdLineHeight = 60.f;
         if (m_cmdLineHeight > 600.f) m_cmdLineHeight = 600.f;
 
-        // ── 5. 命令行 ────────────────────────────────────────────
         DrawCommandLine(dm);
 
-        // ── 6. 状态栏 ────────────────────────────────────────────
+        ImGui::PopStyleVar();   // ItemSpacing
+
+        // ── 4. 状态栏 ────────────────────────────────────────────
         DrawStatusBar(dm);
 
         // ── 5. 文字输入弹窗 ───────────────────────────────────────
