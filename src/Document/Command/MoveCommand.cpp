@@ -9,6 +9,8 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Core/GeomKernel/Line.hpp"
 
 namespace MiniCAD
@@ -103,6 +105,20 @@ namespace MiniCAD
                 e.BeforeSpline = static_cast<SplineEntity*>(entity)->GetSpline();
                 e.AfterSpline  = Translate(e.BeforeSpline, delta);
             }
+            else if (entity->IsKindOf<TextEntity>())
+            {
+                auto* te = static_cast<TextEntity*>(entity);
+                e.Kind       = MoveEntityEntry::Kind::Text;
+                e.BeforeText = { te->GetPosition(), te->GetRotation() };
+                e.AfterText  = { te->GetPosition() + delta, te->GetRotation() };
+            }
+            else if (entity->IsKindOf<MTextEntity>())
+            {
+                auto* me = static_cast<MTextEntity*>(entity);
+                e.Kind        = MoveEntityEntry::Kind::MText;
+                e.BeforeMText = { me->GetPosition(), me->GetRotation() };
+                e.AfterMText  = { me->GetPosition() + delta, me->GetRotation() };
+            }
             else
             {
                 continue;   // 不识别的 Entity 类型,跳过
@@ -147,6 +163,22 @@ namespace MiniCAD
         case MoveEntityEntry::Kind::Spline:
             static_cast<SplineEntity*>(entity)->GetSpline() = useAfter ? e.AfterSpline : e.BeforeSpline;
             break;
+        case MoveEntityEntry::Kind::Text:
+        {
+            const auto& snap = useAfter ? e.AfterText : e.BeforeText;
+            auto* te = static_cast<TextEntity*>(entity);
+            te->SetPosition(snap.pos);
+            te->SetRotation(static_cast<float>(snap.rotation));
+            break;
+        }
+        case MoveEntityEntry::Kind::MText:
+        {
+            const auto& snap = useAfter ? e.AfterMText : e.BeforeMText;
+            auto* me = static_cast<MTextEntity*>(entity);
+            me->SetPosition(snap.pos);
+            me->SetRotation(snap.rotation);
+            break;
+        }
         }
     }
 

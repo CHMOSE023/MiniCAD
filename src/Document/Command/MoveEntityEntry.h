@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Object/Object.hpp"
+#include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/Point.hpp"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/GeomKernel/Circle.hpp"
@@ -25,6 +26,8 @@ namespace MiniCAD
             Ellipse,
             Polyline,
             Spline,
+            Text,
+            MText,
         } Kind;
 
         // 仅使用与 Kind 对应的那对字段,其余字段未定义但不读取
@@ -36,5 +39,10 @@ namespace MiniCAD
         Ellipse   BeforeEllipse, AfterEllipse;
         Polyline  BeforePolyline, AfterPolyline;
         Spline    BeforeSpline, AfterSpline;
+
+        // 文字实体快照：变换操作只涉及位置和旋转角
+        struct TextSnap { Math::Point3 pos = {}; double rotation = 0; };
+        TextSnap  BeforeText, AfterText;
+        TextSnap  BeforeMText, AfterMText;
     };
 }

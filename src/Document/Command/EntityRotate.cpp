@@ -8,6 +8,8 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include "Core/Math/Constants.hpp"
 
 #include <cmath>
@@ -118,6 +120,20 @@ namespace MiniCAD
             auto& sp = se.GetSpline();
             for (auto& p : sp.FitPoints) p = RotatePoint(p, pivot, angle);
             sp.Build();
+            return;
+        }
+        if (entity.IsKindOf<TextEntity>())
+        {
+            auto& te = static_cast<TextEntity&>(entity);
+            te.SetPosition(RotatePoint(te.GetPosition(), pivot, angle));
+            te.SetRotation(te.GetRotation() + static_cast<float>(angle));
+            return;
+        }
+        if (entity.IsKindOf<MTextEntity>())
+        {
+            auto& me = static_cast<MTextEntity&>(entity);
+            me.SetPosition(RotatePoint(me.GetPosition(), pivot, angle));
+            me.SetRotation(me.GetRotation() + angle);
             return;
         }
     }

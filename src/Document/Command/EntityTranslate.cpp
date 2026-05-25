@@ -8,6 +8,8 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 
 namespace MiniCAD
 {
@@ -75,6 +77,18 @@ namespace MiniCAD
             auto& sp = se.GetSpline();
             for (auto& p : sp.FitPoints) p += d;
             sp.Build();
+            return;
+        }
+        if (entity.IsKindOf<TextEntity>())
+        {
+            auto& te = static_cast<TextEntity&>(entity);
+            te.SetPosition(te.GetPosition() + d);
+            return;
+        }
+        if (entity.IsKindOf<MTextEntity>())
+        {
+            auto& me = static_cast<MTextEntity&>(entity);
+            me.SetPosition(me.GetPosition() + d);
             return;
         }
     }

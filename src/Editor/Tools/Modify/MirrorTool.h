@@ -18,6 +18,8 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 
 #include <vector>
 #include <cstdio>
@@ -212,6 +214,12 @@ namespace MiniCAD
                 auto pts = sp.Tessellate(32);
                 for (size_t i = 0; i + 1 < pts.size(); ++i)
                     m_ctx->overlay.AddLine(pts[i], pts[i + 1], color);
+                return;
+            }
+            if (entity->IsKindOf<TextEntity>() || entity->IsKindOf<MTextEntity>())
+            {
+                auto box = entity->GetBoundingBox();
+                m_ctx->overlay.AddRect(box.Min, box.Max, color);
                 return;
             }
         }
