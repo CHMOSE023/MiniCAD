@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 #include "ImGuiLayer.h"
+#include "CommandConsole.h"
 #include "Editor/Input/ViewportInput.h"
 #include <imgui.h>
 #include <memory>
@@ -57,6 +58,7 @@ namespace MiniCAD
         void DrawToolbar       (DocumentManager& dm);
         void DrawDocumentTabs  (DocumentManager& dm);
         void DrawStatusBar     (DocumentManager& dm);
+        void DrawCommandLine   (DocumentManager& dm);
         void DrawTextInputPopup (DocumentManager& dm);
         void DrawMTextInputPopup(DocumentManager& dm);
         void InitToolIcons   ();
@@ -72,6 +74,9 @@ namespace MiniCAD
         Tool                        m_activeTool    = Tool::Select;
 
         float                       m_captionButtonsScreenX = 0.f;
+        float                       m_cmdLineHeight = 130.f;    // 命令行高度（可拖动调整）
+
+        CommandConsole              m_console;                 // 命令行控制台（输入/补全/历史/回显）
 
         std::unordered_map<std::string, ImTextureID> m_toolIcons;
     };

@@ -93,6 +93,12 @@ namespace MiniCAD
             return m_fitPoints.empty() ? Math::Point3{} : m_fitPoints.back();
         }
 
+        std::string GetPrompt() const override
+        {
+            return m_fitPoints.empty() ? "指定起点:"
+                                       : "指定下一点 [右键提交/C 闭合/Z 撤回/ESC 取消]:";
+        }
+
         void OnSceneChanged() override { Reset(); }
 
     private:

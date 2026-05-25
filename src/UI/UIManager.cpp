@@ -210,14 +210,27 @@ namespace MiniCAD
         // ── 2. 工具栏 ────────────────────────────────────────────
         DrawToolbar(dm);
 
-        // ── 3. 绘图区（剩余高度 - 状态栏） ──────────────────────
-        { 
-            ImGui::BeginChild("##DocArea", ImVec2(0, -kStatusBarHeight),  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
+        // ── 3. 绘图区（剩余高度 - 命令行 - 分隔条 - 状态栏） ──────
+        constexpr float kCmdSplitterH = 5.f;
+        {
+            ImGui::BeginChild("##DocArea", ImVec2(0, -(m_cmdLineHeight + kCmdSplitterH + kStatusBarHeight)),  false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
             DrawDocumentTabs(dm);
             ImGui::EndChild();
         }
 
-        // ── 4. 状态栏 ────────────────────────────────────────────
+        // ── 4. 拖动条：上下拖动调整命令行高度 ────────────────────
+        ImGui::InvisibleButton("##cmdSplitter", ImVec2(-1.f, kCmdSplitterH));
+        if (ImGui::IsItemActive())
+            m_cmdLineHeight -= ImGui::GetIO().MouseDelta.y;   // 向上拖增大命令行
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (m_cmdLineHeight < 60.f)  m_cmdLineHeight = 60.f;
+        if (m_cmdLineHeight > 600.f) m_cmdLineHeight = 600.f;
+
+        // ── 5. 命令行 ────────────────────────────────────────────
+        DrawCommandLine(dm);
+
+        // ── 6. 状态栏 ────────────────────────────────────────────
         DrawStatusBar(dm);
 
         // ── 5. 文字输入弹窗 ───────────────────────────────────────
@@ -898,6 +911,14 @@ namespace MiniCAD
 
         ImGui::EndTabBar();
         ImGui::PopStyleVar();
+    }
+
+    void UIManager::DrawCommandLine(DocumentManager& dm)
+    {
+        if (!dm.GetActive())
+            return;
+
+        m_console.Draw(dm.GetEditor(), m_cmdLineHeight);
     }
 
     void UIManager::DrawStatusBar(DocumentManager& dm)

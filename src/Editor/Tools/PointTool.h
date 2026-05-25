@@ -62,6 +62,11 @@ namespace MiniCAD
             return Math::Point3(0.f, 0.f, 0.f);
         }
 
+        std::string GetPrompt() const override
+        {
+            return "指定点位置 [右键退出]:";
+        }
+
     private:
 
         Math::Point3 GetPoint(const InputEvent& e)

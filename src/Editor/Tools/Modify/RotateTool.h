@@ -128,6 +128,16 @@ namespace MiniCAD
         bool         HasAnchor() const override { return m_phase == Phase::Angle; }
         Math::Point3 GetAnchor() const override { return m_pivot; }
 
+        std::string GetPrompt() const override
+        {
+            switch (m_phase)
+            {
+                case Phase::AskCopy: return "是否保留源对象? [是(Y)/否(N)]:";
+                case Phase::Angle:   return "指定旋转角度 [右键/ESC 取消]:";
+                default:             return "指定基点（旋转中心）:";
+            }
+        }
+
     private:
         enum class Phase { Base, AskCopy, Angle };
 

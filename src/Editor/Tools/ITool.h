@@ -2,6 +2,7 @@
 #include "Editor/Input/InputEvent.h"
 #include "Core/Math/Point3.hpp"
 #include <functional>
+#include <string>
 
 namespace MiniCAD
 {
@@ -20,6 +21,8 @@ namespace MiniCAD
         virtual bool     HasAnchor() const { return false; }  // 是否有"锚点"
 
         virtual Math::Point3 GetAnchor() const { return {}; }     // 获取锚点（仅在 HasAnchor() == true 时有效）
+
+        virtual std::string  GetPrompt() const { return {}; }     // 命令行提示（随工具状态变化）
 
         std::function<void()> OnFinished;
     };

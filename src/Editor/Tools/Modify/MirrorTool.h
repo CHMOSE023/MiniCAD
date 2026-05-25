@@ -126,6 +126,16 @@ namespace MiniCAD
         bool         HasAnchor() const override { return m_phase == Phase::P1; }
         Math::Point3 GetAnchor() const override { return m_p0; }
 
+        std::string GetPrompt() const override
+        {
+            switch (m_phase)
+            {
+                case Phase::P1:        return "指定镜像线第二点:";
+                case Phase::AskDelete: return "是否删除源对象? [是(Y)/否(N)]:";
+                default:               return "指定镜像线第一点:";
+            }
+        }
+
     private:
         enum class Phase { P0, P1, AskDelete };
 

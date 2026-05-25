@@ -96,6 +96,11 @@ namespace MiniCAD
         bool         HasAnchor()  const override { return m_hasBase; }
         Math::Point3 GetAnchor()  const override { return m_base; }
 
+        std::string GetPrompt() const override
+        {
+            return m_hasBase ? "指定目标点 [右键/ESC 取消]:" : "指定基点:";
+        }
+
     private:
         Math::Point3 GetPoint(const InputEvent& e) const
         {

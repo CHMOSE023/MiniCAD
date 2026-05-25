@@ -66,6 +66,11 @@ namespace MiniCAD
 
         Math::Point3 GetAnchor() const override { return m_firstCorner; }
 
+        std::string GetPrompt() const override
+        {
+            return m_hasStart ? "指定另一个角点 [右键/ESC 退出]:" : "指定第一个角点:";
+        }
+
         void OnSceneChanged() override { Reset(); }
 
     private:

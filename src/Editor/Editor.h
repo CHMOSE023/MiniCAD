@@ -9,6 +9,7 @@
 #include "Editor/Input/KeyCode.h"
 #include "Editor/Constraint/ConstraintEngine.h"
 #include "Editor/Resolver/InputResolver.h"
+#include "Editor/CommandLine/CommandLine.h"
 #include "Viewport/Viewport.h"
 #include "Viewport/ViewState.h"
 #include "Scene/Scene.h"
@@ -25,8 +26,7 @@
 
 namespace MiniCAD
 {
-    class Document;
-    class FontSystem;
+    class Document; 
 
     class Editor
     {
@@ -62,6 +62,12 @@ namespace MiniCAD
         void RegisterTool(const std::string& toolId, std::function<std::unique_ptr<ITool>()> factory);
         void RegisterAlias(const std::string& alias, const std::string& toolId);
         void ActivateToolById(const std::string& toolId);
+
+        // ── 命令行 ───────────────────────────────────────────
+        CommandLine&       GetCmdLine()       { return m_commandLine; }
+        const CommandLine& GetCmdLine() const { return m_commandLine; }
+        void RunCommand(const std::string& text);   // 命令行/键盘提交的命令统一入口
+        std::vector<std::string> GetCommandNames() const;  // 所有别名 + 工具全名，供补全
 
         // ── 绘制工具便捷方法 ────────────────────────────────
         void StartLineTool();
@@ -173,6 +179,7 @@ namespace MiniCAD
         GripEditor       m_gripEditor;
         ConstraintEngine m_constraintEngine;
         InputResolver    m_resolver;        // 输入解析器
+        CommandLine      m_commandLine;     // 命令行提示与回显缓冲
 
         // 工具
         std::unique_ptr<ITool> m_tool;

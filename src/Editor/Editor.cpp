@@ -17,6 +17,7 @@
 #include "Core/Entity/Entity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include <cctype>
 
 #ifdef MINICAD_WEB
 #include <emscripten.h>
@@ -213,27 +214,69 @@ namespace MiniCAD
 
     void Editor::ActivateToolByAlias(const std::string& alias)
     {
-        if (alias == "Previous" || alias == "PREVIOUS")
+        auto iequals = [](const std::string& a, const std::string& b)
+        {
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i)
+                if (std::toupper((unsigned char)a[i]) != std::toupper((unsigned char)b[i]))
+                    return false;
+            return true;
+        };
+
+        if (iequals(alias, "Previous"))
         {
             m_picking.RestoreLastSelection();
             m_gripEditor.MarkDirty();
             return;
         }
 
-        auto it = m_aliasRegistry.find(alias);
-        if (it != m_aliasRegistry.end())
+        // 别名表（键统一为大写）：L → Line
+        std::string upper = alias;
+        for (auto& c : upper) c = (char)std::toupper((unsigned char)c);
+        if (auto it = m_aliasRegistry.find(upper); it != m_aliasRegistry.end())
         {
             ActivateToolById(it->second);
             return;
         }
 
-        if (m_toolRegistry.contains(alias))
+        // 工具全名（大小写不敏感）：line / LINE / Line → Line
+        for (const auto& [id, factory] : m_toolRegistry)
         {
-            ActivateToolById(alias);
-            return;
+            if (iequals(id, alias))
+            {
+                ActivateToolById(id);
+                return;
+            }
         }
 
+        m_commandLine.Echo("未知命令: " + alias);
         printf("[Editor] Unknown command: %s\n", alias.c_str());
+    }
+
+    std::vector<std::string> Editor::GetCommandNames() const
+    {
+        std::vector<std::string> names;
+        names.reserve(m_aliasRegistry.size() + m_toolRegistry.size());
+        for (const auto& [alias, id] : m_aliasRegistry)
+            names.push_back(alias);
+        for (const auto& [id, factory] : m_toolRegistry)
+            names.push_back(id);
+        return names;
+    }
+
+    void Editor::RunCommand(const std::string& text)
+    {
+        // 去除首尾空白
+        size_t b = text.find_first_not_of(" \t");
+        if (b == std::string::npos)
+        {
+            // 空回车 = 重复上一条命令（AutoCAD 行为）
+            if (!m_lastCommand.empty())
+                ActivateToolByAlias(m_lastCommand);
+            return;
+        }
+        size_t e = text.find_last_not_of(" \t");
+        ActivateToolByAlias(text.substr(b, e - b + 1));
     }
 
     char Editor::ToCommandChar(KeyCode key)
@@ -259,6 +302,7 @@ namespace MiniCAD
         auto it = m_toolRegistry.find(toolId);
         if (it == m_toolRegistry.end())
         {
+            m_commandLine.Echo("未知命令: " + toolId);
             printf("[Editor] Unknown tool: %s\n", toolId.c_str());
             return;
         }
@@ -267,10 +311,12 @@ namespace MiniCAD
 
         if (!tool)
         {
+            m_commandLine.Echo(toolId + ": 需要先选择对象");
             printf("[Editor] Tool '%s' has no targets, skipped.\n", toolId.c_str());
             return;
         }
 
+        m_commandLine.Echo("命令: " + toolId);
         printf("[Editor] Start %s\n", toolId.c_str());
         m_lastCommand = toolId;
         ActivateTool(std::move(tool));
@@ -838,6 +884,9 @@ namespace MiniCAD
     void Editor::Render()
     {
         if (!m_doc || !m_viewport) return;
+
+        // 命令行提示 = 当前工具的状态提示（无工具时为空）
+        m_commandLine.SetPrompt(m_tool ? m_tool->GetPrompt() : std::string{});
 
         m_overlayVertices.clear();
 

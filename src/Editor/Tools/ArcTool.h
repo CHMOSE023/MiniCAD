@@ -120,6 +120,16 @@ namespace MiniCAD
             return m_p1;
         }
 
+        std::string GetPrompt() const override
+        {
+            switch (m_step)
+            {
+                case 1:  return "指定圆弧上一点:";
+                case 2:  return "指定终点 [右键/ESC 退出]:";
+                default: return "指定起点:";
+            }
+        }
+
         void OnSceneChanged() override
         {
             Reset();

@@ -146,6 +146,16 @@ namespace MiniCAD
 
         Math::Point3 GetAnchor() const override { return m_center; }
 
+        std::string GetPrompt() const override
+        {
+            switch (m_step)
+            {
+                case 1:  return "指定长轴端点:";
+                case 2:  return "指定短轴端点 [右键/ESC 退出]:";
+                default: return "指定圆心:";
+            }
+        }
+
         void OnSceneChanged() override { Reset(); }
 
     private:
