@@ -5,100 +5,252 @@
 #include <vector>
 #include <cstring>
 #include <cctype>
+#include <algorithm>
 
 namespace MiniCAD
 {
-    // 移植自 imgui_demo 的 ExampleAppConsole，接入 MiniCAD 命令系统：
+    // 命令行控件：输入字符实时在上方弹出候选列表（类 AutoCAD / Claude Code 风格）
     //   回显 ← Editor::CommandLine::Lines()   提示 ← 活跃工具 GetPrompt()
-    //   Tab 补全候选 ← Editor::GetCommandNames()   回车 → Editor::RunCommand()
-    //   上下键历史由本类维护（纯 UI 导航状态）
+    //   候选 ← Editor::GetCommandNames() 前缀匹配   回车/鼠标 → Editor::RunCommand()
+    //   Up/Down：候选列表导航（无候选时导航历史）
     class CommandConsole
-    {
+    { 
     public:
         void Draw(Editor& editor, float height)
-        {
-            CommandLine& cl = editor.GetCmdLine();
+        { 
+            CommandLine& cl = editor.GetCmdLine(); 
 
-            ImGui::BeginChild("##Console", ImVec2(0.f, height), ImGuiChildFlags_Borders,
-                              ImGuiWindowFlags_NoScrollbar);
+            // 配色
+            const ImVec4 kHistoryBg     = ImVec4(0.85f, 0.85f, 0.85f, 1.f);
+            const ImVec4 kHistoryText   = ImVec4(0.f, 0.f, 0.f, 1.f); 
+            const ImVec4 kInputBg       = ImVec4(1.f, 1.f, 1.f, 1.f);
+            const ImVec4 kInputText     = ImVec4(0.f, 0.f, 0.f, 1.f); 
+            const ImVec4 kCandidateBg   = ImVec4(0.15f, 0.15f, 0.18f, 1.f);
+            const ImVec4 kCandidateText = ImVec4(1.f, 1.f, 1.f, 1.f);
+            const float kInputBarH      = 32.f;
+            const float kSeparatorH     = 1.f;
 
-            // ── 回显滚动区（保留底部一行给输入框） ──────────────
+            
+            ImGui::BeginChild("##Console", ImVec2(0.f, height), ImGuiChildFlags_Borders
+                                                              , ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+             
             ImGuiStyle& style = ImGui::GetStyle();
-            const float footer = style.ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));   // 透出外层 Console 底色
-            if (ImGui::BeginChild("##Scroll", ImVec2(0.f, -footer), ImGuiChildFlags_NavFlattened,
-                                  ImGuiWindowFlags_HorizontalScrollbar))
-            {
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
-                for (const std::string& line : cl.Lines())
-                {
-                    ImVec4 color;
-                    bool   hasColor = false;
-                    if (line.rfind("未知命令", 0) == 0 || line.rfind("候选", 0) == 0)
-                    { color = ImVec4(1.0f, 0.5f, 0.4f, 1.f); hasColor = true; }
-                    else if (line.rfind("命令:", 0) == 0)
-                    { color = ImVec4(0.5f, 0.9f, 0.5f, 1.f); hasColor = true; }
+            const float footer = kInputBarH + kSeparatorH + style.ItemSpacing.y * 2.f;
 
-                    if (hasColor) ImGui::PushStyleColor(ImGuiCol_Text, color);
-                    ImGui::TextUnformatted(line.c_str());
-                    if (hasColor) ImGui::PopStyleColor();
+            // ============================================================
+            // 1. 命令历史区
+            // ============================================================
+            { 
+                ImGui::PushStyleColor(ImGuiCol_ChildBg,          kHistoryBg);
+                ImGui::PushStyleColor(ImGuiCol_Text,             kHistoryText);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.f, 4.f));
+
+                if (ImGui::BeginChild("##Scroll", ImVec2(0.f, -footer), ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_HorizontalScrollbar))
+                {
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 1.f));
+
+                    for (const std::string& line : cl.Lines())
+                    {
+                        ImGui::SetCursorPosX(5.0);
+                        ImGui::TextUnformatted(line.c_str());
+                    }
+
+                    const bool atBottom =
+                        ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
+
+                    if (cl.ConsumeScrollToBottom() || (m_autoScroll && atBottom))
+                        ImGui::SetScrollHereY(1.f); 
+
+                    ImGui::PopStyleVar();
                 }
 
-                const bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
-                if (cl.ConsumeScrollToBottom() || (m_autoScroll && atBottom))
-                    ImGui::SetScrollHereY(1.f);
-
+                ImGui::EndChild(); 
                 ImGui::PopStyleVar();
+                ImGui::PopStyleColor(2);
             }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();   // ChildBg
 
-            // ── 提示 + 输入框 ──────────────────────────────────
-            const std::string& prompt = cl.Prompt();
-            ImGui::AlignTextToFramePadding();   // 提示文本与输入框垂直居中对齐
-            ImGui::TextUnformatted(prompt.empty() ? "命令:" : prompt.c_str());
-            ImGui::SameLine();
+            // ============================================================
+            // 2. 分割线
+            // ============================================================
+            ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.6f, 0.6f, 0.6f, 1.f));
 
-            CbCtx ctx{ this, &editor };
-            const ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
-                                            | ImGuiInputTextFlags_CallbackCompletion
-                                            | ImGuiInputTextFlags_CallbackHistory;
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));   // 输入框背景透出 Console 底色
-            ImGui::SetNextItemWidth(-1.f);
-            const bool submitted = ImGui::InputText("##cmdinput", m_input, sizeof(m_input), flags, &TextEditStub, &ctx);
+            ImGui::Separator();
+
             ImGui::PopStyleColor();
-            if (submitted)
-            {
-                char*  s   = m_input;
-                size_t len = std::strlen(s);
-                while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) s[--len] = '\0';
-                if (s[0]) ExecCommand(editor, s);
-                m_input[0]     = '\0';
-                m_reclaimFocus = true;
-            }
 
-            ImGui::SetItemDefaultFocus();
-            if (m_reclaimFocus)
+            // ============================================================
+            // 3. 输入区
+            // ============================================================
             {
-                ImGui::SetKeyboardFocusHere(-1);   // 回车后把焦点收回输入框
-                m_reclaimFocus = false;
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, kInputBg);
+
+                if (ImGui::BeginChild("##InputBar", ImVec2(0.f, 32.f), 0, ImGuiWindowFlags_NoScrollbar))
+                {
+                    const float lineH   = ImGui::GetFrameHeight();
+                    const float offsetY = (32.f - lineH) * 0.5f;  
+                    ImGui::SetCursorPosY(offsetY);
+                    ImGui::SetCursorPosX(5.0);
+
+
+                    const std::string& prompt = cl.Prompt(); 
+                    ImGui::AlignTextToFramePadding(); 
+                    ImGui::PushStyleColor(ImGuiCol_Text, kInputText); 
+                    ImGui::TextUnformatted(prompt.empty() ? "命令:" : prompt.c_str());
+                    ImGui::PopStyleColor(); 
+                    ImGui::SameLine();
+
+                    // 输入框位置（候选框定位）
+                    const ImVec2 inputPos  = ImGui::GetCursorScreenPos();
+                    const float inputWidth = ImGui::GetContentRegionAvail().x;
+
+                    CbCtx ctx{ this, &editor };
+
+                    const ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
+                                                    | ImGuiInputTextFlags_CallbackAlways 
+                                                    | ImGuiInputTextFlags_CallbackHistory;
+
+                    ImGui::PushStyleColor(ImGuiCol_FrameBg,           kInputBg);
+                    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,    kInputBg);
+                    ImGui::PushStyleColor(ImGuiCol_FrameBgActive,     kInputBg);
+                    ImGui::PushStyleColor(ImGuiCol_Text,              ImVec4(0.f, 0.f, 0.f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_InputTextCursor,   ImVec4(0.f, 0.f, 0.f, 1.f));
+                    ImGui::PushStyleColor(ImGuiCol_TextSelectedBg,    ImVec4(0.25f, 0.48f, 0.78f, 0.35f));
+                    ImGui::PushStyleColor(ImGuiCol_Border,            ImVec4(0.6f, 0.6f, 0.6f, 1.f));
+
+                    ImGui::SetNextItemWidth(-1.f);
+
+                    if (m_reclaimFocus)
+                    {
+                        ImGui::SetKeyboardFocusHere(0);
+                        m_reclaimFocus = false;
+                    }
+
+                    const bool submitted = ImGui::InputText("##cmdinput", m_input, sizeof(m_input), flags, &TextEditStub, &ctx);
+
+                    ImGui::PopStyleColor(7);
+
+                    // ====================================================
+                    // 回车执行
+                    // ====================================================
+                    if (submitted)
+                    {
+                        char tmp[256];
+
+                        if (m_selectedCandidate >= 0 &&  m_selectedCandidate < (int)m_candidates.size())
+                        {
+                            std::strncpy(tmp, m_candidates[m_selectedCandidate].c_str(), sizeof(tmp) - 1);
+                        }
+                        else
+                        {
+                            std::strncpy(tmp, m_input, sizeof(tmp) - 1);
+                        }
+
+                        tmp[sizeof(tmp) - 1] = '\0'; 
+                        size_t len = std::strlen(tmp);
+
+                        while (len > 0 && (tmp[len - 1] == ' ' || tmp[len - 1] == '\t'))
+                        {
+                            tmp[--len] = '\0';
+                        }
+
+                        if (tmp[0])
+                        {
+                            ExecCommand(editor, tmp);
+                        }
+
+                        m_input[0] = '\0';
+
+                        m_candidates.clear();
+                        m_selectedCandidate = -1;
+
+                        m_reclaimFocus = true;
+                    }
+
+                    // ====================================================
+                    // 鼠标点击候选项执行
+                    // ====================================================
+                    if (m_pendingExec >= 0)
+                    {
+                        if (m_pendingExec < (int)m_candidates.size())
+                        {
+                            ExecCommand(editor, m_candidates[m_pendingExec].c_str());
+                        }
+
+                        m_pendingExec = -1; 
+
+                        m_candidates.clear();
+                        m_selectedCandidate = -1;
+
+                        m_clearBuffer = true;
+                        m_reclaimFocus = true;
+                    }
+
+                    // ====================================================
+                    // 候选列表
+                    // ====================================================
+                    DrawCandidateList({ inputPos.x,inputPos.y - 12 }, 320);
+                } 
+
+                ImGui::EndChild(); 
+                ImGui::PopStyleColor();
             }
 
             ImGui::EndChild();
         }
 
     private:
-        struct CbCtx { CommandConsole* self; Editor* editor; };
+        struct CbCtx { CommandConsole* self; Editor* editor; }; 
+
+        // 候选列表浮窗：贴紧输入框上方，固定宽度与输入框一致
+        void DrawCandidateList(ImVec2 inputPos, float inputWidth)
+        {
+            if (m_candidates.empty()) return;
+
+            const float lineH   = ImGui::GetTextLineHeightWithSpacing();
+            const float padV    = 4.f;
+            const int   maxShow = 8;
+            const int   count   = std::min((int)m_candidates.size(), maxShow);
+            const float popupH  = count * lineH + padV * 2.f;
+
+            ImGui::SetNextWindowPos(ImVec2(inputPos.x, inputPos.y - popupH), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(inputWidth, popupH), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.95f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.f, padV));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.13f, 0.13f, 0.17f, 1.f));
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.48f, 0.78f, 0.55f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.48f, 0.78f, 0.75f));
+
+            const ImGuiWindowFlags wf = ImGuiWindowFlags_NoDecoration
+                                      | ImGuiWindowFlags_NoMove
+                                      | ImGuiWindowFlags_NoSavedSettings
+                                      | ImGuiWindowFlags_NoFocusOnAppearing
+                                      | ImGuiWindowFlags_NoNav;
+            if (ImGui::Begin("##cmd_candidates", nullptr, wf))
+            {
+                for (int i = 0; i < (int)m_candidates.size(); ++i)
+                {
+                    const bool sel = (i == m_selectedCandidate);
+                    ImGui::PushID(i);
+                    if (ImGui::Selectable(m_candidates[i].c_str(), sel))
+                        m_pendingExec = i;
+                    if (sel) ImGui::SetScrollHereY(0.5f);
+                    ImGui::PopID();
+                }
+            }
+            ImGui::End();
+
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
+        }
 
         void ExecCommand(Editor& editor, const char* cmd)
         {
-            // 命令历史去重后追加到末尾
             for (size_t i = 0; i < m_history.size(); ++i)
                 if (IEquals(m_history[i], cmd)) { m_history.erase(m_history.begin() + i); break; }
             m_history.emplace_back(cmd);
             m_historyPos = -1;
-
-            editor.RunCommand(cmd);   // 回显由 Editor 写入 CommandLine
+            editor.RunCommand(cmd);
         }
 
         static int TextEditStub(ImGuiInputTextCallbackData* data)
@@ -111,84 +263,83 @@ namespace MiniCAD
         {
             switch (data->EventFlag)
             {
-            case ImGuiInputTextFlags_CallbackCompletion:
+            case ImGuiInputTextFlags_CallbackAlways:
             {
-                // 定位当前单词
-                const char* word_end   = data->Buf + data->CursorPos;
-                const char* word_start = word_end;
-                while (word_start > data->Buf)
+                // 鼠标点击执行后清空 InputText 内部缓冲
+                if (m_clearBuffer)
                 {
-                    const char c = word_start[-1];
-                    if (c == ' ' || c == '\t' || c == ',' || c == ';') break;
-                    word_start--;
+                    data->DeleteChars(0, data->BufTextLen);
+                    m_clearBuffer = false;
+                    m_prevBuf[0] = '\0';
+                    m_candidates.clear();
+                    m_selectedCandidate = -1;
+                    break;
                 }
-                const int wlen = (int)(word_end - word_start);
 
-                // 候选 = 命令名中前缀匹配者
-                std::vector<std::string> all = editor.GetCommandNames();
-                std::vector<const char*> cand;
-                for (const std::string& name : all)
-                    if (Strnicmp(name.c_str(), word_start, wlen) == 0)
-                        cand.push_back(name.c_str());
+                // 仅在内容变化时重算候选（避免每帧无意义查询）
+                if (std::strcmp(data->Buf, m_prevBuf) != 0)
+                {
+                    std::strncpy(m_prevBuf, data->Buf, sizeof(m_prevBuf) - 1);
+                    m_prevBuf[sizeof(m_prevBuf) - 1] = '\0';
 
-                if (cand.empty())
-                {
-                    // 无匹配
-                }
-                else if (cand.size() == 1)
-                {
-                    data->DeleteChars((int)(word_start - data->Buf), wlen);
-                    data->InsertChars(data->CursorPos, cand[0]);
-                    data->InsertChars(data->CursorPos, " ");
-                }
-                else
-                {
-                    // 多候选：补全到公共前缀，并把候选列入回显
-                    int match_len = wlen;
-                    for (;;)
+                    // 提取光标前的当前单词
+                    const char* end = data->Buf + data->CursorPos;
+                    const char* start = end;
+                    while (start > data->Buf)
                     {
-                        int  c            = 0;
-                        bool allMatch     = true;
-                        for (size_t i = 0; i < cand.size() && allMatch; ++i)
+                        const char ch = start[-1];
+                        if (ch == ' ' || ch == '\t' || ch == ',' || ch == ';') break;
+                        start--;
+                    }
+                    const int wlen = (int)(end - start); 
+
+                    m_candidates.clear();
+                    m_selectedCandidate = -1;
+                    if (wlen > 0)
+                    {
+                        for (const std::string& name : editor.GetCommandNames())
                         {
-                            if (i == 0)
-                                c = std::toupper((unsigned char)cand[i][match_len]);
-                            else if (c == 0 || c != std::toupper((unsigned char)cand[i][match_len]))
-                                allMatch = false;
+                            if (Strnicmp(name.c_str(), start, wlen) == 0)
+                            {
+                                m_candidates.push_back(name);
+                            }
                         }
-                        if (!allMatch) break;
-                        match_len++;
                     }
-                    if (match_len > wlen)
-                    {
-                        data->DeleteChars((int)(word_start - data->Buf), wlen);
-                        data->InsertChars(data->CursorPos, cand[0], cand[0] + match_len);
-                    }
-
-                    std::string msg = "候选: ";
-                    for (const char* c : cand) { msg += c; msg += "  "; }
-                    editor.GetCmdLine().Echo(msg);
                 }
                 break;
             }
             case ImGuiInputTextFlags_CallbackHistory:
             {
-                const int prev = m_historyPos;
-                if (data->EventKey == ImGuiKey_UpArrow)
+                if (!m_candidates.empty())
                 {
-                    if (m_historyPos == -1)        m_historyPos = (int)m_history.size() - 1;
-                    else if (m_historyPos > 0)     m_historyPos--;
+                    // 有候选时 Up/Down 在候选列表中循环导航
+                    if (data->EventKey == ImGuiKey_UpArrow)
+                        m_selectedCandidate = (m_selectedCandidate <= 0)
+                        ? (int)m_candidates.size() - 1 : m_selectedCandidate - 1;
+                    else if (data->EventKey == ImGuiKey_DownArrow)
+                        m_selectedCandidate = (m_selectedCandidate >= (int)m_candidates.size() - 1)
+                        ? -1 : m_selectedCandidate + 1;
                 }
-                else if (data->EventKey == ImGuiKey_DownArrow)
+                else
                 {
-                    if (m_historyPos != -1 && ++m_historyPos >= (int)m_history.size())
-                        m_historyPos = -1;
-                }
-                if (prev != m_historyPos)
-                {
-                    const char* h = (m_historyPos >= 0) ? m_history[m_historyPos].c_str() : "";
-                    data->DeleteChars(0, data->BufTextLen);
-                    data->InsertChars(0, h);
+                    // 无候选时 Up/Down 导航历史（保留原有行为）
+                    const int prev = m_historyPos;
+                    if (data->EventKey == ImGuiKey_UpArrow)
+                    {
+                        if (m_historyPos == -1)      m_historyPos = (int)m_history.size() - 1;
+                        else if (m_historyPos > 0)   m_historyPos--;
+                    }
+                    else if (data->EventKey == ImGuiKey_DownArrow)
+                    {
+                        if (m_historyPos != -1 && ++m_historyPos >= (int)m_history.size())
+                            m_historyPos = -1;
+                    }
+                    if (prev != m_historyPos)
+                    {
+                        const char* h = (m_historyPos >= 0) ? m_history[m_historyPos].c_str() : "";
+                        data->DeleteChars(0, data->BufTextLen);
+                        data->InsertChars(0, h);
+                    }
                 }
                 break;
             }
@@ -196,12 +347,14 @@ namespace MiniCAD
             return 0;
         }
 
-        // 大小写不敏感比较：name 前 n 字符是否匹配输入 word（ASCII 命令名）
-        static int Strnicmp(const char* s1, const char* s2, int n)
+        // 检查 name[0..n-1] 是否与 word[0..n-1] 大小写不敏感匹配（ASCII 命令名）
+        static int Strnicmp(const char* name, const char* word, int n)
         {
             int d = 0;
-            while (n > 0 && (d = std::toupper((unsigned char)*s2) - std::toupper((unsigned char)*s1)) == 0 && *s1)
-            { s1++; s2++; n--; }
+            while (n > 0 && (d = std::toupper((unsigned char)*word) - std::toupper((unsigned char)*name)) == 0 && *name)
+            {
+                name++; word++; n--;
+            }
             return d;
         }
 
@@ -215,9 +368,15 @@ namespace MiniCAD
 
     private:
         char                     m_input[256] = {};
-        std::vector<std::string> m_history;          // 输入过的命令
-        int                      m_historyPos   = -1; // -1 = 新行；0..n-1 = 浏览历史
-        bool                     m_reclaimFocus = false;
-        bool                     m_autoScroll   = true;
+        char                     m_prevBuf[256] = {};        // 上一帧 buf，用于变化检测
+        std::vector<std::string> m_history;
+        int                      m_historyPos = -1;
+        bool                     m_reclaimFocus = true;
+        bool                     m_autoScroll = true;
+        bool                     m_clearBuffer = false;      // 通知回调清空 InputText 内部缓冲
+
+        std::vector<std::string> m_candidates;               // 当前前缀匹配的候选命令
+        int                      m_selectedCandidate = -1;   // -1 = 无选中
+        int                      m_pendingExec = -1;         // 鼠标点击候选项的索引
     };
 }

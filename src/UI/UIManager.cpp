@@ -243,7 +243,12 @@ namespace MiniCAD
         if (m_cmdLineHeight < 60.f)  m_cmdLineHeight = 60.f;
         if (m_cmdLineHeight > 600.f) m_cmdLineHeight = 600.f;
 
-        DrawCommandLine(dm);
+        // ── 命令行 ────────────────────────────────────────────
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            DrawCommandLine(dm);
+            ImGui::PopStyleVar();
+        }
 
         ImGui::PopStyleVar();   // ItemSpacing
 
@@ -949,11 +954,9 @@ namespace MiniCAD
         //ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8.f, 2.f));
         //ImGui::PushStyleColor(ImGuiCol_ChildBg,          ImVec4(0.15f, 0.15f, 0.15f, 1.f));
 
-        ImGui::BeginChild("##StatusBar",
-                          ImVec2(0.f, kStatusBarHeight),
-                          false,
-                          ImGuiWindowFlags_NoScrollbar);
-
+        ImGui::BeginChild("##StatusBar",   ImVec2(0.f, kStatusBarHeight),   false,   ImGuiWindowFlags_NoScrollbar);
+        ImGui::SetCursorPosX(5.0);
+        ImGui::SetCursorPosY(4.0);
           
         // ── 当前工具 ─────────────────────────────────────────────
         const char* toolNames[] = {
