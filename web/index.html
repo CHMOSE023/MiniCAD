@@ -1,1197 +1,1470 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#0d1014">
-    <link rel="icon" type="image/x-icon" href="icons/app.ico">
-    <link rel="apple-touch-icon" href="icons/app.ico">
-    <title>MiniCAD Web</title>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="theme-color" content="#0d1014" />
+    <meta name="description" content="MiniCAD — 轻量开源跨平台二维CAD。" />
+    <meta
+      name="keywords"
+      content="MiniCAD, CAD, 二维CAD, 在线CAD, WebAssembly, 绘图工具, 2D CAD editor, browser CAD"
+    />
+    <meta name="author" content="Hello BIM" />
+    <meta property="og:title" content="MiniCAD — 在线二维 CAD 编辑器" />
+    <meta
+      property="og:description"
+      content="轻量级跨平台二维 CAD 编辑器框架，基于 C++20 与 WebAssembly，在浏览器中直接绘图。"
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/x-icon" href="icons/app.ico" />
+    <link rel="apple-touch-icon" href="icons/app.ico" />
+    <title>MiniCAD</title>
     <style>
-         /* ── Design tokens ─────────────────────────────── */
-         :root {
-             --bg-0: #0d1014;
-             --bg-1: #14181f;
-             --bg-2: #1b2029;
-             --bg-3: #232934;
-             --bg-4: #2c333f;
-             --border: #2a3140;
-             --border-hi: #3a4352;
-             --text: #e1e6ee;
-             --text-mute: #9aa3b2;
-             --text-dim: #5d6573;
-             --accent: #4ea3ff;
-             --accent-glow: rgba(78, 163, 255, 0.35);
-             --success: #5fe39a;
-             --warn: #ffa760;
-             --danger: #ff6b6b;
-             --radius-sm: 4px;
-             --radius-md: 6px;
-             --radius-lg: 8px;
-             --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
-             --shadow-2: 0 4px 12px rgba(0,0,0,0.4);
-             --tb-height: 44px;
-             --status-height: 26px;
-             /* 安全区（刘海屏 / 灵动岛 / Home Indicator） */
-             --safe-top: env(safe-area-inset-top, 0px);
-             --safe-bot: env(safe-area-inset-bottom, 0px);
-             --safe-left: env(safe-area-inset-left, 0px);
-             --safe-right: env(safe-area-inset-right, 0px);
-         }
+      /* ── Design tokens ─────────────────────────────── */
+      :root {
+        --bg-0: #0d1014;
+        --bg-1: #14181f;
+        --bg-2: #1b2029;
+        --bg-3: #232934;
+        --bg-4: #2c333f;
+        --border: #2a3140;
+        --border-hi: #3a4352;
+        --text: #e1e6ee;
+        --text-mute: #9aa3b2;
+        --text-dim: #5d6573;
+        --accent: #4ea3ff;
+        --accent-glow: rgba(78, 163, 255, 0.35);
+        --success: #5fe39a;
+        --warn: #ffa760;
+        --danger: #ff6b6b;
+        --radius-sm: 4px;
+        --radius-md: 6px;
+        --radius-lg: 8px;
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.4);
+        --tb-height: 44px;
+        --status-height: 26px;
+        /* 安全区（刘海屏 / 灵动岛 / Home Indicator） */
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bot: env(safe-area-inset-bottom, 0px);
+        --safe-left: env(safe-area-inset-left, 0px);
+        --safe-right: env(safe-area-inset-right, 0px);
+      }
 
-         *, *::before, *::after {
-             box-sizing: border-box;
-         }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
 
-         html, body {
-             margin: 0;
-             width: 100%;
-             height: 100%;
-             overflow: hidden;
-             overscroll-behavior: none; /* 禁止下拉刷新 / 边缘回弹 */
-             background: var(--bg-0);
-             color: var(--text);
-             font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-             -webkit-font-smoothing: antialiased;
-             -webkit-tap-highlight-color: transparent;
-             -webkit-touch-callout: none; /* iOS 长按弹菜单 */
-             touch-action: none; /* 禁止双击放大、捏合缩放 */
-             user-select: none;
-         }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        overscroll-behavior: none; /* 禁止下拉刷新 / 边缘回弹 */
+        background: var(--bg-0);
+        color: var(--text);
+        font:
+          12px/1.4 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Microsoft YaHei",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none; /* iOS 长按弹菜单 */
+        touch-action: none; /* 禁止双击放大、捏合缩放 */
+        user-select: none;
+      }
 
-         /* Generic scrollbars (canvas, dialogs, etc.) */
-         ::-webkit-scrollbar {
-             height: 6px;
-             width: 6px;
-         }
+      /* Generic scrollbars (canvas, dialogs, etc.) */
+      ::-webkit-scrollbar {
+        height: 6px;
+        width: 6px;
+      }
 
-         ::-webkit-scrollbar-track {
-             background: transparent;
-         }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
 
-         ::-webkit-scrollbar-thumb {
-             background: var(--bg-4);
-             border-radius: 3px;
-         }
+      ::-webkit-scrollbar-thumb {
+        background: var(--bg-4);
+        border-radius: 3px;
+      }
 
-             ::-webkit-scrollbar-thumb:hover {
-                 background: var(--border-hi);
-             }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--border-hi);
+      }
 
-         #app {
-             display: grid;
-             grid-template-rows: var(--tb-height) 1fr var(--status-height);
-             width: 100vw;
-             height: 100vh;
-             height: 100dvh; /* 移动浏览器动态视口（避免地址栏遮挡） */
-             padding: var(--safe-top) var(--safe-right) var(--safe-bot) var(--safe-left);
-         }
+      #app {
+        display: grid;
+        grid-template-rows: var(--tb-height) 1fr var(--status-height);
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh; /* 移动浏览器动态视口（避免地址栏遮挡） */
+        padding: var(--safe-top) var(--safe-right) var(--safe-bot)
+          var(--safe-left);
+      }
 
-         /* ── Toolbar ─────────────────────────────────────────────────────── */
-         #toolbar {
-             position: relative;
-             display: flex;
-             align-items: center;
-             gap: 4px;
-             padding: 0 12px;
-             background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
-             border-bottom: 1px solid var(--border);
-             box-shadow: var(--shadow-1);
-             overflow-x: auto;
-             overflow-y: hidden;
-             /* Firefox */
-             scrollbar-width: thin;
-             scrollbar-color: var(--bg-4) transparent;
-         }
+      /* ── Toolbar ─────────────────────────────────────────────────────── */
+      #toolbar {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 12px;
+        background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+        border-bottom: 1px solid var(--border);
+        box-shadow: var(--shadow-1);
+        overflow-x: auto;
+        overflow-y: hidden;
+        /* Firefox */
+        scrollbar-width: thin;
+        scrollbar-color: var(--bg-4) transparent;
+      }
 
-             /* ── Toolbar horizontal scrollbar (WebKit / Chromium) ─────────────
+      /* ── Toolbar horizontal scrollbar (WebKit / Chromium) ─────────────
         默认极细且半透明，hover 时变粗、激活时点亮强调色 */
-             #toolbar::-webkit-scrollbar {
-                 height: 6px;
-                 background: transparent;
-             }
+      #toolbar::-webkit-scrollbar {
+        height: 6px;
+        background: transparent;
+      }
 
-             #toolbar::-webkit-scrollbar-track {
-                 background: linear-gradient(180deg, transparent 0%, rgba(255,255,255,0.015) 50%, transparent 100%);
-                 border-top: 1px solid rgba(255,255,255,0.02);
-             }
+      #toolbar::-webkit-scrollbar-track {
+        background: linear-gradient(
+          180deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.015) 50%,
+          transparent 100%
+        );
+        border-top: 1px solid rgba(255, 255, 255, 0.02);
+      }
 
-             #toolbar::-webkit-scrollbar-thumb {
-                 background: linear-gradient(180deg, rgba(120, 135, 160, 0.20) 0%, rgba(80, 95, 120, 0.35) 100%);
-                 border-radius: 999px;
-                 border: 1px solid rgba(255,255,255,0.04);
-                 transition: background 0.2s ease, border-color 0.2s ease;
-             }
+      #toolbar::-webkit-scrollbar-thumb {
+        background: linear-gradient(
+          180deg,
+          rgba(120, 135, 160, 0.2) 0%,
+          rgba(80, 95, 120, 0.35) 100%
+        );
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        transition:
+          background 0.2s ease,
+          border-color 0.2s ease;
+      }
 
-             #toolbar:hover::-webkit-scrollbar-thumb {
-                 background: linear-gradient(180deg, rgba(160, 178, 205, 0.45) 0%, rgba(110, 130, 160, 0.6) 100%);
-                 border-color: rgba(255,255,255,0.08);
-             }
+      #toolbar:hover::-webkit-scrollbar-thumb {
+        background: linear-gradient(
+          180deg,
+          rgba(160, 178, 205, 0.45) 0%,
+          rgba(110, 130, 160, 0.6) 100%
+        );
+        border-color: rgba(255, 255, 255, 0.08);
+      }
 
-             #toolbar::-webkit-scrollbar-thumb:hover {
-                 background: linear-gradient(180deg, var(--accent) 0%, #2d7fdc 100%);
-                 border-color: var(--accent);
-                 box-shadow: 0 0 8px var(--accent-glow);
-             }
+      #toolbar::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(180deg, var(--accent) 0%, #2d7fdc 100%);
+        border-color: var(--accent);
+        box-shadow: 0 0 8px var(--accent-glow);
+      }
 
-             #toolbar::-webkit-scrollbar-thumb:active {
-                 background: linear-gradient(180deg, #6cb6ff 0%, var(--accent) 100%);
-             }
+      #toolbar::-webkit-scrollbar-thumb:active {
+        background: linear-gradient(180deg, #6cb6ff 0%, var(--accent) 100%);
+      }
 
-             #toolbar::-webkit-scrollbar-corner {
-                 background: transparent;
-             } 
+      #toolbar::-webkit-scrollbar-corner {
+        background: transparent;
+      }
 
-         /* Brand */
-         .brand {
-             display: flex;
-             align-items: center;
-             gap: 8px;
-             padding: 0 10px 0 0;
-             margin-right: 6px;
-             border-right: 1px solid var(--border);
-             height: 100%;
-             flex-shrink: 0;
-         }
+      /* Brand */
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px 0 0;
+        margin-right: 6px;
+        border-right: 1px solid var(--border);
+        height: 100%;
+        flex-shrink: 0;
+      }
 
-             .brand img {
-                 width: 26px;
-                 height: 26px;
-             }
+      .brand img {
+        width: 26px;
+        height: 26px;
+      }
 
-         .brand-name {
-             font-size: 16px;
-             font-weight: 900;
-             letter-spacing: 0.4px;
-             background: linear-gradient(180deg, #ffffff 0%, #b8c5d6 100%);
-             -webkit-background-clip: text;
-             background-clip: text;
-             color: transparent;
-         }
+      .brand-name {
+        font-size: 16px;
+        font-weight: 900;
+        letter-spacing: 0.4px;
+        background: linear-gradient(180deg, #ffffff 0%, #b8c5d6 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
 
-         /* Group */
-         .tb-group {
-             display: flex;
-             align-items: center;
-             gap: 2px;
-             padding: 0 4px;
-             flex-shrink: 0;
-         }
-            .tb-group button {
-                font-size: 12px;
-            }
-            
-            .tb-label {
-                font-size: 14px;
-                color: var(--text-dim);
-                padding: 0 6px;
-                text-transform: uppercase;
-                letter-spacing: 0.6px;
-                flex-shrink: 0;
-            }
+      /* Group */
+      .tb-group {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 0 4px;
+        flex-shrink: 0;
+      }
+      .tb-group button {
+        font-size: 12px;
+      }
 
-         .tb-sep {
-             width: 1px;
-             height: 22px;
-             background: var(--border);
-             margin: 0 6px;
-             flex-shrink: 0;
-         }
+      .tb-label {
+        font-size: 14px;
+        color: var(--text-dim);
+        padding: 0 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        flex-shrink: 0;
+      }
 
-         /* Buttons */
-         button {
-             height: 30px;
-             min-width: 30px;
-             padding: 0 10px;
-             border: 1px solid transparent;
-             border-radius: var(--radius-md);
-             background: transparent;
-             color: var(--text);
-             cursor: pointer;
-             font: 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-             white-space: nowrap;
-             flex-shrink: 0;
-             display: inline-flex;
-             align-items: center;
-             gap: 6px;
-             transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
-         }
+      .tb-sep {
+        width: 1px;
+        height: 22px;
+        background: var(--border);
+        margin: 0 6px;
+        flex-shrink: 0;
+      }
 
-             button:hover {
-                 background: var(--bg-3);
-                 border-color: var(--border);
-                 color: #ffffff;
-             }
+      /* Buttons */
+      button {
+        height: 30px;
+        min-width: 30px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+        font:
+          11px/1 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
+        white-space: nowrap;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease,
+          box-shadow 0.15s ease,
+          transform 0.05s ease;
+      }
 
-             button:active {
-                 background: var(--bg-4);
-                 transform: translateY(1px);
-             }
+      button:hover {
+        background: var(--bg-3);
+        border-color: var(--border);
+        color: #ffffff;
+      }
 
-             button.active {
-                 background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
-                 border-color: #3a93ec;
-                 color: #ffffff;
-                 box-shadow: 0 0 0 1px rgba(78,163,255,0.2), 0 0 12px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.15);
-             }
+      button:active {
+        background: var(--bg-4);
+        transform: translateY(1px);
+      }
 
-             button.toggle-on {
-                 background: linear-gradient(180deg, #1f7a52 0%, #155c3d 100%);
-                 border-color: #2a9d6a;
-                 color: #c4ffe2;
-                 box-shadow: 0 0 0 1px rgba(95,227,154,0.2), 0 0 10px rgba(95,227,154,0.25), inset 0 1px 0 rgba(255,255,255,0.1);
-             }
+      button.active {
+        background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
+        border-color: #3a93ec;
+        color: #ffffff;
+        box-shadow:
+          0 0 0 1px rgba(78, 163, 255, 0.2),
+          0 0 12px var(--accent-glow),
+          inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      }
 
-             button.danger {
-                 color: #ffb0b0;
-             }
+      button.toggle-on {
+        background: linear-gradient(180deg, #1f7a52 0%, #155c3d 100%);
+        border-color: #2a9d6a;
+        color: #c4ffe2;
+        box-shadow:
+          0 0 0 1px rgba(95, 227, 154, 0.2),
+          0 0 10px rgba(95, 227, 154, 0.25),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      }
 
-                 button.danger:hover {
-                     background: rgba(255,107,107,0.12);
-                     border-color: rgba(255,107,107,0.4);
-                     color: #ff8b8b;
-                 }
+      button.danger {
+        color: #ffb0b0;
+      }
 
-                 button.danger:active {
-                     background: rgba(255,107,107,0.22);
-                 }
+      button.danger:hover {
+        background: rgba(255, 107, 107, 0.12);
+        border-color: rgba(255, 107, 107, 0.4);
+        color: #ff8b8b;
+      }
 
-         .tb-icon {
-             width: 18px;
-             height: 18px;
-             flex-shrink: 0;
-             pointer-events: none;
-             opacity: 0.85;
-             transition: opacity 0.15s ease;
-         }
+      button.danger:active {
+        background: rgba(255, 107, 107, 0.22);
+      }
 
-         button:hover .tb-icon,
-         button.active .tb-icon,
-         button.toggle-on .tb-icon {
-             opacity: 1;
-         }
+      .tb-icon {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        pointer-events: none;
+        opacity: 0.85;
+        transition: opacity 0.15s ease;
+      }
 
-         /* SVG icons for buttons without a PNG */
-         .icon-point {
-             background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='3.5' fill='%23d8dee9'/></svg>") center/contain no-repeat;
-         }
+      button:hover .tb-icon,
+      button.active .tb-icon,
+      button.toggle-on .tb-icon {
+        opacity: 1;
+      }
 
-         .icon-delete {
-             background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffb0b0' stroke-width='1.4' stroke-linecap='round'><path d='M3 4.5h10'/><path d='M5.5 4.5V3h5v1.5'/><path d='M4 4.5l.7 9a1.2 1.2 0 0 0 1.2 1.1h4.2a1.2 1.2 0 0 0 1.2-1.1l.7-9'/><line x1='6.5' y1='7' x2='6.5' y2='12'/><line x1='9.5' y1='7' x2='9.5' y2='12'/></svg>") center/contain no-repeat;
-         }
+      /* SVG icons for buttons without a PNG */
+      .icon-point {
+        background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='3.5' fill='%23d8dee9'/></svg>")
+          center/contain no-repeat;
+      }
 
-         .icon-snap {
-             background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d8dee9' stroke-width='1.5' stroke-linecap='round'><path d='M4 9a4 4 0 0 1 8 0v3.5'/><path d='M4 9v3.5'/><line x1='2.5' y1='12.5' x2='5.5' y2='12.5'/><line x1='10.5' y1='12.5' x2='13.5' y2='12.5'/></svg>") center/contain no-repeat;
-         }
+      .icon-delete {
+        background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffb0b0' stroke-width='1.4' stroke-linecap='round'><path d='M3 4.5h10'/><path d='M5.5 4.5V3h5v1.5'/><path d='M4 4.5l.7 9a1.2 1.2 0 0 0 1.2 1.1h4.2a1.2 1.2 0 0 0 1.2-1.1l.7-9'/><line x1='6.5' y1='7' x2='6.5' y2='12'/><line x1='9.5' y1='7' x2='9.5' y2='12'/></svg>")
+          center/contain no-repeat;
+      }
 
-         .icon-ortho {
-             background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23d8dee9' stroke-width='1.5' fill='none' stroke-linecap='round'><path d='M3 3v10h10'/><rect x='3.5' y='9.5' width='3' height='3' fill='%23d8dee9' stroke='none'/></svg>") center/contain no-repeat;
-         }
+      .icon-snap {
+        background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d8dee9' stroke-width='1.5' stroke-linecap='round'><path d='M4 9a4 4 0 0 1 8 0v3.5'/><path d='M4 9v3.5'/><line x1='2.5' y1='12.5' x2='5.5' y2='12.5'/><line x1='10.5' y1='12.5' x2='13.5' y2='12.5'/></svg>")
+          center/contain no-repeat;
+      }
 
-         .icon-cancel {
-             background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23d8dee9' stroke-width='2' stroke-linecap='round' fill='none'><line x1='4' y1='4' x2='12' y2='12'/><line x1='12' y1='4' x2='4' y2='12'/></svg>") center/contain no-repeat;
-         }
+      .icon-ortho {
+        background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23d8dee9' stroke-width='1.5' fill='none' stroke-linecap='round'><path d='M3 3v10h10'/><rect x='3.5' y='9.5' width='3' height='3' fill='%23d8dee9' stroke='none'/></svg>")
+          center/contain no-repeat;
+      }
 
-         /* Toolbar right side: GitHub link */
-         .tb-spacer {
-             flex: 1 1 auto;
-             min-width: 12px;
-         }
+      .icon-cancel {
+        background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' stroke='%23d8dee9' stroke-width='2' stroke-linecap='round' fill='none'><line x1='4' y1='4' x2='12' y2='12'/><line x1='12' y1='4' x2='4' y2='12'/></svg>")
+          center/contain no-repeat;
+      }
 
-         .tb-link {
-             display: inline-flex;
-             align-items: center;
-             gap: 6px;
-             height: 30px;
-             padding: 0 12px;
-             border: 1px solid var(--border);
-             border-radius: var(--radius-md);
-             color: var(--text-mute);
-             text-decoration: none;
-             font-size: 11px;
-             font-weight: 500;
-             transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-             flex-shrink: 0;
-         }
+      /* Toolbar right side: GitHub link */
+      .tb-spacer {
+        flex: 1 1 auto;
+        min-width: 12px;
+      }
 
-             .tb-link:hover {
-                 background: var(--bg-3);
-                 color: #ffffff;
-                 border-color: var(--border-hi);
-                 box-shadow: 0 0 12px rgba(255,255,255,0.06);
-             }
+      .tb-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 30px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        color: var(--text-mute);
+        text-decoration: none;
+        font-size: 11px;
+        font-weight: 500;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease,
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
+        flex-shrink: 0;
+      }
 
-             .tb-link svg {
-                 width: 16px;
-                 height: 16px;
-                 flex-shrink: 0;
-             }
+      .tb-link:hover {
+        background: var(--bg-3);
+        color: #ffffff;
+        border-color: var(--border-hi);
+        box-shadow: 0 0 12px rgba(255, 255, 255, 0.06);
+      }
 
-             .tb-link .star {
-                 display: inline-flex;
-                 align-items: center;
-                 gap: 3px;
-                 padding: 2px 6px;
-                 margin-left: 4px;
-                 font-size: 10px;
-                 background: var(--bg-2);
-                 border: 1px solid var(--border);
-                 border-radius: 999px;
-                 color: var(--warn);
-             }
+      .tb-link svg {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+      }
 
-         /* ── Canvas ──────────────────────────────────────────────────────── */
-         #canvas-wrap {
-             position: relative;
-             min-width: 0;
-             min-height: 0;
-             overflow: hidden;
-             background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(78,163,255,0.04) 0%, transparent 60%), var(--bg-0);
-         }
+      .tb-link .star {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 2px 6px;
+        margin-left: 4px;
+        font-size: 10px;
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--warn);
+      }
 
-         canvas {
-             display: block;
-             width: 100%;
-             height: 100%;
-             outline: none;
-             cursor: none;
-             touch-action: none;
-         }
+      /* ── Canvas ──────────────────────────────────────────────────────── */
+      #canvas-wrap {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(
+            ellipse 80% 60% at 50% 40%,
+            rgba(78, 163, 255, 0.04) 0%,
+            transparent 60%
+          ),
+          var(--bg-0);
+      }
 
-         /* Subtle inner border around canvas */
-         #canvas-wrap::after {
-             content: "";
-             position: absolute;
-             inset: 0;
-             pointer-events: none;
-             box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
-         }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+        cursor: none;
+        touch-action: none;
+      }
 
-         /* ── Status bar ──────────────────────────────────────────────────── */
-         #status {
-             display: flex;
-             align-items: center;
-             padding: 0 12px;
-             background: linear-gradient(0deg, var(--bg-1) 0%, var(--bg-2) 100%);
-             border-top: 1px solid var(--border);
-             color: var(--text-mute);
-             font-size: 11px;
-             gap: 0;
-             overflow: hidden;
-         }
+      /* Subtle inner border around canvas */
+      #canvas-wrap::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+      }
 
-             #status .seg {
-                 padding: 0 12px;
-                 height: 100%;
-                 display: flex;
-                 align-items: center;
-                 white-space: nowrap;
-                 position: relative;
-             }
+      /* ── Status bar ──────────────────────────────────────────────────── */
+      #status {
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        background: linear-gradient(0deg, var(--bg-1) 0%, var(--bg-2) 100%);
+        border-top: 1px solid var(--border);
+        color: var(--text-mute);
+        font-size: 11px;
+        gap: 0;
+        overflow: hidden;
+      }
 
-                 #status .seg + .seg::before {
-                     content: "";
-                     position: absolute;
-                     left: 0;
-                     top: 25%;
-                     height: 50%;
-                     width: 1px;
-                     background: var(--border);
-                 }
+      #status .seg {
+        padding: 0 12px;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        white-space: nowrap;
+        position: relative;
+      }
 
-         .hint kbd {
-             display: inline-block;
-             padding: 1px 5px;
-             margin: 0 3px;
-             font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-             color: var(--text);
-             background: var(--bg-3);
-             border: 1px solid var(--border-hi);
-             border-bottom-width: 2px;
-             border-radius: 3px;
-         }
+      #status .seg + .seg::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 25%;
+        height: 50%;
+        width: 1px;
+        background: var(--border);
+      }
 
-         .hint {
-             color: var(--text-dim);
-         }
+      .hint kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        margin: 0 3px;
+        font:
+          10px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: var(--text);
+        background: var(--bg-3);
+        border: 1px solid var(--border-hi);
+        border-bottom-width: 2px;
+        border-radius: 3px;
+      }
 
-         /* Status pills */
-         .pill {
-             display: inline-flex;
-             align-items: center;
-             gap: 5px;
-             padding: 2px 8px;
-             border-radius: 999px;
-             font-size: 10px;
-             font-weight: 600;
-             letter-spacing: 0.3px;
-             border: 1px solid var(--border);
-             background: var(--bg-2);
-         }
+      .hint {
+        color: var(--text-dim);
+      }
 
-             .pill::before {
-                 content: "";
-                 width: 6px;
-                 height: 6px;
-                 border-radius: 50%;
-                 background: currentColor;
-                 box-shadow: 0 0 6px currentColor;
-             }
+      /* Status pills */
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        border: 1px solid var(--border);
+        background: var(--bg-2);
+      }
 
-             .pill.active-mode {
-                 color: var(--accent);
-                 border-color: rgba(78,163,255,0.3);
-             }
+      .pill::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 6px currentColor;
+      }
 
-             .pill.snap-on {
-                 color: var(--success);
-                 border-color: rgba(95,227,154,0.3);
-             }
+      .pill.active-mode {
+        color: var(--accent);
+        border-color: rgba(78, 163, 255, 0.3);
+      }
 
-             .pill.snap-off {
-                 color: var(--text-dim);
-             }
+      .pill.snap-on {
+        color: var(--success);
+        border-color: rgba(95, 227, 154, 0.3);
+      }
 
-             .pill.ortho-on {
-                 color: var(--warn);
-                 border-color: rgba(255,167,96,0.3);
-             }
+      .pill.snap-off {
+        color: var(--text-dim);
+      }
 
-             .pill.ortho-off {
-                 color: var(--text-dim);
-             }
+      .pill.ortho-on {
+        color: var(--warn);
+        border-color: rgba(255, 167, 96, 0.3);
+      }
 
-             /* 可点击切换的胶囊（捕捉 / 正交）─ hover 高亮、active 缩放、on 状态发光 */
-             .pill.toggleable {
-                 cursor: pointer;
-                 user-select: none;
-                 transition: background 0.15s ease, border-color 0.15s ease,
-                             color 0.15s ease, box-shadow 0.15s ease,
-                             transform 0.05s ease;
-             }
-             .pill.toggleable:hover {
-                 background: var(--bg-3);
-                 border-color: var(--border-hi);
-                 filter: brightness(1.15);
-             }
-             .pill.toggleable:active {
-                 transform: scale(0.96);
-             }
-             .pill.toggleable:focus-visible {
-                 outline: none;
-                 box-shadow: 0 0 0 2px var(--accent-glow);
-             }
-             /* on 状态发光 */
-             .pill.toggleable.snap-on {
-                 box-shadow: 0 0 8px rgba(95,227,154,0.25);
-             }
-             .pill.toggleable.ortho-on {
-                 box-shadow: 0 0 8px rgba(255,167,96,0.25);
-             }
+      .pill.ortho-off {
+        color: var(--text-dim);
+      }
 
-         #status .seg.right {
-             margin-left: auto;
-             gap: 6px;
-         }
+      /* 可点击切换的胶囊（捕捉 / 正交）─ hover 高亮、active 缩放、on 状态发光 */
+      .pill.toggleable {
+        cursor: pointer;
+        user-select: none;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease,
+          box-shadow 0.15s ease,
+          transform 0.05s ease;
+      }
+      .pill.toggleable:hover {
+        background: var(--bg-3);
+        border-color: var(--border-hi);
+        filter: brightness(1.15);
+      }
+      .pill.toggleable:active {
+        transform: scale(0.96);
+      }
+      .pill.toggleable:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px var(--accent-glow);
+      }
+      /* on 状态发光 */
+      .pill.toggleable.snap-on {
+        box-shadow: 0 0 8px rgba(95, 227, 154, 0.25);
+      }
+      .pill.toggleable.ortho-on {
+        box-shadow: 0 0 8px rgba(255, 167, 96, 0.25);
+      }
 
-         /* ──────────────────────────────────────────────────────────────────
+      #status .seg.right {
+        margin-left: auto;
+        gap: 6px;
+      }
+
+      /* ──────────────────────────────────────────────────────────────────
         响应式 / 触屏适配
         ────────────────────────────────────────────────────────────────── */
 
-         /* 鼠标设备 → 显示十字光标，触屏设备 → 自动隐藏（系统不画） */
-         @media (hover: none) and (pointer: coarse) {
-             canvas {
-                 cursor: default;
-             }
-             /* 触屏点按反馈：模拟 hover 态略弱化 */
-             button:hover {
-                 background: transparent;
-                 border-color: transparent;
-             }
+      /* 鼠标设备 → 显示十字光标，触屏设备 → 自动隐藏（系统不画） */
+      @media (hover: none) and (pointer: coarse) {
+        canvas {
+          cursor: default;
+        }
+        /* 触屏点按反馈：模拟 hover 态略弱化 */
+        button:hover {
+          background: transparent;
+          border-color: transparent;
+        }
 
-             button:active {
-                 background: var(--bg-3);
-                 border-color: var(--border-hi);
-                 transform: scale(0.97);
-             }
+        button:active {
+          background: var(--bg-3);
+          border-color: var(--border-hi);
+          transform: scale(0.97);
+        }
 
-             .tb-link:hover {
-                 background: transparent;
-             }
-         }
+        .tb-link:hover {
+          background: transparent;
+        }
+      }
 
-         /* ── 平板 / 小笔电（≤ 1024px）：紧凑工具栏 ─────────────────────── */
-         @media (max-width: 1024px) {
-             :root {
-                 --tb-height: 48px;
-             }
+      /* ── 平板 / 小笔电（≤ 1024px）：紧凑工具栏 ─────────────────────── */
+      @media (max-width: 1024px) {
+        :root {
+          --tb-height: 48px;
+        }
 
-             .tb-label {
-                 display: none;
-             }
-             /* 隐藏 "绘制 / 编辑 / ..." 分组标题 */
-             .tb-sep {
-                 margin: 0 4px;
-             }
+        .tb-label {
+          display: none;
+        }
+        /* 隐藏 "绘制 / 编辑 / ..." 分组标题 */
+        .tb-sep {
+          margin: 0 4px;
+        }
 
-             button {
-                 padding: 0 8px;
-             }
+        button {
+          padding: 0 8px;
+        }
 
-             .brand-name {
-                 font-size: 12px;
-             }
-         }
+        .brand-name {
+          font-size: 12px;
+        }
+      }
 
-         /* ── 手机（≤ 720px）：图标-only 按钮 + 极简状态栏 ─────────────── */
-         @media (max-width: 720px) {
-             :root {
-                 --tb-height: 52px; /* 触屏更大点击区 */
-             }
+      /* ── 手机（≤ 720px）：图标-only 按钮 + 极简状态栏 ─────────────── */
+      @media (max-width: 720px) {
+        :root {
+          --tb-height: 52px; /* 触屏更大点击区 */
+        }
 
-             #toolbar {
-                 gap: 2px;
-                 padding: 0 8px;
-             }
+        #toolbar {
+          gap: 2px;
+          padding: 0 8px;
+        }
 
-             .brand {
-                 padding-right: 6px;
-                 margin-right: 4px;
-             }
+        .brand {
+          padding-right: 6px;
+          margin-right: 4px;
+        }
 
-             .brand-name {
-                 display: none;
-             }
-             /* 仅留 logo */
+        .brand-name {
+          display: none;
+        }
+        /* 仅留 logo */
 
-             /* 按钮变方形图标按钮：隐藏文字 */
-             button {
-                 min-width: 38px;
-                 height: 38px;
-                 padding: 0;
-                 justify-content: center;
-                 gap: 0;
-                 font-size: 0; /* 隐藏文字标签 */
-             }
+        /* 按钮变方形图标按钮：隐藏文字 */
+        button {
+          min-width: 38px;
+          height: 38px;
+          padding: 0;
+          justify-content: center;
+          gap: 0;
+          font-size: 0; /* 隐藏文字标签 */
+        }
 
-                 button .tb-icon {
-                     width: 24px;
-                     height: 24px;
-                 }
+        button .tb-icon {
+          width: 24px;
+          height: 24px;
+        }
 
-             /* GitHub 链接也变图标 */
-             .tb-link {
-                 padding: 0 10px;
-                 font-size: 0;
-             }
+        /* GitHub 链接也变图标 */
+        .tb-link {
+          padding: 0 10px;
+          font-size: 0;
+        }
 
-                 .tb-link span {
-                     display: none;
-                 }
+        .tb-link span {
+          display: none;
+        }
 
-                 .tb-link svg {
-                     width: 18px;
-                     height: 18px;
-                 }
+        .tb-link svg {
+          width: 18px;
+          height: 18px;
+        }
 
-             /* 状态栏：隐藏键盘提示 */
-             #status .hint {
-                 display: none;
-             }
+        /* 状态栏：隐藏键盘提示 */
+        #status .hint {
+          display: none;
+        }
 
-             #status .seg {
-                 padding: 0 8px;
-             }
+        #status .seg {
+          padding: 0 8px;
+        }
 
-             .pill {
-                 font-size: 9px;
-                 padding: 2px 6px;
-             }
-         }
+        .pill {
+          font-size: 9px;
+          padding: 2px 6px;
+        }
+      }
 
-         /* ── 超窄屏（≤ 420px）：进一步压缩 ──────────────────────────── */
-         @media (max-width: 420px) {
-             :root {
-                 --status-height: 30px;
-             }
+      /* ── 超窄屏（≤ 420px）：进一步压缩 ──────────────────────────── */
+      @media (max-width: 420px) {
+        :root {
+          --status-height: 30px;
+        }
 
-             #toolbar {
-                 padding: 0 6px;
-             }
+        #toolbar {
+          padding: 0 6px;
+        }
 
-             button {
-                 min-width: 36px;
-                 height: 36px;
-             }
+        button {
+          min-width: 36px;
+          height: 36px;
+        }
 
-                 button .tb-icon {
-                     width: 18px;
-                     height: 18px;
-                 }
+        button .tb-icon {
+          width: 18px;
+          height: 18px;
+        }
 
-             .tb-sep {
-                 margin: 0 2px;
-                 height: 20px;
-             }
+        .tb-sep {
+          margin: 0 2px;
+          height: 20px;
+        }
 
-             .brand img {
-                 width: 20px;
-                 height: 20px;
-             }
+        .brand img {
+          width: 20px;
+          height: 20px;
+        }
 
-             /* 状态栏只显示模式胶囊 + 捕捉/正交 */
-             #status .seg:not(:first-child):not(.right) {
-                 display: none;
-             }
-         }
+        /* 状态栏只显示模式胶囊 + 捕捉/正交 */
+        #status .seg:not(:first-child):not(.right) {
+          display: none;
+        }
+      }
 
-         /* ── 文字输入浮层 ─────────────────────────────────────────── */
-         #text-input-overlay,
-         #mtext-input-overlay {
-             display: none;
-             position: fixed;
-             inset: 0;
-             z-index: 1000;
-             align-items: center;
-             justify-content: center;
-             background: rgba(0, 0, 0, 0.55);
-             backdrop-filter: blur(3px);
-         }
+      /* ── 文字输入浮层 ─────────────────────────────────────────── */
+      #text-input-overlay,
+      #mtext-input-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(3px);
+      }
 
-         #text-input-overlay.visible,
-         #mtext-input-overlay.visible {
-             display: flex;
-         }
+      #text-input-overlay.visible,
+      #mtext-input-overlay.visible {
+        display: flex;
+      }
 
-         .text-panel {
-             background: linear-gradient(160deg, var(--bg-2) 0%, var(--bg-1) 100%);
-             border: 1px solid var(--border-hi);
-             border-radius: var(--radius-lg);
-             box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,163,255,0.08);
-             padding: 18px 20px 16px;
-             width: 320px;
-             max-width: calc(100vw - 32px);
-             display: flex;
-             flex-direction: column;
-             gap: 12px;
-         }
+      .text-panel {
+        background: linear-gradient(160deg, var(--bg-2) 0%, var(--bg-1) 100%);
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius-lg);
+        box-shadow:
+          0 8px 32px rgba(0, 0, 0, 0.6),
+          0 0 0 1px rgba(78, 163, 255, 0.08);
+        padding: 18px 20px 16px;
+        width: 320px;
+        max-width: calc(100vw - 32px);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
 
-         .text-panel-title {
-             font-size: 13px;
-             font-weight: 600;
-             color: var(--text);
-             letter-spacing: 0.3px;
-             display: flex;
-             align-items: center;
-             gap: 8px;
-         }
+      .text-panel-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: 0.3px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
 
-         .text-panel-title::before {
-             content: "";
-             display: inline-block;
-             width: 3px;
-             height: 14px;
-             background: var(--accent);
-             border-radius: 2px;
-             box-shadow: 0 0 8px var(--accent-glow);
-         }
+      .text-panel-title::before {
+        content: "";
+        display: inline-block;
+        width: 3px;
+        height: 14px;
+        background: var(--accent);
+        border-radius: 2px;
+        box-shadow: 0 0 8px var(--accent-glow);
+      }
 
-         #text-input-field,
-         #mtext-input-field {
-             width: 100%;
-             height: 36px;
-             padding: 0 10px;
-             background: var(--bg-0);
-             border: 1px solid var(--border-hi);
-             border-radius: var(--radius-md);
-             color: var(--text);
-             font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-             outline: none;
-             transition: border-color 0.15s ease, box-shadow 0.15s ease;
-         }
+      #text-input-field,
+      #mtext-input-field {
+        width: 100%;
+        height: 36px;
+        padding: 0 10px;
+        background: var(--bg-0);
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius-md);
+        color: var(--text);
+        font:
+          13px/1 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+        outline: none;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
+      }
 
-         #mtext-input-field {
-             height: 96px;
-             padding: 8px 10px;
-             line-height: 1.4;
-             resize: vertical;
-             box-sizing: border-box;
-         }
+      #mtext-input-field {
+        height: 96px;
+        padding: 8px 10px;
+        line-height: 1.4;
+        resize: vertical;
+        box-sizing: border-box;
+      }
 
-         #text-input-field:focus,
-         #mtext-input-field:focus {
-             border-color: var(--accent);
-             box-shadow: 0 0 0 2px var(--accent-glow);
-         }
+      #text-input-field:focus,
+      #mtext-input-field:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-glow);
+      }
 
-         .text-panel-hint {
-             font-size: 11px;
-             color: var(--text-dim);
-         }
+      .text-panel-hint {
+        font-size: 11px;
+        color: var(--text-dim);
+      }
 
-         .text-panel-actions {
-             display: flex;
-             gap: 8px;
-             justify-content: flex-end;
-         }
+      .text-panel-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
 
-         .text-panel-actions button {
-             height: 28px;
-             padding: 0 14px;
-             font-size: 12px;
-         }
+      .text-panel-actions button {
+        height: 28px;
+        padding: 0 14px;
+        font-size: 12px;
+      }
 
-         #text-btn-ok,
-         #mtext-btn-ok {
-             background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
-             border-color: #3a93ec;
-             color: #fff;
-             box-shadow: 0 0 0 1px rgba(78,163,255,0.2);
-         }
+      #text-btn-ok,
+      #mtext-btn-ok {
+        background: linear-gradient(180deg, #2a7ed8 0%, #1d62b3 100%);
+        border-color: #3a93ec;
+        color: #fff;
+        box-shadow: 0 0 0 1px rgba(78, 163, 255, 0.2);
+      }
 
-         #text-btn-ok:hover,
-         #mtext-btn-ok:hover {
-             background: linear-gradient(180deg, #3a8ee8 0%, #2d72c3 100%);
-         }
+      #text-btn-ok:hover,
+      #mtext-btn-ok:hover {
+        background: linear-gradient(180deg, #3a8ee8 0%, #2d72c3 100%);
+      }
 
-         .text-panel-row {
-             display: flex;
-             align-items: center;
-             gap: 8px;
-         }
+      .text-panel-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
 
-         .text-panel-row label {
-             font-size: 12px;
-             color: var(--text-mute);
-             white-space: nowrap;
-             flex-shrink: 0;
-             width: 28px;
-         }
+      .text-panel-row label {
+        font-size: 12px;
+        color: var(--text-mute);
+        white-space: nowrap;
+        flex-shrink: 0;
+        width: 28px;
+      }
 
-         #text-height-field,
-         #mtext-height-field,
-         #mtext-width-field {
-             width: 80px;
-             height: 32px;
-             padding: 0 8px;
-             background: var(--bg-0);
-             border: 1px solid var(--border-hi);
-             border-radius: var(--radius-md);
-             color: var(--text);
-             font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-             outline: none;
-             transition: border-color 0.15s ease, box-shadow 0.15s ease;
-         }
+      #text-height-field,
+      #mtext-height-field,
+      #mtext-width-field {
+        width: 80px;
+        height: 32px;
+        padding: 0 8px;
+        background: var(--bg-0);
+        border: 1px solid var(--border-hi);
+        border-radius: var(--radius-md);
+        color: var(--text);
+        font:
+          12px/1 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+        outline: none;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
+      }
 
-         #text-height-field:focus,
-         #mtext-height-field:focus,
-         #mtext-width-field:focus {
-             border-color: var(--accent);
-             box-shadow: 0 0 0 2px var(--accent-glow);
-         }
+      #text-height-field:focus,
+      #mtext-height-field:focus,
+      #mtext-width-field:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--accent-glow);
+      }
 
-         /* ── 横屏手机（高 ≤ 480px）：尽量给画布腾空间 ─────────────── */
-         @media (max-height: 480px) and (orientation: landscape) {
-             :root {
-                 --tb-height: 40px;
-                 --status-height: 22px;
-             }
+      /* ── 横屏手机（高 ≤ 480px）：尽量给画布腾空间 ─────────────── */
+      @media (max-height: 480px) and (orientation: landscape) {
+        :root {
+          --tb-height: 40px;
+          --status-height: 22px;
+        }
 
-             button {
-                 height: 32px;
-                 min-width: 32px;
-             }
+        button {
+          height: 32px;
+          min-width: 32px;
+        }
 
-                 button .tb-icon {
-                     width: 16px;
-                     height: 16px;
-                 }
-         }
+        button .tb-icon {
+          width: 16px;
+          height: 16px;
+        }
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div id="app">
-
-        <!-- ── Toolbar ─────────────────────────────────────────────── -->
-        <div id="toolbar">
-
-            <div class="brand">
-                <img src="icons/app.ico" alt="">
-                <span class="brand-name">MiniCAD</span>
-            </div>
-
-            <div class="tb-group">
-                <button id="btn-point" title="点 (PT)">           <span class="tb-icon icon-point"></span> 点</button>
-                <button id="btn-line" title="直线 (L)">           <img class="tb-icon" src="icons/Line.png" alt=""> 直线</button>
-                <button id="btn-rectangle" title="矩形 (REC)">    <img class="tb-icon" src="icons/Rect.png" alt=""> 矩形</button>
-                <button id="btn-circle" title="圆 (C)">           <img class="tb-icon" src="icons/Circle.png" alt=""> 圆</button>
-                <button id="btn-arc" title="圆弧 (ARC)">          <img class="tb-icon" src="icons/Arc.png" alt=""> 圆弧</button>
-                <button id="btn-ellipse" title="椭圆 (EL)">       <img class="tb-icon" src="icons/Ellipse.png" alt=""> 椭圆</button>
-                <button id="btn-polyline" title="多段线 (PL)">    <img class="tb-icon" src="icons/Pline.png" alt=""> 多段线</button>
-                <button id="btn-spline" title="样条曲线 (SP)">    <img class="tb-icon" src="icons/Spline.png" alt=""> 样条</button>
-                <button id="btn-text" title="文字 (T)">           <img class="tb-icon" src="icons/Text.png" alt=""> 文字</button>
-                <button id="btn-mtext" title="多行文字 (MT)">     <img class="tb-icon" src="icons/Text.png" alt=""> 多行文字</button>
-            </div>
-
-            <div class="tb-sep"></div>
-
-            <div class="tb-group"> 
-                <button id="btn-move" title="移动 (M)">         <img class="tb-icon" src="icons/Move.png" alt=""> 移动</button>
-                <button id="btn-copy" title="复制 (CO)">        <img class="tb-icon" src="icons/Copy.png" alt=""> 复制</button>
-                <button id="btn-mirror" title="镜像 (MI)">        <img class="tb-icon" src="icons/Mirror.png" alt=""> 镜像</button>
-                <button id="btn-rotate" title="旋转 (RO)">        <img class="tb-icon" src="icons/Rotate.png" alt=""> 旋转</button>
-                <button id="btn-delete" title="删除 (Del)" class="danger"><span class="tb-icon icon-delete"></span> 删除</button>
-            </div>
-
-            <div class="tb-sep"></div>
-
-            <div class="tb-group"> 
-                <button id="btn-undo" title="撤销 (Ctrl+Z)"><img class="tb-icon" src="icons/Undo.png" alt=""> 撤销</button>
-                <button id="btn-redo" title="重做 (Ctrl+Y)"><img class="tb-icon" src="icons/Redo.png" alt=""> 重做</button>
-                <button id="btn-cancel" title="取消 / ESC"><span class="tb-icon icon-cancel"></span> 取消</button>
-            </div>
-
-            <div class="tb-spacer"></div>
-
-            <a class="tb-link" href="https://github.com/CHMOSE023/MiniCAD" target="_blank" rel="noopener noreferrer" title="在 GitHub 上查看源码">
-                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
-                </svg>
-                <span>GitHub</span>
-                <span class="star">★ Star</span>
-            </a>
+      <!-- ── Toolbar ─────────────────────────────────────────────── -->
+      <div id="toolbar">
+        <div class="brand">
+          <img src="icons/app.ico" alt="" />
+          <span class="brand-name">MiniCAD</span>
         </div>
 
-        <!-- ── Canvas ──────────────────────────────────────────────── -->
-        <div id="canvas-wrap">
-            <canvas id="minicad-canvas" tabindex="0" oncontextmenu="return false"></canvas>
+        <div class="tb-group">
+          <button id="btn-point" title="点 (PT)">
+            <span class="tb-icon icon-point"></span> 点
+          </button>
+          <button id="btn-line" title="直线 (L)">
+            <img class="tb-icon" src="icons/Line.png" alt="" /> 直线
+          </button>
+          <button id="btn-rectangle" title="矩形 (REC)">
+            <img class="tb-icon" src="icons/Rect.png" alt="" /> 矩形
+          </button>
+          <button id="btn-circle" title="圆 (C)">
+            <img class="tb-icon" src="icons/Circle.png" alt="" /> 圆
+          </button>
+          <button id="btn-arc" title="圆弧 (ARC)">
+            <img class="tb-icon" src="icons/Arc.png" alt="" /> 圆弧
+          </button>
+          <button id="btn-ellipse" title="椭圆 (EL)">
+            <img class="tb-icon" src="icons/Ellipse.png" alt="" /> 椭圆
+          </button>
+          <button id="btn-polyline" title="多段线 (PL)">
+            <img class="tb-icon" src="icons/Pline.png" alt="" /> 多段线
+          </button>
+          <button id="btn-spline" title="样条曲线 (SP)">
+            <img class="tb-icon" src="icons/Spline.png" alt="" /> 样条
+          </button>
+          <button id="btn-text" title="文字 (T)">
+            <img class="tb-icon" src="icons/Text.png" alt="" /> 文字
+          </button>
+          <button id="btn-mtext" title="多行文字 (MT)">
+            <img class="tb-icon" src="icons/Text.png" alt="" /> 多行文字
+          </button>
         </div>
 
-        <!-- ── 文字输入浮层 ────────────────────────────────────────── -->
-        <div id="text-input-overlay" role="dialog" aria-modal="true" aria-labelledby="text-panel-title">
-            <div class="text-panel">
-                <div class="text-panel-title" id="text-panel-title">输入文字</div>
-                <input id="text-input-field" type="text" placeholder="请输入文字内容…"
-                       autocomplete="off" spellcheck="false" maxlength="256">
-                <div class="text-panel-row">
-                    <label for="text-height-field">字高</label>
-                    <input id="text-height-field" type="number" value="2.5" min="0.1" max="1000" step="0.5">
-                </div>
-                <div class="text-panel-hint">按 <kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 取消</div>
-                <div class="text-panel-actions">
-                    <button id="text-btn-cancel">取消</button>
-                    <button id="text-btn-ok">确定</button>
-                </div>
-            </div>
+        <div class="tb-sep"></div>
+
+        <div class="tb-group">
+          <button id="btn-move" title="移动 (M)">
+            <img class="tb-icon" src="icons/Move.png" alt="" /> 移动
+          </button>
+          <button id="btn-copy" title="复制 (CO)">
+            <img class="tb-icon" src="icons/Copy.png" alt="" /> 复制
+          </button>
+          <button id="btn-mirror" title="镜像 (MI)">
+            <img class="tb-icon" src="icons/Mirror.png" alt="" /> 镜像
+          </button>
+          <button id="btn-rotate" title="旋转 (RO)">
+            <img class="tb-icon" src="icons/Rotate.png" alt="" /> 旋转
+          </button>
+          <button id="btn-delete" title="删除 (Del)" class="danger">
+            <span class="tb-icon icon-delete"></span> 删除
+          </button>
         </div>
 
-        <!-- ── 多行文字输入浮层 ────────────────────────────────────── -->
-        <div id="mtext-input-overlay" role="dialog" aria-modal="true" aria-labelledby="mtext-panel-title">
-            <div class="text-panel">
-                <div class="text-panel-title" id="mtext-panel-title">输入多行文字</div>
-                <textarea id="mtext-input-field" placeholder="请输入多行文字内容…"
-                          autocomplete="off" spellcheck="false"></textarea>
-                <div class="text-panel-row">
-                    <label for="mtext-height-field">字高</label>
-                    <input id="mtext-height-field" type="number" value="2.5" min="0.1" max="1000" step="0.5">
-                    <label for="mtext-width-field">框宽</label>
-                    <input id="mtext-width-field" type="number" value="0" min="0" max="100000" step="1">
-                </div>
-                <div class="text-panel-hint">框宽 0 表示不限宽 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 取消</div>
-                <div class="text-panel-actions">
-                    <button id="mtext-btn-cancel">取消</button>
-                    <button id="mtext-btn-ok">确定</button>
-                </div>
-            </div>
+        <div class="tb-sep"></div>
+
+        <div class="tb-group">
+          <button id="btn-undo" title="撤销 (Ctrl+Z)">
+            <img class="tb-icon" src="icons/Undo.png" alt="" /> 撤销
+          </button>
+          <button id="btn-redo" title="重做 (Ctrl+Y)">
+            <img class="tb-icon" src="icons/Redo.png" alt="" /> 重做
+          </button>
+          <button id="btn-cancel" title="取消 / ESC">
+            <span class="tb-icon icon-cancel"></span> 取消
+          </button>
         </div>
 
-        <!-- ── Status bar ──────────────────────────────────────────── -->
-        <div id="status">
-            <span class="seg">
-                <span id="mode-pill" class="pill active-mode">就绪</span>
-            </span>
-            <span class="seg hint"><kbd>L</kbd>左键 / <kbd>R</kbd>右键 / <kbd>M</kbd>中键</span>
-            <span class="seg hint">滚轮缩放 · 中键拖动平移</span>
-            <span class="seg hint"><kbd>Esc</kbd>结束 · <kbd>Enter</kbd>重复</span>
-            <span class="seg right">
-                <span id="snap-pill"  class="pill toggleable snap-on"  title="点击切换捕捉 (F3)" role="switch" tabindex="0" aria-checked="true">捕捉 · ON</span>
-                <span id="ortho-pill" class="pill toggleable ortho-off" title="点击切换正交 (F8)" role="switch" tabindex="0" aria-checked="false">正交 · OFF</span>
-            </span>
-        </div>
+        <div class="tb-spacer"></div>
 
-    </div><!-- #app -->
+        <a
+          class="tb-link"
+          href="https://github.com/CHMOSE023/MiniCAD/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="下载桌面版"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path
+              d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14zM7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06z"
+            />
+          </svg>
+          <span>桌面版</span>
+        </a>
+        <a class="tb-link" href="docs/" title="开发文档">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path
+              d="M0 1.75A.75.75 0 01.75 1h4.253c1.227 0 2.317.59 3 1.501A3.744 3.744 0 0111.006 1h4.245a.75.75 0 01.75.75v10.5a.75.75 0 01-.75.75h-4.507a2.25 2.25 0 00-1.591.659l-.622.621a.75.75 0 01-1.06 0l-.622-.621A2.25 2.25 0 005.258 13H.75a.75.75 0 01-.75-.75zm7.251 10.324l.004-5.073-.002-2.253A2.25 2.25 0 005.003 2.5H1.5v9h3.757a3.75 3.75 0 011.994.574zM8.755 4.75l-.004 7.322a3.752 3.752 0 011.992-.572H14.5v-9h-3.495a2.25 2.25 0 00-2.25 2.25z"
+            />
+          </svg>
+          <span>文档</span>
+        </a>
+        <a
+          class="tb-link"
+          href="https://github.com/CHMOSE023/MiniCAD"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="在 GitHub 上查看源码"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+            />
+          </svg>
+          <span>GitHub</span>
+          <span class="star">★ Star</span>
+        </a>
+      </div>
+
+      <!-- ── Canvas ──────────────────────────────────────────────── -->
+      <div id="canvas-wrap">
+        <canvas
+          id="minicad-canvas"
+          tabindex="0"
+          oncontextmenu="return false;"
+        ></canvas>
+      </div>
+
+      <!-- ── 文字输入浮层 ────────────────────────────────────────── -->
+      <div
+        id="text-input-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="text-panel-title"
+      >
+        <div class="text-panel">
+          <div class="text-panel-title" id="text-panel-title">输入文字</div>
+          <input
+            id="text-input-field"
+            type="text"
+            placeholder="请输入文字内容…"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="256"
+          />
+          <div class="text-panel-row">
+            <label for="text-height-field">字高</label>
+            <input
+              id="text-height-field"
+              type="number"
+              value="2.5"
+              min="0.1"
+              max="1000"
+              step="0.5"
+            />
+          </div>
+          <div class="text-panel-hint">
+            按 <kbd>Enter</kbd> 确定 · <kbd>Esc</kbd> 取消
+          </div>
+          <div class="text-panel-actions">
+            <button id="text-btn-cancel">取消</button>
+            <button id="text-btn-ok">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 多行文字输入浮层 ────────────────────────────────────── -->
+      <div
+        id="mtext-input-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mtext-panel-title"
+      >
+        <div class="text-panel">
+          <div class="text-panel-title" id="mtext-panel-title">
+            输入多行文字
+          </div>
+          <textarea
+            id="mtext-input-field"
+            placeholder="请输入多行文字内容…"
+            autocomplete="off"
+            spellcheck="false"
+          ></textarea>
+          <div class="text-panel-row">
+            <label for="mtext-height-field">字高</label>
+            <input
+              id="mtext-height-field"
+              type="number"
+              value="2.5"
+              min="0.1"
+              max="1000"
+              step="0.5"
+            />
+            <label for="mtext-width-field">框宽</label>
+            <input
+              id="mtext-width-field"
+              type="number"
+              value="0"
+              min="0"
+              max="100000"
+              step="1"
+            />
+          </div>
+          <div class="text-panel-hint">
+            框宽 0 表示不限宽 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 确定 ·
+            <kbd>Esc</kbd> 取消
+          </div>
+          <div class="text-panel-actions">
+            <button id="mtext-btn-cancel">取消</button>
+            <button id="mtext-btn-ok">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Status bar ──────────────────────────────────────────── -->
+      <div id="status">
+        <span class="seg">
+          <span id="mode-pill" class="pill active-mode">就绪</span>
+        </span>
+        <span class="seg hint"
+          ><kbd>L</kbd>左键 / <kbd>R</kbd>右键 / <kbd>M</kbd>中键</span
+        >
+        <span class="seg hint">滚轮缩放 · 中键拖动平移</span>
+        <span class="seg hint"><kbd>Esc</kbd>结束 · <kbd>Enter</kbd>重复</span>
+        <span class="seg right">
+          <span
+            id="snap-pill"
+            class="pill toggleable snap-on"
+            title="点击切换捕捉 (F3)"
+            role="switch"
+            tabindex="0"
+            aria-checked="true"
+            >捕捉 · ON</span
+          >
+          <span
+            id="ortho-pill"
+            class="pill toggleable ortho-off"
+            title="点击切换正交 (F8)"
+            role="switch"
+            tabindex="0"
+            aria-checked="false"
+            >正交 · OFF</span
+          >
+        </span>
+      </div>
+    </div>
+    <!-- #app -->
 
     <script>
-        const canvas = document.getElementById('minicad-canvas');
-        const modePill = document.getElementById('mode-pill');
-        const snapPill = document.getElementById('snap-pill');
-        const orthoPill = document.getElementById('ortho-pill');
+      const canvas = document.getElementById("minicad-canvas");
+      const modePill = document.getElementById("mode-pill");
+      const snapPill = document.getElementById("snap-pill");
+      const orthoPill = document.getElementById("ortho-pill");
 
-        let snapOn = true;
-        let orthoOn = false;
-        let activeTool = null;
+      let snapOn = true;
+      let orthoOn = false;
+      let activeTool = null;
 
-        function syncCanvasCssSize() {
-            const wrap = document.getElementById('canvas-wrap');
-            const rect = wrap.getBoundingClientRect();
-            canvas.style.width = `${Math.max(1, Math.floor(rect.width))}px`;
-            canvas.style.height = `${Math.max(1, Math.floor(rect.height))}px`;
+      function syncCanvasCssSize() {
+        const wrap = document.getElementById("canvas-wrap");
+        const rect = wrap.getBoundingClientRect();
+        canvas.style.width = `${Math.max(1, Math.floor(rect.width))}px`;
+        canvas.style.height = `${Math.max(1, Math.floor(rect.height))}px`;
+      }
+
+      function call(name) {
+        if (!Module.runtimeReady) return;
+        Module.ccall(name, null, [], []);
+      }
+
+      function setMode(label) {
+        modePill.textContent = label;
+      }
+
+      function activateBtn(id) {
+        if (activeTool) {
+          const prev = document.getElementById(activeTool);
+          if (prev) prev.classList.remove("active");
         }
-
-        function call(name) {
-            if (!Module.runtimeReady) return;
-            Module.ccall(name, null, [], []);
+        activeTool = id;
+        if (id) {
+          const btn = document.getElementById(id);
+          if (btn) btn.classList.add("active");
         }
+      }
 
-        function setMode(label) { modePill.textContent = label; }
-
-        function activateBtn(id) {
-            if (activeTool) {
-                const prev = document.getElementById(activeTool);
-                if (prev) prev.classList.remove('active');
-            }
-            activeTool = id;
-            if (id) {
-                const btn = document.getElementById(id);
-                if (btn) btn.classList.add('active');
-            }
-        }
-
-        function toolBtn(btnId, exportName, label) {
-            document.getElementById(btnId).onclick = () => {
-                canvas.focus();
-                call(exportName);
-                setMode(label);
-                activateBtn(btnId);
-            };
-        }
-
-        function actionBtn(btnId, exportName, label) {
-            document.getElementById(btnId).onclick = () => {
-                canvas.focus();
-                call(exportName);
-                setMode(label);
-            };
-        }
-
-        var Module = {
-            canvas,
-            onRuntimeInitialized() {
-                syncCanvasCssSize();
-                window.addEventListener('resize', syncCanvasCssSize);
-                Module.runtimeReady = true;
-
-                // ── 文字输入浮层 ─────────────────────────────────────
-                const textOverlay   = document.getElementById('text-input-overlay');
-                const textField     = document.getElementById('text-input-field');
-                const textHeightFld = document.getElementById('text-height-field');
-
-                function showTextOverlay() {
-                    document.getElementById('text-panel-title').textContent = '输入文字';
-                    textField.value = '';
-                    textOverlay.classList.add('visible');
-                    window._textInputActive = true;
-                    requestAnimationFrame(() => textField.focus());
-                }
-
-                window._minicadShowTextEdit = function(initialText) {
-                    document.getElementById('text-panel-title').textContent = '编辑文字';
-                    textField.value = initialText || '';
-                    textOverlay.classList.add('visible');
-                    window._textInputActive = true;
-                    requestAnimationFrame(() => { textField.focus(); textField.select(); });
-                };
-
-                function hideTextOverlay() {
-                    textOverlay.classList.remove('visible');
-                    window._textInputActive = false;
-                    canvas.focus();
-                }
-
-                function submitText() {
-                    const text   = textField.value.trim();
-                    const height = parseFloat(textHeightFld.value) || 2.5;
-                    hideTextOverlay();
-                    if (text) {
-                        Module.ccall('MiniCAD_SubmitText', null, ['string', 'number'], [text, height]);
-                    } else {
-                        Module.ccall('MiniCAD_CancelText', null, [], []);
-                    }
-                    setMode('就绪');
-                    activateBtn(null);
-                }
-
-                function cancelText() {
-                    hideTextOverlay();
-                    Module.ccall('MiniCAD_CancelText', null, [], []);
-                    setMode('就绪');
-                    activateBtn(null);
-                }
-
-                // 供 pre-WASM 捕获监听器调用（在 WASM 加载前注册，需通过 window 引用）
-                window._minicadSubmitText    = submitText;
-                window._minicadCancelText    = cancelText;
-                // C++ 通过 EM_ASM 调用此函数弹出浮层
-                window._minicadShowTextInput = showTextOverlay;
-
-                document.getElementById('text-btn-ok').onclick     = submitText;
-                document.getElementById('text-btn-cancel').onclick  = cancelText;
-
-                // ── 多行文字输入浮层 ─────────────────────────────────
-                const mtextOverlay   = document.getElementById('mtext-input-overlay');
-                const mtextField     = document.getElementById('mtext-input-field');
-                const mtextHeightFld = document.getElementById('mtext-height-field');
-                const mtextWidthFld  = document.getElementById('mtext-width-field');
-
-                function showMTextOverlay() {
-                    document.getElementById('mtext-panel-title').textContent = '输入多行文字';
-                    mtextField.value = '';
-                    mtextOverlay.classList.add('visible');
-                    window._mtextInputActive = true;
-                    requestAnimationFrame(() => mtextField.focus());
-                }
-
-                window._minicadShowMTextEdit = function(initialText) {
-                    document.getElementById('mtext-panel-title').textContent = '编辑多行文字';
-                    mtextField.value = initialText || '';
-                    mtextOverlay.classList.add('visible');
-                    window._mtextInputActive = true;
-                    requestAnimationFrame(() => { mtextField.focus(); mtextField.select(); });
-                };
-
-                function hideMTextOverlay() {
-                    mtextOverlay.classList.remove('visible');
-                    window._mtextInputActive = false;
-                    canvas.focus();
-                }
-
-                function submitMText() {
-                    const text     = mtextField.value.replace(/\s+$/, '');
-                    const height   = parseFloat(mtextHeightFld.value) || 2.5;
-                    const boxWidth = parseFloat(mtextWidthFld.value)  || 0;
-                    hideMTextOverlay();
-                    if (text) {
-                        Module.ccall('MiniCAD_SubmitMText', null,
-                            ['string', 'number', 'number'], [text, height, boxWidth]);
-                    } else {
-                        Module.ccall('MiniCAD_CancelMText', null, [], []);
-                    }
-                    setMode('就绪');
-                    activateBtn(null);
-                }
-
-                function cancelMText() {
-                    hideMTextOverlay();
-                    Module.ccall('MiniCAD_CancelMText', null, [], []);
-                    setMode('就绪');
-                    activateBtn(null);
-                }
-
-                window._minicadSubmitMText    = submitMText;
-                window._minicadCancelMText    = cancelMText;
-                window._minicadShowMTextInput = showMTextOverlay;
-
-                document.getElementById('mtext-btn-ok').onclick     = submitMText;
-                document.getElementById('mtext-btn-cancel').onclick = cancelMText;
-
-                // Draw tools
-                toolBtn('btn-line',      'MiniCAD_StartLine',      '直线');
-                toolBtn('btn-polyline',  'MiniCAD_StartPolyline',  '多段线');
-                toolBtn('btn-circle',    'MiniCAD_StartCircle',    '圆');
-                toolBtn('btn-arc',       'MiniCAD_StartArc',       '圆弧');
-                toolBtn('btn-ellipse',   'MiniCAD_StartEllipse',   '椭圆');
-                toolBtn('btn-rectangle', 'MiniCAD_StartRectangle', '矩形');
-                toolBtn('btn-spline',    'MiniCAD_StartSpline',    '样条');
-                toolBtn('btn-point',     'MiniCAD_StartPoint',     '点');
-                toolBtn('btn-text',      'MiniCAD_StartText',      '文字 · 点击插入点');
-                toolBtn('btn-mtext',     'MiniCAD_StartMText',     '多行文字 · 点击插入点');
-
-                // Edit tools
-                toolBtn('btn-move', 'MiniCAD_StartMove', '移动');
-                toolBtn('btn-copy', 'MiniCAD_StartCopy', '复制');
-                toolBtn('btn-mirror', 'MiniCAD_StartMirror', '镜像');
-                toolBtn('btn-rotate', 'MiniCAD_StartRotate', '旋转');
-
-                // Delete
-                document.getElementById('btn-delete').onclick = () => {
-                    canvas.focus();
-                    call('MiniCAD_Delete');
-                    setMode('就绪');
-                    activateBtn(null);
-                };
-
-                // Snap 胶囊：单击切换 + 键盘 Space/Enter
-                const toggleSnap = () => {
-                    canvas.focus();
-                    call('MiniCAD_ToggleSnap');
-                    snapOn = !snapOn;
-                    snapPill.textContent = `捕捉 · ${snapOn ? 'ON' : 'OFF'}`;
-                    snapPill.classList.toggle('snap-on',  snapOn);
-                    snapPill.classList.toggle('snap-off', !snapOn);
-                    snapPill.setAttribute('aria-checked', snapOn ? 'true' : 'false');
-                };
-                snapPill.addEventListener('click', toggleSnap);
-                snapPill.addEventListener('keydown', (e) => {
-                    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSnap(); }
-                });
-
-                // Ortho 胶囊：单击切换 + 键盘 Space/Enter
-                const toggleOrtho = () => {
-                    canvas.focus();
-                    call('MiniCAD_ToggleOrtho');
-                    orthoOn = !orthoOn;
-                    orthoPill.textContent = `正交 · ${orthoOn ? 'ON' : 'OFF'}`;
-                    orthoPill.classList.toggle('ortho-on',  orthoOn);
-                    orthoPill.classList.toggle('ortho-off', !orthoOn);
-                    orthoPill.setAttribute('aria-checked', orthoOn ? 'true' : 'false');
-                };
-                orthoPill.addEventListener('click', toggleOrtho);
-                orthoPill.addEventListener('keydown', (e) => {
-                    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleOrtho(); }
-                });
-
-                // History & misc
-                actionBtn('btn-undo', 'MiniCAD_Undo', '撤销');
-                actionBtn('btn-redo', 'MiniCAD_Redo', '重做');
-
-                document.getElementById('btn-cancel').onclick = () => {
-                    canvas.focus();
-                    call('MiniCAD_Cancel');
-                    setMode('就绪');
-                    activateBtn(null);
-                };
-
-                setMode('就绪');
-                canvas.focus();
-            }
+      function toolBtn(btnId, exportName, label) {
+        document.getElementById(btnId).onclick = () => {
+          canvas.focus();
+          call(exportName);
+          setMode(label);
+          activateBtn(btnId);
         };
+      }
+
+      function actionBtn(btnId, exportName, label) {
+        document.getElementById(btnId).onclick = () => {
+          canvas.focus();
+          call(exportName);
+          setMode(label);
+        };
+      }
+
+      var Module = {
+        canvas,
+        onRuntimeInitialized() {
+          syncCanvasCssSize();
+          window.addEventListener("resize", syncCanvasCssSize);
+          Module.runtimeReady = true;
+
+          // ── 文字输入浮层 ─────────────────────────────────────
+          const textOverlay = document.getElementById("text-input-overlay");
+          const textField = document.getElementById("text-input-field");
+          const textHeightFld = document.getElementById("text-height-field");
+
+          function showTextOverlay() {
+            document.getElementById("text-panel-title").textContent =
+              "输入文字";
+            textField.value = "";
+            textOverlay.classList.add("visible");
+            window._textInputActive = true;
+            requestAnimationFrame(() => textField.focus());
+          }
+
+          window._minicadShowTextEdit = function (initialText) {
+            document.getElementById("text-panel-title").textContent =
+              "编辑文字";
+            textField.value = initialText || "";
+            textOverlay.classList.add("visible");
+            window._textInputActive = true;
+            requestAnimationFrame(() => {
+              textField.focus();
+              textField.select();
+            });
+          };
+
+          function hideTextOverlay() {
+            textOverlay.classList.remove("visible");
+            window._textInputActive = false;
+            canvas.focus();
+          }
+
+          function submitText() {
+            const text = textField.value.trim();
+            const height = parseFloat(textHeightFld.value) || 2.5;
+            hideTextOverlay();
+            if (text) {
+              Module.ccall(
+                "MiniCAD_SubmitText",
+                null,
+                ["string", "number"],
+                [text, height],
+              );
+            } else {
+              Module.ccall("MiniCAD_CancelText", null, [], []);
+            }
+            setMode("就绪");
+            activateBtn(null);
+          }
+
+          function cancelText() {
+            hideTextOverlay();
+            Module.ccall("MiniCAD_CancelText", null, [], []);
+            setMode("就绪");
+            activateBtn(null);
+          }
+
+          // 供 pre-WASM 捕获监听器调用（在 WASM 加载前注册，需通过 window 引用）
+          window._minicadSubmitText = submitText;
+          window._minicadCancelText = cancelText;
+          // C++ 通过 EM_ASM 调用此函数弹出浮层
+          window._minicadShowTextInput = showTextOverlay;
+
+          document.getElementById("text-btn-ok").onclick = submitText;
+          document.getElementById("text-btn-cancel").onclick = cancelText;
+
+          // ── 多行文字输入浮层 ─────────────────────────────────
+          const mtextOverlay = document.getElementById("mtext-input-overlay");
+          const mtextField = document.getElementById("mtext-input-field");
+          const mtextHeightFld = document.getElementById("mtext-height-field");
+          const mtextWidthFld = document.getElementById("mtext-width-field");
+
+          function showMTextOverlay() {
+            document.getElementById("mtext-panel-title").textContent =
+              "输入多行文字";
+            mtextField.value = "";
+            mtextOverlay.classList.add("visible");
+            window._mtextInputActive = true;
+            requestAnimationFrame(() => mtextField.focus());
+          }
+
+          window._minicadShowMTextEdit = function (initialText) {
+            document.getElementById("mtext-panel-title").textContent =
+              "编辑多行文字";
+            mtextField.value = initialText || "";
+            mtextOverlay.classList.add("visible");
+            window._mtextInputActive = true;
+            requestAnimationFrame(() => {
+              mtextField.focus();
+              mtextField.select();
+            });
+          };
+
+          function hideMTextOverlay() {
+            mtextOverlay.classList.remove("visible");
+            window._mtextInputActive = false;
+            canvas.focus();
+          }
+
+          function submitMText() {
+            const text = mtextField.value.replace(/\s+$/, "");
+            const height = parseFloat(mtextHeightFld.value) || 2.5;
+            const boxWidth = parseFloat(mtextWidthFld.value) || 0;
+            hideMTextOverlay();
+            if (text) {
+              Module.ccall(
+                "MiniCAD_SubmitMText",
+                null,
+                ["string", "number", "number"],
+                [text, height, boxWidth],
+              );
+            } else {
+              Module.ccall("MiniCAD_CancelMText", null, [], []);
+            }
+            setMode("就绪");
+            activateBtn(null);
+          }
+
+          function cancelMText() {
+            hideMTextOverlay();
+            Module.ccall("MiniCAD_CancelMText", null, [], []);
+            setMode("就绪");
+            activateBtn(null);
+          }
+
+          window._minicadSubmitMText = submitMText;
+          window._minicadCancelMText = cancelMText;
+          window._minicadShowMTextInput = showMTextOverlay;
+
+          document.getElementById("mtext-btn-ok").onclick = submitMText;
+          document.getElementById("mtext-btn-cancel").onclick = cancelMText;
+
+          // Draw tools
+          toolBtn("btn-line", "MiniCAD_StartLine", "直线");
+          toolBtn("btn-polyline", "MiniCAD_StartPolyline", "多段线");
+          toolBtn("btn-circle", "MiniCAD_StartCircle", "圆");
+          toolBtn("btn-arc", "MiniCAD_StartArc", "圆弧");
+          toolBtn("btn-ellipse", "MiniCAD_StartEllipse", "椭圆");
+          toolBtn("btn-rectangle", "MiniCAD_StartRectangle", "矩形");
+          toolBtn("btn-spline", "MiniCAD_StartSpline", "样条");
+          toolBtn("btn-point", "MiniCAD_StartPoint", "点");
+          toolBtn("btn-text", "MiniCAD_StartText", "文字 · 点击插入点");
+          toolBtn("btn-mtext", "MiniCAD_StartMText", "多行文字 · 点击插入点");
+
+          // Edit tools
+          toolBtn("btn-move", "MiniCAD_StartMove", "移动");
+          toolBtn("btn-copy", "MiniCAD_StartCopy", "复制");
+          toolBtn("btn-mirror", "MiniCAD_StartMirror", "镜像");
+          toolBtn("btn-rotate", "MiniCAD_StartRotate", "旋转");
+
+          // Delete
+          document.getElementById("btn-delete").onclick = () => {
+            canvas.focus();
+            call("MiniCAD_Delete");
+            setMode("就绪");
+            activateBtn(null);
+          };
+
+          // Snap 胶囊：单击切换 + 键盘 Space/Enter
+          const toggleSnap = () => {
+            canvas.focus();
+            call("MiniCAD_ToggleSnap");
+            snapOn = !snapOn;
+            snapPill.textContent = `捕捉 · ${snapOn ? "ON" : "OFF"}`;
+            snapPill.classList.toggle("snap-on", snapOn);
+            snapPill.classList.toggle("snap-off", !snapOn);
+            snapPill.setAttribute("aria-checked", snapOn ? "true" : "false");
+          };
+          snapPill.addEventListener("click", toggleSnap);
+          snapPill.addEventListener("keydown", (e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              toggleSnap();
+            }
+          });
+
+          // Ortho 胶囊：单击切换 + 键盘 Space/Enter
+          const toggleOrtho = () => {
+            canvas.focus();
+            call("MiniCAD_ToggleOrtho");
+            orthoOn = !orthoOn;
+            orthoPill.textContent = `正交 · ${orthoOn ? "ON" : "OFF"}`;
+            orthoPill.classList.toggle("ortho-on", orthoOn);
+            orthoPill.classList.toggle("ortho-off", !orthoOn);
+            orthoPill.setAttribute("aria-checked", orthoOn ? "true" : "false");
+          };
+          orthoPill.addEventListener("click", toggleOrtho);
+          orthoPill.addEventListener("keydown", (e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              toggleOrtho();
+            }
+          });
+
+          // History & misc
+          actionBtn("btn-undo", "MiniCAD_Undo", "撤销");
+          actionBtn("btn-redo", "MiniCAD_Redo", "重做");
+
+          document.getElementById("btn-cancel").onclick = () => {
+            canvas.focus();
+            call("MiniCAD_Cancel");
+            setMode("就绪");
+            activateBtn(null);
+          };
+
+          setMode("就绪");
+          canvas.focus();
+        },
+      };
     </script>
     <script>
-        // 在 WASM keydown 捕获监听器注册之前先占位，阻止文字输入期间的按键被 C++ 命令系统消费
-        window._textInputActive = false;
-        window._mtextInputActive = false;
-        window.addEventListener('keydown', function(e) {
-            if (window._textInputActive) {
-                e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
-                if (e.key === 'Enter')  { e.preventDefault(); if (window._minicadSubmitText) window._minicadSubmitText(); }
-                if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelText) window._minicadCancelText(); }
-                return;
+      // 在 WASM keydown 捕获监听器注册之前先占位，阻止文字输入期间的按键被 C++ 命令系统消费
+      window._textInputActive = false;
+      window._mtextInputActive = false;
+      window.addEventListener(
+        "keydown",
+        function (e) {
+          if (window._textInputActive) {
+            e.stopImmediatePropagation(); // 阻止 Emscripten 捕获此事件
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (window._minicadSubmitText) window._minicadSubmitText();
             }
-            if (window._mtextInputActive) {
-                e.stopImmediatePropagation();   // 阻止 Emscripten 捕获此事件
-                // Ctrl/Cmd+Enter 提交；单独 Enter 在文本域内换行
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault();
-                    if (window._minicadSubmitMText) window._minicadSubmitMText();
-                }
-                if (e.key === 'Escape') { e.preventDefault(); if (window._minicadCancelMText) window._minicadCancelMText(); }
-                return;
+            if (e.key === "Escape") {
+              e.preventDefault();
+              if (window._minicadCancelText) window._minicadCancelText();
             }
-        }, true /* capture */);
+            return;
+          }
+          if (window._mtextInputActive) {
+            e.stopImmediatePropagation(); // 阻止 Emscripten 捕获此事件
+            // Ctrl/Cmd+Enter 提交；单独 Enter 在文本域内换行
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              if (window._minicadSubmitMText) window._minicadSubmitMText();
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              if (window._minicadCancelMText) window._minicadCancelMText();
+            }
+            return;
+          }
+        },
+        true /* capture */,
+      );
     </script>
     {{{ SCRIPT }}}
-</body>
+  </body>
 </html>

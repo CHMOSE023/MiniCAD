@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MiniCAD 开发文档</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/languages/cpp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/languages/cmake.min.js"></script>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #0d1117;
+        --sidebar: #161b22;
+        --border: #30363d;
+        --text: #c9d1d9;
+        --text-dim: #6e7781;
+        --text-head: #e6edf3;
+        --accent: #58a6ff;
+        --accent-bg: #1f2d3d;
+        --code-bg: #161b22;
+        --tag-bg: #21262d;
+        --sidebar-w: 260px;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        display: flex;
+        overflow: hidden;
+      }
+
+      /* ── Sidebar ── */
+      #sidebar {
+        width: var(--sidebar-w);
+        min-width: var(--sidebar-w);
+        background: var(--sidebar);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        position: sticky;
+        top: 0;
+      }
+
+      #sidebar-header {
+        padding: 20px 16px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      #sidebar-header .logo {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-head);
+        letter-spacing: 0.3px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #sidebar-header .logo svg {
+        flex-shrink: 0;
+      }
+      #sidebar-header .sub {
+        font-size: 11px;
+        color: var(--text-dim);
+        margin-top: 2px;
+        padding-left: 26px;
+      }
+
+      #search-wrap {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      #search {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 13px;
+        padding: 5px 10px;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      #search:focus {
+        border-color: var(--accent);
+      }
+      #search::placeholder {
+        color: var(--text-dim);
+      }
+
+      #nav {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px 0;
+      }
+      #nav::-webkit-scrollbar {
+        width: 4px;
+      }
+      #nav::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #nav::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+      }
+
+      .nav-section {
+        padding: 8px 12px 2px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px 5px 16px;
+        font-size: 13px;
+        color: var(--text);
+        cursor: pointer;
+        border-radius: 4px;
+        margin: 0 4px;
+        transition:
+          background 0.1s,
+          color 0.1s;
+        text-decoration: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .nav-item:hover {
+        background: var(--tag-bg);
+        color: var(--text-head);
+      }
+      .nav-item.active {
+        background: var(--accent-bg);
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .nav-item .badge {
+        flex-shrink: 0;
+        font-size: 10px;
+        font-weight: 600;
+        background: var(--tag-bg);
+        color: var(--text-dim);
+        border-radius: 3px;
+        padding: 1px 5px;
+        min-width: 22px;
+        text-align: center;
+      }
+      .nav-item.active .badge {
+        background: var(--accent-bg);
+        color: var(--accent);
+      }
+      .nav-item .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* ── Main ── */
+      #main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      #topbar {
+        background: var(--sidebar);
+        border-bottom: 1px solid var(--border);
+        padding: 0 28px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .breadcrumb {
+        font-size: 13px;
+        color: var(--text-dim);
+      }
+      .breadcrumb span {
+        color: var(--text-head);
+        font-weight: 500;
+      }
+
+      #content-wrap {
+        flex: 1;
+        overflow-y: auto;
+        padding: 40px 28px 60px;
+      }
+      #content-wrap::-webkit-scrollbar {
+        width: 6px;
+      }
+      #content-wrap::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #content-wrap::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+
+      #content {
+        max-width: 820px;
+        margin: 0 auto;
+      }
+
+      /* ── Loading / Error ── */
+      #loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 200px;
+        color: var(--text-dim);
+        font-size: 14px;
+        gap: 10px;
+      }
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* ── Markdown styles ── */
+      #content h1 {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--text-head);
+        margin-bottom: 8px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      #content h2 {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text-head);
+        margin: 28px 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border);
+      }
+      #content h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-head);
+        margin: 20px 0 8px;
+      }
+      #content h4 {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-head);
+        margin: 16px 0 6px;
+      }
+      #content p {
+        margin: 10px 0;
+      }
+      #content a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      #content a:hover {
+        text-decoration: underline;
+      }
+
+      #content ul,
+      #content ol {
+        padding-left: 24px;
+        margin: 8px 0;
+      }
+      #content li {
+        margin: 4px 0;
+      }
+      #content li > ul,
+      #content li > ol {
+        margin: 2px 0;
+      }
+
+      #content code {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 12.5px;
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: #e06c75;
+      }
+      #content pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        overflow-x: auto;
+        margin: 14px 0;
+        line-height: 1.5;
+      }
+      #content pre code {
+        background: none;
+        border: none;
+        padding: 0;
+        color: inherit;
+        font-size: 13px;
+      }
+      #content pre::-webkit-scrollbar {
+        height: 4px;
+      }
+      #content pre::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #content pre::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 2px;
+      }
+
+      #content blockquote {
+        border-left: 3px solid var(--accent);
+        margin: 14px 0;
+        padding: 8px 16px;
+        background: var(--accent-bg);
+        border-radius: 0 6px 6px 0;
+        color: var(--text);
+      }
+      #content blockquote p {
+        margin: 4px 0;
+      }
+
+      #content table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 14px 0;
+        font-size: 13.5px;
+      }
+      #content table th {
+        background: var(--sidebar);
+        color: var(--text-head);
+        font-weight: 600;
+        text-align: left;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+      }
+      #content table td {
+        padding: 7px 12px;
+        border: 1px solid var(--border);
+        vertical-align: top;
+      }
+      #content table tr:nth-child(even) td {
+        background: #0f1419;
+      }
+
+      #content hr {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 24px 0;
+      }
+
+      #content strong {
+        color: var(--text-head);
+        font-weight: 600;
+      }
+
+      /* welcome screen */
+      #welcome {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 60vh;
+        text-align: center;
+        color: var(--text-dim);
+      }
+      #welcome .icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+      }
+      #welcome h2 {
+        color: var(--text-head);
+        font-size: 22px;
+        margin-bottom: 8px;
+      }
+      #welcome p {
+        font-size: 14px;
+        max-width: 400px;
+      }
+      #welcome .quick-links {
+        display: flex;
+        gap: 10px;
+        margin-top: 24px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      #welcome .quick-links a {
+        background: var(--sidebar);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          color 0.15s;
+        text-decoration: none;
+      }
+      #welcome .quick-links a:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      /* ── Mobile toggle ── */
+      #menu-btn {
+        display: none;
+        background: none;
+        border: none;
+        color: var(--text);
+        cursor: pointer;
+        padding: 4px;
+        margin-right: 8px;
+      }
+      .logo a {
+        text-decoration: none;
+      }
+      @media (max-width: 700px) {
+        #menu-btn {
+          display: block;
+        }
+        #sidebar {
+          position: fixed;
+          left: -100%;
+          z-index: 100;
+          transition: left 0.2s;
+        }
+        #sidebar.open {
+          left: 0;
+        }
+        #overlay {
+          display: none;
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.5);
+          z-index: 99;
+        }
+        #overlay.open {
+          display: block;
+        }
+        #content-wrap {
+          padding: 24px 16px 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay"></div>
+
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <div class="logo">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#58a6ff"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18M9 21V9" />
+          </svg>
+          <a class="logo" href="/docs">MiniCAD 开发文档</a>
+        </div>
+        <div class="sub">初级教程 · 架构指南</div>
+      </div>
+      <div id="search-wrap">
+        <input
+          id="search"
+          type="text"
+          placeholder="搜索课程…"
+          autocomplete="off"
+        />
+      </div>
+      <nav id="nav"></nav>
+    </aside>
+
+    <div id="main">
+      <div id="topbar">
+        <button id="menu-btn" onclick="toggleSidebar()" aria-label="菜单">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <span class="breadcrumb"
+          >MiniCAD &rsaquo; <span id="breadcrumb-title">文档首页</span></span
+        >
+      </div>
+      <div id="content-wrap">
+        <div id="content">
+          <div id="welcome">
+            <div class="icon">📐</div>
+            <h2>MiniCAD 开发文档</h2>
+            <p>轻量级跨平台 CAD 编辑器框架，从左侧选择一篇课程开始阅读。</p>
+            <div class="quick-links" id="quick-links"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let DOCS = [];
+
+      const nav = document.getElementById("nav");
+      const search = document.getElementById("search");
+      const contentEl = document.getElementById("content");
+      const breadcrumbTitle = document.getElementById("breadcrumb-title");
+      const quickLinks = document.getElementById("quick-links");
+
+      let currentFile = null;
+      let allItems = [];
+
+      function buildNav(filter = "") {
+        const lc = filter.toLowerCase();
+        nav.innerHTML = "";
+        let hasSection = false;
+        let sectionEl = null;
+
+        DOCS.forEach((entry) => {
+          if (entry.section) {
+            sectionEl = entry;
+            hasSection = false;
+            return;
+          }
+          if (
+            lc &&
+            !entry.label.toLowerCase().includes(lc) &&
+            !entry.badge.toLowerCase().includes(lc)
+          )
+            return;
+          if (sectionEl && !hasSection) {
+            const sec = document.createElement("div");
+            sec.className = "nav-section";
+            sec.textContent = sectionEl.section;
+            nav.appendChild(sec);
+            hasSection = true;
+          }
+          const a = document.createElement("a");
+          a.className =
+            "nav-item" + (entry.file === currentFile ? " active" : "");
+          a.dataset.file = entry.file;
+          a.innerHTML = `<span class="badge">${entry.badge}</span><span class="label">${entry.label}</span>`;
+          a.onclick = () => loadDoc(entry.file, entry.label);
+          nav.appendChild(a);
+        });
+      }
+
+      function buildQuickLinks() {
+        const picks = DOCS.filter((d) => d.file).slice(0, 4);
+        picks.forEach((d) => {
+          const a = document.createElement("a");
+          a.textContent = d.label;
+          a.onclick = () => loadDoc(d.file, d.label);
+          quickLinks.appendChild(a);
+        });
+      }
+
+      marked.use({
+        breaks: false,
+        gfm: true,
+      });
+
+      const renderer = new marked.Renderer();
+      renderer.code = function (code, lang) {
+        const language = hljs.getLanguage(lang) ? lang : "plaintext";
+        const highlighted = hljs.highlight(
+          typeof code === "object" ? code.text : code,
+          { language },
+        ).value;
+        return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
+      };
+
+      async function loadDoc(file, label) {
+        currentFile = file;
+        breadcrumbTitle.textContent = label || file;
+        buildNav(search.value);
+
+        contentEl.innerHTML =
+          '<div id="loading"><div class="spinner"></div> 加载中…</div>';
+
+        // close mobile sidebar
+        document.getElementById("sidebar").classList.remove("open");
+        document.getElementById("overlay").classList.remove("open");
+
+        window.location.hash = file;
+
+        try {
+          const res = await fetch(file);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          const html = marked.parse(text, { renderer });
+          contentEl.innerHTML = html;
+          document.getElementById("content-wrap").scrollTop = 0;
+
+          // syntax highlight any un-highlighted blocks
+          contentEl.querySelectorAll("pre code:not(.hljs)").forEach((block) => {
+            hljs.highlightElement(block);
+          });
+        } catch (e) {
+          contentEl.innerHTML = `<div style="color:#f85149;padding:20px;">无法加载文件：${file}<br><small>${e.message}</small></div>`;
+        }
+      }
+
+      search.addEventListener("input", () => buildNav(search.value));
+
+      function toggleSidebar() {
+        const s = document.getElementById("sidebar");
+        const o = document.getElementById("overlay");
+        s.classList.toggle("open");
+        o.classList.toggle("open");
+      }
+      document.getElementById("overlay").onclick = toggleSidebar;
+
+      // init: load docs.json then build UI
+      fetch("docs.json")
+        .then((r) => r.json())
+        .then((data) => {
+          DOCS = data;
+          buildNav();
+          buildQuickLinks();
+          const hash = window.location.hash.slice(1);
+          const initial = DOCS.find((d) => d.file === hash);
+          if (initial) loadDoc(initial.file, initial.label);
+        });
+    </script>
+  </body>
+</html>

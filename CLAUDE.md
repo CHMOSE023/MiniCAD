@@ -63,11 +63,11 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 
 | 层 | 职责 |
 |---|---|
-| **Core** | 纯计算库，无 I/O 无副作用：Math、Geom、Entity 定义 |
-| **Scene** | 只读运行时快照，持有 EntityDatabase、LayerManager |
+| **Core** | 纯计算库，无 I/O 无副作用：Math、GeomKernel、Entity 定义（文件扩展名为 `.hpp`） |
+| **Scene** | 只读运行时快照，持有 EntityDatabase、LayerManager、预览对象列表 |
 | **Document** | 数据库内核，唯一的 Scene 写入口，持有 CommandStack |
 | **Viewport** | 视图层：Camera、Grid、Axis、Cursor，接收 ViewState 并驱动 IRenderer |
-| **Editor** | 交互层：工具系统、输入处理、吸附、拾取、Grip 编辑、约束、顶点缓冲 |
+| **Editor** | 交互层：工具系统、输入处理、吸附、拾取、Grip 编辑、约束、命令行、顶点缓冲 |
 | **Render** | D3D11（Windows）和 WebGL（WASM）后端，各自实现 IRenderer |
 | **Text** | TTF/SHX 字体、字形缓存、虚拟机执行、排版引擎 |
 | **UI** | ImGui 界面层：菜单栏、工具栏、文档选项卡、状态栏（仅桌面） |
@@ -87,7 +87,7 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 
 - **Document**（纯数据）：持有 Scene、CommandStack、名称/路径/脏标记、FontSystem 指针。不依赖 Editor 或 Viewport。
 - **Viewport**（视图与渲染）：持有 Camera、Grid、Axis、Cursor、RenderTarget。接收不可变的 `ViewState` 快照，调用 `IRenderer` 绘制。
-- **Editor**（交互）：持有工具系统、Picking、Snap、Overlay、GripEditor、ConstraintEngine、Resolver、**四组顶点缓冲**（scene/text/overlay/grip）。通过 `Bind(Document&, Viewport&)` / `Unbind()` 绑定。
+- **Editor**（交互）：持有工具系统、Picking、Snap、Overlay、GripEditor、ConstraintEngine、InputResolver、CommandLine、**四组顶点缓冲**（scene/text/overlay/grip）。通过 `Bind(Document&, Viewport&)` / `Unbind()` 绑定。
 
 **DocumentManager** 拥有唯一的 `Editor` 实例和 `Viewport`。切换文档时调用 `Editor::Unbind()` + `Editor::Bind(newDoc, viewport)`。
 
@@ -95,15 +95,15 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 
 ## 实体类型系统
 
-`Object`（根）→ `Entity`（基类）→ 10 个具体实体：Line、Point、Circle、Arc、Ellipse、Rectangle、Polyline、Spline、Text、MText。
+`Object`（根）→ `Entity`（基类）→ 11 个具体实体：Line、Point、Circle、Arc、Ellipse、Rectangle、Polyline、Spline、Text、MText（另有 TODO 中的几何编辑工具 Trim/Extend/Break）。
 
-- **运行时类型**：`DECLARE_RUNTIME_TYPE` 宏，`static const RuntimeTypeInfo TypeInfo`，`IsKindOf<T>()` 类型判断
+- **运行时类型**：`DECLARE_RUNTIME_TYPE(ThisClass, ParentClass)` 宏，`static const RuntimeTypeInfo TypeInfo`，`IsKindOf<T>()` 类型判断
 - **绘制接口**：`Draw(IDrawSink&, isSelected, isHovered)` 向 sink 发射几何，不直接依赖渲染器
 - **克隆**：`Clone(newId)` 用于复制操作
 
 ## Command 模式
 
-`ICommand` 接口：`Execute(Scene&) → bool`、`Undo(Scene&)`、`GetName() → string`。
+`ICommand` 接口（`src/Document/CommandStack/ICommand.h`）：`Execute(Scene&) → bool`、`Undo(Scene&)`、`GetName() → string`。
 
 - `Execute()` 返回 false 时命令不入栈（校验失败）
 - **所有权语义**：Execute 后 Scene 持有实体；Undo 后 Command 回收实体所有权
@@ -111,7 +111,7 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 
 ## 工具系统
 
-`ITool` 接口：`OnInput(InputContext&) → bool`、`Cancel()`、`OnSceneChanged()`、`OnFocusLost/Restored()`、`HasAnchor() → bool`、`GetAnchor() → Point3`。
+`ITool` 接口：`OnInput(EditorContext&) → bool`、`Cancel()`、`OnSceneChanged()`、`OnFocusLost/Restored()`、`HasAnchor() → bool`、`GetAnchor() → Point3`。
 
 - **有状态**：工具跨帧累积输入（如画线收集点位）
 - `OnInput()` 返回 true 表示事件已消费；`OnFinished` 回调通知工具完成
@@ -119,15 +119,26 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 - **注册**：`Editor::RegisterTool(toolId, factory)`，`RegisterAlias(alias, toolId)` 支持键盘别名（"L" → "Line"）
 - Tools 全部是 header-only（`.h`），无对应 `.cpp`
 
-## 输入处理管线（Resolver）
+## 输入处理管线（InputResolver）
 
-`Editor::OnInput()` 每帧构建 `InputContext`，交给 `Resolver` 产出 `ResolvedInput`：
+`Editor::OnInput()` 每帧构建 `EditorContext`，交给 `InputResolver` 产出 `InputResult`：
 
 1. **Raw**：屏幕坐标 → 世界坐标（Camera）
 2. **Snap**：SnapEngine（端点、中点、最近点、象限点、网格）
 3. **Constraint**：OrthoConstraint / PolarConstraint（需要锚点，来自 Tool 或 Grip）
 4. **Picking**：在**未约束**坐标上做 HitTest
-5. **输出**：`ResolvedInput`（hasPoint、hasSnap、hasConstraint、pickedObject）
+5. **输出**：`InputResult`（hasPoint、hasSnap、hasConstraint、pickedObject）
+
+`EditorContext`（`src/Editor/EditorContext.h`）是每帧打包的引用聚合体，持有 InputEvent、Scene、Viewport、SnapEngine、ConstraintEngine、Picking、CommandStack、Overlay、InputResult、ITool*、GripEditor*。
+
+## CommandLine
+
+`CommandLine`（`src/Editor/CommandLine/CommandLine.h`）是 Editor 子系统，负责命令行交互缓冲：
+
+- 工具每帧写 `SetPrompt()` 更新提示语（如 "指定第一个点:"）
+- Editor 通过 `Echo()` 写命令回显（命令名、错误信息等），最多保留 500 行
+- UI 每帧读取 `Prompt()` 和 `Lines()` 显示，通过 `ConsumeScrollToBottom()` 判断是否需要滚动
+- 用户输入文本由 `Editor::RunCommand()` 统一处理（命令行 + 键盘别名共用入口）
 
 ## Grip 编辑
 
@@ -156,11 +167,13 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 - **文档根对象** — `src/Document/Document.h`（Scene、CommandStack、名称/路径/脏标记）
 - **编辑器** — `src/Editor/Editor.h`（工具管理、选择、输入分派、四组顶点缓冲、Bind/Unbind）
 - **文档管理器** — `src/Document/DocumentManager.h`（拥有唯一 Editor + Viewport，多文档切换）
-- **输入上下文** — `src/Editor/Input/InputContext.h`（打包一帧输入所需的所有引用）
+- **编辑器上下文** — `src/Editor/EditorContext.h`（打包一帧输入所需的所有引用，传给 ITool 和 InputResolver）
+- **输入解析结果** — `src/Editor/Resolver/InputResult.h`（InputResolver 输出：hasPoint、hasSnap、pickedObject 等）
 - **渲染快照** — `src/Viewport/ViewState.h`（std::span 引用 Editor 顶点缓冲，零拷贝传递给 Viewport）
-- **绘制汇聚点** — `src/Document/DrawContext.hpp`（IDrawSink 实现）
+- **绘制汇聚点** — `src/Document/DrawContext.hpp`（IDrawSink 实现，含 GlyphProvider / FontResolver 回调）
 - **渲染器接口** — `src/Render/IRenderer.h`
 - **UI 管理器** — `src/UI/UIManager.h`（菜单、工具栏、文档选项卡，仅桌面）
+- **预编译头** — `src/pch.h`（桌面端包含 Windows/D3D11 头；WASM 下为空）
 
 ## Web 端注意事项
 
@@ -172,4 +185,5 @@ CMakeLists.txt 中 `MINICAD_EXPORTS` 是 CMake 列表变量，通过 `list(JOIN 
 
 - **MSVC 编译选项** — `/utf-8`、`/UNICODE`、`NOMINMAX`、`WIN32_LEAN_AND_MEAN`
 - **头文件根路径** — `src/` 和 `3rd/`，所有 `#include` 使用相对于这两个根的路径（含移入子目录的 `.cpp` 文件）
+- **文件扩展名约定** — Core 层（Math / GeomKernel / Entity / Draw）使用 `.hpp`，其余层使用 `.h` / `.cpp`
 - **第三方库** — ImGui（桌面用 Win32 + D3D11 后端）、stb 头文件库

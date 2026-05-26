@@ -91,10 +91,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM ---- 复制文档到输出目录 ---------------------------------------------------
+echo [文档] 复制 docs 到 %OUTPUT_DIR%\docs ...
+if exist "%OUTPUT_DIR%\docs" rd /s /q "%OUTPUT_DIR%\docs"
+xcopy "%PROJECT_DIR%\docs" "%OUTPUT_DIR%\docs\" /E /I /Q /Y >nul
 echo.
 echo ============================================================================
 echo  [完成] 构建成功
 echo  输出: %OUTPUT_DIR%\index.html
+echo  文档: %OUTPUT_DIR%\docs\index.html
 echo ============================================================================
 echo.
 goto :END

@@ -1,7 +1,8 @@
 # MiniCAD
 
 一个轻量级二维CAD编辑器。
-  
+
+![MiniCAD](docs/images/MiniCAD.png)
 
 ## 文件目录 
  

@@ -9,7 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
-
+.claude
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
@@ -362,6 +362,6 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 # Claude Code local user settings
-.claude/settings.local.json
+.claude
 
 thirdParty/shx-parser/

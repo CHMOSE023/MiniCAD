@@ -1,0 +1,23 @@
+[
+  { "section": "入门" },
+  { "file": "Lesson00.md", "badge": "导读", "label": "课程规划与前置知识" },
+  { "file": "Lesson00_cpp.md", "badge": "C++", "label": "C++ 基础课" },
+  { "file": "Lesson01.md", "badge": "01", "label": "项目能跑起来" },
+  { "section": "核心架构" },
+  { "file": "Lesson02.md", "badge": "02", "label": "整体架构地图" },
+  { "file": "Lesson03.md", "badge": "03", "label": "程序入口与主循环" },
+  { "file": "Lesson04.md", "badge": "04", "label": "输入系统与消息映射" },
+  { "file": "Lesson05.md", "badge": "05", "label": "绘图工具如何工作" },
+  { "file": "Lesson06.md", "badge": "06", "label": "Core 层：数学与几何" },
+  { "file": "Lesson07.md", "badge": "07", "label": "命令模式与撤销重做" },
+  { "section": "进阶系统" },
+  { "file": "Lesson08.md", "badge": "08", "label": "选择、拾取与夹点编辑" },
+  { "file": "Lesson09.md", "badge": "09", "label": "视口、相机与坐标转换" },
+  { "file": "Lesson10.md", "badge": "10", "label": "渲染层入门" },
+  { "file": "Lesson11.md", "badge": "11", "label": "文字与字体系统" },
+  { "file": "Lesson12.md", "badge": "12", "label": "吸附与约束系统" },
+  { "file": "Lesson13.md", "badge": "13", "label": "命令行系统" },
+  { "file": "Lesson14.md", "badge": "14", "label": "多文档管理" },
+  { "section": "实战" },
+  { "file": "Lesson15.md", "badge": "15", "label": "综合实战：扩展功能" }  
+]
