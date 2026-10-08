@@ -33,6 +33,7 @@
 #include "Style/Theme.hpp"
 #include "Widgets/ViewportHost.h"
 #include "Widgets/UiLayout.h"
+#include <psapi.h>
 #include <algorithm>
 #include <filesystem>
 #include <cmath>
@@ -1390,6 +1391,107 @@ namespace MiniCAD
             }
             std::filesystem::remove(file, ec);
             RenderFrame();
+        }
+
+        // ── 21. 带线宽、远离原点的大图纸：平移不重新细分；细线显示时缩放也不重新细分 ──
+        {
+            m_commands.Execute("file.new");
+            Document* big = m_docManager.GetActive();
+            Scene& scene = big->GetScene();
+            const double ox = 512345.678, oy = 3456789.123;     // 测绘坐标量级，屏幕坐标的舍入误差明显
+            for (int i = 0; i < 20000; ++i)
+            {
+                const double a = i * 0.0031;
+                const double r = 50.0 + (i % 200) * 1.0;
+                auto line = std::make_unique<LineEntity>(scene.NextObjectID(),
+                    Math::Point3(ox + r * std::cos(a), oy + r * std::sin(a), 0), Math::Point3(ox + (r + 10.0) * std::cos(a + 0.5), oy + (r + 10.0) * std::sin(a + 0.5), 0));
+                EntityAttr attr = line->GetAttr();
+                attr.Lineweight = Lineweight::W050;
+                line->SetAttr(attr);
+                scene.AddEntity(std::move(line));
+            }
+            big->MarkSaved();
+            m_docManager.ZoomAll();
+            m_viewport->RequestRender();
+            RenderFrame();
+
+            const int px = cx, py = cy;
+            uint64_t version = editor.BuildViewState().SceneVersion;
+            send(WM_MOUSEMOVE, 0, px, py);
+            send(WM_MBUTTONDOWN, MK_MBUTTON, px, py);
+            int64_t t = NowTicks();
+            for (int i = 0; i < 30; ++i)
+            {
+                send(WM_MOUSEMOVE, MK_MBUTTON, px + (i % 2 ? 7 : -7), py + i % 5);
+                RenderFrame();
+            }
+            const double panMs = static_cast<double>(NowTicks() - t) * 1000.0 / static_cast<double>(kTicksPerSecond) / 30.0;
+            send(WM_MBUTTONUP, 0, px, py);
+            check(editor.BuildViewState().SceneVersion == version, "线宽图纸（远离原点）平移时不重新细分场景");
+
+            POINT sp = { cx, cy };
+            ClientToScreen(hwnd, &sp);
+            auto wheel = [&](int n)
+            {
+                const int64_t t0 = NowTicks();
+                for (int i = 0; i < n; ++i)
+                {
+                    SendMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, (i % 2 ? -WHEEL_DELTA : WHEEL_DELTA)), MAKELPARAM(sp.x, sp.y));
+                    RenderFrame();
+                }
+                return static_cast<double>(NowTicks() - t0) * 1000.0 / static_cast<double>(kTicksPerSecond) / n;
+            };
+            version = editor.BuildViewState().SceneVersion;
+            const double zoomMs = wheel(10);
+            check(editor.BuildViewState().SceneVersion != version, "线宽图纸缩放时重新细分（线宽按像素等宽）");
+
+            m_commands.Execute("view.thinLines");
+            RenderFrame();
+            check(editor.IsThinLines() && m_commands.IsChecked("view.thinLines"), "细线显示开关");
+            version = editor.BuildViewState().SceneVersion;
+            const double thinZoomMs = wheel(10);
+            check(editor.BuildViewState().SceneVersion == version, "细线显示时缩放不重新细分");
+            m_commands.Execute("view.thinLines");
+            RenderFrame();
+            check(!editor.IsThinLines(), "关闭细线显示");
+
+            std::printf("    2 万条 0.5mm 线宽的线：平移一帧 %.1f ms，滚轮缩放一帧 %.1f ms，细线显示时缩放一帧 %.1f ms\n",
+                        panMs, zoomMs, thinZoomMs);
+            m_commands.Execute("file.close");
+            RenderFrame();
+        }
+
+        // ── 22. 关闭大图纸后归还内存（提交内存 = 任务管理器的"提交大小"）──
+        {
+            auto privateMb = []
+            {
+                PROCESS_MEMORY_COUNTERS_EX pmc = {};
+                pmc.cb = sizeof(pmc);
+                K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc));
+                return static_cast<double>(pmc.PrivateUsage) / 1048576.0;
+            };
+            const double before = privateMb();
+            m_commands.Execute("file.new");
+            Document* big = m_docManager.GetActive();
+            Scene& scene = big->GetScene();
+            for (int i = 0; i < 200000; ++i)
+            {
+                const double a = i * 0.0031;
+                const double r = 5.0 + (i % 200) * 0.1;
+                scene.AddEntity(std::make_unique<LineEntity>(scene.NextObjectID(),
+                    Math::Point3(r * std::cos(a), r * std::sin(a), 0), Math::Point3((r + 1.0) * std::cos(a + 0.5), (r + 1.0) * std::sin(a + 0.5), 0)));
+            }
+            big->MarkSaved();
+            m_viewport->RequestRender();
+            RenderFrame();
+            send(WM_MOUSEMOVE, 0, cx, cy);      // 悬停 / 拾取：建立空间索引
+            RenderFrame();
+            const double opened = privateMb();
+            m_commands.Execute("file.close");
+            RenderFrame();
+            const double closed = privateMb();
+            std::printf("    20 万条线：打开前 %.0f MB，打开后 %.0f MB，关闭后 %.0f MB\n", before, opened, closed);
+            check(closed - before < (opened - before) * 0.25, "关闭大图纸后归还大部分内存");
         }
 
         std::printf("输入→呈现 最近 %.1f ms，最大 %.1f ms；界面 %llu 帧，视口 %llu 帧\n", m_latencyLast, m_latencyMax,

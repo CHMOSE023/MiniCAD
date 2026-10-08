@@ -315,6 +315,15 @@ namespace MiniCAD
         void SetHoverEnabled(bool enabled) { m_picking.SetHoverEnabled(enabled); }
         void ToggleHover() { SetHoverEnabled(!IsHoverEnabled()); }
 
+        // ── 全局细线：所有线宽按 1px 细线显示（只影响显示，不改图纸）────
+        bool IsThinLines() const { return m_thinLines; }
+        void SetThinLines(bool thin);
+        void ToggleThinLines() { SetThinLines(!m_thinLines); }
+
+        // 关闭文档后调用：丢弃已解码的光栅图像（仍在用的下一帧按需重新加载）。
+        // 每次加载得到新的 ImageData::Key，渲染器里按 Key 缓存的纹理要同时释放
+        void ClearImageCache() { m_imageLibrary.Clear(); }
+
         // ── Undo / Redo / Command ─────────────────────────────
         void Undo();
         void Redo();
@@ -413,7 +422,7 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4>    m_selFillVertices;
         std::vector<Vertex_P3_C4_UV> m_selTextVertices;
         uint64_t                     m_selVersion = 0;
-        bool                         m_selHasLineweight = false;
+        bool                         m_selViewDependent = false;
 
         // 最近一次场景流构建时排除的实体（拖动跟随中的实体）
         std::unordered_set<Object::ObjectID> m_sceneExcluded;
@@ -427,7 +436,7 @@ namespace MiniCAD
             std::vector<Vertex_P3_C4>    lines;
             std::vector<Vertex_P3_C4>    fills;
             std::vector<Vertex_P3_C4_UV> texts;
-            bool                         hasLineweight = false;
+            bool                         viewDependent = false;   // 线宽/虚线按像素烘焙：缩放后需重新细分
             std::vector<ImageDraw>       images;
             std::vector<std::vector<Math::Point3>> wipes;   // 区域覆盖多边形：拼接时裁剪此前的顶点
         };
@@ -442,8 +451,11 @@ namespace MiniCAD
         void*                        m_fontTexture    = nullptr;
         GlyphProvider                m_glyphProvider;           // 由应用层注入
 
-        // 线宽几何是屏幕等宽(像素)烘焙到世界顶点,缩放改变像素比例时需重建
+        // 线宽/虚线几何按屏幕像素烘焙到世界顶点,缩放改变像素比例时需重建
         double                       m_lastWorldPerPixel  = 0.0;
-        bool                         m_sceneHasLineweight = false;
+        bool                         m_sceneViewDependent = false;
+
+        bool                         m_thinLines      = false;   // 全局细线：忽略线宽
+        bool                         m_displayInvalid = false;   // 显示设置变化：下一帧所有实体重新细分
     };
 }

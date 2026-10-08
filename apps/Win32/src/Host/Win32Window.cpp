@@ -9,6 +9,7 @@
 #include "Platform/Win32/Win32Input.h"
 #include "Widgets/TitleBar.h"
 #include <commdlg.h>
+#include <malloc.h>
 #include <algorithm>
 #include <filesystem>
 
@@ -376,6 +377,15 @@ namespace MiniCAD
         BOOL done = FALSE;
         while (ctx->GetData(query.Get(), &done, sizeof(done), 0) != S_OK || !done)
             ;
+    }
+
+    void Win32Window::ReleaseFreeMemory()
+    {
+        // 已释放的 D3D11 缓冲要等命令提交后驱动才真正销毁
+        m_device->GetContext()->Flush();
+        // CRT 堆（即进程堆）：合并空闲块，把整页空闲的内存归还系统
+        _heapmin();
+        HeapCompact(GetProcessHeap(), 0);
     }
 
     // =========================================================

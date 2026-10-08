@@ -109,6 +109,9 @@ namespace MiniCAD
 
         m_hover = AddChild<StatusToggle>("悬停: ", [this] { m_dm.GetEditor().ToggleHover(); if (m_onToggled) m_onToggled(); });
         m_hover->SetTooltip("左键: 开/关 鼠标悬停高亮");
+
+        m_thin = AddChild<StatusToggle>("细线: ", [this] { m_dm.GetEditor().ToggleThinLines(); if (m_onToggled) m_onToggled(); });
+        m_thin->SetTooltip("左键: 开/关 全局细线（忽略线宽，只影响显示）");
         AddVSeparator(this);
 
         // ── 当前文档 ─────────────────────────────────────────────
@@ -160,6 +163,7 @@ namespace MiniCAD
         m_snap->SetOn(editor.IsSnapEnabled());
         m_ortho->SetOn(editor.IsOrthoEnabled());
         m_hover->SetOn(editor.IsHoverEnabled());
+        m_thin->SetOn(editor.IsThinLines());
 
         m_docName->SetText(doc->GetName());
         m_docDirty->SetVisible(doc->IsDirty());

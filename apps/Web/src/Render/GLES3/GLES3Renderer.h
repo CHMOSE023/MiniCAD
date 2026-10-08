@@ -40,6 +40,7 @@ namespace MiniCAD
         std::unique_ptr<IRenderTarget> CreateLayerTarget() override;
         void  DrawLayer(IRenderTarget& layer) override;
         void  SetLightBackground(bool light) override { m_lightBackground = light; }
+        void  ReleaseCachedResources() override;
         void* GetNativeDevice() override { return nullptr; }
 
     private:

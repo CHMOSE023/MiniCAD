@@ -372,6 +372,11 @@ namespace MiniCAD
                 m_docManager.SetActive(next);
             }
             m_docManager.Close(doc);
+            // 归还关闭的文档占用的显示资源：图像缓存、渲染器的顶点缓冲与纹理（剩下的文档下一帧按需重建），
+            // 再请平台把空闲的堆内存还给系统
+            m_docManager.GetEditor().ClearImageCache();
+            m_platform->GetRenderer().ReleaseCachedResources();
+            m_platform->ReleaseFreeMemory();
             m_viewport->RequestRender();
             StateChanged();
             if (m_viewport->IsVisible())

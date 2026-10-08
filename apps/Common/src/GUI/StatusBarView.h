@@ -38,6 +38,7 @@ namespace MiniCAD
         StatusToggle*    m_snap     = nullptr;
         StatusToggle*    m_ortho    = nullptr;
         StatusToggle*    m_hover    = nullptr;
+        StatusToggle*    m_thin     = nullptr;
         MiniGUI::Label*  m_docName  = nullptr;
         MiniGUI::Label*  m_docDirty = nullptr;
         MiniGUI::Label*  m_docCount = nullptr;

@@ -35,6 +35,7 @@ namespace MiniCAD
         virtual void DrawLayer(IRenderTarget& layer) override;
 
         virtual void SetLightBackground(bool light) override { m_lightBackground = light; }
+        virtual void ReleaseCachedResources() override;
 
         virtual void* GetNativeDevice() override;
 

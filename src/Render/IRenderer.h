@@ -73,6 +73,9 @@ namespace MiniCAD
         // 白色的实体、图层颜色、十字光标在两种背景下都看得见。只影响线 / 三角形 / 文字，不影响光栅图像
         virtual void SetLightBackground(bool light) { (void)light; }
 
+        // 释放缓存提交的顶点缓冲与图像纹理（关闭文档后调用）：之后的提交按需重新创建、上传
+        virtual void ReleaseCachedResources() {}
+
         virtual void* GetNativeDevice() = 0;
     };
 }

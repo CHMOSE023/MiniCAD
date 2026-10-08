@@ -39,6 +39,7 @@ namespace MiniCAD
         virtual void BeginUiPass()   = 0;       // 绑定窗口的帧缓冲并清屏
         virtual void EndUiPass()     = 0;       // 呈现，并同步输入法位置等平台输入状态
         virtual void WaitForGpu() {}            // 自测计时用：等 GPU 执行完已提交的命令
+        virtual void ReleaseFreeMemory() {}     // 关闭文档后：把堆里空闲的内存归还系统（Win32：整理 CRT 堆）
         virtual const char* GetGraphicsName() const = 0;    // 关于对话框显示，例如 "D3D11"
 
         // ── 窗口 ─────────────────────────────────────────────────

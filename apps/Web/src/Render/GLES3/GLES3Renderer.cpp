@@ -162,6 +162,23 @@ namespace MiniCAD
             glDeleteProgram(p.program);
     }
 
+    void GLES3Renderer::ReleaseCachedResources()
+    {
+        auto destroy = [](VertexBuffer& vb)
+        {
+            glDeleteBuffers(1, &vb.vbo);
+            glDeleteVertexArrays(1, &vb.vao);
+        };
+        for (auto& [slot, vb] : m_cached)     destroy(vb);
+        for (auto& [slot, vb] : m_cachedText) destroy(vb);
+        m_cached.clear();
+        m_cachedText.clear();
+        for (auto& [key, tex] : m_imageTextures)
+            if (tex)
+                glDeleteTextures(1, &tex);
+        m_imageTextures.clear();
+    }
+
     void GLES3Renderer::InitVertexBuffer(VertexBuffer& vb, bool textured)
     {
         glGenVertexArrays(1, &vb.vao);
@@ -192,9 +209,10 @@ namespace MiniCAD
     void GLES3Renderer::Upload(VertexBuffer& vb, const void* data, size_t bytes, GLenum usage)
     {
         glBindBuffer(GL_ARRAY_BUFFER, vb.vbo);
-        if (bytes > vb.capacity)
+        // 容量不足时按 1.5 倍扩容，减少反复重新分配；用量不到容量的 1/4 时缩容（归还显存）
+        const bool shrink = vb.capacity > (1u << 20) && bytes * 4 < vb.capacity;
+        if (bytes > vb.capacity || shrink)
         {
-            // 容量不足时按 1.5 倍扩容，减少反复重新分配
             vb.capacity = bytes + bytes / 2;
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vb.capacity), nullptr, usage);
         }

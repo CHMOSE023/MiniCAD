@@ -179,8 +179,36 @@ namespace MiniCAD
         m_overlay.Clear();
         m_currentSnap = {};
 
+        // 释放上一个文档的显示数据（大图纸可达数百 MB）：clear() 不归还容量，换成空容器。
+        // 重新绑定时 Bind 会整体标脏，这些缓存本来也要全部重建
+        m_entityVertexCache = {};
+        m_sceneVertices     = {};
+        m_sceneFillVertices = {};
+        m_textVertices      = {};
+        m_sceneImages       = {};
+        m_selVertices       = {};
+        m_selFillVertices   = {};
+        m_selTextVertices   = {};
+        m_scratchLines      = {};
+        m_scratchFills      = {};
+        m_scratchTexts      = {};
+        m_overlayVertices   = {};
+        m_sceneExcluded     = {};
+        m_sceneViewDependent = false;
+        m_selViewDependent   = false;
+        ++m_sceneVersion;   // 渲染后端的缓存顶点缓冲随之失效
+        ++m_selVersion;
+        m_picking.Unbind();
+
         m_doc      = nullptr;
         m_viewport = nullptr;
+    }
+
+    void Editor::SetThinLines(bool thin)
+    {
+        if (m_thinLines == thin) return;
+        m_thinLines      = thin;
+        m_displayInvalid = true;   // 线宽几何全部重新细分
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -2208,15 +2236,12 @@ namespace MiniCAD
 
         m_overlayVertices.clear();
 
-        // 1 屏幕像素对应的世界长度(线宽/虚线显示用):用单位向量投影求得
-        auto& camera = m_viewport->GetCamera();
-        auto  s0 = camera.WorldToScreen({ 0, 0, 0 });
-        auto  s1 = camera.WorldToScreen({ 1, 0, 0 });
-        double pxPerWorld    = Math::Distance(s0, s1);
-        double worldPerPixel = (pxPerWorld > 1e-12) ? 1.0 / pxPerWorld : 0.0;
+        // 1 屏幕像素对应的世界长度(线宽/虚线显示用)
+        const double worldPerPixel = m_viewport->GetCamera().GetWorldPerPixel();
 
-        // 线宽几何按屏幕像素等宽烘焙,缩放变化时含线宽的流需重建
-        bool zoomChanged = std::abs(worldPerPixel - m_lastWorldPerPixel) > 1e-12;
+        // 线宽/虚线按屏幕像素烘焙,缩放变化时依赖像素比例的实体需重建。
+        // 按相对误差比较:平移不改变 worldPerPixel,不能因舍入误差触发整图重建
+        bool zoomChanged = std::abs(worldPerPixel - m_lastWorldPerPixel) > 1e-9 * std::max(worldPerPixel, m_lastWorldPerPixel);
         m_lastWorldPerPixel = worldPerPixel;
 
         const bool dragging       = m_gripEditor.IsDragging();
@@ -2235,10 +2260,10 @@ namespace MiniCAD
             m_gripEditor.RebuildGrips();
         }
 
-        // 选中流：选择集变化 / 场景重建 / 拖动中（几何逐帧变化）/ 缩放+线宽
+        // 选中流：选择集变化 / 场景重建 / 拖动中（几何逐帧变化）/ 缩放+线宽虚线 / 细线开关
         UpdateSelectionVertices(worldPerPixel,
                                 sceneRebuilt || selectionDirty || dragging ||
-                                (zoomChanged && m_selHasLineweight));
+                                (zoomChanged && m_selViewDependent));
 
         m_overlay.ToVertices(m_overlayVertices);
 
@@ -2340,13 +2365,13 @@ namespace MiniCAD
         if (!dragIds.empty() && !exclusionChanged)
         {
             // 拖动期间 GripEditor 每帧 MarkDirty（实时几何变化），但被拖实体
-            // 已不在场景流中，场景流无需重建；仅缩放+线宽场合仍需重建。
-            need = zoomChanged && m_sceneHasLineweight;
+            // 已不在场景流中，场景流无需重建；仅缩放+线宽/虚线场合仍需重建。
+            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid;
         }
         else
         {
-            need = scene.IsDirty() || exclusionChanged ||
-                   (zoomChanged && m_sceneHasLineweight);
+            need = scene.IsDirty() || exclusionChanged || m_displayInvalid ||
+                   (zoomChanged && m_sceneViewDependent);
         }
 
         if (!need) return false;
@@ -2361,16 +2386,17 @@ namespace MiniCAD
         }
         const ImageProvider imageProvider = [this](const std::string& p) { return m_imageLibrary.Get(p); };
 
-        // 全局脏（图层颜色/线型表等影响所有实体）或缩放变化（线宽/虚线按
-        // 屏幕像素烘焙进世界顶点）时所有实体缓存整体失效。
-        const bool invalidateAll = scene.IsAllDirty() || zoomChanged;
+        // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
+        // 缩放变化只让依赖像素比例的实体（线宽/虚线按屏幕像素烘焙进世界顶点）失效。
+        const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid;
+        m_displayInvalid = false;
 
         // ── 纯新增快路径 ────────────────────────────────────
         // 几万实体的场景里新画一个图形:旧实体缓存全部有效,既不该重新细分,
         // 也不该把全场景顶点重新拼接一遍。脏集全部是"缓存中不存在的新实体"
         // 时,只细分新实体并追加到现有顶点流尾部(新实体总在实体链表末尾,
         // 与全量重建的绘制序一致)。修改/删除(脏 ID 已在缓存)仍走全量拼接。
-        if (!invalidateAll && dragIds.empty() && m_sceneExcluded.empty())
+        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty())
         {
             bool pureAppend = !scene.GetDirtyEntities().empty();
             for (auto id : scene.GetDirtyEntities())
@@ -2395,6 +2421,7 @@ namespace MiniCAD
                                 layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                                 m_glyphProvider, MakeFontResolver(m_doc));
                 ctx.SetImageProvider(imageProvider);
+                ctx.SetThinLines(m_thinLines);
 
                 for (auto id : ids)
                 {
@@ -2409,7 +2436,7 @@ namespace MiniCAD
                     m_scratchLines.clear();
                     m_scratchFills.clear();
                     m_scratchTexts.clear();
-                    ctx.ResetLineweightFlag();
+                    ctx.ResetViewDependentFlag();
 
                     ctx.BeginEntity(&attr);
                     entity.Draw(ctx, /*isSelected*/ false, false);
@@ -2419,7 +2446,7 @@ namespace MiniCAD
                     c.lines         = m_scratchLines;
                     c.fills         = m_scratchFills;
                     c.texts         = m_scratchTexts;
-                    c.hasLineweight = ctx.HasLineweightGeometry();
+                    c.viewDependent = ctx.HasViewDependentGeometry();
                     c.wipes         = ctx.TakeWipes();
                     c.images        = ctx.TakeImages();
 
@@ -2428,7 +2455,7 @@ namespace MiniCAD
                     m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
                     m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
                     m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
-                    m_sceneHasLineweight |= c.hasLineweight;
+                    m_sceneViewDependent |= c.viewDependent;
 
                     m_entityVertexCache.emplace(id, std::move(c));
                 }
@@ -2445,8 +2472,12 @@ namespace MiniCAD
         if (invalidateAll)
             m_entityVertexCache.clear();
         else
+        {
             for (auto id : scene.GetDirtyEntities())   // 含已删除实体：顺带清理
                 m_entityVertexCache.erase(id);
+            if (zoomChanged && m_sceneViewDependent)
+                std::erase_if(m_entityVertexCache, [](const auto& kv) { return kv.second.viewDependent; });
+        }
 
         m_sceneVertices.clear();
         m_sceneFillVertices.clear();
@@ -2459,8 +2490,9 @@ namespace MiniCAD
                         layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                         m_glyphProvider, MakeFontResolver(m_doc));
         ctx.SetImageProvider(imageProvider);
+        ctx.SetThinLines(m_thinLines);
 
-        bool hasLineweight = false;
+        bool viewDependent = false;
 
         scene.ForEachObject([&](const Object& obj)
         {
@@ -2487,7 +2519,7 @@ namespace MiniCAD
                    m_scratchLines.clear();
                    m_scratchFills.clear();
                    m_scratchTexts.clear();
-                   ctx.ResetLineweightFlag();
+                   ctx.ResetViewDependentFlag();
 
                    ctx.BeginEntity(&attr);
                    entity.Draw(ctx, /*isSelected*/ false, false);
@@ -2497,7 +2529,7 @@ namespace MiniCAD
                    c.lines         = m_scratchLines;
                    c.fills         = m_scratchFills;
                    c.texts         = m_scratchTexts;
-                   c.hasLineweight = ctx.HasLineweightGeometry();
+                   c.viewDependent = ctx.HasViewDependentGeometry();
                    c.wipes         = ctx.TakeWipes();
                    c.images        = ctx.TakeImages();
                    it = m_entityVertexCache.emplace(obj.GetID(), std::move(c)).first;
@@ -2509,11 +2541,11 @@ namespace MiniCAD
                m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
                m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
                m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
-               hasLineweight |= c.hasLineweight;
+               viewDependent |= c.viewDependent;
            }
         });
 
-        m_sceneHasLineweight = hasLineweight;
+        m_sceneViewDependent = viewDependent;
         m_sceneExcluded      = std::move(dragIds);
 
         ++m_sceneVersion;   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
@@ -2556,6 +2588,7 @@ namespace MiniCAD
             DrawContext ctx(m_selVertices, m_selFillVertices, m_selTextVertices, m_overlay,
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
+            ctx.SetThinLines(m_thinLines);
 
             auto drawOne = [&](Object::ObjectID id)
             {
@@ -2581,11 +2614,11 @@ namespace MiniCAD
                 if (!selection.contains(id))
                     drawOne(id);
 
-            m_selHasLineweight = ctx.HasLineweightGeometry();
+            m_selViewDependent = ctx.HasViewDependentGeometry();
         }
         else
         {
-            m_selHasLineweight = false;
+            m_selViewDependent = false;
         }
 
         ++m_selVersion;

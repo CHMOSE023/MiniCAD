@@ -73,6 +73,20 @@ namespace MiniCAD
         // 增量更新依赖脏集,必须保证脏集被清掉前已被索引消费(查询路径也会按需同步)。
         void SyncIndex() { EnsureIndex(); }
 
+        // 解绑文档：释放空间索引与选择集（大图纸的索引有几十 MB）
+        void Unbind()
+        {
+            m_scene    = nullptr;
+            m_viewport = nullptr;
+            m_index    = {};
+            m_indexVersion = ~0ull;
+            m_candidates   = {};
+            m_selection.clear();
+            m_lastSelection.clear();
+            m_hovered.clear();
+            m_drag = DragState::Idle;
+        }
+
     private:
         // 输入分发
         void OnMouseDown  (const InputEvent& e);

@@ -319,8 +319,16 @@ namespace MiniCAD
         }
     }
 
+    void D3D11Renderer::ReleaseCachedResources()
+    {
+        m_cachedVBs.clear();
+        m_cachedTextVBs.clear();
+        m_imageTextures.clear();
+    }
+
     // (slot, version) 持久顶点缓冲：version 未变直接复用；变化时整体上传一次。
-    // 容量不足按 1.5 倍扩容；创建失败返回 nullptr，调用方回退非缓存路径。
+    // 容量不足按 1.5 倍扩容，用量不到容量的 1/4 时缩容（大图纸换成小图纸后归还显存）；
+    // 创建失败返回 nullptr，调用方回退非缓存路径。
     D3D11Renderer::CachedVB* D3D11Renderer::EnsureCachedVB(
         std::unordered_map<uint32_t, CachedVB>& cache,
         uint32_t slot, uint64_t version,
@@ -331,7 +339,8 @@ namespace MiniCAD
         if (cb.valid && cb.version == version)
             return &cb;
 
-        if (vertCount > cb.capacity || !cb.vb)
+        const bool shrink = cb.capacity > 65536 && vertCount * 4 < cb.capacity;
+        if (vertCount > cb.capacity || !cb.vb || shrink)
         {
             size_t newCap = std::max<size_t>(vertCount, 1024);
             newCap += newCap / 2;   // 预留空间，减少频繁重建

@@ -47,6 +47,7 @@ namespace MiniCAD
         void BeginUiPass() override;
         void EndUiPass() override;
         void WaitForGpu() override;
+        void ReleaseFreeMemory() override;
         const char* GetGraphicsName() const override { return "D3D11"; }
 
         void SetTitle(const std::string& utf8) override;

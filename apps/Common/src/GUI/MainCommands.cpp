@@ -188,6 +188,10 @@ namespace MiniCAD
         viewToggle("view.grid",  "显示栅格(&G)", &Viewport::ShowGridToggle,  &Viewport::IsGridShown);
         viewToggle("view.axis",  "显示极轴(&A)", &Viewport::ShowAxisToggle,  &Viewport::IsAxisShown);
         viewToggle("view.gizmo", "显示坐标(&Z)", &Viewport::ShowGizmoToggle, &Viewport::IsGizmoShown);
+        m_commands.Register({ .id = "view.thinLines", .label = "细线显示(&T)",
+                              .tooltip = "忽略线宽，所有线按 1 像素细线显示（只影响显示，不修改图纸）",
+                              .execute   = [this, &dm] { dm.GetEditor().ToggleThinLines(); m_viewport->RequestRender(); },
+                              .isChecked = [&dm] { return dm.GetEditor().IsThinLines(); } });
 
         // ── 绘图辅助：功能键在输入框有焦点时也生效 ──────────────────
         m_commands.Register({ .id = "aux.snap",  .label = "对象捕捉(&S)", .shortcut = "F3", .allowInTextInput = true,

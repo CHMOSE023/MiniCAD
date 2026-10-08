@@ -97,10 +97,14 @@ namespace MiniCAD
         void Wipe(const std::vector<Math::Point3>& polygon) override { m_wipes.push_back(polygon); }
         std::vector<std::vector<Math::Point3>> TakeWipes() { return std::move(m_wipes); }
 
-        // 本次重建是否产出了线宽几何(供 Editor 决定缩放时是否需要重建顶点)
-        bool HasLineweightGeometry() const { return m_hasLineweight; }
-        // 复位线宽标志：逐实体细分时在每个实体前调用，按实体统计线宽几何
-        void ResetLineweightFlag()         { m_hasLineweight = false; }
+        // 本次细分是否产出了依赖像素比例的几何(线宽四边形、按像素取舍的虚线),
+        // 供 Editor 决定缩放时哪些实体需要重新细分
+        bool HasViewDependentGeometry() const { return m_viewDependent; }
+        // 复位该标志：逐实体细分时在每个实体前调用，按实体统计
+        void ResetViewDependentFlag()         { m_viewDependent = false; }
+
+        // 全局细线：忽略线宽，全部按 1px 细线显示（同 AutoCAD 关闭"显示线宽"）
+        void SetThinLines(bool thin) { m_thinLines = thin; }
 
         // --- 几何线段 ---
         void DrawLine(const Math::Point3& a, const Math::Point3& b,  const Math::Color4& color, bool isOverlay) override
@@ -266,6 +270,9 @@ namespace MiniCAD
         // 解析生效线宽 → 世界单位宽度(0 = 1px 硬件细线)
         double ResolveWidthWorld(const Layer* layer) const
         {
+            if (m_thinLines)
+                return 0.0;
+
             Lineweight lw = m_curAttr->Lineweight;
             if (lw == Lineweight::ByLayer)
                 lw = layer ? layer->GetLineweight() : Lineweight::Default;
@@ -297,6 +304,10 @@ namespace MiniCAD
 
             if (!continuous)
             {
+                // 虚线的取舍与"点"的长度都按像素算,缩放后要重新细分
+                if (m_worldPerPixel > 0.0)
+                    m_viewDependent = true;
+
                 double cycle = rec->PatternLength * scale;
                 if (cycle <= 1e-12)
                     continuous = true;
@@ -381,7 +392,7 @@ namespace MiniCAD
             m_fillVerts.push_back(ToVertex(p2, color));
             m_fillVerts.push_back(ToVertex(p3, color));
 
-            m_hasLineweight = true;
+            m_viewDependent = true;
         }
 
         static const char* DecodeUtf8(const char* p, const char* end, unsigned int& cp)
@@ -413,7 +424,8 @@ namespace MiniCAD
         const LineTypeTable&           m_lineTypes;
         double                         m_worldPerPixel = 0.0;   // 1 屏幕像素对应的世界长度
         const EntityAttr*              m_curAttr       = nullptr;
-        bool                           m_hasLineweight = false;
+        bool                           m_viewDependent = false;
+        bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
         std::vector<ImageDraw>         m_images;
         ImageProvider                  m_imageProvider;

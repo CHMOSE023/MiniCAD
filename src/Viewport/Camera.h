@@ -28,6 +28,9 @@ namespace MiniCAD
         Math::Point3 GetCameraPos() const;
         double       GetWidth()     const { return m_screenWidth; }
         double       GetHeight()    const { return m_screenHeight; }
+        // 1 屏幕像素对应的世界长度：只取决于缩放与视口高度，平移不改变它
+        // （不要用 WorldToScreen 两点之差来求——远离原点时有舍入误差，平移也会让结果抖动）
+        double       GetWorldPerPixel() const { return m_screenHeight > 0.0 ? m_zoom / m_screenHeight : 0.0; }
 
         CameraState  GetState() const;
         void         SetState(const CameraState& s);
