@@ -376,15 +376,26 @@ namespace MiniCAD
 
         auto dialog = std::make_unique<Dialog>("另存为");
         Node* body = dialog->GetBody();
-        body->SetLayoutStyle(ColumnStyle(8.0f));
+        LayoutStyle bs = ColumnStyle(10.0f);
+        bs.padding = Edges::Make(16.0f, 12.0f, 16.0f, 4.0f);
+        body->SetLayoutStyle(bs);
+
+        constexpr float kFieldWidth = 280.0f;
         TextBox* name = AddRow<TextBox>(body, "文件名", base);
-        name->EditLayoutStyle().width = 260.0f;
+        name->EditLayoutStyle().width = kFieldWidth;
         std::vector<std::string> labels;
         for (const Format& f : kFormats)
             labels.emplace_back(f.label);
         ComboBox* type = AddRow<ComboBox>(body, "格式", labels, format);
-        type->EditLayoutStyle().width = 260.0f;
-        body->AddChild<Label>("DWG / DXF 按 AutoCAD 2018 格式写出；保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
+        type->EditLayoutStyle().width = kFieldWidth;
+
+        // 提示与输入框左对齐（名称列 72 + 间距 8）
+        Node* hints = body->AddChild<Node>();
+        LayoutStyle hs = ColumnStyle(2.0f);
+        hs.margin = Edges::Make(80.0f, 0.0f, 0.0f, 0.0f);
+        hints->SetLayoutStyle(hs);
+        hints->AddChild<Label>("DWG / DXF 按 AutoCAD 2018 格式写出", 12.0f, Theme::TextDim);
+        hints->AddChild<Label>("保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
         Button* ok = raw->AddButton("保存", [this, raw, name, type, doc, onSaved]
