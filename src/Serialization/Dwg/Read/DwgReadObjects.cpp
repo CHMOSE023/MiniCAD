@@ -1255,7 +1255,9 @@ namespace MiniDWG::DwgRead
         ReadCommonNonEntityData(*record);
 
         DwgBitReader& r = m_objReader;
-        const std::uint64_t end = static_cast<std::uint32_t>(r.ReadBitLong()) + r.Position();
+        // 先读长度再取位置（拆成两句：同一表达式里两者的求值顺序不确定）
+        const std::uint64_t size = static_cast<std::uint32_t>(r.ReadBitLong());
+        const std::uint64_t end  = size + r.Position();
         while (r.Position() < end && !r.Failed())
         {
             XRecordEntry e;

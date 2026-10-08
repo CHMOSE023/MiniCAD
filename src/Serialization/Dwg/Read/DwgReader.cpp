@@ -171,7 +171,9 @@ namespace MiniDWG::DwgRead
         if (R2007Plus())
         {
             // 字符串在数据末尾：类数据到字符串区域的开头为止（按位计）
-            const std::uint64_t flagPos = r.PositionInBits() + static_cast<std::uint32_t>(r.ReadRawLong()) - 1;
+            // 先取位置再读长度（拆成两句：同一表达式里两者的求值顺序不确定，Release 优化后会先读，结果差 32 位）
+            const std::uint64_t start   = r.PositionInBits();
+            const std::uint64_t flagPos = start + static_cast<std::uint32_t>(r.ReadRawLong()) - 1;
             text.SetPositionByFlag(flagPos);
             end = text.PositionInBits();
             s.Text = &text;
