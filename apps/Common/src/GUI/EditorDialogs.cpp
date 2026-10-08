@@ -23,6 +23,7 @@
 #include "Widgets/TextBox.h"
 #include "Widgets/ViewportHost.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 
@@ -770,10 +771,19 @@ namespace MiniCAD
             return out;
         }
 
+        // 忽略 ASCII 大小写比较（字体文件名）
+        bool EqualsIgnoreCase(const std::string& a, const std::string& b)
+        {
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y)
+            {
+                return std::tolower(x) == std::tolower(y);
+            });
+        }
+
         int IndexOf(const std::vector<std::string>& v, const std::string& s)
         {
             for (size_t i = 0; i < v.size(); ++i)
-                if (_stricmp(v[i].c_str(), s.c_str()) == 0)
+                if (EqualsIgnoreCase(v[i], s))
                     return static_cast<int>(i);
             return -1;
         }

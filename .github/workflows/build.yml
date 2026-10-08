@@ -53,11 +53,11 @@ jobs:
         run: emcmake cmake -S . -B out/web -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build out/web --target WASM
+        run: cmake --build out/web --target MiniCADWeb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: MiniCAD-Web
-          path: out/web/Wasm/
+          path: out/web/MiniCADWeb/
           retention-days: 7

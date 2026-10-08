@@ -429,6 +429,12 @@ namespace MiniCAD
                 m_platform->OnDocumentSaved(doc->GetPath());
     }
 
+    bool MainFrame::HasUnsavedDocuments() const
+    {
+        auto& docs = const_cast<DocumentManager&>(m_docManager).GetAll();
+        return std::any_of(docs.begin(), docs.end(), [](const auto& d) { return d->IsDirty(); });
+    }
+
     void MainFrame::RequestExit()
     {
         size_t dirty = 0;

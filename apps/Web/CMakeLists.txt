@@ -46,3 +46,25 @@ target_link_options(MiniGUIWebGallery PRIVATE
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSansSC-UI.ttf@/fonts/NotoSansSC-UI.ttf"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/tests/Data/UI@/assets"
 )
+
+# ── MiniCAD 网页版：WebApp 宿主 + 共用的主窗口界面（MiniCADApp）──────────
+add_executable(MiniCADWeb
+    src/Host/WebMain.cpp
+    src/Host/WebApp.cpp
+    src/Render/GLES3/GLES3Renderer.cpp
+    src/Render/GLES3/GLRenderTarget.cpp
+)
+target_include_directories(MiniCADWeb PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
+)
+target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCADLib MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
+minicad_web_executable(MiniCADWeb)
+# 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui
+target_link_options(MiniCADWeb PRIVATE
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/icons@/icons"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/patterns@/patterns"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/ui@/ui"
+)
+set_target_properties(MiniCADWeb PROPERTIES OUTPUT_NAME "index")

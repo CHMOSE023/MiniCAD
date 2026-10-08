@@ -1,10 +1,33 @@
 #include "Host/WebHost.h"
+#include <emscripten.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 
 namespace MiniCAD
 {
+    EM_JS_DEPS(MiniCADWebHost, "$UTF8ToString");
+
+    // 画布尺寸变化（ResizeObserver，比 window 的 resize 事件可靠：页面布局、开发者工具、嵌入的面板都能捕获）
+    // 与 devicePixelRatio 变化（浏览器缩放、拖到另一块屏幕）都回调 MiniCADWebHost_OnResize
+    EM_JS(void, MiniCADWebHost_Observe, (const char* selectorPtr, void* host), {
+        const canvas = document.querySelector(UTF8ToString(selectorPtr));
+        if (!canvas) return;
+        const notify = () => _MiniCADWebHost_OnResize(host);
+        if (typeof ResizeObserver !== "undefined")
+            new ResizeObserver(notify).observe(canvas);
+        const watchDpr = () => {
+            const mq = matchMedia("(resolution: " + devicePixelRatio + "dppx)");
+            mq.addEventListener("change", () => { notify(); watchDpr(); }, { once: true });
+        };
+        watchDpr();
+    });
+
+    extern "C" EMSCRIPTEN_KEEPALIVE void MiniCADWebHost_OnResize(void* host)
+    {
+        static_cast<WebHost*>(host)->UpdateSize();
+    }
+
     WebHost::WebHost(std::string canvasSelector)
         : m_selector(std::move(canvasSelector))
     {
@@ -42,6 +65,7 @@ namespace MiniCAD
 
         // 窗口尺寸变化、页面缩放（devicePixelRatio 变化）都会触发 resize
         emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, false, &WebHost::OnResizeEvent);
+        MiniCADWebHost_Observe(m_selector.c_str(), this);
         UpdateSize();
         return true;
     }

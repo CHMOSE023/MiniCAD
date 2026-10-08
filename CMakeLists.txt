@@ -137,7 +137,10 @@ if(MSVC)
     )
 endif()
 
-if(EMSCRIPTEN)
+# 旧版 WASM 接口（wasm/：导出 C 函数，界面由 HTML/JS 前端实现）。核心库在 MINICAD_WEB 下改走那套前端的路径
+# （文字输入交给 JS、块名自动命名、文字用纹理图集），与网页版（apps/Web，界面与桌面版相同）互斥，默认关闭
+option(MINICAD_BUILD_LEGACY_WASM "Build the legacy C-API WASM target (wasm/) instead of the MiniGUI web app" OFF)
+if(EMSCRIPTEN AND MINICAD_BUILD_LEGACY_WASM)
     target_compile_definitions(MiniCADLib PUBLIC MINICAD_WEB)
 endif()
 
@@ -149,8 +152,11 @@ if(WIN32 AND NOT EMSCRIPTEN)
 endif()
 
 if(EMSCRIPTEN)
-    add_subdirectory(wasm)
-    add_subdirectory("apps/Web")
+    if(MINICAD_BUILD_LEGACY_WASM)
+        add_subdirectory(wasm)
+    else()
+        add_subdirectory("apps/Web")
+    endif()
 endif()
 
 # ── 测试（桌面端）：tests/Core、tests/UI、tests/Serialization ─────────
