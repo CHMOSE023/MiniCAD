@@ -77,6 +77,10 @@ MiniCAD
 
 推送 `v*` 标签（例如 `v0.1.0`）后，GitHub Actions 自动编译桌面版和网页版、运行测试，并创建 Release 上传两个 zip 包。发布说明取自 `docs/release-notes/<标签>.md`。
 
+## 许可证
+
+[MIT](LICENSE) © 2026 CHMOSE023
+
 ## 第三方组件
 
 - MiniDWG 移植自 [ACadSharp](https://github.com/DomCR/ACadSharp)（MIT），`tests/Data/Dwg/` 下的样例图纸也来自该项目
