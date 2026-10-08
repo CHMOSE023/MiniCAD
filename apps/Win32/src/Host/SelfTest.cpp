@@ -1,6 +1,7 @@
-// ── MiniCAD 主窗口（MiniGUI 版）：窗口、设备、消息循环、文档、视口输入与渲染、自测 ─────────
+// ── MiniCAD 桌面版自测（--selftest）：注入窗口消息，验证输入在下一帧生效，以及主窗口的标题栏、多文档、图层 ─────────
+// MainFrame 的成员函数，只在 Win32 版编译；窗口句柄由 Win32Window 提供
 #include "GUI/MainFrame.h"
-#include "Render/D3D11/D3D11Renderer.h"
+#include "Host/Win32Window.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
 #include "Core/Entity/LineEntity.hpp"
@@ -15,10 +16,6 @@
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
-#include "D3D11/D3D11Backend.h"
-#include "Platform/Win32/Win32Fonts.h"
-#include "Platform/Win32/Win32Frame.h"
-#include "Platform/Win32/Win32Input.h"
 #include "GUI/StatusBarView.h"
 #include "Widgets/AutoComplete.h"
 #include "Widgets/CommandConsole.h"
@@ -45,840 +42,12 @@
 
 namespace MiniCAD
 {
-    namespace
-    {
-        namespace Theme = MiniGUI::Theme;
-
-        int64_t QpcNow()
-        {
-            LARGE_INTEGER t;
-            QueryPerformanceCounter(&t);
-            return t.QuadPart;
-        }
-
-        // MiniGUI 的按键 → MiniCAD 的 KeyCode（字母、数字、F1～F12 两边顺序相同）
-        KeyCode ToKeyCode(MiniGUI::Key key)
-        {
-            using K = MiniGUI::Key;
-            const int k = static_cast<int>(key);
-            if (k >= static_cast<int>(K::A) && k <= static_cast<int>(K::F12))
-                return static_cast<KeyCode>(static_cast<int>(KeyCode::A) + (k - static_cast<int>(K::A)));
-
-            switch (key)
-            {
-            case K::Escape:    return KeyCode::Escape;
-            case K::Enter:     return KeyCode::Enter;
-            case K::Tab:       return KeyCode::Tab;
-            case K::Backspace: return KeyCode::Backspace;
-            case K::Delete:    return KeyCode::Delete;
-            case K::Insert:    return KeyCode::Insert;
-            case K::Space:     return KeyCode::Space;
-            case K::Home:      return KeyCode::Home;
-            case K::End:       return KeyCode::End;
-            case K::PageUp:    return KeyCode::PageUp;
-            case K::PageDown:  return KeyCode::PageDown;
-            case K::Left:      return KeyCode::Left;
-            case K::Right:     return KeyCode::Right;
-            case K::Up:        return KeyCode::Up;
-            case K::Down:      return KeyCode::Down;
-            case K::Shift:     return KeyCode::Shift;
-            case K::Ctrl:      return KeyCode::Ctrl;
-            case K::Alt:       return KeyCode::Alt;
-            default:           return KeyCode::Unknown;
-            }
-        }
-
-        MouseButton ToMouseButton(MiniGUI::MouseButton b)
-        {
-            switch (b)
-            {
-            case MiniGUI::MouseButton::Left:   return MouseButton::Left;
-            case MiniGUI::MouseButton::Right:  return MouseButton::Right;
-            case MiniGUI::MouseButton::Middle: return MouseButton::Middle;
-            default:                           return MouseButton::None;
-            }
-        }
-
-        // MiniGUI 掩码（左 1、右 2、中 4）→ MiniCAD 掩码（左 1、中 2、右 4）
-        uint8_t ToButtonState(uint8_t buttons)
-        {
-            uint8_t b = 0;
-            if (buttons & static_cast<uint8_t>(MiniGUI::MouseButtonMask::Left))   b |= static_cast<uint8_t>(MouseButtonState::Left);
-            if (buttons & static_cast<uint8_t>(MiniGUI::MouseButtonMask::Middle)) b |= static_cast<uint8_t>(MouseButtonState::Middle);
-            if (buttons & static_cast<uint8_t>(MiniGUI::MouseButtonMask::Right))  b |= static_cast<uint8_t>(MouseButtonState::Right);
-            return b;
-        }
-
-        // 启动时的示例图形：一组同心圆和放射线，外加一行文字，便于观察平移和缩放是否跟手
-        void AddDemoEntities(Document& doc)
-        {
-            Scene& scene = doc.GetScene();
-            const Math::Point3 c(0, 0, 0);
-            for (int i = 1; i <= 6; ++i)
-                scene.AddEntity(std::make_unique<CircleEntity>(scene.NextObjectID(), c, 2.0 * i));
-            for (int i = 0; i < 12; ++i)
-            {
-                const double a = i * 3.14159265358979 / 6.0;
-                scene.AddEntity(std::make_unique<LineEntity>(scene.NextObjectID(),
-                    Math::Point3(2.0 * std::cos(a), 2.0 * std::sin(a), 0), Math::Point3(14.0 * std::cos(a), 14.0 * std::sin(a), 0)));
-            }
-            scene.AddEntity(std::make_unique<MTextEntity>(scene.NextObjectID(), 0, "MiniCAD · MiniGUI", Math::Point3(-6, -16, 0), 1.2, 0, 0));
-            doc.MarkSaved();        // 示例图形不算修改，直接退出时不询问
-        }
-
-        std::wstring ToWide(const std::string& utf8)
-        {
-            const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
-            std::wstring w(static_cast<size_t>(n > 0 ? n - 1 : 0), L'\0');
-            if (n > 1)
-                MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, w.data(), n);
-            return w;
-        }
-    }
-
-    MainFrame::MainFrame()
-    {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        m_qpcFreq = f.QuadPart;
-    }
-
-    MainFrame::~MainFrame()
-    {
-        if (m_uiWatch)
-            FindCloseChangeNotification(m_uiWatch);
-        // MiniGUI 先于设备释放（后端持有设备引用）；绑定引用特性面板里的控件，先清掉
-        m_syncGeometryRows = nullptr;
-        m_bindings.Clear();
-        m_commands.UnbindShortcuts();
-        m_input.reset();
-        m_frame.reset();
-        m_ui.reset();
-        m_layout.reset();
-        m_backend.reset();
-        m_fontSystem.Shutdown();
-    }
-
-    // =========================================================
-    // 初始化
-    // =========================================================
-    bool MainFrame::Initialize(const wchar_t* title, int width, int height)
-    {
-        if (!InitWindow(title, width, height))
-            return false;
-
-        RECT rc{};
-        GetClientRect(m_hwnd, &rc);
-        const int w = rc.right - rc.left;
-        const int h = rc.bottom - rc.top;
-
-        if (!InitD3D11(w, h))
-            return false;
-
-        m_fontSystem.Initialize();
-        m_fontSystem.PreloadDefaultFonts();
-
-        if (!InitDocument(w, h))
-            return false;
-
-        InitUI();
-        ShowWindow(m_hwnd, SW_SHOW);
-        return true;
-    }
-
-    bool MainFrame::InitWindow(const wchar_t* title, int width, int height)
-    {
-        HINSTANCE hInstance = GetModuleHandleW(nullptr);
-
-        WNDCLASSEXW wc = {};
-        wc.cbSize        = sizeof(wc);
-        wc.style         = CS_DBLCLKS;
-        wc.lpfnWndProc   = WndProc;
-        wc.hInstance     = hInstance;
-        wc.hCursor       = nullptr;     // 光标由 MiniGUI 在 WM_SETCURSOR 设置（边框上由系统设置）
-        wc.lpszClassName = L"MiniCADWin";
-        wc.hIcon         = (HICON)LoadImageW(nullptr, L"icons/app.ico", IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
-        wc.hIconSm       = (HICON)LoadImageW(nullptr, L"icons/app.ico", IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
-                                             GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE);
-        RegisterClassExW(&wc);
-
-        // 无边框：窗口矩形就是客户区。按系统缩放放大初始尺寸，居中到主显示器的工作区
-        const float scale = static_cast<float>(GetDpiForSystem()) / 96.0f;
-        const int   w     = static_cast<int>(width * scale);
-        const int   h     = static_cast<int>(height * scale);
-        MONITORINFO mi    = { sizeof(mi) };
-        GetMonitorInfoW(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY), &mi);
-        const int x = mi.rcWork.left + std::max(0, static_cast<int>(mi.rcWork.right - mi.rcWork.left - w) / 2);
-        const int y = mi.rcWork.top  + std::max(0, static_cast<int>(mi.rcWork.bottom - mi.rcWork.top - h) / 2);
-
-        m_hwnd = CreateWindowExW(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW,
-                                 x, y, w, h, nullptr, nullptr, hInstance, this);
-        if (!m_hwnd)
-            return false;
-        m_frame = std::make_unique<MiniGUI::Win32Frame>(m_hwnd);
-        m_frame->Apply();       // 先保存再应用：Apply 触发的 WM_NCCALCSIZE 要经过 m_frame
-        return true;
-    }
-
-    bool MainFrame::InitD3D11(int width, int height)
-    {
-        m_device = std::make_unique<Device>();
-        m_device->Initialize();
-
-        SwapChain::Options opt;
-        opt.enableVSync  = true;    // 帧率钉在刷新率；输入在 Present 之前全部处理完，不会因此晚一帧
-        opt.allowTearing = false;
-        m_swapChain = std::make_unique<SwapChain>();
-        m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
-
-        m_renderer   = std::make_unique<D3D11Renderer>(m_device->GetDevice(), m_device->GetContext());
-        m_viewportRT = std::make_unique<D3D11RenderTarget>(m_device->GetDevice());
-        m_viewportRT->Create(width, height);
-        return true;
-    }
-
-    bool MainFrame::InitDocument(int width, int height)
-    {
-        m_docManager.SetRenderer(m_renderer.get());
-        m_docManager.SetRenderTarget(m_viewportRT.get());
-        m_docManager.InitViewport(*m_renderer, static_cast<float>(width), static_cast<float>(height));
-
-        if (!m_fontSystem.IsReady())
-        {
-            LOG_ERROR("MainFrame: 字体系统初始化失败");
-            return false;
-        }
-        m_docManager.SetFontSystem(&m_fontSystem);     // 文字样式由各文档的文字样式表定义
-
-        AddDemoEntities(m_docManager.Create());
-        return true;
-    }
-
-    void MainFrame::InitUI()
-    {
-        m_backend = std::make_unique<MiniGUI::D3D11Backend>(m_device->GetDevice(), m_device->GetContext());
-        m_ui      = std::make_unique<MiniGUI::UIContext>(m_backend.get());
-        m_input   = std::make_unique<MiniGUI::Win32Input>(m_ui.get(), m_hwnd);
-
-        if (!MiniGUI::LoadSystemUIFonts(m_ui->GetTextSystem()))
-            LOG_ERROR("MainFrame: 没有找到系统界面字体（微软雅黑）");
-
-        HWND hwnd = m_hwnd;
-        m_ui->SetRedrawCallback([hwnd] { InvalidateRect(hwnd, nullptr, FALSE); });
-        UpdateDisplaySize();
-
-        // ── 无边框窗口：标题栏的空白处可以拖动窗口 ───────────────────
-        m_frame->SetCaptionTest([this](int x, int y)
-        {
-            MiniGUI::TitleBar* bar = m_layout ? m_layout->GetTitleBar() : nullptr;
-            return bar && bar->IsCaptionAt({ static_cast<float>(x) / m_dpiScale, static_cast<float>(y) / m_dpiScale });
-        });
-        m_frame->SetOnActiveChanged([this](bool active)
-        {
-            if (MiniGUI::TitleBar* bar = m_layout ? m_layout->GetTitleBar() : nullptr)
-                bar->SetWindowActive(active);
-        });
-
-        // ── 命令 → 快捷键。执行任何命令后、宿主数据变化时（StateChanged）都会通知：
-        //    同步文档标签、图层面板、标题，刷新数据绑定（特性面板、图层下拉框），重绘视口（撤销、粘贴等改了图形）
-        RegisterCommands();
-        m_commands.BindShortcuts(m_ui->GetShortcuts());
-        m_commands.AddListener([this]
-        {
-            SyncDocuments();
-            RefreshLayerPanel();
-            UpdateTitle();
-            SyncEditorRequests();           // 文字输入、块名、插入块、阵列：打开 / 关闭对应界面
-            if (m_syncGeometryRows)
-                m_syncGeometryRows();
-            m_bindings.Refresh();
-            if (m_viewport)
-                m_viewport->RequestRender();
-        });
-
-        // 填充：HATCH 先弹图案对话框；图案库在内置图案之外加载 patterns/ 下的 .pat
-        m_docManager.GetEditor().SetHatchDialogEnabled(true);
-        LoadHatchPatterns();
-
-        // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
-        m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ExeDir() + "/icons");
-        m_layout->RegisterPanel("documents",  CreateDocumentArea());
-        m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
-        m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
-        m_layout->RegisterPanel("layerbar",   CreateLayerBar());
-        m_layout->RegisterPanel("commandline", CreateCommandLine(), "命令行");
-        m_layout->RegisterPanel("statusbar",  CreateStatusBar());
-
-        m_uiHost = m_ui->GetRoot()->AddChild<MiniGUI::Panel>(Theme::Background);
-        if (m_uiPath.empty())
-        {
-            // 开发时直接读源码目录里的文件（修改后立即生效），找不到时用输出目录里的副本
-            std::error_code ec;
-            const std::string source = MINICAD_UI_SOURCE;
-            m_uiPath = std::filesystem::exists(std::filesystem::path(std::u8string(source.begin(), source.end())), ec)
-                     ? source : ExeDir() + "/ui/minicad_ui.json";
-        }
-        ReloadUi();
-        WatchUiFile();
-        m_viewport->Focus();
-    }
-
-    void MainFrame::LoadHatchPatterns()
-    {
-        std::error_code ec;
-        const std::string dir = ExeDir() + "/patterns";
-        const std::filesystem::path path(std::u8string(dir.begin(), dir.end()));
-        if (!std::filesystem::is_directory(path, ec))
-            return;
-        for (const auto& entry : std::filesystem::directory_iterator(path, ec))
-        {
-            std::string ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (ext != ".pat")
-                continue;
-            const std::u8string u8 = entry.path().u8string();
-            const std::string   file(u8.begin(), u8.end());
-            std::string error;
-            const size_t n = HatchPatternLibrary::Instance().LoadFile(file, &error);
-            LOG_INFO("填充图案：%s 载入 %zu 个", file.c_str(), n);
-            if (!error.empty())
-                LOG_WARN("填充图案：%s %s", file.c_str(), error.c_str());
-        }
-    }
-
-    std::string MainFrame::ExeDir()
-    {
-        wchar_t buf[MAX_PATH] = L"";
-        GetModuleFileNameW(nullptr, buf, MAX_PATH);
-        std::filesystem::path dir = std::filesystem::path(buf).parent_path();
-        const std::u8string u8 = dir.u8string();
-        return std::string(u8.begin(), u8.end());
-    }
-
-    void MainFrame::UpdateDisplaySize()
-    {
-        if (!m_ui)
-            return;
-        RECT rc{};
-        GetClientRect(m_hwnd, &rc);
-        m_dpiScale = static_cast<float>(GetDpiForWindow(m_hwnd)) / 96.0f;
-        const float w = static_cast<float>(rc.right - rc.left);
-        const float h = static_cast<float>(rc.bottom - rc.top);
-        m_ui->SetDisplaySize({ w / m_dpiScale, h / m_dpiScale }, m_dpiScale);
-
-        // 立即布局并同步相机尺寸：下一次输入就按新的视口尺寸换算坐标
-        m_ui->Update();
-        if (m_viewport && m_viewport->IsVisible())
-        {
-            int pw = 0, ph = 0;
-            m_viewport->GetPixelSize(pw, ph);
-            Viewport& vp = m_docManager.GetViewport();
-            if (pw > 0 && ph > 0 && (vp.GetWidth() != pw || vp.GetHeight() != ph))
-                vp.Resize(static_cast<float>(pw), static_cast<float>(ph));
-        }
-    }
-
-    // =========================================================
-    // 消息
-    // =========================================================
-    LRESULT MainFrame::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-    {
-        MainFrame* self = nullptr;
-        if (msg == WM_NCCREATE)
-        {
-            self = static_cast<MainFrame*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
-        else
-        {
-            self = reinterpret_cast<MainFrame*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-        }
-        return self ? self->EventProc(hwnd, msg, wParam, lParam) : DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
-
-    LRESULT MainFrame::EventProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-    {
-        LRESULT result = 0;
-        // 无边框窗口的非客户区消息先处理（命中测试要在 MiniGUI 之前）
-        if (m_frame && m_frame->HandleMessage(hwnd, msg, wParam, lParam, result))
-            return result;
-        if (m_input && m_input->HandleMessage(hwnd, msg, wParam, lParam, result))
-            return result;
-
-        switch (msg)
-        {
-        case WM_ERASEBKGND:
-            return 1;
-
-        case WM_SIZE:
-            if (m_swapChain && wParam != SIZE_MINIMIZED)
-            {
-                m_swapChain->Resize(LOWORD(lParam), HIWORD(lParam));
-                UpdateDisplaySize();
-                m_commands.NotifyStateChanged();    // 最大化按钮切换"还原"图标
-            }
-            return 0;
-
-        case WM_GETMINMAXINFO:
-        {
-            auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-            const float scale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
-            mmi->ptMinTrackSize = { static_cast<LONG>(640 * scale), static_cast<LONG>(420 * scale) };
-            return 0;
-        }
-
-        case WM_DPICHANGED:
-        {
-            const RECT* r = reinterpret_cast<const RECT*>(lParam);
-            SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-            UpdateDisplaySize();
-            return 0;
-        }
-
-        case WM_PAINT:
-            // 消息队列里没有其他消息时才会收到 WM_PAINT：此时本帧之前的输入已全部交给 Editor
-            RenderFrame();
-            ValidateRect(hwnd, nullptr);
-            return 0;
-
-        case WM_CLOSE:
-            RequestExit();          // 有未保存的文档时先询问
-            return 0;
-
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-
-        default:
-            return DefWindowProcW(hwnd, msg, wParam, lParam);
-        }
-    }
-
-    int MainFrame::Run()
-    {
-        // 空闲时阻塞等待（消息或界面描述文件所在目录的变化），CPU 占用为 0；需要重绘时 UIContext 回调 InvalidateRect
-        while (true)
-        {
-            const DWORD count = m_uiWatch ? 1 : 0;
-            const DWORD r = MsgWaitForMultipleObjectsEx(count, &m_uiWatch, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-            if (count && r == WAIT_OBJECT_0)
-            {
-                FindNextChangeNotification(m_uiWatch);
-                CheckUiFileChanged();
-            }
-
-            MSG msg = {};
-            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
-            {
-                if (msg.message == WM_QUIT)
-                    return static_cast<int>(msg.wParam);
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-    }
-
-    // =========================================================
-    // 文档
-    // =========================================================
-    void MainFrame::StateChanged()
-    {
-        // 订阅者：工具栏、菜单勾选、标题栏按钮，以及 InitUI 里的监听（文档标签、图层面板、标题、数据绑定）
-        m_commands.NotifyStateChanged();
-    }
-
-    void MainFrame::SyncDocuments()
-    {
-        if (!m_docTabs)
-            return;
-        auto& docs = m_docManager.GetAll();
-        m_syncing = true;
-
-        // 标签与文档一一对应（按文档在标签上的顺序，用户可拖动标签排序）：先删掉已关闭的，再追加新文档
-        for (int i = m_docTabs->GetTabCount() - 1; i >= 0; --i)
-        {
-            const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
-            const bool alive = std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; });
-            if (!alive)
-                m_docTabs->RemoveTab(i);
-        }
-        for (const auto& d : docs)
-        {
-            const auto key = reinterpret_cast<uintptr_t>(d.get());
-            if (m_docTabs->FindTabData(key) < 0)
-                m_docTabs->SetTabData(m_docTabs->AddTab(d->GetName(), nullptr, true), key);
-        }
-        for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
-        {
-            const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
-            if (m_docTabs->GetTabTitle(i) != doc->GetName())
-                m_docTabs->SetTabTitle(i, doc->GetName());
-            m_docTabs->SetTabModified(i, doc->IsDirty());
-        }
-
-        Document* active = m_docManager.GetActive();
-        const int sel = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(active));
-        if (sel >= 0)
-            m_docTabs->SetSelected(sel);
-        m_syncing = false;
-
-        // 没有文档时用提示代替视口和标签条
-        const bool hasDoc = active != nullptr;
-        m_docTabs->SetVisible(!docs.empty());
-        m_viewport->SetVisible(hasDoc);
-        m_noDocHint->SetVisible(!hasDoc);
-    }
-
-    void MainFrame::UpdateTitle()
-    {
-        std::string title = "MiniCAD";
-        if (Document* doc = m_docManager.GetActive())
-            title = doc->GetName() + (doc->IsDirty() ? " *" : "") + " - MiniCAD";
-        if (title == m_title)
-            return;
-        m_title = title;
-        if (MiniGUI::TitleBar* bar = m_layout ? m_layout->GetTitleBar() : nullptr)
-            bar->SetTitle(m_title);
-        SetWindowTextW(m_hwnd, ToWide(m_title).c_str());      // 任务栏、Alt+Tab 显示的名称
-    }
-
-    void MainFrame::ActivateDocument(Document* doc)
-    {
-        if (!doc || doc == m_docManager.GetActive())
-            return;
-        m_docManager.SetActive(doc);           // Editor 解绑旧文档时结束进行中的工具
-        m_viewport->RequestRender();
-        StateChanged();
-    }
-
-    void MainFrame::CloseDocument(Document* doc)
-    {
-        auto& docs = m_docManager.GetAll();
-        auto alive = [&docs, doc] { return std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; }); };
-        if (!doc || !alive())
-            return;
-
-        auto close = [this, doc, alive]
-        {
-            if (!alive())
-                return;
-            // 关闭当前文档：先切到标签上相邻的文档（同时恢复它的相机），再关闭
-            if (doc == m_docManager.GetActive())
-            {
-                Document* next = nullptr;
-                const int i = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(doc));
-                const int n = m_docTabs->GetTabCount();
-                if (i >= 0 && n > 1)
-                    next = reinterpret_cast<Document*>(m_docTabs->GetTabData(i + 1 < n ? i + 1 : i - 1));
-                m_docManager.SetActive(next);
-            }
-            m_docManager.Close(doc);
-            m_viewport->RequestRender();
-            StateChanged();
-            if (m_viewport->IsVisible())
-                m_viewport->Focus();
-        };
-
-        if (!doc->IsDirty())
-        {
-            close();
-            return;
-        }
-        MiniGUI::ShowMessageBox(*m_ui, "MiniCAD", "“" + doc->GetName() + "”尚未保存，是否保存修改？",
-            { "保存", "不保存", "取消" },
-            [this, doc, close, alive](int r)
-            {
-                if (r == 0 && alive())
-                {
-                    ActivateDocument(doc);
-                    m_docManager.Save();            // 没有路径时弹出另存为；取消另存为则不关闭
-                    if (!doc->IsDirty())
-                        close();
-                    else
-                        StateChanged();
-                }
-                else if (r == 1)
-                {
-                    close();
-                }
-            });
-    }
-
-    void MainFrame::RequestExit()
-    {
-        size_t dirty = 0;
-        for (const auto& d : m_docManager.GetAll())
-            dirty += d->IsDirty() ? 1 : 0;
-        if (dirty == 0 || !m_ui)
-        {
-            DestroyWindow(m_hwnd);
-            return;
-        }
-        if (m_ui->HasModal())
-            return;             // 已经在询问了（例如连续点了两次关闭）
-        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档尚未保存。",
-            { "全部保存并退出", "不保存，直接退出", "取消" },
-            [this](int r)
-            {
-                if (r == 0)
-                {
-                    m_docManager.SaveAll();
-                    const bool allSaved = std::none_of(m_docManager.GetAll().begin(), m_docManager.GetAll().end(),
-                                                       [](const auto& d) { return d->IsDirty(); });
-                    if (allSaved)
-                        DestroyWindow(m_hwnd);
-                    else
-                        StateChanged();         // 取消了某个另存为：留在程序里
-                }
-                else if (r == 1)
-                {
-                    DestroyWindow(m_hwnd);
-                }
-            });
-    }
-
-    // =========================================================
-    // 视口输入 → Editor
-    // =========================================================
-    void MainFrame::NoteInput()
-    {
-        if (m_pendingInputQpc == 0)
-            m_pendingInputQpc = QpcNow();
-        m_viewport->RequestRender();
-    }
-
-    void MainFrame::OnViewportPointer(const MiniGUI::ViewportPointerEvent& e)
-    {
-        using T = MiniGUI::PointerEventType;
-        if (e.type == T::Enter || e.type == T::Leave)
-        {
-            m_hovered = e.type == T::Enter;
-            m_viewport->Invalidate();       // 更新状态栏坐标
-            return;
-        }
-        if (!m_docManager.GetActive())
-            return;
-
-        const int x = static_cast<int>(std::floor(e.pixel.x));
-        const int y = static_cast<int>(std::floor(e.pixel.y));
-
-        InputEvent ie   = {};
-        ie.Modifiers    = e.modifiers;          // 两边的修饰键掩码相同
-        ie.MouseButtons = ToButtonState(e.buttons);
-        ie.MouseX       = x;
-        ie.MouseY       = y;
-        ie.LastMouseX   = m_mouseX;
-        ie.LastMouseY   = m_mouseY;
-
-        switch (e.type)
-        {
-        case T::Down:
-            m_pressX   = x;
-            m_pressY   = y;
-            ie.Type    = InputEventType::MouseButtonDown;
-            ie.Button  = ToMouseButton(e.button);
-            break;
-        case T::Up:
-            ie.Type    = InputEventType::MouseButtonUp;
-            ie.Button  = ToMouseButton(e.button);
-            break;
-        case T::Move:
-            if (x == m_mouseX && y == m_mouseY)
-                return;
-            ie.Type    = InputEventType::MouseMove;
-            break;
-        case T::Wheel:
-            ie.Type       = InputEventType::MouseWheel;
-            ie.WheelDelta = e.wheelDelta.y;
-            break;
-        case T::Cancel:
-            // 捕获被系统打断：补一个抬起，避免 Editor 停在拖拽状态
-            {
-                const std::pair<MouseButton, MouseButtonState> held[] =
-                {
-                    { MouseButton::Left,   MouseButtonState::Left   },
-                    { MouseButton::Middle, MouseButtonState::Middle },
-                    { MouseButton::Right,  MouseButtonState::Right  },
-                };
-                for (const auto& [button, state] : held)
-                {
-                    if (!(m_buttons & static_cast<uint8_t>(state)))
-                        continue;
-                    InputEvent up   = ie;
-                    up.Type         = InputEventType::MouseButtonUp;
-                    up.Button       = button;
-                    up.MouseButtons = 0;
-                    m_docManager.GetEditor().OnInput(up);
-                }
-            }
-            m_buttons = 0;
-            NoteInput();
-            return;
-        default:
-            return;
-        }
-
-        ie.PressMouseX = m_pressX;
-        ie.PressMouseY = m_pressY;
-        m_mouseX  = x;
-        m_mouseY  = y;
-        m_buttons = ie.MouseButtons;
-
-        m_docManager.GetEditor().OnInput(ie);
-        NoteInput();
-        // 按下 / 抬起 / 滚轮可能改变选择集、结束当前工具、修改文档：刷新界面（移动太频繁，不刷新）
-        if (e.type != T::Move)
-            StateChanged();
-    }
-
-    bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
-    {
-        const KeyCode code = ToKeyCode(e.key);
-        if (code == KeyCode::Unknown || code == KeyCode::Tab || !m_docManager.GetActive())
-            return false;
-        if (RouteKeyToDynamicInput(e) || RouteKeyToCommandLine(e))
-            return true;
-
-        InputEvent ie   = {};
-        ie.Type         = e.type == MiniGUI::KeyEventType::Down ? InputEventType::KeyDown : InputEventType::KeyUp;
-        ie.Key          = code;
-        ie.Modifiers    = e.modifiers;
-        ie.MouseButtons = m_buttons;
-        ie.MouseX       = m_mouseX;
-        ie.MouseY       = m_mouseY;
-        ie.LastMouseX   = m_mouseX;
-        ie.LastMouseY   = m_mouseY;
-        ie.PressMouseX  = m_pressX;
-        ie.PressMouseY  = m_pressY;
-
-        const bool handled = m_docManager.GetEditor().OnInput(ie);
-        NoteInput();
-        StateChanged();
-        return handled || ie.Type == InputEventType::KeyDown;
-    }
-
-    // =========================================================
-    // 渲染
-    // =========================================================
-    void MainFrame::RenderViewport(int pixelWidth, int pixelHeight)
-    {
-        if (m_viewportRT->GetWidth() != pixelWidth || m_viewportRT->GetHeight() != pixelHeight)
-            m_viewportRT->Resize(pixelWidth, pixelHeight);
-
-        Viewport& vp = m_docManager.GetViewport();
-        if (vp.GetWidth() != pixelWidth || vp.GetHeight() != pixelHeight)
-            vp.Resize(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
-
-        if (m_docManager.GetActive())
-        {
-            Editor& editor = m_docManager.GetEditor();
-            editor.Render();
-            vp.Render(*m_renderer, *m_viewportRT, editor.BuildViewState());
-        }
-
-        // 渲染目标重建后 SRV 会变，重新登记
-        void* srv = m_viewportRT->GetNativeShaderResource();
-        if (srv != m_viewSRV)
-        {
-            if (m_viewTex != MiniGUI::InvalidTextureId)
-                m_backend->DestroyTexture(m_viewTex);
-            m_viewTex = m_backend->RegisterExternalTexture(static_cast<ID3D11ShaderResourceView*>(srv));
-            m_viewSRV = srv;
-            m_viewport->SetTexture(m_viewTex);
-            ++m_viewTexRebuilds;
-        }
-        ++m_viewportFrames;
-    }
-
-    void MainFrame::UpdateStatus()
-    {
-        std::string tool = "选择";
-        const Editor& editor = m_docManager.GetEditor();
-        if (m_docManager.GetActive() && editor.IsActiveTool())
-        {
-            const auto it = m_toolCommands.find(editor.GetLastCommand());
-            tool = it != m_toolCommands.end() ? MiniGUI::CommandRegistry::StripMnemonic(m_commands.GetLabel(it->second))
-                                              : editor.GetLastCommand();
-        }
-        m_statusBar->Refresh(tool, m_hovered || m_buttons != 0, m_mouseX, m_mouseY);
-    }
-
-    void MainFrame::WaitForGpu()
-    {
-        // 事件查询：GPU 执行完之前提交的全部命令后才返回（只用于自测计时）
-        D3D11_QUERY_DESC desc = { D3D11_QUERY_EVENT, 0 };
-        Microsoft::WRL::ComPtr<ID3D11Query> query;
-        if (FAILED(m_device->GetDevice()->CreateQuery(&desc, &query)))
-            return;
-        ID3D11DeviceContext* ctx = m_device->GetContext();
-        ctx->End(query.Get());
-        BOOL done = FALSE;
-        while (ctx->GetData(query.Get(), &done, sizeof(done), 0) != S_OK || !done)
-            ;
-    }
-
-    void MainFrame::RenderFrame()
-    {
-        if (!m_ui)
-            return;
-        auto ms = [this](int64_t from) { return static_cast<double>(QpcNow() - from) * 1000.0 / static_cast<double>(m_qpcFreq); };
-        int64_t t = QpcNow();
-
-        // 1. 同步状态栏文字（会触发布局，所以放在 Update 之前）
-        UpdateStatus();
-
-        // 2. 布局 → 3. 按最新尺寸和相机渲染视口
-        m_ui->Update();
-        m_timing.layout = ms(t);
-        t = QpcNow();
-        m_timing.viewportRendered = m_viewport->IsVisible() && m_viewport->RenderContent();
-        if (m_syncGpu)
-            WaitForGpu();
-        m_timing.viewport = ms(t);
-
-        // 3.5 Editor 在渲染时更新命令提示：同步到命令行，有变化时补一次布局（没有变化时 Update 立即返回）
-        t = QpcNow();
-        SyncCommandLine();
-        SyncDynamicInput();
-        m_ui->Update();
-        m_timing.layout += ms(t);
-
-        // 4. 界面（含视口纹理）画到交换链
-        t = QpcNow();
-        ID3D11DeviceContext* ctx = m_device->GetContext();
-        ID3D11RenderTargetView* rtv = m_swapChain->GetRTV();
-        const float clear[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
-        ctx->OMSetRenderTargets(1, &rtv, nullptr);
-        ctx->ClearRenderTargetView(rtv, clear);
-        if (m_syncGpu)
-        {
-            WaitForGpu();       // 后备缓冲区要等显示器交还（垂直同步），这段等待不算界面绘制
-            t = QpcNow();
-        }
-        m_ui->Render();
-        if (m_syncGpu)
-            WaitForGpu();
-        m_timing.ui = ms(t);
-        t = QpcNow();
-        m_swapChain->Present();
-        m_timing.present = ms(t);
-        m_input->Sync();
-        ++m_frames;
-
-        if (m_pendingInputQpc != 0)
-        {
-            m_latencyLast = static_cast<double>(QpcNow() - m_pendingInputQpc) * 1000.0 / static_cast<double>(m_qpcFreq);
-            m_latencyMax  = (std::max)(m_latencyMax, m_latencyLast);
-            m_pendingInputQpc = 0;
-        }
-    }
-
     // =========================================================
     // 自测：注入窗口消息，验证输入在下一帧（而不是下下帧）生效，以及主窗口的标题栏、多文档、图层
     // =========================================================
     int MainFrame::RunSelfTest()
     {
+        const HWND hwnd = static_cast<Win32Window*>(m_platform)->GetHwnd();
         int failures = 0;
         auto check = [&](bool ok, const char* what)
         {
@@ -905,7 +74,7 @@ namespace MiniCAD
         const int top  = static_cast<int>(std::lround(vr.min.y * m_dpiScale));
         const int cx   = static_cast<int>(std::lround(vr.Center().x * m_dpiScale));
         const int cy   = static_cast<int>(std::lround(vr.Center().y * m_dpiScale));
-        auto send = [&](UINT m, WPARAM wp, int x, int y) { SendMessageW(m_hwnd, m, wp, MAKELPARAM(x, y)); };
+        auto send = [&](UINT m, WPARAM wp, int x, int y) { SendMessageW(hwnd, m, wp, MAKELPARAM(x, y)); };
 
         Editor&       editor = m_docManager.GetEditor();
         const Camera& camera = m_docManager.GetViewport().GetCamera();
@@ -946,9 +115,9 @@ namespace MiniCAD
         const Math::Point3 anchor = camera.ScreenToWorld(cx - left, cy - top);
         const Math::Point2 farBefore = camera.WorldToScreen(Math::Point3(anchor.x + 100.0, anchor.y, 0.0));
         POINT sp = { cx, cy };
-        ClientToScreen(m_hwnd, &sp);
+        ClientToScreen(hwnd, &sp);
         frames = m_frames;
-        SendMessageW(m_hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM(sp.x, sp.y));
+        SendMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM(sp.x, sp.y));
         RenderFrame();
         const Math::Point3 anchorAfter = camera.ScreenToWorld(cx - left, cy - top);
         const Math::Point2 farAfter    = camera.WorldToScreen(Math::Point3(anchor.x + 100.0, anchor.y, 0.0));
@@ -976,8 +145,8 @@ namespace MiniCAD
                 auto hit = [&](MiniGUI::Vec2 logical)
                 {
                     POINT p = { static_cast<LONG>(std::lround(logical.x * m_dpiScale)), static_cast<LONG>(std::lround(logical.y * m_dpiScale)) };
-                    ClientToScreen(m_hwnd, &p);
-                    return SendMessageW(m_hwnd, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y));
+                    ClientToScreen(hwnd, &p);
+                    return SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y));
                 };
                 const MiniGUI::Rect tb    = bar->GetScreenBounds();
                 const MiniGUI::Rect title = bar->GetTitleRect();
@@ -987,7 +156,7 @@ namespace MiniCAD
                 check(!menu.IsEmpty() && hit({ menu.min.x + 12.0f, tb.Center().y }) == HTCLIENT, "菜单栏不是标题区域");
                 check(hit({ tb.max.x - MiniGUI::TitleBar::kButtonWidth * 0.5f, tb.Center().y }) == HTCLIENT, "关闭按钮不是标题区域");
                 const LRESULT edge = hit({ tb.Center().x, 0.0f });
-                std::printf("    上边缘命中 %lld（HTTOP = %d），窗口%s\n", static_cast<long long>(edge), HTTOP, IsZoomed(m_hwnd) ? "已最大化" : "未最大化");
+                std::printf("    上边缘命中 %lld（HTTOP = %d），窗口%s\n", static_cast<long long>(edge), HTTOP, IsZoomed(hwnd) ? "已最大化" : "未最大化");
                 check(edge == HTTOP, "窗口上边缘可以拖动缩放");
             }
         }
@@ -995,26 +164,26 @@ namespace MiniCAD
         // ── 7. 最大化 / 还原：命令驱动，界面按新尺寸布局，按钮显示还原图标 ──
         {
             RECT before{}, after{};
-            GetClientRect(m_hwnd, &before);
+            GetClientRect(hwnd, &before);
             m_commands.Execute("window.maximize");
             pump();
-            GetClientRect(m_hwnd, &after);
+            GetClientRect(hwnd, &after);
             const MiniGUI::Vec2 ds = m_ui->GetDisplaySize();
-            check(IsZoomed(m_hwnd) && m_commands.IsChecked("window.maximize"), "最大化后命令显示为选中（按钮为还原）");
+            check(IsZoomed(hwnd) && m_commands.IsChecked("window.maximize"), "最大化后命令显示为选中（按钮为还原）");
             check(after.right > before.right && std::abs(ds.x * m_dpiScale - after.right) < 1.0f, "最大化后界面按新的客户区布局");
             MONITORINFO mi = { sizeof(mi) };
-            GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+            GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
             RECT wr{};
-            GetWindowRect(m_hwnd, &wr);
+            GetWindowRect(hwnd, &wr);
             std::printf("    最大化窗口 (%ld, %ld)～(%ld, %ld)，工作区 (%ld, %ld)～(%ld, %ld)\n", wr.left, wr.top, wr.right, wr.bottom,
                         mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
             POINT o = { 0, 0 };
-            ClientToScreen(m_hwnd, &o);
+            ClientToScreen(hwnd, &o);
             check(o.x == mi.rcWork.left && o.y == mi.rcWork.top && after.right == mi.rcWork.right - mi.rcWork.left,
                   "最大化时客户区正好铺满工作区（边框不伸出屏幕）");
             m_commands.Execute("window.maximize");
             pump();
-            check(!IsZoomed(m_hwnd) && !m_commands.IsChecked("window.maximize"), "再次执行还原窗口");
+            check(!IsZoomed(hwnd) && !m_commands.IsChecked("window.maximize"), "再次执行还原窗口");
         }
 
         // ── 8. 多文档：新建、切换（相机随文档恢复）、关闭 ──────────
@@ -1075,16 +244,16 @@ namespace MiniCAD
         {
             m_viewport->Focus();
             RenderFrame();
-            SendMessageW(m_hwnd, WM_KEYDOWN, 'L', 0);
-            SendMessageW(m_hwnd, WM_CHAR, 'l', 0);
-            SendMessageW(m_hwnd, WM_KEYUP, 'L', 0);
+            SendMessageW(hwnd, WM_KEYDOWN, 'L', 0);
+            SendMessageW(hwnd, WM_CHAR, 'l', 0);
+            SendMessageW(hwnd, WM_KEYUP, 'L', 0);
             RenderFrame();
             MiniGUI::AutoComplete* ac = m_console->GetInput()->GetAutoComplete();
             check(m_console->HasInputFocus() && m_console->GetInputText() == "l", "绘图区按 L：焦点进入命令行，字母落入输入框");
             check(ac && ac->IsOpen() && ac->GetCurrent() == 0 && ac->GetSuggestions().front().text == "Line",
                   "别名 L 对应的 Line 排在候选第一位并默认选中");
 
-            SendMessageW(m_hwnd, WM_CHAR, ' ', 0);      // 空格 = 回车
+            SendMessageW(hwnd, WM_CHAR, ' ', 0);      // 空格 = 回车
             RenderFrame();
             const auto& lines = editor.GetCmdLine().Lines();
             check(editor.IsActiveTool() && editor.GetLastCommand() == "Line", "空格执行候选：直线工具启动");
@@ -1095,8 +264,8 @@ namespace MiniCAD
             check(m_console->GetPrompt() != "命令:" && m_console->GetPrompt() == editor.GetCmdLine().Prompt(), "命令行显示当前工具的提示");
 
             // 工具进行中字母交给工具（不进入命令行）；Esc 取消工具，提示恢复
-            SendMessageW(m_hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
-            SendMessageW(m_hwnd, WM_KEYUP, VK_ESCAPE, 0);
+            SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+            SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
             RenderFrame();
             check(!editor.IsActiveTool() && m_console->GetPrompt() == "命令:", "Esc 取消工具，提示恢复为“命令:”");
 
@@ -1125,19 +294,19 @@ namespace MiniCAD
                 zdoc->GetScene().AddEntity(std::move(zline));
                 m_viewport->Focus();
                 RenderFrame();
-                SendMessageW(m_hwnd, WM_KEYDOWN, 'Z', 0);
-                SendMessageW(m_hwnd, WM_CHAR, 'z', 0);
-                SendMessageW(m_hwnd, WM_KEYUP, 'Z', 0);
+                SendMessageW(hwnd, WM_KEYDOWN, 'Z', 0);
+                SendMessageW(hwnd, WM_CHAR, 'z', 0);
+                SendMessageW(hwnd, WM_KEYUP, 'Z', 0);
                 RenderFrame();
-                SendMessageW(m_hwnd, WM_CHAR, ' ', 0);
+                SendMessageW(hwnd, WM_CHAR, ' ', 0);
                 RenderFrame();
                 check(editor.IsZoomPending(), "Z 空格：ZOOM 等待选项");
                 Camera& zcam = m_docManager.GetViewport().GetCamera();
                 const bool dirty0 = zdoc->IsDirty();
                 // A：全部（缩放到全图），可撤销 / 重做，且不让文档变成已修改
-                SendMessageW(m_hwnd, WM_KEYDOWN, 'A', 0);
-                SendMessageW(m_hwnd, WM_CHAR, 'a', 0);
-                SendMessageW(m_hwnd, WM_KEYUP, 'A', 0);
+                SendMessageW(hwnd, WM_KEYDOWN, 'A', 0);
+                SendMessageW(hwnd, WM_CHAR, 'a', 0);
+                SendMessageW(hwnd, WM_KEYUP, 'A', 0);
                 RenderFrame();   // 敲下 A 即执行，不再需要空格
                 AABB zbox = AABB::Empty();
                 zdoc->GetScene().GetExtents(zbox);
@@ -1152,15 +321,15 @@ namespace MiniCAD
 
                 // E：框选区域缩放（窗口缩放）：两个角点 → 区域居中并充满视口
                 zcam.SetState(zcam0);
-                SendMessageW(m_hwnd, WM_KEYDOWN, 'Z', 0);
-                SendMessageW(m_hwnd, WM_CHAR, 'z', 0);
-                SendMessageW(m_hwnd, WM_KEYUP, 'Z', 0);
+                SendMessageW(hwnd, WM_KEYDOWN, 'Z', 0);
+                SendMessageW(hwnd, WM_CHAR, 'z', 0);
+                SendMessageW(hwnd, WM_KEYUP, 'Z', 0);
                 RenderFrame();
-                SendMessageW(m_hwnd, WM_CHAR, ' ', 0);
+                SendMessageW(hwnd, WM_CHAR, ' ', 0);
                 RenderFrame();
-                SendMessageW(m_hwnd, WM_KEYDOWN, 'E', 0);
-                SendMessageW(m_hwnd, WM_CHAR, 'e', 0);
-                SendMessageW(m_hwnd, WM_KEYUP, 'E', 0);
+                SendMessageW(hwnd, WM_KEYDOWN, 'E', 0);
+                SendMessageW(hwnd, WM_CHAR, 'e', 0);
+                SendMessageW(hwnd, WM_KEYUP, 'E', 0);
                 RenderFrame();
                 check(editor.IsActiveTool() && editor.GetCmdLine().Prompt().find("窗口") != std::string::npos, "Z 空格 E：进入框选窗口，提示指定角点");
                 editor.SubmitPoint(Math::Point3(100.0, 100.0, 0.0));
@@ -1202,13 +371,13 @@ namespace MiniCAD
             send(WM_MOUSEMOVE, 0, left + static_cast<int>(a.x) + 80, top + static_cast<int>(a.y));     // 水平向右
             RenderFrame();
             check(IsDynInputVisible() && !DynInputHasFocus(), "有锚点时光标旁显示动态输入，焦点仍在绘图区");
-            SendMessageW(m_hwnd, WM_KEYDOWN, '7', 0);
-            SendMessageW(m_hwnd, WM_CHAR, '7', 0);
-            SendMessageW(m_hwnd, WM_KEYUP, '7', 0);
+            SendMessageW(hwnd, WM_KEYDOWN, '7', 0);
+            SendMessageW(hwnd, WM_CHAR, '7', 0);
+            SendMessageW(hwnd, WM_KEYUP, '7', 0);
             RenderFrame();
             check(DynInputHasFocus() && GetDynInputText(0) == "7", "按数字：焦点进入长度框，替换实时值");
-            SendMessageW(m_hwnd, WM_KEYDOWN, VK_RETURN, 0);
-            SendMessageW(m_hwnd, WM_KEYUP, VK_RETURN, 0);
+            SendMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0);
+            SendMessageW(hwnd, WM_KEYUP, VK_RETURN, 0);
             RenderFrame();
             editor.TryGetAnchor(anchor);
             std::printf("    动态输入后锚点 (%.3f, %.3f)\n", anchor.x, anchor.y);
@@ -2157,12 +1326,12 @@ namespace MiniCAD
         // ── 20. 大图纸的非逐帧开销（只打印，不判定）：添加实体、首次生成显示数据、整体重建、保存、打开 ──
         for (const int count : { 20000, 200000 })
         {
-            auto msSince = [this](int64_t from) { return static_cast<double>(QpcNow() - from) * 1000.0 / static_cast<double>(m_qpcFreq); };
+            auto msSince = [this](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
             m_commands.Execute("file.new");
             Document* big = m_docManager.GetActive();
             Scene& scene = big->GetScene();
 
-            int64_t t = QpcNow();
+            int64_t t = NowTicks();
             for (int i = 0; i < count; ++i)
             {
                 const double a = i * 0.0031;
@@ -2194,7 +1363,7 @@ namespace MiniCAD
             const std::filesystem::path file = std::filesystem::path(tmp) / L"minicad_selftest_big.mcad";
             const std::u8string u8 = file.u8string();
             const std::string path(u8.begin(), u8.end());
-            t = QpcNow();
+            t = NowTicks();
             const bool saved = big->SaveAs(path);
             const double saveMs = msSince(t);
             std::error_code ec;
@@ -2202,7 +1371,7 @@ namespace MiniCAD
             big->MarkSaved();
             m_commands.Execute("file.close");
 
-            t = QpcNow();
+            t = NowTicks();
             Document* loaded = saved ? m_docManager.Open(path) : nullptr;
             const double openMs = msSince(t);
             m_viewport->RequestRender();

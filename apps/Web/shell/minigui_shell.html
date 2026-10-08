@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniCAD</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1f22; }
+  #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #9da0a6; font: 14px system-ui, sans-serif; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="status">正在加载…</div>
+<script>
+  var Module = {
+    canvas: document.getElementById("canvas"),
+    setStatus: function (text) {
+      var s = document.getElementById("status");
+      if (!s) return;
+      if (text) s.textContent = text; else s.remove();     // 空字符串表示加载完成
+    },
+    print: function (text) { console.log(text); },
+    printErr: function (text) { console.error(text); }
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

@@ -25,36 +25,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <commdlg.h>
 
-#pragma comment(lib, "comdlg32.lib")
 
 namespace MiniCAD
 {
-    namespace
-    {
-        // 选择光栅图像文件（返回 UTF-8 路径，空串 = 取消）
-        std::string ShowImageDialog(HWND owner)
-        {
-            wchar_t buf[MAX_PATH] = L"";
-            OPENFILENAMEW ofn = {};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner   = owner;
-            ofn.lpstrFilter = L"图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif\0所有文件 (*.*)\0*.*\0";
-            ofn.lpstrFile   = buf;
-            ofn.nMaxFile    = MAX_PATH;
-            ofn.Flags       = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-            if (!GetOpenFileNameW(&ofn))
-                return {};
-            const int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
-            if (len <= 1)
-                return {};
-            std::string utf8(static_cast<size_t>(len - 1), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, buf, -1, utf8.data(), len, nullptr, nullptr);
-            return utf8;
-        }
-    }
-
     namespace
     {
         namespace Theme = MiniGUI::Theme;
@@ -119,13 +93,18 @@ namespace MiniCAD
         else if (!text && !mtext && m_textPopup)
             m_textPopup->Close();       // 请求被撤销（切换文档、撤销…）
 
-        // 插入图像：弹系统文件选择框（模态），选定后启动放置工具；取消则撤销请求
+        // 插入图像：选择图像文件（Win32 为模态的系统对话框，网页版异步），选定后启动放置工具；取消则撤销请求
         if (doc && editor.GetImageRequest().Active)
         {
             editor.GetImageRequest().Active = false;
-            const std::string path = ShowImageDialog(m_hwnd);
-            if (!path.empty())
-                editor.SubmitImagePath(path);
+            m_platform->PickFile(FileKind::Image, [this, doc](const std::string& path)
+            {
+                if (m_docManager.GetActive() != doc)
+                    return;     // 选择期间切换了文档
+                m_docManager.GetEditor().SubmitImagePath(path);
+                m_viewport->Focus();
+                StateChanged();
+            });
         }
 
         const bool blockName = doc && editor.GetBlockNameRequest().Active;
@@ -873,7 +852,7 @@ namespace MiniCAD
         bs.padding = Edges::Symmetric(12.0f, 4.0f);
         body->SetLayoutStyle(bs);
 
-        const std::string fontDir = ExeDir() + "/fonts";
+        const std::string fontDir = ResourceDir() + "/fonts";
         auto* styleCombo = AddRow<ComboBox>(body, "样式");
         styleCombo->EditLayoutStyle().width = 240.0f;
         Label* current = body->AddChild<Label>("", 12.0f, Theme::TextDim);
@@ -1079,7 +1058,7 @@ namespace MiniCAD
         body->AddChild<Label>("MiniCAD", 22.0f);
         body->AddChild<Label>("版本 1.0", 13.0f, Theme::TextDim);
         body->AddChild<Separator>();
-        body->AddChild<Label>("界面：MiniGUI（保留模式，D3D11 渲染）", 13.0f);
+        body->AddChild<Label>(std::string("界面：MiniGUI（保留模式，") + m_platform->GetGraphicsName() + " 渲染）", 13.0f);
         body->AddChild<Label>("作者：Hello", 13.0f);
         body->AddChild<Label>("鸣谢：Qizhiwoniu（七只蜗牛）", 13.0f);
         body->AddChild<Separator>();

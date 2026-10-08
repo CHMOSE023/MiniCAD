@@ -40,17 +40,11 @@ if(MSVC)
     target_compile_options(MiniGUI_Software PRIVATE /utf-8 /W4)
 endif()
 
-# ── MiniCAD 桌面版：整个界面由 MiniGUI 绘制，CAD 视口由 D3D11Renderer 渲染 ──
+# ── MiniCAD 桌面版：Win32 宿主（窗口 + D3D11）+ 共用的主窗口界面（MiniCADApp）──
 add_executable(MiniCADWin
-    src/GUI/GuiMain.cpp
-    src/GUI/MainFrame.cpp
-    src/GUI/MainCommands.cpp
-    src/GUI/MainPanels.cpp
-    src/GUI/LayerPanels.cpp
-    src/GUI/CommandLine.cpp
-    src/GUI/DynamicInput.cpp
-    src/GUI/EditorDialogs.cpp
-    src/GUI/StatusBarView.cpp
+    src/Host/GuiMain.cpp
+    src/Host/Win32Window.cpp
+    src/Host/SelfTest.cpp
     src/MiniCAD.rc
     src/Render/D3D11/D3D11Renderer.cpp
     src/Render/D3D11/D3D11RenderTarget.cpp
@@ -65,6 +59,7 @@ target_include_directories(MiniCADWin PRIVATE
 )
 
 target_link_libraries(MiniCADWin PRIVATE
+    MiniCADApp
     MiniCADLib
     MiniGUI_Win32
     MiniGUI_D3D11
@@ -85,11 +80,6 @@ if(MSVC)
         WIN32_LEAN_AND_MEAN
     )
 endif()
-
-# 开发时直接读源码目录里的界面描述文件：修改后立即重新加载，不必重新编译或复制
-target_compile_definitions(MiniCADWin PRIVATE
-    MINICAD_UI_SOURCE="${CMAKE_SOURCE_DIR}/assets/ui/minicad_ui.json"
-)
 
 option(USE_WIN32 "Use Win GUI subsystem (no console)" OFF)
 if(USE_WIN32)

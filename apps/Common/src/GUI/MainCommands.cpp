@@ -3,7 +3,6 @@
 #include "GUI/MainFrame.h"
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
-#include "Platform/Win32/Win32Frame.h"
 #include "Widgets/TabView.h"
 #include "Widgets/TitleBar.h"
 #include "Core/UIContext.h"
@@ -12,47 +11,9 @@
 #include "Widgets/DockSpace.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
-#include <commdlg.h>
-
-#pragma comment(lib, "comdlg32.lib")
 
 namespace MiniCAD
 {
-    namespace
-    {
-        // 打开 / 保存文件对话框（返回 UTF-8 路径，空串 = 取消）
-        std::string ShowFileDialog(HWND owner, bool save)
-        {
-            wchar_t buf[MAX_PATH] = L"";
-            OPENFILENAMEW ofn = {};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner   = owner;
-            // 打开：首项为全部可识别格式；保存：扩展名决定写出格式（.mcad / .dwg / .dxf / .json）
-            ofn.lpstrFilter = save
-                ? L"MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0"
-                : L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
-            ofn.lpstrFile   = buf;
-            ofn.nMaxFile    = MAX_PATH;
-            ofn.lpstrDefExt = save ? nullptr : L"mcad";   // 保存时按所选筛选器补扩展名（见下）
-            ofn.Flags       = OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST));
-            if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn)))
-                return {};
-            const wchar_t* fileName = wcsrchr(buf, L'\\') ? wcsrchr(buf, L'\\') + 1 : buf;
-            if (save && !wcschr(fileName, L'.'))
-            {
-                static const wchar_t* const kExt[] = { L".mcad", L".dwg", L".dxf", L".json" };
-                const DWORD idx = ofn.nFilterIndex >= 1 && ofn.nFilterIndex <= 4 ? ofn.nFilterIndex - 1 : 0;
-                wcsncat_s(buf, kExt[idx], _TRUNCATE);
-            }
-            const int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
-            if (len <= 1)
-                return {};
-            std::string utf8(static_cast<size_t>(len - 1), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, buf, -1, utf8.data(), len, nullptr, nullptr);
-            return utf8;
-        }
-    }
-
     void MainFrame::RegisterCommands()
     {
         using MiniGUI::Command;
@@ -60,25 +21,42 @@ namespace MiniCAD
         auto hasDoc       = [&dm] { return dm.GetActive() != nullptr; };
         auto hasSelection = [&dm] { return dm.GetActive() && !dm.GetEditor().GetSelection().empty(); };
 
-        HWND hwnd = m_hwnd;
-        dm.SetFileDialogHandler([hwnd](bool save) { return ShowFileDialog(hwnd, save); });
+        // 另存为的路径由平台选择（Win32：系统对话框；网页：浏览器内存文件系统，保存后下载）。
+        // 打开文件不经过 DocumentManager::Open()：网页版的文件选择是异步的，见 file.open
+        AppPlatform* platform = m_platform;
+        dm.SetFileDialogHandler([platform, &dm](bool save)
+        {
+            Document* doc = dm.GetActive();
+            return save ? platform->ChooseSavePath(doc ? doc->GetName() : "未命名") : std::string();
+        });
 
-        // ── 窗口：标题栏的最小化 / 最大化 / 关闭按钮执行这三个命令 ─────────
-        MiniGUI::Win32Frame* frame = m_frame.get();
-        m_commands.Register({ .id = MiniGUI::TitleBar::kMinimizeCommand, .label = "最小化(&N)", .execute = [frame] { frame->Minimize(); } });
-        m_commands.Register({ .id = MiniGUI::TitleBar::kMaximizeCommand, .label = "最大化(&X)",
-                              .execute = [frame] { frame->ToggleMaximize(); }, .isChecked = [frame] { return frame->IsWindowMaximized(); } });
-        m_commands.Register({ .id = MiniGUI::TitleBar::kCloseCommand,    .label = "关闭(&C)",   .execute = [frame] { frame->Close(); } });
+        // ── 窗口：标题栏的最小化 / 最大化 / 关闭按钮执行这三个命令（网页版没有窗口按钮：不注册，标题栏就不显示）──
+        if (platform->HasWindowControls())
+        {
+            m_commands.Register({ .id = MiniGUI::TitleBar::kMinimizeCommand, .label = "最小化(&N)", .execute = [platform] { platform->MinimizeWindow(); } });
+            m_commands.Register({ .id = MiniGUI::TitleBar::kMaximizeCommand, .label = "最大化(&X)",
+                                  .execute = [platform] { platform->ToggleMaximizeWindow(); }, .isChecked = [platform] { return platform->IsWindowMaximized(); } });
+            m_commands.Register({ .id = MiniGUI::TitleBar::kCloseCommand,    .label = "关闭(&C)",   .execute = [platform] { platform->CloseWindow(); } });
+        }
 
         // ── 文件 ─────────────────────────────────────────────────
         m_commands.Register({ .id = "file.new",     .label = "新建(&N)",     .shortcut = "Ctrl+N",       .execute = [&dm] { dm.New(); } });
-        m_commands.Register({ .id = "file.open",    .label = "打开(&O)…",    .shortcut = "Ctrl+O",       .execute = [&dm] { dm.Open(); } });
-        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",     .shortcut = "Ctrl+S",       .execute = [&dm] { dm.Save(); },    .canExecute = hasDoc });
-        m_commands.Register({ .id = "file.saveAs",  .label = "另存为(&A)…",  .shortcut = "Ctrl+Shift+S", .execute = [&dm] { dm.SaveAs(); },  .canExecute = hasDoc });
-        m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [&dm] { dm.SaveAll(); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.open",    .label = "打开(&O)…",    .shortcut = "Ctrl+O",
+                              .execute = [this, platform, &dm]
+                              {
+                                  platform->PickFile(FileKind::Drawing, [this, &dm](const std::string& path)
+                                  {
+                                      dm.Open(path);
+                                      m_viewport->RequestRender();
+                                      StateChanged();         // 网页版在命令执行完之后才选好文件：自己刷新界面
+                                  });
+                              } });
+        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",     .shortcut = "Ctrl+S",       .execute = [this] { SaveDocuments(false, false); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.saveAs",  .label = "另存为(&A)…",  .shortcut = "Ctrl+Shift+S", .execute = [this] { SaveDocuments(false, true); },  .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveDocuments(true, false); },  .canExecute = hasDoc });
         m_commands.Register({ .id = "file.close",   .label = "关闭(&C)",     .shortcut = "Ctrl+W",
                               .execute = [this, &dm] { CloseDocument(dm.GetActive()); }, .canExecute = hasDoc });
-        m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [hwnd] { PostMessageW(hwnd, WM_CLOSE, 0, 0); } });
+        m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
 
         // ── 文档标签：按标签顺序切换 ────────────────────────────────
         auto stepDoc = [this](int dir)

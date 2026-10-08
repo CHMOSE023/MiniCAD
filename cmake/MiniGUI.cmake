@@ -1,6 +1,6 @@
 # ── MiniGUI（保留模式界面库，源码在 src/UI）─────────────────────────────
 # 头文件以 src/UI 为根（"Core/UIContext.h"、"Widgets/Button.h"），命名空间 MiniGUI。
-# D3D11 / Software 渲染后端放在 apps/Win32/src/Render 下，由 apps/Win32/CMakeLists.txt 定义。
+# 渲染后端放在各应用的 src/Render 下：D3D11 / Software → apps/Win32，WebGL2 → apps/Web。
 
 set(MINIGUI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/UI")
 
@@ -110,4 +110,14 @@ if(WIN32)
             WIN32_LEAN_AND_MEAN
         )
     endif()
+endif()
+
+# ── Web 平台层（Emscripten）─────────────────────────────────────────
+if(EMSCRIPTEN)
+    add_library(MiniGUI_Web STATIC
+        "${MINIGUI_SRC}/Platform/Web/WebInput.cpp"
+        "${MINIGUI_SRC}/Platform/Web/WebFonts.cpp"
+    )
+
+    target_link_libraries(MiniGUI_Web PUBLIC MiniGUI)
 endif()

@@ -33,15 +33,6 @@ namespace MiniCAD
     {
         namespace Theme = MiniGUI::Theme;
 
-        std::string ToUtf8(const std::wstring& w)
-        {
-            const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-            std::string s(static_cast<size_t>(n > 0 ? n - 1 : 0), '\0');
-            if (n > 1)
-                WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
-            return s;
-        }
-
         std::filesystem::path ToPath(const std::string& utf8)
         {
             return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
@@ -54,14 +45,11 @@ namespace MiniCAD
             return ec ? 0 : static_cast<int64_t>(t.time_since_epoch().count());
         }
 
-        // 用户布局文件：%LOCALAPPDATA%\MiniCAD\layout.json
-        std::filesystem::path UserLayoutPath()
+        // 用户布局文件：平台的用户数据目录下的 layout.json（Win32：%LOCALAPPDATA%\MiniCAD）；没有该目录时不保存
+        std::filesystem::path UserLayoutPath(const AppPlatform& platform)
         {
-            wchar_t buf[MAX_PATH] = L"";
-            const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
-            if (n == 0 || n >= MAX_PATH)
-                return {};
-            return std::filesystem::path(buf) / L"MiniCAD" / L"layout.json";
+            const std::string dir = platform.GetUserDataDir();
+            return dir.empty() ? std::filesystem::path() : ToPath(dir) / "layout.json";
         }
 
         // 第一次加载就失败时使用的最小布局：至少能看到绘图区和状态栏里的错误信息（标题栏保证窗口能拖动、关闭）
@@ -554,7 +542,8 @@ namespace MiniCAD
         using namespace MiniGUI;
         const bool firstLoad = m_uiHost->GetChildren().empty();
         const bool hadFocus  = !m_ui->GetFocus() || (m_viewport && m_viewport->HasFocus());
-        const std::string fileName = ToUtf8(ToPath(m_uiPath).filename().wstring());
+        const std::u8string fileNameU8 = ToPath(m_uiPath).filename().u8string();
+        const std::string fileName(fileNameU8.begin(), fileNameU8.end());
 
         m_uiWriteTime = WriteTime(m_uiPath);
         const bool ok = m_layout->ApplyFile(m_uiHost, m_uiPath);
@@ -584,7 +573,7 @@ namespace MiniCAD
         if (TitleBar* bar = m_layout->GetTitleBar())
         {
             bar->SetTitle(m_title);
-            bar->SetWindowActive(GetActiveWindow() == m_hwnd);
+            bar->SetWindowActive(m_platform->IsWindowActive());
         }
 
         // 用户布局只在启动时恢复：之后修改界面描述文件里的 dock，重新加载后立即看到效果
@@ -597,18 +586,6 @@ namespace MiniCAD
         if (hadFocus && m_viewport->GetParent() && m_viewport->IsVisible())
             m_viewport->Focus();
         StateChanged();
-    }
-
-    void MainFrame::WatchUiFile()
-    {
-        const std::wstring dir = ToPath(m_uiPath).parent_path().wstring();
-        m_uiWatch = FindFirstChangeNotificationW(dir.c_str(), FALSE,
-                                                 FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE);
-        if (m_uiWatch == INVALID_HANDLE_VALUE)
-        {
-            m_uiWatch = nullptr;
-            LOG_WARN("无法监视界面描述文件所在目录，修改后请按 F5 重新加载");
-        }
     }
 
     void MainFrame::CheckUiFileChanged()
@@ -626,7 +603,7 @@ namespace MiniCAD
     {
         using namespace MiniGUI;
         DockSpace* dock = m_layout->GetDock("main");
-        const std::filesystem::path path = UserLayoutPath();
+        const std::filesystem::path path = UserLayoutPath(*m_platform);
         if (!dock || !m_useUserLayout || path.empty())
             return;
 
@@ -671,7 +648,7 @@ namespace MiniCAD
     {
         using namespace MiniGUI;
         DockSpace* dock = m_layout->GetDock("main");
-        const std::filesystem::path path = UserLayoutPath();
+        const std::filesystem::path path = UserLayoutPath(*m_platform);
         if (!dock || !m_useUserLayout || path.empty())
             return;
 
@@ -688,13 +665,16 @@ namespace MiniCAD
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out << root.Dump(2);
         if (!out)
-            LOG_WARN("无法保存用户布局：%s", ToUtf8(path.wstring()).c_str());
+        {
+            const std::u8string u8 = path.u8string();
+            LOG_WARN("无法保存用户布局：%s", std::string(u8.begin(), u8.end()).c_str());
+        }
     }
 
     void MainFrame::ResetLayout()
     {
         std::error_code ec;
-        const std::filesystem::path path = UserLayoutPath();
+        const std::filesystem::path path = UserLayoutPath(*m_platform);
         if (!path.empty())
             std::filesystem::remove(path, ec);
         ReloadUi();         // 按界面描述文件里的默认布局重建（不再读取用户布局）

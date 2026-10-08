@@ -1,13 +1,11 @@
 #pragma once
-#include <windows.h>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "Render/D3D11/Device.h"
-#include "Render/D3D11/SwapChain.h"
-#include "Render/D3D11/D3D11RenderTarget.h"
+#include "GUI/AppPlatform.h"
 #include "Render/IRenderer.h"
 #include "Document/DocumentManager.h"
 #include "Text/FontSystem.h"
@@ -18,9 +16,7 @@
 namespace MiniGUI
 {
     class UIContext;
-    class D3D11Backend;
-    class Win32Input;
-    class Win32Frame;
+    class TitleBar;
     class ViewportHost;
     class CommandConsole;
     class Label;
@@ -43,19 +39,21 @@ namespace MiniCAD
     class StatusBarView;
     class DynamicInputBox;
 
-    // MiniCAD 桌面版主窗口（MiniCADWin）。整个界面由 MiniGUI 绘制：
-    //   - 无边框窗口（Win32Frame）：标题栏自绘，菜单栏在标题栏里，右侧最小化 / 最大化 / 关闭；保留系统的贴靠、阴影、缩放边框
+    // MiniCAD 主窗口的界面与逻辑（桌面版和网页版共用）。整个界面由 MiniGUI 绘制，平台相关的部分
+    // （窗口、图形设备、消息循环、文件对话框）由 AppPlatform 提供：Win32 版见 apps/Win32/src/Host，网页版见 apps/Web/src/Host。
+    //   - 标题栏自绘，菜单栏在标题栏里；桌面版右侧有最小化 / 最大化 / 关闭（无边框窗口，Win32Frame）
     //   - 多文档标签：所有文档共用一个视口（MiniCAD 的 DocumentManager 只有一个 Viewport + Editor，切换文档时换相机状态）
     //   - 工具栏里的图层 / 线型 / 线宽下拉框，停靠的特性与图层面板、命令行，状态栏
     //   - 菜单、工具栏、布局由界面描述文件 ui/minicad_ui.json 描述（UiLayout），保存后自动重新加载（也可按 F5）；
-    //     用户拖动后的面板布局保存到 %LOCALAPPDATA%\MiniCAD\layout.json，下次启动恢复
+    //     用户拖动后的面板布局保存到 AppPlatform::GetUserDataDir() 下的 layout.json（Win32：%LOCALAPPDATA%\MiniCAD），下次启动恢复
     //
     // 帧顺序（输入与画面同一帧）：
-    //   1. 消息到达：Win32Input → UIContext 分发 → ViewportHost 转发 → 立即交给 Editor（相机平移/缩放当场生效）
-    //   2. 消息队列清空后才收到 WM_PAINT：UIContext::Update 布局 → ViewportHost::RenderContent 按最新尺寸和相机渲染 CAD
-    //      → UIContext::Render 把界面连同视口纹理画到交换链 → Present
+    //   1. 输入到达：平台输入层（Win32Input / WebInput）→ UIContext 分发 → ViewportHost 转发 → 立即交给 Editor（相机平移/缩放当场生效）
+    //   2. 宿主在输入处理完之后调用 RenderFrame：UIContext::Update 布局 → ViewportHost::RenderContent 按最新尺寸和相机渲染 CAD
+    //      → UIContext::Render 把界面连同视口纹理画到窗口 → 呈现
     //
-    // --selftest：注入窗口消息，验证视口输入在第一帧生效、标题栏命中测试、多文档切换，结果写到控制台，退出码 0 表示通过
+    // RunSelfTest（只有 Win32 版，定义在 apps/Win32/src/Host/SelfTest.cpp）：注入窗口消息，验证视口输入在第一帧生效、
+    // 标题栏命中测试、多文档切换，结果写到控制台，返回 0 表示通过
     class MainFrame
     {
     public:
@@ -67,16 +65,25 @@ namespace MiniCAD
         // 不读写用户布局文件（自测用，避免受本机保存的布局影响）
         void SetUseUserLayout(bool use) { m_useUserLayout = use; }
 
-        bool Initialize(const wchar_t* title, int width, int height);
-        int  Run();
+        // 平台对象必须比 MainFrame 活得久。尺寸为逻辑像素，pixelScale = 物理像素 / 逻辑像素
+        bool Initialize(AppPlatform& platform, float width, float height, float pixelScale);
         int  RunSelfTest();
 
-    private:
-        static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-        LRESULT EventProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+        // ── 由宿主调用 ───────────────────────────────────────────
+        void OnResize(float width, float height, float pixelScale);    // 窗口尺寸或 DPI 变化
+        void RenderFrame();
+        void RequestExit();                     // 有未保存的文档时先询问，确认后调用 AppPlatform::Quit
+        void StateChanged();                    // 文档、选择集、当前工具可能变了：刷新命令状态、标签、面板、标题
+        void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
+        const std::string&  GetUiPath() const { return m_uiPath; }
+        MiniGUI::UIContext& GetUI() const { return *m_ui; }
+        MiniGUI::TitleBar*  GetTitleBar() const;
 
-        bool InitWindow(const wchar_t* title, int width, int height);
-        bool InitD3D11(int width, int height);
+        // 单调时钟（统计帧耗时、输入延迟）
+        static int64_t NowTicks();
+        static constexpr int64_t kTicksPerSecond = 1'000'000'000;
+
+    private:
         bool InitDocument(int width, int height);
         void InitUI();
 
@@ -115,24 +122,19 @@ namespace MiniCAD
 
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
-        void WatchUiFile();
-        void CheckUiFileChanged();
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
-        static std::string ExeDir();            // 可执行文件所在目录（UTF-8）
+        std::string ResourceDir() const { return m_platform->GetResourceDir(); }   // icons/ ui/ patterns/ fonts/ 所在目录
 
         // ── 文档 ─────────────────────────────────────────────────
-        void StateChanged();                    // 文档、选择集、当前工具可能变了：刷新命令状态、标签、面板、标题
         void SyncDocuments();                   // 标签与 DocumentManager 的文档列表保持一致
         void UpdateTitle();
         void ActivateDocument(Document* doc);
         void CloseDocument(Document* doc);      // 未保存时先询问
-        void RequestExit();                     // 有未保存的文档时先询问
+        void SaveDocuments(bool all, bool saveAs);   // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）
         void LayerChanged();                    // 图层特性改了：重建场景显示、刷新面板、重绘视口
 
-        void UpdateDisplaySize();
-        void RenderFrame();
         void RenderViewport(int pixelWidth, int pixelHeight);
         void UpdateStatus();
 
@@ -142,22 +144,15 @@ namespace MiniCAD
         void NoteInput();       // 记录输入时间，用于统计输入到呈现的延迟
 
     private:
-        HWND  m_hwnd     = nullptr;
-        float m_dpiScale = 1.0f;
+        AppPlatform* m_platform = nullptr;
+        float        m_dpiScale = 1.0f;     // 物理像素 / 逻辑像素
 
         // ── MiniCAD ─────────────────────────────────────────────
-        std::unique_ptr<Device>            m_device;
-        std::unique_ptr<SwapChain>         m_swapChain;
-        std::unique_ptr<D3D11RenderTarget> m_viewportRT;
-        std::unique_ptr<IRenderer>         m_renderer;
         FontSystem                         m_fontSystem;
         DocumentManager                    m_docManager;
 
         // ── MiniGUI ─────────────────────────────────────────────
-        std::unique_ptr<MiniGUI::D3D11Backend> m_backend;
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
-        std::unique_ptr<MiniGUI::Win32Input>   m_input;
-        std::unique_ptr<MiniGUI::Win32Frame>   m_frame;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;
         MiniGUI::Node*                         m_noDocHint  = nullptr;   // 没有文档时代替视口显示
@@ -188,7 +183,6 @@ namespace MiniCAD
         MiniGUI::Node*                         m_uiHost     = nullptr;   // 界面描述生成的内容放在这里
         std::string                            m_uiPath;                 // 界面描述文件（UTF-8）
         int64_t                                m_uiWriteTime = 0;
-        HANDLE                                 m_uiWatch    = nullptr;   // 文件所在目录的变化通知
         std::unordered_map<std::string, std::string> m_toolCommands;     // Editor 工具 ID → 命令 ID（状态栏显示工具名）
         bool                                   m_useUserLayout = true;
         bool                                   m_syncing    = false;     // SyncDocuments 进行中：忽略标签的选中回调
@@ -204,8 +198,7 @@ namespace MiniCAD
         // ── 统计 ────────────────────────────────────────────────
         uint64_t m_frames          = 0;
         uint64_t m_viewportFrames  = 0;
-        int64_t  m_qpcFreq         = 1;
-        int64_t  m_pendingInputQpc = 0;      // 尚未呈现的最早一次输入
+        int64_t  m_pendingInputTicks = 0;    // 尚未呈现的最早一次输入（NowTicks）
         double   m_latencyLast     = 0.0;    // 毫秒：输入 → Present 返回
         double   m_latencyMax      = 0.0;
 
@@ -215,12 +208,11 @@ namespace MiniCAD
         {
             double layout   = 0.0;      // 状态同步 + 布局（含命令行 / 动态输入同步后的第二次布局）
             double viewport = 0.0;      // CAD 视口渲染（Editor::Render + Viewport::Render）
-            double ui       = 0.0;      // 界面绘制（生成 DrawList + D3D11 绘制）
+            double ui       = 0.0;      // 界面绘制（生成 DrawList + 后端绘制）
             double present  = 0.0;      // Present（含垂直同步等待）
             bool   viewportRendered = false;
         };
         FrameTiming m_timing;
         bool        m_syncGpu = false;
-        void        WaitForGpu();
     };
 }

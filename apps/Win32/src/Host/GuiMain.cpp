@@ -1,7 +1,7 @@
 // MiniCADWin：MiniCAD 桌面版入口（界面由 MiniGUI 绘制）
 // 用法：MiniCADWin.exe [--selftest] [--ui 界面描述文件.json]
 // 以 USE_WIN32 编译时为窗口程序（没有控制台，日志和自测输出不可见）
-#include "GUI/MainFrame.h"
+#include "Host/Win32Window.h"
 #include <shellapi.h>
 #include <cstdio>
 #include <string>
@@ -37,8 +37,9 @@ namespace
     {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-        MainFrame frame;
-        bool selfTest = false;
+        Win32Window window;
+        MainFrame&  frame    = window.GetFrame();
+        bool        selfTest = false;
 
         // 命令行参数按 UTF-8 取（--ui 的路径可能含中文）
         int argc = 0;
@@ -58,10 +59,10 @@ namespace
         else
             WidenConsole();
         frame.SetUseUserLayout(!selfTest);      // 自测不受本机保存的面板布局影响，也不覆盖它
-        if (!frame.Initialize(L"MiniCAD", 1280, 800))
+        if (!window.Initialize(L"MiniCAD", 1280, 800))
             return 2;
 
-        return selfTest ? frame.RunSelfTest() : frame.Run();
+        return selfTest ? frame.RunSelfTest() : window.Run();
     }
 }
 

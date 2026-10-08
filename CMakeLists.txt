@@ -15,10 +15,8 @@ endif()
 # ── MiniDWG（DWG/DXF 读写库）────────────────────────────────────────
 include(cmake/MiniDWG.cmake)
 
-# ── MiniGUI（保留模式界面库，桌面端使用）─────────────────────────────
-if(NOT EMSCRIPTEN)
-    include(cmake/MiniGUI.cmake)
-endif()
+# ── MiniGUI（保留模式界面库）─────────────────────────────────────────
+include(cmake/MiniGUI.cmake)
 
 # ── Scene ───────────────────────────────────────────────────────────
 set(SCENE_SOURCES
@@ -144,12 +142,15 @@ if(EMSCRIPTEN)
 endif()
 
 # ── 平台应用 ────────────────────────────────────────────────────────
+add_subdirectory("apps/Common")     # 主窗口界面与逻辑（桌面版、网页版共用）
+
 if(WIN32 AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Win32")
 endif()
 
 if(EMSCRIPTEN)
     add_subdirectory(wasm)
+    add_subdirectory("apps/Web")
 endif()
 
 # ── 测试（桌面端）：tests/Core、tests/UI、tests/Serialization ─────────
