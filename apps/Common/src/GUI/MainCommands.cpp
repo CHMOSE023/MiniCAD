@@ -24,10 +24,14 @@ namespace MiniCAD
         // 另存为的路径由平台选择（Win32：系统对话框；网页：浏览器内存文件系统，保存后下载）。
         // 打开文件不经过 DocumentManager::Open()：网页版的文件选择是异步的，见 file.open
         AppPlatform* platform = m_platform;
-        dm.SetFileDialogHandler([platform, &dm](bool save)
+        dm.SetFileDialogHandler([this, platform, &dm](bool save)
         {
+            if (!save)
+                return std::string();
+            if (!m_pendingSavePath.empty())
+                return m_pendingSavePath;           // 另存为对话框（没有系统对话框的平台）已经选好
             Document* doc = dm.GetActive();
-            return save ? platform->ChooseSavePath(doc ? doc->GetName() : "未命名") : std::string();
+            return platform->ChooseSavePath(doc ? doc->GetName() : "未命名");
         });
 
         // ── 窗口：标题栏的最小化 / 最大化 / 关闭按钮执行这三个命令（网页版没有窗口按钮：不注册，标题栏就不显示）──

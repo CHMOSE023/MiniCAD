@@ -390,11 +390,9 @@ namespace MiniCAD
                 if (r == 0 && alive())
                 {
                     ActivateDocument(doc);
-                    SaveDocuments(false, false);    // 没有路径时弹出另存为；取消另存为则不关闭
-                    if (!doc->IsDirty())
-                        close();
-                    else
-                        StateChanged();
+                    // 没有路径时弹出另存为（网页版的对话框是异步的）；保存成功才关闭，取消则留下
+                    SaveDocuments(false, false, close);
+                    StateChanged();
                 }
                 else if (r == 1)
                 {
@@ -403,8 +401,16 @@ namespace MiniCAD
             });
     }
 
-    void MainFrame::SaveDocuments(bool all, bool saveAs)
+    void MainFrame::SaveDocuments(bool all, bool saveAs, std::function<void()> onSaved)
     {
+        // 平台没有系统另存为对话框（网页版）：先用自己的对话框问文件名和格式
+        Document* active = m_docManager.GetActive();
+        if (!all && active && !m_platform->HasSaveDialog() && (saveAs || !active->HasPath()))
+        {
+            OpenSaveAsDialog(active, std::move(onSaved));
+            return;
+        }
+
         // 保存前记下哪些文档有未保存的修改：保存成功（不再脏、有路径）后通知平台，网页版据此把文件下载到本机
         std::vector<std::pair<Document*, bool>> targets;
         if (all)
@@ -427,6 +433,8 @@ namespace MiniCAD
         for (const auto& [doc, wasDirty] : targets)
             if (wasDirty && !doc->IsDirty() && doc->HasPath())
                 m_platform->OnDocumentSaved(doc->GetPath());
+        if (onSaved && active && !active->IsDirty())
+            onSaved();
     }
 
     bool MainFrame::HasUnsavedDocuments() const

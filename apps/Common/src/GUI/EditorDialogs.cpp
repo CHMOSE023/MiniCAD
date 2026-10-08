@@ -346,6 +346,86 @@ namespace MiniCAD
     }
 
     // =========================================================
+    // 另存为（没有系统对话框的平台，即网页版）：文件名 + 格式
+    // =========================================================
+    void MainFrame::OpenSaveAsDialog(Document* doc, std::function<void()> onSaved)
+    {
+        using namespace MiniGUI;
+        struct Format { const char* label; const char* ext; };
+        static const Format kFormats[] =
+        {
+            { "MiniCAD 文档 (*.mcad)",     ".mcad" },
+            { "AutoCAD 图形 (*.dwg)",      ".dwg"  },
+            { "AutoCAD 交换文件 (*.dxf)",  ".dxf"  },
+            { "JSON 文件 (*.json)",        ".json" },
+        };
+
+        // 默认文件名去掉已知扩展名；默认格式沿用当前文件的格式
+        std::string base   = doc->GetName();
+        int         format = 0;
+        auto lower = [](std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
+        const std::string current = lower(doc->HasPath() ? doc->GetPath() : doc->GetName());
+        for (int i = 0; i < static_cast<int>(std::size(kFormats)); ++i)
+        {
+            const std::string ext = kFormats[i].ext;
+            if (current.size() > ext.size() && current.compare(current.size() - ext.size(), ext.size(), ext) == 0)
+                format = i;
+            if (lower(base).size() > ext.size() && lower(base).compare(base.size() - ext.size(), ext.size(), ext) == 0)
+                base.resize(base.size() - ext.size());
+        }
+
+        auto dialog = std::make_unique<Dialog>("另存为");
+        Node* body = dialog->GetBody();
+        body->SetLayoutStyle(ColumnStyle(8.0f));
+        TextBox* name = AddRow<TextBox>(body, "文件名", base);
+        name->EditLayoutStyle().width = 260.0f;
+        std::vector<std::string> labels;
+        for (const Format& f : kFormats)
+            labels.emplace_back(f.label);
+        ComboBox* type = AddRow<ComboBox>(body, "格式", labels, format);
+        type->EditLayoutStyle().width = 260.0f;
+        body->AddChild<Label>("DWG / DXF 按 AutoCAD 2018 格式写出；保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
+
+        Dialog* raw = dialog.get();
+        Button* ok = raw->AddButton("保存", [this, raw, name, type, doc, onSaved]
+        {
+            const std::string n = Trimmed(name->GetText());
+            const int i = type->GetSelectedIndex();
+            auto& docs = m_docManager.GetAll();
+            const bool alive = std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; });
+            raw->Close();
+            if (n.empty() || i < 0 || !alive)
+                return;
+
+            ActivateDocument(doc);
+            m_pendingSavePath = m_platform->ChooseSavePath(n + kFormats[i].ext);
+            const std::string path = m_pendingSavePath;
+            if (!path.empty())
+                m_docManager.SaveAs();          // 文件对话框回调返回 m_pendingSavePath
+            m_pendingSavePath.clear();
+            if (!path.empty() && !doc->IsDirty())
+            {
+                m_platform->OnDocumentSaved(doc->GetPath());
+                if (onSaved)
+                    onSaved();
+            }
+            StateChanged();
+        }, DialogButtonRole::Default);
+        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        name->SetOnChanged([ok](const std::string& t) { ok->SetEnabled(!Trimmed(t).empty()); });
+        ok->SetEnabled(!Trimmed(name->GetText()).empty());
+
+        raw->SetOnClosed([this]
+        {
+            if (m_viewport->IsVisible())
+                m_viewport->Focus();
+        });
+        raw->SetInitialFocus(name);
+        m_ui->OpenPopup(std::move(dialog));
+        name->SelectAll();
+    }
+
+    // =========================================================
     // 插入块：块表选择（双击直接插入）
     // =========================================================
     void MainFrame::OpenBlockInsertDialog()

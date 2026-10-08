@@ -133,7 +133,10 @@ namespace MiniCAD
         void UpdateTitle();
         void ActivateDocument(Document* doc);
         void CloseDocument(Document* doc);      // 未保存时先询问
-        void SaveDocuments(bool all, bool saveAs);   // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）
+        // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）。onSaved：当前文档保存成功后调用
+        // （平台没有系统另存为对话框时，另存为经 OpenSaveAsDialog 异步完成）
+        void SaveDocuments(bool all, bool saveAs, std::function<void()> onSaved = {});
+        void OpenSaveAsDialog(Document* doc, std::function<void()> onSaved);      // 文件名 + 格式（EditorDialogs.cpp）
         void LayerChanged();                    // 图层特性改了：重建场景显示、刷新面板、重绘视口
 
         void RenderViewport(int pixelWidth, int pixelHeight);
@@ -175,6 +178,7 @@ namespace MiniCAD
         MiniGUI::TextureId                     m_viewTex    = MiniGUI::InvalidTextureId;
         uint64_t                               m_viewTexRebuilds = 0;    // 视口渲染目标重建（重新登记纹理）的次数，自测用
         std::string                            m_title;                  // 标题栏文字
+        std::string                            m_pendingSavePath;        // 另存为对话框选定的路径，交给 DocumentManager 的文件对话框回调
 
         // ── 命令与界面描述（注册表要比工具栏活得久：先声明、后销毁）──
         MiniGUI::CommandRegistry               m_commands;
