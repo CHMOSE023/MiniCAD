@@ -36,8 +36,21 @@ namespace MiniCAD
             return s;
         }
 
-        // 打开 / 保存文件对话框（返回 UTF-8 路径，空串 = 取消）
-        std::string ShowFileDialog(HWND owner, bool save, FileKind kind, const std::string& suggestedName)
+        // 保存对话框的筛选器：扩展名 + DWG / DXF 版本（顺序与 lpstrFilter 一致）
+        struct SaveFilter { const wchar_t* ext; CadSaveVersion version; };
+        constexpr SaveFilter kSaveFilters[] =
+        {
+            { L".mcad", CadSaveVersion::R2018 },
+            { L".dwg",  CadSaveVersion::R2018 },
+            { L".dwg",  CadSaveVersion::R2013 },
+            { L".dxf",  CadSaveVersion::R2018 },
+            { L".dxf",  CadSaveVersion::R2013 },
+            { L".json", CadSaveVersion::R2018 },
+        };
+
+        // 打开 / 保存文件对话框（返回 UTF-8 路径，空串 = 取消）。保存时 version 传入默认版本、返回所选版本
+        std::string ShowFileDialog(HWND owner, bool save, FileKind kind, const std::string& suggestedName,
+                                   CadSaveVersion* version = nullptr)
         {
             wchar_t buf[MAX_PATH] = L"";
             if (save && !suggestedName.empty())
@@ -50,21 +63,39 @@ namespace MiniCAD
             if (kind == FileKind::Image)
                 ofn.lpstrFilter = L"图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif\0所有文件 (*.*)\0*.*\0";
             else if (save)
-                ofn.lpstrFilter = L"MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0";
+                ofn.lpstrFilter = L"MiniCAD 文档 (*.mcad)\0*.mcad\0"
+                                  L"AutoCAD 2018 图形 (*.dwg)\0*.dwg\0"
+                                  L"AutoCAD 2013/2014 图形 (*.dwg)\0*.dwg\0"
+                                  L"AutoCAD 2018 DXF (*.dxf)\0*.dxf\0"
+                                  L"AutoCAD 2013/2014 DXF (*.dxf)\0*.dxf\0"
+                                  L"JSON 文件 (*.json)\0*.json\0";
             else
                 ofn.lpstrFilter = L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
             ofn.lpstrFile   = buf;
             ofn.nMaxFile    = MAX_PATH;
             ofn.lpstrDefExt = (save || kind == FileKind::Image) ? nullptr : L"mcad";   // 保存时按所选筛选器补扩展名（见下）
             ofn.Flags       = OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST));
+            if (save && kind == FileKind::Drawing)
+            {
+                // 默认筛选器：沿用文档当前的格式（按文件名扩展名）和版本
+                const wchar_t* dot = wcsrchr(buf, L'.');
+                for (DWORD i = 0; i < static_cast<DWORD>(std::size(kSaveFilters)); ++i)
+                    if (dot && _wcsicmp(dot, kSaveFilters[i].ext) == 0 && (!version || kSaveFilters[i].version == *version))
+                    {
+                        ofn.nFilterIndex = i + 1;
+                        break;
+                    }
+            }
             if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn)))
                 return {};
             const wchar_t* fileName = wcsrchr(buf, L'\\') ? wcsrchr(buf, L'\\') + 1 : buf;
-            if (save && !wcschr(fileName, L'.'))
+            if (save && kind == FileKind::Drawing)
             {
-                static const wchar_t* const kExt[] = { L".mcad", L".dwg", L".dxf", L".json" };
-                const DWORD idx = ofn.nFilterIndex >= 1 && ofn.nFilterIndex <= 4 ? ofn.nFilterIndex - 1 : 0;
-                wcsncat_s(buf, kExt[idx], _TRUNCATE);
+                const DWORD idx = ofn.nFilterIndex >= 1 && ofn.nFilterIndex <= std::size(kSaveFilters) ? ofn.nFilterIndex - 1 : 0;
+                if (!wcschr(fileName, L'.'))
+                    wcsncat_s(buf, kSaveFilters[idx].ext, _TRUNCATE);
+                if (version)
+                    *version = kSaveFilters[idx].version;
             }
             return ToUtf8(buf);
         }
@@ -372,9 +403,9 @@ namespace MiniCAD
             done(path);
     }
 
-    std::string Win32Window::ChooseSavePath(const std::string& suggestedName)
+    std::string Win32Window::ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version)
     {
-        return ShowFileDialog(m_hwnd, true, FileKind::Drawing, suggestedName);
+        return ShowFileDialog(m_hwnd, true, FileKind::Drawing, suggestedName, &version);
     }
 
     std::string Win32Window::GetResourceDir() const

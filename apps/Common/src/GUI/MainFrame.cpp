@@ -652,6 +652,8 @@ namespace MiniCAD
 
         // 1. 同步状态栏文字（会触发布局，所以放在 Update 之前）
         UpdateStatus();
+        // 视口背景跟随界面主题：浅色主题下白色实体、十字光标画成黑色
+        m_docManager.GetViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
 
         // 2. 布局 → 3. 按最新尺寸和相机渲染视口
         m_ui->Update();

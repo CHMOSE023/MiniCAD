@@ -69,6 +69,10 @@ namespace MiniCAD
         // 把缓存层的内容原样复制到当前帧的渲染目标（BeginFrame 之后调用，尺寸必须相同）
         virtual void DrawLayer(IRenderTarget& layer) { (void)layer; }
 
+        // 背景深浅（AutoCAD 的 7 号色语义）：浅色背景时纯白顶点画成纯黑，深色背景时纯黑画成纯白，
+        // 白色的实体、图层颜色、十字光标在两种背景下都看得见。只影响线 / 三角形 / 文字，不影响光栅图像
+        virtual void SetLightBackground(bool light) { (void)light; }
+
         virtual void* GetNativeDevice() = 0;
     };
 }

@@ -351,25 +351,32 @@ namespace MiniCAD
     void MainFrame::OpenSaveAsDialog(Document* doc, std::function<void()> onSaved)
     {
         using namespace MiniGUI;
-        struct Format { const char* label; const char* ext; };
+        struct Format { const char* label; const char* ext; CadSaveVersion version; };
         static const Format kFormats[] =
         {
-            { "MiniCAD 文档 (*.mcad)",     ".mcad" },
-            { "AutoCAD 图形 (*.dwg)",      ".dwg"  },
-            { "AutoCAD 交换文件 (*.dxf)",  ".dxf"  },
-            { "JSON 文件 (*.json)",        ".json" },
+            { "MiniCAD 文档 (*.mcad)",          ".mcad", CadSaveVersion::R2018 },
+            { "AutoCAD 2018 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2018 },
+            { "AutoCAD 2013/2014 图形 (*.dwg)", ".dwg",  CadSaveVersion::R2013 },
+            { "AutoCAD 2018 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2018 },
+            { "AutoCAD 2013/2014 DXF (*.dxf)",  ".dxf",  CadSaveVersion::R2013 },
+            { "JSON 文件 (*.json)",             ".json", CadSaveVersion::R2018 },
         };
 
-        // 默认文件名去掉已知扩展名；默认格式沿用当前文件的格式
+        // 默认文件名去掉已知扩展名；默认格式沿用当前文件的格式和 DWG / DXF 版本
         std::string base   = doc->GetName();
         int         format = 0;
+        bool        matched = false;
         auto lower = [](std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
         const std::string current = lower(doc->HasPath() ? doc->GetPath() : doc->GetName());
         for (int i = 0; i < static_cast<int>(std::size(kFormats)); ++i)
         {
             const std::string ext = kFormats[i].ext;
-            if (current.size() > ext.size() && current.compare(current.size() - ext.size(), ext.size(), ext) == 0)
-                format = i;
+            if (!matched && current.size() > ext.size() && current.compare(current.size() - ext.size(), ext.size(), ext) == 0
+                && (kFormats[i].version == doc->GetCadSaveVersion() || ext == ".mcad" || ext == ".json"))
+            {
+                format  = i;
+                matched = true;
+            }
             if (lower(base).size() > ext.size() && lower(base).compare(base.size() - ext.size(), ext.size(), ext) == 0)
                 base.resize(base.size() - ext.size());
         }
@@ -394,7 +401,7 @@ namespace MiniCAD
         LayoutStyle hs = ColumnStyle(2.0f);
         hs.margin = Edges::Make(80.0f, 0.0f, 0.0f, 0.0f);
         hints->SetLayoutStyle(hs);
-        hints->AddChild<Label>("DWG / DXF 按 AutoCAD 2018 格式写出", 12.0f, Theme::TextDim);
+        hints->AddChild<Label>("AutoCAD 2013～2017 共用 2013 格式", 12.0f, Theme::TextDim);
         hints->AddChild<Label>("保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
@@ -409,7 +416,9 @@ namespace MiniCAD
                 return;
 
             ActivateDocument(doc);
-            m_pendingSavePath = m_platform->ChooseSavePath(n + kFormats[i].ext);
+            CadSaveVersion version = kFormats[i].version;
+            m_pendingSavePath    = m_platform->ChooseSavePath(n + kFormats[i].ext, version);
+            m_pendingSaveVersion = kFormats[i].version;
             const std::string path = m_pendingSavePath;
             if (!path.empty())
                 m_docManager.SaveAs();          // 文件对话框回调返回 m_pendingSavePath

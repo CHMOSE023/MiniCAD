@@ -59,7 +59,7 @@ namespace MiniCAD
         void Quit() override;
 
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
-        std::string ChooseSavePath(const std::string& suggestedName) override;
+        std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         std::string GetResourceDir() const override;
         std::string GetUserDataDir() const override;
 

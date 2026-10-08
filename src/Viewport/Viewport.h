@@ -63,6 +63,10 @@ namespace MiniCAD
         bool IsGridShown    () const    { return m_showGrid; }
         bool IsAxisShown    () const    { return m_showAxis; }
 
+        // 视口背景是浅色（界面浅色主题）：白色内容改画成黑色，见 IRenderer::SetLightBackground
+        void SetLightBackground(bool light) { m_lightBackground = light; }
+        bool IsLightBackground() const      { return m_lightBackground; }
+
     private:
         void              AddDashedLine(std::vector<Vertex_P3_C4>& out, Math::Float3& a, Math::Float3& b, Math::Float4& color, float dashLen = 6.0f, float gapLen = 4.0f);
         SelectionGeometry BuildSelectionGeometry(const ViewState& viewState);
@@ -100,6 +104,7 @@ namespace MiniCAD
         bool     m_layerValid   = false;
         uint64_t m_layerRedraws = 0;
 
+        bool m_lightBackground = false;
         bool m_showGizmo = true;
         bool m_showGrid  = false;
         bool m_showAxis  = false;

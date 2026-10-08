@@ -1,5 +1,6 @@
 #pragma once
 #include "Render/IRenderBackend.h"
+#include "Import/CadExchange.h"
 #include <functional>
 #include <string>
 
@@ -54,9 +55,10 @@ namespace MiniCAD
         // 选择要打开的文件；done 收到 UTF-8 路径（取消时不调用）。网页版的选择是异步的
         virtual void PickFile(FileKind kind, std::function<void(const std::string& path)> done) = 0;
         // 另存为：返回保存路径（UTF-8，空串 = 取消）。
-        // 有系统对话框时（HasSaveDialog）suggestedName 为文档名，由用户在对话框里选位置和格式；
-        // 没有时 MainFrame 先用自己的对话框问文件名和格式，suggestedName 是带扩展名的文件名
-        virtual std::string ChooseSavePath(const std::string& suggestedName) = 0;
+        // 有系统对话框时（HasSaveDialog）suggestedName 为文档名，由用户在对话框里选位置、格式和 DWG / DXF 版本
+        // （version 传入当前版本作为默认值，返回所选版本）；
+        // 没有时 MainFrame 先用自己的对话框问文件名、格式和版本，suggestedName 是带扩展名的文件名，version 不变
+        virtual std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) = 0;
         virtual bool HasSaveDialog() const { return true; }
         virtual void OnDocumentSaved(const std::string& path) { (void)path; }   // 网页版：保存后下载到本机
         virtual std::string GetResourceDir() const = 0;     // icons/ ui/ patterns/ fonts/ 所在目录（UTF-8）

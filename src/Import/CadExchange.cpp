@@ -489,11 +489,12 @@ namespace MiniCAD
         class Exporter
         {
         public:
-            Exporter(const Scene& scene, Dwg::CadDatabase& db) : m_scene(scene), m_db(db) {}
+            Exporter(const Scene& scene, Dwg::CadDatabase& db, Dwg::CadVersion version)
+                : m_scene(scene), m_db(db), m_version(version) {}
 
             void Run()
             {
-                m_db.SetVersion(Dwg::CadVersion::AC1032);
+                m_db.SetVersion(m_version);
                 m_db.CreateDefaults();
 
                 // 头变量里的 UCS 轴默认是零向量，AutoCAD 打开会提示"非单一的 UCS X/Y 轴。正常化。"，须设成世界坐标系的轴
@@ -840,6 +841,7 @@ namespace MiniCAD
         private:
             const Scene&      m_scene;
             Dwg::CadDatabase& m_db;
+            Dwg::CadVersion   m_version;
 
             std::map<LayerID, Dwg::Handle>     m_layerHandles;
             std::map<LineTypeID, Dwg::Handle>  m_lineTypeHandles;
@@ -860,7 +862,7 @@ namespace MiniCAD
         return CadFileKind::None;
     }
 
-    bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error)
+    bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error, CadSaveVersion* version)
     {
         auto fail = [&](const std::string& msg)
         {
@@ -893,15 +895,17 @@ namespace MiniCAD
         if (!db)
             return fail(firstError.empty() ? "文件已损坏或版本不受支持" : firstError);
 
+        if (version)
+            *version = db->GetVersion() == Dwg::CadVersion::AC1027 ? CadSaveVersion::R2013 : CadSaveVersion::R2018;
         Importer(*db, scene).Run();
         return true;
     }
 
-    std::vector<std::uint8_t> ExportCad(const Scene& scene, CadFileKind kind, std::string* error)
+    std::vector<std::uint8_t> ExportCad(const Scene& scene, CadFileKind kind, CadSaveVersion version, std::string* error)
     {
         std::string firstError;
         auto db = std::make_unique<Dwg::CadDatabase>();
-        Exporter(scene, *db).Run();
+        Exporter(scene, *db, version == CadSaveVersion::R2013 ? Dwg::CadVersion::AC1027 : Dwg::CadVersion::AC1032).Run();
 
         std::vector<std::uint8_t> out;
         if (kind == CadFileKind::Dwg)

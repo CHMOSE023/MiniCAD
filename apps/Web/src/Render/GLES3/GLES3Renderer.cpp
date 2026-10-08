@@ -12,17 +12,41 @@ namespace MiniCAD
         // 得到 M 的转置，于是 uViewProj * v 与 HLSL 的 mul(v, M) 相同
         const char* kVertexColor = R"(#version 300 es
             uniform mat4 uViewProj;
+            uniform float uLight;       // 1 浅色背景，0 深色背景，-1 不换色（光栅图像）
+            vec4 MapColor(vec4 c)
+            {
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+                if (uLight >= 0.0)
+                {
+                    vec3 d = abs(c.rgb - vec3(uLight));
+                    if (max(d.x, max(d.y, d.z)) < 0.004)
+                        c.rgb = 1.0 - c.rgb;
+                }
+                return c;
+            }
             layout(location = 0) in vec3 aPos;
             layout(location = 1) in vec4 aColor;
             out vec4 vColor;
             void main()
             {
-                vColor = aColor;
+                vColor = MapColor(aColor);
                 gl_Position = uViewProj * vec4(aPos, 1.0);
             })";
 
         const char* kVertexTextured = R"(#version 300 es
             uniform mat4 uViewProj;
+            uniform float uLight;       // 1 浅色背景，0 深色背景，-1 不换色（光栅图像）
+            vec4 MapColor(vec4 c)
+            {
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+                if (uLight >= 0.0)
+                {
+                    vec3 d = abs(c.rgb - vec3(uLight));
+                    if (max(d.x, max(d.y, d.z)) < 0.004)
+                        c.rgb = 1.0 - c.rgb;
+                }
+                return c;
+            }
             layout(location = 0) in vec3 aPos;
             layout(location = 1) in vec4 aColor;
             layout(location = 2) in vec2 aUV;
@@ -30,7 +54,7 @@ namespace MiniCAD
             out vec2 vUV;
             void main()
             {
-                vColor = aColor;
+                vColor = MapColor(aColor);
                 vUV    = aUV;
                 gl_Position = uViewProj * vec4(aPos, 1.0);
             })";
@@ -109,6 +133,7 @@ namespace MiniCAD
             ProgramInfo& info = m_programs[i];
             info.program  = Link(i == 0 ? kVertexColor : kVertexTextured, fragments[i]);
             info.viewProj = glGetUniformLocation(info.program, "uViewProj");
+            info.light    = glGetUniformLocation(info.program, "uLight");
             if (i != 0)
             {
                 glUseProgram(info.program);
@@ -205,6 +230,7 @@ namespace MiniCAD
             m[i] = static_cast<float>(viewProj.m[i]);
         glUseProgram(info.program);
         glUniformMatrix4fv(info.viewProj, 1, GL_FALSE, m);
+        glUniform1f(info.light, p == Program::Image ? -1.0f : (m_lightBackground ? 1.0f : 0.0f));
 
         if (blend)
         {

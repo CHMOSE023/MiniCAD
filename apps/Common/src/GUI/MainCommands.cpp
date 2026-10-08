@@ -28,10 +28,18 @@ namespace MiniCAD
         {
             if (!save)
                 return std::string();
-            if (!m_pendingSavePath.empty())
-                return m_pendingSavePath;           // 另存为对话框（没有系统对话框的平台）已经选好
             Document* doc = dm.GetActive();
-            return platform->ChooseSavePath(doc ? doc->GetName() : "未命名");
+            if (!m_pendingSavePath.empty())
+            {
+                if (doc)
+                    doc->SetCadSaveVersion(m_pendingSaveVersion);
+                return m_pendingSavePath;           // 另存为对话框（没有系统对话框的平台）已经选好
+            }
+            CadSaveVersion version = doc ? doc->GetCadSaveVersion() : CadSaveVersion::R2018;
+            const std::string path = platform->ChooseSavePath(doc ? doc->GetName() : "未命名", version);
+            if (doc && !path.empty())
+                doc->SetCadSaveVersion(version);    // DWG / DXF 按所选版本写出
+            return path;
         });
 
         // ── 窗口：标题栏的最小化 / 最大化 / 关闭按钮执行这三个命令（网页版没有窗口按钮：不注册，标题栏就不显示）──
@@ -225,7 +233,12 @@ namespace MiniCAD
                               .shortcut = "F5", .allowInTextInput = true,
                               .execute = [this] { ReloadUi(); } });
         m_commands.Register({ .id = "ui.theme", .label = "浅色主题(&T)", .shortcut = "Ctrl+T",
-                              .execute   = [this] { m_ui->SetTheme(m_ui->GetTheme().IsDark() ? MiniGUI::ThemeColors::Light() : MiniGUI::ThemeColors::Dark()); },
+                              .execute   = [this]
+                              {
+                                  const bool toLight = m_ui->GetTheme().IsDark();
+                                  m_ui->SetTheme(toLight ? MiniGUI::ThemeColors::Light() : MiniGUI::ThemeColors::Dark());
+                                  m_viewport->RequestRender();      // 视口背景随主题反转白色内容（RenderFrame 同步）
+                              },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
         m_commands.Register({ .id = "help.about", .label = "关于(&A)…", .shortcut = "F1", .execute = [this] { ShowAbout(); } });
     }

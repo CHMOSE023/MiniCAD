@@ -56,7 +56,7 @@ namespace MiniCAD
         void Quit() override;
 
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
-        std::string ChooseSavePath(const std::string& suggestedName) override;
+        std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
         bool HasSaveDialog() const override { return false; }  // 文件名和格式由 MainFrame 的另存为对话框询问
         std::string GetResourceDir() const override { return ""; }     // 资源在虚拟文件系统根目录：/icons、/ui ...

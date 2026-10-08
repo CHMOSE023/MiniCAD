@@ -217,7 +217,7 @@ namespace MiniCAD
         m_host.RequestFrame();
     }
 
-    std::string WebApp::ChooseSavePath(const std::string& suggestedName)
+    std::string WebApp::ChooseSavePath(const std::string& suggestedName, CadSaveVersion&)
     {
         // 浏览器没有"另存为"对话框：保存到内存文件系统，保存完成后（OnDocumentSaved）下载。
         // 已经带 .mcad / .dwg / .dxf / .json 扩展名的按原格式保存，否则存为 .mcad

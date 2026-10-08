@@ -107,7 +107,7 @@ namespace MiniCAD
         if (const CadFileKind kind = CadKindFromPath(path); kind != CadFileKind::None)
         {
             std::string err;
-            const std::vector<std::uint8_t> bytes = ExportCad(m_scene, kind, &err);
+            const std::vector<std::uint8_t> bytes = ExportCad(m_scene, kind, m_cadVersion, &err);
             if (bytes.empty())
             {
                 LOG_ERROR("Save failed, export error: %s", err.c_str());
@@ -209,7 +209,7 @@ namespace MiniCAD
         {
             const std::vector<std::uint8_t> bytes(content.begin(), content.end());
             std::string err;
-            if (!ImportCad(bytes, m_scene, &err))
+            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion))
             {
                 LOG_ERROR("Open failed: %s (%s)", path.c_str(), err.c_str());
                 return false;

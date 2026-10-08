@@ -179,6 +179,7 @@ namespace MiniCAD
         uint64_t                               m_viewTexRebuilds = 0;    // 视口渲染目标重建（重新登记纹理）的次数，自测用
         std::string                            m_title;                  // 标题栏文字
         std::string                            m_pendingSavePath;        // 另存为对话框选定的路径，交给 DocumentManager 的文件对话框回调
+        CadSaveVersion                         m_pendingSaveVersion = CadSaveVersion::R2018;
 
         // ── 命令与界面描述（注册表要比工具栏活得久：先声明、后销毁）──
         MiniGUI::CommandRegistry               m_commands;

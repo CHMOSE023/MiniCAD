@@ -36,6 +36,17 @@ namespace MiniCAD
             return MiniGUI::RGBA(ch(c.r), ch(c.g), ch(c.b));
         }
 
+        // 颜色块：与视口相同的 7 号色语义，浅色主题下白色显示为黑色、深色主题下黑色显示为白色
+        MiniGUI::Color32 SwatchColor(const Math::Color4& c, const MiniGUI::UIContext* ctx)
+        {
+            const MiniGUI::Color32 color = ToColor32(c);
+            if (!ctx)
+                return color;
+            const bool dark = ctx->GetTheme().IsDark();
+            const MiniGUI::Color32 target = dark ? MiniGUI::RGBA(0, 0, 0) : MiniGUI::RGBA(255, 255, 255);
+            return color == target ? (dark ? MiniGUI::RGBA(255, 255, 255) : MiniGUI::RGBA(0, 0, 0)) : color;
+        }
+
         Math::Color4 ToColor4(MiniGUI::Color32 c)
         {
             return { (c & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0, ((c >> 16) & 0xFF) / 255.0, 1.0 };
@@ -93,7 +104,7 @@ namespace MiniCAD
             MiniGUI::DrawLayerOnIcon(dl, Rect{ x, box.min.y, x + 16.0f, box.max.y }, l.IsVisible());    x += 20.0f;
             MiniGUI::DrawLayerLockIcon(dl, Rect{ x, box.min.y, x + 16.0f, box.max.y }, l.IsLocked());   x += 20.0f;
             const float cy = box.Center().y;
-            MiniGUI::DrawColorSwatch(dl, Rect{ x, cy - 6.0f, x + 12.0f, cy + 6.0f }, ToColor32(l.GetColor()));  x += 20.0f;
+            MiniGUI::DrawColorSwatch(dl, Rect{ x, cy - 6.0f, x + 12.0f, cy + 6.0f }, SwatchColor(l.GetColor(), ctx));  x += 20.0f;
             if (ctx)
                 ctx->GetTextSystem().Draw(dl, Rect{ x, box.min.y, box.max.x, box.max.y }, l.GetName(), CellText());
         }
@@ -227,7 +238,7 @@ namespace MiniCAD
             case ColColor:
             {
                 const float cy = cell.Center().y;
-                DrawColorSwatch(dl, Rect{ box.min.x, cy - 6.0f, box.min.x + 22.0f, cy + 6.0f }, ToColor32(l->GetColor()));
+                DrawColorSwatch(dl, Rect{ box.min.x, cy - 6.0f, box.min.x + 22.0f, cy + 6.0f }, SwatchColor(l->GetColor(), m_ui.get()));
                 return true;
             }
             case ColLinetype:

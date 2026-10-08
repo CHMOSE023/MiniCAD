@@ -42,7 +42,17 @@ namespace MiniCAD
                 cbuffer VSConstants : register(b0)
                 {
                     float4x4 vp;
+                    float4   options;
                 };
+
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+                float4 MapColor(float4 c)
+                {
+                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                    if (max(d.x, max(d.y, d.z)) < 0.004f)
+                        c.rgb = 1.0f - c.rgb;
+                    return c;
+                }
 
                 struct VSInput
                 {
@@ -60,7 +70,7 @@ namespace MiniCAD
                 {
                     PSInput o;
                     o.pos = mul(float4(input.pos, 1.0f), vp);
-                    o.color = input.color;
+                    o.color = MapColor(input.color);
                     return o;
                 }
 
@@ -106,7 +116,17 @@ namespace MiniCAD
               cbuffer VSConstants : register(b0)
               {
                   float4x4 vp;
+                  float4   options;
               };
+
+              // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+              float4 MapColor(float4 c)
+              {
+                  float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                  if (max(d.x, max(d.y, d.z)) < 0.004f)
+                      c.rgb = 1.0f - c.rgb;
+                  return c;
+              }
               
               Texture2D<float4> gFont : register(t0);
               SamplerState      gSamp : register(s0);
@@ -129,7 +149,7 @@ namespace MiniCAD
               {
                   PSInput o;
                   o.pos   = mul(float4(input.pos, 1.0f), vp);
-                  o.color = input.color;
+                  o.color = MapColor(input.color);
                   o.uv    = input.uv;
                   return o;
               }

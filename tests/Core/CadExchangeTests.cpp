@@ -80,19 +80,21 @@ namespace
         scene.AddEntity(std::move(ins));
     }
 
-    void CheckRoundTrip(CadFileKind kind, const char* label)
+    void CheckRoundTrip(CadFileKind kind, const char* label, CadSaveVersion version = CadSaveVersion::R2018)
     {
         Scene src;
         BuildScene(src);
 
         std::string err;
-        const auto bytes = ExportCad(src, kind, &err);
+        const auto bytes = ExportCad(src, kind, version, &err);
         Check(!bytes.empty(), (std::string(label) + "：导出成功").c_str());
         if (bytes.empty())
             return;
 
         Scene dst;
-        Check(ImportCad(bytes, dst, &err), (std::string(label) + "：导入成功").c_str());
+        CadSaveVersion readVersion = CadSaveVersion::R2018;
+        Check(ImportCad(bytes, dst, &err, &readVersion), (std::string(label) + "：导入成功").c_str());
+        Check(readVersion == version, (std::string(label) + "：读回的版本与写出的版本一致").c_str());
 
         Check(CountAll(dst) == CountAll(src), (std::string(label) + "：实体数量一致").c_str());
 
@@ -140,6 +142,8 @@ int RunCadExchangeTests()
 
     CheckRoundTrip(CadFileKind::Dxf, "DXF");
     CheckRoundTrip(CadFileKind::Dwg, "DWG");
+    CheckRoundTrip(CadFileKind::Dxf, "DXF 2013", CadSaveVersion::R2013);
+    CheckRoundTrip(CadFileKind::Dwg, "DWG 2013", CadSaveVersion::R2013);
 
     // MiniDWG 样例图：能读入，且读入后能再导出、再读回，实体数不变
     const char* samples[] = { "sample_AC1015.dwg", "sample_AC1032.dwg", "sample_AC1015_ascii.dxf", "sample_AC1032_binary.dxf" };
@@ -155,7 +159,7 @@ int RunCadExchangeTests()
         Check(ImportCad(data, scene, nullptr), (std::string("读取样例 ") + name).c_str());
         std::printf("       %s：%d 个实体\n", name, CountAll(scene));
 
-        const auto out = ExportCad(scene, CadFileKind::Dwg, nullptr);
+        const auto out = ExportCad(scene, CadFileKind::Dwg);
         Scene again;
         Check(!out.empty() && ImportCad(out, again, nullptr) && CountAll(again) == CountAll(scene),
               (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变").c_str());

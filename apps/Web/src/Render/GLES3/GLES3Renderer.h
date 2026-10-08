@@ -39,6 +39,7 @@ namespace MiniCAD
 
         std::unique_ptr<IRenderTarget> CreateLayerTarget() override;
         void  DrawLayer(IRenderTarget& layer) override;
+        void  SetLightBackground(bool light) override { m_lightBackground = light; }
         void* GetNativeDevice() override { return nullptr; }
 
     private:
@@ -48,6 +49,7 @@ namespace MiniCAD
         {
             GLuint program = 0;
             GLint  viewProj = -1;
+            GLint  light    = -1;
         };
 
         // 一个顶点数组对象 + 顶点缓冲（持久缓存或每帧流式上传）
@@ -75,5 +77,6 @@ namespace MiniCAD
         std::unordered_map<uint32_t, VertexBuffer> m_cachedText;
         std::unordered_map<uint64_t, GLuint>       m_imageTextures;   // ImageData::Key → 纹理（0 = 创建失败，不再重试）
         IRenderTarget* m_currentTarget = nullptr;
+        bool           m_lightBackground = false;
     };
 }

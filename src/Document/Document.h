@@ -1,4 +1,5 @@
 #pragma once
+#include "Import/CadExchange.h"
 
 namespace MiniCAD { class FontSystem; }
 
@@ -49,6 +50,10 @@ namespace MiniCAD
 		bool Save();
 		bool SaveAs(const std::string& path);
 		bool SaveToFile(const std::string& path);
+
+		// 保存为 DWG / DXF 时的版本：打开 DWG / DXF 时取自文件，另存为时由用户选择
+		void           SetCadSaveVersion(CadSaveVersion v) { m_cadVersion = v; }
+		CadSaveVersion GetCadSaveVersion() const          { return m_cadVersion; }
 		bool LoadFromFile(const std::string& path);
 
 		// 字符串级存取(Web 端下载/上传等无文件系统场景)。
@@ -69,6 +74,7 @@ namespace MiniCAD
 		void Deserialize(ISerializer& s);
 
 	private:
+		CadSaveVersion m_cadVersion = CadSaveVersion::R2018;
 		Scene          m_scene;
 		CommandStack   m_cmdStack;
 

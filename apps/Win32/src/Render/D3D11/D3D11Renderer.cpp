@@ -36,7 +36,7 @@ namespace MiniCAD
 
         // ===== CB =====
         D3D11_BUFFER_DESC cb = {};
-        cb.ByteWidth = sizeof(Float4x4);
+        cb.ByteWidth = sizeof(Float4x4) + sizeof(float) * 4;   // viewProj + options（x = 浅色背景）
         cb.Usage     = D3D11_USAGE_DEFAULT;
         cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         m_device->CreateBuffer(&cb, nullptr, m_cb.GetAddressOf());
@@ -170,11 +170,15 @@ namespace MiniCAD
     {
         Float4x4 gpuMat = Float4x4::FromMat4(viewProj.Transposed());
 
-        if (!m_cbValid || memcmp(m_lastViewProj, gpuMat.m, sizeof(m_lastViewProj)) != 0)
+        if (!m_cbValid || m_lastLight != m_lightBackground || memcmp(m_lastViewProj, gpuMat.m, sizeof(m_lastViewProj)) != 0)
         {
-            m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, gpuMat.m, 0, 0);
+            float data[20] = {};
+            memcpy(data, gpuMat.m, sizeof(gpuMat.m));
+            data[16] = m_lightBackground ? 1.0f : 0.0f;
+            m_context->UpdateSubresource(m_cb.Get(), 0, nullptr, data, 0, 0);
             memcpy(m_lastViewProj, gpuMat.m, sizeof(m_lastViewProj));
-            m_cbValid = true;
+            m_lastLight = m_lightBackground;
+            m_cbValid   = true;
         }
         m_context->VSSetConstantBuffers(0, 1, m_cb.GetAddressOf());
     }

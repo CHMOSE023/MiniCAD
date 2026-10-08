@@ -34,6 +34,8 @@ namespace MiniCAD
         virtual std::unique_ptr<IRenderTarget> CreateLayerTarget() override;
         virtual void DrawLayer(IRenderTarget& layer) override;
 
+        virtual void SetLightBackground(bool light) override { m_lightBackground = light; }
+
         virtual void* GetNativeDevice() override;
 
         ID3D11Device* GetDevice() { return m_device; }
@@ -80,6 +82,8 @@ namespace MiniCAD
         // 当前常量缓冲里的 viewProj（已转置），用于跳过重复上传
         float m_lastViewProj[16] = {};
         bool  m_cbValid          = false;
+        bool  m_lightBackground  = false;
+        bool  m_lastLight        = false;
 
         // ===== states =====
         ComPtr<ID3D11DepthStencilState> m_depthEnabled;

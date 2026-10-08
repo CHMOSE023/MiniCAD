@@ -47,6 +47,7 @@ namespace MiniCAD
 
         // 网格/坐标轴/Gizmo 只依赖相机+尺寸+开关：版本未变时 CPU 不重建、GPU 缓冲直接复用
         RefreshViewGeometry(viewState);
+        renderer.SetLightBackground(m_lightBackground);
 
         constexpr uint32_t kSlotSceneFill = 0;
         constexpr uint32_t kSlotScene     = 1;
@@ -93,6 +94,7 @@ namespace MiniCAD
             key = HashCombine(key, &viewState.SceneVersion, sizeof(viewState.SceneVersion));
             key = HashCombine(key, &m_viewVersion, sizeof(m_viewVersion));
             key = HashCombine(key, &viewState.FontTexture, sizeof(viewState.FontTexture));
+            key = HashCombine(key, &m_lightBackground, sizeof(m_lightBackground));
             if (!m_layerValid || key != m_layerKey)
             {
                 renderer.BeginFrame(*m_sceneLayer, m_viewportDesc);
