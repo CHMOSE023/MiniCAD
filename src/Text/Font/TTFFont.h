@@ -31,7 +31,10 @@ namespace MiniCAD
         Glyph BuildGlyph(uint32_t codepoint);
 
         void  BuildFill(Glyph& g);
-        void  ScanlineFill(const std::vector<Line>& lines, std::vector<Triangle>& out);
+
+        // 梯形 Y-扫描三角化：在每个顶点 Y 处切片，slab 内各边均为直线，
+        // 梯形斜边贴合真实轮廓（无台阶），偶奇配对天然处理内孔。
+        void  TrapezoidFill(const std::vector<Line>& lines, std::vector<Triangle>& out);
 
         // 递归自适应细分二次贝塞尔曲线 → 折线段
         void FlattenQuad(double x0, double y0,

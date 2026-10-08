@@ -23,9 +23,19 @@ namespace MiniCAD
         CommandStack&     cmdStack;
         Overlay&          overlay;
 
-        InputResult       resolved ; // 
+        InputResult       resolved ; //
 
         ITool*            tool = nullptr;
         GripEditor*       grip = nullptr;
+
+        // 新建实体的统一属性入口:落在当前图层,线型/线宽取当前设置(默认 ByLayer),
+        // 颜色保持默认 ByLayer —— 显示时随图层解析。各绘图工具提交实体前调用。
+        void ApplyCurrentAttr(Entity& e) const
+        {
+            auto& attr      = e.GetAttr();
+            attr.LayerId    = scene.GetLayerManager().GetActiveLayerID();
+            attr.LineType   = scene.GetCurrentLineType();
+            attr.Lineweight = scene.GetCurrentLineweight();
+        }
     };
 }

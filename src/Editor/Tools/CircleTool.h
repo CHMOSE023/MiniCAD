@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/Entity/CircleEntity.hpp"
-#include <cstdio>
+#include "Core/Log.h"
 #include <cmath>
 
 namespace MiniCAD
@@ -15,17 +15,18 @@ namespace MiniCAD
     public:
         CircleTool()
         {
-            printf("[CircleTool] 左键定圆心 | 左键确认半径 | 右键/ESC 退出\n");
+            LOG_DEBUG("[CircleTool] 左键定圆心 | 左键确认半径 | 右键/ESC 退出");
         }
 
         ~CircleTool()
         {
-            printf("退出绘制\n");
+            LOG_DEBUG("退出绘制");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsLeftClick())
@@ -112,9 +113,10 @@ namespace MiniCAD
         {
             auto id = m_ctx->scene.NextObjectID();
             auto circle = std::make_unique<CircleEntity>(id, center, radius);
+            m_ctx->ApplyCurrentAttr(*circle);
             auto cmd = std::make_unique<AddEntityCommand>(std::move(circle));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-            printf("圆 Id %d  center(%.3f,%.3f)  r=%.3f\n",
+            LOG_DEBUG("圆 Id %d  center(%.3f,%.3f)  r=%.3f",
                 static_cast<int>(id), center.x, center.y, radius);
         }
 
@@ -122,11 +124,12 @@ namespace MiniCAD
         {
             m_hasCenter = false;
             m_center = {};
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
     private:
         const EditorContext* m_ctx = nullptr;
+        Overlay*              m_overlay = nullptr;
 
         bool         m_hasCenter = false;
         Math::Point3 m_center{};

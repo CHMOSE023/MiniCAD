@@ -3,12 +3,21 @@
 #include "CircleGripHandler.h"
 #include "PointGripHandler.h"
 #include "RectangleGripHandler.h"
+#include "ImageGripHandler.h"
+#include "TableGripHandler.h"
 #include "ArcGripHandler.h"
 #include "EllipseGripHandler.h"
 #include "PolylineGripHandler.h"
 #include "SplineGripHandler.h"
 #include "TextGripHandler.h"
 #include "MTextGripHandler.h"
+#include "XLineGripHandler.h"
+#include "RayGripHandler.h"
+#include "DimensionGripHandler.h"
+#include "LeaderGripHandler.h"
+#include "MLeaderGripHandler.h"
+#include "HatchGripHandler.h"
+#include "InsertGripHandler.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
@@ -17,6 +26,13 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/XLineEntity.hpp"
+#include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/DimensionEntity.hpp"
+#include "Core/Entity/LeaderEntity.hpp"
+#include "Core/Entity/MLeaderEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
 
 #include <cfloat>
 #include <cmath>
@@ -33,12 +49,21 @@ namespace MiniCAD
         RegisterHandler<CircleEntity>   (std::make_unique<CircleGripHandler>());
         RegisterHandler<PointEntity>    (std::make_unique<PointGripHandler>());
         RegisterHandler<RectangleEntity>(std::make_unique<RectangleGripHandler>());
+        RegisterHandler<TableEntity>    (std::make_unique<TableGripHandler>());
+        RegisterHandler<ImageEntity>    (std::make_unique<ImageGripHandler>());
         RegisterHandler<ArcEntity>      (std::make_unique<ArcGripHandler>());
         RegisterHandler<EllipseEntity>  (std::make_unique<EllipseGripHandler>());
         RegisterHandler<PolylineEntity> (std::make_unique<PolylineGripHandler>());
         RegisterHandler<SplineEntity>   (std::make_unique<SplineGripHandler>());
         RegisterHandler<TextEntity>     (std::make_unique<TextGripHandler>());
         RegisterHandler<MTextEntity>    (std::make_unique<MTextGripHandler>());
+        RegisterHandler<XLineEntity>    (std::make_unique<XLineGripHandler>());
+        RegisterHandler<RayEntity>      (std::make_unique<RayGripHandler>());
+        RegisterHandler<DimensionEntity>(std::make_unique<DimensionGripHandler>());
+        RegisterHandler<LeaderEntity>   (std::make_unique<LeaderGripHandler>());
+        RegisterHandler<MLeaderEntity>  (std::make_unique<MLeaderGripHandler>());
+        RegisterHandler<HatchEntity>    (std::make_unique<HatchGripHandler>());
+        RegisterHandler<InsertEntity>   (std::make_unique<InsertGripHandler>());
     }
 
     void GripEditor::Bind(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay)
@@ -162,7 +187,9 @@ namespace MiniCAD
                                        entry.ActiveGrip, *m_overlay);
         }
 
-        m_scene->MarkDirty();
+        // 按实体标脏：只有被拖实体的顶点缓存失效，其余实体缓存保持有效
+        for (const auto& entry : m_dragEntries)
+            m_scene->MarkEntityDirty(entry.Id);
         return true;
     }
 
@@ -250,15 +277,17 @@ namespace MiniCAD
         if (!allEntries.empty())
             m_cmdStack->Push(std::make_unique<DragEntitiesCommand>(std::move(allEntries)));
 
+        // 按实体标脏（仅被拖实体需要重新细分）
+        for (const auto& entry : m_dragEntries)
+            m_scene->MarkEntityDirty(entry.Id);
+
         // 重置所有状态
         m_dragEntries.clear();
         m_activeGripIdx = -1;
         m_activated     = false;
         m_following     = false;
 
-        m_overlay->Clear(); 
-
-        m_scene->MarkDirty();
+        m_overlay->Clear();
 
         // 提交后重建夹点（几何已变）
         m_dirty = true;
@@ -283,13 +312,16 @@ namespace MiniCAD
                 entry.Handler->CancelDrag(entity, entry.DragState.get());
         }
 
+        // 按实体标脏（仅被还原实体需要重新细分）
+        for (const auto& entry : m_dragEntries)
+            m_scene->MarkEntityDirty(entry.Id);
+
         m_dragEntries.clear();
         m_activeGripIdx = -1;
         m_activated     = false;
         m_following     = false;
 
         m_overlay->Clear();
-        m_scene->MarkDirty();
 
         // 还原后重建夹点到原始位置
         m_dirty = true;
@@ -324,6 +356,8 @@ namespace MiniCAD
         {
             auto obj = m_scene->GetEntity(id);
             if (!obj) continue;
+
+            if (m_scene->IsEntityLocked(*obj)) continue;        // 锁定图层上的对象不能用夹点修改
 
             auto* entity = static_cast<Entity*>(obj);
             auto* handler = FindHandler(entity);

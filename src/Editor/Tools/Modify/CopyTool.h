@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -20,7 +20,7 @@
 #include "Core/Entity/MTextEntity.hpp"
 
 #include <vector>
-#include <cstdio>
+#include "Core/Log.h"
 #include <cmath>
 
 namespace MiniCAD
@@ -35,17 +35,18 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            printf("[CopyTool] 左键基点 | 左键目标点(可重复) | 右键/ESC 结束\n");
+            LOG_INFO("[CopyTool] 左键基点 | 左键目标点(可重复) | 右键/ESC 结束");
         }
 
         ~CopyTool()
         {
-            printf("[CopyTool] 退出\n");
+            LOG_DEBUG("[CopyTool] 退出");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsLeftClick())
@@ -56,7 +57,7 @@ namespace MiniCAD
                 {
                     m_base = pt;
                     m_hasBase = true;
-                    printf("[CopyTool] 基点 (%.3f, %.3f)\n", pt.x, pt.y);
+                    LOG_INFO("[CopyTool] 基点 (%.3f, %.3f)", pt.x, pt.y);
                     return true;
                 }
 
@@ -86,13 +87,13 @@ namespace MiniCAD
 
         void Cancel() override
         {
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
             if (OnFinished) OnFinished();
         }
 
         void OnSceneChanged() override { Cancel(); }
 
-        void OnFocusLost()      override { if (m_ctx) m_ctx->overlay.Clear(); }
+        void OnFocusLost()      override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusRestored()  override {}
 
         bool         HasAnchor() const override { return m_hasBase; }
@@ -166,7 +167,7 @@ namespace MiniCAD
             if (entity->IsKindOf<EllipseEntity>())
             {
                 const auto& el = static_cast<EllipseEntity*>(entity)->GetEllipse();
-                m_ctx->overlay.AddEllipse(el.Center + d, el.RadiusX, el.RadiusY, el.Rotation, color);
+                { Ellipse moved = el; moved.Center = el.Center + d; m_ctx->overlay.AddEllipse(moved, color); }
                 return;
             }
             if (entity->IsKindOf<PolylineEntity>())
@@ -206,14 +207,14 @@ namespace MiniCAD
 
             if (std::fabs(d.x) < 1e-6 && std::fabs(d.y) < 1e-6 && std::fabs(d.z) < 1e-6)
             {
-                printf("[CopyTool] 偏移量为零,忽略\n");
+                LOG_WARN("[CopyTool] 偏移量为零,忽略");
                 return;
             }
 
             auto cmd = std::make_unique<CopyCommand>(m_sourceIds, d);
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("[CopyTool] 复制 %zu 个对象  delta=(%.3f, %.3f)\n",
+            LOG_DEBUG("[CopyTool] 复制 %zu 个对象  delta=(%.3f, %.3f)",
                 m_sourceIds.size(), d.x, d.y);
         }
 
@@ -222,6 +223,8 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_sourceIds;
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         bool          m_hasBase = false;
         Math::Point3  m_base{};

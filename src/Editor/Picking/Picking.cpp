@@ -1,4 +1,5 @@
 #include "Picking.h"
+#include "Core/Log.h"
 #include "Scene/Scene.h"
 #include "Viewport/Viewport.h"
 #include "Core/Entity/PointEntity.hpp"
@@ -8,24 +9,181 @@
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include "Core/Entity/XLineEntity.hpp"
+#include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/Entity.hpp"
+#include "Core/Draw/IDrawSink.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 #include <Core/Math/Circle2.hpp>
 
 namespace MiniCAD
 {
+    namespace
+    {
+        // 拾取用绘制收集器:把实体 Draw() 输出的线段 / 填充三角形收集到世界空间。
+        // 凡未在 HitTest / BoxSelect 中单独特化的实体类型(Dimension /
+        // Leader / MLeader / Tolerance / Hatch / Insert 等),都通过让其"绘制"到本
+        // Sink、再在屏幕空间统一做距离 / 区域命中测试来支持拾取。
+        // (XLine / Ray 已单独特化,见 AsXLineGeometry / ParamLineClipBox2。)
+        // 这样组合型实体(标注、块引用展开的子实体)无需在拾取里重复其几何构造逻辑。
+        class PickCollectSink : public IDrawSink
+        {
+        public:
+            std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
+            std::vector<std::array<Math::Point3, 3>>           Triangles;
+
+            void DrawLine(const Math::Point3& a, const Math::Point3& b,const Math::Color4&, bool) override
+            {
+                Segments.emplace_back(a, b);
+            }
+            void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+            {
+                Triangles.push_back({ a, b, c });
+            }
+            // 文本不参与拾取几何:标注 / 引线 / 公差的框线、引线本身已足够命中。
+        };
+
+        // 该实体是否已在拾取中单独特化(避免被通用回退重复处理)。
+        bool HasSpecializedPick(const Object& obj)
+        {
+            return obj.IsKindOf<LineEntity>()      || obj.IsKindOf<RectangleEntity>()
+                || obj.IsKindOf<CircleEntity>()    || obj.IsKindOf<PointEntity>()
+                || obj.IsKindOf<ArcEntity>()       || obj.IsKindOf<EllipseEntity>()
+                || obj.IsKindOf<PolylineEntity>()  || obj.IsKindOf<SplineEntity>()
+                || obj.IsKindOf<TextEntity>()      || obj.IsKindOf<MTextEntity>()
+                || obj.IsKindOf<XLineEntity>()     || obj.IsKindOf<RayEntity>();
+        }
+
+        // 取实体承载的无限直线几何(XLine 与 Ray 共用 XLine: 基点 + 方向)。
+        // 非 XLine/Ray 返回 nullptr;isRay 输出该实体是否为单侧射线。
+        const XLine* AsXLineGeometry(const Object& obj, bool& isRay)
+        {
+            if (obj.IsKindOf<XLineEntity>())
+            {
+                isRay = false;
+                return &static_cast<const XLineEntity*>(&obj)->GetXLine();
+            }
+            if (obj.IsKindOf<RayEntity>())
+            {
+                isRay = true;
+                return &static_cast<const RayEntity*>(&obj)->GetRay();
+            }
+            return nullptr;
+        }
+
+        // 参数化直线 p(t)=o+t*d 与轴对齐盒在 t∈[tMin,tMax] 内是否相交(Liang–Barsky)。
+        //   XLine 传 tMin=-inf, tMax=+inf;Ray 传 tMin=0, tMax=+inf。
+        // 约定 d 已归一化,使平行判定阈值在屏幕像素尺度下稳定。
+        bool ParamLineClipBox2(const Math::Point2& o, const Math::Point2& d,
+                               double xMin, double yMin, double xMax, double yMax,
+                               double tMin, double tMax)
+        {
+            // 逐边界裁剪:p*t <= q
+            auto clip = [&](double p, double q) -> bool
+            {
+                if (std::abs(p) < 1e-12)
+                    return q >= 0.0;        // 平行于该边界:仅当起点在内侧才可能相交
+                double r = q / p;
+                if (p < 0.0) { if (r > tMax) return false; if (r > tMin) tMin = r; }
+                else         { if (r < tMin) return false; if (r < tMax) tMax = r; }
+                return true;
+            };
+
+            if (!clip(-d.x, o.x - xMin)) return false;   // x >= xMin
+            if (!clip( d.x, xMax - o.x)) return false;   // x <= xMax
+            if (!clip(-d.y, o.y - yMin)) return false;   // y >= yMin
+            if (!clip( d.y, yMax - o.y)) return false;   // y <= yMax
+
+            return tMin <= tMax;
+        }
+
+        // 点是否落在屏幕空间三角形内(叉积同号法)。用于实心填充(Hatch / 箭头)区域命中。
+        bool PointInTriangle2(const Math::Point2& p, const Math::Point2& a,
+                              const Math::Point2& b, const Math::Point2& c)
+        {
+            double d1 = Math::Cross(b - a, p - a);
+            double d2 = Math::Cross(c - b, p - b);
+            double d3 = Math::Cross(a - c, p - c);
+            bool hasNeg = (d1 < 0.0) || (d2 < 0.0) || (d3 < 0.0);
+            bool hasPos = (d1 > 0.0) || (d2 > 0.0) || (d3 > 0.0);
+            return !(hasNeg && hasPos);
+        }
+    }
+
     // ───────────────── 绑定 ─────────────────
-    void Picking::Bind(Scene& scene, Viewport& viewport) { m_scene = &scene; m_viewport = &viewport; }
+    void Picking::Bind(Scene& scene, Viewport& viewport)
+    {
+        m_scene = &scene;
+        m_viewport = &viewport;
+        m_indexVersion = ~0ull;   // 强制下次查询时重建索引
+    }
+
+    // ───────────────── 悬停开关 ─────────────────
+    void Picking::SetHoverEnabled(bool enabled)
+    {
+        if (m_hoverEnabled == enabled) return;
+        m_hoverEnabled = enabled;
+        if (!enabled)
+            m_hovered.clear();   // 禁用即清空当前悬停（下一帧不再高亮）
+    }
+
+    // ───────────────── 空间索引 ─────────────────
+    void Picking::EnsureIndex()
+    {
+        if (!m_scene) return;
+        const uint64_t v = m_scene->GeometryVersion();
+        if (v == m_indexVersion) return;
+
+        // 尚未构建 / 全局脏 / 增量退化(墓碑、溢出积累过多) → 整表重建;
+        // 否则按场景脏实体集增量更新——几万实体的场景里新增/拖动一个图形
+        // 只动该实体的索引项,不再每次全量重建。
+        if (m_indexVersion == ~0ull || m_scene->IsGeometryAllDirty() || m_index.PreferRebuild())
+        {
+            m_index.Rebuild(*m_scene);
+        }
+        else
+        {
+            for (ObjectID id : m_scene->GetDirtyEntities())
+                m_index.Update(id, *m_scene);
+        }
+        m_indexVersion = v;
+    }
+
+    AABB Picking::ScreenRectToWorldAABB(double x0, double y0, double x1, double y1) const
+    {
+        AABB b = AABB::Empty();
+        auto& cam = m_viewport->GetCamera();
+
+        auto add = [&](double sx, double sy)
+        {
+            auto w = cam.ScreenToWorld(static_cast<int>(std::lround(sx)),
+                                       static_cast<int>(std::lround(sy)));
+            b.Expand({ w.x, w.y, 0.0 });
+        };
+        // 屏幕矩形四角反投影，覆盖相机可能的旋转
+        add(x0, y0); add(x1, y0); add(x1, y1); add(x0, y1);
+
+        // z 不参与 XY 网格；置为全范围，避免实体 z 与查询 z 不一致而误剔除
+        constexpr double inf = std::numeric_limits<double>::infinity();
+        b.Min.z = -inf;
+        b.Max.z =  inf;
+        return b;
+    }
 
     // ───────────────── 输入入口 ─────────────────
     bool Picking::OnInput(const InputEvent& e)
@@ -52,6 +210,21 @@ namespace MiniCAD
         return false;
     }
 
+    // 实体是否可被拾取:实体本身可见,且所在图层未关闭（锁定的图层仍可拾取）。
+    bool Picking::IsPickable(const Object& obj) const
+    {
+        if (!obj.IsKindOf<Entity>()) return true;
+
+        const auto& attr = static_cast<const Entity&>(obj).GetAttr();
+        if (!attr.Visible) return false;
+
+        if (const Layer* layer = m_scene->GetLayerManager().GetLayer(attr.LayerId))
+            if (!layer->IsVisible())
+                return false;       // 锁定的图层可拾取（可选中、可看特性），修改时由各编辑入口跳过
+
+        return true;
+    }
+
     // ───────────────── 查询接口 ─────────────────
     // 点选命中测试：返回距离最近且在阈值内的对象 ID
     Picking::ObjectID Picking::HitTest(const Math::Point2& pt, double thresh)
@@ -61,8 +234,11 @@ namespace MiniCAD
 
         auto& camera = m_viewport->GetCamera();
 
-        m_scene->ForEachObject([&](const Object& obj)
+        // 单实体精确命中测试（含细分）。仅对空间索引筛出的候选执行。
+        auto testOne = [&](const Object& obj)
             {
+                if (!IsPickable(obj)) return;
+
                 if (obj.IsKindOf<LineEntity>())
                 {
                     auto line = static_cast<const LineEntity*>(&obj);
@@ -101,6 +277,13 @@ namespace MiniCAD
                     testEdge(p3, p4);
                     testEdge(p4, p1);
 
+                    // 二维填充是实心的：落在内部也算命中
+                    if (obj.IsKindOf<SolidEntity>() && bestDist > 0.0
+                        && (PointInTriangle2(pt, p1, p2, p3) || PointInTriangle2(pt, p1, p3, p4)))
+                    {
+                        bestDist = 0.0;
+                        best     = obj.GetID();
+                    }
                 }
 
                 if (obj.IsKindOf<CircleEntity>())
@@ -220,14 +403,16 @@ namespace MiniCAD
                     auto  ellEnt   = static_cast<const EllipseEntity*>(&obj);
                     const auto& el = ellEnt->GetEllipse();
 
-                    // 椭圆细分为折线后，逐段判断距离（屏幕空间）
+                    // 椭圆（弧）细分为折线后，逐段判断距离（屏幕空间）
                     constexpr int kSeg = 64;
+                    const double tBeg  = el.IsFull() ? 0.0 : el.StartParam;
+                    const double sweep = el.SweepParam();
                     double minD = std::numeric_limits<double>::max();
 
                     for (int i = 0; i < kSeg; ++i)
                     {
-                        double t0 = Math::TwoPI *  i      / kSeg;
-                        double t1 = Math::TwoPI * (i + 1) / kSeg;
+                        double t0 = tBeg + sweep *  i      / kSeg;
+                        double t1 = tBeg + sweep * (i + 1) / kSeg;
 
                         auto a0 = camera.WorldToScreen(el.PointAt(t0));
                         auto a1 = camera.WorldToScreen(el.PointAt(t1));
@@ -329,13 +514,100 @@ namespace MiniCAD
                     }
                 }
 
-            });
+                // ── XLineEntity / RayEntity 点选 ─────────────────────────────────────
+                // 无限直线/射线:在屏幕空间求光标到直线(射线)的投影距离。
+                // 端点在 ±1e6 处,不能用 Draw() 折线近似(投影后坐标巨大、精度差),
+                // 故单独特化精确求距。
+                if (bool isRay = false; const XLine* geo = AsXLineGeometry(obj, isRay))
+                {
+                    if (geo->IsValid())
+                    {
+                        auto oSS = camera.WorldToScreen(geo->Origin);
+                        auto o2  = camera.WorldToScreen(geo->Origin + geo->UnitDirection());
+                        Math::Point2 dSS{ o2.x - oSS.x, o2.y - oSS.y };
+
+                        double len2 = dSS.x * dSS.x + dSS.y * dSS.y;
+                        if (len2 > 1e-18)
+                        {
+                            double t = ((pt.x - oSS.x) * dSS.x + (pt.y - oSS.y) * dSS.y) / len2;
+                            if (isRay && t < 0.0) t = 0.0;   // 射线:投影不能落在起点之前
+                            Math::Point2 proj{ oSS.x + t * dSS.x, oSS.y + t * dSS.y };
+
+                            double d = Math::Distance(pt, proj);
+                            if (d < thresh && d < bestDist)
+                            {
+                                bestDist = d;
+                                best     = obj.GetID();
+                            }
+                        }
+                    }
+                }
+
+                // ── 通用拾取回退 ──────────────────────────────────────────────────────
+                // 未单独特化的实体(Dimension / Leader / MLeader /
+                // Tolerance / Hatch / Insert 等):收集其 Draw() 输出的线段与三角形,
+                // 在屏幕空间统一做距离 / 区域命中测试。
+                if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
+                {
+                    const auto* ent = static_cast<const Entity*>(&obj);
+
+                    PickCollectSink sink;
+                    ent->Draw(sink, false, false);
+
+                    double minD = std::numeric_limits<double>::max();
+
+                    for (const auto& seg : sink.Segments)
+                    {
+                        auto a = camera.WorldToScreen(seg.first);
+                        auto b = camera.WorldToScreen(seg.second);
+                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)));
+                    }
+
+                    for (const auto& tri : sink.Triangles)
+                    {
+                        auto a = camera.WorldToScreen(tri[0]);
+                        auto b = camera.WorldToScreen(tri[1]);
+                        auto c = camera.WorldToScreen(tri[2]);
+
+                        // 落在实心三角形内即直接命中(距离为 0)
+                        if (PointInTriangle2(pt, a, b, c)) { minD = 0.0; break; }
+
+                        // 否则按到三角形边的距离参与竞争(细线宽实体退化为线)
+                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)));
+                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, b, c)));
+                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, c, a)));
+                    }
+
+                    if (minD < thresh && minD < bestDist)
+                    {
+                        bestDist = minD;
+                        best     = obj.GetID();
+                    }
+                }
+
+            };
+
+        // 包围盒粗筛 + 空间索引：仅对世界查询窗口内的候选做精确测试
+        EnsureIndex();
+        AABB q = ScreenRectToWorldAABB(pt.x - thresh, pt.y - thresh,
+                                       pt.x + thresh, pt.y + thresh);
+        m_index.Query(q, m_candidates);
+        for (ObjectID id : m_candidates)
+            if (const Object* o = m_scene->GetEntity(id))
+                testOne(*o);
 
         if (best > 0)
         {
-            printf("[Picking] HitTest at (%.1f, %.1f)  BestDist=%.2f  HitID=%d\n", pt.x, pt.y, bestDist, static_cast<int>(best));
+            LOG_TRACE("[Picking] HitTest at (%.1f, %.1f)  BestDist=%.2f  HitID=%d", pt.x, pt.y, bestDist, static_cast<int>(best));
         }
         return best;
+    }
+
+    void Picking::CollectSnapCandidates(const Math::Point2& pt, double radiusPx, std::vector<ObjectID>& out)
+    {
+        EnsureIndex();
+        AABB q = ScreenRectToWorldAABB(pt.x - radiusPx, pt.y - radiusPx,  pt.x + radiusPx, pt.y + radiusPx);
+        m_index.Query(q, out);
     }
 
     // 框选：返回命中的对象 ID 集合（右框全包含 / 左框触碰）
@@ -353,8 +625,11 @@ namespace MiniCAD
         auto& camera = m_viewport->GetCamera();
         std::unordered_set<ObjectID> result;
 
-        m_scene->ForEachObject([&](const Object& obj)
+        // 单实体框选测试。仅对空间索引筛出的候选执行。
+        auto testOne = [&](const Object& obj)
             {
+                if (!IsPickable(obj)) return;
+
                 if (obj.IsKindOf<PointEntity>())
                 {
                     auto point = static_cast<const PointEntity*>(&obj);
@@ -582,14 +857,16 @@ namespace MiniCAD
                     auto  ellEnt   = static_cast<const EllipseEntity*>(&obj);
                     const auto& el = ellEnt->GetEllipse();
 
-                    // 细分椭圆为折线，复用折线框选逻辑
+                    // 细分椭圆（弧）为折线，复用折线框选逻辑
                     constexpr int kSeg = 64;
+                    const double tBeg  = el.IsFull() ? 0.0 : el.StartParam;
+                    const double sweep = el.SweepParam();
                     std::vector<Math::Point2> screenPts;
                     screenPts.reserve(kSeg + 1);
 
                     for (int i = 0; i <= kSeg; ++i)
                     {
-                        double t = Math::TwoPI * i / kSeg;
+                        double t = tBeg + sweep * i / kSeg;
                         screenPts.push_back(camera.WorldToScreen(el.PointAt(t)));
                     }
 
@@ -758,7 +1035,87 @@ namespace MiniCAD
                     }
                 }
 
-            });
+                // ── XLineEntity / RayEntity 框选 ─────────────────────────────────────
+                // 无限直线/射线向无穷延伸,永远不可能被窗口(全包含)选中;
+                // 仅交叉框选:用参数化直线/射线裁剪选择框,判断是否穿过框区域。
+                if (bool isRay = false; const XLine* geo = AsXLineGeometry(obj, isRay))
+                {
+                    if (geo->IsValid() && !fullyContain)
+                    {
+                        auto oSS = camera.WorldToScreen(geo->Origin);
+                        auto o2  = camera.WorldToScreen(geo->Origin + geo->UnitDirection());
+                        Math::Point2 dSS{ o2.x - oSS.x, o2.y - oSS.y };
+
+                        // 归一化屏幕方向,保证 Liang–Barsky 平行判定阈值稳定
+                        double dl = std::hypot(dSS.x, dSS.y);
+                        if (dl > 1e-9)
+                        {
+                            dSS.x /= dl; dSS.y /= dl;
+
+                            constexpr double inf = std::numeric_limits<double>::infinity();
+                            double tMin = isRay ? 0.0 : -inf;   // 射线只向 +Direction 延伸
+
+                            if (ParamLineClipBox2(oSS, dSS, xMin, yMin, xMax, yMax, tMin, inf))
+                                result.insert(obj.GetID());
+                        }
+                    }
+                }
+
+                // ── 通用框选回退 ──────────────────────────────────────────────────────
+                // 未单独特化的实体:收集其 Draw() 输出的线段(三角形拆为三条边),
+                // 投影到屏幕空间。右框(fullyContain)要求全部顶点在框内;左框(crossing)
+                // 任一段触碰框即命中。
+                if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
+                {
+                    const auto* ent = static_cast<const Entity*>(&obj);
+
+                    PickCollectSink sink;
+                    ent->Draw(sink, false, false);
+
+                    std::vector<std::pair<Math::Point2, Math::Point2>> segs;
+                    auto addSeg = [&](const Math::Point3& wa, const Math::Point3& wb)
+                    { segs.emplace_back(camera.WorldToScreen(wa), camera.WorldToScreen(wb)); };
+
+                    for (const auto& s : sink.Segments)  addSeg(s.first, s.second);
+                    for (const auto& t : sink.Triangles)
+                    {
+                        addSeg(t[0], t[1]);
+                        addSeg(t[1], t[2]);
+                        addSeg(t[2], t[0]);
+                    }
+
+                    if (!segs.empty())
+                    {
+                        bool hit;
+                        if (fullyContain)
+                        {
+                            hit = true;
+                            for (const auto& s : segs)
+                                if (!box.Contains(s.first) || !box.Contains(s.second)) { hit = false; break; }
+                        }
+                        else
+                        {
+                            hit = false;
+                            for (const auto& s : segs)
+                                if (box.Contains(s.first) || box.Contains(s.second) ||
+                                    Math::SegmentIntersectsBox2(s.first, s.second, box)) { hit = true; break; }
+                        }
+
+                        if (hit)
+                            result.insert(obj.GetID());
+                    }
+                }
+
+            };
+
+        // 包围盒粗筛 + 空间索引：仅对与选择框相交的候选做精确测试
+        EnsureIndex();
+        AABB q = ScreenRectToWorldAABB(a.x, a.y, b.x, b.y);
+        m_index.Query(q, m_candidates);
+        for (ObjectID id : m_candidates)
+            if (const Object* o = m_scene->GetEntity(id))
+                testOne(*o);
+
         return result;
     }
 
@@ -823,16 +1180,21 @@ namespace MiniCAD
 
     void Picking::UpdateHovered(const InputEvent& e)
     {
+        // 悬停禁用：不做命中测试，保持无悬停
+        if (!m_hoverEnabled)
+        {
+            m_hovered.clear();
+            return;
+        }
+
         Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
         ObjectID id = HitTest(pt, HOVER_THRESH);
 
+        // 注意：悬停变化不再 MarkDirty —— 悬停高亮改由 Editor 每帧以 overlay 重建，
+        // 不触发整场景顶点重建（鼠标移动驱动的重绘已足够刷新高亮）。
         if (id == Object::InvalidID)
         {
-            if (!m_hovered.empty())
-            {
-                m_hovered.clear();
-                MarkDirty();
-            }
+            m_hovered.clear();
             return;
         }
 
@@ -841,7 +1203,6 @@ namespace MiniCAD
 
         m_hovered.clear();
         m_hovered.insert(id);
-        MarkDirty();
     }
 
     void Picking::DoPointPick(const InputEvent& e)
@@ -850,8 +1211,18 @@ namespace MiniCAD
         bool alt = e.HasModifier(ModifierKey::Alt);
         bool shift = e.HasModifier(ModifierKey::Shift);
 
-        Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
-        ObjectID id = HitTest(pt, PICK_THRESH);
+        // 复用悬停结果：悬停启用时，UpdateHovered 已在最近一次鼠标移动算出光标下实体，
+        // 直接拿来作为命中对象（“看到高亮的就是点中的”），省掉这里再做一次全场景命中测试。
+        // 悬停的 HOVER_THRESH ≥ PICK_THRESH，故无悬停即光标下无可选实体。
+        // 悬停禁用时才回退到即时 HitTest。
+        ObjectID id;
+        if (m_hoverEnabled)
+            id = m_hovered.empty() ? Object::InvalidID : *m_hovered.begin();
+        else
+        {
+            Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
+            id = HitTest(pt, PICK_THRESH);
+        }
 
         std::unordered_set<ObjectID> newSel = m_selection;
 

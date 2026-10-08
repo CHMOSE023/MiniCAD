@@ -18,6 +18,7 @@ namespace MiniCAD
 
         std::string name;
         std::string fontFile;  // 文件名或绝对路径；相对路径由 FontEngine 拼接 searchDir
+        std::string bigFontFile;   // SHX 大字体（中文等双字节字符）；非空时与主字体组成 SHXCompositeFont
 
         bool  isShx       = false;
         float widthFactor = 1.0f;

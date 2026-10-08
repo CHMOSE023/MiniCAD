@@ -1,4 +1,5 @@
 #include "FontEngine.h"
+#include "SHXCompositeFont.h"
 #include <algorithm>
 
 namespace MiniCAD
@@ -18,7 +19,7 @@ namespace MiniCAD
 
     std::string FontEngine::BuildKey(const FontStyle& style) const
     {
-        return style.name + "|" + style.fontFile + "|" + (style.isShx ? "shx" : "ttf");
+        return style.name + "|" + style.fontFile + "|" + style.bigFontFile + "|" + (style.isShx ? "shx" : "ttf");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -37,7 +38,13 @@ namespace MiniCAD
         const std::string path = ResolvePath(style.fontFile);
 
         std::shared_ptr<IFont> font;
-        if (style.isShx)
+        if (style.isShx && !style.bigFontFile.empty())
+        {
+            auto mainFont = std::make_shared<SHXFont>(style.fontFile, path, m_nextRuntimeFontId++);
+            auto bigFont  = std::make_shared<SHXFont>(style.bigFontFile, ResolvePath(style.bigFontFile), m_nextRuntimeFontId++);
+            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, bigFont, m_nextRuntimeFontId++);
+        }
+        else if (style.isShx)
             font = std::make_shared<SHXFont>(style.name, path, m_nextRuntimeFontId++);
         else
             font = std::make_shared<TTFFont>(style.name, path, m_nextRuntimeFontId++);

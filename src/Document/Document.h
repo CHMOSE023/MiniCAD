@@ -5,10 +5,12 @@ namespace MiniCAD { class FontSystem; }
 #include "Scene/Scene.h"
 #include "Scene/LayerManager.h"
 #include "Document/CommandStack/CommandStack.h"
+#include "Viewport/Camera.h"
 #include <string>
 
 namespace MiniCAD
 {
+	class ISerializer;
 	class Document
 	{
 	public:
@@ -43,14 +45,28 @@ namespace MiniCAD
 
 		bool HasPath() const { return !m_path.empty(); }
 
-		// 保存 / 另存为
+		// 保存 / 另存为 / 打开(JSON 文档)
 		bool Save();
 		bool SaveAs(const std::string& path);
 		bool SaveToFile(const std::string& path);
+		bool LoadFromFile(const std::string& path);
+
+		// 字符串级存取(Web 端下载/上传等无文件系统场景)。
+		// 加载按内容嗅探格式(MCAD 魔数 → 二进制,否则 JSON),不改变路径。
+		std::string SaveToString(bool binary = false) const;
+		bool        LoadFromString(const std::string& text);
 
 		// 由 DocumentManager 在创建文档后注入，用于矢量文字渲染
 		void SetFontSystem(FontSystem* fs) { m_fontSystem = fs; }
 		FontSystem* GetFontSystem() const  { return m_fontSystem; }
+
+		// ── 视口状态（切换文档时保存/恢复）──────────────────────
+		const CameraState& GetCameraState() const    { return m_cameraState; }
+		void SetCameraState(const CameraState& s)    { m_cameraState = s; }
+
+		// ── 序列化 ───────────────────────────────────────────
+		void Serialize(ISerializer& s) const;
+		void Deserialize(ISerializer& s);
 
 	private:
 		Scene          m_scene;
@@ -61,5 +77,6 @@ namespace MiniCAD
 		bool           m_dirty = false;
 
 		FontSystem*    m_fontSystem = nullptr;
+		CameraState    m_cameraState;
 	};
 }

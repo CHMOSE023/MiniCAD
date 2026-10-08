@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
-#include <cstdio>
+#include "Core/Entity/LineEntity.hpp"
+#include "Core/Log.h"
 #include <optional>
 
 namespace MiniCAD
@@ -14,11 +15,11 @@ namespace MiniCAD
     public:
         LineTool()
         {
-            printf("[LineTool] 左键起点 | 左键延续 | 右键结束段 | 空格继续 | ESC 退出\n");
+            LOG_DEBUG("[LineTool] 左键起点 | 左键延续 | 右键结束段 | 空格继续 | ESC 退出");
         }
         ~LineTool()
         {
-            printf("退出绘制\n");
+            LOG_DEBUG("退出绘制");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -88,12 +89,14 @@ namespace MiniCAD
         void Commit(const Math::Point3& a, const Math::Point3& b)
         {
             auto id   = m_ctx->scene.NextObjectID();
-            auto line = std::make_unique<LineEntity>(id, a, b);
+            auto line = std::make_unique<LineEntity>(id, a, b); 
+
+            m_ctx->ApplyCurrentAttr(*line);
             auto cmd  = std::make_unique<AddEntityCommand>(std::move(line));
 
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("线段 Id %d  (%.3f,%.3f) (%.3f,%.3f)\n",static_cast<int>(id), a.x, a.y, b.x, b.y);
+            LOG_DEBUG("线段 Id %d  (%.3f,%.3f) (%.3f,%.3f)",static_cast<int>(id), a.x, a.y, b.x, b.y);
         }
 
     private:

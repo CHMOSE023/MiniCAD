@@ -1,5 +1,6 @@
 #include "MirrorCopyCommand.h"
 #include "Scene/Scene.h"
+#include "Document/DimAssoc.h"
 #include "Core/Entity/Entity.hpp"
 
 namespace MiniCAD
@@ -22,7 +23,8 @@ namespace MiniCAD
                 MirrorEntityInPlace(*clone, m_axis);
                 scene.AddEntity(std::move(clone));   // 按你 Scene 接口调整
             }
-            scene.MarkDirty();
+            // AddEntity/RemoveEntity 已按实体标脏，无需全局失效
+            DimAssoc::RemapCopies(scene, m_sourceIds, m_newIds);   // 一起复制的标注改为关联到副本
             return true;
         }
 
@@ -43,8 +45,10 @@ namespace MiniCAD
             m_newIds.push_back(newId);
         }
 
+        DimAssoc::RemapCopies(scene, m_sourceIds, m_newIds);   // 一起复制的标注改为关联到副本
+
         m_executed = true;
-        scene.MarkDirty();
+        // AddEntity/RemoveEntity 已按实体标脏，无需全局失效
         return !m_newIds.empty();
     }
 
@@ -52,6 +56,6 @@ namespace MiniCAD
     {
         for (auto id : m_newIds)
             scene.RemoveEntity(id);
-        scene.MarkDirty();
+        // AddEntity/RemoveEntity 已按实体标脏，无需全局失效
     }
 }

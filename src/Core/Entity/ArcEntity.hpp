@@ -1,13 +1,15 @@
 #pragma once
 #include "../GeomKernel/Arc.hpp"
+#include "../GeomKernel/Curves.hpp"
 #include "../Math/Point3.hpp"
 #include "../Math/Color4.hpp"
 #include "Entity.hpp"
+#include "ICurveEntity.hpp"
 #include <stdexcept>
 
 namespace MiniCAD
 {
-    class ArcEntity : public Entity
+    class ArcEntity : public Entity, public ICurveEntity
     {
     public:
         // ── 方式 1：圆心 + 半径 + 起止角（弧度）────────────────────────
@@ -52,13 +54,18 @@ namespace MiniCAD
             return true;
         }
 
+        // ── ICurveEntity ──────────────────────────────────────────────
+        std::unique_ptr<ICurve> MakeCurve() const override { return std::make_unique<ArcCurve>(m_arc); }
+        ICurveEntity*       AsCurveEntity()       override { return this; }
+        const ICurveEntity* AsCurveEntity() const override { return this; }
+
         // ── Entity 接口 ───────────────────────────────────────────────
         virtual AABB GetBoundingBox() const override { return m_arc.GetBounds(); }
 
         virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             const auto& attr  = GetAttr();
-            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
+            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
             constexpr int kSegments = 64;
             const double  sweep     = m_arc.SweepAngle();
 

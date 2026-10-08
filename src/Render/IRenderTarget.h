@@ -19,7 +19,7 @@ namespace MiniCAD
         // GL:    framebuffer id (GLuint*)
         virtual void* GetNativeHandle()        const = 0;
 
-        // SRV D3D11:ID3D11ShaderResourceView*   ← ImGui 贴图用
+        // SRV D3D11:ID3D11ShaderResourceView*   ← 界面层把视口画面当作纹理显示（MiniGUI ViewportHost）
         // GL:    texture id (GLuint*)
         virtual void* GetNativeShaderResource() const = 0;
     };

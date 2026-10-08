@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -6,7 +6,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
-#include <cstdio>
+#include "Core/Log.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -27,12 +27,12 @@ namespace MiniCAD
 
         PolylineTool()
         {
-            printf("[PolylineTool] L=直线 A=圆弧 | 左键追加顶点 | 右键提交 | ESC取消\n");
+            LOG_DEBUG("[PolylineTool] L=直线 A=圆弧 | 左键追加顶点 | 右键提交 | ESC取消");
         }
 
         ~PolylineTool()
         {
-            printf("[PolylineTool] 退出\n");
+            LOG_DEBUG("[PolylineTool] 退出");
         }
 
     public:
@@ -40,6 +40,7 @@ namespace MiniCAD
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsKeyPressed(KeyCode::L))
@@ -115,7 +116,7 @@ namespace MiniCAD
             m_mode      = DrawMode::Line;
             m_hasArcMid = false;
             m_arcMid    = {};
-            printf("[PolylineTool] 模式 = 直线\n");
+            LOG_INFO("[PolylineTool] 模式 = 直线");
             RefreshOverlay();
         }
 
@@ -124,7 +125,7 @@ namespace MiniCAD
             m_mode      = DrawMode::Arc;
             m_hasArcMid = false;
             m_arcMid    = {};
-            printf("[PolylineTool] 模式 = 圆弧（三点：弧上点 → 终点）\n");
+            LOG_INFO("[PolylineTool] 模式 = 圆弧（三点：弧上点 → 终点）");
             RefreshOverlay();
         }
 
@@ -133,7 +134,7 @@ namespace MiniCAD
             if (m_points.empty())
             {
                 m_points.push_back(pt);
-                printf("[PolylineTool] 起点 (%.3f, %.3f)\n", pt.x, pt.y);
+                LOG_INFO("[PolylineTool] 起点 (%.3f, %.3f)", pt.x, pt.y);
                 RefreshOverlay();
                 return;
             }
@@ -142,7 +143,7 @@ namespace MiniCAD
             {
                 m_bulges.push_back(0.0);
                 m_points.push_back(pt);
-                printf("[PolylineTool] 直线顶点 #%zu (%.3f, %.3f)\n",  m_points.size(), pt.x, pt.y);
+                LOG_INFO("[PolylineTool] 直线顶点 #%zu (%.3f, %.3f)",  m_points.size(), pt.x, pt.y);
             }
             else
             {
@@ -150,7 +151,7 @@ namespace MiniCAD
                 {
                     m_arcMid    = pt;
                     m_hasArcMid = true;
-                    printf("[PolylineTool] 弧上点 (%.3f, %.3f)，请继续点击弧终点\n",  pt.x, pt.y);
+                    LOG_INFO("[PolylineTool] 弧上点 (%.3f, %.3f)，请继续点击弧终点",  pt.x, pt.y);
                 }
                 else
                 {
@@ -159,7 +160,7 @@ namespace MiniCAD
                     m_bulges.push_back(bulge);
                     m_points.push_back(pt);
 
-                    printf("[PolylineTool] 弧终点 (%.3f, %.3f)  Bulge=%.6f\n",  pt.x, pt.y, bulge);
+                    LOG_DEBUG("[PolylineTool] 弧终点 (%.3f, %.3f)  Bulge=%.6f",  pt.x, pt.y, bulge);
 
                     m_hasArcMid = false;
                     m_arcMid    = {};
@@ -276,7 +277,7 @@ namespace MiniCAD
         {
             if (m_points.size() < 2)
             {
-                printf("[PolylineTool] 顶点不足，放弃提交\n");
+                LOG_WARN("[PolylineTool] 顶点不足，放弃提交");
                 return;
             }
 
@@ -286,10 +287,11 @@ namespace MiniCAD
 
             auto id     = m_ctx->scene.NextObjectID();
             auto entity = std::make_unique<PolylineEntity>(id, m_points, m_bulges);
+            m_ctx->ApplyCurrentAttr(*entity);
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("[PolylineTool] 提交 Id=%d  顶点=%zu  直线段=%d  弧段=%d\n", static_cast<int>(id), m_points.size(), lineCount, arcCount);
+            LOG_DEBUG("[PolylineTool] 提交 Id=%d  顶点=%zu  直线段=%d  弧段=%d", static_cast<int>(id), m_points.size(), lineCount, arcCount);
         }
 
         void Reset()
@@ -299,7 +301,7 @@ namespace MiniCAD
             m_hasArcMid = false;
             m_arcMid    = {};
             m_cursor    = {};
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
         Math::Point3 GetPoint(const InputEvent& e) const
@@ -312,6 +314,8 @@ namespace MiniCAD
     private:
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         DrawMode m_mode = DrawMode::Line;
 

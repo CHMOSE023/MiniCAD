@@ -38,11 +38,37 @@ namespace MiniCAD
         {
             const auto& exclude = dragging ? ctx.picking.GetSelection() : std::unordered_set<Object::ObjectID>{};
 
+            // 垂足捕捉的基点：绘制工具的锚点，或拖拽中的活动夹点。
+            Math::Point3 fromStorage;
+            const Math::Point3* fromPoint = nullptr;
+            if (ctx.tool && ctx.tool->HasAnchor())
+            {
+                fromStorage = ctx.tool->GetAnchor();
+                fromPoint   = &fromStorage;
+            }
+            else if (dragging && ctx.grip)
+            {
+                if (const Grip* g = ctx.grip->GetActiveGrip())
+                {
+                    fromStorage = g->WorldPos;
+                    fromPoint   = &fromStorage;
+                }
+            }
+
+            Math::Point2 sp{ static_cast<double>(ctx.event.MouseX),  static_cast<double>(ctx.event.MouseY) };
+
+            // 空间索引粗筛：只把光标孔径附近的实体交给捕捉引擎，
+            // 避免每种捕捉模式都全场景遍历（2 万实体时为主要瓶颈）。
+            // 窗口比孔径略放大，避免投影/取整误差漏掉边界候选。
+            ctx.picking.CollectSnapCandidates(sp, ctx.snap.GetSnapRadiusPx() + 2.0, m_snapCandidates);
+
             snap = ctx.snap.Query(
-                { static_cast<double>(ctx.event.MouseX), static_cast<double>(ctx.event.MouseY)},
+                sp,
                 ctx.scene,
                 ctx.viewport.GetCamera(),
-                exclude
+                exclude,
+                fromPoint,
+                &m_snapCandidates
             );
 
             hasSnap = snap.IsValid();

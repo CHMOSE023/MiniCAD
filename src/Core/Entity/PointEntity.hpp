@@ -25,7 +25,7 @@ namespace MiniCAD
 		virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered)   const override
 		{
 			const auto& attr = GetAttr();
-			const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color; 
+			const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink); 
 
 			// 绘制为十字
 			const float s = 0.2f;

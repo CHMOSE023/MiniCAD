@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -16,7 +16,7 @@
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include <vector>
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -26,17 +26,18 @@ namespace MiniCAD
         MoveTool(std::vector<Object*> targets)
             : m_targets(std::move(targets))
         {
-            printf("[MoveTool] 左键基点 | 左键目标点 | 右键/ESC 取消\n");
+            LOG_INFO("[MoveTool] 左键基点 | 左键目标点 | 右键/ESC 取消");
         }
 
         ~MoveTool()
         {
-            printf("[MoveTool] 退出\n");
+            LOG_DEBUG("[MoveTool] 退出");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsLeftClick())
@@ -47,7 +48,7 @@ namespace MiniCAD
                 {
                     m_base = pt;
                     m_hasBase = true;
-                    printf("[MoveTool] 基点 (%.3f, %.3f)\n", pt.x, pt.y);
+                    LOG_INFO("[MoveTool] 基点 (%.3f, %.3f)", pt.x, pt.y);
                     return true;
                 }
                 else
@@ -75,7 +76,7 @@ namespace MiniCAD
 
         void Cancel() override
         {
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
             if (OnFinished) OnFinished();
         }
 
@@ -86,7 +87,7 @@ namespace MiniCAD
 
         void OnFocusLost() override
         {
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
         void OnFocusRestored() override
@@ -169,7 +170,7 @@ namespace MiniCAD
             if (entity->IsKindOf<EllipseEntity>())
             {
                 const auto& el = static_cast<EllipseEntity*>(entity)->GetEllipse();
-                m_ctx->overlay.AddEllipse(el.Center + d, el.RadiusX, el.RadiusY, el.Rotation, color);
+                { Ellipse moved = el; moved.Center = el.Center + d; m_ctx->overlay.AddEllipse(moved, color); }
                 return;
             }
 
@@ -225,7 +226,7 @@ namespace MiniCAD
 
             if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f)
             {
-                printf("[MoveTool] 偏移量为零，忽略\n");
+                LOG_WARN("[MoveTool] 偏移量为零，忽略");
                 Cancel();
                 return;
             }
@@ -239,7 +240,7 @@ namespace MiniCAD
 
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("[MoveTool] 移动 %zu 个对象  delta=(%.3f, %.3f)\n", ids.size(), dx, dy);
+            LOG_DEBUG("[MoveTool] 移动 %zu 个对象  delta=(%.3f, %.3f)", ids.size(), dx, dy);
 
             m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();
@@ -249,6 +250,8 @@ namespace MiniCAD
         std::vector<Object*> m_targets;
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         bool          m_hasBase = false;
         Math::Point3  m_base{};

@@ -1,5 +1,7 @@
-#include "LayerManager.h"   
+#include "LayerManager.h"
 #include "Layer.h"
+#include "Serialization/ISerializer.h"
+#include <algorithm>
 #include <utility>
 #include <memory>
 namespace MiniCAD
@@ -70,4 +72,64 @@ namespace MiniCAD
         if (m_layers.count(id)) m_activeLayerID = id;
     }
 
+    void LayerManager::Serialize(ISerializer& s) const
+    {
+        uint32_t active = m_activeLayerID;
+        s.Value("active", active);
+        uint32_t next = m_nextID.load();
+        s.Value("nextId", next);
+
+        // 按 ID 升序写出,保证文件内容确定。
+        std::vector<LayerID> ids;
+        ids.reserve(m_layers.size());
+        for (auto& kv : m_layers) ids.push_back(kv.first);
+        std::sort(ids.begin(), ids.end());
+
+        size_t n = ids.size();
+        if (s.BeginArray("items", n))
+        {
+            for (LayerID id : ids)
+            {
+                if (s.BeginElement(0))
+                {
+                    m_layers.at(id)->Serialize(s);
+                    s.EndElement();
+                }
+            }
+            s.EndArray();
+        }
+    }
+
+    void LayerManager::Deserialize(ISerializer& s)
+    {
+        m_layers.clear();
+
+        size_t n = 0;
+        if (s.BeginArray("items", n))
+        {
+            for (size_t i = 0; i < n; ++i)
+            {
+                if (!s.BeginElement(i)) continue;
+                auto layer = std::make_unique<Layer>();
+                layer->Deserialize(s);
+                m_layers[layer->GetID()] = std::move(layer);
+                s.EndElement();
+            }
+            s.EndArray();
+        }
+
+        // 防御:文件缺默认图层时补回(实体的 LayerId 0 必须可解析)。
+        if (!m_layers.count(Layer::DefaultLayerID))
+            m_layers[Layer::DefaultLayerID] = std::make_unique<Layer>(Layer::DefaultLayerID, "Default");
+
+        uint32_t active = Layer::DefaultLayerID;
+        s.Value("active", active);
+        m_activeLayerID = m_layers.count(active) ? active : Layer::DefaultLayerID;
+
+        uint32_t next = 1;
+        s.Value("nextId", next);
+        for (auto& kv : m_layers)
+            next = std::max(next, kv.first + 1);
+        m_nextID.store(next);
+    }
 }

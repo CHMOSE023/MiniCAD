@@ -4,10 +4,17 @@
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/MLineEntity.hpp"
+#include "Core/Entity/RegionEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/XLineEntity.hpp"
+#include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/ICurveEntity.hpp"
+#include "Core/GeomKernel/CurveIntersect.hpp"
+#include "Document/FeaturePoints.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Constants.hpp"
@@ -17,6 +24,8 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <memory>
+#include <vector>
 #include <unordered_set>
 
 namespace MiniCAD
@@ -26,6 +35,21 @@ namespace MiniCAD
     // =========================================================================
     namespace
     {
+        // 隐藏图层(或自身不可见)的实体不参与捕捉;锁定图层仍可捕捉(同 AutoCAD)。
+        inline bool IsSnapVisible(const Scene& scene, const Object& obj)
+        {
+            if (!obj.IsKindOf<Entity>()) return true;
+
+            const auto& attr = static_cast<const Entity&>(obj).GetAttr();
+            if (!attr.Visible) return false;
+
+            if (const Layer* layer = scene.GetLayerManager().GetLayer(attr.LayerId))
+                if (!layer->IsVisible())
+                    return false;
+
+            return true;
+        }
+
         // 候选点与光标的屏幕距离，满足阈值则更新 best
         inline void TryUpdateBest(const Math::Point3& worldPt,
             const Math::Point2& sp,
@@ -50,298 +74,83 @@ namespace MiniCAD
     // =========================================================================
     SnapResult SnapEngine::Query(const Math::Point2& sp, const Scene& scene,
         const Camera& cam,
-        const std::unordered_set<Object::ObjectID>& exclude) const
+        const std::unordered_set<Object::ObjectID>& exclude,
+        const Math::Point3* fromPoint,
+        const std::vector<Object::ObjectID>* candidates) const
     {
-        if (m_enableEndpoint) { auto r = TryEndpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (m_enableMidpoint) { auto r = TryMidpoint(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (m_enableQuadrant) { auto r = TryQuadrant(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (m_enableNearest)  { auto r = TryNearest(sp, scene, cam, exclude); if (r.IsValid()) return r; }
-        if (m_enableGrid)     return TryGrid(sp, cam);
+        // 候选集仅在本次 Query 执行期间生效（各 Try* 经 ForEachSnapObject 消费）
+        m_queryCandidates = candidates;
+
+        // ── 点类捕捉（端点/中点/交点/象限/垂足）：同一孔径内按「捕捉点到
+        //    光标的屏幕距离」取最近者，距离相同时按上述顺序优先 ──
+        SnapResult best;
+        double bestDist = std::numeric_limits<double>::max();
+
+        auto consider = [&](SnapResult r)
+        {
+            if (!r.IsValid()) return;
+            double d = Math::Distance(sp, cam.WorldToScreen(r.WorldPos));
+            if (d < bestDist) { bestDist = d; best = r; }
+        };
+
+        if (IsModeEnabled(SnapMode::Endpoint))     consider(TryEndpoint(sp, scene, cam, exclude));
+        if (IsModeEnabled(SnapMode::Midpoint))     consider(TryMidpoint(sp, scene, cam, exclude));
+        if (IsModeEnabled(SnapMode::Intersection)) consider(TryIntersection(sp, scene, cam, exclude));
+        if (IsModeEnabled(SnapMode::Quadrant))     consider(TryQuadrant(sp, scene, cam, exclude));
+        if (IsModeEnabled(SnapMode::Perpendicular) && fromPoint)
+            consider(TryPerpendicular(sp, scene, cam, exclude, *fromPoint));
+
+        // ── 最近点：仅在点类捕捉均未命中时兜底(光标贴近曲线即生效) ──
+        if (!best.IsValid() && IsModeEnabled(SnapMode::Nearest))
+            best = TryNearest(sp, scene, cam, exclude);
+
+        m_queryCandidates = nullptr;   // 候选集指针仅本次查询有效
+
+        if (best.IsValid()) return best;
+        if (IsModeEnabled(SnapMode::Grid)) return TryGrid(sp, cam);
         return {};
     }
 
     // =========================================================================
-    // TryEndpoint
+    // TryEndpoint / TryMidpoint / TryQuadrant
     //
-    // 各实体端点规则：
-    //   Line         → Start / End
-    //   Rectangle    → P1 / P2 / P3 / P4
-    //   Point        → Position
-    //   Circle       → Center（AutoCAD 中圆心属于 Endpoint 捕捉）
-    //   Arc          → StartPoint / EndPoint / Center
-    //   Ellipse      → Center
-    //   Polyline     → 所有顶点（Points）
-    //   Spline       → 首尾拟合点
+    // 各实体的端点 / 中点 / 象限点由 CollectFeaturePoints 枚举（Document/FeaturePoints），
+    // 关联标注按同一套枚举的序号记录关联点。
     // =========================================================================
+    SnapResult SnapEngine::TryFeature(const Math::Point2& sp, const Scene& scene, const Camera& cam,
+        const std::unordered_set<Object::ObjectID>& exclude, int kind, SnapResult::Type type) const
+    {
+        SnapResult best;
+        double bestDist = std::numeric_limits<double>::max();
+        std::vector<Math::Point3> pts;
+
+        ForEachSnapObject(scene, [&](const Object& obj)
+            {
+                if (exclude.contains(obj.GetID()) || !IsSnapVisible(scene, obj)) return;
+                if (!obj.IsKindOf<Entity>()) return;
+
+                pts.clear();
+                CollectFeaturePoints(static_cast<const Entity&>(obj), static_cast<FeatureKind>(kind), pts);
+                for (const auto& p : pts)
+                    TryUpdateBest(p, sp, cam, m_snapRadiusPx, bestDist, best, type, obj.GetID());
+            });
+
+        return best;
+    }
+
     SnapResult SnapEngine::TryEndpoint(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude) const
     {
-        SnapResult best;
-        double bestDist = std::numeric_limits<double>::max();
-
-        scene.ForEachObject([&](const Object& obj)
-            {
-                if (exclude.contains(obj.GetID())) return;
-
-                const auto id = obj.GetID();
-                const auto T = SnapResult::Type::Endpoint;
-
-                // ── Point ──────────────────────────────────────────────────────
-                if (obj.IsKindOf<PointEntity>())
-                {
-                    auto* e = static_cast<const PointEntity*>(&obj);
-                    TryUpdateBest(e->GetPoint().Position, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Line ───────────────────────────────────────────────────────
-                if (obj.IsKindOf<LineEntity>())
-                {
-                    auto* e = static_cast<const LineEntity*>(&obj);
-                    TryUpdateBest(e->GetLine().Start, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(e->GetLine().End, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Rectangle ──────────────────────────────────────────────────
-                if (obj.IsKindOf<RectangleEntity>())
-                {
-                    auto* e = static_cast<const RectangleEntity*>(&obj);
-                    const auto& r = e->GetRectangle();
-                    for (const auto& p : { r.P1, r.P2, r.P3, r.P4 })
-                        TryUpdateBest(p, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Circle：圆心 ───────────────────────────────────────────────
-                if (obj.IsKindOf<CircleEntity>())
-                {
-                    auto* e = static_cast<const CircleEntity*>(&obj);
-                    TryUpdateBest(e->GetCircle().Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Arc：StartPoint / EndPoint / Center ────────────────────────
-                if (obj.IsKindOf<ArcEntity>())
-                {
-                    auto* e = static_cast<const ArcEntity*>(&obj);
-                    const auto& arc = e->GetArc();
-                    TryUpdateBest(arc.StartPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(arc.EndPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(arc.Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Ellipse：Center ────────────────────────────────────────────
-                if (obj.IsKindOf<EllipseEntity>())
-                {
-                    auto* e = static_cast<const EllipseEntity*>(&obj);
-                    TryUpdateBest(e->GetEllipse().Center, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Polyline：所有顶点 ─────────────────────────────────────────
-                if (obj.IsKindOf<PolylineEntity>())
-                {
-                    auto* e = static_cast<const PolylineEntity*>(&obj);
-                    for (const auto& pt : e->GetPolyline().Points)
-                        TryUpdateBest(pt, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Spline：所有拟合点 ────────────────────────────────────────────
-                if (obj.IsKindOf<SplineEntity>())
-                {
-                    auto* e = static_cast<const SplineEntity*>(&obj);
-                    const auto& spline = e->GetSpline();
-
-                    for (const auto& fp : spline.FitPoints)
-                        TryUpdateBest(fp, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-            });
-
-        return best;
+        return TryFeature(sp, scene, cam, exclude, static_cast<int>(FeatureKind::Endpoint), SnapResult::Type::Endpoint);
     }
 
-    // =========================================================================
-    // TryMidpoint
-    //
-    //   Line         → 线段中点
-    //   Rectangle    → 四条边的中点
-    //   Arc          → 弧中点（MidPoint，参数 t=0.5 处）
-    //   Ellipse      → 四个轴端点之间的弧中点（即 t=π/4, 3π/4, 5π/4, 7π/4 处）
-    //   Polyline     → 每段的中点（直线段取几何中点，弧段取弧上中点）
-    //   Spline       → 相邻拟合点的弦中点（轻量近似，不重建曲线）
-    // =========================================================================
-    SnapResult SnapEngine::TryMidpoint(const Math::Point2& sp, const Scene& scene,
-        const Camera& cam,
-        const std::unordered_set<Object::ObjectID>& exclude) const
+    SnapResult SnapEngine::TryMidpoint(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude) const
     {
-        SnapResult best;
-        double bestDist = std::numeric_limits<double>::max();
-
-        scene.ForEachObject([&](const Object& obj)
-            {
-                if (exclude.contains(obj.GetID())) return;
-
-                const auto id = obj.GetID();
-                const auto T = SnapResult::Type::Midpoint;
-
-                // ── Line ───────────────────────────────────────────────────────
-                if (obj.IsKindOf<LineEntity>())
-                {
-                    auto* e = static_cast<const LineEntity*>(&obj);
-                    TryUpdateBest(Math::Midpoint(e->GetLine().Start, e->GetLine().End),
-                        sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Rectangle：四条边中点 ───────────────────────────────────────
-                if (obj.IsKindOf<RectangleEntity>())
-                {
-                    auto* e = static_cast<const RectangleEntity*>(&obj);
-                    const auto& r = e->GetRectangle();
-                    TryUpdateBest(Math::Midpoint(r.P1, r.P2), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P2, r.P3), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P3, r.P4), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(Math::Midpoint(r.P4, r.P1), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Arc：弧段中点 ──────────────────────────────────────────────
-                if (obj.IsKindOf<ArcEntity>())
-                {
-                    auto* e = static_cast<const ArcEntity*>(&obj);
-                    TryUpdateBest(e->GetArc().MidPoint(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Ellipse：四段弧的中点（t = π/4 * (2k+1)，k=0..3）─────────
-                if (obj.IsKindOf<EllipseEntity>())
-                {
-                    auto* e = static_cast<const EllipseEntity*>(&obj);
-                    const auto& el = e->GetEllipse();
-
-                    // 每个象限弧的参数中点：t = 45° / 135° / 225° / 315°
-                    constexpr double kMidAngles[4] =
-                    {
-                        Math::PI * 0.25,
-                        Math::PI * 0.75,
-                        Math::PI * 1.25,
-                        Math::PI * 1.75
-                    };
-                    for (double t : kMidAngles)
-                        TryUpdateBest(el.PointAt(t), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Polyline：每段中点 ────────────────────────────────────────
-                if (obj.IsKindOf<PolylineEntity>())
-                {
-                    auto* e = static_cast<const PolylineEntity*>(&obj);
-                    const auto& pl = e->GetPolyline();
-
-                    for (int i = 0; i < pl.SegCount(); ++i)
-                    {
-                        Math::Point3 mid;
-                        if (pl.SegIsArc(i))
-                        {
-                            // 弧段：取弧上参数中点
-                            ArcGeom arc = Polyline::ComputeArc(pl.SegStart(i), pl.SegEnd(i), pl.SegBulge(i));
-                            double  midAngle = arc.StartAngle + arc.SweepAngle * 0.5;
-                            mid =
-                            {
-                                arc.Center.x + arc.Radius * std::cos(midAngle),
-                                arc.Center.y + arc.Radius * std::sin(midAngle),
-                                pl.SegStart(i).z
-                            };
-                        }
-                        else
-                        {
-                            // 直线段：几何中点
-                            mid = Math::Midpoint(pl.SegStart(i), pl.SegEnd(i));
-                        }
-                        TryUpdateBest(mid, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    }
-                }
-
-                // ── Spline：相邻拟合点的弦中点 ───────────────────────────────
-                if (obj.IsKindOf<SplineEntity>())
-                {
-                    auto* e = static_cast<const SplineEntity*>(&obj);
-                    const auto& spline = e->GetSpline();   //  改名 spline，不再遮蔽参数 sp
-                    if (!spline.IsValid()) return;
-
-                    for (const auto& seg : spline.Segments)
-                        TryUpdateBest(seg.Evaluate(0.5), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-            });
-
-        return best;
+        return TryFeature(sp, scene, cam, exclude, static_cast<int>(FeatureKind::Midpoint), SnapResult::Type::Midpoint);
     }
 
-    // =========================================================================
-    // TryQuadrant
-    //
-    //   Circle  → 0° / 90° / 180° / 270° 四个象限点
-    //   Arc     → 只取弧段角度范围内的象限点（与 AutoCAD 一致）
-    //   Ellipse → VertexE / VertexN / VertexW / VertexS（轴端点）
-    // =========================================================================
-    SnapResult SnapEngine::TryQuadrant(const Math::Point2& sp, const Scene& scene,
-        const Camera& cam,
-        const std::unordered_set<Object::ObjectID>& exclude) const
+    SnapResult SnapEngine::TryQuadrant(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude) const
     {
-        SnapResult best;
-        double bestDist = std::numeric_limits<double>::max();
-
-        scene.ForEachObject([&](const Object& obj)
-            {
-                if (exclude.contains(obj.GetID())) return;
-
-                const auto id = obj.GetID();
-                const auto T = SnapResult::Type::Quadrant;
-
-                // ── Circle：固定四个象限点 ────────────────────────────────────
-                if (obj.IsKindOf<CircleEntity>())
-                {
-                    auto* e = static_cast<const CircleEntity*>(&obj);
-                    const auto& c = e->GetCircle();
-
-                    const Math::Point3 qpts[4] =
-                    {
-                        { c.Center.x + c.Radius, c.Center.y,            c.Center.z },
-                        { c.Center.x,            c.Center.y + c.Radius, c.Center.z },
-                        { c.Center.x - c.Radius, c.Center.y,            c.Center.z },
-                        { c.Center.x,            c.Center.y - c.Radius, c.Center.z }
-                    };
-                    for (const auto& qp : qpts)
-                        TryUpdateBest(qp, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-
-                // ── Arc：只捕捉弧角度范围内的象限点 ──────────────────────────
-                if (obj.IsKindOf<ArcEntity>())
-                {
-                    auto* e = static_cast<const ArcEntity*>(&obj);
-                    const auto& arc = e->GetArc();
-
-                    constexpr double kQuadAngles[4] =
-                    {
-                        0.0,
-                        Math::PI * 0.5,
-                        Math::PI,
-                        Math::PI * 1.5
-                    };
-
-                    for (double qa : kQuadAngles)
-                    {
-                        if (!arc.ContainsAngle(qa)) continue;   // 不在弧范围内则跳过
-                        TryUpdateBest(arc.PointAt(qa), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    }
-                }
-
-                // ── Ellipse：四个轴端点（AutoCAD 的 Quadrant 对椭圆也有效）────
-                if (obj.IsKindOf<EllipseEntity>())
-                {
-                    auto* e = static_cast<const EllipseEntity*>(&obj);
-                    const auto& el = e->GetEllipse();
-
-                    TryUpdateBest(el.VertexE(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexN(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexW(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                    TryUpdateBest(el.VertexS(), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
-                }
-            });
-
-        return best;
+        return TryFeature(sp, scene, cam, exclude, static_cast<int>(FeatureKind::Quadrant), SnapResult::Type::Quadrant);
     }
 
     // =========================================================================
@@ -355,18 +164,16 @@ namespace MiniCAD
     //   Polyline     → Tessellate 后逐段最近点
     //   Spline       → Tessellate 后逐段最近点
     // =========================================================================
-    SnapResult SnapEngine::TryNearest(const Math::Point2& sp, const Scene& scene,
-        const Camera& cam,
-        const std::unordered_set<Object::ObjectID>& exclude) const
+    SnapResult SnapEngine::TryNearest(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude) const
     {
         SnapResult best;
         double bestDist = std::numeric_limits<double>::max();
 
         Math::Point3 worldMouse = cam.ScreenToWorld(sp.x, sp.y);
 
-        scene.ForEachObject([&](const Object& obj)
+        ForEachSnapObject(scene, [&](const Object& obj)
             {
-                if (exclude.contains(obj.GetID())) return;
+                if (exclude.contains(obj.GetID()) || !IsSnapVisible(scene, obj)) return;
 
                 const auto id = obj.GetID();
                 const auto T = SnapResult::Type::Nearest;
@@ -452,6 +259,105 @@ namespace MiniCAD
                     Math::Point3 closest = sp_.ClosestPoint(worldMouse);
                     TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
+
+                // ── XLine：无限直线上最近点（参数不设限）──────────────────────
+                if (obj.IsKindOf<XLineEntity>())
+                {
+                    auto* e = static_cast<const XLineEntity*>(&obj);
+                    const XLine& xl = e->GetXLine();
+                    if (!xl.IsValid()) return;
+                    TryUpdateBest(xl.ClosestPoint(worldMouse), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                }
+
+                // ── Ray：半无限直线上最近点（参数 clamp 到 t ≥ 0）─────────────
+                if (obj.IsKindOf<RayEntity>())
+                {
+                    auto* e = static_cast<const RayEntity*>(&obj);
+                    const XLine& r = e->GetRay();
+                    if (!r.IsValid()) return;
+                    double t = std::max(0.0, r.ProjectParam(worldMouse));
+                    TryUpdateBest(r.PointAt(t), sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                }
+            });
+
+        return best;
+    }
+
+    // =========================================================================
+    // TryIntersection
+    //
+    // 通过 ICurve 抽象统一处理所有曲线两两求交（Geom::IntersectCurves），不再按
+    // 类型分派。先按「曲线到光标的屏幕距离 ≤ 捕捉半径」剔除候选 —— 交点若落在
+    // 捕捉半径内，则两条母曲线都必经过光标附近，故该剔除不漏解又把两两规模压到极小。
+    // =========================================================================
+    SnapResult SnapEngine::TryIntersection(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude) const
+    {
+        const Math::Point3 worldMouse = cam.ScreenToWorld(sp.x, sp.y);
+
+        struct Cand { Object::ObjectID id; std::unique_ptr<ICurve> curve; };
+        std::vector<Cand> cands;
+
+        ForEachSnapObject(scene, [&](const Object& obj)
+            {
+                if (exclude.contains(obj.GetID()) || !IsSnapVisible(scene, obj))   return;
+                if (!obj.IsKindOf<Entity>())         return;
+
+                const ICurveEntity* ce = static_cast<const Entity*>(&obj)->AsCurveEntity();
+                if (!ce) return;
+
+                auto curve = ce->MakeCurve();
+                Math::Point3 onCurve = curve->ClosestPoint(worldMouse);
+                if (Math::Distance(sp, cam.WorldToScreen(onCurve)) > m_snapRadiusPx) return;
+
+                cands.push_back({ obj.GetID(), std::move(curve) });
+            });
+
+        SnapResult best;
+        double bestDist = std::numeric_limits<double>::max();
+
+        for (size_t i = 0; i < cands.size(); ++i)
+            for (size_t j = i + 1; j < cands.size(); ++j)
+            {
+                auto pts = Geom::IntersectCurves(*cands[i].curve, *cands[j].curve);
+                for (const auto& p : pts)
+                {
+                    const double before = bestDist;
+                    TryUpdateBest(p, sp, cam, m_snapRadiusPx, bestDist, best,
+                                  SnapResult::Type::Intersection, cands[i].id);
+                    if (bestDist < before) best.SourceID2 = cands[j].id;
+                }
+            }
+
+        return best;
+    }
+
+    // =========================================================================
+    // TryPerpendicular
+    //
+    // 自基点 fromPoint（工具锚点 / 活动夹点）向所指曲线作垂线，捕捉垂足。
+    // 对直线 / 射线 / 构造线 / 圆 / 弧 / 椭圆，「基点到曲线的最近点」即法向垂足，
+    // 故复用 ICurve::ClosestPoint(fromPoint)。
+    //
+    // 判定与其他点类捕捉一致：光标须贴近垂足点本身（孔径内）才命中——
+    // 不做「指到曲线任意处即给出远处垂足」的延伸垂足，避免过度灵敏、
+    // 也避免与最近点捕捉互相抢占。
+    // =========================================================================
+    SnapResult SnapEngine::TryPerpendicular(const Math::Point2& sp, const Scene& scene, const Camera& cam, const std::unordered_set<Object::ObjectID>& exclude, const Math::Point3& fromPoint) const
+    {
+        SnapResult best;
+        double bestDist = std::numeric_limits<double>::max();
+
+        ForEachSnapObject(scene, [&](const Object& obj)
+            {
+                if (exclude.contains(obj.GetID()) || !IsSnapVisible(scene, obj))   return;
+                if (!obj.IsKindOf<Entity>())         return;
+
+                const ICurveEntity* ce = static_cast<const Entity*>(&obj)->AsCurveEntity();
+                if (!ce) return;
+
+                Math::Point3 foot = ce->MakeCurve()->ClosestPoint(fromPoint);
+                TryUpdateBest(foot, sp, cam, m_snapRadiusPx, bestDist, best,
+                              SnapResult::Type::Perpendicular, obj.GetID());
             });
 
         return best;

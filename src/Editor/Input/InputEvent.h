@@ -1,5 +1,4 @@
 ﻿#pragma once
-#include "pch.h"
 #include "Core/Math/Point3.hpp"
 #include "KeyCode.h"
 #include <cstdint>  

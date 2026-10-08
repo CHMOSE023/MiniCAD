@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -14,17 +14,18 @@ namespace MiniCAD
     public:
         RectangleTool()
         {
-            printf("[RectangleTool] 左键第一角点 | 左键第二角点确认 | 右键/ESC 退出\n");
+            LOG_DEBUG("[RectangleTool] 左键第一角点 | 左键第二角点确认 | 右键/ESC 退出");
         }
 
         ~RectangleTool()
         {
-            printf("exit RectangleTool\n");
+            LOG_DEBUG("exit RectangleTool");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsLeftClick())
@@ -85,10 +86,11 @@ namespace MiniCAD
         {
             auto id   = m_ctx->scene.NextObjectID();
             auto rect = std::make_unique<RectangleEntity>(id, a, b);
+            m_ctx->ApplyCurrentAttr(*rect);
             auto cmd  = std::make_unique<AddEntityCommand>(std::move(rect));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("[RectangleTool] 矩形 Id=%d  (%.3f,%.3f)-(%.3f,%.3f)\n",
+            LOG_DEBUG("[RectangleTool] 矩形 Id=%d  (%.3f,%.3f)-(%.3f,%.3f)",
                    static_cast<int>(id), a.x, a.y, b.x, b.y);
         }
 
@@ -96,11 +98,12 @@ namespace MiniCAD
         {
             m_hasStart    = false;
             m_firstCorner = {};
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
     private:
         const EditorContext* m_ctx = nullptr;
+        Overlay*              m_overlay = nullptr;
 
         bool         m_hasStart    = false;
         Math::Point3 m_firstCorner{};

@@ -34,7 +34,7 @@ namespace MiniCAD
         virtual void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             const auto& attr = GetAttr();
-            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
+            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
 
 			// 绘制矩形边框（4 条线段）
             sink.DrawLine(m_rect.P1, m_rect.P2, color, false);

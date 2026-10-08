@@ -1,6 +1,5 @@
 #include "SHXCompositeFont.h"
-#include "pch.h"
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -10,7 +9,9 @@ namespace MiniCAD
         , m_mainFont(std::move(mainFont))
         , m_bigFont(std::move(bigFont))
     {
-        printf("[Composite] '%s'  main=%s  big=%s\n", m_name.c_str(), m_mainFont ? m_mainFont->GetName() : "(none)", m_bigFont ? m_bigFont->GetName() : "(none)");
+        LOG_DEBUG("[Composite] '%s'  main=%s  big=%s", m_name.c_str(),
+            m_mainFont ? m_mainFont->GetName() : "(none)",
+            m_bigFont  ? m_bigFont->GetName()  : "(none)");
     }
 
     //--------------------------------------------------------------
@@ -29,7 +30,7 @@ namespace MiniCAD
         else if (fallback && fallback->HasGlyph(cp)) picked = fallback;
 
         m_routeCache[cp] = picked;
-        printf("[Composite] U+%04X → %s\n", cp, picked ? picked->GetName() : "(none)");
+        LOG_TRACE("[Composite] U+%04X -> %s", cp, picked ? picked->GetName() : "(none)");
         return picked;
     }
 

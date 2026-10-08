@@ -46,7 +46,7 @@ namespace MiniCAD
             {
                 line->SetLine({ seg.Start, seg.End });
             }
-            scene.MarkDirty();
+            scene.MarkEntityDirty(m_id);   // 仅该实体重新细分
         }
     };
 
@@ -71,7 +71,8 @@ namespace MiniCAD
 
             for (auto& e : m_entries)
                 Apply(scene, e.Id, e.After);
-            scene.MarkDirty();
+            for (auto& e : m_entries)
+                scene.MarkEntityDirty(e.Id);   // 仅受影响实体重新细分
             return true;
         }
 
@@ -80,7 +81,8 @@ namespace MiniCAD
             // 逆序撤销，保持操作对称性
             for (int i = (int)m_entries.size() - 1; i >= 0; --i)
                 Apply(scene, m_entries[i].Id, m_entries[i].Before);
-            scene.MarkDirty();
+            for (auto& e : m_entries)
+                scene.MarkEntityDirty(e.Id);
         }
 
         std::string GetName() const override { return "拖动直线"; }

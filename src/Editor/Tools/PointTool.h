@@ -1,4 +1,5 @@
-#pragma once
+﻿#pragma once
+#include "Core/Log.h"
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -14,12 +15,12 @@ namespace MiniCAD
     public:
         PointTool()
         {
-            printf("[PointTool] 左键放点 | 右键退出\n");
+            LOG_DEBUG("[PointTool] 左键放点 | 右键退出");
         }
 
         ~PointTool()
         {
-            printf("退出点绘制工具\n");
+            LOG_DEBUG("退出点绘制工具");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -83,10 +84,11 @@ namespace MiniCAD
 
             auto pointEntity = std::make_unique<PointEntity>(id, p);
 
+            m_ctx->ApplyCurrentAttr(*pointEntity);
             auto cmd = std::make_unique<AddEntityCommand>(std::move(pointEntity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("点 Id %d  (%.3f, %.3f, %.3f)\n", static_cast<int>(id), p.x, p.y, p.z);
+            LOG_DEBUG("点 Id %d  (%.3f, %.3f, %.3f)", static_cast<int>(id), p.x, p.y, p.z);
         }
 
     private:

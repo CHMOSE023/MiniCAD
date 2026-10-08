@@ -1,5 +1,6 @@
 #include "SHXParser.h"
 #include "SHXVM.h"
+#include "Core/Log.h"
 
 #include <fstream>
 #include <algorithm>
@@ -40,7 +41,7 @@ namespace MiniCAD
     //==================================================================
     bool SHXParser::Load(const std::string& filePath)
     {
-        printf("[SHX-DBG] ===== Load() ENTRY, path=%s =====\n", filePath.c_str());
+        LOG_TRACE("[SHX] Load entry: %s", filePath.c_str());
 
         //----------------------------------------------------------------
         // 0. Reset all state
@@ -60,7 +61,7 @@ namespace MiniCAD
         //----------------------------------------------------------------
         std::ifstream f(filePath, std::ios::binary);
         if (!f) {
-            printf("[SHX-DBG] cannot open file\n");
+            LOG_ERROR("[SHX] cannot open file: %s", filePath.c_str());
             return false;
         }
 
@@ -68,12 +69,11 @@ namespace MiniCAD
             std::istreambuf_iterator<char>());
 
         if (m_fileData.size() < 24) {
-            printf("[SHX-DBG] file too small: %zu bytes\n", m_fileData.size());
+            LOG_ERROR("[SHX] file too small: %zu bytes", m_fileData.size());
             return false;
         }
 
-        printf("[SHX-DBG] file read OK, size=%zu, first8= "
-            "%02X %02X %02X %02X %02X %02X %02X %02X\n",
+        LOG_TRACE("[SHX] file read OK, size=%zu, first8= %02X %02X %02X %02X %02X %02X %02X %02X",
             m_fileData.size(),
             m_fileData[0], m_fileData[1], m_fileData[2], m_fileData[3],
             m_fileData[4], m_fileData[5], m_fileData[6], m_fileData[7]);
@@ -81,16 +81,12 @@ namespace MiniCAD
         //----------------------------------------------------------------
         // 2. Strict signature check (rejects TTF/OTF immediately)
         //----------------------------------------------------------------
-        printf("[SHX-DBG] about to check signature\n");
-
         if (std::memcmp(m_fileData.data(), "AutoCAD-", 8) != 0) {
-            printf("[SHX-DBG] SIGNATURE FAIL: not a SHX file. "
-                "First 8 bytes: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+            LOG_WARN("[SHX] signature mismatch (not a SHX file): %02X %02X %02X %02X %02X %02X %02X %02X",
                 m_fileData[0], m_fileData[1], m_fileData[2], m_fileData[3],
                 m_fileData[4], m_fileData[5], m_fileData[6], m_fileData[7]);
             return false;
         }
-        printf("[SHX-DBG] SIGNATURE PASS\n");
 
         //----------------------------------------------------------------
         // 3. Find 0x1A header terminator, extract ASCII header line
@@ -102,7 +98,7 @@ namespace MiniCAD
         while (sub < end && *sub != 0x1A) ++sub;
 
         if (sub >= end) {
-            printf("[SHX-DBG] no 0x1A terminator found\n");
+            LOG_WARN("[SHX] no 0x1A terminator found");
             return false;
         }
 
@@ -114,15 +110,14 @@ namespace MiniCAD
             (m_headerLine.back() == '\r' || m_headerLine.back() == '\n')) {
             m_headerLine.pop_back();
         }
-        printf("[SHX-DBG] header line (%zu bytes before 0x1A): \"%s\"\n",
-            hdrEnd, m_headerLine.c_str());
+        LOG_TRACE("[SHX] header line (%zu bytes): \"%s\"", hdrEnd, m_headerLine.c_str());
 
         //----------------------------------------------------------------
         // 4. Classify by header line
         //----------------------------------------------------------------
         m_kind = ClassifyHeader(m_headerLine);
         if (m_kind == Kind::Unknown) {
-            printf("[SHX-DBG] unrecognized header kind\n");
+            LOG_WARN("[SHX] unrecognized header: \"%s\"", m_headerLine.c_str());
             return false;
         }
 
@@ -135,40 +130,34 @@ namespace MiniCAD
 
         static const char* kKindNames[] =
         { "Unknown", "Shapes", "BigFont", "Unifont" };
-        printf("[SHX-DBG] classified as kind=%s ver=%s\n",
-            kKindNames[int(m_kind)], m_version.c_str());
+        LOG_TRACE("[SHX] kind=%s ver=%s", kKindNames[int(m_kind)], m_version.c_str());
 
         //----------------------------------------------------------------
         // 5. DIAGNOSTIC: dump 64 bytes starting at 0x1A
         //    This is where the BigFont/Unifont/Shapes binary header begins.
         //    Use this to verify field layout against real files.
         //----------------------------------------------------------------
-        {
+        if (::MiniCAD::g_logLevel <= ::MiniCAD::LogLevel::Trace) {
             const size_t kDumpBytes = 64;
-            const uint8_t* dp = base + hdrEnd;     // starts at 0x1A itself
+            const uint8_t* dp = base + hdrEnd;
             size_t avail = std::min<size_t>(kDumpBytes, size_t(end - dp));
-            printf("[SHX-DUMP] %zu bytes from offset 0x%zX (0x1A and after):\n",
-                avail, hdrEnd);
+            printf("[SHX-DUMP] %zu bytes from offset 0x%zX:\n", avail, hdrEnd);
             for (size_t i = 0; i < avail; i += 16) {
                 printf("  %04zX:", hdrEnd + i);
                 for (size_t j = 0; j < 16 && i + j < avail; ++j)
                     printf(" %02X", dp[i + j]);
                 printf("\n");
             }
-        }
-
-        //----------------------------------------------------------------
-        // 6. DIAGNOSTIC: dump last 32 bytes (often tail of glyph data)
-        //----------------------------------------------------------------
-        if (m_fileData.size() >= 32) {
-            const uint8_t* tp = end - 32;
-            const size_t   to = m_fileData.size() - 32;
-            printf("[SHX-DUMP] last 32 bytes at offset 0x%zX:\n", to);
-            for (size_t i = 0; i < 32; i += 16) {
-                printf("  %04zX:", to + i);
-                for (size_t j = 0; j < 16; ++j)
-                    printf(" %02X", tp[i + j]);
-                printf("\n");
+            if (m_fileData.size() >= 32) {
+                const uint8_t* tp = end - 32;
+                const size_t   to = m_fileData.size() - 32;
+                printf("[SHX-DUMP] last 32 bytes at offset 0x%zX:\n", to);
+                for (size_t i = 0; i < 32; i += 16) {
+                    printf("  %04zX:", to + i);
+                    for (size_t j = 0; j < 16; ++j)
+                        printf(" %02X", tp[i + j]);
+                    printf("\n");
+                }
             }
         }
 
@@ -186,8 +175,7 @@ namespace MiniCAD
         }
 
         if (!ok) {
-            printf("[SHX-DBG] content parse FAILED for kind=%s\n",
-                kKindNames[int(m_kind)]);
+            LOG_ERROR("[SHX] content parse FAILED for kind=%s", kKindNames[int(m_kind)]);
         }
 
         //----------------------------------------------------------------
@@ -198,13 +186,9 @@ namespace MiniCAD
         //----------------------------------------------------------------
         // 9. Final summary
         //----------------------------------------------------------------
-        printf("[SHX] %s  kind=%s  ver=%s  name='%s'  glyphs=%zu  height=%.2f\n",
-            filePath.c_str(),
-            kKindNames[int(m_kind)],
-            m_version.c_str(),
-            m_fontName.c_str(),
-            m_shapes.size(),
-            m_fontHeight);
+        LOG_DEBUG("[SHX] loaded %s  kind=%s  ver=%s  name='%s'  glyphs=%zu  height=%.2f",
+            filePath.c_str(), kKindNames[int(m_kind)], m_version.c_str(),
+            m_fontName.c_str(), m_shapes.size(), m_fontHeight);
 
         m_loaded = ok;
         return ok;
@@ -244,7 +228,7 @@ namespace MiniCAD
     bool SHXParser::ParseShapesContent(const uint8_t* p, const uint8_t* end)
     {
         if (p + 6 > end) {
-            printf("[SHX] shapes: header too short\n");
+            LOG_WARN("[SHX] shapes: header too short");
             return false;
         }
         /*uint16_t first =*/ RdU16LE(p); p += 2;
@@ -252,7 +236,7 @@ namespace MiniCAD
         uint16_t nshape = RdU16LE(p); p += 2;
 
         if (nshape == 0) {
-            printf("[SHX] shapes: nshape=0\n");
+            LOG_WARN("[SHX] shapes: nshape=0");
             return false;
         }
 
@@ -262,7 +246,7 @@ namespace MiniCAD
 
         for (uint16_t i = 0; i < nshape; ++i) {
             if (p + 4 > end) {
-                printf("[SHX] shapes: dispatch truncated at i=%u\n", i);
+                LOG_WARN("[SHX] shapes: dispatch truncated at i=%u", i);
                 return false;
             }
             Entry e;
@@ -274,8 +258,7 @@ namespace MiniCAD
         const uint8_t* d = p;
         for (const auto& e : table) {
             if (d + e.len > end) {
-                printf("[SHX] shapes: glyph 0x%04X exceeds file (len=%u)\n",
-                    e.code, e.len);
+                LOG_WARN("[SHX] shapes: glyph 0x%04X exceeds file (len=%u)", e.code, e.len);
                 break;
             }
             m_shapes[e.code] = { d, size_t(e.len) };
@@ -295,7 +278,7 @@ namespace MiniCAD
     bool SHXParser::ParseBigFontContent(const uint8_t* p, const uint8_t* end)
     {
         if (p + 6 > end) {
-            printf("[SHX] bigfont: header too short\n");
+            LOG_WARN("[SHX] bigfont: header too short");
             return false;
         }
 
@@ -304,11 +287,10 @@ namespace MiniCAD
         uint16_t nranges = RdU16LE(p); p += 2;
         (void)reserved;
 
-        printf("[SHX] bigfont: nshapes=%u  nranges=%u  reserved=0x%04X\n",
-            nshapes, nranges, reserved);
+        LOG_DEBUG("[SHX] bigfont: nshapes=%u  nranges=%u  reserved=0x%04X", nshapes, nranges, reserved);
 
         if (nshapes == 0 || nshapes > 65000) {
-            printf("[SHX] bigfont: implausible nshapes=%u\n", nshapes);
+            LOG_WARN("[SHX] bigfont: implausible nshapes=%u", nshapes);
             return false;
         }
 
@@ -316,15 +298,14 @@ namespace MiniCAD
         // Skip the escape-range table (4 bytes per range)
         //--------------------------------------------------------------
         if (p + size_t(nranges) * 4 > end) {
-            printf("[SHX] bigfont: range table truncated "
-                "(need %u bytes, have %zu)\n",
+            LOG_WARN("[SHX] bigfont: range table truncated (need %u bytes, have %zu)",
                 unsigned(nranges) * 4, size_t(end - p));
             return false;
         }
         for (uint16_t i = 0; i < nranges; ++i) {
             uint16_t lo = RdU16LE(p); p += 2;
             uint16_t hi = RdU16LE(p); p += 2;
-            printf("[SHX] bigfont: range[%u] = 0x%04X..0x%04X\n", i, lo, hi);
+            LOG_TRACE("[SHX] bigfont: range[%u] = 0x%04X..0x%04X", i, lo, hi);
         }
 
         //--------------------------------------------------------------
@@ -338,7 +319,7 @@ namespace MiniCAD
 
         for (uint16_t i = 0; i < nshapes; ++i) {
             if (p + 8 > end) {
-                printf("[SHX] bigfont: dispatch truncated at i=%u\n", i);
+                LOG_WARN("[SHX] bigfont: dispatch truncated at i=%u", i);
                 break;
             }
             uint16_t code = RdU16LE(p);  p += 2;
@@ -349,8 +330,7 @@ namespace MiniCAD
 
             if (offset >= fileSize || offset + len > fileSize) {
                 if (++bad <= 4) {
-                    printf("[SHX] bigfont: bad entry i=%u code=0x%04X "
-                        "len=%u off=%u\n", i, code, len, offset);
+                    LOG_WARN("[SHX] bigfont: bad entry i=%u code=0x%04X len=%u off=%u", i, code, len, offset);
                 }
                 continue;
             }
@@ -359,7 +339,7 @@ namespace MiniCAD
             ++good;
         }
 
-        printf("[SHX] bigfont: parsed dispatch: %zu good, %zu bad, %u total\n", good, bad, nshapes);
+        LOG_DEBUG("[SHX] bigfont: parsed dispatch: %zu good, %zu bad, %u total", good, bad, nshapes);
 
         return good > 0;
     }
@@ -380,15 +360,15 @@ namespace MiniCAD
     bool SHXParser::ParseUnifontContent(const uint8_t* p, const uint8_t* end)
     {
         if (p + 2 > end) {
-            printf("[SHX] unifont: header too short\n");
+            LOG_WARN("[SHX] unifont: header too short");
             return false;
         }
 
         uint16_t nshapes = RdU16LE(p);  p += 2;
-        printf("[SHX] unifont: nshapes=%u\n", nshapes);
+        LOG_DEBUG("[SHX] unifont: nshapes=%u", nshapes);
 
         if (nshapes == 0 || nshapes > 200000) {
-            printf("[SHX] unifont: implausible nshapes=%u\n", nshapes);
+            LOG_WARN("[SHX] unifont: implausible nshapes=%u", nshapes);
             return false;
         }
 
@@ -396,7 +376,7 @@ namespace MiniCAD
 
         for (uint16_t i = 0; i < nshapes; ++i) {
             if (p + 4 > end) {
-                printf("[SHX] unifont: dispatch header truncated at i=%u\n", i);
+                LOG_WARN("[SHX] unifont: dispatch header truncated at i=%u", i);
                 break;
             }
             uint16_t code = RdU16LE(p); p += 2;
@@ -404,8 +384,7 @@ namespace MiniCAD
 
             if (p + len > end) {
                 if (++bad <= 4)
-                    printf("[SHX] unifont: data truncated i=%u code=U+%04X len=%u "
-                        "remaining=%zu\n",
+                    LOG_WARN("[SHX] unifont: data truncated i=%u code=U+%04X len=%u remaining=%zu",
                         i, code, len, size_t(end - p));
                 break;
             }
@@ -417,8 +396,7 @@ namespace MiniCAD
             p += len;
         }
 
-        printf("[SHX] unifont: parsed: %zu good, %zu bad, %u total\n",
-            good, bad, nshapes);
+        LOG_DEBUG("[SHX] unifont: parsed: %zu good, %zu bad, %u total", good, bad, nshapes);
 
         return good > 0;
     }

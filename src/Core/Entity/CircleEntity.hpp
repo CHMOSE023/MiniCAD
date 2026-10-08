@@ -1,11 +1,13 @@
 #pragma once
 #include "../GeomKernel/Circle.hpp"
+#include "../GeomKernel/Curves.hpp"
 #include "../Math/Point3.hpp"
 #include "Entity.hpp"
+#include "ICurveEntity.hpp"
 
 namespace MiniCAD
 {
-    class CircleEntity : public Entity
+    class CircleEntity : public Entity, public ICurveEntity
     {
     public:
         CircleEntity(ObjectID id, const Math::Point3& center, double radius)
@@ -23,6 +25,11 @@ namespace MiniCAD
 
         virtual AABB GetBoundingBox() const override { return m_circle.GetBounds(); }
 
+        // ── ICurveEntity ──────────────────────────────────────────────
+        std::unique_ptr<ICurve> MakeCurve() const override { return std::make_unique<CircleCurve>(m_circle); }
+        ICurveEntity*       AsCurveEntity()       override { return this; }
+        const ICurveEntity* AsCurveEntity() const override { return this; }
+
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
         {
             auto e = std::make_unique<CircleEntity>(newId, m_circle.Center, m_circle.Radius);
@@ -34,7 +41,7 @@ namespace MiniCAD
         {
             const auto& attr = GetAttr();
 
-            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : attr.Color;
+            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
 
             constexpr int kSegments = 64;
 

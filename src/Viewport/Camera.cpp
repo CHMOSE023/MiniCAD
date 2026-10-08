@@ -4,10 +4,29 @@
 
 namespace MiniCAD
 {  
+    namespace
+    {
+        constexpr double kMinZoom = 0.01;
+        constexpr double kMaxZoom = 1e7;   // 可视高度（世界单位）；大图纸（毫米制）需要较大的上限
+    }
+
     Camera::Camera(double width, double height) { Resize(width, height); }
+
+    void Camera::ZoomToBounds(double minX, double minY, double maxX, double maxY, double margin)
+    {
+        const double w = maxX - minX, h = maxY - minY;
+        double zoom = std::max(h, w / m_aspect) * margin;   // 可视高度 = m_zoom，可视宽度 = m_zoom * 宽高比
+        if (zoom < 1e-6)
+            zoom = 10.0;                                      // 只有一个点：给个默认视野
+        m_zoom = std::clamp(zoom, kMinZoom, kMaxZoom);
+        m_target.x = (minX + maxX) * 0.5;
+        m_target.y = (minY + maxY) * 0.5;
+        UpdateViewProj();
+    }
 
     void Camera::Resize(double width, double height)
     {
+
         m_aspect = width / height;
         m_screenWidth = width;
         m_screenHeight = height;
@@ -36,7 +55,7 @@ namespace MiniCAD
         if (delta > 0) m_zoom /= zoomFactor;
         else           m_zoom *= zoomFactor;
 
-        m_zoom = std::clamp(m_zoom, 0.01, 10000.0);
+        m_zoom = std::clamp(m_zoom, kMinZoom, kMaxZoom);
 
         // 3. zoom 变了，先刷新矩阵
         UpdateViewProj();
@@ -74,8 +93,20 @@ namespace MiniCAD
         m_invViewProj = Math::Mat4::Inverse(m_viewProj);
     }
 
-    // ─── 坐标转换 ─────────────────────────────────────────────────────────────────
 
+    CameraState Camera::GetState() const
+    {
+        return { m_target, m_zoom }; 
+    }
+
+    void Camera::SetState(const CameraState& s)
+    {
+        m_target = s.Target;
+        m_zoom = s.Zoom;
+        UpdateViewProj();
+    }
+
+    // ─── 坐标转换 ─────────────────────────────────────────────────────────────────
     Math::Point3 Camera::ScreenToWorld(int px, int py) const
     {
         // 屏幕像素 → NDC [-1, 1]

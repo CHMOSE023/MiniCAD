@@ -9,6 +9,7 @@
 #include "Core/Math/Color4.hpp"
 #include "Core/Math/Constants.hpp"
 #include "Core/GeomKernel/Polyline.hpp"
+#include "Core/GeomKernel/Ellipse.hpp"
 namespace MiniCAD
 {
     /// <summary>
@@ -130,9 +131,19 @@ namespace MiniCAD
         }
 
         // ===== Ellipse =====
-        void AddEllipse(const Math::Point3& center,  double rx, double ry, double rotation,  const Math::Color4& mcolor, int segments = 64)
+        // 整椭圆或椭圆弧（参数角 t 从 Ellipse::StartParam 逆时针扫过 SweepParam）
+        void AddEllipse(const Ellipse& el, const Math::Color4& mcolor, int segments = 64)
         {
-            if (rx <= 0.0 || ry <= 0.0 || segments < 3)
+            const double t0    = el.IsFull() ? 0.0 : el.StartParam;
+            const double sweep = el.SweepParam();
+            const int    segs  = std::max(4, static_cast<int>(std::ceil(segments * sweep / Math::TwoPI)));
+            AddEllipse(el.Center, el.RadiusX, el.RadiusY, el.Rotation, mcolor, segs, t0, sweep);
+        }
+
+        void AddEllipse(const Math::Point3& center,  double rx, double ry, double rotation,  const Math::Color4& mcolor, int segments = 64,
+                        double startParam = 0.0, double sweepParam = Math::TwoPI)
+        {
+            if (rx <= 0.0 || ry <= 0.0 || segments < 1)
                 return;
 
             Float4 color =
@@ -150,8 +161,8 @@ namespace MiniCAD
 
             for (int i = 0; i < segments; ++i)
             {
-                double t0 = Math::TwoPI * i / segments;
-                double t1 = Math::TwoPI * (i + 1) / segments;
+                double t0 = startParam + sweepParam * i / segments;
+                double t1 = startParam + sweepParam * (i + 1) / segments;
 
                 // 参数方程（与 Ellipse::PointAt 完全一致）
                 Float3 p0 =

@@ -10,6 +10,14 @@
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/DimensionEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
+#include "Core/Entity/LeaderEntity.hpp"
+#include "Core/Entity/MLeaderEntity.hpp"
+#include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/XLineEntity.hpp"
+#include "Core/Entity/ToleranceEntity.hpp"
 
 namespace MiniCAD
 {
@@ -89,6 +97,83 @@ namespace MiniCAD
         {
             auto& me = static_cast<MTextEntity&>(entity);
             me.SetPosition(me.GetPosition() + d);
+            return;
+        }
+        if (entity.IsKindOf<InsertEntity>())
+        {
+            auto& ie = static_cast<InsertEntity&>(entity);
+            ie.SetPosition(ie.GetPosition() + d);
+            // rotation 不变
+            return;
+        }
+        if (entity.IsKindOf<DimensionEntity>())
+        {
+            auto& de = static_cast<DimensionEntity&>(entity);
+            de.SetP1         (de.GetP1()          + d);
+            de.SetP2         (de.GetP2()          + d);
+            de.SetDimLinePoint(de.GetDimLinePoint() + d);
+            de.SetCenterPoint (de.GetCenterPoint()  + d);
+            // linearAngle 不变
+            return;
+        }
+        if (entity.IsKindOf<HatchEntity>())
+        {
+            auto& he = static_cast<HatchEntity&>(entity);
+            for (auto& loop : he.GetLoops())
+                for (auto& edge : loop.Edges)
+                {
+                    switch (edge.Type)
+                    {
+                    case HatchEdge::Kind::Poly:
+                        for (auto& p : edge.Poly.Points) p += d;
+                        break;
+                    case HatchEdge::Kind::EllipseArc:
+                        edge.Ell.Center = edge.Ell.Center + d;
+                        break;
+                    case HatchEdge::Kind::Spline:
+                        for (auto& p : edge.Spl.FitPoints) p += d;
+                        edge.Spl.Build();
+                        break;
+                    }
+                }
+            return;
+        }
+        if (entity.IsKindOf<LeaderEntity>())
+        {
+            auto& le = static_cast<LeaderEntity&>(entity);
+            auto verts = le.GetVertices();
+            for (auto& v : verts) v = v + d;
+            le.SetVertices(std::move(verts));
+            return;
+        }
+        if (entity.IsKindOf<MLeaderEntity>())
+        {
+            auto& ml = static_cast<MLeaderEntity&>(entity);
+            ml.SetLanding(ml.GetLanding() + d);
+            // doglegDir 不变（方向向量）
+            for (auto& ln : ml.GetLeaderLines())
+                for (auto& p : ln.points) p = p + d;
+            return;
+        }
+        if (entity.IsKindOf<RayEntity>())
+        {
+            auto& re = static_cast<RayEntity&>(entity);
+            re.SetOrigin(re.GetOrigin() + d);
+            // direction 不变
+            return;
+        }
+        if (entity.IsKindOf<XLineEntity>())
+        {
+            auto& xl = static_cast<XLineEntity&>(entity);
+            xl.SetOrigin(xl.GetOrigin() + d);
+            // direction 不变
+            return;
+        }
+        if (entity.IsKindOf<ToleranceEntity>())
+        {
+            auto& te = static_cast<ToleranceEntity&>(entity);
+            te.SetInsertion(te.GetInsertion() + d);
+            // direction 不变
             return;
         }
     }

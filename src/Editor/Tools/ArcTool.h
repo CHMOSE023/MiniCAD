@@ -1,11 +1,11 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Math/Point3.hpp"
 #include "Core/Entity/ArcEntity.hpp"
-#include <cstdio>
+#include "Core/Log.h"
 #include <cmath>
 
 namespace MiniCAD
@@ -15,17 +15,18 @@ namespace MiniCAD
     public:
         ArcTool()
         {
-            printf("[ArcTool] 左键起点 | 左键弧上点 | 左键终点确认 | 右键/ESC 退出\n");
+            LOG_DEBUG("[ArcTool] 左键起点 | 左键弧上点 | 左键终点确认 | 右键/ESC 退出");
         }
 
         ~ArcTool()
         {
-            printf("退出绘制\n");
+            LOG_DEBUG("退出绘制");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsLeftClick())
@@ -36,14 +37,14 @@ namespace MiniCAD
                     case 0:
                         m_p1 = pt;
                         m_step = 1;
-                        printf("[ArcTool] 起点 (%.3f, %.3f) 已定，请点击弧上经过点\n",
+                        LOG_INFO("[ArcTool] 起点 (%.3f, %.3f) 已定，请点击弧上经过点",
                                pt.x, pt.y);
                         break;
 
                     case 1:
                         m_p2 = pt;
                         m_step = 2;
-                        printf("[ArcTool] 弧上点 (%.3f, %.3f) 已定，请点击终点\n",
+                        LOG_INFO("[ArcTool] 弧上点 (%.3f, %.3f) 已定，请点击终点",
                                pt.x, pt.y);
                         break;
 
@@ -57,7 +58,7 @@ namespace MiniCAD
                         }
                         else
                         {
-                            printf("[ArcTool] 三点共线，无法构成圆弧，请重新选择终点\n");
+                            LOG_WARN("[ArcTool] 三点共线，无法构成圆弧，请重新选择终点");
                         }
                         Reset();
                         break;
@@ -147,10 +148,11 @@ namespace MiniCAD
             auto id     = m_ctx->scene.NextObjectID();
             auto entity = std::make_unique<ArcEntity>(id, arc.Center, arc.Radius,
                                                       arc.StartAngle, arc.EndAngle);
+            m_ctx->ApplyCurrentAttr(*entity);
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("圆弧 Id %d  center(%.3f,%.3f)  r=%.3f  [%.1f°, %.1f°]\n",
+            LOG_DEBUG("圆弧 Id %d  center(%.3f,%.3f)  r=%.3f  [%.1f°, %.1f°]",
                    static_cast<int>(id),
                    arc.Center.x, arc.Center.y,
                    arc.Radius,
@@ -162,11 +164,12 @@ namespace MiniCAD
         {
             m_step = 0;
             m_p1 = m_p2 = m_p3 = {};
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
     private:
         const EditorContext* m_ctx = nullptr;
+        Overlay*              m_overlay = nullptr;
 
         int          m_step = 0;
         Math::Point3 m_p1{};

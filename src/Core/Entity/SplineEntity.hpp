@@ -26,6 +26,28 @@ namespace MiniCAD
         const Spline& GetSpline() const { return m_spline; }
         Spline& GetSpline() { return m_spline; }
 
+        // ── DXF SPLINE 控制点(NURBS)定义 ──────────────────────────────────
+        // 设置控制点 + 节点矢量 + 阶数(+ 可选权重)。knots 为空时按夹持均匀节点生成。
+        // 设置后 GetBoundingBox/Draw 自动走 NURBS 精确求值路径。
+        void SetControlData(std::vector<Math::Point3> ctrlPoints,
+                            std::vector<double>       knots,
+                            int                       degree,
+                            std::vector<double>       weights = {})
+        {
+            m_spline.Degree        = degree;
+            m_spline.ControlPoints = std::move(ctrlPoints);
+            m_spline.Weights       = std::move(weights);
+            if (knots.empty())
+                knots = Spline::MakeClampedUniformKnots(static_cast<int>(m_spline.ControlPoints.size()), degree);
+            m_spline.Knots = std::move(knots);
+            if (!m_spline.Weights.empty())
+                m_spline.Flags |= SplineFlag_Rational;
+        }
+
+        bool HasControlData() const { return m_spline.HasControlData(); }
+        int  Degree()         const { return m_spline.Degree; }
+        int  ControlPointCount() const { return static_cast<int>(m_spline.ControlPoints.size()); }
+
         void SetBoundary(SplineBoundary b)
         {
             m_spline.Boundary = b;
@@ -71,7 +93,7 @@ namespace MiniCAD
             const auto& attr = GetAttr();
             const Math::Color4& curveColor = isSelected ? IDrawSink::kSelectionColor
                 : isHovered ? IDrawSink::kHoverColor
-                : attr.Color;
+                : ResolveDrawColor(sink);
             constexpr int kSamplesPerSeg = 32;
             auto pts = m_spline.Tessellate(kSamplesPerSeg);
 

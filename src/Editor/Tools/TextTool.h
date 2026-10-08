@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
 #include "Core/Math/Point3.hpp"
 #include <functional>
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -12,10 +12,10 @@ namespace MiniCAD
     public:
         TextTool()
         {
-            printf("[TextTool] 左键选择插入点 | ESC 退出\n");
+            LOG_DEBUG("[TextTool] 左键选择插入点 | ESC 退出");
         }
 
-        ~TextTool() { printf("退出文字绘制\n"); }
+        ~TextTool() { LOG_DEBUG("退出文字绘制"); }
 
         std::function<void(Math::Point3)> OnInsertPointPicked;
 

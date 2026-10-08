@@ -22,13 +22,15 @@ namespace MiniCAD
     // ─────────────────────────────────────────────
     // EllipseGripHandler
     //
-    // 夹点布局（5 个）：
+    // 夹点布局（整椭圆 5 个）：
     //   Center   × 1 — 椭圆中心，整体平移
     //   Quadrant × 4 — 四个轴端点（沿长短轴方向），SubIndex 0-3
     //                    0 = +X 轴端（E），修改 RadiusX
     //                    1 = +Y 轴端（N），修改 RadiusY
     //                    2 = -X 轴端（W），修改 RadiusX（镜像）
     //                    3 = -Y 轴端（S），修改 RadiusY（镜像）
+    // 椭圆弧：轴端点只保留落在弧上的；另加
+    //   Start / End  — 弧的两端，沿椭圆改起止参数（其余几何不变）
     // ─────────────────────────────────────────────
     class EllipseGripHandler : public IEntityGripHandler
     {
@@ -41,10 +43,17 @@ namespace MiniCAD
             const auto id     = entity->GetID();
 
             outGrips.push_back({ id, Grip::Type::Center,   el.Center,     0 });
-            outGrips.push_back({ id, Grip::Type::Quadrant, el.VertexE(),  0 }); // +X
-            outGrips.push_back({ id, Grip::Type::Quadrant, el.VertexN(),  1 }); // +Y
-            outGrips.push_back({ id, Grip::Type::Quadrant, el.VertexW(),  2 }); // -X
-            outGrips.push_back({ id, Grip::Type::Quadrant, el.VertexS(),  3 }); // -Y
+            for (int k = 0; k < 4; ++k)     // +X / +Y / -X / -Y
+            {
+                const double t = Math::PI * 0.5 * k;
+                if (el.ContainsParam(t))
+                    outGrips.push_back({ id, Grip::Type::Quadrant, el.PointAt(t), k });
+            }
+            if (!el.IsFull())
+            {
+                outGrips.push_back({ id, Grip::Type::Start, el.StartPoint(), 0 });
+                outGrips.push_back({ id, Grip::Type::End,   el.EndPoint(),   0 });
+            }
         }
 
         std::unique_ptr<IGripDragState> BeginDrag(Entity* entity, const Grip& /*activeGrip*/) override
@@ -110,13 +119,19 @@ namespace MiniCAD
                 break;
             }
 
+            // ── 弧端点拖动：沿椭圆改起止参数 ─────────────────────────
+            case Grip::Type::Start:
+                out.SetParams(out.ParamOfPoint(worldPos), out.EndParam);
+                break;
+            case Grip::Type::End:
+                out.SetParams(out.StartParam, out.ParamOfPoint(worldPos));
+                break;
+
             default:
                 break;
             }
 
-            ellEnt->SetRadiusX(out.RadiusX);
-            ellEnt->SetRadiusY(out.RadiusY);
-            ellEnt->SetCenter(out.Center);
+            ellEnt->SetEllipse(out);
             SyncGrips(entity->GetID(), out, grips);
         }
 
@@ -129,8 +144,7 @@ namespace MiniCAD
             const Math::Color4 kHelper = { 1.0,  0.85, 0.0,  0.55 };
 
             // Ghost 原始椭圆
-            overlay.AddEllipse(state->Base.Center, state->Base.RadiusX,
-                               state->Base.RadiusY, state->Base.Rotation, kGhost);
+            overlay.AddEllipse(state->Base, kGhost);
 
             // 辅助线：长轴 / 短轴
             overlay.AddLine(state->Base.VertexW(), state->Base.VertexE(), kHelper);
@@ -152,7 +166,9 @@ namespace MiniCAD
                 std::abs(after.Center.y  - b.Center.y)  < Math::LengthEPS &&
                 std::abs(after.RadiusX   - b.RadiusX)   < Math::LengthEPS &&
                 std::abs(after.RadiusY   - b.RadiusY)   < Math::LengthEPS &&
-                std::abs(after.Rotation  - b.Rotation)  < Math::AngleEPS)
+                std::abs(after.Rotation  - b.Rotation)  < Math::AngleEPS &&
+                std::abs(after.StartParam - b.StartParam) < Math::AngleEPS &&
+                std::abs(after.EndParam   - b.EndParam)   < Math::AngleEPS)
                 return false;
 
             outEntry.Id            = entity->GetID();
@@ -168,10 +184,7 @@ namespace MiniCAD
             auto* ellEnt = static_cast<EllipseEntity*>(entity);
             auto* state  = static_cast<EllipseDragState*>(dragState);
 
-            ellEnt->SetCenter(state->Base.Center);
-            ellEnt->SetRadiusX(state->Base.RadiusX);
-            ellEnt->SetRadiusY(state->Base.RadiusY);
-            ellEnt->SetRotation(state->Base.Rotation);
+            ellEnt->SetEllipse(state->Base);
         }
 
     private:
@@ -189,14 +202,13 @@ namespace MiniCAD
                     grip.WorldPos = el.Center;
                     break;
                 case Grip::Type::Quadrant:
-                    switch (grip.SubIndex)
-                    {
-                    case 0: grip.WorldPos = el.VertexE(); break;
-                    case 1: grip.WorldPos = el.VertexN(); break;
-                    case 2: grip.WorldPos = el.VertexW(); break;
-                    case 3: grip.WorldPos = el.VertexS(); break;
-                    default: break;
-                    }
+                    grip.WorldPos = el.PointAt(Math::PI * 0.5 * grip.SubIndex);
+                    break;
+                case Grip::Type::Start:
+                    grip.WorldPos = el.StartPoint();
+                    break;
+                case Grip::Type::End:
+                    grip.WorldPos = el.EndPoint();
                     break;
                 default:
                     break;

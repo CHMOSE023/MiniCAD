@@ -63,12 +63,33 @@ namespace MiniCAD
         Closed,     // 闭合曲线，首尾 C2 连续
     };
 
+    // ── DXF SPLINE 标志位（组码 70）─────────────────────────────────────────────
+    // 控制点定义的样条按真正的 NURBS 求值;拟合点定义的样条走三次插值路径。
+    enum SplineFlags : int
+    {
+        SplineFlag_Closed   = 1,
+        SplineFlag_Periodic = 2,
+        SplineFlag_Rational = 4,
+        SplineFlag_Planar   = 8,
+        SplineFlag_Linear   = 16,
+    };
+
     struct Spline
     {
-        std::vector<Math::Point3> FitPoints;     // 拟合点（用户点击的点）
+        std::vector<Math::Point3> FitPoints;     // 拟合点（用户点击的点）          组码 11/21/31
         SplineBoundary            Boundary = SplineBoundary::Natural;
-        Math::Point3              StartTangent{};  // 仅 Clamped 模式有效
-        Math::Point3              EndTangent{};    // 仅 Clamped 模式有效
+        Math::Point3              StartTangent{};  // 仅 Clamped 模式有效 / DXF 组码 12
+        Math::Point3              EndTangent{};    // 仅 Clamped 模式有效 / DXF 组码 13
+
+        // ── DXF SPLINE NURBS 定义（控制点路径,用于无损往返与精确绘制）─────────────
+        int                       Degree = 3;            // 阶数        组码 71
+        int                       Flags  = 0;            // 标志位      组码 70（见 SplineFlags）
+        std::vector<Math::Point3> ControlPoints;         // 控制点      组码 10/20/30
+        std::vector<double>       Weights;               // 权重(可空)  组码 41，size==ControlPoints 时生效
+        std::vector<double>       Knots;                 // 节点矢量    组码 40，size==ctrl+degree+1
+        double                    FitTolerance  = 1e-10; // 组码 44
+        double                    KnotTolerance = 1e-7;  // 组码 42
+        double                    CtrlTolerance = 1e-7;  // 组码 43
 
         // 内部计算结果（Build() 后有效）
         std::vector<SplineSegment> Segments;       // 段数 = FitPoints.size()-1（非闭合）
@@ -86,10 +107,41 @@ namespace MiniCAD
         // ── 有效性 ────────────────────────────────────────────────────────────
         bool IsValid() const
         {
-            return FitPoints.size() >= 2 && !Segments.empty();
+            return HasControlData() || (FitPoints.size() >= 2 && !Segments.empty());
         }
 
-        bool IsClosed() const { return Boundary == SplineBoundary::Closed; }
+        bool IsClosed() const
+        {
+            return Boundary == SplineBoundary::Closed || (Flags & SplineFlag_Closed);
+        }
+
+        // ── DXF 控制点（NURBS）路径 ─────────────────────────────────────────────
+        // 控制点数 ≥ degree+1 且节点矢量长度 = 控制点数 + degree + 1 时,按 NURBS 求值。
+        bool HasControlData() const
+        {
+            return Degree >= 1
+                && static_cast<int>(ControlPoints.size()) >= Degree + 1
+                && Knots.size() == ControlPoints.size() + Degree + 1;
+        }
+
+        bool IsRational() const
+        {
+            return (Flags & SplineFlag_Rational) && Weights.size() == ControlPoints.size();
+        }
+
+        // 生成 [0,1] 上的夹持(clamped)均匀节点矢量:首尾各重复 degree+1 次。
+        static std::vector<double> MakeClampedUniformKnots(int numCtrl, int degree)
+        {
+            std::vector<double> U;
+            if (numCtrl < degree + 1) return U;
+            int m = numCtrl + degree + 1;
+            U.resize(m);
+            int interior = numCtrl - degree - 1;   // 内部节点段数
+            for (int i = 0; i <= degree; ++i)            U[i] = 0.0;
+            for (int i = 1; i <= interior; ++i)          U[degree + i] = static_cast<double>(i) / (interior + 1);
+            for (int i = m - degree - 1; i < m; ++i)     U[i] = 1.0;
+            return U;
+        }
 
         // ── 重新计算所有段 ────────────────────────────────────────────────────
         void Build()
@@ -373,6 +425,10 @@ namespace MiniCAD
         // samplesPerSeg：每段插值点数（不含末端）
         std::vector<Math::Point3> Tessellate(int samplesPerSeg = 32) const
         {
+            // 控制点(NURBS)优先:精确反映 DXF SPLINE 的控制点定义。
+            if (HasControlData())
+                return TessellateNURBS(std::max<int>(samplesPerSeg * static_cast<int>(ControlPoints.size()), 32));
+
             std::vector<Math::Point3> pts;
             if (!IsValid()) return pts;
 
@@ -390,10 +446,77 @@ namespace MiniCAD
             return pts;
         }
 
+        // ── NURBS 求值（Cox-de Boor）：参数 u ∈ [Knots[p], Knots[n+1]] ──────────
+        Math::Point3 EvaluateNURBS(double u) const
+        {
+            const int p = Degree;
+            const int n = static_cast<int>(ControlPoints.size()) - 1;
+            const double u0 = Knots[p], u1 = Knots[n + 1];
+            if (u < u0) u = u0;
+            if (u > u1) u = u1;
+
+            const int span = FindSpan(n, p, u, Knots);
+            std::vector<double> N(p + 1);
+            BasisFuns(span, u, p, Knots, N);
+
+            const bool rational = IsRational();
+            Math::Point3 pt{ 0, 0, 0 };
+            double wsum = 0.0;
+            for (int i = 0; i <= p; ++i)
+            {
+                const int idx = span - p + i;
+                const double w = rational ? Weights[idx] : 1.0;
+                const double c = N[i] * w;
+                pt.x += c * ControlPoints[idx].x;
+                pt.y += c * ControlPoints[idx].y;
+                pt.z += c * ControlPoints[idx].z;
+                wsum += c;
+            }
+            if (std::abs(wsum) > Math::LengthEPS)
+            {
+                pt.x /= wsum; pt.y /= wsum; pt.z /= wsum;
+            }
+            return pt;
+        }
+
+        // 沿参数域等距采样 totalSamples+1 个点。
+        std::vector<Math::Point3> TessellateNURBS(int totalSamples) const
+        {
+            std::vector<Math::Point3> pts;
+            if (!HasControlData()) return pts;
+
+            const int p = Degree;
+            const int n = static_cast<int>(ControlPoints.size()) - 1;
+            const double u0 = Knots[p], u1 = Knots[n + 1];
+            const int N = std::max(totalSamples, 2);
+
+            pts.reserve(N + 1);
+            for (int k = 0; k <= N; ++k)
+            {
+                const double u = u0 + (u1 - u0) * (static_cast<double>(k) / N);
+                pts.push_back(EvaluateNURBS(u));
+            }
+            return pts;
+        }
+
         // ── 最近点（逐段二分法，快速近似）────────────────────────────────────
         Math::Point3 ClosestPoint(const Math::Point3& p, int samples = 128) const
         {
             if (!IsValid()) return p;
+
+            // 控制点(NURBS)路径:在采样折线上取最近点。
+            if (HasControlData())
+            {
+                auto pts = TessellateNURBS(std::max(samples, static_cast<int>(ControlPoints.size()) * 16));
+                Math::Point3 best = pts.empty() ? p : pts[0];
+                double bestD2 = pts.empty() ? 0.0 : Dist2(p, best);
+                for (const auto& q : pts)
+                {
+                    double d2 = Dist2(p, q);
+                    if (d2 < bestD2) { bestD2 = d2; best = q; }
+                }
+                return best;
+            }
 
             Math::Point3 best = Segments[0].Evaluate(0.0);
             double bestD2 = Dist2(p, best);
@@ -440,6 +563,45 @@ namespace MiniCAD
         {
             double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
             return dx * dx + dy * dy + dz * dz;
+        }
+
+        // ── NURBS 基函数辅助（The NURBS Book, A2.1 / A2.2）─────────────────────
+        // 定位参数 u 所在的节点区间 [U[i], U[i+1])。n = 控制点数-1。
+        static int FindSpan(int n, int p, double u, const std::vector<double>& U)
+        {
+            if (u >= U[n + 1]) return n;
+            if (u <= U[p])     return p;
+
+            int low = p, high = n + 1, mid = (low + high) / 2;
+            while (u < U[mid] || u >= U[mid + 1])
+            {
+                if (u < U[mid]) high = mid;
+                else            low = mid;
+                mid = (low + high) / 2;
+            }
+            return mid;
+        }
+
+        // 计算 span 处非零的 p+1 个基函数值,写入 N[0..p]。
+        static void BasisFuns(int span, double u, int p, const std::vector<double>& U,
+                              std::vector<double>& N)
+        {
+            std::vector<double> left(p + 1, 0.0), right(p + 1, 0.0);
+            N[0] = 1.0;
+            for (int j = 1; j <= p; ++j)
+            {
+                left[j]  = u - U[span + 1 - j];
+                right[j] = U[span + j] - u;
+                double saved = 0.0;
+                for (int r = 0; r < j; ++r)
+                {
+                    const double denom = right[r + 1] + left[j - r];
+                    const double temp  = (std::abs(denom) > 1e-300) ? N[r] / denom : 0.0;
+                    N[r]  = saved + right[r + 1] * temp;
+                    saved = left[j - r] * temp;
+                }
+                N[j] = saved;
+            }
         }
     };
 }

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -23,7 +23,7 @@
 
 #include <vector>
 #include <cmath>
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -37,14 +37,15 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            printf("[RotateTool] 左键旋转基点\n");
+            LOG_INFO("[RotateTool] 左键旋转基点");
         }
 
-        ~RotateTool() { printf("[RotateTool] 退出\n"); }
+        ~RotateTool() { LOG_DEBUG("[RotateTool] 退出"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsRightClick() || e.IsCancel())
@@ -61,7 +62,7 @@ namespace MiniCAD
                 {
                     m_pivot = GetPoint(e);
                     m_phase = Phase::AskCopy;
-                    printf("[RotateTool] 基点 (%.3f, %.3f),是否保留源对象? [Y/N] <N>\n",
+                    LOG_INFO("[RotateTool] 基点 (%.3f, %.3f),是否保留源对象? [Y/N] <N>",
                            m_pivot.x, m_pivot.y);
                     return true;
                 }
@@ -117,12 +118,12 @@ namespace MiniCAD
 
         void Cancel() override
         {
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
             if (OnFinished) OnFinished();
         }
 
         void OnSceneChanged()  override { Cancel(); }
-        void OnFocusLost()     override { if (m_ctx) m_ctx->overlay.Clear(); }
+        void OnFocusLost()     override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusRestored() override {}
 
         bool         HasAnchor() const override { return m_phase == Phase::Angle; }
@@ -145,7 +146,7 @@ namespace MiniCAD
         {
             m_phase   = Phase::Angle;
             m_hasRef0 = false;
-            printf("[RotateTool] 移动鼠标设定旋转角度,左键确定%s\n",
+            LOG_INFO("[RotateTool] 移动鼠标设定旋转角度,左键确定%s",
                    m_keepSource ? "(保留源)" : "");
         }
 
@@ -220,7 +221,7 @@ namespace MiniCAD
             if (entity->IsKindOf<EllipseEntity>())
             {
                 const auto& el = static_cast<EllipseEntity*>(entity)->GetEllipse();
-                m_ctx->overlay.AddEllipse(el.Center, el.RadiusX, el.RadiusY, el.Rotation, color);
+                m_ctx->overlay.AddEllipse(el, color);
                 return;
             }
             if (entity->IsKindOf<PolylineEntity>())
@@ -249,7 +250,7 @@ namespace MiniCAD
         {
             if (std::fabs(angle) < 1e-9)
             {
-                printf("[RotateTool] 旋转角为零,忽略\n");
+                LOG_WARN("[RotateTool] 旋转角为零,忽略");
                 Cancel();
                 return;
             }
@@ -258,14 +259,14 @@ namespace MiniCAD
             {
                 auto cmd = std::make_unique<RotateCopyCommand>(m_sourceIds, m_pivot, angle);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                printf("[RotateTool] 旋转 %zu 个对象,源保留,angle=%.3f deg\n",
+                LOG_DEBUG("[RotateTool] 旋转 %zu 个对象,源保留,angle=%.3f deg",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
             else
             {
                 auto cmd = std::make_unique<RotateMoveCommand>(m_sourceIds, m_pivot, angle, m_ctx->scene);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                printf("[RotateTool] 旋转 %zu 个对象,源原地修改,angle=%.3f deg\n",
+                LOG_DEBUG("[RotateTool] 旋转 %zu 个对象,源原地修改,angle=%.3f deg",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
 
@@ -278,6 +279,8 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_sourceIds;
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         Phase        m_phase = Phase::Base;
         Math::Point3 m_pivot{};

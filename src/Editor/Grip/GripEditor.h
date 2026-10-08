@@ -47,6 +47,21 @@ namespace MiniCAD
         const std::vector<Grip>& GetGrips    () const { return m_grips; }
         const std::vector<int>&  HoveredGrips() const { return m_hoveredIdxs; }
 
+        // 拖动跟随中正被实时修改的实体 ID。
+        // Editor 据此把这些实体从场景顶点流排除（改由选中流每帧绘制），
+        // 拖动期间的逐帧 MarkDirty 不再触发全场景顶点重建。
+        std::vector<Object::ObjectID> GetDraggingIDs() const
+        {
+            std::vector<Object::ObjectID> ids;
+            if (m_following)
+            {
+                ids.reserve(m_dragEntries.size());
+                for (const auto& e : m_dragEntries)
+                    ids.push_back(e.Id);
+            }
+            return ids;
+        }
+
         // 仅在 IsActivated() 为 true 时有效
         const Grip* GetActiveGrip() const
         {

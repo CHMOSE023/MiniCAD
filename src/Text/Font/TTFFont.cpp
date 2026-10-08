@@ -1,15 +1,17 @@
 #include "TTFFont.h"
+#include "Core/Log.h"
 #include <fstream>
 #include <cmath>
 #include <cassert>
+#include <algorithm>
 
 // stb_truetype 仅在桌面端使用；Web 端走 WebFontAtlas，不需要本文件解析 TTF。
-// 用 STBTT_DEF static 编译一个本文件私有副本，避免与 imgui_draw.cpp 的 extern 符号冲突。
+// 用 STBTT_DEF static 编译一个本文件私有副本，避免与宿主（例如 MiniGUI）里的 stb_truetype 符号冲突。
 #ifndef MINICAD_WEB
 #define STBTT_DEF    static
 #define STBTT_assert(x) assert(x)
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "imgui/imstb_truetype.h"
+#include "stb/stb_truetype.h"
 #endif
 
 namespace MiniCAD
@@ -58,17 +60,14 @@ namespace MiniCAD
 
         m_stbFont = info;
 
-        printf("\n========== SHX DUMP ==========\n");
-
-        for (size_t i = 0; i < 1024 && i < m_fileData.size(); ++i)
-        {
-            if (i % 16 == 0)
-                printf("\n%04X: ", (unsigned)i);
-
-            printf("%02X ", m_fileData[i]);
+        if (::MiniCAD::g_logLevel <= ::MiniCAD::LogLevel::Trace) {
+            printf("\n========== TTF DUMP ==========\n");
+            for (size_t i = 0; i < 1024 && i < m_fileData.size(); ++i) {
+                if (i % 16 == 0) printf("\n%04X: ", (unsigned)i);
+                printf("%02X ", m_fileData[i]);
+            }
+            printf("\n");
         }
-
-        printf("\n");
 
         // 计算归一化比例：em 高度 → 1.0
         int ascent = 0, descent = 0, lineGap = 0;
@@ -195,68 +194,93 @@ namespace MiniCAD
     void TTFFont::BuildFill(Glyph& g)
     {
         g.Triangles.clear();
-        ScanlineFill(g.Lines, g.Triangles);
+        TrapezoidFill(g.Lines, g.Triangles);
         g.Filled = true;
     }
 
-    void TTFFont::ScanlineFill(const std::vector<Line>& lines, std::vector<Triangle>& out)
+    void TTFFont::TrapezoidFill(const std::vector<Line>& lines, std::vector<Triangle>& out)
     {
-        struct Edge
-        {
-            double x0, y0, x1, y1;
-        };
+        if (lines.empty()) return;
 
-        std::vector<Edge> edges;
+        constexpr double kEps = 1e-9;
+
+        struct Edge { double x0, y0, x1, y1; };
+
+        std::vector<Edge>   edges;
+        std::vector<double> ys; // 所有顶点 Y，作为 slab 边界
         edges.reserve(lines.size());
+        ys.reserve(lines.size() * 2);
 
         for (const auto& l : lines)
         {
-            edges.push_back({ l.Start.x, l.Start.y,    l.End.x, l.End.y });
+            edges.push_back({ l.Start.x, l.Start.y, l.End.x, l.End.y });
+            ys.push_back(l.Start.y);
+            ys.push_back(l.End.y);
         }
 
-        if (edges.empty()) return;
+        std::sort(ys.begin(), ys.end());
+        ys.erase(std::unique(ys.begin(), ys.end(),
+                             [&](double a, double b) { return std::abs(a - b) < kEps; }),
+                 ys.end());
 
-        double minY = 1e30, maxY = -1e30;
+        if (ys.size() < 2) return;
 
-        for (auto& e : edges)
+        // 一条跨越当前 slab 的边在底/顶/中三个高度上的 X，以及绕行方向（用于 nonzero 规则）。
+        struct Span { double xb, xt, xm; int dir; };
+        std::vector<Span> spans;
+
+        for (size_t s = 0; s + 1 < ys.size(); ++s)
         {
-            minY = std::min({ minY, e.y0, e.y1 });
-            maxY = std::max({ maxY, e.y0, e.y1 });
-        }
+            const double yb = ys[s];
+            const double yt = ys[s + 1];
+            if (yt - yb < kEps) continue;
+            const double ym = 0.5 * (yb + yt);
 
-        const double step = 0.01; // 可调：越小越精细
-
-        for (double y = minY; y < maxY; y += step)
-        {
-            std::vector<double> xs;
-            xs.reserve(edges.size());
-
-            for (auto& e : edges)
+            spans.clear();
+            for (const auto& e : edges)
             {
-                bool crosses =
-                    (e.y0 <= y && e.y1 > y) ||
-                    (e.y1 <= y && e.y0 > y);
+                const double lo = std::min(e.y0, e.y1);
+                const double hi = std::max(e.y0, e.y1);
+                if (hi - lo < kEps) continue;                 // 水平边不贡献交点
+                if (lo > yb + kEps || hi < yt - kEps) continue; // 未完整跨越本 slab
 
-                if (!crosses) continue;
-
-                double t = (y - e.y0) / (e.y1 - e.y0);
-                double x = e.x0 + t * (e.x1 - e.x0);
-                xs.push_back(x);
+                auto xAt = [&](double y) {
+                    double t = (y - e.y0) / (e.y1 - e.y0);
+                    return e.x0 + t * (e.x1 - e.x0);
+                };
+                // 绕行方向：向上 +1，向下 -1（保留原始 start→end 顺序所携带的缠绕信息）。
+                const int dir = (e.y1 > e.y0) ? 1 : -1;
+                spans.push_back({ xAt(yb), xAt(yt), xAt(ym), dir });
             }
 
-            if (xs.size() < 2) continue;
+            if (spans.size() < 2) continue;
 
-            std::sort(xs.begin(), xs.end());
+            // 按 slab 中点 X 排序，从左到右累加缠绕数。
+            // 区间缠绕数 != 0 即为内部（nonzero 规则）——重叠同向笔画也会被正确填充。
+            std::sort(spans.begin(), spans.end(),
+                      [](const Span& a, const Span& b) { return a.xm < b.xm; });
 
-            for (size_t i = 0; i + 1 < xs.size(); i += 2)
+            int winding = 0;
+            for (size_t i = 0; i + 1 < spans.size(); ++i)
             {
-                Triangle tri;
+                winding += spans[i].dir;
+                if (winding == 0) continue; // 区间在外部
 
-                tri.a = Math::Point3(xs[i], y, 0);
-                tri.b = Math::Point3(xs[i + 1], y, 0);
-                tri.c = Math::Point3(xs[i + 1], y + step, 0);
+                const Span& L = spans[i];
+                const Span& R = spans[i + 1];
 
-                out.push_back(tri);
+                // 梯形：底边 [L.xb,R.xb]@yb，顶边 [L.xt,R.xt]@yt，斜边贴合真实轮廓。
+                Triangle t0;
+                t0.a = Math::Point3(L.xb, yb, 0);
+                t0.b = Math::Point3(R.xb, yb, 0);
+                t0.c = Math::Point3(R.xt, yt, 0);
+                out.push_back(t0);
+
+                Triangle t1;
+                t1.a = Math::Point3(L.xb, yb, 0);
+                t1.b = Math::Point3(R.xt, yt, 0);
+                t1.c = Math::Point3(L.xt, yt, 0);
+                out.push_back(t1);
             }
         }
     }

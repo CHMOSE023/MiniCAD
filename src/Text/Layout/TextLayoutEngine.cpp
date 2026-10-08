@@ -3,6 +3,32 @@
 
 namespace MiniCAD
 {
+    namespace
+    {
+        // 自 s[i] 解码一个完整 UTF-8 码点并前进 i;非法序列按单字节跳过返回 U+FFFD。
+        // 与 DecodeLine 内部解码逻辑一致,供折行/量宽按「字符」而非「字节」推进。
+        uint32_t DecodeOneUtf8(const std::string& s, size_t& i)
+        {
+            const size_t n = s.size();
+            const unsigned char c = (unsigned char)s[i];
+            uint32_t cp; int len;
+            if      (c < 0x80)        { cp = c;        len = 1; }
+            else if ((c >> 5) == 0x6) { cp = c & 0x1F; len = 2; }
+            else if ((c >> 4) == 0xE) { cp = c & 0x0F; len = 3; }
+            else if ((c >> 3) == 0x1E){ cp = c & 0x07; len = 4; }
+            else                      { i += 1;        return 0xFFFD; }
+
+            if (i + len > n) { i = n; return 0xFFFD; }
+            for (int k = 1; k < len; ++k)
+            {
+                unsigned char cc = (unsigned char)s[i + k];
+                if ((cc >> 6) != 0x2) { i += 1; return 0xFFFD; }
+                cp = (cp << 6) | (cc & 0x3F);
+            }
+            i += len;
+            return cp;
+        }
+    }
     TextLayoutEngine::LayoutResult
         TextLayoutEngine::Layout(const std::string& text,
             IFont* font,
@@ -157,27 +183,34 @@ namespace MiniCAD
         double norm  = (fontH > 0.0) ? 1.0 / fontH : 1.0;
         double scale = height * norm;
 
-        for (char c : text)
+        // 按 UTF-8 码点(而非字节)推进:一个汉字只量一次宽度,
+        // 且折行点不会落在多字节序列中间。
+        const size_t n = text.size();
+        size_t i = 0;
+        while (i < n)
         {
-            if (c == '\n')
+            if (text[i] == '\n')
             {
                 outLines.push_back(current);
                 current.clear();
                 currentWidth = 0.0;
+                ++i;
                 continue;
             }
 
-            uint32_t codepoint = static_cast<uint8_t>(c);
+            const size_t start = i;
+            uint32_t codepoint = DecodeOneUtf8(text, i);
             double advance = font->GetAdvance(codepoint) * scale * widthFactor;
 
-            if (boxWidth > 0.0 && currentWidth + advance > boxWidth)
+            // 行内已有内容且放不下时折行;单字符超宽则独占一行,避免产生空行。
+            if (boxWidth > 0.0 && !current.empty() && currentWidth + advance > boxWidth)
             {
                 outLines.push_back(current);
                 current.clear();
                 currentWidth = 0.0;
             }
 
-            current.push_back(c);
+            current.append(text, start, i - start);
             currentWidth += advance;
         }
 
@@ -191,9 +224,10 @@ namespace MiniCAD
     {
         double width = 0.0;
 
-        for (char c : line)
+        size_t i = 0;
+        while (i < line.size())
         {
-            uint32_t codepoint = static_cast<uint8_t>(c);
+            uint32_t codepoint = DecodeOneUtf8(line, i);
             width += font->GetAdvance(codepoint) * widthFactor;
         }
 

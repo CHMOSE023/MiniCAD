@@ -1,172 +1,160 @@
-cmake_minimum_required(VERSION 3.16)
-project(MiniCAD)
+cmake_minimum_required(VERSION 3.20)
+project(MiniCAD VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 静态链接 MSVC 运行库（/MT、/MTd），拷到其他电脑上运行时不再依赖 MSVCP140(D).dll / VCRUNTIME140(D).dll
 if(MSVC)
-    add_definitions("-DUNICODE" "-D_UNICODE")
-    add_compile_options(/utf-8)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-if(WIN32)
-    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+# 三个库的头文件各有自己的 include 根：MiniCADLib → src，MiniGUI → src/UI，MiniDWG → src/Serialization。
+# 各根之下的 "目录/文件.h" 相对路径不能重复，否则会按搜索顺序互相遮挡（编译器不报错）。
+
+# ── MiniDWG（DWG/DXF 读写库）────────────────────────────────────────
+include(cmake/MiniDWG.cmake)
+
+# ── MiniGUI（保留模式界面库，桌面端使用）─────────────────────────────
+if(NOT EMSCRIPTEN)
+    include(cmake/MiniGUI.cmake)
 endif()
 
-# ── Cross-platform core sources ───────────────────────────────────────────────
-file(GLOB_RECURSE MINICAD_CORE_SRC CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/src/Core/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Scene/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Document/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Viewport/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Text/*.cpp"
+# ── Scene ───────────────────────────────────────────────────────────
+set(SCENE_SOURCES
+    "src/Scene/Scene.cpp"
+    "src/Scene/Layer.cpp"
+    "src/Scene/LayerManager.cpp"
+    "src/Scene/LineTypeTable.cpp"
+    "src/Scene/BlockTable.cpp"
+    "src/Scene/DimStyleTable.cpp"
+    "src/Scene/HatchPatternLibrary.cpp"
+    "src/Scene/TextStyleTable.cpp"
+    "src/Scene/MLineStyleTable.cpp"
 )
 
-# Editor: shared subsystems only — Input/Win is platform-specific
-file(GLOB MINICAD_EDITOR_SRC CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/src/Editor/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Editor/Constraint/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Editor/Grip/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Editor/Picking/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Editor/Resolver/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Editor/Snap/*.cpp"
+# ── Document ────────────────────────────────────────────────────────
+set(DOCUMENT_SOURCES   
+   "src/Document/Document.cpp"
+   "src/Document/DocumentManager.cpp"
+   "src/Document/CommandStack/CommandStack.cpp"
+   "src/Document/FeaturePoints.cpp"
+   "src/Document/DimAssoc.cpp"
+   "src/Document/Command/EntityTranslate.cpp"
+   "src/Document/Command/EntityRotate.cpp"
+   "src/Document/Command/EntityScale.cpp"
+   "src/Document/Command/EntityStretch.cpp"
+   "src/Document/Command/EntityFillet.cpp"
+   "src/Document/Command/EntityChamfer.cpp"
+   "src/Document/Command/EntityExplode.cpp"
+   "src/Document/Command/EntityMirror.cpp"
+   "src/Document/Command/MoveCommand.cpp"
+   "src/Document/Command/CopyCommand.cpp"
+   "src/Document/Command/MirrorMoveCommand.cpp"
+   "src/Document/Command/MirrorCopyCommand.cpp"
+   "src/Document/Command/RotateMoveCommand.cpp"
+   "src/Document/Command/RotateCopyCommand.cpp"
+   "src/Document/Command/ArrayCommand.cpp"
 )
-list(APPEND MINICAD_CORE_SRC ${MINICAD_EDITOR_SRC})
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Serialization ────────────────────────────────────────────────────────── 
+set(SERIALIZATION_SOURCES
+    "src/Serialization/TreeSerializer.cpp"
+    "src/Serialization/JsonSerializer.cpp"
+    "src/Serialization/BinarySerializer.cpp"
+    "src/Serialization/EntityIO.cpp"
+)
+
+# ── Import（DWG/DXF 经 MiniDWG 与 Scene 互转）──────────────────────
+set(IMPORT_SOURCES
+    "src/Import/CadExchange.cpp"
+)
+
+# ── Editor ────────────────────────────────────────────────────────── 
+set(EDITOR_SOURCES
+    "src/Editor/Editor.cpp"
+    "src/Editor/Overlay/EntityOverlay.cpp"
+    "src/Editor/Resolver/InputResolver.cpp"
+    "src/Editor/Snap/SnapEngine.cpp"
+    "src/Editor/Picking/Picking.cpp"
+    "src/Editor/Properties/PropertyTable.cpp"
+    "src/Editor/Grip/GripEditor.cpp"
+    "src/Editor/Constraint/ConstraintEngine.cpp"
+)
+
+# ── Viewport ────────────────────────────────────────────────────────
+set(VIEWPORT_SOURCES
+    "src/Viewport/Viewport.cpp"
+    "src/Viewport/Camera.cpp"
+)
+
+# ── Text ────────────────────────────────────────────────────────────
+set(TEXT_SOURCES
+    "src/Text/Font/FontEngine.cpp"
+    "src/Text/Font/SHXFont.cpp"
+    "src/Text/Font/SHXCompositeFont.cpp"
+    "src/Text/Font/TTFFont.cpp"
+    "src/Core/Image/ImageLibrary.cpp"
+    "src/Text/Font/EncodingGBK.cpp"
+    "src/Text/Layout/TextLayoutEngine.cpp"
+    "src/Text/Parser/SHXParser.cpp"
+    "src/Text/Parser/SHXVM.cpp"
+)
+
+# ── GeomKernel ──────────────────────────────────────────────────────
+set(GEOM_SOURCES
+    "src/Core/GeomKernel/CurveIntersect.cpp"
+)
+
+# ── 库源文件汇总 ─────────────────────────────────────────────────────
+set(MINICADLIB_SOURCES
+    "src/MiniCADEngine.cpp"
+    ${SCENE_SOURCES}
+    ${DOCUMENT_SOURCES}
+    ${EDITOR_SOURCES}
+    ${SERIALIZATION_SOURCES}
+    ${IMPORT_SOURCES}
+    ${VIEWPORT_SOURCES}
+    ${TEXT_SOURCES}
+    ${GEOM_SOURCES}
+)
+
+add_library(MiniCADLib STATIC ${MINICADLIB_SOURCES})
+
+target_include_directories(MiniCADLib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/3rd
+)
+
+# DWG/DXF 只在库内部的导入导出代码中使用，公开头文件不暴露 MiniDWG 类型
+target_link_libraries(MiniCADLib PRIVATE MiniDWG)
+
+if(MSVC)
+    target_compile_options(MiniCADLib PRIVATE /utf-8)
+    target_compile_definitions(MiniCADLib PRIVATE
+        UNICODE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
+
 if(EMSCRIPTEN)
-# ── Web (WASM / WebGL) build ──────────────────────────────────────────────────
+    target_compile_definitions(MiniCADLib PUBLIC MINICAD_WEB)
+endif()
 
-    option(MINICAD_WEB_DEBUG "Enable debug build for Web" OFF)
+# ── 平台应用 ────────────────────────────────────────────────────────
+if(WIN32 AND NOT EMSCRIPTEN)
+    add_subdirectory("apps/Win32")
+endif()
 
-    if(MINICAD_WEB_DEBUG)
-        set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
-        add_compile_options(-fexceptions -g3 -O0)
-        add_link_options(-g3 -O0 -sASSERTIONS=2 -sSAFE_HEAP=1 -sSTACK_OVERFLOW_CHECK=2)
-    else()
-        set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
-        add_compile_options(-O3 -DNDEBUG)
-        add_link_options(-O3 -sASSERTIONS=0 -sSAFE_HEAP=0 -sSTACK_OVERFLOW_CHECK=0)
-    endif()
+if(EMSCRIPTEN)
+    add_subdirectory(wasm)
+endif()
 
-    # Exported C symbols — one entry per line, easy to add/remove
-    set(MINICAD_EXPORTS
-        _main
-        _MiniCAD_StartLine      _MiniCAD_StartPoint     _MiniCAD_StartCircle
-        _MiniCAD_StartRectangle _MiniCAD_StartArc       _MiniCAD_StartEllipse
-        _MiniCAD_StartPolyline  _MiniCAD_StartSpline
-        _MiniCAD_StartMove      _MiniCAD_StartCopy      _MiniCAD_StartMirror    _MiniCAD_StartRotate
-        _MiniCAD_Delete
-        _MiniCAD_ToggleSnap     _MiniCAD_ToggleOrtho
-        _MiniCAD_Undo           _MiniCAD_Redo           _MiniCAD_Cancel
-        _MiniCAD_StartText      _MiniCAD_SubmitText     _MiniCAD_CancelText
-        _MiniCAD_StartMText     _MiniCAD_SubmitMText    _MiniCAD_CancelMText
-    )
-    list(JOIN MINICAD_EXPORTS "','" MINICAD_EXPORTS_JOINED)
-
-    add_executable(MiniCADWeb
-        ${MINICAD_CORE_SRC}
-        src/App/Web/WebMain.cpp
-        src/Render/WebGL/WebGLRenderer.cpp
-        src/Render/WebGL/WebGLRenderTarget.cpp
-    )
-
-    target_include_directories(MiniCADWeb PRIVATE
-        "${CMAKE_SOURCE_DIR}/src"
-        "${CMAKE_SOURCE_DIR}/3rd"
-    )
-
-    target_compile_definitions(MiniCADWeb PRIVATE MINICAD_WEB)
-
-    target_link_options(MiniCADWeb PRIVATE
-        "-sUSE_WEBGL2=1"
-        "-sMIN_WEBGL_VERSION=2"
-        "-sMAX_WEBGL_VERSION=2"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sSTACK_SIZE=5242880"
-        "-sINITIAL_MEMORY=33554432"
-        "-sWASM=1"
-        "-sEXPORTED_FUNCTIONS=['${MINICAD_EXPORTS_JOINED}']"
-        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
-        "--shell-file=${CMAKE_SOURCE_DIR}/web/index.html"
-        "--preload-file=${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
-    )
-
-    set_target_properties(MiniCADWeb PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/MiniCADWeb"
-        OUTPUT_NAME "index"
-        SUFFIX ".html"
-    )
-
-    add_custom_command(TARGET MiniCADWeb POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/assets/icons"
-                "${CMAKE_BINARY_DIR}/MiniCADWeb/icons"
-        COMMENT "Copy icons for MiniCADWeb"
-    )
-
-else()
-# ── Win (Win / D3D11) build ─────────────────────────────────────────────
-
-    add_library(Imgui
-        3rd/imgui/imgui.cpp
-        3rd/imgui/imgui_draw.cpp
-        3rd/imgui/imgui_widgets.cpp
-        3rd/imgui/imgui_tables.cpp
-        3rd/imgui/imgui_demo.cpp
-        3rd/imgui/backends/imgui_impl_win32.cpp
-        3rd/imgui/backends/imgui_impl_dx11.cpp
-    )
-    target_include_directories(Imgui PUBLIC 3rd/imgui 3rd/imgui/backends)
-
-    file(GLOB_RECURSE MINICAD_WIN32_SRC CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/src/UI/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Render/D3D11/*.cpp"
-        "${CMAKE_SOURCE_DIR}/src/Editor/Input/Win/*.cpp"
-    )
-
-    option(USE_WIN32 "Use Win GUI subsystem" OFF)
-
-    if(USE_WIN32)
-        add_executable(MiniCAD WIN32
-            ${MINICAD_CORE_SRC}
-            ${MINICAD_WIN32_SRC}
-            src/App/Win/Main.cpp
-            src/App/Win/MainWindow.cpp
-            assets/MiniCAD.rc
-        )
-        target_compile_definitions(MiniCAD PRIVATE USE_WIN32)
-    else()
-        add_executable(MiniCAD
-            ${MINICAD_CORE_SRC}
-            ${MINICAD_WIN32_SRC}
-            src/App/Win/Main.cpp
-            src/App/Win/MainWindow.cpp
-            assets/MiniCAD.rc
-        )
-    endif()
-
-    target_include_directories(MiniCAD PRIVATE
-        "${CMAKE_SOURCE_DIR}/src"
-        "${CMAKE_SOURCE_DIR}/3rd"
-    )
-
-    target_link_libraries(MiniCAD PRIVATE Imgui d3d11 dxgi D3DCompiler)
-
-    set_target_properties(MiniCAD PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY         "${CMAKE_BINARY_DIR}/MiniCAD"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG   "${CMAKE_BINARY_DIR}/MiniCAD"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/MiniCAD"
-        VS_DEBUGGER_WORKING_DIRECTORY    "${CMAKE_BINARY_DIR}/MiniCAD"
-    )
-
-    if(EXISTS "${CMAKE_SOURCE_DIR}/assets")
-        add_custom_command(TARGET MiniCAD POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/assets"
-                    "$<TARGET_FILE_DIR:MiniCAD>"
-            COMMENT "Copy assets contents for MiniCAD"
-        )
-    endif()
-
+# ── 测试（桌面端）：tests/Core、tests/UI、tests/Serialization ─────────
+option(MINICAD_BUILD_TESTS "Build MiniCAD tests" ON)
+if(MINICAD_BUILD_TESTS AND NOT EMSCRIPTEN)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

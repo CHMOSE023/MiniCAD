@@ -37,7 +37,7 @@ namespace MiniCAD
             return Direction.Normalized();
         }
          
-		Point3 PointAt(double t) const   // P(t) = Origin + t * Direction 参数 t 对应的点坐标
+		Math::Point3 PointAt(double t) const   // P(t) = Origin + t * Direction 参数 t 对应的点坐标
         {
             return Origin + Direction * t;
         }

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <vector>
 #include "IEntityGripHandler.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Math/Point3.hpp"
@@ -11,7 +12,11 @@
 #include "Core/GeomKernel/Arc.hpp"
 #include "Core/GeomKernel/Ellipse.hpp"
 #include "Core/GeomKernel/Polyline.hpp"
-#include "Core/GeomKernel/Spline.hpp" 
+#include "Core/GeomKernel/Spline.hpp"
+#include "Core/GeomKernel/XLine.hpp"
+#include "Core/Entity/DimensionEntity.hpp"
+#include "Core/Entity/MLeaderEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
 #include "Viewport/Viewport.h"
 
 namespace MiniCAD
@@ -60,6 +65,36 @@ namespace MiniCAD
         double       BoxWidth = 0.0;
     };
 
+    // Table 拖拽快照：插入点 + 列宽 + 行高
+    struct TableSnapshot
+    {
+        Math::Point3        Position;
+        std::vector<double> ColWidths;
+        std::vector<double> RowHeights;
+    };
+
+    // Dimension 拖拽快照：覆盖各标注子类型用到的全部定义点与参数。
+    struct DimSnapshot
+    {
+        DimType      Type              = DimType::Aligned;
+        Math::Point3 P1;
+        Math::Point3 P2;
+        Math::Point3 DimLinePoint;
+        Math::Point3 CenterPoint;
+        double       LinearAngle       = 0.0;
+        OrdinateAxis Axis              = OrdinateAxis::X;
+        Math::Point3 TextPos;
+        bool         UseDefaultTextPos = true;
+    };
+
+    // MLeader 拖拽快照：全部引线顶点 + 基线端点 + dogleg 方向。
+    struct MLeaderSnapshot
+    {
+        std::vector<MLeaderEntity::LeaderLine> Lines;
+        Math::Point3                           Landing;
+        Math::Vec3                             DoglegDir{ 1, 0, 0 };
+    };
+
     struct DragEntityEntry
     {
         Object::ObjectID Id;
@@ -76,6 +111,14 @@ namespace MiniCAD
             Spline,
             Text,
             MText,
+            XLine,
+            Ray,
+            Dimension,
+            Leader,
+            MLeader,
+            Hatch,
+            Insert,
+            Table,
         } Kind;
 
 
@@ -105,6 +148,29 @@ namespace MiniCAD
 
         MTextSnapshot  BeforeMText;
         MTextSnapshot  AfterMText;
+
+        // XLine / Ray 共用 XLine 几何(基点 + 方向)
+        XLine    BeforeXLine;
+        XLine    AfterXLine;
+
+        DimSnapshot    BeforeDim;
+        DimSnapshot    AfterDim;
+
+        // Leader 路径顶点快照
+        std::vector<Math::Point3> BeforeLeader;
+        std::vector<Math::Point3> AfterLeader;
+
+        // MLeader 快照
+        MLeaderSnapshot BeforeMLeader;
+        MLeaderSnapshot AfterMLeader;
+
+        // Table 快照
+        TableSnapshot BeforeTable;
+        TableSnapshot AfterTable;
+
+        // Hatch 边界环快照
+        std::vector<HatchLoop> BeforeHatch;
+        std::vector<HatchLoop> AfterHatch;
     };
 
     // ─────────────────────────────────────────────

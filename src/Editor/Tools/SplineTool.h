@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -6,7 +6,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/Spline.hpp"
 #include "Core/Entity/SplineEntity.hpp"
-#include <cstdio>
+#include "Core/Log.h"
 #include <vector>
 #include <cmath>
 
@@ -18,17 +18,18 @@ namespace MiniCAD
 
         SplineTool()
         {
-            printf("[SplineTool] 左键追加拟合点 | 右键提交 | C=闭合 | Z=撤回上一点 | ESC取消\n");
+            LOG_DEBUG("[SplineTool] 左键追加拟合点 | 右键提交 | C=闭合 | Z=撤回上一点 | ESC取消");
         }
 
         ~SplineTool()
         {
-            printf("[SplineTool] 退出\n");
+            LOG_DEBUG("[SplineTool] 退出");
         }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsKeyPressed(KeyCode::C))
@@ -62,7 +63,7 @@ namespace MiniCAD
                 }
 
                 m_fitPoints.push_back(pt);
-                printf("[SplineTool] 拟合点 #%zu (%.3f, %.3f)\n",
+                LOG_INFO("[SplineTool] 拟合点 #%zu (%.3f, %.3f)",
                        m_fitPoints.size(), pt.x, pt.y);
                 RefreshOverlay();
                 return true;
@@ -107,11 +108,11 @@ namespace MiniCAD
         {
             if (m_fitPoints.size() < 3)
             {
-                printf("[SplineTool] 闭合需要至少 3 个拟合点\n");
+                LOG_INFO("[SplineTool] 闭合需要至少 3 个拟合点");
                 return;
             }
             m_closed = !m_closed;
-            printf("[SplineTool] 样条 %s\n", m_closed ? "已闭合" : "已开放");
+            LOG_DEBUG("[SplineTool] 样条 %s", m_closed ? "已闭合" : "已开放");
             RefreshOverlay();
         }
 
@@ -120,7 +121,7 @@ namespace MiniCAD
             if (m_fitPoints.empty()) return;
             m_fitPoints.pop_back();
             if (m_fitPoints.size() < 3) m_closed = false;
-            printf("[SplineTool] 撤回拟合点，剩余 %zu 个\n", m_fitPoints.size());
+            LOG_INFO("[SplineTool] 撤回拟合点，剩余 %zu 个", m_fitPoints.size());
             RefreshOverlay();
         }
 
@@ -175,7 +176,7 @@ namespace MiniCAD
         {
             if (m_fitPoints.size() < 2)
             {
-                printf("[SplineTool] 拟合点不足（至少需要 2 个），放弃提交\n");
+                LOG_WARN("[SplineTool] 拟合点不足（至少需要 2 个），放弃提交");
                 return;
             }
 
@@ -185,15 +186,16 @@ namespace MiniCAD
             if (m_closed && m_fitPoints.size() < 3)
             {
                 boundary = SplineBoundary::Natural;
-                printf("[SplineTool] 点数不足，自动降级为开放样条\n");
+                LOG_WARN("[SplineTool] 点数不足，自动降级为开放样条");
             }
 
             auto id     = m_ctx->scene.NextObjectID();
             auto entity = std::make_unique<SplineEntity>(id, m_fitPoints, boundary);
+            m_ctx->ApplyCurrentAttr(*entity);
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            printf("[SplineTool] 提交 Id=%d  拟合点=%zu  %s  总长≈%.3f\n",
+            LOG_DEBUG("[SplineTool] 提交 Id=%d  拟合点=%zu  %s  总长≈%.3f",
                    static_cast<int>(id),
                    m_fitPoints.size(),
                    m_closed ? "闭合" : "开放",
@@ -213,7 +215,7 @@ namespace MiniCAD
             m_fitPoints.clear();
             m_closed = false;
             m_cursor = {};
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
         }
 
         Math::Point3 GetPoint(const InputEvent& e) const
@@ -235,6 +237,8 @@ namespace MiniCAD
         static constexpr double kDoubleClickPx = 6.0;
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         std::vector<Math::Point3> m_fitPoints;
         bool                      m_closed = false;

@@ -117,8 +117,13 @@ namespace MiniCAD
         void PreloadDefaultFonts()
         {
             EnsureReady();
+#ifdef __EMSCRIPTEN__
+            auto mainFont = std::make_shared<SHXFont>("tssdeng", "/fonts/tssdeng.shx", /*fontId*/ 100); // 英文
+            auto bigFont  = std::make_shared<SHXFont>("tssdchn", "/fonts/TSSDCHN.SHX", /*fontId*/ 101); // 中文
+#else
             auto mainFont = std::make_shared<SHXFont>("tssdeng", "fonts/tssdeng.shx", /*fontId*/ 100); // 英文
             auto bigFont  = std::make_shared<SHXFont>("tssdchn", "fonts/TSSDCHN.SHX", /*fontId*/ 101); // 中文
+#endif
             m_shxCompositeFont = std::make_unique<SHXCompositeFont>("tssdeng+tssdchn", mainFont, bigFont, /*fontId*/ 200); // 英文 + 中文
         }
 
@@ -133,11 +138,15 @@ namespace MiniCAD
         {
             m_defaultTextHeight = 1.0;
             m_nextStyleId       = kStandardStyleId + 1;
-             
+
             FontStyle standard;
             standard.id       = kStandardStyleId;
             standard.name     = "Standard";
+#ifdef __EMSCRIPTEN__
+            standard.fontFile = "/fonts/simplex.shx";
+#else
             standard.fontFile = "simplex.shx";
+#endif
             standard.isShx    = true;
 
             m_styles[standard.id]         = standard;

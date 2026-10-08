@@ -1,0 +1,235 @@
+// MiniCAD 界面描述（MiniCADWin，界面由 MiniGUI 绘制）
+// 程序运行时修改并保存本文件，界面立即更新（也可按 F5）；写错时保留当前界面，状态栏显示错误位置。
+// - commands：覆盖命令的名称 label、快捷键 shortcut、图标 icon（相对 icons 目录）、提示 tooltip
+// - menus / toolbars 的项是命令 ID，"-" 或 "|" 为分隔线
+// - layout：titlebar / row / column / menubar / toolbar / panel / splitter / separator / spacer / label / dock
+//   titlebar：无边框窗口的标题栏，children 放在图标右边（菜单栏），右侧按钮执行 window.minimize / window.maximize / window.close
+//   宿主提供的面板：documents（文档标签 + 视口）、commandline（命令行）、properties（特性）、layers（图层）、
+//   layerbar（图层 / 线型 / 线宽下拉框）、statusbar（状态栏）
+// - dock：停靠区，root 为布局树（split: row / column，tabs: 面板列表，size: 尺寸）。
+//   用户拖动后的布局保存在 %LOCALAPPDATA%\MiniCAD\layout.json，启动时优先使用；"视图 > 面板 > 重置面板布局"恢复这里的默认布局
+{
+  "commands": {
+    "draw.line": { "tooltip": "指定两点绘制直线段，Esc 结束" },
+    "draw.circle": { "tooltip": "指定圆心和半径" }
+  },
+
+  "menus": [
+    {
+      "title": "文件(&F)",
+      "items": [ "file.new", "file.open", "-", "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "-", "app.exit" ]
+    },
+    {
+      "title": "编辑(&E)",
+      "items": [ "edit.undo", "edit.redo", "-", "edit.cut", "edit.copy", "edit.copyBase", "edit.paste", "edit.delete", "-", "edit.selectAll" ]
+    },
+    {
+      "title": "视图(&V)",
+      "items": [
+        "view.zoomExtents",
+        "-",
+        "view.grid",
+        "view.axis",
+        "view.gizmo",
+        "-",
+        {
+          "title": "绘图辅助",
+          "items": [ "aux.snap", "aux.ortho", "aux.polar", "aux.hover" ]
+        },
+        {
+          "title": "面板",
+          "items": [ "view.panel.properties", "view.panel.layers", "view.panel.commandline", "-", "view.resetLayout" ]
+        },
+        "-",
+        "ui.theme",
+        "ui.reload"
+      ]
+    },
+    {
+      "title": "格式(&O)",
+      "items": [ "layer.new", "-", "format.textStyle" ]
+    },
+    {
+      "title": "绘图(&D)",
+      "items": [
+        "draw.line",
+        "draw.point",
+        "draw.rect",
+        "draw.circle",
+        "draw.arc",
+        "draw.ellipse",
+        "draw.ellipseArc",
+        "-",
+        "draw.pline",
+        "draw.mline",
+        "draw.spline",
+        "-",
+        "draw.xline",
+        "draw.ray",
+        "-",
+        "draw.hatch",
+        "draw.solid",
+        "draw.wipeout",
+        "draw.image",
+        "-",
+        {
+          "title": "文字",
+          "items": [ "draw.text", "draw.mtext" ]
+        },
+        "draw.table",
+        "draw.region",
+        {
+          "title": "块",
+          "items": [ "block.define", "block.insert" ]
+        }
+      ]
+    },
+    {
+      "title": "查询(&Q)",
+      "items": [ "inquiry.area" ]
+    },
+    {
+      "title": "标注(&N)",
+      "items": [ "dim.linear", "dim.angular", "-", "dim.radius", "dim.diameter", "dim.jogged", "dim.arc", "-", "dim.ordinate", "-", "dim.leader", "dim.mleader" ]
+    },
+    {
+      "title": "修改(&M)",
+      "items": [
+        "modify.move",
+        "modify.copy",
+        "modify.mirror",
+        "modify.rotate",
+        "modify.scale",
+        "modify.stretch",
+        "modify.offset",
+        "modify.fillet",
+        "modify.chamfer",
+        "modify.explode",
+        "-",
+        "modify.trim",
+        "modify.extend",
+        "modify.break",
+        "-",
+        "modify.array",
+        "-",
+        {
+          "title": "面域",
+          "items": [ "region.union", "region.subtract", "region.intersect" ]
+        }
+      ]
+    },
+    {
+      "title": "窗口(&W)",
+      "items": [ "doc.next", "doc.prev", "-", "file.close" ]
+    },
+    {
+      "title": "帮助(&H)",
+      "items": [ "help.about" ]
+    }
+  ],
+
+  "toolbars": {
+    "standard": [ "file.new", "file.open", "file.save", "|", "edit.undo", "edit.redo", "|", "aux.snap", "aux.ortho" ],
+    "draw": {
+      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "|", "draw.pline", "draw.spline", "|", "draw.text", "draw.mtext" ],
+      "iconSize": 20
+    },
+    "modify": [ "modify.move", "modify.copy", "modify.mirror", "modify.rotate" ]
+  },
+
+  "layout": {
+    "type": "column",
+    "children": [
+      {
+        "type": "titlebar",
+        "icon": "app.png",
+        "shrink": 0,
+        "children": [ { "type": "menubar" } ]
+      },
+      {
+        "type": "row",
+        "background": "Panel",
+        "shrink": 0,
+        "align": "center",
+        "children": [
+          {
+            "type": "toolbar",
+            "id": "standard"
+          },
+          {
+            "type": "separator",
+            "height": 20
+          },
+          {
+            "type": "toolbar",
+            "id": "draw"
+          },
+          {
+            "type": "separator",
+            "height": 20
+          },
+          {
+            "type": "toolbar",
+            "id": "modify",
+            "shrink": 1
+          },
+          {
+            "type": "separator",
+            "height": 20
+          },
+          {
+            "type": "panel",
+            "name": "layerbar"
+          },
+          { "type": "spacer" }
+        ]
+      },
+      { "type": "separator", "shrink": 0 },
+      // 停靠区：文档区（没有标题栏）下面是命令行，右侧上下排列特性和图层；拖动面板标签可以停靠到其他位置或合并为标签
+      {
+        "type": "dock",
+        "id": "main",
+        "grow": 1,
+        "root": {
+          "split": "row",
+          "children": [
+            {
+              "split": "column",
+              "children": [
+                {
+                  "tabs": [
+                    {
+                      "panel": "documents",
+                      "header": false,
+                      "closable": false
+                    }
+                  ]
+                },
+                {
+                  "tabs": [ "commandline" ],
+                  "size": 140
+                }
+              ]
+            },
+            {
+              "split": "column",
+              "size": 350,
+              "children": [
+                { "tabs": [ "properties" ] },
+                {
+                  "tabs": [ "layers" ],
+                  "size": 280
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "panel",
+        "name": "statusbar",
+        "shrink": 0
+      }
+    ]
+  }
+}

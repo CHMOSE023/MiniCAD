@@ -1,6 +1,11 @@
 #include "SHXFont.h"
-#include "pch.h"
 #include "EncodingGBK.h"
+#include "Core/Log.h"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 namespace MiniCAD
 {
     SHXFont::SHXFont(const std::string& name, const std::string& filePath, uint64_t fontId)
@@ -30,12 +35,9 @@ namespace MiniCAD
         m_defaultAdvance = 0.6;
 
         const char* kindStr[] = { "Unknown","Shapes","BigFont","Unifont" };
-        printf("[SHX] %s  kind=%s  name='%s'  glyphs=%zu  h=%.2f\n",
-            filePath.c_str(),
-            kindStr[(int)m_parser->GetKind()],
-            m_parser->GetFontName().c_str(),
-            m_parser->GetGlyphCount(),    // ← 不再硬编码 0
-            m_height);
+        LOG_DEBUG("[SHX] loaded %s  kind=%s  name='%s'  glyphs=%zu  h=%.2f",
+            filePath.c_str(), kindStr[(int)m_parser->GetKind()],
+            m_parser->GetFontName().c_str(), m_parser->GetGlyphCount(), m_height);
     }
 
     uint32_t SHXFont::ResolveShxKey(uint32_t cp) const
@@ -82,7 +84,7 @@ namespace MiniCAD
         const uint32_t key = ResolveShxKey(codepoint);
         const bool     hit = (m_parser && m_parser->HasGlyph(key));   // 只查一次
 
-        printf("[SHX] U+%04X → key=0x%04X %s\n", codepoint, key, hit ? "HIT" : "MISS");
+        LOG_TRACE("[SHX] U+%04X -> key=0x%04X %s", codepoint, key, hit ? "HIT" : "MISS");
 
         Glyph g;
         if (hit) g = m_parser->BuildGlyph(key);

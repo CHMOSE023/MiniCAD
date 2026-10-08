@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -22,7 +22,7 @@
 #include "Core/Entity/MTextEntity.hpp"
 
 #include <vector>
-#include <cstdio>
+#include "Core/Log.h"
 
 namespace MiniCAD
 {
@@ -36,14 +36,15 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            printf("[MirrorTool] 左键镜像线第一点\n");
+            LOG_INFO("[MirrorTool] 左键镜像线第一点");
         }
 
-        ~MirrorTool() { printf("[MirrorTool] 退出\n"); }
+        ~MirrorTool() { LOG_DEBUG("[MirrorTool] 退出"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
             m_ctx = &ctx;
+            m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
             const auto& e = ctx.event;
 
             if (e.IsRightClick() || e.IsCancel())
@@ -60,7 +61,7 @@ namespace MiniCAD
                 {
                     m_p0 = GetPoint(e);
                     m_phase = Phase::P1;
-                    printf("[MirrorTool] 镜像线第一点 (%.3f, %.3f),左键第二点\n", m_p0.x, m_p0.y);
+                    LOG_INFO("[MirrorTool] 镜像线第一点 (%.3f, %.3f),左键第二点", m_p0.x, m_p0.y);
                     return true;
                 }
                 break;
@@ -73,11 +74,11 @@ namespace MiniCAD
                     if (std::abs(m_p1.x - m_p0.x) < 1e-9 &&
                         std::abs(m_p1.y - m_p0.y) < 1e-9)
                     {
-                        printf("[MirrorTool] 两点重合,请重新选第二点\n");
+                        LOG_WARN("[MirrorTool] 两点重合,请重新选第二点");
                         return true;
                     }
                     m_phase = Phase::AskDelete;
-                    printf("[MirrorTool] 是否删除源对象? [Y/N] <N>\n");
+                    LOG_INFO("[MirrorTool] 是否删除源对象? [Y/N] <N>");
                     return true;
                 }
                 if (e.Type == InputEventType::MouseMove)
@@ -115,12 +116,12 @@ namespace MiniCAD
 
         void Cancel() override
         {
-            if (m_ctx) m_ctx->overlay.Clear();
+            if (m_overlay) m_overlay->Clear();
             if (OnFinished) OnFinished();
         }
 
         void OnSceneChanged()  override { Cancel(); }
-        void OnFocusLost()     override { if (m_ctx) m_ctx->overlay.Clear(); }
+        void OnFocusLost()     override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusRestored() override {}
 
         bool         HasAnchor() const override { return m_phase == Phase::P1; }
@@ -209,7 +210,7 @@ namespace MiniCAD
             if (entity->IsKindOf<EllipseEntity>())
             {
                 const auto& el = static_cast<EllipseEntity*>(entity)->GetEllipse();
-                m_ctx->overlay.AddEllipse(el.Center, el.RadiusX, el.RadiusY, el.Rotation, color);
+                m_ctx->overlay.AddEllipse(el, color);
                 return;
             }
             if (entity->IsKindOf<PolylineEntity>())
@@ -242,13 +243,13 @@ namespace MiniCAD
             {
                 auto cmd = std::make_unique<MirrorMoveCommand>(m_sourceIds, axis, m_ctx->scene);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                printf("[MirrorTool] 镜像 %zu 个对象,源已删除\n", m_sourceIds.size());
+                LOG_DEBUG("[MirrorTool] 镜像 %zu 个对象,源已删除", m_sourceIds.size());
             }
             else
             {
                 auto cmd = std::make_unique<MirrorCopyCommand>(m_sourceIds, axis);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                printf("[MirrorTool] 镜像 %zu 个对象,源保留\n", m_sourceIds.size());
+                LOG_DEBUG("[MirrorTool] 镜像 %zu 个对象,源保留", m_sourceIds.size());
             }
 
             m_ctx->overlay.Clear();
@@ -260,6 +261,8 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_sourceIds;
 
         const EditorContext* m_ctx = nullptr;
+
+        Overlay*              m_overlay = nullptr;
 
         Phase        m_phase = Phase::P0;
         Math::Point3 m_p0{}, m_p1{};

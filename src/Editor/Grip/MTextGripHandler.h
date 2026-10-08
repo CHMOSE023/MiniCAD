@@ -33,9 +33,10 @@ namespace MiniCAD
             const auto& pos = e->GetPosition();
             double      bw  = e->GetBoxWidth();
             double      h   = e->GetHeight();
+            double      rot = e->GetRotation();
 
-            outGrips.push_back({ entity->GetID(), Grip::Type::Start,  pos,                                    0 });
-            outGrips.push_back({ entity->GetID(), Grip::Type::Radius, WidthGripPos(pos, bw, h),               1 });
+            outGrips.push_back({ entity->GetID(), Grip::Type::Start,  pos,                           0 });
+            outGrips.push_back({ entity->GetID(), Grip::Type::Radius, WidthGripPos(pos, bw, h, rot), 1 });
         }
 
         std::unique_ptr<IGripDragState> BeginDrag(Entity* entity, const Grip&) override
@@ -58,8 +59,9 @@ namespace MiniCAD
             if (activeGrip.GripType == Grip::Type::Start)
             {
                 e->SetPosition(worldPos);
-                double bw = e->GetBoxWidth();
-                double h  = e->GetHeight();
+                double bw  = e->GetBoxWidth();
+                double h   = e->GetHeight();
+                double rot = e->GetRotation();
 
                 for (auto& grip : grips)
                 {
@@ -67,20 +69,22 @@ namespace MiniCAD
                     if (grip.GripType == Grip::Type::Start)
                         grip.WorldPos = worldPos;
                     else if (grip.GripType == Grip::Type::Radius)
-                        grip.WorldPos = WidthGripPos(worldPos, bw, h);
+                        grip.WorldPos = WidthGripPos(worldPos, bw, h, rot);
                 }
             }
             else if (activeGrip.GripType == Grip::Type::Radius)
             {
-                // BoxWidth = 鼠标 X 相对于插入点的距离，最小为 0
+                // BoxWidth = 鼠标相对插入点的位移在文字方向(旋转后 +X)上的投影,最小为 0
                 const auto& pos = e->GetPosition();
-                double newBW = std::max(0.0, worldPos.x - pos.x);
+                double rot   = e->GetRotation();
+                double newBW = std::max(0.0,
+                    (worldPos.x - pos.x) * std::cos(rot) + (worldPos.y - pos.y) * std::sin(rot));
                 e->SetBoxWidth(newBW);
 
                 for (auto& grip : grips)
                 {
                     if (grip.OwnerID == ownerId && grip.GripType == Grip::Type::Radius)
-                        grip.WorldPos = WidthGripPos(pos, newBW, e->GetHeight());
+                        grip.WorldPos = WidthGripPos(pos, newBW, e->GetHeight(), rot);
                 }
             }
         }
@@ -117,10 +121,11 @@ namespace MiniCAD
         }
 
     private:
-        // boxWidth=0 时使用 height*4 作为宽度夹点的占位距离
-        static Math::Point3 WidthGripPos(const Math::Point3& pos, double bw, double h)
+        // boxWidth=0 时使用 height*4 作为宽度夹点的占位距离;沿文字方向(旋转后 +X)放置
+        static Math::Point3 WidthGripPos(const Math::Point3& pos, double bw, double h, double rot)
         {
-            return { pos.x + (bw > 0.0 ? bw : h * 4.0), pos.y, pos.z };
+            const double dist = bw > 0.0 ? bw : h * 4.0;
+            return { pos.x + dist * std::cos(rot), pos.y + dist * std::sin(rot), pos.z };
         }
     };
 }
