@@ -54,7 +54,7 @@ namespace MiniCAD
 		// 保存为 DWG / DXF 时的版本：打开 DWG / DXF 时取自文件，另存为时由用户选择
 		void           SetCadSaveVersion(CadSaveVersion v) { m_cadVersion = v; }
 		CadSaveVersion GetCadSaveVersion() const          { return m_cadVersion; }
-		bool LoadFromFile(const std::string& path);
+		bool LoadFromFile(const std::string& path, std::string* error = nullptr);
 
 		// 字符串级存取(Web 端下载/上传等无文件系统场景)。
 		// 加载按内容嗅探格式(MCAD 魔数 → 二进制,否则 JSON),不改变路径。
@@ -75,6 +75,7 @@ namespace MiniCAD
 
 	private:
 		CadSaveVersion m_cadVersion = CadSaveVersion::R2018;
+		std::shared_ptr<const CadSource> m_cadSource;   // 打开的 DWG / DXF 原图：另存为同格式同版本时据此原样保留未修改的对象
 		Scene          m_scene;
 		CommandStack   m_cmdStack;
 

@@ -9,6 +9,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 
 namespace MiniCAD
@@ -107,7 +108,7 @@ namespace MiniCAD
         if (const CadFileKind kind = CadKindFromPath(path); kind != CadFileKind::None)
         {
             std::string err;
-            const std::vector<std::uint8_t> bytes = ExportCad(m_scene, kind, m_cadVersion, &err);
+            const std::vector<std::uint8_t> bytes = ExportCad(m_scene, kind, m_cadVersion, &err, m_cadSource.get());
             if (bytes.empty())
             {
                 LOG_ERROR("Save failed, export error: %s", err.c_str());
@@ -192,27 +193,43 @@ namespace MiniCAD
         return true;
     }
 
-    bool Document::LoadFromFile(const std::string& path)
+    bool Document::LoadFromFile(const std::string& path, std::string* error)
     {
+        if (error) error->clear();
+        auto fail = [&](const std::string& reason)
+        {
+            if (error) *error = reason;
+            LOG_ERROR("Open failed: %s (%s)", path.c_str(), reason.c_str());
+            return false;
+        };
         std::ifstream file(Utf8Path(path), std::ios::binary);
         if (!file.is_open())
         {
-            LOG_ERROR("Open failed, cannot open file: %s", path.c_str());
-            return false;
+            return fail("无法读取文件，请检查文件是否存在及访问权限");
         }
 
-        std::ostringstream buf;
-        buf << file.rdbuf();
-
-        const std::string content = buf.str();
         if (CadKindFromPath(path) != CadFileKind::None)
         {
-            const std::vector<std::uint8_t> bytes(content.begin(), content.end());
-            std::string err;
-            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion))
+            // CAD 直接读入字节缓冲，避免同时持有流缓冲、字符串和字节数组三份文件内容。
+            file.seekg(0, std::ios::end);
+            const auto length = file.tellg();
+            if (length < 0 || static_cast<std::uintmax_t>(length) > std::numeric_limits<std::streamsize>::max())
             {
-                LOG_ERROR("Open failed: %s (%s)", path.c_str(), err.c_str());
-                return false;
+                return fail("无法确定图纸文件大小");
+            }
+            std::vector<std::uint8_t> bytes;
+            if (static_cast<std::uintmax_t>(length) > bytes.max_size())
+                return fail("图纸文件过大，无法分配读取缓冲区");
+            bytes.resize(static_cast<std::size_t>(length));
+            file.seekg(0, std::ios::beg);
+            if (!file || (!bytes.empty() && !file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(length))))
+            {
+                return fail("无法完整读取图纸文件");
+            }
+            std::string err;
+            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource))
+            {
+                return fail(err.empty() ? "图纸已损坏或版本不受支持" : err);
             }
             m_dirty = false;
             SetPath(path);
@@ -220,10 +237,14 @@ namespace MiniCAD
             return true;
         }
 
+        std::ostringstream buf;
+        buf << file.rdbuf();
+        if (file.bad())
+            return fail("无法完整读取文档文件");
+        const std::string content = buf.str();
         if (!LoadFromString(content))
         {
-            LOG_ERROR("Open failed: %s", path.c_str());
-            return false;
+            return fail("不是有效的 MiniCAD 文档，或文件已损坏");
         }
 
         SetPath(path);

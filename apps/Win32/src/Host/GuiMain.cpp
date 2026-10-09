@@ -1,10 +1,11 @@
 // MiniCADWin：MiniCAD 桌面版入口（界面由 MiniGUI 绘制）
-// 用法：MiniCADWin.exe [--selftest] [--ui 界面描述文件.json]
+// 用法：MiniCADWin.exe [--selftest] [--ui 界面描述文件.json] [--] [图纸路径 ...]
 // 以 USE_WIN32 编译时为窗口程序（没有控制台，日志和自测输出不可见）
 #include "Host/Win32Window.h"
 #include <shellapi.h>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace MiniCAD;
 
@@ -40,6 +41,8 @@ namespace
         Win32Window window;
         MainFrame&  frame    = window.GetFrame();
         bool        selfTest = false;
+        std::vector<std::string> drawingPaths;
+        bool positional = false;
 
         // 命令行参数按 UTF-8 取（--ui 的路径可能含中文）
         int argc = 0;
@@ -47,10 +50,14 @@ namespace
         for (int i = 1; i < argc; ++i)
         {
             const std::string a = ToUtf8(argv[i]);
-            if (a == "--selftest")
+            if (!positional && a == "--")
+                positional = true;
+            else if (!positional && a == "--selftest")
                 selfTest = true;
-            else if (a == "--ui" && i + 1 < argc)
+            else if (!positional && a == "--ui" && i + 1 < argc)
                 frame.SetUiFile(ToUtf8(argv[++i]));
+            else
+                drawingPaths.push_back(a);
         }
         LocalFree(argv);
 
@@ -61,6 +68,9 @@ namespace
         frame.SetUseUserLayout(!selfTest);      // 自测不受本机保存的面板布局影响，也不覆盖它
         if (!window.Initialize(L"MiniCAD", 1280, 800))
             return 2;
+
+        if (!selfTest && !drawingPaths.empty())
+            frame.OpenDrawings(drawingPaths);
 
         return selfTest ? frame.RunSelfTest() : window.Run();
     }

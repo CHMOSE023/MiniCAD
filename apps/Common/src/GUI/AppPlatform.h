@@ -3,6 +3,8 @@
 #include "Import/CadExchange.h"
 #include <functional>
 #include <string>
+#include <vector>
+#include <utility>
 
 namespace MiniGUI
 {
@@ -55,6 +57,14 @@ namespace MiniCAD
         // ── 文件 ─────────────────────────────────────────────────
         // 选择要打开的文件；done 收到 UTF-8 路径（取消时不调用）。网页版的选择是异步的
         virtual void PickFile(FileKind kind, std::function<void(const std::string& path)> done) = 0;
+        // 图纸可批量打开；没有多选能力的平台沿用单文件选择。
+        virtual void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
+        {
+            PickFile(FileKind::Drawing, [done = std::move(done)](const std::string& path)
+            {
+                if (done && !path.empty()) done({ path });
+            });
+        }
         // 另存为：返回保存路径（UTF-8，空串 = 取消）。
         // 有系统对话框时（HasSaveDialog）suggestedName 为文档名，由用户在对话框里选位置、格式和 DWG / DXF 版本
         // （version 传入当前版本作为默认值，返回所选版本）；

@@ -61,7 +61,8 @@ namespace MiniCAD
 
         void New();
         void Open();                              // 经文件对话框选择路径后打开
-        Document* Open(const std::string& path);  // 直接按路径打开;失败返回 nullptr
+        // 加载成功才提交新文档；重复路径激活已有文档，失败详情可供界面显示。
+        Document* Open(const std::string& path, std::string* error = nullptr);
         void Save();
         void SaveAs();
         void SaveAll();

@@ -6,6 +6,8 @@
 #include <utility>
 #include <memory>
 #include <string>
+#include <filesystem>
+#include <exception>
 #include "Text/FontSystem.h"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
@@ -22,6 +24,24 @@ namespace MiniCAD
 {
     namespace
     {
+        std::filesystem::path FilePath(const std::string& utf8)
+        {
+            return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+        }
+
+        bool SameFile(const std::string& a, const std::string& b)
+        {
+            if (a == b) return true;
+            std::error_code ec;
+            const auto pa = FilePath(a), pb = FilePath(b);
+            // equivalent respects the filesystem's case rules and also identifies hard links.
+            if (std::filesystem::equivalent(pa, pb, ec) && !ec) return true;
+            const auto ca = std::filesystem::weakly_canonical(pa, ec);
+            if (ec) return false;
+            const auto cb = std::filesystem::weakly_canonical(pb, ec);
+            return !ec && ca == cb;
+        }
+
         // 活动文档的相机状态实时存在于 viewport(切换文档时才回写到文档)，
         // 存盘前需主动同步，否则写出的 camera 永远是上次激活时的旧值。
         void SyncActiveCameraState(Document* active, Viewport* viewport)
@@ -445,12 +465,13 @@ namespace MiniCAD
             m_editor.ZoomAll(undoable);
     }
 
-    Document* DocumentManager::Open(const std::string& path)
+    Document* DocumentManager::Open(const std::string& path, std::string* error)
     {
+        if (error) error->clear();
         // 已打开同一文件:直接激活,不重复加载。
         for (auto& d : m_docs)
         {
-            if (!d->GetPath().empty() && d->GetPath() == path)
+            if (!d->GetPath().empty() && SameFile(d->GetPath(), path))
             {
                 SetActive(d.get());
                 return d.get();
@@ -460,8 +481,17 @@ namespace MiniCAD
         auto doc = std::make_unique<Document>();
         doc->SetFontSystem(m_fontSystem);
 
-        if (!doc->LoadFromFile(path))
+        try
+        {
+            if (!doc->LoadFromFile(path, error))
+                return nullptr;
+        }
+        catch (const std::exception& e)
+        {
+            if (error) *error = std::string("读取图纸失败：") + e.what();
+            LOG_ERROR("Open failed: %s (%s)", path.c_str(), e.what());
             return nullptr;
+        }
 
         if (m_active && m_viewport) // 切换前保存当前文档的视口状态
         {

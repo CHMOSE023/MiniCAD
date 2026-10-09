@@ -9,11 +9,13 @@
 #include "Platform/Win32/Win32Input.h"
 #include "Widgets/TitleBar.h"
 #include <commdlg.h>
+#include <shellapi.h>
 #include <malloc.h>
 #include <algorithm>
 #include <filesystem>
 
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace MiniCAD
 {
@@ -49,6 +51,8 @@ namespace MiniCAD
             { L".json", CadSaveVersion::R2018 },
         };
 
+        constexpr wchar_t kDrawingFilter[] = L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
+
         // 打开 / 保存文件对话框（返回 UTF-8 路径，空串 = 取消）。保存时 version 传入默认版本、返回所选版本
         std::string ShowFileDialog(HWND owner, bool save, FileKind kind, const std::string& suggestedName,
                                    CadSaveVersion* version = nullptr)
@@ -71,7 +75,7 @@ namespace MiniCAD
                                   L"AutoCAD 2013/2014 DXF (*.dxf)\0*.dxf\0"
                                   L"JSON 文件 (*.json)\0*.json\0";
             else
-                ofn.lpstrFilter = L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
+                ofn.lpstrFilter = kDrawingFilter;
             ofn.lpstrFile   = buf;
             ofn.nMaxFile    = MAX_PATH;
             ofn.lpstrDefExt = (save || kind == FileKind::Image) ? nullptr : L"mcad";   // 保存时按所选筛选器补扩展名（见下）
@@ -145,6 +149,7 @@ namespace MiniCAD
         });
 
         WatchUiFile();
+        DragAcceptFiles(m_hwnd, TRUE);
         ShowWindow(m_hwnd, SW_SHOW);
         return true;
     }
@@ -293,6 +298,24 @@ namespace MiniCAD
             m_main.RequestExit();   // 有未保存的文档时先询问
             return 0;
 
+        case WM_DROPFILES:
+        {
+            const HDROP drop = reinterpret_cast<HDROP>(wParam);
+            const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            std::vector<std::string> paths;
+            paths.reserve(count);
+            for (UINT i = 0; i < count; ++i)
+            {
+                const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+                std::vector<wchar_t> path(static_cast<size_t>(length) + 1);
+                if (DragQueryFileW(drop, i, path.data(), length + 1))
+                    paths.push_back(ToUtf8(path.data()));
+            }
+            DragFinish(drop);
+            m_main.OpenDrawings(paths);
+            return 0;
+        }
+
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -411,6 +434,36 @@ namespace MiniCAD
         const std::string path = ShowFileDialog(m_hwnd, false, kind, {});
         if (!path.empty() && done)
             done(path);
+    }
+
+    void Win32Window::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
+    {
+        // 多选返回「目录\0文件名\0文件名\0\0」；单选返回完整路径。
+        std::vector<wchar_t> buffer(65536, L'\0');
+        OPENFILENAMEW ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = m_hwnd;
+        ofn.lpstrFilter = kDrawingFilter;
+        ofn.lpstrFile = buffer.data();
+        ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+        ofn.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+        if (!GetOpenFileNameW(&ofn))
+        {
+            if (CommDlgExtendedError())
+                MessageBoxW(m_hwnd, L"无法读取文件选择结果，请减少所选文件数量后重试。", L"打开图纸失败", MB_OK | MB_ICONERROR);
+            return;
+        }
+        std::vector<std::string> paths;
+        const wchar_t* next = buffer.data() + wcslen(buffer.data()) + 1;
+        if (!*next)
+            paths.push_back(ToUtf8(buffer.data()));
+        else
+        {
+            const std::filesystem::path directory(buffer.data());
+            for (; *next; next += wcslen(next) + 1)
+                paths.push_back(ToUtf8((directory / next).c_str()));
+        }
+        if (done) done(paths);
     }
 
     std::string Win32Window::ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version)

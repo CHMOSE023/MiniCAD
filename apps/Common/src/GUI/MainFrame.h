@@ -74,6 +74,8 @@ namespace MiniCAD
         void RenderFrame();
         void RequestExit();                     // 有未保存的文档时先询问，确认后调用 AppPlatform::Quit
         void StateChanged();                    // 文档、选择集、当前工具可能变了：刷新命令状态、标签、面板、标题
+        // 菜单、启动参数和拖放共用此入口；逐个打开，失败汇总显示，成功文档保留。
+        void OpenDrawings(const std::vector<std::string>& paths);
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
         bool HasUnsavedDocuments() const;       // 网页版：关闭页面前据此提示
         const std::string&  GetUiPath() const { return m_uiPath; }

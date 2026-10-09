@@ -37,6 +37,7 @@ namespace MiniCAD
 
         // 由 JavaScript 回调（内部使用）
         void OnFilePicked(int requestId, const char* path);
+        void OnFilePickCompleted(int requestId, const char* error);
         bool HasUnsavedDocuments() const;
 
         // ── AppPlatform ─────────────────────────────────────────
@@ -56,6 +57,7 @@ namespace MiniCAD
         void Quit() override;
 
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
+        void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
         bool HasSaveDialog() const override { return false; }  // 文件名和格式由 MainFrame 的另存为对话框询问
@@ -71,7 +73,12 @@ namespace MiniCAD
         MainFrame                               m_main;
         std::unique_ptr<MiniGUI::WebInput>      m_input;
 
-        std::unordered_map<int, std::function<void(const std::string&)>> m_pickRequests;
+        struct PickRequest
+        {
+            std::function<void(const std::vector<std::string>&)> done;
+            std::vector<std::string> paths;
+        };
+        std::unordered_map<int, PickRequest> m_pickRequests;
         int m_nextPickId = 1;
     };
 }

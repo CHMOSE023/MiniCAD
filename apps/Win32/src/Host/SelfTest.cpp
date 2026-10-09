@@ -34,10 +34,14 @@
 #include "Widgets/ViewportHost.h"
 #include "Widgets/UiLayout.h"
 #include <psapi.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <cstring>
 #include <algorithm>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <unordered_set>
 #include <utility>
 
@@ -1492,6 +1496,66 @@ namespace MiniCAD
             const double closed = privateMb();
             std::printf("    20 万条线：打开前 %.0f MB，打开后 %.0f MB，关闭后 %.0f MB\n", before, opened, closed);
             check(closed - before < (opened - before) * 0.25, "关闭大图纸后归还大部分内存");
+        }
+
+        // 公共打开入口及真实 WM_DROPFILES 消息走同一 DWG 管线。
+        {
+            const auto dir = std::filesystem::temp_directory_path() /
+                ("minicad-selftest-open-" + std::to_string(NowTicks()));
+            std::filesystem::create_directories(dir);
+            const auto file = dir / L"拖放 测试.dwg";
+            const auto u8 = file.u8string();
+            const std::string path(u8.begin(), u8.end());
+            Scene drawing;
+            drawing.AddEntity(std::make_unique<LineEntity>(drawing.NextObjectID(),
+                Math::Point3{500000, 3000000, 0}, Math::Point3{500100, 3000060, 0}));
+            const auto data = ExportCad(drawing, CadFileKind::Dwg);
+            { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(data.data()), data.size()); }
+            const auto before = m_docManager.GetAll().size();
+            OpenDrawings({path, path});
+            RenderFrame();
+            Document* opened = m_docManager.GetActive();
+            check(opened && opened->GetPath() == path && m_docManager.GetAll().size() == before + 1 &&
+                  m_docTabs->GetTabCount() == static_cast<int>(before + 1), "公共打开入口加载 DWG、去重并同步标签");
+            AABB openedBounds = AABB::Empty();
+            const auto openedCamera = m_docManager.GetViewport().GetCamera().GetState();
+            check(opened && opened->GetScene().GetExtents(openedBounds) &&
+                  std::abs(openedCamera.Target.x - 500050) < 1e-5 && std::abs(openedCamera.Target.y - 3000030) < 1e-5,
+                  "DWG 真彩图层可见，远坐标内容自动居中");
+            const auto wide = file.wstring();
+            const size_t bytes = sizeof(DROPFILES) + (wide.size() + 2) * sizeof(wchar_t);
+            HGLOBAL memory = GlobalAlloc(GHND, bytes);
+            auto* drop = static_cast<DROPFILES*>(GlobalLock(memory));
+            if (drop)
+            {
+                drop->pFiles = sizeof(DROPFILES);
+                drop->fWide = TRUE;
+                std::memcpy(reinterpret_cast<char*>(drop) + sizeof(DROPFILES), wide.c_str(), (wide.size() + 1) * sizeof(wchar_t));
+                GlobalUnlock(memory);
+                SendMessageW(hwnd, WM_DROPFILES, reinterpret_cast<WPARAM>(memory), 0); // 宿主 DragFinish 释放内存
+                RenderFrame();
+                check(m_docManager.GetActive() == opened && m_docManager.GetAll().size() == before + 1,
+                      "Unicode WM_DROPFILES 打开同一 DWG 时激活已有文档");
+            }
+            else
+            {
+                if (memory) GlobalFree(memory);
+                check(false, "分配拖放测试数据");
+            }
+            const auto missing = (dir / "missing.dwg").u8string();
+            OpenDrawings({ std::string(missing.begin(), missing.end()), path });
+            RenderFrame();
+            check(m_ui->HasModal() && m_docManager.GetActive() == opened && m_docManager.GetAll().size() == before + 1,
+                  "批量打开失败给出可见提示，后续有效图纸仍可打开");
+            send(WM_KEYDOWN, VK_ESCAPE, 0, 0);
+            send(WM_KEYUP, VK_ESCAPE, 0, 0);
+            RenderFrame();
+            check(!m_ui->HasModal(), "打开失败提示可以关闭");
+            if (opened && opened->GetPath() == path) CloseDocument(opened);
+            RenderFrame();
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+            std::filesystem::remove(dir, ec);
         }
 
         std::printf("输入→呈现 最近 %.1f ms，最大 %.1f ms；界面 %llu 帧，视口 %llu 帧\n", m_latencyLast, m_latencyMax,

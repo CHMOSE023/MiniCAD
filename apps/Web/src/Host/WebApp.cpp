@@ -7,6 +7,7 @@
 #include "Core/UIContext.h"
 #include "Document/Document.h"
 #include "Platform/Web/WebFonts.h"
+#include "Widgets/Dialog.h"
 #include "Platform/Web/WebInput.h"
 #include <emscripten.h>
 #include <GLES3/gl3.h>
@@ -38,24 +39,48 @@ namespace MiniCAD
     // =========================================================
     EM_JS_DEPS(MiniCADWebApp, "$stringToNewUTF8,$UTF8ToString,$FS");
 
-    // 弹出浏览器的文件选择框；选中后把文件写进 /upload，回调 MiniCADWeb_OnFilePicked(requestId, 路径)
-    EM_JS(void, MiniCADWeb_PickFile, (int requestId, const char* acceptPtr), {
+    // 每次请求和每个文件使用独立目录，保留文件名；全部上传完成后统一打开。
+    EM_JS(void, MiniCADWeb_PickFile, (int requestId, const char* acceptPtr, int multiple), {
         const input = document.createElement("input");
         input.type = "file";
         input.accept = UTF8ToString(acceptPtr);
+        input.multiple = !!multiple;
         input.style.display = "none";
-        input.addEventListener("change", () => {
-            const file = input.files && input.files[0];
+        let settled = false;
+        const complete = (error) => {
+            const p = stringToNewUTF8(error || "");
+            _MiniCADWeb_OnFilePickCompleted(requestId, p);
+            _free(p);
+        };
+        input.addEventListener("cancel", () => {
+            if (settled) return;
+            settled = true;
             input.remove();
-            if (!file) return;
-            file.arrayBuffer().then((buf) => {
-                try { FS.mkdir("/upload"); } catch (e) {}
-                const path = "/upload/" + file.name.replace(/[\\/]/g, "_");
-                FS.writeFile(path, new Uint8Array(buf));
-                const p = stringToNewUTF8(path);
-                _MiniCADWeb_OnFilePicked(requestId, p);
-                _free(p);
-            }).catch((err) => console.error("MiniCAD: 读取文件失败", err));
+            complete("");
+        });
+        input.addEventListener("change", async () => {
+            if (settled) return;
+            settled = true;
+            const files = Array.from(input.files || []);
+            input.remove();
+            const errors = [];
+            for (let i = 0; i < files.length; ++i) {
+                const file = files[i];
+                try {
+                    const buf = await file.arrayBuffer();
+                    const directory = "/upload/" + requestId + "/" + i;
+                    FS.mkdirTree(directory);
+                    const name = file.name.replace(/[\\/]/g, "_");
+                    const path = directory + "/" + name;
+                    FS.writeFile(path, new Uint8Array(buf));
+                    const p = stringToNewUTF8(path);
+                    _MiniCADWeb_OnFilePicked(requestId, p);
+                    _free(p);
+                } catch (err) {
+                    errors.push(file.name + ": " + String(err));
+                }
+            }
+            complete(errors.join("\n"));
         });
         document.body.appendChild(input);
         input.click();
@@ -94,6 +119,12 @@ namespace MiniCAD
         {
             if (g_app)
                 g_app->OnFilePicked(requestId, path);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnFilePickCompleted(int requestId, const char* error)
+        {
+            if (g_app)
+                g_app->OnFilePickCompleted(requestId, error);
         }
 
         EMSCRIPTEN_KEEPALIVE int MiniCADWeb_HasUnsaved()
@@ -201,8 +232,18 @@ namespace MiniCAD
     void WebApp::PickFile(FileKind kind, std::function<void(const std::string& path)> done)
     {
         const int id = m_nextPickId++;
-        m_pickRequests[id] = std::move(done);
-        MiniCADWeb_PickFile(id, kind == FileKind::Image ? ".png,.jpg,.jpeg,.bmp,.tga,.gif" : ".mcad,.dwg,.dxf,.json");
+        m_pickRequests[id] = { [done = std::move(done)](const std::vector<std::string>& paths)
+        {
+            if (done && !paths.empty()) done(paths.front());
+        }, {} };
+        MiniCADWeb_PickFile(id, kind == FileKind::Image ? ".png,.jpg,.jpeg,.bmp,.tga,.gif" : ".mcad,.dwg,.dxf,.json", 0);
+    }
+
+    void WebApp::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
+    {
+        const int id = m_nextPickId++;
+        m_pickRequests[id] = { std::move(done), {} };
+        MiniCADWeb_PickFile(id, ".mcad,.dwg,.dxf,.json", 1);
     }
 
     void WebApp::OnFilePicked(int requestId, const char* path)
@@ -210,10 +251,20 @@ namespace MiniCAD
         auto it = m_pickRequests.find(requestId);
         if (it == m_pickRequests.end())
             return;
-        auto done = std::move(it->second);
+        if (path && *path)
+            it->second.paths.emplace_back(path);
+    }
+
+    void WebApp::OnFilePickCompleted(int requestId, const char* error)
+    {
+        auto it = m_pickRequests.find(requestId);
+        if (it == m_pickRequests.end()) return;
+        auto request = std::move(it->second);
         m_pickRequests.erase(it);
-        if (done && path && *path)
-            done(path);
+        if (request.done && !request.paths.empty())
+            request.done(request.paths);
+        if (error && *error)
+            MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件失败", error, { "确定" }, [](int) {});
         m_host.RequestFrame();
     }
 

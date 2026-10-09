@@ -56,11 +56,9 @@ namespace MiniCAD
         m_commands.Register({ .id = "file.open",    .label = "打开(&O)…",    .shortcut = "Ctrl+O",
                               .execute = [this, platform, &dm]
                               {
-                                  platform->PickFile(FileKind::Drawing, [this, &dm](const std::string& path)
+                                  platform->PickDrawingFiles([this](const std::vector<std::string>& paths)
                                   {
-                                      dm.Open(path);
-                                      m_viewport->RequestRender();
-                                      StateChanged();         // 网页版在命令执行完之后才选好文件：自己刷新界面
+                                      OpenDrawings(paths);
                                   });
                               } });
         m_commands.Register({ .id = "file.save",    .label = "保存(&S)",     .shortcut = "Ctrl+S",       .execute = [this] { SaveDocuments(false, false); }, .canExecute = hasDoc });

@@ -286,6 +286,31 @@ namespace MiniCAD
         m_commands.NotifyStateChanged();
     }
 
+    void MainFrame::OpenDrawings(const std::vector<std::string>& paths)
+    {
+        std::string failures;
+        bool opened = false;
+        for (const auto& path : paths)
+        {
+            if (path.empty()) continue;
+            std::string error;
+            if (m_docManager.Open(path, &error))
+                opened = true;
+            else
+            {
+                if (!failures.empty()) failures += "\n\n";
+                failures += path + "\n" + (error.empty() ? "无法打开图纸" : error);
+            }
+        }
+        if (opened)
+        {
+            StateChanged();
+            if (m_viewport) m_viewport->Focus();
+        }
+        if (!failures.empty() && m_ui)
+            MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", failures, { "确定" }, [](int) {});
+    }
+
     void MainFrame::SyncDocuments()
     {
         if (!m_docTabs)
