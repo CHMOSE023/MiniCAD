@@ -80,10 +80,10 @@ namespace MiniCAD
             m_viewport = nullptr;
             m_index    = {};
             m_indexVersion = ~0ull;
-            m_candidates   = {};
-            m_selection.clear();
-            m_lastSelection.clear();
-            m_hovered.clear();
+            decltype(m_candidates){}.swap(m_candidates);
+            decltype(m_selection){}.swap(m_selection);
+            decltype(m_lastSelection){}.swap(m_lastSelection);
+            decltype(m_hovered){}.swap(m_hovered);
             m_drag = DragState::Idle;
         }
 

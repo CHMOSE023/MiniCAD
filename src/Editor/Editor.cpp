@@ -179,21 +179,24 @@ namespace MiniCAD
         m_overlay.Clear();
         m_currentSnap = {};
 
-        // 释放上一个文档的显示数据（大图纸可达数百 MB）：clear() 不归还容量，换成空容器。
+        // 释放上一个文档的显示数据（大图纸可达数百 MB）。
+        // vector = {} 调用 initializer_list 赋值，仍保留容量；与空容器交换才归还存储。
         // 重新绑定时 Bind 会整体标脏，这些缓存本来也要全部重建
-        m_entityVertexCache = {};
-        m_sceneVertices     = {};
-        m_sceneFillVertices = {};
-        m_textVertices      = {};
-        m_sceneImages       = {};
-        m_selVertices       = {};
-        m_selFillVertices   = {};
-        m_selTextVertices   = {};
-        m_scratchLines      = {};
-        m_scratchFills      = {};
-        m_scratchTexts      = {};
-        m_overlayVertices   = {};
-        m_sceneExcluded     = {};
+        auto releaseStorage = []<typename T>(T& container) { T{}.swap(container); };
+        releaseStorage(m_entityVertexCache);
+        releaseStorage(m_sceneVertices);
+        releaseStorage(m_sceneFillVertices);
+        releaseStorage(m_textVertices);
+        releaseStorage(m_sceneImages);
+        releaseStorage(m_selVertices);
+        releaseStorage(m_selFillVertices);
+        releaseStorage(m_selTextVertices);
+        releaseStorage(m_scratchLines);
+        releaseStorage(m_scratchFills);
+        releaseStorage(m_scratchTexts);
+        releaseStorage(m_overlayVertices);
+        releaseStorage(m_gripVertices);
+        releaseStorage(m_sceneExcluded);
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
         ++m_sceneVersion;   // 渲染后端的缓存顶点缓冲随之失效
