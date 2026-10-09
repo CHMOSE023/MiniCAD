@@ -261,10 +261,11 @@ namespace MiniDWG::DwgRead
             return;
         }
 
+        m_scheduled.reserve(m_map.size());
+        m_infos.reserve(m_map.size());
         for (Handle h : m_headerHandles.All())
         {
-            if (h != kNullHandle)
-                m_queue.push_back(h);
+            Enqueue(h);
         }
 
         ReadQueued();
@@ -274,12 +275,19 @@ namespace MiniDWG::DwgRead
         std::vector<Handle> rest;
         for (const auto& [h, offset] : m_map)
         {
-            if (m_visited.count(h) == 0)
+            if (m_scheduled.count(h) == 0)
                 rest.push_back(h);
         }
         std::sort(rest.begin(), rest.end());
-        m_queue.assign(rest.begin(), rest.end());
+        for (Handle h : rest)
+            Enqueue(h);
         ReadQueued();
+    }
+
+    void Reader::Enqueue(Handle handle)
+    {
+        if (handle != kNullHandle && m_map.find(handle) != m_map.end() && m_scheduled.insert(handle).second)
+            m_queue.push_back(handle);
     }
 
     void Reader::ReadQueued()
@@ -288,13 +296,9 @@ namespace MiniDWG::DwgRead
         {
             const Handle handle = m_queue.front();
             m_queue.pop_front();
-            if (m_visited.count(handle) != 0)
-                continue;
             auto it = m_map.find(handle);
             if (it == m_map.end())
                 continue;
-            m_visited.insert(handle);
-
             m_currentHandle = handle;
             const std::int16_t type = BeginObject(it->second);
             if (type < 0)

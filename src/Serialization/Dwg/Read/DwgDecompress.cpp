@@ -54,12 +54,15 @@ namespace MiniDWG::DwgCodec
         // 复制 count 个字面量字节，返回下一个操作码
         int CopyLiteral(int count, Input& in, std::vector<std::uint8_t>& out)
         {
-            if (in.pos + count > in.data.size())
+            if (count < 0 || in.pos > in.data.size()
+                || static_cast<std::size_t>(count) > in.data.size() - in.pos)
             {
                 in.failed = true;
                 return 0x11;
             }
-            out.insert(out.end(), in.data.begin() + in.pos, in.data.begin() + in.pos + count);
+            // 指针范围避免 Debug 下对每个字节执行 span 迭代器检查。
+            const auto* begin = in.data.data() + in.pos;
+            out.insert(out.end(), begin, begin + count);
             in.pos += count;
             return in.Next();
         }
@@ -104,12 +107,17 @@ namespace MiniDWG::DwgCodec
                 opcode = first;
             }
 
-            if (offset <= 0 || static_cast<std::size_t>(offset) > out.size())
+            if (in.failed || count < 0 || offset <= 0 || static_cast<std::size_t>(offset) > out.size()
+                || static_cast<std::size_t>(count) > out.max_size() - out.size())
                 return false;
-            // 回溯复制，允许重叠（逐字节）
-            std::size_t from = out.size() - offset;
+            // 一次扩展缓冲，避免逐字节 push_back 的迭代器失效检查。
+            // 必须前向复制：重叠回溯会继续使用刚生成的字节，不能改为 memmove。
+            const std::size_t before = out.size();
+            const std::size_t from = before - offset;
+            out.resize(before + count);
+            auto* bytes = out.data();
             for (int i = 0; i < count; ++i)
-                out.push_back(out[from + i]);
+                bytes[before + i] = bytes[from + i];
 
             int literals = opcode & 3;
             if (literals == 0)

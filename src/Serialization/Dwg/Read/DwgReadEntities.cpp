@@ -107,8 +107,7 @@ namespace MiniDWG::DwgRead
             {
                 for (Handle h : { entity.ObjectHandle - 1, entity.ObjectHandle + 1 })
                 {
-                    if (m_visited.count(h) == 0)
-                        m_queue.push_back(h);
+                    Enqueue(h);
                 }
             }
         }

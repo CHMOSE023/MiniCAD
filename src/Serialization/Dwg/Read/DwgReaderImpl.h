@@ -76,6 +76,7 @@ namespace MiniDWG::DwgRead
         void ReadHandles();
         void ReadObjects();
         void ReadQueued();
+        void Enqueue(Handle handle);
 
         // ── 对象（DwgReadObjects.cpp）──
         std::int16_t BeginObject(std::uint64_t offset);    // 返回对象类型
@@ -190,7 +191,7 @@ namespace MiniDWG::DwgRead
         std::map<std::int16_t, DxfClass>          m_classes;      // 类号 → 类定义
         std::unordered_map<Handle, std::uint64_t> m_map;          // 句柄 → 对象位置
         std::deque<Handle>                         m_queue;
-        std::unordered_set<Handle>                 m_visited;
+        std::unordered_set<Handle>                 m_scheduled; // 入队即记录，避免同一对象被重复排队
         std::unordered_map<Handle, ObjectInfo>     m_infos;
         std::map<std::string, int>                 m_skipped;
         std::map<std::string, int>                 m_preserved;   // 原样保留的未建模类型 → 个数

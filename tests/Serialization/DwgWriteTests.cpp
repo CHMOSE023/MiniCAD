@@ -165,6 +165,68 @@ TEST(DwgWrite_Compress_RoundTrip)
     }
 }
 
+// AC18 优化后的复制仍要支持重叠回溯，并拒绝截断/越界输入。
+TEST(DwgRead_AC18_OverlappingMatchAndTruncatedInput)
+{
+    // 一个字面量 A，之后距离为 1 的三个字节回溯，必须使用刚写出的字节。
+    const std::vector<std::uint8_t> compressed{ 0x12, 'A', 0x21, 0, 0, 0x11, 0, 0 };
+    std::vector<std::uint8_t> out{ 9, 8 };
+    std::size_t pos = 0;
+    CHECK(DwgCodec::DecompressAC18(compressed, pos, out));
+    CHECK(out == (std::vector<std::uint8_t>{ 9, 8, 'A', 'A', 'A', 'A' }));
+    CHECK(pos == 6);
+
+    for (const std::vector<std::uint8_t>& invalid : {
+             std::vector<std::uint8_t>{ 0x15, 1, 2 },           // 字面量不足
+             std::vector<std::uint8_t>{ 0x12, 'A', 0x21, 0 },   // 回溯距离被截断
+             std::vector<std::uint8_t>{ 0x12, 'A', 0x21, 8, 0 } // 回溯越界
+         })
+    {
+        out.clear();
+        pos = 0;
+        CHECK(!DwgCodec::DecompressAC18(invalid, pos, out));
+    }
+}
+
+TEST(DwgRead_ModelSpaceEntityOrder)
+{
+    CadDatabase db;
+    db.CreateDefaults();
+    auto* model = db.ModelSpace();
+    CHECK(model != nullptr);
+    if (!model)
+        return;
+    for (int i = 0; i < 256; ++i)
+    {
+        auto line = std::make_unique<Line>();
+        line->StartPoint = { static_cast<double>(i), 0, 0 };
+        line->EndPoint = { static_cast<double>(i), 1, 0 };
+        db.AddEntity(model, std::move(line));
+    }
+    for (CadVersion version : { CadVersion::AC1015, CadVersion::AC1018, CadVersion::AC1021, CadVersion::AC1032 })
+    {
+        DwgWriteOptions options;
+        options.Version = version;
+        const auto bytes = WriteDwg(db, options);
+        auto read = ReadDwg(bytes);
+        CHECK(read != nullptr);
+        if (!read)
+            continue;
+        const auto* result = read->ModelSpace();
+        CHECK(result != nullptr);
+        if (!result)
+            continue;
+        CHECK(result->Entities.size() == 256);
+        for (std::size_t i = 0; i < result->Entities.size(); ++i)
+        {
+            const auto* line = read->FindAs<Line>(result->Entities[i]);
+            CHECK(line != nullptr);
+            if (line)
+                CHECK(line->StartPoint.X == static_cast<double>(i));
+        }
+    }
+}
+
 // CRC 与 AutoCAD 写出的文件一致（R2000 文件头的 CRC）
 TEST(DwgWrite_Checksums)
 {

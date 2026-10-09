@@ -89,8 +89,7 @@ namespace MiniDWG::DwgRead
     Handle Reader::HandleRef(Handle reference)
     {
         const Handle h = m_handleReader.ReadHandle(reference);
-        if (h != kNullHandle && m_visited.count(h) == 0)
-            m_queue.push_back(h);
+        Enqueue(h);
         return h;
     }
 
@@ -139,8 +138,7 @@ namespace MiniDWG::DwgRead
         {
             ExtendedData data;
             data.AppIdHandle = r.ReadHandle();
-            if (data.AppIdHandle != kNullHandle && m_visited.count(data.AppIdHandle) == 0)
-                m_queue.push_back(data.AppIdHandle);
+            Enqueue(data.AppIdHandle);
             const std::uint64_t end = r.Position() + static_cast<std::uint16_t>(size);
             while (r.Position() < end && !r.Failed())
             {
@@ -451,8 +449,7 @@ namespace MiniDWG::DwgRead
             if (h != kNullHandle && m_map.count(h) != 0)
             {
                 d.References.push_back(h);
-                if (m_visited.count(h) == 0)
-                    m_queue.push_back(h);
+                Enqueue(h);
             }
         }
 

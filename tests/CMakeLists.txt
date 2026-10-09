@@ -8,6 +8,63 @@
 
 set(MINICAD_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Data")
 
+add_executable(MiniCADTianzhengTests "Core/TianzhengWallTests.cpp")
+target_include_directories(MiniCADTianzhengTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(MiniCADTianzhengTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTianzhengTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTianzhengTests COMMAND MiniCADTianzhengTests)
+
+add_executable(MiniCADTchImportTests "Core/TchBlockInsertTests.cpp" "Core/TchProxyGraphicsTests.cpp")
+target_link_libraries(MiniCADTchImportTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTchImportTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchImportTests COMMAND MiniCADTchImportTests)
+
+add_executable(MiniCADCadPreserveTests "Core/CadPreserveTests.cpp")
+target_link_libraries(MiniCADCadPreserveTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADCadPreserveTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADCadPreserveTests COMMAND MiniCADCadPreserveTests)
+
+add_executable(MiniCADTchOpeningTests "Core/TchOpeningTests.cpp")
+target_link_libraries(MiniCADTchOpeningTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTchOpeningTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchOpeningTests COMMAND MiniCADTchOpeningTests)
+
+add_executable(MiniCADTchDimensionTests "Core/TchDimensionTests.cpp")
+target_link_libraries(MiniCADTchDimensionTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTchDimensionTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchDimensionTests COMMAND MiniCADTchDimensionTests)
+
+add_executable(MiniCADTchSymbolTests "Core/TchSymbolTests.cpp")
+target_link_libraries(MiniCADTchSymbolTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTchSymbolTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchSymbolTests COMMAND MiniCADTchSymbolTests)
+
+add_executable(MiniCADTchStairTests "Core/TchStairTests.cpp")
+target_link_libraries(MiniCADTchStairTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADTchStairTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchStairTests COMMAND MiniCADTchStairTests)
+
+add_executable(MiniCADFace3DTests "Core/Face3DTests.cpp")
+target_link_libraries(MiniCADFace3DTests PRIVATE MiniCADLib MiniDWG)
+if(MSVC)
+    target_compile_options(MiniCADFace3DTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADFace3DTests COMMAND MiniCADFace3DTests)
+
 function(minicad_test_output target)
     set_target_properties(${target} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY         "${CMAKE_BINARY_DIR}"
@@ -51,6 +108,27 @@ if(WIN32)
     endif()
     minicad_test_output(MiniCADTests)
     add_test(NAME MiniCADTests COMMAND MiniCADTests)
+
+    add_executable(MiniCADDrawingOpenTests "Core/DrawingOpenTests.cpp")
+    target_link_libraries(MiniCADDrawingOpenTests PRIVATE MiniCADLib)
+    target_compile_definitions(MiniCADDrawingOpenTests PRIVATE MINICAD_DRAWING_OPEN_TEST_MAIN UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MSVC)
+        target_compile_options(MiniCADDrawingOpenTests PRIVATE /utf-8)
+    endif()
+    minicad_test_output(MiniCADDrawingOpenTests)
+    add_test(NAME MiniCADDrawingOpenTests COMMAND MiniCADDrawingOpenTests)
+
+    add_executable(MiniCADDwgInspect "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
+    target_link_libraries(MiniCADDwgInspect PRIVATE MiniCADLib MiniDWG)
+    if(MSVC)
+        target_compile_options(MiniCADDwgInspect PRIVATE /utf-8)
+    endif()
+
+    add_executable(MiniCADTchPatch "${CMAKE_SOURCE_DIR}/tools/tch_patch.cpp")
+    target_link_libraries(MiniCADTchPatch PRIVATE MiniDWG)
+    if(MSVC)
+        target_compile_options(MiniCADTchPatch PRIVATE /utf-8)
+    endif()
 endif()
 
 # ── MiniGUI 单元测试（与平台无关，只链接核心库）─────────────────────────

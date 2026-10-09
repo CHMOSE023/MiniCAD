@@ -1,6 +1,7 @@
 #include "Dwg/Read/DwgFile.h"
 #include "Dwg/Read/DwgBitReader.h"
 #include "Dwg/Read/DwgDecompress.h"
+#include <algorithm>
 #include <cstring>
 
 namespace MiniDWG::DwgRead
@@ -341,6 +342,8 @@ namespace MiniDWG::DwgRead
         const Descriptor& d = it->second;
 
         std::vector<std::uint8_t> out;
+        // 按段大小预留，减少逐页追加的扩容复制；限制提前分配量，避免损坏的段表声明巨量容量。
+        out.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(d.Size, 64ull * 1024 * 1024)));
         for (const Page& page : d.Pages)
         {
             if (page.Empty)

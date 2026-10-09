@@ -91,11 +91,14 @@ namespace MiniDWG::DwgRead
             }
             m_db->SetTable(type, handle);
             std::vector<Handle> entries;
+            entries.reserve(table->Entries.size());
+            std::unordered_set<Handle> seen;
+            seen.reserve(table->Entries.size());
             for (Handle h : table->Entries)
             {
                 const auto* entry = m_db->FindAs<TableEntry>(h);
                 if (entry != nullptr && entry->GetDxfName() == table->GetEntryDxfName()
-                    && std::find(entries.begin(), entries.end(), h) == entries.end())
+                    && seen.insert(h).second)
                     entries.push_back(h);
             }
             table->Entries = std::move(entries);
@@ -191,9 +194,16 @@ namespace MiniDWG::DwgRead
             auto info = m_infos.find(h);
             if (info == m_infos.end())
                 continue;
-            const std::vector<Handle> handles = info->second.FirstChild != kNullHandle
+            const bool linked = info->second.FirstChild != kNullHandle;
+            const std::vector<Handle> chain = linked
                 ? ChainEntities(info->second.FirstChild, info->second.LastChild)
-                : info->second.Owned;
+                : std::vector<Handle>{};
+            const auto& handles = linked ? chain : info->second.Owned;
+            // 模型空间也是块记录；逐个 std::find 会对 N 个实体做 O(N²) 比较。
+            // 集合只用于去重，实体列表仍保持文件中的顺序。
+            std::unordered_set<Handle> seen(record->Entities.begin(), record->Entities.end());
+            seen.reserve(seen.size() + handles.size());
+            record->Entities.reserve(record->Entities.size() + handles.size());
             for (Handle e : handles)
             {
                 auto* entity = m_db->FindAs<Entity>(e);
@@ -201,7 +211,7 @@ namespace MiniDWG::DwgRead
                     || dynamic_cast<Seqend*>(entity) || dynamic_cast<Vertex*>(entity)
                     || dynamic_cast<AttributeEntity*>(entity))
                     continue;
-                if (std::find(record->Entities.begin(), record->Entities.end(), e) != record->Entities.end())
+                if (!seen.insert(e).second)
                     continue;
                 entity->OwnerHandle = h;
                 record->Entities.push_back(e);
@@ -237,9 +247,11 @@ namespace MiniDWG::DwgRead
             auto* insert = dynamic_cast<Insert*>(info.Object);
             if (pl == nullptr && insert == nullptr)
                 continue;
-            const std::vector<Handle> children = info.FirstChild != kNullHandle
+            const bool linked = info.FirstChild != kNullHandle;
+            const std::vector<Handle> chain = linked
                 ? ChainEntities(info.FirstChild, info.LastChild)
-                : info.Owned;
+                : std::vector<Handle>{};
+            const auto& children = linked ? chain : info.Owned;
             for (Handle c : children)
             {
                 CadObject* child = m_db->Find(c);

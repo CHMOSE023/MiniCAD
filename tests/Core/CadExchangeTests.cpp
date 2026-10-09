@@ -103,6 +103,7 @@ namespace
         Check(line && line->GetAttr().Color.Method == ColorMethod::ByAci && line->GetAttr().Color.Aci == 3, "直线 ACI 颜色保留");
         const Layer* layer = line ? dst.GetLayerManager().GetLayer(line->GetAttr().LayerId) : nullptr;
         Check(layer && layer->GetName() == "Walls" && Near(layer->GetColor().r, 1.0), "图层名与颜色保留");
+        Check(layer && layer->IsVisible(), "真彩图层读回后仍可见（-1 索引不是关闭标志）");
 
         const auto* circle = FindOne<CircleEntity>(dst);
         Check(circle && Near(circle->GetCircle().Radius, 4.0) && Near(circle->GetCircle().Center.x, 20), "圆一致");
@@ -144,6 +145,18 @@ int RunCadExchangeTests()
     CheckRoundTrip(CadFileKind::Dwg, "DWG");
     CheckRoundTrip(CadFileKind::Dxf, "DXF 2013", CadSaveVersion::R2013);
     CheckRoundTrip(CadFileKind::Dwg, "DWG 2013", CadSaveVersion::R2013);
+
+    for (const auto kind : { CadFileKind::Dwg, CadFileKind::Dxf })
+    {
+        Scene hidden;
+        BuildScene(hidden);
+        hidden.GetLayerManager().GetLayer(Layer::DefaultLayerID)->SetVisible(false);
+        const auto data = ExportCad(hidden, kind);
+        Scene restored;
+        Check(!data.empty() && ImportCad(data, restored) &&
+              !restored.GetLayerManager().GetLayer(Layer::DefaultLayerID)->IsVisible(),
+              "关闭的真彩图层读回后保持关闭");
+    }
 
     // MiniDWG 样例图：能读入，且读入后能再导出、再读回，实体数不变
     const char* samples[] = { "sample_AC1015.dwg", "sample_AC1032.dwg", "sample_AC1015_ascii.dxf", "sample_AC1032_binary.dxf" };

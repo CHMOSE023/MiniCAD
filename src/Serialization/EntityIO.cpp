@@ -10,6 +10,7 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
+#include "Core/Entity/Face3DEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
@@ -247,6 +248,19 @@ namespace MiniCAD::EntityIO
         }
 
         void WriteSolid(ISerializer& s, const SolidEntity& e) { WriteRectangle(s, e); }
+        void WriteFace3D(ISerializer& s, const Face3DEntity& e)
+        {
+            WriteRectangle(s, e);
+            auto flags = e.GetInvisibleEdges(); s.Value("invisibleEdges", flags);
+        }
+        std::unique_ptr<Entity> ReadFace3D(ISerializer& s, Object::ObjectID id)
+        {
+            Rectangle r;
+            Ser::Value(s, "p1", r.P1); Ser::Value(s, "p2", r.P2);
+            Ser::Value(s, "p3", r.P3); Ser::Value(s, "p4", r.P4);
+            std::uint32_t flags = 0; s.Value("invisibleEdges", flags);
+            return std::make_unique<Face3DEntity>(id, r.P1, r.P2, r.P3, r.P4, flags);
+        }
         std::unique_ptr<Entity> ReadSolid(ISerializer& s, Object::ObjectID id)
         {
             Rectangle r;
@@ -905,6 +919,7 @@ namespace MiniCAD::EntityIO
         }
 
         const TypeEntry kTypes[] = {
+            { "Face3DEntity", &WriteThunk<Face3DEntity, &WriteFace3D>, &ReadFace3D },
             { "LineEntity",      &WriteThunk<LineEntity, &WriteLine>,           &ReadLine      },
             { "PointEntity",     &WriteThunk<PointEntity, &WritePoint>,         &ReadPoint     },
             { "CircleEntity",    &WriteThunk<CircleEntity, &WriteCircle>,       &ReadCircle    },

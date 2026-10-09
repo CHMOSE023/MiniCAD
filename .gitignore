@@ -9,3 +9,6 @@ dist
 .pnpm-store
 .claude
 __pycache__/
+
+docs
+tools
