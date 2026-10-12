@@ -155,12 +155,19 @@ namespace MiniCAD
         if (m_indexVersion == ~0ull || m_scene->IsGeometryAllDirty() || m_index.PreferRebuild())
         {
             m_index.Rebuild(*m_scene);
+            m_pickGeometry.clear();
         }
         else
         {
             for (ObjectID id : m_scene->GetDirtyEntities())
+            {
                 m_index.Update(id, *m_scene);
+                m_pickGeometry.erase(id);
+            }
         }
+        // 全局几何变化（如块定义、图层等影响所有实体）不一定走整表重建，拾取几何缓存一并清掉
+        if (m_scene->IsGeometryAllDirty())
+            m_pickGeometry.clear();
         m_indexVersion = v;
     }
 
@@ -233,6 +240,7 @@ namespace MiniCAD
         double   bestDist = std::numeric_limits<double>::max();
 
         auto& camera = m_viewport->GetCamera();
+        const Math::Point3 worldPt = camera.ScreenToWorld(pt.x, pt.y);
 
         // 单实体精确命中测试（含细分）。仅对空间索引筛出的候选执行。
         auto testOne = [&](const Object& obj)
@@ -549,35 +557,48 @@ namespace MiniCAD
                 // 在屏幕空间统一做距离 / 区域命中测试。
                 if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
                 {
-                    const auto* ent = static_cast<const Entity*>(&obj);
+                    const PickGeometry& geom = GetPickGeometry(obj);
 
-                    PickCollectSink sink;
-                    ent->Draw(sink, false, false);
+                    // 在世界坐标里求距离：相机只有平移与等比缩放，屏幕距离 = 世界 XY 距离 / 每像素世界长度，
+                    // 省掉每个顶点的投影换算；先用包围盒排除离光标超过阈值的线段
+                    const double wpp = camera.GetWorldPerPixel();
+                    if (wpp <= 0.0) return;
+                    const Math::Point2 pw{ worldPt.x, worldPt.y };
+                    const double tw = thresh * wpp;
+                    auto P2 = [](const Math::Point3& p) { return Math::Point2{ p.x, p.y }; };
+                    auto outside = [&](const Math::Point3& a, const Math::Point3& b)
+                    {
+                        return std::min(a.x, b.x) > pw.x + tw || std::max(a.x, b.x) < pw.x - tw
+                            || std::min(a.y, b.y) > pw.y + tw || std::max(a.y, b.y) < pw.y - tw;
+                    };
 
                     double minD = std::numeric_limits<double>::max();
 
-                    for (const auto& seg : sink.Segments)
+                    for (const auto& seg : geom.Segments)
                     {
-                        auto a = camera.WorldToScreen(seg.first);
-                        auto b = camera.WorldToScreen(seg.second);
-                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)));
+                        if (outside(seg.first, seg.second)) continue;
+                        const Math::Point2 a = P2(seg.first), b = P2(seg.second);
+                        minD = std::min(minD, Math::Distance(pw, Math::ClosestPointOnSegment(pw, a, b)));
                     }
 
-                    for (const auto& tri : sink.Triangles)
+                    for (const auto& tri : geom.Triangles)
                     {
-                        auto a = camera.WorldToScreen(tri[0]);
-                        auto b = camera.WorldToScreen(tri[1]);
-                        auto c = camera.WorldToScreen(tri[2]);
+                        const double x0 = std::min({ tri[0].x, tri[1].x, tri[2].x }), x1 = std::max({ tri[0].x, tri[1].x, tri[2].x });
+                        const double y0 = std::min({ tri[0].y, tri[1].y, tri[2].y }), y1 = std::max({ tri[0].y, tri[1].y, tri[2].y });
+                        if (x0 > pw.x + tw || x1 < pw.x - tw || y0 > pw.y + tw || y1 < pw.y - tw) continue;
+                        const Math::Point2 a = P2(tri[0]), b = P2(tri[1]), c = P2(tri[2]);
 
                         // 落在实心三角形内即直接命中(距离为 0)
-                        if (PointInTriangle2(pt, a, b, c)) { minD = 0.0; break; }
+                        if (PointInTriangle2(pw, a, b, c)) { minD = 0.0; break; }
 
                         // 否则按到三角形边的距离参与竞争(细线宽实体退化为线)
-                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)));
-                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, b, c)));
-                        minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, c, a)));
+                        minD = std::min(minD, Math::Distance(pw, Math::ClosestPointOnSegment(pw, a, b)));
+                        minD = std::min(minD, Math::Distance(pw, Math::ClosestPointOnSegment(pw, b, c)));
+                        minD = std::min(minD, Math::Distance(pw, Math::ClosestPointOnSegment(pw, c, a)));
                     }
 
+                    if (minD < std::numeric_limits<double>::max())
+                        minD /= wpp;   // 换回屏幕像素
                     if (minD < thresh && minD < bestDist)
                     {
                         bestDist = minD;
@@ -601,6 +622,21 @@ namespace MiniCAD
             LOG_TRACE("[Picking] HitTest at (%.1f, %.1f)  BestDist=%.2f  HitID=%d", pt.x, pt.y, bestDist, static_cast<int>(best));
         }
         return best;
+    }
+
+    const Picking::PickGeometry& Picking::GetPickGeometry(const Object& obj)
+    {
+        auto it = m_pickGeometry.find(obj.GetID());
+        if (it == m_pickGeometry.end())
+        {
+            PickCollectSink sink;
+            static_cast<const Entity&>(obj).Draw(sink, false, false);
+            PickGeometry g;
+            g.Segments  = std::move(sink.Segments);
+            g.Triangles = std::move(sink.Triangles);
+            it = m_pickGeometry.emplace(obj.GetID(), std::move(g)).first;
+        }
+        return it->second;
     }
 
     void Picking::CollectSnapCandidates(const Math::Point2& pt, double radiusPx, std::vector<ObjectID>& out)

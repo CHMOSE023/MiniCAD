@@ -72,10 +72,8 @@ namespace MiniCAD
 
             for (auto cp : codepoints)
             {
-                Glyph glyph = font->GetGlyph(cp);
-
                 GlyphInstance instance;
-                instance.m_glyph = std::move(glyph);
+                instance.m_glyph = &font->GetGlyph(cp);
                 instance.m_scale = scale;
                 instance.m_rotation = rotation;
                 instance.m_position = Math::Point3(cursorX, cursorY, 0.0);

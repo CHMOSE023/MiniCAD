@@ -44,6 +44,10 @@ namespace MiniCAD
     {
         auto screenVP = Math::Mat4::OrthoOffCenterLH(0.0f, m_width, m_height, 0.0f, 0.0f, 1.0f);
         Math::Mat4 vp = m_camera.GetViewProj();
+        // 二维显示与 Z 无关：深度统一取 0.5（行向量约定，第 3 列为输出 z），否则相机深度范围 [0, 1000] 之外的图元
+        //（如 Z = -1 的文字、标高较大的天正图元）会被裁剪掉。只改渲染用的矩阵，拾取用的反算矩阵不变
+        vp.m[2] = vp.m[6] = vp.m[10] = 0.0;
+        vp.m[14] = 0.5;
 
         // 网格/坐标轴/Gizmo 只依赖相机+尺寸+开关：版本未变时 CPU 不重建、GPU 缓冲直接复用
         RefreshViewGeometry(viewState);
@@ -207,7 +211,7 @@ namespace MiniCAD
      
     void Viewport::Zoom(float delta, float mouseX, float mouseY)
     {
-        m_camera.Zoom(delta, static_cast<int>(mouseX), static_cast<int>(mouseY));  // delta = 滚轮增量，mouseX/Y = 屏幕坐标
+        m_camera.Zoom(delta, mouseX, mouseY);  // delta = 滚轮增量，mouseX/Y = 屏幕坐标
     }
      
     // 构建选择框

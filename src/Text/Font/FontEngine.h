@@ -41,6 +41,7 @@ namespace MiniCAD
     private:
         std::string BuildKey(const FontStyle& style) const;
         std::string ResolvePath(const std::string& fontFile) const;
+        std::string FindPath(const std::string& fontFile, const char* substitute, bool* found = nullptr) const;
 
     private:
         std::unordered_map<std::string, std::shared_ptr<IFont>> m_cache;

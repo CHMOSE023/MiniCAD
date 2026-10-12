@@ -6,6 +6,11 @@
 #include "Import/TchColumn.h"
 #include "Import/TchDimension.h"
 #include "Import/TchStair.h"
+#include "Import/TchPathArray.h"
+#include "Import/TchText.h"
+#include "Import/TchAnnotation.h"
+#include "Import/TchShape.h"
+#include "Import/TchMultiStair.h"
 #include "Import/TchSymbol.h"
 
 #include "Core/Log.h"
@@ -538,13 +543,13 @@ namespace MiniCAD
                     Tch::TchDrawingName drawingName;
                     if (Tch::DecodeDrawingName(*unknown, drawingName, &nativeReason))
                     {
-                        // 天正按原图文字样式的字体（textbox）计算宽度并居中排布，所以按 DWG 中的样式估算
-                        //（场景里同名的 Standard 等样式可能是 MiniCAD 自己的设置）
+                        // 天正按原图字体的 textbox 排布；MiniCAD 显示时用的是场景中的样式（同名的 Standard 是 MiniCAD 自己的设置，
+                        // 缺失的字体另有替代），按原图字体排布会让比例文字压到图名上，所以按实际显示的字体估算宽度
                         const TextStyleID nameStyle = LookupStyle(drawingName.NameStyle), scaleStyle = LookupStyle(drawingName.ScaleStyle);
                         auto extent = [&](const std::string& text, double height, bool scaleText) {
-                            const auto* st = m_db.FindAs<Dwg::TextStyle>(scaleText ? drawingName.ScaleStyle : drawingName.NameStyle);
-                            const double factor = st != nullptr && st->Width > 0 ? st->Width : 1.0;
-                            auto e = Tch::Detail::EstimateExtent(st ? st->Filename : std::string(), text);
+                            const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(scaleText ? scaleStyle : nameStyle);
+                            const double factor = rec.WidthFactor > 0 ? rec.WidthFactor : 1.0;
+                            auto e = Tch::Detail::DisplayExtent(rec.FontFile, text);
                             return Tch::Detail::TextExtent{e.Width * height * factor, e.Bottom * height};
                         };
                         ++m_tchConverted[unknown->Raw.DxfName];
@@ -555,6 +560,250 @@ namespace MiniCAD
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return MakeTchGraphics(src, Tch::BuildRectStair(stair), LookupStyle(stair.TextStyle), std::nullopt, stair.ArrowLayer);
+                    }
+                    Tch::TchElevation elevation;
+                    if (Tch::DecodeElevation(*unknown, elevation, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildElevation(elevation), LookupStyle(elevation.Style));
+                    }
+                    Tch::TchMultiLeader leader;
+                    if (Tch::DecodeMultiLeader(*unknown, leader, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildMultiLeader(leader), LookupStyle(leader.Style));
+                    }
+                    Tch::TchComposing composing;
+                    if (Tch::DecodeComposing(*unknown, composing, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildComposing(composing), LookupStyle(composing.Style));
+                    }
+                    Tch::TchDrawingIndex drawingIndex;
+                    if (Tch::DecodeDrawingIndex(*unknown, drawingIndex, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildDrawingIndex(drawingIndex), LookupStyle(drawingIndex.Style), LookupStyle(drawingIndex.ScaleStyle));
+                    }
+                    Tch::TchNorthThumb north;
+                    if (Tch::DecodeNorthThumb(*unknown, north, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildNorthThumb(north), LookupStyle(north.Style));
+                    }
+                    Tch::TchCut cut;
+                    if (Tch::DecodeCut(*unknown, cut, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCut(cut), TextStyleTable::StandardID);
+                    }
+                    Tch::TchSymmetry symmetry;
+                    if (Tch::DecodeSymmetry(*unknown, symmetry, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildSymmetry(symmetry), TextStyleTable::StandardID);
+                    }
+                    Tch::TchRect tchRect;
+                    if (Tch::DecodeRect(*unknown, tchRect, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildRect(tchRect), TextStyleTable::StandardID);
+                    }
+                    Tch::TchSlab slab;
+                    if (Tch::DecodeSlab(*unknown, slab, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildSlab(slab), TextStyleTable::StandardID);
+                    }
+                    Tch::TchHandRail handRail;
+                    if (Tch::DecodeHandRail(*unknown, handRail, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildHandRail(handRail), TextStyleTable::StandardID);
+                    }
+                    Tch::TchApron apron;
+                    if (Tch::DecodeApron(*unknown, apron, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildApron(apron), TextStyleTable::StandardID);
+                    }
+                    Tch::TchCornerWindow cornerWindow;
+                    if (Tch::DecodeCornerWindow(*unknown, cornerWindow, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCornerWindow(cornerWindow), LookupStyle(cornerWindow.Style));
+                    }
+                    Tch::TchLineStair lineStair;
+                    if (Tch::DecodeLineStair(*unknown, lineStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildLineStair(lineStair), TextStyleTable::StandardID);
+                    }
+                    Tch::TchArcStair arcStair;
+                    if (Tch::DecodeArcStair(*unknown, arcStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildArcStair(arcStair), TextStyleTable::StandardID);
+                    }
+                    Tch::TchAscent ascent;
+                    if (Tch::DecodeAscent(*unknown, ascent, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildAscent(ascent), TextStyleTable::StandardID);
+                    }
+                    Tch::TchBalcony balcony;
+                    if (Tch::DecodeBalcony(*unknown, balcony, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildBalcony(balcony), TextStyleTable::StandardID);
+                    }
+                    Tch::TchCurveStair curveStair;
+                    if (Tch::DecodeCurveStair(*unknown, curveStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCurveStair(curveStair), TextStyleTable::StandardID);
+                    }
+                    Tch::TchModi modi;
+                    if (Tch::DecodeModi(*unknown, modi, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildModi(modi), TextStyleTable::StandardID);
+                    }
+                    Tch::TchParallelStair parallelStair;
+                    if (Tch::DecodeParallelStair(*unknown, parallelStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildParallelStair(parallelStair), LookupStyle(parallelStair.TextStyle), std::nullopt, parallelStair.ArrowLayer);
+                    }
+                    Tch::TchCornerStair cornerStair;
+                    if (Tch::DecodeCornerStair(*unknown, cornerStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCornerStair(cornerStair), LookupStyle(cornerStair.TextStyle), std::nullopt, cornerStair.ArrowLayer);
+                    }
+                    Tch::TchDoubleMulStair doubleMulStair;
+                    if (Tch::DecodeDoubleMulStair(*unknown, doubleMulStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildDoubleMulStair(doubleMulStair), LookupStyle(doubleMulStair.TextStyle), std::nullopt, doubleMulStair.ArrowLayer);
+                    }
+                    Tch::TchScissorsStair scissorsStair;
+                    if (Tch::DecodeScissorsStair(*unknown, scissorsStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildScissorsStair(scissorsStair), LookupStyle(scissorsStair.TextStyle), std::nullopt, scissorsStair.ArrowLayer);
+                    }
+                    Tch::TchCrossStair crossStair;
+                    if (Tch::DecodeCrossStair(*unknown, crossStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCrossStair(crossStair), LookupStyle(crossStair.TextStyle), std::nullopt, crossStair.ArrowLayer);
+                    }
+                    Tch::TchTriangleStair triangleStair;
+                    if (Tch::DecodeTriangleStair(*unknown, triangleStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildTriangleStair(triangleStair), LookupStyle(triangleStair.TextStyle), std::nullopt, triangleStair.ArrowLayer);
+                    }
+                    Tch::TchRectCornerStair rectCornerStair;
+                    if (Tch::DecodeRectCornerStair(*unknown, rectCornerStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildRectCornerStair(rectCornerStair), LookupStyle(rectCornerStair.TextStyle), std::nullopt, rectCornerStair.ArrowLayer);
+                    }
+                    Tch::TchAutoStair autoStair;
+                    if (Tch::DecodeAutoStair(*unknown, autoStair, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildAutoStair(autoStair), LookupStyle(autoStair.TextStyle), std::nullopt, autoStair.ArrowLayer);
+                    }
+                    Tch::TchMountRoof mountRoof;
+                    if (Tch::DecodeMountRoof(*unknown, mountRoof, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildMountRoof(mountRoof), TextStyleTable::StandardID);
+                    }
+                    Tch::TchCuspRoof cuspRoof;
+                    if (Tch::DecodeCuspRoof(*unknown, cuspRoof, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCuspRoof(cuspRoof), TextStyleTable::StandardID);
+                    }
+                    Tch::TchSlopeRoof slopeRoof;
+                    if (Tch::DecodeSlopeRoof(*unknown, slopeRoof, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildSlopeRoof(slopeRoof), TextStyleTable::StandardID);
+                    }
+                    Tch::TchDualRoof dualRoof;
+                    if (Tch::DecodeDualRoof(*unknown, dualRoof, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildDualRoof(dualRoof), TextStyleTable::StandardID);
+                    }
+                    Tch::TchOpeningSlot openingSlot;
+                    if (Tch::DecodeOpeningSlot(*unknown, openingSlot, &nativeReason))
+                    {
+                        // 门窗套：按所属门窗的位置与所在墙的两侧墙面画截面矩形
+                        const auto it = m_openings.find(openingSlot.Opening);
+                        const auto* host = it == m_openings.end() ? nullptr : m_db.FindAs<Dwg::UnknownEntity>(it->second.Wall);
+                        Tch::TchWall slotWall;
+                        if (host != nullptr && Tch::DecodeWall(*host, slotWall))
+                        {
+                            const auto& o = it->second;
+                            // 门窗方向与墙方向相同时，门窗左侧即墙的左侧
+                            const double wa = std::atan2(slotWall.End.Y - slotWall.Start.Y, slotWall.End.X - slotWall.Start.X);
+                            const bool same = std::cos(o.Angle - wa) >= 0;
+                            const double faceLeft = same ? slotWall.LeftWidth : slotWall.RightWidth;
+                            const double faceRight = same ? slotWall.RightWidth : slotWall.LeftWidth;
+                            ++m_tchConverted[unknown->Raw.DxfName];
+                            return MakeTchGraphics(src, Tch::BuildOpeningSlot(openingSlot, o, faceLeft, faceRight), TextStyleTable::StandardID);
+                        }
+                        nativeReason = "opening slot owner or host wall is unknown";
+                    }
+                    Tch::TchStep tchStep;
+                    if (Tch::DecodeStep(*unknown, tchStep, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildStep(tchStep), TextStyleTable::StandardID);
+                    }
+                    Tch::TchWallPatch wallPatch;
+                    if (Tch::DecodeWallPatch(*unknown, wallPatch, &nativeReason))
+                    {
+                        // 所附着墙的墙体四边形：轮廓落在墙内的部分不画
+                        std::vector<std::array<Tch::TchGraphics::Point, 4>> bodies;
+                        for (Dwg::Handle h : wallPatch.Walls)
+                        {
+                            const auto* host = m_db.FindAs<Dwg::UnknownEntity>(h);
+                            Tch::TchWall w;
+                            if (host == nullptr || !Tch::DecodeWall(*host, w) || w.Angle != 0) continue;   // 弧墙未处理
+                            const double dx = w.End.X - w.Start.X, dy = w.End.Y - w.Start.Y, len = std::hypot(dx, dy);
+                            if (len < 1e-9) continue;
+                            const double nx = -dy / len, ny = dx / len;
+                            bodies.push_back({Tch::TchGraphics::Point{w.Start.X + nx * w.LeftWidth, w.Start.Y + ny * w.LeftWidth},
+                                              {w.End.X + nx * w.LeftWidth, w.End.Y + ny * w.LeftWidth},
+                                              {w.End.X - nx * w.RightWidth, w.End.Y - ny * w.RightWidth},
+                                              {w.Start.X - nx * w.RightWidth, w.Start.Y - ny * w.RightWidth}});
+                        }
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildWallPatch(wallPatch, bodies), TextStyleTable::StandardID);
+                    }
+                    Tch::TchText tchText;
+                    if (Tch::DecodeText(*unknown, tchText, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        const TextStyleID textStyle = LookupStyle(tchText.Style);
+                        const bool trueType = !m_scene.GetTextStyleTable().Resolve(textStyle).IsShx();
+                        return MakeTchGraphics(src, Tch::BuildText(tchText, trueType), textStyle);
+                    }
+                    Tch::TchPathArray pathArray;
+                    if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
+                    {
+                        if (auto converted = ConvertPathArray(src, pathArray, nativeReason))
+                        {
+                            ++m_tchConverted[unknown->Raw.DxfName];
+                            return converted;
+                        }
                     }
                     Tch::TchAxisLabel axisLabel;
                     if (Tch::DecodeAxisLabel(*unknown, axisLabel, &nativeReason))
@@ -580,6 +829,48 @@ namespace MiniCAD
                     Tch::TchWall wall;
                     if (Tch::DecodeWall(*unknown, wall, &nativeReason))
                     {
+                        double arcX = 0, arcY = 0, arcR = 0;
+                        if (wall.ArcCenter(arcX, arcY, arcR))
+                        {
+                            // 弧墙：两侧为同心圆弧（逆时针弧左侧在内），门窗处按轴线弧长断开；端部连接量未用（样例为 0）
+                            std::string arcName = "*U_TCH_" + std::to_string(src.ObjectHandle);
+                            while (m_scene.GetBlockTable().Get(arcName)) arcName += "_";
+                            const auto arcBlockId = m_scene.GetBlockTable().Create(arcName);
+                            auto* arcBlock = m_scene.GetBlockTable().Find(arcBlockId);
+                            arcBlock->SetFlags(BlockEntity::Anonymous);
+                            const double a0 = std::atan2(wall.Start.Y - arcY, wall.Start.X - arcX);
+                            const double ccw = wall.Angle > 0 ? 1.0 : -1.0;
+                            // 轴线上自起点的角度区间 [0, |Angle|]，门窗按中点角度 ± 半宽 / 半径断开
+                            std::vector<std::pair<double, double>> arcCuts;
+                            if (auto it = m_wallOpenings.find(src.ObjectHandle); it != m_wallOpenings.end())
+                                for (const auto& o : it->second)
+                                {
+                                    const double t = std::remainder((std::atan2(o.Position.Y - arcY, o.Position.X - arcX) - a0) * ccw, 2 * std::numbers::pi);
+                                    const double half = o.Width / 2 / arcR;
+                                    arcCuts.emplace_back(t - half, t + half);
+                                }
+                            std::sort(arcCuts.begin(), arcCuts.end());
+                            const double span = std::abs(wall.Angle);
+                            for (const double radius : {arcR - ccw * wall.LeftWidth, arcR + ccw * wall.RightWidth})
+                            {
+                                if (radius <= 0) continue;
+                                auto addArc = [&](double t0, double t1) {
+                                    double s0 = a0 + ccw * t0, s1 = a0 + ccw * t1;
+                                    if (ccw < 0) std::swap(s0, s1);
+                                    arcBlock->AddEntity(Make<ArcEntity>(src, nullptr, Math::Point3{arcX, arcY, wall.Start.Z}, radius, s0, s1));
+                                };
+                                double cursor = 0;
+                                for (const auto& [c0, c1] : arcCuts)
+                                {
+                                    if (c1 <= cursor || c0 >= span) continue;
+                                    if (c0 > cursor) addArc(cursor, c0);
+                                    cursor = std::max(cursor, c1);
+                                }
+                                if (cursor < span) addArc(cursor, span);
+                            }
+                            ++m_tianzhengWalls;
+                            return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
+                        }
                         const double dx = wall.End.X - wall.Start.X, dy = wall.End.Y - wall.Start.Y;
                         const double length = std::hypot(dx, dy);
                         const double nx = -dy / length, ny = dx / length;
@@ -694,10 +985,22 @@ namespace MiniCAD
 
                 if (auto* e = dynamic_cast<const Dwg::TextEntity*>(&src))
                 {
-                    const bool aligned = e->HorizontalAlignment != Dwg::TextHorizontalAlignment::Left
-                                      || e->VerticalAlignment != Dwg::TextVerticalAlignmentType::Baseline;
-                    return Make<TextEntity>(src, &e->Normal, ToPoint(aligned ? e->AlignmentPoint : e->InsertPoint),
+                    // 对齐方式：左 / 中 / 右与竖直四种按对齐点显示（MiniCAD 按自己的字宽对齐）；
+                    // “中间”（72 = 4）按水平居中、竖直居中；“对齐”“布满”（3、5）从插入点左对齐近似
+                    const int h72 = static_cast<int>(e->HorizontalAlignment);
+                    const int v73 = static_cast<int>(e->VerticalAlignment);
+                    const int hAlign = h72 == 1 || h72 == 4 ? 1 : h72 == 2 ? 2 : 0;
+                    const int vAlign = h72 == 4 ? 2 : h72 == 3 || h72 == 5 ? 0 : std::clamp(v73, 0, 3);
+                    const bool aligned = hAlign != 0 || vAlign != 0;
+                    auto text = Make<TextEntity>(src, &e->Normal, ToPoint(aligned ? e->AlignmentPoint : e->InsertPoint),
                         e->Value, static_cast<float>(e->Height), static_cast<float>(e->Rotation), LookupStyle(e->StyleHandle));
+                    if (text)
+                    {
+                        auto& t = static_cast<TextEntity&>(*text);
+                        t.SetAlignment(hAlign, vAlign);
+                        t.SetWidthFactor(e->WidthFactor);   // CAD 里 TEXT 以自身的宽度因子为准，样式的只是新建时的默认值
+                    }
+                    return text;
                 }
 
                 if (auto* e = dynamic_cast<const Dwg::MText*>(&src))
@@ -831,7 +1134,8 @@ namespace MiniCAD
                 }
                 for (const auto& t : g.Texts)
                 {
-                    const TextStyleID style = t.Style == 1 ? secondStyle.value_or(textStyle) : textStyle;
+                    TextStyleID style = t.Style == 1 ? secondStyle.value_or(textStyle) : textStyle;
+                    if (t.WidthFactor > 0) style = WidthVariant(style, t.WidthFactor);
                     auto text = Make<MTextEntity>(src, nullptr, style, t.Value, pt(t.Center), t.Height, t.Rotation, 0.0);
                     auto& mt = static_cast<MTextEntity&>(*text);
                     mt.SetAttachment(static_cast<MTextAttachment>(t.Attachment));
@@ -844,8 +1148,74 @@ namespace MiniCAD
                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
             }
 
+            // 线图案：每个单元是图案块的一个块参照（缩放不等时块内圆弧显示为椭圆弧，与天正分解结果相同），合成一个匿名块
+            std::unique_ptr<Entity> ConvertPathArray(const Dwg::Entity& src, const Tch::TchPathArray& a, std::string& reason)
+            {
+                const auto block = m_blocks.find(a.Block);
+                const auto* def = block == m_blocks.end() ? nullptr : m_scene.GetBlockTable().Find(block->second);
+                if (!def) { reason = "path array pattern block is missing"; return nullptr; }
+                const AABB box = def->GetBoundingBox();
+                if (!(box.Max.x > box.Min.x && box.Max.y > box.Min.y)) { reason = "path array pattern block is empty"; return nullptr; }
+                const auto units = Tch::BuildPathArray(a, box.Min.x, box.Min.y, box.Max.x, box.Max.y);
+                if (units.empty()) { reason = "path array has no pattern unit"; return nullptr; }
+                std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
+                while (m_scene.GetBlockTable().Get(name)) name += "_";
+                const auto blockId = m_scene.GetBlockTable().Create(name);
+                auto* group = m_scene.GetBlockTable().Find(blockId);
+                group->SetFlags(BlockEntity::Anonymous);
+                for (const auto& u : units)
+                {
+                    auto unit = Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(block->second), def->GetName(),
+                                                   Math::Point3{u.X, u.Y, 0});
+                    auto& insert = static_cast<InsertEntity&>(*unit);
+                    insert.SetScale({u.ScaleX, u.ScaleY, 1});
+                    insert.SetRotation(u.Rotation);
+                    m_scene.ResolveInsert(insert);
+                    group->AddEntity(std::move(unit));
+                }
+                return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+            }
+
             std::unique_ptr<Entity> ConvertOpening(const Dwg::Entity& src, const Tch::TchOpening& o)
             {
+                if (o.Type == Tch::TchOpening::Kind::Group)
+                {
+                    // 组合门窗：各子门窗按普通门窗显示，另加组合编号（天正 2014 分解结果核对：两樘门与编号文字）
+                    std::vector<std::unique_ptr<Entity>> parts;
+                    for (const auto& part : o.Parts)
+                        if (auto converted = ConvertOpening(src, part)) parts.push_back(std::move(converted));
+                    if (!o.Label.empty())
+                    {
+                        Tch::TchGraphics label;
+                        const double nominal = o.LabelHeight * o.Scale;
+                        Tch::Detail::AddRuns(label, o.Label, nominal, o.LabelX, o.LabelY - 0.425 * nominal, 0, 1);
+                        if (auto text = MakeTchGraphics(src, label, LookupStyle(o.Style))) parts.push_back(std::move(text));
+                    }
+                    if (parts.empty()) return nullptr;
+                    std::string name = "*U_TCH_OPENING_" + std::to_string(src.ObjectHandle);
+                    while (m_scene.GetBlockTable().Get(name)) name += "_";
+                    const auto blockId = m_scene.GetBlockTable().Create(name);
+                    auto* group = m_scene.GetBlockTable().Find(blockId);
+                    group->SetFlags(BlockEntity::Anonymous);
+                    for (auto& part : parts)
+                    {
+                        if (auto* insert = dynamic_cast<InsertEntity*>(part.get())) m_scene.ResolveInsert(*insert);
+                        group->AddEntity(std::move(part));
+                    }
+                    return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+                }
+                if (o.Type == Tch::TchOpening::Kind::Band)
+                {
+                    const auto* bandHost = m_db.FindAs<Dwg::UnknownEntity>(o.Wall);
+                    Tch::TchWall bandWall;
+                    if (bandHost == nullptr || !Tch::DecodeWall(*bandHost, bandWall))
+                    {
+                        m_tchFailures.try_emplace("TCH_OPENING", "band window host wall is unknown");
+                        return nullptr;
+                    }
+                    const double angle = std::atan2(bandWall.End.Y - bandWall.Start.Y, bandWall.End.X - bandWall.Start.X);
+                    return MakeTchGraphics(src, Tch::BuildBandWindow(o, angle, bandWall.LeftWidth, bandWall.RightWidth), LookupStyle(o.Style));
+                }
                 const auto block = m_blocks.find(o.Block2D);
                 if (block == m_blocks.end())
                 {
@@ -872,7 +1242,7 @@ namespace MiniCAD
                 const double yScale = o.MirrorY() ? -depth : depth;
                 insert.SetScale({o.MirrorX() ? -o.Width : o.Width, yScale, o.Width});
                 insert.SetRotation(o.Angle);
-                if (o.Type != Tch::TchOpening::Kind::Door || !hasWall)
+                if (o.Type != Tch::TchOpening::Kind::Door || !hasWall || o.InGroup)
                     return result;
 
                 // 门：门扇所在一侧的对面墙面上，横跨门洞画一条线（天正 2014 的显示与分解结果都有这条线，
@@ -1378,10 +1748,21 @@ namespace MiniCAD
                 {
                     auto d = std::make_unique<Dwg::TextEntity>();
                     d->InsertPoint = ToXYZ(s->GetPosition());
+                    if (s->GetHAlign() != 0 || s->GetVAlign() != 0)
+                    {
+                        // 非左对齐基线：对齐点为准，插入点由 CAD 重新计算
+                        d->AlignmentPoint      = d->InsertPoint;
+                        d->HorizontalAlignment = static_cast<Dwg::TextHorizontalAlignment>(s->GetHAlign());
+                        d->VerticalAlignment   = static_cast<Dwg::TextVerticalAlignmentType>(s->GetVAlign());
+                    }
                     d->Value       = s->GetText();
                     d->Height      = s->GetHeight();
                     d->Rotation    = s->GetRotation();
                     d->StyleHandle = StyleHandle(s->GetStyleId());
+                    if (s->GetWidthFactor() > 0.0)
+                        d->WidthFactor = s->GetWidthFactor();
+                    else if (const TextStyleRecord* rec = m_scene.GetTextStyleTable().Find(s->GetStyleId()))
+                        d->WidthFactor = rec->WidthFactor > 0.0 ? rec->WidthFactor : 1.0;
                     d->Normal      = NormalOf(e);
                     return Finish(e, std::move(d));
                 }

@@ -18,14 +18,14 @@ namespace MiniCAD
         TTFFont(const std::string& name, const std::string& filePath, uint64_t fontId);
         ~TTFFont();
 
-        Glyph       GetGlyph  (uint32_t codepoint) override;
+        const Glyph& GetGlyph (uint32_t codepoint) override;
         double      GetAdvance(uint32_t codepoint) override;
         double      GetHeight ()   const override { return m_height; }
         uint64_t    GetFontId ()   const override { return m_fontId; }
         const char* GetName   ()   const override { return m_name.c_str(); }
         bool        IsLoaded  ()   const          { return m_stbFont != nullptr; }
 
-        bool        HasGlyph(uint32_t codepoint) override { return  m_glyphCache[codepoint].empty() ? false : true; }
+        bool        HasGlyph(uint32_t codepoint) override { return !GetGlyph(codepoint).empty(); }   // 原先用 operator[] 会把空字形塞进缓存
     private:
         void  Load(const std::string& filePath);
         Glyph BuildGlyph(uint32_t codepoint);

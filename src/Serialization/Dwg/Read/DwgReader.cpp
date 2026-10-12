@@ -240,7 +240,7 @@ namespace MiniDWG::DwgRead
                 handle += offset;
                 location += r.ReadSignedModularChar();
                 if (offset > 0 && location >= 0)
-                    m_map[handle] = static_cast<std::uint64_t>(location);
+                    m_map[handle].Offset = static_cast<std::uint64_t>(location);
             }
             r.ReadByte();
             r.ReadByte();
@@ -261,7 +261,6 @@ namespace MiniDWG::DwgRead
             return;
         }
 
-        m_scheduled.reserve(m_map.size());
         m_infos.reserve(m_map.size());
         for (Handle h : m_headerHandles.All())
         {
@@ -273,9 +272,9 @@ namespace MiniDWG::DwgRead
         // 没有被引用的对象（如 R2010 起 ACAD_TABLE 的 TABLECONTENT 只有所有者指向表格）：AutoCAD 同样保留，
         // 也读入；写出时所有者会写出的才写出
         std::vector<Handle> rest;
-        for (const auto& [h, offset] : m_map)
+        for (const auto& [h, location] : m_map)
         {
-            if (m_scheduled.count(h) == 0)
+            if (!location.Scheduled)
                 rest.push_back(h);
         }
         std::sort(rest.begin(), rest.end());
@@ -286,8 +285,14 @@ namespace MiniDWG::DwgRead
 
     void Reader::Enqueue(Handle handle)
     {
-        if (handle != kNullHandle && m_map.find(handle) != m_map.end() && m_scheduled.insert(handle).second)
+        if (handle == kNullHandle)
+            return;
+        auto it = m_map.find(handle);
+        if (it != m_map.end() && !it->second.Scheduled)
+        {
+            it->second.Scheduled = true;
             m_queue.push_back(handle);
+        }
     }
 
     void Reader::ReadQueued()
@@ -300,7 +305,7 @@ namespace MiniDWG::DwgRead
             if (it == m_map.end())
                 continue;
             m_currentHandle = handle;
-            const std::int16_t type = BeginObject(it->second);
+            const std::int16_t type = BeginObject(it->second.Offset);
             if (type < 0)
                 continue;
 

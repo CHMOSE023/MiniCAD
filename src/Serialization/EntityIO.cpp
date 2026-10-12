@@ -306,6 +306,9 @@ namespace MiniCAD::EntityIO
             float h = e.GetHeight();        s.Value("height", h);
             float r = e.GetRotation();      s.Value("rotation", r);
             uint32_t st = e.GetStyleId();   s.Value("styleId", st);
+            int32_t ha = e.GetHAlign();     s.Value("hAlign", ha);
+            int32_t va = e.GetVAlign();     s.Value("vAlign", va);
+            double wf = e.GetWidthFactor(); s.Value("widthFactor", wf);
         }
         std::unique_ptr<Entity> ReadText(ISerializer& s, Object::ObjectID id)
         {
@@ -316,7 +319,15 @@ namespace MiniCAD::EntityIO
             s.Value("rotation", r);
             uint32_t st = 0;                // 旧文件无此项：0 = Standard
             s.Value("styleId", st);
-            return std::make_unique<TextEntity>(id, p, t, h, r, st);
+            int32_t ha = 0, va = 0;         // 旧文件无此项：左对齐基线
+            s.Value("hAlign", ha);
+            s.Value("vAlign", va);
+            double wf = 0.0;                // 旧文件无此项：随样式
+            s.Value("widthFactor", wf);
+            auto e = std::make_unique<TextEntity>(id, p, t, h, r, st);
+            e->SetAlignment(ha, va);
+            e->SetWidthFactor(wf);
+            return e;
         }
 
         void WriteMText(ISerializer& s, const MTextEntity& e)

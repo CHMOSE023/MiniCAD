@@ -17,7 +17,7 @@ namespace MiniCAD
         Camera(double width, double height);
  
         void Pan    (double dx, double dy);                          // 屏幕像素平移
-        void Zoom   (double delta, int mouseX = 0, int mouseY = 0);  // 缩放，可选鼠标中心
+        void Zoom   (double delta, double mouseX = 0, double mouseY = 0);  // 缩放（delta 为滚轮格数，正为放大），可选鼠标中心
         void Resize (double width, double height);
         void ZoomToBounds(double minX, double minY, double maxX, double maxY, double margin = 1.1);   // 居中并缩放到刚好容纳该范围（留边）
 
@@ -36,6 +36,7 @@ namespace MiniCAD
         void         SetState(const CameraState& s);
 
         Math::Point3 ScreenToWorld(int px, int py)               const;
+        Math::Point3 ScreenToWorld(double px, double py)         const;
         Math::Point2 WorldToScreen(const Math::Point3& worldPos) const;
 
     private:

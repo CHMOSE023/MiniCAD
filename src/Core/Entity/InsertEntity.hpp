@@ -183,6 +183,8 @@ namespace MiniCAD
                     if (a.Color.Method == ColorMethod::ByBlock) a.Color = host.Color;
                     if (a.Lineweight == Lineweight::ByBlock)     a.Lineweight = host.Lineweight;
                     if (a.LineType == LineTypeTable_ByBlockID)   a.LineType = host.LineType;
+                    // 块内 0 层上的实体随插入所在图层（ByLayer 颜色、线型与图层开关都按插入的图层），与 AutoCAD 相同
+                    if (a.LayerId == DefaultLayer_ID)            a.LayerId = host.LayerId;
                     clone->SetAttr(a);
                     m_resolved.push_back(std::move(clone));
                 }
@@ -192,6 +194,8 @@ namespace MiniCAD
 
         // 与 LineTypeTable::ByBlockID 约定一致(1 = ByBlock),避免在头文件引入块表依赖。
         static constexpr LineTypeID LineTypeTable_ByBlockID = 1;
+        // 与 Layer::DefaultLayerID 一致（0 层）
+        static constexpr LayerID DefaultLayer_ID = 0;
 
         BlockID            m_blockId   = 0;
         std::string        m_blockName;

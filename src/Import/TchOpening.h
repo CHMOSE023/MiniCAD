@@ -3,6 +3,7 @@
 #include "Dwg/Read/DwgBitReader.h"
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace MiniCAD::Tch
 {
@@ -68,7 +69,8 @@ namespace MiniCAD::Tch
 
     struct TchOpening
     {
-        enum class Kind { Door = 0, Window = 1 };
+        enum class Kind { Door = 0, Window = 1, Band = 5, Group = 8 };   // 5 带形窗（沿墙画窗线，没有二维图块）；8 组合门窗（由子门窗组成）
+        struct Segment { double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0, Bulge = 0; };
 
         MiniDWG::XYZ Position;      // 墙轴线上的门窗中点；Z 为窗台高
         double Width = 0, Height = 0;
@@ -77,14 +79,89 @@ namespace MiniCAD::Tch
         int    Mirror = 0;          // 0 不镜像，1 X，2 X 与 Y，3 Y（转换函数 0x706e70；3 已由天正 2014 分解结果核对）
         MiniDWG::Handle Block2D = MiniDWG::kNullHandle;  // 二维图块（$TCHSYS$DOOR2D / $TCHSYS$WIN2D）
         MiniDWG::Handle Wall = MiniDWG::kNullHandle;     // 所在墙（TCH_WALL）
+        // 带形窗、组合门窗用：编号文字、出图比例、文字样式、分段（直段带形窗无分段，按 Position / Width / Angle）
+        std::string Label;
+        double LabelX = 0, LabelY = 0, LabelHeight = 3.5, Scale = 100;
+        MiniDWG::Handle Style = MiniDWG::kNullHandle;
+        std::vector<Segment> Segments;
+        std::vector<TchOpening> Parts;                   // 组合门窗的子门窗（各自按门、窗显示）
+        bool   InGroup = false;                          // 组合门窗的子门窗：不画门槛线
 
         bool MirrorX() const { return Mirror == 1 || Mirror == 2; }
         bool MirrorY() const { return Mirror == 2 || Mirror == 3; }
     };
 
-    // TCH_OPENING 门窗：按 TDbOpening 的私有布局版本 < 6 的明文分支解析，
-    // 必须恰好读完主数据流。只接受门（类型 0）与窗（类型 1）。显示方式（插入二维图块，X 缩放为宽度，
-    // Y 缩放门为宽度、窗为墙厚，旋转为 Angle）与天正 2014 分解出的块参照一致，见 docs/Tch-compatibility.md
+    namespace Detail
+    {
+        // TDbOpening 的私有布局（版本 < 6 的明文分支）：天正基类之后的门窗字段，不检查是否读完
+        inline bool ReadOpeningFields(MiniDWG::DwgBitReader& r, TchOpening& o, int& kind, const char*& why)
+        {
+            const int version = r.ReadByte();
+            if (version < 2 || version > 5) { why = "unsupported native opening version"; return false; }
+            o.Position = {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()};
+            o.Width = r.ReadBitDouble();
+            r.ReadBitDouble();
+            o.Height = r.ReadBitDouble();
+            o.Angle = r.ReadBitDouble();
+            o.Mirror = r.ReadByte();
+            kind = r.ReadByte();
+            r.ReadBitDouble();
+            // 文字流：编号；句柄流：二维图块、三维图块
+            o.LabelX = r.ReadBitDouble(); o.LabelY = r.ReadBitDouble(); r.ReadBitDouble();     // 编号文字位置
+            // 句柄流：所在墙
+            const int flags = r.ReadBitShort();
+            if ((flags & 1) || kind == 10) { r.ReadBitDouble(); r.ReadBitDouble(); }
+            if (kind == 4)
+            {
+                r.ReadByte(); r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
+                if (version > 4) r.ReadBitDouble();
+            }
+            else if (kind == 6 || kind == 7)
+            {
+                r.ReadBitDouble();
+                if (kind == 6) r.ReadBitDouble();
+            }
+            // 句柄流：5 个（文字样式、图层）
+            o.LabelHeight = r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
+            const int segments = r.ReadBitShort();
+            if (segments < 0 || segments > 1024) { why = "invalid opening segment count"; return false; }
+            for (int i = 0; i < segments && !r.Failed(); ++i)
+            {
+                TchOpening::Segment s;
+                s.X1 = r.ReadRawDouble(); s.Y1 = r.ReadRawDouble(); s.X2 = r.ReadRawDouble(); s.Y2 = r.ReadRawDouble();   // 两个二维点（2RD）
+                s.Bulge = r.ReadBitDouble();
+                o.Segments.push_back(s);
+            }
+            if (version > 2)
+            {
+                r.ReadBitLong(); r.ReadBitShort(); r.ReadBit();
+                for (int k = 0; k < 4; ++k) r.ReadBitDouble();      // 字符串在文字流
+            }
+            if (version > 3) r.ReadBitDouble();
+            if (r.Failed()) { why = "native opening fields are truncated"; return false; }
+            const double values[] = {o.Position.X, o.Position.Y, o.Position.Z, o.Width, o.Height, o.Angle};
+            for (double v : values)
+                if (!std::isfinite(v) || std::abs(v) > 1e12) { why = "nonfinite opening geometry"; return false; }
+            if (o.Width <= 0 || o.Mirror < 0 || o.Mirror > 3) { why = "invalid opening size or mirror mode"; return false; }
+            return true;
+        }
+
+        // 句柄流中一个门窗的 8 个句柄：二维图块、三维图块、所在墙、文字样式、4 个图层
+        inline void ReadOpeningHandles(MiniDWG::DwgBitReader& handles, MiniDWG::Handle owner, TchOpening& o)
+        {
+            o.Block2D = handles.ReadHandle(owner);
+            handles.ReadHandle(owner);
+            o.Wall = handles.ReadHandle(owner);
+            o.Style = handles.ReadHandle(owner);
+            for (int i = 0; i < 4; ++i) handles.ReadHandle(owner);
+        }
+    }
+
+    // TCH_OPENING 门窗：按 TDbOpening 的私有布局版本 < 6 的明文分支解析，必须恰好读完主数据流。
+    // 接受门（类型 0）、窗（类型 1）、带形窗（类型 5）与组合门窗（类型 8，类 TDbGroupOpening）。门窗的显示方式
+    // （插入二维图块，X 缩放为宽度，Y 缩放门为宽度、窗为墙厚，旋转为 Angle）与天正 2014 分解出的块参照一致，见 docs/Tch-compatibility.md。
+    // 组合门窗（天正内核 TDbGroupOpening::dwgInFields）：自身的门窗字段之后为 RC 版本（0）、BL 子门窗数，
+    // 每个子门窗是嵌入对象：AcDbEntity 通用字段（样例为固定的 37 位，句柄流中 4 个句柄）后接完整的 TDbOpening 数据
     inline bool DecodeOpening(const MiniDWG::UnknownEntity& entity, TchOpening& opening, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -96,65 +173,61 @@ namespace MiniCAD::Tch
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
-        const int version = r.ReadByte();
-        if (version < 2 || version > 5) return fail("unsupported native opening version");
-
         TchOpening o;
-        o.Position = {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()};
-        o.Width = r.ReadBitDouble();
-        r.ReadBitDouble();
-        o.Height = r.ReadBitDouble();
-        o.Angle = r.ReadBitDouble();
-        o.Mirror = r.ReadByte();
-        const int kind = r.ReadByte();
-        r.ReadBitDouble();
-        // 文字流：编号；句柄流：二维图块、三维图块
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();     // 编号文字位置
-        // 句柄流：所在墙
-        const int flags = r.ReadBitShort();
-        if ((flags & 1) || kind == 10) { r.ReadBitDouble(); r.ReadBitDouble(); }
-        if (kind == 4)
+        int kind = 0;
+        const char* why = "";
+        if (!Detail::ReadOpeningFields(r, o, kind, why)) return fail(why);
+        std::vector<TchBase> partBases;
+        if (kind == 8)
         {
-            r.ReadByte(); r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-            if (version > 4) r.ReadBitDouble();
+            if (r.ReadByte() != 0) return fail("unsupported native group opening version");
+            const int count = r.ReadBitLong();
+            if (count < 1 || count > 64) return fail("invalid group opening part count");
+            for (int i = 0; i < count && !r.Failed(); ++i)
+            {
+                // 嵌入对象的 AcDbEntity 通用字段：样例为固定的 37 位
+                static constexpr const char* kPrefix = "0010101101111100000000000001000011101";
+                for (const char* c = kPrefix; *c; ++c)
+                    if (r.ReadBit() != (*c == '1')) return fail("unsupported group opening part header");
+                TchBase partBase;
+                if (!ReadTchBase(r, partBase)) return fail("unsupported group opening part base layout");
+                TchOpening part;
+                int partKind = 0;
+                if (!Detail::ReadOpeningFields(r, part, partKind, why)) return fail(why);
+                if (partKind != 0 && partKind != 1) return fail("group opening parts must be doors or windows");
+                part.Type = static_cast<TchOpening::Kind>(partKind);
+                part.Scale = partBase.Scale;
+                part.InGroup = true;
+                o.Parts.push_back(std::move(part));
+                partBases.push_back(partBase);
+            }
         }
-        else if (kind == 6 || kind == 7)
-        {
-            r.ReadBitDouble();
-            if (kind == 6) r.ReadBitDouble();
-        }
-        // 句柄流：5 个（文字样式、图层）
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        const int segments = r.ReadBitShort();
-        if (segments < 0 || segments > 1024) return fail("invalid opening segment count");
-        for (int i = 0; i < segments && !r.Failed(); ++i)
-        {
-            r.ReadRawDouble(); r.ReadRawDouble(); r.ReadRawDouble(); r.ReadRawDouble();   // 两个二维点（2RD）
-            r.ReadBitDouble();
-        }
-        if (version > 2)
-        {
-            r.ReadBitLong(); r.ReadBitShort(); r.ReadBit();
-            for (int k = 0; k < 4; ++k) r.ReadBitDouble();      // 字符串在文字流
-        }
-        if (version > 3) r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native opening fields do not consume the payload exactly");
-
-        if (kind != 0 && kind != 1) return fail("only doors and windows are supported");
+        if (kind != 0 && kind != 1 && kind != 5 && kind != 8) return fail("only doors, windows, band and group openings are supported");
         o.Type = static_cast<TchOpening::Kind>(kind);
-        const double values[] = {o.Position.X, o.Position.Y, o.Position.Z, o.Width, o.Height, o.Angle};
-        for (double v : values)
-            if (!std::isfinite(v) || std::abs(v) > 1e12) return fail("nonfinite opening geometry");
-        if (o.Width <= 0 || o.Mirror < 0 || o.Mirror > 3) return fail("invalid opening size or mirror mode");
-        // 句柄流按读取顺序：基类句柄、二维图块、三维图块、所在墙（空句柄也占位，所以不能用 References 的下标）
+        // 句柄流按读取顺序：基类句柄、二维图块、三维图块、所在墙……（空句柄也占位，所以不能用 References 的下标）
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
-        o.Block2D = handles.ReadHandle(entity.ObjectHandle);
-        handles.ReadHandle(entity.ObjectHandle);
-        o.Wall = handles.ReadHandle(entity.ObjectHandle);
-        if (handles.Failed() || handles.PositionInBits() > data.HandleBits || o.Block2D == kNullHandle)
+        Detail::ReadOpeningHandles(handles, entity.ObjectHandle, o);
+        for (std::size_t i = 0; i < o.Parts.size(); ++i)
+        {
+            for (int k = 0; k < 4 + partBases[i].HandleCount; ++k) handles.ReadHandle(entity.ObjectHandle);
+            Detail::ReadOpeningHandles(handles, entity.ObjectHandle, o.Parts[i]);
+            if (o.Parts[i].Block2D == kNullHandle) return fail("group opening part 2D block is missing");
+        }
+        const bool labelled = o.Type == TchOpening::Kind::Band || o.Type == TchOpening::Kind::Group;
+        if (handles.Failed() || handles.PositionInBits() > data.HandleBits || (o.Block2D == kNullHandle && !labelled))
             return fail("opening handle stream is incomplete");
+        if (labelled)
+        {
+            // 带形窗、组合门窗的文字流先是编号（基类字符串之后）；普通门窗的文字流布局未核对，不取编号
+            o.Scale = base.Scale;
+            DwgBitReader text(data.Text, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < base.TextCount; ++i) text.ReadVariableText();
+            o.Label = text.ReadVariableText();
+            if (text.Failed()) o.Label.clear();
+        }
         opening = o;
         if (diagnostic) diagnostic->clear();
         return true;

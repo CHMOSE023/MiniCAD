@@ -20,7 +20,7 @@ namespace MiniCAD
 
         struct GlyphInstance
         {
-            Glyph        m_glyph;
+            const Glyph* m_glyph = nullptr;   // 指向字体缓存（见 IFont::GetGlyph）
 
             Math::Point3 m_position;
             double       m_rotation = 0.0;

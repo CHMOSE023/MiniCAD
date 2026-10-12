@@ -115,7 +115,10 @@ namespace MiniDWG
 
     private:
         std::uint8_t ReadBitsRaw(int count);
-        std::string FromUtf16(const std::vector<std::uint8_t>& bytes) const;
+        // 从当前位置读 count 字节到 out（可以不在字节边界）；数据不足时置错误并返回 false
+        bool ReadBytesTo(std::uint8_t* out, std::size_t count);
+        // 读 count 个 UTF-16LE 字符，转为 UTF-8
+        std::string ReadUtf16(std::size_t count);
 
         std::span<const std::uint8_t> m_data;
         std::uint64_t                 m_bit = 0;

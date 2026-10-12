@@ -69,11 +69,23 @@ namespace MiniCAD
             printf("\n");
         }
 
-        // 计算归一化比例：em 高度 → 1.0
+        // 计算归一化比例：与 AutoCAD 相同，TrueType 文字的字高是大写字母高（取 'H' 的字形顶部），
+        // 例如宋体 / 仿宋_GB2312 的 em 约为字高的 1.46 倍；没有 'H' 时退回 ascent − descent
         int ascent = 0, descent = 0, lineGap = 0;
         stbtt_GetFontVMetrics(info, &ascent, &descent, &lineGap);
-        int emHeight = ascent - descent;
-        m_scale  = (emHeight > 0) ? (1.0 / emHeight) : 1.0;
+        // 按轮廓顶点取顶部：有的字体（如仿宋_GB2312）字形头里的包围盒是整套字体的 ascent，不是字形本身
+        int capHeight = 0;
+        if (stbtt_FindGlyphIndex(info, 'H') != 0)
+        {
+            stbtt_vertex* verts = nullptr;
+            const int n = stbtt_GetCodepointShape(info, 'H', &verts);
+            for (int i = 0; i < n; ++i) capHeight = std::max<int>(capHeight, verts[i].y);
+            stbtt_FreeShape(info, verts);
+        }
+        if (capHeight > 0)
+            m_scale = 1.0 / capHeight;
+        else
+            m_scale = (ascent - descent > 0) ? (1.0 / (ascent - descent)) : 1.0;
         m_height = 1.0;
 #endif
     }
@@ -82,14 +94,12 @@ namespace MiniCAD
     // IFont 接口
     // ──────────────────────────────────────────────────────────────────────
 
-    Glyph TTFFont::GetGlyph(uint32_t codepoint)
+    const Glyph& TTFFont::GetGlyph(uint32_t codepoint)
     {
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
 
-        Glyph g = BuildGlyph(codepoint);
-        m_glyphCache[codepoint] = g;
-        return g;
+        return m_glyphCache.emplace(codepoint, BuildGlyph(codepoint)).first->second;
     }
 
     double TTFFont::GetAdvance(uint32_t codepoint)
@@ -128,8 +138,8 @@ namespace MiniCAD
         int n = stbtt_GetCodepointShape(info, static_cast<int>(codepoint), &verts);
         if (n <= 0 || !verts) return g;
 
-        // 展平容差（归一化单位）
-        const double kTol = 0.5 * m_scale;
+        // 展平容差（归一化单位）：1 个字体单位，约字高的 0.5%；再细只会成倍增加线段和三角形，屏幕上看不出
+        const double kTol = 1.0 * m_scale;
 
         double curX = 0.0, curY = 0.0;  // 当前轮廓点（font 单位）
         double startX = 0.0, startY = 0.0;
@@ -218,6 +228,24 @@ namespace MiniCAD
             ys.push_back(l.End.y);
         }
 
+        // 边与边的交点高度也作为 slab 边界：汉字字体的笔画轮廓常互相重叠，交点落在 slab 中间时梯形会扭曲，
+        // 合并后误差会沿整段边扩散
+        for (size_t i = 0; i < edges.size(); ++i)
+        {
+            const Edge& a = edges[i];
+            for (size_t j = i + 1; j < edges.size(); ++j)
+            {
+                const Edge& b = edges[j];
+                const double rx = a.x1 - a.x0, ry = a.y1 - a.y0, sx = b.x1 - b.x0, sy = b.y1 - b.y0;
+                const double den = rx * sy - ry * sx;
+                if (std::abs(den) < 1e-15) continue;   // 平行
+                const double qx = b.x0 - a.x0, qy = b.y0 - a.y0;
+                const double t = (qx * sy - qy * sx) / den, u = (qx * ry - qy * rx) / den;
+                if (t > 1e-9 && t < 1 - 1e-9 && u > 1e-9 && u < 1 - 1e-9)   // 只取内部交点（端点相接不算）
+                    ys.push_back(a.y0 + t * ry);
+            }
+        }
+
         std::sort(ys.begin(), ys.end());
         ys.erase(std::unique(ys.begin(), ys.end(),
                              [&](double a, double b) { return std::abs(a - b) < kEps; }),
@@ -225,10 +253,32 @@ namespace MiniCAD
 
         if (ys.size() < 2) return;
 
-        // 一条跨越当前 slab 的边在底/顶/中三个高度上的 X，以及绕行方向（用于 nonzero 规则）。
-        struct Span { double xb, xt, xm; int dir; };
+        auto xAt = [&](size_t i, double y) {
+            const Edge& e = edges[i];
+            const double t = (y - e.y0) / (e.y1 - e.y0);
+            return e.x0 + t * (e.x1 - e.x0);
+        };
+
+        // 梯形左右两边都是直线边：相邻 slab 里左右边不变的梯形合并成一个，只在边结束处切开。
+        // 不合并时每个顶点高度都把所有笔画横切一刀，汉字一个字就有一千多个三角形
+        struct Trap { size_t left, right; double yb; };
+        std::vector<Trap> open, next;
+
+        auto emit = [&](const Trap& t, double yt)
+        {
+            const double lb = xAt(t.left, t.yb), rb = xAt(t.right, t.yb);
+            const double lt = xAt(t.left, yt),   rt = xAt(t.right, yt);
+            const Math::Point3 LB(lb, t.yb, 0), RB(rb, t.yb, 0), RT(rt, yt, 0), LT(lt, yt, 0);
+            // 底边或顶边退化为一点时只输出一个三角形
+            if (rb - lb > kEps) out.push_back({ LB, RB, RT });
+            if (rt - lt > kEps) out.push_back({ LB, RT, LT });
+        };
+
+        // 一条跨越当前 slab 的边：中点 X（排序用）、边序号、绕行方向（nonzero 规则）
+        struct Span { double xm; size_t edge; int dir; };
         std::vector<Span> spans;
 
+        double prevTop = ys.front();
         for (size_t s = 0; s + 1 < ys.size(); ++s)
         {
             const double yb = ys[s];
@@ -237,52 +287,47 @@ namespace MiniCAD
             const double ym = 0.5 * (yb + yt);
 
             spans.clear();
-            for (const auto& e : edges)
+            for (size_t i = 0; i < edges.size(); ++i)
             {
+                const Edge& e = edges[i];
                 const double lo = std::min(e.y0, e.y1);
                 const double hi = std::max(e.y0, e.y1);
                 if (hi - lo < kEps) continue;                 // 水平边不贡献交点
                 if (lo > yb + kEps || hi < yt - kEps) continue; // 未完整跨越本 slab
-
-                auto xAt = [&](double y) {
-                    double t = (y - e.y0) / (e.y1 - e.y0);
-                    return e.x0 + t * (e.x1 - e.x0);
-                };
                 // 绕行方向：向上 +1，向下 -1（保留原始 start→end 顺序所携带的缠绕信息）。
-                const int dir = (e.y1 > e.y0) ? 1 : -1;
-                spans.push_back({ xAt(yb), xAt(yt), xAt(ym), dir });
+                spans.push_back({ xAt(i, ym), i, (e.y1 > e.y0) ? 1 : -1 });
             }
-
-            if (spans.size() < 2) continue;
 
             // 按 slab 中点 X 排序，从左到右累加缠绕数。
             // 区间缠绕数 != 0 即为内部（nonzero 规则）——重叠同向笔画也会被正确填充。
             std::sort(spans.begin(), spans.end(),
                       [](const Span& a, const Span& b) { return a.xm < b.xm; });
 
+            next.clear();
             int winding = 0;
             for (size_t i = 0; i + 1 < spans.size(); ++i)
             {
                 winding += spans[i].dir;
                 if (winding == 0) continue; // 区间在外部
 
-                const Span& L = spans[i];
-                const Span& R = spans[i + 1];
-
-                // 梯形：底边 [L.xb,R.xb]@yb，顶边 [L.xt,R.xt]@yt，斜边贴合真实轮廓。
-                Triangle t0;
-                t0.a = Math::Point3(L.xb, yb, 0);
-                t0.b = Math::Point3(R.xb, yb, 0);
-                t0.c = Math::Point3(R.xt, yt, 0);
-                out.push_back(t0);
-
-                Triangle t1;
-                t1.a = Math::Point3(L.xb, yb, 0);
-                t1.b = Math::Point3(R.xt, yt, 0);
-                t1.c = Math::Point3(L.xt, yt, 0);
-                out.push_back(t1);
+                const size_t l = spans[i].edge, r = spans[i + 1].edge;
+                // 上一 slab 紧贴本 slab 且左右边相同：延续，否则新开一个
+                auto it = std::find_if(open.begin(), open.end(), [&](const Trap& t) { return t.left == l && t.right == r; });
+                if (it != open.end() && std::abs(prevTop - yb) < kEps)
+                {
+                    next.push_back(*it);
+                    open.erase(it);
+                }
+                else
+                    next.push_back({ l, r, yb });
             }
+            for (const Trap& t : open)  // 没有延续的在上一 slab 顶部结束
+                emit(t, prevTop);
+            open.swap(next);
+            prevTop = yt;
         }
+        for (const Trap& t : open)
+            emit(t, prevTop);
     }
 
     // ──────────────────────────────────────────────────────────────────────

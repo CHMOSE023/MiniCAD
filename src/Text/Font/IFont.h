@@ -15,8 +15,9 @@ namespace MiniCAD
     public:
         virtual ~IFont() = default;
 
-        // 获取 glyph（统一输出线段几何）
-        virtual Glyph GetGlyph(uint32_t codepoint) = 0;
+        // 获取 glyph（统一输出线段几何）。返回字体缓存里的字形，引用在字体存续期间有效（缓存只增不删），
+        // 排版不再逐字拷贝——一个汉字有几百条线段和三角形
+        virtual const Glyph& GetGlyph(uint32_t codepoint) = 0;
 
         // 字符前进宽度（排版用）
         virtual double GetAdvance(uint32_t codepoint) = 0;

@@ -210,13 +210,34 @@ namespace MiniCAD
                        double              boxWidth,
                        const Math::Color4& color) override
         {
+            EmitLaidOutText(pos, utf8Text, styleId, height, rotation, boxWidth, TextLayoutEngine::HAlign::Left, 0.0, 0.0, color);
+        }
+
+        // 单行文字按对齐点：水平按排版宽度居中 / 右对齐；竖直以字高（大写字母高）为准，
+        // “底”取基线下 0.2 × 字高（下伸部）
+        void EmitAlignedText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
+                             int hAlign, int vAlign, double widthFactor, const Math::Color4& color) override
+        {
+            const auto align = hAlign == 1 ? TextLayoutEngine::HAlign::Center : hAlign == 2 ? TextLayoutEngine::HAlign::Right
+                                                                                             : TextLayoutEngine::HAlign::Left;
+            const double baseline = vAlign == 1 ? 0.2 * height : vAlign == 2 ? -0.5 * height : vAlign == 3 ? -height : 0.0;
+            EmitLaidOutText(pos, utf8Text, styleId, height, rotation, 0.0, align, baseline, widthFactor, color);
+        }
+
+    private:
+        // 排版并输出字形；baseline 为基线相对 pos 的局部 y 偏移（随文字旋转），widthFactor > 0 时代替样式的宽度因子
+        void EmitLaidOutText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
+                             double boxWidth, TextLayoutEngine::HAlign align, double baseline, double widthFactor, const Math::Color4& color)
+        {
             if (utf8Text.empty() || !m_fontResolver) return;
 
-            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font) return;
+            if (widthFactor > 0.0)
+                rs.WidthFactor = widthFactor;
 
             TextLayoutEngine layout;
-            auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth);
+            auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth, align);
             const double shear = std::tan(rs.Oblique);     // 倾斜：字形 x 随高度错切
 
             const double cosR = std::cos(rotation);
@@ -233,7 +254,7 @@ namespace MiniCAD
                 auto xform = [&](const Math::Point3& lp) -> Math::Float3
                 {
                     double x = (lp.x * rs.WidthFactor + lp.y * shear) * inst.m_scale + inst.m_position.x;
-                    double y = lp.y * inst.m_scale + inst.m_position.y;
+                    double y = lp.y * inst.m_scale + inst.m_position.y + baseline;
                     return {
                         static_cast<float>(pos.x + x * cosR - y * sinR),
                         static_cast<float>(pos.y + x * sinR + y * cosR),
@@ -241,24 +262,23 @@ namespace MiniCAD
                     };
                 };
 
-                if (inst.m_glyph.Filled && !inst.m_glyph.Triangles.empty())
+                const Glyph& glyph = *inst.m_glyph;
+                if (glyph.Filled && !glyph.Triangles.empty())
                 {
                     // 填充字形：输出三角形到场景填充几何
-                    for (const auto& tri : inst.m_glyph.Triangles)
+                    for (const auto& tri : glyph.Triangles)
                     {
                         m_fillVerts.push_back({ xform(tri.a), c4 });
                         m_fillVerts.push_back({ xform(tri.b), c4 });
                         m_fillVerts.push_back({ xform(tri.c), c4 });
                     }
                 }
-                else
+                // 轮廓线段：SHX 等无填充数据时就是字形本身；填充字形（TTF）也叠加轮廓——
+                // 缩小后笔画不足 1 像素，三角形盖不住像素中心会断续发花，硬件线至少画 1 像素，笔画保持连续
+                for (const auto& seg : glyph.Lines)
                 {
-                    // 轮廓字形（SHX 等无填充数据）：输出线段
-                    for (const auto& seg : inst.m_glyph.Lines)
-                    {
-                        m_verts.push_back({ xform(seg.Start), c4 });
-                        m_verts.push_back({ xform(seg.End),   c4 });
-                    }
+                    m_verts.push_back({ xform(seg.Start), c4 });
+                    m_verts.push_back({ xform(seg.End),   c4 });
                 }
             }
         }

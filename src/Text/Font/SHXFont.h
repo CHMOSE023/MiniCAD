@@ -13,7 +13,7 @@ namespace MiniCAD
     public:
         SHXFont(const std::string& name, const std::string& filePath, uint64_t fontId);
 
-        Glyph GetGlyph(uint32_t codepoint) override;
+        const Glyph& GetGlyph(uint32_t codepoint) override;
 
         double GetAdvance(uint32_t codepoint) override;
 

@@ -50,27 +50,41 @@ namespace MiniDWG
         return ReadBitsRaw(8);
     }
 
+    bool DwgBitReader::ReadBytesTo(std::uint8_t* out, std::size_t count)
+    {
+        if (!CheckCount(static_cast<std::int64_t>(count), 8))
+            return false;
+        const std::uint8_t* src = m_data.data() + (m_bit >> 3);
+        const int shift = static_cast<int>(m_bit & 7);
+        if (shift == 0)
+        {
+            std::memcpy(out, src, count);
+        }
+        else
+        {
+            // 不在字节边界：每个字节由相邻两个源字节拼成（CheckCount 保证 src[count] 仍在数据内）
+            for (std::size_t i = 0; i < count; ++i)
+                out[i] = static_cast<std::uint8_t>((src[i] << shift) | (src[i + 1] >> (8 - shift)));
+        }
+        m_bit += std::uint64_t(count) << 3;
+        return true;
+    }
+
     std::vector<std::uint8_t> DwgBitReader::ReadBytes(std::size_t count)
     {
         std::vector<std::uint8_t> out;
         if (!CheckCount(static_cast<std::int64_t>(count), 8))
             return out;
         out.resize(count);
-        if ((m_bit & 7) == 0)
-        {
-            std::memcpy(out.data(), m_data.data() + (m_bit >> 3), count);
-            m_bit += std::uint64_t(count) << 3;
-        }
-        else
-        {
-            for (std::size_t i = 0; i < count; ++i)
-                out[i] = ReadByte();
-        }
+        ReadBytesTo(out.data(), count);
         return out;
     }
 
     std::int16_t DwgBitReader::ReadRawShort()
     {
+        std::uint8_t b[2];
+        if (!m_failed && m_bit + 16 <= SizeInBits() && ReadBytesTo(b, 2))
+            return static_cast<std::int16_t>(b[0] | (b[1] << 8));
         const std::uint16_t lo = ReadByte();
         const std::uint16_t hi = ReadByte();
         return static_cast<std::int16_t>(lo | (hi << 8));
@@ -85,6 +99,10 @@ namespace MiniDWG
 
     std::int32_t DwgBitReader::ReadRawLong()
     {
+        std::uint8_t b[4];
+        if (!m_failed && m_bit + 32 <= SizeInBits() && ReadBytesTo(b, 4))
+            return static_cast<std::int32_t>(b[0] | (std::uint32_t(b[1]) << 8) | (std::uint32_t(b[2]) << 16) |
+                                             (std::uint32_t(b[3]) << 24));
         std::uint32_t v = 0;
         for (int i = 0; i < 4; ++i)
             v |= std::uint32_t(ReadByte()) << (8 * i);
@@ -93,6 +111,14 @@ namespace MiniDWG
 
     std::uint64_t DwgBitReader::ReadRawLongLong()
     {
+        std::uint8_t b[8];
+        if (!m_failed && m_bit + 64 <= SizeInBits() && ReadBytesTo(b, 8))
+        {
+            std::uint64_t v = 0;
+            for (int i = 7; i >= 0; --i)
+                v = (v << 8) | b[i];
+            return v;
+        }
         std::uint64_t v = 0;
         for (int i = 0; i < 8; ++i)
             v |= std::uint64_t(ReadByte()) << (8 * i);
@@ -338,14 +364,46 @@ namespace MiniDWG
         }
     }
 
-    std::string DwgBitReader::FromUtf16(const std::vector<std::uint8_t>& bytes) const
+    std::string DwgBitReader::ReadUtf16(std::size_t count)
     {
-        std::string out;
-        out.reserve(bytes.size() / 2);
-        for (std::size_t i = 0; i + 1 < bytes.size(); i += 2)
+        // 字符串多数很短，放在栈上，长的才分配
+        std::uint8_t local[512];
+        std::vector<std::uint8_t> heap;
+        const std::size_t size = count * 2;
+        std::uint8_t* bytes = local;
+        if (size > sizeof(local))
+        {
+            if (!CheckCount(static_cast<std::int64_t>(size), 8))
+                return {};
+            heap.resize(size);
+            bytes = heap.data();
+        }
+        if (!ReadBytesTo(bytes, size))
+            return {};
+
+        // 先按纯 ASCII 直接写入（多数字符串如此），遇到非 ASCII 或 0 再转为逐字符追加
+        std::string out(count, '\0');
+        std::size_t ascii = 0;
+        while (ascii < count)
+        {
+            const std::uint8_t lo = bytes[ascii * 2];
+            if (lo == 0 || lo >= 0x80 || bytes[ascii * 2 + 1] != 0)
+                break;
+            out[ascii++] = static_cast<char>(lo);
+        }
+        if (ascii == count)
+            return out;
+        out.resize(ascii);
+        for (std::size_t i = ascii * 2; i + 1 < size; i += 2)
         {
             char32_t c = bytes[i] | (char32_t(bytes[i + 1]) << 8);
-            if (c >= 0xD800 && c <= 0xDBFF && i + 3 < bytes.size())
+            if (c < 0x80)
+            {
+                if (c != 0)
+                    out.push_back(static_cast<char>(c));
+                continue;
+            }
+            if (c >= 0xD800 && c <= 0xDBFF && i + 3 < size)
             {
                 const char32_t low = bytes[i + 2] | (char32_t(bytes[i + 3]) << 8);
                 if (low >= 0xDC00 && low <= 0xDFFF)
@@ -354,8 +412,6 @@ namespace MiniDWG
                     i += 2;
                 }
             }
-            if (c == 0)
-                continue;
             Codec::AppendUtf8(out, c);
         }
         return out;
@@ -367,10 +423,11 @@ namespace MiniDWG
         if (length <= 0)
             return {};
         if (m_version >= CadVersion::AC1021)
-            return FromUtf16(ReadBytes(std::size_t(length) * 2));
+            return ReadUtf16(static_cast<std::size_t>(length));
 
-        std::vector<std::uint8_t> bytes = ReadBytes(static_cast<std::size_t>(length));
-        std::string raw(bytes.begin(), bytes.end());
+        std::string raw(static_cast<std::size_t>(length), '\0');
+        if (!ReadBytesTo(reinterpret_cast<std::uint8_t*>(raw.data()), raw.size()))
+            return {};
         raw.erase(std::remove(raw.begin(), raw.end(), '\0'), raw.end());
         return Codec::ToUtf8(raw, m_codePage);
     }
@@ -382,13 +439,14 @@ namespace MiniDWG
         {
             if (length <= 0)
                 return {};
-            return FromUtf16(ReadBytes(std::size_t(length) * 2));
+            return ReadUtf16(static_cast<std::size_t>(length));
         }
         const int codePageIndex = ReadByte();
         if (length <= 0)
             return {};
-        std::vector<std::uint8_t> bytes = ReadBytes(static_cast<std::size_t>(length));
-        std::string raw(bytes.begin(), bytes.end());
+        std::string raw(static_cast<std::size_t>(length), '\0');
+        if (!ReadBytesTo(reinterpret_cast<std::uint8_t*>(raw.data()), raw.size()))
+            return {};
         raw.erase(std::remove(raw.begin(), raw.end(), '\0'), raw.end());
         Codec::CodePage cp = Codec::CodePageFromDwgIndex(codePageIndex);
         if (cp == Codec::CodePage::Unknown || !Codec::IsSupported(cp))
@@ -506,22 +564,29 @@ namespace MiniDWG
 
     std::vector<std::uint8_t> DwgBitReader::CopyBits(std::uint64_t startBit, std::uint64_t bits) const
     {
-        std::vector<std::uint8_t> out((bits + 7) / 8, 0);
         if (startBit + bits > SizeInBits())
             return {};
-        if ((startBit & 7) == 0)
-        {
-            std::copy_n(m_data.begin() + static_cast<std::ptrdiff_t>(startBit >> 3), out.size(), out.begin());
-            if (bits & 7)
-                out.back() &= static_cast<std::uint8_t>(0xFF00u >> (bits & 7));
+        std::vector<std::uint8_t> out((bits + 7) / 8);
+        if (out.empty())
             return out;
-        }
-        for (std::uint64_t i = 0; i < bits; ++i)
+        const std::uint8_t* src = m_data.data() + (startBit >> 3);
+        const int shift = static_cast<int>(startBit & 7);
+        if (shift == 0)
         {
-            const std::uint64_t b = startBit + i;
-            if (m_data[b >> 3] & (0x80u >> (b & 7)))
-                out[i >> 3] |= static_cast<std::uint8_t>(0x80u >> (i & 7));
+            std::memcpy(out.data(), src, out.size());
         }
+        else
+        {
+            // 每个输出字节由相邻两个源字节拼成；末尾的下一个源字节可能已在数据之外
+            const std::size_t srcCount = static_cast<std::size_t>(((startBit + bits + 7) >> 3) - (startBit >> 3));
+            for (std::size_t i = 0; i < out.size(); ++i)
+            {
+                const unsigned next = i + 1 < srcCount ? src[i + 1] : 0u;
+                out[i] = static_cast<std::uint8_t>((src[i] << shift) | (next >> (8 - shift)));
+            }
+        }
+        if (bits & 7)
+            out.back() &= static_cast<std::uint8_t>(0xFF00u >> (bits & 7));
         return out;
     }
 

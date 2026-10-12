@@ -37,10 +37,13 @@ namespace MiniCAD
     //--------------------------------------------------------------
     // IFont 接口实现
     //--------------------------------------------------------------
-    Glyph SHXCompositeFont::GetGlyph(uint32_t cp)
+    const Glyph& SHXCompositeFont::GetGlyph(uint32_t cp)
     {
+        if (auto it = m_glyphCache.find(cp); it != m_glyphCache.end())
+            return it->second;
+
         IFont* f = PickFontFor(cp);
-        if (!f) return Glyph{};
+        if (!f) return m_glyphCache[cp];
 
         Glyph g = f->GetGlyph(cp);
 
@@ -57,7 +60,7 @@ namespace MiniCAD
             g.Advance *= k;
             ComputeBounds(g);
         }
-        return g;
+        return m_glyphCache.emplace(cp, std::move(g)).first->second;
     }
 
     double SHXCompositeFont::GetAdvance(uint32_t cp)

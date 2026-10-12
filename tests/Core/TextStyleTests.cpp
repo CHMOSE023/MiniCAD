@@ -6,6 +6,8 @@
 #include "Scene/Scene.h"
 #include "Scene/TextStyleTable.h"
 #include "Serialization/JsonSerializer.h"
+#include "Text/Font/FontEngine.h"
+#include "Text/Font/TTFFont.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -29,11 +31,14 @@ namespace
     class StrokeFont : public IFont
     {
     public:
-        Glyph GetGlyph(uint32_t) override
+        const Glyph& GetGlyph(uint32_t) override
         {
-            Glyph g;
-            g.Lines.push_back(Line{ { 0, 0, 0 }, { 0, 1, 0 } });
-            g.Advance = 1.0;
+            static const Glyph g = [] {
+                Glyph s;
+                s.Lines.push_back(Line{ { 0, 0, 0 }, { 0, 1, 0 } });
+                s.Advance = 1.0;
+                return s;
+            }();
             return g;
         }
         double      GetAdvance(uint32_t) override { return 1.0; }
@@ -149,6 +154,69 @@ int RunTextStyleTests()
         }
         Check(ok, "宽度因子 2：字距加倍；倾斜 45°：竖笔画顶端右移一个字高");
     }
+
+#ifdef MINICAD_ASSET_DIR
+    // ── 5. SHX 形名不当作画笔指令；缺失字体用自带字体替代 ─────────────
+    {
+        const std::string dir = std::string(MINICAD_ASSET_DIR) + "/fonts/";
+        SHXFont simplex("simplex", dir + "simplex.shx", 1);
+        const Glyph eq = simplex.GetGlyph('=');
+        bool bars = eq.Lines.size() == 2;
+        for (const auto& l : eq.Lines) bars = bars && Near(l.Start.y, l.End.y);
+        Check(bars, "simplex.shx 的“=”（形名 EQUALS SIGN）画成两条横线");
+
+        FontEngine engine;
+        engine.SetFontDir(dir);
+        FontStyle missing;
+        missing.name = "COMPLEX+GBCBIG"; missing.fontFile = "COMPLEX.shx"; missing.bigFontFile = "GBCBIG.shx"; missing.isShx = true;
+        IFont& font = engine.Resolve(missing);
+        FontStyle upper;
+        upper.name = "SIMPLEX"; upper.fontFile = "SIMPLEX.SHX"; upper.isShx = true;
+        Check(font.HasGlyph('1') && font.HasGlyph(0x4e0a) && engine.Resolve(upper).HasGlyph('='),
+              "缺失的 complex / gbcbig 换成 simplex / TSSDCHN，数字与汉字都能显示；字体名大小写不同也能找到");
+    }
+
+    // ── 6. TrueType 字形填充：三角形覆盖的面积等于按非零环绕规则采样的面积（汉字笔画轮廓互相重叠），
+    //       三角形数与轮廓边数同一量级（不再每个顶点高度横切一刀）─────────────
+    {
+        TTFFont ttf("gb2312", std::string(MINICAD_ASSET_DIR) + "/fonts/GB2312.ttf", 3);
+        bool ok = true;
+        for (uint32_t cp : { 0x56feu, 0x5efau, uint32_t('H'), uint32_t('8') })
+        {
+            const Glyph& gl = ttf.GetGlyph(cp);
+            double filled = 0.0;
+            for (const auto& t : gl.Triangles)
+                filled += 0.5 * std::abs((t.b.x - t.a.x) * (t.c.y - t.a.y) - (t.c.x - t.a.x) * (t.b.y - t.a.y));
+
+            double x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+            for (const auto& l : gl.Lines)
+            {
+                x0 = std::min({ x0, l.Start.x, l.End.x }); x1 = std::max({ x1, l.Start.x, l.End.x });
+                y0 = std::min({ y0, l.Start.y, l.End.y }); y1 = std::max({ y1, l.Start.y, l.End.y });
+            }
+            constexpr int N = 400;
+            long inside = 0;
+            for (int iy = 0; iy < N; ++iy)
+            {
+                const double py = y0 + (y1 - y0) * (iy + 0.5) / N;
+                for (int ix = 0; ix < N; ++ix)
+                {
+                    const double px = x0 + (x1 - x0) * (ix + 0.5) / N;
+                    int winding = 0;
+                    for (const auto& l : gl.Lines)
+                        if ((l.Start.y <= py) != (l.End.y <= py)
+                            && l.Start.x + (py - l.Start.y) / (l.End.y - l.Start.y) * (l.End.x - l.Start.x) < px)
+                            winding += l.End.y > l.Start.y ? 1 : -1;
+                    inside += winding != 0;
+                }
+            }
+            const double sampled = (x1 - x0) * (y1 - y0) * inside / (double(N) * N);
+            ok = ok && gl.Filled && sampled > 0 && std::abs(filled - sampled) < sampled * 0.01
+                    && gl.Triangles.size() < gl.Lines.size() * 3;
+        }
+        Check(ok, "TTF 字形三角形面积与非零环绕规则采样面积一致，三角形数少于轮廓边数的 3 倍");
+    }
+#endif
 
     return g_failures;
 }

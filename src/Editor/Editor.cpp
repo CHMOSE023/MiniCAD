@@ -195,6 +195,7 @@ namespace MiniCAD
         releaseStorage(m_scratchFills);
         releaseStorage(m_scratchTexts);
         releaseStorage(m_overlayVertices);
+        releaseStorage(m_hoverCache);
         releaseStorage(m_gripVertices);
         releaseStorage(m_sceneExcluded);
         m_sceneViewDependent = false;
@@ -2295,54 +2296,95 @@ namespace MiniCAD
             }
         }
 
-        // 悬停高亮：每帧从当前悬停集重建（追加到 overlay 顶点），不触发场景重建。
-        BuildHoverHighlight();
+        // 悬停高亮：追加到 overlay 顶点，不触发场景重建。场景重建（含图层显示变化）、
+        // 选择集变化时缓存的高亮顶点失效
+        BuildHoverHighlight(sceneRebuilt || selectionDirty);
     }
 
     // 悬停高亮绘制：仅对当前悬停且未被选中的实体描边（选中态已是选中色）。
-    // 悬停集通常只有 1 个实体，开销可忽略。
-    void Editor::BuildHoverHighlight()
+    // 悬停集通常只有 1 个实体，但可能是很大的块参照（每次绘制几毫秒），而在密集处移动 1 像素悬停对象
+    // 就会在几个实体间来回切换，所以按实体缓存高亮顶点，再次悬停时只复制
+    void Editor::BuildHoverHighlight(bool invalidate)
     {
         if (!m_doc) return;
 
         const auto& hovered = m_picking.GetHovered();
         if (hovered.empty()) return;
 
-        const auto& selection = m_picking.GetSelection();
         auto& scene = m_doc->GetScene();
+        if (invalidate || m_hoverCacheGeomVersion != scene.GeometryVersion())
+        {
+            m_hoverCache.clear();
+            m_hoverCacheGeomVersion = scene.GeometryVersion();
+        }
 
-        HoverHighlightSink sink(m_overlayVertices, IDrawSink::kHoverColor);
+        const auto& selection = m_picking.GetSelection();
+        ++m_hoverTick;
 
         for (auto id : hovered)
         {
             if (selection.contains(id)) continue;  // 已选中：保持选中色
 
-            auto* obj = scene.GetEntity(id);
-            if (!obj || !obj->IsKindOf<Entity>()) continue;
-
-            const auto& entity = static_cast<const Entity&>(*obj);
-
-            // 隐藏图层上的实体不参与悬停高亮
-            if (!entity.GetAttr().Visible) continue;
-            if (const Layer* layer = scene.GetLayerManager().GetLayer(entity.GetLayerID());
-                layer && !layer->IsVisible())
-                continue;
-
-            entity.Draw(sink, /*isSelected*/ false, /*isHovered*/ true);
-
-            // 文字类实体：字形不输出线段，用包围盒勾边作为悬停反馈
-            if (obj->IsKindOf<TextEntity>() || obj->IsKindOf<MTextEntity>())
+            auto cached = std::find_if(m_hoverCache.begin(), m_hoverCache.end(),
+                                       [id](const HoverCacheEntry& e) { return e.id == id; });
+            if (cached == m_hoverCache.end())
             {
-                AABB bb = entity.GetBoundingBox();
-                Math::Point3 p0{ bb.Min.x, bb.Min.y, bb.Min.z };
-                Math::Point3 p1{ bb.Max.x, bb.Min.y, bb.Min.z };
-                Math::Point3 p2{ bb.Max.x, bb.Max.y, bb.Min.z };
-                Math::Point3 p3{ bb.Min.x, bb.Max.y, bb.Min.z };
-                sink.DrawLine(p0, p1, IDrawSink::kHoverColor, false);
-                sink.DrawLine(p1, p2, IDrawSink::kHoverColor, false);
-                sink.DrawLine(p2, p3, IDrawSink::kHoverColor, false);
-                sink.DrawLine(p3, p0, IDrawSink::kHoverColor, false);
+                HoverCacheEntry entry;
+                entry.id = id;
+                BuildHoverVertices(id, entry.vertices);
+                m_hoverCache.push_back(std::move(entry));
+                cached = m_hoverCache.end() - 1;
             }
+            cached->lastUse = m_hoverTick;
+            m_overlayVertices.insert(m_overlayVertices.end(), cached->vertices.begin(), cached->vertices.end());
+        }
+
+        // 超出容量时淘汰最久未用的（本帧用到的不淘汰）
+        constexpr std::size_t kMaxEntries  = 32;
+        constexpr std::size_t kMaxVertices = 2'000'000;
+        std::size_t total = 0;
+        for (const auto& e : m_hoverCache)
+            total += e.vertices.size();
+        while (m_hoverCache.size() > 1 && (m_hoverCache.size() > kMaxEntries || total > kMaxVertices))
+        {
+            auto oldest = std::min_element(m_hoverCache.begin(), m_hoverCache.end(),
+                                           [](const HoverCacheEntry& a, const HoverCacheEntry& b) { return a.lastUse < b.lastUse; });
+            if (oldest->lastUse == m_hoverTick) break;
+            total -= oldest->vertices.size();
+            m_hoverCache.erase(oldest);
+        }
+    }
+
+    // 生成一个实体的悬停高亮顶点（隐藏的实体为空）
+    void Editor::BuildHoverVertices(Object::ObjectID id, std::vector<Vertex_P3_C4>& out) const
+    {
+        auto& scene = m_doc->GetScene();
+        auto* obj = scene.GetEntity(id);
+        if (!obj || !obj->IsKindOf<Entity>()) return;
+
+        const auto& entity = static_cast<const Entity&>(*obj);
+
+        // 隐藏图层上的实体不参与悬停高亮
+        if (!entity.GetAttr().Visible) return;
+        if (const Layer* layer = scene.GetLayerManager().GetLayer(entity.GetLayerID());
+            layer && !layer->IsVisible())
+            return;
+
+        HoverHighlightSink sink(out, IDrawSink::kHoverColor);
+        entity.Draw(sink, /*isSelected*/ false, /*isHovered*/ true);
+
+        // 文字类实体：字形不输出线段，用包围盒勾边作为悬停反馈
+        if (obj->IsKindOf<TextEntity>() || obj->IsKindOf<MTextEntity>())
+        {
+            AABB bb = entity.GetBoundingBox();
+            Math::Point3 p0{ bb.Min.x, bb.Min.y, bb.Min.z };
+            Math::Point3 p1{ bb.Max.x, bb.Min.y, bb.Min.z };
+            Math::Point3 p2{ bb.Max.x, bb.Max.y, bb.Min.z };
+            Math::Point3 p3{ bb.Min.x, bb.Max.y, bb.Min.z };
+            sink.DrawLine(p0, p1, IDrawSink::kHoverColor, false);
+            sink.DrawLine(p1, p2, IDrawSink::kHoverColor, false);
+            sink.DrawLine(p2, p3, IDrawSink::kHoverColor, false);
+            sink.DrawLine(p3, p0, IDrawSink::kHoverColor, false);
         }
     }
 
@@ -2497,6 +2539,12 @@ namespace MiniCAD
 
         bool viewDependent = false;
 
+        // 第一遍：按绘制序收集要拼接的实体缓存（缓存未命中的就地细分），并统计总顶点数；
+        // 第二遍一次预留后再拼接，避免几百万顶点的顶点流反复扩容拷贝
+        std::vector<const EntityVertexCache*> visible;
+        visible.reserve(m_entityVertexCache.size());
+        std::size_t lineCount = 0, fillCount = 0, textCount = 0, imageCount = 0;
+
         scene.ForEachObject([&](const Object& obj)
         {
            if (obj.IsKindOf<Entity>())
@@ -2539,14 +2587,28 @@ namespace MiniCAD
                }
 
                const auto& c = it->second;
-               ApplyWipes(c.wipes);
-               m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
-               m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
-               m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
-               m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
+               visible.push_back(&c);
+               lineCount  += c.lines.size();
+               fillCount  += c.fills.size();
+               textCount  += c.texts.size();
+               imageCount += c.images.size();
                viewDependent |= c.viewDependent;
            }
         });
+
+        // 遮罩（wipeout）会裁剪已拼接的顶点，裁剪可能多出少量顶点，预留只是下限
+        m_sceneVertices.reserve(lineCount);
+        m_sceneFillVertices.reserve(fillCount);
+        m_textVertices.reserve(textCount);
+        m_sceneImages.reserve(imageCount);
+        for (const EntityVertexCache* c : visible)
+        {
+            ApplyWipes(c->wipes);
+            m_sceneImages.insert(m_sceneImages.end(), c->images.begin(), c->images.end());
+            m_sceneVertices.insert(m_sceneVertices.end(), c->lines.begin(), c->lines.end());
+            m_sceneFillVertices.insert(m_sceneFillVertices.end(), c->fills.begin(), c->fills.end());
+            m_textVertices.insert(m_textVertices.end(), c->texts.begin(), c->texts.end());
+        }
 
         m_sceneViewDependent = viewDependent;
         m_sceneExcluded      = std::move(dragIds);

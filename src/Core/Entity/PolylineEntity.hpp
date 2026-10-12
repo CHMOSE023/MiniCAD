@@ -186,6 +186,11 @@ namespace MiniCAD
             // 内部折点斜接尖角
             for (size_t i = 1; i + 1 < n; ++i)
                 EmitMiterJoin(sink, pts[i - 1], pts[i], pts[i + 1], halfWidth, color);
+
+            // 叠加中心线：缩小到线宽不足 1 像素时，细长三角形盖不住像素中心会断续发花，
+            // 硬件线至少画 1 像素，线条保持连续；放大后被填充覆盖，看不出来
+            for (size_t i = 0; i + 1 < n; ++i)
+                sink.DrawLine(pts[i], pts[i + 1], color, false);
         }
 
         // 在折点 v 处（来自 a、去往 b）用斜接（miter）三角形补外侧缺口，形成尖角。

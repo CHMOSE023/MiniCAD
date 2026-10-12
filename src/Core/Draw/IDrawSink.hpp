@@ -43,5 +43,15 @@ namespace MiniCAD
         // styleId: FontStyle ID（由 DocumentManager 管理）
         // boxWidth: 自动换行宽度，0 = 不限宽
         virtual void EmitMText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation, double boxWidth, const Math::Color4& color) {}
+
+        // 单行文字（TEXT）按对齐点输出：hAlign 0 左 / 1 中 / 2 右（按实际字宽），vAlign 0 基线 / 1 底 / 2 中 / 3 上。
+        // widthFactor > 0 时代替样式的宽度因子（TEXT 自身的组码 41），0 = 用样式的。
+        // 默认当作左对齐基线交给 EmitMText（只关心样式等的 sink 不必实现）
+        virtual void EmitAlignedText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
+                                     int hAlign, int vAlign, double widthFactor, const Math::Color4& color)
+        {
+            (void)hAlign; (void)vAlign; (void)widthFactor;
+            EmitMText(pos, utf8Text, styleId, height, rotation, 0.0, color);
+        }
     };
 } 

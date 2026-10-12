@@ -15,6 +15,41 @@ namespace MiniDWG::DwgRead
             return h;
         }
 
+        // 数一组扩展数据中的记录数（只跳过数据，不解码），用于预留空间
+        std::size_t CountExtendedDataRecords(DwgBitReader r, std::uint64_t end)
+        {
+            const bool unicode = r.Version() >= CadVersion::AC1021;
+            std::size_t count = 0;
+            while (r.Position() < end && !r.Failed())
+            {
+                switch (1000 + r.ReadByte())
+                {
+                case 1000:
+                case 1001:
+                {
+                    const std::int16_t length = r.ReadRawShort();
+                    if (!unicode)
+                        r.ReadByte();
+                    if (length > 0)
+                        r.Advance(static_cast<std::uint64_t>(length) * (unicode ? 2 : 1));
+                    break;
+                }
+                case 1002: r.Advance(1); break;
+                case 1004: r.Advance(r.ReadByte()); break;
+                case 1003: case 1005:
+                case 1040: case 1041: case 1042:
+                    r.Advance(8);
+                    break;
+                case 1010: case 1011: case 1012: case 1013: r.Advance(24); break;
+                case 1070: r.Advance(2); break;
+                case 1071: r.Advance(4); break;
+                default: return count;
+                }
+                ++count;
+            }
+            return count;
+        }
+
         std::string_view TableEntryName(std::int16_t controlType)
         {
             switch (static_cast<CadObjectType>(controlType))
@@ -140,11 +175,14 @@ namespace MiniDWG::DwgRead
             data.AppIdHandle = r.ReadHandle();
             Enqueue(data.AppIdHandle);
             const std::uint64_t end = r.Position() + static_cast<std::uint16_t>(size);
+            data.Records.reserve(CountExtendedDataRecords(r, end));
             while (r.Position() < end && !r.Failed())
             {
-                ExtendedDataRecord rec;
-                rec.Code = static_cast<std::int16_t>(1000 + r.ReadByte());
-                switch (rec.Code)
+                // 已按记录数预留，就地构造
+                const auto code = static_cast<std::int16_t>(1000 + r.ReadByte());
+                ExtendedDataRecord& rec = data.Records.emplace_back();
+                rec.Code = code;
+                switch (code)
                 {
                 case 1000:
                 case 1001:
@@ -155,6 +193,8 @@ namespace MiniDWG::DwgRead
                     break;
                 case 1003:
                     rec.Value = ReadBigEndianHandle(r);     // 图层句柄，建库时换成图层名
+                    if (m_layerXDataOwners.empty() || m_layerXDataOwners.back() != m_currentHandle)
+                        m_layerXDataOwners.push_back(m_currentHandle);
                     break;
                 case 1004:
                     rec.Value = r.ReadBytes(r.ReadByte());
@@ -175,12 +215,12 @@ namespace MiniDWG::DwgRead
                     rec.Value = r.ReadRawLong();
                     break;
                 default:
-                    NotifyOnce("xdata:" + std::to_string(rec.Code), NotificationType::Warning,
-                               "扩展数据中未知的组码 " + std::to_string(rec.Code));
+                    data.Records.pop_back();
+                    NotifyOnce("xdata:" + std::to_string(code), NotificationType::Warning,
+                               "扩展数据中未知的组码 " + std::to_string(code));
                     r.SetPosition(end);
                     continue;
                 }
-                data.Records.push_back(std::move(rec));
             }
             object.ExtendedDataList.push_back(std::move(data));
             size = r.ReadBitShort();
@@ -361,7 +401,7 @@ namespace MiniDWG::DwgRead
         {
             if (auto ml = ReadMultiLeader(info))
                 return ml;
-            BeginObject(m_map[m_currentHandle]);
+            BeginObject(m_map[m_currentHandle].Offset);
             info = ObjectInfo{};
             return ReadUnknown(n, 0, true, info);
         }
@@ -370,7 +410,7 @@ namespace MiniDWG::DwgRead
             // 遇到样例中没有出现过的结构时原样保留
             if (auto assoc = ReadDimensionAssociation())
                 return assoc;
-            BeginObject(m_map[m_currentHandle]);
+            BeginObject(m_map[m_currentHandle].Offset);
             return ReadUnknown(n, 0, false, info);
         }
         if (n == "DBCOLOR")
@@ -1151,6 +1191,7 @@ namespace MiniDWG::DwgRead
     {
         std::unique_ptr<CadDictionary> dict = withDefault ? std::make_unique<CadDictionaryWithDefault>()
                                                           : std::make_unique<CadDictionary>();
+        m_dictionaryHandles.push_back(m_currentHandle);
         ReadCommonNonEntityData(*dict);
 
         DwgBitReader& r = m_objReader;
@@ -1164,6 +1205,8 @@ namespace MiniDWG::DwgRead
         }
         if (!r.CheckCount(count))
             return dict;
+        dict->EntryNames.reserve(std::min(count, 4096));
+        dict->EntryHandles.reserve(std::min(count, 4096));
         for (int i = 0; i < count; ++i)
         {
             std::string name = m_s.ReadVariableText();
@@ -1378,6 +1421,7 @@ namespace MiniDWG::DwgRead
     std::unique_ptr<CadObject> Reader::ReadLayout()
     {
         auto layout = std::make_unique<Layout>();
+        m_layoutHandles.push_back(m_currentHandle);
         ReadCommonNonEntityData(*layout);
         ReadPlotSettings(*layout);
 

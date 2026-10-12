@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 
 using namespace MiniCAD;
@@ -60,7 +61,10 @@ namespace
         scene.AddEntity(std::make_unique<CircleEntity>(scene.NextObjectID(), Math::Point3{ 20, 20, 0 }, 4.0));
         scene.AddEntity(std::make_unique<ArcEntity>(scene.NextObjectID(), Math::Point3{ 0, 30, 0 }, 7.0, 0.5, 2.0));
         scene.AddEntity(std::make_unique<EllipseEntity>(scene.NextObjectID(), Math::Point3{ 50, 0, 0 }, 6.0, 3.0, 0.3));
-        scene.AddEntity(std::make_unique<TextEntity>(scene.NextObjectID(), Math::Point3{ 1, 2, 0 }, "Hello 你好", 2.5f, 0.25f));
+        auto text = std::make_unique<TextEntity>(scene.NextObjectID(), Math::Point3{ 1, 2, 0 }, "Hello 你好", 2.5f, 0.25f);
+        text->SetAlignment(1, 2);   // 居中、竖直居中：位置为对齐点
+        text->SetWidthFactor(0.55); // 文字自身的宽度因子（与样式不同）
+        scene.AddEntity(std::move(text));
         scene.AddEntity(std::make_unique<MTextEntity>(scene.NextObjectID(), 0u, "line1\Pline2", Math::Point3{ 5, 5, 0 }, 3.0, 0.0, 40.0));
 
         // 闭合多段线（末点 = 起点）+ 圆弧段
@@ -117,6 +121,9 @@ namespace
 
         const auto* text = FindOne<TextEntity>(dst);
         Check(text && text->GetText() == "Hello 你好" && Near(text->GetHeight(), 2.5), "单行文字（含中文）一致");
+        Check(text && text->GetHAlign() == 1 && text->GetVAlign() == 2 && Near(text->GetPosition().x, 1) && Near(text->GetPosition().y, 2),
+              "单行文字的对齐方式与对齐点一致");
+        Check(text && Near(text->GetWidthFactor(), 0.55), "单行文字自身的宽度因子一致");
 
         const auto* mtext = FindOne<MTextEntity>(dst);
         Check(mtext && mtext->GetText() == "line1\Pline2" && Near(mtext->GetBoxWidth(), 40.0), "多行文字一致");
@@ -177,6 +184,40 @@ int RunCadExchangeTests()
         Check(!out.empty() && ImportCad(out, again, nullptr) && CountAll(again) == CountAll(scene),
               (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变").c_str());
     }
+
+#ifdef MINICAD_TCH_SAMPLE_DIR
+    // 天正 2014 用脚本画出的样例图（tests/Data/Tch）：每个天正对象都恢复为一个顶层实体（实体数 = 原图模型空间实体数），
+    // 以原图为底另存后再读回实体数不变。样例覆盖墙（直墙、弧墙、带造型）、门窗（门、带形窗、组合门窗、门窗套）、
+    // 各类楼梯与扶梯、台阶、坡道、阳台、散水、屋顶与注释符号
+    struct TchSample { const char* Name; int Entities; int Tch; };
+    const TchSample tchSamples[] = {
+        {"p1.dwg", 14, 14}, {"p2.dwg", 15, 13}, {"p3.dwg", 15, 11}, {"p5.dwg", 11, 11}, {"q6.dwg", 13, 11},
+        {"q7.dwg", 30, 30}, {"q8.dwg", 6, 6}, {"q9.dwg", 9, 6}, {"q_ban.dwg", 9, 9}, {"q_patch.dwg", 9, 9},
+        {"q_step.dwg", 9, 9}, {"v1.dwg", 9, 9}, {"v2.dwg", 8, 8},
+    };
+    for (const auto& sample : tchSamples)
+    {
+        const auto data = ReadFile(std::string(MINICAD_TCH_SAMPLE_DIR) + "/" + sample.Name);
+        if (data.empty())
+        {
+            std::printf("[跳过] 没有找到天正样例 %s\n", sample.Name);
+            continue;
+        }
+        Scene scene;
+        CadSaveVersion version = CadSaveVersion::R2018;
+        std::shared_ptr<const CadSource> source;
+        const bool ok = ImportCad(data, scene, nullptr, &version, &source);
+        Check(ok && CountAll(scene) == sample.Entities && CadSourceTchCount(source.get()) == sample.Tch,
+              (std::string("天正样例 ") + sample.Name + "：每个天正对象都恢复显示").c_str());
+        if (!ok) continue;
+        const auto out = ExportCad(scene, CadFileKind::Dwg, version, nullptr, source.get());
+        Scene again;
+        std::shared_ptr<const CadSource> againSource;
+        Check(!out.empty() && ImportCad(out, again, nullptr, nullptr, &againSource) && CountAll(again) == sample.Entities &&
+              CadSourceTchCount(againSource.get()) == sample.Tch,
+              (std::string("天正样例 ") + sample.Name + " 以原图为底另存后再读回不变").c_str());
+    }
+#endif
 
     std::printf("DWG/DXF 交换测试：%d 项失败\n", g_failures);
     return g_failures;

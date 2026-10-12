@@ -358,7 +358,10 @@ namespace MiniCAD
         // 仅在选择集变化/场景重建/拖动中重建，避免选中触发全场景重建。
         void UpdateSelectionVertices(double worldPerPixel, bool force);
 
-        void BuildHoverHighlight();   // 每帧重建悬停高亮（overlay），与场景顶点解耦
+        // 悬停高亮（追加到 overlay），与场景顶点解耦。按实体缓存高亮顶点（大块参照每次绘制要几毫秒），
+        // invalidate 为真（场景重建、选择集变化）时清空缓存
+        void BuildHoverHighlight(bool invalidate);
+        void BuildHoverVertices(Object::ObjectID id, std::vector<Vertex_P3_C4>& out) const;
 
     private:
         // 绑定目标（非拥有）
@@ -448,6 +451,17 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4_UV> m_scratchTexts;
         std::vector<Vertex_P3_C4>    m_overlayVertices;
         std::vector<GripDraw>        m_gripVertices;
+
+        // 悬停高亮缓存（见 BuildHoverHighlight）：按实体，场景几何、显示或选择集变化时清空
+        struct HoverCacheEntry
+        {
+            Object::ObjectID          id = 0;
+            std::vector<Vertex_P3_C4> vertices;
+            uint64_t                  lastUse = 0;
+        };
+        std::vector<HoverCacheEntry> m_hoverCache;
+        uint64_t                     m_hoverCacheGeomVersion = 0;
+        uint64_t                     m_hoverTick = 0;
         void*                        m_fontTexture    = nullptr;
         GlyphProvider                m_glyphProvider;           // 由应用层注入
 

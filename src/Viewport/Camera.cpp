@@ -45,15 +45,19 @@ namespace MiniCAD
         UpdateViewProj();
     }
 
-    void Camera::Zoom(double delta, int mouseX, int mouseY)
+    void Camera::Zoom(double delta, double mouseX, double mouseY)
     {
+        // 滚轮增量以格为单位（一格 = 1）：触控板、高精度滚轮一次只送几分之一格，
+        // 按格数等比缩放；之前不论大小一律缩放 1.1 倍，且增量为 0（水平滚动）时也缩小，滚动时画面来回抖动
+        if (std::abs(delta) < 1e-6)
+            return;
+
         // 1. 缩放前：记录鼠标对应的世界坐标
         Math::Point3 worldBefore = ScreenToWorld(mouseX, mouseY);
 
         // 2. 更新缩放
         constexpr double zoomFactor = 1.1;
-        if (delta > 0) m_zoom /= zoomFactor;
-        else           m_zoom *= zoomFactor;
+        m_zoom /= std::pow(zoomFactor, std::clamp(delta, -10.0, 10.0));
 
         m_zoom = std::clamp(m_zoom, kMinZoom, kMaxZoom);
 
@@ -108,6 +112,11 @@ namespace MiniCAD
 
     // ─── 坐标转换 ─────────────────────────────────────────────────────────────────
     Math::Point3 Camera::ScreenToWorld(int px, int py) const
+    {
+        return ScreenToWorld(static_cast<double>(px), static_cast<double>(py));
+    }
+
+    Math::Point3 Camera::ScreenToWorld(double px, double py) const
     {
         // 屏幕像素 → NDC [-1, 1]
         double ndcX = (2.0 * px / m_screenWidth) - 1.0;

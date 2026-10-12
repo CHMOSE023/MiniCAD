@@ -25,6 +25,13 @@ namespace MiniCAD
         // ObjectID 用 InvalidID 占位(块表索引才是身份,与场景实体 ID 解耦)。
         m_blocks.push_back(std::make_unique<BlockEntity>(Object::InvalidID, "*Model_Space"));
         m_blocks.push_back(std::make_unique<BlockEntity>(Object::InvalidID, "*Paper_Space"));
+        IndexName(ModelSpaceID);
+        IndexName(PaperSpaceID);
+    }
+
+    void BlockTable::IndexName(BlockID id)
+    {
+        m_byName.emplace(ToLower(m_blocks[id]->GetName()), id);
     }
 
     BlockID BlockTable::Add(std::unique_ptr<BlockEntity> block)
@@ -38,6 +45,7 @@ namespace MiniCAD
             return existing;
 
         m_blocks.push_back(std::move(block));
+        IndexName(static_cast<BlockID>(m_blocks.size() - 1));
         return static_cast<BlockID>(m_blocks.size() - 1);
     }
 
@@ -48,6 +56,7 @@ namespace MiniCAD
             return existing;
 
         m_blocks.push_back(std::make_unique<BlockEntity>(Object::InvalidID, name, basePoint));
+        IndexName(static_cast<BlockID>(m_blocks.size() - 1));
         return static_cast<BlockID>(m_blocks.size() - 1);
     }
 
@@ -65,11 +74,8 @@ namespace MiniCAD
 
     BlockID BlockTable::FindByName(const std::string& name) const
     {
-        std::string key = ToLower(name);
-        for (size_t i = 0; i < m_blocks.size(); ++i)
-            if (ToLower(m_blocks[i]->GetName()) == key)
-                return static_cast<BlockID>(i);
-        return InvalidID;
+        const auto it = m_byName.find(ToLower(name));
+        return it != m_byName.end() ? it->second : InvalidID;
     }
 
     BlockEntity* BlockTable::Get(const std::string& name)
@@ -129,5 +135,8 @@ namespace MiniCAD
         while (m_blocks.size() < 2)
             m_blocks.push_back(std::make_unique<BlockEntity>(Object::InvalidID,
                 m_blocks.empty() ? "*Model_Space" : "*Paper_Space"));
+        m_byName.clear();
+        for (size_t i = 0; i < m_blocks.size(); ++i)
+            IndexName(static_cast<BlockID>(i));
     }
 }

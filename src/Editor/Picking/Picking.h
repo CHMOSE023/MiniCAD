@@ -5,8 +5,12 @@
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point2.hpp"
+#include <array>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace MiniCAD
 { 
@@ -81,6 +85,7 @@ namespace MiniCAD
             m_index    = {};
             m_indexVersion = ~0ull;
             decltype(m_candidates){}.swap(m_candidates);
+            decltype(m_pickGeometry){}.swap(m_pickGeometry);
             decltype(m_selection){}.swap(m_selection);
             decltype(m_lastSelection){}.swap(m_lastSelection);
             decltype(m_hovered){}.swap(m_hovered);
@@ -137,5 +142,15 @@ namespace MiniCAD
         SpatialIndex m_index;
         uint64_t     m_indexVersion = ~0ull;
         std::vector<ObjectID> m_candidates;   // 查询候选复用缓冲，避免每次分配
+
+        // 通用拾取回退（块参照、天正对象、标注等）的世界空间几何缓存：按实体 ID 保存其 Draw() 输出的线段与三角形，
+        // 实体变化时随空间索引同步失效。大块参照每次重新绘制要十几毫秒，不缓存时鼠标移动（悬停拾取）会卡
+        struct PickGeometry
+        {
+            std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
+            std::vector<std::array<Math::Point3, 3>>           Triangles;
+        };
+        const PickGeometry& GetPickGeometry(const Object& obj);
+        std::unordered_map<ObjectID, PickGeometry> m_pickGeometry;
     };
 }

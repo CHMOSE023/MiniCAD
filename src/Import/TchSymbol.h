@@ -209,6 +209,35 @@ namespace MiniCAD::Tch
                 }
             return e;
         }
+
+        // MiniCAD 自己显示时的文字宽度（字高 1，按字形步进累加，与 TextLayoutEngine 相同）：
+        // 程序只带 simplex、tssdeng、TSSDCHN，其余 SHX 主字体显示为 simplex，大字体显示为 TSSDCHN（FontEngine 的替代规则）。
+        // tssdeng 与 simplex 字形相同、单位高 33 / 28；TSSDCHN 汉字步进为 1
+        inline TextExtent DisplayExtent(const std::string& fontFile, const std::string& text)
+        {
+            static constexpr double simplex[95] = {
+                0.67857, 0.46429, 0.53571, 0.67857, 0.71429, 0.78571, 0.92857, 0.32143, 0.5, 0.5, 0.57143, 0.92857, 0.35714, 0.92857,
+                0.35714, 0.78571, 0.71429, 0.57143, 0.71429, 0.71429, 0.71429, 0.71429, 0.71429, 0.71429, 0.71429, 0.71429, 0.53571,
+                0.5, 0.71429, 0.92857, 0.71429, 0.64286, 0.85714, 0.78571, 0.75, 0.75, 0.75, 0.67857, 0.64286, 0.75, 0.78571, 0.28571,
+                0.57143, 0.75, 0.60714, 0.85714, 0.78571, 0.78571, 0.75, 0.78571, 0.75, 0.71429, 0.64286, 0.78571, 0.71429, 0.85714,
+                0.71429, 0.71429, 0.71429, 0.53571, 0.78571, 0.42857, 0.71429, 0.85714, 0.32143, 0.67857, 0.67857, 0.64286, 0.67857,
+                0.64286, 0.42857, 0.67857, 0.67857, 0.28571, 0.35714, 0.60714, 0.28571, 1.07143, 0.67857, 0.67857, 0.67857, 0.67857,
+                0.46429, 0.60714, 0.5, 0.67857, 0.57143, 0.78571, 0.60714, 0.57143, 0.60714, 0.42857, 0.25, 0.39286, 0.92857};
+            std::string font;
+            for (char ch : fontFile) font.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+            const double ascii = font.starts_with("tssdeng") ? 28.0 / 33.0 : 1.0;
+            TextExtent e;
+            bool wide = false;
+            for (std::size_t i = 0; i < text.size();)
+            {
+                const unsigned char c = static_cast<unsigned char>(text[i]);
+                if (c >= 0x80) { e.Width += 1.0; wide = true; }
+                else if (c >= 32 && c < 127) e.Width += simplex[c - 32] * ascii;
+                i += c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+            }
+            e.Bottom = wide ? -0.06618 : 0.0;
+            return e;
+        }
     }
 
     // 按 TDbSymbCoord 的私有布局版本 < 7 的明文分支解析，

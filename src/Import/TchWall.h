@@ -13,6 +13,19 @@ namespace MiniCAD::Tch
         double LeftWidth = 0, RightWidth = 0;
         std::array<double, 4> Joins{};
         int OpeningCount = 0;   // 墙上的门窗数；门窗句柄在句柄流中（TCH_OPENING 引用）
+        double Angle = 0;       // 弧墙的圆心角（弧度，正值为自起点逆时针到终点）；直墙为 0
+
+        // 弧墙的圆心与轴线半径
+        bool ArcCenter(double& cx, double& cy, double& radius) const
+        {
+            if (Angle == 0) return false;
+            const double dx = End.X - Start.X, dy = End.Y - Start.Y, chord = std::hypot(dx, dy);
+            radius = chord / 2 / std::sin(std::abs(Angle) / 2);
+            const double h = radius * std::cos(Angle / 2) * (Angle > 0 ? 1 : -1);   // 弦中点到圆心（弦左侧为正）
+            cx = (Start.X + End.X) / 2 - dy / chord * h;
+            cy = (Start.Y + End.Y) / 2 + dx / chord * h;
+            return true;
+        }
     };
 
     // Read-only compatibility adapter for the schema-5 straight-wall layout
@@ -60,22 +73,25 @@ namespace MiniCAD::Tch
             return false;
         const int openings = r.ReadBitShort();
         if (openings < 0 || openings > 1024 || r.Read2Bits() != 0 || r.Read2Bits() != 2 || r.Read2Bits() != 2 ||
-            r.ReadByte() != 0 || r.Read2Bits() != 0)
+            r.ReadByte() != 0 || r.Read2Bits() > 1)        // 最后 2 位：附有墙体造型（TCH_WALL_PATCH）时为 1
             return false;
         result.OpeningCount = openings;
         const double insulation = r.ReadBitDouble();
         for (auto& join : result.Joins) join = r.ReadBitDouble();
         // The remaining 11-bit signature is 00000000 010.
         if (r.ReadByte() != 0 || r.Read3Bits() != 2 || r.Failed() || geometry.Failed() ||
-            r.PositionInBits() != data.MainBits || curveParameter != 0 || flags != 0)
+            r.PositionInBits() != data.MainBits || (flags & ~0xFF) != 0)     // 标志低位：识别为外墙等（散水样例为 1）
             return false;
         const std::array<double, 10> values{result.Start.X, result.Start.Y, result.Start.Z,
             result.End.X, result.End.Y, result.End.Z, result.LeftWidth, result.RightWidth, height, insulation};
         for (double value : values)
             if (!std::isfinite(value) || std::abs(value) > 1e12) return false;
         const double length = std::hypot(result.End.X - result.Start.X, result.End.Y - result.Start.Y);
+        // 曲线参数为弧墙的圆心角（天正 2014 生成的弧墙样例核对：弦长 6000、拱高 1500 时为 1.8546）
+        if (!std::isfinite(curveParameter) || std::abs(curveParameter) >= 2 * 3.14159265358979 - 1e-6) return false;
+        result.Angle = curveParameter;
         if (length < 1e-6 || result.Start.Z != result.End.Z || result.LeftWidth <= 0 || result.RightWidth <= 0 ||
-            result.LeftWidth + result.RightWidth >= length || height <= 0 || insulation < 0)
+            (result.Angle == 0 && result.LeftWidth + result.RightWidth >= length) || height <= 0 || insulation < 0)
             return false;
         for (double join : result.Joins)
             if (!std::isfinite(join) || std::abs(join) >= length) return false;

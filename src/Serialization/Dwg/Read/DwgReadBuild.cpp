@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <typeinfo>
 
 namespace MiniDWG::DwgRead
 {
@@ -22,6 +23,31 @@ namespace MiniDWG::DwgRead
             return s.size() >= prefix.size() && EqualsIgnoreCase(s.substr(0, prefix.size()), prefix);
         }
 
+        // 按动态类型缓存 dynamic_cast 的结果。建库要对十万个对象反复判断类型，dynamic_cast 每次要
+        // 遍历类型层次（MSVC 上约 50 纳秒），而同一动态类型的结果总是相同；不同的动态类型只有几十种
+        template <class T>
+        class CastCache
+        {
+        public:
+            T* operator()(CadObject* object)
+            {
+                if (object == nullptr)
+                    return nullptr;
+                const std::type_info* type = &typeid(*object);
+                for (const auto& [known, is] : m_known)
+                {
+                    if (known == type)
+                        return is ? static_cast<T*>(object) : nullptr;
+                }
+                T* result = dynamic_cast<T*>(object);
+                m_known.emplace_back(type, result != nullptr);
+                return result;
+            }
+
+        private:
+            std::vector<std::pair<const std::type_info*, bool>> m_known;
+        };
+
         // 完整的匿名块名：*U12、*D3、*X7、*T2 ……
         bool IsAnonymousName(std::string_view name)
         {
@@ -35,23 +61,20 @@ namespace MiniDWG::DwgRead
     {
         BuildTables();
         BuildBlockRecords();
-        BuildOwnedChildren();
         BuildEntityReferences();
         BuildDictionaries();
         if (R13_14Only())
             ApplyR14RoundTrip();
         BuildExtendedData();
 
-        Handle maxHandle = 0;
-        for (const auto& [h, obj] : m_db->Objects())
-            maxHandle = std::max(maxHandle, h);
+        // Objects() 按句柄升序，最后一个就是最大的
+        const Handle maxHandle = m_db->Objects().empty() ? 0 : m_db->Objects().rbegin()->first;
         const Handle fileSeed = std::max<Handle>(maxHandle + 1, m_db->Header.HandleSeed);
         m_db->SetHandleSeed(fileSeed);
 
         if (m_options.CreateDefaults)
             m_db->CreateDefaults();
-        FixDictionaryDefaults();
-        FillDefaultReferences();
+        FixDictionaryDefaults(FillDefaultReferences());
         BuildHeaderNames();
 
         const Handle seed = std::max(m_db->GetHandleSeed(), static_cast<Handle>(m_db->Header.HandleSeed));
@@ -153,6 +176,15 @@ namespace MiniDWG::DwgRead
             }
         }
 
+        CastCache<Entity> asEntity;
+        CastCache<Block> asBlock;
+        CastCache<BlockEnd> asBlockEnd;
+        CastCache<Seqend> asSeqend;
+        CastCache<Vertex> asVertex;
+        CastCache<AttributeEntity> asAttribute;
+        CastCache<Viewport> asViewport;
+        std::vector<Entity*> entities;
+        std::vector<Handle> sorted;
         for (Handle h : records->Entries)
         {
             auto* record = m_db->FindAs<BlockRecord>(h);
@@ -200,36 +232,52 @@ namespace MiniDWG::DwgRead
                 : std::vector<Handle>{};
             const auto& handles = linked ? chain : info->second.Owned;
             // 模型空间也是块记录；逐个 std::find 会对 N 个实体做 O(N²) 比较。
-            // 集合只用于去重，实体列表仍保持文件中的顺序。
-            std::unordered_set<Handle> seen(record->Entities.begin(), record->Entities.end());
-            seen.reserve(seen.size() + handles.size());
+            // 集合只用于去重，实体列表仍保持文件中的顺序。通常没有重复：先排序检查，没有重复时
+            // 不建哈希集合（几万个节点的分配比排序慢）
+            sorted.assign(handles.begin(), handles.end());
+            std::sort(sorted.begin(), sorted.end());
+            const bool unique = record->Entities.empty() && std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
+            std::unordered_set<Handle> seen;
+            if (!unique)
+            {
+                seen.reserve(record->Entities.size() + handles.size());
+                seen.insert(record->Entities.begin(), record->Entities.end());
+            }
             record->Entities.reserve(record->Entities.size() + handles.size());
+            // 与 record->Entities 一一对应的实体指针，后面编视口序号时不必再按句柄查找
+            entities.clear();
+            for (Handle e : record->Entities)
+                entities.push_back(asEntity(m_db->Find(e)));
             for (Handle e : handles)
             {
-                auto* entity = m_db->FindAs<Entity>(e);
-                if (entity == nullptr || dynamic_cast<Block*>(entity) || dynamic_cast<BlockEnd*>(entity)
-                    || dynamic_cast<Seqend*>(entity) || dynamic_cast<Vertex*>(entity)
-                    || dynamic_cast<AttributeEntity*>(entity))
+                CadObject* object = m_db->Find(e);
+                auto* entity = asEntity(object);
+                if (entity == nullptr || asBlock(object) || asBlockEnd(object) || asSeqend(object) || asVertex(object)
+                    || asAttribute(object))
                     continue;
-                if (!seen.insert(e).second)
+                if (!unique && !seen.insert(e).second)
                     continue;
                 entity->OwnerHandle = h;
                 record->Entities.push_back(e);
+                entities.push_back(entity);
             }
 
             // 视口的叠放序号（DXF 68）不存于 DWG：AutoCAD 按布局中的顺序编号，总视口为 1，关闭的为 0
             std::int16_t stack = 0;
-            for (Handle e : record->Entities)
+            for (Entity* entity : entities)
             {
-                if (auto* vp = m_db->FindAs<Viewport>(e))
+                if (auto* vp = asViewport(entity))
                     vp->ActiveStatus = HasFlag(vp->Status, ViewportStatusFlags::ViewportOff) ? 0 : ++stack;
             }
         }
 
         // R14 的块记录没有布局句柄：由布局对象反查（R2000 起两边都有）
-        for (const auto& [h, obj] : m_db->Objects())
+        // 只看读到的布局，按句柄升序（与遍历全部对象时的顺序相同）
+        std::sort(m_layoutHandles.begin(), m_layoutHandles.end());
+        m_layoutHandles.erase(std::unique(m_layoutHandles.begin(), m_layoutHandles.end()), m_layoutHandles.end());
+        for (Handle h : m_layoutHandles)
         {
-            if (const auto* layout = dynamic_cast<const Layout*>(obj.get()))
+            if (const auto* layout = m_db->FindAs<Layout>(h))
             {
                 auto* record = m_db->FindAs<BlockRecord>(layout->AssociatedBlockHandle);
                 if (record != nullptr && m_db->FindAs<Layout>(record->LayoutHandle) == nullptr)
@@ -238,51 +286,9 @@ namespace MiniDWG::DwgRead
         }
     }
 
-    // POLYLINE 的顶点、INSERT 的属性：R13～R2000 用首尾句柄，R2004 起用拥有对象列表
-    void Reader::BuildOwnedChildren()
-    {
-        for (auto& [handle, info] : m_infos)
-        {
-            auto* pl = dynamic_cast<Polyline*>(info.Object);
-            auto* insert = dynamic_cast<Insert*>(info.Object);
-            if (pl == nullptr && insert == nullptr)
-                continue;
-            const bool linked = info.FirstChild != kNullHandle;
-            const std::vector<Handle> chain = linked
-                ? ChainEntities(info.FirstChild, info.LastChild)
-                : std::vector<Handle>{};
-            const auto& children = linked ? chain : info.Owned;
-            for (Handle c : children)
-            {
-                CadObject* child = m_db->Find(c);
-                if (child == nullptr)
-                    continue;
-                if (pl != nullptr && dynamic_cast<Vertex*>(child) != nullptr)
-                {
-                    child->OwnerHandle = handle;
-                    auto* mesh = dynamic_cast<PolyfaceMesh*>(pl);
-                    (mesh != nullptr && dynamic_cast<VertexFaceRecord*>(child) != nullptr ? mesh->Faces : pl->Vertices).push_back(c);
-                }
-                else if (insert != nullptr && dynamic_cast<AttributeEntity*>(child) != nullptr)
-                {
-                    child->OwnerHandle = handle;
-                    insert->Attributes.push_back(c);
-                }
-                else if (dynamic_cast<Seqend*>(child) != nullptr)
-                {
-                    if (pl != nullptr)
-                        pl->SeqendHandle = c;
-                    else
-                        insert->SeqendHandle = c;
-                }
-            }
-            const Handle seqend = pl != nullptr ? pl->SeqendHandle : insert->SeqendHandle;
-            if (CadObject* s = m_db->FindAs<Seqend>(seqend))
-                s->OwnerHandle = handle;
-        }
-    }
-
-    // 实体的线型标志、所在空间；多线样式元素的线型序号
+    // 实体的线型标志、所在空间、子对象；多线样式元素的线型序号。
+    // 子对象与所在空间放在同一遍里：子对象的所有者由父对象直接改写，所在空间只在所有者为空时填写，
+    // 两者的先后不影响结果
     void Reader::BuildEntityReferences()
     {
         // 材质 ByBlock 在 DWG 中只是标志，DXF 中写 ByBlock 材质对象的句柄（ByLayer 不写）
@@ -293,14 +299,67 @@ namespace MiniDWG::DwgRead
                 byBlockMaterial = m->ObjectHandle;
         }
 
+        CastCache<Entity> asEntity;
+        CastCache<MLineStyle> asMLineStyle;
+        CastCache<Polyline> asPolyline;
+        CastCache<Insert> asInsert;
+        CastCache<Vertex> asVertex;
+        CastCache<PolyfaceMesh> asMesh;
+        CastCache<VertexFaceRecord> asFace;
+        CastCache<AttributeEntity> asAttribute;
+        CastCache<Seqend> asSeqend;
+
+        // POLYLINE 的顶点、INSERT 的属性：R13～R2000 用首尾句柄，R2004 起用拥有对象列表
+        auto ownedChildren = [&](Handle handle, const ObjectInfo& info, Polyline* pl, Insert* insert) {
+            const bool linked = info.FirstChild != kNullHandle;
+            const std::vector<Handle> chain = linked
+                ? ChainEntities(info.FirstChild, info.LastChild)
+                : std::vector<Handle>{};
+            const auto& children = linked ? chain : info.Owned;
+            for (Handle c : children)
+            {
+                CadObject* child = m_db->Find(c);
+                if (child == nullptr)
+                    continue;
+                if (pl != nullptr && asVertex(child) != nullptr)
+                {
+                    child->OwnerHandle = handle;
+                    auto* mesh = asMesh(pl);
+                    (mesh != nullptr && asFace(child) != nullptr ? mesh->Faces : pl->Vertices).push_back(c);
+                }
+                else if (insert != nullptr && asAttribute(child) != nullptr)
+                {
+                    child->OwnerHandle = handle;
+                    insert->Attributes.push_back(c);
+                }
+                else if (asSeqend(child) != nullptr)
+                {
+                    if (pl != nullptr)
+                        pl->SeqendHandle = c;
+                    else
+                        insert->SeqendHandle = c;
+                }
+            }
+            const Handle seqend = pl != nullptr ? pl->SeqendHandle : insert->SeqendHandle;
+            if (CadObject* s = asSeqend(m_db->Find(seqend)))
+                s->OwnerHandle = handle;
+        };
+
         for (auto& [handle, info] : m_infos)
         {
-            if (auto* entity = dynamic_cast<Entity*>(info.Object))
+            if (auto* entity = asEntity(info.Object))
             {
+                auto* pl = asPolyline(entity);
+                auto* insert = pl == nullptr ? asInsert(entity) : nullptr;
+                if (pl != nullptr || insert != nullptr)
+                    ownedChildren(handle, info, pl, insert);
                 if (info.MaterialFlags == 1)
                     entity->MaterialHandle = byBlockMaterial;
-                if (auto book = m_bookColors.find(entity->BookColorHandle); book != m_bookColors.end())
-                    entity->Color = book->second;
+                if (!m_bookColors.empty())
+                {
+                    if (auto book = m_bookColors.find(entity->BookColorHandle); book != m_bookColors.end())
+                        entity->Color = book->second;
+                }
                 switch (info.LtypeFlags)
                 {
                 case 0: entity->LineTypeHandle = m_headerHandles.BYLAYER; break;
@@ -316,7 +375,7 @@ namespace MiniDWG::DwgRead
                         entity->OwnerHandle = m_headerHandles.MODEL_SPACE;
                 }
             }
-            else if (auto* style = dynamic_cast<MLineStyle*>(info.Object))
+            else if (auto* style = asMLineStyle(info.Object))
             {
                 for (std::size_t i = 0; i < style->Elements.size() && i < info.ElementLineTypeIndex.size(); ++i)
                 {
@@ -337,15 +396,21 @@ namespace MiniDWG::DwgRead
     // 字典条目的名称与所有者（与 DXF 读取一致）
     void Reader::BuildDictionaries()
     {
-        for (const auto& [h, obj] : m_db->Objects())
+        // 只看读到的字典，按句柄升序（与遍历全部对象时的顺序相同：条目被多个字典引用时先到的命名）
+        std::sort(m_dictionaryHandles.begin(), m_dictionaryHandles.end());
+        m_dictionaryHandles.erase(std::unique(m_dictionaryHandles.begin(), m_dictionaryHandles.end()),
+                                  m_dictionaryHandles.end());
+        CastCache<CadDictionary> asDictionary;
+        CastCache<NonGraphicalObject> asNonGraphical;
+        for (Handle h : m_dictionaryHandles)
         {
-            auto* dict = dynamic_cast<CadDictionary*>(obj.get());
+            auto* dict = asDictionary(m_db->Find(h));
             if (dict == nullptr)
                 continue;
             const std::size_t n = std::min(dict->EntryNames.size(), dict->EntryHandles.size());
             for (std::size_t k = 0; k < n; ++k)
             {
-                auto* entry = m_db->FindAs<NonGraphicalObject>(dict->EntryHandles[k]);
+                auto* entry = asNonGraphical(m_db->Find(dict->EntryHandles[k]));
                 if (entry == nullptr)
                     continue;
                 if (entry->Name.empty())
@@ -356,9 +421,9 @@ namespace MiniDWG::DwgRead
         }
         if (m_db->RootDictionary() == nullptr)
         {
-            for (const auto& [h, obj] : m_db->Objects())
+            for (Handle h : m_dictionaryHandles)
             {
-                auto* dict = dynamic_cast<CadDictionary*>(obj.get());
+                auto* dict = asDictionary(m_db->Find(h));
                 if (dict != nullptr && dict->OwnerHandle == kNullHandle)
                 {
                     m_db->SetRootDictionary(h);
@@ -370,16 +435,9 @@ namespace MiniDWG::DwgRead
 
     // 带默认值的字典，默认项必须是字典中的条目。AutoCAD 存为 R14 的打印样式字典（ACAD_PLOTSTYLENAME）
     // 没有条目、只有默认项句柄，写成 DXF 后 AUDIT 报"Default Name Is Missing"：与 AUDIT 的修复相同，补上条目
-    void Reader::FixDictionaryDefaults()
+    // broken：默认项不在条目中的字典（FillDefaultReferences 遍历全部对象时顺带找出）
+    void Reader::FixDictionaryDefaults(const std::vector<CadDictionaryWithDefault*>& broken)
     {
-        std::vector<CadDictionaryWithDefault*> broken;
-        for (const auto& [h, obj] : m_db->Objects())
-        {
-            auto* dict = dynamic_cast<CadDictionaryWithDefault*>(obj.get());
-            if (dict != nullptr
-                && std::find(dict->EntryHandles.begin(), dict->EntryHandles.end(), dict->DefaultEntryHandle) == dict->EntryHandles.end())
-                broken.push_back(dict);
-        }
         for (CadDictionaryWithDefault* dict : broken)
         {
             auto* entry = m_db->FindAs<NonGraphicalObject>(dict->DefaultEntryHandle);
@@ -403,8 +461,13 @@ namespace MiniDWG::DwgRead
     // 扩展数据中 1003 存的是图层句柄，换成图层名（与 DXF 一致）
     void Reader::BuildExtendedData()
     {
-        for (const auto& [h, obj] : m_db->Objects())
+        // 只看读取时遇到过 1003 的对象（同一对象可能记了多次，第二次时值已是名称，不再处理）
+        CastCache<Layer> asLayer;
+        for (Handle h : m_layerXDataOwners)
         {
+            CadObject* obj = m_db->Find(h);
+            if (obj == nullptr)
+                continue;
             for (ExtendedData& data : obj->ExtendedDataList)
             {
                 for (ExtendedDataRecord& rec : data.Records)
@@ -413,7 +476,7 @@ namespace MiniDWG::DwgRead
                         continue;
                     if (const Handle* layer = std::get_if<Handle>(&rec.Value))
                     {
-                        const auto* entry = m_db->FindAs<Layer>(*layer);
+                        const auto* entry = asLayer(m_db->Find(*layer));
                         rec.Value = entry != nullptr ? entry->Name : std::string("0");
                     }
                 }
@@ -592,8 +655,9 @@ namespace MiniDWG::DwgRead
         nameOf(m_headerHandles.DIMLTEX2, h.DimensionTex2);
     }
 
-    // 省略的引用取默认值（与 DXF 读取相同）
-    void Reader::FillDefaultReferences()
+    // 省略的引用取默认值（与 DXF 读取相同）。同一遍里找出默认项不在条目中的带默认值字典并返回，
+    // 由 FixDictionaryDefaults 补上（它只增加占位对象、改字典条目，与这里改的实体和图层无关）
+    std::vector<CadDictionaryWithDefault*> Reader::FillDefaultReferences()
     {
         auto handleOf = [&](CadTable* table, std::string_view name) {
             TableEntry* e = m_db->FindTableEntry(table, name);
@@ -602,17 +666,36 @@ namespace MiniDWG::DwgRead
         const Handle layer0 = handleOf(m_db->Layers(), "0");
         const Handle byLayer = handleOf(m_db->LineTypes(), "ByLayer");
         const Handle continuous = handleOf(m_db->LineTypes(), "Continuous");
+        CastCache<Entity> asEntity;
+        CastCache<Layer> asLayer;
+        CastCache<CadDictionaryWithDefault> asDictionaryWithDefault;
+        std::vector<CadDictionaryWithDefault*> broken;
+        // 图层只有几十到几百个，而实体有几万个：记住查过的图层句柄是否有效
+        std::unordered_map<Handle, bool> layerValid;
         for (const auto& [handle, obj] : m_db->Objects())
         {
-            if (auto* entity = dynamic_cast<Entity*>(obj.get()))
+            if (auto* entity = asEntity(obj.get()))
             {
-                if (m_db->FindAs<Layer>(entity->LayerHandle) == nullptr)
+                auto [it, inserted] = layerValid.try_emplace(entity->LayerHandle, false);
+                if (inserted)
+                    it->second = asLayer(m_db->Find(entity->LayerHandle)) != nullptr;
+                if (!it->second)
                     entity->LayerHandle = layer0;
                 if (entity->LineTypeHandle == kNullHandle)
                     entity->LineTypeHandle = byLayer;
             }
-            if (auto* layer = dynamic_cast<Layer*>(obj.get()); layer && layer->LineTypeHandle == kNullHandle)
-                layer->LineTypeHandle = continuous;
+            else if (auto* layer = asLayer(obj.get()))
+            {
+                if (layer->LineTypeHandle == kNullHandle)
+                    layer->LineTypeHandle = continuous;
+            }
+            else if (auto* dict = asDictionaryWithDefault(obj.get());
+                     dict != nullptr
+                     && std::find(dict->EntryHandles.begin(), dict->EntryHandles.end(), dict->DefaultEntryHandle) == dict->EntryHandles.end())
+            {
+                broken.push_back(dict);
+            }
         }
+        return broken;
     }
 }

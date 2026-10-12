@@ -156,15 +156,15 @@ namespace MiniDWG::DwgRead
         // ── 建库（DwgReadBuild.cpp）──
         void Build();
         void BuildBlockRecords();
-        void BuildOwnedChildren();
+
         void BuildEntityReferences();
         void BuildTables();
         void BuildDictionaries();
         void BuildHeaderNames();
         void BuildExtendedData();
         void ApplyR14RoundTrip();
-        void FillDefaultReferences();
-        void FixDictionaryDefaults();
+        std::vector<CadDictionaryWithDefault*> FillDefaultReferences();
+        void FixDictionaryDefaults(const std::vector<CadDictionaryWithDefault*>& broken);
         std::vector<Handle> ChainEntities(Handle first, Handle last) const;
         std::string MakeAnonymousName(char letter);
 
@@ -189,9 +189,13 @@ namespace MiniDWG::DwgRead
         HeaderHandles                 m_headerHandles;
 
         std::map<std::int16_t, DxfClass>          m_classes;      // 类号 → 类定义
-        std::unordered_map<Handle, std::uint64_t> m_map;          // 句柄 → 对象位置
-        std::deque<Handle>                         m_queue;
-        std::unordered_set<Handle>                 m_scheduled; // 入队即记录，避免同一对象被重复排队
+        struct ObjectLocation
+        {
+            std::uint64_t Offset = 0;
+            bool          Scheduled = false;    // 入队即记录，避免同一对象被重复排队
+        };
+        std::unordered_map<Handle, ObjectLocation> m_map;         // 句柄 → 对象位置
+        std::deque<Handle>                          m_queue;
         std::unordered_map<Handle, ObjectInfo>     m_infos;
         std::map<std::string, int>                 m_skipped;
         std::map<std::string, int>                 m_preserved;   // 原样保留的未建模类型 → 个数
@@ -201,6 +205,11 @@ namespace MiniDWG::DwgRead
         std::unordered_map<Handle, std::unique_ptr<Block>> m_blockData;
         // 线型表中列出的表项（不含 ByLayer/ByBlock），多线样式按序号引用
         std::vector<Handle> m_lineTypeIndex;
+        // 扩展数据中有 1003（图层句柄）的对象，建库时换成图层名
+        std::vector<Handle> m_layerXDataOwners;
+        // 读到的字典与布局（建库时不必为找它们遍历全部对象）
+        std::vector<Handle> m_dictionaryHandles;
+        std::vector<Handle> m_layoutHandles;
         // 颜色簿颜色（DBCOLOR 对象句柄 → 颜色）：实体中只存句柄
         std::unordered_map<Handle, Color> m_bookColors;
         // 已用的块名（补匿名块编号时避开）

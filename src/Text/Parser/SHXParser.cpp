@@ -433,12 +433,21 @@ namespace MiniCAD
         return m_shapes.find(code) != m_shapes.end();
     }
 
+    // 形定义以 NUL 结尾的形名开头（多数为空名，只有一个 0；simplex.shx 的“=”名为 "EQUALS SIGN"），
+    // 执行前跳过，否则形名的字节会被当作画笔指令
+    static void SkipShapeName(const uint8_t*& d, size_t& l)
+    {
+        for (size_t i = 0; i < l; ++i)
+            if (d[i] == 0) { d += i + 1; l -= i + 1; return; }
+    }
+
     bool SHXParser::FetchShapeBytes(uint32_t code,
         const uint8_t*& d, size_t& l) const
     {
         auto it = m_shapes.find(code);
         if (it == m_shapes.end()) return false;
         d = it->second.data;  l = it->second.len;
+        SkipShapeName(d, l);
         return true;
     }
 
@@ -457,7 +466,10 @@ namespace MiniCAD
 
         const bool isUnifont = (m_kind == Kind::Unifont);
         double advX = 0.0;
-        vm.Execute(it->second.data, it->second.len, lines, isUnifont, fetcher, &advX);
+        const uint8_t* data = it->second.data;
+        size_t len = it->second.len;
+        SkipShapeName(data, len);
+        vm.Execute(data, len, lines, isUnifont, fetcher, &advX);
 
         g.Lines   = std::move(lines);
         g.Advance = advX;                    // SHX 单位，由上层除以 fontHeight 归一化

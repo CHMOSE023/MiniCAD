@@ -45,6 +45,12 @@ namespace MiniCAD
             m_target.EmitMText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, boxWidth * m_scale, color);
         }
 
+        void EmitAlignedText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
+                             int hAlign, int vAlign, double widthFactor, const Math::Color4& color) override
+        {
+            m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, hAlign, vAlign, widthFactor, color);
+        }
+
     private:
         IDrawSink&  m_target;
         Math::Mat4  m_xform;

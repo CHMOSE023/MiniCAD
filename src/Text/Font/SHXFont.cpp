@@ -76,7 +76,7 @@ namespace MiniCAD
         return key;
     }
 
-    Glyph SHXFont::GetGlyph(uint32_t codepoint)
+    const Glyph& SHXFont::GetGlyph(uint32_t codepoint)
     {
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
@@ -89,8 +89,7 @@ namespace MiniCAD
         Glyph g;
         if (hit) g = m_parser->BuildGlyph(key);
 
-        m_glyphCache[codepoint] = g;
-        return g;
+        return m_glyphCache.emplace(codepoint, std::move(g)).first->second;
     }
 
     double SHXFont::GetAdvance(uint32_t codepoint)

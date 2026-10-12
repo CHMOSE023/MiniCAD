@@ -8,6 +8,7 @@
 #include "Core/Entity/BlockEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Document/Command/EntityExplode.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -133,6 +134,30 @@ int RunExplodeTests()
         ExplodeEntity(ins, out);
         Check(out[0]->GetAttr().Color.Method == ColorMethod::ByAci && out[0]->GetAttr().Color.Aci == 1, "BYBLOCK 颜色继承插入对象的颜色");
         Check(Near(L(out, 0).Start.x, 0) && Near(L(out, 0).End.x, 1), "块基点 (1,0)：插入点 (0,0) 处，线从 (0,0) 到 (1,0)");
+    }
+
+    {
+        // 块内 0 层上的实体显示时随插入所在的图层，其他图层不变（与 AutoCAD 相同）
+        struct LayerSink : IDrawSink
+        {
+            mutable std::vector<LayerID> Layers;
+            // ByLayer 颜色在绘制时按实体图层向 sink 查询
+            Math::Color4 GetLayerColor(LayerID layer) const override { Layers.push_back(layer); return Math::Color4::White(); }
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+        };
+        BlockEntity block(40, "D", { 0, 0, 0 });
+        block.AddEntity(std::make_unique<LineEntity>(41, Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 }));
+        auto other = std::make_unique<LineEntity>(42, Math::Point3{ 0, 1, 0 }, Math::Point3{ 1, 1, 0 });
+        other->GetAttr().LayerId = 5;
+        block.AddEntity(std::move(other));
+        InsertEntity ins(43, 40, "D", { 0, 0, 0 });
+        ins.SetBlock(&block);
+        ins.GetAttr().LayerId = 7;
+        LayerSink sink;
+        ins.Draw(sink, false, false);
+        Check(std::count(sink.Layers.begin(), sink.Layers.end(), LayerID(7)) == 1 && std::count(sink.Layers.begin(), sink.Layers.end(), LayerID(5)) == 1 &&
+                  std::count(sink.Layers.begin(), sink.Layers.end(), LayerID(0)) == 0,
+              "块内 0 层的实体随插入图层显示，其他图层的实体保持原图层");
     }
 
     // ── 不可分解 ─────────────────────────────────────────────

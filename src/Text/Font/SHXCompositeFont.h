@@ -19,7 +19,7 @@ namespace MiniCAD
     public:
         SHXCompositeFont(const std::string& name, std::shared_ptr<IFont> mainFont, std::shared_ptr<IFont> bigFont, uint64_t fontId);
 
-        Glyph       GetGlyph  (uint32_t codepoint) override;
+        const Glyph& GetGlyph (uint32_t codepoint) override;
         double      GetAdvance(uint32_t codepoint) override;
         double      GetHeight () const             override;
         uint64_t    GetFontId () const             override;
@@ -43,5 +43,7 @@ namespace MiniCAD
 
         // 路由缓存:避免每次都把两个字体都试一遍
         std::unordered_map<uint32_t, IFont*> m_routeCache;
+        // 归一化后的字形缓存（GetGlyph 返回其中的引用）
+        std::unordered_map<uint32_t, Glyph>  m_glyphCache;
     };
 }

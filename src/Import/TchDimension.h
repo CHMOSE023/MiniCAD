@@ -298,7 +298,8 @@ namespace MiniCAD::Tch
         // Center 为对齐点；Attachment 同 MTEXT 的附着点（5 正中、4 左中、6 右中）
         // Style：0 为对象的主文字样式，1 为第二文字样式（如索引符号旁注用的标注文字样式）
         // Color 为 ACI 颜色号（天正分解出的文字多为 7 号色）
-        struct Text { Point Center; double Height = 0, Rotation = 0; std::string Value; int Attachment = 5; int Style = 0; int Color = 7; int Layer = 0; };
+        // WidthFactor：大于 0 时按此宽度因子显示（天正把混排文字拆成西文、汉字两段，西文宽度因子 0.6 / 0.85）
+        struct Text { Point Center; double Height = 0, Rotation = 0; std::string Value; int Attachment = 5; int Style = 0; int Color = 7; int Layer = 0; double WidthFactor = 0; };
 
         std::vector<Segment>  Lines;
         std::vector<Tick>     Ticks;
