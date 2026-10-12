@@ -62,6 +62,10 @@ int main()
     check(!MiniCAD::Tch::DecodeWall(*wrong, wall), "unknown schema rejected");
     wrong = Fixture(); wrong->Raw.Dwg.Version = CadVersion::AC1032;
     check(!MiniCAD::Tch::DecodeWall(*wrong, wall), "unverified DWG version rejected");
+    auto v2010 = Fixture(); v2010->Raw.Dwg.Version = CadVersion::AC1024;
+    check(MiniCAD::Tch::DecodeWall(*v2010, wall) && wall.Start.X == 1000, "AC1024 (2010) drawing uses the same layout");
+    check(MiniCAD::Tch::DecodeWall(*Fixture(0, 0), wall) && wall.LeftWidth == 0 && wall.RightWidth == 120,
+        "wall with one zero-width side (axis on wall face) decodes");
     wrong = Fixture(); wrong->Raw.DxfName = "TCH_COLUMN";
     check(!MiniCAD::Tch::DecodeWall(*wrong, wall), "other Tianzheng entities rejected");
     wrong = Fixture(); wrong->Raw.Dwg.Main.back() ^= 0x10;

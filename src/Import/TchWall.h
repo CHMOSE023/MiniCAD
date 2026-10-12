@@ -45,7 +45,8 @@ namespace MiniCAD::Tch
                 " bits; verified range is 773..1173";
             return false;
         }
-        if (data.Version != CadVersion::AC1027 || data.Main.size() != (data.MainBits + 7) / 8)
+        // AC1024（2010 格式，8#楼-A平面图）与 AC1027 的这段位流布局相同；其他版本未核对
+        if ((data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
             return false;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         if (r.ReadByte() != 5) return false;
@@ -66,21 +67,24 @@ namespace MiniCAD::Tch
         result.LeftWidth = geometry.ReadRawDouble();
         result.RightWidth = geometry.ReadRawDouble();
         const double height = geometry.ReadRawDouble();
-        // 受保护数据之后：RC 0、门窗数 BS、6 位签名 001010、RC 0、2 位 0。
-        // 门窗数为 0 的墙这一段恰好是字节 00 8A 00 加 2 位 0；有门窗的墙多出的位数与句柄流中多出的
-        // TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）
+        // 受保护数据之后：RC 0、门窗数 BS、2 位 0、4 位标志、RC 标志、2 位 0。
+        // 门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；有门窗的墙多出的位数与句柄流中多出的
+        // TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
+        // 4 位标志与其后的 RC 含义未明：8#楼-A平面图 的墙有 1010 / 1000 / 0111 / 1111 / 0010 与 0 / 128 / 192 多种取值，不影响几何
         if (r.ReadByte() != 0)
             return false;
         const int openings = r.ReadBitShort();
-        if (openings < 0 || openings > 1024 || r.Read2Bits() != 0 || r.Read2Bits() != 2 || r.Read2Bits() != 2 ||
-            r.ReadByte() != 0 || r.Read2Bits() > 1)        // 最后 2 位：附有墙体造型（TCH_WALL_PATCH）时为 1
+        if (openings < 0 || openings > 1024 || r.Read2Bits() != 0)
+            return false;
+        r.Read2Bits(); r.Read2Bits();
+        if ((r.ReadByte() & 0x3F) != 0 || r.Read2Bits() > 1)        // 最后 2 位：附有墙体造型（TCH_WALL_PATCH）时为 1
             return false;
         result.OpeningCount = openings;
         const double insulation = r.ReadBitDouble();
         for (auto& join : result.Joins) join = r.ReadBitDouble();
         // The remaining 11-bit signature is 00000000 010.
         if (r.ReadByte() != 0 || r.Read3Bits() != 2 || r.Failed() || geometry.Failed() ||
-            r.PositionInBits() != data.MainBits || (flags & ~0xFF) != 0)     // 标志低位：识别为外墙等（散水样例为 1）
+            r.PositionInBits() != data.MainBits || (flags & ~0x7FFF) != 0)   // 标志低位：识别为外墙等（散水样例为 1）；8#楼 还有 0x400 / 0x2000 / 0x4000 等高位
             return false;
         const std::array<double, 10> values{result.Start.X, result.Start.Y, result.Start.Z,
             result.End.X, result.End.Y, result.End.Z, result.LeftWidth, result.RightWidth, height, insulation};
@@ -90,13 +94,14 @@ namespace MiniCAD::Tch
         // 曲线参数为弧墙的圆心角（天正 2014 生成的弧墙样例核对：弦长 6000、拱高 1500 时为 1.8546）
         if (!std::isfinite(curveParameter) || std::abs(curveParameter) >= 2 * 3.14159265358979 - 1e-6) return false;
         result.Angle = curveParameter;
-        if (length < 1e-6 || result.Start.Z != result.End.Z || result.LeftWidth <= 0 || result.RightWidth <= 0 ||
-            (result.Angle == 0 && result.LeftWidth + result.RightWidth >= length) || height <= 0 || insulation < 0)
+        // 一侧宽度可以为 0（轴线贴墙边）；短墙（墙垛、门垛）的长度可以小于墙厚，端部连接量也可以超过墙长，
+        // 一侧连接量之和不小于墙长时该侧边退化为点（8#楼-A平面图 均有此类墙）
+        if (length < 1e-6 || result.Start.Z != result.End.Z || result.LeftWidth < 0 || result.RightWidth < 0 ||
+            result.LeftWidth + result.RightWidth <= 0 || height <= 0 || insulation < 0)
             return false;
+        const double joinLimit = length + 2 * (result.LeftWidth + result.RightWidth);
         for (double join : result.Joins)
-            if (!std::isfinite(join) || std::abs(join) >= length) return false;
-        if (result.Joins[0] + result.Joins[1] >= length || result.Joins[2] + result.Joins[3] >= length)
-            return false;
+            if (!std::isfinite(join) || std::abs(join) >= joinLimit) return false;
         wall = result;
         if (diagnostic) diagnostic->clear();
         return true;

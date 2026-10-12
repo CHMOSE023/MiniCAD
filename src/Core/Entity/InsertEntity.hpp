@@ -104,6 +104,7 @@ namespace MiniCAD
             if (!m_block) return box;
 
             const AABB local = m_block->GetBoundingBox();
+            if (local.Min.x > local.Max.x) return box;   // 空块：变换 ±∞ 角点会得到 NaN
             // 块局部包围盒 8 角,逐单元变换后取并集。
             const Math::Point3 corners[8] = {
                 { local.Min.x, local.Min.y, local.Min.z }, { local.Max.x, local.Min.y, local.Min.z },

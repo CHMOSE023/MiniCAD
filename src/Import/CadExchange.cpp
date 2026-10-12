@@ -216,6 +216,10 @@ namespace MiniCAD
                 ImportLineTypes();
                 ImportLayers();
                 ImportTextStyles();
+                // 门窗：先全部解码（模型空间与块内，天正图常把墙和门窗整体做成块），生成墙体时据此留出断口
+                ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
+                if (const Dwg::BlockRecord* model = m_db.ModelSpace())
+                    CollectOpenings(*model);
                 ImportBlocks();
                 ImportModelSpace();
                 m_scene.ResolveAllInserts();
@@ -298,7 +302,9 @@ namespace MiniCAD
                     {
                         dst->SetColor(LayerColorToColor4(src.Color));
                         // True-color Index() is -1 as a sentinel, not a negative ACI (off layer).
-                        dst->SetVisible(src.IsOn && (src.Color.IsTrueColor() || src.Color.Index() >= 0));
+                        // 冻结（标志位 1）与关闭一样不显示；MiniCAD 不区分冻结与关闭
+                        const bool frozen = (static_cast<int>(src.Flags) & 1) != 0;
+                        dst->SetVisible(src.IsOn && !frozen && (src.Color.IsTrueColor() || src.Color.Index() >= 0));
                         LineTypeID lt = LookupLineType(src.LineTypeHandle);
                         if (lt == LineTypeTable::ByLayerID || lt == LineTypeTable::ByBlockID)
                             lt = LineTypeTable::ContinuousID;   // 图层线型不允许 ByLayer / ByBlock
@@ -392,7 +398,6 @@ namespace MiniCAD
                 const Dwg::BlockRecord* model = m_db.ModelSpace();
                 if (model == nullptr)
                     return;
-                CollectOpenings(*model);
                 for (Dwg::Handle h : model->Entities)
                 {
                     const auto* e = m_db.FindAs<Dwg::Entity>(h);
@@ -410,15 +415,14 @@ namespace MiniCAD
                 }
             }
 
-            // 门窗：先全部解码，生成墙体时据此在侧线上留出断口
-            void CollectOpenings(const Dwg::BlockRecord& model)
+            void CollectOpenings(const Dwg::BlockRecord& record)
             {
-                for (Dwg::Handle h : model.Entities)
+                for (Dwg::Handle h : record.Entities)
                 {
                     const auto* unknown = m_db.FindAs<Dwg::UnknownEntity>(h);
                     Tch::TchOpening opening;
                     std::string reason;
-                    if (unknown == nullptr || unknown->Raw.DxfName != "TCH_OPENING")
+                    if (unknown == nullptr || unknown->Raw.DxfName != "TCH_OPENING" || m_openings.contains(h))
                         continue;
                     if (!Tch::DecodeOpening(*unknown, opening, &reason))
                     {
@@ -898,6 +902,7 @@ namespace MiniCAD
                         std::sort(cuts.begin(), cuts.end());
                         auto addSide = [&](const Math::Point3& a, const Math::Point3& b, double from, double to)
                         {
+                            if (to - from < 1e-9) return;   // 连接量之和不小于墙长：该侧边退化为点
                             const Math::Point3 d{(b.x - a.x) / (to - from), (b.y - a.y) / (to - from), 0};
                             auto at = [&](double t) { return Math::Point3{a.x + d.x * (t - from), a.y + d.y * (t - from), a.z}; };
                             double cursor = from;

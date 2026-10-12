@@ -54,6 +54,9 @@ namespace MiniCAD
 
 		void Expand(const AABB& other)  // 扩展包围盒以包含另一个包围盒
         {
+            // 空盒（Min > Max）不参与合并：否则 Min 的 +∞ 与 Max 的 -∞ 会把结果撑成无穷大
+            if (other.Min.x > other.Max.x || other.Min.y > other.Max.y || other.Min.z > other.Max.z)
+                return;
             Expand(other.Min);
             Expand(other.Max);
         }
