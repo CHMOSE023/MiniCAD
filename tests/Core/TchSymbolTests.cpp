@@ -80,6 +80,7 @@ namespace
         double Length = 3, Height = 3.5;
         double TailX = 63021.56436710451;
         std::string Text1 = "上", Text2 = "下";
+        bool HasText2 = true;       // 样例为 1；为 0 时天正不画第二个文字
     };
 
     // 版本 5；样例 371（749 位）：三个顶点，末端为箭头
@@ -97,7 +98,7 @@ namespace
         const double v[3][2] = {{s.TailX, 18688.228029981386}, {61322.95742863529, 18688.228029981386}, {60560.109991518184, 19735.59585386717}};
         for (const auto& p : v) { r.WriteRawDouble(p[0]); r.WriteRawDouble(p[1]); r.WriteBitDouble(0); }
         r.WriteBitDouble(s.Length); r.WriteByte(0);
-        r.WriteBitDouble(-1000); r.WriteBit(true);
+        r.WriteBitDouble(-1000); r.WriteBit(s.HasText2);
         r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteBitDouble(0);
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         r.WriteVariableText(s.Text1); r.WriteVariableText(s.Text2);
@@ -336,10 +337,19 @@ int main()
         Check(DecodeArrow(*ArrowObject(left), a) && BuildArrow(a).Texts[0].Attachment == 6 && Near(BuildArrow(a).Texts[0].Center.X, 58686.5 + 227.128, 25),
               "a tail pointing left puts the text on the left");
         ArrowSpec both; both.Mode = 2;
-        Check(DecodeArrow(*ArrowObject(both), a) && BuildArrow(a).Texts.size() == 2 &&
-              Near(BuildArrow(a).Texts[0].Center, 62068.0 + (18.617 + 227.128) / 2, 18782.1 + (11.1702 + 305.319) / 2, 25) &&
-              Near(BuildArrow(a).Texts[1].Center, 62077.3 + (22.3404 + 212.234) / 2, 18285.4 + (3.7234 + 297.872) / 2, 25),
-              "mode 2: both texts centred above and below the first segment");
+        // 模式 2 的文字沿首段方向、左下对齐排布：对齐点沿文字方向加半个天正字宽（0.69 × 名义字高）、垂直方向加半个字高即为字形中心，
+        // 与天正分解出的 TEXT 墨迹框中心比较
+        auto inkCentre = [](const TchGraphics::Text& t) {
+            const double c = std::cos(t.Rotation), s = std::sin(t.Rotation), w = 0.69 * 350 / 2, h = t.Height / 2;
+            return TchGraphics::Point{t.Center.X + c * w - s * h, t.Center.Y + s * w + c * h};
+        };
+        Check(DecodeArrow(*ArrowObject(both), a) && BuildArrow(a).Texts.size() == 2 && BuildArrow(a).Texts[0].Attachment == 7 &&
+              Near(inkCentre(BuildArrow(a).Texts[0]), 62068.0 + (18.617 + 227.128) / 2, 18782.1 + (11.1702 + 305.319) / 2, 30) &&
+              Near(inkCentre(BuildArrow(a).Texts[1]), 62077.3 + (22.3404 + 212.234) / 2, 18285.4 + (3.7234 + 297.872) / 2, 30),
+              "mode 2: both texts above and below the middle of the first segment");
+        ArrowSpec noSecond; noSecond.Mode = 2; noSecond.HasText2 = false;
+        Check(DecodeArrow(*ArrowObject(noSecond), a) && BuildArrow(a).Texts.size() == 1,
+              "mode 2 without the second-text flag draws only the first text (kernel TDbSymbArrow::ExplodeOrDraw2d)");
         ArrowSpec mode0; mode0.Mode = 0;
         Check(!DecodeArrow(*ArrowObject(mode0), a), "unverified arrow text mode 0 is not drawn");
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeArrow(e, o, w); }, a) == 0,
@@ -499,8 +509,19 @@ int main()
         NameSpec byBlock; byBlock.Color = 0;
         Check(DecodeDrawingName(*NameObject(byBlock), dn) && BuildDrawingName(dn, GbenorText).Texts[0].Color == 0,
               "the last short is the text colour (0 = ByBlock)");
+        // 双线（8#楼详图 10 个图名的分解结果）：粗线下 1.4 × 比例再画一条细线，显示比例时两条线都画到比例文字末端外 0.2 × 比例字高，
+        // 居中用的总长也含这段外伸
         NameSpec doubleLine; doubleLine.LineMode = 0;
-        Check(!DecodeDrawingName(*NameObject(doubleLine), dn), "unverified double underline mode 0 is not drawn");
+        if (DecodeDrawingName(*NameObject(doubleLine), dn))
+        {
+            const TchGraphics g = BuildDrawingName(dn, GbenorText);
+            const double shift = 0.2 * 500 / 2;     // 外伸 0.2 × 比例字高（5 × 比例 100），整体左移一半
+            Check(g.Paths.size() == 1 && g.Lines.size() == 1 && Near(g.Paths[0].Points[0].P, 54032.1 - shift, 16734.2, 10) &&
+                  g.Texts.size() == 2 && Near(g.Texts[1].Center.X, 58317.0 - shift, 10) && g.Paths[0].Points[1].P.X > g.Texts[1].Center.X + 100 &&
+                  Near(g.Lines[0].A, g.Paths[0].Points[0].P.X, 16734.2 - 140, 0.01) && Near(g.Lines[0].B, g.Paths[0].Points[1].P.X, 16734.2 - 140, 0.01),
+                  "double underline mode 0 adds a thin line 1.4 x scale below, both reaching past the scale text");
+        }
+        else Check(false, "double underline mode 0 decodes");
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeDrawingName(e, o, w); }, dn) == 0,
               "every truncated drawing name payload is rejected");
     }

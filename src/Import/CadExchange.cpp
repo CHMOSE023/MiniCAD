@@ -19,6 +19,7 @@
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
@@ -27,12 +28,17 @@
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
+#include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/WipeoutEntity.hpp"
+#include "Core/Math/OCS.hpp"
+#include "Scene/HatchPatternLibrary.h"
 #include "Scene/Scene.h"
 #include "Serialization/EntityIO.h"
 #include "Serialization/JsonSerializer.h"
 
 #include "Database/CadDatabase.h"
 #include "Database/CadFileFormat.h"
+#include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgReader.h"
 #include "Dwg/Write/DwgWriter.h"
 #include "Dxf/Read/DxfReader.h"
@@ -123,6 +129,40 @@ namespace MiniCAD
         }
 
         std::uint8_t ToByte(double v) { return static_cast<std::uint8_t>(std::clamp(std::lround(v * 255.0), 0L, 255L)); }
+
+        // 凸度的方向约定：DWG/DXF 里正凸度是逆时针弧（AutoCAD），MiniCAD 的 Polyline 里正凸度是顺时针弧
+        // （见 Polyline::ComputeArc），填充边界在两者之间换算时取反
+        double BulgeFromCad(double cadBulge) { return -cadBulge; }
+        double BulgeToCad(double bulge) { return -bulge; }
+
+        // 填充等二维实体的 OCS → 世界坐标；法向为 +Z 时不变，为 -Z 时左右镜像
+        struct OcsMap
+        {
+            Math::OCS Ocs;
+            bool      Identity  = true;
+            double    Elevation = 0.0;
+
+            OcsMap(const Dwg::XYZ& normal, double elevation)
+                : Ocs(Math::BuildOCS({ normal.X, normal.Y, normal.Z })), Identity(IsDefaultNormal(normal)), Elevation(elevation) {}
+
+            Math::Point3 Point(double x, double y) const
+            {
+                const Math::Point3 p{ x, y, Elevation };
+                return Identity ? p : Math::OcsToWcs(Ocs, p);
+            }
+
+            // 向量在世界 XY 平面内的投影
+            std::pair<double, double> Vector(double x, double y) const
+            {
+                if (Identity) return { x, y };
+                return { Ocs.Ux.x * x + Ocs.Uy.x * y, Ocs.Ux.y * x + Ocs.Uy.y * y };
+            }
+
+            bool Mirrored() const { return !Identity && Ocs.Ux.x * Ocs.Uy.y - Ocs.Ux.y * Ocs.Uy.x < 0.0; }
+
+            // DWG 凸度 → 世界坐标下 MiniCAD 的凸度（镜像时弧的转向相反）
+            double Bulge(double cadBulge) const { return Mirrored() ? cadBulge : BulgeFromCad(cadBulge); }
+        };
 
         Dwg::Color FromEntityColor(const EntityColor& c)
         {
@@ -220,6 +260,7 @@ namespace MiniCAD
                 ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
                 if (const Dwg::BlockRecord* model = m_db.ModelSpace())
                     CollectOpenings(*model);
+                ScanObjects();
                 ImportBlocks();
                 ImportModelSpace();
                 m_scene.ResolveAllInserts();
@@ -232,8 +273,10 @@ namespace MiniCAD
                     LOG_WARN("TCH_WALL × %d 显示为普通轮廓；不修改时另存为原格式原版本可保留天正对象", m_tianzhengWalls);
                 for (const auto& [name, count] : m_tchConverted)
                     LOG_WARN("%s × %d 显示为普通几何；不修改时另存为原格式原版本可保留天正对象", name.c_str(), count);
-                for (const auto& [name, reason] : m_tchFailures)
-                    LOG_WARN("%s 无法恢复显示：%s", name.c_str(), reason.c_str());
+                for (const auto& [name, reasons] : m_tchFailures)
+                    for (const auto& [reason, handles] : reasons)
+                        LOG_WARN("%s × %d 无法恢复显示（如句柄 %llX）：%s", name.c_str(), static_cast<int>(handles.size()),
+                                 static_cast<unsigned long long>(*handles.begin()), reason.c_str());
             }
 
         private:
@@ -374,23 +417,26 @@ namespace MiniCAD
                             blk->SetDescription(b->Comments);
                 });
 
-                ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec)
-                {
-                    auto it = m_blocks.find(rec.ObjectHandle);
-                    if (it == m_blocks.end())
-                        return;
-                    BlockEntity* blk = table.Find(it->second);
-                    if (blk == nullptr || !blk->IsEmpty())
-                        return;
-                    for (Dwg::Handle h : rec.Entities)
-                        if (const auto* e = m_db.FindAs<Dwg::Entity>(h))
-                            if (auto conv = Convert(*e))
-                            {
-                                if (conv->IsKindOf<InsertEntity>())
-                                    m_scene.ResolveInsert(static_cast<InsertEntity&>(*conv));
-                                blk->AddEntity(std::move(conv));
-                            }
-                });
+                ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { FillBlock(rec); });
+            }
+
+            // 转换块内实体。线图案等需要先知道所引用块的内容，会提前调用它，所以按句柄只填一次
+            void FillBlock(const Dwg::BlockRecord& rec)
+            {
+                auto it = m_blocks.find(rec.ObjectHandle);
+                if (it == m_blocks.end() || !m_filledBlocks.insert(rec.ObjectHandle).second)
+                    return;
+                BlockEntity* blk = m_scene.GetBlockTable().Find(it->second);
+                if (blk == nullptr || !blk->IsEmpty())
+                    return;
+                for (Dwg::Handle h : DrawOrder(rec))
+                    if (const auto* e = m_db.FindAs<Dwg::Entity>(h))
+                        if (auto conv = Convert(*e))
+                        {
+                            if (conv->IsKindOf<InsertEntity>())
+                                m_scene.ResolveInsert(static_cast<InsertEntity&>(*conv));
+                            blk->AddEntity(std::move(conv));
+                        }
             }
 
             void ImportModelSpace()
@@ -398,7 +444,7 @@ namespace MiniCAD
                 const Dwg::BlockRecord* model = m_db.ModelSpace();
                 if (model == nullptr)
                     return;
-                for (Dwg::Handle h : model->Entities)
+                for (Dwg::Handle h : DrawOrder(*model))
                 {
                     const auto* e = m_db.FindAs<Dwg::Entity>(h);
                     if (e == nullptr)
@@ -415,6 +461,81 @@ namespace MiniCAD
                 }
             }
 
+            // 遍历一遍非图形对象：各块的绘制顺序表（SORTENTSTABLE）、区域覆盖的边框开关（WIPEOUTVARIABLES）
+            void ScanObjects()
+            {
+                for (const auto& [handle, object] : m_db.Objects())
+                {
+                    if (const auto* sort = dynamic_cast<const Dwg::SortEntitiesTable*>(object.get()))
+                    {
+                        auto& keys = m_sortKeys[sort->BlockOwnerHandle];
+                        for (const auto& entry : sort->Entries)
+                            keys[entry.EntityHandle] = entry.SortHandle;
+                    }
+                    else if (const auto* unknown = dynamic_cast<const Dwg::UnknownObject*>(object.get());
+                             unknown != nullptr && unknown->Raw.DxfName == "WIPEOUTVARIABLES")
+                        ReadWipeoutFrame(unknown->Raw);
+                }
+            }
+
+            // WIPEOUTVARIABLES 只有一个字段：显示边框（BS / DXF 组码 70），即 WIPEOUTFRAME
+            void ReadWipeoutFrame(const Dwg::RawObjectData& raw)
+            {
+                if (raw.Dxf.Version != Dwg::CadVersion::Unknown)
+                {
+                    for (const auto& g : raw.Dxf.Groups)
+                        if (g.Code == 70)
+                            m_wipeoutFrame = g.Value.AsInt() != 0;
+                    return;
+                }
+                const auto& d = raw.Dwg.Main;
+                if (raw.Dwg.MainBits < 2 || d.size() * 8 < raw.Dwg.MainBits)
+                    return;
+                auto bits = [&](std::uint64_t from, int count)
+                {
+                    int v = 0;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        const std::uint64_t k = from + i;
+                        v = (v << 1) | ((d[k >> 3] >> (7 - (k & 7))) & 1);
+                    }
+                    return v;
+                };
+                switch (bits(0, 2))
+                {
+                case 0:   // 16 位，低字节在前
+                    if (raw.Dwg.MainBits >= 18) m_wipeoutFrame = (bits(2, 8) | (bits(10, 8) << 8)) != 0;
+                    break;
+                case 1:   // 8 位
+                    if (raw.Dwg.MainBits >= 10) m_wipeoutFrame = bits(2, 8) != 0;
+                    break;
+                case 2:  m_wipeoutFrame = false; break;   // 0
+                default: m_wipeoutFrame = true;  break;   // 256
+                }
+            }
+
+            // 绘制顺序：块（含模型空间）有 SORTENTSTABLE 时按排序句柄从小到大（表里没有的实体以自身句柄排序），
+            // 否则按实体列表。区域覆盖只盖住先画的实体，顺序决定它遮住什么
+            std::vector<Dwg::Handle> DrawOrder(const Dwg::BlockRecord& rec) const
+            {
+                const auto it = m_sortKeys.find(rec.ObjectHandle);
+                if (it == m_sortKeys.end() || it->second.empty())
+                    return rec.Entities;
+                std::vector<std::pair<Dwg::Handle, Dwg::Handle>> keyed;
+                keyed.reserve(rec.Entities.size());
+                for (Dwg::Handle h : rec.Entities)
+                {
+                    const auto k = it->second.find(h);
+                    keyed.emplace_back(k == it->second.end() ? h : k->second, h);
+                }
+                std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                std::vector<Dwg::Handle> order;
+                order.reserve(keyed.size());
+                for (const auto& [key, h] : keyed)
+                    order.push_back(h);
+                return order;
+            }
+
             void CollectOpenings(const Dwg::BlockRecord& record)
             {
                 for (Dwg::Handle h : record.Entities)
@@ -426,7 +547,7 @@ namespace MiniCAD
                         continue;
                     if (!Tch::DecodeOpening(*unknown, opening, &reason))
                     {
-                        m_tchFailures.try_emplace("TCH_OPENING", reason);
+                        m_tchFailures["TCH_OPENING"][reason].insert(h);
                         continue;
                     }
                     m_openings[h] = opening;
@@ -557,7 +678,9 @@ namespace MiniCAD
                             return Tch::Detail::TextExtent{e.Width * height * factor, e.Bottom * height};
                         };
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildDrawingName(drawingName, extent), nameStyle, scaleStyle);
+                        const bool nameTtf = !m_scene.GetTextStyleTable().Resolve(nameStyle).IsShx();
+                        const bool scaleTtf = !m_scene.GetTextStyleTable().Resolve(scaleStyle).IsShx();
+                        return MakeTchGraphics(src, Tch::BuildDrawingName(drawingName, extent, nameTtf, scaleTtf), nameStyle, scaleStyle);
                     }
                     Tch::TchRectStair stair;
                     if (Tch::DecodeRectStair(*unknown, stair, &nativeReason))
@@ -797,8 +920,15 @@ namespace MiniCAD
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
                         const TextStyleID textStyle = LookupStyle(tchText.Style);
-                        const bool trueType = !m_scene.GetTextStyleTable().Resolve(textStyle).IsShx();
-                        return MakeTchGraphics(src, Tch::BuildText(tchText, trueType), textStyle);
+                        const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(textStyle);
+                        const bool trueType = !rec.IsShx();
+                        // 西文显示规则按原图样式的字体判断（场景中同名的 Standard 是 MiniCAD 自己的设置）
+                        const auto* dwgStyle = m_db.FindAs<Dwg::TextStyle>(tchText.Style);
+                        std::string font;
+                        for (char ch : dwgStyle ? dwgStyle->Filename : rec.FontFile) font.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+                        const bool symbolFont = !font.starts_with("gbenor") && !font.starts_with("gbeitc");
+                        const double styleWidth = dwgStyle && dwgStyle->Width > 0 ? dwgStyle->Width : rec.WidthFactor > 0 ? rec.WidthFactor : 1.0;
+                        return MakeTchGraphics(src, Tch::BuildText(tchText, trueType, symbolFont, styleWidth), textStyle);
                     }
                     Tch::TchPathArray pathArray;
                     if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
@@ -942,7 +1072,7 @@ namespace MiniCAD
                             reason = "proxy primitive cannot be mapped to Scene";
                         }
                         if (!nativeReason.empty()) reason = nativeReason + "; " + reason;
-                        m_tchFailures.try_emplace(unknown->Raw.DxfName, reason);
+                        m_tchFailures[unknown->Raw.DxfName][reason].insert(src.ObjectHandle);
                     }
                 }
                 if (auto* e = dynamic_cast<const Dwg::Face3D*>(&src))
@@ -984,6 +1114,15 @@ namespace MiniCAD
 
                 if (auto* e = dynamic_cast<const Dwg::Polyline*>(&src))
                     return ConvertOldPolyline(*e);
+
+                if (auto* e = dynamic_cast<const Dwg::Hatch*>(&src))
+                    return ConvertHatch(*e);
+
+                if (auto* e = dynamic_cast<const Dwg::Wipeout*>(&src))
+                    return ConvertWipeout(*e);
+
+                if (auto* e = dynamic_cast<const Dwg::Spline*>(&src))
+                    return ConvertSpline(*e);
 
                 if (dynamic_cast<const Dwg::AttributeBase*>(&src))
                     return Skip(src);   // 属性定义 / 属性：当前场景没有对应的实体
@@ -1156,13 +1295,14 @@ namespace MiniCAD
             // 线图案：每个单元是图案块的一个块参照（缩放不等时块内圆弧显示为椭圆弧，与天正分解结果相同），合成一个匿名块
             std::unique_ptr<Entity> ConvertPathArray(const Dwg::Entity& src, const Tch::TchPathArray& a, std::string& reason)
             {
+                if (const auto* rec = m_db.FindAs<Dwg::BlockRecord>(a.Block)) FillBlock(*rec);   // 图案块可能排在所在块之后
                 const auto block = m_blocks.find(a.Block);
                 const auto* def = block == m_blocks.end() ? nullptr : m_scene.GetBlockTable().Find(block->second);
                 if (!def) { reason = "path array pattern block is missing"; return nullptr; }
                 const AABB box = def->GetBoundingBox();
                 if (!(box.Max.x > box.Min.x && box.Max.y > box.Min.y)) { reason = "path array pattern block is empty"; return nullptr; }
                 const auto units = Tch::BuildPathArray(a, box.Min.x, box.Min.y, box.Max.x, box.Max.y);
-                if (units.empty()) { reason = "path array has no pattern unit"; return nullptr; }
+                // 每段都短于一个单元时天正不显示任何内容（8#楼各图中的挡土墙线图案，天正 2014 分解结果为空），生成空块
                 std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
                 while (m_scene.GetBlockTable().Get(name)) name += "_";
                 const auto blockId = m_scene.GetBlockTable().Create(name);
@@ -1215,30 +1355,55 @@ namespace MiniCAD
                     Tch::TchWall bandWall;
                     if (bandHost == nullptr || !Tch::DecodeWall(*bandHost, bandWall))
                     {
-                        m_tchFailures.try_emplace("TCH_OPENING", "band window host wall is unknown");
+                        m_tchFailures["TCH_OPENING"]["band window host wall is unknown"].insert(src.ObjectHandle);
                         return nullptr;
                     }
                     const double angle = std::atan2(bandWall.End.Y - bandWall.Start.Y, bandWall.End.X - bandWall.Start.X);
                     return MakeTchGraphics(src, Tch::BuildBandWindow(o, angle, bandWall.LeftWidth, bandWall.RightWidth), LookupStyle(o.Style));
                 }
-                const auto block = m_blocks.find(o.Block2D);
-                if (block == m_blocks.end())
-                {
-                    m_tchFailures.try_emplace("TCH_OPENING", "opening 2D block is missing");
-                    return nullptr;
-                }
                 const auto* host = m_db.FindAs<Dwg::UnknownEntity>(o.Wall);
                 Tch::TchWall wall;
                 const bool hasWall = host != nullptr && Tch::DecodeWall(*host, wall);
+                // 幕墙上的门窗：幕墙与墙共用前缀，从中取墙厚（8#楼平面图、详图的幕墙窗与天正 2014 分解结果核对）
+                Tch::TchWall curtain;
+                const bool hasCurtain = !hasWall && host != nullptr && Tch::DecodeWallPrefix(*host, curtain);
+                const Tch::TchWall* sides = hasWall ? &wall : hasCurtain ? &curtain : nullptr;
+                if (o.Type == Tch::TchOpening::Kind::Hole)
+                {
+                    // 洞口（8#楼详图的分解结果核对）：门洞两端各一条横穿墙厚的线；没有所在墙时按门窗自身的厚度居中
+                    const double ux = std::cos(o.Angle), uy = std::sin(o.Angle);
+                    double nx = -uy, ny = ux, left = o.Thickness / 2, right = o.Thickness / 2;
+                    if (sides != nullptr)
+                    {
+                        const double wl = std::hypot(sides->End.X - sides->Start.X, sides->End.Y - sides->Start.Y);
+                        nx = -(sides->End.Y - sides->Start.Y) / wl; ny = (sides->End.X - sides->Start.X) / wl;
+                        left = sides->LeftWidth; right = sides->RightWidth;
+                    }
+                    Tch::TchGraphics g;
+                    for (const double t : {-o.Width / 2, o.Width / 2})
+                    {
+                        const double x = o.Position.X + ux * t, y = o.Position.Y + uy * t;
+                        g.Lines.push_back({{x + nx * left, y + ny * left}, {x - nx * right, y - ny * right}});
+                    }
+                    return MakeTchGraphics(src, g, LookupStyle(o.Style));
+                }
+                const auto block = m_blocks.find(o.Block2D);
+                if (block == m_blocks.end())
+                {
+                    m_tchFailures["TCH_OPENING"]["opening 2D block is missing"].insert(src.ObjectHandle);
+                    return nullptr;
+                }
                 double depth = o.Width;
                 if (o.Type == Tch::TchOpening::Kind::Window)
                 {
-                    if (!hasWall)
+                    // 窗的 Y 缩放为墙厚；没有所在墙（句柄为空）时为门窗自身的厚度（8#楼平面图独立窗的分解结果核对）
+                    if (sides != nullptr) depth = sides->LeftWidth + sides->RightWidth;
+                    else if (o.Wall == Dwg::kNullHandle && o.Thickness > 0) depth = o.Thickness;
+                    else
                     {
-                        m_tchFailures.try_emplace("TCH_OPENING", "window host wall thickness is unknown");
+                        m_tchFailures["TCH_OPENING"]["window host wall thickness is unknown"].insert(src.ObjectHandle);
                         return nullptr;
                     }
-                    depth = wall.LeftWidth + wall.RightWidth;
                 }
                 const auto* def = m_scene.GetBlockTable().Find(block->second);
                 auto result = Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(block->second),
@@ -1298,6 +1463,258 @@ namespace MiniCAD
                 return ent;
             }
 
+            // 填充：边界是 OCS 坐标（标高 Elevation），按法向换到世界坐标。图案线族用填充自带的定义——
+            // 它已按填充的比例、角度换算到 OCS（天正“钢筋混凝土”等自定义图案在图案库里没有），所以场景里比例取 1、角度取 0
+            std::unique_ptr<Entity> ConvertHatch(const Dwg::Hatch& h)
+            {
+                const OcsMap map(h.Normal, h.Elevation);
+                std::vector<HatchLoop> loops;
+                for (const auto& path : h.Paths)
+                {
+                    HatchLoop loop = ConvertHatchPath(path, map);
+                    if (!loop.Empty())
+                        loops.push_back(std::move(loop));
+                }
+                if (loops.empty())
+                    return Skip(h);
+
+                HatchPattern pattern;
+                pattern.Name        = h.Pattern.Name.empty() ? std::string("SOLID") : h.Pattern.Name;
+                pattern.Description = h.Pattern.Description;
+                pattern.Solid       = h.IsSolid || h.GradientColor.Enabled;   // 渐变色填充按实心显示
+                double scale = 1.0, angleDeg = 0.0;
+                if (!pattern.Solid)
+                {
+                    for (const auto& line : h.Pattern.Lines)
+                        pattern.Families.push_back(FamilyOf(line, map));
+                    if (pattern.Families.empty())
+                    {
+                        // 没有存线族（少见）：按名称查图案库，比例与角度用填充的
+                        const HatchPattern* lib = HatchPatternLibrary::Instance().Find(pattern.Name);
+                        if (lib == nullptr)
+                            return Skip(h);
+                        pattern  = *lib;
+                        scale    = h.PatternScale;
+                        angleDeg = h.PatternAngle * 180.0 / kPi;
+                    }
+                }
+                auto ent = Make<HatchEntity>(h, nullptr, std::move(loops), std::move(pattern));
+                auto& hatch = static_cast<HatchEntity&>(*ent);
+                hatch.SetScale(scale);
+                hatch.SetAngle(angleDeg);
+                return ent;
+            }
+
+            // 图案线：角度、基点、偏移都是 OCS 里的最终值（偏移是相邻两条线之间的平移向量，不是 .pat 里沿线 / 垂直线的分量）
+            static HatchLineFamily FamilyOf(const Dwg::HatchPatternLine& line, const OcsMap& map)
+            {
+                auto [dx, dy] = map.Vector(std::cos(line.Angle), std::sin(line.Angle));
+                const double len = std::hypot(dx, dy);
+                if (len > 1e-12) { dx /= len; dy /= len; }
+                const auto [ox, oy] = map.Vector(line.Offset.X, line.Offset.Y);
+                const Math::Point3 base = map.Point(line.BasePoint.X, line.BasePoint.Y);
+                HatchLineFamily f;
+                f.AngleDeg = std::atan2(dy, dx) * 180.0 / kPi;
+                f.OffsetX  = base.x;
+                f.OffsetY  = base.y;
+                f.DeltaX   = ox * dx + oy * dy;
+                f.Spacing  = -ox * dy + oy * dx;
+                f.Dashes   = line.DashLengths;
+                return f;
+            }
+
+            // 一条边界路径 → 一个边界环：相接的直线、圆弧、椭圆弧合成一条多段线边，样条单独成边
+            static HatchLoop ConvertHatchPath(const Dwg::HatchBoundaryPath& path, const OcsMap& map)
+            {
+                HatchLoop loop;
+                std::vector<Math::Point3> pts;
+                std::vector<double>       bulges;
+                auto flush = [&]
+                {
+                    if (pts.size() >= 2)
+                        loop.Edges.push_back(HatchEdge::MakePoly(Polyline(std::move(pts), std::move(bulges))));
+                    pts.clear();
+                    bulges.clear();
+                };
+                auto finite = [](const Math::Point3& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); };
+                // 追加一段（世界坐标、MiniCAD 凸度）；起点与上一段终点不重合时用直线接上
+                auto add = [&](const Math::Point3& a, const Math::Point3& b, double bulge)
+                {
+                    if (!finite(a) || !finite(b) || !std::isfinite(bulge))
+                        return;
+                    if (pts.empty() || std::abs(pts.back().x - a.x) > 1e-9 || std::abs(pts.back().y - a.y) > 1e-9)
+                    {
+                        if (!pts.empty())
+                            bulges.push_back(0.0);
+                        pts.push_back(a);
+                    }
+                    bulges.push_back(bulge);
+                    pts.push_back(b);
+                };
+                // 从 s 转过 sweep（逆时针为正）的圆弧，超过半圆时分两段
+                auto addArc = [&](double cx, double cy, double r, double s, double sweep)
+                {
+                    const int n = std::abs(sweep) > kPi ? 2 : 1;
+                    const double step = sweep / n;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const double a0 = s + step * i, a1 = a0 + step;
+                        add(map.Point(cx + r * std::cos(a0), cy + r * std::sin(a0)),
+                            map.Point(cx + r * std::cos(a1), cy + r * std::sin(a1)), map.Bulge(std::tan(step / 4.0)));
+                    }
+                };
+                // 弧的起止角：逆时针时从 start 到 end；顺时针时 DWG 里存的是角度的相反数（ezdxf 同此约定，样例图核对过首尾相接）
+                auto sweepOf = [](double start, double end, bool ccw, double& s) -> double
+                {
+                    s = ccw ? start : -start;
+                    const double e = ccw ? end : -end;
+                    double d = std::fmod(ccw ? e - s : s - e, kTwoPi);
+                    if (d < 0.0) d += kTwoPi;
+                    if (d < 1e-9) d = kTwoPi;   // 起止相同：整圆
+                    return ccw ? d : -d;
+                };
+
+                for (const auto& edge : path.Edges)
+                {
+                    if (const auto* pl = dynamic_cast<const Dwg::HatchBoundaryPathPolyline*>(edge.get()))
+                    {
+                        const auto& v = pl->Vertices;   // Z 为凸度
+                        for (std::size_t i = 0; i + 1 < v.size(); ++i)
+                            add(map.Point(v[i].X, v[i].Y), map.Point(v[i + 1].X, v[i + 1].Y), map.Bulge(v[i].Z));
+                        if (pl->IsClosed && v.size() >= 2)
+                            add(map.Point(v.back().X, v.back().Y), map.Point(v.front().X, v.front().Y), map.Bulge(v.back().Z));
+                    }
+                    else if (const auto* l = dynamic_cast<const Dwg::HatchBoundaryPathLine*>(edge.get()))
+                        add(map.Point(l->Start.X, l->Start.Y), map.Point(l->End.X, l->End.Y), 0.0);
+                    else if (const auto* a = dynamic_cast<const Dwg::HatchBoundaryPathArc*>(edge.get()))
+                    {
+                        double s = 0.0;
+                        const double sweep = sweepOf(a->StartAngle, a->EndAngle, a->CounterClockWise, s);
+                        if (a->Radius > 1e-12)
+                            addArc(a->Center.X, a->Center.Y, a->Radius, s, sweep);
+                    }
+                    else if (const auto* el = dynamic_cast<const Dwg::HatchBoundaryPathEllipse*>(edge.get()))
+                    {
+                        // 椭圆弧离散成折线（起止值按参数角处理）
+                        double s = 0.0;
+                        const double sweep = sweepOf(el->StartAngle, el->EndAngle, el->CounterClockWise, s);
+                        const double mx = el->MajorAxisEndPoint.X, my = el->MajorAxisEndPoint.Y;
+                        const double ra = std::hypot(mx, my), rb = ra * el->RadiusRatio;
+                        if (ra < 1e-12)
+                            continue;
+                        const double ca = mx / ra, sa = my / ra;
+                        auto at = [&](double t)
+                        {
+                            const double x = ra * std::cos(t), y = rb * std::sin(t);
+                            return map.Point(el->Center.X + x * ca - y * sa, el->Center.Y + x * sa + y * ca);
+                        };
+                        const int n = std::max(8, static_cast<int>(std::ceil(std::abs(sweep) / (kPi / 36.0))));
+                        for (int i = 0; i < n; ++i)
+                            add(at(s + sweep * i / n), at(s + sweep * (i + 1) / n), 0.0);
+                    }
+                    else if (const auto* sp = dynamic_cast<const Dwg::HatchBoundaryPathSpline*>(edge.get()))
+                    {
+                        flush();
+                        Spline spline;
+                        spline.Degree = sp->Degree;
+                        for (const auto& p : sp->ControlPoints)
+                        {
+                            spline.ControlPoints.push_back(map.Point(p.X, p.Y));
+                            if (sp->IsRational)
+                                spline.Weights.push_back(p.Z);   // 有理样条的权重放在 Z
+                        }
+                        spline.Knots = sp->Knots;
+                        if (sp->IsRational)
+                            spline.Flags |= SplineFlag_Rational;
+                        if (sp->IsPeriodic)
+                            spline.Flags |= SplineFlag_Periodic;
+                        if (!spline.HasControlData())
+                        {
+                            if (sp->FitPoints.size() < 2)
+                                continue;
+                            std::vector<Math::Point3> fit;
+                            for (const auto& p : sp->FitPoints)
+                                fit.push_back(map.Point(p.X, p.Y));
+                            spline = Spline(std::move(fit));
+                        }
+                        loop.Edges.push_back(HatchEdge::MakeSpline(std::move(spline)));
+                    }
+                }
+                flush();
+                return loop;
+            }
+
+            // 区域覆盖：边界是图像坐标（像素中心为整数，原点在左上角、Y 向下，整幅图像为 Size 个像素），
+            // 世界坐标 = 插入点 + UVector·(x + 0.5) + VVector·(高 − y − 0.5)。没有裁剪边界时为整幅图像
+            std::unique_ptr<Entity> ConvertWipeout(const Dwg::Wipeout& w)
+            {
+                const double sx = w.Size.X > 0.0 ? w.Size.X : 1.0;
+                const double sy = w.Size.Y > 0.0 ? w.Size.Y : 1.0;
+                std::vector<Dwg::XY> clip = w.ClipBoundaryVertices;
+                if (clip.size() > 3 && clip.front().X == clip.back().X && clip.front().Y == clip.back().Y)
+                    clip.pop_back();
+                if (!w.ClippingState || clip.size() < 2)
+                    clip = { { -0.5, -0.5 }, { sx - 0.5, sy - 0.5 } };
+                if (clip.size() == 2)   // 两个点是矩形的对角
+                    clip = { clip[0], { clip[1].X, clip[0].Y }, clip[1], { clip[0].X, clip[1].Y } };
+
+                std::vector<Math::Point3> pts;
+                pts.reserve(clip.size());
+                for (const auto& p : clip)
+                {
+                    const double u = p.X + 0.5, v = sy - 0.5 - p.Y;
+                    const Math::Point3 q{ w.InsertPoint.X + w.UVector.X * u + w.VVector.X * v,
+                                          w.InsertPoint.Y + w.UVector.Y * u + w.VVector.Y * v,
+                                          w.InsertPoint.Z + w.UVector.Z * u + w.VVector.Z * v };
+                    if (!std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z))
+                        return Skip(w);
+                    pts.push_back(q);
+                }
+                auto ent = Make<WipeoutEntity>(w, nullptr, std::move(pts));
+                static_cast<WipeoutEntity&>(*ent).SetShowFrame(m_wipeoutFrame);
+                return ent;
+            }
+
+            // 样条：有控制点与节点时按 NURBS 显示（拟合点一并保留），只有拟合点时按拟合点插值
+            std::unique_ptr<Entity> ConvertSpline(const Dwg::Spline& s)
+            {
+                Spline sp;
+                sp.Degree = s.Degree;
+                sp.Flags  = static_cast<int>(s.Flags) & (SplineFlag_Closed | SplineFlag_Periodic | SplineFlag_Planar | SplineFlag_Linear);
+                for (const auto& p : s.ControlPoints)
+                    sp.ControlPoints.push_back(ToPoint(p));
+                sp.Knots = s.Knots;
+                if (!s.Weights.empty() && s.Weights.size() == s.ControlPoints.size()
+                    && (Any(s.Flags & Dwg::SplineFlags::Rational)
+                        || std::any_of(s.Weights.begin(), s.Weights.end(), [](double w) { return std::abs(w - 1.0) > 1e-12; })))
+                {
+                    sp.Weights = s.Weights;
+                    sp.Flags |= SplineFlag_Rational;
+                }
+                for (const auto& p : s.FitPoints)
+                    sp.FitPoints.push_back(ToPoint(p));
+                sp.StartTangent  = ToPoint(s.StartTangent);
+                sp.EndTangent    = ToPoint(s.EndTangent);
+                sp.FitTolerance  = s.FitTolerance;
+                sp.KnotTolerance = s.KnotTolerance;
+                sp.CtrlTolerance = s.ControlPointTolerance;
+                if (!sp.HasControlData())
+                {
+                    if (sp.FitPoints.size() < 2)
+                        return Skip(s);
+                    sp.ControlPoints.clear();
+                    sp.Knots.clear();
+                    sp.Weights.clear();
+                    auto nonZero = [](const Math::Point3& t) { return std::abs(t.x) + std::abs(t.y) + std::abs(t.z) > 1e-12; };
+                    sp.Boundary = Any(s.Flags & Dwg::SplineFlags::Closed) ? SplineBoundary::Closed
+                                : nonZero(sp.StartTangent) && nonZero(sp.EndTangent) ? SplineBoundary::Clamped
+                                                                                     : SplineBoundary::Natural;
+                }
+                if (!sp.FitPoints.empty())
+                    sp.Build();
+                return Make<SplineEntity>(s, nullptr, std::move(sp));
+            }
+
             // 旧式 POLYLINE（R12 的 DXF）：二维 / 三维折线；网格不支持
             std::unique_ptr<Entity> ConvertOldPolyline(const Dwg::Polyline& e)
             {
@@ -1337,12 +1754,15 @@ namespace MiniCAD
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
             std::map<Dwg::Handle, BlockID>     m_blocks;
+            std::set<Dwg::Handle>              m_filledBlocks;
             std::map<Dwg::Handle, Tch::TchOpening> m_openings;                      // 门窗句柄 → 解码结果
             std::map<Dwg::Handle, std::vector<Tch::TchOpening>> m_wallOpenings;    // 墙句柄 → 墙上的门窗
             std::map<std::string, int>         m_skipped;
+            std::map<Dwg::Handle, std::map<Dwg::Handle, Dwg::Handle>> m_sortKeys;   // 块记录 → 实体 → 排序句柄
+            bool m_wipeoutFrame = true;                                              // WIPEOUTFRAME（没有该对象时 AutoCAD 默认显示）
             int m_tianzhengWalls = 0;
             std::map<std::string, int> m_tchConverted;
-            std::map<std::string, std::string> m_tchFailures;
+            std::map<std::string, std::map<std::string, std::set<Dwg::Handle>>> m_tchFailures;   // 类型 → 原因 → 句柄
         };
 
         // ════════════════════════════════════════════════════════════════
@@ -1741,8 +2161,14 @@ namespace MiniCAD
                     d->Normal   = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
+                if (auto* s = dynamic_cast<const WipeoutEntity*>(&e))   // 派生自 PolylineEntity，须先判断
+                    return ConvertWipeout(e, *s);
                 if (auto* s = dynamic_cast<const PolylineEntity*>(&e))
                     return ConvertPolyline(e, s->GetPolyline(), s->GetWidth());
+                if (auto* s = dynamic_cast<const HatchEntity*>(&e))
+                    return ConvertHatch(e, *s);
+                if (auto* s = dynamic_cast<const SplineEntity*>(&e))
+                    return ConvertSpline(e, s->GetSpline());
                 if (auto* s = dynamic_cast<const RectangleEntity*>(&e))
                 {
                     const auto& r = s->GetRectangle();
@@ -1876,6 +2302,218 @@ namespace MiniCAD
                 d->Elevation     = pts.front().z;
                 d->ConstantWidth = width >= 1.0 ? width : 0.0;
                 d->Normal        = NormalOf(e);
+                return Finish(e, std::move(d));
+            }
+
+            // 填充：只有一条多段线边的环写成多段线路径，其余写成直线 / 圆弧 / 椭圆弧 / 样条边；
+            // 图案线族按场景里的比例、角度换算成 DWG 存的最终值（导入的逆过程，见 Importer::FamilyOf）
+            std::unique_ptr<Dwg::Entity> ConvertHatch(const Entity& e, const HatchEntity& h)
+            {
+                auto d = std::make_unique<Dwg::Hatch>();
+                bool hasElevation = false;
+                auto elevation = [&](const Math::Point3& p)
+                {
+                    if (!hasElevation) { d->Elevation = p.z; hasElevation = true; }
+                };
+                auto addLine = [](Dwg::HatchBoundaryPath& path, const Math::Point3& a, const Math::Point3& b)
+                {
+                    auto line = std::make_unique<Dwg::HatchBoundaryPathLine>();
+                    line->Start = { a.x, a.y };
+                    line->End   = { b.x, b.y };
+                    path.Edges.push_back(std::move(line));
+                };
+
+                for (const auto& loop : h.GetLoops())
+                {
+                    Dwg::HatchBoundaryPath path;
+                    path.Flags = Dwg::BoundaryPathFlags::External;
+                    if (loop.Edges.size() == 1 && loop.Edges[0].Type == HatchEdge::Kind::Poly)
+                    {
+                        const Polyline& pl = loop.Edges[0].Poly;
+                        std::size_t count = pl.Points.size();
+                        if (count < 2)
+                            continue;
+                        elevation(pl.Points.front());
+                        if (count >= 3 && std::hypot(pl.Points.front().x - pl.Points.back().x, pl.Points.front().y - pl.Points.back().y) < 1e-9)
+                            --count;   // 末点与起点重合：闭合段的凸度落到末顶点上
+                        auto edge = std::make_unique<Dwg::HatchBoundaryPathPolyline>();
+                        edge->IsClosed = true;
+                        for (std::size_t i = 0; i < count; ++i)
+                            edge->Vertices.push_back({ pl.Points[i].x, pl.Points[i].y, BulgeToCad(pl.SegBulge(static_cast<int>(i))) });
+                        path.Flags = path.Flags | Dwg::BoundaryPathFlags::Polyline;
+                        path.Edges.push_back(std::move(edge));
+                    }
+                    else
+                    {
+                        for (const auto& edge : loop.Edges)
+                        {
+                            if (edge.Type == HatchEdge::Kind::Poly)
+                            {
+                                const Polyline& pl = edge.Poly;
+                                for (int i = 0; i + 1 < static_cast<int>(pl.Points.size()); ++i)
+                                {
+                                    const Math::Point3& a = pl.Points[i];
+                                    const Math::Point3& b = pl.Points[i + 1];
+                                    elevation(a);
+                                    const ArcGeom g = Polyline::ComputeArc(a, b, pl.SegBulge(i));
+                                    if (!pl.SegIsArc(i) || g.Radius <= 0.0)
+                                    {
+                                        addLine(path, a, b);
+                                        continue;
+                                    }
+                                    // 顺时针弧存角度的相反数（见 Importer::ConvertHatchPath）
+                                    auto arc = std::make_unique<Dwg::HatchBoundaryPathArc>();
+                                    arc->Center = { g.Center.x, g.Center.y };
+                                    arc->Radius = g.Radius;
+                                    arc->CounterClockWise = g.SweepAngle > 0.0;
+                                    arc->StartAngle = arc->CounterClockWise ? g.StartAngle : -g.StartAngle;
+                                    arc->EndAngle   = arc->CounterClockWise ? g.StartAngle + g.SweepAngle : -(g.StartAngle + g.SweepAngle);
+                                    path.Edges.push_back(std::move(arc));
+                                }
+                            }
+                            else if (edge.Type == HatchEdge::Kind::EllipseArc)
+                            {
+                                const Ellipse& el = edge.Ell;
+                                elevation(el.Center);
+                                auto ell = std::make_unique<Dwg::HatchBoundaryPathEllipse>();
+                                ell->Center = { el.Center.x, el.Center.y };
+                                double rot = el.Rotation, a0 = edge.A0, a1 = edge.A1;
+                                double major = el.RadiusX, minor = el.RadiusY;
+                                if (minor > major)   // 长轴沿 Y：转 90°，参数角相应减 90°
+                                {
+                                    std::swap(major, minor);
+                                    rot += kPi / 2.0;
+                                    a0 -= kPi / 2.0;
+                                    a1 -= kPi / 2.0;
+                                }
+                                ell->MajorAxisEndPoint = { major * std::cos(rot), major * std::sin(rot) };
+                                ell->RadiusRatio       = major > 0.0 ? minor / major : 1.0;
+                                ell->StartAngle        = a0;
+                                ell->EndAngle          = a1;
+                                ell->CounterClockWise  = true;
+                                path.Edges.push_back(std::move(ell));
+                            }
+                            else if (edge.Spl.HasControlData())
+                            {
+                                const Spline& sp = edge.Spl;
+                                elevation(sp.ControlPoints.front());
+                                auto spl = std::make_unique<Dwg::HatchBoundaryPathSpline>();
+                                spl->Degree     = sp.Degree;
+                                spl->IsRational = sp.IsRational();
+                                spl->IsPeriodic = (sp.Flags & SplineFlag_Periodic) != 0;
+                                spl->Knots      = sp.Knots;
+                                for (std::size_t i = 0; i < sp.ControlPoints.size(); ++i)   // 有理样条的权重放在 Z
+                                    spl->ControlPoints.push_back({ sp.ControlPoints[i].x, sp.ControlPoints[i].y, spl->IsRational ? sp.Weights[i] : 0.0 });
+                                path.Edges.push_back(std::move(spl));
+                            }
+                            else
+                            {
+                                // 只有拟合点的样条：离散成直线边
+                                const std::vector<Math::Point3> pts = edge.Spl.Tessellate(24);
+                                for (std::size_t i = 0; i + 1 < pts.size(); ++i)
+                                {
+                                    elevation(pts[i]);
+                                    addLine(path, pts[i], pts[i + 1]);
+                                }
+                            }
+                        }
+                    }
+                    if (!path.Edges.empty())
+                        d->Paths.push_back(std::move(path));
+                }
+                if (d->Paths.empty())
+                    return Skip(e);
+
+                const HatchPattern& pat = h.GetPattern();
+                d->Pattern.Name = pat.Solid ? std::string("SOLID") : pat.Name;
+                d->IsSolid      = pat.Solid;
+                d->PatternType  = Dwg::HatchPatternType::SolidFill;   // 组码 76 = 1：预定义图案（ACadSharp 的枚举名不准确）
+                d->Style        = Dwg::HatchStyleType::Normal;
+                if (!pat.Solid)
+                {
+                    const double scale = h.GetScale(), rad = h.GetAngle() * kPi / 180.0;
+                    d->PatternScale = scale;
+                    d->PatternAngle = rad;
+                    for (const auto& f : pat.Families)
+                    {
+                        Dwg::HatchPatternLine line;
+                        const double a = f.AngleDeg * kPi / 180.0 + rad;
+                        const double bx = f.OffsetX * scale, by = f.OffsetY * scale;
+                        const double dx = f.DeltaX * scale, dy = f.Spacing * scale;
+                        line.Angle     = a;
+                        line.BasePoint = { bx * std::cos(rad) - by * std::sin(rad), bx * std::sin(rad) + by * std::cos(rad) };
+                        line.Offset    = { dx * std::cos(a) - dy * std::sin(a), dx * std::sin(a) + dy * std::cos(a) };
+                        for (double dash : f.Dashes)
+                            line.DashLengths.push_back(dash * scale);
+                        d->Pattern.Lines.push_back(std::move(line));
+                    }
+                }
+                return Finish(e, std::move(d));
+            }
+
+            // 区域覆盖：以多边形的外包矩形为整幅图像（1×1 像素），边界换成图像坐标（导入的逆过程，见 Importer::ConvertWipeout）
+            std::unique_ptr<Dwg::Entity> ConvertWipeout(const Entity& e, const WipeoutEntity& w)
+            {
+                std::vector<Math::Point3> pts = w.GetPolyline().Points;
+                if (pts.size() > 1 && pts.front().x == pts.back().x && pts.front().y == pts.back().y)
+                    pts.pop_back();
+                if (pts.size() < 3)
+                    return Skip(e);
+                double x0 = pts[0].x, y0 = pts[0].y, x1 = x0, y1 = y0;
+                for (const auto& p : pts)
+                {
+                    x0 = std::min(x0, p.x); x1 = std::max(x1, p.x);
+                    y0 = std::min(y0, p.y); y1 = std::max(y1, p.y);
+                }
+                const double width = x1 - x0, height = y1 - y0;
+                if (width < 1e-9 || height < 1e-9)
+                    return Skip(e);
+
+                auto d = std::make_unique<Dwg::Wipeout>();
+                d->InsertPoint   = { x0, y0, pts.front().z };
+                d->UVector       = { width, 0.0, 0.0 };
+                d->VVector       = { 0.0, height, 0.0 };
+                d->Size          = { 1.0, 1.0 };
+                d->Flags         = Dwg::ImageDisplayFlags::ShowImage | Dwg::ImageDisplayFlags::ShowNotAlignedImage
+                                 | Dwg::ImageDisplayFlags::UseClippingBoundary;
+                d->ClippingState = true;
+                for (const auto& p : pts)
+                    d->ClipBoundaryVertices.push_back({ (p.x - x0) / width - 0.5, 0.5 - (p.y - y0) / height });
+                return Finish(e, std::move(d));
+            }
+
+            // 样条：有控制点时写控制点与节点（拟合点一并写出），否则只写拟合点（AutoCAD 打开时重算控制点）
+            std::unique_ptr<Dwg::Entity> ConvertSpline(const Entity& e, const Spline& sp)
+            {
+                if (!sp.HasControlData() && sp.FitPoints.size() < 2)
+                    return Skip(e);
+                auto d = std::make_unique<Dwg::Spline>();
+                d->Degree = sp.HasControlData() ? sp.Degree : 3;
+                int flags = sp.Flags & (SplineFlag_Closed | SplineFlag_Periodic | SplineFlag_Planar | SplineFlag_Linear);
+                if (sp.IsClosed())
+                    flags |= SplineFlag_Closed;
+                if (sp.HasControlData())
+                {
+                    for (const auto& p : sp.ControlPoints)
+                        d->ControlPoints.push_back(ToXYZ(p));
+                    d->Knots = sp.Knots;
+                    if (sp.IsRational())
+                    {
+                        d->Weights = sp.Weights;
+                        flags |= SplineFlag_Rational;
+                    }
+                }
+                for (const auto& p : sp.FitPoints)
+                    d->FitPoints.push_back(ToXYZ(p));
+                if (!sp.HasControlData() && sp.Boundary == SplineBoundary::Clamped)
+                {
+                    d->StartTangent = ToXYZ(sp.StartTangent);
+                    d->EndTangent   = ToXYZ(sp.EndTangent);
+                }
+                d->Flags                 = static_cast<Dwg::SplineFlags>(flags);
+                d->FitTolerance          = sp.FitTolerance;
+                d->KnotTolerance         = sp.KnotTolerance;
+                d->ControlPointTolerance = sp.CtrlTolerance;
                 return Finish(e, std::move(d));
             }
 

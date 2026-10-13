@@ -65,6 +65,15 @@ if(MSVC)
 endif()
 add_test(NAME MiniCADTchPathArrayTests COMMAND MiniCADTchPathArrayTests)
 
+# 天正对象显示几何与天正 2014 分解结果比对（期望数据 Core/TchGeometryRef.inc 由 Core/tch_geomref.py 生成）
+add_executable(MiniCADTchGeometryTests "Core/TchGeometryTests.cpp")
+target_link_libraries(MiniCADTchGeometryTests PRIVATE MiniCADLib MiniDWG)
+target_compile_definitions(MiniCADTchGeometryTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
+if(MSVC)
+    target_compile_options(MiniCADTchGeometryTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchGeometryTests COMMAND MiniCADTchGeometryTests)
+
 add_executable(MiniCADFace3DTests "Core/Face3DTests.cpp")
 target_link_libraries(MiniCADFace3DTests PRIVATE MiniCADLib MiniDWG)
 if(MSVC)

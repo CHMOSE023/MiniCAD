@@ -28,6 +28,46 @@ namespace MiniCAD::Tch
         }
     };
 
+    // 幕墙（TCH_CURTAIN_WALL，内核 TDbCurtainWall::dwgInFields 先调用 TDbWall::dwgInFields）与墙共用的前缀：
+    // 只读到受保护几何（起终点、左右宽），用于取幕墙上门窗的墙厚；其后的幕墙私有字段不解析
+    inline bool DecodeWallPrefix(const MiniDWG::UnknownEntity& entity, TchWall& wall)
+    {
+        using namespace MiniDWG;
+        const auto& data = entity.Raw.Dwg;
+        if (entity.Raw.DxfName != "TCH_WALL" && entity.Raw.DxfName != "TCH_CURTAIN_WALL") return false;
+        if ((data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8 ||
+            data.MainBits < 773)
+            return false;
+        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+        if (r.ReadByte() != 5) return false;
+        const double scale = r.ReadBitDouble();
+        if (!std::isfinite(scale) || scale <= 0 ||
+            r.ReadBitShort() != 0 || r.ReadByte() != 3 || r.Read2Bits() != 0 ||
+            r.ReadRawShort() != 512 || r.ReadByte() != 8)
+            return false;
+        const auto protectionKey = r.ReadByte();
+        auto decoded = r.ReadBytes(84);
+        for (auto& byte : decoded) byte ^= protectionKey;
+        DwgBitReader geometry(decoded, data.Version, Codec::CodePage::Gbk);
+        TchWall result;
+        result.Start = geometry.Read3RawDouble();
+        result.End = geometry.Read3RawDouble();
+        result.Angle = geometry.ReadRawDouble();
+        geometry.ReadRawLong();
+        result.LeftWidth = geometry.ReadRawDouble();
+        result.RightWidth = geometry.ReadRawDouble();
+        if (r.Failed() || geometry.Failed()) return false;
+        const std::array<double, 9> values{result.Start.X, result.Start.Y, result.Start.Z, result.End.X, result.End.Y, result.End.Z,
+                                           result.LeftWidth, result.RightWidth, result.Angle};
+        for (double value : values)
+            if (!std::isfinite(value) || std::abs(value) > 1e12) return false;
+        if (result.LeftWidth < 0 || result.RightWidth < 0 || result.LeftWidth + result.RightWidth <= 0 ||
+            std::hypot(result.End.X - result.Start.X, result.End.Y - result.Start.Y) < 1e-6)
+            return false;
+        wall = result;
+        return true;
+    }
+
     // Read-only compatibility adapter for the schema-5 straight-wall layout
     // observed in tianzheng.dwg. Unidentified fields are checked as signatures,
     // not assigned speculative meanings. Other layouts remain unknown entities.

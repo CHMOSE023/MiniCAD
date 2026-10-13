@@ -1,7 +1,11 @@
 // ── 区域覆盖测试：顶点流裁剪（线 / 填充 / 文字）、实体绘制、序列化往返 ─────────────
 #include "Core/Draw/IDrawSink.hpp"
+#include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
+#include "Document/DrawContext.hpp"
 #include "Document/WipeClip.hpp"
+#include "Scene/Scene.h"
 #include "Serialization/EntityIO.h"
 #include "Serialization/JsonSerializer.h"
 #include <cmath>
@@ -116,6 +120,51 @@ int RunWipeoutTests()
 
     auto clone = w.Clone(2);
     Check(clone && clone->IsKindOf<WipeoutEntity>() && !static_cast<WipeoutEntity*>(clone.get())->GetShowFrame(), "克隆保持类型与边框设置");
+
+    // ── 块内的区域覆盖：经插入变换，并盖住同一块里先画的图形（后画的不受影响）────────
+    {
+        Scene scene;
+        const BlockID blk = scene.GetBlockTable().Create("KTTG", { 0, 0, 0 });
+        BlockEntity* def = scene.GetBlockTable().Find(blk);
+        def->AddEntity(std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ -5, 5, 0 }, Math::Point3{ 15, 5, 0 }));
+        auto mask = std::make_unique<WipeoutEntity>(scene.NextObjectID(), kSquare);
+        mask->SetShowFrame(false);
+        def->AddEntity(std::move(mask));
+        def->AddEntity(std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ 5, -5, 0 }, Math::Point3{ 5, 15, 0 }));
+        InsertEntity ins(scene.NextObjectID(), blk, "KTTG", Math::Point3{ 100, 0, 0 });
+        scene.ResolveInsert(ins);
+
+        std::vector<Vertex_P3_C4> lines, fills;
+        std::vector<Vertex_P3_C4_UV> texts;
+        Overlay overlay;
+        DrawContext ctx(lines, fills, texts, overlay, scene.GetLayerManager(), scene.GetLineTypeTable());
+        lines.push_back(V(0, 0));   // 之前实体的顶点：不归本实体裁剪
+        lines.push_back(V(200, 0));
+        ctx.BeginEntity(&ins.GetAttr());
+        ins.Draw(ctx, false, false);
+        ctx.BeginEntity(nullptr);
+        const auto wipes = ctx.TakeWipes();
+
+        double horizontal = 0, vertical = 0;
+        for (size_t k = 2; k + 1 < lines.size(); k += 2)
+        {
+            const auto& a = lines[k].pos;
+            const auto& b = lines[k + 1].pos;
+            if (a.y == b.y) horizontal += std::abs(b.x - a.x);
+            else vertical += std::abs(b.y - a.y);
+        }
+        Check(lines[0].pos.x == 0 && lines[1].pos.x == 200, "块内遮罩不裁剪之前实体的顶点（由拼接顶点流时处理）");
+        Check(std::abs(horizontal - 10) < 1e-4, "块内遮罩盖住块里先画的线（经插入变换到 x = 100～110）");
+        Check(std::abs(vertical - 20) < 1e-4, "块里后画的线不受遮罩影响");
+        Check(wipes.size() == 1 && std::abs(wipes[0][0].x - 100) < 1e-9, "遮罩边界经插入变换后交给场景拼接");
+    }
+
+    // 只裁剪 from 之后的顶点
+    {
+        std::vector<Vertex_P3_C4> v = { V(-5, 5), V(15, 5), V(-5, 6), V(15, 6) };
+        WipeClip::ClipLines(v, WipeClip::Poly(kSquare), 2);
+        Check(v.size() == 6 && v[0].pos.x == -5 && v[1].pos.x == 15, "ClipLines：from 之前的线段保持不变");
+    }
 
     JsonSerializer ws;
     EntityIO::Write(ws, w);

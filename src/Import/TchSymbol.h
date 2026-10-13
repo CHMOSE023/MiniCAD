@@ -1,6 +1,7 @@
 #pragma once
 #include "Import/TchDimension.h"
 #include <array>
+#include <cctype>
 #include <functional>
 #include <vector>
 
@@ -47,9 +48,11 @@ namespace MiniCAD::Tch
     {
         struct Vertex { double X = 0, Y = 0, Bulge = 0; };
         double Scale = 1, TextHeight = 3.5;
-        int    Mode = 1;            // 1：第一个文字放在尾端外侧；2：两个文字在首段中点上下
-        std::vector<Vertex> Vertices;
+        int    Mode = 1;            // 1：第一个文字放在尾端外侧；2：两个文字在首段中点上下；3：第一个文字沿首段、从尾端起写在线上方
+        std::vector<Vertex> Vertices;   // 少于 2 个顶点或闭合时天正不显示（内核 TDbSymbArrow::IsValid）
         double ArrowLength = 3;     // 图面单位
+        int    Head = 0;            // 箭头样式（内核 ExplodeOrDraw2d）：0 有宽度的多段线、1 实心三角形（显示相同），4 及以上不画箭头
+        bool   HasText2 = false;    // 为 false 时不画第二个文字
         std::string Text1, Text2;
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle;
     };
@@ -90,7 +93,7 @@ namespace MiniCAD::Tch
         double LineWidth = 0.7;             // 下划线线宽（图面单位）
         double Gap = 0.6;                   // 图名与比例之间的距离（× 图名字高）
         bool   ShowScale = true;
-        int    LineMode = 1;                // 1、2：单下划线（0 为双线，未核对）
+        int    LineMode = 1;                // 0：双线（粗线下再加一条细线）；1、2：单下划线
         int    Color = 7;                   // 文字颜色（ACI）
         MiniDWG::Handle NameStyle = MiniDWG::kNullHandle, ScaleStyle = MiniDWG::kNullHandle;
     };
@@ -278,8 +281,8 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 按 TDbSymbArrow 的私有布局版本 < 6 的明文分支解析，
-    // 多段线布局（RC 闭合、BS 顶点数、每顶点 2RD + BD 凸度）。只接受版本 4～5、模式 1 与 2
+    // 按 TDbSymbArrow 的私有布局版本 < 6 的明文分支解析（CADReader 0x6edce0，内核 TDbSymbArrow::dwgInFields），
+    // 多段线布局（RC 闭合、BS 顶点数、每顶点 2RD + BD 凸度）。只接受版本 4～5、文字模式 1～3（模式 0、4 没有样例）
     inline bool DecodeArrow(const MiniDWG::UnknownEntity& entity, TchArrow& arrow, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -297,21 +300,24 @@ namespace MiniCAD::Tch
         a.Scale = symbol.Base.Scale;
         a.TextHeight = symbol.TextHeight;
         a.Mode = r.ReadByte();
-        // 文字流：第一个文字
+        // 文字流：第一个文字。3BD 为文字位置（相对于按模式确定的局部坐标，空箭头中可能为 NaN），显示按模式的规则排布
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();                                           // 闭合标志
+        const bool closed = r.ReadByte() != 0;
         const int count = r.ReadBitShort();
-        if (count < 2 || count > 4096) return fail("invalid arrow vertex count");
+        if (count < 0 || count > 4096) return fail("invalid arrow vertex count");
         a.Vertices.resize(static_cast<std::size_t>(count));
         for (auto& v : a.Vertices) { v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble(); }
         a.ArrowLength = r.ReadBitDouble();
-        r.ReadByte();
-        r.ReadBitDouble(); r.ReadBit();
+        a.Head = r.ReadByte();
+        r.ReadBitDouble();
+        a.HasText2 = r.ReadBit() != 0;
         // 文字流：第二个文字
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native arrow fields do not consume the payload exactly");
-        if (a.Mode != 1 && a.Mode != 2) return fail("unsupported arrow text mode");
+        if (count < 2 || closed) a.Vertices.clear();    // 天正不显示
+        if (a.Mode < 1 || a.Mode > 3) return fail("unsupported arrow text mode");
+        if (a.Head == 2 || a.Head == 3) return fail("unsupported arrow head style");
         const double values[] = {a.Scale, a.TextHeight, a.ArrowLength};
         for (double v : values)
             if (!Detail::Finite(v)) return fail("nonfinite arrow settings");
@@ -470,7 +476,7 @@ namespace MiniCAD::Tch
         if (version >= 2) { d.X = r.ReadBitDouble(); d.Y = r.ReadBitDouble(); r.ReadBitDouble(); }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native drawing name fields do not consume the payload exactly");
-        if (d.LineMode != 1 && d.LineMode != 2) return fail("unsupported drawing name underline mode");
+        if (d.LineMode < 0 || d.LineMode > 2) return fail("unsupported drawing name underline mode");
         const double values[] = {d.Scale, d.X, d.Y, d.NameHeight, d.ScaleHeight, d.LineWidth, d.Gap};
         for (double v : values)
             if (!Detail::Finite(v)) return fail("nonfinite drawing name settings");
@@ -493,27 +499,73 @@ namespace MiniCAD::Tch
     // 图名（与天正 2014 对 11 个变体的分解结果核对）：图名字高 NameHeight × 比例，比例字高 ScaleHeight × 比例，两者间隔 Gap × 图名字高；
     // 显示比例时“图名 + 间隔 + 比例”整体以插入点水平居中，否则“图名 + 0.2 × 图名字高”居中；文字基线在插入点。
     // 下划线线宽 LineWidth × 比例，位于图名墨迹最低点下 2 × 线宽，从图名起点画到图名末端外 0.2 × 图名字高。
+    // 下划线方式 0（双线，内核 TDbDrawingName::ExplodeOrDraw2d / GetLineLen）：粗线下 1.4 × 比例（g_dDrawingNameUnderLineOffset）
+    // 再画一条细线；显示比例时两条线都画到比例文字末端外 0.2 × 比例字高。
     // 含汉字的文字天正把字高乘以 0.96454（大字体 GBCBIG 下实测）；宽度与最低点取 textbox，间隔与下划线外伸仍按名义字高。
     // extent(文字, 实际字高, 是否比例文字) 返回 textbox 宽度与最低点（世界单位）
+    // TrueType 样式（nameTrueType / scaleTrueType，8#楼详图“宋体”图名的分解结果核对）：字高 = 名义字高 × 0.75527，
+    // 文字按中西文分段排布，步进汉字 = 字高、西文 = 0.5 × 字高（与天正单行文字相同）；排布用的宽度为墨迹宽度（步进之和减去首尾留白），
+    // 含汉字时墨迹最低点为 −0.145 × 字高
     inline TchGraphics BuildDrawingName(const TchDrawingName& d,
-                                        const std::function<Detail::TextExtent(const std::string&, double, bool)>& extent)
+                                        const std::function<Detail::TextExtent(const std::string&, double, bool)>& extent,
+                                        bool nameTrueType = false, bool scaleTrueType = false)
     {
         TchGraphics g;
         const double s = d.Scale, h1 = d.NameHeight * s, h2 = d.ScaleHeight * s, line = d.LineWidth * s;
-        const double a1 = Detail::HasWideChar(d.Name) ? 0.96454 * h1 : h1;
-        const double a2 = Detail::HasWideChar(d.ScaleText) ? 0.96454 * h2 : h2;
+        const double a1 = nameTrueType ? 0.75527 * h1 : Detail::HasWideChar(d.Name) ? 0.96454 * h1 : h1;
+        const double a2 = scaleTrueType ? 0.75527 * h2 : Detail::HasWideChar(d.ScaleText) ? 0.96454 * h2 : h2;
         const bool scale = d.ShowScale && !d.ScaleText.empty();
-        const Detail::TextExtent e1 = extent(d.Name, a1, false);
-        const double w2 = scale ? extent(d.ScaleText, a2, true).Width : 0.0;
-        const double total = scale ? e1.Width + d.Gap * h1 + w2 : e1.Width + 0.2 * h1;
+        // TrueType：按天正步进分段，返回总宽
+        auto runs = [&](const std::string& text, double h, double x, int style, bool emit) {
+            double cursor = 0;
+            std::string run;
+            bool runWide = false;
+            double runStart = 0;
+            auto flush = [&] {
+                if (emit && run.find_first_not_of(' ') != std::string::npos)
+                    g.Texts.push_back({{x + runStart, d.Y}, h, 0, run, 7, style, d.Color});
+                run.clear();
+            };
+            for (std::size_t i = 0; i < text.size();)
+            {
+                const unsigned char c = static_cast<unsigned char>(text[i]);
+                const std::size_t len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+                const bool wide = c >= 0x80;
+                if (!run.empty() && wide != runWide) flush();
+                if (run.empty()) { runWide = wide; runStart = cursor; }
+                run.append(text, i, len);
+                cursor += wide ? h : 0.5 * h;
+                i += len;
+            }
+            flush();
+            return cursor;
+        };
+        // 图名同样取墨迹宽度（8#楼详图实测比步进之和少约 0.12 × 字高）
+        Detail::TextExtent e1 = nameTrueType ? Detail::TextExtent{runs(d.Name, a1, 0, 0, false) - 0.12 * a1, Detail::HasWideChar(d.Name) ? -0.145 * a1 : 0.0}
+                                             : extent(d.Name, a1, false);
+        // 比例文字取墨迹宽度：TrueType 时为步进之和减去首尾字形留白（“1:50” 实测 0.162 × 字高）
+        const double w2 = !scale ? 0.0 : scaleTrueType ? runs(d.ScaleText, a2, 0, 1, false) - 0.162 * a2 : extent(d.ScaleText, a2, true).Width;
+        // 居中用的总长（内核 GetTotalLen）：双线方式且显示比例时也含比例文字末端外伸的 0.2 × 比例字高
+        const double total = scale ? e1.Width + d.Gap * h1 + w2 + (d.LineMode == 0 ? 0.2 * h2 : 0.0) : e1.Width + 0.2 * h1;
         const double left = d.X - total / 2;
-        if (!d.Name.empty()) g.Texts.push_back({{left, d.Y + a1 / 2}, a1, 0, d.Name, 4, 0, d.Color});
-        if (scale) g.Texts.push_back({{left + e1.Width + d.Gap * h1, d.Y + a2 / 2}, a2, 0, d.ScaleText, 4, 1, d.Color});
+        if (!d.Name.empty())
+        {
+            if (nameTrueType) runs(d.Name, a1, left, 0, true);
+            else g.Texts.push_back({{left, d.Y + a1 / 2}, a1, 0, d.Name, 4, 0, d.Color});
+        }
+        if (scale)
+        {
+            const double x2 = left + e1.Width + d.Gap * h1;
+            if (scaleTrueType) runs(d.ScaleText, a2, x2, 1, true);
+            else g.Texts.push_back({{x2, d.Y + a2 / 2}, a2, 0, d.ScaleText, 4, 1, d.Color});
+        }
         TchGraphics::Path underline;
         underline.Width = line;
         const double y = d.Y + e1.Bottom - 2 * line;
-        underline.Points = {{{left, y}}, {{left + e1.Width + 0.2 * h1, y}}};
+        const double length = d.LineMode == 0 && scale ? e1.Width + d.Gap * h1 + w2 + 0.2 * h2 : e1.Width + 0.2 * h1;
+        underline.Points = {{{left, y}}, {{left + length, y}}};
         g.Paths.push_back(std::move(underline));
+        if (d.LineMode == 0) g.Lines.push_back({{left, y - 1.4 * s}, {left + length, y - 1.4 * s}});
         return g;
     }
 
@@ -637,18 +689,87 @@ namespace MiniCAD::Tch
         return g;
     }
 
+    namespace Detail
+    {
+        // 天正注释文字的显示：西文与汉字分段，西文字高 0.85 × 名义字高、宽度因子 0.6 / 0.85，汉字字高 0.96454 × 名义字高
+        //（天正 2014 分解出的 TEXT 与此相同）。各段按 MiniCAD 实际显示的字宽（simplex / TSSDCHN）首尾相接，
+        // align：0 左对齐、1 居中、2 右对齐，(x, y) 为该对齐位置的基线点
+        // asciiScale / asciiWidth / tzAscii：西文段的字高系数、宽度因子（0 为样式自身）、天正排布用的每字宽度（× 名义字高）；
+        // 注释符号为 0.85、0.6 / 0.85、0.5714，天正单行文字为 1、0（样式）、0.604
+        inline void AddRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int align,
+                            int color = 7, int layer = 0, int style = 0, double asciiScale = 0.85, double asciiWidth = 0.6 / 0.85,
+                            double tzAscii = 0.5714, double tzWide = 0.69, bool tianzhengAdvance = false)
+        {
+            struct Run { std::string Value; bool Wide; double Width; double Tz = 0; };
+            std::vector<Run> runs;
+            for (std::size_t i = 0; i < text.size();)
+            {
+                const unsigned char c = static_cast<unsigned char>(text[i]);
+                const std::size_t len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+                const bool wide = c >= 0x80;
+                if (runs.empty() || runs.back().Wide != wide) runs.push_back({{}, wide, 0, 0});
+                runs.back().Value.append(text, i, len);
+                i += len;
+            }
+            double total = 0;
+            for (auto& r : runs)
+            {
+                r.Width = r.Wide ? DisplayExtent("", r.Value).Width * 0.96454 * nominal
+                                 : DisplayExtent("simplex", r.Value).Width * asciiScale * (asciiWidth > 0 ? asciiWidth : 1.0) * nominal;
+                total += r.Width;
+            }
+            // 对齐按天正自己的字宽定起点（分解结果核对：西文每字 0.5714、句点 0.114、汉字约 0.69 × 名义字高），
+            // 这样文字起点与天正一致，不会因 MiniCAD 字体宽窄不同越过引线转折点等
+            double tz = 0;
+            std::size_t runIndex = 0, runEnd = runs.empty() ? 0 : runs[0].Value.size(), consumed = 0;
+            for (std::size_t i = 0; i < text.size();)
+            {
+                while (runIndex + 1 < runs.size() && i >= consumed + runEnd) { consumed += runEnd; runEnd = runs[++runIndex].Value.size(); }
+                const double before = tz;
+                const unsigned char c = static_cast<unsigned char>(text[i]);
+                // AutoCAD 控制码 %%%、%%c / %%d / %%p、%%nnn 显示为一个字符
+                if (c == '%' && i + 2 < text.size() && text[i + 1] == '%')
+                {
+                    std::size_t n = 3;
+                    while (n < 5 && i + n < text.size() && std::isdigit(static_cast<unsigned char>(text[i + n])) &&
+                           std::isdigit(static_cast<unsigned char>(text[i + 2]))) ++n;
+                    tz += tzAscii;
+                    i += n;
+                    if (!runs.empty()) runs[runIndex].Tz += (tz - before) * nominal;
+                    continue;
+                }
+                tz += c >= 0x80 ? tzWide : (c == '.' || c == ',') ? 0.2 * tzAscii : tzAscii;
+                i += c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+                if (!runs.empty()) runs[runIndex].Tz += (tz - before) * nominal;
+            }
+            tz *= nominal;
+            (void)total;
+            double cursor = align == 1 ? -tz / 2 : align == 2 ? -tz : 0;
+            const double c = std::cos(rotation), s = std::sin(rotation);
+            for (const auto& r : runs)
+            {
+                if (r.Value.find_first_not_of(' ') != std::string::npos)
+                    g.Texts.push_back({{x + cursor * c, y + cursor * s}, r.Wide ? 0.96454 * nominal : asciiScale * nominal, rotation, r.Value, 7, style, color, layer,
+                                       r.Wide ? 0.0 : asciiWidth});
+                cursor += tianzhengAdvance ? r.Tz : r.Width;     // tianzhengAdvance：各段也按天正步进排布（MiniCAD 字宽与天正字体相差较大时）
+            }
+        }
+    }
+
     // 箭头（与天正 2014 对 8 个变体的分解结果核对）：最后一段末端为长 ArrowLength × 比例、底宽为其 1/3.75 的实心箭头；
-    // 文字高 0.9645 × 名义字高。模式 1：第一个文字在尾端外侧 0.3 × 名义字高处、垂直居中；模式 2：两个文字在首段中点上下，
-    // 距线 0.3 × 名义字高
+    // 文字高 0.9645 × 名义字高。模式 1：第一个文字在尾端外侧 0.3 × 名义字高处、垂直居中；模式 2：两个文字沿首段、在首段中点上下，
+    // 距线 0.3 × 名义字高；模式 3（8#楼墙身大样的分解结果核对）：第一个文字沿首段方向（朝左时转 180°），在线的上方 0.3 × 名义字高，
+    // 从尾端起写（转 180° 时文字末端对齐尾端），字高 0.85 × 名义字高、宽度因子 0.6 / 0.85
     inline TchGraphics BuildArrow(const TchArrow& a)
     {
         using P = TchGraphics::Point;
         TchGraphics g;
         const auto& v = a.Vertices;
         const std::size_t n = v.size();
+        if (n < 2) return g;
         const P tip{v[n - 1].X, v[n - 1].Y}, before{v[n - 2].X, v[n - 2].Y};
         const double last = std::hypot(tip.X - before.X, tip.Y - before.Y);
-        const double head = std::min(a.ArrowLength * a.Scale, last);
+        const double head = a.Head >= 4 ? 0.0 : std::min(a.ArrowLength * a.Scale, last);
         const P base = last > 0 ? P{tip.X + (before.X - tip.X) / last * head, tip.Y + (before.Y - tip.Y) / last * head} : tip;
         TchGraphics::Path path;
         for (std::size_t i = 0; i + 1 < n; ++i) path.Points.push_back({{v[i].X, v[i].Y}, i + 2 < n ? v[i].Bulge : 0});
@@ -668,9 +789,25 @@ namespace MiniCAD::Tch
         }
         else if (a.Mode == 2)
         {
+            // 文字沿首段方向（朝左时转 180°）居中于首段中点：第一个文字基线在线上方 0.3 × 名义字高，第二个文字顶部在线下方同样距离
+            //（8#楼墙身大样 62 个坡度箭头的分解结果核对：西文字高 0.85 × 名义字高、宽度因子 0.6 / 0.85）
             const P mid{(v[0].X + v[1].X) / 2, (v[0].Y + v[1].Y) / 2};
-            if (!a.Text1.empty()) g.Texts.push_back({{mid.X, mid.Y + gap + height / 2}, height, 0, a.Text1, 5});
-            if (!a.Text2.empty()) g.Texts.push_back({{mid.X, mid.Y - gap - height / 2}, height, 0, a.Text2, 5});
+            double rotation = std::atan2(v[1].Y - v[0].Y, v[1].X - v[0].X);
+            Detail::Upright(rotation);
+            const double c = std::cos(rotation), s = std::sin(rotation);
+            if (!a.Text1.empty()) Detail::AddRuns(g, a.Text1, nominal, mid.X - s * gap, mid.Y + c * gap, rotation, 1);
+            if (!a.Text2.empty() && a.HasText2)
+            {
+                const double drop = gap + (Detail::HasWideChar(a.Text2) ? height : 0.85 * nominal);
+                Detail::AddRuns(g, a.Text2, nominal, mid.X + s * drop, mid.Y - c * drop, rotation, 1);
+            }
+        }
+        else if (a.Mode == 3 && !a.Text1.empty())
+        {
+            double rotation = std::atan2(v[1].Y - v[0].Y, v[1].X - v[0].X);
+            const bool flipped = Detail::Upright(rotation);
+            const double c = std::cos(rotation), s = std::sin(rotation);
+            Detail::AddRuns(g, a.Text1, nominal, v[0].X - s * gap, v[0].Y + c * gap, rotation, flipped ? 2 : 0);
         }
         return g;
     }

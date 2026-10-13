@@ -432,9 +432,9 @@ namespace MiniCAD
             const double nLast  = std::floor((vmax - vO) / dy);
             if (nLast - nFirst > static_cast<double>(budget)) { budget = 0; return; }
 
-            // 虚线周期；全部为 0（只有点）时周期取 0，按连续线处理没有意义，直接跳过
+            // 虚线周期（虚线长度同样是图案单位，乘以缩放）；全部为 0（只有点）时周期取 0，按连续线处理没有意义，直接跳过
             double period = 0.0;
-            for (double d : fam.Dashes) period += std::abs(d);
+            for (double d : fam.Dashes) period += std::abs(d) * m_scale;
             const bool dashed = !fam.Dashes.empty();
             if (dashed && period < 1e-9) return;
             const double dotLen = 0.1 * m_scale;        // 点（dash = 0）画成很短的线段
@@ -481,7 +481,7 @@ namespace MiniCAD
                     {
                         for (double d : fam.Dashes)
                         {
-                            const double len = std::abs(d);
+                            const double len = std::abs(d) * m_scale;
                             if (d > 0.0)
                             {
                                 const double s0 = std::max(s, a), s1 = std::min(s + len, b);

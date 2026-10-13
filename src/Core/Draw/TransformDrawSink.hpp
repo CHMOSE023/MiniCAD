@@ -35,6 +35,16 @@ namespace MiniCAD
             m_target.FillTriangle(m_xform * a, m_xform * b, m_xform * c, color);
         }
 
+        // 块内的区域覆盖：边界同样经插入变换
+        void Wipe(const std::vector<Math::Point3>& polygon) override
+        {
+            std::vector<Math::Point3> pts;
+            pts.reserve(polygon.size());
+            for (const auto& p : polygon)
+                pts.push_back(m_xform * p);
+            m_target.Wipe(pts);
+        }
+
         void EmitText(const Math::Point3& pos, const std::string& utf8Text, float height, float rotation, const Math::Color4& color) override
         {
             m_target.EmitText(m_xform * pos, utf8Text, height * static_cast<float>(m_scale), rotation + static_cast<float>(m_rotation), color);

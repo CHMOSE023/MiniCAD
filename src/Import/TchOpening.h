@@ -69,16 +69,18 @@ namespace MiniCAD::Tch
 
     struct TchOpening
     {
-        enum class Kind { Door = 0, Window = 1, Band = 5, Group = 8 };   // 5 带形窗（沿墙画窗线，没有二维图块）；8 组合门窗（由子门窗组成）
+        // 2 洞口（两侧各一条横穿墙厚的线）；5 带形窗（沿墙画窗线，没有二维图块）；8 组合门窗（由子门窗组成）
+        enum class Kind { Door = 0, Window = 1, Hole = 2, Band = 5, Group = 8 };
         struct Segment { double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0, Bulge = 0; };
 
         MiniDWG::XYZ Position;      // 墙轴线上的门窗中点；Z 为窗台高
         double Width = 0, Height = 0;
+        double Thickness = 0;       // 门窗自身的厚度：没有所在墙时窗的二维图块按它缩放（8#楼平面图独立窗的分解结果核对）
         double Angle = 0;           // 弧度，沿所在墙的方向
         Kind   Type = Kind::Door;
         int    Mirror = 0;          // 0 不镜像，1 X，2 X 与 Y，3 Y（转换函数 0x706e70；3 已由天正 2014 分解结果核对）
         MiniDWG::Handle Block2D = MiniDWG::kNullHandle;  // 二维图块（$TCHSYS$DOOR2D / $TCHSYS$WIN2D）
-        MiniDWG::Handle Wall = MiniDWG::kNullHandle;     // 所在墙（TCH_WALL）
+        MiniDWG::Handle Wall = MiniDWG::kNullHandle;     // 所在墙（TCH_WALL 或幕墙 TCH_CURTAIN_WALL，可以为空）
         // 带形窗、组合门窗用：编号文字、出图比例、文字样式、分段（直段带形窗无分段，按 Position / Width / Angle）
         std::string Label;
         double LabelX = 0, LabelY = 0, LabelHeight = 3.5, Scale = 100;
@@ -100,7 +102,7 @@ namespace MiniCAD::Tch
             if (version < 2 || version > 5) { why = "unsupported native opening version"; return false; }
             o.Position = {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()};
             o.Width = r.ReadBitDouble();
-            r.ReadBitDouble();
+            o.Thickness = r.ReadBitDouble();
             o.Height = r.ReadBitDouble();
             o.Angle = r.ReadBitDouble();
             o.Mirror = r.ReadByte();
@@ -158,7 +160,7 @@ namespace MiniCAD::Tch
     }
 
     // TCH_OPENING 门窗：按 TDbOpening 的私有布局版本 < 6 的明文分支解析，必须恰好读完主数据流。
-    // 接受门（类型 0）、窗（类型 1）、带形窗（类型 5）与组合门窗（类型 8，类 TDbGroupOpening）。门窗的显示方式
+    // 接受门（类型 0）、窗（类型 1）、洞口（类型 2）、带形窗（类型 5）与组合门窗（类型 8，类 TDbGroupOpening）。门窗的显示方式
     // （插入二维图块，X 缩放为宽度，Y 缩放门为宽度、窗为墙厚，旋转为 Angle）与天正 2014 分解出的块参照一致，见 docs/Tch-compatibility.md。
     // 组合门窗（天正内核 TDbGroupOpening::dwgInFields）：自身的门窗字段之后为 RC 版本（0）、BL 子门窗数，
     // 每个子门窗是嵌入对象：AcDbEntity 通用字段（样例为固定的 37 位，句柄流中 4 个句柄）后接完整的 TDbOpening 数据
@@ -204,7 +206,8 @@ namespace MiniCAD::Tch
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native opening fields do not consume the payload exactly");
-        if (kind != 0 && kind != 1 && kind != 5 && kind != 8) return fail("only doors, windows, band and group openings are supported");
+        if (kind != 0 && kind != 1 && kind != 2 && kind != 5 && kind != 8)
+            return fail("only doors, windows, holes, band and group openings are supported");
         o.Type = static_cast<TchOpening::Kind>(kind);
         // 句柄流按读取顺序：基类句柄、二维图块、三维图块、所在墙……（空句柄也占位，所以不能用 References 的下标）
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
@@ -217,7 +220,8 @@ namespace MiniCAD::Tch
             if (o.Parts[i].Block2D == kNullHandle) return fail("group opening part 2D block is missing");
         }
         const bool labelled = o.Type == TchOpening::Kind::Band || o.Type == TchOpening::Kind::Group;
-        if (handles.Failed() || handles.PositionInBits() > data.HandleBits || (o.Block2D == kNullHandle && !labelled))
+        if (handles.Failed() || handles.PositionInBits() > data.HandleBits ||
+            (o.Block2D == kNullHandle && !labelled && o.Type != TchOpening::Kind::Hole))
             return fail("opening handle stream is incomplete");
         if (labelled)
         {

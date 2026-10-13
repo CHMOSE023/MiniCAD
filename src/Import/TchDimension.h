@@ -29,14 +29,26 @@ namespace MiniCAD::Tch
     // TCH_AXIS_LABEL 轴号：一组平行轴线两端的引出线、圆圈和编号
     struct TchAxisLabel
     {
-        struct Axis { double Spacing = 0; std::string Label; };   // Spacing 为到下一根轴线的距离
+        // 每根轴的标志（内核 TDbAxisLabelSet::ExplodeOrDraw2d / GetAxis / GetLabelCenter）：
+        // 0x02 / 0x04 不标起点端 / 终点端；0x08 / 0x10 起点端轴号圆斜向错开（+135° / −135°），0x20 / 0x40 终点端同样；
+        // 0x80 / 0x100 起点端 / 终点端引出长度另设（图面单位）；0x400 / 0x800 起点 / 终点沿轴线向内缩进（世界单位）
+        struct Axis
+        {
+            double Spacing = 0;                 // 到下一根轴线的距离
+            int    Flags = 0;
+            double StartLeader = 0, EndLeader = 0, StartTrim = 0, EndTrim = 0;
+            std::string Label;
+        };
+        enum : int { HideStart = 0x04, HideEnd = 0x08, SkipFirst = 0x40 };   // Mode 中影响显示的位（0x80 只是不自动排序）
 
         MiniDWG::XYZ      Start, End;           // 第一根轴线的两端
         std::vector<Axis> Axes;
+        int               Mode = 0;
         double            StartExtension = 0;   // 起点端引出线长度（图面单位）
         double            EndExtension = 0;     // 终点端引出线长度（图面单位）
         double            Radius = 0;           // 轴号圆半径（图面单位）
         double            Scale = 1;
+        bool              ShowText = true;      // 末尾 BS 的第 0 位为 0 时隐藏全部编号
         MiniDWG::Handle   TextStyle = MiniDWG::kNullHandle;
     };
 
@@ -131,8 +143,8 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 按 TDbAxisLabelSet 的私有布局版本 < 7 解析，
-    // 必须恰好读完主数据流。只接受模式 0（两端都标轴号，唯一核对过的样例）
+    // 按 TDbAxisLabelSet 的私有布局版本 < 7 解析（CADReader 0x6c5af0，内核 TDbAxisLabelSet::dwgInFields），
+    // 必须恰好读完主数据流。模式位 0x01（弧形轴网）与第一根轴为圆弧（凸度不为 0）的情况不支持
     inline bool DecodeAxisLabel(const MiniDWG::UnknownEntity& entity, TchAxisLabel& label, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -155,25 +167,28 @@ namespace MiniCAD::Tch
         const double x1 = r.ReadRawDouble(), y1 = r.ReadRawDouble();
         a.Start = {x0, y0, 0};
         a.End = {x1, y1, 0};
-        r.ReadBitDouble();
+        const double bulge = r.ReadBitDouble();     // 第一根轴线的凸度
         const int count = version == 6 ? r.ReadBitShort() : r.ReadByte();
         if (count < 1 || count > 4096) return fail("invalid axis count");
         a.Axes.resize(static_cast<std::size_t>(count));
         for (auto& axis : a.Axes)
         {
             const int flags = version < 3 ? r.ReadByte() : r.ReadBitShort();
+            axis.Flags = flags;
             // 文字流：编号
             axis.Spacing = r.ReadBitDouble();
             if (version > 2)
             {
-                if (flags & 0x80) r.ReadBitDouble();
-                if (flags & 0x100) r.ReadBitDouble();
+                if (flags & 0x80) axis.StartLeader = r.ReadBitDouble();
+                if (flags & 0x100) axis.EndLeader = r.ReadBitDouble();
             }
+            else axis.Flags &= ~0x180;
             if (version > 4)
             {
-                if (flags & 0x400) r.ReadBitDouble();
-                if (flags & 0x800) r.ReadBitDouble();
+                if (flags & 0x400) axis.StartTrim = r.ReadBitDouble();
+                if (flags & 0x800) axis.EndTrim = r.ReadBitDouble();
             }
+            else axis.Flags &= ~0xc00;
         }
         r.ReadBitDouble();
         a.StartExtension = r.ReadBitDouble();
@@ -181,16 +196,21 @@ namespace MiniCAD::Tch
         a.Radius = r.ReadBitDouble();
         // 版本 > 1：句柄流中多一个句柄（图层）
         if (version > 3) r.ReadBitShort();
-        if (version > 4) r.ReadBitShort();
+        if (version > 4) a.ShowText = (r.ReadBitShort() & 1) != 0;
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native axis label fields do not consume the payload exactly");
-        if (mode != 0) return fail("unsupported axis label mode");
+        a.Mode = mode;
+        if (mode & 1) return fail("arc axis net labels are not supported");
+        if (mode & ~0xcc) return fail("unsupported axis label mode");
+        if (std::abs(bulge) >= 1e-6) return fail("arc axis labels are not supported");
 
         const double values[] = {x0, y0, x1, y1, a.StartExtension, a.EndExtension, a.Radius, a.Scale};
         for (double v : values)
             if (!Detail::Finite(v)) return fail("nonfinite axis label geometry");
         for (const auto& axis : a.Axes)
-            if (!Detail::Finite(axis.Spacing)) return fail("nonfinite axis spacing");
+            if (!Detail::Finite(axis.Spacing) || !Detail::Finite(axis.StartLeader) || !Detail::Finite(axis.EndLeader) ||
+                !Detail::Finite(axis.StartTrim) || !Detail::Finite(axis.EndTrim))
+                return fail("nonfinite axis spacing");
         if (a.Scale <= 0 || a.Radius < 0 || std::hypot(x1 - x0, y1 - y0) < 1e-9) return fail("invalid axis label geometry");
 
         Detail::TextStream text(data);
@@ -436,6 +456,10 @@ namespace MiniCAD::Tch
         return g;
     }
 
+    // 轴号（内核 TDbAxisLabelSet::ExplodeOrDraw2d）：第 i 根轴为第一根轴向右法线平移前 i 个间距之和，标志 0x400 / 0x800 再把两端向内缩进；
+    // 每个标注端从轴线端点向外引出（引出长度 × 比例），轴号圆在引出线外侧相切、编号居中；
+    // 斜向错开时圆心在引出线末端沿“向内方向 ± 135°”的 √2 × 半径处，另画从圆边到引出线末端的短线（起点端引出长度为 0 时不画）。
+    // 8#楼立剖面、墙身大样共 16 个轴号（含模式 0x08、0x88，标志 0x800 等）的线与圆和天正 2014 分解结果一致
     inline TchGraphics BuildAxisLabel(const TchAxisLabel& a)
     {
         using P = TchGraphics::Point;
@@ -445,20 +469,56 @@ namespace MiniCAD::Tch
         const double dx = (a.End.X - a.Start.X) / len, dy = (a.End.Y - a.Start.Y) / len;
         const double rx = dy, ry = -dx;                     // 右法线：轴线依次排列的方向
         const double radius = a.Radius * s;
+        constexpr double diagonal = 3 * std::numbers::pi / 4;
         double offset = 0;
-        for (const auto& axis : a.Axes)
+        for (std::size_t i = 0; i < a.Axes.size(); ++i)
         {
-            const P p0{a.Start.X + rx * offset, a.Start.Y + ry * offset};
-            const P p1{a.End.X + rx * offset, a.End.Y + ry * offset};
-            for (const auto& [p, sign, ext] : {std::tuple{p0, -1.0, a.StartExtension * s}, std::tuple{p1, 1.0, a.EndExtension * s}})
-            {
-                const P q{p.X + sign * dx * ext, p.Y + sign * dy * ext};
-                const P c{q.X + sign * dx * radius, q.Y + sign * dy * radius};
-                g.Lines.push_back({p, q});
-                g.Circles.push_back({c, radius});
-                g.Texts.push_back({c, radius * 1.25, 0, axis.Label});
-            }
+            const auto& axis = a.Axes[i];
+            const double here = offset;
             offset += axis.Spacing;
+            if (i == 0 && (a.Mode & TchAxisLabel::SkipFirst)) continue;
+            P p0{a.Start.X + rx * here, a.Start.Y + ry * here};
+            P p1{a.End.X + rx * here, a.End.Y + ry * here};
+            if ((axis.Flags & 0x400) && axis.StartTrim < len + 1e-6) p0 = {p0.X + dx * axis.StartTrim, p0.Y + dy * axis.StartTrim};
+            if ((axis.Flags & 0x800) && axis.EndTrim < len + 1e-6) p1 = {p1.X - dx * axis.EndTrim, p1.Y - dy * axis.EndTrim};
+            struct Side { P Base; double InX, InY; bool Hidden; double Leader; int Plus, Minus; };
+            const Side sides[] = {
+                {p0, dx, dy, (a.Mode & TchAxisLabel::HideStart) || (axis.Flags & 0x02),
+                 (axis.Flags & 0x80) ? axis.StartLeader * s : a.StartExtension * s, 0x08, 0x10},
+                {p1, -dx, -dy, (a.Mode & TchAxisLabel::HideEnd) || (axis.Flags & 0x04),
+                 (axis.Flags & 0x100) ? axis.EndLeader * s : a.EndExtension * s, 0x20, 0x40}};
+            for (const auto& side : sides)
+            {
+                if (side.Hidden) continue;
+                const P q{side.Base.X - side.InX * side.Leader, side.Base.Y - side.InY * side.Leader};
+                if (std::abs(side.Leader) > 1e-9) g.Lines.push_back({side.Base, q});
+                P c{q.X - side.InX * radius, q.Y - side.InY * radius};
+                if (axis.Flags & (side.Plus | side.Minus))
+                {
+                    const double angle = std::atan2(side.InY, side.InX) + ((axis.Flags & side.Plus) ? diagonal : -diagonal);
+                    const double ux = std::cos(angle), uy = std::sin(angle);
+                    c = {q.X + ux * std::numbers::sqrt2 * radius, q.Y + uy * std::numbers::sqrt2 * radius};
+                    if (a.StartExtension > 1e-6) g.Lines.push_back({{c.X - ux * radius, c.Y - uy * radius}, q});
+                }
+                g.Circles.push_back({c, radius});
+                if (!a.ShowText || axis.Label.empty()) continue;
+                // 附加轴号“分子/分母”（内核按 '/' 拆成上下两段）：圆内画水平直径，两段居中在圆心上下 0.457 × 半径，
+                // 字高约 0.62 × 半径（8#楼墙身大样的分解结果核对）
+                if (const auto slash = axis.Label.find('/'); slash != std::string::npos)
+                {
+                    g.Lines.push_back({{c.X - radius, c.Y}, {c.X + radius, c.Y}});
+                    g.Texts.push_back({{c.X, c.Y + 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(0, slash)});
+                    g.Texts.push_back({{c.X, c.Y - 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(slash + 1)});
+                }
+                else
+                {
+                    // 天正用 Fit 对齐，字高随字数变化（8#楼各图的分解结果：单字约 1.24 × 半径，两字约 0.97 × 半径）
+                    std::size_t chars = 0;
+                    for (unsigned char ch : axis.Label) chars += (ch & 0xc0) != 0x80;
+                    const double height = chars <= 1 ? 1.24 * radius : 1.94 * radius / static_cast<double>(chars);
+                    g.Texts.push_back({c, height, 0, axis.Label});
+                }
+            }
         }
         return g;
     }

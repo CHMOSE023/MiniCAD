@@ -2,11 +2,14 @@
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/WipeoutEntity.hpp"
 #include "Import/CadExchange.h"
 #include "Scene/Scene.h"
 #include <cmath>
@@ -30,6 +33,7 @@ namespace
     }
 
     bool Near(double a, double b) { return std::abs(a - b) < 1e-6; }
+    constexpr double kHalfPi = 1.57079632679489661923;
 
     template <class T>
     const T* FindOne(const Scene& scene)
@@ -137,6 +141,134 @@ namespace
         Check(ins && ins->GetBlock() && Near(ins->GetBlock()->GetBasePoint().x, 1), "块基点一致");
     }
 
+    // 统计填充画出的线段总长与三角形面积，用来比较两种表示（比例 / 角度 vs. 换算后的线族）画出的图形是否相同
+    class MeasureSink : public IDrawSink
+    {
+    public:
+        double length = 0.0, area = 0.0;
+        int    lines = 0;
+        void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4&, bool) override
+        {
+            length += std::hypot(b.x - a.x, b.y - a.y);
+            ++lines;
+        }
+        void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+        {
+            area += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
+        }
+    };
+
+    MeasureSink Measure(const Entity& e)
+    {
+        MeasureSink s;
+        e.Draw(s, false, false);
+        return s;
+    }
+
+    bool NearRel(double a, double b, double tol = 1e-3) { return std::abs(a - b) <= tol * std::max(1.0, std::abs(b)); }
+
+    template <class T>
+    std::vector<const T*> FindAll(const Scene& scene)
+    {
+        std::vector<const T*> all;
+        scene.ForEachObject([&](const Object& o) { if (o.IsKindOf<T>()) all.push_back(static_cast<const T*>(&o)); });
+        return all;
+    }
+
+    // 填充、区域覆盖、样条：导出再导入后外观一致
+    void CheckHatchWipeoutSpline(CadFileKind kind, const char* label)
+    {
+        Scene src;
+
+        // 实心填充：外环带一段圆弧（凸度），内环为孔
+        Polyline outer({ { 0, 0, 0 }, { 20, 0, 0 }, { 20, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }, { 0.0, 0.4, 0.0, 0.0 });
+        Polyline hole({ { 5, 3, 0 }, { 8, 3, 0 }, { 8, 6, 0 }, { 5, 6, 0 }, { 5, 3, 0 } });
+        auto solid = std::make_unique<HatchEntity>(src.NextObjectID(), std::vector<Polyline>{ outer, hole }, HatchPattern::MakeSolid());
+        EntityAttr attr = solid->GetAttr();
+        attr.Color = EntityColor::FromAci(8);
+        solid->SetAttr(attr);
+        const MeasureSink solidRef = Measure(*solid);
+        src.AddEntity(std::move(solid));
+
+        // 图案填充：两族带虚线与错位的线，比例 2、角度 30°；第二个环由多段线边 + 椭圆弧边组成（导出为逐条边）
+        HatchPattern pat;
+        pat.Name  = "CUSTOM_TEST";
+        pat.Solid = false;
+        pat.Families.push_back({ 45.0, 3.0, 1.0, 0.5, 1.5, { 4.0, -2.0, 1.0, -2.0 } });
+        pat.Families.push_back({ 135.0, 3.0, 0.0, 0.0, 0.0, {} });
+        HatchLoop mixed;
+        mixed.Edges.push_back(HatchEdge::MakeEllipseArc(Ellipse({ 60, 5, 0 }, 3.0, 5.0, 0.0), -kHalfPi, kHalfPi));
+        mixed.Edges.push_back(HatchEdge::MakePoly(Polyline({ { 60, 10, 0 }, { 40, 10, 0 }, { 40, 0, 0 } }, { 0.0, 0.3 })));
+        mixed.Edges.push_back(HatchEdge::MakePoly(Polyline({ { 40, 0, 0 }, { 60, 0, 0 } }, { 0.0 })));
+        auto patterned = std::make_unique<HatchEntity>(src.NextObjectID(), std::vector<HatchLoop>{ mixed }, pat);
+        patterned->SetScale(2.0);
+        patterned->SetAngle(30.0);
+        const MeasureSink patRef = Measure(*patterned);
+        src.AddEntity(std::move(patterned));
+
+        // 区域覆盖：不对齐坐标轴的四边形
+        const std::vector<Math::Point3> quad = { { 100, 0, 0 }, { 110, 2, 0 }, { 108, 9, 0 }, { 99, 6, 0 } };
+        src.AddEntity(std::make_unique<WipeoutEntity>(src.NextObjectID(), quad));
+
+        // 样条：三次有理 NURBS
+        auto spline = std::make_unique<SplineEntity>(src.NextObjectID(), std::vector<Math::Point3>{});
+        spline->SetControlData({ { 0, 50, 0 }, { 5, 60, 0 }, { 10, 45, 0 }, { 15, 55, 0 }, { 20, 50, 0 } },
+                               { 0, 0, 0, 0, 0.5, 1, 1, 1, 1 }, 3, { 1, 2, 1, 0.5, 1 });
+        const auto splineRef = spline->GetSpline().Tessellate(8);
+        src.AddEntity(std::move(spline));
+
+        std::string err;
+        const auto bytes = ExportCad(src, kind, CadSaveVersion::R2018, &err);
+        Scene dst;
+        const std::string prefix = std::string(label) + "：";
+        Check(!bytes.empty() && ImportCad(bytes, dst, &err), (prefix + "填充 / 区域覆盖 / 样条导出再导入").c_str());
+        std::printf("       实体 %d（导出前 %d）\n", CountAll(dst), CountAll(src));
+        Check(CountAll(dst) == CountAll(src), (prefix + "实体数一致（没有被跳过）").c_str());
+
+        const auto hatches = FindAll<HatchEntity>(dst);
+        const HatchEntity* solidBack = nullptr;
+        const HatchEntity* patBack = nullptr;
+        for (const auto* h : hatches)
+            (h->GetPattern().Solid ? solidBack : patBack) = h;
+        Check(solidBack && solidBack->GetLoops().size() == 2 && solidBack->GetAttr().Color.Aci == 8, (prefix + "实心填充：两个环与颜色").c_str());
+        if (solidBack)
+        {
+            const MeasureSink m = Measure(*solidBack);
+            Check(NearRel(m.area, solidRef.area, 1e-6), (prefix + "实心填充：填充面积一致（圆弧方向保持）").c_str());
+            const Polyline& pl = solidBack->GetLoops()[0].Edges[0].Poly;
+            Check(pl.Points.size() >= 4 && Near(pl.SegBulge(1), 0.4), (prefix + "实心填充：凸度原样读回").c_str());
+        }
+        Check(patBack && patBack->GetPattern().Name == "CUSTOM_TEST" && patBack->GetPattern().Families.size() == 2,
+              (prefix + "图案填充：名称与线族数").c_str());
+        if (patBack)
+        {
+            const MeasureSink m = Measure(*patBack);
+            std::printf("       图案线 %d 段 / 总长 %.4f（导出前 %d 段 / %.4f）\n", m.lines, m.length, patRef.lines, patRef.length);
+            Check(m.lines > 0 && NearRel(m.length, patRef.length) && std::abs(m.lines - patRef.lines) <= 2,
+                  (prefix + "图案填充：比例、角度换算后画出的图案线一致").c_str());
+            const auto box = patBack->GetBoundingBox();
+            Check(NearRel(box.Min.x, 40) && NearRel(box.Max.x, 63) && NearRel(box.Min.y, 0) && NearRel(box.Max.y, 10),
+                  (prefix + "图案填充：直线、圆弧、椭圆弧边界范围一致").c_str());
+        }
+
+        const auto* wipe = FindOne<WipeoutEntity>(dst);
+        bool wipeOk = wipe != nullptr && wipe->GetPolyline().Points.size() == quad.size() + 1;
+        for (std::size_t i = 0; wipeOk && i < quad.size(); ++i)
+            wipeOk = Near(wipe->GetPolyline().Points[i].x, quad[i].x) && Near(wipe->GetPolyline().Points[i].y, quad[i].y);
+        Check(wipeOk, (prefix + "区域覆盖：边界顶点一致").c_str());
+
+        const auto* sp = FindOne<SplineEntity>(dst);
+        bool splineOk = sp != nullptr && sp->HasControlData() && sp->Degree() == 3 && sp->GetSpline().IsRational();
+        if (splineOk)
+        {
+            const auto pts = sp->GetSpline().Tessellate(8);
+            splineOk = pts.size() == splineRef.size();
+            for (std::size_t i = 0; splineOk && i < pts.size(); ++i)
+                splineOk = Near(pts[i].x, splineRef[i].x) && Near(pts[i].y, splineRef[i].y);
+        }
+        Check(splineOk, (prefix + "样条：控制点、节点、权重一致").c_str());
+    }
+
     std::vector<std::uint8_t> ReadFile(const std::string& path)
     {
         std::ifstream f(path, std::ios::binary);
@@ -152,6 +284,8 @@ int RunCadExchangeTests()
     CheckRoundTrip(CadFileKind::Dwg, "DWG");
     CheckRoundTrip(CadFileKind::Dxf, "DXF 2013", CadSaveVersion::R2013);
     CheckRoundTrip(CadFileKind::Dwg, "DWG 2013", CadSaveVersion::R2013);
+    CheckHatchWipeoutSpline(CadFileKind::Dwg, "DWG");
+    CheckHatchWipeoutSpline(CadFileKind::Dxf, "DXF");
 
     for (const auto kind : { CadFileKind::Dwg, CadFileKind::Dxf })
     {

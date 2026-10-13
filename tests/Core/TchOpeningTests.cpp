@@ -176,7 +176,10 @@ int main()
     OpeningSpec b6; b6.BaseVersion = 6;
     Check(!MiniCAD::Tch::DecodeOpening(*Opening(b6), o), "unverified base version is rejected");
     OpeningSpec hole; hole.Kind = 2;
-    Check(!MiniCAD::Tch::DecodeOpening(*Opening(hole), o), "opening kinds other than door and window are not drawn");
+    Check(MiniCAD::Tch::DecodeOpening(*Opening(hole), o) && o.Type == MiniCAD::Tch::TchOpening::Kind::Hole,
+          "holes (kind 2) decode; their display is checked against Tianzheng in MiniCADTchGeometryTests");
+    OpeningSpec other; other.Kind = 3;
+    Check(!MiniCAD::Tch::DecodeOpening(*Opening(other), o), "opening kinds without verified display are not drawn");
     auto noBlock = Opening(); noBlock->Raw.Dwg.Handles.clear(); noBlock->Raw.Dwg.HandleBits = 0;
     Check(!MiniCAD::Tch::DecodeOpening(*noBlock, o), "missing handle stream is rejected");
 

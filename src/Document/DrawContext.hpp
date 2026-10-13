@@ -4,6 +4,7 @@
 #include "Core/Math/Color4.hpp"
 #include "Render/VertexTypes.hpp"
 #include "Render/ImageDraw.hpp"
+#include "Document/WipeClip.hpp"
 #include "Editor/Overlay/Overlay.h"
 #include "Text/Font/IFont.h"
 #include "Text/Layout/TextLayoutEngine.h"
@@ -68,7 +69,14 @@ namespace MiniCAD
         void BeginEntity(const EntityAttr* attr) override
         {
             m_curAttr = attr;
-            if (attr) { m_wipes.clear(); m_images.clear(); }
+            if (attr)
+            {
+                m_wipes.clear();
+                m_images.clear();
+                m_entityLines = m_verts.size();
+                m_entityFills = m_fillVerts.size();
+                m_entityTexts = m_textVerts.size();
+            }
         }
 
         // 光栅图像：没有图像解析回调（选中流、悬停等）时返回 false，实体改画占位框 / 高亮框
@@ -93,8 +101,19 @@ namespace MiniCAD
         }
         std::vector<ImageDraw> TakeImages() { return std::move(m_images); }
 
-        // 区域覆盖：记录下来，由 Editor 在拼接顶点流时按绘制序裁剪之前的内容
-        void Wipe(const std::vector<Math::Point3>& polygon) override { m_wipes.push_back(polygon); }
+        // 区域覆盖：同一实体（块参照）里先画的部分就地裁剪；之前实体的内容记录下来，
+        // 由 Editor 在拼接顶点流时按绘制序裁剪
+        void Wipe(const std::vector<Math::Point3>& polygon) override
+        {
+            const WipeClip::Poly poly(polygon);
+            if (poly.Valid())
+            {
+                WipeClip::ClipLines(m_verts, poly, m_entityLines);
+                WipeClip::ClipFills(m_fillVerts, poly, 5, m_entityFills);
+                WipeClip::ClipTexts(m_textVerts, poly, m_entityTexts);
+            }
+            m_wipes.push_back(polygon);
+        }
         std::vector<std::vector<Math::Point3>> TakeWipes() { return std::move(m_wipes); }
 
         // 本次细分是否产出了依赖像素比例的几何(线宽四边形、按像素取舍的虚线),
@@ -447,6 +466,9 @@ namespace MiniCAD
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
+        size_t                         m_entityLines = 0;   // 当前实体在各顶点流中的起点（块内遮罩只裁剪本实体先画的部分）
+        size_t                         m_entityFills = 0;
+        size_t                         m_entityTexts = 0;
         std::vector<ImageDraw>         m_images;
         ImageProvider                  m_imageProvider;
         GlyphProvider                 m_glyphProvider;
