@@ -1446,15 +1446,18 @@ namespace MiniCAD
                 return static_cast<double>(NowTicks() - t0) * 1000.0 / static_cast<double>(kTicksPerSecond) / n;
             };
             version = editor.BuildViewState().SceneVersion;
+            uint64_t dynVersion = editor.BuildViewState().SceneDynVersion;
             const double zoomMs = wheel(10);
-            check(editor.BuildViewState().SceneVersion != version, "线宽图纸缩放时重新细分（线宽按像素等宽）");
+            check(editor.BuildViewState().SceneDynVersion != dynVersion && editor.BuildViewState().SceneVersion == version,
+                  "线宽图纸缩放时只重新细分动态流（线宽按像素等宽），静态流不动");
 
             m_commands.Execute("view.thinLines");
             RenderFrame();
             check(editor.IsThinLines() && m_commands.IsChecked("view.thinLines"), "细线显示开关");
             version = editor.BuildViewState().SceneVersion;
+            dynVersion = editor.BuildViewState().SceneDynVersion;
             const double thinZoomMs = wheel(10);
-            check(editor.BuildViewState().SceneVersion == version, "细线显示时缩放不重新细分");
+            check(editor.BuildViewState().SceneVersion == version && editor.BuildViewState().SceneDynVersion == dynVersion, "细线显示时缩放不重新细分");
             m_commands.Execute("view.thinLines");
             RenderFrame();
             check(!editor.IsThinLines(), "关闭细线显示");
@@ -1562,5 +1565,77 @@ namespace MiniCAD
                     static_cast<unsigned long long>(m_frames), static_cast<unsigned long long>(m_viewportFrames));
         std::printf("%s：%d 项失败\n", failures == 0 ? "自测通过" : "自测失败", failures);
         return failures == 0 ? 0 : 1;
+    }
+
+    // =========================================================
+    // 基准（--bench 图纸）：打开图纸、全部显示，然后在视口中心滚轮放大 / 缩小，打印每帧耗时、是否重新细分与内存
+    // =========================================================
+    int MainFrame::RunBenchmark(const std::string& path)
+    {
+        const HWND hwnd = static_cast<Win32Window*>(m_platform)->GetHwnd();
+        auto memMb = []
+        {
+            PROCESS_MEMORY_COUNTERS_EX pmc = {};
+            pmc.cb = sizeof(pmc);
+            K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc));
+            return std::pair<double, double>(static_cast<double>(pmc.PrivateUsage) / 1048576.0, static_cast<double>(pmc.WorkingSetSize) / 1048576.0);
+        };
+        auto msSince = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+        RenderFrame();
+        auto [m0, w0] = memMb();
+        std::printf("启动：私有 %.0f MB，工作集 %.0f MB\n", m0, w0);
+
+        int64_t t = NowTicks();
+        Document* doc = m_docManager.Open(path);
+        if (!doc) { std::printf("打开失败：%s\n", path.c_str()); return 1; }
+        const double openMs = msSince(t);
+        auto [m1, w1] = memMb();
+        std::printf("打开 %.0f ms：私有 %.0f MB，工作集 %.0f MB，实体 %d\n", openMs, m1, w1, doc->GetScene().EntityCount());
+
+        m_docManager.ZoomAll();
+        m_syncGpu = true;
+        m_viewport->RequestRender();
+        t = NowTicks();
+        RenderFrame();
+        Editor& editor = m_docManager.GetEditor();
+        {
+            const ViewState vs = editor.BuildViewState();
+            auto [m2, w2] = memMb();
+            std::printf("首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB；顶点 线 %zu 填充 %zu 文字 %zu\n", msSince(t), m_timing.viewport,
+                        m2, w2, vs.Scene.size(), vs.SceneFill.size(), vs.TextScene.size());
+        }
+
+        const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
+        POINT sp = { static_cast<LONG>(std::lround(vr.Center().x * m_dpiScale)), static_cast<LONG>(std::lround(vr.Center().y * m_dpiScale)) };
+        SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
+        RenderFrame();
+        ClientToScreen(hwnd, &sp);
+        const int steps = 12;
+        double peak = 0, low = 1e30, total = 0, worst = 0;
+        int rebuilds = 0;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int i = 0; i < 2 * steps; ++i)
+            {
+                const bool zoomIn = i < steps;
+                const uint64_t v = editor.BuildViewState().SceneVersion, dv = editor.BuildViewState().SceneDynVersion;
+                const int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, zoomIn ? WHEEL_DELTA : -WHEEL_DELTA), MAKELPARAM(sp.x, sp.y));
+                RenderFrame();
+                const double ms = msSince(f0);
+                const bool rebuilt = editor.BuildViewState().SceneVersion != v;
+                const bool dynRebuilt = editor.BuildViewState().SceneDynVersion != dv;
+                rebuilds += rebuilt;
+                auto [pm, wm] = memMb();
+                peak = std::max(peak, pm); low = std::min(low, pm);
+                total += ms; worst = std::max(worst, ms);
+                if (pass == 0)
+                    std::printf("  %s %2d：%7.1f ms（视口 %7.1f ms）%s 私有 %.0f MB 工作集 %.0f MB\n", zoomIn ? "放大" : "缩小", i % steps + 1, ms,
+                                m_timing.viewport, rebuilt ? "整体重建" : dynRebuilt ? "动态流  " : "        ", pm, wm);
+            }
+        std::printf("滚轮 %d 帧：平均 %.1f ms，最慢 %.1f ms，整体重建 %d 帧，私有内存 %.0f～%.0f MB\n", 4 * steps, total / (4 * steps), worst, rebuilds, low, peak);
+        m_syncGpu = false;
+        return 0;
     }
 }

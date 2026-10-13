@@ -88,8 +88,8 @@ namespace MiniCAD
 		//                          所有实体顶点缓存失效，但几何不变：不改几何版本号，
 		//                          拾取空间索引保持不动（几十万实体时整表重建要上百毫秒）。
 		bool IsDirty() const  { return m_dirty; }
-		void MarkDirty()      { m_allDirty = true; m_geomAllDirty = true; m_dirty = true; ++m_geomVersion; if (m_onDirty) m_onDirty(); }
-		void MarkDisplayDirty() { m_allDirty = true; m_dirty = true; if (m_onDirty) m_onDirty(); }
+		void MarkDirty()      { m_allDirty = true; m_geomAllDirty = true; m_dirty = true; ++m_geomVersion; ++m_displayVersion; if (m_onDirty) m_onDirty(); }
+		void MarkDisplayDirty() { m_allDirty = true; m_dirty = true; ++m_displayVersion; if (m_onDirty) m_onDirty(); }
 		void MarkEntityDirty(ObjectID id)
 		{
 			m_dirtyEntities.insert(id);
@@ -105,6 +105,8 @@ namespace MiniCAD
 		// 每次几何/拓扑变化（增删实体、编辑、平移/缩放标脏）自增。
 		// 供拾取的空间索引判断是否需要重建（与相机无关，仅几何变更才需重建）。
 		uint64_t GeometryVersion() const { return m_geomVersion; }
+		// 显示版本号：全局显示变化（MarkDisplayDirty / MarkDirty）时自增，如图层开关改变块内子实体是否参与拾取
+		uint64_t DisplayVersion() const { return m_displayVersion; }
 
 		void SetDirtyCallback(DirtyCallback cb) { m_onDirty = std::move(cb); }
 
@@ -143,6 +145,7 @@ namespace MiniCAD
 		bool          m_geomAllDirty = false;              // 全局几何脏：拾取空间索引需整表重建
 		std::unordered_set<ObjectID> m_dirtyEntities;      // 实体级脏：仅这些实体需重新细分
 		uint64_t      m_geomVersion = 0;   // 几何版本号（见 GeometryVersion）
+		uint64_t      m_displayVersion = 0;    // 显示版本号（见 DisplayVersion）
 		DirtyCallback m_onDirty;
 	};
 }

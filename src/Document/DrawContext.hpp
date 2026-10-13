@@ -65,6 +65,12 @@ namespace MiniCAD
             return layer ? layer->GetColor() : Math::Color4::White();
         }
 
+        bool IsLayerVisible(LayerID layerId) const override
+        {
+            const Layer* layer = m_layerManager.GetLayer(layerId);
+            return !layer || layer->IsVisible();
+        }
+
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {

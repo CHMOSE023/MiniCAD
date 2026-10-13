@@ -30,6 +30,8 @@ SOURCES = [
     ('TchArch/8#楼-C详图.dwg', 'x_axCb.txt', {'TCH_AXIS_LABEL': 10}, 2.0),
     ('TchArch/8#楼-C详图.dwg', 'x_opC.txt', {'TCH_OPENING': 60}, 2.0, 'holes'),
     ('TchArch/8#楼-D墙身大样.dwg', 'x_axD.txt', {'TCH_AXIS_LABEL': 10, 'TCH_TEXT': 10, 'TCH_ARROW': 70}, 2.0),
+    ('TchArch/8#楼-A平面图.dwg', 'cwblk_ref.txt', {'TCH_CURTAIN_WALL': 40}, 2.0),
+    ('TchArch/8#楼-A平面图.dwg', 'mtext_ref.txt', {'TCH_MTEXT': 1}, 2.0),
 ]
 
 # 显示为普通实体（不生成 *U_TCH_ 块）的类型：测试按几何在普通实体中查找

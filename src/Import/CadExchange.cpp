@@ -928,7 +928,8 @@ namespace MiniCAD
                         for (char ch : dwgStyle ? dwgStyle->Filename : rec.FontFile) font.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
                         const bool symbolFont = !font.starts_with("gbenor") && !font.starts_with("gbeitc");
                         const double styleWidth = dwgStyle && dwgStyle->Width > 0 ? dwgStyle->Width : rec.WidthFactor > 0 ? rec.WidthFactor : 1.0;
-                        return MakeTchGraphics(src, Tch::BuildText(tchText, trueType, symbolFont, styleWidth), textStyle);
+                        return MakeTchGraphics(src, tchText.Multiline ? Tch::BuildMultilineText(tchText, trueType, symbolFont, styleWidth)
+                                                                      : Tch::BuildText(tchText, trueType, symbolFont, styleWidth), textStyle);
                     }
                     Tch::TchPathArray pathArray;
                     if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
@@ -1047,6 +1048,87 @@ namespace MiniCAD
                         addSide(points[0], points[1], wall.Joins[0], length - wall.Joins[1]);
                         addSide(points[3], points[2], wall.Joins[2], length - wall.Joins[3]);
                         ++m_tianzhengWalls;
+                        return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+                    }
+                    if (Tch::TchWall curtain; unknown->Raw.DxfName == "TCH_CURTAIN_WALL" && Tch::DecodeWallPrefix(*unknown, curtain))
+                    {
+                        // 幕墙（代理图形为空，按天正 2014 分解结果近似）：墙标志含 0x4 时为玻璃幕墙，沿墙厚三等分画 4 条线、两端封口；
+                        // 否则按普通墙画两条侧边线。都在门窗处断开；与相邻墙的交接（斜接、连接量）不处理
+                        const bool glass = (curtain.Flags & 0x4) != 0;
+                        const double width = curtain.LeftWidth + curtain.RightWidth;
+                        std::vector<double> offsets;    // 相对轴线的偏移，左侧为正
+                        if (glass)
+                            for (int k = 0; k <= 3; ++k) offsets.push_back(curtain.LeftWidth - width * k / 3);
+                        else
+                            offsets = {curtain.LeftWidth, -curtain.RightWidth};
+                        std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
+                        while (m_scene.GetBlockTable().Get(name)) name += "_";
+                        const auto blockId = m_scene.GetBlockTable().Create(name);
+                        auto* block = m_scene.GetBlockTable().Find(blockId);
+                        block->SetFlags(BlockEntity::Anonymous);
+                        const double z = curtain.Start.Z;
+                        double arcX = 0, arcY = 0, arcR = 0;
+                        const bool arc = curtain.ArcCenter(arcX, arcY, arcR);
+                        const double a0 = arc ? std::atan2(curtain.Start.Y - arcY, curtain.Start.X - arcX) : 0;
+                        const double ccw = curtain.Angle > 0 ? 1.0 : -1.0;
+                        const double dx = curtain.End.X - curtain.Start.X, dy = curtain.End.Y - curtain.Start.Y;
+                        const double length = std::hypot(dx, dy);
+                        const double ux = dx / length, uy = dy / length;
+                        // 沿轴线的参数：直墙为距起点的长度，弧墙为自起点的圆心角
+                        const double span = arc ? std::abs(curtain.Angle) : length;
+                        std::vector<std::pair<double, double>> cuts;
+                        if (auto it = m_wallOpenings.find(src.ObjectHandle); it != m_wallOpenings.end())
+                            for (const auto& o : it->second)
+                            {
+                                if (arc)
+                                {
+                                    const double t = std::remainder((std::atan2(o.Position.Y - arcY, o.Position.X - arcX) - a0) * ccw, 2 * std::numbers::pi);
+                                    cuts.emplace_back(t - o.Width / 2 / arcR, t + o.Width / 2 / arcR);
+                                }
+                                else
+                                {
+                                    const double t = (o.Position.X - curtain.Start.X) * ux + (o.Position.Y - curtain.Start.Y) * uy;
+                                    cuts.emplace_back(t - o.Width / 2, t + o.Width / 2);
+                                }
+                            }
+                        std::sort(cuts.begin(), cuts.end());
+                        // 轴线参数 t、偏移 off 处的点
+                        auto at = [&](double t, double off) {
+                            if (arc)
+                            {
+                                const double r = arcR - ccw * off, a = a0 + ccw * t;
+                                return Math::Point3{arcX + r * std::cos(a), arcY + r * std::sin(a), z};
+                            }
+                            return Math::Point3{curtain.Start.X + ux * t - uy * off, curtain.Start.Y + uy * t + ux * off, z};
+                        };
+                        auto addPiece = [&](double off, double t0, double t1) {
+                            if (t1 - t0 < 1e-9) return;
+                            if (!arc)
+                            {
+                                block->AddEntity(Make<LineEntity>(src, nullptr, at(t0, off), at(t1, off)));
+                                return;
+                            }
+                            const double r = arcR - ccw * off;
+                            if (r <= 0) return;
+                            double s0 = a0 + ccw * t0, s1 = a0 + ccw * t1;
+                            if (ccw < 0) std::swap(s0, s1);
+                            block->AddEntity(Make<ArcEntity>(src, nullptr, Math::Point3{arcX, arcY, z}, r, s0, s1));
+                        };
+                        for (const double off : offsets)
+                        {
+                            double cursor = 0;
+                            for (const auto& [c0, c1] : cuts)
+                            {
+                                if (c1 <= cursor || c0 >= span) continue;
+                                if (c0 > cursor) addPiece(off, cursor, c0);
+                                cursor = std::max(cursor, c1);
+                            }
+                            if (cursor < span) addPiece(off, cursor, span);
+                        }
+                        if (glass)
+                            for (const double t : {0.0, span})
+                                block->AddEntity(Make<LineEntity>(src, nullptr, at(t, curtain.LeftWidth), at(t, -curtain.RightWidth)));
+                        ++m_tchConverted[unknown->Raw.DxfName];
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }
                     if (unknown->Raw.DxfName.starts_with("TCH_"))

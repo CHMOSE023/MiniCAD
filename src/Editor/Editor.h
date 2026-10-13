@@ -35,6 +35,7 @@ namespace MiniCAD
 {
     class Document;
     class Entity;
+    class DrawContext;
 
     class Editor
     {
@@ -444,6 +445,17 @@ namespace MiniCAD
             std::vector<std::vector<Math::Point3>> wipes;   // 区域覆盖多边形：拼接时裁剪此前的顶点
         };
         std::unordered_map<Object::ObjectID, EntityVertexCache> m_entityVertexCache;
+
+        // 动态流：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充，缩放时只重建这一路，静态流不动
+        std::vector<Vertex_P3_C4>     m_sceneDynVertices;
+        std::vector<Vertex_P3_C4>     m_sceneDynFillVertices;
+        uint64_t                      m_sceneDynVersion = 0;
+        // 重建动态流要按绘制序经过的实体：随视图变化的实体，以及带区域覆盖的实体（裁剪此前的动态顶点）
+        std::vector<Object::ObjectID> m_dynOrder;
+
+        void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
+        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c);
+        void RebuildDynamicStream(DrawContext& ctx);
 
         // 细分临时缓冲（复用容量，避免逐实体分配）
         std::vector<Vertex_P3_C4>    m_scratchLines;

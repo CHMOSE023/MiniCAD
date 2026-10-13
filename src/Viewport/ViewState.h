@@ -64,6 +64,10 @@ namespace MiniCAD
         // 场景顶点版本号：每次重建自增。渲染后端据此判断 GPU 缓冲是否需要
         // 重新上传（版本未变直接复用，避免每帧全量上传）。
         uint64_t                         SceneVersion = 0;
+        // 动态场景流：随视图变化的线与填充（虚线、按像素等宽的线宽），缩放时只重建这一路，画在静态流之后
+        std::span<const Vertex_P3_C4>    SceneDyn;
+        std::span<const Vertex_P3_C4>    SceneDynFill;
+        uint64_t                         SceneDynVersion = 0;
 
         // 选中流：选中/拖动中实体按选中态绘制，叠加在场景之上。
         // 仅在选择集变化或拖动时重建，选中不再触发全场景顶点重建。

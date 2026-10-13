@@ -59,6 +59,7 @@ namespace MiniCAD
             uint64_t version  = 0;
             UINT     count    = 0;
             bool     valid    = false;
+            bool     immutable = false;  // DEFAULT 缓冲（大缓冲）：不能 Map，内容变化时整体重建
         };
         // 返回 nullptr 表示创建缓冲失败（调用方回退到非缓存路径）
         CachedVB* EnsureCachedVB(std::unordered_map<uint32_t, CachedVB>& cache,

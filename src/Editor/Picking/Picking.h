@@ -84,6 +84,7 @@ namespace MiniCAD
             m_viewport = nullptr;
             m_index    = {};
             m_indexVersion = ~0ull;
+            m_displayVersion = ~0ull;
             decltype(m_candidates){}.swap(m_candidates);
             decltype(m_pickGeometry){}.swap(m_pickGeometry);
             decltype(m_selection){}.swap(m_selection);
@@ -141,6 +142,7 @@ namespace MiniCAD
         // 空间索引及其同步的几何版本（UINT64_MAX = 尚未构建）
         SpatialIndex m_index;
         uint64_t     m_indexVersion = ~0ull;
+        uint64_t     m_displayVersion = ~0ull;  // 拾取几何缓存对应的场景显示版本
         std::vector<ObjectID> m_candidates;   // 查询候选复用缓冲，避免每次分配
 
         // 通用拾取回退（块参照、天正对象、标注等）的世界空间几何缓存：按实体 ID 保存其 Draw() 输出的线段与三角形，

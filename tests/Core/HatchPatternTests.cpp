@@ -82,6 +82,34 @@ int RunHatchPatternTests()
         bool all = true;
         for (const char* n : expected) all = all && lib.Find(n) != nullptr;
         Check(all, "内置图案齐全（18 个）");
+    }
+
+    // ── 实心填充：面积正确（含孔岛），相邻条带的梯形合并，三角形数与边数同阶 ──
+    {
+        struct AreaSink : IDrawSink
+        {
+            double area = 0.0;
+            int    tris = 0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+            {
+                area += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
+                ++tris;
+            }
+        };
+        // 40 边的近似圆（半径 10）中间挖一个 4×4 的方孔
+        std::vector<Math::Point3> ring;
+        for (int i = 0; i <= 40; ++i)
+        {
+            const double a = Math::TwoPI * (i % 40) / 40.0;
+            ring.push_back({ 10.0 * std::cos(a), 10.0 * std::sin(a), 0.0 });
+        }
+        HatchEntity h(2, std::vector<Polyline>{ Polyline(ring), Polyline({ { -2, -2, 0 }, { 2, -2, 0 }, { 2, 2, 0 }, { -2, 2, 0 }, { -2, -2, 0 } }) });
+        AreaSink sink;
+        h.Draw(sink, false, false);
+        const double expected = 0.5 * 40 * 100.0 * std::sin(Math::TwoPI / 40.0) - 16.0;
+        Check(std::abs(sink.area - expected) < 1e-6, "实心填充：含孔岛时三角形总面积 = 外环面积 - 孔面积");
+        Check(sink.tris <= 2 * 44, "实心填充：相邻条带的梯形合并，三角形数不超过 2 × 边数");
         Check(lib.Find("solid") && lib.Find("solid")->Solid && lib.Find("solid")->Families.empty(), "SOLID 为实心，名称不区分大小写");
         const HatchPattern* brick = lib.Find("BRICK");
         Check(brick && brick->Families.size() == 3 && brick->Families[2].Dashes.size() == 2

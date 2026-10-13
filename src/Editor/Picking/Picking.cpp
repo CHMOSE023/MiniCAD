@@ -44,8 +44,17 @@ namespace MiniCAD
         class PickCollectSink : public IDrawSink
         {
         public:
+            explicit PickCollectSink(const LayerManager& layers) : m_layers(layers) {}
+
             std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
             std::vector<std::array<Math::Point3, 3>>           Triangles;
+
+            // 块内关闭 / 冻结图层上的子实体不参与拾取
+            bool IsLayerVisible(LayerID layerId) const override
+            {
+                const Layer* layer = m_layers.GetLayer(layerId);
+                return !layer || layer->IsVisible();
+            }
 
             void DrawLine(const Math::Point3& a, const Math::Point3& b,const Math::Color4&, bool) override
             {
@@ -56,6 +65,9 @@ namespace MiniCAD
                 Triangles.push_back({ a, b, c });
             }
             // 文本不参与拾取几何:标注 / 引线 / 公差的框线、引线本身已足够命中。
+
+        private:
+            const LayerManager& m_layers;
         };
 
         // 该实体是否已在拾取中单独特化(避免被通用回退重复处理)。
@@ -146,6 +158,12 @@ namespace MiniCAD
     void Picking::EnsureIndex()
     {
         if (!m_scene) return;
+        // 显示属性变化（如图层开关）会改变块参照展开后参与拾取的子实体，拾取几何缓存失效
+        if (m_scene->DisplayVersion() != m_displayVersion)
+        {
+            m_pickGeometry.clear();
+            m_displayVersion = m_scene->DisplayVersion();
+        }
         const uint64_t v = m_scene->GeometryVersion();
         if (v == m_indexVersion) return;
 
@@ -629,7 +647,7 @@ namespace MiniCAD
         auto it = m_pickGeometry.find(obj.GetID());
         if (it == m_pickGeometry.end())
         {
-            PickCollectSink sink;
+            PickCollectSink sink(m_scene->GetLayerManager());
             static_cast<const Entity&>(obj).Draw(sink, false, false);
             PickGeometry g;
             g.Segments  = std::move(sink.Segments);
@@ -1105,7 +1123,7 @@ namespace MiniCAD
                 {
                     const auto* ent = static_cast<const Entity*>(&obj);
 
-                    PickCollectSink sink;
+                    PickCollectSink sink(m_scene->GetLayerManager());
                     ent->Draw(sink, false, false);
 
                     std::vector<std::pair<Math::Point2, Math::Point2>> segs;

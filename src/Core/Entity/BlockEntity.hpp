@@ -67,7 +67,8 @@ namespace MiniCAD
         {
             AABB box = AABB::Empty();
             for (const auto& e : m_entities)
-                box.Expand(e->GetBoundingBox());
+                if (e->GetAttr().Visible)   // 不可见的子实体不画，也不计入范围（与 AutoCAD 相同）
+                    box.Expand(e->GetBoundingBox());
             return box;
         }
 
@@ -75,7 +76,8 @@ namespace MiniCAD
         void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             for (const auto& e : m_entities)
-                e->Draw(sink, isSelected, isHovered);
+                if (e->GetAttr().Visible && sink.IsLayerVisible(e->GetAttr().LayerId))
+                    e->Draw(sink, isSelected, isHovered);
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override

@@ -99,8 +99,15 @@ namespace MiniCAD
         class HoverHighlightSink : public IDrawSink
         {
         public:
-            HoverHighlightSink(std::vector<Vertex_P3_C4>& out, const Math::Color4& color)
-                : m_out(out), m_color(color) {}
+            HoverHighlightSink(std::vector<Vertex_P3_C4>& out, const Math::Color4& color, const LayerManager& layers)
+                : m_out(out), m_color(color), m_layers(layers) {}
+
+            // 块内关闭 / 冻结图层上的子实体不高亮
+            bool IsLayerVisible(LayerID layerId) const override
+            {
+                const Layer* layer = m_layers.GetLayer(layerId);
+                return !layer || layer->IsVisible();
+            }
 
             void DrawLine(const Math::Point3& a, const Math::Point3& b,
                           const Math::Color4&, bool) override
@@ -131,6 +138,7 @@ namespace MiniCAD
 
             std::vector<Vertex_P3_C4>& m_out;
             Math::Color4               m_color;
+            const LayerManager&        m_layers;
         };
     }
 
@@ -186,6 +194,9 @@ namespace MiniCAD
         releaseStorage(m_entityVertexCache);
         releaseStorage(m_sceneVertices);
         releaseStorage(m_sceneFillVertices);
+        releaseStorage(m_sceneDynVertices);
+        releaseStorage(m_sceneDynFillVertices);
+        releaseStorage(m_dynOrder);
         releaseStorage(m_textVertices);
         releaseStorage(m_sceneImages);
         releaseStorage(m_selVertices);
@@ -201,6 +212,7 @@ namespace MiniCAD
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
         ++m_sceneVersion;   // 渲染后端的缓存顶点缓冲随之失效
+        ++m_sceneDynVersion;
         ++m_selVersion;
         m_picking.Unbind();
 
@@ -2370,7 +2382,7 @@ namespace MiniCAD
             layer && !layer->IsVisible())
             return;
 
-        HoverHighlightSink sink(out, IDrawSink::kHoverColor);
+        HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager());
         entity.Draw(sink, /*isSelected*/ false, /*isHovered*/ true);
 
         // 文字类实体：字形不输出线段，用包围盒勾边作为悬停反馈
@@ -2392,6 +2404,83 @@ namespace MiniCAD
     static FontResolver MakeFontResolver(Document* doc)
     {
         return MakeTextStyleResolver(doc->GetFontSystem(), &doc->GetScene().GetTextStyleTable());
+    }
+
+    // 细分一个实体到逐实体缓存（顶点、是否随视图变化、区域覆盖、图像）
+    void Editor::TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c)
+    {
+        m_scratchLines.clear();
+        m_scratchFills.clear();
+        m_scratchTexts.clear();
+        ctx.ResetViewDependentFlag();
+
+        ctx.BeginEntity(&entity.GetAttr());
+        entity.Draw(ctx, /*isSelected*/ false, false);
+        ctx.BeginEntity(nullptr);
+
+        c.lines         = m_scratchLines;
+        c.fills         = m_scratchFills;
+        c.texts         = m_scratchTexts;
+        c.viewDependent = ctx.HasViewDependentGeometry();
+        c.wipes         = ctx.TakeWipes();
+        c.images        = ctx.TakeImages();
+    }
+
+    // 把一个实体的缓存按绘制序接到场景流尾部：先用它的区域覆盖裁剪此前的顶点，再追加它自己的顶点。
+    // 随视图变化的线 / 填充进动态流，其余进静态流；文字与图像总在静态流（不随缩放变化）
+    void Editor::AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c)
+    {
+        ApplyWipes(c.wipes);
+        m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
+        m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
+        if (c.viewDependent)
+        {
+            m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
+            m_sceneDynFillVertices.insert(m_sceneDynFillVertices.end(), c.fills.begin(), c.fills.end());
+        }
+        else
+        {
+            m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
+            m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
+        }
+        if (c.viewDependent || !c.wipes.empty())
+            m_dynOrder.push_back(id);
+        m_sceneViewDependent |= c.viewDependent;
+    }
+
+    // 只重建动态流：随视图变化的实体重新细分，按绘制序拼接，并用其后的区域覆盖裁剪（与静态流的规则相同）
+    void Editor::RebuildDynamicStream(DrawContext& ctx)
+    {
+        auto& scene = m_doc->GetScene();
+        m_sceneDynVertices.clear();
+        m_sceneDynFillVertices.clear();
+        for (Object::ObjectID id : m_dynOrder)
+        {
+            auto it = m_entityVertexCache.find(id);
+            if (it == m_entityVertexCache.end())
+            {
+                const Object* obj = scene.GetEntity(id);
+                if (!obj || !obj->IsKindOf<Entity>()) continue;
+                EntityVertexCache c;
+                TessellateEntity(static_cast<const Entity&>(*obj), ctx, c);
+                it = m_entityVertexCache.emplace(id, std::move(c)).first;
+            }
+            const EntityVertexCache& c = it->second;
+            if (!m_sceneDynVertices.empty() || !m_sceneDynFillVertices.empty())
+                for (const auto& w : c.wipes)
+                {
+                    const WipeClip::Poly poly(w);
+                    if (!poly.Valid()) continue;
+                    WipeClip::ClipLines(m_sceneDynVertices, poly);
+                    WipeClip::ClipFills(m_sceneDynFillVertices, poly);
+                }
+            if (c.viewDependent)
+            {
+                m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
+                m_sceneDynFillVertices.insert(m_sceneDynFillVertices.end(), c.fills.begin(), c.fills.end());
+            }
+        }
+        ++m_sceneDynVersion;
     }
 
     bool Editor::UpdateSceneVertices(double worldPerPixel, bool zoomChanged)
@@ -2436,6 +2525,34 @@ namespace MiniCAD
         const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid;
         m_displayInvalid = false;
 
+        const auto& layerMgr = scene.GetLayerManager();
+        DrawContext ctx(m_scratchLines, m_scratchFills, m_scratchTexts, m_overlay,
+                        layerMgr, scene.GetLineTypeTable(), worldPerPixel,
+                        m_glyphProvider, MakeFontResolver(m_doc));
+        ctx.SetImageProvider(imageProvider);
+        ctx.SetThinLines(m_thinLines);
+
+        // ── 只缩放：静态流不动，只重建动态流 ─────────────────
+        // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
+        // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
+        if (zoomChanged && !invalidateAll && !exclusionChanged && scene.GetDirtyEntities().empty())
+        {
+            for (Object::ObjectID id : m_dynOrder)
+                if (auto it = m_entityVertexCache.find(id); it != m_entityVertexCache.end() && it->second.viewDependent)
+                    m_entityVertexCache.erase(it);
+            RebuildDynamicStream(ctx);
+            scene.ClearDirty();
+            return true;
+        }
+
+        auto isShown = [&](const Entity& entity)
+        {
+            const auto& attr = entity.GetAttr();
+            if (!attr.Visible) return false;
+            const Layer* layer = layerMgr.GetLayer(attr.LayerId);
+            return !layer || layer->IsVisible();
+        };
+
         // ── 纯新增快路径 ────────────────────────────────────
         // 几万实体的场景里新画一个图形:旧实体缓存全部有效,既不该重新细分,
         // 也不该把全场景顶点重新拼接一遍。脏集全部是"缓存中不存在的新实体"
@@ -2461,51 +2578,19 @@ namespace MiniCAD
                                                   scene.GetDirtyEntities().end());
                 std::sort(ids.begin(), ids.end());
 
-                const auto& layerMgr = scene.GetLayerManager();
-                DrawContext ctx(m_scratchLines, m_scratchFills, m_scratchTexts, m_overlay,
-                                layerMgr, scene.GetLineTypeTable(), worldPerPixel,
-                                m_glyphProvider, MakeFontResolver(m_doc));
-                ctx.SetImageProvider(imageProvider);
-                ctx.SetThinLines(m_thinLines);
-
                 for (auto id : ids)
                 {
                     const auto& entity = static_cast<const Entity&>(*scene.GetEntity(id));
-                    const auto& attr   = entity.GetAttr();
-
-                    if (!attr.Visible) continue;
-                    if (const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-                        layer && !layer->IsVisible())
-                        continue;
-
-                    m_scratchLines.clear();
-                    m_scratchFills.clear();
-                    m_scratchTexts.clear();
-                    ctx.ResetViewDependentFlag();
-
-                    ctx.BeginEntity(&attr);
-                    entity.Draw(ctx, /*isSelected*/ false, false);
-                    ctx.BeginEntity(nullptr);
+                    if (!isShown(entity)) continue;
 
                     EntityVertexCache c;
-                    c.lines         = m_scratchLines;
-                    c.fills         = m_scratchFills;
-                    c.texts         = m_scratchTexts;
-                    c.viewDependent = ctx.HasViewDependentGeometry();
-                    c.wipes         = ctx.TakeWipes();
-                    c.images        = ctx.TakeImages();
-
-                    ApplyWipes(c.wipes);
-                    m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
-                    m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
-                    m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
-                    m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
-                    m_sceneViewDependent |= c.viewDependent;
-
+                    TessellateEntity(entity, ctx, c);
+                    AppendToSceneStreams(id, c);
                     m_entityVertexCache.emplace(id, std::move(c));
                 }
 
                 ++m_sceneVersion;   // 顶点流已追加,渲染后端需重新上传
+                ++m_sceneDynVersion;
                 scene.ClearDirty();
                 return true;
             }
@@ -2526,74 +2611,49 @@ namespace MiniCAD
 
         m_sceneVertices.clear();
         m_sceneFillVertices.clear();
+        m_sceneDynVertices.clear();
+        m_sceneDynFillVertices.clear();
         m_textVertices.clear();
         m_sceneImages.clear();
-
-        const auto& layerMgr = scene.GetLayerManager();
-
-        DrawContext ctx(m_scratchLines, m_scratchFills, m_scratchTexts, m_overlay,
-                        layerMgr, scene.GetLineTypeTable(), worldPerPixel,
-                        m_glyphProvider, MakeFontResolver(m_doc));
-        ctx.SetImageProvider(imageProvider);
-        ctx.SetThinLines(m_thinLines);
-
-        bool viewDependent = false;
+        m_dynOrder.clear();
+        m_sceneViewDependent = false;
 
         // 第一遍：按绘制序收集要拼接的实体缓存（缓存未命中的就地细分），并统计总顶点数；
         // 第二遍一次预留后再拼接，避免几百万顶点的顶点流反复扩容拷贝
-        std::vector<const EntityVertexCache*> visible;
+        std::vector<std::pair<Object::ObjectID, const EntityVertexCache*>> visible;
         visible.reserve(m_entityVertexCache.size());
         std::size_t lineCount = 0, fillCount = 0, textCount = 0, imageCount = 0;
 
         scene.ForEachObject([&](const Object& obj)
         {
-           if (obj.IsKindOf<Entity>())
+           if (!obj.IsKindOf<Entity>()) return;
+           const auto& entity = static_cast<const Entity&>(obj);
+
+           // 图层关闭或实体自身隐藏:不产出顶点
+           if (!isShown(entity)) return;
+
+           // 拖动跟随中的实体由选中流绘制
+           if (dragIds.contains(obj.GetID())) return;
+
+           // 选中/悬停高亮均不烘焙进场景顶点（选中走选中流、悬停走 overlay），
+           // 因此选择集/悬停变化都不会触发整场景顶点重建。
+           auto it = m_entityVertexCache.find(obj.GetID());
+           if (it == m_entityVertexCache.end())
            {
-               const auto& entity = static_cast<const Entity&>(obj);
-               const auto& attr   = entity.GetAttr();
-
-               // 图层关闭或实体自身隐藏:不产出顶点
-               if (!attr.Visible) return;
-               if (const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-                   layer && !layer->IsVisible())
-                   return;
-
-               // 拖动跟随中的实体由选中流绘制
-               if (dragIds.contains(obj.GetID())) return;
-
-               // 选中/悬停高亮均不烘焙进场景顶点（选中走选中流、悬停走 overlay），
-               // 因此选择集/悬停变化都不会触发整场景顶点重建。
-               auto it = m_entityVertexCache.find(obj.GetID());
-               if (it == m_entityVertexCache.end())
-               {
-                   // 缓存未命中：重新细分该实体
-                   m_scratchLines.clear();
-                   m_scratchFills.clear();
-                   m_scratchTexts.clear();
-                   ctx.ResetViewDependentFlag();
-
-                   ctx.BeginEntity(&attr);
-                   entity.Draw(ctx, /*isSelected*/ false, false);
-                   ctx.BeginEntity(nullptr);
-
-                   EntityVertexCache c;
-                   c.lines         = m_scratchLines;
-                   c.fills         = m_scratchFills;
-                   c.texts         = m_scratchTexts;
-                   c.viewDependent = ctx.HasViewDependentGeometry();
-                   c.wipes         = ctx.TakeWipes();
-                   c.images        = ctx.TakeImages();
-                   it = m_entityVertexCache.emplace(obj.GetID(), std::move(c)).first;
-               }
-
-               const auto& c = it->second;
-               visible.push_back(&c);
-               lineCount  += c.lines.size();
-               fillCount  += c.fills.size();
-               textCount  += c.texts.size();
-               imageCount += c.images.size();
-               viewDependent |= c.viewDependent;
+               EntityVertexCache c;
+               TessellateEntity(entity, ctx, c);   // 缓存未命中：重新细分该实体
+               it = m_entityVertexCache.emplace(obj.GetID(), std::move(c)).first;
            }
+
+           const auto& c = it->second;
+           visible.emplace_back(obj.GetID(), &c);
+           if (!c.viewDependent)
+           {
+               lineCount += c.lines.size();
+               fillCount += c.fills.size();
+           }
+           textCount  += c.texts.size();
+           imageCount += c.images.size();
         });
 
         // 遮罩（wipeout）会裁剪已拼接的顶点，裁剪可能多出少量顶点，预留只是下限
@@ -2601,24 +2661,19 @@ namespace MiniCAD
         m_sceneFillVertices.reserve(fillCount);
         m_textVertices.reserve(textCount);
         m_sceneImages.reserve(imageCount);
-        for (const EntityVertexCache* c : visible)
-        {
-            ApplyWipes(c->wipes);
-            m_sceneImages.insert(m_sceneImages.end(), c->images.begin(), c->images.end());
-            m_sceneVertices.insert(m_sceneVertices.end(), c->lines.begin(), c->lines.end());
-            m_sceneFillVertices.insert(m_sceneFillVertices.end(), c->fills.begin(), c->fills.end());
-            m_textVertices.insert(m_textVertices.end(), c->texts.begin(), c->texts.end());
-        }
+        for (const auto& [id, c] : visible)
+            AppendToSceneStreams(id, *c);
 
-        m_sceneViewDependent = viewDependent;
-        m_sceneExcluded      = std::move(dragIds);
+        m_sceneExcluded = std::move(dragIds);
 
         ++m_sceneVersion;   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
+        ++m_sceneDynVersion;
 
         scene.ClearDirty();
         return true;
     }
 
+    // 区域覆盖裁剪此前已拼接的静态流与动态流
     void Editor::ApplyWipes(const std::vector<std::vector<Math::Point3>>& wipes)
     {
         for (const auto& w : wipes)
@@ -2628,6 +2683,8 @@ namespace MiniCAD
             WipeClip::ClipLines(m_sceneVertices, poly);
             WipeClip::ClipFills(m_sceneFillVertices, poly);
             WipeClip::ClipTexts(m_textVertices, poly);
+            WipeClip::ClipLines(m_sceneDynVertices, poly);
+            WipeClip::ClipFills(m_sceneDynFillVertices, poly);
         }
     }
 
@@ -2702,6 +2759,9 @@ namespace MiniCAD
         vs.TextScene    = m_textVertices;
         vs.Images       = m_sceneImages;
         vs.SceneVersion = m_sceneVersion;
+        vs.SceneDyn        = m_sceneDynVertices;
+        vs.SceneDynFill    = m_sceneDynFillVertices;
+        vs.SceneDynVersion = m_sceneDynVersion;
         vs.SelScene     = m_selVertices;
         vs.SelFill      = m_selFillVertices;
         vs.SelText      = m_selTextVertices;

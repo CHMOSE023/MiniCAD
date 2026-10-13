@@ -10,6 +10,7 @@
 #include <string>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 
 namespace MiniCAD
 {
@@ -327,61 +328,78 @@ namespace MiniCAD
                 pts.push_back(a);
         }
 
-        // ── 实心填充：梯形分解 ──────────────────────────────────────────────
+        // 实心填充（奇偶规则）：按顶点 y 值切成水平条带，每条带内交点两两配对成梯形；
+        // 相邻条带里由同一对边围成的梯形合并成一个（边是直线，合并是精确的），
+        // 三角形数与边数同阶，而不是条带数 × 交点数
         static void FillSolid(IDrawSink& sink,
                               const std::vector<std::vector<Math::Point3>>& polys,
                               double elevation,
                               const Math::Color4& color)
         {
+            struct Edge { double xa, ya, xb, yb; };
+            std::vector<Edge> edges;
             std::vector<double> ys;
             for (const auto& poly : polys)
-                for (const auto& p : poly)
-                    ys.push_back(p.y);
-            if (ys.size() < 2) return;
+                for (size_t i = 0; i + 1 < poly.size(); ++i)
+                {
+                    ys.push_back(poly[i].y);
+                    if (std::abs(poly[i + 1].y - poly[i].y) > 1e-12)
+                        edges.push_back({ poly[i].x, poly[i].y, poly[i + 1].x, poly[i + 1].y });
+                }
+            if (ys.size() < 2 || edges.size() < 2) return;
 
             std::sort(ys.begin(), ys.end());
             ys.erase(std::unique(ys.begin(), ys.end(),
                      [](double a, double b){ return std::abs(a - b) < 1e-9; }), ys.end());
 
+            auto xAt = [&](size_t e, double y)
+            {
+                const Edge& g = edges[e];
+                return g.xa + (g.xb - g.xa) * (y - g.ya) / (g.yb - g.ya);
+            };
+            auto emit = [&](size_t l, size_t r, double y0, double y1)
+            {
+                Math::Point3 A{ xAt(l, y0), y0, elevation };
+                Math::Point3 B{ xAt(r, y0), y0, elevation };
+                Math::Point3 C{ xAt(r, y1), y1, elevation };
+                Math::Point3 D{ xAt(l, y1), y1, elevation };
+                sink.FillTriangle(A, B, C, color);
+                sink.FillTriangle(A, C, D, color);
+            };
+
+            struct Trap { size_t l, r; double y0; };
+            std::vector<Trap> open, next;
+            std::vector<std::pair<double, size_t>> crossings;
             for (size_t b = 0; b + 1 < ys.size(); ++b)
             {
-                double y0 = ys[b], y1 = ys[b + 1];
-                if (y1 - y0 < 1e-12) continue;
-                double ymid = 0.5 * (y0 + y1);
-
-                struct Span { double xTop, xBot; };
-                std::vector<Span> crossings;
-                for (const auto& poly : polys)
+                const double y0 = ys[b], y1 = ys[b + 1];
+                next.clear();
+                crossings.clear();
+                if (y1 - y0 >= 1e-12)
                 {
-                    for (size_t i = 0; i + 1 < poly.size(); ++i)
+                    const double ymid = 0.5 * (y0 + y1);
+                    for (size_t e = 0; e < edges.size(); ++e)
                     {
-                        double ya = poly[i].y,     xa = poly[i].x;
-                        double yb = poly[i + 1].y, xb = poly[i + 1].x;
-                        double lo = std::min(ya, yb), hi = std::max(ya, yb);
-                        if (ymid <= lo || ymid >= hi) continue;
-                        double inv = (xb - xa) / (yb - ya);
-                        crossings.push_back({ xa + inv * (y1 - ya),
-                                              xa + inv * (y0 - ya) });
+                        const Edge& g = edges[e];
+                        if (ymid <= std::min(g.ya, g.yb) || ymid >= std::max(g.ya, g.yb)) continue;
+                        crossings.push_back({ xAt(e, ymid), e });
+                    }
+                    std::sort(crossings.begin(), crossings.end());
+                    for (size_t k = 0; k + 1 < crossings.size(); k += 2)
+                    {
+                        const size_t l = crossings[k].second, r = crossings[k + 1].second;
+                        double start = y0;
+                        for (auto& t : open)
+                            if (t.l == l && t.r == r) { start = t.y0; t.l = SIZE_MAX; break; }   // 延续上一条带的梯形
+                        next.push_back({ l, r, start });
                     }
                 }
-                if (crossings.size() < 2) continue;
-
-                std::sort(crossings.begin(), crossings.end(),
-                          [](const Span& a, const Span& c)
-                          { return (a.xTop + a.xBot) < (c.xTop + c.xBot); });
-
-                for (size_t k = 0; k + 1 < crossings.size(); k += 2)
-                {
-                    const Span& L = crossings[k];
-                    const Span& R = crossings[k + 1];
-                    Math::Point3 A{ L.xBot, y0, elevation };
-                    Math::Point3 B{ R.xBot, y0, elevation };
-                    Math::Point3 C{ R.xTop, y1, elevation };
-                    Math::Point3 D{ L.xTop, y1, elevation };
-                    sink.FillTriangle(A, B, C, color);
-                    sink.FillTriangle(A, C, D, color);
-                }
+                for (const auto& t : open)
+                    if (t.l != SIZE_MAX) emit(t.l, t.r, t.y0, y0);                 // 没有延续的梯形到此结束
+                open.swap(next);
             }
+            for (const auto& t : open)
+                emit(t.l, t.r, t.y0, ys.back());
         }
 
         // 单个填充对象最多输出的线段数：图案相对区域过密（比例太小）时不再继续生成，

@@ -3,6 +3,7 @@
 #include "Dwg/Read/DwgBitReader.h"
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace MiniCAD::Tch
@@ -14,6 +15,7 @@ namespace MiniCAD::Tch
         std::array<double, 4> Joins{};
         int OpeningCount = 0;   // 墙上的门窗数；门窗句柄在句柄流中（TCH_OPENING 引用）
         double Angle = 0;       // 弧墙的圆心角（弧度，正值为自起点逆时针到终点）；直墙为 0
+        std::uint32_t Flags = 0;    // 受保护几何里的墙标志（内核 this+0x140）
 
         // 弧墙的圆心与轴线半径
         bool ArcCenter(double& cx, double& cy, double& radius) const
@@ -53,7 +55,7 @@ namespace MiniCAD::Tch
         result.Start = geometry.Read3RawDouble();
         result.End = geometry.Read3RawDouble();
         result.Angle = geometry.ReadRawDouble();
-        geometry.ReadRawLong();
+        result.Flags = static_cast<std::uint32_t>(geometry.ReadRawLong());
         result.LeftWidth = geometry.ReadRawDouble();
         result.RightWidth = geometry.ReadRawDouble();
         if (r.Failed() || geometry.Failed()) return false;

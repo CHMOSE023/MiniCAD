@@ -339,8 +339,36 @@ namespace MiniCAD
         if (cb.valid && cb.version == version)
             return &cb;
 
+        // 大缓冲（场景静态流，几十 MB）：按实际大小创建 DEFAULT 缓冲并带初始数据，旧缓冲直接释放。
+        // 动态缓冲每次 WRITE_DISCARD 时驱动要另备一份后备存储（重命名），几十 MB 的缓冲会让内存大幅抖动，
+        // 还要按 1.5 倍预留；静态流只在图纸内容变化时才重新上传，不需要 CPU 可写
+        constexpr size_t kStaticBytes = 4u << 20;
+        if (vertCount * vertSize >= kStaticBytes)
+        {
+            D3D11_BUFFER_DESC desc = {};
+            desc.ByteWidth = static_cast<UINT>(vertSize * vertCount);
+            desc.Usage     = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            D3D11_SUBRESOURCE_DATA init = {};
+            init.pSysMem = data;
+            cb.vb.Reset();
+            cb.capacity = 0;
+            cb.valid    = false;
+            if (FAILED(m_device->CreateBuffer(&desc, &init, cb.vb.GetAddressOf())))
+            {
+                cb.vb.Reset();
+                return nullptr;
+            }
+            cb.capacity = vertCount;
+            cb.immutable = true;
+            cb.count   = static_cast<UINT>(vertCount);
+            cb.version = version;
+            cb.valid   = true;
+            return &cb;
+        }
+
         const bool shrink = cb.capacity > 65536 && vertCount * 4 < cb.capacity;
-        if (vertCount > cb.capacity || !cb.vb || shrink)
+        if (vertCount > cb.capacity || !cb.vb || shrink || cb.immutable)
         {
             size_t newCap = std::max<size_t>(vertCount, 1024);
             newCap += newCap / 2;   // 预留空间，减少频繁重建
@@ -359,7 +387,8 @@ namespace MiniCAD
                 cb.vb.Reset();
                 return nullptr;
             }
-            cb.capacity = newCap;
+            cb.capacity  = newCap;
+            cb.immutable = false;
         }
 
         if (vertCount > 0)

@@ -23,6 +23,7 @@ namespace MiniCAD
 
         // 属性查询/实体上下文直接转发,保证块内子实体的 ByLayer 颜色与线型解析正确
         Math::Color4 GetLayerColor(LayerID layerId) const override { return m_target.GetLayerColor(layerId); }
+        bool IsLayerVisible(LayerID layerId) const override        { return m_target.IsLayerVisible(layerId); }
         void BeginEntity(const EntityAttr* attr) override          { m_target.BeginEntity(attr); }
 
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) override

@@ -62,6 +62,8 @@ namespace MiniCAD
         constexpr uint32_t kSlotGrid      = 6;
         constexpr uint32_t kSlotAxis      = 7;
         constexpr uint32_t kSlotGizmo     = 8;
+        constexpr uint32_t kSlotDynFill   = 9;
+        constexpr uint32_t kSlotDyn       = 10;
 
         auto drawStatic = [&]
         {
@@ -74,8 +76,10 @@ namespace MiniCAD
                 if (im.Image) renderer.SubmitImage(*im.Image, im.Verts, vp);
 
             // 场景几何走缓存提交：版本未变时 GPU 缓冲直接复用，不重新上传
-            renderer.SubmitCached(kSlotSceneFill, viewState.SceneVersion, viewState.SceneFill, vp, PrimitiveType::Triangle, true, true);
-            renderer.SubmitCached(kSlotScene,     viewState.SceneVersion, viewState.Scene,     vp, PrimitiveType::Line,     true, true);
+            renderer.SubmitCached(kSlotSceneFill, viewState.SceneVersion,    viewState.SceneFill,    vp, PrimitiveType::Triangle, true, true);
+            renderer.SubmitCached(kSlotDynFill,   viewState.SceneDynVersion, viewState.SceneDynFill, vp, PrimitiveType::Triangle, true, true);
+            renderer.SubmitCached(kSlotScene,     viewState.SceneVersion,    viewState.Scene,        vp, PrimitiveType::Line,     true, true);
+            renderer.SubmitCached(kSlotDyn,       viewState.SceneDynVersion, viewState.SceneDyn,     vp, PrimitiveType::Line,     true, true);
             if (viewState.FontTexture)
                 renderer.SubmitTexturedCached(kSlotSceneText, viewState.SceneVersion, viewState.TextScene, vp, viewState.FontTexture, false, true);
         };
@@ -96,6 +100,7 @@ namespace MiniCAD
             }
             uint64_t key = 1469598103934665603ull;
             key = HashCombine(key, &viewState.SceneVersion, sizeof(viewState.SceneVersion));
+            key = HashCombine(key, &viewState.SceneDynVersion, sizeof(viewState.SceneDynVersion));
             key = HashCombine(key, &m_viewVersion, sizeof(m_viewVersion));
             key = HashCombine(key, &viewState.FontTexture, sizeof(viewState.FontTexture));
             key = HashCombine(key, &m_lightBackground, sizeof(m_lightBackground));

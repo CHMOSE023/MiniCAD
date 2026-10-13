@@ -68,6 +68,7 @@ namespace MiniCAD
         // 平台对象必须比 MainFrame 活得久。尺寸为逻辑像素，pixelScale = 物理像素 / 逻辑像素
         bool Initialize(AppPlatform& platform, float width, float height, float pixelScale);
         int  RunSelfTest();
+        int  RunBenchmark(const std::string& path);     // 只有 Win32 版：--bench 图纸，打印打开、滚轮缩放的耗时与内存
 
         // ── 由宿主调用 ───────────────────────────────────────────
         void OnResize(float width, float height, float pixelScale);    // 窗口尺寸或 DPI 变化

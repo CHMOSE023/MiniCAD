@@ -5,6 +5,8 @@
 #include "../Math/Color4.hpp"
 #include "Entity.hpp"
 #include "ICurveEntity.hpp"
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace MiniCAD
@@ -66,8 +68,9 @@ namespace MiniCAD
         {
             const auto& attr  = GetAttr();
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
-            constexpr int kSegments = 64;
-            const double  sweep     = m_arc.SweepAngle();
+            // 分段数按张角比例，与整圆 64 段的密度相同（小弧不必也分 64 段）
+            const double sweep     = m_arc.SweepAngle();
+            const int    kSegments = std::max(4, static_cast<int>(std::ceil(std::abs(sweep) / (Math::TwoPI / 64.0))));
 
             for (int i = 0; i < kSegments; ++i)
             {

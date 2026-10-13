@@ -131,10 +131,14 @@ namespace MiniCAD
                 for (int c = 0; c < m_colCount; ++c)
                 {
                     TransformDrawSink xsink(sink, CellMatrix(c, r));
+                    // 块内设置了不可见标志（DWG 的 invisible，如被隐藏的嵌套块参照）或在关闭 / 冻结图层上的子实体不画；
+                    // 0 层上的子实体已解析为插入所在的图层
                     for (const auto& e : m_resolved)
-                        e->Draw(xsink, isSelected, isHovered);
+                        if (e->GetAttr().Visible && sink.IsLayerVisible(e->GetAttr().LayerId))
+                            e->Draw(xsink, isSelected, isHovered);
                     for (const auto& a : m_attribs)
-                        a->Draw(xsink, isSelected, isHovered);
+                        if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId))
+                            a->Draw(xsink, isSelected, isHovered);
                 }
         }
 

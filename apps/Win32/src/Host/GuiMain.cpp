@@ -1,5 +1,5 @@
 // MiniCADWin：MiniCAD 桌面版入口（界面由 MiniGUI 绘制）
-// 用法：MiniCADWin.exe [--selftest] [--ui 界面描述文件.json] [--] [图纸路径 ...]
+// 用法：MiniCADWin.exe [--selftest] [--bench 图纸] [--ui 界面描述文件.json] [--] [图纸路径 ...]
 // 以 USE_WIN32 编译时为窗口程序（没有控制台，日志和自测输出不可见）
 #include "Host/Win32Window.h"
 #include <shellapi.h>
@@ -41,6 +41,7 @@ namespace
         Win32Window window;
         MainFrame&  frame    = window.GetFrame();
         bool        selfTest = false;
+        std::string benchPath;
         std::vector<std::string> drawingPaths;
         bool positional = false;
 
@@ -54,6 +55,8 @@ namespace
                 positional = true;
             else if (!positional && a == "--selftest")
                 selfTest = true;
+            else if (!positional && a == "--bench" && i + 1 < argc)
+                benchPath = ToUtf8(argv[++i]);
             else if (!positional && a == "--ui" && i + 1 < argc)
                 frame.SetUiFile(ToUtf8(argv[++i]));
             else
@@ -61,6 +64,8 @@ namespace
         }
         LocalFree(argv);
 
+        if (!benchPath.empty())
+            selfTest = true;    // 基准与自测一样：不读写用户布局，输出不缓冲
         if (selfTest)
             std::setvbuf(stdout, nullptr, _IONBF, 0);     // 自测输出不缓冲：中途崩溃也能看到已经执行的检查
         else
@@ -72,6 +77,8 @@ namespace
         if (!selfTest && !drawingPaths.empty())
             frame.OpenDrawings(drawingPaths);
 
+        if (!benchPath.empty())
+            return frame.RunBenchmark(benchPath);
         return selfTest ? frame.RunSelfTest() : window.Run();
     }
 }

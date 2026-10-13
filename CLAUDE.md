@@ -136,6 +136,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
+- `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest
 
@@ -208,5 +209,6 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 
 - 拾取的空间索引按 `Scene::GeometryVersion()` 缓存与失效
 - 视口缓存层：场景版本、相机、尺寸、显示开关、背景深浅都没变时，每帧只复制缓存层再画动态内容
+- 场景顶点分两路：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充进动态流，其余进静态流；滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传。D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动
 - 渲染器按 (slot, version) 缓存顶点缓冲，版本没变时不重新上传
 - `SnapEngine` 每帧 O(n)，大图纸时可考虑接入空间索引

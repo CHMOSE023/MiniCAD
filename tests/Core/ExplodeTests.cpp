@@ -159,6 +159,53 @@ int RunExplodeTests()
                   std::count(sink.Layers.begin(), sink.Layers.end(), LayerID(0)) == 0,
               "块内 0 层的实体随插入图层显示，其他图层的实体保持原图层");
     }
+    {
+        // 块内设置了不可见标志的子实体：不画，也不计入范围（如 DWG 里被隐藏的嵌套块参照）
+        struct CountSink : IDrawSink
+        {
+            int Lines = 0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override { ++Lines; }
+        };
+        BlockEntity block(50, "E", { 0, 0, 0 });
+        block.AddEntity(std::make_unique<LineEntity>(51, Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 }));
+        auto hidden = std::make_unique<LineEntity>(52, Math::Point3{ 100, 0, 0 }, Math::Point3{ 200, 0, 0 });
+        hidden->GetAttr().Visible = false;
+        block.AddEntity(std::move(hidden));
+        InsertEntity ins(53, 50, "E", { 0, 0, 0 });
+        ins.SetBlock(&block);
+        CountSink sink;
+        ins.Draw(sink, false, false);
+        Check(sink.Lines == 1, "块内不可见的子实体不画");
+        Check(Near(ins.GetBoundingBox().Max.x, 1), "块内不可见的子实体不计入块参照的范围");
+    }
+    {
+        // 块内关闭 / 冻结图层上的子实体不画；0 层上的子实体随插入所在的图层
+        struct HiddenLayerSink : IDrawSink
+        {
+            LayerID Hidden = 0;
+            int     Lines  = 0;
+            bool IsLayerVisible(LayerID layer) const override { return layer != Hidden; }
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override { ++Lines; }
+        };
+        BlockEntity block(60, "F", { 0, 0, 0 });
+        block.AddEntity(std::make_unique<LineEntity>(61, Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 }));   // 0 层
+        auto onFive = std::make_unique<LineEntity>(62, Math::Point3{ 0, 1, 0 }, Math::Point3{ 1, 1, 0 });
+        onFive->GetAttr().LayerId = 5;
+        block.AddEntity(std::move(onFive));
+        InsertEntity ins(63, 60, "F", { 0, 0, 0 });
+        ins.SetBlock(&block);
+        ins.GetAttr().LayerId = 7;
+
+        HiddenLayerSink s5; s5.Hidden = 5;
+        ins.Draw(s5, false, false);
+        Check(s5.Lines == 1, "块内关闭图层上的子实体不画，其余照常");
+        HiddenLayerSink s7; s7.Hidden = 7;
+        ins.Draw(s7, false, false);
+        Check(s7.Lines == 1, "块内 0 层的子实体随插入图层：插入图层关闭时不画");
+        HiddenLayerSink sb; sb.Hidden = 5;
+        block.Draw(sb, false, false);
+        Check(sb.Lines == 1, "直接绘制块定义时同样跳过关闭图层上的子实体");
+    }
 
     // ── 不可分解 ─────────────────────────────────────────────
     {

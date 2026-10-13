@@ -23,6 +23,8 @@ namespace MiniCAD
         virtual void BeginEntity(const EntityAttr* attr) {}
 
         virtual Math::Color4 GetLayerColor(LayerID layerId) const { return Math::Color4::White(); }
+        // 图层是否显示（关闭或冻结为 false）：块参照展开时据此跳过块内隐藏图层上的子实体。默认都显示
+        virtual bool IsLayerVisible(LayerID layerId) const { return true; }
         virtual void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) = 0;
 
         // 填充三角形（线宽 > 1 的实体由三角形拼接而成，走 TRIANGLELIST 场景缓冲）
