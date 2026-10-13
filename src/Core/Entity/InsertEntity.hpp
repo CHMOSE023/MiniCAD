@@ -2,9 +2,11 @@
 #include "Entity.hpp"
 #include "BlockEntity.hpp"
 #include "AttribEntity.hpp"
+#include "Core/Draw/ClipDrawSink.hpp"
 #include "Core/Draw/TransformDrawSink.hpp"
 #include "Core/Math/Mat4.hpp"
 #include "Core/Math/OCS.hpp"
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -64,6 +66,12 @@ namespace MiniCAD
         void AddAttrib(std::unique_ptr<AttribEntity> a) { if (a) m_attribs.push_back(std::move(a)); }
         const std::vector<std::unique_ptr<AttribEntity>>& GetAttribs() const { return m_attribs; }
 
+        // ── 裁剪边界（XCLIP）────────────────────────────────────────────────
+        // 块坐标系（与块内实体相同，未减基点）中的闭合多边形，只显示块内落在其中的部分；空 = 不裁剪
+        void SetClipBoundary(std::vector<Math::Point3> polygon) { m_clip = std::move(polygon); }
+        const std::vector<Math::Point3>& GetClipBoundary() const { return m_clip; }
+        bool HasClipBoundary() const { return m_clip.size() >= 3; }
+
         // 块/继承属性变更后需重建展开缓存时调用(SetBlock 已自动置位)。
         void MarkResolveDirty() { m_resolvedDirty = true; }
 
@@ -103,8 +111,21 @@ namespace MiniCAD
             AABB box = AABB::Empty();
             if (!m_block) return box;
 
-            const AABB local = m_block->GetBoundingBox();
+            AABB local = m_block->GetBoundingBox();
             if (local.Min.x > local.Max.x) return box;   // 空块：变换 ±∞ 角点会得到 NaN
+            if (HasClipBoundary())
+            {
+                // 与裁剪边界的外包框求交
+                double x0 = m_clip[0].x, y0 = m_clip[0].y, x1 = x0, y1 = y0;
+                for (const auto& p : m_clip)
+                {
+                    x0 = std::min(x0, p.x); x1 = std::max(x1, p.x);
+                    y0 = std::min(y0, p.y); y1 = std::max(y1, p.y);
+                }
+                local.Min.x = std::max(local.Min.x, x0); local.Max.x = std::min(local.Max.x, x1);
+                local.Min.y = std::max(local.Min.y, y0); local.Max.y = std::min(local.Max.y, y1);
+                if (local.Min.x > local.Max.x || local.Min.y > local.Max.y) return box;
+            }
             // 块局部包围盒 8 角,逐单元变换后取并集。
             const Math::Point3 corners[8] = {
                 { local.Min.x, local.Min.y, local.Min.z }, { local.Max.x, local.Min.y, local.Min.z },
@@ -130,7 +151,10 @@ namespace MiniCAD
             for (int r = 0; r < m_rowCount; ++r)
                 for (int c = 0; c < m_colCount; ++c)
                 {
-                    TransformDrawSink xsink(sink, CellMatrix(c, r));
+                    TransformDrawSink tsink(sink, CellMatrix(c, r));
+                    // 有裁剪边界时子实体先在块坐标系中裁剪，再施加插入变换
+                    ClipDrawSink csink(tsink, m_clip);
+                    IDrawSink& xsink = csink.Valid() ? static_cast<IDrawSink&>(csink) : tsink;
                     // 块内设置了不可见标志（DWG 的 invisible，如被隐藏的嵌套块参照）或在关闭 / 冻结图层上的子实体不画；
                     // 0 层上的子实体已解析为插入所在的图层
                     for (const auto& e : m_resolved)
@@ -153,6 +177,7 @@ namespace MiniCAD
             e->m_rowCount   = m_rowCount;
             e->m_colSpacing = m_colSpacing;
             e->m_rowSpacing = m_rowSpacing;
+            e->m_clip       = m_clip;
             for (const auto& a : m_attribs)
                 e->m_attribs.push_back(std::unique_ptr<AttribEntity>(
                     static_cast<AttribEntity*>(a->Clone(a->GetID()).release())));
@@ -216,6 +241,7 @@ namespace MiniCAD
         double             m_rowSpacing = 0.0;
 
         std::vector<std::unique_ptr<AttribEntity>> m_attribs;
+        std::vector<Math::Point3>                  m_clip;     // 裁剪边界（块坐标系），空 = 不裁剪
 
         // 展开缓存(仅随块/继承属性变化重建)。
         mutable std::vector<std::unique_ptr<Entity>> m_resolved;

@@ -39,6 +39,7 @@
 #include "Database/CadDatabase.h"
 #include "Database/CadFileFormat.h"
 #include "Database/UnknownObjects.h"
+#include "Dwg/Read/DwgBitReader.h"
 #include "Dwg/Read/DwgReader.h"
 #include "Dwg/Write/DwgWriter.h"
 #include "Dxf/Read/DxfReader.h"
@@ -250,6 +251,90 @@ namespace MiniCAD
         public:
             Importer(const Dwg::CadDatabase& db, Scene& scene, CadSource* source)
                 : m_db(db), m_scene(scene), m_source(source) {}
+
+            // 块参照的 XCLIP 裁剪边界（扩展字典 ACAD_FILTER → SPATIAL 的 SPATIAL_FILTER），换算到块坐标系；
+            // 未裁剪、裁剪未启用或无法解析时返回空。
+            // SPATIAL_FILTER 数据：BS 点数、2RD 点（2 个点为矩形对角）、3BD 法向、3BD 原点、BS 启用、BS 前裁剪 [BD]、BS 后裁剪 [BD]、
+            // 12 BD 插入逆矩阵、12 BD 边界变换（均为 3×4 行主序）；块坐标 = 插入逆矩阵 × 边界变换 × 点。
+            // 前后裁剪平面与反向裁剪（R2015 起）不处理
+            std::vector<Math::Point3> ReadClipBoundary(const Dwg::Entity& insert) const
+            {
+                auto entry = [&](Dwg::Handle dict, std::string_view name) -> Dwg::Handle {
+                    const auto* d = m_db.FindAs<Dwg::CadDictionary>(dict);
+                    if (!d) return Dwg::kNullHandle;
+                    for (std::size_t i = 0; i < d->EntryNames.size() && i < d->EntryHandles.size(); ++i)
+                        if (d->EntryNames[i] == name) return d->EntryHandles[i];
+                    return Dwg::kNullHandle;
+                };
+                if (insert.XDictionaryHandle == Dwg::kNullHandle) return {};
+                const auto* filter = m_db.FindAs<Dwg::UnknownObject>(entry(entry(insert.XDictionaryHandle, "ACAD_FILTER"), "SPATIAL"));
+                if (!filter || filter->Raw.DxfName != "SPATIAL_FILTER") return {};
+
+                std::vector<Dwg::XY> points;
+                bool enabled = false;
+                std::vector<double> matrices;   // 插入逆矩阵 + 边界变换，共 24 个
+                const auto& raw = filter->Raw;
+                if (raw.Dwg.Version != Dwg::CadVersion::Unknown && !raw.Dwg.Main.empty())
+                {
+                    Dwg::DwgBitReader r(raw.Dwg.Main, raw.Dwg.Version, Dwg::Codec::CodePage::Gbk);
+                    const int count = r.ReadBitShort();
+                    if (count < 2 || count > 100000) return {};
+                    for (int i = 0; i < count; ++i) points.push_back(r.Read2RawDouble());
+                    r.Read3BitDouble();
+                    r.Read3BitDouble();
+                    enabled = r.ReadBitShort() != 0;
+                    if (r.ReadBitShort() != 0) r.ReadBitDouble();
+                    if (r.ReadBitShort() != 0) r.ReadBitDouble();
+                    for (int i = 0; i < 24; ++i) matrices.push_back(r.ReadBitDouble());
+                    if (r.PositionInBits() > raw.Dwg.MainBits) return {};
+                }
+                else if (raw.Dxf.Version != Dwg::CadVersion::Unknown)
+                {
+                    bool front = false;
+                    for (const auto& g : raw.Dxf.Groups)
+                        switch (g.Code)
+                        {
+                        case 10:
+                            if (g.Value.Is<Dwg::XYZ>()) { const auto p = g.Value.AsXYZ(); points.push_back({ p.X, p.Y }); }
+                            else points.push_back({ g.Value.AsDouble(), 0.0 });
+                            break;
+                        case 20: if (!points.empty()) points.back().Y = g.Value.AsDouble(); break;
+                        case 71: enabled = g.Value.AsInt() != 0; break;
+                        case 72: front = g.Value.AsInt() != 0; break;
+                        case 40:
+                            if (front) front = false;   // 前裁剪距离
+                            else matrices.push_back(g.Value.AsDouble());
+                            break;
+                        default: break;
+                        }
+                }
+                if (!enabled || points.size() < 2 || matrices.size() != 24) return {};
+                if (points.size() == 2)
+                {
+                    const Dwg::XY a = points[0], b = points[1];
+                    points = { a, { b.X, a.Y }, b, { a.X, b.Y } };
+                }
+                // 3×4 行主序矩阵作用于点
+                auto apply = [](const double* m, double& x, double& y, double& z) {
+                    const double nx = m[0] * x + m[1] * y + m[2] * z + m[3];
+                    const double ny = m[4] * x + m[5] * y + m[6] * z + m[7];
+                    const double nz = m[8] * x + m[9] * y + m[10] * z + m[11];
+                    x = nx; y = ny; z = nz;
+                };
+                auto valid = [](const double* m) {
+                    return std::all_of(m, m + 12, [](double v) { return std::isfinite(v); }) && std::abs(m[0] * m[5] - m[1] * m[4]) > 1e-12;
+                };
+                const bool invOk = valid(matrices.data()), clipOk = valid(matrices.data() + 12);
+                std::vector<Math::Point3> result;
+                for (const auto& p : points)
+                {
+                    double x = p.X, y = p.Y, z = 0;
+                    if (clipOk) apply(matrices.data() + 12, x, y, z);
+                    if (invOk) apply(matrices.data(), x, y, z);
+                    result.push_back({ x, y, 0.0 });
+                }
+                return result;
+            }
 
             void Run()
             {
@@ -1256,6 +1341,8 @@ namespace MiniCAD
                     ins.SetRotation(e->Rotation);
                     if (e->ColumnCount > 1 || e->RowCount > 1)
                         ins.SetArray(e->ColumnCount, e->RowCount, e->ColumnSpacing, e->RowSpacing);
+                    if (auto clip = ReadClipBoundary(*e); !clip.empty())
+                        ins.SetClipBoundary(std::move(clip));
                     return ent;
                 }
 

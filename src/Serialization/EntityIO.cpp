@@ -855,6 +855,10 @@ namespace MiniCAD::EntityIO
             int32_t rows = e.GetRowCount();      s.Value("rows", rows);
             double cs = e.GetColumnSpacing();    s.Value("colSpacing", cs);
             double rs = e.GetRowSpacing();       s.Value("rowSpacing", rs);
+            if (e.HasClipBoundary())
+            {
+                auto clip = e.GetClipBoundary();  Ser::Value(s, "clip", clip);
+            }
 
             size_t n = e.GetAttribs().size();
             if (s.BeginArray("attribs", n))
@@ -891,6 +895,11 @@ namespace MiniCAD::EntityIO
             s.Value("colSpacing", cs);
             s.Value("rowSpacing", rs);
             e->SetArray(cols, rows, cs, rs);
+            if (s.Has("clip"))
+            {
+                std::vector<Point3> clip;         Ser::Value(s, "clip", clip);
+                e->SetClipBoundary(std::move(clip));
+            }
 
             size_t n = 0;
             if (s.BeginArray("attribs", n))

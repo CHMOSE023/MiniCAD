@@ -207,6 +207,52 @@ int RunExplodeTests()
         Check(sb.Lines == 1, "直接绘制块定义时同样跳过关闭图层上的子实体");
     }
 
+    // ── 块参照的裁剪边界（XCLIP）──────────────────────────────
+    {
+        struct ClipSink : IDrawSink
+        {
+            std::vector<std::pair<Math::Point3, Math::Point3>> Lines;
+            double Area = 0;
+            int    Wipes = 0;
+            void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4&, bool) override { Lines.push_back({ a, b }); }
+            void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+            {
+                Area += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
+            }
+            void Wipe(const std::vector<Math::Point3>& p) override { ++Wipes; Area += std::abs(ClipDrawSink::SignedArea(p)); }
+        };
+        // 块（基点 (100,0)）内一条横穿的线；裁剪边界为块坐标 x∈[100,104]、y∈[0,4] 的矩形，插入点 (0,0) 处
+        BlockEntity block(70, "C", { 100, 0, 0 });
+        block.AddEntity(std::make_unique<LineEntity>(71, Math::Point3{ 90, 2, 0 }, Math::Point3{ 110, 2, 0 }));
+        block.AddEntity(std::make_unique<LineEntity>(72, Math::Point3{ 90, 9, 0 }, Math::Point3{ 110, 9, 0 }));
+        InsertEntity ins(73, 70, "C", { 0, 0, 0 });
+        ins.SetBlock(&block);
+        ins.SetClipBoundary({ { 100, 0, 0 }, { 104, 0, 0 }, { 104, 4, 0 }, { 100, 4, 0 } });
+        ClipSink sink;
+        ins.Draw(sink, false, false);
+        Check(sink.Lines.size() == 1 && Near(sink.Lines[0].first.x, 0) && Near(sink.Lines[0].second.x, 4) && Near(sink.Lines[0].first.y, 2),
+              "裁剪边界：边界内的部分截断后照常变换，边界外的线不画");
+        const AABB box = ins.GetBoundingBox();
+        Check(Near(box.Min.x, 0) && Near(box.Max.x, 4) && Near(box.Max.y, 4), "裁剪边界：范围与边界求交");
+        auto copy = ins.Clone(74);
+        Check(static_cast<InsertEntity&>(*copy).GetClipBoundary().size() == 4, "裁剪边界：复制后保留");
+
+        // 凹多边形（L 形）：穿过缺口的线分成两段
+        std::vector<Math::Point3> ell = { { 0, 0, 0 }, { 10, 0, 0 }, { 10, 4, 0 }, { 4, 4, 0 }, { 4, 10, 0 }, { 0, 10, 0 } };
+        ClipSink s2;
+        ClipDrawSink clip(s2, ell);
+        clip.DrawLine({ -5, 6, 0 }, { 15, 6, 0 }, Math::Color4::White(), false);
+        clip.DrawLine({ 2, -5, 0 }, { 2, 15, 0 }, Math::Color4::White(), false);
+        Check(s2.Lines.size() == 2 && Near(s2.Lines[0].second.x, 4) && Near(s2.Lines[1].second.y, 10), "凹裁剪边界：线只保留在边界内的部分");
+        clip.FillTriangle({ -10, -10, 0 }, { 30, -10, 0 }, { -10, 30, 0 }, Math::Color4::White());
+        Check(std::abs(s2.Area - 64.0) < 4.0, "凹裁剪边界：完全覆盖边界的三角形裁剪后面积约等于边界面积 64");
+        ClipSink s3;
+        ClipDrawSink rect(s3, { { 0, 0, 0 }, { 4, 0, 0 }, { 4, 4, 0 }, { 0, 4, 0 } });
+        rect.FillTriangle({ -10, -10, 0 }, { 30, -10, 0 }, { -10, 30, 0 }, Math::Color4::White());
+        rect.Wipe({ { 2, 2, 0 }, { 8, 2, 0 }, { 8, 8, 0 }, { 2, 8, 0 } });
+        Check(std::abs(s3.Area - 16.0 - 4.0) < 1e-9 && s3.Wipes == 1, "凸裁剪边界：三角形与区域覆盖精确裁剪");
+    }
+
     // ── 不可分解 ─────────────────────────────────────────────
     {
         CircleEntity c(30, { 0, 0, 0 }, 5.0);
