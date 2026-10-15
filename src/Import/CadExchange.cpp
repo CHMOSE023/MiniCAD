@@ -14,6 +14,7 @@
 #include "Import/TchSymbol.h"
 #include "Import/TchPipe.h"
 #include "Import/TchElec.h"
+#include "Import/TchHvac.h"
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
@@ -785,7 +786,8 @@ namespace MiniCAD
                     if (Tch::DecodeMultiLeader(*unknown, leader, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildMultiLeader(leader), LookupStyle(leader.Style));
+                        const TextStyleID style = LookupStyle(leader.Style);
+                        return MakeTchGraphics(src, Tch::BuildMultiLeader(leader, TchTextRules(leader.Style, style)), style);
                     }
                     Tch::TchComposing composing;
                     if (Tch::DecodeComposing(*unknown, composing, &nativeReason))
@@ -1060,6 +1062,19 @@ namespace MiniCAD
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return MakeTchGraphics(src, Tch::BuildCableFitting(fitting, trays), TextStyleTable::StandardID, std::nullopt,
                                                LayerByName("CABLETRAY_DOTE"));
+                    }
+                    // 天正暖通：风管、风管管件（边线在自身图层，中心线、管端线在由自身图层名推出的图层）
+                    if (Tch::TchHvacDuct duct; Tch::DecodeHvacDuct(*unknown, duct, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        const auto [center, endLine] = DuctLayers(src);
+                        return MakeTchGraphics(src, Tch::BuildHvacDuct(duct), TextStyleTable::StandardID, std::nullopt, center, endLine);
+                    }
+                    if (Tch::TchHvacFitting ductFitting; Tch::DecodeHvacFitting(*unknown, ductFitting, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        const auto [center, endLine] = DuctLayers(src);
+                        return MakeTchGraphics(src, Tch::BuildHvacFitting(ductFitting), TextStyleTable::StandardID, std::nullopt, center, endLine);
                     }
                     if (Tch::TchRupture rupture; Tch::DecodeRupture(*unknown, rupture, &nativeReason))
                     {
@@ -1446,14 +1461,14 @@ namespace MiniCAD
             }
 
             // 天正标注、轴号的图元放进匿名块：线随对象的图层与颜色，文字为 7 号色（与天正 2014 分解结果一致）。
-            // Layer = 1 的图元放到对象引用的符号图层 symbolLayer（如楼梯箭头的 DIM_SYMB），颜色随层
+            // Layer = 1 的图元放到对象引用的符号图层 symbolLayer（如楼梯箭头的 DIM_SYMB），Layer = 2 的放到 secondLayer，颜色随层
             std::unique_ptr<Entity> MakeTchGraphics(const Dwg::Entity& src, const Tch::TchGraphics& g, TextStyleID textStyle,
                                                     std::optional<TextStyleID> secondStyle = std::nullopt,
-                                                    Dwg::Handle symbolLayer = Dwg::kNullHandle)
+                                                    Dwg::Handle symbolLayer = Dwg::kNullHandle, Dwg::Handle secondLayer = Dwg::kNullHandle)
             {
                 auto onLayer = [&](Entity& e, int layer) {
-                    if (layer != 1) return;
-                    const auto it = m_layers.find(symbolLayer);
+                    if (layer != 1 && layer != 2) return;
+                    const auto it = m_layers.find(layer == 1 ? symbolLayer : secondLayer);
                     if (it == m_layers.end()) return;
                     EntityAttr attr = e.GetAttr();
                     attr.LayerId = it->second;
@@ -1519,6 +1534,16 @@ namespace MiniCAD
                     block->AddEntity(std::move(text));
                 }
                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+            }
+
+            // 天正暖通风管类的中心线、管端线图层：自身图层名（如 DUCT-排烟管）去掉末尾的“管”后加“中心线”“管端线”
+            std::pair<Dwg::Handle, Dwg::Handle> DuctLayers(const Dwg::Entity& src)
+            {
+                const auto* layer = m_db.FindAs<Dwg::Layer>(src.LayerHandle);
+                if (!layer) return {Dwg::kNullHandle, Dwg::kNullHandle};
+                std::string base = layer->Name;
+                if (const std::string tail = "管"; base.ends_with(tail)) base.erase(base.size() - tail.size());
+                return {LayerByName(base + "中心线"), LayerByName(base + "管端线")};
             }
 
             // 原图中按名称找图层（如天正电气桥架中心线所在的 CABLETRAY_DOTE）；找不到时为空句柄，按对象自身的图层显示

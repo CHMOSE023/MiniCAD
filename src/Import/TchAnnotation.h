@@ -116,10 +116,12 @@ namespace MiniCAD::Tch
         std::vector<TchGraphics::Point> Targets;   // 各引线的被标注点
         std::string Upper, Lower;           // 线上、线下文字
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
+        double Gap = -1000;                 // 文字与水平线的间距（× 名义字高）；−1000 为默认
+        int    Align = 3;                   // 文字对齐：3 对齐水平线远端，1 对齐转折点一侧，2 居中（未核对）
     };
 
     // 符号基类、RC 版本、RC 箭头样式、2RD 转折点、BD 线长、RC 方向、线上 / 线下文字（文字流）、RC 点数与各点 2RD；
-    // 版本 ≥ 2：BD 箭头长；≥ 3：BD、RC、BD；≥ 4：RC、2RD；≥ 5：两个 3BD；= 6：两段文字
+    // 版本 ≥ 2：BD 箭头长；≥ 3：BD 文字间距、RC 文字对齐、BD；≥ 4：RC、2RD；≥ 5：两个 3BD；= 6：两段文字
     inline bool DecodeMultiLeader(const MiniDWG::UnknownEntity& entity, TchMultiLeader& leader, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -146,7 +148,7 @@ namespace MiniCAD::Tch
             m.Targets.push_back({x, y});
         }
         if (version > 1) m.ArrowSize = r.ReadBitDouble();
-        if (version > 2) { r.ReadBitDouble(); r.ReadByte(); r.ReadBitDouble(); }
+        if (version > 2) { m.Gap = r.ReadBitDouble(); m.Align = r.ReadByte(); r.ReadBitDouble(); }
         if (version > 3) { r.ReadByte(); r.ReadRawDouble(); r.ReadRawDouble(); }
         if (version > 4) for (int i = 0; i < 6; ++i) r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native leader fields do not consume the payload exactly");
@@ -187,9 +189,11 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 与天正 2014 分解结果核对（3 个变体）：各被标注点连线到转折点，转折点起水平线长 LineLength × 比例；
-    // 线上文字基线高 0.3 × 名义字高，线下文字基线低 1.3 × 名义字高，均与水平线末端对齐（末端内缩约 0.6 × 比例）
-    inline TchGraphics BuildMultiLeader(const TchMultiLeader& m)
+    // 与天正 2014 分解结果核对（3 个变体）：各被标注点连线到转折点，转折点起水平线长 LineLength × 比例（可为负，即朝反方向）；
+    // 文字间距 Gap（× 名义字高 n，默认 0.3）：线上文字基线高 Gap × n，线下文字基线低 (1 + Gap) × n。
+    // 水平方向按 Align 对齐在水平线远端（3）或转折点一侧（1），内缩 0.3 × n，朝线内对齐（1#楼平面图 127 个、139 户型大样的分解结果核对）。
+    // SHX 样式用天正注释符号的字宽排布；TrueType 样式（如“宋体”）同 TCH_TEXT：字高 = n × 0.75527、样式宽度因子
+    inline TchGraphics BuildMultiLeader(const TchMultiLeader& m, const TchTextStyleRule& rule = {})
     {
         TchGraphics g;
         const double s = m.Scale, nominal = m.TextHeight * s, side = m.Side == 0 ? 1.0 : -1.0;
@@ -201,9 +205,28 @@ namespace MiniCAD::Tch
         }
         const double end = m.ElbowX + side * m.LineLength * s;
         g.Lines.push_back({elbow, {end, m.ElbowY}});
-        const double anchor = end - side * 0.6 * s;
-        Detail::AddRuns(g, m.Upper, nominal, anchor, m.ElbowY + 0.3 * nominal, 0, side > 0 ? 2 : 0);
-        Detail::AddRuns(g, m.Lower, nominal, anchor, m.ElbowY - 1.3 * nominal, 0, side > 0 ? 2 : 0);
+        const double gap = m.Gap >= 0 && m.Gap < 10 ? m.Gap : 0.3;
+        const double dir = end >= m.ElbowX ? 1.0 : -1.0;        // 水平线自转折点的走向
+        const double inset = 0.3 * nominal;
+        double anchor = end - dir * inset;
+        int column = dir > 0 ? 2 : 0;                           // 0 左对齐、1 居中、2 右对齐
+        if (m.Align == 1) { anchor = m.ElbowX + dir * inset; column = dir > 0 ? 0 : 2; }
+        else if (m.Align == 2) { anchor = (m.ElbowX + end) / 2; column = 1; }
+        const double upper = m.ElbowY + gap * nominal, lower = m.ElbowY - (1 + gap) * nominal;
+        if (rule.TrueType)
+        {
+            for (const auto& [value, y] : {std::pair{m.Upper, upper}, std::pair{m.Lower, lower}})
+            {
+                if (value.empty()) continue;
+                TchText t;
+                t.X = anchor; t.Y = y; t.Height = m.TextHeight; t.Scale = s; t.Attachment = 7 + column; t.Value = value;
+                const auto part = BuildText(t, rule);
+                g.Texts.insert(g.Texts.end(), part.Texts.begin(), part.Texts.end());
+            }
+            return g;
+        }
+        Detail::AddRuns(g, m.Upper, nominal, anchor, upper, 0, column);
+        Detail::AddRuns(g, m.Lower, nominal, anchor, lower, 0, column);
         return g;
     }
     // ── TCH_COMPOSING 做法标注（CADReader TDbSymbComposing 读取函数 0x6ee920，版本 < 4 为明文分支）──

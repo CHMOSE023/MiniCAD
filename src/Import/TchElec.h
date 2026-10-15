@@ -142,11 +142,12 @@ namespace MiniCAD::Tch
         TchCableStroke Stroke;
     };
 
+    // 只读出属性表；天正暖通风管 TCH_DBHVACDUCT（TDbHvacDuct）同属 TDbPipeBase，布局相同（三张暖通图 539 个全部读通），显示规则未核对
     inline bool ReadCableTrayMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
-        if (entity.Raw.DxfName != "TCH_CABLETRY") return false;
+        if (entity.Raw.DxfName != "TCH_CABLETRY" && entity.Raw.DxfName != "TCH_DBHVACDUCT") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cable tray");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -179,6 +180,7 @@ namespace MiniCAD::Tch
 
     inline bool DecodeCableTray(const MiniDWG::UnknownEntity& entity, TchCableTray& tray, std::string* diagnostic = nullptr)
     {
+        if (entity.Raw.DxfName != "TCH_CABLETRY") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         TchXDataMap map;
         TchBase base;
@@ -211,7 +213,7 @@ namespace MiniCAD::Tch
     }
 
     // ── TCH_EFITTING 桥架配件（TDbEFitting → TDbFittingBase → TDbInterfacesObj）──
-    // TDbFittingBase：BS 版本；版本 1：软指针、属性表、两个 BL（样例均为 0）；之后 TDbEFitting 的 BS 版本。
+    // TDbFittingBase：BS 版本；版本 1：软指针、属性表、两个 BL 列表计数（元素在句柄流）；之后 TDbEFitting 的 BS 版本。
     // 属性表：Mid 中心线交点，B 宽度，Corner 非 0 时内角为圆弧（90° 弯通、三通、四通），IdCNT1～4 所接桥架；按类型：
     // 弯通（有 Elbow）：MajBr / MinBr 两支方向，L 每支长度，Elbow 1 为 90° 弯通、2 为 45° 弯通；
     // 三通（有 Tee）：MajBr 主路方向，MinBr 支路方向，L1 主路全长，L2 / 2 为内角切点到 Mid 的距离；
@@ -229,12 +231,12 @@ namespace MiniCAD::Tch
         MiniDWG::Handle Connected[2] = {MiniDWG::kNullHandle, MiniDWG::kNullHandle};
     };
 
-    // 只读出属性表（诊断工具也用它打印属性）
+    // 只读出属性表（诊断工具也用它打印属性）；天正暖通风管管件 TCH_DBHFITTING（TDbHvacFitting）同属 TDbFittingBase
     inline bool ReadCableFittingMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
-        if (entity.Raw.DxfName != "TCH_EFITTING") return false;
+        if (entity.Raw.DxfName != "TCH_EFITTING" && entity.Raw.DxfName != "TCH_DBHFITTING") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cable tray fitting");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -246,15 +248,19 @@ namespace MiniCAD::Tch
         if (r.ReadBitShort() != 1) return fail("unsupported cable tray fitting version");
         ++handles;                                                  // 软指针
         if (!Detail::ReadXDataMap(r, *text, map, handles)) return fail("invalid cable tray fitting property map");
-        if (r.ReadBitLong() != 0 || r.ReadBitLong() != 0) return fail("unsupported cable tray fitting lists");
+        // 两个列表的元素都在句柄流中（排在属性表的句柄之后），主数据流只有计数（CK-T 暖通平面图 10 个风管管件核对：计数非 0 时也恰好读完）
+        const int list1 = r.ReadBitLong(), list2 = r.ReadBitLong();
         if (r.ReadBitShort() > 1) return fail("unsupported cable tray fitting class version");
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native cable tray fitting fields do not consume the payload exactly");
+        if (r.Failed() || r.PositionInBits() != data.MainBits)
+            return fail(("native cable tray fitting fields do not consume the payload exactly (lists " + std::to_string(list1) + ", " +
+                         std::to_string(list2) + ", bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits) + ")").c_str());
         if (baseOut) *baseOut = base;
         return true;
     }
 
     inline bool DecodeCableFitting(const MiniDWG::UnknownEntity& entity, TchCableFitting& fitting, std::string* diagnostic = nullptr)
     {
+        if (entity.Raw.DxfName != "TCH_EFITTING") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         TchXDataMap map;
         TchBase base;
