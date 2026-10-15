@@ -51,7 +51,12 @@ namespace
         int ExtraAllowed = 0;
     };
 
+    // 期望数据含项目信息，不入库（.gitignore）；本地没有时跳过几何比对
+#if __has_include("TchGeometryRef.inc")
 #include "TchGeometryRef.inc"
+#else
+    const std::vector<RefObject> kRefObjects;
+#endif
 
     // 天正显示为空、但必须恢复（生成空的显示块，不再报“已跳过”）的对象：天正 2014 分解结果为空
     struct EmptyObject { const char* File; unsigned long long Handle; const char* Why; };

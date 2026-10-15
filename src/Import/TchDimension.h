@@ -328,6 +328,7 @@ namespace MiniCAD::Tch
         std::vector<Triangle> Arrows;
         std::vector<Path>     Paths;
         std::vector<Text>     Texts;
+        int LineColor = 256;        // Lines 的 ACI 颜色，256 为随层（天正给排水井标注的引线固定为 6 号色）
     };
 
     namespace Detail

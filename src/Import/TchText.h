@@ -8,6 +8,30 @@
 
 namespace MiniCAD::Tch
 {
+    // 天正文字的样式规则（由 CadExchange 按原图样式判断后传入）。
+    // 天正在文字样式上挂 _TCH 扩展数据（两个 1040：a、b）：SHX 样式的西文字高 = a × 名义字高，宽度因子 = 样式宽度 × b / a，
+    // 天正排布的西文步进随 b 等比（以 b = 0.6 时的标定值为准），汉字字高与步进不变；没有扩展数据时按 (1, 1)。
+    // 核对：_TCH_DIM (0.85, 0.6) 即原先写死的 0.85、0.6 / 0.85；139 户型图 _TCH_DIM (0.8, 0.6)、宽 0.7 → 西文字高 0.8、宽 0.525、步进 × 0.7；
+    // 同图 Standard（simplex、宽 0.7、无扩展数据）→ 字高 1.0、宽 0.7、西文步进 0.6667 × 名义字高；
+    // 总图 _TWT_SERIAL (1, 0.8)、宽 0.6 → 字高 1.0、宽 0.48；14#~16#楼 (0.7, 0.7)、宽 0.7 → 字高 0.7、宽 0.7。
+    // 汉字字高：大字体 gbcbig 为 0.96454 × 名义字高；hztxt 为 1.0（139 户型图 _TWT_PIPEDN、_TWT_DIM 的分解结果核对）。
+    // TrueType 样式不受影响：字高 × 0.75527、宽度用样式自身的
+    struct TchTextStyleRule
+    {
+        bool   TrueType = false;
+        bool   SymbolFont = false;                      // SHX 主字体不是 gbenor / gbeitc（如 simplex）：天正按注释符号的方式排布
+        double StyleWidth = 1.0;
+        double AsciiHeight = 1.0, AsciiWidth = 1.0;     // _TCH 扩展数据的 a、b
+        double WideHeight = 0.96454;                    // SHX 样式的汉字字高（× 名义字高），随大字体
+
+        bool Symbol() const { return SymbolFont && !TrueType; }
+        double HeightFactor() const { return TrueType ? 0.75527 : AsciiHeight; }
+        double WidthFactor() const { return TrueType ? 0.0 : StyleWidth * AsciiWidth / AsciiHeight; }   // 0：用样式自身的
+        // 西文段的宽度因子：(1, 1) 时为 0（用样式自身的）
+        double AsciiWidthFactor() const { return TrueType || (AsciiHeight == 1.0 && AsciiWidth == 1.0) ? 0.0 : WidthFactor(); }
+        double AsciiStep() const { return AsciiWidth / 0.6; }  // 西文步进相对 b = 0.6 标定值的倍数
+    };
+
     // TCH_TEXT 天正单行文字（CADReader TDbText 读取函数 0x6f4070，版本 < 3 为明文分支）
     struct TchText
     {
@@ -29,7 +53,9 @@ namespace MiniCAD::Tch
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
-        const bool multiline = entity.Raw.DxfName == "TCH_MTEXT";
+        // TCH_MTEXTNEW（天正给排水，TDbMTextNew::dwgInFields）：TDbMText 之后再 B、2 × BD，显示同 TCH_MTEXT
+        const bool multilineNew = entity.Raw.DxfName == "TCH_MTEXTNEW";
+        const bool multiline = entity.Raw.DxfName == "TCH_MTEXT" || multilineNew;
         if (entity.Raw.DxfName != "TCH_TEXT" && !multiline) return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
@@ -54,6 +80,11 @@ namespace MiniCAD::Tch
             t.Multiline = true;
             t.BoxWidth = r.ReadBitDouble();
             t.LineSpacing = r.ReadBitDouble();
+            if (multilineNew)
+            {
+                r.ReadBit();
+                r.ReadBitDouble(); r.ReadBitDouble();
+            }
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native text fields do not consume the payload exactly");
@@ -67,6 +98,15 @@ namespace MiniCAD::Tch
         for (int i = 0; i < base.TextCount; ++i) stream.Next();
         t.Value = stream.Next();
         if (stream.Reader.Failed()) return fail("native text stream is incomplete");
+        // TCH_MTEXTNEW 的正文夹有格式码 $|字高|0$（139 户型水施图的说明为 $|3.6|0$），不显示；字高变化不处理
+        if (multilineNew)
+            for (std::size_t at = t.Value.find("$|"); at != std::string::npos; at = t.Value.find("$|", at))
+            {
+                const std::size_t end = t.Value.find('$', at + 2);
+                if (end == std::string::npos) break;
+                if (t.Value.find_first_not_of("0123456789.|-", at + 2) == end) t.Value.erase(at, end + 1 - at);
+                else at += 2;
+            }
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         t.Style = handles.ReadHandle(entity.ObjectHandle);
@@ -76,25 +116,27 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // SHX 样式：天正 2014 分解为西文、汉字交替的 TEXT：西文字高 = 名义字高 × 比例（样式自身宽度因子），汉字 × 0.96454，颜色随层。
+    // SHX 样式：天正 2014 分解为西文、汉字交替的 TEXT：西文字高 = 名义字高 × 比例（样式自身宽度因子），汉字 × 0.96454（随大字体），颜色随层。
     // 左下对齐时各段从插入点起首尾相接；其他对齐方式只有纯西文或纯汉字时按附着点显示，混排时按水平对齐近似。
     // TrueType 样式（trueType，如“宋体”）：字高 = 名义字高 × 0.75527，用样式宽度因子；天正排布的步进汉字 = 字高、西文 = 0.5 × 字高
     //（宋体宽度因子 0.7 时与字形步进一致；8#楼封面目录的天正显示与分解结果核对）。
     // 混排时各段按附着点的水平、竖直位置排布（竖直：上 / 中按字高下移）
-    // symbolFont：SHX 主字体不是 gbenor / gbeitc（如 _TCH_DIM、_TCH_WINDOW 的 simplex）时，西文按注释符号的规则显示：
-    // 字高 0.85 × 名义字高、宽度因子 = 样式宽度因子 × 0.6 / 0.85（styleWidth 为样式宽度因子；8#楼立剖面、详图的分解结果核对）
-    inline TchGraphics BuildText(const TchText& t, bool trueType = false, bool symbolFont = false, double styleWidth = 1.0)
+    // SHX 样式的西文字高、宽度因子按样式的 _TCH 扩展数据（TchTextStyleRule）；符号字体（如 _TCH_DIM、_TCH_WINDOW 的 simplex）
+    // 按注释符号的方式排布（8#楼立剖面、详图，139 户型图的分解结果核对）
+    inline TchGraphics BuildText(const TchText& t, const TchTextStyleRule& rule = {})
     {
         TchGraphics g;
         const double nominal = t.Height * t.Scale;
         bool ascii = false, wide = false;
         for (unsigned char c : t.Value) (c >= 0x80 ? wide : ascii) = true;
+        const bool trueType = rule.TrueType;
+        const double styleWidth = rule.StyleWidth;
         const double h = trueType ? nominal * 0.75527 : nominal;
-        const bool symbol = symbolFont && !trueType;
-        const double asciiScale = symbol ? 0.85 : 1.0, asciiWidth = symbol ? styleWidth * 0.6 / 0.85 : 0.0;
+        const bool symbol = rule.Symbol();
+        const double asciiScale = rule.HeightFactor(), asciiWidth = rule.AsciiWidthFactor();
         if (!(ascii && wide))
         {
-            g.Texts.push_back({{t.X, t.Y}, trueType ? h : nominal * (wide ? 0.96454 : asciiScale), t.Rotation, t.Value, t.Attachment, 0, 0,
+            g.Texts.push_back({{t.X, t.Y}, trueType ? h : nominal * (wide ? rule.WideHeight : asciiScale), t.Rotation, t.Value, t.Attachment, 0, 0,
                                0, wide ? 0.0 : asciiWidth});
             return g;
         }
@@ -106,8 +148,10 @@ namespace MiniCAD::Tch
         if (!trueType)
         {
             // 天正排布步进：符号字体为西文 0.5714、汉字 0.69 × 名义字高，均乘样式宽度因子（8#楼详图的窗号、标高说明核对）
-            if (symbol) Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.5714 * styleWidth, 0.69 * styleWidth, true);
-            else Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.604);
+            if (symbol)
+                Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.5714 * styleWidth * rule.AsciiStep(),
+                                0.69 * styleWidth, true, rule.WideHeight);
+            else Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.604, 0.69, false, rule.WideHeight);
             return g;
         }
         struct Run { std::string Value; bool Wide; double Width; };
@@ -136,18 +180,20 @@ namespace MiniCAD::Tch
 
     // TCH_MTEXT：插入点为左上角，按换行宽度（BoxWidth × 比例）与原文换行折行，左对齐。
     // 第一行基线在插入点下一个名义字高，行距 = 名义字高 × (LineSpacing − 0.2)。
-    // 符号字体（SHX 主字体不是 gbenor / gbeitc）按天正多行文字的实际排布：西文每字步进 = simplex 字宽 × 名义字高 × 样式宽度因子 × 0.8，
-    // 汉字 = 名义字高 × 样式宽度因子 × 0.70213，字高与宽度因子同单行文字的符号字体规则；其他字体用单行文字的天正步进，每行交给 BuildText。
+    // 符号字体（SHX 主字体不是 gbenor / gbeitc）按天正多行文字的实际排布：西文每字步进 = simplex 字宽 × 名义字高 × 样式宽度因子 × 0.8
+    //（× b / 0.6，见 TchTextStyleRule），汉字 = 名义字高 × 样式宽度因子 × 0.70213，字高与宽度因子同单行文字；其他字体用单行文字的天正步进，每行交给 BuildText。
     // 折行（与 8#楼平面小说明 43 行的分解结果逐行一致）：连续的西文字符为一个词，整词放得下才放；汉字只要字的中点不超出行宽就放；
     // 避头标点（句号、逗号、右括号等）放不下时连同前一个字移到下一行；原文换行后紧跟避头标点时，该换行不生效。
     // 天正符号 ^1（钢筋符号，形如 Φ）：宽 = 名义字高 × 宽度因子，圆半径 0.21 × 名义字高、圆心高 0.5 × 名义字高，竖线自基线到 0.95 × 名义字高
-    inline TchGraphics BuildMultilineText(const TchText& t, bool trueType = false, bool symbolFont = false, double styleWidth = 1.0)
+    inline TchGraphics BuildMultilineText(const TchText& t, const TchTextStyleRule& rule = {})
     {
+        const bool trueType = rule.TrueType;
+        const double styleWidth = rule.StyleWidth;
         TchGraphics g;
         const double nominal = t.Height * t.Scale;
         const double width = t.BoxWidth * t.Scale;
         const double pitch = nominal * std::max(1.0, t.LineSpacing - 0.2);
-        const bool symbol = symbolFont && !trueType;
+        const bool symbol = rule.Symbol();
         auto isRebar = [](const std::string& u) { return u == "^1"; };
         auto isNewline = [](const std::string& u) { return u == "\n"; };
         // 一个字符（或控制码、符号）的步进
@@ -158,7 +204,7 @@ namespace MiniCAD::Tch
             {
                 if (ch >= 0x80) return 0.70213 * styleWidth * nominal;
                 const std::string shown = unit.size() > 1 && unit[0] == '%' ? std::string("%") : unit;    // 控制码按一个字符
-                return Detail::DisplayExtent("simplex", shown).Width * 0.8 * styleWidth * nominal;
+                return Detail::DisplayExtent("simplex", shown).Width * 0.8 * styleWidth * rule.AsciiStep() * nominal;
             }
             const double wide = (trueType ? 0.75527 : 0.69) * nominal, ascii = (trueType ? 0.5 * 0.75527 : 0.604) * nominal;
             return ch >= 0x80 ? wide : (ch == '.' || ch == ',') ? 0.2 * ascii : ascii;
@@ -249,8 +295,8 @@ namespace MiniCAD::Tch
                 if (run.find_first_not_of(' ') != std::string::npos)
                 {
                     if (symbol)
-                        g.Texts.push_back({at(runStart, 0), runWide ? 0.96454 * nominal : 0.85 * nominal, t.Rotation, run, 7, 0, 0, 0,
-                                           runWide ? 0.0 : styleWidth * 0.6 / 0.85});
+                        g.Texts.push_back({at(runStart, 0), runWide ? rule.WideHeight * nominal : rule.HeightFactor() * nominal, t.Rotation, run, 7, 0, 0, 0,
+                                           runWide ? 0.0 : rule.AsciiWidthFactor()});
                     else
                     {
                         TchText one = t;
@@ -260,7 +306,7 @@ namespace MiniCAD::Tch
                         const auto p = at(runStart, 0);
                         one.X = p.X;
                         one.Y = p.Y;
-                        TchGraphics part = BuildText(one, trueType, symbolFont, styleWidth);
+                        TchGraphics part = BuildText(one, rule);
                         g.Texts.insert(g.Texts.end(), part.Texts.begin(), part.Texts.end());
                     }
                 }

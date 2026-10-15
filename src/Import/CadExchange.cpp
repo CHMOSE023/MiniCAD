@@ -12,6 +12,7 @@
 #include "Import/TchShape.h"
 #include "Import/TchMultiStair.h"
 #include "Import/TchSymbol.h"
+#include "Import/TchPipe.h"
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
@@ -1005,16 +1006,40 @@ namespace MiniCAD
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
                         const TextStyleID textStyle = LookupStyle(tchText.Style);
-                        const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(textStyle);
-                        const bool trueType = !rec.IsShx();
-                        // 西文显示规则按原图样式的字体判断（场景中同名的 Standard 是 MiniCAD 自己的设置）
-                        const auto* dwgStyle = m_db.FindAs<Dwg::TextStyle>(tchText.Style);
-                        std::string font;
-                        for (char ch : dwgStyle ? dwgStyle->Filename : rec.FontFile) font.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-                        const bool symbolFont = !font.starts_with("gbenor") && !font.starts_with("gbeitc");
-                        const double styleWidth = dwgStyle && dwgStyle->Width > 0 ? dwgStyle->Width : rec.WidthFactor > 0 ? rec.WidthFactor : 1.0;
-                        return MakeTchGraphics(src, tchText.Multiline ? Tch::BuildMultilineText(tchText, trueType, symbolFont, styleWidth)
-                                                                      : Tch::BuildText(tchText, trueType, symbolFont, styleWidth), textStyle);
+                        const auto rules = TchTextRules(tchText.Style, textStyle);
+                        return MakeTchGraphics(src, tchText.Multiline ? Tch::BuildMultilineText(tchText, rules)
+                                                                      : Tch::BuildText(tchText, rules), textStyle);
+                    }
+                    // 天正给排水：管线、管件、设备、阀门、井（代理图形都是空的，按私有布局与天正给排水的分解结果显示）
+                    Tch::TchPipe pipe;
+                    if (Tch::DecodePipe(*unknown, pipe, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        if (pipe.Width > 0)                         // 双线管
+                            return MakeTchGraphics(src, Tch::BuildDoubleLinePipe(pipe), TextStyleTable::StandardID, std::nullopt, pipe.CenterLayer);
+                        const TextStyleID labelStyle = LookupStyle(pipe.LabelStyle);
+                        const auto rules = TchTextRules(pipe.LabelStyle, labelStyle);
+                        return MakeTchGraphics(src, Tch::BuildPipe(pipe, rules), labelStyle,
+                                               std::nullopt, pipe.LabelLayer);
+                    }
+                    if (Tch::DecodePipeFitting(*unknown, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return nullptr;                             // 管件不显示（分解结果为空）
+                    }
+                    Tch::TchPipeBlock pipeBlock;
+                    if (Tch::DecodeEquipment(*unknown, pipeBlock, &nativeReason) || Tch::DecodePipeValve(*unknown, pipeBlock, &nativeReason))
+                    {
+                        if (auto converted = ConvertPipeBlock(src, pipeBlock, nativeReason))
+                        {
+                            ++m_tchConverted[unknown->Raw.DxfName];
+                            return converted;
+                        }
+                    }
+                    if (auto converted = ConvertPipeAnnotation(src, *unknown, nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return converted;
                     }
                     Tch::TchPathArray pathArray;
                     if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
@@ -1418,7 +1443,16 @@ namespace MiniCAD
                 auto* block = m_scene.GetBlockTable().Find(blockId);
                 block->SetFlags(BlockEntity::Anonymous);
                 for (const auto& l : g.Lines)
-                    block->AddEntity(Make<LineEntity>(src, nullptr, pt(l.A), pt(l.B)));
+                {
+                    auto line = Make<LineEntity>(src, nullptr, pt(l.A), pt(l.B));
+                    if (g.LineColor != 256)
+                    {
+                        EntityAttr attr = line->GetAttr();
+                        attr.Color = EntityColor::FromAci(static_cast<std::uint16_t>(g.LineColor));
+                        line->SetAttr(attr);
+                    }
+                    block->AddEntity(std::move(line));
+                }
                 for (const auto& t : g.Ticks)
                 {
                     auto tick = Make<PolylineEntity>(src, nullptr, std::vector<Math::Point3>{pt(t.A), pt(t.B)});
@@ -1454,11 +1488,133 @@ namespace MiniCAD
                     mt.SetAttachment(static_cast<MTextAttachment>(t.Attachment));
                     onLayer(mt, t.Layer);
                     EntityAttr attr = mt.GetAttr();
-                    attr.Color = t.Color == 0 ? EntityColor::ByBlock() : EntityColor::FromAci(static_cast<std::uint16_t>(t.Color));
+                    attr.Color = t.Color == 0 ? EntityColor::ByBlock() : t.Color == 256 ? EntityColor::ByLayer()
+                                                                     : EntityColor::FromAci(static_cast<std::uint16_t>(t.Color));
                     mt.SetAttr(attr);
                     block->AddEntity(std::move(text));
                 }
                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+            }
+
+            // 天正文字（TCH_TEXT 与给排水的标注）的显示规则，按原图样式的字体与 _TCH 扩展数据判断（场景中同名的 Standard 是 MiniCAD 自己的设置）
+            Tch::TchTextStyleRule TchTextRules(Dwg::Handle styleHandle, TextStyleID textStyle)
+            {
+                const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(textStyle);
+                const auto* dwgStyle = m_db.FindAs<Dwg::TextStyle>(styleHandle);
+                std::string font;
+                for (char ch : dwgStyle ? dwgStyle->Filename : rec.FontFile) font.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+                Tch::TchTextStyleRule rule;
+                rule.TrueType = !rec.IsShx();
+                rule.SymbolFont = !font.starts_with("gbenor") && !font.starts_with("gbeitc");
+                rule.StyleWidth = dwgStyle && dwgStyle->Width > 0 ? dwgStyle->Width : rec.WidthFactor > 0 ? rec.WidthFactor : 1.0;
+                std::string bigFont;
+                for (char ch : dwgStyle ? dwgStyle->BigFontFilename : std::string()) bigFont.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+                if (bigFont.starts_with("hztxt")) rule.WideHeight = 1.0;
+                // 样式上 _TCH 扩展数据的前两个实数：西文字高比例、西文宽度比例
+                if (dwgStyle)
+                    for (const auto& x : dwgStyle->ExtendedDataList)
+                    {
+                        const auto* app = m_db.FindAs<Dwg::AppId>(x.AppIdHandle);
+                        if (!app || app->Name != "_TCH") continue;
+                        std::vector<double> reals;
+                        for (const auto& r : x.Records)
+                            if (const auto* v = std::get_if<double>(&r.Value); v && r.Code == 1040) reals.push_back(*v);
+                        if (reals.size() >= 2 && reals[0] > 0 && reals[1] > 0 && reals[0] < 10 && reals[1] < 10)
+                        {
+                            rule.AsciiHeight = reals[0];
+                            rule.AsciiWidth = reals[1];
+                        }
+                    }
+                return rule;
+            }
+
+            // 天正给排水的标注类（管线文字、立管标注、井标注、多管标注）与法兰；不是这些类型时返回空且不改 reason
+            std::unique_ptr<Entity> ConvertPipeAnnotation(const Dwg::Entity& src, const Dwg::UnknownEntity& unknown, std::string& reason)
+            {
+                auto rule = [&](Dwg::Handle style, TextStyleID id) { return TchTextRules(style, id); };
+                auto pipeAt = [&](Dwg::Handle h, Tch::TchPipe& pipe) {
+                    const auto* e = m_db.FindAs<Dwg::UnknownEntity>(h);
+                    return e != nullptr && Tch::DecodePipe(*e, pipe);
+                };
+                if (Tch::TchPipeText t; Tch::DecodePipeText(unknown, t, &reason))
+                {
+                    const TextStyleID style = LookupStyle(t.Style);
+                    return MakeTchGraphics(src, Tch::BuildPipeText(t, rule(t.Style, style)), style);
+                }
+                if (Tch::TchVPipeDim d; Tch::DecodeVPipeDim(unknown, d, &reason))
+                {
+                    const TextStyleID style = LookupStyle(d.Style);
+                    return MakeTchGraphics(src, Tch::BuildVPipeDim(d, rule(d.Style, style)), style);
+                }
+                if (Tch::TchWellDim d; Tch::DecodeWellDim(unknown, d, &reason))
+                {
+                    const auto* wellEntity = m_db.FindAs<Dwg::UnknownEntity>(d.Well);
+                    Tch::TchPipeBlock well;
+                    if (!wellEntity || !Tch::DecodeEquipment(*wellEntity, well) || wellEntity->Raw.DxfName != "TCH_WELL")
+                    {
+                        reason = "well dimension target well is missing";
+                        return nullptr;
+                    }
+                    const TextStyleID style = LookupStyle(d.Style);
+                    return MakeTchGraphics(src, Tch::BuildWellDim(d, well.WellGround, well.WellInvert, rule(d.Style, style)), style);
+                }
+                if (Tch::TchPipeMultDim d; Tch::DecodePipeMultDim(unknown, d, &reason))
+                {
+                    const double len = std::hypot(d.P2.X - d.P1.X, d.P2.Y - d.P1.Y);
+                    const double ux = (d.P2.X - d.P1.X) / len, uy = (d.P2.Y - d.P1.Y) / len;
+                    std::vector<std::string> labels;
+                    std::vector<std::optional<Tch::TchGraphics::Point>> crossings;
+                    for (const Dwg::Handle h : d.Pipes)
+                    {
+                        Tch::TchPipe pipe;
+                        if (!pipeAt(h, pipe)) continue;
+                        char number[32];
+                        std::snprintf(number, sizeof number, "%g", pipe.Diameter);
+                        labels.push_back(pipe.LabelPrefix + number + pipe.LabelSuffix);
+                        crossings.push_back(Tch::PipeCrossing(pipe, d.P1, ux, uy));
+                    }
+                    const TextStyleID style = LookupStyle(d.Style);
+                    return MakeTchGraphics(src, Tch::BuildPipeMultDim(d, labels, crossings, rule(d.Style, style)), style);
+                }
+                if (Tch::TchFlange f; Tch::DecodeFlange(unknown, f, &reason))
+                {
+                    // 管宽与中心线图层取自所连的双线管
+                    Tch::TchPipe pipe;
+                    for (const Dwg::Handle h : f.Pipes)
+                        if (pipeAt(h, pipe) && pipe.Width > 0) break;
+                    return MakeTchGraphics(src, Tch::BuildFlange(f, pipe.Width), TextStyleTable::StandardID, std::nullopt, pipe.CenterLayer);
+                }
+                return nullptr;
+            }
+
+            // 天正给排水的设备、阀门、井：所引用图块的一个块参照，块内图层 0 的图元随对象图层
+            std::unique_ptr<Entity> ConvertPipeBlock(const Dwg::Entity& src, const Tch::TchPipeBlock& b, std::string& reason)
+            {
+                for (const Dwg::Handle h : b.Blocks)
+                {
+                    const auto* rec = m_db.FindAs<Dwg::BlockRecord>(h);
+                    if (!rec) continue;
+                    FillBlock(*rec);                                // 图块可能排在所在块之后
+                    const auto it = m_blocks.find(h);
+                    const auto* def = it == m_blocks.end() ? nullptr : m_scene.GetBlockTable().Find(it->second);
+                    if (!def) continue;
+                    auto unit = Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(it->second), def->GetName(),
+                                                   Math::Point3{b.X, b.Y, 0});
+                    auto& insert = static_cast<InsertEntity&>(*unit);
+                    insert.SetScale({b.ScaleX, b.ScaleY, std::abs(b.ScaleX)});
+                    insert.SetRotation(b.Rotation);
+                    m_scene.ResolveInsert(insert);
+                    // 与其他天正对象一致，放进以对象句柄命名的匿名块
+                    std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
+                    while (m_scene.GetBlockTable().Get(name)) name += "_";
+                    const auto blockId = m_scene.GetBlockTable().Create(name);
+                    auto* group = m_scene.GetBlockTable().Find(blockId);
+                    group->SetFlags(BlockEntity::Anonymous);
+                    group->AddEntity(std::move(unit));
+                    return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+                }
+                reason = "pipe object block is missing";
+                return nullptr;
             }
 
             // 线图案：每个单元是图案块的一个块参照（缩放不等时块内圆弧显示为椭圆弧，与天正分解结果相同），合成一个匿名块

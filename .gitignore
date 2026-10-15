@@ -13,3 +13,5 @@ __pycache__/
 docs
 tools
 tests/Data
+tests/Core/*.py
+tests/Core/*.inc

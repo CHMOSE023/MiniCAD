@@ -698,7 +698,7 @@ namespace MiniCAD::Tch
         // 注释符号为 0.85、0.6 / 0.85、0.5714，天正单行文字为 1、0（样式）、0.604
         inline void AddRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int align,
                             int color = 7, int layer = 0, int style = 0, double asciiScale = 0.85, double asciiWidth = 0.6 / 0.85,
-                            double tzAscii = 0.5714, double tzWide = 0.69, bool tianzhengAdvance = false)
+                            double tzAscii = 0.5714, double tzWide = 0.69, bool tianzhengAdvance = false, double wideScale = 0.96454)
         {
             struct Run { std::string Value; bool Wide; double Width; double Tz = 0; };
             std::vector<Run> runs;
@@ -714,7 +714,7 @@ namespace MiniCAD::Tch
             double total = 0;
             for (auto& r : runs)
             {
-                r.Width = r.Wide ? DisplayExtent("", r.Value).Width * 0.96454 * nominal
+                r.Width = r.Wide ? DisplayExtent("", r.Value).Width * wideScale * nominal
                                  : DisplayExtent("simplex", r.Value).Width * asciiScale * (asciiWidth > 0 ? asciiWidth : 1.0) * nominal;
                 total += r.Width;
             }
@@ -749,7 +749,7 @@ namespace MiniCAD::Tch
             for (const auto& r : runs)
             {
                 if (r.Value.find_first_not_of(' ') != std::string::npos)
-                    g.Texts.push_back({{x + cursor * c, y + cursor * s}, r.Wide ? 0.96454 * nominal : asciiScale * nominal, rotation, r.Value, 7, style, color, layer,
+                    g.Texts.push_back({{x + cursor * c, y + cursor * s}, r.Wide ? wideScale * nominal : asciiScale * nominal, rotation, r.Value, 7, style, color, layer,
                                        r.Wide ? 0.0 : asciiWidth});
                 cursor += tianzhengAdvance ? r.Tz : r.Width;     // tianzhengAdvance：各段也按天正步进排布（MiniCAD 字宽与天正字体相差较大时）
             }
