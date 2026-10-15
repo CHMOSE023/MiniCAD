@@ -228,5 +228,6 @@ namespace MiniDWG::DwgRead
         bool                          m_lastDataStore = false;
         std::uint32_t                 m_objectSize = 0;
         Handle                        m_currentHandle = kNullHandle;
+        std::size_t                   m_objectsRead   = 0;     // 已读对象数（报告进度）
     };
 }

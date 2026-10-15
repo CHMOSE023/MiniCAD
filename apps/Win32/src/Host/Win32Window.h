@@ -64,6 +64,8 @@ namespace MiniCAD
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         std::string GetResourceDir() const override;
         std::string GetUserDataDir() const override;
+        void RunInBackground(std::function<void()> work, std::function<void()> done) override;
+        void Post(std::function<void()> fn) override;
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

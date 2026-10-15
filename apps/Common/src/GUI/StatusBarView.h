@@ -27,6 +27,9 @@ namespace MiniCAD
         // 点击捕捉 / 正交 / 悬停开关之后回调（宿主据此刷新工具栏、菜单的勾选状态）
         void SetOnToggled(std::function<void()> cb) { m_onToggled = std::move(cb); }
 
+        // 宿主的附加项（如读取进度），放在右侧文档数量的左边
+        MiniGUI::Node* AddRightItem(std::unique_ptr<MiniGUI::Node> item);
+
     private:
         void OpenSnapSettings();
 

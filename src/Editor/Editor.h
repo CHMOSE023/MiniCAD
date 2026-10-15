@@ -36,6 +36,7 @@ namespace MiniCAD
     class Document;
     class Entity;
     class DrawContext;
+    namespace WipeClip { class Batch; }
 
     class Editor
     {
@@ -353,7 +354,7 @@ namespace MiniCAD
         // 场景顶点流：所有实体按未选中态绘制；仅几何/图层变化时重建。
         // 拖动跟随中的实体被排除（由选中流绘制）。返回本帧是否重建。
         bool UpdateSceneVertices(double worldPerPixel, bool zoomChanged);
-        void ApplyWipes(const std::vector<std::vector<Math::Point3>>& wipes);   // 用区域覆盖裁剪已拼接的场景顶点流
+        void FlushSceneWipes(WipeClip::Batch& wipes);   // 用记录下的区域覆盖一次裁剪已拼接的场景顶点流
 
         // 选中流：选中 + 拖动中的实体，叠加绘制在场景之上。
         // 仅在选择集变化/场景重建/拖动中重建，避免选中触发全场景重建。
@@ -454,7 +455,7 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_dynOrder;
 
         void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
-        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c);
+        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
         void RebuildDynamicStream(DrawContext& ctx);
 
         // 细分临时缓冲（复用容量，避免逐实体分配）

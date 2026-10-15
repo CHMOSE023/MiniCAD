@@ -2426,11 +2426,13 @@ namespace MiniCAD
         c.images        = ctx.TakeImages();
     }
 
-    // 把一个实体的缓存按绘制序接到场景流尾部：先用它的区域覆盖裁剪此前的顶点，再追加它自己的顶点。
-    // 随视图变化的线 / 填充进动态流，其余进静态流；文字与图像总在静态流（不随缩放变化）
-    void Editor::AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c)
+    // 把一个实体的缓存按绘制序接到场景流尾部：记下它的区域覆盖（裁剪此前的顶点，由 FlushSceneWipes 一次完成），
+    // 再追加它自己的顶点。随视图变化的线 / 填充进动态流，其余进静态流；文字与图像总在静态流（不随缩放变化）
+    void Editor::AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes)
     {
-        ApplyWipes(c.wipes);
+        for (const auto& w : c.wipes)
+            wipes.Add(w, { m_sceneVertices.size(), m_sceneFillVertices.size(), m_textVertices.size(),
+                           m_sceneDynVertices.size(), m_sceneDynFillVertices.size() });
         m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
         m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
         if (c.viewDependent)
@@ -2454,6 +2456,7 @@ namespace MiniCAD
         auto& scene = m_doc->GetScene();
         m_sceneDynVertices.clear();
         m_sceneDynFillVertices.clear();
+        WipeClip::Batch wipes(2);
         for (Object::ObjectID id : m_dynOrder)
         {
             auto it = m_entityVertexCache.find(id);
@@ -2468,18 +2471,15 @@ namespace MiniCAD
             const EntityVertexCache& c = it->second;
             if (!m_sceneDynVertices.empty() || !m_sceneDynFillVertices.empty())
                 for (const auto& w : c.wipes)
-                {
-                    const WipeClip::Poly poly(w);
-                    if (!poly.Valid()) continue;
-                    WipeClip::ClipLines(m_sceneDynVertices, poly);
-                    WipeClip::ClipFills(m_sceneDynFillVertices, poly);
-                }
+                    wipes.Add(w, { m_sceneDynVertices.size(), m_sceneDynFillVertices.size() });
             if (c.viewDependent)
             {
                 m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
                 m_sceneDynFillVertices.insert(m_sceneDynFillVertices.end(), c.fills.begin(), c.fills.end());
             }
         }
+        wipes.ClipLines(m_sceneDynVertices, 0);
+        wipes.ClipFills(m_sceneDynFillVertices, 1);
         ++m_sceneDynVersion;
     }
 
@@ -2585,7 +2585,9 @@ namespace MiniCAD
 
                     EntityVertexCache c;
                     TessellateEntity(entity, ctx, c);
-                    AppendToSceneStreams(id, c);
+                    WipeClip::Batch wipes(5);
+                    AppendToSceneStreams(id, c, wipes);
+                    FlushSceneWipes(wipes);
                     m_entityVertexCache.emplace(id, std::move(c));
                 }
 
@@ -2661,8 +2663,12 @@ namespace MiniCAD
         m_sceneFillVertices.reserve(fillCount);
         m_textVertices.reserve(textCount);
         m_sceneImages.reserve(imageCount);
-        for (const auto& [id, c] : visible)
-            AppendToSceneStreams(id, *c);
+        {
+            WipeClip::Batch wipes(5);
+            for (const auto& [id, c] : visible)
+                AppendToSceneStreams(id, *c, wipes);
+            FlushSceneWipes(wipes);
+        }
 
         m_sceneExcluded = std::move(dragIds);
 
@@ -2673,19 +2679,15 @@ namespace MiniCAD
         return true;
     }
 
-    // 区域覆盖裁剪此前已拼接的静态流与动态流
-    void Editor::ApplyWipes(const std::vector<std::vector<Math::Point3>>& wipes)
+    // 用记录下的区域覆盖裁剪此前已拼接的静态流与动态流
+    void Editor::FlushSceneWipes(WipeClip::Batch& wipes)
     {
-        for (const auto& w : wipes)
-        {
-            const WipeClip::Poly poly(w);
-            if (!poly.Valid()) continue;
-            WipeClip::ClipLines(m_sceneVertices, poly);
-            WipeClip::ClipFills(m_sceneFillVertices, poly);
-            WipeClip::ClipTexts(m_textVertices, poly);
-            WipeClip::ClipLines(m_sceneDynVertices, poly);
-            WipeClip::ClipFills(m_sceneDynFillVertices, poly);
-        }
+        if (wipes.Empty()) return;
+        wipes.ClipLines(m_sceneVertices, 0);
+        wipes.ClipFills(m_sceneFillVertices, 1);
+        wipes.ClipTexts(m_textVertices, 2);
+        wipes.ClipLines(m_sceneDynVertices, 3);
+        wipes.ClipFills(m_sceneDynFillVertices, 4);
     }
 
     // 选中流：选中实体 + 拖动跟随中的实体，按选中态绘制，叠加在场景之上。

@@ -48,6 +48,7 @@
 #include "Dxf/Read/DxfReader.h"
 #include "Dxf/Write/DxfWriter.h"
 
+#include <chrono>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -213,12 +214,13 @@ namespace MiniCAD
 
         // 读入 DWG / DXF；format 为 Unknown 时按内容识别
         std::unique_ptr<Dwg::CadDatabase> ReadDatabase(const std::vector<std::uint8_t>& data, Dwg::CadFileFormat format,
-                                                       Dwg::NotificationHandler notify)
+                                                       Dwg::NotificationHandler notify, ImportProgress progress = nullptr)
         {
             if (format == Dwg::CadFileFormat::Dwg)
             {
                 Dwg::DwgReadOptions opt;
-                opt.Notify = std::move(notify);
+                opt.Notify   = std::move(notify);
+                opt.Progress = std::move(progress);
                 return Dwg::ReadDwg(data, opt);
             }
             if (format == Dwg::CadFileFormat::DxfAscii || format == Dwg::CadFileFormat::DxfBinary)
@@ -252,8 +254,8 @@ namespace MiniCAD
         class Importer
         {
         public:
-            Importer(const Dwg::CadDatabase& db, Scene& scene, CadSource* source)
-                : m_db(db), m_scene(scene), m_source(source) {}
+            Importer(const Dwg::CadDatabase& db, Scene& scene, CadSource* source, ImportProgress progress = nullptr)
+                : m_db(db), m_scene(scene), m_source(source), m_progress(std::move(progress)) {}
 
             // 块参照的 XCLIP 裁剪边界（扩展字典 ACAD_FILTER → SPATIAL 的 SPATIAL_FILTER），换算到块坐标系；
             // 未裁剪、裁剪未启用或无法解析时返回空。
@@ -349,6 +351,16 @@ namespace MiniCAD
                 if (const Dwg::BlockRecord* model = m_db.ModelSpace())
                     CollectOpenings(*model);
                 ScanObjects();
+                if (m_progress)
+                {
+                    ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec)
+                    {
+                        if (!IsLayoutBlock(rec.Name))
+                            m_progressTotal += rec.Entities.size();
+                    });
+                    if (const Dwg::BlockRecord* model = m_db.ModelSpace())
+                        m_progressTotal += model->Entities.size();
+                }
                 ImportBlocks();
                 ImportModelSpace();
                 m_scene.ResolveAllInserts();
@@ -519,7 +531,7 @@ namespace MiniCAD
                     return;
                 for (Dwg::Handle h : DrawOrder(rec))
                     if (const auto* e = m_db.FindAs<Dwg::Entity>(h))
-                        if (auto conv = Convert(*e))
+                        if (Tick(); auto conv = Convert(*e))
                         {
                             if (conv->IsKindOf<InsertEntity>())
                                 m_scene.ResolveInsert(static_cast<InsertEntity&>(*conv));
@@ -537,6 +549,7 @@ namespace MiniCAD
                     const auto* e = m_db.FindAs<Dwg::Entity>(h);
                     if (e == nullptr)
                         continue;
+                    Tick();
                     if (m_source != nullptr && IsTch(*e))
                         ++m_source->TchCount;
                     if (auto conv = Convert(*e))
@@ -1316,8 +1329,18 @@ namespace MiniCAD
                         ToPoint(e->ThirdCorner), ToPoint(e->FourthCorner), static_cast<std::uint32_t>(e->Flags));
                 }
                 if (auto* e = dynamic_cast<const Dwg::Solid*>(&src))
+                {
+                    // 角点是 OCS 坐标（Z 为标高）。SolidEntity 不处理法向，这里换到世界坐标：
+                    // 法向为 -Z 时左右镜像，不换算会画到关于 Y 轴对称的位置（远离原点的图纸会把全图范围撑得极大）
+                    if (!IsDefaultNormal(e->Normal))
+                    {
+                        const OcsMap map(e->Normal, e->FirstCorner.Z);
+                        auto P = [&](const Dwg::XYZ& p) { return map.Point(p.X, p.Y); };
+                        return Make<SolidEntity>(src, nullptr, P(e->FirstCorner), P(e->SecondCorner), P(e->FourthCorner), P(e->ThirdCorner));
+                    }
                     return Make<SolidEntity>(src, &e->Normal, ToPoint(e->FirstCorner), ToPoint(e->SecondCorner),
                                              ToPoint(e->FourthCorner), ToPoint(e->ThirdCorner));
+                }
                 if (auto* e = dynamic_cast<const Dwg::Line*>(&src))
                     return Make<LineEntity>(src, &e->Normal, ToPoint(e->StartPoint), ToPoint(e->EndPoint));
 
@@ -2137,6 +2160,15 @@ namespace MiniCAD
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
             std::map<Dwg::Handle, BlockID>     m_blocks;
+            // 转换进度：已转换 / 全部块与模型空间的实体数
+            void Tick()
+            {
+                if (m_progress && m_progressTotal > 0 && (++m_progressDone & 255) == 0)
+                    m_progress(std::min(1.0f, static_cast<float>(m_progressDone) / static_cast<float>(m_progressTotal)));
+            }
+            ImportProgress                     m_progress;
+            std::size_t                        m_progressTotal = 0;
+            std::size_t                        m_progressDone  = 0;
             std::set<Dwg::Handle>              m_filledBlocks;
             std::map<Dwg::Handle, Tch::TchOpening> m_openings;                      // 门窗句柄 → 解码结果
             std::map<Dwg::Handle, std::vector<Tch::TchOpening>> m_wallOpenings;    // 墙句柄 → 墙上的门窗
@@ -2925,7 +2957,7 @@ namespace MiniCAD
     }
 
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error, CadSaveVersion* version,
-                   std::shared_ptr<const CadSource>* source)
+                   std::shared_ptr<const CadSource>* source, const ImportProgress& progress)
     {
         auto fail = [&](const std::string& msg)
         {
@@ -2941,7 +2973,15 @@ namespace MiniCAD
         if (info.format == Dwg::CadFileFormat::Unknown)
             return fail("不是 DWG / DXF 文件");
         std::string firstError;
-        std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(data, info.format, MakeNotify(&firstError));
+        // 进度：读取占前 40%，转换占后 60%（大图纸上两者耗时大致如此）
+        auto stage = [&progress](float from, float to) -> ImportProgress
+        {
+            if (!progress) return nullptr;
+            return [&progress, from, to](float f) { progress(from + (to - from) * f); };
+        };
+        const auto t0 = std::chrono::steady_clock::now();
+        std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(data, info.format, MakeNotify(&firstError), stage(0.0f, 0.4f));
+        const auto t1 = std::chrono::steady_clock::now();
 
         if (!db)
             return fail(firstError.empty() ? "文件已损坏或版本不受支持" : firstError);
@@ -2956,7 +2996,11 @@ namespace MiniCAD
             src->Format  = info.format;
             src->Version = db->GetVersion();
         }
-        Importer(*db, scene, src.get()).Run();
+        if (progress) progress(0.4f);
+        Importer(*db, scene, src.get(), stage(0.4f, 1.0f)).Run();
+        if (progress) progress(1.0f);
+        auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+        LOG_INFO("DWG/DXF 导入：读取 %.0f ms，转换 %.0f ms", ms(t1 - t0), ms(std::chrono::steady_clock::now() - t1));
         if (source != nullptr)
             *source = std::move(src);
         return true;

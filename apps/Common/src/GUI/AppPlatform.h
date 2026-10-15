@@ -74,5 +74,18 @@ namespace MiniCAD
         virtual void OnDocumentSaved(const std::string& path) { (void)path; }   // 网页版：保存后下载到本机
         virtual std::string GetResourceDir() const = 0;     // icons/ ui/ patterns/ fonts/ 所在目录（UTF-8）
         virtual std::string GetUserDataDir() const = 0;     // 用户布局等文件的目录（UTF-8）；空串 = 不保存
+
+        // ── 后台任务 ─────────────────────────────────────────────
+        // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。
+        // work 只能访问自己的数据；可以调用 RequestRedraw 让界面刷新进度（各平台的实现都是线程安全的）。
+        // 没有线程的平台先让界面画出一帧，再在界面线程上依次执行 work 和 done
+        virtual void RunInBackground(std::function<void()> work, std::function<void()> done)
+        {
+            work();
+            done();
+        }
+        // 在界面线程上稍后执行 fn：当前消息（包括正在进行的绘制）处理完之后。
+        // 绘制过程中要改界面并重绘时用它——绘制结束会清掉绘制期间提出的重绘请求
+        virtual void Post(std::function<void()> fn) { fn(); }
     };
 }

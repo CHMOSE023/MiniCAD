@@ -63,6 +63,11 @@ namespace MiniCAD
         void Open();                              // 经文件对话框选择路径后打开
         // 加载成功才提交新文档；重复路径激活已有文档，失败详情可供界面显示。
         Document* Open(const std::string& path, std::string* error = nullptr);
+        // Open 的两步，供界面在后台线程读取：Load 只读文件、建文档，不碰文档列表、视口与编辑器，可在其他线程调用；
+        // Add 在界面线程把读好的文档加入列表并激活（外来图纸缩放到全图）
+        std::unique_ptr<Document> Load(const std::string& path, std::string* error = nullptr, const ImportProgress& progress = nullptr) const;
+        Document* Add(std::unique_ptr<Document> doc);
+        Document* FindOpen(const std::string& path) const;   // 已打开同一文件时返回该文档
         void Save();
         void SaveAs();
         void SaveAll();

@@ -22,6 +22,7 @@ namespace MiniGUI
     class Label;
     class ListView;
     class Node;
+    class ProgressBar;
     class TabView;
     class UiLayout;
     struct ViewportPointerEvent;
@@ -75,8 +76,9 @@ namespace MiniCAD
         void RenderFrame();
         void RequestExit();                     // 有未保存的文档时先询问，确认后调用 AppPlatform::Quit
         void StateChanged();                    // 文档、选择集、当前工具可能变了：刷新命令状态、标签、面板、标题
-        // 菜单、启动参数和拖放共用此入口；逐个打开，失败汇总显示，成功文档保留。
+        // 菜单、启动参数和拖放共用此入口；逐个在后台读取（状态栏显示进度），读完一个加入一个，失败汇总显示，成功文档保留。
         void OpenDrawings(const std::vector<std::string>& paths);
+        bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty(); }   // 还有图纸在读取或排队
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
         bool HasUnsavedDocuments() const;       // 网页版：关闭页面前据此提示
         const std::string&  GetUiPath() const { return m_uiPath; }
@@ -100,6 +102,7 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Node> CreateStatusBar();
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
         std::unique_ptr<MiniGUI::Node> CreateLayerBar();          // 工具栏里的图层 / 线型 / 线宽下拉框
+        std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
         std::unique_ptr<MiniGUI::Node> CreateCommandLine();       // 命令行（CommandLine.cpp）
         void SyncCommandLine();                                   // 回显与提示同步到命令行
         void RunCommandLine(const std::string& text);             // 命令行提交
@@ -133,6 +136,11 @@ namespace MiniCAD
 
         // ── 文档 ─────────────────────────────────────────────────
         void SyncDocuments();                   // 标签与 DocumentManager 的文档列表保持一致
+        void StartNextOpen();                   // 后台读取队列里的下一张图纸
+        void FinishOpen();                      // 界面线程：读完一张，提示"正在生成显示"，等这一帧画出后再加入
+        void AddOpened();                       // 帧尾：把读完的图纸加入文档列表（下一帧生成显示），继续下一张
+        void EndOpenBatch();                    // 队列读完：同步界面，显示失败汇总
+        void SyncOpenProgress();                // 每帧：把后台读取进度同步到状态栏
         void UpdateTitle();
         void ActivateDocument(Document* doc);
         void CloseDocument(Document* doc);      // 未保存时先询问
@@ -195,6 +203,20 @@ namespace MiniCAD
         std::unordered_map<std::string, std::string> m_toolCommands;     // Editor 工具 ID → 命令 ID（状态栏显示工具名）
         bool                                   m_useUserLayout = true;
         bool                                   m_syncing    = false;     // SyncDocuments 进行中：忽略标签的选中回调
+
+        // ── 后台打开图纸（OpenDrawings）───────────────────────────
+        struct OpenJob;                                                  // 一张图纸的读取任务，与后台线程共享（MainFrame.cpp）
+        std::shared_ptr<OpenJob>               m_openJob;                // 正在读取的图纸；空 = 空闲
+        std::shared_ptr<OpenJob>               m_openDone;               // 已读完、等本帧画完后加入的图纸
+        bool                                   m_openAddPosted = false;  // 已投递"加入 m_openDone"（AppPlatform::Post）
+        std::vector<std::string>               m_openQueue;              // 排队等待读取的路径
+        std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
+        bool                                   m_openedAny  = false;
+        bool                                   m_hideOpenProgress = false;   // 最后一张已加入：画完它的首帧后隐藏进度
+        MiniGUI::Node*                         m_openBar    = nullptr;   // 状态栏里的读取进度
+        MiniGUI::Label*                        m_openLabel  = nullptr;
+        MiniGUI::ProgressBar*                  m_openProgress = nullptr;
+        int                                    m_openPercent = -1;       // 进度条当前显示的百分比
 
         // ── 视口指针状态（物理像素，视口内坐标）──────────────────
         int     m_mouseX   = 0;

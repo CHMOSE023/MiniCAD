@@ -133,6 +133,17 @@ namespace MiniCAD
         m_docName->EditLayoutStyle().shrink = 1.0f;
     }
 
+    MiniGUI::Node* StatusBarView::AddRightItem(std::unique_ptr<MiniGUI::Node> item)
+    {
+        const auto& children = GetChildren();
+        size_t index = children.size();
+        for (size_t i = 0; i < children.size(); ++i)
+            if (children[i].get() == m_docCount)
+                index = i;
+        item->EditLayoutStyle().shrink = 0.0f;
+        return InsertChild(index, std::move(item));
+    }
+
     // =========================================================
     // 每帧同步
     // =========================================================

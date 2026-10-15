@@ -13,6 +13,8 @@
 #include <malloc.h>
 #include <algorithm>
 #include <filesystem>
+#include <memory>
+#include <thread>
 
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -21,6 +23,8 @@ namespace MiniCAD
 {
     namespace
     {
+        constexpr UINT kMsgBackgroundDone = WM_APP + 1;     // lParam：new 出来的 std::function<void()>（RunInBackground 的 done、Post）
+
         std::wstring ToWide(const std::string& utf8)
         {
             const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
@@ -316,6 +320,15 @@ namespace MiniCAD
             return 0;
         }
 
+        case kMsgBackgroundDone:
+        {
+            // 后台任务完成（RunInBackground）或 Post：在界面线程上调用
+            std::unique_ptr<std::function<void()>> done(reinterpret_cast<std::function<void()>*>(lParam));
+            if (*done)
+                (*done)();
+            return 0;
+        }
+
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -369,7 +382,27 @@ namespace MiniCAD
 
     void Win32Window::RequestRedraw()
     {
-        InvalidateRect(m_hwnd, nullptr, FALSE);
+        InvalidateRect(m_hwnd, nullptr, FALSE);     // 线程安全：后台任务里也可调用
+    }
+
+    void Win32Window::RunInBackground(std::function<void()> work, std::function<void()> done)
+    {
+        // done 经窗口消息交回界面线程；窗口已销毁（消息投递失败）时就地释放，不再调用
+        auto* pending = new std::function<void()>(std::move(done));
+        const HWND hwnd = m_hwnd;
+        std::thread([hwnd, work = std::move(work), pending]
+        {
+            work();
+            if (!PostMessageW(hwnd, kMsgBackgroundDone, 0, reinterpret_cast<LPARAM>(pending)))
+                delete pending;
+        }).detach();
+    }
+
+    void Win32Window::Post(std::function<void()> fn)
+    {
+        auto* pending = new std::function<void()>(std::move(fn));
+        if (!PostMessageW(m_hwnd, kMsgBackgroundDone, 0, reinterpret_cast<LPARAM>(pending)))
+            delete pending;
     }
 
     void Win32Window::BeginUiPass()

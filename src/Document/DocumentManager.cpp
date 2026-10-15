@@ -465,25 +465,22 @@ namespace MiniCAD
             m_editor.ZoomAll(undoable);
     }
 
-    Document* DocumentManager::Open(const std::string& path, std::string* error)
+    Document* DocumentManager::FindOpen(const std::string& path) const
+    {
+        for (const auto& d : m_docs)
+            if (!d->GetPath().empty() && SameFile(d->GetPath(), path))
+                return d.get();
+        return nullptr;
+    }
+
+    std::unique_ptr<Document> DocumentManager::Load(const std::string& path, std::string* error, const ImportProgress& progress) const
     {
         if (error) error->clear();
-        // 已打开同一文件:直接激活,不重复加载。
-        for (auto& d : m_docs)
-        {
-            if (!d->GetPath().empty() && SameFile(d->GetPath(), path))
-            {
-                SetActive(d.get());
-                return d.get();
-            }
-        }
-
         auto doc = std::make_unique<Document>();
         doc->SetFontSystem(m_fontSystem);
-
         try
         {
-            if (!doc->LoadFromFile(path, error))
+            if (!doc->LoadFromFile(path, error, progress))
                 return nullptr;
         }
         catch (const std::exception& e)
@@ -492,7 +489,13 @@ namespace MiniCAD
             LOG_ERROR("Open failed: %s (%s)", path.c_str(), e.what());
             return nullptr;
         }
+        return doc;
+    }
 
+    Document* DocumentManager::Add(std::unique_ptr<Document> doc)
+    {
+        if (!doc)
+            return nullptr;
         if (m_active && m_viewport) // 切换前保存当前文档的视口状态
         {
             m_active->SetCameraState(m_viewport->GetCamera().GetState());
@@ -505,11 +508,23 @@ namespace MiniCAD
         {
             m_viewport->GetCamera().SetState(m_active->GetCameraState());
             m_editor.Bind(*m_active, *m_viewport);
-            if (CadKindFromPath(path) != CadFileKind::None)
+            if (CadKindFromPath(m_active->GetPath()) != CadFileKind::None)
                 ZoomAll(false);   // 外来图纸的坐标可能离原点很远；初始视图不进撤销栈
         }
 
         return m_active;
+    }
+
+    Document* DocumentManager::Open(const std::string& path, std::string* error)
+    {
+        if (error) error->clear();
+        // 已打开同一文件:直接激活,不重复加载。
+        if (Document* d = FindOpen(path))
+        {
+            SetActive(d);
+            return d;
+        }
+        return Add(Load(path, error));
     }
 
     void DocumentManager::Save()

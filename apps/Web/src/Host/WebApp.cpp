@@ -13,6 +13,7 @@
 #include <GLES3/gl3.h>
 #include <algorithm>
 #include <cctype>
+#include <memory>
 
 namespace MiniCAD
 {
@@ -283,5 +284,29 @@ namespace MiniCAD
     void WebApp::OnDocumentSaved(const std::string& path)
     {
         MiniCADWeb_Download(path.c_str());
+    }
+
+    void WebApp::RunInBackground(std::function<void()> work, std::function<void()> done)
+    {
+        // 没有线程：先让浏览器画出当前帧（进度条），再在界面线程上执行；执行期间页面不响应
+        struct Task { std::function<void()> work, done; };
+        auto* task = new Task{ std::move(work), std::move(done) };
+        RequestRedraw();
+        emscripten_async_call([](void* p)
+        {
+            std::unique_ptr<Task> t(static_cast<Task*>(p));
+            t->work();
+            t->done();
+        }, task, 50);
+    }
+
+    void WebApp::Post(std::function<void()> fn)
+    {
+        auto* task = new std::function<void()>(std::move(fn));
+        emscripten_async_call([](void* p)
+        {
+            std::unique_ptr<std::function<void()>> f(static_cast<std::function<void()>*>(p));
+            (*f)();
+        }, task, 0);
     }
 }

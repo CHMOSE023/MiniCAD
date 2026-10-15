@@ -18,6 +18,7 @@
 #include "Widgets/AutoComplete.h"
 #include "Widgets/CommandConsole.h"
 #include "Widgets/CommandUI.h"
+#include "Widgets/Controls.h"
 #include "Widgets/Dialog.h"
 #include "Widgets/Label.h"
 #include "Widgets/ListView.h"
@@ -32,11 +33,13 @@
 #include "Widgets/ViewportHost.h"
 #include "Widgets/UiLayout.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <unordered_set>
+#include <thread>
 #include <utility>
 
 namespace MiniCAD
@@ -116,10 +119,46 @@ namespace MiniCAD
         }
     }
 
+    // 一张图纸的后台读取任务。后台线程只写 doc / error / progress，界面线程在 done 回调之后才读取
+    struct MainFrame::OpenJob
+    {
+        enum State : int { Pending, Running, Finished, Abandoned };
+
+        std::string               path;
+        std::string               name;                 // 显示用的文件名
+        std::atomic<int>          state{ Pending };
+        std::atomic<bool>         cancel{ false };      // 关闭程序时置位：进度回调抛出 OpenCancelled 中止读取
+        std::atomic<float>        progress{ 0.0f };
+        std::atomic<int>          percent{ 0 };         // 上次请求重绘时的百分比（按 1% 节流）
+        std::unique_ptr<Document> doc;
+        std::string               error;
+    };
+
+    namespace
+    {
+        struct OpenCancelled : std::exception
+        {
+            const char* what() const noexcept override { return "已取消"; }
+        };
+    }
+
     MainFrame::MainFrame() = default;
 
     MainFrame::~MainFrame()
     {
+        // 后台还在读图纸：没开始的不再开始；正在读的让它中止并等它退出（它引用了 m_docManager）
+        if (m_openJob)
+        {
+            int pending = OpenJob::Pending;
+            if (!m_openJob->state.compare_exchange_strong(pending, OpenJob::Abandoned))
+            {
+                m_openJob->cancel = true;
+                while (m_openJob->state.load() == OpenJob::Running)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            m_openJob->state = OpenJob::Abandoned;
+        }
+
         // 界面先于平台对象释放（纹理属于平台的界面后端）；绑定引用特性面板里的控件，先清掉
         m_syncGeometryRows = nullptr;
         m_bindings.Clear();
@@ -288,27 +327,163 @@ namespace MiniCAD
 
     void MainFrame::OpenDrawings(const std::vector<std::string>& paths)
     {
-        std::string failures;
-        bool opened = false;
         for (const auto& path : paths)
         {
             if (path.empty()) continue;
-            std::string error;
-            if (m_docManager.Open(path, &error))
-                opened = true;
-            else
+            // 已打开：直接激活；已在读取或排队：不重复读取
+            if (Document* d = m_docManager.FindOpen(path))
             {
-                if (!failures.empty()) failures += "\n\n";
-                failures += path + "\n" + (error.empty() ? "无法打开图纸" : error);
+                m_docManager.SetActive(d);
+                m_openedAny = true;
+                continue;
             }
+            const bool queued = std::find(m_openQueue.begin(), m_openQueue.end(), path) != m_openQueue.end()
+                             || (m_openJob && m_openJob->path == path) || (m_openDone && m_openDone->path == path);
+            if (!queued)
+                m_openQueue.push_back(path);
         }
-        if (opened)
+        if (!m_openJob && !m_openDone)
+            StartNextOpen();
+    }
+
+    void MainFrame::StartNextOpen()
+    {
+        if (m_openQueue.empty())
+        {
+            EndOpenBatch();
+            return;
+        }
+        auto job  = std::make_shared<OpenJob>();
+        job->path = m_openQueue.front();
+        m_openQueue.erase(m_openQueue.begin());
+        const std::filesystem::path p(std::u8string(job->path.begin(), job->path.end()));
+        const std::u8string name = p.filename().u8string();
+        job->name = std::string(name.begin(), name.end());
+        m_openJob = job;
+
+        if (m_openBar)
+        {
+            m_openLabel->SetText("正在打开 " + job->name);
+            m_openProgress->SetValue(0.0f);
+            m_openBar->SetVisible(true);
+        }
+        m_openPercent      = 0;
+        m_hideOpenProgress = false;
+
+        // 后台线程只用到 DocumentManager::Load（不碰文档列表、视口和编辑器）和平台的 RequestRedraw
+        const DocumentManager* dm = &m_docManager;
+        AppPlatform* platform = m_platform;
+        m_platform->RunInBackground(
+            [job, dm, platform]
+            {
+                int pending = OpenJob::Pending;
+                if (!job->state.compare_exchange_strong(pending, OpenJob::Running))
+                    return;     // 程序已关闭
+                job->doc = dm->Load(job->path, &job->error, [job, platform](float f)
+                {
+                    if (job->cancel) throw OpenCancelled();
+                    job->progress = f;
+                    const int percent = static_cast<int>(f * 100.0f);
+                    if (job->percent.exchange(percent) != percent)
+                        platform->RequestRedraw();
+                });
+                job->state = OpenJob::Finished;
+            },
+            [this, job]
+            {
+                if (job->state.load() != OpenJob::Abandoned && m_openJob == job)
+                    FinishOpen();
+            });
+    }
+
+    void MainFrame::FinishOpen()
+    {
+        m_openDone = std::move(m_openJob);
+        if (m_openDone->doc && m_openBar)
+        {
+            // 生成显示（细分、裁剪）在下一帧的视口渲染里同步完成，大图纸要一两秒：先把提示画出来
+            m_openLabel->SetText("正在生成显示 " + m_openDone->name);
+            m_openProgress->SetValue(1.0f);
+        }
+        m_platform->RequestRedraw();
+    }
+
+    void MainFrame::AddOpened()
+    {
+        auto job = std::move(m_openDone);
+        m_openAddPosted = false;
+        if (job->doc)
+        {
+            if (Document* d = m_docManager.FindOpen(job->path))     // 读取期间已经从别处打开
+                m_docManager.SetActive(d);
+            else
+                m_docManager.Add(std::move(job->doc));
+            m_openedAny = true;
+            StateChanged();     // 标签马上出现
+            if (m_viewport) m_viewport->Focus();
+        }
+        else
+        {
+            if (!m_openFailures.empty()) m_openFailures += "\n\n";
+            m_openFailures += job->path + "\n" + (job->error.empty() ? "无法打开图纸" : job->error);
+        }
+        StartNextOpen();
+    }
+
+    void MainFrame::EndOpenBatch()
+    {
+        m_hideOpenProgress = true;      // 最后一张的首帧画完后隐藏
+        if (m_platform) m_platform->RequestRedraw();
+        if (m_openedAny)
         {
             StateChanged();
             if (m_viewport) m_viewport->Focus();
         }
-        if (!failures.empty() && m_ui)
-            MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", failures, { "确定" }, [](int) {});
+        m_openedAny = false;
+        if (!m_openFailures.empty() && m_ui)
+            MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", m_openFailures, { "确定" }, [](int) {});
+        m_openFailures.clear();
+    }
+
+    void MainFrame::SyncOpenProgress()
+    {
+        if (!m_openBar)
+            return;
+        if (m_openJob)
+        {
+            const int percent = static_cast<int>(m_openJob->progress.load() * 100.0f);
+            if (percent != m_openPercent)
+            {
+                m_openPercent = percent;
+                m_openProgress->SetValue(static_cast<float>(percent) / 100.0f);
+            }
+        }
+        else if (m_hideOpenProgress && !m_openDone)
+        {
+            m_hideOpenProgress = false;
+            m_openBar->SetVisible(false);
+        }
+    }
+
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateOpenProgress()
+    {
+        using namespace MiniGUI;
+        auto bar = std::make_unique<Node>();
+        LayoutStyle s;
+        s.direction  = FlexDirection::Row;
+        s.alignItems = Align::Center;
+        s.gap        = 6.0f;
+        s.padding    = Edges::Symmetric(12.0f, 0.0f);
+        s.shrink     = 0.0f;
+        bar->SetLayoutStyle(s);
+        m_openLabel = bar->AddChild<Label>("", 13.0f, Theme::TextDim);
+        m_openLabel->SetEllipsis(true);
+        m_openLabel->EditLayoutStyle().maxWidth = 260.0f;
+        m_openProgress = bar->AddChild<ProgressBar>();
+        m_openProgress->EditLayoutStyle().width = 140.0f;
+        bar->SetVisible(m_openJob || m_openDone);
+        m_openBar = bar.get();
+        return bar;
     }
 
     void MainFrame::SyncDocuments()
@@ -680,8 +855,9 @@ namespace MiniCAD
         auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
         int64_t t = NowTicks();
 
-        // 1. 同步状态栏文字（会触发布局，所以放在 Update 之前）
+        // 1. 同步状态栏文字与读取进度（会触发布局，所以放在 Update 之前）
         UpdateStatus();
+        SyncOpenProgress();
         // 视口背景跟随界面主题：浅色主题下白色实体、十字光标画成黑色
         m_docManager.GetViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
 
@@ -723,6 +899,18 @@ namespace MiniCAD
             m_latencyLast = static_cast<double>(NowTicks() - m_pendingInputTicks) * 1000.0 / static_cast<double>(kTicksPerSecond);
             m_latencyMax  = (std::max)(m_latencyMax, m_latencyLast);
             m_pendingInputTicks = 0;
+        }
+
+        // 5. 读完的图纸在"正在生成显示"画出来之后才加入（下一帧生成显示时界面会停顿）。
+        //    不能在这里直接加入：绘制结束（WM_PAINT 的 ValidateRect）会清掉加入时提出的重绘请求，图纸要等鼠标动了才显示
+        if (m_openDone && !m_openAddPosted)
+        {
+            m_openAddPosted = true;
+            m_platform->Post([this, job = m_openDone]
+            {
+                if (m_openDone == job)
+                    AddOpened();
+            });
         }
     }
 }

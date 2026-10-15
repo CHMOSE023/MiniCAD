@@ -301,6 +301,8 @@ namespace MiniDWG::DwgRead
         {
             const Handle handle = m_queue.front();
             m_queue.pop_front();
+            if (m_options.Progress && (++m_objectsRead & 1023) == 0)
+                m_options.Progress(std::min(1.0f, static_cast<float>(m_objectsRead) / static_cast<float>(m_map.size())));
             auto it = m_map.find(handle);
             if (it == m_map.end())
                 continue;

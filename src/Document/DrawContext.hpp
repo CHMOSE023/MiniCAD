@@ -74,6 +74,7 @@ namespace MiniCAD
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {
+            FlushWipes();
             m_curAttr = attr;
             if (attr)
             {
@@ -107,20 +108,19 @@ namespace MiniCAD
         }
         std::vector<ImageDraw> TakeImages() { return std::move(m_images); }
 
-        // 区域覆盖：同一实体（块参照）里先画的部分就地裁剪；之前实体的内容记录下来，
+        // 区域覆盖：同一实体（块参照）里先画的部分在实体结束时（BeginEntity）一次裁剪；之前实体的内容记录下来，
         // 由 Editor 在拼接顶点流时按绘制序裁剪
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
-            const WipeClip::Poly poly(polygon);
-            if (poly.Valid())
-            {
-                WipeClip::ClipLines(m_verts, poly, m_entityLines);
-                WipeClip::ClipFills(m_fillVerts, poly, 5, m_entityFills);
-                WipeClip::ClipTexts(m_textVerts, poly, m_entityTexts);
-            }
+            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size() });
             m_wipes.push_back(polygon);
         }
-        std::vector<std::vector<Math::Point3>> TakeWipes() { return std::move(m_wipes); }
+        std::vector<std::vector<Math::Point3>> TakeWipes()
+        {
+            FlushWipes();
+            return std::move(m_wipes);
+        }
+        ~DrawContext() override { FlushWipes(); }
 
         // 本次细分是否产出了依赖像素比例的几何(线宽四边形、按像素取舍的虚线),
         // 供 Editor 决定缩放时哪些实体需要重新细分
@@ -309,6 +309,16 @@ namespace MiniCAD
         }
 
     private:
+        void FlushWipes()
+        {
+            if (m_pendingWipes.Empty()) return;
+            m_pendingWipes.ClipLines(m_verts, 0, m_entityLines);
+            m_pendingWipes.ClipFills(m_fillVerts, 1, 5, m_entityFills);
+            m_pendingWipes.ClipTexts(m_textVerts, 2, m_entityTexts);
+            m_pendingWipes.Clear();
+        }
+
+    private:
         // 1mm 线宽对应的屏幕像素(约 96 DPI 显示),与 AutoCAD 屏显观感一致
         static constexpr double kPixelsPerMm = 96.0 / 25.4;
 
@@ -472,6 +482,7 @@ namespace MiniCAD
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
+        WipeClip::Batch                m_pendingWipes{ 3 };   // 本实体内尚未裁剪的遮罩（线、填充、文字三条流）
         size_t                         m_entityLines = 0;   // 当前实体在各顶点流中的起点（块内遮罩只裁剪本实体先画的部分）
         size_t                         m_entityFills = 0;
         size_t                         m_entityTexts = 0;

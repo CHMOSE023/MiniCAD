@@ -193,7 +193,7 @@ namespace MiniCAD
         return true;
     }
 
-    bool Document::LoadFromFile(const std::string& path, std::string* error)
+    bool Document::LoadFromFile(const std::string& path, std::string* error, const ImportProgress& progress)
     {
         if (error) error->clear();
         auto fail = [&](const std::string& reason)
@@ -227,7 +227,7 @@ namespace MiniCAD
                 return fail("无法完整读取图纸文件");
             }
             std::string err;
-            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource))
+            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource, progress))
             {
                 return fail(err.empty() ? "图纸已损坏或版本不受支持" : err);
             }

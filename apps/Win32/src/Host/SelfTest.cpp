@@ -70,6 +70,19 @@ namespace MiniCAD
             }
         };
 
+        // 打开图纸在后台读取：只处理消息（绘制也走 WM_PAINT，与实际运行相同，不额外调用 RenderFrame），
+        // 直到读完并加入（最多 30 秒）
+        auto waitOpen = [&]
+        {
+            const int64_t start = NowTicks();
+            while (IsOpeningDrawings() && NowTicks() - start < 30 * kTicksPerSecond)
+            {
+                MsgWaitForMultipleObjects(0, nullptr, FALSE, 20, QS_ALLINPUT);
+                pump();
+            }
+            pump();
+        };
+
         // 处理完启动时的消息，渲染第一帧
         pump();
         RenderFrame();
@@ -1516,7 +1529,9 @@ namespace MiniCAD
             { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(data.data()), data.size()); }
             const auto before = m_docManager.GetAll().size();
             OpenDrawings({path, path});
-            RenderFrame();
+            check(IsOpeningDrawings() && m_openBar && m_openBar->IsVisible(), "打开图纸时状态栏显示读取进度");
+            waitOpen();
+            check(!m_openBar->IsVisible(), "读完后隐藏读取进度");
             Document* opened = m_docManager.GetActive();
             check(opened && opened->GetPath() == path && m_docManager.GetAll().size() == before + 1 &&
                   m_docTabs->GetTabCount() == static_cast<int>(before + 1), "公共打开入口加载 DWG、去重并同步标签");
@@ -1547,7 +1562,7 @@ namespace MiniCAD
             }
             const auto missing = (dir / "missing.dwg").u8string();
             OpenDrawings({ std::string(missing.begin(), missing.end()), path });
-            RenderFrame();
+            waitOpen();
             check(m_ui->HasModal() && m_docManager.GetActive() == opened && m_docManager.GetAll().size() == before + 1,
                   "批量打开失败给出可见提示，后续有效图纸仍可打开");
             send(WM_KEYDOWN, VK_ESCAPE, 0, 0);
@@ -1635,6 +1650,16 @@ namespace MiniCAD
                                 m_timing.viewport, rebuilt ? "整体重建" : dynRebuilt ? "动态流  " : "        ", pm, wm);
             }
         std::printf("滚轮 %d 帧：平均 %.1f ms，最慢 %.1f ms，整体重建 %d 帧，私有内存 %.0f～%.0f MB\n", 4 * steps, total / (4 * steps), worst, rebuilds, low, peak);
+
+        // 切换文档：切到新建的空白文档再切回，切回后的首帧要重新生成全部显示数据
+        m_docManager.New();
+        RenderFrame();
+        t = NowTicks();
+        m_docManager.SetActive(doc);
+        StateChanged();
+        RenderFrame();
+        auto [m3, w3] = memMb();
+        std::printf("切回文档首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB\n", msSince(t), m_timing.viewport, m3, w3);
         m_syncGpu = false;
         return 0;
     }

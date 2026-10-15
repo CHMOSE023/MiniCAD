@@ -2,6 +2,7 @@
 #include "Database/CadDatabase.h"
 #include "Database/Notification.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -33,6 +34,9 @@ namespace MiniDWG
 
         // 不为空时填写读取报告
         DwgReadReport* Report = nullptr;
+
+        // 读取进度（0～1，按已读对象数）：读对象时每读一批调用一次，在调用 ReadDwg 的线程上
+        std::function<void(float)> Progress;
     };
 
     // 读取 DWG（R13～R2018，AC1012～AC1032）。数据不是 DWG 或版本不支持时返回 nullptr。

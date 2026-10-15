@@ -7,6 +7,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
@@ -297,6 +298,22 @@ int RunCadExchangeTests()
         Check(!data.empty() && ImportCad(data, restored) &&
               !restored.GetLayerManager().GetLayer(Layer::DefaultLayerID)->IsVisible(),
               "关闭的真彩图层读回后保持关闭");
+    }
+
+    // 法向为 -Z 的二维填充（SOLID）：角点是 OCS 坐标，读入后换到世界坐标（左右镜像）
+    for (const auto kind : { CadFileKind::Dwg, CadFileKind::Dxf })
+    {
+        Scene src;
+        auto solid = std::make_unique<SolidEntity>(src.NextObjectID(), Math::Point3{ 10, 0, 0 }, Math::Point3{ 20, 0, 0 },
+                                                   Math::Point3{ 20, 5, 0 }, Math::Point3{ 10, 5, 0 });
+        solid->SetExtrusion({ 0, 0, -1 });
+        src.AddEntity(std::move(solid));
+        const auto data = ExportCad(src, kind);
+        Scene restored;
+        AABB box = AABB::Empty();
+        Check(!data.empty() && ImportCad(data, restored) && restored.GetExtents(box) &&
+              std::abs(box.Min.x + 20) < 1e-9 && std::abs(box.Max.x + 10) < 1e-9 && std::abs(box.Max.y - 5) < 1e-9,
+              kind == CadFileKind::Dwg ? "DWG：法向 -Z 的 SOLID 换到世界坐标" : "DXF：法向 -Z 的 SOLID 换到世界坐标");
     }
 
     // MiniDWG 样例图：能读入，且读入后能再导出、再读回，实体数不变

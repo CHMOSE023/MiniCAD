@@ -2,6 +2,7 @@
 // DWG / DXF 文件交换：经 MiniDWG 的 CadDatabase 与 Scene 互相转换。
 // 公开头文件不暴露 MiniDWG 类型。
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,8 +36,11 @@ namespace MiniCAD
     // 读取 DWG / DXF 内存数据到空场景。格式按文件内容识别，失败返回 false 并在 error 中说明原因
     // version：文件版本对应的写出版本（2013 格式 → R2013，其余 → R2018），保存时据此沿用原版本
     // source：非空时返回原图，另存时传给 ExportCad
+    // progress：读取进度（0～1），在调用线程上定期调用
+    using ImportProgress = std::function<void(float)>;
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error = nullptr,
-                   CadSaveVersion* version = nullptr, std::shared_ptr<const CadSource>* source = nullptr);
+                   CadSaveVersion* version = nullptr, std::shared_ptr<const CadSource>* source = nullptr,
+                   const ImportProgress& progress = nullptr);
 
     // 把场景写成 DWG 或 DXF（ASCII）。失败返回空数组
     // source：场景打开时的原图。格式与版本都与原图相同时以原图为底写出（见 CadSource），否则重新生成整张图纸，

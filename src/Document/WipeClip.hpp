@@ -3,6 +3,9 @@
 #include "Render/VertexTypes.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <initializer_list>
+#include <utility>
 #include <vector>
 
 namespace MiniCAD::WipeClip
@@ -29,7 +32,45 @@ namespace MiniCAD::WipeClip
                 minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
                 minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
             }
+
+            // 凸多边形（遮罩绝大多数是矩形）统一成逆时针，填充裁剪可以按半平面精确求差
+            const size_t n = pts.size();
+            if (n < 3) return;
+            double area = 0;
+            int sign = 0;
+            convex = true;
+            for (size_t i = 0; i < n; ++i)
+            {
+                const auto& a = pts[i];
+                const auto& b = pts[(i + 1) % n];
+                const auto& c = pts[(i + 2) % n];
+                area += a.x * b.y - b.x * a.y;
+                const double cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+                const double scale = std::abs(b.x - a.x) + std::abs(b.y - a.y) + std::abs(c.x - b.x) + std::abs(c.y - b.y);
+                if (std::abs(cross) <= 1e-12 * scale * scale) continue;   // 共线点
+                const int s = cross > 0 ? 1 : -1;
+                if (sign == 0) sign = s;
+                else if (s != sign) convex = false;
+            }
+            if (sign == 0) convex = false;   // 退化（全部共线）
+            if (convex)
+            {
+                // 转向一致还可能是自交的星形：外角和须为一圈
+                double turn = 0;
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const auto& a = pts[i];
+                    const auto& b = pts[(i + 1) % n];
+                    const auto& c = pts[(i + 2) % n];
+                    const double ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+                    turn += std::atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+                }
+                convex = std::abs(std::abs(turn) - 2.0 * 3.14159265358979323846) < 1e-6;
+            }
+            if (convex && area < 0) std::reverse(pts.begin(), pts.end());
         }
+
+        bool convex = false;   // 为 true 时 pts 为逆时针
 
         bool Valid() const { return pts.size() >= 3; }
 
@@ -131,6 +172,100 @@ namespace MiniCAD::WipeClip
             ClipTri(poly, c1, depth - 1, out);
             ClipTri(poly, c2, depth - 1, out);
             ClipTri(poly, c3, depth - 1, out);
+        }
+
+        // ── 凸多边形片段（填充三角形被凸遮罩切开后的各块，仍是凸的）──
+        using Piece = std::vector<Vertex_P3_C4>;
+
+        inline Vertex_P3_C4 Lerp(const Vertex_P3_C4& a, const Vertex_P3_C4& b, double t)
+        {
+            const float f = static_cast<float>(t);
+            Vertex_P3_C4 m;
+            m.pos   = { a.pos.x + (b.pos.x - a.pos.x) * f, a.pos.y + (b.pos.y - a.pos.y) * f, a.pos.z + (b.pos.z - a.pos.z) * f };
+            m.color = { a.color.x + (b.color.x - a.color.x) * f, a.color.y + (b.color.y - a.color.y) * f,
+                        a.color.z + (b.color.z - a.color.z) * f, a.color.w + (b.color.w - a.color.w) * f };
+            return m;
+        }
+
+        // 用有向直线 p→q 切凸片段：left 为 true 保留左侧，否则保留右侧（线上的点两侧都保留）
+        inline void ClipHalf(const Piece& in, const Math::Point3& p, const Math::Point3& q, bool left, Piece& out)
+        {
+            out.clear();
+            const double ex = q.x - p.x, ey = q.y - p.y;
+            auto side = [&](const Vertex_P3_C4& v)
+            {
+                const double s = ex * (v.pos.y - p.y) - ey * (v.pos.x - p.x);
+                return left ? s : -s;
+            };
+            const size_t n = in.size();
+            for (size_t i = 0; i < n; ++i)
+            {
+                const Vertex_P3_C4& a = in[i];
+                const Vertex_P3_C4& b = in[(i + 1) % n];
+                const double sa = side(a), sb = side(b);
+                if (sa >= 0) out.push_back(a);
+                if ((sa > 0 && sb < 0) || (sa < 0 && sb > 0))
+                    out.push_back(Lerp(a, b, sa / (sa - sb)));
+            }
+        }
+
+        inline double PieceArea2(const Piece& p)
+        {
+            double a = 0;
+            for (size_t i = 0, n = p.size(); i < n; ++i)
+            {
+                const auto& u = p[i].pos;
+                const auto& v = p[(i + 1) % n].pos;
+                a += static_cast<double>(u.x) * v.y - static_cast<double>(v.x) * u.y;
+            }
+            return a;
+        }
+
+        // 凸片段减去凸遮罩（逆时针）：依次取遮罩每条边外侧的部分（互不重叠），剩下的在遮罩内，丢弃
+        inline void SubtractConvex(const Piece& piece, const Poly& poly, std::vector<Piece>& out, Piece& cur, Piece& tmp)
+        {
+            cur = piece;
+            const size_t n = poly.pts.size();
+            for (size_t i = 0; i < n && cur.size() >= 3; ++i)
+            {
+                const auto& p = poly.pts[i];
+                const auto& q = poly.pts[(i + 1) % n];
+                ClipHalf(cur, p, q, false, tmp);
+                if (tmp.size() >= 3 && std::abs(PieceArea2(tmp)) > 0)
+                    out.push_back(tmp);
+                ClipHalf(cur, p, q, true, tmp);
+                cur.swap(tmp);
+            }
+        }
+
+        // 多个（非凸）遮罩一起细分：任一遮罩边界穿过就四分，到最大深度后重心落在任一遮罩内则删去
+        inline void ClipTriMulti(const std::vector<const Poly*>& polys, const Vertex_P3_C4 t[3], int depth, std::vector<Vertex_P3_C4>& out)
+        {
+            const Math::Float3 v[3] = { t[0].pos, t[1].pos, t[2].pos };
+            const double x0 = std::min({ v[0].x, v[1].x, v[2].x }), x1 = std::max({ v[0].x, v[1].x, v[2].x });
+            const double y0 = std::min({ v[0].y, v[1].y, v[2].y }), y1 = std::max({ v[0].y, v[1].y, v[2].y });
+            bool partial = false;
+            for (const Poly* p : polys)
+                if (p->BoxOverlaps(x0, y0, x1, y1) && TriTouchesBoundary(*p, v)) { partial = true; break; }
+
+            if (!partial || depth == 0)
+            {
+                const double cx = (v[0].x + v[1].x + v[2].x) / 3.0;
+                const double cy = (v[0].y + v[1].y + v[2].y) / 3.0;
+                for (const Poly* p : polys)
+                    if (p->BoxOverlaps(cx, cy, cx, cy) && p->Contains(cx, cy)) return;
+                out.insert(out.end(), t, t + 3);
+                return;
+            }
+            const Vertex_P3_C4 m01 = Lerp(t[0], t[1], 0.5), m12 = Lerp(t[1], t[2], 0.5), m20 = Lerp(t[2], t[0], 0.5);
+            const Vertex_P3_C4 c0[3] = { t[0], m01, m20 };
+            const Vertex_P3_C4 c1[3] = { m01, t[1], m12 };
+            const Vertex_P3_C4 c2[3] = { m20, m12, t[2] };
+            const Vertex_P3_C4 c3[3] = { m01, m12, m20 };
+            ClipTriMulti(polys, c0, depth - 1, out);
+            ClipTriMulti(polys, c1, depth - 1, out);
+            ClipTriMulti(polys, c2, depth - 1, out);
+            ClipTriMulti(polys, c3, depth - 1, out);
         }
     }
 
@@ -254,4 +389,283 @@ namespace MiniCAD::WipeClip
         v.resize(first);
         v.insert(v.end(), out.begin(), out.end());
     }
+
+    // 批量裁剪：区域覆盖只裁剪在它之前画的内容。逐个遮罩调用上面的函数时，每个遮罩都要把其后的整段顶点流
+    // 复制重建一遍，天正图块里成千上万个遮罩时成了平方复杂度（打开一张暖通图要几分钟）。
+    // 这里先记下每个遮罩出现时各顶点流的长度，最后一次裁剪：下标 k 的图元只被"出现时流长度 > k"的遮罩裁剪，
+    // 裁掉的是这些多边形的并集，与遮罩的先后无关；候选遮罩经均匀网格按外包框查找。
+    // 记录的长度是未裁剪时的下标，因此一批遮罩全部记录完之前不能裁剪对应的顶点流。
+    class Batch
+    {
+    public:
+        explicit Batch(int streams) : m_streams(streams) {}
+
+        // ends：各顶点流此刻的长度（个数与构造时的 streams 相同）
+        void Add(const std::vector<Math::Point3>& polygon, std::initializer_list<size_t> ends)
+        {
+            Poly poly(polygon);
+            if (!poly.Valid()) return;
+            m_polys.push_back(std::move(poly));
+            m_ends.insert(m_ends.end(), ends.begin(), ends.end());
+            m_ends.resize(m_polys.size() * m_streams, 0);
+            m_gridDirty = true;
+        }
+
+        bool Empty() const { return m_polys.empty(); }
+        void Clear()
+        {
+            m_polys.clear();
+            m_ends.clear();
+            m_gridDirty = true;
+        }
+
+        // 线段流（每两个顶点一条），只处理下标 from 起的顶点
+        void ClipLines(std::vector<Vertex_P3_C4>& v, int stream, size_t from = 0)
+        {
+            if (m_polys.empty() || v.size() < from + 2) return;
+            BuildGrid();
+            std::vector<Vertex_P3_C4> out;
+            size_t first = SIZE_MAX;
+            std::vector<double> ts;
+            std::vector<std::pair<double, double>> pieces, next;
+            for (size_t k = from; k + 1 < v.size(); k += 2)
+            {
+                const Vertex_P3_C4 a = v[k], b = v[k + 1];
+                Candidates(std::min(a.pos.x, b.pos.x), std::min(a.pos.y, b.pos.y),
+                           std::max(a.pos.x, b.pos.x), std::max(a.pos.y, b.pos.y), k, stream);
+                if (m_cand.empty())
+                {
+                    if (first != SIZE_MAX) { out.push_back(a); out.push_back(b); }
+                    continue;
+                }
+                if (first == SIZE_MAX)
+                {
+                    first = k;
+                    out.reserve(v.size() - k);
+                }
+
+                // 依次用每个候选多边形切掉段内落在其中的部分（参数区间）
+                const double rx = b.pos.x - a.pos.x, ry = b.pos.y - a.pos.y;
+                pieces.assign(1, { 0.0, 1.0 });
+                for (uint32_t pi : m_cand)
+                {
+                    const Poly& poly = m_polys[pi];
+                    const size_t n = poly.pts.size();
+                    ts.clear();
+                    for (size_t i = 0; i < n; ++i)
+                    {
+                        const auto& p = poly.pts[i];
+                        const auto& q = poly.pts[(i + 1) % n];
+                        double t;
+                        if (detail::SegSeg(a.pos.x, a.pos.y, rx, ry, p.x, p.y, q.x - p.x, q.y - p.y, t))
+                            ts.push_back(t);
+                    }
+                    std::sort(ts.begin(), ts.end());
+                    next.clear();
+                    for (const auto& [t0, t1] : pieces)
+                    {
+                        double s = t0;
+                        auto keep = [&](double e)
+                        {
+                            if (e - s < 1e-9) return;
+                            const double tm = (s + e) * 0.5;
+                            if (!poly.Contains(a.pos.x + rx * tm, a.pos.y + ry * tm))
+                            {
+                                if (!next.empty() && std::abs(next.back().second - s) < 1e-12)
+                                    next.back().second = e;    // 与上一段相接：合并
+                                else
+                                    next.emplace_back(s, e);
+                            }
+                            s = e;
+                        };
+                        for (double t : ts)
+                            if (t > t0 && t < t1) keep(t);
+                        keep(t1);
+                    }
+                    pieces.swap(next);
+                    if (pieces.empty()) break;
+                }
+
+                auto at = [&](double t)
+                {
+                    if (t <= 0.0) return a;
+                    if (t >= 1.0) return b;
+                    Vertex_P3_C4 m;
+                    m.pos   = { static_cast<float>(a.pos.x + rx * t), static_cast<float>(a.pos.y + ry * t),
+                                static_cast<float>(a.pos.z + (b.pos.z - a.pos.z) * t) };
+                    m.color = a.color;
+                    return m;
+                };
+                for (const auto& [t0, t1] : pieces)
+                {
+                    out.push_back(at(t0));
+                    out.push_back(at(t1));
+                }
+            }
+            if (first == SIZE_MAX) return;
+            v.resize(first);
+            v.insert(v.end(), out.begin(), out.end());
+        }
+
+        // 填充三角形流（每三个顶点一个），只处理下标 from 起的顶点
+        void ClipFills(std::vector<Vertex_P3_C4>& v, int stream, int maxDepth = 5, size_t from = 0)
+        {
+            if (m_polys.empty() || v.size() < from + 3) return;
+            BuildGrid();
+            std::vector<Vertex_P3_C4> out, cur;
+            size_t first = SIZE_MAX;
+            for (size_t k = from; k + 2 < v.size(); k += 3)
+            {
+                const Vertex_P3_C4* t = &v[k];
+                Candidates(std::min({ t[0].pos.x, t[1].pos.x, t[2].pos.x }), std::min({ t[0].pos.y, t[1].pos.y, t[2].pos.y }),
+                           std::max({ t[0].pos.x, t[1].pos.x, t[2].pos.x }), std::max({ t[0].pos.y, t[1].pos.y, t[2].pos.y }), k, stream);
+                if (m_cand.empty())
+                {
+                    if (first != SIZE_MAX) out.insert(out.end(), t, t + 3);
+                    continue;
+                }
+                if (first == SIZE_MAX)
+                {
+                    first = k;
+                    out.reserve(v.size() - k);
+                }
+                // 凸遮罩精确求差（片段数只与遮罩边数有关）；非凸遮罩最后合在一起细分一次，
+                // 不能逐个遮罩细分——每个遮罩把三角形再四分 maxDepth 层，几个遮罩叠在一起就是指数膨胀
+                m_pieces.assign(1, detail::Piece(t, t + 3));
+                m_nonConvex.clear();
+                for (uint32_t pi : m_cand)
+                {
+                    const Poly& poly = m_polys[pi];
+                    if (!poly.convex)
+                    {
+                        m_nonConvex.push_back(&poly);
+                        continue;
+                    }
+                    m_nextPieces.clear();
+                    for (const detail::Piece& pc : m_pieces)
+                    {
+                        double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+                        for (const auto& pv : pc)
+                        {
+                            x0 = std::min<double>(x0, pv.pos.x); x1 = std::max<double>(x1, pv.pos.x);
+                            y0 = std::min<double>(y0, pv.pos.y); y1 = std::max<double>(y1, pv.pos.y);
+                        }
+                        if (poly.BoxOverlaps(x0, y0, x1, y1))
+                            detail::SubtractConvex(pc, poly, m_nextPieces, m_cur, m_tmp);
+                        else
+                            m_nextPieces.push_back(pc);
+                    }
+                    m_pieces.swap(m_nextPieces);
+                    if (m_pieces.empty()) break;
+                }
+                cur.clear();
+                for (const detail::Piece& pc : m_pieces)
+                    for (size_t j = 1; j + 1 < pc.size(); ++j)
+                    {
+                        cur.push_back(pc[0]); cur.push_back(pc[j]); cur.push_back(pc[j + 1]);
+                    }
+                if (m_nonConvex.empty())
+                    out.insert(out.end(), cur.begin(), cur.end());
+                else
+                    for (size_t j = 0; j + 2 < cur.size(); j += 3)
+                        detail::ClipTriMulti(m_nonConvex, &cur[j], maxDepth, out);
+            }
+            if (first == SIZE_MAX) return;
+            v.resize(first);
+            v.insert(v.end(), out.begin(), out.end());
+        }
+
+        // 纹理文字流（每个字符 6 个顶点）：字符中心落在任一适用的多边形内则删去，只处理下标 from 起的顶点
+        void ClipTexts(std::vector<Vertex_P3_C4_UV>& v, int stream, size_t from = 0)
+        {
+            if (m_polys.empty() || v.size() < from + 6) return;
+            BuildGrid();
+            size_t w = from;
+            for (size_t k = from; k + 5 < v.size(); k += 6)
+            {
+                double cx = 0, cy = 0;
+                for (int i = 0; i < 6; ++i) { cx += v[k + i].pos.x; cy += v[k + i].pos.y; }
+                cx /= 6.0; cy /= 6.0;
+                Candidates(cx, cy, cx, cy, k, stream);
+                const bool inside = std::any_of(m_cand.begin(), m_cand.end(), [&](uint32_t pi) { return m_polys[pi].Contains(cx, cy); });
+                if (inside) continue;
+                if (w != k) std::copy(v.begin() + k, v.begin() + k + 6, v.begin() + w);
+                w += 6;
+            }
+            v.resize(w);
+        }
+
+    private:
+        void BuildGrid()
+        {
+            if (!m_gridDirty) return;
+            m_gridDirty = false;
+            m_gx0 = m_gy0 = 1e300;
+            double gx1 = -1e300, gy1 = -1e300;
+            for (const Poly& p : m_polys)
+            {
+                m_gx0 = std::min(m_gx0, p.minX); m_gy0 = std::min(m_gy0, p.minY);
+                gx1 = std::max(gx1, p.maxX);     gy1 = std::max(gy1, p.maxY);
+            }
+            m_gx1 = gx1; m_gy1 = gy1;
+            m_gn = std::clamp(static_cast<int>(std::sqrt(static_cast<double>(m_polys.size()))) + 1, 1, 256);
+            m_cw = std::max((gx1 - m_gx0) / m_gn, 1e-12);
+            m_ch = std::max((gy1 - m_gy0) / m_gn, 1e-12);
+            m_cells.assign(static_cast<size_t>(m_gn) * m_gn, {});
+            for (uint32_t i = 0; i < m_polys.size(); ++i)
+            {
+                const Poly& p = m_polys[i];
+                const int cx0 = Cell(p.minX, m_gx0, m_cw), cx1 = Cell(p.maxX, m_gx0, m_cw);
+                const int cy0 = Cell(p.minY, m_gy0, m_ch), cy1 = Cell(p.maxY, m_gy0, m_ch);
+                for (int y = cy0; y <= cy1; ++y)
+                    for (int x = cx0; x <= cx1; ++x)
+                        m_cells[static_cast<size_t>(y) * m_gn + x].push_back(i);
+            }
+            m_stamp.assign(m_polys.size(), 0);
+            m_stampId = 0;
+        }
+
+        int Cell(double v, double origin, double size) const
+        {
+            return std::clamp(static_cast<int>(std::floor((v - origin) / size)), 0, m_gn - 1);
+        }
+
+        // 收集外包框与 [x0,x1]×[y0,y1] 相交、且出现在下标 index 之后的遮罩到 m_cand（按加入顺序）
+        void Candidates(double x0, double y0, double x1, double y1, size_t index, int stream)
+        {
+            m_cand.clear();
+            if (x1 < m_gx0 || x0 > m_gx1 || y1 < m_gy0 || y0 > m_gy1) return;
+            if (++m_stampId == 0)
+            {
+                std::fill(m_stamp.begin(), m_stamp.end(), 0);
+                m_stampId = 1;
+            }
+            const int cx0 = Cell(x0, m_gx0, m_cw), cx1 = Cell(x1, m_gx0, m_cw);
+            const int cy0 = Cell(y0, m_gy0, m_ch), cy1 = Cell(y1, m_gy0, m_ch);
+            for (int y = cy0; y <= cy1; ++y)
+                for (int x = cx0; x <= cx1; ++x)
+                    for (uint32_t i : m_cells[static_cast<size_t>(y) * m_gn + x])
+                    {
+                        if (m_stamp[i] == m_stampId) continue;
+                        m_stamp[i] = m_stampId;
+                        if (m_ends[static_cast<size_t>(i) * m_streams + stream] > index && m_polys[i].BoxOverlaps(x0, y0, x1, y1))
+                            m_cand.push_back(i);
+                    }
+            std::sort(m_cand.begin(), m_cand.end());
+        }
+
+        int                             m_streams;
+        std::vector<Poly>               m_polys;
+        std::vector<size_t>             m_ends;     // [遮罩 × 顶点流]
+        bool                            m_gridDirty = true;
+        double                          m_gx0 = 0, m_gy0 = 0, m_gx1 = 0, m_gy1 = 0, m_cw = 1, m_ch = 1;
+        int                             m_gn = 1;
+        std::vector<std::vector<uint32_t>> m_cells;
+        std::vector<uint32_t>           m_stamp;
+        uint32_t                        m_stampId = 0;
+        std::vector<uint32_t>           m_cand;
+        std::vector<detail::Piece>      m_pieces, m_nextPieces;   // 填充裁剪的临时缓冲（复用容量）
+        detail::Piece                   m_cur, m_tmp;
+        std::vector<const Poly*>        m_nonConvex;
+    };
 }

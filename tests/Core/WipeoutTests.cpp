@@ -159,6 +159,53 @@ int RunWipeoutTests()
         Check(wipes.size() == 1 && std::abs(wipes[0][0].x - 100) < 1e-9, "遮罩边界经插入变换后交给场景拼接");
     }
 
+    // ── 批量裁剪：每个遮罩只裁剪它出现之前的顶点，结果与逐个裁剪一致 ──────────
+    {
+        // 线：第一条在两个遮罩之前，第二条只在第二个遮罩之前
+        std::vector<Vertex_P3_C4> v = { V(-5, 5), V(35, 5), V(-5, 6), V(35, 6) };
+        WipeClip::Batch b(1);
+        b.Add(kSquare, { 2 });
+        b.Add({ { 20, 0, 0 }, { 30, 0, 0 }, { 30, 10, 0 }, { 20, 10, 0 } }, { 4 });
+        b.ClipLines(v, 0);
+        double len5 = 0, len6 = 0;
+        for (size_t k = 0; k + 1 < v.size(); k += 2)
+            (v[k].pos.y == 5 ? len5 : len6) += std::abs(v[k + 1].pos.x - v[k].pos.x);
+        Check(std::abs(len5 - 20) < 1e-4, "Batch::ClipLines：前面的线被两个遮罩都裁剪");
+        Check(std::abs(len6 - 30) < 1e-4, "Batch::ClipLines：后面的线只被之后的遮罩裁剪");
+    }
+    {
+        // 填充：20×20 的两个三角形，被两个相交的凸遮罩精确扣掉并集（面积 400 - 100 - 100 + 25）
+        std::vector<Vertex_P3_C4> v = { V(-5, -5), V(15, -5), V(15, 15), V(-5, -5), V(15, 15), V(-5, 15) };
+        WipeClip::Batch b(1);
+        b.Add(kSquare, { 6 });
+        b.Add({ { 5, 5, 0 }, { 15, 5, 0 }, { 15, 15, 0 }, { 5, 15, 0 } }, { 6 });
+        b.ClipFills(v, 0);
+        Check(std::abs(Area(v) - 225) < 1e-3, "Batch::ClipFills：凸遮罩精确扣除并集");
+        Check(v.size() < 200, "Batch::ClipFills：凸遮罩不细分三角形");
+
+        // 顺时针给出的遮罩同样按凸多边形处理
+        std::vector<Vertex_P3_C4> w = { V(-5, -5), V(15, -5), V(15, 15) };
+        WipeClip::Batch cw(1);
+        cw.Add({ { 0, 10, 0 }, { 10, 10, 0 }, { 10, 0, 0 }, { 0, 0, 0 } }, { 3 });
+        cw.ClipFills(w, 0);
+        Check(std::abs(Area(w) - 150) < 1e-3, "Batch::ClipFills：顺时针遮罩");
+
+        // 非凸（L 形）遮罩走细分，面积误差在细分精度内
+        std::vector<Vertex_P3_C4> u = { V(0, 0), V(20, 0), V(20, 20), V(0, 0), V(20, 20), V(0, 20) };
+        WipeClip::Batch nc(1);
+        nc.Add({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 5, 5, 0 }, { 5, 10, 0 }, { 0, 10, 0 } }, { 6 });
+        nc.ClipFills(u, 0, 7);
+        Check(std::abs(Area(u) - 325) < 2.0, "Batch::ClipFills：非凸遮罩细分裁剪");
+    }
+    {
+        std::vector<Vertex_P3_C4_UV> t(12);
+        for (int i = 0; i < 6; ++i) { t[i].pos = { 5, 5, 0 }; t[6 + i].pos = { 50, 5, 0 }; }
+        WipeClip::Batch b(1);
+        b.Add(kSquare, { 12 });
+        b.ClipTexts(t, 0);
+        Check(t.size() == 6 && t[0].pos.x == 50, "Batch::ClipTexts：删去中心在遮罩内的字符");
+    }
+
     // 只裁剪 from 之后的顶点
     {
         std::vector<Vertex_P3_C4> v = { V(-5, 5), V(15, 5), V(-5, 6), V(15, 6) };

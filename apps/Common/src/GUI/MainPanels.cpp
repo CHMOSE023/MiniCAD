@@ -525,6 +525,7 @@ namespace MiniCAD
         m_statusBar->EditLayoutStyle().grow     = 1.0f;
         m_statusBar->EditLayoutStyle().minWidth = 0.0f;
         m_statusBar->SetOnToggled([this] { StateChanged(); });
+        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：文档数量左边，平时隐藏
 
         m_uiStatus = status->AddChild<Label>("", 12.0f, Theme::TextDim);
         m_uiStatus->SetEllipsis(true);
