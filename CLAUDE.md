@@ -7,7 +7,7 @@
 MiniCAD 是用现代 C++（C++20）编写的跨平台二维 CAD 编辑器。一个仓库里包含三个库和两个应用：
 平台无关的核心库 MiniCADLib、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
 Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代码（`apps/Common`）绘制同一套 MiniGUI 界面。
-仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.1.0。
+仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.1.1。
 
 ### 目录
 
@@ -78,7 +78,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 主窗口与平台（桌面版、网页版）
 
 整个界面由 MiniGUI 绘制。界面由 MiniGUI 后端渲染（`D3D11Backend` / `WebGL2Backend`），CAD 视口由 CAD 渲染器渲染（`D3D11Renderer` / `GLES3Renderer`），两者不是一回事。
-`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录。
+`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、后台任务（`RunInBackground`：桌面版用线程读图纸，网页版先画一帧再同步执行）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
