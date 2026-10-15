@@ -13,6 +13,7 @@
 #include "Import/TchMultiStair.h"
 #include "Import/TchSymbol.h"
 #include "Import/TchPipe.h"
+#include "Import/TchElec.h"
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
@@ -1041,6 +1042,30 @@ namespace MiniCAD
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return converted;
                     }
+                    // 天正电气：桥架、桥架配件（边线在对象自身的图层，中心线在 CABLETRAY_DOTE 图层）；折断线
+                    if (Tch::TchCableTray tray; Tch::DecodeCableTray(*unknown, tray, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCableTray(tray), TextStyleTable::StandardID, std::nullopt, LayerByName("CABLETRAY_DOTE"));
+                    }
+                    if (Tch::TchCableFitting fitting; Tch::DecodeCableFitting(*unknown, fitting, &nativeReason))
+                    {
+                        std::vector<Tch::TchGraphics::Segment> trays;
+                        for (Dwg::Handle h : fitting.Connected)
+                        {
+                            Tch::TchCableTray t;
+                            if (const auto* e = m_db.FindAs<Dwg::UnknownEntity>(h); e && Tch::DecodeCableTray(*e, t))
+                                trays.push_back({{t.Start.X, t.Start.Y}, {t.End.X, t.End.Y}});
+                        }
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCableFitting(fitting, trays), TextStyleTable::StandardID, std::nullopt,
+                                               LayerByName("CABLETRAY_DOTE"));
+                    }
+                    if (Tch::TchRupture rupture; Tch::DecodeRupture(*unknown, rupture, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildRupture(rupture), TextStyleTable::StandardID);
+                    }
                     Tch::TchPathArray pathArray;
                     if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
                     {
@@ -1494,6 +1519,14 @@ namespace MiniCAD
                     block->AddEntity(std::move(text));
                 }
                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+            }
+
+            // 原图中按名称找图层（如天正电气桥架中心线所在的 CABLETRAY_DOTE）；找不到时为空句柄，按对象自身的图层显示
+            Dwg::Handle LayerByName(const std::string& name)
+            {
+                if (name.empty()) return Dwg::kNullHandle;
+                const auto* layer = m_db.FindTableEntry<Dwg::Layer>(m_db.Layers(), name);
+                return layer ? layer->ObjectHandle : Dwg::kNullHandle;
             }
 
             // 天正文字（TCH_TEXT 与给排水的标注）的显示规则，按原图样式的字体与 _TCH 扩展数据判断（场景中同名的 Standard 是 MiniCAD 自己的设置）

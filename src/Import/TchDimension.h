@@ -55,14 +55,6 @@ namespace MiniCAD::Tch
     namespace Detail
     {
         inline bool Finite(double v) { return std::isfinite(v) && std::abs(v) < 1e12; }
-
-        // 文字流在基类之后依次存放派生类的字符串
-        struct TextStream
-        {
-            MiniDWG::DwgBitReader Reader;
-            explicit TextStream(const MiniDWG::RawDwgData& data) : Reader(data.Text, data.Version, MiniDWG::Codec::CodePage::Gbk) {}
-            std::string Next() { return Reader.ReadVariableText(); }
-        };
     }
 
     // 按 TDbDimension2 的私有布局版本 1 的明文分支解析，
@@ -73,12 +65,13 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_DIMENSION2") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native dimension");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native dimension version");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < base.TextCount; ++i) text.Next();
 
         TchDimension d;
         d.Scale = base.Scale;
@@ -96,12 +89,16 @@ namespace MiniCAD::Tch
             if (n < 0 || n > 4096) return fail("invalid dimension text position count");
             for (int i = 0; i < n && !r.Failed(); ++i) { r.ReadBitShort(); r.ReadRawDouble(); r.ReadRawDouble(); }
         }
-        std::vector<int> overrides;
-        if (d.Flags & 4)                                // 替代文字：段号 + 文字流中的字符串
+        if (d.Flags & 4)                                // 替代文字：每项 BS 段号、字符串
         {
             const int n = r.ReadBitShort();
             if (n < 0 || n > 4096) return fail("invalid dimension text override count");
-            for (int i = 0; i < n && !r.Failed(); ++i) overrides.push_back(r.ReadBitShort());
+            for (int i = 0; i < n && !r.Failed(); ++i)
+            {
+                const int index = r.ReadBitShort();
+                d.TextOverrides[index] = text.Next();
+            }
+            if (text.Reader.Failed()) return fail("dimension text stream is incomplete");
         }
         // 标志 0x01：句柄流中多一个句柄
         if (d.Flags & 0x10)
@@ -126,13 +123,6 @@ namespace MiniCAD::Tch
         if (d.Scale <= 0) return fail("invalid dimension scale");
         if (d.IsArc() && (d.ArcRadius <= 0 || d.MeasuredRadius <= 0)) return fail("invalid arc dimension radius");
 
-        if (!overrides.empty())
-        {
-            Detail::TextStream text(data);
-            for (int i = 0; i < base.TextCount; ++i) text.Next();
-            for (int index : overrides) d.TextOverrides[index] = text.Next();
-            if (text.Reader.Failed()) return fail("dimension text stream is incomplete");
-        }
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         d.DimStyle = handles.ReadHandle(entity.ObjectHandle);
@@ -151,13 +141,14 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_AXIS_LABEL") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native axis label");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native axis label");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 6) return fail("unsupported native axis label version");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < base.TextCount; ++i) text.Next();
         const int mode = version < 3 ? r.ReadByte() : r.ReadBitShort();
 
         TchAxisLabel a;
@@ -175,7 +166,7 @@ namespace MiniCAD::Tch
         {
             const int flags = version < 3 ? r.ReadByte() : r.ReadBitShort();
             axis.Flags = flags;
-            // 文字流：编号
+            axis.Label = text.Next();                   // 编号
             axis.Spacing = r.ReadBitDouble();
             if (version > 2)
             {
@@ -213,9 +204,6 @@ namespace MiniCAD::Tch
                 return fail("nonfinite axis spacing");
         if (a.Scale <= 0 || a.Radius < 0 || std::hypot(x1 - x0, y1 - y0) < 1e-9) return fail("invalid axis label geometry");
 
-        Detail::TextStream text(data);
-        for (int i = 0; i < base.TextCount; ++i) text.Next();
-        for (auto& axis : a.Axes) axis.Label = text.Next();
         if (text.Reader.Failed()) return fail("axis label text stream is incomplete");
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
@@ -249,12 +237,13 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_RADIUSDIM") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native radius dimension");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native radius dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native radius dimension version");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < base.TextCount; ++i) text.Next();
 
         TchRadiusDim d;
         d.Scale = base.Scale;
@@ -264,7 +253,7 @@ namespace MiniCAD::Tch
         d.Center = {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()};
         d.TipX = r.ReadRawDouble();
         d.TipY = r.ReadRawDouble();
-        // 标志 0x04：替代文字在文字流
+        if (d.Flags & 4) d.TextOverride = text.Next();  // 替代文字
         if (d.Flags & 2)
         {
             d.HasTextPosition = true;
@@ -278,13 +267,7 @@ namespace MiniCAD::Tch
             if (!Detail::Finite(v)) return fail("nonfinite radius dimension geometry");
         if (d.Scale <= 0 || std::hypot(d.TipX - d.Center.X, d.TipY - d.Center.Y) < 1e-9)
             return fail("invalid radius dimension geometry");
-        if (d.Flags & 4)
-        {
-            Detail::TextStream text(data);
-            for (int i = 0; i < base.TextCount; ++i) text.Next();
-            d.TextOverride = text.Next();
-            if (text.Reader.Failed()) return fail("radius dimension text stream is incomplete");
-        }
+        if (text.Reader.Failed()) return fail("radius dimension text stream is incomplete");
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         d.DimStyle = handles.ReadHandle(entity.ObjectHandle);

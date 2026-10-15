@@ -251,8 +251,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_COORD") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native coordinate");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native coordinate");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
@@ -289,18 +288,20 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_ARROW") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native arrow");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native arrow");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         const int version = r.ReadByte();
         if (version < 4 || version > 5) return fail("unsupported native arrow version");
         TchArrow a;
         a.Scale = symbol.Base.Scale;
         a.TextHeight = symbol.TextHeight;
         a.Mode = r.ReadByte();
-        // 文字流：第一个文字。3BD 为文字位置（相对于按模式确定的局部坐标，空箭头中可能为 NaN），显示按模式的规则排布
+        a.Text1 = text.Next();
+        // 3BD 为文字位置（相对于按模式确定的局部坐标，空箭头中可能为 NaN），显示按模式的规则排布
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
         const bool closed = r.ReadByte() != 0;
         const int count = r.ReadBitShort();
@@ -311,7 +312,7 @@ namespace MiniCAD::Tch
         a.Head = r.ReadByte();
         r.ReadBitDouble();
         a.HasText2 = r.ReadBit() != 0;
-        // 文字流：第二个文字
+        a.Text2 = text.Next();
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native arrow fields do not consume the payload exactly");
@@ -325,10 +326,6 @@ namespace MiniCAD::Tch
             if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge) || std::abs(v.Bulge) > 1e6)
                 return fail("nonfinite arrow vertex");
         if (a.Scale <= 0 || a.TextHeight <= 0 || a.ArrowLength < 0) return fail("invalid arrow settings");
-        Detail::TextStream text(data);
-        for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
-        a.Text1 = text.Next();
-        a.Text2 = text.Next();
         if (text.Reader.Failed()) return fail("arrow text stream is incomplete");
         if (!Detail::ReadSymbolHandles(entity, symbol, a.TextStyle)) return fail("arrow handle stream is incomplete");
         arrow = std::move(a);
@@ -343,11 +340,12 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_SYMB_SECTION") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native section symbol");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native section symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native section symbol version");
         TchSection s;
@@ -358,11 +356,11 @@ namespace MiniCAD::Tch
         const int count = r.ReadByte();
         if (count < 2) return fail("section symbol needs at least two points");
         for (int i = 0; i < count && !r.Failed(); ++i) s.Points.push_back({r.ReadRawDouble(), r.ReadRawDouble()});
-        // 文字流：编号
+        s.Label = text.Next();                          // 编号
         for (int i = 0; i < 4; ++i) r.ReadRawDouble();
         if (version > 1)
         {
-            // 文字流：第二个字符串（不用于显示）
+            text.Next();                                // 第二个字符串（不用于显示）
             for (int i = 0; i < 4; ++i) r.ReadRawDouble();
             r.ReadBitDouble(); r.ReadBitShort();
             // 句柄流：一个句柄
@@ -375,9 +373,6 @@ namespace MiniCAD::Tch
             return fail("invalid section symbol settings");
         for (const auto& p : s.Points)
             if (!Detail::Finite(p.X) || !Detail::Finite(p.Y)) return fail("nonfinite section symbol point");
-        Detail::TextStream text(data);
-        for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
-        s.Label = text.Next();
         if (text.Reader.Failed()) return fail("section symbol text stream is incomplete");
         if (!Detail::ReadSymbolHandles(entity, symbol, s.TextStyle)) return fail("section symbol handle stream is incomplete");
         section = std::move(s);
@@ -426,7 +421,7 @@ namespace MiniCAD::Tch
         for (double v : values)
             if (!Detail::Finite(v)) return fail("nonfinite index symbol geometry");
         if (p.Scale <= 0 || p.Radius <= 0) return fail("invalid index symbol settings");
-        Detail::TextStream text(data);
+        Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         p.Number = text.Next(); p.Sheet = text.Next(); p.Above = text.Next(); p.Below = text.Next();
         for (int i = 0; i < list1 + list2 + 1; ++i) text.Next();
@@ -455,16 +450,19 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_DRAWINGNAME") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native drawing name");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native drawing name");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < base.TextCount; ++i) text.Next();
         const int version = r.ReadBitShort();
         if (version < 1 || version > 3) return fail("unsupported native drawing name version");
         TchDrawingName d;
         d.Scale = base.Scale;
         d.X = r.ReadBitDouble(); d.Y = r.ReadBitDouble(); r.ReadBitDouble();
+        d.Name = text.Next();
+        d.ScaleText = text.Next();
         r.ReadBitDouble();
         d.NameHeight = r.ReadBitDouble();
         d.ScaleHeight = r.ReadBitDouble();
@@ -481,10 +479,6 @@ namespace MiniCAD::Tch
         for (double v : values)
             if (!Detail::Finite(v)) return fail("nonfinite drawing name settings");
         if (d.Scale <= 0 || d.NameHeight <= 0 || d.Color < 0 || d.Color > 256) return fail("invalid drawing name settings");
-        Detail::TextStream text(data);
-        for (int i = 0; i < base.TextCount; ++i) text.Next();
-        d.Name = text.Next();
-        d.ScaleText = text.Next();
         if (text.Reader.Failed()) return fail("drawing name text stream is incomplete");
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);

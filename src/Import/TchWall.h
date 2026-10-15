@@ -37,7 +37,7 @@ namespace MiniCAD::Tch
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_WALL" && entity.Raw.DxfName != "TCH_CURTAIN_WALL") return false;
-        if ((data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8 ||
+        if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8 ||
             data.MainBits < 773)
             return false;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -87,8 +87,8 @@ namespace MiniCAD::Tch
                 " bits; verified range is 773..1173";
             return false;
         }
-        // AC1024（2010 格式，8#楼-A平面图）与 AC1027 的这段位流布局相同；其他版本未核对
-        if ((data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
+        // AC1018（2004 格式，天正电气 1#楼平面图）、AC1024（2010 格式，8#楼-A平面图）与 AC1027 的这段位流布局相同；其他版本未核对
+        if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
             return false;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         if (r.ReadByte() != 5) return false;
@@ -125,7 +125,10 @@ namespace MiniCAD::Tch
         const double insulation = r.ReadBitDouble();
         for (auto& join : result.Joins) join = r.ReadBitDouble();
         // The remaining 11-bit signature is 00000000 010.
-        if (r.ReadByte() != 0 || r.Read3Bits() != 2 || r.Failed() || geometry.Failed() ||
+        const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
+        // 最后是一个字符串（R2007 起在文字流）；R2004 就地在主数据流（1#楼平面图的墙均为空串，占 2 位）
+        if (data.Version < CadVersion::AC1021) r.ReadVariableText();
+        if (!signature || r.Failed() || geometry.Failed() ||
             r.PositionInBits() != data.MainBits || (flags & ~0x7FFF) != 0)   // 标志低位：识别为外墙等（散水样例为 1）；8#楼 还有 0x400 / 0x2000 / 0x4000 等高位
             return false;
         const std::array<double, 10> values{result.Start.X, result.Start.Y, result.Start.Z,

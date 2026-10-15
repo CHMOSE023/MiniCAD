@@ -8,27 +8,49 @@
 namespace MiniCAD::Tch
 {
     // 天正对象公共基类（TCH_Base）私有数据中与显示无关、但决定位流布局的部分。
-    // 布局依据已核对的基类私有布局；字符串在文字流、
+    // 布局依据已核对的基类私有布局；R2007 起字符串在文字流（R2004 及更早就地嵌在主数据流，见 InlineText）、
     // 句柄在句柄流，主数据流中不占位。只支持基类版本 1～5，更高版本含未核对的段，按不支持处理
     struct TchBase
     {
         int Version = 0;
         int HandleCount = 0;    // 基类在句柄流中占用的句柄数（派生类的句柄排在其后）
-        int TextCount = 0;      // 基类在文字流中占用的字符串数（属性包的名字与字符串值）
+        int TextCount = 0;      // 基类在文字流中占用的字符串数（属性包的名字与字符串值）；R2004 及更早已就地读掉，为 0
         double Scale = 1;       // 出图比例（如 100）；标注、轴号的图面尺寸乘以它得到世界尺寸
     };
 
     namespace Detail
     {
+        // R2004 及更早没有独立的文字流：天正对象的字符串（TV）就地写在主数据流中 dwgInFields 读它的位置
+        inline bool InlineText(const MiniDWG::DwgBitReader& r) { return r.Version() < MiniDWG::CadVersion::AC1021; }
+
+        // 天正对象的字符串：R2007 起依次取自文字流，更早的版本就地读主数据流。
+        // 解码时必须在 dwgInFields 读字符串的位置调用 Next()（R2007 起只要求次序一致）
+        struct TextStream
+        {
+            MiniDWG::DwgBitReader Reader;
+            MiniDWG::DwgBitReader* Main = nullptr;
+            TextStream(const MiniDWG::RawDwgData& data, MiniDWG::DwgBitReader& main)
+                : Reader(data.Text, data.Version, MiniDWG::Codec::CodePage::Gbk), Main(InlineText(main) ? &main : nullptr) {}
+            std::string Next() { return Main ? Main->ReadVariableText() : Reader.ReadVariableText(); }
+        };
+
+        // 天正对象支持的 DWG 版本：R2004 起（R2004 字符串在主数据流，R2007 起在文字流）
+        inline bool SupportedVersion(const MiniDWG::RawDwgData& data)
+        {
+            return data.Version >= MiniDWG::CadVersion::AC1018 && data.Main.size() >= (data.MainBits + 7) / 8;
+        }
+
         // 属性包：BL 个数；每项为名字（文字流）、BL 类型、按类型读值。类型 100 为嵌套属性包
         inline bool SkipPropertyBag(MiniDWG::DwgBitReader& r, int& texts, int& handles, int depth = 0)
         {
+            const bool inlineText = InlineText(r);
+            auto text = [&] { if (inlineText) r.ReadVariableText(); else ++texts; };
             if (depth > 8) return false;
             const int count = r.ReadBitLong();
             if (count < 0 || count > 4096) return false;
             for (int i = 0; i < count && !r.Failed(); ++i)
             {
-                ++texts;                                                            // 名字
+                text();                                                             // 名字
                 switch (r.ReadBitLong())
                 {
                 case 0: r.ReadBit(); break;
@@ -36,7 +58,7 @@ namespace MiniCAD::Tch
                 case 4: case 5: r.ReadBitShort(); break;
                 case 6: case 7: r.ReadBitLong(); break;
                 case 100: if (!SkipPropertyBag(r, texts, handles, depth + 1)) return false; break;
-                case 0x65: ++texts; break;                                           // 字符串
+                case 0x65: text(); break;                                            // 字符串
                 case 200: r.ReadBitDouble(); break;
                 case 0xc9: case 0xcb: r.ReadRawDouble(); r.ReadRawDouble(); break;                // 二维点为 2RD
                 case 0xca: case 0xcc: case 0xcd: r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble(); break;
@@ -96,7 +118,7 @@ namespace MiniCAD::Tch
     namespace Detail
     {
         // TDbOpening 的私有布局（版本 < 6 的明文分支）：天正基类之后的门窗字段，不检查是否读完
-        inline bool ReadOpeningFields(MiniDWG::DwgBitReader& r, TchOpening& o, int& kind, const char*& why)
+        inline bool ReadOpeningFields(MiniDWG::DwgBitReader& r, TextStream& text, TchOpening& o, int& kind, const char*& why)
         {
             const int version = r.ReadByte();
             if (version < 2 || version > 5) { why = "unsupported native opening version"; return false; }
@@ -108,7 +130,8 @@ namespace MiniCAD::Tch
             o.Mirror = r.ReadByte();
             kind = r.ReadByte();
             r.ReadBitDouble();
-            // 文字流：编号；句柄流：二维图块、三维图块
+            o.Label = text.Next();                                                              // 编号
+            // 句柄流：二维图块、三维图块
             o.LabelX = r.ReadBitDouble(); o.LabelY = r.ReadBitDouble(); r.ReadBitDouble();     // 编号文字位置
             // 句柄流：所在墙
             const int flags = r.ReadBitShort();
@@ -137,7 +160,8 @@ namespace MiniCAD::Tch
             if (version > 2)
             {
                 r.ReadBitLong(); r.ReadBitShort(); r.ReadBit();
-                for (int k = 0; k < 4; ++k) r.ReadBitDouble();      // 字符串在文字流
+                text.Next();
+                for (int k = 0; k < 4; ++k) r.ReadBitDouble();
             }
             if (version > 3) r.ReadBitDouble();
             if (r.Failed()) { why = "native opening fields are truncated"; return false; }
@@ -170,15 +194,16 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_OPENING") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native opening");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native opening");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        Detail::TextStream text(data, r);
+        for (int i = 0; i < base.TextCount; ++i) text.Next();
         TchOpening o;
         int kind = 0;
         const char* why = "";
-        if (!Detail::ReadOpeningFields(r, o, kind, why)) return fail(why);
+        if (!Detail::ReadOpeningFields(r, text, o, kind, why)) return fail(why);
         std::vector<TchBase> partBases;
         if (kind == 8)
         {
@@ -193,13 +218,15 @@ namespace MiniCAD::Tch
                     if (r.ReadBit() != (*c == '1')) return fail("unsupported group opening part header");
                 TchBase partBase;
                 if (!ReadTchBase(r, partBase)) return fail("unsupported group opening part base layout");
+                for (int k = 0; k < partBase.TextCount; ++k) text.Next();
                 TchOpening part;
                 int partKind = 0;
-                if (!Detail::ReadOpeningFields(r, part, partKind, why)) return fail(why);
+                if (!Detail::ReadOpeningFields(r, text, part, partKind, why)) return fail(why);
                 if (partKind != 0 && partKind != 1) return fail("group opening parts must be doors or windows");
                 part.Type = static_cast<TchOpening::Kind>(partKind);
                 part.Scale = partBase.Scale;
                 part.InGroup = true;
+                part.Label.clear();
                 o.Parts.push_back(std::move(part));
                 partBases.push_back(partBase);
             }
@@ -223,15 +250,9 @@ namespace MiniCAD::Tch
         if (handles.Failed() || handles.PositionInBits() > data.HandleBits ||
             (o.Block2D == kNullHandle && !labelled && o.Type != TchOpening::Kind::Hole))
             return fail("opening handle stream is incomplete");
-        if (labelled)
-        {
-            // 带形窗、组合门窗的文字流先是编号（基类字符串之后）；普通门窗的文字流布局未核对，不取编号
-            o.Scale = base.Scale;
-            DwgBitReader text(data.Text, data.Version, Codec::CodePage::Gbk);
-            for (int i = 0; i < base.TextCount; ++i) text.ReadVariableText();
-            o.Label = text.ReadVariableText();
-            if (text.Failed()) o.Label.clear();
-        }
+        // 编号只用于带形窗、组合门窗（普通门窗的编号由图块显示）
+        if (labelled) o.Scale = base.Scale;
+        if (!labelled || text.Reader.Failed()) o.Label.clear();
         opening = o;
         if (diagnostic) diagnostic->clear();
         return true;

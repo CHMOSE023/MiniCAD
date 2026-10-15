@@ -178,7 +178,7 @@ namespace MiniCAD::Tch
             return fail("invalid native pipe geometry");
 
         // 文字流：基类之后为原型的字符串、管线的标注前缀，版本 ≥ 2 时还有后缀
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         for (int i = 0; i < base.TextCount + 1; ++i) stream.Next();
         p.LabelPrefix = stream.Next();
         if (version > 1) p.LabelSuffix = stream.Next();
@@ -482,7 +482,7 @@ namespace MiniCAD::Tch
         t.X = at.X; t.Y = at.Y; t.Scale = base.Scale;
         t.Rotation = Detail::Upright(std::atan2(dir.Y, dir.X));
         if (!Detail::Finite(t.X) || !Detail::Finite(t.Y) || !(t.Height > 0) || !(t.Scale > 0)) return fail("invalid native pipe text settings");
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         for (int i = 0; i < base.TextCount; ++i) stream.Next();
         t.Value = stream.Next();
         if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
@@ -523,7 +523,7 @@ namespace MiniCAD::Tch
         if (!Detail::CheckPayload(entity, "TCH_VPIPEDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
         if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
         if (r.ReadByte() >= 2) return fail("unsupported native riser dimension version");
@@ -581,7 +581,7 @@ namespace MiniCAD::Tch
         if (!Detail::CheckPayload(entity, "TCH_WELLDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
         if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
         if (r.ReadByte() >= 2) return fail("unsupported native well dimension version");
@@ -640,7 +640,7 @@ namespace MiniCAD::Tch
         if (!Detail::CheckPayload(entity, "TCH_PIPEMULTDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
         if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
         const int version = r.ReadByte();
@@ -793,7 +793,7 @@ namespace MiniCAD::Tch
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native flange fields do not consume the payload exactly");
         f.X = at.X; f.Y = at.Y;
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         for (int i = 0; i < base.TextCount + count; ++i) stream.Next();
         const std::string ratio = stream.Next();
         if (stream.Reader.Failed()) return fail("native flange text stream is incomplete");

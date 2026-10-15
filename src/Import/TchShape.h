@@ -25,7 +25,7 @@ namespace MiniCAD::Tch
         {
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
-            if (entity.Raw.DxfName != dxf || data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return false;
+            if (entity.Raw.DxfName != dxf || !SupportedVersion(data)) return false;
             return ReadTchBase(r, base);
         }
 
@@ -359,6 +359,8 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CORNER_WINDOW") return false;
+        // 编号在主数据流中的位置未核对：R2004 及更早（字符串嵌在主数据流）不支持
+        if (data.Version < CadVersion::AC1021) return fail("unsupported DWG version for corner window");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!Detail::ShapeHead(entity, "TCH_CORNER_WINDOW", r, base)) return fail("unsupported Tianzheng base layout");
@@ -391,7 +393,7 @@ namespace MiniCAD::Tch
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native corner window fields do not consume the payload exactly");
         for (double v : {w.X, w.Y, w.Length1, w.Length2, w.Angle1, w.Angle2, w.Thickness, w.LabelX, w.LabelY, w.LabelHeight})
             if (!Detail::Finite(v)) return fail("invalid native corner window settings");
-        Detail::TextStream stream(data);
+        Detail::TextStream stream(data, r);
         for (int i = 0; i < base.TextCount; ++i) stream.Next();
         w.Label = stream.Next();
         (void)texts;
@@ -622,7 +624,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_LINESTAIR") return false;
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for line stair");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for line stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchLineStair s;
         if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");
@@ -684,7 +686,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_ARCSTAIR") return false;
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for arc stair");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for arc stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchArcStair s;
         if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");
@@ -866,7 +868,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CURVESTAIR") return false;
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for curve stair");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for curve stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchCurveStair s;
         if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");

@@ -27,7 +27,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_PATH_ARRAY") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
+        if (!Detail::SupportedVersion(data))
             return fail("unsupported DWG version for native path array");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;

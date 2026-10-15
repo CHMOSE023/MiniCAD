@@ -9,21 +9,19 @@ namespace MiniCAD::Tch
 {
     namespace Detail
     {
-        // 符号基类之后、文字流中的派生类字符串（先跳过基类属性包占用的字符串）
-        inline std::vector<std::string> SymbolTexts(const MiniDWG::RawDwgData& data, const TchSymbolBase& symbol, int count)
+        // 派生类的字符串：先跳过文字流中基类属性包占用的字符串（R2004 已在主数据流就地读掉），之后在读到的位置调用 Next()
+        inline TextStream SymbolTexts(const MiniDWG::RawDwgData& data, MiniDWG::DwgBitReader& r, const TchSymbolBase& symbol)
         {
-            TextStream stream(data);
+            TextStream stream(data, r);
             for (int i = 0; i < symbol.Base.TextCount; ++i) stream.Next();
-            std::vector<std::string> out;
-            for (int i = 0; i < count; ++i) out.push_back(stream.Next());
-            return out;
+            return stream;
         }
 
         inline bool ReadSymbolHead(const MiniDWG::UnknownEntity& entity, const char* dxf, MiniDWG::DwgBitReader& r, TchSymbolBase& symbol)
         {
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
-            if (entity.Raw.DxfName != dxf || data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return false;
+            if (entity.Raw.DxfName != dxf || !SupportedVersion(data)) return false;
             return ReadTchSymbolBase(r, symbol);
         }
     }
@@ -54,23 +52,23 @@ namespace MiniCAD::Tch
         if (version < 1 || version > 4) return fail("unsupported native elevation version");
         TchElevation e;
         e.Scale = symbol.Base.Scale; e.TextHeight = symbol.TextHeight;
+        auto text = Detail::SymbolTexts(data, r, symbol);
         e.Flags = r.ReadByte();
         e.X = r.ReadRawDouble(); e.Y = r.ReadRawDouble();
+        e.Value = text.Next();
         e.LineLength = r.ReadBitDouble();
         if (e.Flags & 4) r.ReadBitDouble();
         if (e.Flags & 8) r.ReadBitDouble();
-        int texts = 1;
         if (version > 1)
         {
             r.ReadBitDouble(); r.ReadByte();
             r.ReadRawDouble(); r.ReadRawDouble(); r.ReadRawDouble(); r.ReadRawDouble();
-            ++texts;
+            text.Next();
         }
         if (version > 3) r.ReadByte();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native elevation fields do not consume the payload exactly");
         if (!Detail::Finite(e.X) || !Detail::Finite(e.Y) || !Detail::Finite(e.LineLength) || !(e.Scale > 0) || !(e.TextHeight > 0))
             return fail("invalid native elevation settings");
-        e.Value = Detail::SymbolTexts(data, symbol, texts)[0];
         if (!Detail::ReadSymbolHandles(entity, symbol, e.Style)) return fail("elevation handle stream is incomplete");
         elevation = std::move(e);
         if (diagnostic) diagnostic->clear();
@@ -135,10 +133,12 @@ namespace MiniCAD::Tch
         if (version < 1 || version > 6) return fail("unsupported native leader version");
         TchMultiLeader m;
         m.Scale = symbol.Base.Scale; m.TextHeight = symbol.TextHeight;
+        auto text = Detail::SymbolTexts(data, r, symbol);
         m.Arrow = r.ReadByte();
         m.ElbowX = r.ReadRawDouble(); m.ElbowY = r.ReadRawDouble();
         m.LineLength = r.ReadBitDouble();
         m.Side = r.ReadByte();
+        m.Upper = text.Next(); m.Lower = text.Next();
         const int count = r.ReadByte();
         for (int i = 0; i < count && !r.Failed(); ++i)
         {
@@ -155,8 +155,6 @@ namespace MiniCAD::Tch
             return fail("invalid native leader settings");
         for (const auto& p : m.Targets)
             if (!Detail::Finite(p.X) || !Detail::Finite(p.Y)) return fail("invalid native leader point");
-        const auto texts = Detail::SymbolTexts(data, symbol, 2);
-        m.Upper = texts[0]; m.Lower = texts[1];
         if (!Detail::ReadSymbolHandles(entity, symbol, m.Style)) return fail("leader handle stream is incomplete");
         leader = std::move(m);
         if (diagnostic) diagnostic->clear();
@@ -235,18 +233,19 @@ namespace MiniCAD::Tch
         if (version < 1 || version > 3) return fail("unsupported native composing version");
         TchComposing c;
         c.Scale = symbol.Base.Scale; c.TextHeight = symbol.TextHeight;
+        auto text = Detail::SymbolTexts(data, r, symbol);
         c.TextSide = r.ReadByte();
         const int code = (r.ReadBit() ? 2 : 0) + (r.ReadBit() ? 1 : 0);
         c.LineLength = code == 0 ? r.ReadRawDouble() : code == 1 ? 1.0 : 0.0;
         c.StartX = r.ReadRawDouble(); c.StartY = r.ReadRawDouble();
         c.ElbowX = r.ReadRawDouble(); c.ElbowY = r.ReadRawDouble();
+        c.Text = text.Next();
         if (version > 1) { for (int i = 0; i < 5; ++i) r.ReadBitDouble(); r.ReadByte(); }
         if (version > 2) r.ReadByte();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native composing fields do not consume the payload exactly");
         if (!Detail::Finite(c.StartX) || !Detail::Finite(c.StartY) || !Detail::Finite(c.ElbowX) || !Detail::Finite(c.ElbowY) ||
             !Detail::Finite(c.LineLength) || !(c.Scale > 0) || !(c.TextHeight > 0))
             return fail("invalid native composing settings");
-        c.Text = Detail::SymbolTexts(data, symbol, 1)[0];
         if (!Detail::ReadSymbolHandles(entity, symbol, c.Style)) return fail("composing handle stream is incomplete");
         composing = std::move(c);
         if (diagnostic) diagnostic->clear();
@@ -321,11 +320,14 @@ namespace MiniCAD::Tch
         if (version < 1 || version > 2) return fail("unsupported native drawing index version");
         TchDrawingIndex d;
         d.Scale = symbol.Base.Scale; d.TextHeight = symbol.TextHeight;
+        auto text = Detail::SymbolTexts(data, r, symbol);
         d.X = r.ReadRawDouble(); d.Y = r.ReadRawDouble();
         d.Radius = r.ReadBitDouble();
         d.LineWidth = r.ReadBitDouble();
+        d.Number = text.Next(); d.Sheet = text.Next();
         if (version > 1)
         {
+            d.ScaleText = text.Next();
             d.ScaleHeight = r.ReadBitDouble();
             r.ReadBitDouble();
             d.ShowScale = r.ReadByte() != 0;
@@ -336,9 +338,6 @@ namespace MiniCAD::Tch
         if (!Detail::Finite(d.X) || !Detail::Finite(d.Y) || !(d.Radius > 0) || !Detail::Finite(d.Radius) || !Detail::Finite(d.LineWidth) ||
             !(d.Scale > 0) || !(d.ScaleHeight > 0))
             return fail("invalid native drawing index settings");
-        const auto texts = Detail::SymbolTexts(data, symbol, version > 1 ? 3 : 2);
-        d.Number = texts[0]; d.Sheet = texts[1];
-        if (version > 1) d.ScaleText = texts[2];
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < symbol.Base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         d.Style = handles.ReadHandle(entity.ObjectHandle);
@@ -420,7 +419,7 @@ namespace MiniCAD::Tch
             return fail("invalid native north thumb settings");
         if (version > 1)
         {
-            Detail::TextStream stream(data);
+            Detail::TextStream stream(data, r);
             for (int i = 0; i < base.TextCount; ++i) stream.Next();
             n.Text = stream.Next();
             DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
@@ -463,7 +462,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CUT") return false;
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for cut line");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cut line");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
@@ -537,7 +536,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_SYMMETRY") return false;
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for symmetry");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for symmetry");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
@@ -580,7 +579,7 @@ namespace MiniCAD::Tch
         double Bulge = 0.5;                         // 每段圆弧的凸度
     };
 
-    // 符号基类、RC 版本（1）、RC 闭合、BS 点数与各点 2RD + BD、BD 弧长系数、BD 凸度、RC、3BD 编号位置；文字流：编号
+    // 符号基类、RC 版本（1）、RC 闭合、BS 点数与各点 2RD + BD、BD 弧长系数、BD 凸度、RC、编号（文字）、3BD 编号位置
     inline bool DecodeModi(const MiniDWG::UnknownEntity& entity, TchModi& modi, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -592,6 +591,7 @@ namespace MiniCAD::Tch
         if (!Detail::ReadSymbolHead(entity, "TCH_MODI", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
         if (r.ReadByte() != 1) return fail("unsupported native revision cloud version");
         TchModi m;
+        auto text = Detail::SymbolTexts(data, r, symbol);
         m.Closed = r.ReadByte() != 0;
         const int count = r.ReadBitShort();
         if (count < 2 || count > 100000) return fail("invalid revision cloud vertex count");
@@ -605,6 +605,7 @@ namespace MiniCAD::Tch
         r.ReadBitDouble();
         m.Bulge = r.ReadBitDouble();
         r.ReadByte();
+        text.Next();                                    // 编号
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native revision cloud fields do not consume the payload exactly");
         if (!Detail::Finite(m.Bulge) || std::abs(m.Bulge) > 10) return fail("invalid revision cloud bulge");

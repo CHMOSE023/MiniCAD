@@ -58,14 +58,16 @@ namespace MiniCAD::Tch
         const bool multiline = entity.Raw.DxfName == "TCH_MTEXT" || multilineNew;
         if (entity.Raw.DxfName != "TCH_TEXT" && !multiline) return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
-            return fail("unsupported DWG version for native text");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native text");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+        Detail::TextStream stream(data, r);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native text version");
         TchText t;
+        for (int i = 0; i < base.TextCount; ++i) stream.Next();
+        t.Value = stream.Next();                        // 正文：样式（句柄流）之后、插入点之前
         t.Scale = base.Scale;
         t.X = r.ReadBitDouble(); t.Y = r.ReadBitDouble(); r.ReadBitDouble();
         t.Height = r.ReadBitDouble();
@@ -94,9 +96,6 @@ namespace MiniCAD::Tch
         // 10～12 为基线左 / 中 / 右，13 为文字全高的正中。基线与底部只差下伸部分，按 7～9 显示，13 按正中（5）显示
         if (t.Attachment >= 10 && t.Attachment <= 13) t.Attachment = t.Attachment == 13 ? 5 : t.Attachment - 3;
         if (t.Attachment < 1 || t.Attachment > 9) return fail("unsupported text alignment");
-        Detail::TextStream stream(data);
-        for (int i = 0; i < base.TextCount; ++i) stream.Next();
-        t.Value = stream.Next();
         if (stream.Reader.Failed()) return fail("native text stream is incomplete");
         // TCH_MTEXTNEW 的正文夹有格式码 $|字高|0$（139 户型水施图的说明为 $|3.6|0$），不显示；字高变化不处理
         if (multilineNew)
