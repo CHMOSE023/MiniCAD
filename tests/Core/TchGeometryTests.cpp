@@ -348,6 +348,11 @@ int main(int argc, char** argv)
         if (it == files.end())
         {
             const auto data = ReadFile(std::string(MINICAD_TEST_DATA_DIR) + "/" + e.File);
+            if (data.empty())   // 天正样图含项目信息，不入库（.gitignore）；本地没有时跳过
+            {
+                std::printf("[SKIP] %llx: %s（没有样图 %s）\n", e.Handle, e.Why, e.File);
+                continue;
+            }
             Scene scene;
             it = files.emplace(e.File, !data.empty() && ImportCad(data, scene) ? Collect(scene) : std::map<unsigned long long, Geometry>{}).first;
         }
