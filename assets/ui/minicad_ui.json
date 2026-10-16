@@ -130,9 +130,9 @@
   ],
 
   "toolbars": {
-    "standard": [ "file.new", "file.open", "file.save", "|", "edit.undo", "edit.redo", "|", "aux.snap", "aux.ortho" ],
+    "standard": [ "file.new", "file.open", "file.save", "|", "edit.undo", "edit.redo"],
     "draw": {
-      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "|", "draw.pline", "draw.spline", "|", "draw.text", "draw.mtext" ],
+      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "draw.pline", "draw.spline", "draw.text", "draw.mtext" ],
       "iconSize": 20
     },
     "modify": [ "modify.move", "modify.copy", "modify.mirror", "modify.rotate" ]

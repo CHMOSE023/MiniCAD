@@ -296,21 +296,22 @@ namespace MiniCAD
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? LineweightIndex(d->GetScene().GetCurrentLineweight()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
 
-        // ── 绘图辅助（与工具栏、状态栏、F3 / F8 是同一份数据，任何一处修改都同步）────
-        Expander* aux = grid->AddGroup("绘图辅助");
         Editor& editor = dm.GetEditor();
-        auto bindToggle = [this](CheckBox* box, std::function<bool()> get, std::function<void()> toggle)
-        {
-            m_bindings.BindCheck(box, [get] { return std::optional<bool>(get()); },
-                                      [get, toggle](const bool& v) { if (v != get()) toggle(); });
-        };
-        bindToggle(grid->AddProperty<CheckBox>(aux, "对象捕捉"), [&editor] { return editor.IsSnapEnabled(); },  [&editor] { editor.ToggleSnap(); });
-        bindToggle(grid->AddProperty<CheckBox>(aux, "正交"),     [&editor] { return editor.IsOrthoEnabled(); }, [&editor] { editor.ToggleOrtho(); });
-        bindToggle(grid->AddProperty<CheckBox>(aux, "悬停高亮"), [&editor] { return editor.IsHoverEnabled(); }, [&editor] { editor.ToggleHover(); });
-        auto* radius = grid->AddProperty<NumberBox>(aux, "捕捉孔径", 10.0, 1.0, 50.0, 1.0, 0);
-        m_bindings.BindNumber(radius,
-            [&editor] { return std::optional<double>(editor.GetSnapEngine().GetSnapRadiusPx()); },
-            [&editor](const double& v) { editor.GetSnapEngine().SetSnapRadiusPx(v); });
+
+        // ── 绘图辅助（与工具栏、状态栏、F3 / F8 是同一份数据，任何一处修改都同步）────
+        //Expander* aux = grid->AddGroup("绘图辅助");
+        //auto bindToggle = [this](CheckBox* box, std::function<bool()> get, std::function<void()> toggle)
+        //{
+        //    m_bindings.BindCheck(box, [get] { return std::optional<bool>(get()); },
+        //                              [get, toggle](const bool& v) { if (v != get()) toggle(); });
+        //};
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "对象捕捉"), [&editor] { return editor.IsSnapEnabled(); },  [&editor] { editor.ToggleSnap(); });
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "正交"),     [&editor] { return editor.IsOrthoEnabled(); }, [&editor] { editor.ToggleOrtho(); });
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "悬停高亮"), [&editor] { return editor.IsHoverEnabled(); }, [&editor] { editor.ToggleHover(); });
+        //auto* radius = grid->AddProperty<NumberBox>(aux, "捕捉孔径", 10.0, 1.0, 50.0, 1.0, 0);
+        //m_bindings.BindNumber(radius,
+        //    [&editor] { return std::optional<double>(editor.GetSnapEngine().GetSnapRadiusPx()); },
+        //    [&editor](const double& v) { editor.GetSnapEngine().SetSnapRadiusPx(v); });
 
         // ── 选择集（可编辑：多个对象取值不同时显示"*多种*"；修改走 ChangeAttrCommand，可撤销）────────────
         Expander* sel = grid->AddGroup("选择集");

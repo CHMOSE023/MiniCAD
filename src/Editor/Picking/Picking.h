@@ -137,7 +137,7 @@ namespace MiniCAD
         int m_currY  = 0;
         bool m_dirty = false;
 
-        bool m_hoverEnabled = true;   // 悬停高亮开关
+        bool m_hoverEnabled = false;   // 悬停高亮开关
 
         // 空间索引及其同步的几何版本（UINT64_MAX = 尚未构建）
         SpatialIndex m_index;

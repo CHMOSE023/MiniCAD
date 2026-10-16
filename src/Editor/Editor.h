@@ -391,7 +391,7 @@ namespace MiniCAD
         double                 m_chamferD2 = 1.0;
 
         std::unordered_map<std::string,
-            std::function<std::unique_ptr<ITool>()>>     m_toolRegistry;
+        std::function<std::unique_ptr<ITool>()>>         m_toolRegistry;
         std::unordered_map<std::string, std::string>     m_aliasRegistry;
         bool                                             m_zoomPending = false;   // ZOOM 命令等待选项
         std::string                                      m_cmdBuffer;
@@ -482,7 +482,7 @@ namespace MiniCAD
         double                       m_lastWorldPerPixel  = 0.0;
         bool                         m_sceneViewDependent = false;
 
-        bool                         m_thinLines      = false;   // 全局细线：忽略线宽
+        bool                         m_thinLines      = true;    // 全局细线：忽略线宽
         bool                         m_displayInvalid = false;   // 显示设置变化：下一帧所有实体重新细分
     };
 }

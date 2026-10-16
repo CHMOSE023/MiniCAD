@@ -213,7 +213,7 @@ namespace MiniCAD
         }
         m_docManager.SetFontSystem(&m_fontSystem);     // 文字样式由各文档的文字样式表定义
 
-        AddDemoEntities(m_docManager.Create());
+        //AddDemoEntities(m_docManager.Create());
         return true;
     }
 

@@ -94,7 +94,7 @@ namespace MiniCAD
 
     private:
         // ─── 开关 ───────────────────────────────
-        bool     m_enableEngine = true;
+        bool     m_enableEngine = false;
         uint32_t m_modes        = static_cast<uint32_t>(SnapMode::Default);
 
         double m_gridSize       = 1.0;    // 世界单位
