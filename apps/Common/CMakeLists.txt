@@ -13,7 +13,7 @@ add_library(MiniCADApp STATIC
 )
 
 target_include_directories(MiniCADApp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(MiniCADApp PUBLIC MiniCADLib MiniGUI)
+target_link_libraries(MiniCADApp PUBLIC MiniCAD MiniGUI)
 
 if(MSVC)
     target_compile_options(MiniCADApp PRIVATE /utf-8)

@@ -58,7 +58,7 @@ target_include_directories(MiniCADWeb PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
 )
-target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCADLib MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
+target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCAD MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
 minicad_web_executable(MiniCADWeb)
 # 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui
 target_link_options(MiniCADWeb PRIVATE

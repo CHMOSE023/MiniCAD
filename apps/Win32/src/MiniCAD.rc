@@ -1,4 +1,5 @@
 #include "resource.h"
+#include "MiniCADVersion.h"
 #include <winver.h>
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
@@ -26,8 +27,8 @@ END
 IDI_ICON ICON "..\\..\\..\\assets\\icons\\app.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1, 0, 0, 0
-PRODUCTVERSION 1, 0, 0, 0
+FILEVERSION MINICAD_VERSION_MAJOR, MINICAD_VERSION_MINOR, MINICAD_VERSION_PATCH, 0
+PRODUCTVERSION MINICAD_VERSION_MAJOR, MINICAD_VERSION_MINOR, MINICAD_VERSION_PATCH, 0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 
 #ifdef _DEBUG
@@ -46,8 +47,8 @@ BEGIN
 BLOCK "080404B0"
 BEGIN
 VALUE "FileDescription", "MiniCAD\0"
-VALUE "FileVersion", "0.0.0.1\0"
-VALUE "ProductVersion", "0.0.0.1\0"
+VALUE "FileVersion", MINICAD_FILE_VERSION_STR
+VALUE "ProductVersion", MINICAD_PRODUCT_VERSION_STR
 VALUE "ProductName", "MiniCAD\0"
 VALUE "CompanyName", "Hello\0"
 VALUE "LegalCopyright", "Hello\0"

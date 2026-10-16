@@ -57,7 +57,7 @@ run_tests.bat
 
 ```
 MiniCAD
-├── src/                    # MiniCADLib 核心库：实体、场景、文档、编辑器、视口、文字（命名空间 MiniCAD）
+├── src/                    # MiniCAD 核心库：实体、场景、文档、编辑器、视口、文字（命名空间 MiniCAD）
 │   ├── UI/                 # MiniGUI 保留模式界面库（命名空间 MiniGUI）
 │   └── Serialization/      # 原生格式（JSON / 二进制）+ MiniDWG DWG/DXF 读写库（Codec/ Database/ Dwg/ Dxf/）
 ├── apps/

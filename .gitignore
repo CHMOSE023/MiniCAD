@@ -10,7 +10,7 @@ dist
 .claude
 __pycache__/
 
-docs
+docs/evidence
 tools
 tests/Data
 tests/Core/*.py

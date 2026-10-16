@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MiniCADWin VERSION 0.1.1 LANGUAGES CXX)
+project(MiniCADWin VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,18 @@ if(MSVC)
 endif()
 
 # ── MiniCAD 桌面版：Win32 宿主（窗口 + D3D11）+ 共用的主窗口界面（MiniCADApp）──
+
+# 版本号由根 CMakeLists.txt 的 MINICAD_VERSION 提供，生成 MiniCADVersion.h 供 MiniCAD.rc 填写 exe 版本信息
+string(REPLACE "." ";" MINICAD_VERSION_PARTS "${MINICAD_VERSION}")
+list(GET MINICAD_VERSION_PARTS 0 MINICAD_VERSION_MAJOR)
+list(GET MINICAD_VERSION_PARTS 1 MINICAD_VERSION_MINOR)
+list(GET MINICAD_VERSION_PARTS 2 MINICAD_VERSION_PATCH)
+configure_file(
+    src/MiniCADVersion.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/MiniCADVersion.h
+    @ONLY
+)
+
 add_executable(MiniCADWin
     src/Host/GuiMain.cpp
     src/Host/Win32Window.cpp
@@ -55,12 +67,13 @@ add_executable(MiniCADWin
 
 target_include_directories(MiniCADWin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/3rd
 )
 
 target_link_libraries(MiniCADWin PRIVATE
     MiniCADApp
-    MiniCADLib
+    MiniCAD
     MiniGUI_Win32
     MiniGUI_D3D11
     d3d11

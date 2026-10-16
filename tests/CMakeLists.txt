@@ -1,5 +1,5 @@
 # ── 测试 ────────────────────────────────────────────────────────────
-# Core/          MiniCADLib 核心库测试   → MiniCADTests
+# Core/          MiniCAD 核心库测试   → MiniCADTests
 # UI/            MiniGUI 单元测试        → MiniGUITests
 # UI/Golden/     MiniGUI 截图对比测试    → MiniGUIGolden（基准图片在 UI/Golden/baseline）
 # Serialization/ MiniDWG 单元测试        → MiniDWGTests
@@ -10,56 +10,56 @@ set(MINICAD_TEST_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Data")
 
 add_executable(MiniCADTianzhengTests "Core/TianzhengWallTests.cpp")
 target_include_directories(MiniCADTianzhengTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(MiniCADTianzhengTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTianzhengTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTianzhengTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTianzhengTests COMMAND MiniCADTianzhengTests)
 
 add_executable(MiniCADTchImportTests "Core/TchBlockInsertTests.cpp" "Core/TchProxyGraphicsTests.cpp")
-target_link_libraries(MiniCADTchImportTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchImportTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchImportTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTchImportTests COMMAND MiniCADTchImportTests)
 
 add_executable(MiniCADCadPreserveTests "Core/CadPreserveTests.cpp")
-target_link_libraries(MiniCADCadPreserveTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADCadPreserveTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADCadPreserveTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADCadPreserveTests COMMAND MiniCADCadPreserveTests)
 
 add_executable(MiniCADTchOpeningTests "Core/TchOpeningTests.cpp")
-target_link_libraries(MiniCADTchOpeningTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchOpeningTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchOpeningTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTchOpeningTests COMMAND MiniCADTchOpeningTests)
 
 add_executable(MiniCADTchDimensionTests "Core/TchDimensionTests.cpp")
-target_link_libraries(MiniCADTchDimensionTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchDimensionTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchDimensionTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTchDimensionTests COMMAND MiniCADTchDimensionTests)
 
 add_executable(MiniCADTchSymbolTests "Core/TchSymbolTests.cpp")
-target_link_libraries(MiniCADTchSymbolTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchSymbolTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchSymbolTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTchSymbolTests COMMAND MiniCADTchSymbolTests)
 
 add_executable(MiniCADTchStairTests "Core/TchStairTests.cpp")
-target_link_libraries(MiniCADTchStairTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchStairTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchStairTests PRIVATE /utf-8)
 endif()
 add_test(NAME MiniCADTchStairTests COMMAND MiniCADTchStairTests)
 
 add_executable(MiniCADTchPathArrayTests "Core/TchPathArrayTests.cpp")
-target_link_libraries(MiniCADTchPathArrayTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchPathArrayTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADTchPathArrayTests PRIVATE /utf-8)
 endif()
@@ -67,7 +67,7 @@ add_test(NAME MiniCADTchPathArrayTests COMMAND MiniCADTchPathArrayTests)
 
 # 天正对象显示几何与天正 2014 分解结果比对（期望数据 Core/TchGeometryRef.inc 由 Core/tch_geomref.py 生成）
 add_executable(MiniCADTchGeometryTests "Core/TchGeometryTests.cpp")
-target_link_libraries(MiniCADTchGeometryTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADTchGeometryTests PRIVATE MiniCAD MiniDWG)
 target_compile_definitions(MiniCADTchGeometryTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
 if(MSVC)
     target_compile_options(MiniCADTchGeometryTests PRIVATE /utf-8)
@@ -75,7 +75,7 @@ endif()
 add_test(NAME MiniCADTchGeometryTests COMMAND MiniCADTchGeometryTests)
 
 add_executable(MiniCADFace3DTests "Core/Face3DTests.cpp")
-target_link_libraries(MiniCADFace3DTests PRIVATE MiniCADLib MiniDWG)
+target_link_libraries(MiniCADFace3DTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(MiniCADFace3DTests PRIVATE /utf-8)
 endif()
@@ -89,7 +89,7 @@ function(minicad_test_output target)
     )
 endfunction()
 
-# ── MiniCADLib 核心库测试 ────────────────────────────────────────────
+# ── MiniCAD 核心库测试 ────────────────────────────────────────────
 if(WIN32)
     add_executable(MiniCADTests
         "Core/SpatialIndexTests.cpp"
@@ -116,7 +116,7 @@ if(WIN32)
         "Core/DimAssocTests.cpp"
         "Core/CadExchangeTests.cpp"
     )
-    target_link_libraries(MiniCADTests PRIVATE MiniCADLib)
+    target_link_libraries(MiniCADTests PRIVATE MiniCAD)
     target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")
     target_compile_definitions(MiniCADTests PRIVATE MINICAD_TCH_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Tch")
     target_compile_definitions(MiniCADTests PRIVATE MINICAD_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
@@ -128,7 +128,7 @@ if(WIN32)
     add_test(NAME MiniCADTests COMMAND MiniCADTests)
 
     add_executable(MiniCADDrawingOpenTests "Core/DrawingOpenTests.cpp")
-    target_link_libraries(MiniCADDrawingOpenTests PRIVATE MiniCADLib)
+    target_link_libraries(MiniCADDrawingOpenTests PRIVATE MiniCAD)
     target_compile_definitions(MiniCADDrawingOpenTests PRIVATE MINICAD_DRAWING_OPEN_TEST_MAIN UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     if(MSVC)
         target_compile_options(MiniCADDrawingOpenTests PRIVATE /utf-8)
@@ -139,7 +139,7 @@ if(WIN32)
     # 本地诊断工具：tools/ 不进仓库（.gitignore），只在本机有源文件时编译
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
         add_executable(MiniCADDwgInspect "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
-        target_link_libraries(MiniCADDwgInspect PRIVATE MiniCADLib MiniDWG)
+        target_link_libraries(MiniCADDwgInspect PRIVATE MiniCAD MiniDWG)
         if(MSVC)
             target_compile_options(MiniCADDwgInspect PRIVATE /utf-8)
         endif()

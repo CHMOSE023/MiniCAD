@@ -8,7 +8,7 @@ target_include_directories(WASM PRIVATE
     "${CMAKE_SOURCE_DIR}/wasm"
 )
 
-target_link_libraries(WASM PRIVATE MiniCADLib)
+target_link_libraries(WASM PRIVATE MiniCAD)
 
 # ── Exported C symbols ───────────────────────────────────────────────────────
 set(MINICAD_EXPORTS

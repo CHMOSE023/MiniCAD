@@ -5,28 +5,28 @@
 ## 项目概览
 
 MiniCAD 是用现代 C++（C++20）编写的跨平台二维 CAD 编辑器。一个仓库里包含三个库和两个应用：
-平台无关的核心库 MiniCADLib、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
+平台无关的核心库 MiniCAD、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
 Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代码（`apps/Common`）绘制同一套 MiniGUI 界面。
-仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.1.1。
+仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.1.2。
 
 ### 目录
 
-- `src/`：核心库（目标 `MiniCADLib`，命名空间 `MiniCAD`）
+- `src/`：核心库（目标 `MiniCAD`，定义在 `cmake/MiniCAD.cmake`，命名空间 `MiniCAD`）
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）与 `Platform/Web`（`MiniGUI_Web`：DOM 输入、经隐藏 textarea 接入输入法、剪贴板、打包的界面字体）。开发计划：`docs/MiniGUI/PLAN.md`
-- `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCADLib（网页版也包含），核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCADLib，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。开发计划：`docs/MiniDWG/PLAN.md`；`*.g.cpp` 由已归档的 MiniDWG 仓库 `tools/` 里的脚本生成，不要手改
+- `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD（网页版也包含），核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。开发计划：`docs/MiniDWG/PLAN.md`；`*.g.cpp` 由已归档的 MiniDWG 仓库 `tools/` 里的脚本生成，不要手改
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`：`MainFrame`、命令、面板、命令行、对话框）。平台服务经 `AppPlatform` 接口（`apps/Common/src/GUI/AppPlatform.h`）提供
 - `apps/Win32/`：桌面版宿主 `Win32Window`（无边框窗口、D3D11、消息循环，实现 `AppPlatform`），目标 `MiniCADWin`；自测 `Host/SelfTest.cpp`。`src/Render/` 下是 CAD 渲染器 `D3D11Renderer` 与 MiniGUI 后端（`D3D11/D3D11Backend` → `MiniGUI_D3D11`，`Software/SoftwareBackend` → `MiniGUI_Software`）
 - `apps/Web/`：网页版宿主 `WebApp`（经 `WebHost` 管理画布与 WebGL2，浏览器文件选择与下载，实现 `AppPlatform`），目标 `MiniCADWeb`。`src/Render/` 下是 CAD 渲染器 `GLES3Renderer` + `GLRenderTarget` 与 MiniGUI 的 `WebGL2/WebGL2Backend`（`MiniGUI_WebGL2`）。`MiniGUIWebGallery` 是浏览器里的 MiniGUI 控件展示
 - `wasm/`：旧版 C 接口 WASM（给仓库外的 HTML/JS 前端用）。只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译，此时核心库定义 `MINICAD_WEB`（文字输入交给 JS、块名自动命名、文字走纹理图集），并且不编译 `apps/Web`
-- `tests/`：`Core/`（MiniCADLib）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
+- `tests/`：`Core/`（MiniCAD）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
 - `tools/make_web_font.py`：重新生成 `assets/fonts/NotoSansSC-UI.ttf`（网页版界面字体，Noto Sans SC Regular 子集，OFL）
 - `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
-- `3rd/`：stb_image、stb_truetype（MiniCADLib 与 MiniGUI 共用）
+- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）
 - `docs/`：早期 MiniCAD 项目的教程（描述的是旧架构）、各库开发计划、发布说明 `release-notes/`
 
 ### include 根目录（重要）
 
-每个库有自己的 include 根：MiniCADLib → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，桌面版 → `apps/Win32/src` 与 `apps/Win32/src/Render`，网页版 → `apps/Web/src` 与 `apps/Web/src/Render`。
+每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，桌面版 → `apps/Win32/src` 与 `apps/Win32/src/Render`，网页版 → `apps/Web/src` 与 `apps/Web/src/Render`。
 `src` 和 `src/UI` 下都有 `Core/`、`Render/`、`Text/`；目前没有任何相对路径（如 `Core/Foo.h`）同时存在于两个根下，要保持这样——重名时编译器会按搜索顺序悄悄选中其中一个，不会报错。
 命名空间保持 `MiniCAD` / `MiniGUI` / `MiniDWG`。
 
@@ -201,7 +201,7 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 ## 文件组织
 
 - `src/*/` 下按模块组织，`#include "Module/File.h"` 相对于 `src/`
-- 源文件逐个列出（不用通配）：MiniCADLib 在顶层 `CMakeLists.txt`，MiniGUI 在 `cmake/MiniGUI.cmake`，MiniDWG 在 `cmake/MiniDWG.cmake`，共用应用在 `apps/Common/CMakeLists.txt`，桌面 / 网页宿主在 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试在 `tests/CMakeLists.txt`；新增 `.cpp` 要加到对应位置。实体是纯头文件（`.hpp`），一般不用改 CMake
+- 源文件逐个列出（不用通配）：MiniCAD 在 `cmake/MiniCAD.cmake`，MiniGUI 在 `cmake/MiniGUI.cmake`，MiniDWG 在 `cmake/MiniDWG.cmake`，共用应用在 `apps/Common/CMakeLists.txt`，桌面 / 网页宿主在 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试在 `tests/CMakeLists.txt`；新增 `.cpp` 要加到对应位置。实体是纯头文件（`.hpp`），一般不用改 CMake
 - `src/Core/Object/Object.hpp`：所有场景对象的基类（类型信息、ID）
 - `src/Render/VertexTypes.hpp`：平台无关的顶点格式
 
