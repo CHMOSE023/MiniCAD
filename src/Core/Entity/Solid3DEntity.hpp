@@ -32,17 +32,20 @@ namespace MiniCAD
             if (bytes.empty())
                 return nullptr;
             Wire wire = std::move(kernel.Edges(body).Lines);
-            auto e = std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), transform);
+            auto e = std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), transform, kernel.Bounds(body));
             e->m_data->Body = body;
             return e;
         }
 
-        // 由保存的数据恢复（不需要内核）
-        Solid3DEntity(ObjectID id, std::vector<uint8_t> bytes, Wire localWire, const Math::Mat4& transform)
+        // 由保存的数据恢复（不需要内核）。localBounds 是局部坐标下实体的精确包围盒（由内核求出）：
+        // 线框只有边，曲面会凸出到边以外（球只有接缝和赤道两条边），只用线框求的包围盒会偏小
+        Solid3DEntity(ObjectID id, std::vector<uint8_t> bytes, Wire localWire, const Math::Mat4& transform,
+                      const AABB& localBounds = AABB::Empty())
             : Entity(id), m_data(std::make_shared<Data>()), m_transform(transform)
         {
-            m_data->Bytes = std::move(bytes);
-            m_data->LocalWire = std::move(localWire);
+            m_data->Bytes       = std::move(bytes);
+            m_data->LocalWire   = std::move(localWire);
+            m_data->LocalBounds = localBounds;
             UpdateWorldWire();
         }
 
@@ -50,6 +53,7 @@ namespace MiniCAD
         const std::vector<uint8_t>& GetBytes()     const { return m_data->Bytes; }
         const Wire&                 GetLocalWire() const { return m_data->LocalWire; }
         const Wire&                 GetWorldWire() const { return m_worldWire; }
+        const AABB&                 GetLocalBounds() const { return m_data->LocalBounds; }   // 可能为空（旧数据）
 
         const Math::Mat4& GetTransform() const { return m_transform; }
         void SetTransform(const Math::Mat4& m)
@@ -134,6 +138,7 @@ namespace MiniCAD
         {
             std::vector<uint8_t>   Bytes;
             Wire                   LocalWire;
+            AABB                   LocalBounds = AABB::Empty();
             mutable Solid::BodyPtr Body;
         };
 
@@ -152,6 +157,7 @@ namespace MiniCAD
             return true;
         }
 
+        // 世界线框与包围盒：线框各点，加上局部包围盒 8 个角点变换后的位置
         void UpdateWorldWire()
         {
             m_worldWire = m_data->LocalWire;
@@ -162,6 +168,12 @@ namespace MiniCAD
                     p = m_transform.TransformPoint(p);
                     m_bounds.Expand(p);
                 }
+            const AABB& b = m_data->LocalBounds;
+            if (b.Min.x <= b.Max.x && b.Min.y <= b.Max.y && b.Min.z <= b.Max.z)
+                for (int i = 0; i < 8; ++i)
+                    m_bounds.Expand(m_transform.TransformPoint({ (i & 1) ? b.Max.x : b.Min.x,
+                                                                 (i & 2) ? b.Max.y : b.Min.y,
+                                                                 (i & 4) ? b.Max.z : b.Min.z }));
         }
 
         std::shared_ptr<Data> m_data;

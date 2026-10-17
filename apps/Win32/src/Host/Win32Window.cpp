@@ -1,5 +1,8 @@
 // ── MiniCAD 桌面版宿主：窗口、D3D11 设备、消息循环与平台服务 ─────────
 #include "Host/Win32Window.h"
+#ifdef MINICAD_WITH_SOLID
+#include "Solid/SMLib/SMLibKernel.h"
+#endif
 #include "Render/D3D11/D3D11Renderer.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -111,6 +114,15 @@ namespace MiniCAD
     }
 
     Win32Window::Win32Window() = default;
+
+    Solid::ISolidKernel* Win32Window::GetSolidKernel()
+    {
+#ifdef MINICAD_WITH_SOLID
+        if (!m_solidKernel)
+            m_solidKernel = Solid::CreateSMLibKernel();
+#endif
+        return m_solidKernel.get();
+    }
 
     Win32Window::~Win32Window()
     {

@@ -13,6 +13,7 @@
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -53,6 +54,7 @@ namespace MiniCAD
     int MainFrame::RunSelfTest()
     {
         const HWND hwnd = static_cast<Win32Window*>(m_platform)->GetHwnd();
+        std::setvbuf(stdout, nullptr, _IONBF, 0);   // 输出重定向到文件时，中途崩溃也能看到已跑过的检查
         int failures = 0;
         auto check = [&](bool ok, const char* what)
         {
@@ -630,6 +632,79 @@ namespace MiniCAD
             if (editor.IsActiveTool())
                 SendKeyToEditor(MiniGUI::Key::Escape);
             scene.SetCurrentTextStyle(TextStyleTable::StandardID);
+        }
+
+        // ── 16c'. 三维实体（M3）：命令行建模、拉伸、布尔、显示，一步撤销 ─────────
+        {
+            Scene& scene = doc->GetScene();
+            auto solids = [&]
+            {
+                std::vector<const Solid3DEntity*> out;
+                scene.ForEachObject([&](const Object& o) { if (o.IsKindOf<Solid3DEntity>()) out.push_back(static_cast<const Solid3DEntity*>(&o)); });
+                return out;
+            };
+            Solid::ISolidKernel* kernel = editor.GetSolidKernel();
+            check(kernel != nullptr, "三维实体：桌面版经 AppPlatform 提供 SMLib 内核");
+
+            if (kernel)
+            {
+                const size_t before = solids().size();
+                RunCommandLine("BOX");
+                editor.SubmitPoint(Math::Point3(2000.0, 2000.0, 0.0));
+                editor.SubmitPoint(Math::Point3(2010.0, 2020.0, 0.0));
+                RunCommandLine("30");
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                auto all = solids();
+                const Solid3DEntity* box = all.size() == before + 1 ? all.back() : nullptr;
+                for (auto* s : all)
+                    if (s->GetBoundingBox().Min.x >= 1999.0) box = s;
+                check(box && std::abs(kernel->Volume(box->GetWorldBody(*kernel)) - 6000.0) < 1e-6,
+                      "BOX：命令行输入两角点和高度 30，生成体积 6000 的长方体");
+
+                // 显示：实体的 12 条边进入场景顶点（线框）
+                size_t wireVerts = 0;
+                RenderFrame();
+                editor.ForEachCachedVertex([&](const Vertex_P3_C4& v)
+                {
+                    if (v.pos.x >= 1999.0f && v.pos.x <= 2011.0f && v.pos.y >= 1999.0f && v.pos.y <= 2021.0f) ++wireVerts;
+                });
+                check(wireVerts >= 24, "BOX：线框画进场景顶点");
+
+                // 拉伸一个圆，再与长方体求并集（一步撤销还原）
+                RunCommandLine("Circle");
+                editor.SubmitPoint(Math::Point3(2010.0, 2010.0, 0.0));
+                editor.SubmitPoint(Math::Point3(2015.0, 2010.0, 0.0));
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                Object::ObjectID circle = Object::InvalidID;
+                scene.ForEachObject([&](const Object& o)
+                {
+                    if (o.IsKindOf<CircleEntity>() && static_cast<const CircleEntity&>(o).GetCircle().Center.x == 2010.0) circle = o.GetID();
+                });
+                editor.SetSelection({ circle });
+                RunCommandLine("EXT");
+                RunCommandLine("30");
+                check(solids().size() == before + 2 && scene.GetEntity(circle) == nullptr, "EXTRUDE：圆拉伸为实体，原来的圆被替换");
+
+                std::unordered_set<Object::ObjectID> pair;
+                for (auto* s : solids())
+                    if (s->GetBoundingBox().Min.x >= 1999.0) pair.insert(s->GetID());
+                editor.SetSelection(pair);
+                RunCommandLine("UNION");
+                all = solids();
+                const Solid3DEntity* merged = all.size() == before + 1 ? all.back() : nullptr;
+                const double expected = 6000.0 + 0.5 * 3.14159265358979323846 * 25.0 * 30.0;    // 圆心在长方体右边上：圆柱一半在外
+                check(merged && std::abs(kernel->Volume(merged->GetWorldBody(*kernel)) - expected) < 1e-3,
+                      "UNION：长方体与圆柱合成一个实体");
+                m_docManager.Undo();
+                check(solids().size() == before + 2, "UNION：一次撤销还原两个实体");
+                m_docManager.Undo();   // 拉伸：圆回来
+                m_docManager.Undo();   // 圆
+                m_docManager.Undo();   // 长方体
+                check(solids().size() == before && scene.GetEntity(circle) == nullptr, "撤销拉伸、圆、长方体：实体全部移除");
+                editor.SetSelection({});
+            }
         }
 
         // ── 16d. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销 ─────────

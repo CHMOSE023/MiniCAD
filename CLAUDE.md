@@ -15,6 +15,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）与 `Platform/Web`（`MiniGUI_Web`：DOM 输入、经隐藏 textarea 接入输入法、剪贴板、打包的界面字体）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD（网页版也包含），核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。开发计划：`docs/MiniDWG/PLAN.md`；`*.g.cpp` 由已归档的 MiniDWG 仓库 `tools/` 里的脚本生成，不要手改
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`：`MainFrame`、命令、面板、命令行、对话框）。平台服务经 `AppPlatform` 接口（`apps/Common/src/GUI/AppPlatform.h`）提供
+- 注意：根目录 `.gitignore` 的 `tools` 规则也会命中 `src/Editor/Tools/`，在那里新增文件要 `git add -f`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（无边框窗口、D3D11、消息循环，实现 `AppPlatform`），目标 `MiniCADWin`；自测 `Host/SelfTest.cpp`。`src/Render/` 下是 CAD 渲染器 `D3D11Renderer` 与 MiniGUI 后端（`D3D11/D3D11Backend` → `MiniGUI_D3D11`，`Software/SoftwareBackend` → `MiniGUI_Software`）
 - `apps/Web/`：网页版宿主 `WebApp`（经 `WebHost` 管理画布与 WebGL2，浏览器文件选择与下载，实现 `AppPlatform`），目标 `MiniCADWeb`。`src/Render/` 下是 CAD 渲染器 `GLES3Renderer` + `GLRenderTarget` 与 MiniGUI 的 `WebGL2/WebGL2Backend`（`MiniGUI_WebGL2`）。`MiniGUIWebGallery` 是浏览器里的 MiniGUI 控件展示
 - `wasm/`：旧版 C 接口 WASM（给仓库外的 HTML/JS 前端用）。只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译，此时核心库定义 `MINICAD_WEB`（文字输入交给 JS、块名自动命名、文字走纹理图集），并且不编译 `apps/Web`
@@ -78,7 +79,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 主窗口与平台（桌面版、网页版）
 
 整个界面由 MiniGUI 绘制。界面由 MiniGUI 后端渲染（`D3D11Backend` / `WebGL2Backend`），CAD 视口由 CAD 渲染器渲染（`D3D11Renderer` / `GLES3Renderer`），两者不是一回事。
-`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、后台任务（`RunInBackground`：桌面版用线程读图纸，网页版先画一帧再同步执行）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
+`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、三维实体内核（`GetSolidKernel`，桌面版为 SMLib，网页版为空）、后台任务（`RunInBackground`：桌面版用线程读图纸，网页版先画一帧再同步执行）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
@@ -136,7 +137,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
-- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
+- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest

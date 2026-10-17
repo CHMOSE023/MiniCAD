@@ -269,6 +269,9 @@ namespace MiniCAD::EntityIO
             Ser::Bytes(s, "data", bytes);
             Math::Mat4 m = e.GetTransform();
             Ser::Value(s, "transform", m);
+            const AABB& b = e.GetLocalBounds();
+            std::vector<double> bounds{ b.Min.x, b.Min.y, b.Min.z, b.Max.x, b.Max.y, b.Max.z };
+            s.Value("bounds", bounds);
             size_t n = e.GetLocalWire().size();
             if (s.BeginArray("wire", n))
             {
@@ -289,6 +292,11 @@ namespace MiniCAD::EntityIO
             Ser::Bytes(s, "data", bytes);
             Math::Mat4 m = Math::Mat4::Identity();
             Ser::Value(s, "transform", m);
+            AABB bounds = AABB::Empty();
+            std::vector<double> b;
+            s.Value("bounds", b);
+            if (b.size() == 6)
+                bounds = AABB({ b[0], b[1], b[2] }, { b[3], b[4], b[5] });
             Solid3DEntity::Wire wire;
             size_t n = 0;
             if (s.BeginArray("wire", n))
@@ -302,7 +310,7 @@ namespace MiniCAD::EntityIO
                 }
                 s.EndArray();
             }
-            return std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), m);
+            return std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), m, bounds);
         }
 
         std::unique_ptr<Entity> ReadSolid(ISerializer& s, Object::ObjectID id)

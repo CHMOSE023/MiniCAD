@@ -85,6 +85,8 @@
 #include "Editor/Tools/Modify/ExtendTool.h"
 #include "Editor/Tools/Modify/BreakTool.h"
 #include "Editor/Tools/Modify/OffsetTool.h"
+#include "Editor/Tools/SolidTools.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include <cstdio>
 #include <memory>
@@ -379,6 +381,27 @@ namespace MiniCAD
         RegisterTool("Stretch", [] { return std::make_unique<StretchTool>(); });     // 自带交叉窗口选择，无需预选
         RegisterTool("Break",  [] { return std::make_unique<BreakTool>();  });
 
+        // ── 三维实体（需要内核，见 ActivateToolById）──────────────
+        RegisterTool("Box", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<BoxTool>(std::move(*env)) : nullptr;
+        });
+        RegisterTool("Cylinder", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<RoundSolidTool>(RoundSolidTool::Kind::Cylinder, std::move(*env)) : nullptr;
+        });
+        RegisterTool("Sphere", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<RoundSolidTool>(RoundSolidTool::Kind::Sphere, std::move(*env)) : nullptr;
+        });
+        RegisterTool("Extrude", [this]() -> std::unique_ptr<ITool> {   // 预选闭合对象
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<ExtrudeTool>(std::move(ids), std::move(*env));
+        });
+
         // ── 快捷键绑定 ────────────────────────────────────────
         RegisterAlias("P",      "Previous");
         RegisterAlias("L",      "Line");
@@ -406,6 +429,12 @@ namespace MiniCAD
         RegisterAlias("UNI",    "Union");
         RegisterAlias("SU",     "Subtract");
         RegisterAlias("IN",     "Intersect");
+        RegisterAlias("BOX",      "Box");
+        RegisterAlias("CYLINDER", "Cylinder");
+        RegisterAlias("CYL",      "Cylinder");
+        RegisterAlias("SPHERE",   "Sphere");
+        RegisterAlias("EXTRUDE",  "Extrude");
+        RegisterAlias("EXT",      "Extrude");
         RegisterAlias("Z",      "Zoom");
         RegisterAlias("ZOOMALL", "ZoomAll");
         RegisterAlias("IM",     "Image");   // Image 是特例命令(非工具),全名也走别名表
@@ -697,6 +726,12 @@ namespace MiniCAD
         {
             m_commandLine.Echo("命令: ZOOM");
             m_zoomPending = true;
+            return;
+        }
+
+        if ((toolId == "Box" || toolId == "Cylinder" || toolId == "Sphere" || toolId == "Extrude") && !m_solidKernel)
+        {
+            m_commandLine.Echo(toolId + ": 三维建模不可用（此版本没有实体内核）");
             return;
         }
 
@@ -1179,10 +1214,108 @@ namespace MiniCAD
         m_commandLine.Echo("原对象已保留；不再需要时请自行删除");
     }
 
+    std::optional<SolidToolEnv> Editor::MakeSolidToolEnv()
+    {
+        if (!m_doc || !m_solidKernel)
+            return std::nullopt;
+        return SolidToolEnv{ m_doc->GetScene(), m_doc->GetCommandStack(), m_picking, m_overlay, *m_solidKernel,
+                             [this](const std::string& text) { m_commandLine.Echo(text); } };
+    }
+
+    void Editor::SolidBoolean(BooleanOp op)
+    {
+        static const char* kNames[] = { "Union", "Subtract", "Intersect" };
+        static const char* kLabel[] = { "并集", "差集", "交集" };
+        const int opi = static_cast<int>(op);
+        m_commandLine.Echo(std::string("命令: ") + kNames[opi]);
+        m_lastCommand = kNames[opi];
+        if (!m_solidKernel)
+        {
+            m_commandLine.Echo(std::string(kNames[opi]) + ": 三维实体运算不可用（此版本没有实体内核）");
+            return;
+        }
+
+        // 操作数：选择集里的三维实体，按 ID 升序（差集以最先创建的为被减对象）
+        auto& scene = m_doc->GetScene();
+        std::map<Object::ObjectID, const Solid3DEntity*> solids;
+        int others = 0, locked = 0;
+        for (auto id : m_picking.GetSelection())
+        {
+            const Object* o = scene.GetEntity(id);
+            if (!o || !o->IsKindOf<Entity>()) continue;
+            if (!o->IsKindOf<Solid3DEntity>()) { ++others; continue; }
+            if (scene.IsEntityLocked(*o)) { ++locked; continue; }
+            solids[id] = static_cast<const Solid3DEntity*>(o);
+        }
+        std::string notes;
+        if (others > 0) notes += "（" + std::to_string(others) + " 个不是三维实体的对象已忽略）";
+        if (locked > 0) notes += "（" + std::to_string(locked) + " 个实体在锁定的图层上，已跳过）";
+        if (solids.size() < 2)
+        {
+            m_commandLine.Echo(std::string(kNames[opi]) + ": 需要至少选择两个三维实体" + notes);
+            return;
+        }
+
+        const auto kop = op == BooleanOp::Union ? Solid::BooleanOp::Union
+                       : op == BooleanOp::Subtract ? Solid::BooleanOp::Difference : Solid::BooleanOp::Intersection;
+        Solid::BodyPtr result;
+        for (const auto& [id, solid] : solids)
+        {
+            Solid::BodyPtr body = solid->GetWorldBody(*m_solidKernel);
+            if (body && result)
+                body = m_solidKernel->Boolean(kop, result, body);
+            if (!body)
+            {
+                m_commandLine.Echo(std::string(kLabel[opi]) + "失败，未做修改（" + m_solidKernel->LastError() + "）");
+                return;
+            }
+            result = body;
+        }
+
+        auto entity = Solid3DEntity::Create(scene.NextObjectID(), *m_solidKernel, result);
+        if (!entity || entity->GetLocalWire().empty())
+        {
+            m_commandLine.Echo(std::string(kLabel[opi]) + "：结果为空" + (op == BooleanOp::Intersect ? "（这些实体没有公共部分）" : "") + "，未做修改");
+            return;
+        }
+        entity->SetAttr(solids.begin()->second->GetAttr());   // 属性取自 ID 最小的原实体
+        const double volume = m_solidKernel->Volume(result);
+
+        // 原实体替换为结果，作为一步操作（撤销一次全部还原）
+        std::vector<GeometryEditCommand::Item> items;
+        for (const auto& [id, solid] : solids)
+        {
+            GeometryEditCommand::Item it;
+            it.id     = id;
+            it.before = solid->Clone(id);
+            items.push_back(std::move(it));
+        }
+        GeometryEditCommand::Item add;
+        add.id    = entity->GetID();
+        add.after = std::move(entity);
+        items.push_back(std::move(add));
+
+        m_picking.ClearSelection();
+        m_picking.MarkDirty();
+        m_gripEditor.MarkDirty();
+        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>(std::string("实体") + kLabel[opi], std::move(items)), scene);
+
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s：%zu 个实体合成一个，体积 = %.4f", kLabel[opi], solids.size(), volume);
+        m_commandLine.Echo(buf + notes);
+    }
+
     void Editor::RegionBoolean(BooleanOp op)
     {
         if (!m_doc)
             return;
+        // 选择集里有三维实体：做实体布尔（同 AutoCAD 的 UNION / SUBTRACT / INTERSECT 对面域与实体都适用）
+        for (auto id : m_picking.GetSelection())
+            if (const Object* o = m_doc->GetScene().GetEntity(id); o && o->IsKindOf<Solid3DEntity>())
+            {
+                SolidBoolean(op);
+                return;
+            }
         static const char* kNames[] = { "Union", "Subtract", "Intersect" };
         static const char* kLabel[] = { "并集", "差集", "交集" };
         const int opi = static_cast<int>(op);

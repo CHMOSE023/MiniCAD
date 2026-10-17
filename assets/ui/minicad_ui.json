@@ -11,7 +11,14 @@
 {
   "commands": {
     "draw.line": { "tooltip": "指定两点绘制直线段，Esc 结束" },
-    "draw.circle": { "tooltip": "指定圆心和半径" }
+    "draw.circle": { "tooltip": "指定圆心和半径" },
+    "solid.box": { "tooltip": "三维长方体：指定底面两个角点和高度" },
+    "solid.cylinder": { "tooltip": "三维圆柱体：指定底面中心、半径和高度" },
+    "solid.sphere": { "tooltip": "三维球体：指定中心和半径" },
+    "solid.extrude": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定高度，拉伸为三维实体" },
+    "region.union": { "tooltip": "合并选中的面域或三维实体" },
+    "region.subtract": { "tooltip": "从最先创建的面域或三维实体中减去其余选中的对象" },
+    "region.intersect": { "tooltip": "求选中的面域或三维实体的公共部分" }
   },
 
   "menus": [
@@ -118,6 +125,10 @@
           "items": [ "region.union", "region.subtract", "region.intersect" ]
         }
       ]
+    },
+    {
+      "title": "建模(&L)",
+      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "-", "region.union", "region.subtract", "region.intersect" ]
     },
     {
       "title": "窗口(&W)",

@@ -1,6 +1,6 @@
 # 三维实体建模开发计划
 
-> 状态：M0～M2 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）
+> 状态：M0～M3 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、实体并 / 差 / 交）
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -91,12 +91,13 @@ SM_API → SMLib
 
 - **几何 = 共享数据 + 变换矩阵**：内核数据（`Save` 的字节）与局部坐标下的线框在 `Create(id, kernel, body)` 时一次求出、之后不变，克隆之间共享（`shared_ptr`）；变换矩阵 `Mat4`（局部 → 世界，行向量约定）每个实体一份
 - **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（网页版）也能显示、移动、原样保存
-- **显示**（第一期）：世界坐标线框 = 实体所有边的折线，经 `IDrawSink::DrawLine` 输出；包围盒由线框求出。暂不画曲面轮廓线（球只显示接缝和赤道）
+- **显示**（第一期）：世界坐标线框 = 实体所有边的折线，经 `IDrawSink::DrawLine` 输出。暂不画曲面轮廓线（球只显示接缝和赤道）
+- **包围盒**：创建时由内核求出局部坐标下的精确包围盒（`GetLocalBounds`，与字节一起保存），变换后取 8 个角点；只用线框会偏小（球的线框只覆盖半个球），影响缩放到全图、空间索引和夹点位置
 - **变换只改矩阵**：`TranslateEntityInPlace` / `Rotate` / `Mirror` / `Scale` 各加一个分支（复制、阵列、缩放工具经它们生效）；移动 / 旋转 / 镜像命令的 `MoveEntityEntry` 与夹点的 `DragEntityEntry` 增加 `Kind::Transform`，保存前后矩阵用于撤销
 - **拾取**：走 `Picking` 的通用回退（按 `Draw()` 输出的线段命中），无需特化
 - **捕捉**（`Document/FeaturePoints.cpp`、`SnapEngine::TryNearest`）：端点 = 不闭合的边的两端 + 圆形边的圆心（同圆 / 圆弧的约定）；中点 = 不闭合的边按长度的中点；圆心；最近点 = 线框各段上的最近点
 - **夹点**（`Editor/Grip/Solid3DGripHandler.h`）：包围盒中心一个，拖动即整体移动
-- **读写**（`EntityIO`）：`data`（内核字节，base64，`Ser::Bytes`）、`transform`（16 个数）、`wire`（局部线框，没有内核时用来显示）；`.mcad` 与 JSON 都适用
+- **读写**（`EntityIO`）：`data`（内核字节，base64，`Ser::Bytes`）、`transform`（16 个数）、`bounds`（局部包围盒）、`wire`（局部线框，没有内核时用来显示）；`.mcad` 与 JSON 都适用
 - **DWG / DXF**：导出时作为不支持的实体跳过并 `LOG_WARN`（退化为网格留到 M4）
 - 测试：`tests/Solid/Solid3DEntityTests.cpp`（51 项：显示、克隆、四种变换、命令与撤销、复制、夹点、捕捉、JSON / .mcad / .json 往返、base64）
 
@@ -114,13 +115,33 @@ SM_API → SMLib
 
 ---
 
-## 7. 编辑与命令
+## 7. 编辑与命令（第一批已在 M3 实现）
 
-- 撤销：命令里保存新旧 `BodyPtr`，撤销时换回；布尔运算的输入实体用现有的移除 / 恢复所有权机制
-- 失败：内核返回失败时 `Execute()` 返回 false，不入撤销栈，命令行提示原因
-- 第一批命令：长方体、圆柱、球、拉伸（选闭合多段线 / 圆 / 面域）、并、差、交
+### 内核从哪里来
+
+`AppPlatform::GetSolidKernel()`（默认返回空）：桌面版 `Win32Window` 在 `MINICAD_WITH_SOLID` 时第一次请求时创建 SMLib 内核并持有；网页版不实现。`MainFrame::Initialize` 把它交给 `Editor::SetSolidKernel`。没有内核时建模命令只在命令行提示“不可用”。
+
+### 第一批命令（`src/Editor/Tools/SolidTools.h`，注册在 `Editor::RegisterBuiltinTools`）
+
+| 命令 | 别名 | 操作 |
+|---|---|---|
+| `Box` | BOX | 底面两个角点 → 高度 |
+| `Cylinder` | CYLINDER、CYL | 底面中心 → 半径 → 高度 |
+| `Sphere` | SPHERE | 中心 → 半径 |
+| `Extrude` | EXTRUDE、EXT | 预选闭合对象（圆、闭合多段线含圆弧段、矩形）→ 高度；原对象被替换（同 AutoCAD 默认） |
+| `Union` / `Subtract` / `Intersect` | UNION / SUBTRACT / INTERSECT | 选择集里有三维实体时做实体布尔（`Editor::SolidBoolean`），否则仍是面域布尔。差集与面域相同：ID 最小（最先创建）的为被减对象 |
+
+- 视图仍是俯视：底面在点取点的水平面上，高度沿 +Z（负数沿 −Z），键入数值或点取两点距离
+- 工具在命令行键入数值时也要提交，那时 `EditorContext` 已失效：工具持有 `SolidToolEnv`（场景、撤销栈、选择、预览层、内核、命令行输出），由 `Editor::MakeSolidToolEnv` 创建
+- 撤销：新建经 `AddEntityCommand`；拉伸与布尔经 `GeometryEditCommand`（原对象与结果一步替换，一次撤销全部还原）
+- 失败：内核返回空时命令行提示原因，不入撤销栈
+- 菜单：顶层“建模”（长方体、圆柱体、球体、拉伸、并集、差集、交集）；“修改 > 面域”保留同样的并集 / 差集 / 交集。命令 ID `solid.box` / `solid.cylinder` / `solid.sphere` / `solid.extrude` / `region.union` / `region.subtract` / `region.intersect`
+- 测试：`tests/Solid/SolidToolTests.cpp`（30 项，经 `Editor` 的公开入口驱动）；桌面版自测 `--selftest` 的“三维实体”一节经真实命令行入口验证建模、拉伸、并集、显示与撤销
+
+### 之后
+
 - 第二批：旋转、扫掠、圆角、倒角（需要能选中实体上的边：拾取命中的边线折线带回 `EdgeId`）、截面、平面投影
-- 耗时运算：桌面版可交给单个后台工作线程（内核只能单线程），网页版同步执行，与打开图纸的做法一致
+- 耗时运算：桌面版可交给单个后台工作线程（内核只能单线程），网页版同步执行，与打开图纸的做法一致。目前在界面线程同步执行
 
 ---
 
@@ -131,7 +152,7 @@ SM_API → SMLib
 | **M0** ✅ | 引入 SMLib 源码；静态库、C++20 补丁；`cmake/SMLib.cmake`；冒烟测试 `SMLibSmokeTests` | Debug / Release 全部测试通过 |
 | **M1** ✅ | `ISolidKernel` 接口与 `SMLibKernel` 适配层（目标 `MiniCADSolid`）；接口测试 `SolidKernelTests`（基本体、拉伸、旋转、布尔、圆角、变换、离散化、边、隐藏线、截面、读写与损坏数据） | 测试只依赖接口；MiniCAD 公开头文件不含 `Sm*` |
 | **M2** ✅ | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、夹点、撤销、`.mcad` / JSON 读写；测试 `Solid3DEntityTests` | 测试覆盖实体与命令 |
-| M3 | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`） | 桌面版里实际建模、布尔、撤销、保存再打开 |
+| **M3** ✅ | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`），内核经 `AppPlatform` 注入；测试 `SolidToolTests` 与桌面版自测 | 桌面版里实际建模、布尔、撤销 |
 | M4 | 截面、平面投影出二维图；DWG 导出退化为网格 | 出图结果可标注、可导出 DWG |
 | M5 | 第二批命令：旋转、扫掠、圆角、倒角，选边 | |
 | M6 | 三维视图（显示第二期） | |

@@ -247,6 +247,9 @@ namespace MiniCAD
         m_docManager.GetEditor().SetHatchDialogEnabled(true);
         LoadHatchPatterns();
 
+        // 三维实体内核（桌面版 SMLib；网页版没有，建模命令提示不可用）
+        m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
+
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
         m_layout->RegisterPanel("documents",  CreateDocumentArea());

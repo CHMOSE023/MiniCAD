@@ -8,6 +8,7 @@
 #include "Render/D3D11/SwapChain.h"
 #include "Render/D3D11/D3D11RenderTarget.h"
 #include "Render/IRenderer.h"
+#include "Solid/ISolidKernel.h"
 
 namespace MiniGUI
 {
@@ -49,6 +50,7 @@ namespace MiniCAD
         void WaitForGpu() override;
         void ReleaseFreeMemory() override;
         const char* GetGraphicsName() const override { return "D3D11"; }
+        Solid::ISolidKernel* GetSolidKernel() override;
 
         void SetTitle(const std::string& utf8) override;
         bool HasWindowControls() const override { return true; }
@@ -90,5 +92,6 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Win32Frame>   m_frame;
         MainFrame                              m_main;
         std::unique_ptr<MiniGUI::Win32Input>   m_input;
+        std::unique_ptr<Solid::ISolidKernel>   m_solidKernel;   // MINICAD_WITH_SOLID 时为 SMLib，第一次请求时创建
     };
 }

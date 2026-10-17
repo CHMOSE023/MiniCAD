@@ -18,6 +18,8 @@
 #include "Editor/Properties/PropertyTable.h"
 #include "Editor/Tools/HatchSettings.h"
 #include "Editor/Tools/MLineSettings.h"
+#include "Editor/Tools/SolidTools.h"
+#include "Solid/ISolidKernel.h"
 #include "Document/GlyphTypes.h"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/Object/Object.hpp"
@@ -29,6 +31,7 @@
 #include <unordered_set>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -182,8 +185,14 @@ namespace MiniCAD
         void ReportArea();                                   // 报告选中对象的面积与周长
         // 面域布尔运算：对选择集中的面域 / 封闭对象运算，结果是一个新面域，原对象被替换（可一步撤销）。
         // 差集：ID 最小（最先画的）为被减对象，其余为减去的对象。
+        // 选择集里有三维实体时改为实体布尔（SolidBoolean），规则相同，只对实体运算
         enum class BooleanOp { Union, Subtract, Intersect };
-        void RegionBoolean(BooleanOp op);                                   // 报告选中对象的面积与周长
+        void RegionBoolean(BooleanOp op);
+
+        // ── 三维实体（docs/Solid/PLAN.md）───────────────────
+        // 内核由宿主提供（桌面版为 SMLib，网页版没有）；为空时建模命令提示不可用。不拥有，宿主保证生命周期
+        void                 SetSolidKernel(Solid::ISolidKernel* kernel) { m_solidKernel = kernel; }
+        Solid::ISolidKernel* GetSolidKernel() const                      { return m_solidKernel; }
         void RequestArray();                                 // 检查选择,弹对话框(无选择则提示)
         void SubmitArray();                                  // 按 Params 执行阵列
         void CancelArray();                                  // 关闭对话框,清预览
@@ -364,6 +373,10 @@ namespace MiniCAD
 
         void RegisterBuiltinTools();
 
+        // 三维实体：建模工具的环境（文档不存在或没有内核时返回空）、实体布尔
+        std::optional<SolidToolEnv> MakeSolidToolEnv();
+        void SolidBoolean(BooleanOp op);
+
         // 场景顶点流：所有实体按未选中态绘制；仅几何/图层变化时重建。
         // 拖动跟随中的实体被排除（由选中流绘制）。返回本帧是否重建。
         bool UpdateSceneVertices(double worldPerPixel, bool zoomChanged);
@@ -399,6 +412,7 @@ namespace MiniCAD
         std::unique_ptr<ITool> m_tool;
         bool                   m_toolSuspended    = false;
         bool                   m_pendingToolReset = false;
+        Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
         double                 m_filletRadius = 1.0;           // 圆角半径，多次圆角之间保留
         double                 m_chamferD1 = 1.0;              // 倒角距离，多次倒角之间保留
         double                 m_chamferD2 = 1.0;
