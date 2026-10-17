@@ -1,6 +1,6 @@
 # 三维实体建模开发计划
 
-> 状态：M0 已完成（2026-10-17）：SMLib 源码引入、静态库构建（C++20）、冒烟测试。Debug / Release 下全部测试通过
+> 状态：M0、M1 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层，55 项接口测试通过
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -58,48 +58,38 @@ SM_API → SMLib
 
 ---
 
-## 4. 接口草案（M1 细化）
+## 4. 接口（M1 已实现）
 
-```cpp
-namespace MiniCAD::Solid
-{
-    using BodyHandle = std::shared_ptr<const class IBody>;   // 只读，修改时生成新句柄（写时复制）
+| 文件 | 内容 |
+|---|---|
+| `src/Solid/ISolidKernel.h` | 接口，属于核心库，只用 MiniCAD 的类型（`Point3`、`Vec3`、`Mat4`、`AABB`） |
+| `src/Solid/SMLib/SMLibKernel.h/.cpp` | SMLib 实现与工厂 `CreateSMLibKernel()`；目标 `MiniCADSolid`（`cmake/MiniCAD.cmake`），私有链接 `SM_API`。单独成库是因为核心库定义了 `UNICODE`，SMLib 按它切换宽字符文件名 |
+| `tests/Solid/SolidKernelTests.cpp` | 接口测试（55 项），只经接口调用，换内核实现时应原样通过 |
 
-    struct Mesh { std::vector<Math::Point3> Vertices; std::vector<Math::Vector3> Normals; std::vector<uint32_t> Indices; };
-    struct EdgeLines { std::vector<std::vector<Math::Point3>> Polylines; std::vector<int> EdgeIds; };   // EdgeIds 用于选边
+- `BodyPtr = shared_ptr<const IBody>`：实体不可变，所有运算返回新实体、输入不变，可在撤销栈、剪贴板间共享
+- 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`
+- 轮廓 `Profile`：z = 常数平面上的闭合多段线，顶点带凸度（与 MiniCAD 多段线相同，顺 / 逆时针都可以），或整圆
+- 修改：`Boolean`（并 / 差 / 交）、`Fillet`（按 `Edges()` 给出的边编号）、`Transform`（任意 `Mat4`，含镜像、非均匀缩放）
+- 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`
+- 读写：`Save` / `Load`，数据 = 16 字节头（`SMLB`、版本、长度、CRC32）+ SMLib 二进制格式；`Load` 先校验，损坏的数据不交给 SMLib（它的读取器遇到乱码会崩溃）
+- 失败：返回空指针 / 空结果，原因由 `LastError()` 给出
 
-    class ISolidKernel
-    {
-    public:
-        virtual BodyHandle Box(const Math::Point3& origin, double dx, double dy, double dz) = 0;
-        virtual BodyHandle Cylinder(...) = 0;
-        virtual BodyHandle Sphere(...) = 0;
-        virtual BodyHandle Extrude(const Profile& closedProfile, const Math::Vector3& dir) = 0;  // 轮廓：直线 / 圆弧 / 样条组成的闭合环
-        virtual BodyHandle Boolean(BooleanOp op, const BodyHandle& a, const BodyHandle& b) = 0;
-        virtual BodyHandle Fillet(const BodyHandle& body, std::span<const int> edgeIds, double radius) = 0;
-        virtual BodyHandle Transform(const BodyHandle& body, const Math::Mat4& m) = 0;
-        virtual Mesh       Tessellate(const BodyHandle& body, const TessParams& params) = 0;
-        virtual EdgeLines  Edges(const BodyHandle& body, double chordTol) = 0;
-        virtual EdgeLines  Silhouette(const BodyHandle& body, const Math::Vector3& viewDir) = 0;
-        virtual EdgeLines  Section(const BodyHandle& body, const Plane& plane) = 0;
-        virtual double     Volume(const BodyHandle& body) = 0;
-        virtual Math::AABB Bounds(const BodyHandle& body) = 0;
-        virtual std::vector<uint8_t> Save(const BodyHandle& body) = 0;
-        virtual BodyHandle Load(std::span<const uint8_t> bytes) = 0;
-        // 失败返回空句柄，原因经 LastError() 取得
-    };
-}
-```
+### 实现要点与已知限制
 
-SMLib 对应的接口（已确认存在）：`SmApiCreateBox/Cylinder/Sphere`、`SmApiCreateExtrude`、`SmApiBooleanUnion/Difference/Intersection`、`SmApiFilletEdges`、`SmApiTransform`、`SmApiTessellate`、`SmApiTessellateBoundaries`、`SmApiCreateSilhouetteCurves`、`SmApiIntersectBrepWithPlane`、`SmApiBrepComputeVolume`、`SmApiBrepBoundingBox`。读写只有文件接口 `SmApiWriteBrepToFile` / `SmApiReadBrepFromFile`，内存读写需先经临时文件，或在适配层补一个缓冲区版本。
+- **视线方向**：SMLib 的 `SmHCR` 用"从物体指向眼睛"的向量，适配层取反后传入；接口里 `viewDir` 是视线方向（俯视为 (0, 0, −1)）
+- **隐藏线**：`SmApiCreateSilhouetteCurves` 实际是 `SmHCR` 隐藏线消除且只给可见线、显示曲面接缝，适配层直接用 `SmHCR`，不显示接缝和光滑相接的边。**已知限制**：轮廓线与曲面接缝重合时（如从正面看球，接缝在 xz 平面上），重合的那一段不输出
+- **法线**：`SmPolyVertex` 自带的面 / 法线表实测对不上（长方体顶点拿到相邻面的法线），改为按面对周围三角形法线面积加权平均
+- **边编号**：`SmApiGetEdges` 的顺序；深拷贝保持顺序，所以 `Fillet` 在副本上按同一编号取边。编号只在同一实体内有效，运算后的新实体重新编号（稳定的拓扑命名见第 9 节）
+- **读写经临时文件**：SM_API 只有文件接口；SMLib 内部有内存流 `SmDatabaseIOStream`，但直接用要重复其版本头逻辑，留待以后。临时文件名用窄字符（ANSI）路径，临时目录含 ANSI 无法表示的字符时会失败
+- **单线程**：见第 2 节
 
 ---
 
 ## 5. 实体 `Solid3DEntity`
 
 - 命名：MiniCAD 已有 `SolidEntity`（二维填充，DXF 的 SOLID），三维实体用 `Solid3DEntity`（对应 DXF 3DSOLID）
-- 成员：`BodyHandle`、`Mat4` 变换、离散结果缓存（边线、轮廓线、网格）
-- `Clone()` 共享 `BodyHandle`；移动 / 旋转 / 镜像 / 缩放只改变换矩阵，现有修改工具基本可直接用；布尔、圆角前把矩阵烘焙进 BRep
+- 成员：`BodyPtr`、`Mat4` 变换、离散结果缓存（边线、轮廓线、网格）
+- `Clone()` 共享 `BodyPtr`；移动 / 旋转 / 镜像 / 缩放只改变换矩阵，现有修改工具基本可直接用；布尔、圆角前把矩阵烘焙进 BRep
 - 包围盒、拾取、捕捉基于边线折线：端点、中点；圆形边给圆心
 - 夹点：先只有基点（移动）
 - 序列化：`.mcad` / JSON 里存内核的字节流；DWG / DXF 导出退化为网格并 `LOG_WARN`
@@ -120,7 +110,7 @@ SMLib 对应的接口（已确认存在）：`SmApiCreateBox/Cylinder/Sphere`、
 
 ## 7. 编辑与命令
 
-- 撤销：命令里保存新旧 `BodyHandle`，撤销时换回；布尔运算的输入实体用现有的移除 / 恢复所有权机制
+- 撤销：命令里保存新旧 `BodyPtr`，撤销时换回；布尔运算的输入实体用现有的移除 / 恢复所有权机制
 - 失败：内核返回失败时 `Execute()` 返回 false，不入撤销栈，命令行提示原因
 - 第一批命令：长方体、圆柱、球、拉伸（选闭合多段线 / 圆 / 面域）、并、差、交
 - 第二批：旋转、扫掠、圆角、倒角（需要能选中实体上的边：拾取命中的边线折线带回 `EdgeId`）、截面、平面投影
@@ -133,7 +123,7 @@ SMLib 对应的接口（已确认存在）：`SmApiCreateBox/Cylinder/Sphere`、
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | **M0** ✅ | 引入 SMLib 源码；静态库、C++20 补丁；`cmake/SMLib.cmake`；冒烟测试 `SMLibSmokeTests` | Debug / Release 全部测试通过 |
-| M1 | `ISolidKernel` 接口与 `SMLibKernel` 适配层；接口级单元测试（基本体、拉伸、布尔、离散化、读写往返） | 测试只依赖接口；MiniCAD 公开头文件不含 `Sm*` |
+| **M1** ✅ | `ISolidKernel` 接口与 `SMLibKernel` 适配层（目标 `MiniCADSolid`）；接口测试 `SolidKernelTests`（基本体、拉伸、旋转、布尔、圆角、变换、离散化、边、隐藏线、截面、读写与损坏数据） | 测试只依赖接口；MiniCAD 公开头文件不含 `Sm*` |
 | M2 | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、撤销、`.mcad` / JSON 读写 | 核心库测试覆盖实体与命令 |
 | M3 | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`） | 桌面版里实际建模、布尔、撤销、保存再打开 |
 | M4 | 截面、平面投影出二维图；DWG 导出退化为网格 | 出图结果可标注、可导出 DWG |
