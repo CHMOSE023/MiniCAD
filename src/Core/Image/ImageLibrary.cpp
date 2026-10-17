@@ -3,7 +3,15 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
+#endif
 #include <iterator>
 
 // 用 STB_IMAGE_STATIC 编译一个本文件私有副本，避免与宿主里的 stb_image 符号冲突。
@@ -41,6 +49,7 @@ namespace MiniCAD
             }
             catch (const std::exception&)
             {
+#ifdef _WIN32
                 try
                 {
                     const int need = ::MultiByteToWideChar(CP_ACP, 0, s.c_str(),
@@ -56,6 +65,7 @@ namespace MiniCAD
                 catch (const std::exception&)
                 {
                 }
+#endif
                 return {};
             }
         }
