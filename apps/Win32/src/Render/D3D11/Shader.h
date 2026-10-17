@@ -84,7 +84,7 @@ namespace MiniCAD
             D3D11_INPUT_ELEMENT_DESC desc[] =
             {
                 {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,   0, 0,D3D11_INPUT_PER_VERTEX_DATA,0},
-                {"COLOR",   0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},
+                {"COLOR",   0,DXGI_FORMAT_R8G8B8A8_UNORM,    0,12,D3D11_INPUT_PER_VERTEX_DATA,0},   // VertexColor：RGBA 各 8 位
             };
 
             m_layout = CreateLayout(device, desc, 2, m_shader.vsBlob.Get());
@@ -106,6 +106,84 @@ namespace MiniCAD
         ComPtr<ID3D11InputLayout> m_layout;
     };
 
+
+    // 字形实例（GlyphInstancing.hpp）：槽 0 为字形网格的局部顶点（float2），槽 1 为逐实例的仿射变换与颜色
+    class GlyphShader
+    {
+    public:
+        void Initialize(ID3D11Device* device)
+        {
+            const char* glyphShader = R"(
+                cbuffer VSConstants : register(b0)
+                {
+                    float4x4 vp;
+                    float4   options;
+                };
+
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白（同线着色器）
+                float4 MapColor(float4 c)
+                {
+                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                    if (max(d.x, max(d.y, d.z)) < 0.004f)
+                        c.rgb = 1.0f - c.rgb;
+                    return c;
+                }
+
+                struct VSInput
+                {
+                    float2 pos    : POSITION;
+                    float4 m      : TEXCOORD0;   // m00 m01 m10 m11
+                    float3 t      : TEXCOORD1;   // tx ty z
+                    float4 color  : COLOR;
+                };
+
+                struct PSInput
+                {
+                    float4 pos : SV_POSITION;
+                    float4 color : COLOR;
+                };
+
+                PSInput VSMain(VSInput input)
+                {
+                    PSInput o;
+                    float2 w = float2(input.pos.x * input.m.x + input.pos.y * input.m.z + input.t.x,
+                                      input.pos.x * input.m.y + input.pos.y * input.m.w + input.t.y);
+                    o.pos = mul(float4(w, input.t.z, 1.0f), vp);
+                    o.color = MapColor(input.color);
+                    return o;
+                }
+
+                float4 PSMain(PSInput input) : SV_TARGET
+                {
+                    return input.color;
+                }  )";
+
+            m_shader = CreateShader(device, glyphShader);
+
+            D3D11_INPUT_ELEMENT_DESC desc[] =
+            {
+                {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,       0,  0, D3D11_INPUT_PER_VERTEX_DATA,   0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1,  0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+                {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT,    1, 16, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+                {"COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM,     1, 28, D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            };
+
+            m_layout = CreateLayout(device, desc, 4, m_shader.vsBlob.Get());
+        }
+
+        PipelineState GetPipeline()
+        {
+            PipelineState pso;
+            pso.shader = &m_shader;
+            pso.layout = m_layout.Get();
+            pso.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+            return pso;
+        }
+
+    private:
+        ShaderProgram             m_shader;
+        ComPtr<ID3D11InputLayout> m_layout;
+    };
 
     class TextShader
     {

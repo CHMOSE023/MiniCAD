@@ -83,8 +83,10 @@ namespace MiniCAD
             pump();
         };
 
-        // 处理完启动时的消息，渲染第一帧
+        // 处理完启动时的消息，渲染第一帧。v0.2.0 起启动时不再创建演示文档，自测要先有一个活动文档
         pump();
+        if (!m_docManager.GetActive())
+            m_docManager.New();
         RenderFrame();
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
@@ -713,10 +715,14 @@ namespace MiniCAD
                 auto hasColor = [&](double r, double g, double b)
                 {
                     RenderFrame();
-                    const ViewState vs = editor.BuildViewState();
-                    for (const auto& v : vs.Scene)
-                        if (std::abs(v.color.x - r) < 1e-4 && std::abs(v.color.y - g) < 1e-4 && std::abs(v.color.z - b) < 1e-4) return true;
-                    return false;
+                    // 拼接流上传 GPU 后已释放，查逐实体缓存；顶点颜色为 8 位，按 8 位比较
+                    const VertexColor want(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), 1.0f);
+                    bool found = false;
+                    editor.ForEachCachedVertex([&](const Vertex_P3_C4& v)
+                    {
+                        found |= v.color.r == want.r && v.color.g == want.g && v.color.b == want.b;
+                    });
+                    return found;
                 };
                 check(!hasColor(0.123, 0.456, 0.789), "改颜色前：场景里没有这个颜色");
                 editor.SetSelection(rects);
@@ -1616,10 +1622,10 @@ namespace MiniCAD
         RenderFrame();
         Editor& editor = m_docManager.GetEditor();
         {
-            const ViewState vs = editor.BuildViewState();
+            const auto st = editor.GetSceneStreamStats();
             auto [m2, w2] = memMb();
             std::printf("首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB；顶点 线 %zu 填充 %zu 文字 %zu\n", msSince(t), m_timing.viewport,
-                        m2, w2, vs.Scene.size(), vs.SceneFill.size(), vs.TextScene.size());
+                        m2, w2, st.lines, st.fills, st.texts);
         }
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
@@ -1660,6 +1666,11 @@ namespace MiniCAD
         RenderFrame();
         auto [m3, w3] = memMb();
         std::printf("切回文档首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB\n", msSince(t), m_timing.viewport, m3, w3);
+        {
+            const auto st = editor.GetSceneStreamStats();
+            const ViewState vs = editor.BuildViewState();
+            std::printf("  顶点 线 %zu 填充 %zu 文字 %zu 动态线 %zu 动态填充 %zu 字形实例 %zu 字形网格 %zu\n", st.lines, st.fills, st.texts, vs.SceneDyn.size(), vs.SceneDynFill.size(), st.glyphs, st.glyphMeshes);
+        }
         m_syncGpu = false;
         return 0;
     }

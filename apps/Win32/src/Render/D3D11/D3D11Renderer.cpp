@@ -22,6 +22,7 @@ namespace MiniCAD
         m_lineShader.Initialize(m_device);
         m_textShader.Initialize(m_device);
         m_imageShader.Initialize(m_device);
+        m_glyphShader.Initialize(m_device);
     }
 
     void D3D11Renderer::Initialize()
@@ -323,6 +324,12 @@ namespace MiniCAD
     {
         m_cachedVBs.clear();
         m_cachedTextVBs.clear();
+        m_cachedGlyphVBs.clear();
+        m_glyphBatches.clear();
+        m_glyphMeshes.clear();
+        m_glyphFillVB.Reset();
+        m_glyphLineVB.Reset();
+        m_glyphMeshValid = false;
         m_imageTextures.clear();
     }
 
@@ -453,6 +460,88 @@ namespace MiniCAD
         UINT offset = 0;
         m_context->IASetVertexBuffers(0, 1, cb->vb.GetAddressOf(), &stride, &offset);
         m_context->Draw(cb->count, 0);
+    }
+
+    bool D3D11Renderer::IsCached(uint32_t slot, uint64_t version, bool textured) const
+    {
+        const auto& cache = textured ? m_cachedTextVBs : m_cachedVBs;
+        auto it = cache.find(slot);
+        return it != cache.end() && it->second.valid && it->second.version == version;
+    }
+
+    // 字形网格库：版本变化时整体重新创建两个 DEFAULT 缓冲（几 MB，只在新增字形时变化）
+    bool D3D11Renderer::EnsureGlyphMeshes(const GlyphMeshView& meshes)
+    {
+        if (m_glyphMeshValid && m_glyphMeshVersion == meshes.Version)
+            return true;
+        m_glyphMeshValid = false;
+        auto create = [&](std::span<const Math::Float2> verts, ComPtr<ID3D11Buffer>& out)
+        {
+            out.Reset();
+            if (verts.empty()) return true;
+            D3D11_BUFFER_DESC desc = {};
+            desc.ByteWidth = static_cast<UINT>(verts.size_bytes());
+            desc.Usage     = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+            D3D11_SUBRESOURCE_DATA init = {};
+            init.pSysMem = verts.data();
+            return SUCCEEDED(m_device->CreateBuffer(&desc, &init, out.GetAddressOf()));
+        };
+        if (!create(meshes.FillVerts, m_glyphFillVB) || !create(meshes.LineVerts, m_glyphLineVB))
+            return false;
+        m_glyphMeshes.assign(meshes.Meshes.begin(), meshes.Meshes.end());
+        m_glyphMeshVersion = meshes.Version;
+        m_glyphMeshValid   = true;
+        return true;
+    }
+
+    void D3D11Renderer::SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
+                                           std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
+                                           const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
+    {
+        const bool fresh = !IsGlyphCached(slot, version, m_glyphMeshVersion);   // 实例这次要重新上传
+        CachedVB* ib = EnsureCachedVB(m_cachedGlyphVBs, slot, version, instances.data(), instances.size(), sizeof(GlyphInstance));
+        if (!ib || !EnsureGlyphMeshes(meshes))
+        {
+            IRenderer::SubmitGlyphsCached(slot, version, meshes, instances, batches, viewProj, type, depth, blend);
+            return;
+        }
+        if (fresh)
+            m_glyphBatches[slot].assign(batches.begin(), batches.end());
+        if (ib->count == 0) return;
+
+        ID3D11Buffer* meshVB = type == PrimitiveType::Triangle ? m_glyphFillVB.Get() : m_glyphLineVB.Get();
+        if (!meshVB) return;
+
+        SetLineState(viewProj, type, depth, blend);
+        auto pso = m_glyphShader.GetPipeline();
+        m_context->IASetInputLayout(pso.layout);
+        m_context->VSSetShader(pso.shader->vs.Get(), nullptr, 0);
+        m_context->PSSetShader(pso.shader->ps.Get(), nullptr, 0);
+
+        ID3D11Buffer* vbs[2]     = { meshVB, ib->vb.Get() };
+        UINT          strides[2] = { sizeof(Math::Float2), sizeof(GlyphInstance) };
+        UINT          offsets[2] = { 0, 0 };
+        m_context->IASetVertexBuffers(0, 2, vbs, strides, offsets);
+        for (const GlyphBatch& b : m_glyphBatches[slot])
+        {
+            if (b.mesh >= m_glyphMeshes.size()) continue;
+            const GlyphMeshRange& m = m_glyphMeshes[b.mesh];
+            const UINT n     = type == PrimitiveType::Triangle ? m.fillCount : m.lineCount;
+            const UINT start = type == PrimitiveType::Triangle ? m.fillStart : m.lineStart;
+            if (n) m_context->DrawInstanced(n, b.count, start, b.first);
+        }
+        // 槽 1 解绑：之后的提交只用槽 0
+        ID3D11Buffer* none = nullptr;
+        UINT zero = 0;
+        m_context->IASetVertexBuffers(1, 1, &none, &zero, &zero);
+    }
+
+    bool D3D11Renderer::IsGlyphCached(uint32_t slot, uint64_t version, uint64_t meshVersion) const
+    {
+        auto it = m_cachedGlyphVBs.find(slot);
+        return it != m_cachedGlyphVBs.end() && it->second.valid && it->second.version == version
+            && m_glyphMeshValid && m_glyphMeshVersion == meshVersion;
     }
 
     std::unique_ptr<IRenderTarget> D3D11Renderer::CreateLayerTarget()

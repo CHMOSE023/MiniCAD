@@ -3,6 +3,7 @@
 #include <GLES3/gl3.h>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace MiniCAD
 {
@@ -37,6 +38,12 @@ namespace MiniCAD
                                   const Math::Mat4& viewProj, void* nativeSRV,
                                   bool depth = false, bool blend = true) override;
 
+        bool IsCached(uint32_t slot, uint64_t version, bool textured) const override;
+        void SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
+                                std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
+                                const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) override;
+        bool IsGlyphCached(uint32_t slot, uint64_t version, uint64_t meshVersion) const override;
+
         std::unique_ptr<IRenderTarget> CreateLayerTarget() override;
         void  DrawLayer(IRenderTarget& layer) override;
         void  SetLightBackground(bool light) override { m_lightBackground = light; }
@@ -44,7 +51,7 @@ namespace MiniCAD
         void* GetNativeDevice() override { return nullptr; }
 
     private:
-        enum class Program { Color, Text, Image };
+        enum class Program { Color, Text, Image, Glyph };
 
         struct ProgramInfo
         {
@@ -71,11 +78,27 @@ namespace MiniCAD
         VertexBuffer& Cached(std::unordered_map<uint32_t, VertexBuffer>& cache, uint32_t slot, bool textured);
 
     private:
-        ProgramInfo  m_programs[3];
+        ProgramInfo  m_programs[4];
         VertexBuffer m_stream;          // Vertex_P3_C4，每次提交重新上传
         VertexBuffer m_textStream;      // Vertex_P3_C4_UV
         std::unordered_map<uint32_t, VertexBuffer> m_cached;
         std::unordered_map<uint32_t, VertexBuffer> m_cachedText;
+
+        // 字形实例（GlyphInstancing.hpp）：网格库两个缓冲 + 各槽的实例缓冲与分批副本
+        struct GlyphSlot
+        {
+            VertexBuffer            instances;   // 只用 vbo / capacity / version / count / valid
+            std::vector<GlyphBatch> batches;
+        };
+        void ReleaseGlyphResources();
+        void EnsureGlyphMeshes(const GlyphMeshView& meshes);
+        std::unordered_map<uint32_t, GlyphSlot> m_glyphSlots;
+        std::vector<GlyphMeshRange>             m_glyphMeshes;
+        GLuint   m_glyphVao     = 0;
+        GLuint   m_glyphFillVbo = 0;
+        GLuint   m_glyphLineVbo = 0;
+        uint64_t m_glyphMeshVersion = 0;
+        bool     m_glyphMeshValid   = false;
         std::unordered_map<uint64_t, GLuint>       m_imageTextures;   // ImageData::Key → 纹理（0 = 创建失败，不再重试）
         IRenderTarget* m_currentTarget = nullptr;
         bool           m_lightBackground = false;

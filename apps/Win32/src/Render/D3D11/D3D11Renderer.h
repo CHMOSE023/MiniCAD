@@ -31,6 +31,12 @@ namespace MiniCAD
                                           const Math::Mat4& viewProj, void* nativeSRV,
                                           bool depth = false, bool blend = true) override;
 
+        virtual bool IsCached(uint32_t slot, uint64_t version, bool textured) const override;
+        virtual void SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
+                                        std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
+                                        const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) override;
+        virtual bool IsGlyphCached(uint32_t slot, uint64_t version, uint64_t meshVersion) const override;
+
         virtual std::unique_ptr<IRenderTarget> CreateLayerTarget() override;
         virtual void DrawLayer(IRenderTarget& layer) override;
 
@@ -77,6 +83,15 @@ namespace MiniCAD
 
         std::unordered_map<uint32_t, CachedVB> m_cachedVBs;      // Vertex_P3_C4
         std::unordered_map<uint32_t, CachedVB> m_cachedTextVBs;  // Vertex_P3_C4_UV
+        std::unordered_map<uint32_t, CachedVB> m_cachedGlyphVBs; // GlyphInstance（实例缓冲）
+        // 字形实例的分批与字形网格区间：调用方上传后可能释放自己的那份，绘制时用这里的副本
+        std::unordered_map<uint32_t, std::vector<GlyphBatch>> m_glyphBatches;
+        std::vector<GlyphMeshRange> m_glyphMeshes;
+        ComPtr<ID3D11Buffer>        m_glyphFillVB;   // 字形网格库：三角形顶点（float2）
+        ComPtr<ID3D11Buffer>        m_glyphLineVB;   // 字形网格库：线段顶点（float2）
+        uint64_t                    m_glyphMeshVersion = 0;
+        bool                        m_glyphMeshValid   = false;
+        bool EnsureGlyphMeshes(const GlyphMeshView& meshes);
 
         int m_maxVertices     = 65536;
         int m_maxTextVertices = 65536;
@@ -99,6 +114,7 @@ namespace MiniCAD
         LineShader m_lineShader;
         TextShader  m_textShader;
         ImageShader m_imageShader;
+        GlyphShader m_glyphShader;
 
         // 光栅图像纹理：按 ImageData::Key 缓存（同一路径重新加载会得到新 Key）
         std::unordered_map<uint64_t, ComPtr<ID3D11ShaderResourceView>> m_imageTextures;

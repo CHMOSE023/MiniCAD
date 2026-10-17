@@ -576,6 +576,7 @@ namespace MiniCAD
             // 再请平台把空闲的堆内存还给系统
             m_docManager.GetEditor().ClearImageCache();
             m_platform->GetRenderer().ReleaseCachedResources();
+            m_docManager.GetEditor().RequestSceneRestitch();
             m_platform->ReleaseFreeMemory();
             m_viewport->RequestRender();
             StateChanged();
@@ -818,7 +819,12 @@ namespace MiniCAD
         {
             Editor& editor = m_docManager.GetEditor();
             editor.Render();
-            vp.Render(m_platform->GetRenderer(), target, editor.BuildViewState());
+            IRenderer&      renderer = m_platform->GetRenderer();
+            const ViewState vs       = editor.BuildViewState();
+            vp.Render(renderer, target, vs);
+            // 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）
+            if (Viewport::SceneUploaded(renderer, vs))
+                editor.ReleaseUploadedSceneStreams();
         }
 
         // 渲染目标重建后着色器资源会变，重新登记

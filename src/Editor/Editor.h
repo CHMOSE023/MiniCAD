@@ -22,6 +22,7 @@
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/Object/Object.hpp"
 #include "Render/VertexTypes.hpp"
+#include "Document/GlyphMeshLibrary.hpp"
 #include "Render/ImageDraw.hpp"
 #include "Core/Image/ImageLibrary.h"
 #include <unordered_map>
@@ -339,6 +340,18 @@ namespace MiniCAD
         // ── 渲染辅助 ─────────────────────────────────────────
         ViewState BuildViewState();  // app calls after Render() to get snapshot for Viewport
 
+        // 渲染后端已持有场景静态流的当前版本后调用（Viewport::SceneUploaded）：释放 CPU 端的拼接流，
+        // 只留逐实体缓存。之后要用拼接流时（后端丢弃了缓冲、追加新实体）从逐实体缓存重新拼接，不重新细分
+        void ReleaseUploadedSceneStreams();
+        // 渲染后端丢弃了缓存的顶点缓冲（ReleaseCachedResources）后调用：拼接流已释放的话下一帧重新拼接
+        void RequestSceneRestitch() { m_sceneRestitch = m_sceneStreamsReleased; }
+
+        // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
+        struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0; };
+        SceneStreamStats GetSceneStreamStats() const { return m_sceneStats; }
+        // 逐实体缓存里的线与填充顶点（调试与自测用）
+        void ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const;
+
     private:
         bool HandleGlobal (const InputEvent& e);
         bool HandleDefault(const InputEvent& e);
@@ -421,6 +434,10 @@ namespace MiniCAD
         ImageLibrary                 m_imageLibrary;
         std::vector<Vertex_P3_C4_UV> m_textVertices;
         uint64_t                     m_sceneVersion = 0;   // 场景顶点重建计数（GPU 缓存键）
+        // 场景文字的字形实例（拼接时按绘制序，拼接完按网格排序分批）与字形网格库
+        std::vector<GlyphInstance>   m_glyphInstances;
+        std::vector<GlyphBatch>      m_glyphBatches;
+        GlyphMeshLibrary             m_glyphLibrary;
 
         // 选中流（选中 + 拖动中的实体，叠加在场景之上）
         std::vector<Vertex_P3_C4>    m_selVertices;
@@ -441,11 +458,15 @@ namespace MiniCAD
             std::vector<Vertex_P3_C4>    lines;
             std::vector<Vertex_P3_C4>    fills;
             std::vector<Vertex_P3_C4_UV> texts;
+            std::vector<GlyphInstance>   glyphs;          // 矢量文字的字形实例
             bool                         viewDependent = false;   // 线宽/虚线按像素烘焙：缩放后需重新细分
             std::vector<ImageDraw>       images;
             std::vector<std::vector<Math::Point3>> wipes;   // 区域覆盖多边形：拼接时裁剪此前的顶点
         };
         std::unordered_map<Object::ObjectID, EntityVertexCache> m_entityVertexCache;
+        bool             m_sceneStreamsReleased = false;   // 静态拼接流已交给渲染后端并释放
+        bool             m_sceneRestitch        = false;   // 下一帧从逐实体缓存重新拼接
+        SceneStreamStats m_sceneStats;
 
         // 动态流：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充，缩放时只重建这一路，静态流不动
         std::vector<Vertex_P3_C4>     m_sceneDynVertices;
@@ -457,11 +478,13 @@ namespace MiniCAD
         void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
         void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
         void RebuildDynamicStream(DrawContext& ctx);
+        void UpdateSceneStats();
 
         // 细分临时缓冲（复用容量，避免逐实体分配）
         std::vector<Vertex_P3_C4>    m_scratchLines;
         std::vector<Vertex_P3_C4>    m_scratchFills;
         std::vector<Vertex_P3_C4_UV> m_scratchTexts;
+        std::vector<GlyphInstance>   m_scratchGlyphs;
         std::vector<Vertex_P3_C4>    m_overlayVertices;
         std::vector<GripDraw>        m_gripVertices;
 
