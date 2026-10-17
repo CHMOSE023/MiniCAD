@@ -1,4 +1,5 @@
 #include "EntityTranslate.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -23,6 +24,11 @@ namespace MiniCAD
 {
     void TranslateEntityInPlace(Entity& entity, const Math::Vec3& d)
     {
+        if (entity.IsKindOf<Solid3DEntity>())
+        {
+            static_cast<Solid3DEntity&>(entity).ApplyTransform(Solid3DEntity::MoveMatrix(d));
+            return;
+        }
         if (entity.IsKindOf<PointEntity>())
         {
             auto& pe = static_cast<PointEntity&>(entity);

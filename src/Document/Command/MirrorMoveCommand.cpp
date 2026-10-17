@@ -19,6 +19,7 @@
 #include "Core/Entity/RayEntity.hpp"
 #include "Core/Entity/XLineEntity.hpp"
 #include "Core/Entity/ToleranceEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Math/Constants.hpp"
 
 #include <cmath>
@@ -278,6 +279,13 @@ namespace MiniCAD
                 e.AfterPosVec  = { ReflectPoint (te->GetInsertion(), axis),
                                    ReflectVector(te->GetDirection(), axis) };
             }
+            else if (entity->IsKindOf<Solid3DEntity>())
+            {
+                auto* se = static_cast<Solid3DEntity*>(entity);
+                e.Kind            = MoveEntityEntry::Kind::Transform;
+                e.BeforeTransform = se->GetTransform();
+                e.AfterTransform  = se->GetTransform() * Solid3DEntity::MirrorMatrix(axis.P0, axis.P1);
+            }
             else
             {
                 continue;
@@ -395,6 +403,9 @@ namespace MiniCAD
             te->SetDirection(snap.dir);
             break;
         }
+        case MoveEntityEntry::Kind::Transform:
+            static_cast<Solid3DEntity*>(entity)->SetTransform(useAfter ? e.AfterTransform : e.BeforeTransform);
+            break;
         }
     }
 

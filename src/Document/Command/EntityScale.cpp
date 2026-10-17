@@ -1,4 +1,5 @@
 #include "EntityScale.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -36,6 +37,12 @@ namespace MiniCAD
     {
         if (!(k > 0.0) || !std::isfinite(k))
             return false;
+
+        if (entity.IsKindOf<Solid3DEntity>())
+        {
+            static_cast<Solid3DEntity&>(entity).ApplyTransform(Solid3DEntity::ScaleMatrix(base, k));
+            return true;
+        }
 
         auto sp = [&](const Math::Point3& p) { return ScalePoint(p, base, k); };
 

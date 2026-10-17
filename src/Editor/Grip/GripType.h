@@ -5,6 +5,7 @@
 #include "IEntityGripHandler.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Math/Point3.hpp"
+#include "Core/Math/Mat4.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/GeomKernel/Circle.hpp"
 #include "Core/GeomKernel/Line.hpp"
@@ -119,6 +120,7 @@ namespace MiniCAD
             Hatch,
             Insert,
             Table,
+            Transform,   // Solid3DEntity：变换矩阵
         } Kind;
 
 
@@ -171,6 +173,10 @@ namespace MiniCAD
         // Hatch 边界环快照
         std::vector<HatchLoop> BeforeHatch;
         std::vector<HatchLoop> AfterHatch;
+
+        // Solid3DEntity 变换矩阵快照
+        Math::Mat4 BeforeTransform = Math::Mat4::Identity();
+        Math::Mat4 AfterTransform  = Math::Mat4::Identity();
     };
 
     // ─────────────────────────────────────────────

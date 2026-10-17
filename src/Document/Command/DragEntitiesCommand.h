@@ -20,6 +20,7 @@
 #include "Core/Entity/MLeaderEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Editor/Grip/GripType.h"
 #include <memory>
@@ -179,6 +180,9 @@ namespace MiniCAD
                     const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
                     ins->SetPosition(p);
                 }
+
+                if (e.Kind == DragEntityEntry::Kind::Transform)
+                    static_cast<Solid3DEntity*>(obj)->SetTransform(useAfter ? e.AfterTransform : e.BeforeTransform);
             }
         }
     };

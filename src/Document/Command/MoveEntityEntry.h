@@ -2,6 +2,7 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Vec3.hpp"
+#include "Core/Math/Mat4.hpp"
 #include "Core/GeomKernel/Point.hpp"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/GeomKernel/Circle.hpp"
@@ -39,6 +40,7 @@ namespace MiniCAD
             Ray,         // RayEntity       — 起点 + 方向向量
             XLine,       // XLineEntity     — 基点 + 方向向量
             Tolerance,   // ToleranceEntity — 插入点 + 方向向量
+            Transform,   // Solid3DEntity   — 局部 → 世界的变换矩阵
         } Kind;
 
         // 仅使用与 Kind 对应的那对字段，其余字段未定义但不读取
@@ -81,5 +83,8 @@ namespace MiniCAD
         // Ray / XLine / Tolerance：原点/插入点 + 方向向量（旋转/镜像时方向也变）
         struct PosVecSnap { Math::Point3 pos = {}; Math::Vec3 dir = {}; };
         PosVecSnap BeforePosVec, AfterPosVec;
+
+        // Solid3DEntity：变换矩阵
+        Math::Mat4 BeforeTransform = Math::Mat4::Identity(), AfterTransform = Math::Mat4::Identity();
     };
 }

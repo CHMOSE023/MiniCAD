@@ -1,6 +1,6 @@
 # 三维实体建模开发计划
 
-> 状态：M0、M1 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层，55 项接口测试通过
+> 状态：M0～M2 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -85,14 +85,20 @@ SM_API → SMLib
 
 ---
 
-## 5. 实体 `Solid3DEntity`
+## 5. 实体 `Solid3DEntity`（M2 已实现）
 
-- 命名：MiniCAD 已有 `SolidEntity`（二维填充，DXF 的 SOLID），三维实体用 `Solid3DEntity`（对应 DXF 3DSOLID）
-- 成员：`BodyPtr`、`Mat4` 变换、离散结果缓存（边线、轮廓线、网格）
-- `Clone()` 共享 `BodyPtr`；移动 / 旋转 / 镜像 / 缩放只改变换矩阵，现有修改工具基本可直接用；布尔、圆角前把矩阵烘焙进 BRep
-- 包围盒、拾取、捕捉基于边线折线：端点、中点；圆形边给圆心
-- 夹点：先只有基点（移动）
-- 序列化：`.mcad` / JSON 里存内核的字节流；DWG / DXF 导出退化为网格并 `LOG_WARN`
+`src/Core/Entity/Solid3DEntity.hpp`（纯头文件，核心库）。命名：MiniCAD 已有 `SolidEntity`（二维填充，DXF 的 SOLID），三维实体用 `Solid3DEntity`（对应 DXF 3DSOLID）。
+
+- **几何 = 共享数据 + 变换矩阵**：内核数据（`Save` 的字节）与局部坐标下的线框在 `Create(id, kernel, body)` 时一次求出、之后不变，克隆之间共享（`shared_ptr`）；变换矩阵 `Mat4`（局部 → 世界，行向量约定）每个实体一份
+- **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（网页版）也能显示、移动、原样保存
+- **显示**（第一期）：世界坐标线框 = 实体所有边的折线，经 `IDrawSink::DrawLine` 输出；包围盒由线框求出。暂不画曲面轮廓线（球只显示接缝和赤道）
+- **变换只改矩阵**：`TranslateEntityInPlace` / `Rotate` / `Mirror` / `Scale` 各加一个分支（复制、阵列、缩放工具经它们生效）；移动 / 旋转 / 镜像命令的 `MoveEntityEntry` 与夹点的 `DragEntityEntry` 增加 `Kind::Transform`，保存前后矩阵用于撤销
+- **拾取**：走 `Picking` 的通用回退（按 `Draw()` 输出的线段命中），无需特化
+- **捕捉**（`Document/FeaturePoints.cpp`、`SnapEngine::TryNearest`）：端点 = 不闭合的边的两端 + 圆形边的圆心（同圆 / 圆弧的约定）；中点 = 不闭合的边按长度的中点；圆心；最近点 = 线框各段上的最近点
+- **夹点**（`Editor/Grip/Solid3DGripHandler.h`）：包围盒中心一个，拖动即整体移动
+- **读写**（`EntityIO`）：`data`（内核字节，base64，`Ser::Bytes`）、`transform`（16 个数）、`wire`（局部线框，没有内核时用来显示）；`.mcad` 与 JSON 都适用
+- **DWG / DXF**：导出时作为不支持的实体跳过并 `LOG_WARN`（退化为网格留到 M4）
+- 测试：`tests/Solid/Solid3DEntityTests.cpp`（51 项：显示、克隆、四种变换、命令与撤销、复制、夹点、捕捉、JSON / .mcad / .json 往返、base64）
 
 ---
 
@@ -124,7 +130,7 @@ SM_API → SMLib
 |---|---|---|
 | **M0** ✅ | 引入 SMLib 源码；静态库、C++20 补丁；`cmake/SMLib.cmake`；冒烟测试 `SMLibSmokeTests` | Debug / Release 全部测试通过 |
 | **M1** ✅ | `ISolidKernel` 接口与 `SMLibKernel` 适配层（目标 `MiniCADSolid`）；接口测试 `SolidKernelTests`（基本体、拉伸、旋转、布尔、圆角、变换、离散化、边、隐藏线、截面、读写与损坏数据） | 测试只依赖接口；MiniCAD 公开头文件不含 `Sm*` |
-| M2 | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、撤销、`.mcad` / JSON 读写 | 核心库测试覆盖实体与命令 |
+| **M2** ✅ | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、夹点、撤销、`.mcad` / JSON 读写；测试 `Solid3DEntityTests` | 测试覆盖实体与命令 |
 | M3 | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`） | 桌面版里实际建模、布尔、撤销、保存再打开 |
 | M4 | 截面、平面投影出二维图；DWG 导出退化为网格 | 出图结果可标注、可导出 DWG |
 | M5 | 第二批命令：旋转、扫掠、圆角、倒角，选边 | |

@@ -35,7 +35,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 核心系统
 
 **实体**（`src/Core/Entity/`）
-- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等
+- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）
 - 支持克隆、包围盒、绘制到 draw sink、序列化；`ICurveEntity` 提供几何操作接口（捕捉、求交、编辑）
 - 颜色 `EntityColor` 同时保存 DXF 语义（ByLayer / ByBlock / ACI / 真彩）和解析后的 RGBA
 
@@ -136,7 +136,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
-- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`：SMLib 冒烟测试与 `ISolidKernel` 接口测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
+- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest
