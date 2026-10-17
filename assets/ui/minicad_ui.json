@@ -16,6 +16,8 @@
     "solid.cylinder": { "tooltip": "三维圆柱体：指定底面中心、半径和高度" },
     "solid.sphere": { "tooltip": "三维球体：指定中心和半径" },
     "solid.extrude": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定高度，拉伸为三维实体" },
+    "solid.section": { "tooltip": "先选择三维实体：键入高度得到水平截面，或点取两点得到铅垂剖面图" },
+    "solid.flatshot": { "tooltip": "先选择三维实体，按俯视、前视、右视等方向投影成二维图（含隐藏线）" },
     "region.union": { "tooltip": "合并选中的面域或三维实体" },
     "region.subtract": { "tooltip": "从最先创建的面域或三维实体中减去其余选中的对象" },
     "region.intersect": { "tooltip": "求选中的面域或三维实体的公共部分" }
@@ -128,7 +130,7 @@
     },
     {
       "title": "建模(&L)",
-      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "-", "region.union", "region.subtract", "region.intersect" ]
+      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "-", "region.union", "region.subtract", "region.intersect", "-", "solid.section", "solid.flatshot" ]
     },
     {
       "title": "窗口(&W)",

@@ -36,7 +36,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 核心系统
 
 **实体**（`src/Core/Entity/`）
-- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）
+- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵；导出 DWG / DXF 时写成多面网格，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）
 - 支持克隆、包围盒、绘制到 draw sink、序列化；`ICurveEntity` 提供几何操作接口（捕捉、求交、编辑）
 - 颜色 `EntityColor` 同时保存 DXF 语义（ByLayer / ByBlock / ACI / 真彩）和解析后的 RGBA
 
@@ -68,7 +68,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **DWG/DXF 交换**（`src/Import/CadExchange.*`）
 - `ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转；`Document::LoadFromFile` / `SaveToFile` 按扩展名 `.dwg` / `.dxf` 分派，DXF 写 ASCII
 - 写出版本 `CadSaveVersion`：`R2018`（AC1032）或 `R2013`（AC1027，AutoCAD 2013～2017 共用，界面上标为"2013/2014"）。打开文件时记住其版本（`Document::GetCadSaveVersion`），另存为时由用户选择
-- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
+- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
 - 以原图为底另存：打开时 `Document` 留下原图 `CadSource`（原始字节、场景实体 ↔ 原图句柄、导入时的签名）。另存为同格式同版本时 `ExportCad` 重新读出原图，只改写变化的实体与表项，未修改的实体（包括天正 `TCH_*` 等自定义对象）、跳过的实体、图纸空间原样写回；格式或版本不同时重新生成整张图纸。天正对象的显示适配在 `src/Import/Tch*.h`
 
 **文字与字体**（`src/Text/`）
@@ -137,7 +137,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
-- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
+- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试、截面 / 投影出图与网格导出测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest

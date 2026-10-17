@@ -401,6 +401,20 @@ namespace MiniCAD
                 return nullptr;
             return std::make_unique<ExtrudeTool>(std::move(ids), std::move(*env));
         });
+        RegisterTool("SolidSection", [this]() -> std::unique_ptr<ITool> {   // 预选三维实体
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<SectionTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("Flatshot", [this]() -> std::unique_ptr<ITool> {       // 预选三维实体
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<FlatshotTool>(std::move(ids), std::move(*env));
+        });
 
         // ── 快捷键绑定 ────────────────────────────────────────
         RegisterAlias("P",      "Previous");
@@ -435,6 +449,11 @@ namespace MiniCAD
         RegisterAlias("SPHERE",   "Sphere");
         RegisterAlias("EXTRUDE",  "Extrude");
         RegisterAlias("EXT",      "Extrude");
+        RegisterAlias("SOLSECTION", "SolidSection");
+        RegisterAlias("SECTION",    "SolidSection");
+        RegisterAlias("SEC",        "SolidSection");
+        RegisterAlias("FLATSHOT",   "Flatshot");
+        RegisterAlias("FSHOT",      "Flatshot");
         RegisterAlias("Z",      "Zoom");
         RegisterAlias("ZOOMALL", "ZoomAll");
         RegisterAlias("IM",     "Image");   // Image 是特例命令(非工具),全名也走别名表
@@ -729,7 +748,8 @@ namespace MiniCAD
             return;
         }
 
-        if ((toolId == "Box" || toolId == "Cylinder" || toolId == "Sphere" || toolId == "Extrude") && !m_solidKernel)
+        if ((toolId == "Box" || toolId == "Cylinder" || toolId == "Sphere" || toolId == "Extrude"
+             || toolId == "SolidSection" || toolId == "Flatshot") && !m_solidKernel)
         {
             m_commandLine.Echo(toolId + ": 三维建模不可用（此版本没有实体内核）");
             return;
@@ -1212,6 +1232,11 @@ namespace MiniCAD
                       built.Skipped > 0 ? ("（忽略 " + std::to_string(built.Skipped) + " 个对象）").c_str() : "");
         m_commandLine.Echo(buf);
         m_commandLine.Echo("原对象已保留；不再需要时请自行删除");
+    }
+
+    std::unique_ptr<Entity> SolidToolDetail::MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b)
+    {
+        return std::make_unique<LineEntity>(id, a, b);
     }
 
     std::optional<SolidToolEnv> Editor::MakeSolidToolEnv()

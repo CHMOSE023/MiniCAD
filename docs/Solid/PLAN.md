@@ -1,6 +1,6 @@
 # 三维实体建模开发计划
 
-> 状态：M0～M3 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、实体并 / 差 / 交）
+> 状态：M0～M4 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、实体并 / 差 / 交）；截面、平面投影出二维图，DWG / DXF 导出为多面网格
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -97,8 +97,9 @@ SM_API → SMLib
 - **拾取**：走 `Picking` 的通用回退（按 `Draw()` 输出的线段命中），无需特化
 - **捕捉**（`Document/FeaturePoints.cpp`、`SnapEngine::TryNearest`）：端点 = 不闭合的边的两端 + 圆形边的圆心（同圆 / 圆弧的约定）；中点 = 不闭合的边按长度的中点；圆心；最近点 = 线框各段上的最近点
 - **夹点**（`Editor/Grip/Solid3DGripHandler.h`）：包围盒中心一个，拖动即整体移动
-- **读写**（`EntityIO`）：`data`（内核字节，base64，`Ser::Bytes`）、`transform`（16 个数）、`bounds`（局部包围盒）、`wire`（局部线框，没有内核时用来显示）；`.mcad` 与 JSON 都适用
-- **DWG / DXF**：导出时作为不支持的实体跳过并 `LOG_WARN`（退化为网格留到 M4）
+- **网格**（M4，`GetLocalMesh`）：创建时由 `Tessellate` 离散，合并同位置顶点；每个三角形记下哪些边在同一个面内部（两侧在端点处的法线相同），用于导出
+- **读写**（`EntityIO`）：`data`（内核字节，base64，`Ser::Bytes`）、`transform`（16 个数）、`bounds`（局部包围盒）、`mesh`（网格，打包成字节，base64）、`wire`（局部线框，没有内核时用来显示）；`.mcad` 与 JSON 都适用
+- **DWG / DXF**（M4，`CadExchange` 的 `ConvertSolid3D`）：写成多面网格（POLYLINE，AcDbPolyFaceMesh），施加变换；面内部的边写成不可见（面记录的索引取负），AutoCAD 里看到的线框与实体的边一致。多面网格的顶点数、面数是 16 位，超过 32767 的跳过；M4 之前保存的实体没有网格，导出时跳过并提示。读入 DWG 时多面网格仍不转成实体
 - 测试：`tests/Solid/Solid3DEntityTests.cpp`（51 项：显示、克隆、四种变换、命令与撤销、复制、夹点、捕捉、JSON / .mcad / .json 往返、base64）
 
 ---
@@ -109,7 +110,7 @@ SM_API → SMLib
 |---|---|---|
 | 一 | 俯视线框：边线 + 视线方向 (0,0,-1) 的轮廓线，经 `IDrawSink::DrawLine` 输出；可选 `FillTriangle` 浅色填充。按实体缓存，走静态流 | 只有实体和适配层 |
 | 二 | 三维视图：`Camera` 增加视线方向（旋转、标准视图），`LookAt` 视图矩阵；顶点格式 `Vertex_P3_N3_C4` 与光照着色器；两个渲染器给实体层开深度测试（GL 渲染器目前关闭）；`IDrawSink` 增加 `EmitMesh`；轮廓线随视角变化，进动态流 | 视口、渲染器、着色器 |
-| 三 | 三维出二维图：截面、平面投影生成二维实体 | 新命令 |
+| 三 ✅ | 三维出二维图：截面、平面投影生成二维实体（M4，见第 7 节） | 新命令 |
 
 先做一、三，二的改动面最大，放最后。
 
@@ -138,9 +139,22 @@ SM_API → SMLib
 - 菜单：顶层“建模”（长方体、圆柱体、球体、拉伸、并集、差集、交集）；“修改 > 面域”保留同样的并集 / 差集 / 交集。命令 ID `solid.box` / `solid.cylinder` / `solid.sphere` / `solid.extrude` / `region.union` / `region.subtract` / `region.intersect`
 - 测试：`tests/Solid/SolidToolTests.cpp`（30 项，经 `Editor` 的公开入口驱动）；桌面版自测 `--selftest` 的“三维实体”一节经真实命令行入口验证建模、拉伸、并集、显示与撤销
 
+### 三维出二维图（M4）
+
+| 命令 | 别名 | 操作 |
+|---|---|---|
+| `SolidSection` | SOLSECTION、SECTION、SEC | 预选三维实体。键入高度 z → 水平截面，曲线原位输出（z 取 0），闭合轮廓可直接再拉伸；或点取两点 → 过这两点的铅垂截面，展开到图纸平面（沿两点方向为 +X、原来的 Z 为 +Y），第三点为第一点在 Z = 0 处的放置位置 |
+| `Flatshot` | FLATSHOT、FSHOT | 预选三维实体。T / U / F / B / R / L 选俯视、仰视、前视、后视、右视、左视（默认前视），H 切换是否生成隐藏线；点取放置点 = 投影图左下角 |
+
+- 截交线由 `ISolidKernel::Section` 给出，按面分段，先首尾相接连成轮廓；投影线由 `HiddenLines` 给出（隐藏线消除）。多个实体投影时先并成一个，互相遮挡才能消隐（合并失败时逐个投影）
+- **拟合**（`src/Solid/CurveFit.h`）：内核给的是采样点折线，拟合回直线、圆弧、整圆、带凸度的多段线（容差为图形尺寸的 1e-5），出图后可直接标注半径、直径、长度。相邻采样点绕圆心转角超过 30° 的不当作圆弧（内核约 10° 采样一次），避免正多边形被认成圆。椭圆（倾斜的圆的投影）仍是折线
+- **隐藏线**：用 `HIDDEN` 线型（不存在时加入线型表），线型比例按图形尺寸取（一段虚线约为尺寸的 1/50）；与可见线重合（如正对视线的面后面的边）或彼此重复的隐藏线不画
+- 结果用当前图层、线宽，经 `BatchAddCommand` 一步撤销
+- 测试：`tests/Solid/SolidDrawingTests.cpp`（53 项：拟合、连接、网格、`.mcad` / JSON 往返、DWG / DXF 导出读回、截面、剖面、投影、隐藏线、撤销）
+
 ### 之后
 
-- 第二批：旋转、扫掠、圆角、倒角（需要能选中实体上的边：拾取命中的边线折线带回 `EdgeId`）、截面、平面投影
+- 第二批：旋转、扫掠、圆角、倒角（需要能选中实体上的边：拾取命中的边线折线带回 `EdgeId`）
 - 耗时运算：桌面版可交给单个后台工作线程（内核只能单线程），网页版同步执行，与打开图纸的做法一致。目前在界面线程同步执行
 
 ---
@@ -153,7 +167,7 @@ SM_API → SMLib
 | **M1** ✅ | `ISolidKernel` 接口与 `SMLibKernel` 适配层（目标 `MiniCADSolid`）；接口测试 `SolidKernelTests`（基本体、拉伸、旋转、布尔、圆角、变换、离散化、边、隐藏线、截面、读写与损坏数据） | 测试只依赖接口；MiniCAD 公开头文件不含 `Sm*` |
 | **M2** ✅ | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、夹点、撤销、`.mcad` / JSON 读写；测试 `Solid3DEntityTests` | 测试覆盖实体与命令 |
 | **M3** ✅ | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`），内核经 `AppPlatform` 注入；测试 `SolidToolTests` 与桌面版自测 | 桌面版里实际建模、布尔、撤销 |
-| M4 | 截面、平面投影出二维图；DWG 导出退化为网格 | 出图结果可标注、可导出 DWG |
+| **M4** ✅ | 截面（`SolidSection`）、平面投影（`Flatshot`）出二维图，拟合为直线 / 圆弧 / 圆；DWG / DXF 导出为多面网格；测试 `SolidDrawingTests` | 出图结果可标注、可导出 DWG |
 | M5 | 第二批命令：旋转、扫掠、圆角、倒角，选边 | |
 | M6 | 三维视图（显示第二期） | |
 | — | 网页版评估：Emscripten 编译、异常、WASM 体积 | 决定网页版是否默认带 |

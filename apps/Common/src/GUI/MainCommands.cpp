@@ -128,6 +128,8 @@ namespace MiniCAD
             { "solid.cylinder", "Cylinder", "圆柱体(&C)",   "" },
             { "solid.sphere",   "Sphere",   "球体(&S)",     "" },
             { "solid.extrude",  "Extrude",  "拉伸(&X)",     "" },
+            { "solid.section",  "SolidSection", "截面(&E)",  "" },
+            { "solid.flatshot", "Flatshot", "平面投影(&P)", "" },
             { "inquiry.area",  "Area",      "面积(&A)",     "" },
             { "draw.wipeout",  "Wipeout",   "区域覆盖(&W)", "" },
             { "draw.hatch",    "Hatch",   "图案填充(&H)…", "" },

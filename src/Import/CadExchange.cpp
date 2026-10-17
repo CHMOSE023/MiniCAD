@@ -22,6 +22,7 @@
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -2226,6 +2227,10 @@ namespace MiniCAD
 
                 for (const auto& [name, count] : m_skipped)
                     LOG_WARN("DWG/DXF 导出：不支持的实体 %s × %d 已跳过", name.c_str(), count);
+                if (m_solidNoMesh > 0)
+                    LOG_WARN("DWG/DXF 导出：%d 个三维实体没有网格数据（早期版本保存），已跳过", m_solidNoMesh);
+                if (m_solidTooLarge > 0)
+                    LOG_WARN("DWG/DXF 导出：%d 个三维实体的网格超过 32767 个顶点或面，已跳过", m_solidTooLarge);
             }
 
         private:
@@ -2541,6 +2546,8 @@ namespace MiniCAD
                     d->Flags = static_cast<Dwg::InvisibleEdgeFlags>(s->GetInvisibleEdges());
                     return Finish(e, std::move(d));
                 }
+                if (auto* s = dynamic_cast<const Solid3DEntity*>(&e))
+                    return ConvertSolid3D(e, *s);
                 if (auto* s = dynamic_cast<const LineEntity*>(&e))
                 {
                     auto d = std::make_unique<Dwg::Line>();
@@ -2654,6 +2661,59 @@ namespace MiniCAD
             {
                 ++m_skipped[e.GetTypeInfo()->Name];
                 return nullptr;
+            }
+
+            // 三维实体：DWG 的 3DSOLID 存的是 ACIS 数据，写不出来，退化为多面网格（POLYLINE，AcDbPolyFaceMesh）。
+            // 网格是创建实体时离散的（局部坐标，这里施加变换）；面内部的边写成不可见（面记录的索引取负）。
+            // 多面网格的顶点数、面数都是 16 位，超出时跳过
+            std::unique_ptr<Dwg::Entity> ConvertSolid3D(const Entity& e, const Solid3DEntity& solid)
+            {
+                const auto& mesh = solid.GetLocalMesh();
+                if (mesh.Empty())
+                {
+                    ++m_solidNoMesh;
+                    return nullptr;
+                }
+                if (mesh.Positions.size() > 32767 || mesh.TriangleCount() > 32767)
+                {
+                    ++m_solidTooLarge;
+                    return nullptr;
+                }
+
+                auto d = std::make_unique<Dwg::PolyfaceMesh>();
+                ApplyAttr(e, *d);
+                auto addVertex = [&](std::unique_ptr<Dwg::Vertex> v) {
+                    ApplyAttr(e, *v);
+                    if (Dwg::Vertex* added = m_db.Add(std::move(v)))
+                        d->Vertices.push_back(added->ObjectHandle);
+                };
+                const Math::Mat4& m = solid.GetTransform();
+                for (const auto& p : mesh.Positions)
+                {
+                    auto v = std::make_unique<Dwg::VertexFaceMesh>();
+                    v->Location = ToXYZ(m.TransformPoint(p));
+                    v->Flags    = Dwg::VertexFlags::PolygonMesh3D | Dwg::VertexFlags::PolyFaceMeshVertex;
+                    addVertex(std::move(v));
+                }
+                for (size_t t = 0; t < mesh.TriangleCount(); ++t)
+                {
+                    auto f = std::make_unique<Dwg::VertexFaceRecord>();
+                    f->Flags = Dwg::VertexFlags::PolyFaceMeshVertex;
+                    std::int16_t idx[3];
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        idx[i] = static_cast<std::int16_t>(mesh.Indices[t * 3 + i] + 1);   // 从 1 开始
+                        if (mesh.EdgeFlags[t] & (1u << i))
+                            idx[i] = static_cast<std::int16_t>(-idx[i]);                     // 负数：从该顶点出发的边不可见
+                    }
+                    f->Index1 = idx[0]; f->Index2 = idx[1]; f->Index3 = idx[2];
+                    if (Dwg::VertexFaceRecord* added = m_db.Add(std::move(f)))
+                    {
+                        ApplyAttr(e, *added);
+                        d->Faces.push_back(added->ObjectHandle);
+                    }
+                }
+                return d;
             }
 
             std::unique_ptr<Dwg::Entity> ConvertEllipse(const Entity& e, const Ellipse& el)
@@ -2941,6 +3001,8 @@ namespace MiniCAD
             std::map<LayerID, Dwg::Handle>     m_layerHandles;
             std::map<LineTypeID, Dwg::Handle>  m_lineTypeHandles;
             std::map<TextStyleID, Dwg::Handle> m_styleHandles;
+            int                                m_solidNoMesh   = 0;
+            int                                m_solidTooLarge = 0;
             std::map<std::string, int>         m_skipped;
         };
     }
