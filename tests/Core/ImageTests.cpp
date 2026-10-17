@@ -58,8 +58,29 @@ int RunImageTests()
 {
     g_failures = 0;
 
-    const fs::path dir = fs::temp_directory_path() / "minicad_image_test";
-    fs::create_directories(dir);
+    // ⚠ 必须用**不抛异常**的重载。
+    // `fs::create_directories(p)` 在目录建不出来时抛 `filesystem_error`，
+    // 而这里没有任何 catch ⇒ 异常逃出 main ⇒ 进程被 std::terminate 直接终止
+    // （exit 0xC0000409）。实测在 %TEMP% 不可写的机器上就是这样：
+    // 整个 MiniCADTests **静默停在这里**，注册在其后的 40 多个用例
+    //（含 MatrixInverseTests 那组「放大时鼠标跳到原点」回归）一次都没跑过 —— 缺陷因此长期没被发现。
+    // 目录建不出来时退到当前目录，用例本身照跑。
+    fs::path dir = fs::temp_directory_path() / "minicad_image_test";
+    {
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec)
+        {
+            std::printf("      [提示] %%TEMP%% 不可写（ec=%d），改用当前目录跑图像用例\n", ec.value());
+            dir = fs::current_path() / "minicad_image_test";
+            fs::create_directories(dir, ec);
+            if (ec)
+            {
+                std::printf("[跳过] 图像用例：连当前目录也建不出工作目录（ec=%d）\n", ec.value());
+                return g_failures;
+            }
+        }
+    }
     const fs::path file = dir / "px.bmp";
     WriteBmp(file);
     const std::string path = file.string();

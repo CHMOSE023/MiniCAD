@@ -1,5 +1,6 @@
 #include "TTFFont.h"
 #include "Core/Log.h"
+#include "Core/PathUtils.h"
 #include <fstream>
 #include <cmath>
 #include <cassert>
@@ -41,7 +42,7 @@ namespace MiniCAD
         (void)filePath; // Web 端不走此路径
         return;
 #else
-        std::ifstream f(filePath, std::ios::binary);
+        std::ifstream f(Utf8ToPath(filePath), std::ios::binary);
         if (!f) return;
 
         m_fileData.assign(

@@ -1,6 +1,7 @@
 #include "SHXParser.h"
 #include "SHXVM.h"
 #include "Core/Log.h"
+#include "Core/PathUtils.h"
 
 #include <fstream>
 #include <algorithm>
@@ -59,7 +60,7 @@ namespace MiniCAD
         //----------------------------------------------------------------
         // 1. Read file into memory
         //----------------------------------------------------------------
-        std::ifstream f(filePath, std::ios::binary);
+        std::ifstream f(Utf8ToPath(filePath), std::ios::binary);
         if (!f) {
             LOG_ERROR("[SHX] cannot open file: %s", filePath.c_str());
             return false;

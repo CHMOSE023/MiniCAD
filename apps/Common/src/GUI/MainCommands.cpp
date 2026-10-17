@@ -68,6 +68,11 @@ namespace MiniCAD
         m_commands.Register({ .id = "file.close",   .label = "关闭(&C)",     .shortcut = "Ctrl+W",
                               .execute = [this, &dm] { CloseDocument(dm.GetActive()); }, .canExecute = hasDoc });
         m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
+        // 「最近打开」的内容由 BuildRecentMenuItems() 在打开菜单时生成，这两条供命令行 / 快捷键直接调用
+        m_commands.Register({ .id = "file.recent.clear", .label = "清除最近打开记录(&C)",
+                              .tooltip = "清空「文件 > 最近打开」列表",
+                              .execute    = [this] { ClearRecentFiles(); },
+                              .canExecute = [this] { return !m_recentFiles.Empty(); } });
 
         // ── 文档标签：按标签顺序切换 ────────────────────────────────
         auto stepDoc = [this](int dir)

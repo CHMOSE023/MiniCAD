@@ -115,6 +115,11 @@ namespace MiniGUI
         return it == m_panels.end() ? nullptr : it->second.node;
     }
 
+    void UiLayout::SetDynamicMenuItems(const std::string& name, std::function<std::vector<MenuItem>()> build)
+    {
+        m_dynamicMenus[name] = std::move(build);
+    }
+
     ToolBar* UiLayout::GetToolBar(const std::string& id) const
     {
         const auto it = m_toolBars.find(id);
@@ -403,6 +408,21 @@ namespace MiniGUI
                     {
                         const std::string title = it["title"].AsString("?");
                         result.push_back(MenuItem::Sub(title, buildItems(it["items"], menuPath + " > " + title)));
+                    }
+                    else if (it.IsObject() && it.Find("dynamic"))
+                    {
+                        const std::string title = it["title"].AsString("?");
+                        const std::string name  = it["dynamic"].AsString();
+                        const auto src = m_dynamicMenus.find(name);
+                        if (src == m_dynamicMenus.end())
+                        {
+                            m_warnings.push_back("菜单 " + menuPath + "：宿主没有提供名为 \"" + name + "\" 的动态菜单内容");
+                            result.push_back(MenuItem(title).Enabled(false));
+                        }
+                        else
+                        {
+                            result.push_back(MenuItem::DynamicSub(title, src->second));
+                        }
                     }
                     else
                         m_warnings.push_back("菜单 " + menuPath + "：无法识别的菜单项 " + it.Dump());

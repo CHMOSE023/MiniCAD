@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -8,10 +9,12 @@
 #include "GUI/AppPlatform.h"
 #include "Render/IRenderer.h"
 #include "Document/DocumentManager.h"
+#include "Document/RecentFiles.h"
 #include "Text/FontSystem.h"
 #include "Render/IRenderBackend.h"
 #include "Data/CommandRegistry.h"
 #include "Widgets/Binding.h"
+#include "Widgets/Menu.h"
 
 namespace MiniGUI
 {
@@ -134,6 +137,15 @@ namespace MiniCAD
         void ResetLayout();
         std::string ResourceDir() const { return m_platform->GetResourceDir(); }   // icons/ ui/ patterns/ fonts/ 所在目录
 
+        // ── 最近打开（RecentFiles，MainPanels.cpp）──────────────────
+        std::filesystem::path RecentStorePath() const;            // exe 目录下的 recent.txt；空 = 该平台不保存
+        void LoadRecentFiles();                                   // 启动时读入
+        void RememberRecentFile(const std::string& path);         // 打开 / 另存为成功后记一笔并写回磁盘
+        void ForgetRecentFile(const std::string& path);           // 打不开的文件从列表里去掉
+        void ClearRecentFiles();
+        std::vector<MiniGUI::MenuItem> BuildRecentMenuItems();     // 「文件 > 最近打开」的内容，打开菜单时生成
+        void SaveRecentFiles();                                   // 写回磁盘（平台不保存时什么都不做）
+
         // ── 文档 ─────────────────────────────────────────────────
         void SyncDocuments();                   // 标签与 DocumentManager 的文档列表保持一致
         void StartNextOpen();                   // 后台读取队列里的下一张图纸
@@ -203,6 +215,7 @@ namespace MiniCAD
         std::unordered_map<std::string, std::string> m_toolCommands;     // Editor 工具 ID → 命令 ID（状态栏显示工具名）
         bool                                   m_useUserLayout = true;
         bool                                   m_syncing    = false;     // SyncDocuments 进行中：忽略标签的选中回调
+        RecentFiles                            m_recentFiles;            // 「文件 > 最近打开」，存到 exe 目录下的 recent.txt
 
         // ── 后台打开图纸（OpenDrawings）───────────────────────────
         struct OpenJob;                                                  // 一张图纸的读取任务，与后台线程共享（MainFrame.cpp）

@@ -25,13 +25,15 @@ namespace MiniGUI
     void DrawMnemonicText(UIContext& ctx, DrawList& dl, const Rect& box, const Mnemonic& m, const TextParams& params);
 
     // 菜单项描述（数据）：菜单打开时按它生成界面。
-    // enabledIf / checkedIf 在打开菜单时求值，适合绑定"当前有没有选中实体""正交是否打开"等动态状态
+    // enabledIf / checkedIf 在打开菜单时求值，适合绑定"当前有没有选中实体""正交是否打开"等动态状态；
+    // dynamicSubmenu 也在打开菜单时求值（此时才知道列表有没有变化），用于"最近打开"这类内容随时会变的子菜单
     struct MenuItem
     {
         std::string            text;
         std::string            shortcut;        // 只用于显示，快捷键本身在 ShortcutTable 注册
         std::function<void()>  action;
         std::vector<MenuItem>  submenu;
+        std::function<std::vector<MenuItem>()> dynamicSubmenu;   // 打开菜单时求值，结果填入 submenu
         bool                   separator = false;
         bool                   enabled   = true;
         bool                   checked   = false;
@@ -44,6 +46,13 @@ namespace MiniGUI
 
         static MenuItem Separator()                                     { MenuItem m; m.separator = true; return m; }
         static MenuItem Sub(std::string text, std::vector<MenuItem> items) { MenuItem m(std::move(text)); m.submenu = std::move(items); return m; }
+        // 内容在打开菜单时才生成的子菜单；返回空列表时该项显示为禁用（例如"最近打开"没有任何记录）
+        static MenuItem DynamicSub(std::string text, std::function<std::vector<MenuItem>()> build)
+        {
+            MenuItem m(std::move(text));
+            m.dynamicSubmenu = std::move(build);
+            return m;
+        }
 
         MenuItem& Checked(bool c)                     { checked = c; return *this; }
         MenuItem& Enabled(bool e)                     { enabled = e; return *this; }

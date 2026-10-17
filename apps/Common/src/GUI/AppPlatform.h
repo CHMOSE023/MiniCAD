@@ -74,6 +74,10 @@ namespace MiniCAD
         virtual void OnDocumentSaved(const std::string& path) { (void)path; }   // 网页版：保存后下载到本机
         virtual std::string GetResourceDir() const = 0;     // icons/ ui/ patterns/ fonts/ 所在目录（UTF-8）
         virtual std::string GetUserDataDir() const = 0;     // 用户布局等文件的目录（UTF-8）；空串 = 不保存
+        // 可执行文件所在目录（UTF-8）：随程序一起携带的小数据文件放在这里（如最近打开列表）。
+        // 与 GetResourceDir 分开命名——那个是只读资源目录，两者目前指向同一处，但语义不同。
+        // 没有本地文件系统的平台返回空串（不保存）
+        virtual std::string GetAppDir() const { return ""; }
 
         // ── 后台任务 ─────────────────────────────────────────────
         // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。
