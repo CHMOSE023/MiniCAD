@@ -7,7 +7,7 @@
 MiniCAD 是用现代 C++（C++20）编写的跨平台二维 CAD 编辑器。一个仓库里包含三个库和两个应用：
 平台无关的核心库 MiniCAD、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
 Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代码（`apps/Common`）绘制同一套 MiniGUI 界面。
-仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.0。
+仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.1。
 
 ### 目录
 
@@ -211,4 +211,6 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 - 视口缓存层：场景版本、相机、尺寸、显示开关、背景深浅都没变时，每帧只复制缓存层再画动态内容
 - 场景顶点分两路：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充进动态流，其余进静态流；滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传。D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动
 - 渲染器按 (slot, version) 缓存顶点缓冲，版本没变时不重新上传
+- 顶点颜色为 RGBA8（`VertexColor`，`Vertex_P3_C4` 16 字节）。拼接后的场景静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（追加实体、渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`）从缓存重新拼接，不重新细分。注意 NVIDIA 驱动会为上传的顶点缓冲在进程里留一份同样大小的系统内存，GPU 数据量直接计入私有内存
+- 矢量文字按字形实例化：`DrawContext` 把每个字输出为一条 `GlyphInstance`（36 字节，局部 → 世界的仿射变换 + 颜色），字形网格在 `GlyphMeshLibrary` 里每个字形只存一份；实例流按网格排序分批，用 `DrawInstanced` / `drawArraysInstanced` 绘制（字形三角形画在填充之后、线之前，轮廓线画在线之后）。被区域覆盖盖到的实例由 `WipeClip::Batch::ClipGlyphs` 展开成顶点再裁剪；选中流仍按顶点展开
 - `SnapEngine` 每帧 O(n)，大图纸时可考虑接入空间索引

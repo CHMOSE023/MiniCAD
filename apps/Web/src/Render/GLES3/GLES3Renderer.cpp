@@ -59,6 +59,32 @@ namespace MiniCAD
                 gl_Position = uViewProj * vec4(aPos, 1.0);
             })";
 
+        // 字形实例：aPos 为字形网格的局部坐标，其余为逐实例属性（divisor 1）
+        const char* kVertexGlyph = R"(#version 300 es
+            uniform mat4 uViewProj;
+            uniform float uLight;
+            vec4 MapColor(vec4 c)
+            {
+                if (uLight >= 0.0)
+                {
+                    vec3 d = abs(c.rgb - vec3(uLight));
+                    if (max(d.x, max(d.y, d.z)) < 0.004)
+                        c.rgb = 1.0 - c.rgb;
+                }
+                return c;
+            }
+            layout(location = 0) in vec2 aPos;
+            layout(location = 1) in vec4 aM;       // m00 m01 m10 m11
+            layout(location = 2) in vec3 aT;       // tx ty z
+            layout(location = 3) in vec4 aColor;
+            out vec4 vColor;
+            void main()
+            {
+                vColor = MapColor(aColor);
+                vec2 w = vec2(aPos.x * aM.x + aPos.y * aM.z + aT.x, aPos.x * aM.y + aPos.y * aM.w + aT.y);
+                gl_Position = uViewProj * vec4(w, aT.z, 1.0);
+            })";
+
         const char* kFragmentColor = R"(#version 300 es
             precision mediump float;
             in vec4 vColor;
@@ -140,8 +166,15 @@ namespace MiniCAD
                 glUniform1i(glGetUniformLocation(info.program, "uTex"), 0);
             }
         }
+        {
+            ProgramInfo& info = m_programs[static_cast<int>(Program::Glyph)];
+            info.program  = Link(kVertexGlyph, kFragmentColor);
+            info.viewProj = glGetUniformLocation(info.program, "uViewProj");
+            info.light    = glGetUniformLocation(info.program, "uLight");
+        }
         InitVertexBuffer(m_stream, false);
         InitVertexBuffer(m_textStream, true);
+        glGenVertexArrays(1, &m_glyphVao);
     }
 
     GLES3Renderer::~GLES3Renderer()
@@ -155,6 +188,8 @@ namespace MiniCAD
         destroy(m_textStream);
         for (auto& [slot, vb] : m_cached)     destroy(vb);
         for (auto& [slot, vb] : m_cachedText) destroy(vb);
+        ReleaseGlyphResources();
+        glDeleteVertexArrays(1, &m_glyphVao);
         for (auto& [key, tex] : m_imageTextures)
             if (tex)
                 glDeleteTextures(1, &tex);
@@ -173,6 +208,7 @@ namespace MiniCAD
         for (auto& [slot, vb] : m_cachedText) destroy(vb);
         m_cached.clear();
         m_cachedText.clear();
+        ReleaseGlyphResources();
         for (auto& [key, tex] : m_imageTextures)
             if (tex)
                 glDeleteTextures(1, &tex);
@@ -201,7 +237,7 @@ namespace MiniCAD
             glEnableVertexAttribArray(0);
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(Vertex_P3_C4, pos)));
-            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(Vertex_P3_C4, color)));
+            glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(offsetof(Vertex_P3_C4, color)));   // VertexColor：RGBA 各 8 位
         }
         glBindVertexArray(0);
     }
@@ -342,6 +378,99 @@ namespace MiniCAD
         glBindTexture(GL_TEXTURE_2D, it->second);
         Upload(m_textStream, quad.data(), quad.size_bytes(), GL_STREAM_DRAW);
         Draw(m_textStream, GL_TRIANGLES, static_cast<GLsizei>(quad.size()));
+    }
+
+    bool GLES3Renderer::IsCached(uint32_t slot, uint64_t version, bool textured) const
+    {
+        const auto& cache = textured ? m_cachedText : m_cached;
+        auto it = cache.find(slot);
+        return it != cache.end() && it->second.valid && it->second.version == version;
+    }
+
+    void GLES3Renderer::ReleaseGlyphResources()
+    {
+        for (auto& [slot, gs] : m_glyphSlots)
+            glDeleteBuffers(1, &gs.instances.vbo);
+        m_glyphSlots.clear();
+        glDeleteBuffers(1, &m_glyphFillVbo);
+        glDeleteBuffers(1, &m_glyphLineVbo);
+        m_glyphFillVbo = m_glyphLineVbo = 0;
+        m_glyphMeshes.clear();
+        m_glyphMeshValid = false;
+    }
+
+    // 字形网格库：版本变化时整体重新上传（几 MB，只在新增字形时变化）
+    void GLES3Renderer::EnsureGlyphMeshes(const GlyphMeshView& meshes)
+    {
+        if (m_glyphMeshValid && m_glyphMeshVersion == meshes.Version)
+            return;
+        auto upload = [](GLuint& vbo, std::span<const Math::Float2> verts)
+        {
+            if (!vbo) glGenBuffers(1, &vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size_bytes()), verts.data(), GL_STATIC_DRAW);
+        };
+        upload(m_glyphFillVbo, meshes.FillVerts);
+        upload(m_glyphLineVbo, meshes.LineVerts);
+        m_glyphMeshes.assign(meshes.Meshes.begin(), meshes.Meshes.end());
+        m_glyphMeshVersion = meshes.Version;
+        m_glyphMeshValid   = true;
+    }
+
+    void GLES3Renderer::SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
+                                           std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
+                                           const Math::Mat4& viewProj, PrimitiveType type, bool, bool blend)
+    {
+        GlyphSlot& gs = m_glyphSlots[slot];
+        if (!gs.instances.valid || gs.instances.version != version)
+        {
+            if (!gs.instances.vbo) glGenBuffers(1, &gs.instances.vbo);
+            Upload(gs.instances, instances.data(), instances.size_bytes(), GL_STATIC_DRAW);
+            gs.instances.count   = static_cast<GLsizei>(instances.size());
+            gs.instances.version = version;
+            gs.instances.valid   = true;
+            gs.batches.assign(batches.begin(), batches.end());
+        }
+        EnsureGlyphMeshes(meshes);
+        if (gs.instances.count == 0)
+            return;
+        const GLuint meshVbo = type == PrimitiveType::Triangle ? m_glyphFillVbo : m_glyphLineVbo;
+
+        UseProgram(Program::Glyph, viewProj, blend);
+        glBindVertexArray(m_glyphVao);
+        glBindBuffer(GL_ARRAY_BUFFER, meshVbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Math::Float2), nullptr);
+        glBindBuffer(GL_ARRAY_BUFFER, gs.instances.vbo);
+        for (GLuint a = 1; a <= 3; ++a)
+        {
+            glEnableVertexAttribArray(a);
+            glVertexAttribDivisor(a, 1);
+        }
+        const GLenum mode = type == PrimitiveType::Triangle ? GL_TRIANGLES : GL_LINES;
+        constexpr GLsizei stride = sizeof(GlyphInstance);
+        for (const GlyphBatch& b : gs.batches)
+        {
+            if (b.mesh >= m_glyphMeshes.size()) continue;
+            const GlyphMeshRange& m = m_glyphMeshes[b.mesh];
+            const GLsizei n     = static_cast<GLsizei>(type == PrimitiveType::Triangle ? m.fillCount : m.lineCount);
+            const GLint   start = static_cast<GLint>(type == PrimitiveType::Triangle ? m.fillStart : m.lineStart);
+            if (n == 0) continue;
+            // WebGL2 没有 baseInstance：逐批把实例属性指到这一批的起点
+            const size_t base = static_cast<size_t>(b.first) * sizeof(GlyphInstance);
+            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(base + offsetof(GlyphInstance, m00)));
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(base + offsetof(GlyphInstance, tx)));
+            glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(base + offsetof(GlyphInstance, color)));
+            glDrawArraysInstanced(mode, start, n, static_cast<GLsizei>(b.count));
+        }
+        glBindVertexArray(0);
+    }
+
+    bool GLES3Renderer::IsGlyphCached(uint32_t slot, uint64_t version, uint64_t meshVersion) const
+    {
+        auto it = m_glyphSlots.find(slot);
+        return it != m_glyphSlots.end() && it->second.instances.valid && it->second.instances.version == version
+            && m_glyphMeshValid && m_glyphMeshVersion == meshVersion;
     }
 
     void GLES3Renderer::SubmitCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4> verts,

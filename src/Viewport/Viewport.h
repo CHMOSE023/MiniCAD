@@ -38,6 +38,8 @@ namespace MiniCAD
 
         // 应用层每帧调用：传入自己的 renderer + renderTarget，Viewport 负责提交所有几何
         void Render(IRenderer& renderer, IRenderTarget& target, const ViewState& viewState);
+        // 场景静态流（填充、线、文字）的当前版本是否都已由渲染后端持有：是则调用方可以释放 CPU 端的拼接流
+        static bool SceneUploaded(const IRenderer& renderer, const ViewState& viewState);
 
         void Resize(float width, float height);
 

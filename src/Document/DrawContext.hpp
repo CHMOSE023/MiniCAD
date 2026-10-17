@@ -5,6 +5,7 @@
 #include "Render/VertexTypes.hpp"
 #include "Render/ImageDraw.hpp"
 #include "Document/WipeClip.hpp"
+#include "Document/GlyphMeshLibrary.hpp"
 #include "Editor/Overlay/Overlay.h"
 #include "Text/Font/IFont.h"
 #include "Text/Layout/TextLayoutEngine.h"
@@ -83,7 +84,16 @@ namespace MiniCAD
                 m_entityLines = m_verts.size();
                 m_entityFills = m_fillVerts.size();
                 m_entityTexts = m_textVerts.size();
+                m_entityGlyphs = m_glyphs ? m_glyphs->size() : 0;
             }
+        }
+
+        // 矢量文字按字形实例输出（见 GlyphMeshLibrary）：每个字一条实例，字形网格进网格库。
+        // 不设置时（选中流等）字形照旧展开成世界坐标的线段与三角形
+        void SetGlyphInstanceSink(std::vector<GlyphInstance>* instances, GlyphMeshLibrary* library)
+        {
+            m_glyphs   = library ? instances : nullptr;
+            m_glyphLib = instances ? library : nullptr;
         }
 
         // 光栅图像：没有图像解析回调（选中流、悬停等）时返回 false，实体改画占位框 / 高亮框
@@ -112,7 +122,7 @@ namespace MiniCAD
         // 由 Editor 在拼接顶点流时按绘制序裁剪
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
-            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size() });
+            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0 });
             m_wipes.push_back(polygon);
         }
         std::vector<std::vector<Math::Point3>> TakeWipes()
@@ -288,6 +298,26 @@ namespace MiniCAD
                 };
 
                 const Glyph& glyph = *inst.m_glyph;
+                if (m_glyphs)
+                {
+                    // 实例：局部 → 世界的仿射变换（与上面 xform 相同，只是不逐点计算）
+                    uint32_t mesh;
+                    if (!m_glyphLib->Register(glyph, mesh)) continue;
+                    const double s  = inst.m_scale;
+                    const double ox = inst.m_position.x, oy = inst.m_position.y + baseline;
+                    GlyphInstance g;
+                    g.m00   = static_cast<float>(rs.WidthFactor * s * cosR);
+                    g.m01   = static_cast<float>(rs.WidthFactor * s * sinR);
+                    g.m10   = static_cast<float>(shear * s * cosR - s * sinR);
+                    g.m11   = static_cast<float>(shear * s * sinR + s * cosR);
+                    g.tx    = static_cast<float>(pos.x + ox * cosR - oy * sinR);
+                    g.ty    = static_cast<float>(pos.y + ox * sinR + oy * cosR);
+                    g.z     = static_cast<float>(pos.z);
+                    g.color = c4;
+                    g.mesh  = mesh;
+                    m_glyphs->push_back(g);
+                    continue;
+                }
                 if (glyph.Filled && !glyph.Triangles.empty())
                 {
                     // 填充字形：输出三角形到场景填充几何
@@ -315,6 +345,8 @@ namespace MiniCAD
             m_pendingWipes.ClipLines(m_verts, 0, m_entityLines);
             m_pendingWipes.ClipFills(m_fillVerts, 1, 5, m_entityFills);
             m_pendingWipes.ClipTexts(m_textVerts, 2, m_entityTexts);
+            if (m_glyphs)
+                m_pendingWipes.ClipGlyphs(*m_glyphs, 3, m_entityGlyphs, *m_glyphLib, m_verts, m_fillVerts);
             m_pendingWipes.Clear();
         }
 
@@ -482,10 +514,13 @@ namespace MiniCAD
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
-        WipeClip::Batch                m_pendingWipes{ 3 };   // 本实体内尚未裁剪的遮罩（线、填充、文字三条流）
+        WipeClip::Batch                m_pendingWipes{ 4 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例四条流）
         size_t                         m_entityLines = 0;   // 当前实体在各顶点流中的起点（块内遮罩只裁剪本实体先画的部分）
         size_t                         m_entityFills = 0;
         size_t                         m_entityTexts = 0;
+        size_t                         m_entityGlyphs = 0;
+        std::vector<GlyphInstance>*    m_glyphs   = nullptr;   // 字形实例输出（为空时字形展开成顶点）
+        GlyphMeshLibrary*              m_glyphLib = nullptr;
         std::vector<ImageDraw>         m_images;
         ImageProvider                  m_imageProvider;
         GlyphProvider                 m_glyphProvider;

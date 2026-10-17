@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/Math/Point3.hpp"
 #include "Render/VertexTypes.hpp"
+#include "Document/GlyphMeshLibrary.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -182,8 +183,8 @@ namespace MiniCAD::WipeClip
             const float f = static_cast<float>(t);
             Vertex_P3_C4 m;
             m.pos   = { a.pos.x + (b.pos.x - a.pos.x) * f, a.pos.y + (b.pos.y - a.pos.y) * f, a.pos.z + (b.pos.z - a.pos.z) * f };
-            m.color = { a.color.x + (b.color.x - a.color.x) * f, a.color.y + (b.color.y - a.color.y) * f,
-                        a.color.z + (b.color.z - a.color.z) * f, a.color.w + (b.color.w - a.color.w) * f };
+            const Math::Float4 ca = a.color.ToFloat4(), cb = b.color.ToFloat4();
+            m.color = { ca.x + (cb.x - ca.x) * f, ca.y + (cb.y - ca.y) * f, ca.z + (cb.z - ca.z) * f, ca.w + (cb.w - ca.w) * f };
             return m;
         }
 
@@ -593,6 +594,45 @@ namespace MiniCAD::WipeClip
                 w += 6;
             }
             v.resize(w);
+        }
+
+        // 字形实例流（见 GlyphMeshLibrary），只处理下标 from 起的实例：外包框与适用的遮罩相交的实例从流中删去，
+        // 展开成线段与三角形、用这些遮罩裁剪后追加到 lines / fills 尾部。
+        // 要在 lines / fills 两条流本身的裁剪之后调用：追加的顶点下标超出记录的流长度，不会被再裁剪一次
+        void ClipGlyphs(std::vector<GlyphInstance>& g, int stream, size_t from, const GlyphMeshLibrary& lib,
+                        std::vector<Vertex_P3_C4>& lines, std::vector<Vertex_P3_C4>& fills)
+        {
+            if (m_polys.empty() || g.size() <= from) return;
+            BuildGrid();
+            std::vector<Vertex_P3_C4> gl, gf;
+            size_t w = from;
+            for (size_t k = from; k < g.size(); ++k)
+            {
+                double x0, y0, x1, y1;
+                lib.Bounds(g[k], x0, y0, x1, y1);
+                Candidates(x0, y0, x1, y1, k, stream);
+                if (m_cand.empty())
+                {
+                    if (w != k) g[w] = g[k];
+                    ++w;
+                    continue;
+                }
+                // 只用这些遮罩裁剪展开后的顶点
+                Batch sub(2);
+                for (uint32_t pi : m_cand)
+                {
+                    sub.m_polys.push_back(m_polys[pi]);
+                    sub.m_ends.insert(sub.m_ends.end(), { SIZE_MAX, SIZE_MAX });
+                }
+                gl.clear();
+                gf.clear();
+                lib.Expand(g[k], gl, gf);
+                sub.ClipLines(gl, 0);
+                sub.ClipFills(gf, 1);
+                lines.insert(lines.end(), gl.begin(), gl.end());
+                fills.insert(fills.end(), gf.begin(), gf.end());
+            }
+            g.resize(w);
         }
 
     private:

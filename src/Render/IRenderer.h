@@ -4,6 +4,8 @@
 #include <cstdint>
 #include "Render/IRenderTarget.h"
 #include "Render/VertexTypes.hpp"
+#include "Render/GlyphInstancing.hpp"
+#include <vector>
 #include "Core/Image/ImageData.hpp"
 #include "Core/Math/Mat4.hpp"
 
@@ -59,6 +61,36 @@ namespace MiniCAD
         {
             (void)slot; (void)version;
             SubmitTextured(verts, viewProj, nativeSRV, depth, blend);
+        }
+
+        // 字形实例（见 GlyphInstancing.hpp）：instances 按网格排序，batches 为同一网格的连续区间。
+        // type 为 Triangle 画字形的三角形，Line 画轮廓线；两次提交共用同一 (slot, version) 的实例。
+        // 默认实现在 CPU 上展开成顶点后走 Submit（无实例化能力的后端）
+        virtual void SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
+                                        std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
+                                        const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false)
+        {
+            (void)slot; (void)version; (void)batches;
+            std::vector<Vertex_P3_C4> verts;
+            for (const GlyphInstance& g : instances)
+                ExpandGlyph(g, meshes, type == PrimitiveType::Triangle, [&](const Vertex_P3_C4& v) { verts.push_back(v); });
+            Submit(verts, viewProj, type, depth, blend);
+        }
+
+        // 后端是否已持有 (slot, version) 的字形实例与 meshes.Version 的字形网格（同 IsCached）
+        virtual bool IsGlyphCached(uint32_t slot, uint64_t version, uint64_t meshVersion) const
+        {
+            (void)slot; (void)version; (void)meshVersion;
+            return false;
+        }
+
+        // 后端是否已持有 (slot, version) 的几何：上传成功，之后同一版本的提交不再读调用方传入的顶点。
+        // 为 true 时调用方可以释放自己的那份顶点（几百万顶点的图纸省下一整份副本）；
+        // 默认 false：无缓存能力的后端每次提交都要读顶点
+        virtual bool IsCached(uint32_t slot, uint64_t version, bool textured) const
+        {
+            (void)slot; (void)version; (void)textured;
+            return false;
         }
 
         // ── 离屏缓存层（可选能力）────────────────────────────────────────

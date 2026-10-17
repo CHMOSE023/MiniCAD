@@ -192,12 +192,19 @@ namespace MiniCAD
         // 重新绑定时 Bind 会整体标脏，这些缓存本来也要全部重建
         auto releaseStorage = []<typename T>(T& container) { T{}.swap(container); };
         releaseStorage(m_entityVertexCache);
+        m_sceneStreamsReleased = false;
+        m_sceneRestitch        = false;
+        m_sceneStats           = {};
         releaseStorage(m_sceneVertices);
         releaseStorage(m_sceneFillVertices);
         releaseStorage(m_sceneDynVertices);
         releaseStorage(m_sceneDynFillVertices);
         releaseStorage(m_dynOrder);
         releaseStorage(m_textVertices);
+        releaseStorage(m_glyphInstances);
+        releaseStorage(m_glyphBatches);
+        releaseStorage(m_scratchGlyphs);
+        m_glyphLibrary.Clear();   // 字形网格按字体的字形对象区分，字体属于文档
         releaseStorage(m_sceneImages);
         releaseStorage(m_selVertices);
         releaseStorage(m_selFillVertices);
@@ -2412,6 +2419,7 @@ namespace MiniCAD
         m_scratchLines.clear();
         m_scratchFills.clear();
         m_scratchTexts.clear();
+        m_scratchGlyphs.clear();
         ctx.ResetViewDependentFlag();
 
         ctx.BeginEntity(&entity.GetAttr());
@@ -2421,6 +2429,7 @@ namespace MiniCAD
         c.lines         = m_scratchLines;
         c.fills         = m_scratchFills;
         c.texts         = m_scratchTexts;
+        c.glyphs        = m_scratchGlyphs;
         c.viewDependent = ctx.HasViewDependentGeometry();
         c.wipes         = ctx.TakeWipes();
         c.images        = ctx.TakeImages();
@@ -2432,9 +2441,10 @@ namespace MiniCAD
     {
         for (const auto& w : c.wipes)
             wipes.Add(w, { m_sceneVertices.size(), m_sceneFillVertices.size(), m_textVertices.size(),
-                           m_sceneDynVertices.size(), m_sceneDynFillVertices.size() });
+                           m_sceneDynVertices.size(), m_sceneDynFillVertices.size(), m_glyphInstances.size() });
         m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
         m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
+        m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
         if (c.viewDependent)
         {
             m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
@@ -2500,11 +2510,11 @@ namespace MiniCAD
         {
             // 拖动期间 GripEditor 每帧 MarkDirty（实时几何变化），但被拖实体
             // 已不在场景流中，场景流无需重建；仅缩放+线宽/虚线场合仍需重建。
-            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid;
+            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid || m_sceneRestitch;
         }
         else
         {
-            need = scene.IsDirty() || exclusionChanged || m_displayInvalid ||
+            need = scene.IsDirty() || exclusionChanged || m_displayInvalid || m_sceneRestitch ||
                    (zoomChanged && m_sceneViewDependent);
         }
 
@@ -2531,11 +2541,12 @@ namespace MiniCAD
                         m_glyphProvider, MakeFontResolver(m_doc));
         ctx.SetImageProvider(imageProvider);
         ctx.SetThinLines(m_thinLines);
+        ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
-        if (zoomChanged && !invalidateAll && !exclusionChanged && scene.GetDirtyEntities().empty())
+        if (zoomChanged && !invalidateAll && !exclusionChanged && !m_sceneRestitch && scene.GetDirtyEntities().empty())
         {
             for (Object::ObjectID id : m_dynOrder)
                 if (auto it = m_entityVertexCache.find(id); it != m_entityVertexCache.end() && it->second.viewDependent)
@@ -2558,7 +2569,8 @@ namespace MiniCAD
         // 也不该把全场景顶点重新拼接一遍。脏集全部是"缓存中不存在的新实体"
         // 时,只细分新实体并追加到现有顶点流尾部(新实体总在实体链表末尾,
         // 与全量重建的绘制序一致)。修改/删除(脏 ID 已在缓存)仍走全量拼接。
-        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty())
+        // 拼接流已交给渲染后端释放时没有可追加的流，走全量拼接（缓存命中，不重新细分）
+        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() && !m_sceneStreamsReleased)
         {
             bool pureAppend = !scene.GetDirtyEntities().empty();
             for (auto id : scene.GetDirtyEntities())
@@ -2585,14 +2597,16 @@ namespace MiniCAD
 
                     EntityVertexCache c;
                     TessellateEntity(entity, ctx, c);
-                    WipeClip::Batch wipes(5);
+                    WipeClip::Batch wipes(6);
                     AppendToSceneStreams(id, c, wipes);
                     FlushSceneWipes(wipes);
                     m_entityVertexCache.emplace(id, std::move(c));
                 }
 
+                SortGlyphInstances(m_glyphInstances, m_glyphBatches);
                 ++m_sceneVersion;   // 顶点流已追加,渲染后端需重新上传
                 ++m_sceneDynVersion;
+                UpdateSceneStats();
                 scene.ClearDirty();
                 return true;
             }
@@ -2616,6 +2630,7 @@ namespace MiniCAD
         m_sceneDynVertices.clear();
         m_sceneDynFillVertices.clear();
         m_textVertices.clear();
+        m_glyphInstances.clear();
         m_sceneImages.clear();
         m_dynOrder.clear();
         m_sceneViewDependent = false;
@@ -2624,7 +2639,7 @@ namespace MiniCAD
         // 第二遍一次预留后再拼接，避免几百万顶点的顶点流反复扩容拷贝
         std::vector<std::pair<Object::ObjectID, const EntityVertexCache*>> visible;
         visible.reserve(m_entityVertexCache.size());
-        std::size_t lineCount = 0, fillCount = 0, textCount = 0, imageCount = 0;
+        std::size_t lineCount = 0, fillCount = 0, textCount = 0, glyphCount = 0, imageCount = 0;
 
         scene.ForEachObject([&](const Object& obj)
         {
@@ -2655,6 +2670,7 @@ namespace MiniCAD
                fillCount += c.fills.size();
            }
            textCount  += c.texts.size();
+           glyphCount += c.glyphs.size();
            imageCount += c.images.size();
         });
 
@@ -2662,21 +2678,53 @@ namespace MiniCAD
         m_sceneVertices.reserve(lineCount);
         m_sceneFillVertices.reserve(fillCount);
         m_textVertices.reserve(textCount);
+        m_glyphInstances.reserve(glyphCount);
         m_sceneImages.reserve(imageCount);
         {
-            WipeClip::Batch wipes(5);
+            WipeClip::Batch wipes(6);
             for (const auto& [id, c] : visible)
                 AppendToSceneStreams(id, *c, wipes);
             FlushSceneWipes(wipes);
         }
+        SortGlyphInstances(m_glyphInstances, m_glyphBatches);
 
         m_sceneExcluded = std::move(dragIds);
 
         ++m_sceneVersion;   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
         ++m_sceneDynVersion;
+        m_sceneStreamsReleased = false;
+        m_sceneRestitch        = false;
+        UpdateSceneStats();
 
         scene.ClearDirty();
         return true;
+    }
+
+    void Editor::ReleaseUploadedSceneStreams()
+    {
+        if (m_sceneStreamsReleased) return;
+        // 与空容器交换才归还存储（clear 保留容量）
+        std::vector<Vertex_P3_C4>{}.swap(m_sceneVertices);
+        std::vector<Vertex_P3_C4>{}.swap(m_sceneFillVertices);
+        std::vector<Vertex_P3_C4_UV>{}.swap(m_textVertices);
+        std::vector<GlyphInstance>{}.swap(m_glyphInstances);
+        std::vector<GlyphBatch>{}.swap(m_glyphBatches);
+        m_sceneStreamsReleased = true;
+    }
+
+    void Editor::UpdateSceneStats()
+    {
+        m_sceneStats = { m_sceneVertices.size(), m_sceneFillVertices.size(), m_textVertices.size(),
+                         m_glyphInstances.size(), m_glyphLibrary.View().Meshes.size() };
+    }
+
+    void Editor::ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const
+    {
+        for (const auto& [id, c] : m_entityVertexCache)
+        {
+            for (const auto& v : c.lines) fn(v);
+            for (const auto& v : c.fills) fn(v);
+        }
     }
 
     // 用记录下的区域覆盖裁剪此前已拼接的静态流与动态流
@@ -2688,6 +2736,8 @@ namespace MiniCAD
         wipes.ClipTexts(m_textVertices, 2);
         wipes.ClipLines(m_sceneDynVertices, 3);
         wipes.ClipFills(m_sceneDynFillVertices, 4);
+        // 被遮罩盖到的字形实例展开成顶点裁剪，追加到静态流（在静态流自身的裁剪之后）
+        wipes.ClipGlyphs(m_glyphInstances, 5, 0, m_glyphLibrary, m_sceneVertices, m_sceneFillVertices);
     }
 
     // 选中流：选中实体 + 拖动跟随中的实体，按选中态绘制，叠加在场景之上。
@@ -2764,6 +2814,9 @@ namespace MiniCAD
         vs.SceneDyn        = m_sceneDynVertices;
         vs.SceneDynFill    = m_sceneDynFillVertices;
         vs.SceneDynVersion = m_sceneDynVersion;
+        vs.Glyphs          = m_glyphInstances;
+        vs.GlyphBatches    = m_glyphBatches;
+        vs.GlyphMeshes     = m_glyphLibrary.View();
         vs.SelScene     = m_selVertices;
         vs.SelFill      = m_selFillVertices;
         vs.SelText      = m_selTextVertices;

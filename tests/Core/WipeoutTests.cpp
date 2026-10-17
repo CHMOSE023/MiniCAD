@@ -206,6 +206,30 @@ int RunWipeoutTests()
         Check(t.size() == 6 && t[0].pos.x == 50, "Batch::ClipTexts：删去中心在遮罩内的字符");
     }
 
+    // 字形实例：盖到遮罩的实例展开成顶点裁剪后追加到线流，没盖到的留在实例流
+    {
+        Glyph glyph;   // 一条从 (0,0) 到 (1,0) 的横线
+        glyph.Lines.push_back({ { 0, 0, 0 }, { 1, 0, 0 } });
+        GlyphMeshLibrary lib;
+        uint32_t mesh = 0;
+        Check(lib.Register(glyph, mesh) && mesh == 0, "GlyphMeshLibrary：登记字形网格");
+        auto inst = [&](float tx, float ty)
+        {
+            // 放大 20 倍：局部 (0,0)-(1,0) → 世界 (tx,ty)-(tx+20,ty)
+            return GlyphInstance{ 20, 0, 0, 20, tx, ty, 0, VertexColor(1, 1, 1, 1), mesh };
+        };
+        std::vector<GlyphInstance> g = { inst(-5, 5), inst(50, 5) };
+        std::vector<Vertex_P3_C4>  lines, fills;
+        WipeClip::Batch b(1);
+        b.Add(kSquare, { 2 });
+        b.ClipGlyphs(g, 0, 0, lib, lines, fills);
+        double len = 0;
+        for (size_t i = 0; i + 1 < lines.size(); i += 2)
+            len += std::hypot(lines[i + 1].pos.x - lines[i].pos.x, lines[i + 1].pos.y - lines[i].pos.y);
+        Check(g.size() == 1 && g[0].tx == 50, "Batch::ClipGlyphs：没盖到遮罩的实例保留");
+        Check(std::abs(len - 10) < 1e-4 && fills.empty(), "Batch::ClipGlyphs：盖到的实例展开后裁掉遮罩内的部分");
+    }
+
     // 只裁剪 from 之后的顶点
     {
         std::vector<Vertex_P3_C4> v = { V(-5, 5), V(15, 5), V(-5, 6), V(15, 6) };

@@ -19,6 +19,20 @@ namespace MiniCAD
         return h;
     }
 
+    // 渲染后端的缓存槽位
+    constexpr uint32_t kSlotSceneFill = 0;
+    constexpr uint32_t kSlotScene     = 1;
+    constexpr uint32_t kSlotSceneText = 2;
+    constexpr uint32_t kSlotSelFill   = 3;
+    constexpr uint32_t kSlotSel       = 4;
+    constexpr uint32_t kSlotSelText   = 5;
+    constexpr uint32_t kSlotGrid      = 6;
+    constexpr uint32_t kSlotAxis      = 7;
+    constexpr uint32_t kSlotGizmo     = 8;
+    constexpr uint32_t kSlotDynFill   = 9;
+    constexpr uint32_t kSlotDyn       = 10;
+    constexpr uint32_t kSlotGlyph     = 11;
+
     Viewport::Viewport(float width, float height)
         : m_camera(width, height)
         , m_width(width)
@@ -30,6 +44,15 @@ namespace MiniCAD
         m_viewportDesc.y        = 0;
         m_viewportDesc.minDepth = 0.0f;
         m_viewportDesc.maxDepth = 1.0f;
+    }
+
+    bool Viewport::SceneUploaded(const IRenderer& renderer, const ViewState& viewState)
+    {
+        // 没有字体纹理时文字流不提交，也就不需要保留
+        return renderer.IsCached(kSlotSceneFill, viewState.SceneVersion, false)
+            && renderer.IsCached(kSlotScene, viewState.SceneVersion, false)
+            && (!viewState.FontTexture || renderer.IsCached(kSlotSceneText, viewState.SceneVersion, true))
+            && (viewState.Glyphs.empty() || renderer.IsGlyphCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes.Version));
     }
 
     // 应用层每帧调用：提供自己创建的 renderer 和 renderTarget。
@@ -53,18 +76,6 @@ namespace MiniCAD
         RefreshViewGeometry(viewState);
         renderer.SetLightBackground(m_lightBackground);
 
-        constexpr uint32_t kSlotSceneFill = 0;
-        constexpr uint32_t kSlotScene     = 1;
-        constexpr uint32_t kSlotSceneText = 2;
-        constexpr uint32_t kSlotSelFill   = 3;
-        constexpr uint32_t kSlotSel       = 4;
-        constexpr uint32_t kSlotSelText   = 5;
-        constexpr uint32_t kSlotGrid      = 6;
-        constexpr uint32_t kSlotAxis      = 7;
-        constexpr uint32_t kSlotGizmo     = 8;
-        constexpr uint32_t kSlotDynFill   = 9;
-        constexpr uint32_t kSlotDyn       = 10;
-
         auto drawStatic = [&]
         {
             renderer.SubmitCached(kSlotGrid,  m_viewVersion, m_gridVerts,  screenVP, PrimitiveType::Line, true, true);
@@ -78,8 +89,13 @@ namespace MiniCAD
             // 场景几何走缓存提交：版本未变时 GPU 缓冲直接复用，不重新上传
             renderer.SubmitCached(kSlotSceneFill, viewState.SceneVersion,    viewState.SceneFill,    vp, PrimitiveType::Triangle, true, true);
             renderer.SubmitCached(kSlotDynFill,   viewState.SceneDynVersion, viewState.SceneDynFill, vp, PrimitiveType::Triangle, true, true);
+            // 文字字形（实例化）：三角形在填充之后、线之前，轮廓线在线之后
+            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
+                                        vp, PrimitiveType::Triangle, true, true);
             renderer.SubmitCached(kSlotScene,     viewState.SceneVersion,    viewState.Scene,        vp, PrimitiveType::Line,     true, true);
             renderer.SubmitCached(kSlotDyn,       viewState.SceneDynVersion, viewState.SceneDyn,     vp, PrimitiveType::Line,     true, true);
+            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
+                                        vp, PrimitiveType::Line, true, true);
             if (viewState.FontTexture)
                 renderer.SubmitTexturedCached(kSlotSceneText, viewState.SceneVersion, viewState.TextScene, vp, viewState.FontTexture, false, true);
         };
@@ -101,6 +117,7 @@ namespace MiniCAD
             uint64_t key = 1469598103934665603ull;
             key = HashCombine(key, &viewState.SceneVersion, sizeof(viewState.SceneVersion));
             key = HashCombine(key, &viewState.SceneDynVersion, sizeof(viewState.SceneDynVersion));
+            key = HashCombine(key, &viewState.GlyphMeshes.Version, sizeof(viewState.GlyphMeshes.Version));
             key = HashCombine(key, &m_viewVersion, sizeof(m_viewVersion));
             key = HashCombine(key, &viewState.FontTexture, sizeof(viewState.FontTexture));
             key = HashCombine(key, &m_lightBackground, sizeof(m_lightBackground));

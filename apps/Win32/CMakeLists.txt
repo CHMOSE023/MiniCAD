@@ -42,15 +42,19 @@ endif()
 
 # ── MiniCAD 桌面版：Win32 宿主（窗口 + D3D11）+ 共用的主窗口界面（MiniCADApp）──
 
-# 版本号由根 CMakeLists.txt 的 MINICAD_VERSION 提供，生成 MiniCADVersion.h 供 MiniCAD.rc 填写 exe 版本信息
-string(REPLACE "." ";" MINICAD_VERSION_PARTS "${MINICAD_VERSION}")
-list(GET MINICAD_VERSION_PARTS 0 MINICAD_VERSION_MAJOR)
-list(GET MINICAD_VERSION_PARTS 1 MINICAD_VERSION_MINOR)
-list(GET MINICAD_VERSION_PARTS 2 MINICAD_VERSION_PATCH)
-configure_file(
-    src/MiniCADVersion.h.in
-    ${CMAKE_CURRENT_BINARY_DIR}/generated/MiniCADVersion.h
-    @ONLY
+# 版本号由根 CMakeLists.txt 的 MINICAD_VERSION 提供，生成 MiniCADVersion.h 供 MiniCAD.rc 填写 exe 版本信息。
+# 第四段构建号取 git 提交数，每次构建都重新生成（内容不变时不改写），新提交后不用重新配置
+set(MINICAD_VERSION_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/MiniCADVersion.h)
+add_custom_target(MiniCADVersionHeader
+    COMMAND ${CMAKE_COMMAND}
+        -DVERSION=${MINICAD_VERSION}
+        -DSOURCE_DIR=${MiniCAD_SOURCE_DIR}
+        -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/MiniCADVersion.h.in
+        -DOUTPUT=${MINICAD_VERSION_HEADER}
+        -P ${MiniCAD_SOURCE_DIR}/cmake/MiniCADVersion.cmake
+    BYPRODUCTS ${MINICAD_VERSION_HEADER}
+    COMMENT "生成 MiniCADVersion.h"
+    VERBATIM
 )
 
 add_executable(MiniCADWin
@@ -70,6 +74,8 @@ target_include_directories(MiniCADWin PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/3rd
 )
+
+add_dependencies(MiniCADWin MiniCADVersionHeader)
 
 target_link_libraries(MiniCADWin PRIVATE
     MiniCADApp

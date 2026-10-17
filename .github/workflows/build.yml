@@ -28,7 +28,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # 完整历史：exe 版本号第四段是 git 提交数（浅克隆只有 1 个提交）
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # USE_WIN32=ON：窗口程序，启动时不带控制台（与 release 预设相同）
       - name: Configure
@@ -97,6 +100,14 @@ jobs:
           name: MiniCAD-Web
           path: dist/*.zip
           retention-days: 7
+
+      - name: Deploy to Cloudflare Pages
+        if: github.repository == 'CHMOSE023/MiniCAD' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist/MiniCAD-dev-web --project-name=minicad --branch=main
 
   # ── 发布：推送 v* 标签时创建 GitHub Release ────────────────────────────────
   release:

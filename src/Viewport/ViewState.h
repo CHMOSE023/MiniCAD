@@ -4,6 +4,7 @@
 #include "Core/Math/Point2.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Render/VertexTypes.hpp"
+#include "Render/GlyphInstancing.hpp"
 #include "Render/ImageDraw.hpp"
 namespace MiniCAD
 {
@@ -68,6 +69,10 @@ namespace MiniCAD
         std::span<const Vertex_P3_C4>    SceneDyn;
         std::span<const Vertex_P3_C4>    SceneDynFill;
         uint64_t                         SceneDynVersion = 0;
+        // 场景文字的字形实例（按网格排序，版本同 SceneVersion）与字形网格库
+        std::span<const GlyphInstance>   Glyphs;
+        std::span<const GlyphBatch>      GlyphBatches;
+        GlyphMeshView                    GlyphMeshes;
 
         // 选中流：选中/拖动中实体按选中态绘制，叠加在场景之上。
         // 仅在选择集变化或拖动时重建，选中不再触发全场景顶点重建。
