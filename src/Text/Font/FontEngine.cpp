@@ -1,6 +1,7 @@
 #include "FontEngine.h"
 #include "SHXCompositeFont.h"
 #include "Core/Log.h"
+#include "Core/PathUtils.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -33,7 +34,7 @@ namespace MiniCAD
         for (const std::string& name : {fontFile, lower, upper})
         {
             const std::string path = ResolvePath(name);
-            if (!name.empty() && std::filesystem::exists(std::filesystem::u8path(path), ec))
+            if (!name.empty() && std::filesystem::is_regular_file(Utf8ToPath(path), ec))
                 return path;
         }
         if (found) *found = false;

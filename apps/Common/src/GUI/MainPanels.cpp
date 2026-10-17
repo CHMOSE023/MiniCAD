@@ -681,4 +681,79 @@ namespace MiniCAD
             std::filesystem::remove(path, ec);
         ReloadUi();         // 按界面描述文件里的默认布局重建（不再读取用户布局）
     }
+
+    // =========================================================
+    // 最近打开：exe 所在目录下的 recent.txt（UTF-8，每行一个路径），随程序一起走（绿色版友好）。
+    // 面板布局仍在用户数据目录（%LOCALAPPDATA%\MiniCAD\layout.json），两者位置不同
+    // =========================================================
+    std::filesystem::path MainFrame::RecentStorePath() const
+    {
+        const std::string dir = m_platform->GetAppDir();
+        return dir.empty() ? std::filesystem::path() : ToPath(dir) / "recent.txt";
+    }
+
+    void MainFrame::LoadRecentFiles()
+    {
+        const std::filesystem::path path = RecentStorePath();
+        if (path.empty())
+            return;                     // 该平台不保存（网页版）：列表只在本次会话里有效
+        const std::u8string u8 = path.u8string();
+        m_recentFiles.Load(std::string(u8.begin(), u8.end()));
+    }
+
+    void MainFrame::SaveRecentFiles()
+    {
+        const std::filesystem::path store = RecentStorePath();
+        if (store.empty())
+            return;
+        const std::u8string u8 = store.u8string();
+        m_recentFiles.Save(std::string(u8.begin(), u8.end()));
+    }
+
+    void MainFrame::RememberRecentFile(const std::string& path)
+    {
+        if (path.empty())
+            return;
+        m_recentFiles.Add(path);
+        SaveRecentFiles();
+    }
+
+    void MainFrame::ForgetRecentFile(const std::string& path)
+    {
+        m_recentFiles.Remove(path);
+        SaveRecentFiles();
+    }
+
+    void MainFrame::ClearRecentFiles()
+    {
+        m_recentFiles.Clear();
+        SaveRecentFiles();
+    }
+
+    std::vector<MiniGUI::MenuItem> MainFrame::BuildRecentMenuItems()
+    {
+        using namespace MiniGUI;
+        std::vector<MenuItem> items;
+        const auto& list = m_recentFiles.Items();
+        for (size_t i = 0; i < list.size(); ++i)
+        {
+            const std::string path = list[i];           // 按值捕获：菜单项可能比这次调用活得久
+            // 前 9 条带 &1～&9 助记符（同 AutoCAD："文件 > 最近打开 > 1 xxx"）
+            const std::string prefix = i < 9 ? ("&" + std::to_string(i + 1) + " ") : "";
+            MenuItem item(prefix + m_recentFiles.DisplayName(i), [this, path] { OpenDrawings({ path }); });
+            items.push_back(std::move(item));
+        }
+
+        if (items.empty())
+        {
+            // 一条记录都没有：仍返回一个（禁用的）提示项，让「最近打开」本身保持可展开——
+            // 否则菜单项会被 MenuPopup 判为空而整个灰掉，看起来像没有这个功能
+            items.push_back(MenuItem("（无最近打开的文件）").Enabled(false));
+            return items;
+        }
+
+        items.push_back(MenuItem::Separator());
+        items.push_back(MenuItem("清除记录(&C)", [this] { ClearRecentFiles(); }));
+        return items;
+    }
 }

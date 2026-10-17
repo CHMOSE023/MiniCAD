@@ -21,6 +21,7 @@ set(MINICAD_SCENE_SOURCES
 set(MINICAD_DOCUMENT_SOURCES
     "${MINICAD_SRC}/Document/Document.cpp"
     "${MINICAD_SRC}/Document/DocumentManager.cpp"
+    "${MINICAD_SRC}/Document/RecentFiles.cpp"
     "${MINICAD_SRC}/Document/CommandStack/CommandStack.cpp"
     "${MINICAD_SRC}/Document/FeaturePoints.cpp"
     "${MINICAD_SRC}/Document/DimAssoc.cpp"

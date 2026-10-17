@@ -210,7 +210,7 @@ namespace MiniCAD::Math
         // =========================
 
         /// 4×4 通用逆矩阵（余子式 / 伴随矩阵法）
-        /// 矩阵奇异（|det| < 1e-15）时返回零矩阵
+        /// 矩阵奇异（|det| 相对 Hadamard 上界过小）时返回零矩阵
         static Mat4 Inverse(const Mat4& mat)
         {
             const double* a = mat.m;
@@ -238,8 +238,23 @@ namespace MiniCAD::Math
 
             double det = a[0]*inv[0] + a[1]*inv[4] + a[2]*inv[8] + a[3]*inv[12];
 
+            // 奇异性判定不能用|det|对固定阈值——行列式是有量纲的，随矩阵元素整体缩放按 4 次方变化。
+            // 正交投影的行列式 = (2/可视宽)(2/可视高)/(far-near)，随可视高度按 1/zoom² 缩小：
+            // 大图纸（zoom 超过约 1.6e6）时 |det| 会低于 1e-15，矩阵其实完全良态，却被判为奇异
+            // 而返回零矩阵，表现为 ScreenToWorld 恒返回 (0,0)（鼠标坐标 / 捕捉点全跳到原点）。
+            //
+            // 改用 Hadamard 上界做尺度无关的判定：|det| ≤ ∏‖row_i‖，两者同为 4 阶齐次，
+            // 比值只反映矩阵的病态程度。良态矩阵比值接近 1，真正奇异时 det 为 0。
+            double rowNormProduct = 1.0;
+            for (int r = 0; r < 4; ++r)
+            {
+                const double* row = a + r * 4;
+                const double norm = std::sqrt(row[0]*row[0] + row[1]*row[1] + row[2]*row[2] + row[3]*row[3]);
+                rowNormProduct *= norm;
+            }
+
             Mat4 result;
-            if (std::abs(det) > 1e-15)
+            if (rowNormProduct > 0.0 && std::abs(det) > 1e-12 * rowNormProduct)
             {
                 double invDet = 1.0 / det;
                 for (int i = 0; i < 16; ++i)

@@ -256,6 +256,11 @@ namespace MiniCAD
         m_layout->RegisterPanel("commandline", CreateCommandLine(), "命令行");
         m_layout->RegisterPanel("statusbar",  CreateStatusBar());
 
+        // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
+        // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
+        LoadRecentFiles();
+        m_layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
+
         m_uiHost = m_ui->GetRoot()->AddChild<MiniGUI::Panel>(Theme::Background);
         if (m_uiPath.empty())
         {
@@ -414,16 +419,26 @@ namespace MiniCAD
         m_openAddPosted = false;
         if (job->doc)
         {
+            Document* opened = nullptr;
             if (Document* d = m_docManager.FindOpen(job->path))     // 读取期间已经从别处打开
+            {
                 m_docManager.SetActive(d);
+                opened = d;
+            }
             else
-                m_docManager.Add(std::move(job->doc));
+            {
+                opened = m_docManager.Add(std::move(job->doc));
+            }
             m_openedAny = true;
+            // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
+            RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
             if (m_viewport) m_viewport->Focus();
         }
         else
         {
+            // 打不开的多半已被删掉 / 移走：从「最近打开」里去掉，避免下次还点它
+            ForgetRecentFile(job->path);
             if (!m_openFailures.empty()) m_openFailures += "\n\n";
             m_openFailures += job->path + "\n" + (job->error.empty() ? "无法打开图纸" : job->error);
         }
@@ -638,7 +653,10 @@ namespace MiniCAD
 
         for (const auto& [doc, wasDirty] : targets)
             if (wasDirty && !doc->IsDirty() && doc->HasPath())
+            {
+                RememberRecentFile(doc->GetPath());     // 另存为的新路径也进「最近打开」
                 m_platform->OnDocumentSaved(doc->GetPath());
+            }
         if (onSaved && active && !active->IsDirty())
             onSaved();
     }

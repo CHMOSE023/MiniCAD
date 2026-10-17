@@ -1,6 +1,8 @@
 #pragma once
 #include "Core/Node.h"
 #include "Data/Json.h"
+#include "Widgets/Menu.h"
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -33,7 +35,8 @@ namespace MiniGUI
     //   }
     //
     // - commands：覆盖命令的名称、快捷键、图标、提示（只覆盖写出的字段；从文件里删掉后恢复为代码里的默认值）
-    // - 菜单 / 工具栏的项："命令 ID"，"-" 或 "|" 为分隔线；菜单项可以是 { "title", "items" } 子菜单；
+    // - 菜单 / 工具栏的项："命令 ID"，"-" 或 "|" 为分隔线；菜单项可以是 { "title", "items" } 子菜单，
+    //   或 { "title", "dynamic": "名字" } 由宿主在打开菜单时生成内容的子菜单（见 SetDynamicMenuItems）；
     //   工具栏项可以是 { "command", "text": true }（图标旁显示名称）
     // - 布局节点 type：row、column、menubar、toolbar（"id" 引用 toolbars，或直接写 "items"；"vertical"）、
     //   panel（"name"）、splitter（调整前一个兄弟的尺寸；"target": "next" 调整后一个）、separator、spacer、label（"text"）、
@@ -54,6 +57,11 @@ namespace MiniGUI
         // title：放进停靠区时标签上显示的名称（为空时用 name）
         void  RegisterPanel(const std::string& name, std::unique_ptr<Node> panel, std::string title = {});
         Node* GetPanel(const std::string& name) const;
+
+        // 宿主提供的动态菜单内容：菜单项写 { "title": "最近打开", "dynamic": "recent" } 时，
+        // 每次打开菜单都调用 build 取当前内容（列表可能已经变了）。build 返回空列表则该项灰显。
+        // 界面重建（Apply）不会清掉已注册的源——宿主只注册一次
+        void SetDynamicMenuItems(const std::string& name, std::function<std::vector<MenuItem>()> build);
 
         // 解析并应用：清空 parent 原有内容（推迟销毁，在事件回调里调用也安全）后按描述重建。
         // JSON 语法错误时返回 false，界面保持不变
@@ -92,6 +100,7 @@ namespace MiniGUI
         std::map<std::string, PanelSlot> m_panels;
 
         std::unordered_map<std::string, CommandDefaults> m_commandDefaults;
+        std::unordered_map<std::string, std::function<std::vector<MenuItem>()>> m_dynamicMenus;
 
         MenuBar*                        m_menuBar  = nullptr;
         TitleBar*                       m_titleBar = nullptr;

@@ -2,6 +2,8 @@
 // 程序运行时修改并保存本文件，界面立即更新（也可按 F5）；写错时保留当前界面，状态栏显示错误位置。
 // - commands：覆盖命令的名称 label、快捷键 shortcut、图标 icon（相对 icons 目录）、提示 tooltip
 // - menus / toolbars 的项是命令 ID，"-" 或 "|" 为分隔线
+//   菜单项也可写成 { "title": "…", "items": [ … ] } 子菜单，或 { "title": "…", "dynamic": "recent" }
+//   由程序在打开菜单时生成内容（"recent" = 最近打开；列表为空时该项置灰）
 // - layout：titlebar / row / column / menubar / toolbar / panel / splitter / separator / spacer / label / dock
 //   titlebar：无边框窗口的标题栏，children 放在图标右边（菜单栏），右侧按钮执行 window.minimize / window.maximize / window.close
 //   宿主提供的面板：documents（文档标签 + 视口）、commandline（命令行）、properties（特性）、layers（图层）、
@@ -17,7 +19,7 @@
   "menus": [
     {
       "title": "文件(&F)",
-      "items": [ "file.new", "file.open", "-", "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "-", "app.exit" ]
+      "items": [ "file.new", "file.open", "-", { "title": "最近打开(&R)", "dynamic": "recent" }, "-", "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "-", "app.exit" ]
     },
     {
       "title": "编辑(&E)",

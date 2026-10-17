@@ -37,6 +37,8 @@ int RunChangeAttrTests();   // ChangeAttrTests.cpp，返回失败项数
 int RunLayerCommandTests(); // LayerCommandTests.cpp，返回失败项数
 int RunDimAssocTests();     // DimAssocTests.cpp，返回失败项数
 int RunCadExchangeTests();   // CadExchangeTests.cpp，返回失败项数
+int RunMatrixInverseTests(); // MatrixInverseTests.cpp，返回失败项数
+int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
 
 namespace
 {
@@ -296,6 +298,8 @@ int main()
     g_failures += RunPolylineOpsTests();
     g_failures += RunDimAssocTests();
     g_failures += RunCadExchangeTests();
+    g_failures += RunMatrixInverseTests();
+    g_failures += RunRecentFilesTests();
 
     std::printf("%s：%d 项失败\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures;

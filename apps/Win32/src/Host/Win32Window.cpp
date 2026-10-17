@@ -512,6 +512,11 @@ namespace MiniCAD
         return std::string(u8.begin(), u8.end());
     }
 
+    std::string Win32Window::GetAppDir() const
+    {
+        return GetResourceDir();    // 桌面端两者都是 exe 所在目录（见 AppPlatform 里的说明）
+    }
+
     std::string Win32Window::GetUserDataDir() const
     {
         // %LOCALAPPDATA%\MiniCAD

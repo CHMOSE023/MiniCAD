@@ -115,6 +115,8 @@ if(WIN32)
         "Core/PolylineOpsTests.cpp"
         "Core/DimAssocTests.cpp"
         "Core/CadExchangeTests.cpp"
+        "Core/MatrixInverseTests.cpp"
+        "Core/RecentFilesTests.cpp"
     )
     target_link_libraries(MiniCADTests PRIVATE MiniCAD)
     target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")

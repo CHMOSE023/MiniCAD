@@ -580,3 +580,144 @@ TEST(Command_RegistryOutlivesUIContext)
     reg.UnbindShortcuts();
     CHECK(reg.Find("a")->shortcut == "Ctrl+B");
 }
+
+// ── 动态菜单内容（{ "title": …, "dynamic": "名字" }）：宿主在打开菜单时生成 ─────────
+// MenuBar::GetMenuItems 里存的只是"来源名"，真正的内容要等构建出 MenuPopup 时才求值
+
+TEST(UiLayout_DynamicMenuBuildsOnOpen)
+{
+    LayoutScene s;
+    int built = 0;
+    std::vector<std::string> files;
+    std::string opened;
+    s.layout.SetDynamicMenuItems("recent", [&]
+    {
+        ++built;
+        std::vector<MenuItem> items;
+        for (const std::string& f : files)
+            items.push_back(MenuItem(f, [&opened, f] { opened = f; }));
+        return items;
+    });
+
+    CHECK(s.Apply(R"json({
+        "menus": [ { "title": "文件(&F)", "items": [
+            "file.new", { "title": "最近打开(&R)", "dynamic": "recent" } ] } ],
+        "layout": { "type": "column", "children": [ { "type": "menubar" }, { "type": "panel", "name": "viewport" } ] }
+    })json"));
+    CHECK(s.layout.GetWarnings().empty());
+    MenuBar* bar = s.layout.GetMenuBar();
+    CHECK(bar && bar->GetMenuCount() == 1);
+    if (!bar)
+        return;
+    CHECK(bar->GetMenuItems(0).size() == 2);
+    CHECK(bar->GetMenuItems(0)[1].text == "最近打开(&R)");
+
+    // 描述里只存了"来源名"：真正的内容要等菜单打开（构建出 MenuPopup）时才生成
+    bar->OpenMenu(0, true);
+    s.t.Layout();
+    auto* popup = static_cast<MenuPopup*>(s.t.ui.GetTopPopup());
+    CHECK(popup != nullptr);
+    if (!popup)
+        return;
+    CHECK(built == 1);
+    CHECK(!popup->GetItems()[1].enabled);           // 还没有记录 → 灰显
+
+    popup->Close();
+    files = { "一层.mcad", "二层.mcad" };
+    bar->OpenMenu(0, true);
+    s.t.Layout();
+    popup = static_cast<MenuPopup*>(s.t.ui.GetTopPopup());
+    CHECK(popup && built == 2);
+    if (!popup)
+        return;
+    CHECK(popup->GetItems()[1].enabled && popup->GetItems()[1].submenu.size() == 2);
+
+    // 子菜单里的动作可执行：↓ 到「最近打开」，→ 进入子菜单，↓ 到第二项，Enter 执行
+    s.t.Key(Key::Down);
+    s.t.Key(Key::Right);
+    MenuPopup* sub = popup->GetSubmenu();
+    CHECK(sub != nullptr);
+    if (!sub)
+        return;
+    sub->ActivateIndex(1);
+    CHECK(opened == "二层.mcad");
+}
+
+// 空列表时返回一个禁用提示项（「最近打开」的做法）：父项不被判为空而灰掉，仍然可以展开
+TEST(UiLayout_DynamicMenuDisabledPlaceholderKeepsParentEnabled)
+{
+    LayoutScene s;
+    s.layout.SetDynamicMenuItems("recent", []
+    {
+        return std::vector<MenuItem>{ MenuItem("（无最近打开的文件）").Enabled(false) };
+    });
+
+    CHECK(s.Apply(R"json({
+        "menus": [ { "title": "文件(&F)", "items": [ { "title": "最近打开(&R)", "dynamic": "recent" } ] } ],
+        "layout": { "type": "column", "children": [ { "type": "menubar" }, { "type": "panel", "name": "viewport" } ] }
+    })json"));
+
+    MenuBar* bar = s.layout.GetMenuBar();
+    CHECK(bar != nullptr);
+    if (!bar)
+        return;
+    bar->OpenMenu(0, true);
+    s.t.Layout();
+    auto* popup = static_cast<MenuPopup*>(s.t.ui.GetTopPopup());
+    CHECK(popup != nullptr);
+    if (!popup)
+        return;
+
+    const auto& items = popup->GetItems();
+    CHECK(items.size() == 1);
+    CHECK(items[0].enabled);                    // 关键：父项仍然可用，入口不会整个消失
+    CHECK(items[0].submenu.size() == 1);        // 展开后能看到提示项
+    CHECK(!items[0].submenu[0].enabled);        // 提示项本身是禁用的
+}
+
+TEST(UiLayout_DynamicMenuUnknownSourceWarnsAndDisables)
+{
+    LayoutScene s;
+    CHECK(s.Apply(R"json({
+        "menus": [ { "title": "文件(&F)", "items": [ { "title": "最近打开", "dynamic": "nosuch" } ] } ],
+        "layout": { "type": "column", "children": [ { "type": "menubar" }, { "type": "panel", "name": "viewport" } ] }
+    })json"));
+
+    MenuBar* bar = s.layout.GetMenuBar();
+    CHECK(bar && bar->GetMenuCount() == 1);
+    if (!bar)
+        return;
+    const auto& items = bar->GetMenuItems(0);
+    CHECK(items.size() == 1 && items[0].text == "最近打开");
+    CHECK(!items[0].enabled);                        // 没有内容来源 → 灰显，不是崩溃
+
+    bool warned = false;
+    for (const std::string& w : s.layout.GetWarnings())
+        warned |= w.find("nosuch") != std::string::npos;
+    CHECK(warned);
+}
+
+// 重新应用界面描述文件后，动态内容来源仍然有效（宿主只注册一次）
+TEST(UiLayout_DynamicMenuSurvivesReapply)
+{
+    LayoutScene s;
+    int built = 0;
+    s.layout.SetDynamicMenuItems("recent", [&] { ++built; return std::vector<MenuItem>{ MenuItem("x") }; });
+
+    const char* json = R"json({
+        "menus": [ { "title": "文件(&F)", "items": [ { "title": "最近打开", "dynamic": "recent" } ] } ],
+        "layout": { "type": "column", "children": [ { "type": "menubar" }, { "type": "panel", "name": "viewport" } ] }
+    })json";
+    CHECK(s.Apply(json));
+    CHECK(s.Apply(json));                            // 重建界面
+    CHECK(s.layout.GetWarnings().empty());
+
+    MenuBar* bar = s.layout.GetMenuBar();
+    CHECK(bar != nullptr);
+    if (!bar)
+        return;
+    bar->OpenMenu(0, true);
+    s.t.Layout();
+    auto* popup = static_cast<MenuPopup*>(s.t.ui.GetTopPopup());
+    CHECK(popup && built == 1);
+}

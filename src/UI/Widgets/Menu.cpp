@@ -105,6 +105,12 @@ namespace MiniGUI
         // 动态状态在打开时求值
         for (MenuItem& item : m_items)
         {
+            if (item.dynamicSubmenu)
+            {
+                item.submenu = item.dynamicSubmenu();
+                if (item.submenu.empty())
+                    item.enabled = false;       // 没有内容（例如"最近打开"没有记录）：灰显
+            }
             if (item.enabledIf) item.enabled = item.enabledIf();
             if (item.checkedIf) item.checked = item.checkedIf();
         }
