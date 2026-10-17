@@ -61,7 +61,7 @@ namespace MiniCAD
                                       OpenDrawings(paths);
                                   });
                               } });
-        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",   .icon = "Save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveDocuments(false, false); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",   .icon = "save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveDocuments(false, false); }, .canExecute = hasDoc });
        
         m_commands.Register({ .id = "file.saveAs",  .label = "另存为(&A)…",  .shortcut = "Ctrl+Shift+S", .execute = [this] { SaveDocuments(false, true); },  .canExecute = hasDoc });
         m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveDocuments(true, false); },  .canExecute = hasDoc });
