@@ -14,12 +14,15 @@
 #include "Solid/ISolidKernel.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
-// 三维实体建模工具（开发计划 docs/Solid/PLAN.md）：长方体、圆柱、球、拉伸（M3）；截面、平面投影（M4）。
+// 三维实体建模工具（开发计划 docs/Solid/PLAN.md）：长方体、圆柱、球、拉伸（M3）；截面、平面投影（M4）；
+// 旋转、扫掠、圆角边、倒角边（M5）。
 // 内核由宿主经 Editor::SetSolidKernel 提供；没有内核（网页版）时这些命令不启动。
 // 视图是俯视的二维视图：底面在光标点所在的水平面上，高度沿 +Z（负数沿 −Z），键入数值或用两点距离给出。
 namespace MiniCAD
@@ -64,7 +67,10 @@ namespace MiniCAD
             return true;
         }
 
-        // 闭合的平面对象 → 拉伸轮廓：圆、首尾相接的多段线（可带圆弧段）、矩形。
+        // 凸度：MiniCAD 的多段线正值为顺时针（见 Polyline::ComputeArc），内核接口与 DXF 相同、正值为逆时针
+        inline double KernelBulge(const Polyline& pl, size_t i) { return -pl.SegBulge(static_cast<int>(i)); }
+
+        // 闭合的平面对象 → 拉伸 / 旋转 / 扫掠的轮廓：圆、首尾相接的多段线（可带圆弧段）、矩形。
         // 只支持默认挤出方向、位于一个水平面上的对象
         inline std::optional<Solid::Profile> ProfileOf(const Entity& e)
         {
@@ -101,11 +107,127 @@ namespace MiniCAD
                 {
                     if (std::abs(pts[i].z - pts[0].z) > Math::LengthEPS)
                         return std::nullopt;
-                    p.Vertices.push_back({ pts[i], pl.SegBulge(static_cast<int>(i)) });
+                    p.Vertices.push_back({ pts[i], KernelBulge(pl, i) });
                 }
                 return p;
             }
             return std::nullopt;
+        }
+
+        inline double ProfileZ(const Solid::Profile& p) { return p.IsCircle ? p.Center.z : p.Vertices.front().Point.z; }
+
+        // 直线实体（定义在 Editor.cpp：LineEntity.hpp 在全局作用域 using namespace MiniCAD::Math，不能经 Editor.h 带进界面代码）
+        std::unique_ptr<Entity> MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b);
+        std::optional<std::pair<Math::Point3, Math::Point3>> LineEndpoints(const Entity& e);   // 不是直线时为空
+
+        // 扫掠路径：直线、圆弧、圆、多段线（闭合或不闭合，可带圆弧段）、矩形；位于一个水平面上
+        inline std::optional<Solid::SweepPath> PathOf(const Entity& e)
+        {
+            if (!e.HasDefaultExtrusion())
+                return std::nullopt;
+            Solid::SweepPath path;
+            if (const auto line = LineEndpoints(e))
+            {
+                const auto& [a, b] = *line;
+                if (std::abs(a.z - b.z) > Math::LengthEPS || Distance2D(a, b) < Math::LengthEPS)
+                    return std::nullopt;
+                path.Vertices = { { a, 0.0 }, { b, 0.0 } };
+                return path;
+            }
+            if (e.IsKindOf<ArcEntity>())
+            {
+                const auto& a = static_cast<const ArcEntity&>(e).GetArc();
+                double sweep = std::fmod(a.EndAngle - a.StartAngle, 2 * Math::PI);
+                if (sweep <= 1e-12)
+                    sweep += 2 * Math::PI;
+                const Math::Point3 p0{ a.Center.x + a.Radius * std::cos(a.StartAngle), a.Center.y + a.Radius * std::sin(a.StartAngle), a.Center.z };
+                const Math::Point3 p1{ a.Center.x + a.Radius * std::cos(a.EndAngle),   a.Center.y + a.Radius * std::sin(a.EndAngle),   a.Center.z };
+                path.Vertices = { { p0, std::tan(sweep / 4) }, { p1, 0.0 } };   // 逆时针
+                return path;
+            }
+            if (e.IsKindOf<CircleEntity>())
+            {
+                const auto& c = static_cast<const CircleEntity&>(e).GetCircle();
+                path.Vertices = { { { c.Center.x + c.Radius, c.Center.y, c.Center.z }, 1.0 }, { { c.Center.x - c.Radius, c.Center.y, c.Center.z }, 1.0 } };
+                path.Closed   = true;
+                return path;
+            }
+            if (e.IsKindOf<RectangleEntity>() || e.IsKindOf<PolylineEntity>())
+            {
+                if (auto profile = ProfileOf(e))   // 闭合
+                {
+                    path.Vertices = std::move(profile->Vertices);
+                    path.Closed   = true;
+                    return path;
+                }
+                if (!e.IsKindOf<PolylineEntity>())
+                    return std::nullopt;
+                const auto& pl  = static_cast<const PolylineEntity&>(e).GetPolyline();
+                const auto& pts = pl.Points;
+                if (pts.size() < 2)
+                    return std::nullopt;
+                for (size_t i = 0; i < pts.size(); ++i)
+                {
+                    if (std::abs(pts[i].z - pts[0].z) > Math::LengthEPS)
+                        return std::nullopt;
+                    path.Vertices.push_back({ pts[i], i + 1 < pts.size() ? KernelBulge(pl, i) : 0.0 });
+                }
+                return path;
+            }
+            return std::nullopt;
+        }
+
+        // 预选的轮廓逐个生成实体，替换原对象（同 AutoCAD 的默认设置），一步撤销全部还原。
+        // make 返回内核实体；轮廓不是闭合平面对象的计入 skipped
+        template<class Make>
+        void ReplaceProfiles(const SolidToolEnv& env, const std::vector<Object::ObjectID>& ids, const char* what, Make make)
+        {
+            auto& scene = env.scene;
+            std::vector<GeometryEditCommand::Item> items;
+            int skipped = 0, failed = 0;
+            std::string error;
+            for (auto id : ids)
+            {
+                const Object* o = scene.GetEntity(id);
+                if (!o || !o->IsKindOf<Entity>()) continue;
+                const auto& src     = static_cast<const Entity&>(*o);
+                const auto  profile = ProfileOf(src);
+                if (!profile)
+                {
+                    ++skipped;
+                    continue;
+                }
+
+                auto solid = Solid3DEntity::Create(scene.NextObjectID(), env.kernel, make(*profile));
+                if (!solid)
+                {
+                    ++failed;
+                    error = env.kernel.LastError();
+                    continue;
+                }
+                solid->SetAttr(src.GetAttr());   // 沿用原对象的图层、颜色等
+
+                GeometryEditCommand::Item remove;
+                remove.id     = id;
+                remove.before = src.Clone(id);
+                items.push_back(std::move(remove));
+                GeometryEditCommand::Item add;
+                add.id    = solid->GetID();
+                add.after = std::move(solid);
+                items.push_back(std::move(add));
+            }
+
+            const size_t created = items.size() / 2;
+            if (created > 0)
+            {
+                env.picking.ClearSelection();
+                env.picking.MarkDirty();
+                env.cmdStack.Execute(std::make_unique<GeometryEditCommand>(what, std::move(items)), scene);
+            }
+            std::string msg = std::string(what) + "：已创建 " + std::to_string(created) + " 个实体";
+            if (skipped > 0) msg += "，" + std::to_string(skipped) + " 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略";
+            if (failed > 0)  msg += "，" + std::to_string(failed) + " 个失败（" + error + "）";
+            env.echo(msg);
         }
 
         // 选择集里的三维实体（按 ID 升序），并统计其他对象个数
@@ -123,9 +245,6 @@ namespace MiniCAD
             std::sort(solids.begin(), solids.end(), [](auto* a, auto* b) { return a->GetID() < b->GetID(); });
             return solids;
         }
-
-        // 直线实体（定义在 Editor.cpp：LineEntity.hpp 在全局作用域 using namespace MiniCAD::Math，不能经 Editor.h 带进界面代码）
-        std::unique_ptr<Entity> MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b);
 
         // 二维出图结果的收集：内核折线（已换算到图纸平面）→ 拟合 → 直线 / 圆弧 / 圆 / 多段线，最后一步加入场景
         class DrawingOutput
@@ -476,51 +595,7 @@ namespace MiniCAD
         {
             if (std::abs(height) < Math::LengthEPS)
                 return;
-            auto& scene = m_env.scene;
-
-            std::vector<GeometryEditCommand::Item> items;
-            int skipped = 0, failed = 0;
-            for (auto id : m_ids)
-            {
-                const Object* o = scene.GetEntity(id);
-                if (!o || !o->IsKindOf<Entity>()) continue;
-                const auto& src     = static_cast<const Entity&>(*o);
-                const auto  profile = SolidToolDetail::ProfileOf(src);
-                if (!profile)
-                {
-                    ++skipped;
-                    continue;
-                }
-
-                auto solid = Solid3DEntity::Create(scene.NextObjectID(), m_env.kernel, m_env.kernel.Extrude(*profile, height));
-                if (!solid)
-                {
-                    ++failed;
-                    continue;
-                }
-                solid->SetAttr(src.GetAttr());   // 沿用原对象的图层、颜色等
-
-                GeometryEditCommand::Item remove;
-                remove.id     = id;
-                remove.before = src.Clone(id);
-                items.push_back(std::move(remove));
-                GeometryEditCommand::Item add;
-                add.id    = solid->GetID();
-                add.after = std::move(solid);
-                items.push_back(std::move(add));
-            }
-
-            const size_t created = items.size() / 2;
-            if (created > 0)
-            {
-                m_env.picking.ClearSelection();
-                m_env.picking.MarkDirty();
-                m_env.cmdStack.Execute(std::make_unique<GeometryEditCommand>("拉伸", std::move(items)), scene);
-            }
-            std::string msg = "拉伸：已创建 " + std::to_string(created) + " 个实体";
-            if (skipped > 0) msg += "，" + std::to_string(skipped) + " 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略";
-            if (failed > 0)  msg += "，" + std::to_string(failed) + " 个失败（" + m_env.kernel.LastError() + "）";
-            m_env.echo(msg);
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "拉伸", [&](const Solid::Profile& p) { return m_env.kernel.Extrude(p, height); });
             if (OnFinished) OnFinished();
         }
 
@@ -829,5 +904,416 @@ namespace MiniCAD
         SolidToolEnv                  m_env;
         View                          m_view   = View::Front;
         bool                          m_hidden = true;
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // RevolveTool（REVOLVE）：预选的闭合对象绕轴旋转（M5）。
+    // 轴由两点给出（或 X / Y 键取世界坐标的 X / Y 轴），位于轮廓所在的水平面内；角度按右手定则绕第一点 → 第二点，
+    // 回车 / 右键为整圈。与拉伸相同，原对象被替换
+    // ─────────────────────────────────────────────────────────────
+    class RevolveTool : public ITool
+    {
+    public:
+        RevolveTool(std::vector<Object::ObjectID> ids, SolidToolEnv env) : m_ids(std::move(ids)), m_env(std::move(env)) {}
+
+        bool OnInput(const EditorContext& ctx) override
+        {
+            const auto& e = ctx.event;
+            if (e.IsCancel() || (e.IsRightClick() && m_step < 2))
+            {
+                Finish();
+                return true;
+            }
+            if (m_step == 2 && (e.IsRightClick() || e.IsKeyPressed(KeyCode::Enter) || e.IsKeyPressed(KeyCode::Space)))
+            {
+                Commit(360.0);
+                return true;
+            }
+            if (m_step == 0 && (e.IsKeyPressed(KeyCode::X) || e.IsKeyPressed(KeyCode::Y)))
+            {
+                m_p1   = { 0, 0, 0 };
+                m_p2   = e.Key == KeyCode::X ? Math::Point3{ 1, 0, 0 } : Math::Point3{ 0, 1, 0 };
+                m_step = 2;
+                m_env.echo(e.Key == KeyCode::X ? "旋转轴：X 轴" : "旋转轴：Y 轴");
+                return true;
+            }
+            if (e.IsLeftClick() && m_step < 2)
+            {
+                const auto p = SolidToolDetail::CursorPoint(ctx);
+                if (m_step == 0)
+                {
+                    m_p1   = p;
+                    m_step = 1;
+                }
+                else if (SolidToolDetail::Distance2D(m_p1, p) > Math::LengthEPS)
+                {
+                    m_p2   = p;
+                    m_step = 2;
+                    ctx.overlay.Clear();
+                    ctx.overlay.AddLine(m_p1, m_p2, kAxisColor);
+                }
+                return true;
+            }
+            if (e.Type == InputEventType::MouseMove && m_step == 1)
+            {
+                ctx.overlay.Clear();
+                ctx.overlay.AddLine(m_p1, SolidToolDetail::CursorPoint(ctx), kAxisColor);
+            }
+            return false;
+        }
+
+        bool OnNumberInput(double value) override
+        {
+            if (m_step != 2)
+                return false;
+            Commit(value);
+            return true;
+        }
+
+        bool         HasAnchor() const override { return m_step == 1; }
+        Math::Point3 GetAnchor() const override { return m_p1; }
+
+        std::string GetPrompt() const override
+        {
+            switch (m_step)
+            {
+            case 0:  return "旋转 指定轴的起点 或 [X 轴(X)/Y 轴(Y)]:";
+            case 1:  return "指定轴的端点:";
+            default: return "指定旋转角度（键入度数，按右手定则绕轴的起点 → 端点）<360>:";
+            }
+        }
+
+        void OnSceneChanged() override { m_env.overlay.Clear(); }
+
+    private:
+        static constexpr Math::Color4 kAxisColor = { 0.6, 0.6, 0.6, 0.8 };
+
+        void Commit(double angleDeg)
+        {
+            if (std::abs(angleDeg) < 1e-9 || std::abs(angleDeg) > 360.0 + 1e-9)
+            {
+                m_env.echo("旋转：角度应在 0 到 360 度之间（不含 0）");
+                return;
+            }
+            const Math::Vec3 dir{ m_p2.x - m_p1.x, m_p2.y - m_p1.y, 0.0 };
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "旋转", [&](const Solid::Profile& p) {
+                return m_env.kernel.Revolve(p, { m_p1.x, m_p1.y, SolidToolDetail::ProfileZ(p) }, dir, angleDeg);
+            });
+            Finish();
+        }
+
+        void Finish()
+        {
+            m_env.overlay.Clear();
+            if (OnFinished) OnFinished();
+        }
+
+        std::vector<Object::ObjectID> m_ids;
+        SolidToolEnv                  m_env;
+        int                           m_step = 0;
+        Math::Point3                  m_p1{}, m_p2{};
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // SweepTool（SWEEP）：预选的闭合对象沿点选的路径扫掠（M5）。
+    // 路径：直线、圆弧、圆、多段线（可不闭合、带圆弧段）、矩形，与轮廓同在水平面内即可；
+    // 轮廓的中心移到路径起点、转到与路径垂直后扫掠。原对象（轮廓）被替换，路径保留，可再用于其他轮廓
+    // ─────────────────────────────────────────────────────────────
+    class SweepTool : public ITool
+    {
+    public:
+        SweepTool(std::vector<Object::ObjectID> ids, SolidToolEnv env) : m_ids(std::move(ids)), m_env(std::move(env)) {}
+
+        bool OnInput(const EditorContext& ctx) override
+        {
+            const auto& e = ctx.event;
+            if (e.IsCancel() || e.IsRightClick())
+            {
+                if (OnFinished) OnFinished();
+                return true;
+            }
+            if (!e.IsLeftClick())
+                return false;
+
+            const Object::ObjectID id = m_env.picking.HitTest({ static_cast<double>(e.MouseX), static_cast<double>(e.MouseY) }, 8.0);
+            const Object* o = id != Object::InvalidID ? m_env.scene.GetEntity(id) : nullptr;
+            if (!o || !o->IsKindOf<Entity>())
+                return true;
+            if (std::find(m_ids.begin(), m_ids.end(), id) != m_ids.end())
+            {
+                m_env.echo("扫掠：路径不能是要扫掠的轮廓");
+                return true;
+            }
+            const auto path = SolidToolDetail::PathOf(static_cast<const Entity&>(*o));
+            if (!path)
+            {
+                m_env.echo("扫掠：路径应为直线、圆弧、圆、多段线或矩形（位于水平面内）");
+                return true;
+            }
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "扫掠", [&](const Solid::Profile& p) { return m_env.kernel.Sweep(p, *path); });
+            if (OnFinished) OnFinished();
+            return true;
+        }
+
+        std::string GetPrompt() const override { return "扫掠 选择扫掠路径（直线、圆弧、圆、多段线）:"; }
+
+    private:
+        std::vector<Object::ObjectID> m_ids;
+        SolidToolEnv                  m_env;
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // SolidEdgeTool：三维实体的边倒圆角（FILLETEDGE）/ 倒角（CHAMFEREDGE）（M5）。
+    // 点选同一个实体上的边（再点一次取消），键入数值改半径 / 距离，回车 / 右键完成。
+    // 俯视图里重叠的边（如长方体的顶边与底边）按离光标的距离、投影成一点的竖直边、高度（高的在前）排序，Tab 依次切换
+    // ─────────────────────────────────────────────────────────────
+    class SolidEdgeTool : public ITool
+    {
+    public:
+        enum class Kind { Fillet, Chamfer };
+
+        // value：半径 / 距离，由 Editor 持有，命令之间保留
+        SolidEdgeTool(Kind kind, double* value, SolidToolEnv env) : m_kind(kind), m_value(value), m_env(std::move(env)) {}
+
+        bool OnInput(const EditorContext& ctx) override
+        {
+            const auto& e = ctx.event;
+            if (e.IsCancel())
+            {
+                Finish();
+                return true;
+            }
+            if (e.IsRightClick() || e.IsKeyPressed(KeyCode::Enter) || e.IsKeyPressed(KeyCode::Space))
+            {
+                if (m_selected.empty())
+                    Finish();
+                else
+                    Commit();
+                return true;
+            }
+            if (e.IsKeyPressed(KeyCode::Tab))
+            {
+                if (m_candidates.size() > 1)
+                {
+                    m_cycle = (m_cycle + 1) % m_candidates.size();
+                    Redraw();
+                }
+                return true;
+            }
+            if (e.Type == InputEventType::MouseMove)
+            {
+                UpdateCandidates(ctx, false);
+                Redraw();
+                return false;
+            }
+            if (e.IsLeftClick())
+            {
+                UpdateCandidates(ctx, true);
+                if (!m_candidates.empty())
+                {
+                    const int edge = m_candidates[m_cycle];
+                    if (auto it = std::find(m_selected.begin(), m_selected.end(), edge); it != m_selected.end())
+                        m_selected.erase(it);
+                    else
+                        m_selected.push_back(edge);
+                    m_solidId = m_selected.empty() ? Object::InvalidID : m_edgeSolid;   // 第一条边定下实体
+                }
+                Redraw();
+                return true;
+            }
+            return false;
+        }
+
+        bool OnNumberInput(double value) override
+        {
+            if (value > Math::LengthEPS)
+                *m_value = value;
+            return true;
+        }
+
+        std::string GetPrompt() const override
+        {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%g", *m_value);
+            const bool fillet = m_kind == Kind::Fillet;
+            std::string p = std::string(fillet ? "圆角边" : "倒角边") + " 选择边（Tab 切换重叠的边；键入数值改" + (fillet ? "半径" : "距离")
+                          + " <" + buf + ">）";
+            if (!m_selected.empty())
+                p += "，已选 " + std::to_string(m_selected.size()) + " 条，回车完成";
+            return p + ":";
+        }
+
+        void OnSceneChanged() override
+        {
+            m_solidId = m_edgeSolid = Object::InvalidID;
+            m_body.reset();
+            m_edges = {};
+            m_selected.clear();
+            m_candidates.clear();
+            m_env.overlay.Clear();
+        }
+
+    private:
+        static constexpr Math::Color4 kSelectedColor = { 1.0, 0.55, 0.0, 1.0 };
+        static constexpr Math::Color4 kHoverColor    = { 0.2, 0.8, 1.0, 1.0 };
+        static constexpr double       kPickPixels    = 8.0;
+
+        // 光标附近的边：已选过边时只看那个实体，否则看光标下的实体
+        void UpdateCandidates(const EditorContext& ctx, bool clicked)
+        {
+            const auto& e = ctx.event;
+            const Math::Point2 mouse{ static_cast<double>(e.MouseX), static_cast<double>(e.MouseY) };
+            Object::ObjectID id = m_solidId;
+            if (id == Object::InvalidID)
+            {
+                id = m_env.picking.HitTest(mouse, kPickPixels);
+                const Object* o = id != Object::InvalidID ? m_env.scene.GetEntity(id) : nullptr;
+                if (!o || !o->IsKindOf<Solid3DEntity>() || m_env.scene.IsEntityLocked(*o))
+                    id = Object::InvalidID;
+            }
+
+            if (id != m_edgeSolid)
+            {
+                m_edgeSolid = id;
+                m_body.reset();
+                m_edges = {};
+                if (const Object* o = id != Object::InvalidID ? m_env.scene.GetEntity(id) : nullptr)
+                {
+                    m_body = static_cast<const Solid3DEntity*>(o)->GetWorldBody(m_env.kernel);
+                    if (m_body)
+                        m_edges = m_env.kernel.Edges(m_body);   // 编号对世界坐标下的这个实体有效
+                }
+            }
+
+            std::vector<int> found = FindEdges(ctx, mouse);
+            if (clicked && found.empty() && m_solidId != Object::InvalidID)
+            {
+                const Object::ObjectID other = m_env.picking.HitTest(mouse, kPickPixels);
+                const Object* o = other != Object::InvalidID ? m_env.scene.GetEntity(other) : nullptr;
+                if (other != m_solidId && o && o->IsKindOf<Solid3DEntity>())
+                    m_env.echo("只能选择同一个实体上的边；先回车完成当前实体");
+            }
+            if (found != m_candidates)
+            {
+                m_candidates = std::move(found);
+                m_cycle      = 0;
+            }
+        }
+
+        // m_edges 中离光标不超过 kPickPixels 的边，排序：距离（按像素取整）→ 投影成一点的竖直边优先 → 最近点高的优先
+        std::vector<int> FindEdges(const EditorContext& ctx, const Math::Point2& mouse) const
+        {
+            const auto& camera = ctx.viewport.GetCamera();
+            struct Hit { long Dist; int Vertical; double NegZ; int Index; };
+            std::vector<Hit> hits;
+            for (size_t i = 0; i < m_edges.Lines.size(); ++i)
+            {
+                const auto& line = m_edges.Lines[i];
+                if (line.empty() || m_edges.Ids[i] < 0)
+                    continue;
+                const Math::Point2 first = camera.WorldToScreen(line[0]);
+                double best = Math::Distance(mouse, first), z = line[0].z, extent = 0.0;
+                Math::Point2 prev = first;
+                for (size_t k = 1; k < line.size(); ++k)
+                {
+                    const Math::Point2 cur = camera.WorldToScreen(line[k]);
+                    extent = std::max(extent, Math::Distance(first, cur));
+                    const double dx = cur.x - prev.x, dy = cur.y - prev.y, len2 = dx * dx + dy * dy;
+                    const double t  = len2 > 0 ? std::clamp(((mouse.x - prev.x) * dx + (mouse.y - prev.y) * dy) / len2, 0.0, 1.0) : 0.0;
+                    const double d  = std::hypot(prev.x + dx * t - mouse.x, prev.y + dy * t - mouse.y);
+                    if (d < best)
+                    {
+                        best = d;
+                        z    = line[k - 1].z + (line[k].z - line[k - 1].z) * t;
+                    }
+                    prev = cur;
+                }
+                if (best <= kPickPixels)
+                {
+                    const bool vertical = extent < 1.0;
+                    hits.push_back({ std::lround(best), vertical ? 0 : 1, vertical ? -std::max(line.front().z, line.back().z) : -z, static_cast<int>(i) });
+                }
+            }
+            std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) {
+                return std::tie(a.Dist, a.Vertical, a.NegZ) < std::tie(b.Dist, b.Vertical, b.NegZ);
+            });
+            std::vector<int> out;
+            for (const auto& h : hits)
+                out.push_back(h.Index);
+            return out;
+        }
+
+        void Redraw()
+        {
+            m_env.overlay.Clear();
+            auto draw = [&](int index, const Math::Color4& color) {
+                const auto& line = m_edges.Lines[index];
+                for (size_t k = 1; k < line.size(); ++k)
+                    m_env.overlay.AddLine(line[k - 1], line[k], color);
+                if (SolidToolDetail::Distance2D(line.front(), line.back()) < Math::LengthEPS && line.size() == 2)
+                    m_env.overlay.AddPoint(line[0], color);   // 竖直边投影成一点
+            };
+            for (int index : m_selected)
+                draw(index, kSelectedColor);
+            if (!m_candidates.empty())
+                draw(m_candidates[m_cycle], kHoverColor);
+        }
+
+        void Commit()
+        {
+            const bool  fillet = m_kind == Kind::Fillet;
+            const char* what   = fillet ? "圆角" : "倒角";
+            const Object* o = m_env.scene.GetEntity(m_solidId);
+            if (!o || !m_body || m_edgeSolid != m_solidId)
+            {
+                Finish();
+                return;
+            }
+            std::vector<int> ids;
+            for (int index : m_selected)
+                ids.push_back(m_edges.Ids[index]);
+            const double value = *m_value;
+            const Solid::BodyPtr result = fillet ? m_env.kernel.Fillet(m_body, ids, value) : m_env.kernel.Chamfer(m_body, ids, value);
+            auto entity = result ? Solid3DEntity::Create(m_env.scene.NextObjectID(), m_env.kernel, result) : nullptr;
+            if (!entity)
+            {
+                m_env.echo(std::string(what) + "失败，未做修改（" + m_env.kernel.LastError() + "）；可换较小的" + (fillet ? "半径" : "距离") + "再试");
+                Finish();
+                return;
+            }
+            const auto& src = static_cast<const Solid3DEntity&>(*o);
+            entity->SetAttr(src.GetAttr());
+
+            std::vector<GeometryEditCommand::Item> items(2);
+            items[0].id     = m_solidId;
+            items[0].before = src.Clone(m_solidId);
+            items[1].id     = entity->GetID();
+            items[1].after  = std::move(entity);
+            m_env.picking.ClearSelection();
+            m_env.picking.MarkDirty();
+            m_env.cmdStack.Execute(std::make_unique<GeometryEditCommand>(what, std::move(items)), m_env.scene);
+
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "%s：%zu 条边，%s = %g", what, ids.size(), fillet ? "半径" : "距离", value);
+            m_env.echo(buf);
+            Finish();
+        }
+
+        void Finish()
+        {
+            m_env.overlay.Clear();
+            if (OnFinished) OnFinished();
+        }
+
+        Kind                 m_kind;
+        double*              m_value;
+        SolidToolEnv         m_env;
+        Object::ObjectID     m_solidId   = Object::InvalidID;   // 已选边所在的实体
+        Object::ObjectID     m_edgeSolid = Object::InvalidID;   // m_body / m_edges 对应的实体
+        Solid::BodyPtr       m_body;                            // 世界坐标
+        Solid::Polylines     m_edges;
+        std::vector<int>     m_selected;                        // m_edges 中的下标
+        std::vector<int>     m_candidates;
+        size_t               m_cycle = 0;
     };
 }

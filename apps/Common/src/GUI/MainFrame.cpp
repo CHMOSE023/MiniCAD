@@ -782,7 +782,11 @@ namespace MiniCAD
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
         const KeyCode code = ToKeyCode(e.key);
-        if (code == KeyCode::Unknown || code == KeyCode::Tab || !m_docManager.GetActive())
+        if (code == KeyCode::Unknown || !m_docManager.GetActive())
+            return false;
+        // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
+        const bool tab = code == KeyCode::Tab;
+        if (tab && !m_docManager.GetEditor().IsActiveTool())
             return false;
         if (RouteKeyToDynamicInput(e) || RouteKeyToCommandLine(e))
             return true;
@@ -802,7 +806,7 @@ namespace MiniCAD
         const bool handled = m_docManager.GetEditor().OnInput(ie);
         NoteInput();
         StateChanged();
-        return handled || ie.Type == InputEventType::KeyDown;
+        return handled || (ie.Type == InputEventType::KeyDown && !tab);
     }
 
     // =========================================================

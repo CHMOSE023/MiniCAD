@@ -704,6 +704,56 @@ namespace MiniCAD
                 m_docManager.Undo();   // 长方体
                 check(solids().size() == before && scene.GetEntity(circle) == nullptr, "撤销拉伸、圆、长方体：实体全部移除");
                 editor.SetSelection({});
+
+                // M5：旋转（命令行空回车 = 整圈），圆角边（键入半径、点选边、绘图区的 Tab 切换到重叠的底边）
+                Camera& camera = m_docManager.GetViewport().GetCamera();
+                const CameraState savedCamera = camera.GetState();
+                camera.ZoomToBounds(2990.0, 2990.0, 3030.0, 3030.0);
+
+                RunCommandLine("Rectangle");
+                editor.SubmitPoint(Math::Point3(3002.0, 3000.0, 0.0));
+                editor.SubmitPoint(Math::Point3(3004.0, 3003.0, 0.0));
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                Object::ObjectID rect = Object::InvalidID;
+                scene.ForEachObject([&](const Object& o)
+                {
+                    if (o.IsKindOf<RectangleEntity>() && std::abs(static_cast<const RectangleEntity&>(o).GetBoundingBox().Min.x - 3002.0) < 0.5) rect = o.GetID();
+                });
+                editor.SetSelection({ rect });
+                RunCommandLine("REV");
+                editor.SubmitPoint(Math::Point3(3000.0, 3000.0, 0.0));
+                editor.SubmitPoint(Math::Point3(3000.0, 3010.0, 0.0));
+                RunCommandLine("");
+                all = solids();
+                const double pi = 3.14159265358979323846;
+                check(all.size() == before + 1 && scene.GetEntity(rect) == nullptr
+                      && std::abs(kernel->Volume(all.back()->GetWorldBody(*kernel)) - 36.0 * pi) < 1e-3,
+                      "REVOLVE：矩形绕竖直轴，命令行空回车为整圈，体积 36π");
+
+                RunCommandLine("BOX");
+                editor.SubmitPoint(Math::Point3(3010.0, 3010.0, 0.0));
+                editor.SubmitPoint(Math::Point3(3020.0, 3020.0, 0.0));
+                RunCommandLine("10");
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                RunCommandLine("FILLETEDGE");
+                RunCommandLine("2");
+                editor.SubmitPoint(Math::Point3(3015.0, 3010.0, 0.0));   // 顶边
+                SendKeyToEditor(MiniGUI::Key::Tab);                      // 切换到重叠的底边
+                editor.SubmitPoint(Math::Point3(3015.0, 3010.0, 0.0));
+                RunCommandLine("");
+                const Solid3DEntity* filleted = nullptr;
+                for (auto* s : solids())
+                    if (s->GetBoundingBox().Min.x >= 3009.0) filleted = s;
+                check(filleted && std::abs(kernel->Volume(filleted->GetWorldBody(*kernel)) - (1000.0 - 2.0 * (4.0 - pi) * 10.0)) < 1e-2,
+                      "FILLETEDGE：键入半径 2，点选顶边、Tab 再选底边，回车后两条边倒圆角");
+                m_docManager.Undo();   // 圆角
+                m_docManager.Undo();   // 长方体
+                m_docManager.Undo();   // 旋转：矩形回来
+                m_docManager.Undo();   // 矩形
+                check(solids().size() == before && scene.GetEntity(rect) == nullptr, "撤销圆角、长方体、旋转、矩形：实体全部移除");
+                camera.SetState(savedCamera);
             }
         }
 

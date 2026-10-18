@@ -48,6 +48,14 @@ namespace MiniCAD::Solid
         }
     };
 
+    // 扫掠路径：z = 常数的水平面上首尾相接的直线 / 圆弧，顶点带凸度（约定同 Profile）。
+    // 不闭合时 Vertices 依次为各段起点和最后一段的终点；闭合时最后一个顶点连回第一个（不要重复首点）
+    struct SweepPath
+    {
+        std::vector<ProfileVertex> Vertices;
+        bool                       Closed = false;
+    };
+
     enum class BooleanOp { Union, Difference, Intersection };
 
     // 离散化参数，含义同 SMLib：弦高为三角形到真实曲面的最大距离，0 表示不限制
@@ -104,11 +112,16 @@ namespace MiniCAD::Solid
         virtual BodyPtr Extrude(const Profile& profile, double height) = 0;
         // 旋转：轮廓绕轴旋转 angleDeg 度（360 为整圈）；轴不能穿过轮廓内部
         virtual BodyPtr Revolve(const Profile& profile, const Math::Point3& axisPoint, const Math::Vec3& axisDir, double angleDeg) = 0;
+        // 扫掠：轮廓先移到路径起点、转到与路径起点切线垂直（轮廓包围盒中心落在路径上），再沿路径扫掠；
+        // 路径的折角处斜接，不闭合的路径两端封口
+        virtual BodyPtr Sweep(const Profile& profile, const SweepPath& path) = 0;
 
         // ── 修改（都返回新实体）──────────────────────────────────────
         virtual BodyPtr Boolean(BooleanOp op, const BodyPtr& a, const BodyPtr& b) = 0;
         // 对 Edges() 给出编号的边倒圆角
         virtual BodyPtr Fillet(const BodyPtr& body, std::span<const int> edgeIds, double radius) = 0;
+        // 对 Edges() 给出编号的边倒角（平面截面）：distance 为滚球半径，两面垂直时即沿两个面各退回 distance
+        virtual BodyPtr Chamfer(const BodyPtr& body, std::span<const int> edgeIds, double distance) = 0;
         // 任意仿射变换（行向量约定，与 Math::Mat4 相同）；非均匀缩放会把几何转成 NURBS
         virtual BodyPtr Transform(const BodyPtr& body, const Math::Mat4& m) = 0;
 

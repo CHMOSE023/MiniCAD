@@ -120,6 +120,14 @@ namespace
 
         auto half = k.Revolve(Rectangle(2, 0, 3, 4), { 0, 0, 0 }, { 0, 1, 0 }, 180);
         Check(half && NearRel(k.Volume(half), 10 * kPi, 1e-4), "revolve rectangle 180°: volume 10π");
+
+        Check(k.Revolve(Rectangle(2, 0, 3, 4), { 2.5, 0, 0 }, { 0, 1, 0 }, 360) == nullptr && !k.LastError().empty(),
+              "revolve with the axis through the profile fails with an error");
+        // 半圆（凸度 1，弦在轴上）绕弦所在的轴：球，体积 4π/3
+        Profile halfDisk;
+        halfDisk.Vertices = { { { 0, -1, 0 }, 1.0 }, { { 0, 1, 0 }, 0.0 } };
+        auto ball = k.Revolve(halfDisk, { 0, 0, 0 }, { 0, 1, 0 }, 360);
+        Check(ball && NearRel(k.Volume(ball), 4 * kPi / 3, 1e-3), "revolve a half disk touching the axis: sphere volume 4π/3");
     }
 
     void TestBoolean(ISolidKernel& k)
@@ -246,6 +254,67 @@ namespace
         Check(k.Fillet(box, std::span<const int>(&bad, 1), r) == nullptr && !k.LastError().empty(), "fillet with an unknown edge id fails with an error");
     }
 
+    void TestChamfer(ISolidKernel& k)
+    {
+        auto box = k.Box({ 0, 0, 0 }, 10, 10, 10);
+        Polylines edges = k.Edges(box);
+        if (edges.Ids.size() < 2)
+        {
+            Check(false, "chamfer: box edges");
+            return;
+        }
+        // 两面垂直：沿两个面各退回 d，去掉的体积 = d² / 2 × 边长
+        const int id = edges.Ids[0];
+        auto one = k.Chamfer(box, std::span<const int>(&id, 1), 1.0);
+        Check(one && NearRel(k.Volume(one), 1000 - 0.5 * 10, 1e-4), "chamfer one edge d = 1: volume 1000 − 5");
+        Check(one && k.Edges(one).Lines.size() == 15, "chamfer one edge: 12 + 3 edges (one face added)");
+
+        const int two[] = { edges.Ids[0], edges.Ids[1] };
+        auto both = k.Chamfer(box, two, 2.0);
+        Check(both && k.Volume(both) < 1000 - 2 * 10 + 1e-6, "chamfer two edges d = 2: removes at least 2 × 20 minus the corner overlap");
+        Check(k.Chamfer(box, std::span<const int>(&id, 1), 0.0) == nullptr && !k.LastError().empty(), "chamfer with distance 0 fails");
+    }
+
+    SweepPath Path(std::initializer_list<ProfileVertex> vs, bool closed = false)
+    {
+        SweepPath p;
+        p.Vertices = vs;
+        p.Closed   = closed;
+        return p;
+    }
+
+    void TestSweep(ISolidKernel& k)
+    {
+        // 正方形沿直线：轮廓中心落在路径上，与路径垂直
+        auto bar = k.Sweep(Rectangle(5, 5, 7, 7), Path({ { { 0, 0, 0 } }, { { 10, 0, 0 } } }));
+        Check(bar && NearRel(k.Volume(bar), 40, 1e-5), "sweep 2 × 2 square along a line of 10: volume 40");
+        const AABB bb = bar ? k.Bounds(bar) : AABB::Empty();
+        Check(bar && NearPoint(bb.Min, { 0, -1, -1 }, 1e-5) && NearPoint(bb.Max, { 10, 1, 1 }, 1e-5),
+              "sweep along a line: profile centered on the path, perpendicular to it");
+
+        // 圆沿 L 形折线：折角处斜接，体积 = 截面积 × 中心线长度
+        auto elbow = k.Sweep(Profile::Circle({ 50, 50, 0 }, 1), Path({ { { 0, 0, 0 } }, { { 10, 0, 0 } }, { { 10, 10, 0 } } }));
+        Check(elbow && NearRel(k.Volume(elbow), kPi * 20, 1e-3), "sweep circle r = 1 along an L of 10 + 10: volume 20π (mitered)");
+
+        // 圆沿四分之一圆弧（R = 10），逆时针与顺时针两个方向
+        const double q = std::tan(kPi / 8);
+        auto ccw = k.Sweep(Profile::Circle({ 0, 0, 0 }, 1), Path({ { { 10, 0, 0 }, q }, { { 0, 10, 0 } } }));
+        Check(ccw && NearRel(k.Volume(ccw), kPi * (kPi * 10 / 2), 1e-3), "sweep circle along a CCW quarter arc R = 10: volume π · 5π");
+        auto cw = k.Sweep(Profile::Circle({ 0, 0, 0 }, 1), Path({ { { 0, 10, 0 }, -q }, { { 10, 0, 0 } } }));
+        Check(cw && NearRel(k.Volume(cw), kPi * (kPi * 10 / 2), 1e-3), "sweep circle along a CW quarter arc: same volume");
+        // 直线接圆弧（相切）
+        auto mixed = k.Sweep(Profile::Circle({ 0, 0, 0 }, 1), Path({ { { -10, 0, 0 } }, { { 0, 0, 0 }, q }, { { 10, 10, 0 } } }));
+        Check(mixed && NearRel(k.Volume(mixed), kPi * (10 + kPi * 10 / 2), 1e-3), "sweep along a line followed by a tangent arc");
+
+        // 闭合路径：20 × 20 的正方形环
+        auto ring = k.Sweep(Profile::Circle({ 0, 0, 0 }, 1),
+                            Path({ { { 0, 0, 0 } }, { { 20, 0, 0 } }, { { 20, 20, 0 } }, { { 0, 20, 0 } } }, true));
+        Check(ring && NearRel(k.Volume(ring), kPi * 80, 1e-3), "sweep circle along a closed square of 20: volume 80π");
+
+        Check(k.Sweep(Profile::Circle({ 0, 0, 0 }, 1), Path({ { { 0, 0, 0 } } })) == nullptr && !k.LastError().empty(),
+              "sweep along a path of one point fails with an error");
+    }
+
     template<class Pred>
     bool AllPoints(const Polylines& p, Pred pred)
     {
@@ -344,6 +413,8 @@ int main()
     TestTessellate(*kernel);
     TestEdges(*kernel);
     TestFillet(*kernel);
+    TestChamfer(*kernel);
+    TestSweep(*kernel);
     TestHiddenLines(*kernel);
     TestSection(*kernel);
     TestSaveLoad(*kernel);

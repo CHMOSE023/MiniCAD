@@ -413,6 +413,8 @@ namespace MiniCAD
         bool                   m_toolSuspended    = false;
         bool                   m_pendingToolReset = false;
         Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
+        double                 m_solidFilletRadius    = 1.0;   // 圆角边 / 倒角边的半径与距离（命令之间保留）
+        double                 m_solidChamferDistance = 1.0;
         double                 m_filletRadius = 1.0;           // 圆角半径，多次圆角之间保留
         double                 m_chamferD1 = 1.0;              // 倒角距离，多次倒角之间保留
         double                 m_chamferD2 = 1.0;

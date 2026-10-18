@@ -1,6 +1,6 @@
 # 三维实体建模开发计划
 
-> 状态：M0～M4 已完成（2026-10-17）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、实体并 / 差 / 交）；截面、平面投影出二维图，DWG / DXF 导出为多面网格
+> 状态：M0～M5 已完成（2026-10-18）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、旋转、扫掠、实体并 / 差 / 交、边圆角 / 倒角）；截面、平面投影出二维图，DWG / DXF 导出为多面网格
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -64,12 +64,13 @@ SM_API → SMLib
 |---|---|
 | `src/Solid/ISolidKernel.h` | 接口，属于核心库，只用 MiniCAD 的类型（`Point3`、`Vec3`、`Mat4`、`AABB`） |
 | `src/Solid/SMLib/SMLibKernel.h/.cpp` | SMLib 实现与工厂 `CreateSMLibKernel()`；目标 `MiniCADSolid`（`cmake/MiniCAD.cmake`），私有链接 `SM_API`。单独成库是因为核心库定义了 `UNICODE`，SMLib 按它切换宽字符文件名 |
-| `tests/Solid/SolidKernelTests.cpp` | 接口测试（55 项），只经接口调用，换内核实现时应原样通过 |
+| `tests/Solid/SolidKernelTests.cpp` | 接口测试（69 项），只经接口调用，换内核实现时应原样通过 |
 
 - `BodyPtr = shared_ptr<const IBody>`：实体不可变，所有运算返回新实体、输入不变，可在撤销栈、剪贴板间共享
-- 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`
-- 轮廓 `Profile`：z = 常数平面上的闭合多段线，顶点带凸度（与 MiniCAD 多段线相同，顺 / 逆时针都可以），或整圆
-- 修改：`Boolean`（并 / 差 / 交）、`Fillet`（按 `Edges()` 给出的边编号）、`Transform`（任意 `Mat4`，含镜像、非均匀缩放）
+- 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`、`Sweep`（M5，轮廓沿 `SweepPath` 扫掠）
+- 轮廓 `Profile`：z = 常数平面上的闭合多段线，顶点带凸度（tan(圆心角 / 4)，**正值为逆时针，与 DXF 相同、与 MiniCAD 的 `Polyline` 相反**；顺 / 逆时针绕行都可以），或整圆
+- 扫掠路径 `SweepPath`：同一水平面上首尾相接的直线 / 圆弧（顶点带凸度，约定同 `Profile`），可闭合
+- 修改：`Boolean`（并 / 差 / 交）、`Fillet` / `Chamfer`（M5，按 `Edges()` 给出的边编号）、`Transform`（任意 `Mat4`，含镜像、非均匀缩放）
 - 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`
 - 读写：`Save` / `Load`，数据 = 16 字节头（`SMLB`、版本、长度、CRC32）+ SMLib 二进制格式；`Load` 先校验，损坏的数据不交给 SMLib（它的读取器遇到乱码会崩溃）
 - 失败：返回空指针 / 空结果，原因由 `LastError()` 给出
@@ -81,6 +82,9 @@ SM_API → SMLib
 - **法线**：`SmPolyVertex` 自带的面 / 法线表实测对不上（长方体顶点拿到相邻面的法线），改为按面对周围三角形法线面积加权平均
 - **边编号**：`SmApiGetEdges` 的顺序；深拷贝保持顺序，所以 `Fillet` 在副本上按同一编号取边。编号只在同一实体内有效，运算后的新实体重新编号（稳定的拓扑命名见第 9 节）
 - **读写经临时文件**：SM_API 只有文件接口；SMLib 内部有内存流 `SmDatabaseIOStream`，但直接用要重复其版本头逻辑，留待以后。临时文件名用窄字符（ANSI）路径，临时目录含 ANSI 无法表示的字符时会失败
+- **旋转**：轴在轮廓平面内时先检查轮廓是否整个在轴的一侧（可以贴着轴），穿过轴的返回失败——`SmApiCreateRotationalSweep` 对这种轮廓也会生成自相交的实体
+- **扫掠**：`SmApiCreateSweepAlongPlanarPath`，轮廓的包围盒中心移到路径起点、转到与起点切线垂直（绕切线的转角由 SMLib 决定），折角处斜接，不闭合的路径两端封口。圆弧段按凸度方向生成（顺时针圆弧反转参数），保证路径首尾相接
+- **倒角**：`SmApiFilletEdges` 的平面截面（`SM_FSG_LINEAR`），距离即滚球半径：两面垂直时沿两个面各退回该距离（等距倒角，暂无两个不同距离）
 - **单线程**：见第 2 节
 
 ---
@@ -129,7 +133,7 @@ SM_API → SMLib
 | `Box` | BOX | 底面两个角点 → 高度 |
 | `Cylinder` | CYLINDER、CYL | 底面中心 → 半径 → 高度 |
 | `Sphere` | SPHERE | 中心 → 半径 |
-| `Extrude` | EXTRUDE、EXT | 预选闭合对象（圆、闭合多段线含圆弧段、矩形）→ 高度；原对象被替换（同 AutoCAD 默认） |
+| `Extrude` | EXTRUDE、EXT | 预选闭合对象（圆、闭合多段线含圆弧段、矩形）→ 高度；原对象被替换（同 AutoCAD 默认）。多段线的凸度交给内核前取反（M5 修正：M3 时直接传入，圆弧段凸向反侧） |
 | `Union` / `Subtract` / `Intersect` | UNION / SUBTRACT / INTERSECT | 选择集里有三维实体时做实体布尔（`Editor::SolidBoolean`），否则仍是面域布尔。差集与面域相同：ID 最小（最先创建）的为被减对象 |
 
 - 视图仍是俯视：底面在点取点的水平面上，高度沿 +Z（负数沿 −Z），键入数值或点取两点距离
@@ -152,9 +156,23 @@ SM_API → SMLib
 - 结果用当前图层、线宽，经 `BatchAddCommand` 一步撤销
 - 测试：`tests/Solid/SolidDrawingTests.cpp`（53 项：拟合、连接、网格、`.mcad` / JSON 往返、DWG / DXF 导出读回、截面、剖面、投影、隐藏线、撤销）
 
+### 第二批命令（M5）
+
+| 命令 | 别名 | 操作 |
+|---|---|---|
+| `Revolve` | REVOLVE、REV | 预选闭合对象 → 轴的两点（或 X / Y 键取世界 X / Y 轴）→ 角度（键入度数，按右手定则绕起点 → 端点；回车 / 右键为整圈）。轴放到轮廓所在的水平面上；原对象被替换 |
+| `Sweep` | SWEEP | 预选闭合对象 → 点选路径（直线、圆弧、圆、多段线含圆弧段、矩形，闭合或不闭合）。原对象（轮廓）被替换，路径保留 |
+| `FilletEdge` | FILLETEDGE | 点选同一个实体上的边（再点取消），键入数值改半径（默认 1，命令之间保留），回车 / 右键完成 |
+| `ChamferEdge` | CHAMFEREDGE | 同上，倒角距离 |
+
+- **选边**（`SolidEdgeTool`）：光标下的实体经 `GetWorldBody` 取世界坐标下的内核实体、再取 `Edges()`（编号对这个实体有效，运算也在它上面做，结果的变换为单位矩阵、留在原位）；离光标 8 像素内的边按“距离（按像素取整）→ 投影成一点的竖直边 → 高的在前”排序，光标处高亮第一条。俯视图里重叠的边（长方体的顶边与底边）按 **Tab** 切换；竖直边在角点处点选。桌面版绘图区在有进行中的工具时把 Tab 交给工具（`MainFrame::OnViewportKey`），工具不处理时仍用于切换焦点
+- 旋转、扫掠、拉伸共用 `SolidToolDetail::ReplaceProfiles`（逐个轮廓生成、替换原对象、一步撤销）；圆角 / 倒角经 `GeometryEditCommand` 一步替换。半径过大等内核失败时提示且不改动
+- 菜单“建模”：拉伸、旋转、扫掠一组，圆角边、倒角边一组。命令 ID `solid.revolve` / `solid.sweep` / `solid.filletedge` / `solid.chamferedge`
+- 测试：`SolidToolTests` 增至 66 项（旋转：两点轴、X / Y 键、角度、轴穿过轮廓；扫掠：直线、折线、圆弧、带圆弧段的多段线、圆路径；圆角 / 倒角：重叠边取高的、角点取竖直边、Tab 切到底边、取消选择、两条边、移动过的实体、半径过大）；桌面版自测经真实命令行与按键验证旋转、圆角边（含 Tab）与撤销
+
 ### 之后
 
-- 第二批：旋转、扫掠、圆角、倒角（需要能选中实体上的边：拾取命中的边线折线带回 `EdgeId`）
+- 不等距倒角（两个距离）、变半径圆角；按面选边（选一个面的全部边）
 - 耗时运算：桌面版可交给单个后台工作线程（内核只能单线程），网页版同步执行，与打开图纸的做法一致。目前在界面线程同步执行
 
 ---
@@ -168,7 +186,7 @@ SM_API → SMLib
 | **M2** ✅ | `Solid3DEntity`：俯视线框显示、变换、拾取、捕捉、夹点、撤销、`.mcad` / JSON 读写；测试 `Solid3DEntityTests` | 测试覆盖实体与命令 |
 | **M3** ✅ | 第一批命令接入界面（`MainCommands.cpp`、`minicad_ui.json`），内核经 `AppPlatform` 注入；测试 `SolidToolTests` 与桌面版自测 | 桌面版里实际建模、布尔、撤销 |
 | **M4** ✅ | 截面（`SolidSection`）、平面投影（`Flatshot`）出二维图，拟合为直线 / 圆弧 / 圆；DWG / DXF 导出为多面网格；测试 `SolidDrawingTests` | 出图结果可标注、可导出 DWG |
-| M5 | 第二批命令：旋转、扫掠、圆角、倒角，选边 | |
+| **M5** ✅ | 第二批命令：旋转（`Revolve`）、扫掠（`Sweep`）、边圆角（`FilletEdge`）、边倒角（`ChamferEdge`），俯视图里选边（Tab 切换重叠的边）；内核增加 `Sweep`、`Chamfer` | 桌面版里实际旋转、扫掠、选边圆角 / 倒角、撤销 |
 | M6 | 三维视图（显示第二期） | |
 | — | 网页版评估：Emscripten 编译、异常、WASM 体积 | 决定网页版是否默认带 |
 

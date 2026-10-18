@@ -415,6 +415,28 @@ namespace MiniCAD
                 return nullptr;
             return std::make_unique<FlatshotTool>(std::move(ids), std::move(*env));
         });
+        RegisterTool("Revolve", [this]() -> std::unique_ptr<ITool> {        // 预选闭合对象
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<RevolveTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("Sweep", [this]() -> std::unique_ptr<ITool> {          // 预选闭合对象，再点选路径
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<SweepTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("FilletEdge", [this]() -> std::unique_ptr<ITool> {     // 自带点选边，无需预选
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<SolidEdgeTool>(SolidEdgeTool::Kind::Fillet, &m_solidFilletRadius, std::move(*env)) : nullptr;
+        });
+        RegisterTool("ChamferEdge", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<SolidEdgeTool>(SolidEdgeTool::Kind::Chamfer, &m_solidChamferDistance, std::move(*env)) : nullptr;
+        });
 
         // ── 快捷键绑定 ────────────────────────────────────────
         RegisterAlias("P",      "Previous");
@@ -454,6 +476,11 @@ namespace MiniCAD
         RegisterAlias("SEC",        "SolidSection");
         RegisterAlias("FLATSHOT",   "Flatshot");
         RegisterAlias("FSHOT",      "Flatshot");
+        RegisterAlias("REVOLVE",     "Revolve");
+        RegisterAlias("REV",         "Revolve");
+        RegisterAlias("SWEEP",       "Sweep");
+        RegisterAlias("FILLETEDGE",  "FilletEdge");
+        RegisterAlias("CHAMFEREDGE", "ChamferEdge");
         RegisterAlias("Z",      "Zoom");
         RegisterAlias("ZOOMALL", "ZoomAll");
         RegisterAlias("IM",     "Image");   // Image 是特例命令(非工具),全名也走别名表
@@ -749,7 +776,8 @@ namespace MiniCAD
         }
 
         if ((toolId == "Box" || toolId == "Cylinder" || toolId == "Sphere" || toolId == "Extrude"
-             || toolId == "SolidSection" || toolId == "Flatshot") && !m_solidKernel)
+             || toolId == "SolidSection" || toolId == "Flatshot" || toolId == "Revolve" || toolId == "Sweep"
+             || toolId == "FilletEdge" || toolId == "ChamferEdge") && !m_solidKernel)
         {
             m_commandLine.Echo(toolId + ": 三维建模不可用（此版本没有实体内核）");
             return;
@@ -1237,6 +1265,14 @@ namespace MiniCAD
     std::unique_ptr<Entity> SolidToolDetail::MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b)
     {
         return std::make_unique<LineEntity>(id, a, b);
+    }
+
+    std::optional<std::pair<Math::Point3, Math::Point3>> SolidToolDetail::LineEndpoints(const Entity& e)
+    {
+        if (!e.IsKindOf<LineEntity>())
+            return std::nullopt;
+        const auto& l = static_cast<const LineEntity&>(e).GetLine();
+        return std::make_pair(l.Start, l.End);
     }
 
     std::optional<SolidToolEnv> Editor::MakeSolidToolEnv()

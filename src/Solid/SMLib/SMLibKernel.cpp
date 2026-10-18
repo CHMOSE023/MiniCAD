@@ -87,8 +87,31 @@ namespace MiniCAD::Solid
             return crc ^ 0xFFFFFFFFu;
         }
 
-        // 按凸度把一段多段线转成 SMLib 曲线：直线段，或圆弧（SmApiCreateArc 在 z = 圆心 z 的水平面内逆时针生成）
-        SmApiStatus MakeSegment(const ProfileVertex& v0, const Math::Point3& p1, SmCurve*& out)
+        // 带凸度的一段圆弧（凸度约定见 ProfileVertex）：圆心、半径与逆时针的起止角（度，a0 < a1）。弦长为 0 时返回 false
+        struct BulgeArc { double Cx, Cy, R, A0, A1; };
+        bool ArcOf(const Math::Point3& p0, const Math::Point3& p1, double b, BulgeArc& arc)
+        {
+            // 圆心在弦中点的左法线方向上，偏移 h = chord·(1 − b²) / (4b)（b 为负、或 |b| > 1 时自然落到另一侧）
+            const double dx    = p1.x - p0.x, dy = p1.y - p0.y;
+            const double chord = std::hypot(dx, dy);
+            if (chord < 1e-12)
+                return false;
+            const double h = chord * (1.0 - b * b) / (4.0 * b);
+            arc.Cx = (p0.x + p1.x) * 0.5 - dy / chord * h;
+            arc.Cy = (p0.y + p1.y) * 0.5 + dx / chord * h;
+            arc.R  = std::hypot(p0.x - arc.Cx, p0.y - arc.Cy);
+            arc.A0 = std::atan2(p0.y - arc.Cy, p0.x - arc.Cx) * kDeg;
+            arc.A1 = std::atan2(p1.y - arc.Cy, p1.x - arc.Cx) * kDeg;
+            if (b < 0.0)
+                std::swap(arc.A0, arc.A1);   // 顺时针圆弧：取从终点到起点的逆时针圆弧，形状相同
+            while (arc.A1 <= arc.A0)
+                arc.A1 += 360.0;
+            return true;
+        }
+
+        // 按凸度把一段多段线转成 SMLib 曲线：直线段，或圆弧（SmApiCreateArc 在 z = 圆心 z 的水平面内逆时针生成）。
+        // keepDirection：曲线方向必须从 v0 到 p1（扫掠路径要首尾相接）；轮廓不要求
+        SmApiStatus MakeSegment(const ProfileVertex& v0, const Math::Point3& p1, SmCurve*& out, bool keepDirection = false)
         {
             out = nullptr;
             const Math::Point3& p0 = v0.Point;
@@ -100,27 +123,48 @@ namespace MiniCAD::Solid
                 return status;
             }
 
-            // 圆心在弦中点的左法线方向上，偏移 h = chord·(1 − b²) / (4b)（b 为负、或 |b| > 1 时自然落到另一侧）
-            const double b     = v0.Bulge;
-            const double dx    = p1.x - p0.x, dy = p1.y - p0.y;
-            const double chord = std::hypot(dx, dy);
-            if (chord < 1e-12)
+            BulgeArc a;
+            if (!ArcOf(p0, p1, v0.Bulge, a))
                 return SM_ERR_INVALID_INPUT;
-            const double h  = chord * (1.0 - b * b) / (4.0 * b);
-            const double cx = (p0.x + p1.x) * 0.5 - dy / chord * h;
-            const double cy = (p0.y + p1.y) * 0.5 + dx / chord * h;
-            const double r  = std::hypot(p0.x - cx, p0.y - cy);
-            double a0 = std::atan2(p0.y - cy, p0.x - cx) * kDeg;
-            double a1 = std::atan2(p1.y - cy, p1.x - cx) * kDeg;
-            if (b < 0.0)
-                std::swap(a0, a1);   // 顺时针圆弧：生成从终点到起点的逆时针圆弧，形状相同
-            while (a1 <= a0)
-                a1 += 360.0;
-
             SmBSplineCurve* arc = nullptr;
-            const SmApiStatus status = SmApiCreateArc(SmPoint3d(cx, cy, p0.z), r, a0, a1, arc);
+            const SmApiStatus status = SmApiCreateArc(SmPoint3d(a.Cx, a.Cy, p0.z), a.R, a.A0, a.A1, arc);
             out = arc;
+            if (status == SM_SUCCESS && arc && v0.Bulge < 0.0 && keepDirection)
+            {
+                SmExtent1d reversed;
+                if (arc->ReverseParameterization(arc->GetNaturalInterval(), reversed) != SM_SUCCESS)
+                    return SM_ERR;
+            }
             return status;
+        }
+
+        // 轮廓边界上的采样点（顶点与圆弧上每 5° 一点），用于判断轮廓在旋转轴的哪一侧
+        std::vector<Math::Point3> SampleProfile(const Profile& profile)
+        {
+            std::vector<Math::Point3> points;
+            auto sampleArc = [&](double cx, double cy, double z, double r, double a0, double a1) {
+                const int n = std::max(2, static_cast<int>(std::ceil((a1 - a0) / 5.0)));
+                for (int i = 0; i <= n; ++i)
+                {
+                    const double a = (a0 + (a1 - a0) * i / n) / kDeg;
+                    points.push_back({ cx + r * std::cos(a), cy + r * std::sin(a), z });
+                }
+            };
+            if (profile.IsCircle)
+            {
+                sampleArc(profile.Center.x, profile.Center.y, profile.Center.z, profile.Radius, 0.0, 360.0);
+                return points;
+            }
+            const auto& vs = profile.Vertices;
+            for (size_t i = 0; i < vs.size(); ++i)
+            {
+                const Math::Point3& p0 = vs[i].Point;
+                points.push_back(p0);
+                BulgeArc a;
+                if (std::abs(vs[i].Bulge) >= 1e-12 && ArcOf(p0, vs[(i + 1) % vs.size()].Point, vs[i].Bulge, a))
+                    sampleArc(a.Cx, a.Cy, p0.z, a.R, a.A0, a.A1);
+            }
+            return points;
         }
     }
 
@@ -198,9 +242,40 @@ namespace MiniCAD::Solid
             if (!MakeProfileCurves(profile, curves))
                 return nullptr;
 
+            // 轴在轮廓平面内时，轮廓必须整个在轴的一侧（可以贴着轴）：SMLib 对穿过轴的轮廓也会生成自相交的实体
+            const std::vector<Math::Point3> samples = SampleProfile(profile);
+            const double z0 = samples.front().z;
+            if (std::abs(axisDir.z) < 1e-9 * axisDir.Length() && std::abs(axisPoint.z - z0) < 1e-9 * (1.0 + std::abs(z0)))
+            {
+                const double len = std::hypot(axisDir.x, axisDir.y);
+                double lo = 0.0, hi = 0.0, size = 0.0;
+                for (const auto& p : samples)
+                {
+                    const double side = (axisDir.x * (p.y - axisPoint.y) - axisDir.y * (p.x - axisPoint.x)) / len;
+                    lo   = std::min(lo, side);
+                    hi   = std::max(hi, side);
+                    size = std::max(size, std::abs(side));
+                }
+                if (lo < -1e-9 * size && hi > 1e-9 * size)
+                    return Fail("Revolve: 旋转轴穿过轮廓");
+            }
+
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateRotationalSweep(curves, ToSm(axisPoint), ToSm(axisDir), angleDeg, TRUE, raw);
             return Wrap(status, raw, "SmApiCreateRotationalSweep");
+        }
+
+        BodyPtr Sweep(const Profile& profile, const SweepPath& path) override
+        {
+            Begin();
+            SmTArray<SmCurve*> curves, pathCurves;
+            SmObjsDelete<SmCurve*> cleanup(&curves), cleanupPath(&pathCurves);   // 只读，不接管
+            if (!MakeProfileCurves(profile, curves) || !MakePathCurves(path, pathCurves))
+                return nullptr;
+
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateSweepAlongPlanarPath(curves, pathCurves, TRUE /* 轮廓中心对准路径起点 */, 3 /* 两端封口 */, raw);
+            return Wrap(status, raw, "SmApiCreateSweepAlongPlanarPath");
         }
 
         // ── 修改 ─────────────────────────────────────────────────────
@@ -232,29 +307,12 @@ namespace MiniCAD::Solid
 
         BodyPtr Fillet(const BodyPtr& body, std::span<const int> edgeIds, double radius) override
         {
-            Begin();
-            if (edgeIds.empty() || !(radius > 0.0))
-                return Fail("Fillet: 没有边或半径不为正");
-            BrepPtr copy = CopyOf(body);
-            if (!copy)
-                return nullptr;
+            return BlendEdges(body, edgeIds, radius, 1 /* 圆形截面 */, "Fillet");
+        }
 
-            // 编号 = SmApiGetEdges 的顺序；深拷贝保持顺序，因此在副本上按同一编号取边
-            SmTArray<SmEdge*> all;
-            if (const SmApiStatus status = SmApiGetEdges(copy.get(), all); status != SM_SUCCESS)
-                return Fail("SmApiGetEdges", status);
-            SmTArray<SmEdge*> edges;
-            for (int id : edgeIds)
-            {
-                if (id < 0 || static_cast<ULONG>(id) >= all.GetSize())
-                    return Fail("Fillet: 边编号超出范围");
-                edges.Add(all[static_cast<ULONG>(id)]);
-            }
-
-            const SmApiStatus status = SmApiFilletEdges(copy.get(), edges, radius, 1 /* 圆形截面 */, 1 /* G1 */, 1.0);
-            if (status != SM_SUCCESS)
-                return Fail("SmApiFilletEdges", status);
-            return Finish(std::move(copy));
+        BodyPtr Chamfer(const BodyPtr& body, std::span<const int> edgeIds, double distance) override
+        {
+            return BlendEdges(body, edgeIds, distance, 0 /* 平面截面 */, "Chamfer");
         }
 
         BodyPtr Transform(const BodyPtr& body, const Math::Mat4& m) override
@@ -602,6 +660,58 @@ namespace MiniCAD::Solid
             return copy;
         }
 
+        // 圆角 / 倒角：截面类型 0 = 平面，1 = 圆形；半径为滚球半径
+        BodyPtr BlendEdges(const BodyPtr& body, std::span<const int> edgeIds, double radius, ULONG xsectType, const char* what)
+        {
+            Begin();
+            if (edgeIds.empty() || !(radius > 0.0))
+                return Fail(std::string(what) + ": 没有边或半径不为正");
+            BrepPtr copy = CopyOf(body);
+            if (!copy)
+                return nullptr;
+
+            // 编号 = SmApiGetEdges 的顺序；深拷贝保持顺序，因此在副本上按同一编号取边
+            SmTArray<SmEdge*> all;
+            if (const SmApiStatus status = SmApiGetEdges(copy.get(), all); status != SM_SUCCESS)
+                return Fail("SmApiGetEdges", status);
+            SmTArray<SmEdge*> edges;
+            for (int id : edgeIds)
+            {
+                if (id < 0 || static_cast<ULONG>(id) >= all.GetSize())
+                    return Fail(std::string(what) + ": 边编号超出范围");
+                edges.Add(all[static_cast<ULONG>(id)]);
+            }
+
+            const SmApiStatus status = SmApiFilletEdges(copy.get(), edges, radius, xsectType, 1 /* G1 */, 1.0);
+            if (status != SM_SUCCESS)
+                return Fail("SmApiFilletEdges", status);
+            return Finish(std::move(copy));
+        }
+
+        bool MakePathCurves(const SweepPath& path, SmTArray<SmCurve*>& curves)
+        {
+            const auto& vs = path.Vertices;
+            const size_t segments = path.Closed ? vs.size() : (vs.empty() ? 0 : vs.size() - 1);
+            if (segments == 0 || (path.Closed && vs.size() == 2 && std::abs(vs[0].Bulge) < 1e-12 && std::abs(vs[1].Bulge) < 1e-12))
+            {
+                Fail("路径: 顶点太少");
+                return false;
+            }
+            for (size_t i = 0; i < segments; ++i)
+            {
+                SmCurve* segment = nullptr;
+                const SmApiStatus status = MakeSegment(vs[i], vs[(i + 1) % vs.size()].Point, segment, true);
+                if (status != SM_SUCCESS || !segment)
+                {
+                    delete segment;
+                    Fail("路径: 生成第 " + std::to_string(i) + " 段曲线失败", status);
+                    return false;
+                }
+                curves.Add(segment);
+            }
+            return true;
+        }
+
         bool MakeProfileCurves(const Profile& profile, SmTArray<SmCurve*>& curves)
         {
             if (profile.IsCircle)
@@ -644,7 +754,7 @@ namespace MiniCAD::Solid
             return true;
         }
 
-        void Fail(const std::string& what, SmApiStatus status) { Fail(what.c_str(), status); }
+        std::nullptr_t Fail(const std::string& what, SmApiStatus status = SM_ERR) { return Fail(what.c_str(), status); }
 
         static void SampleCurves(const SmTArray<SmCurve*>& curves, Polylines& out)
         {
