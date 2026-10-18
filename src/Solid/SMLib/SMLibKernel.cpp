@@ -22,7 +22,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <numbers>
+#include <tuple>
 #include <unordered_map>
 
 namespace MiniCAD::Solid
@@ -355,20 +357,18 @@ namespace MiniCAD::Solid
                 return mesh;
             }
 
-            // 输出顶点按 (网格顶点, 所属原始面) 拆分：面内平滑、面与面之间保持锐边。
+            // 输出顶点按 (位置, 所属原始面) 拆分：面内平滑、面与面之间保持锐边。
+            // 按位置而不是按网格顶点对象合并：SMLib 给同一个面里相邻的网格面片（如圆柱侧面的各个四边形）
+            // 各自建顶点对象，按对象合并时法线只在每个面片内平均，曲面看起来是一块块的平面。
             // 法线取顶点周围三角形（逆时针朝外）法线的面积加权平均。
             // 不用 SmPolyVertex 自带的面 / 法线表：实测其中的法线与面对不上（长方体的顶点拿到相邻面的法线）
-            struct Key
+            struct Polygon
             {
-                const SmPolyVertex* Vertex;
-                const void*         Face;   // 原始面；原始面已失效时用网格面本身（各三角形面片单独成面）
-                bool operator==(const Key&) const = default;
+                const void*            Face;   // 原始面；没有时用网格面本身（各面片单独成面）
+                std::vector<SmPoint3d> Points;
             };
-            struct KeyHash
-            {
-                size_t operator()(const Key& k) const { return std::hash<const void*>()(k.Vertex) * 31 ^ std::hash<const void*>()(k.Face); }
-            };
-            std::unordered_map<Key, uint32_t, KeyHash> indexOf;
+            std::vector<Polygon> polygons;
+            SmExtent3d extent;
 
             SmTArray<SmPolyFace*> faces;
             poly->GetPolyFaces(faces);
@@ -385,25 +385,39 @@ namespace MiniCAD::Solid
                 if (n < 3)
                     continue;
 
-                const SmFace* original = face->GetOKBackPtrs() ? face->GetOriginalFace() : nullptr;
-                const void*   faceKey  = original ? static_cast<const void*>(original) : static_cast<const void*>(face);
-                std::vector<uint32_t> polygon;
-                polygon.reserve(n);
+                // 原始面指针只当作标签用（SmPoly.h：回指无效时也可以当标签，只是不能解引用）
+                const SmFace* original = face->GetOriginalFace();
+                Polygon polygon{ original ? static_cast<const void*>(original) : static_cast<const void*>(face), {} };
+                polygon.Points.reserve(n);
                 for (ULONG e = 0; e < n; ++e)
                 {
-                    SmPolyVertex* v = loopEdges[e]->GetStartPolyVertex();
-                    auto [it, inserted] = indexOf.try_emplace(Key{ v, faceKey }, static_cast<uint32_t>(mesh.Positions.size()));
-                    if (inserted)
-                        mesh.Positions.push_back(ToPoint(v->GetPoint()));
-                    polygon.push_back(it->second);
+                    polygon.Points.push_back(loopEdges[e]->GetStartPolyVertex()->GetPoint());
+                    extent.AddPoint3d(polygon.Points.back());
                 }
+                polygons.push_back(std::move(polygon));
+            }
 
-                // 网格面一般是三角形；多边形按扇形拆分
-                for (size_t i = 1; i + 1 < polygon.size(); ++i)
+            const double tol = std::max(extent.GetSize().Length(), 1.0) * 1e-9;
+            using Key = std::tuple<long long, long long, long long, const void*>;
+            std::map<Key, uint32_t> indexOf;
+            for (const Polygon& polygon : polygons)
+            {
+                std::vector<uint32_t> ids;
+                ids.reserve(polygon.Points.size());
+                for (const SmPoint3d& p : polygon.Points)
                 {
-                    mesh.Indices.push_back(polygon[0]);
-                    mesh.Indices.push_back(polygon[i]);
-                    mesh.Indices.push_back(polygon[i + 1]);
+                    const Key key{ std::llround(p.x / tol), std::llround(p.y / tol), std::llround(p.z / tol), polygon.Face };
+                    auto [it, inserted] = indexOf.try_emplace(key, static_cast<uint32_t>(mesh.Positions.size()));
+                    if (inserted)
+                        mesh.Positions.push_back(ToPoint(p));
+                    ids.push_back(it->second);
+                }
+                // 网格面一般是三角形；多边形按扇形拆分
+                for (size_t i = 1; i + 1 < ids.size(); ++i)
+                {
+                    mesh.Indices.push_back(ids[0]);
+                    mesh.Indices.push_back(ids[i]);
+                    mesh.Indices.push_back(ids[i + 1]);
                 }
             }
 

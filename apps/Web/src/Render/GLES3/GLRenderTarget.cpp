@@ -16,6 +16,8 @@ namespace MiniCAD
         }
         if (!m_fbo)
             glGenFramebuffers(1, &m_fbo);
+        if (!m_depth)
+            glGenRenderbuffers(1, &m_depth);
         Resize(width, height);
     }
 
@@ -23,7 +25,7 @@ namespace MiniCAD
     {
         width  = std::max(width, 1);
         height = std::max(height, 1);
-        if (!m_texture || !m_fbo)
+        if (!m_texture || !m_fbo || !m_depth)
         {
             Create(width, height);
             return;
@@ -38,6 +40,10 @@ namespace MiniCAD
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_texture, 0);
+        glBindRenderbuffer(GL_RENDERBUFFER, m_depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
@@ -47,6 +53,9 @@ namespace MiniCAD
             glDeleteFramebuffers(1, &m_fbo);
         if (m_texture)
             glDeleteTextures(1, &m_texture);
+        if (m_depth)
+            glDeleteRenderbuffers(1, &m_depth);
+        m_depth   = 0;
         m_fbo     = 0;
         m_texture = 0;
         m_width   = 0;

@@ -268,6 +268,8 @@ namespace MiniCAD
             CameraState cam = m_cameraState;
             Ser::Value(s, "target", cam.Target);
             s.Value("zoom", cam.Zoom);
+            s.Value("azimuth", cam.Azimuth);       // 视图方向（M6）；旧文件没有时为俯视
+            s.Value("elevation", cam.Elevation);
             s.EndObject();
         }
 
@@ -286,6 +288,11 @@ namespace MiniCAD
         {
             Ser::Value(s, "target", m_cameraState.Target);
             s.Value("zoom", m_cameraState.Zoom);
+            if (s.Has("azimuth") && s.Has("elevation"))
+            {
+                s.Value("azimuth", m_cameraState.Azimuth);
+                s.Value("elevation", m_cameraState.Elevation);
+            }
             s.EndObject();
         }
 

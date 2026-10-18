@@ -6,6 +6,7 @@
 #include "Render/VertexTypes.hpp"
 #include "Render/GlyphInstancing.hpp"
 #include "Render/ImageDraw.hpp"
+#include "Core/GeomKernel/AABB.hpp"
 namespace MiniCAD
 {
     struct DragRect
@@ -69,6 +70,14 @@ namespace MiniCAD
         std::span<const Vertex_P3_C4>    SceneDyn;
         std::span<const Vertex_P3_C4>    SceneDynFill;
         uint64_t                         SceneDynVersion = 0;
+        // 三维实体随视图变化的部分（M6）：着色面（已按视线方向算好明暗的三角形，画在填充之前）
+        // 与轮廓线（画在场景线之后）；视线方向、视觉样式或场景变化时重建，共用一个版本号
+        std::span<const Vertex_P3_C4>    Shaded;
+        std::span<const Vertex_P3_C4>    Silhouettes;
+        uint64_t                         ShadedVersion = 0;
+        // 场景范围（可见实体的包围盒）：三维视图按它设置深度范围；为空时按相机缩放估计
+        AABB                             SceneBounds = AABB::Empty();
+
         // 场景文字的字形实例（按网格排序，版本同 SceneVersion）与字形网格库
         std::span<const GlyphInstance>   Glyphs;
         std::span<const GlyphBatch>      GlyphBatches;

@@ -5,7 +5,7 @@
 
 namespace MiniCAD
 {
-    // OpenGL ES 3 / WebGL2 离屏渲染目标：帧缓冲 + RGBA8 颜色纹理，与 D3D11RenderTarget 对应。
+    // OpenGL ES 3 / WebGL2 离屏渲染目标：帧缓冲 + RGBA8 颜色纹理 + 深度渲染缓冲（M6），与 D3D11RenderTarget 对应。
     // 原生句柄按值放在指针里（不是指向句柄的指针）：
     //   GetNativeHandle()         → 帧缓冲名
     //   GetNativeShaderResource() → 颜色纹理名（界面层把视口画面当作纹理显示）
@@ -34,6 +34,7 @@ namespace MiniCAD
     private:
         GLuint m_fbo     = 0;
         GLuint m_texture = 0;
+        GLuint m_depth   = 0;
         int    m_width   = 0;
         int    m_height  = 0;
     };

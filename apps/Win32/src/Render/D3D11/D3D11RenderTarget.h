@@ -19,11 +19,15 @@ namespace MiniCAD
         virtual void* GetNativeHandle()         const override { return m_rtv.Get(); }
         virtual void* GetNativeShaderResource() const override { return m_srv.Get(); }
         ID3D11Texture2D* GetTexture() const { return m_texture.Get(); }
+        // 深度缓冲（M6：三维视图里着色面写深度、线按深度测试；二维显示不写深度，测试总能通过）
+        ID3D11DepthStencilView* GetDepthView() const { return m_dsv.Get(); }
 
     private:
         Microsoft::WRL::ComPtr<ID3D11Texture2D>          m_texture;
         Microsoft::WRL::ComPtr<ID3D11RenderTargetView>   m_rtv;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srv;    
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>          m_depth;
+        Microsoft::WRL::ComPtr<ID3D11DepthStencilView>   m_dsv;
 
         ID3D11Device*                                    m_device = nullptr;
         int m_width = 0;

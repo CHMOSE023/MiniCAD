@@ -59,6 +59,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **渲染**（`src/Viewport/` + 平台渲染器）
 - `Viewport`：相机、收集顶点、分两层绘制（不常变的场景画进缓存层，每帧只叠加光标、夹点等动态内容）
 - 渲染器实现 `IRenderer`：`D3D11Renderer`（桌面）、`GLES3Renderer`（网页）。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
+- 三维视图（M6，见 `docs/Solid/PLAN.md` 第 6 节）：相机有视线方向（`CameraState::Azimuth` / `Elevation`），俯视（`Camera::IsPlanView`）时与二维完全相同；三维视图按场景范围设置深度，着色面写深度、线只测试（渲染目标都带深度缓冲）。着色面与轮廓线由 `Editor` 在 CPU 上随视线方向生成（`ViewState::Shaded` / `Silhouettes`），明暗写在顶点颜色里，不需要新着色器。标准视图命令 `ViewTop` / `ViewSWIso` 等、Shift + 中键环绕、视觉样式 `Shade` / `Wireframe`；绘图区右上角的视图方块 `GUI/ViewCube`（点面 / 棱 / 角或东南西北切换视图、拖动环绕；右键菜单或命令 `NAVVCUBE` 隐藏 / 显示，开关存进 `layout.json`）
 - 背景深浅（`IRenderer::SetLightBackground`，7 号色语义）：浅色背景时纯白顶点画成纯黑、深色背景时纯黑画成纯白，在两个渲染器的顶点着色器里处理（光栅图像不变）。`MainFrame::RenderFrame` 每帧按界面主题设置 `Viewport::SetLightBackground`；图层颜色块在 `LayerPanels.cpp` 的 `SwatchColor` 里做同样的反转
 
 **序列化**（`src/Serialization/`）
@@ -83,7 +84,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
-- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏
+- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏、视图方块
 - `Host/Win32Window`（桌面）：无边框窗口（`MiniGUI::Win32Frame`）、D3D11 设备与交换链、消息循环、监视界面描述文件；另存为用系统对话框，"保存类型"里区分 2018 与 2013/2014
 - `Host/WebApp`（网页）：`WebHost` 负责画布、WebGL2、DPI（`ResizeObserver` + devicePixelRatio 监听）、`requestAnimationFrame` 按需刷新；打开文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本
 
@@ -139,7 +140,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
-- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
+- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest

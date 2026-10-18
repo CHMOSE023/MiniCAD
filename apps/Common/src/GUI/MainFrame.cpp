@@ -826,6 +826,13 @@ namespace MiniCAD
         {
             Editor& editor = m_docManager.GetEditor();
             editor.Render();
+            // 视图方块跟着视线方向（环绕、标准视图、切换文档）
+            if (const CameraState cam = vp.GetCamera().GetState(); m_viewCube && (cam.Azimuth != m_cubeAzimuth || cam.Elevation != m_cubeElevation))
+            {
+                m_cubeAzimuth   = cam.Azimuth;
+                m_cubeElevation = cam.Elevation;
+                m_viewCube->Invalidate();
+            }
             IRenderer&      renderer = m_platform->GetRenderer();
             const ViewState vs       = editor.BuildViewState();
             vp.Render(renderer, target, vs);

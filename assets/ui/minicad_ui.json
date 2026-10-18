@@ -16,6 +16,11 @@
     "solid.cylinder": { "tooltip": "三维圆柱体：指定底面中心、半径和高度" },
     "solid.sphere": { "tooltip": "三维球体：指定中心和半径" },
     "solid.extrude": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定高度，拉伸为三维实体" },
+    "view.top": { "tooltip": "俯视（平面视图）：二维绘图的默认视图；三维视图里按住 Shift 拖动中键环绕" },
+    "view.swiso": { "tooltip": "西南等轴测：从左前上方看；按住 Shift 拖动中键可继续环绕" },
+    "view.style.shaded": { "tooltip": "画出三维实体的面，三维视图里被挡住的边不显示" },
+    "view.style.wireframe": { "tooltip": "只画边（线框）" },
+    "view.viewcube": { "tooltip": "绘图区左上角的视图方块：点面、棱、角切换视图，拖动环绕" },
     "solid.revolve": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定旋转轴和角度，旋转为三维实体" },
     "solid.sweep": { "tooltip": "先选择闭合的圆、多段线或矩形，再选择路径（直线、圆弧、圆、多段线），沿路径扫掠为三维实体" },
     "solid.filletedge": { "tooltip": "点选三维实体的边倒圆角，键入数值改半径，回车完成（Tab 切换重叠的边）" },
@@ -44,7 +49,18 @@
         "view.grid",
         "view.axis",
         "view.gizmo",
+        "view.viewcube",
         "view.thinLines",
+        "-",
+        {
+          "title": "三维视图",
+          "items": [ "view.top", "view.bottom", "view.left", "view.right", "view.front", "view.back", "-",
+                     "view.swiso", "view.seiso", "view.neiso", "view.nwiso" ]
+        },
+        {
+          "title": "视觉样式",
+          "items": [ "view.style.wireframe", "view.style.shaded" ]
+        },
         "-",
         {
           "title": "绘图辅助",

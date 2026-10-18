@@ -14,6 +14,7 @@
 #include "Widgets/DockSpace.h"
 #include "Widgets/Label.h"
 #include "Widgets/Menu.h"
+#include "Widgets/CommandUI.h"
 #include "Widgets/NumberBox.h"
 #include "Widgets/Panel.h"
 #include "Widgets/PropertyGrid.h"
@@ -22,6 +23,7 @@
 #include "Widgets/TitleBar.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
+#include "GUI/ViewCube.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -178,6 +180,46 @@ namespace MiniCAD
         vp->SetOnPointer([this](const ViewportPointerEvent& e) { OnViewportPointer(e); });
         vp->SetOnKey    ([this](const KeyEvent& e) { return OnViewportKey(e); });
         m_viewport = vp;
+
+        // 视图方块（M6）：叠在视口右上角
+        ViewCube::Callbacks cubeCallbacks;
+        cubeCallbacks.camera  = [this]() -> const Camera* { return m_docManager.GetActive() ? &m_docManager.GetViewport().GetCamera() : nullptr; };
+        cubeCallbacks.setView = [this](double az, double el)
+        {
+            m_docManager.GetEditor().SetViewDirection(az, el);
+            m_viewport->RequestRender();
+            StateChanged();
+        };
+        cubeCallbacks.orbit = [this](double dx, double dy)
+        {
+            m_docManager.GetViewport().GetCamera().Orbit(dx, dy);
+            m_viewport->RequestRender();
+        };
+        auto* cube = vp->AddChild<ViewCube>(std::move(cubeCallbacks));
+        LayoutStyle cs;
+        cs.position = PositionType::Absolute;
+        cs.right    = 6.0f;
+        cs.top      = 6.0f;
+        cs.width    = 140.0f;
+        cs.height   = 140.0f;
+        cube->SetLayoutStyle(cs);
+        cube->SetVisible(m_viewCubeVisible);
+        // 右键：常用视图与隐藏（隐藏后经“视图 > 显示视图方块”或命令 NAVVCUBE 再显示）
+        cube->SetContextMenuHandler([this, cube](Vec2 pos)
+        {
+            std::vector<MenuItem> items = {
+                CommandMenuItem(m_commands, "view.top"),   CommandMenuItem(m_commands, "view.front"),
+                CommandMenuItem(m_commands, "view.right"), CommandMenuItem(m_commands, "view.swiso"),
+                MenuItem::Separator(),
+                MenuItem("隐藏视图方块(&H)", [this] { SetViewCubeVisible(false); }),
+            };
+            auto popup = std::make_unique<MenuPopup>(std::move(items));
+            popup->SetAnchor(Rect{ pos.x, pos.y, pos.x, pos.y }, PopupPlacement::Below);
+            popup->SetOwner(cube);
+            m_ui->OpenPopup(std::move(popup));
+            return true;
+        });
+        m_viewCube = cube;
 
         // ── 没有文档时的提示 ─────────────────────────────────────
         auto* hint = area->AddChild<Node>();
@@ -621,6 +663,9 @@ namespace MiniCAD
             LOG_WARN("用户布局文件无法解析，使用默认布局：%s", err.ToString().c_str());
             return;
         }
+        m_viewCubeVisible = saved["viewCube"].AsBool(true);
+        if (m_viewCube)
+            m_viewCube->SetVisible(m_viewCubeVisible);
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
         const JsonValue& known = saved["panels"];
         for (const std::string& id : dock->GetPanelIds())
@@ -646,6 +691,14 @@ namespace MiniCAD
             LOG_WARN("用户布局：%s", w.c_str());
     }
 
+    void MainFrame::SetViewCubeVisible(bool visible)
+    {
+        m_viewCubeVisible = visible;
+        if (m_viewCube)
+            m_viewCube->SetVisible(visible);
+        SaveUserLayout();
+    }
+
     void MainFrame::SaveUserLayout()
     {
         using namespace MiniGUI;
@@ -657,6 +710,7 @@ namespace MiniCAD
         JsonValue root = JsonValue::MakeObject();
         root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));
         root.Set("dock", dock->SaveLayout());
+        root.Set("viewCube", JsonValue(m_viewCubeVisible));
         JsonValue panels = JsonValue::MakeArray();      // 保存时已有的面板：之后新增的面板据此识别
         for (const std::string& id : dock->GetPanelIds())
             panels.Push(id);

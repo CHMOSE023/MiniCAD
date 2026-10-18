@@ -33,6 +33,9 @@
 #include "Widgets/TitleBar.h"
 #include "Style/Theme.hpp"
 #include "Widgets/ViewportHost.h"
+#include "GUI/ViewCube.h"
+#include "D3D11/D3D11RenderTarget.h"
+#include <wrl/client.h>
 #include "Widgets/UiLayout.h"
 #include <psapi.h>
 #include <shellapi.h>
@@ -48,6 +51,115 @@
 
 namespace MiniCAD
 {
+    namespace
+    {
+        // 视口渲染目标读回 CPU（RGBA8），用于检查三维视图的显示（M6）
+        struct ViewportPixels
+        {
+            int W = 0, H = 0;
+            std::vector<uint8_t> Rgba;
+            const uint8_t* At(int x, int y) const { return &Rgba[(static_cast<size_t>(y) * W + x) * 4]; }
+            bool Inside(int x, int y) const { return x >= 0 && y >= 0 && x < W && y < H; }
+        };
+
+        ViewportPixels ReadViewport(IRenderer& renderer, IRenderTarget& target)
+        {
+            ViewportPixels out;
+            auto* device  = static_cast<ID3D11Device*>(renderer.GetNativeDevice());
+            auto* texture = static_cast<D3D11RenderTarget&>(target).GetTexture();
+            if (!device || !texture)
+                return out;
+            D3D11_TEXTURE2D_DESC desc;
+            texture->GetDesc(&desc);
+            desc.Usage          = D3D11_USAGE_STAGING;
+            desc.BindFlags      = 0;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            desc.MiscFlags      = 0;
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+            Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+            if (FAILED(device->CreateTexture2D(&desc, nullptr, &staging)))
+                return out;
+            device->GetImmediateContext(&context);
+            context->CopyResource(staging.Get(), texture);
+            D3D11_MAPPED_SUBRESOURCE mapped;
+            if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
+                return out;
+            out.W = static_cast<int>(desc.Width);
+            out.H = static_cast<int>(desc.Height);
+            out.Rgba.resize(static_cast<size_t>(out.W) * out.H * 4);
+            for (int y = 0; y < out.H; ++y)
+                std::memcpy(&out.Rgba[static_cast<size_t>(y) * out.W * 4], static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch, out.W * 4);
+            context->Unmap(staging.Get(), 0);
+            return out;
+        }
+
+        // 整个窗口（含界面）截图：PrintWindow 取 DWM 合成后的内容
+        ViewportPixels CaptureWindow(HWND hwnd)
+        {
+            ViewportPixels out;
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            const int w = rc.right - rc.left, h = rc.bottom - rc.top;
+            if (w <= 0 || h <= 0)
+                return out;
+            HDC screen = GetDC(hwnd);
+            HDC mem    = CreateCompatibleDC(screen);
+            HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
+            HGDIOBJ old = SelectObject(mem, bmp);
+            PrintWindow(hwnd, mem, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+            BITMAPINFO bi{};
+            bi.bmiHeader.biSize        = sizeof(bi.bmiHeader);
+            bi.bmiHeader.biWidth       = w;
+            bi.bmiHeader.biHeight      = -h;   // 自上而下
+            bi.bmiHeader.biPlanes      = 1;
+            bi.bmiHeader.biBitCount    = 32;
+            bi.bmiHeader.biCompression = BI_RGB;
+            std::vector<uint8_t> bgra(static_cast<size_t>(w) * h * 4);
+            GetDIBits(mem, bmp, 0, h, bgra.data(), &bi, DIB_RGB_COLORS);
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+            DeleteDC(mem);
+            ReleaseDC(hwnd, screen);
+            out.W = w;
+            out.H = h;
+            out.Rgba.resize(bgra.size());
+            for (size_t i = 0; i < bgra.size(); i += 4)
+            {
+                out.Rgba[i] = bgra[i + 2]; out.Rgba[i + 1] = bgra[i + 1]; out.Rgba[i + 2] = bgra[i]; out.Rgba[i + 3] = 255;
+            }
+            return out;
+        }
+
+        // 24 位 BMP（看自测的画面用）
+        void SaveBmp(const ViewportPixels& px, const std::filesystem::path& path)
+        {
+            const int rowBytes = (px.W * 3 + 3) & ~3;
+            const uint32_t dataSize = static_cast<uint32_t>(rowBytes * px.H);
+            uint8_t header[54] = { 'B', 'M' };
+            auto put32 = [&](int at, uint32_t v) { for (int i = 0; i < 4; ++i) header[at + i] = static_cast<uint8_t>(v >> (8 * i)); };
+            put32(2, 54 + dataSize);
+            put32(10, 54);
+            put32(14, 40);
+            put32(18, static_cast<uint32_t>(px.W));
+            put32(22, static_cast<uint32_t>(px.H));
+            header[26] = 1;
+            header[28] = 24;
+            put32(34, dataSize);
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(header), sizeof(header));
+            std::vector<uint8_t> row(rowBytes, 0);
+            for (int y = px.H - 1; y >= 0; --y)
+            {
+                for (int x = 0; x < px.W; ++x)
+                {
+                    const uint8_t* c = px.At(x, y);
+                    row[x * 3] = c[2]; row[x * 3 + 1] = c[1]; row[x * 3 + 2] = c[0];
+                }
+                f.write(reinterpret_cast<const char*>(row.data()), rowBytes);
+            }
+        }
+    }
+
     // =========================================================
     // 自测：注入窗口消息，验证输入在下一帧（而不是下下帧）生效，以及主窗口的标题栏、多文档、图层
     // =========================================================
@@ -753,6 +865,128 @@ namespace MiniCAD
                 m_docManager.Undo();   // 旋转：矩形回来
                 m_docManager.Undo();   // 矩形
                 check(solids().size() == before && scene.GetEntity(rect) == nullptr, "撤销圆角、长方体、旋转、矩形：实体全部移除");
+
+                // M6：西南等轴测 + 着色，读回视口像素：面有颜色，被挡住的边看不见，前面的边看得见
+                RunCommandLine("BOX");
+                editor.SubmitPoint(Math::Point3(4000.0, 4000.0, 0.0));
+                editor.SubmitPoint(Math::Point3(4010.0, 4010.0, 0.0));
+                RunCommandLine("10");
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                RunCommandLine("CYL");                // 旁边一个圆柱：曲面的平滑着色（看截图）
+                editor.SubmitPoint(Math::Point3(4022.0, 4005.0, 0.0));
+                RunCommandLine("4");
+                RunCommandLine("12");
+                if (editor.IsActiveTool())
+                    SendKeyToEditor(MiniGUI::Key::Escape);
+                RunCommandLine("ViewSWIso");
+                camera.ZoomToBounds(AABB({ 3995.0, 3995.0, -5.0 }, { 4030.0, 4015.0, 15.0 }));
+                check(!camera.IsPlanView(), "ViewSWIso：切换到西南等轴测");
+                Viewport& view3D = m_docManager.GetViewport();
+                const bool gridWas = view3D.IsGridShown(), axisWas = view3D.IsAxisShown();
+                view3D.ShowGrid(true);   // 截图里看三维视图的网格与坐标轴
+                view3D.ShowAxis(true);
+                RenderFrame();
+                RenderFrame();
+                const ViewportPixels px = ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget());
+                SaveBmp(px, std::filesystem::temp_directory_path() / "minicad_selftest_3d.bmp");
+                SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_window.bmp");
+                view3D.ShowGrid(gridWas);
+                view3D.ShowAxis(axisWas);
+                const bool light = m_docManager.GetViewport().IsLightBackground();
+                auto isLine = [&](const uint8_t* c) { return light ? (c[0] < 40 && c[1] < 40 && c[2] < 40) : (c[0] > 245 && c[1] > 245 && c[2] > 245); };
+                auto lineNear = [&](const Math::Point3& w) {
+                    const auto sp = camera.WorldToScreen(w);
+                    for (int dy = -2; dy <= 2; ++dy)
+                        for (int dx = -2; dx <= 2; ++dx)
+                        {
+                            const int x = static_cast<int>(sp.x) + dx, y = static_cast<int>(sp.y) + dy;
+                            if (px.Inside(x, y) && isLine(px.At(x, y)))
+                                return true;
+                        }
+                    return false;
+                };
+                auto shadedAt = [&](const Math::Point3& w) {
+                    const auto sp = camera.WorldToScreen(w);
+                    const int x = static_cast<int>(sp.x), y = static_cast<int>(sp.y);
+                    if (!px.Inside(x, y))
+                        return false;
+                    const uint8_t* c = px.At(x, y);
+                    return c[3] > 200 && !isLine(c) && (c[0] + c[1] + c[2]) > 60;
+                };
+                // 采样点避开视口中央的十字光标
+                check(px.W > 0 && shadedAt({ 4008.0, 4003.0, 10.0 }) && shadedAt({ 4003.0, 4000.0, 3.0 }), "着色：等轴测里顶面、前面画出带明暗的面");
+                check(px.W > 0 && lineNear({ 4005.0, 4000.0, 0.0 }) && lineNear({ 4000.0, 4000.0, 5.0 }), "着色：前面的边画在面上，看得见");
+                check(px.W > 0 && !lineNear({ 4010.0, 4005.0, 0.0 }) && !lineNear({ 4005.0, 4010.0, 0.0 }), "着色：被实体挡住的底边看不见（深度测试）");
+                RunCommandLine("WIREFRAME");
+                RenderFrame();
+                const ViewportPixels wire = ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget());
+                {
+                    const auto sp = camera.WorldToScreen({ 4010.0, 4005.0, 0.0 });
+                    bool found = false;
+                    for (int dy = -2; dy <= 2 && !found; ++dy)
+                        for (int dx = -2; dx <= 2 && !found; ++dx)
+                        {
+                            const int x = static_cast<int>(sp.x) + dx, y = static_cast<int>(sp.y) + dy;
+                            found = wire.Inside(x, y) && isLine(wire.At(x, y));
+                        }
+                    check(found, "线框：被挡住的底边也画出来");
+                }
+                RunCommandLine("SHADE");
+                m_docManager.Undo();   // 视图
+                check(camera.IsPlanView(), "撤销视图：回到俯视");
+
+                // 视图方块：点“上”面靠前的棱 → 前上方 45°；再点“前”面中央 → 前视；拖动 → 环绕；撤销逐步回到俯视
+                if (auto* cube = static_cast<ViewCube*>(m_viewCube); cube && cube->IsVisible())
+                {
+                    m_ui->Update();
+                    const MiniGUI::Rect cb = cube->GetScreenBounds();
+                    check(cb.max.x > m_viewport->GetScreenBounds().Center().x, "视图方块在绘图区右上角");
+                    auto at = [&](const Math::Vec3& w) {
+                        const MiniGUI::Vec2 p = cube->Project(w);
+                        return MiniGUI::Vec2{ cb.min.x + p.x, cb.min.y + p.y };
+                    };
+                    auto click = [&](MiniGUI::Vec2 p) {
+                        m_ui->PointerMove(p, 0);
+                        m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                        m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                        RenderFrame();
+                    };
+                    click(at({ 0.0, -0.8, 1.0 }));
+                    check(std::abs(camera.GetAzimuth() + 90.0) < 1e-6 && std::abs(camera.GetElevation() - 45.0) < 1e-6,
+                          "视图方块：点顶面靠前的棱，切到前上方 45° 的视图");
+                    click(at({ 0.0, -1.0, 0.0 }));
+                    check(std::abs(camera.GetAzimuth() + 90.0) < 1e-6 && std::abs(camera.GetElevation()) < 1e-6, "视图方块：点“前”面中央，切到前视");
+                    const MiniGUI::Vec2 p0 = at({ 0.0, -1.0, 0.0 });
+                    m_ui->PointerMove(p0, 0);
+                    m_ui->PointerDown(p0, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerMove({ p0.x + 20.0f, p0.y }, 0);
+                    m_ui->PointerMove({ p0.x + 40.0f, p0.y }, 0);
+                    m_ui->PointerUp({ p0.x + 40.0f, p0.y }, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                    check(std::abs(camera.GetAzimuth() + 90.0) > 5.0 && std::abs(camera.GetElevation()) < 1e-6, "视图方块：拖动环绕（左右拖动改方位角）");
+                    // 点指南针的“东”：从东边看，仰角不变（此时为 0，即右视）
+                    click(at({ 2.5, 0.0, -1.1 }));
+                    check(std::abs(camera.GetAzimuth()) < 1e-6 && std::abs(camera.GetElevation()) < 1e-6, "视图方块：点指南针的“东”，从东边看（右视）");
+                    // 点角（上、前、右三面相交）：东南等轴测
+                    click(at({ 1.0, -0.85, 0.85 }));   // 右视里落在“右”面的左上角块
+                    check(std::abs(camera.GetAzimuth() + 45.0) < 1e-6 && std::abs(camera.GetElevation() - 35.26) < 0.01, "视图方块：点角块，切到东南等轴测");
+                    for (int i = 0; i < 4; ++i)
+                        m_docManager.Undo();
+                    check(camera.IsPlanView(), "视图方块：逐步撤销回到俯视");
+
+                    // 隐藏与显示：命令行 NAVVCUBE OFF / ON / 无选项切换，菜单命令 view.viewcube 切换
+                    RunCommandLine("NAVVCUBE OFF");
+                    check(!cube->IsVisible(), "视图方块：NAVVCUBE OFF 隐藏");
+                    m_commands.Execute("view.viewcube");
+                    check(cube->IsVisible() && m_commands.IsChecked("view.viewcube"), "视图方块：菜单“显示视图方块”重新显示（菜单项打勾）");
+                    RunCommandLine("navvcube");
+                    check(!cube->IsVisible() && !m_commands.IsChecked("view.viewcube"), "视图方块：NAVVCUBE 不带选项时切换");
+                    RunCommandLine("VIEWCUBE ON");
+                    check(cube->IsVisible(), "视图方块：VIEWCUBE ON 显示");
+                }
+                m_docManager.Undo();   // 圆柱
+                m_docManager.Undo();   // 长方体
                 camera.SetState(savedCamera);
             }
         }

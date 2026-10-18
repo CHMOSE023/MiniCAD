@@ -483,6 +483,16 @@ namespace MiniCAD
         RegisterAlias("CHAMFEREDGE", "ChamferEdge");
         RegisterAlias("Z",      "Zoom");
         RegisterAlias("ZOOMALL", "ZoomAll");
+        RegisterAlias("PLAN",      "ViewTop");     // 视图与视觉样式是特例命令(非工具),全名也走别名表
+        for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
+                                  "ViewSWIso", "ViewSEIso", "ViewNEIso", "ViewNWIso" })
+        {
+            std::string upper = view;
+            std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            RegisterAlias(upper, view);
+        }
+        RegisterAlias("SHADE",     "Shade");
+        RegisterAlias("WIREFRAME", "Wireframe");
         RegisterAlias("IM",     "Image");   // Image 是特例命令(非工具),全名也走别名表
         RegisterAlias("IMAGE",  "Image");
         RegisterAlias("C",      "Circle");
@@ -632,6 +642,9 @@ namespace MiniCAD
         names.push_back("SelectAll");   // 特例命令(非工具):全选
         names.push_back("Zoom");        // 特例命令(非工具):视图缩放（A 全部 / E 窗口）
         names.push_back("Explode");     // 特例命令(非工具):分解
+        for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
+                                  "ViewSWIso", "ViewSEIso", "ViewNEIso", "ViewNWIso", "Shade", "Wireframe" })
+            names.push_back(view);      // 特例命令(非工具):标准视图、视觉样式（M6）
         std::sort(names.begin(), names.end());
         return names;
     }
@@ -648,7 +661,7 @@ namespace MiniCAD
         }
         Camera& cam = m_viewport->GetCamera();
         const CameraState before = cam.GetState();
-        cam.ZoomToBounds(box.Min.x, box.Min.y, box.Max.x, box.Max.y);
+        cam.ZoomToBounds(box);   // 俯视时只按 XY；三维视图按视图方向投影
         const CameraState after = cam.GetState();
         if (undoable)
         {
@@ -765,6 +778,29 @@ namespace MiniCAD
         {
             m_commandLine.Echo("命令: ZOOM A");
             ZoomAll();
+            return;
+        }
+
+        // 标准视图与视觉样式（M6，特例命令）
+        static const std::pair<const char*, StandardView> kViews[] = {
+            { "ViewTop", StandardView::Top }, { "ViewBottom", StandardView::Bottom }, { "ViewFront", StandardView::Front },
+            { "ViewBack", StandardView::Back }, { "ViewLeft", StandardView::Left }, { "ViewRight", StandardView::Right },
+            { "ViewSWIso", StandardView::SWIso }, { "ViewSEIso", StandardView::SEIso }, { "ViewNEIso", StandardView::NEIso },
+            { "ViewNWIso", StandardView::NWIso } };
+        for (const auto& [name, view] : kViews)
+            if (toolId == name)
+            {
+                m_commandLine.Echo(std::string("命令: ") + name);
+                SetStandardView(view);
+                m_lastCommand = name;
+                return;
+            }
+        if (toolId == "Shade" || toolId == "Wireframe")
+        {
+            const bool shaded = toolId == "Shade";
+            SetVisualStyle(shaded ? VisualStyle::Shaded : VisualStyle::Wireframe);
+            m_commandLine.Echo(shaded ? "视觉样式：着色" : "视觉样式：线框");
+            m_lastCommand = toolId;
             return;
         }
 
@@ -1281,6 +1317,146 @@ namespace MiniCAD
             return std::nullopt;
         return SolidToolEnv{ m_doc->GetScene(), m_doc->GetCommandStack(), m_picking, m_overlay, *m_solidKernel,
                              [this](const std::string& text) { m_commandLine.Echo(text); } };
+    }
+
+    // ── 三维视图（M6）──────────────────────────────────────────────
+    void Editor::SetVisualStyle(VisualStyle style)
+    {
+        if (style == m_visualStyle)
+            return;
+        m_visualStyle = style;
+        m_shadedValid = false;   // 下一帧重建着色面
+    }
+
+    void Editor::SetStandardView(StandardView view)
+    {
+        if (!m_viewport)
+            return;
+        Camera probe = m_viewport->GetCamera();
+        probe.SetStandardView(view);
+        SetViewDirection(probe.GetAzimuth(), probe.GetElevation());
+    }
+
+    void Editor::SetViewDirection(double azimuthDeg, double elevationDeg)
+    {
+        if (!m_doc || !m_viewport)
+            return;
+        Camera& cam = m_viewport->GetCamera();
+        const CameraState before = cam.GetState();
+        cam.SetView(azimuthDeg, elevationDeg);
+        if (AABB box = AABB::Empty(); m_doc->GetScene().GetExtents(box))
+            cam.ZoomToBounds(box);
+        const CameraState after = cam.GetState();
+        cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
+        m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+    }
+
+    // 三维实体随视图变化的部分：着色面与轮廓线。场景重建、视线方向或视觉样式变化时重建，平移、缩放不重建。
+    // 着色：光源跟着相机（从视线的左上方照来），颜色 = 实体颜色 × (环境光 0.25 + 漫反射 0.55)；朝外的法线背对视线时翻过来
+    //（开放网格的背面）。亮度最高 0.8：边（实体颜色）画在面上看得清；纯白顶点在浅色背景下会被渲染器画成黑色（7 号色语义），
+    // 着色面也不应参与。
+    // 轮廓线：面内部的网格边两侧三角形一个朝向眼睛、一个背向眼睛（圆柱、球的外轮廓），两种视觉样式都画
+    void Editor::UpdateShadedVertices(bool sceneRebuilt)
+    {
+        const Camera& cam = m_viewport->GetCamera();
+        const Math::Vec3 f = cam.GetViewDir();
+        const bool viewChanged = (f - m_shadedViewDir).LengthSq() > 1e-18;
+        if (m_shadedValid && !sceneRebuilt && !viewChanged && m_shadedSceneVersion == m_sceneVersion)
+            return;
+
+        m_shadedVertices.clear();
+        m_silhouetteVertices.clear();
+        m_shadedViewDir      = f;
+        m_shadedSceneVersion = m_sceneVersion;
+        m_shadedValid        = true;
+        ++m_shadedVersion;
+
+        const bool shaded = m_visualStyle == VisualStyle::Shaded;
+        const Math::Vec3 r = cam.GetRight(), u = cam.GetUp();
+        const Math::Vec3 light = (-f * 0.75 + u * 0.55 - r * 0.35).Normalized();
+        auto dot = [](const Math::Vec3& a, const Math::Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+        auto toFloat3 = [](const Math::Point3& p) { return Math::Float3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) }; };
+
+        const Scene& scene = m_doc->GetScene();
+        const LayerManager& layers = scene.GetLayerManager();
+        std::vector<double> facing;
+        scene.ForEachObject([&](const Object& o)
+        {
+            if (!o.IsKindOf<Solid3DEntity>())
+                return;
+            const auto& solid = static_cast<const Solid3DEntity&>(o);
+            const auto& attr  = solid.GetAttr();
+            const Layer* layer = layers.GetLayer(attr.LayerId);
+            if (!attr.Visible || (layer && !layer->IsVisible()))
+                return;
+            const auto& mesh = solid.GetLocalMesh();
+            if (mesh.Empty())
+                return;
+            const Math::Color4 base = attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor()
+                                                                                          : static_cast<Math::Color4>(attr.Color);
+            const Math::Mat4& m = solid.GetTransform();
+
+            if (shaded)
+            {
+                const auto& normals = solid.GetLocalCornerNormals();
+                m_shadedVertices.reserve(m_shadedVertices.size() + mesh.Indices.size());
+                for (size_t c = 0; c < mesh.Indices.size(); ++c)
+                {
+                    const Math::Point3 p = m.TransformPoint(mesh.Positions[mesh.Indices[c]]);
+                    Math::Vec3 n = m.TransformVector(normals[c]).Normalized();
+                    if (dot(n, f) > 0.0)
+                        n = -n;
+                    const double k = 0.25 + 0.55 * std::max(0.0, dot(n, light));
+                    const Math::Float4 color{ static_cast<float>(base.r * k), static_cast<float>(base.g * k), static_cast<float>(base.b * k), 1.0f };
+                    m_shadedVertices.push_back({ toFloat3(p), color });
+                }
+            }
+
+            // 轮廓线：三角形朝向（世界坐标下的面法线与视线的点积）在面内部的边两侧变号
+            const auto& edges = solid.GetLocalSmoothEdges();
+            if (edges.empty())
+                return;
+            facing.assign(mesh.TriangleCount(), 0.0);
+            for (size_t t = 0; t < facing.size(); ++t)
+            {
+                const auto& a = mesh.Positions[mesh.Indices[t * 3]];
+                const Math::Vec3 e1 = mesh.Positions[mesh.Indices[t * 3 + 1]] - a;
+                const Math::Vec3 e2 = mesh.Positions[mesh.Indices[t * 3 + 2]] - a;
+                const Math::Vec3 n{ e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+                facing[t] = dot(m.TransformVector(n), f);
+            }
+            const VertexColor lineColor(Math::Float4{ static_cast<float>(base.r), static_cast<float>(base.g), static_cast<float>(base.b), 1.0f });
+            for (const auto& e : edges)
+                if ((facing[e.TriA] < 0.0) != (facing[e.TriB] < 0.0))
+                {
+                    m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.A])), lineColor });
+                    m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.B])), lineColor });
+                }
+        });
+
+        // 三角形从远到近排序：俯视时着色面不做深度测试（与二维内容一样按绘制顺序叠放），近的面要画在后面
+        if (m_shadedVertices.size() >= 6)
+        {
+            const size_t triCount = m_shadedVertices.size() / 3;
+            std::vector<std::pair<double, uint32_t>> order(triCount);
+            for (size_t t = 0; t < triCount; ++t)
+            {
+                double d = 0.0;
+                for (int i = 0; i < 3; ++i)
+                {
+                    const auto& p = m_shadedVertices[t * 3 + i].pos;
+                    d += p.x * f.x + p.y * f.y + p.z * f.z;
+                }
+                order[t] = { -d, static_cast<uint32_t>(t) };
+            }
+            std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<Vertex_P3_C4> sorted;
+            sorted.reserve(m_shadedVertices.size());
+            for (const auto& [key, t] : order)
+                for (int i = 0; i < 3; ++i)
+                    sorted.push_back(m_shadedVertices[t * 3 + i]);
+            m_shadedVertices.swap(sorted);
+        }
     }
 
     void Editor::SolidBoolean(BooleanOp op)
@@ -2120,6 +2296,13 @@ namespace MiniCAD
             return false;
         }
 
+        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift))
+        {
+            // Shift + 中键拖动：绕视图中心环绕（同 AutoCAD 的 3DORBIT）
+            m_viewport->GetCamera().Orbit(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+            return true;
+        }
+
         if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle))
         {
             m_viewport->Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
@@ -2469,6 +2652,7 @@ namespace MiniCAD
         m_picking.SyncIndex();
 
         bool sceneRebuilt = UpdateSceneVertices(worldPerPixel, zoomChanged);
+        UpdateShadedVertices(sceneRebuilt);
 
         // 场景或选择集变化时清预览、重建夹点（原先在场景重建路径内）
         if ((sceneRebuilt || selectionDirty) && !IsActiveTool() && !dragging)
@@ -3008,6 +3192,21 @@ namespace MiniCAD
         vs.SceneDyn        = m_sceneDynVertices;
         vs.SceneDynFill    = m_sceneDynFillVertices;
         vs.SceneDynVersion = m_sceneDynVersion;
+        vs.Shaded          = m_shadedVertices;
+        vs.Silhouettes     = m_silhouetteVertices;
+        vs.ShadedVersion   = m_shadedVersion;
+        if (!m_viewport->GetCamera().IsPlanView())
+        {
+            // 三维视图的深度范围：按场景版本缓存（全图遍历一次）
+            if (!m_sceneBoundsValid || m_sceneBoundsVersion != m_sceneVersion)
+            {
+                m_sceneBounds = AABB::Empty();
+                scene.GetExtents(m_sceneBounds);
+                m_sceneBoundsVersion = m_sceneVersion;
+                m_sceneBoundsValid   = true;
+            }
+            vs.SceneBounds = m_sceneBounds;
+        }
         vs.Glyphs          = m_glyphInstances;
         vs.GlyphBatches    = m_glyphBatches;
         vs.GlyphMeshes     = m_glyphLibrary.View();

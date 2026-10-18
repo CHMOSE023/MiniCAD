@@ -104,6 +104,94 @@ namespace MiniCAD
             return out;
         }
 
+        // 着色用的法线（M6）：每个三角形的每个角一条（与 Indices 一一对应），局部坐标、单位长度。
+        // 绕一个顶点的三角形按“同一个面内部的边”（EdgeFlags）连成光滑的扇区，扇区内取三角形法线的面积加权平均：
+        // 曲面上光滑过渡，棱边两侧保持锐利
+        static std::vector<Math::Vec3> BuildCornerNormals(const SurfaceMesh& mesh)
+        {
+            const size_t triCount = mesh.TriangleCount();
+            std::vector<Math::Vec3> faceNormals(triCount);
+            for (size_t t = 0; t < triCount; ++t)
+            {
+                const auto& a = mesh.Positions[mesh.Indices[t * 3]];
+                const Math::Vec3 u = mesh.Positions[mesh.Indices[t * 3 + 1]] - a;
+                const Math::Vec3 w = mesh.Positions[mesh.Indices[t * 3 + 2]] - a;
+                faceNormals[t] = { u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x };   // 长度 = 面积的两倍
+            }
+
+            // 并查集：元素为三角形的角 (t, i)，即 t * 3 + i
+            std::vector<uint32_t> parent(triCount * 3);
+            for (uint32_t i = 0; i < parent.size(); ++i)
+                parent[i] = i;
+            auto find = [&](uint32_t x) {
+                while (parent[x] != x)
+                    x = parent[x] = parent[parent[x]];
+                return x;
+            };
+            auto corner = [&](size_t t, uint32_t v) -> uint32_t {
+                for (uint32_t i = 0; i < 3; ++i)
+                    if (mesh.Indices[t * 3 + i] == v)
+                        return static_cast<uint32_t>(t * 3 + i);
+                return UINT32_MAX;
+            };
+            // 光滑的边（两侧三角形在同一个面内）：两端的角各自合并
+            std::map<std::pair<uint32_t, uint32_t>, size_t> firstUse;
+            for (size_t t = 0; t < triCount; ++t)
+                for (int i = 0; i < 3; ++i)
+                {
+                    if (t >= mesh.EdgeFlags.size() || !(mesh.EdgeFlags[t] & (1u << i)))
+                        continue;
+                    uint32_t a = mesh.Indices[t * 3 + i], b = mesh.Indices[t * 3 + (i + 1) % 3];
+                    const auto key = std::make_pair(std::min(a, b), std::max(a, b));
+                    auto [it, inserted] = firstUse.try_emplace(key, t);
+                    if (inserted || it->second == t)
+                        continue;
+                    for (uint32_t v : { a, b })
+                    {
+                        const uint32_t c0 = corner(it->second, v), c1 = corner(t, v);
+                        if (c0 != UINT32_MAX && c1 != UINT32_MAX)
+                            parent[find(c0)] = find(c1);
+                    }
+                }
+
+            std::vector<Math::Vec3> sum(parent.size());
+            for (uint32_t c = 0; c < parent.size(); ++c)
+                sum[find(c)] += faceNormals[c / 3];
+            std::vector<Math::Vec3> normals(parent.size());
+            for (uint32_t c = 0; c < parent.size(); ++c)
+            {
+                normals[c] = sum[find(c)].Normalized();
+                if (normals[c].LengthSq() < 0.5)
+                    normals[c] = faceNormals[c / 3].Normalized();
+            }
+            return normals;
+        }
+
+        // 同一个面内部的网格边（两侧三角形在同一个面里，见 EdgeFlags）：三维视图的轮廓线从这些边里找——
+        // 两侧三角形一个朝向眼睛、一个背向眼睛的就是轮廓线（M6）
+        struct SmoothEdge
+        {
+            uint32_t A, B;        // 两个端点（Positions 下标）
+            uint32_t TriA, TriB;  // 两侧的三角形
+        };
+        static std::vector<SmoothEdge> BuildSmoothEdges(const SurfaceMesh& mesh)
+        {
+            std::vector<SmoothEdge> out;
+            std::map<std::pair<uint32_t, uint32_t>, uint32_t> firstUse;
+            for (uint32_t t = 0; t < mesh.TriangleCount(); ++t)
+                for (int i = 0; i < 3; ++i)
+                {
+                    if (t >= mesh.EdgeFlags.size() || !(mesh.EdgeFlags[t] & (1u << i)))
+                        continue;
+                    const uint32_t a = mesh.Indices[t * 3 + i], b = mesh.Indices[t * 3 + (i + 1) % 3];
+                    const auto key = std::make_pair(std::min(a, b), std::max(a, b));
+                    auto [it, inserted] = firstUse.try_emplace(key, t);
+                    if (!inserted && it->second != t)
+                        out.push_back({ key.first, key.second, it->second, t });
+                }
+            return out;
+        }
+
         // 由内核实体创建：保存内核数据并离散出线框。失败返回空（原因见 kernel.LastError()）
         static std::unique_ptr<Solid3DEntity> Create(ObjectID id, Solid::ISolidKernel& kernel, const Solid::BodyPtr& body,
                                                      const Math::Mat4& transform = Math::Mat4::Identity())
@@ -140,6 +228,23 @@ namespace MiniCAD
         const Wire&                 GetWorldWire() const { return m_worldWire; }
         const AABB&                 GetLocalBounds() const { return m_data->LocalBounds; }   // 可能为空（旧数据）
         const SurfaceMesh&          GetLocalMesh()   const { return m_data->Mesh; }          // 可能为空（旧数据）
+        // 面内部的网格边（见 BuildSmoothEdges），第一次调用时求出，克隆之间共享
+        const std::vector<SmoothEdge>& GetLocalSmoothEdges() const
+        {
+            if (!m_data->SmoothEdgesBuilt)
+            {
+                m_data->SmoothEdges      = BuildSmoothEdges(m_data->Mesh);
+                m_data->SmoothEdgesBuilt = true;
+            }
+            return m_data->SmoothEdges;
+        }
+        // 网格各三角形角的法线（局部坐标，见 BuildCornerNormals），第一次调用时求出，克隆之间共享
+        const std::vector<Math::Vec3>& GetLocalCornerNormals() const
+        {
+            if (m_data->CornerNormals.size() != m_data->Mesh.Indices.size())
+                m_data->CornerNormals = BuildCornerNormals(m_data->Mesh);
+            return m_data->CornerNormals;
+        }
 
         const Math::Mat4& GetTransform() const { return m_transform; }
         void SetTransform(const Math::Mat4& m)
@@ -227,6 +332,9 @@ namespace MiniCAD
             AABB                   LocalBounds = AABB::Empty();
             SurfaceMesh            Mesh;
             mutable Solid::BodyPtr Body;
+            mutable std::vector<Math::Vec3> CornerNormals;   // 懒求出，见 GetLocalCornerNormals
+            mutable std::vector<SmoothEdge> SmoothEdges;     // 懒求出，见 GetLocalSmoothEdges
+            mutable bool                    SmoothEdgesBuilt = false;
         };
 
         Solid3DEntity(ObjectID id, std::shared_ptr<Data> data, const Math::Mat4& transform)

@@ -193,6 +193,14 @@ namespace MiniCAD
     {
         AABB b = AABB::Empty();
         auto& cam = m_viewport->GetCamera();
+        constexpr double inf = std::numeric_limits<double>::infinity();
+        if (!cam.IsPlanView())
+        {
+            // 三维视图：屏幕上的一点对应一条视线，世界 XY 网格筛不出候选，全部交给精确测试（在屏幕空间进行）
+            b.Min = { -inf, -inf, -inf };
+            b.Max = {  inf,  inf,  inf };
+            return b;
+        }
 
         auto add = [&](double sx, double sy)
         {
@@ -204,7 +212,6 @@ namespace MiniCAD
         add(x0, y0); add(x1, y0); add(x1, y1); add(x0, y1);
 
         // z 不参与 XY 网格；置为全范围，避免实体 z 与查询 z 不一致而误剔除
-        constexpr double inf = std::numeric_limits<double>::infinity();
         b.Min.z = -inf;
         b.Max.z =  inf;
         return b;
@@ -576,6 +583,31 @@ namespace MiniCAD
                 if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
                 {
                     const PickGeometry& geom = GetPickGeometry(obj);
+
+                    if (!camera.IsPlanView())
+                    {
+                        // 三维视图：世界 XY 距离不再对应屏幕距离，逐点投影到屏幕求像素距离
+                        double minD = std::numeric_limits<double>::max();
+                        for (const auto& seg : geom.Segments)
+                        {
+                            const Math::Point2 a = camera.WorldToScreen(seg.first), b = camera.WorldToScreen(seg.second);
+                            minD = std::min(minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)));
+                        }
+                        for (const auto& tri : geom.Triangles)
+                        {
+                            const Math::Point2 a = camera.WorldToScreen(tri[0]), b = camera.WorldToScreen(tri[1]), c = camera.WorldToScreen(tri[2]);
+                            if (PointInTriangle2(pt, a, b, c)) { minD = 0.0; break; }
+                            minD = std::min({ minD, Math::Distance(pt, Math::ClosestPointOnSegment(pt, a, b)),
+                                              Math::Distance(pt, Math::ClosestPointOnSegment(pt, b, c)),
+                                              Math::Distance(pt, Math::ClosestPointOnSegment(pt, c, a)) });
+                        }
+                        if (minD < thresh && minD < bestDist)
+                        {
+                            bestDist = minD;
+                            best     = obj.GetID();
+                        }
+                        return;
+                    }
 
                     // 在世界坐标里求距离：相机只有平移与等比缩放，屏幕距离 = 世界 XY 距离 / 每像素世界长度，
                     // 省掉每个顶点的投影换算；先用包围盒排除离光标超过阈值的线段

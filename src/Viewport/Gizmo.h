@@ -35,9 +35,15 @@ namespace MiniCAD
             else if (normalized < 5.0f) step = magnitude * 2.0f;
             else                        step = magnitude * 5.0f;
 
+            if (showGizmo && !camera.IsPlanView())
+            {
+                BuildTripod(camera, screenWidth, screenHeight, verts);
+                return verts;
+            }
+
             if (showGizmo)
             {
-               
+
 				auto w2s = camera.WorldToScreen({ 0, 0, 0 });
                 // 坐标轴图标
                 Math::Float2 origin   = { static_cast<float>(w2s.x), static_cast<float>(w2s.y) };
@@ -88,6 +94,51 @@ namespace MiniCAD
             return verts;
         }
 
+    private:
+        // 三维视图（M6）：原点在屏幕内时画在原点，否则画在左下角；X / Y / Z 三根轴按视图方向投影，端部标字母
+        static void BuildTripod(const Camera& camera, float screenWidth, float screenHeight, std::vector<Vertex_P3_C4>& verts)
+        {
+            const auto o = camera.WorldToScreen({ 0, 0, 0 });
+            const bool originVisible = o.x >= 0 && o.x <= screenWidth && o.y >= 0 && o.y <= screenHeight;
+            const float ax = originVisible ? static_cast<float>(o.x) : 50.0f;
+            const float ay = originVisible ? static_cast<float>(o.y) : screenHeight - 50.0f;
+            const Math::Float4 colors[3] = { { 1.0f, 0.35f, 0.35f, 1.0f }, { 0.35f, 1.0f, 0.35f, 1.0f }, { 0.45f, 0.6f, 1.0f, 1.0f } };
+            const Math::Vec3 r = camera.GetRight(), u = camera.GetUp();
+            const float len = 45.0f, s = 6.0f;
+            auto line = [&](float x0, float y0, float x1, float y1, const Math::Float4& c) {
+                verts.push_back({ { x0, y0, 0 }, c });
+                verts.push_back({ { x1, y1, 0 }, c });
+            };
+            for (int i = 0; i < 3; ++i)
+            {
+                // 世界轴方向在屏幕上的投影（屏幕 y 向下）
+                const double wx = i == 0 ? 1 : 0, wy = i == 1 ? 1 : 0, wz = i == 2 ? 1 : 0;
+                const float dx = static_cast<float>(wx * r.x + wy * r.y + wz * r.z);
+                const float dy = static_cast<float>(-(wx * u.x + wy * u.y + wz * u.z));
+                const float ex = ax + dx * len, ey = ay + dy * len;
+                line(ax, ay, ex, ey, colors[i]);
+                if (dx * dx + dy * dy < 0.01f)
+                    continue;   // 指向屏幕里外：不标字母
+                const float lx = ax + dx * (len + 12.0f), ly = ay + dy * (len + 12.0f);
+                if (i == 0)
+                {
+                    line(lx - s, ly - s, lx + s, ly + s, colors[i]);
+                    line(lx + s, ly - s, lx - s, ly + s, colors[i]);
+                }
+                else if (i == 1)
+                {
+                    line(lx - s, ly - s, lx, ly, colors[i]);
+                    line(lx + s, ly - s, lx, ly, colors[i]);
+                    line(lx, ly, lx, ly + s, colors[i]);
+                }
+                else
+                {
+                    line(lx - s, ly - s, lx + s, ly - s, colors[i]);
+                    line(lx + s, ly - s, lx - s, ly + s, colors[i]);
+                    line(lx - s, ly + s, lx + s, ly + s, colors[i]);
+                }
+            }
+        }
     };
 }
           

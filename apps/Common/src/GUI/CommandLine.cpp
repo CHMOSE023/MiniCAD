@@ -88,6 +88,26 @@ namespace MiniCAD
         if (!m_docManager.GetActive())
             return;
         Editor& editor = m_docManager.GetEditor();
+
+        // 视图方块的显示开关（界面层的设置，不经 Editor）：NAVVCUBE / VIEWCUBE 切换，后跟 ON / OFF 指定（同 AutoCAD）
+        if (!editor.IsActiveTool())
+        {
+            std::string upper;
+            for (char c : text)
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+            const size_t space = upper.find(' ');
+            const std::string name = upper.substr(0, space), option = space == std::string::npos ? "" : upper.substr(space + 1);
+            if (name == "NAVVCUBE" || name == "VIEWCUBE")
+            {
+                const bool show = option == "ON" ? true : option == "OFF" ? false : !m_viewCubeVisible;
+                SetViewCubeVisible(show);
+                editor.GetCmdLine().Echo(std::string("命令: ") + text);
+                editor.GetCmdLine().Echo(show ? "视图方块：显示" : "视图方块：隐藏");
+                StateChanged();
+                return;
+            }
+        }
+
         if (text.empty())
         {
             // 空回车：工具进行中交给工具（例如结束多段线），否则重复上一条命令

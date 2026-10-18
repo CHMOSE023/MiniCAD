@@ -65,6 +65,12 @@ namespace MiniGUI
         void PrimRect   (const Rect& rect, ColorRef color);                                   // 不带抗锯齿的实心矩形
         void PrimRectUV (const Rect& rect, Vec2 uv0, Vec2 uv1, ColorRef color);
 
+        // ── 变换已写入的顶点 ────────────────────────────────────
+        // 第 first 个顶点起：p' = origin + xAxis·(p − pivot).x + yAxis·(p − pivot).y。
+        // 用于把排好版的文字画到斜的平面上（例如视图方块的面上）；裁剪矩形不随之变化
+        size_t GetVertexCount() const { return m_vertices.size(); }
+        void   TransformVertices(size_t first, Vec2 pivot, Vec2 xAxis, Vec2 yAxis, Vec2 origin);
+
         // ── 输出 ────────────────────────────────────────────────
         const std::vector<DrawVert>&  GetVertices() const { return m_vertices; }
         const std::vector<DrawIndex>& GetIndices()  const { return m_indices;  }

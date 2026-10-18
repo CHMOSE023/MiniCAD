@@ -504,4 +504,13 @@ namespace MiniGUI
             WriteIndex(i0 + 1); WriteIndex(i1 + 1); WriteIndex(i1);
         }
     }
+
+    void DrawList::TransformVertices(size_t first, Vec2 pivot, Vec2 xAxis, Vec2 yAxis, Vec2 origin)
+    {
+        for (size_t i = first; i < m_vertices.size(); ++i)
+        {
+            const float dx = m_vertices[i].pos.x - pivot.x, dy = m_vertices[i].pos.y - pivot.y;
+            m_vertices[i].pos = { origin.x + xAxis.x * dx + yAxis.x * dy, origin.y + xAxis.y * dx + yAxis.y * dy };
+        }
+    }
 }
