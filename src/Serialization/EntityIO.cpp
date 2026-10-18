@@ -117,6 +117,7 @@ namespace MiniCAD::EntityIO
             Point3      pos;
             double      height = 2.5, rotation = 0.0;
             uint32_t    flags = 0;
+            int32_t     hAlign = 0, vAlign = 0;     // 组码 72 / 73(ATTRIB 为 74)
         };
 
         void WriteAttribBase(ISerializer& s, const AttribBase& a)
@@ -127,6 +128,9 @@ namespace MiniCAD::EntityIO
             double h = a.GetHeight();          s.Value("height", h);
             double r = a.GetRotation();        s.Value("rotation", r);
             uint32_t flags = a.GetFlags();     s.Value("flags", flags);
+            // 对齐码必须存：锚点已按对齐换算过，渲染还要据此整体平移字形（V54 的轴号）
+            int32_t ha = a.GetHAlign();        s.Value("hAlign", ha);
+            int32_t va = a.GetVAlign();        s.Value("vAlign", va);
         }
 
         AttribFields ReadAttribFields(ISerializer& s)
@@ -138,6 +142,8 @@ namespace MiniCAD::EntityIO
             s.Value("height", f.height);
             s.Value("rotation", f.rotation);
             s.Value("flags", f.flags);
+            s.Value("hAlign", f.hAlign);        // 旧文件无此项：左对齐基线
+            s.Value("vAlign", f.vAlign);
             return f;
         }
 
@@ -377,6 +383,12 @@ namespace MiniCAD::EntityIO
             Ser::PolylineGeom(s, "polyline", pl);
             double w = e.GetWidth();
             s.Value("width", w);
+            // 逐段起止宽度（锥形段）。全 0 时不写，保持旧文件的键集不变。
+            if (e.HasSegmentWidths())
+            {
+                std::vector<double> ws = e.GetSegmentStartWidths();  s.Value("segStartWidths", ws);
+                std::vector<double> we = e.GetSegmentEndWidths();    s.Value("segEndWidths",   we);
+            }
         }
         std::unique_ptr<Entity> ReadPolyline(ISerializer& s, Object::ObjectID id)
         {
@@ -386,6 +398,12 @@ namespace MiniCAD::EntityIO
             s.Value("width", w);
             auto e = std::make_unique<PolylineEntity>(id, std::move(pl));
             e->SetWidth(w);
+            // 键不存在时 s.Value 保持传入值不变 → 旧文件读出来是空数组（无锥形段）
+            std::vector<double> ws, we;
+            s.Value("segStartWidths", ws);
+            s.Value("segEndWidths",   we);
+            if (!ws.empty() || !we.empty())
+                e->SetSegmentWidths(std::move(ws), std::move(we));
             return e;
         }
 
@@ -778,6 +796,7 @@ namespace MiniCAD::EntityIO
             AttribFields f = ReadAttribFields(s);
             auto e = std::make_unique<AttDefEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation);
             e->SetFlags(static_cast<uint16_t>(f.flags));
+            e->SetAlign(f.hAlign, f.vAlign);
             std::string prompt;
             s.Value("prompt", prompt);
             e->SetPrompt(std::move(prompt));
@@ -793,6 +812,7 @@ namespace MiniCAD::EntityIO
             AttribFields f = ReadAttribFields(s);
             auto e = std::make_unique<AttribEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation);
             e->SetFlags(static_cast<uint16_t>(f.flags));
+            e->SetAlign(f.hAlign, f.vAlign);
             return e;
         }
 

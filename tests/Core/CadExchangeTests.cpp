@@ -248,7 +248,11 @@ namespace
             Check(m.lines > 0 && NearRel(m.length, patRef.length) && std::abs(m.lines - patRef.lines) <= 2,
                   (prefix + "图案填充：比例、角度换算后画出的图案线一致").c_str());
             const auto box = patBack->GetBoundingBox();
-            Check(NearRel(box.Min.x, 40) && NearRel(box.Max.x, 63) && NearRel(box.Min.y, 0) && NearRel(box.Max.y, 10),
+            // 边界多段线的第二段是 {40,10} → {40,0}、bulge = 0.3（向下行进）。
+            // 按 DXF 组码 42 的规范，正凸度的弧向行进方向**右侧**鼓出 ⇒ 向 −X 鼓到 x = 40 − 1.5 = 38.5
+            // （sagitta：θ = 4·atan(0.3)、r = 10/(2·sin(θ/2))、r − r·cos(θ/2) = 1.5）。
+            // 旧期望写的 40 是按镜像方向（弧朝 +X 凸）算的，凸度方向修正后应为 38.5。
+            Check(NearRel(box.Min.x, 38.5) && NearRel(box.Max.x, 63) && NearRel(box.Min.y, 0) && NearRel(box.Max.y, 10),
                   (prefix + "图案填充：直线、圆弧、椭圆弧边界范围一致").c_str());
         }
 

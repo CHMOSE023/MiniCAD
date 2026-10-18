@@ -105,6 +105,23 @@ namespace MiniCAD
             FillSubdivided(a, b, c, color, 5);
         }
 
+        // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
+        void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
+                            const Math::Color4& color, double width) override
+        {
+            if (std::max(a.x, b.x) < m_minX || std::min(a.x, b.x) > m_maxX ||
+                std::max(a.y, b.y) < m_minY || std::min(a.y, b.y) > m_maxY) return;
+            if (Contains((a.x + b.x) * 0.5, (a.y + b.y) * 0.5))
+            {
+                m_target.DrawStyledLine(a, b, color, width);
+                return;
+            }
+            // 不完全在内：退化为普通线段裁剪（宽度对裁剪边界的取舍影响可忽略）
+            DrawLine(a, b, color, false);
+        }
+
+        bool IsCurrentLinetypeDashed() const override { return m_target.IsCurrentLinetypeDashed(); }
+
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
             std::vector<Math::Point3> src = polygon;

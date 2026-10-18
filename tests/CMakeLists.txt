@@ -115,6 +115,9 @@ if(WIN32)
         "Core/PolylineOpsTests.cpp"
         "Core/DimAssocTests.cpp"
         "Core/CadExchangeTests.cpp"
+        "Core/AttribAxisTests.cpp"
+        "Core/PolylineWidthTests.cpp"
+        "Core/BulgeDirectionTests.cpp"
         "Core/MatrixInverseTests.cpp"
         "Core/RecentFilesTests.cpp"
     )

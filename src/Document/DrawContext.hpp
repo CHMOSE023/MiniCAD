@@ -141,6 +141,20 @@ namespace MiniCAD
         // 全局细线：忽略线宽，全部按 1px 细线显示（同 AutoCAD 关闭"显示线宽"）
         void SetThinLines(bool thin) { m_thinLines = thin; }
 
+        // 当前实体的线型记录（ByLayer → 图层线型、ByBlock → Continuous）。
+        // DrawLine 与 DrawStyledLine 共用，保证「铺线型」与「单独判定虚线」取到同一个线型。
+        const LineTypeRecord* CurrentLineType() const
+        {
+            if (!m_curAttr) return m_lineTypes.Find(LineTypeTable::ContinuousID);
+            const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
+            LineTypeID lt = m_curAttr->LineType;
+            if (lt == LineTypeTable::ByLayerID)
+                lt = layer ? layer->GetLineType() : LineTypeTable::ContinuousID;
+            if (lt == LineTypeTable::ByBlockID)
+                lt = LineTypeTable::ContinuousID;
+            return m_lineTypes.Find(lt);
+        }
+
         // --- 几何线段 ---
         void DrawLine(const Math::Point3& a, const Math::Point3& b,  const Math::Color4& color, bool isOverlay) override
         {
@@ -158,16 +172,28 @@ namespace MiniCAD
             }
 
             const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
+            EmitStyled(a, b, color, CurrentLineType(), ResolveWidthWorld(layer));
+        }
 
-            // ── 线型解析:ByLayer → 图层线型,ByBlock → Continuous ──────────
-            LineTypeID lt = m_curAttr->LineType;
-            if (lt == LineTypeTable::ByLayerID)
-                lt = layer ? layer->GetLineType() : LineTypeTable::ContinuousID;
-            if (lt == LineTypeTable::ByBlockID)
-                lt = LineTypeTable::ContinuousID;
-            const LineTypeRecord* rec = m_lineTypes.Find(lt);
+        // 有宽度的线段按线型铺设（粗多段线的虚线走这里）。宽度是实体自己的几何宽度
+        // （多段线逐段宽度），不是图层线宽，所以直接用传入值。
+        void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
+                            const Math::Color4& color, double width) override
+        {
+            if (!m_curAttr)   // 无实体上下文：按 1px 细线输出
+            {
+                m_verts.push_back(ToVertex(a, color));
+                m_verts.push_back(ToVertex(b, color));
+                return;
+            }
+            EmitStyled(a, b, color, CurrentLineType(), m_thinLines ? 0.0 : std::max(0.0, width));
+        }
 
-            EmitStyled(a, b, color, rec, ResolveWidthWorld(layer));
+        // 当前实体是否虚线：粗多段线据此在「整体填充（保留斜接尖角）」与「逐段铺线型」之间选
+        bool IsCurrentLinetypeDashed() const override
+        {
+            const LineTypeRecord* rec = CurrentLineType();
+            return rec != nullptr && !rec->IsContinuous();
         }
 
         // --- 填充三角形（线宽 > 1 的实体）---

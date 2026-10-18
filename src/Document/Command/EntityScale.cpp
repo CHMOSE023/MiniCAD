@@ -105,6 +105,13 @@ namespace MiniCAD
             for (auto& p : pl.Points) p = sp(p);
             pe.SetPolyline(std::move(pl));
             pe.SetWidth(pe.GetWidth() * k);
+            // 逐段起止宽度同属长度量，等比缩放时同步放大（否则锥形段的宽度不跟随对象）
+            auto ws = pe.GetSegmentStartWidths();
+            auto we = pe.GetSegmentEndWidths();
+            for (double& x : ws) x *= k;
+            for (double& x : we) x *= k;
+            if (!ws.empty() || !we.empty())
+                pe.SetSegmentWidths(std::move(ws), std::move(we));
             return true;
         }
 

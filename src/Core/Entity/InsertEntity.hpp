@@ -158,12 +158,31 @@ namespace MiniCAD
                     // 块内设置了不可见标志（DWG 的 invisible，如被隐藏的嵌套块参照）或在关闭 / 冻结图层上的子实体不画；
                     // 0 层上的子实体已解析为插入所在的图层
                     for (const auto& e : m_resolved)
-                        if (e->GetAttr().Visible && sink.IsLayerVisible(e->GetAttr().LayerId))
-                            e->Draw(xsink, isSelected, isHovered);
-                    for (const auto& a : m_attribs)
-                        if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId))
-                            a->Draw(xsink, isSelected, isHovered);
+                    {
+                        if (!e->GetAttr().Visible || !sink.IsLayerVisible(e->GetAttr().LayerId))
+                            continue;
+                        // 属性模板 ATTDEF：可变属性的实际取值由随附的 ATTRIB 提供，模板本身不该画
+                        //（默认值常常为空、tag 才是「A」这种占位 ⇒ 每个块参照旁多出一个字母）。
+                        // 常量属性没有对应的 ATTRIB，取值就是模板 ⇒ 照常画。
+                        if (const auto* def = dynamic_cast<const AttDefEntity*>(e.get()))
+                            if (!def->ShowsInBlockReference())
+                                continue;
+                        e->Draw(xsink, isSelected, isHovered);
+                    }
                 }
+
+            // ⚠ ATTRIB 的坐标**已经是世界坐标**（AutoCAD 在 INSERT 里就把属性定位算好了），
+            //   **不能再经 `CellMatrix` 变换一次**——此前用 `xsink` 画 ⇒ 位置被平移 / 旋转 / 缩放
+            //   第二次：实测 `test0.dwg` 的轴号块 `_AXISO`（比例 1200），存储锚点
+            //   (2046863.04, -1682314.24) 经 xsink 落到 (2458282511.89, -2020459066.72)，大了 1200 倍，
+            //   整批轴号飞出图面。V0.0.1 的 `BlockEntity.hpp` 写着同一条约定：
+            //   「ATTRIB 已经是插入后的坐标，不能再乘块的插入矩阵。」
+            // 由于坐标已是世界坐标，属性**不能**按阵列单元重复画，所以放在单元循环之外。
+            // 也不套本块的 XCLIP：`m_clip` 是**块坐标系**里的（与块内实体同系，见 GetClipBoundary），
+            // 拿来判世界坐标的属性会把内外判反；宁可少裁，也不要错裁。
+            for (const auto& a : m_attribs)
+                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId))
+                    a->Draw(sink, isSelected, isHovered);
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override

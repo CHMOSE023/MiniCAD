@@ -18,6 +18,7 @@
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
+#include "Core/Entity/AttribEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
@@ -135,10 +136,14 @@ namespace MiniCAD
 
         std::uint8_t ToByte(double v) { return static_cast<std::uint8_t>(std::clamp(std::lround(v * 255.0), 0L, 255L)); }
 
-        // 凸度的方向约定：DWG/DXF 里正凸度是逆时针弧（AutoCAD），MiniCAD 的 Polyline 里正凸度是顺时针弧
-        // （见 Polyline::ComputeArc），填充边界在两者之间换算时取反
-        double BulgeFromCad(double cadBulge) { return -cadBulge; }
-        double BulgeToCad(double bulge) { return -bulge; }
+        // 凸度的方向约定：DWG/DXF 的组码 42 与 Polyline::ComputeArc 现在**同一套**约定
+        //（正凸度 = 逆时针弧 = 弧向右鼓，圆心在 A→B 左侧），所以这里不需要取反。
+        //
+        // ⚠ 曾经因为 `Polyline::ComputeArc` 把圆心与包角的方向双双写反，这里用 `-x`
+        //   把弧掰回来；ComputeArc 修正后（沿弦镜像缺陷，与 V0.1.0 同一问题），
+        //   取反反而会把弧再次镜像。**改 ComputeArc 的约定时必须同步这里。**
+        double BulgeFromCad(double cadBulge) { return cadBulge; }
+        double BulgeToCad(double bulge) { return bulge; }
 
         // 填充等二维实体的 OCS → 世界坐标；法向为 +Z 时不变，为 -Z 时左右镜像
         struct OcsMap
@@ -693,6 +698,81 @@ namespace MiniCAD
                 e->SetAttr(MakeAttr(src));
                 if (normal && !IsDefaultNormal(*normal))
                     e->SetExtrusion({ normal->X, normal->Y, normal->Z });
+                return e;
+            }
+
+            // ── 文字锚点 + 对齐码的统一换算（TEXT / ATTRIB / ATTDEF 共用）──────
+            //
+            // DXF 语义：组码 72/73 非 0 时**以 11/21（第二对齐点）为准**，10/20 被忽略；
+            // 其中 72 = 3(Aligned) / 5(Fit) 是**两端对齐** —— 文字在 10 与 11 **之间**拉伸铺满，
+            // 视觉中心是两点**中点**。
+            //
+            // 【实测 · `test0.dwg` 轴号块 `_AXISO` 的 ATTRIB（全部 72=5）】
+            //     10 = -2333969.50（圆心 +0.283 块单位）
+            //     11 = -2334648.32（圆心 −0.283）
+            //     中点 = -2334308.91 = **圆心** ✓
+            // 取中点即与 CAD 观感一致；若像居中那样直接取 11，会偏 0.8 × 半径（V0.0.1 的 R67）。
+            //
+            // ⚠ 换算锚点**只是事情的一半**：对齐码必须同时交给排版引擎，否则文字仍从锚点
+            //   **向右**排 ⇒ 偏出半个字宽（实测轴号 6/12 跑出圆圈）。
+            struct TextPlacement
+            {
+                Math::Point3 pos;      // 交给实体的锚点
+                int          hAlign;   // 组码 72 归到 MiniCAD 的 0 左 / 1 中 / 2 右
+                int          vAlign;   // 组码 73/74 归到 0 基线 / 1 下 / 2 中 / 3 上
+            };
+
+            static TextPlacement ResolveTextPlacement(const Dwg::XYZ& insertPt,
+                                                      const Dwg::XYZ& alignPt,
+                                                      Dwg::TextHorizontalAlignment h,
+                                                      Dwg::TextVerticalAlignmentType v)
+            {
+                TextPlacement r;
+                const int h72 = static_cast<int>(h);
+                const int v73 = static_cast<int>(v);
+                // 4 = 中间（水平居中 + 竖直居中）；3 / 5 是两端对齐，锚点取中点后按居中显示
+                r.hAlign = h72 == 1 || h72 == 3 || h72 == 4 || h72 == 5 ? 1 : h72 == 2 ? 2 : 0;
+                r.vAlign = h72 == 4 ? 2 : h72 == 3 || h72 == 5 ? 0 : std::clamp(v73, 0, 3);
+
+                const Math::Point3 ip = ToPoint(insertPt);
+                const Math::Point3 ap = ToPoint(alignPt);
+
+                const bool twoPoint = h == Dwg::TextHorizontalAlignment::Aligned ||
+                                      h == Dwg::TextHorizontalAlignment::Fit;
+                if (twoPoint)
+                {
+                    // 两端对齐 ⇒ 取中点（不做逐字拉伸，那要动排版引擎）
+                    r.pos = { (ip.x + ap.x) * 0.5, (ip.y + ap.y) * 0.5, (ip.z + ap.z) * 0.5 };
+                }
+                else if (h != Dwg::TextHorizontalAlignment::Left ||
+                         v != Dwg::TextVerticalAlignmentType::Baseline)
+                {
+                    // 72/73 非 0 ⇒ 以 11 为准。残缺文件会把 11 留成 (0,0)，
+                    // 照字面生效会把文字摆到图纸原点，此时视为缺失、退回插入点。
+                    const bool alignMissing =
+                        std::abs(ap.x) < 1e-12 && std::abs(ap.y) < 1e-12 &&
+                        (std::abs(ip.x) > 1e-12 || std::abs(ip.y) > 1e-12);
+                    r.pos = alignMissing ? ip : ap;
+                }
+                else
+                {
+                    r.pos = ip;
+                }
+                return r;
+            }
+
+            // 属性定义 / 属性实例（ATTDEF / ATTRIB）的公共取值。
+            // 属性文字不跟随样式，Core 侧固定用 Standard（与 V0.1.0 的显示一致）
+            template <class T>
+            std::unique_ptr<Entity> MakeAttrib(const Dwg::AttributeBase& a, std::string text)
+            {
+                const TextPlacement pl = ResolveTextPlacement(a.InsertPoint, a.AlignmentPoint,
+                                                             a.HorizontalAlignment, a.VerticalAlignment);
+                auto e = Make<T>(a, &a.Normal, a.Tag, std::move(text), pl.pos,
+                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation));
+                auto& attrib = static_cast<T&>(*e);
+                attrib.SetFlags(static_cast<std::uint16_t>(static_cast<int>(a.Flags)));
+                attrib.SetAlign(pl.hAlign, pl.vAlign);
                 return e;
             }
 
@@ -1379,8 +1459,14 @@ namespace MiniCAD
                 if (auto* e = dynamic_cast<const Dwg::Spline*>(&src))
                     return ConvertSpline(*e);
 
-                if (dynamic_cast<const Dwg::AttributeBase*>(&src))
-                    return Skip(src);   // 属性定义 / 属性：当前场景没有对应的实体
+                // 属性定义（ATTDEF）：块定义里的可填字段。此前一律 Skip() ⇒ 带属性的块
+                // 打开后看不到字段（V54 的轴号块 `_AXISO` 就是块定义里的圆 + 一个 ATTDEF）。
+                // ⚠ ATTRIB（INSERT 上的具体取值）不在这里：它在 INSERT 分支里随块引用一起读出。
+                if (auto* e = dynamic_cast<const Dwg::AttributeDefinition*>(&src))
+                    return MakeAttrib<AttDefEntity>(*e, e->Value);
+
+                if (dynamic_cast<const Dwg::AttributeEntity*>(&src))
+                    return Skip(src);   // 游离的 ATTRIB（不在 INSERT 里）：无归属，跳过
 
                 if (auto* e = dynamic_cast<const Dwg::TextEntity*>(&src))
                 {
@@ -1431,6 +1517,28 @@ namespace MiniCAD
                         ins.SetArray(e->ColumnCount, e->RowCount, e->ColumnSpacing, e->RowSpacing);
                     if (auto clip = ReadClipBoundary(*e); !clip.empty())
                         ins.SetClipBoundary(std::move(clip));
+
+                    // ── ATTRIB：块引用的属性文字（轴号、图签字段等）────────────────
+                    //
+                    // 此前这里**完全没处理** `e->Attributes`，而 `Convert` 又把
+                    // `Dwg::AttributeBase`（ATTDEF/ATTRIB）整个 Skip() 掉 ⇒ 属性文字**整批消失**。
+                    // 【实测 · `test0.dwg` 的轴号块 `_AXISO`（圆 + 一个属性）】
+                    //   | 侧 | _AXISO 实例 | 带 ATTRIB 的 |
+                    //   | DWG 真值 | 417 | 417（100%）|
+                    //   | 导入后（修前）| 241 | 0 |
+                    //   属性值正是轴号本身（「1」「24」「E」…）⇒ 界面上只剩一个个空圆圈。
+                    //
+                    // 【坐标】ATTRIB 的 `InsertPoint`/`AlignmentPoint` 存的已经是**世界坐标**
+                    // （AutoCAD 在 INSERT 里就把属性定位算好了），所以这里**不能再做块变换**，
+                    // `InsertEntity::Draw` 也因此按 sink 直接画它（见那里的注释）。
+                    for (Dwg::Handle ah : e->Attributes)
+                    {
+                        const auto* a = m_db.FindAs<Dwg::AttributeEntity>(ah);
+                        if (a == nullptr)
+                            continue;
+                        ins.AddAttrib(std::unique_ptr<AttribEntity>(
+                            static_cast<AttribEntity*>(MakeAttrib<AttribEntity>(*a, a->Value).release())));
+                    }
                     return ent;
                 }
 
@@ -1855,17 +1963,34 @@ namespace MiniCAD
                     return nullptr;
                 std::vector<Math::Point3> pts;
                 std::vector<double>       bulges;
+                // 逐顶点起止宽度（DXF 组码 40/41）：顶点 i 的宽度作用于「i → i+1」这一段，
+                // 两者不同即为锥形段（如 `sample_AC1032.dwg` 句柄 35B：首段 0.2→0.1、末段 0.1→0.5）。
+                // 此前只取 `ConstantWidth`（组码 43）⇒ 这些宽度整批丢失，整条多段线画成等宽。
+                std::vector<double>       startW;
+                std::vector<double>       endW;
                 for (const auto& v : e.Vertices)
                 {
                     pts.push_back({ v.Location.X, v.Location.Y, e.Elevation });
                     bulges.push_back(v.Bulge);
+                    startW.push_back(v.StartWidth);
+                    endW.push_back(v.EndWidth);
                 }
-                if (Any(e.Flags & Dwg::LwPolylineFlags::Closed))
+                const bool closed = Any(e.Flags & Dwg::LwPolylineFlags::Closed);
+                if (closed)
                     pts.push_back(pts.front());   // 闭合：末点回到起点，最后一个 bulge 属于闭合段
                 else
                     bulges.pop_back();
                 auto ent = Make<PolylineEntity>(e, &e.Normal, std::move(pts), std::move(bulges));
-                static_cast<PolylineEntity&>(*ent).SetWidth(e.ConstantWidth);
+                auto& pl = static_cast<PolylineEntity&>(*ent);
+                pl.SetWidth(e.ConstantWidth);
+
+                // 数组按段数对齐即可：顶点 i 的宽度正好对应第 i 段。
+                //   · 开放：段数 = 顶点数-1，末顶点的宽度被丢弃（它后面没有段）——与 DXF 语义一致。
+                //   · 闭合：补了重复末点后段数 = 顶点数，最后一段（原末顶点 → 首顶点）
+                //     正好取原末顶点的宽度，也就是 DXF 里「末点宽度作用于闭合段」的约定。
+                startW.resize(static_cast<size_t>(pl.GetPolyline().SegCount()), 0.0);
+                endW.resize(static_cast<size_t>(pl.GetPolyline().SegCount()), 0.0);
+                pl.SetSegmentWidths(std::move(startW), std::move(endW));
                 return ent;
             }
 
@@ -2129,6 +2254,9 @@ namespace MiniCAD
 
                 std::vector<Math::Point3> pts;
                 std::vector<double>       bulges;
+                // 旧式 POLYLINE 的顶点同样带起止宽度（VERTEX 的组码 40/41），一并保留
+                std::vector<double>       startW;
+                std::vector<double>       endW;
                 for (Dwg::Handle h : e.Vertices)
                 {
                     const auto* v = m_db.FindAs<Dwg::Vertex>(h);
@@ -2136,6 +2264,8 @@ namespace MiniCAD
                         continue;
                     pts.push_back({ v->Location.X, v->Location.Y, v->Location.Z });
                     bulges.push_back(v->Bulge);
+                    startW.push_back(v->StartWidth);
+                    endW.push_back(v->EndWidth);
                 }
                 if (pts.size() < 2)
                     return nullptr;
@@ -2144,7 +2274,22 @@ namespace MiniCAD
                 else
                     bulges.pop_back();
                 auto ent = Make<PolylineEntity>(e, &e.Normal, std::move(pts), std::move(bulges));
-                static_cast<PolylineEntity&>(*ent).SetWidth(e.StartWidth);
+                auto& pl = static_cast<PolylineEntity&>(*ent);
+                pl.SetWidth(e.StartWidth);
+
+                // 旧式 POLYLINE 另有一套全局起止宽度（组码 40/41，位于 POLYLINE 自身），
+                // 顶点宽度缺省时用它；两者都没有时回退到 SetWidth 的恒定值。
+                const size_t segs = static_cast<size_t>(pl.GetPolyline().SegCount());
+                if (startW.size() < segs) startW.resize(segs, 0.0);
+                if (endW.size()   < segs) endW.resize(segs, 0.0);
+                startW.resize(segs);
+                endW.resize(segs);
+                for (size_t i = 0; i < segs; ++i)
+                {
+                    if (startW[i] == 0.0) startW[i] = e.StartWidth;
+                    if (endW[i]   == 0.0) endW[i]   = e.EndWidth;
+                }
+                pl.SetSegmentWidths(std::move(startW), std::move(endW));
                 return ent;
             }
 
@@ -2520,6 +2665,24 @@ namespace MiniCAD
                 return dst;
             }
 
+            // ATTDEF / ATTRIB 的位置与对齐：导入时 Fit/Aligned 取过 10↔11 的中点、并把对齐码
+            // 归到了 0/1/2，写出时还原为「插入点 = 对齐点 = 锚点 + 居中对齐」——
+            // 往返后锚点与居中都一致（不做逐字拉伸，语义差一个 72=5 的标记，
+            // 与 TEXT 的处理相同，见导入侧 ResolveTextPlacement 的注释）
+            template <class T>
+            static void SetAttribPlacement(const AttribBase& s, T& d)
+            {
+                d.InsertPoint = ToXYZ(s.GetPosition());
+                d.Height      = s.GetHeight();
+                d.Rotation    = s.GetRotation();
+                if (s.GetHAlign() != 0 || s.GetVAlign() != 0)
+                {
+                    d.AlignmentPoint      = d.InsertPoint;
+                    d.HorizontalAlignment = static_cast<Dwg::TextHorizontalAlignment>(s.GetHAlign());
+                    d.VerticalAlignment   = static_cast<Dwg::TextVerticalAlignmentType>(s.GetVAlign());
+                }
+            }
+
             std::unique_ptr<Dwg::Entity> Convert(const Entity& e)
             {
                 if (auto* s = dynamic_cast<const SolidEntity*>(&e))
@@ -2579,7 +2742,9 @@ namespace MiniCAD
                 if (auto* s = dynamic_cast<const WipeoutEntity*>(&e))   // 派生自 PolylineEntity，须先判断
                     return ConvertWipeout(e, *s);
                 if (auto* s = dynamic_cast<const PolylineEntity*>(&e))
-                    return ConvertPolyline(e, s->GetPolyline(), s->GetWidth());
+                    // 锥形段（逐顶点起止宽度）一并写出，否则另存后宽度整批丢失
+                    return ConvertPolyline(e, s->GetPolyline(), s->GetWidth(),
+                                           &s->GetSegmentStartWidths(), &s->GetSegmentEndWidths());
                 if (auto* s = dynamic_cast<const HatchEntity*>(&e))
                     return ConvertHatch(e, *s);
                 if (auto* s = dynamic_cast<const SplineEntity*>(&e))
@@ -2589,6 +2754,21 @@ namespace MiniCAD
                     const auto& r = s->GetRectangle();
                     Polyline pl(std::vector<Math::Point3>{ r.P1, r.P2, r.P3, r.P4, r.P1 });
                     return ConvertPolyline(e, pl, 0.0);
+                }
+                // 属性定义（ATTDEF）：块定义里的可填字段。**必须排在 TextEntity 之前**判
+                //（AttribBase 与 TextEntity 是平行分支，但先判更稳），否则属性定义会被当成
+                // 普通单行文字写出，丢掉 tag / 默认值 / 提示语。
+                if (auto* s = dynamic_cast<const AttDefEntity*>(&e))
+                {
+                    auto d = std::make_unique<Dwg::AttributeDefinition>();
+                    SetAttribPlacement(*s, *d);
+                    d->Value  = s->GetDefaultValue();
+                    d->Tag    = s->GetTag();
+                    d->Prompt = s->GetPrompt();
+                    d->Flags  = static_cast<Dwg::AttributeFlags>(s->GetFlags());
+                    d->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                    d->Normal = NormalOf(e);
+                    return Finish(e, std::move(d));
                 }
                 if (auto* s = dynamic_cast<const TextEntity*>(&e))
                 {
@@ -2645,6 +2825,24 @@ namespace MiniCAD
                     d->ColumnSpacing = s->GetColumnSpacing();
                     d->RowSpacing    = s->GetRowSpacing();
                     d->Normal       = NormalOf(e);
+
+                    // ATTRIB 与导入成对：只导入不导出，属性文字在另存后整批消失（轴号、图签字段）。
+                    // 属性是 INSERT 的**子实体**（66=1 + ATTRIB… + SEQEND），不是块内成员，
+                    // 所以在这里建对象、挂到 d->Attributes，块记录里不再出现。
+                    for (const auto& a : s->GetAttribs())
+                    {
+                        if (!a) continue;
+                        auto att = std::make_unique<Dwg::AttributeEntity>();
+                        SetAttribPlacement(*a, *att);
+                        att->Value = a->GetValue();
+                        att->Tag   = a->GetTag();
+                        att->Flags = static_cast<Dwg::AttributeFlags>(a->GetFlags());
+                        att->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                        att->Normal = NormalOf(*a);
+                        ApplyAttr(*a, *att);
+                        if (Dwg::AttributeEntity* added = m_db.Add(std::move(att)))
+                            d->Attributes.push_back(added->ObjectHandle);
+                    }
                     return Finish(e, std::move(d));
                 }
                 return Skip(e);
@@ -2692,7 +2890,11 @@ namespace MiniCAD
                 return Finish(e, std::move(d));
             }
 
-            std::unique_ptr<Dwg::Entity> ConvertPolyline(const Entity& e, const Polyline& pl, double width)
+            // segWidths 非空且带非 0 值时，按顶点写回逐段起止宽度（DXF 40/41）——
+            // 与导入成对，否则「打开锥形段多段线 → 另存 → 再打开」宽度整批退化为等宽。
+            std::unique_ptr<Dwg::Entity> ConvertPolyline(const Entity& e, const Polyline& pl, double width,
+                                                         const std::vector<double>* segStartW = nullptr,
+                                                         const std::vector<double>* segEndW = nullptr)
             {
                 const auto& pts = pl.Points;
                 if (pts.size() < 2)
@@ -2707,17 +2909,31 @@ namespace MiniCAD
                     --count;   // 末点与起点重合：用闭合标志表示，最后一段的 bulge 落到末顶点上
                     d->Flags = Dwg::LwPolylineFlags::Closed;
                 }
+                const bool hasSegWidths = segStartW != nullptr || segEndW != nullptr;
                 for (size_t i = 0; i < count; ++i)
                 {
                     Dwg::LwPolylineVertex v;
                     v.Location = { pts[i].x, pts[i].y };
                     v.Bulge    = i < pl.Bulges.size() ? pl.Bulges[i] : 0.0;
+                    if (hasSegWidths)
+                    {
+                        v.StartWidth = segStartW != nullptr && i < segStartW->size() ? (*segStartW)[i] : 0.0;
+                        v.EndWidth   = segEndW   != nullptr && i < segEndW->size()   ? (*segEndW)[i]   : 0.0;
+                    }
                     d->Vertices.push_back(v);
                 }
-                d->Elevation     = pts.front().z;
-                d->ConstantWidth = width >= 1.0 ? width : 0.0;
+                d->Elevation = pts.front().z;
+                // 有逐段宽度时不再写恒定宽度（组码 43）：两者同时存在会让顶点宽度被覆盖
+                d->ConstantWidth = (hasSegWidths && HasNonZero(*segStartW, *segEndW)) ? 0.0 : (width >= 1.0 ? width : 0.0);
                 d->Normal        = NormalOf(e);
                 return Finish(e, std::move(d));
+            }
+
+            static bool HasNonZero(const std::vector<double>& a, const std::vector<double>& b)
+            {
+                for (double v : a) if (v != 0.0) return true;
+                for (double v : b) if (v != 0.0) return true;
+                return false;
             }
 
             // 填充：只有一条多段线边的环写成多段线路径，其余写成直线 / 圆弧 / 椭圆弧 / 样条边；
