@@ -11,6 +11,9 @@
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/BlockEntity.hpp"
+#include "Core/Entity/AttribEntity.hpp"
+#include "Core/Entity/TextEntity.hpp"
+#include "Scene/TextStyleTable.h"
 #include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
@@ -119,6 +122,22 @@ namespace MiniCAD
                         auto e = src->Clone(0);
                         DimAssoc::Strip(*e);         // 块里的标注关联的是块内对象，分解后不再关联
 
+                        // 属性模板 ATTDEF：可变属性的实际取值由随附的 ATTRIB 提供（在下面按
+                        // 块参照整体展开成文字），模板本身不是图面文字 ⇒ 跳过；
+                        // 常量属性没有对应的 ATTRIB，取值就是模板 ⇒ 当单行文字展开。
+                        if (auto* def = dynamic_cast<AttDefEntity*>(e.get()))
+                        {
+                            if (!def->ShowsInBlockReference())
+                                continue;
+                            auto text = std::make_unique<TextEntity>(
+                                0, def->GetPosition(), def->GetText(),
+                                static_cast<float>(def->GetHeight()), static_cast<float>(def->GetRotation()),
+                                TextStyleTable::StandardID);
+                            text->SetAttr(def->GetAttr());
+                            text->SetAlignment(def->GetHAlign(), def->GetVAlign());
+                            e = std::move(text);
+                        }
+
                         // BYBLOCK 的属性继承插入对象
                         EntityAttr a = e->GetAttr();
                         if (a.Color.Method == ColorMethod::ByBlock) a.Color = host.Color;
@@ -136,6 +155,20 @@ namespace MiniCAD
                         out.push_back(std::move(e));
                     }
                 }
+
+            // 随块引用的属性文字（轴号、图签字段…）：坐标**已经是世界坐标**，与
+            // InsertEntity::Draw 一致，不能再过一遍块变换。放在阵列循环之外，只展开一次。
+            for (const auto& a : ins.GetAttribs())
+            {
+                if (!a) continue;
+                auto text = std::make_unique<TextEntity>(
+                    0, a->GetPosition(), a->GetText(),
+                    static_cast<float>(a->GetHeight()), static_cast<float>(a->GetRotation()),
+                    TextStyleTable::StandardID);
+                text->SetAttr(a->GetAttr());
+                text->SetAlignment(a->GetHAlign(), a->GetVAlign());
+                out.push_back(std::move(text));
+            }
             if (out.size() == before)
             {
                 Fail(reason, "块里没有对象");

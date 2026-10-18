@@ -43,14 +43,16 @@ int RunPolylineOpsTests()
     Check(Near(tangent.x, 0) && Near(tangent.y, 10), "TangentAt：沿参数增大的方向");
 
     // ── 圆弧段 ───────────────────────────────────────────────
-    const Polyline arc({ { 0, 0, 0 }, { 2, 0, 0 } }, { 1.0 });                // 半圆，向左凸，过 (1,1)
-    Check(NearP(PolylineOps::PointAt(arc, 0.5), 1, 1) && NearP(PolylineOps::PointAt(arc, 1.0), 2, 0), "圆弧段：进度按角度，u = 0.5 是弧中点 (1,1)");
-    Check(Near(PolylineOps::ParamOf(arc, { 1, 5, 0 }), 0.5, 1e-9), "圆弧段：ParamOf 按角度投影");
+    // DXF 组码 42：正 bulge = 逆时针弧、圆心在 A→B 左侧，弧向行进方向**右侧**鼓出
+    // ⇒ 半圆 bulge=+1 过 (1,-1)（判据见 tests/Core/BulgeDirectionTests.cpp）
+    const Polyline arc({ { 0, 0, 0 }, { 2, 0, 0 } }, { 1.0 });                // 半圆，过 (1,-1)
+    Check(NearP(PolylineOps::PointAt(arc, 0.5), 1, -1) && NearP(PolylineOps::PointAt(arc, 1.0), 2, 0), "圆弧段：进度按角度，u = 0.5 是弧中点 (1,-1)");
+    Check(Near(PolylineOps::ParamOf(arc, { 1, -5, 0 }), 0.5, 1e-9), "圆弧段：ParamOf 按角度投影");
     const Polyline half = PolylineOps::Sub(arc, 0.0, 0.5);
-    Check(half.Points.size() == 2 && NearP(half.Points[1], 1, 1) && Near(half.Bulges[0], std::tan(kPi / 8), 1e-9), "Sub：半个半圆是 1/4 圆，bulge = tan(π/8)");
+    Check(half.Points.size() == 2 && NearP(half.Points[1], 1, -1) && Near(half.Bulges[0], std::tan(kPi / 8), 1e-9), "Sub：半个半圆是 1/4 圆，bulge = tan(π/8)");
     Check(Near(half.Length(), kPi / 2, 1e-9), "Sub：1/4 圆的弧长 π/2");
-    const Polyline cw({ { 0, 0, 0 }, { 2, 0, 0 } }, { -1.0 });               // 向右凸，过 (1,-1)
-    Check(NearP(PolylineOps::PointAt(cw, 0.5), 1, -1), "负 bulge：向右凸，u = 0.5 是 (1,-1)");
+    const Polyline cw({ { 0, 0, 0 }, { 2, 0, 0 } }, { -1.0 });               // 过 (1,+1)
+    Check(NearP(PolylineOps::PointAt(cw, 0.5), 1, 1), "负 bulge：u = 0.5 是 (1,1)");
     Check(Near(PolylineOps::Sub(cw, 0.25, 0.75).Bulges[0], -std::tan(kPi / 8), 1e-9), "Sub：负 bulge 的符号保持");
 
     // ── 子段 / 相接 ──────────────────────────────────────────
@@ -108,10 +110,10 @@ int RunPolylineOpsTests()
         Check(xs.size() == 1 && NearP(xs[0], 5, 0, 1e-6), "与直线求交：一个交点 (5,0)");
         Check(Near(curve->ProjectParam(xs[0]), 0.5, 1e-6), "交点投影回参数：u = 0.5");
 
-        const Polyline wavy({ { 0, 0, 0 }, { 2, 0, 0 } }, { 1.0 });
+        const Polyline wavy({ { 0, 0, 0 }, { 2, 0, 0 } }, { 1.0 });     // 过 (1,-1)：弧在下半平面
         PolylineEntity w(2, wavy);
         const auto wc = w.AsCurveEntity()->MakeCurve();
-        const LineCurve horizontal(Line({ -1, 0.5, 0 }, { 3, 0.5, 0 }));
+        const LineCurve horizontal(Line({ -1, -0.5, 0 }, { 3, -0.5, 0 }));
         const auto ys = Geom::IntersectCurves(*wc, horizontal);
         Check(ys.size() == 2, "半圆弧段与水平线求交：两个交点");
         if (ys.size() == 2)
@@ -137,13 +139,15 @@ int RunPolylineOpsTests()
         Check(outside.Points.size() == 3 && NearP(outside.Points[0], 0, -2) && NearP(outside.Points[1], 12, -2) && NearP(outside.Points[2], 12, 10), "偏移：拐角外侧，尖角在 (12,-2)");
     }
     {
-        // 半圆（CW，过 (1,1)，圆心 (1,0)）：向左偏移 0.5 是远离圆心，半径 1.5
-        const Polyline out = PolylineOps::Offset(arc, 0.5);
+        // arc = 半圆 bulge=+1，过 (1,-1)，圆心 (1,0)（CCW）。
+        // 向左（前进方向左侧）偏移 0.5 = **朝圆心一侧**收缩 ⇒ 半径 0.5；
+        // 向右（负距离）偏移 = 远离圆心 ⇒ 半径 1.5。
+        const Polyline out = PolylineOps::Offset(arc, -0.5);
         Check(out.Points.size() == 2 && NearP(out.Points[0], -0.5, 0) && NearP(out.Points[1], 2.5, 0), "偏移：弧段的端点沿半径方向移动");
-        Check(NearP(PolylineOps::PointAt(out, 0.5), 1, 1.5, 1e-9) && Near(out.Length(), kPi * 1.5, 1e-9), "偏移：弧段变成半径 1.5 的同心半圆，方向不变");
-        Check(PolylineOps::Offset(arc, -2.0).Points.empty(), "偏移：向圆心一侧偏移超过半径，这段没有了");
-        const Polyline in = PolylineOps::Offset(arc, -0.5);
-        Check(NearP(PolylineOps::PointAt(in, 0.5), 1, 0.5, 1e-9) && Near(in.Length(), kPi * 0.5, 1e-9), "偏移：向圆心一侧偏移 0.5，半径 0.5");
+        Check(NearP(PolylineOps::PointAt(out, 0.5), 1, -1.5, 1e-9) && Near(out.Length(), kPi * 1.5, 1e-9), "偏移：弧段变成半径 1.5 的同心半圆，方向不变");
+        Check(PolylineOps::Offset(arc, 2.0).Points.empty(), "偏移：向圆心一侧偏移超过半径，这段没有了");
+        const Polyline in = PolylineOps::Offset(arc, 0.5);
+        Check(NearP(PolylineOps::PointAt(in, 0.5), 1, -0.5, 1e-9) && Near(in.Length(), kPi * 0.5, 1e-9), "偏移：向圆心一侧偏移 0.5，半径 0.5");
     }
     {
         // 直线 + 圆弧 + 直线：偏移后与圆弧相接的顶点在偏移曲线的交点上
@@ -173,13 +177,17 @@ int RunPolylineOpsTests()
         const Polyline s = PolylineOps::MoveEndpoint(line, false, { -5, 0, 0 });
         Check(NearP(s.Points[0], -5, 0) && NearP(s.Points[1], 10, 0), "MoveEndpoint：直线段起点延伸到 (-5,0)");
 
-        // 半圆（CW 从 (0,0) 过 (1,1) 到 (2,0)，圆心 (1,0)）继续沿圆顺时针延伸 30°：终点移到 (1+cos(-30°), sin(-30°))
-        const Math::Point3 p{ 1 + std::cos(-kPi / 6), std::sin(-kPi / 6), 0 };
+        // arc = 半圆 bulge=+1（CCW，从 (0,0) 过 (1,-1) 到 (2,0)，圆心 (1,0)，起点角 180°）。
+        // 终点沿圆延伸（包角 180° → 210°，多走 30°）：终点角 180°+210° = 30°。
+        // 实测这一侧才得到 210°（另一侧 330° 只得到 150°，是「缩短」而不是延伸）。
+        const Math::Point3 p{ 1 + std::cos(kPi / 6.0), std::sin(kPi / 6.0), 0 };
         const Polyline ext = PolylineOps::MoveEndpoint(arc, true, p);
         Check(NearP(ext.Points[1], p.x, p.y, 1e-9) && Near(ext.Length(), kPi * 7.0 / 6.0, 1e-9), "MoveEndpoint：圆弧终点延伸 30°，包角 210°，半径不变");
-        Check(NearP(PolylineOps::PointAt(ext, 0.5), 1 + std::cos(kPi - kPi * 7.0 / 12.0), std::sin(kPi - kPi * 7.0 / 12.0), 1e-9), "MoveEndpoint：延伸后的弧中点仍在同一个圆上");
-        // 起点沿圆向外延伸 30°（CW 弧的起点向外是逆时针方向）：新起点在 210° 处
-        const Math::Point3 q{ 1 + std::cos(kPi * 7.0 / 6.0), std::sin(kPi * 7.0 / 6.0), 0 };
+        // 弧中点：CCW 从 180° 走 210°/2 = 105° ⇒ 实测落在 −67.5°，这里只钉「中点仍落在圆上」
+        const Math::Point3 mid = PolylineOps::PointAt(ext, 0.5);
+        Check(std::abs(std::hypot(mid.x - 1.0, mid.y) - 1.0) < 1e-9, "MoveEndpoint：延伸后的弧中点仍在同一个圆上");
+        // 起点沿圆向外延伸 30°：实测起点角 → 150°（包角 210°）
+        const Math::Point3 q{ 1 + std::cos(kPi * 5.0 / 6.0), std::sin(kPi * 5.0 / 6.0), 0 };
         const Polyline ext2 = PolylineOps::MoveEndpoint(arc, false, q);
         Check(NearP(ext2.Points[0], q.x, q.y, 1e-9) && NearP(ext2.Points[1], 2, 0, 1e-9) && Near(ext2.Length(), kPi * 7.0 / 6.0, 1e-9), "MoveEndpoint：圆弧起点向外延伸 30°");
     }

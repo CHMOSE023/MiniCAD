@@ -2,6 +2,7 @@
 #include "Entity.hpp"
 #include "Core/Math/Point3.hpp"
 #include <string>
+#include <cstdint>
 #include <cmath>
 
 namespace MiniCAD
@@ -48,6 +49,17 @@ namespace MiniCAD
         bool     IsInvisible() const  { return (m_flags & static_cast<uint16_t>(AttribFlags::Invisible)) != 0; }
         bool     IsConstant()  const  { return (m_flags & static_cast<uint16_t>(AttribFlags::Constant))  != 0; }
 
+        // ── 对齐（组码 72 水平 / 73（ATTRIB 为 74）垂直）────────────────────
+        // 语义与 DXF 一致：水平 0=左 1=中 2=右 3=Aligned 5=Fit；垂直 0=基线 1=下 2=中 3=上。
+        //
+        // ⚠ 锚点已在导入时按对齐换算过（Fit/Aligned 取 10↔11 中点），但**渲染仍需这两个值** ——
+        //   排版引擎要据此整体平移字形。只换锚点、渲染仍左对齐 ⇒ 文字从中点向右画，偏出半个字宽。
+        //   实测 `test0.dwg` 的轴号块 `_AXISO`（全部 72=5）：文字原本整批丢失，救回来后
+        //   6/12 个实例的字跑出圆圈（与 V0.0.1 的 R67 同一根因）。
+        void SetAlign(int h, int v) { m_hAlign = h; m_vAlign = v; }
+        int  GetHAlign() const { return m_hAlign; }
+        int  GetVAlign() const { return m_vAlign; }
+
         AABB GetBoundingBox() const override
         {
             const double approxChars = static_cast<double>(m_text.size()) / 1.5;
@@ -60,17 +72,29 @@ namespace MiniCAD
         void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             if (IsInvisible()) return;
+            // 取值文本为空时：ATTDEF（属性模板）显示 tag 作占位（AutoCAD 里新建的
+            // 属性定义就是这个样子）；ATTRIB（实例）**什么都不画** —— 空值表示这一栏没填，
+            // 画 tag 会把「专业负责人1」「图名」这类字段名印到图上。
+            // 实测 `test0.dwg` 的 2343 个 ATTRIB 里有 990 个空值（图签各栏），
+            // 若沿用占位规则会凭空多出 990 处文字。
+            std::string shown = m_text;
+            if (shown.empty() && UsesTagAsPlaceholder()) shown = m_tag;
+            if (shown.empty()) return;
 
             const auto& attr = GetAttr();
             const Math::Color4& col = isSelected ? IDrawSink::kSelectionColor
                                     : isHovered  ? IDrawSink::kHoverColor
                                                  : ResolveDrawColor(sink);
-            // 属性绘制取值文本;空文本(纯定义未填值)显示标签作占位提示。
-            const std::string& shown = m_text.empty() ? m_tag : m_text;
-            sink.EmitMText(m_position, shown, 0, m_height, m_rotation, 0.0, col);
+            if (m_hAlign == 0 && m_vAlign == 0)
+                sink.EmitMText(m_position, shown, 0, m_height, m_rotation, 0.0, col);
+            else
+                sink.EmitAlignedText(m_position, shown, 0, m_height, m_rotation, m_hAlign, m_vAlign, 0.0, col);
         }
 
     protected:
+        // 取值文本为空时是否显示 tag 作占位：只有属性模板（ATTDEF）是
+        virtual bool UsesTagAsPlaceholder() const { return false; }
+
         AttribBase(ObjectID id, std::string tag, std::string text,
                    const Math::Point3& pos, double height, double rotation)
             : Entity(id)
@@ -85,7 +109,9 @@ namespace MiniCAD
         void CopyCommonTo(AttribBase& dst) const
         {
             dst.SetAttr(GetAttr());
-            dst.m_flags = m_flags;
+            dst.m_flags  = m_flags;
+            dst.m_hAlign = m_hAlign;
+            dst.m_vAlign = m_vAlign;
         }
 
         std::string  m_tag;
@@ -94,6 +120,8 @@ namespace MiniCAD
         double       m_height   = 2.5;
         double       m_rotation = 0.0;
         uint16_t     m_flags    = static_cast<uint16_t>(AttribFlags::None);
+        int          m_hAlign   = 0;    // 组码 72：0=左 1=中 2=右 3=Aligned 5=Fit
+        int          m_vAlign   = 0;    // 组码 73/74：0=基线 1=下 2=中 3=上
 
         DECLARE_RUNTIME_TYPE(AttribBase, Entity)
     };
@@ -115,6 +143,15 @@ namespace MiniCAD
         const std::string& GetDefaultValue() const { return m_text; }
         void               SetDefaultValue(std::string v) { m_text = std::move(v); }
 
+        // 块参照展开时是否画出模板本身：
+        //   · 常量属性(70&2)：块里没有对应的 ATTRIB，取值就是这个模板 ⇒ **要画**；
+        //   · 其余(可变属性)：实际显示的是 INSERT 随附的 ATTRIB ⇒ 画模板会多出一份，
+        //     而 ATTDEF 的默认值常常为空、tag 才是「A」「TEXT」这种占位 ⇒ 多出一个字母。
+        //     实测 `test0.dwg` 的轴号块 `_AXISO`（tag="A"、默认值空）：
+        //     每个轴号旁都多画一个「A」，全图 1616 个块参照
+        //     （V0.0.1 的 R35 记录的就是这一条）。
+        bool ShowsInBlockReference() const { return IsConstant() && !m_text.empty(); }
+
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
         {
             auto e = std::make_unique<AttDefEntity>(newId, m_tag, m_text, m_position, m_height, m_rotation);
@@ -124,6 +161,10 @@ namespace MiniCAD
         }
 
         DECLARE_RUNTIME_TYPE(AttDefEntity, AttribBase)
+
+    protected:
+        // 属性模板的取值就是「默认值」，空的时候显示 tag 作占位（AutoCAD 的属性定义编辑器同样如此）
+        bool UsesTagAsPlaceholder() const override { return true; }
 
     private:
         std::string m_prompt;   // 组码 3,插入时提示语

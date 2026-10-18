@@ -25,14 +25,21 @@ namespace MiniCAD
     // Segment i goes from Points[i] to Points[i+1].
     // Bulges[i] describes that segment using AutoCAD's bulge convention:
     //
-    //   bulge = tan(included_angle / 4)
+    //   bulge = tan(included_angle / 4)     组码 42
+    //          （起点到终点**顺时针**时取负）
     //
     //   0        → straight line segment
-    //   > 0      → arc bows to the LEFT  of A→B (CW sweep, −θ)
-    //   < 0      → arc bows to the RIGHT of A→B (CCW sweep, +θ)
+    //   > 0      → 逆时针 CCW，弧向行进方向**右侧**鼓出，圆心在 A→B **左侧**
+    //   < 0      → 顺时针 CW， 弧向行进方向**左侧**鼓出，圆心在 A→B **右侧**
     //
-    // The centre of a positive-bulge arc sits to the RIGHT of the A→B chord.
-    // This matches the convention verified empirically in ComputeArc below.
+    // 判据（半圆，规范唯一确定）：A=(0,0) → B=(2,0) 时
+    //   bulge = +1 的弧过 (1,−1)；bulge = −1 的弧过 (1,+1)。
+    // 同一套约定在 SHXVM::EmitBulgeArc 里（R39 已用 gbenor.shx 字形实渲染验证）。
+    //
+    // ⚠ v0.2.0 曾把这里写成「> 0 向左鼓 / 顺时针」（圆心符号与包角符号双双取反），
+    //   整条弧沿弦镜像 ⇒ DWG/DXF 读进来的凸度多段线画在错误的一边。
+    //   与 V0.1.0 的 V-effort 同一缺陷（其 BulgeDirectionTests 记录：test0.dwg 句柄 2D51C、
+    //   图层 STAIR 的 LWPOLYLINE 就是这个症状）。改这里请一并跑 tests/Core/BulgeDirectionTests.cpp。
     //
     struct Polyline
     {
@@ -76,19 +83,17 @@ namespace MiniCAD
 
         // ── Arc geometry from a bulge value ───────────────────────────────────
         //
-        // Derivation:
+        // 推导：
         //   chord   = |B − A|
-        //   θ       = 4·atan(|bulge|)       (included angle, always ≥ 0)
+        //   θ       = 4·atan(|bulge|)        （包角，恒 ≥ 0）
         //   r       = chord / (2·sin(θ/2))
-        //   d_mc    = r·cos(θ/2)            (distance from chord midpoint to centre)
+        //   d_mc    = r·cos(θ/2)             （弦中点到圆心的距离）
         //   right_perp = rotate(B−A, −90°) / chord = (dy, −dx) / chord
         //
-        //   For bulge > 0 (arc bows LEFT): centre = mid + d_mc · right_perp
-        //   For bulge < 0 (arc bows RIGHT): centre = mid − d_mc · right_perp
+        //   bulge > 0（CCW，弧向右鼓）：圆心在 A→B **左侧** = mid − d_mc · right_perp
+        //   bulge < 0（CW， 弧向左鼓）：圆心在 A→B 右侧   = mid + d_mc · right_perp
         //
-        //   SweepAngle = −sign(bulge) · θ
-        //     (positive bulge → CW sweep → negative angle)
-        //
+        //   SweepAngle = +θ（bulge>0，CCW 为正）/ −θ（bulge<0）
         static ArcGeom ComputeArc(const Math::Point3& A, const Math::Point3& B, double bulge)
         {
             ArcGeom arc;
@@ -111,11 +116,12 @@ namespace MiniCAD
             double my  = (A.y + B.y) * 0.5;
             double mz  = (A.z + B.z) * 0.5;
 
-            double sign    = (bulge > 0) ? 1.0 : -1.0;
+            // bulge > 0 ⇒ 圆心在左 ⇒ 沿 right_perp 的反方向
+            double sign    = (bulge > 0) ? -1.0 : 1.0;
             arc.Center     = { mx + sign * d_mc * rpx,   my + sign * d_mc * rpy,  mz };
             arc.Radius     = r;
             arc.StartAngle = std::atan2(A.y - arc.Center.y, A.x - arc.Center.x);
-            arc.SweepAngle = -sign * theta;       // positive bulge → CW (negative)
+            arc.SweepAngle = (bulge > 0) ? theta : -theta;   // bulge>0 → CCW（正）
             return arc;
         }
 

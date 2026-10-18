@@ -48,21 +48,22 @@ int RunExplodeTests()
         Check(out[0]->GetAttr().LayerId == 3 && out[0]->GetID() == 0, "分解出的对象继承图层，ID 为 0 由调用方分配");
     }
     {
-        // bulge = 1：半圆。正 bulge 向左凸，弧过 (1,1)
+        // bulge = 1：半圆。按 DXF 组码 42 的规范，正 bulge 是逆时针弧、圆心在 A→B 左侧，
+        // 弧向行进方向右侧鼓出 ⇒ 弧过 (1,-1)（判据见 tests/Core/BulgeDirectionTests.cpp）
         PolylineEntity pl(2, { { 0, 0, 0 }, { 2, 0, 0 } }, { 1.0 });
         std::vector<std::unique_ptr<Entity>> out;
         Check(ExplodeEntity(pl, out) && out.size() == 1 && out[0]->IsKindOf<ArcEntity>(), "多段线：带 bulge 的段分解成圆弧");
         const Arc& a = static_cast<const ArcEntity&>(*out[0]).GetArc();
         Check(Near(a.Radius, 1.0) && Near(a.Center.x, 1.0) && Near(a.Center.y, 0.0) && Near(a.SweepAngle(), kPi), "圆弧：半径 1、圆心 (1,0)、包角 180°");
         const auto mid = a.MidPoint();
-        Check(Near(mid.x, 1.0) && Near(mid.y, 1.0), "圆弧：弧中点 (1,1)，与多段线的弧段方向一致");
+        Check(Near(mid.x, 1.0) && Near(mid.y, -1.0), "圆弧：弧中点 (1,-1)，与多段线的弧段方向一致");
     }
     {
         PolylineEntity pl(3, { { 0, 0, 0 }, { 2, 0, 0 } }, { -1.0 });
         std::vector<std::unique_ptr<Entity>> out;
         ExplodeEntity(pl, out);
         const auto mid = static_cast<const ArcEntity&>(*out[0]).GetArc().MidPoint();
-        Check(Near(mid.x, 1.0) && Near(mid.y, -1.0), "负 bulge：弧向右凸，弧中点 (1,-1)");
+        Check(Near(mid.x, 1.0) && Near(mid.y, 1.0), "负 bulge：弧中点 (1,1)");
     }
     {
         PolylineEntity pl(4, { { 0, 0, 0 } }, {});

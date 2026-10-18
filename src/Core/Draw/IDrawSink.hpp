@@ -27,6 +27,21 @@ namespace MiniCAD
         virtual bool IsLayerVisible(LayerID layerId) const { return true; }
         virtual void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) = 0;
 
+        // 按线型铺设有宽度的线段（width 为模型单位）。粗多段线无法整体填充成一条带宽度、
+        // 又带线型的路径：填充几何不经过线型解析，虚线会被画成实线。所以虚线粗线逐段走这里，
+        // 由 sink 解析线型、挤出加宽几何。默认实现忽略线宽，等价于 DrawLine（保持旧行为）。
+        virtual void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
+                                    const Math::Color4& color, double width)
+        {
+            (void)width;
+            DrawLine(a, b, color, false);
+        }
+
+        // 当前实体的生效线型是否为虚线。有宽度的实体据此选择：
+        // 连续线走整体填充（保留斜接尖角），虚线则逐段调用 DrawStyledLine。
+        // 默认 false —— 未知线型按连续实线处理。
+        virtual bool IsCurrentLinetypeDashed() const { return false; }
+
         // 填充三角形（线宽 > 1 的实体由三角形拼接而成，走 TRIANGLELIST 场景缓冲）
         virtual void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) {}
 

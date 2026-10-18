@@ -31,6 +31,15 @@ namespace MiniCAD
             m_target.DrawLine(m_xform * a, m_xform * b, color, isOverlay);
         }
 
+        // 块内粗多段线：线段两端经插入变换，宽度按插入缩放放大
+        void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
+                            const Math::Color4& color, double width) override
+        {
+            m_target.DrawStyledLine(m_xform * a, m_xform * b, color, width * m_scale);
+        }
+
+        bool IsCurrentLinetypeDashed() const override { return m_target.IsCurrentLinetypeDashed(); }
+
         void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) override
         {
             m_target.FillTriangle(m_xform * a, m_xform * b, m_xform * c, color);
