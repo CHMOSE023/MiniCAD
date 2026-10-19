@@ -352,6 +352,7 @@ namespace MiniCAD
                 ImportLineTypes();
                 ImportLayers();
                 ImportTextStyles();
+                ImportPointStyle();
                 // 门窗：先全部解码（模型空间与块内，天正图常把墙和门窗整体做成块），生成墙体时据此留出断口
                 ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
                 if (const Dwg::BlockRecord* model = m_db.ModelSpace())
@@ -395,6 +396,19 @@ namespace MiniCAD
                 for (Dwg::Handle h : table->Entries)
                     if (const T* e = m_db.FindAs<T>(h))
                         fn(*e);
+            }
+
+            // $PDMODE / $PDSIZE：POINT 实体的显示完全由这两个图纸级变量决定。
+            //
+            // 为什么必须读：POINT 实体自身**只有坐标**（组码 10/20/30 + 可选 50），
+            // 不带任何"画成什么样、多大"的信息。不读这两个就只画得出写死的十字
+            // （实测 sample_AC1032.dwg：$PDMODE=34、$PDSIZE=0.1，
+            //  CAD 里是 ⊕（圆+十字），我们画出来是个尺寸也不对的十字）。
+            void ImportPointStyle()
+            {
+                const Dwg::CadHeader& h = m_db.Header;
+                m_scene.SetPointDisplayMode(static_cast<int>(h.PointDisplayMode));
+                m_scene.SetPointDisplaySize(h.PointDisplaySize);
             }
 
             void ImportLineTypes()
@@ -2352,6 +2366,12 @@ namespace MiniCAD
                     // 2007 以前的文字按 $DWGCODEPAGE 编码（2007 起为 Unicode），默认的 ANSI_1252 写不出中文
                     if (m_version < Dwg::CadVersion::AC1021)
                         h.CodePage = "ANSI_936";
+
+                    // 点样式写回（$PDMODE / $PDSIZE）。**必须与导入成对**：
+                    // 只导入不写出，用户一存盘点样式就退回 AutoCAD 默认（0 = 一像素小点），
+                    // 整张图的 POINT 看起来全变了。
+                    h.PointDisplayMode = static_cast<std::int16_t>(m_scene.GetPointDisplayMode());
+                    h.PointDisplaySize = m_scene.GetPointDisplaySize();
                 }
 
                 ExportLineTypes();

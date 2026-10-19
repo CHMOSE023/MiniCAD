@@ -2921,6 +2921,13 @@ namespace MiniCAD
         ctx.SetThinLines(m_thinLines);
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
 
+        // 图纸级点样式（HEADER 的 $PDMODE/$PDSIZE）+ 视口像素高度。
+        // POINT 实体自身只有坐标，画成什么样完全由这两个变量决定；实体拿不到 Scene，
+        // 所以只能在这里经 sink 传下去（与图层颜色同一条路）。
+        // $PDSIZE<=0 是视口高度百分比，没有像素高度换算不出世界尺寸（点退化成 1 像素小点）。
+        ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
+        ctx.SetViewportHeightPx(m_viewport ? static_cast<double>(m_viewport->GetHeight()) : 0.0);
+
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）

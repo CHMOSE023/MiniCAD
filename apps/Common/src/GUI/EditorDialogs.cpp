@@ -9,6 +9,7 @@
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/PointEntity.hpp"     // 点样式（$PDMODE/$PDSIZE）预览与图案
 #include "Document/TextStyleResolver.h"
 #include <filesystem>
 #include "Style/Theme.hpp"
@@ -132,6 +133,13 @@ namespace MiniCAD
             OpenHatchDialog();
         else if (!hatch && m_hatchDialog)
             m_hatchDialog->Close();
+
+        // 点样式：改动实时生效，切换/关闭文档后原 Scene 就没了。
+        // 对话框只在**它打开时的那个文档**仍为活动文档时保留
+        //（PointStyleDialog 定义在本文件较后的匿名命名空间里，这里不能引用它的类型，
+        //  所以用 MainFrame 上的 m_pointStyleDoc 记录）。
+        if (m_pointStyleDialog && m_pointStyleDoc != doc)
+            m_pointStyleDialog->Close();
 
         const auto& array = editor.GetArrayRequest();
         const bool  arrayOpen = doc && array.Active && !array.PickingCenter;
@@ -928,6 +936,132 @@ namespace MiniCAD
             TextStyleDialog() : MiniGUI::Dialog("文字样式") {}
             TextStyleID selected = TextStyleTable::StandardID;     // 正在编辑的样式
         };
+
+        // ── 点样式图标网格（对应 AutoCAD DDPTYPE 的 20 个图标）──────────────
+        //
+        // 20 = 4 种**外框** × 5 种**基本形**，与 AutoCAD 的排布完全一致：
+        //     行 = 外框：无 / 圆(32) / 方(64) / 方+圆(96)
+        //     列 = 基本形：点(0) / 无(1) / 十字(2) / 叉(3) / 竖线(4)
+        // 所以第 row 行第 col 列的 $PDMODE 就是 `外框[row] | col`。
+        //
+        // 图标直接用 PointEntity::EmitGlyph 画 ⇒ 与视口**同一个实现**，
+        // 不会出现"图标里是一样、图里画成另一样"。
+        class PointStyleGrid : public MiniGUI::Node
+        {
+        public:
+            static constexpr int kCols  = 5;
+            static constexpr int kRows  = 4;
+            static constexpr float kCell = 30.0f;
+
+            int selected = 34;                          // 当前 $PDMODE
+            std::function<void(int)> onPick;            // 用户点了某个图标
+
+            static int OuterAt(int row) { return MiniCAD::kPdmodeOuter[row]; }
+            static int ModeAt(int row, int col) { return MiniCAD::PdmodeAt(row, col); }
+
+            // 把某个 $PDMODE 的图形画进 box（与视口同一条 EmitGlyph 路径）
+            static void DrawGlyph(MiniGUI::DrawList& dl, const MiniGUI::Rect& box, int mode,
+                                  MiniGUI::ColorRef color, float thick)
+            {
+                struct SegSink : MiniCAD::IDrawSink
+                {
+                    std::vector<std::pair<MiniCAD::Math::Point3, MiniCAD::Math::Point3>> segs;
+                    void DrawLine(const MiniCAD::Math::Point3& a, const MiniCAD::Math::Point3& b,
+                                  const MiniCAD::Math::Color4&, bool) override
+                    { segs.push_back({ a, b }); }
+                } s;
+                // 外接半径给 0.5 ⇒ 十字臂 = 1.0，世界范围正好 ±1
+                MiniCAD::PointEntity::EmitGlyph(s, { 0.0, 0.0, 0.0 }, mode, 0.5,
+                                                MiniCAD::Math::Color4::White());
+                const float cx = box.Center().x, cy = box.Center().y;
+                const float half = std::min(box.Width(), box.Height()) * 0.5f;
+                auto M = [&](const MiniCAD::Math::Point3& p)
+                { return MiniGUI::Vec2{ cx + static_cast<float>(p.x) * half,
+                                        cy - static_cast<float>(p.y) * half }; };
+                for (const auto& g : s.segs)
+                    dl.AddLine(M(g.first), M(g.second), color, thick);
+
+                // $PDMODE 低 4 位 = 0 是"实心点"。EmitGlyph 给它画的是极短的十字
+                // （视口里那条路径走 DrawPoint 点图元），图标上要显式画个圆点才看得见。
+                if (MiniCAD::PdmodeShape(mode) == 0)
+                    dl.AddCircleFilled({ cx, cy }, 1.6f, color);
+            }
+
+        protected:
+            void OnPaint(MiniGUI::DrawList& dl, const MiniGUI::Rect& r) override
+            {
+                for (int row = 0; row < kRows; ++row)
+                    for (int col = 0; col < kCols; ++col)
+                    {
+                        const MiniGUI::Rect cell(r.min.x + col * kCell, r.min.y + row * kCell,
+                                                 r.min.x + (col + 1) * kCell,
+                                                 r.min.y + (row + 1) * kCell);
+                        const int  m   = ModeAt(row, col);
+                        const bool sel = (m == selected);
+                        dl.AddRectFilled(cell.Deflated(1.0f),
+                                         sel ? Theme::Accent : Theme::Control, 2.0f);
+                        dl.AddRect(cell.Deflated(1.0f),
+                                   sel ? Theme::AccentHover : Theme::Border, 2.0f, sel ? 2.0f : 1.0f);
+                        DrawGlyph(dl, cell.Deflated(5.0f), m,
+                                  sel ? Theme::TextOnAccent : Theme::Text, 1.2f);
+                    }
+            }
+
+            void OnPointerEvent(MiniGUI::PointerEvent& e) override
+            {
+                if (e.type != MiniGUI::PointerEventType::Up ||
+                    e.button != MiniGUI::MouseButton::Left)
+                    return;
+                const int col = static_cast<int>(e.localPosition.x / kCell);
+                const int row = static_cast<int>(e.localPosition.y / kCell);
+                if (row < 0 || row >= kRows || col < 0 || col >= kCols)
+                    return;
+                e.handled = true;
+                const int m = ModeAt(row, col);
+                if (m == selected)
+                    return;
+                selected = m;
+                Invalidate();
+                if (onPick)
+                    onPick(m);
+            }
+        };
+
+        class PointStyleDialog : public MiniGUI::Dialog
+        {
+        public:
+            PointStyleDialog() : MiniGUI::Dialog("点样式") {}
+
+            // ── 对话框自身持有全部状态 ─────────────────────────────────
+            // ⚠ 这些**必须是成员**，不能让回调按引用捕获 OpenPointStyleDialog 的局部变量：
+            //   控件的回调在对话框整个生命周期内都可能触发，而函数在弹出后就返回了，
+            //   局部变量随之销毁 —— 之后第一次点按钮就是**悬垂引用**（表现为崩溃）。
+            int    mode     = 34;        // $PDMODE
+            double size     = 0.1;       // $PDSIZE 的绝对值
+            bool   relative = false;     // true ⇒ 写回时 $PDSIZE 取 <= 0（视口百分比）
+
+            // 打开时的原值：「取消」要按 AutoCAD 的语义**还原**。
+            // 因为改动是**实时**生效的，所以必须自己记住原值才能撤销。
+            int    origMode     = 34;
+            double origSize     = 0.1;
+            bool   origRelative = false;
+            bool   Accept       = false;   // 点过「确定」；否则关闭时还原原值
+
+            // 打开时的文档。**所有回调都经它取 Scene**，绝不按引用捕获 Scene&：
+            // 文档可能在对话框开着的时候被关掉，那时的 Scene 引用就是悬垂的。
+            Document* doc = nullptr;
+
+            PointStyleGrid*      grid    = nullptr;
+            MiniGUI::NumberBox*  sizeBox = nullptr;
+            MiniGUI::Label*      hint    = nullptr;
+            MiniGUI::RadioGroup  sizeGroup;
+
+            // 由 OpenPointStyleDialog 设置：把 mode/size/relative 写回 Scene 并重画。
+            // 只捕获 MainFrame / Document / 本对话框，三者生命周期都长于对话框。
+            std::function<void()> onApply;
+
+            void Commit() { if (onApply) onApply(); }
+        };
     }
 
     void MainFrame::OpenTextStyleDialog()
@@ -1161,5 +1295,156 @@ namespace MiniCAD
         Dialog* raw = dialog.get();
         raw->AddButton("关闭", [raw] { raw->Close(); }, DialogButtonRole::Default);
         m_ui->OpenPopup(std::move(dialog));
+    }
+
+    // =========================================================
+    // 格式 → 点样式…（图纸级 HEADER 的 $PDMODE / $PDSIZE）
+    // =========================================================
+    void MainFrame::OpenPointStyleDialog()
+    {
+        using namespace MiniGUI;
+        Document* doc = m_docManager.GetActive();
+        if (!doc)
+            return;
+
+        auto dialog = std::make_unique<PointStyleDialog>();
+        PointStyleDialog* raw = dialog.get();
+        Node* body = raw->GetBody();
+        LayoutStyle bs = ColumnStyle(8.0f);
+        bs.padding = Edges::Symmetric(14.0f, 6.0f);
+        body->SetLayoutStyle(bs);
+
+        Scene& scene = doc->GetScene();
+        raw->doc = doc;
+
+        // ── 当前值（图纸级 HEADER 的 $PDMODE/$PDSIZE）────────────────────
+        raw->mode     = scene.GetPointDisplayMode();
+        raw->size     = std::abs(scene.GetPointDisplaySize());
+        raw->relative = scene.GetPointDisplaySize() <= 0.0;
+        if (raw->relative && raw->size == 0.0)
+            raw->size = 5.0;                            // 0 = 默认 5%
+        raw->origMode     = raw->mode;
+        raw->origSize     = raw->size;
+        raw->origRelative = raw->relative;
+
+        // ── 图标网格（与 AutoCAD 的 20 个图标一一对应）────────────────────
+        auto* grid = body->AddChild<PointStyleGrid>();
+        grid->EditLayoutStyle().width  = PointStyleGrid::kCols * PointStyleGrid::kCell;
+        grid->EditLayoutStyle().height = PointStyleGrid::kRows * PointStyleGrid::kCell;
+        grid->selected = raw->mode;
+        raw->grid = grid;
+
+        Label* modeLabel = body->AddChild<Label>("", 12.0f, Theme::TextDim);
+
+        // ── 点大小 ───────────────────────────────────────────────────────
+        body->AddChild<Separator>();
+        RadioGroup& sizeGroup = raw->sizeGroup;         // 对话框成员，回调长期引用
+        body->AddChild<RadioButton>(&sizeGroup, 0, "相对于屏幕设置大小(&R)");
+        body->AddChild<RadioButton>(&sizeGroup, 1, "按绝对单位设置大小(&A)");
+        auto* sizeBox = AddRow<NumberBox>(body, "点大小", raw->size, 0.0, 1.0e6, 0.1, 4);
+        sizeBox->SetTooltip("相对屏幕时是视口高度的百分比；绝对单位时是世界单位");
+        Label* hint = body->AddChild<Label>("", 12.0f, Theme::TextDim);
+
+        raw->sizeBox = sizeBox;
+        raw->hint    = hint;
+
+        sizeGroup.SetValue(raw->relative ? 0 : 1);
+
+        // ── 唯一的"应用"入口（对话框方法持有，只捕获生命周期更长的对象）──
+        // ⚠ **不要**再写按引用捕获局部变量（如 apply/组控件）的闭包：
+        //   函数返回后局部变量即销毁，而控件回调在对话框存活期间随时会触发，
+        //   那就是悬垂引用（用户点一下就崩）。这里全部经 raw-> 成员访问。
+        raw->onApply = [this, raw]()
+        {
+            // 经 raw->doc 取 Scene：文档可能在对话框开着时被关闭/切换。
+            if (!raw->doc || raw->doc != m_docManager.GetActive())
+                return;
+            Scene& scene = raw->doc->GetScene();
+
+            const double v = raw->sizeBox ? raw->sizeBox->GetValue() : raw->size;
+            const int mode = raw->mode;
+            const double size = raw->relative
+                              ? ((std::abs(v - 5.0) < 1e-9) ? 0.0 : -std::abs(v))
+                              : std::abs(v);
+            raw->size = std::abs(v);
+
+            scene.SetPointDisplayMode(mode);
+            scene.SetPointDisplaySize(size);
+
+            if (raw->grid) { raw->grid->selected = mode; raw->grid->Invalidate(); }
+            if (raw->hint)
+                raw->hint->SetText(raw->relative
+                    ? "视口高度的百分比；缩放时点图形大小不变"
+                    : "世界单位；缩放时点图形跟着变大变小");
+
+            // POINT 的显示属性变了但几何没变 ⇒ 用 MarkDisplayDirty
+            // （不重建拾取索引；大图纸整表重建要上百毫秒，与图层配色同一档）。
+            scene.MarkDisplayDirty();
+            m_viewport->RequestRender();
+            StateChanged();
+        };
+
+        auto syncLabel = [raw, modeLabel, grid]()
+        {
+            const int m = raw->mode;
+            const char* outer = PdmodeHasCircle(m) && PdmodeHasSquare(m) ? "方+圆"
+                              : PdmodeHasCircle(m) ? "圆"
+                              : PdmodeHasSquare(m) ? "方" : "无外框";
+            static const char* kShape[5] = { "实心点", "无", "十字", "叉号", "竖线" };
+            const int sh = PdmodeShape(m);
+            modeLabel->SetText("当前：$PDMODE = " + std::to_string(m) + "（" + outer + " + " +
+                               kShape[(sh >= 0 && sh <= 4) ? sh : 2] + "）");
+        };
+
+        grid->onPick = [raw, syncLabel](int m)
+        {
+            raw->mode = m;
+            syncLabel();
+            raw->Commit();
+        };
+
+        sizeBox->SetOnChanged([raw](double) { raw->Commit(); });
+
+        sizeGroup.SetOnChanged([raw](int v)
+        {
+            raw->relative = (v == 0);
+            // 切换相对/绝对时把数值置成该模式下的默认值（5% / 1 单位）
+            if (raw->sizeBox)
+                raw->sizeBox->SetValue(raw->relative ? 5.0 : 1.0);
+            raw->size = raw->relative ? 5.0 : 1.0;
+            raw->Commit();
+        });
+
+        syncLabel();
+        // 初始化说明文字（不触发回调）
+        hint->SetText(raw->relative
+            ? "视口高度的百分比；缩放时点图形大小不变"
+            : "世界单位；缩放时点图形跟着变大变小");
+
+        raw->AddButton("确定", [raw] { raw->Accept = true; raw->Close(); },
+                       DialogButtonRole::Default);
+        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->SetOnClosed([this, raw]
+        {
+            // 「取消」= 还原打开时的值（改动是实时生效的，所以必须撤销）。
+            if (!raw->Accept && raw->doc && raw->doc == m_docManager.GetActive())
+            {
+                Scene& scene = raw->doc->GetScene();
+                scene.SetPointDisplayMode(raw->origMode);
+                scene.SetPointDisplaySize(raw->origRelative
+                    ? ((std::abs(raw->origSize - 5.0) < 1e-9) ? 0.0 : -raw->origSize)
+                    : raw->origSize);
+                scene.MarkDisplayDirty();
+            }
+            if (m_pointStyleDialog == raw)
+                m_pointStyleDialog = nullptr;
+            m_pointStyleDoc = nullptr;
+            if (m_viewport->IsVisible())
+                m_viewport->Focus();
+            StateChanged();
+        });
+        m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
+        m_pointStyleDialog = raw;
+        m_pointStyleDoc    = doc;
     }
 }

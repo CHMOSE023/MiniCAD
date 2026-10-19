@@ -72,6 +72,42 @@ namespace MiniCAD
             return !layer || layer->IsVisible();
         }
 
+        std::string GetLayerName(LayerID layerId) const override
+        {
+            const Layer* layer = m_layerManager.GetLayer(layerId);
+            return layer ? layer->GetName() : std::string();
+        }
+
+        // 点样式（HEADER 的 $PDMODE/$PDSIZE）。默认 0/0 = AutoCAD 默认"实心小点"。
+        bool GetPointStyle(int& mode, double& size) const override
+        {
+            mode = m_pointMode;
+            size = m_pointSize;
+            return true;
+        }
+        void SetPointStyle(int mode, double size)
+        {
+            m_pointMode = mode;
+            m_pointSize = size;
+        }
+
+        double GetWorldPerPixel() const override    { return m_worldPerPixel; }
+        double GetViewportHeightPx() const override { return m_viewportHeightPx; }
+        // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
+        // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
+        void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
+
+        // 点图元：画成一个屏幕像素的实心小点（POINT 的 $PDMODE=0 与退路）。
+        // 世界坐标下的点无法表达"一个像素"，所以这里只记录位置与颜色，
+        // 由渲染端按像素尺寸画（与网格点、夹点标记同一机制）。
+        void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) override
+        {
+            (void)isOverlay;
+            // 用一个极小的十字表达"点图元"：渲染端把它当点画。
+            // 这里直接进 overlay，避免参与场景顶点流（点不参与拾取、不参与裁剪）
+            m_overlay.AddPoint(p, color);
+        }
+
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {
@@ -536,6 +572,9 @@ namespace MiniCAD
         const LayerManager&            m_layerManager;
         const LineTypeTable&           m_lineTypes;
         double                         m_worldPerPixel = 0.0;   // 1 屏幕像素对应的世界长度
+        double                         m_viewportHeightPx = 0.0;   // 视口像素高度（$PDSIZE<=0 换算世界尺寸用）
+        int                            m_pointMode = 0;    // $PDMODE：点样式
+        double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;

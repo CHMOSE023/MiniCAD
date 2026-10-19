@@ -127,6 +127,7 @@ namespace MiniCAD
         void OpenArrayDialog();
         void OpenHatchDialog();
         void OpenTextStyleDialog();
+        void OpenPointStyleDialog();                             // 格式 → 点样式…（$PDMODE/$PDSIZE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
         void RefreshLayerPanel();
@@ -205,6 +206,8 @@ namespace MiniCAD
         bool                                   m_arrayPicking    = false;   // 阵列对话框为拾取中心点暂时关闭
         MiniGUI::Dialog*                       m_hatchDialog     = nullptr;
         MiniGUI::Dialog*                       m_textStyleDialog = nullptr;
+        MiniGUI::Dialog*                       m_pointStyleDialog = nullptr;  // 点样式对话框（$PDMODE/$PDSIZE）
+        Document*                              m_pointStyleDoc    = nullptr;  // 它对应的文档；文档换了就关掉
         std::vector<uint32_t>                  m_layerIds;               // 图层面板每一行对应的图层 ID
         std::string                            m_layerSignature;         // 图层面板当前显示的内容，没变时不重建行
         void*                                  m_viewSRV    = nullptr;   // 当前登记的视口 SRV（尺寸变化后会重建）

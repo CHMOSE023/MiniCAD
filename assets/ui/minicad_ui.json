@@ -79,7 +79,7 @@
     },
     {
       "title": "格式(&O)",
-      "items": [ "layer.new", "-", "format.textStyle" ]
+      "items": [ "layer.new", "-", "format.textStyle", "format.pointStyle" ]
     },
     {
       "title": "绘图(&D)",

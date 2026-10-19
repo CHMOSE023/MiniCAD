@@ -145,6 +145,7 @@ namespace MiniCAD
             { "draw.text",     "Text",      "单行文字(&T)", "Text.png" },
             { "draw.mtext",    "MText",     "多行文字(&M)", "MText.png" },
             { "format.textStyle", "Style",    "文字样式(&S)…", "" },
+            { "format.pointStyle", "PointStyle", "点样式(&P)…", "" },
             { "dim.linear",    "Dimension",   "线性(&L)",     "" },
             { "dim.angular",   "DimAngular",  "角度(&A)",     "" },
             { "dim.radius",    "DimRadius",   "半径(&R)",     "" },
@@ -266,6 +267,12 @@ namespace MiniCAD
                                       doc.GetScene());
                                   LayerChanged();
                               },
+                              .canExecute = hasDoc });
+
+        // ── 格式 ─────────────────────────────────────────────────
+        m_commands.Register({ .id = "format.pointStyle", .label = "点样式(&P)…",
+                              .tooltip = "设置 POINT 的显示图形与大小（HEADER 的 $PDMODE/$PDSIZE）",
+                              .execute = [this] { OpenPointStyleDialog(); },
                               .canExecute = hasDoc });
 
         // ── 界面 ─────────────────────────────────────────────────

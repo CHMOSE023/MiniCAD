@@ -25,7 +25,33 @@ namespace MiniCAD
         virtual Math::Color4 GetLayerColor(LayerID layerId) const { return Math::Color4::White(); }
         // 图层是否显示（关闭或冻结为 false）：块参照展开时据此跳过块内隐藏图层上的子实体。默认都显示
         virtual bool IsLayerVisible(LayerID layerId) const { return true; }
+
+        // 图层名（大小写不敏感比较由调用方做）。用于 DEFPOINTS 特例等。
+        // 块内图层形如 "块名|图层名"。默认返回空串。
+        virtual std::string GetLayerName(LayerID layerId) const { (void)layerId; return {}; }
+
         virtual void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) = 0;
+
+        // 点图元：一个屏幕像素的实心小点（POINT 的 $PDMODE=0、以及拿不到点样式时的退路）。
+        // 只有生成场景顶点流的 sink 需要处理，默认忽略。
+        virtual void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) { (void)p; (void)color; (void)isOverlay; }
+
+        // ── 点样式查询（DXF HEADER 的 $PDMODE / $PDSIZE）────────────────────
+        //
+        // 返回 false = sink 不知道该图纸设置（选中流、探针、文字预览等），调用方按
+        // $PDMODE=0 的"实心小点"处理。
+        //
+        // $PDSIZE 语义：>0 = 世界单位；=0 = 视口高度的 5%；<0 = 视口高度的 |值|%。
+        // 后两种是**屏幕相对**的，需要 worldPerPixel + 视口像素高，一并提供。
+        virtual bool GetPointStyle(int& outPdMode, double& outPdSize) const
+        {
+            (void)outPdMode; (void)outPdSize;
+            return false;
+        }
+        // 1 屏幕像素对应的世界长度；<=0 表示未知（相对尺寸无法换算）。
+        virtual double GetWorldPerPixel() const { return 0.0; }
+        // 视口高度（像素）。=0 表示未知。
+        virtual double GetViewportHeightPx() const { return 0.0; }
 
         // 按线型铺设有宽度的线段（width 为模型单位）。粗多段线无法整体填充成一条带宽度、
         // 又带线型的路径：填充几何不经过线型解析，虚线会被画成实线。所以虚线粗线逐段走这里，
