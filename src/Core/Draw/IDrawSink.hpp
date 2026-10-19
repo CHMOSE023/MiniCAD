@@ -32,8 +32,15 @@ namespace MiniCAD
 
         virtual void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) = 0;
 
-        // 点图元：一个屏幕像素的实心小点（POINT 的 $PDMODE=0、以及拿不到点样式时的退路）。
-        // 只有生成场景顶点流的 sink 需要处理，默认忽略。
+        // 点图元：**一个顶点 = 一个点**，由渲染器保证恒定 1 屏幕像素，与缩放无关。
+        //
+        // 用途：
+        //   · 图案填充的"点"笔划（.pat 的 dash = 0，如 DOTS 点阵）；
+        //   · POINT 实体的 $PDMODE=0（AutoCAD 默认实心小点）与拿不到点样式时的退路。
+        //
+        // ⚠ 不能改用"极短线段"表达：线段长度是世界尺寸，缩小视图时会小于 1px
+        //   而整片消失（图案填充的点阵就是这么看不见的）。几何仍是世界坐标，
+        //   因此可缓存、缩放不必重建顶点。
         virtual void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) { (void)p; (void)color; (void)isOverlay; }
 
         // ── 点样式查询（DXF HEADER 的 $PDMODE / $PDSIZE）────────────────────

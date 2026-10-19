@@ -29,8 +29,10 @@ namespace
     class RecordingSink : public IDrawSink
     {
     public:
-        std::vector<Seg> segs;
+        std::vector<Seg>          segs;
+        std::vector<Math::Point3> points;   // 点图元（.pat 的 dash = 0）
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4&, bool) override { segs.push_back({ a, b }); }
+        void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override { points.push_back(p); }
     };
 
     double Len(const Seg& s) { return std::hypot(s.b.x - s.a.x, s.b.y - s.a.y); }
@@ -160,9 +162,10 @@ int RunHatchPatternTests()
         Check(inside, "DASH：每段不超过实线长，且裁剪在边界内");
 
         const auto dots = Render(*lib.Find("DOTS"), 1.0, 0.0, 0, 0, 50, 50);
-        bool tiny = !dots.empty();
-        for (const auto& s : dots) tiny = tiny && Len(s) < 0.2;
-        Check(tiny, "DOTS：点画成极短线段");
+        // .pat 的 dash = 0 是"点"，走**点图元**（IDrawSink::DrawPoint / POINTLIST），
+        // 由渲染器画成恒定 1 屏幕像素 —— 不画成任何线段。
+        // （旧实现画成 0.1 世界单位的短线段，缩小视图时 < 1px 整片消失。）
+        Check(dots.empty(), "DOTS：点走点图元，不画线段");
     }
 
     // ── 5. 多族图案：原点随填充角度旋转 ─────────────────────────────

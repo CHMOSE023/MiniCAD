@@ -100,16 +100,26 @@ namespace MiniCAD
         // 全局线型比例（Scene 的 $LTSCALE）。与实体级组码 48 相乘得到虚线实际周期。
         void SetLineTypeScale(double s) { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
 
-        // 点图元：画成一个屏幕像素的实心小点（POINT 的 $PDMODE=0 与退路）。
-        // 世界坐标下的点无法表达"一个像素"，所以这里只记录位置与颜色，
-        // 由渲染端按像素尺寸画（与网格点、夹点标记同一机制）。
+        // 点图元：一个顶点一个点，渲染端按 POINTLIST / GL_POINTS 画成
+        // 恒定 1 屏幕像素。用途：图案填充的 dash=0 点笔划、POINT 的 $PDMODE=0。
+        //
+        // ⚠ 走**独立的点流** m_points，不与线段流混：
+        //   · 图元类型不同（POINTLIST vs LINELIST），混在一起没法提交；
+        //   · 点流也参与区域覆盖裁剪（WipeClip），与线段同规则。
+        // 不能进 overlay：那是每帧清空的动态层，承载不了场景几何。
         void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) override
         {
-            (void)isOverlay;
-            // 用一个极小的十字表达"点图元"：渲染端把它当点画。
-            // 这里直接进 overlay，避免参与场景顶点流（点不参与拾取、不参与裁剪）
-            m_overlay.AddPoint(p, color);
+            if (isOverlay)
+            {
+                m_overlay.AddPoint(p, color);
+                return;
+            }
+            m_points.push_back(ToVertex(p, color));
         }
+
+        // 本次细分产出的点图元（调用方取走后清空）
+        std::vector<Vertex_P3_C4> TakePoints() { return std::move(m_points); }
+        void ClearPoints() { m_points.clear(); }
 
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
@@ -574,6 +584,7 @@ namespace MiniCAD
 
         std::vector<Vertex_P3_C4>&     m_verts;
         std::vector<Vertex_P3_C4>&     m_fillVerts;
+        std::vector<Vertex_P3_C4>      m_points;     // 点图元（POINTLIST，与线段/填充分开提交）
         std::vector<Vertex_P3_C4_UV>&  m_textVerts;
         Overlay&                       m_overlay;
         const LayerManager&            m_layerManager;

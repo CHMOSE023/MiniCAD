@@ -1,14 +1,26 @@
-// ── 图案填充的"点"（.pat dash = 0）可见性测试 ──────────────────────────────
+// ── 图案填充的"点"（.pat dash = 0）与点图元测试 ────────────────────────────
 //
-// 回归点：用户报 DOTS 之类的点阵填充看不见。
+// 回归点：用户报 DOTS 之类的点阵填充看不见；且点被画成短线段而非一个像素点。
 //
-// 根因：HatchEntity 把 dash = 0 的"点"画成 `0.1 * m_scale` **世界单位**的短线段。
-// 图案填充的几何常是毫米量级、视图又常缩放，0.1 世界单位在正常缩放开下远小于
-// 1 个屏幕像素 ⇒ 整片点阵消失。大坐标图纸（百万量级）里更极端。
+// 两个叠加的缺陷，都在 HatchEntity 的图案线族绘制里：
 //
-// 修法：与 DrawContext::EmitStyled 的虚线点同一套规则 ——
-//   点的可见长度按**屏幕像素**换算成世界尺寸（至少 ~1.5px）。
-//   拿不到 worldPerPixel 时（离屏探针）退到旧的 0.1 × scale，保证有输出。
+// 缺陷 1：点长写死 `0.1 * m_scale`（纯世界尺寸）。
+//   图案填充的几何常是毫米量级、视图又常缩放，0.1 世界单位在正常缩放开下
+//   远小于 1 个屏幕像素 ⇒ 整片点阵消失。大坐标图纸（百万量级）里更极端。
+//   也曾试过"按屏幕像素换算的短线段"：那仍是世界尺寸的线，缩小到点长
+//   超过线间距时会糊成一条实线（DOTS 间距只有 1.5875）。
+//   正解：走**点图元**（IDrawSink::DrawPoint / POINTLIST），一个顶点一个点，
+//   由渲染器画成恒定 1 屏幕像素，与缩放无关，也永远不与间距矛盾。
+//
+// 缺陷 2：内层循环不推进，输出几十万个重叠的点。
+//   dash 序列遍历用 `for (double d : fam.Dashes)` 每遍从头重放；
+//   `d == 0` 时 `len == 0` ⇒ `s += len` 不推进 ⇒ 永远卡在第一个 dash 上，
+//   在同一位置反复 emit 直到 budget 耗尽。
+//   实测（dashes = {0}，20×20 范围）：修前 500000 段全挤在 (0,1) 这一个点。
+//   修法：按 dash 序列的**下标**走，点不占相位（.pat 语义），靠下标前进；
+//   纯点阵特判按周期推进。
+//   顺带：全部 dash 都是 0 时 period 算出 0，原来直接 return ——
+//   整个点阵被跳过，一个点都不画。
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include <algorithm>
@@ -30,21 +42,20 @@ namespace
 
     struct Seg { Math::Point3 a, b; };
 
-    // 记录线段，并可指定 worldPerPixel（模拟视口缩放）
+    // 分别记录线段与点：点必须走 DrawPoint（点图元），不能画成线段
     class Sink : public IDrawSink
     {
     public:
-        std::vector<Seg> segs;
-        double           wpp = 0.0;
+        std::vector<Seg>          segs;
+        std::vector<Math::Point3> points;
 
         void DrawLine(const Math::Point3& a, const Math::Point3& b,
                       const Math::Color4&, bool) override
         { segs.push_back({ a, b }); }
 
-        double GetWorldPerPixel() const override { return wpp; }
+        void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override
+        { points.push_back(p); }
     };
-
-    double Len(const Seg& s) { return std::hypot(s.b.x - s.a.x, s.b.y - s.a.y); }
 
     // 只有一个 dash = 0 的图案族：沿 v 方向每隔 spacing 铺一个点
     HatchPattern MakeDots(double spacing)
@@ -61,144 +72,181 @@ namespace
         return p;
     }
 
-    // 铺一条横跨 [x0,x1]×[y0,y1] 的点阵，返回所有线段（每个点一段）
-    std::vector<Seg> RenderDots(double spacing, double scale, double wpp,
-                                double x0, double y0, double x1, double y1)
+    // 内置 DOTS：`0, -1.5875` = 点 + 空白，间距 1.5875
+    HatchPattern MakeBuiltinDots()
+    {
+        HatchPattern p;
+        p.Name        = "DOTS";
+        p.Description = "点阵";
+        p.Solid       = false;
+        HatchLineFamily fam;
+        fam.AngleDeg = 0.0;
+        fam.Spacing  = 1.5875;
+        fam.Dashes.push_back(0.0);
+        fam.Dashes.push_back(-1.5875);
+        p.Families.push_back(fam);
+        return p;
+    }
+
+    void Render(const HatchPattern& p, double scale, Sink& sink,
+                double x0, double y0, double x1, double y1)
     {
         HatchEntity h(1, Polyline({ { x0, y0, 0 }, { x1, y0, 0 },
-                                    { x1, y1, 0 }, { x0, y1, 0 }, { x0, y0, 0 } }),
-                      MakeDots(spacing));
+                                    { x1, y1, 0 }, { x0, y1, 0 }, { x0, y0, 0 } }), p);
         h.SetScale(scale);
-        Sink sink;
-        sink.wpp = wpp;
         h.Draw(sink, false, false);
-        return sink.segs;
     }
 }
 
 int RunHatchDotsTests()
 {
     g_failures = 0;
-    std::printf("\n=== 图案填充的点（dash = 0）===\n");
+    std::printf("\n=== 图案填充的点（dash = 0）与点图元 ===\n");
     const int before = g_failures;
 
-    // ── 1. 点必须被画出来（不是整片消失）────────────────────────
+    // ── 1. 点必须走点图元，而不是画成线段 ──────────────────────
     {
-        const auto segs = RenderDots(1.0, 1.0, 0.001, 0.0, 0.0, 20.0, 20.0);
-        Check(!segs.empty(), "点阵被画出来（至少 1 个点）");
-        std::printf("    点数 = %zu\n", segs.size());
-        Check(segs.size() >= 10, "20×20 范围、间距 1 的点数 ≥ 10");
+        Sink s;
+        Render(MakeDots(1.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(!s.points.empty(), "点阵被画出来（至少 1 个点）");
+        Check(s.segs.empty(), "点阵**不画任何线段**（点走点图元，不是短线段）");
+        std::printf("    点数 = %zu，线段数 = %zu\n", s.points.size(), s.segs.size());
+        Check(s.points.size() >= 10, "20×20 范围、间距 1 的点数 ≥ 10");
     }
 
-    // ── 2. 点的可见长度随 worldPerPixel 缩放（核心修复）──────────
+    // ── 2. 点不重叠、间距等于线间距 ────────────────────────────
+    {
+        Sink s;
+        Render(MakeDots(1.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        if (s.points.size() >= 2)
+        {
+            // 同一条填充线（y 相同）上相邻点的 x 间距应为 1.0
+            std::vector<double> xs;
+            for (const auto& p : s.points)
+                if (Near(p.y, s.points.front().y, 1e-9)) xs.push_back(p.x);
+            std::sort(xs.begin(), xs.end());
+            const double d = xs.size() >= 2 ? xs[1] - xs[0] : -1.0;
+            std::printf("    同行点数 %zu，相邻间距 %.6f\n", xs.size(), d);
+            Check(Near(d, 1.0, 1e-6), "同行相邻点间距 = 线间距 1.0（不重叠）");
+
+            // 全部点互不重复
+            std::vector<Math::Point3> uniq = s.points;
+            std::sort(uniq.begin(), uniq.end(), [](const Math::Point3& a, const Math::Point3& b)
+            { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+            uniq.erase(std::unique(uniq.begin(), uniq.end(), [](const Math::Point3& a, const Math::Point3& b)
+            { return Near(a.x, b.x, 1e-9) && Near(a.y, b.y, 1e-9); }), uniq.end());
+            Check(uniq.size() == s.points.size(),
+                  "没有重复点（修前是几十万个点挤在同一位置）");
+        }
+    }
+
+    // ── 3. 修前的具体病症：纯点阵整个被跳过 ────────────────────
     //
-    // 规则是三档夹逼：max(0.1 × scale, 1.5 × wpp) 再 min(半个间距)。
-    // 所以：
-    //   · 缩小视图（wpp 大）⇒ 点按 1.5 × wpp 变大，保持可见（修前的病症）；
-    //   · 放大视图（wpp 小）⇒ 退到 0.1 × scale 的世界尺寸兜底。
-    // 这里验证"缩小那一侧"真的在按 wpp 放大。
+    // 全部 dash 都是 0 时 period 算出 0，原来直接 return（一个点都不画）；
+    // 后来 period 置为 dy 但循环不推进，变成输出几十万个重叠点。
     {
-        const double wppCoarse = 1.0;      // 缩小视图：1px = 1 世界单位
-        const double wppTiny   = 0.001;    // 放大视图：1px = 0.001 世界单位
-
-        // 间距取大（10）让 dy/2 = 5 的上限不干扰，专门看像素那一档
-        const auto coarse = RenderDots(10.0, 1.0, wppCoarse, 0.0, 0.0, 200.0, 200.0);
-        const auto tiny   = RenderDots(10.0, 1.0, wppTiny,   0.0, 0.0, 200.0, 200.0);
-
-        Check(!coarse.empty() && !tiny.empty(), "两种缩放下都画得出点");
-        if (!coarse.empty() && !tiny.empty())
+        Sink s;
+        Render(MakeDots(2.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(!s.points.empty(), "纯点阵（只有 dash=0）画得出点");
+        Check(s.segs.empty(), "纯点阵不产生线段");
+        if (!s.points.empty())
         {
-            const double lc = Len(coarse.front());
-            const double lt = Len(tiny.front());
-            std::printf("    wpp=1 → 点长 %.6f；wpp=0.001 → 点长 %.6f\n", lc, lt);
-
-            Check(lc > lt, "缩小视图（wpp 大）时点更大（保持可见）");
-            Check(Near(lc, 1.5 * wppCoarse, 1e-6),
-                  "wpp=1 时点长 = 1.5 × wpp（屏幕约 1.5px）");
-            Check(Near(lt, 0.1, 1e-6),
-                  "wpp=0.001 时点长退到 0.1 × scale 的世界尺寸兜底");
-        }
-
-        // 再取一个中间值，确认"点长 / wpp"在像素那一档是常数
-        const auto mid = RenderDots(10.0, 1.0, 0.1, 0.0, 0.0, 200.0, 200.0);
-        if (!mid.empty())
-        {
-            const double lm = Len(mid.front());
-            std::printf("    wpp=0.1 → 点长 %.6f（1.5 × 0.1 = 0.15）\n", lm);
-            Check(Near(lm, 1.5 * 0.1, 1e-6), "wpp=0.1 时点长 = 1.5 × wpp");
+            std::vector<double> xs;
+            for (const auto& p : s.points)
+                if (Near(p.y, s.points.front().y, 1e-9)) xs.push_back(p.x);
+            std::sort(xs.begin(), xs.end());
+            const double d = xs.size() >= 2 ? xs[1] - xs[0] : -1.0;
+            std::printf("    纯点阵同行点数 %zu，相邻间距 %.6f（应为 2.0）\n", xs.size(), d);
+            Check(Near(d, 2.0, 1e-6), "纯点阵相邻点间距 = 线间距 2.0");
         }
     }
 
-    // ── 3. 修前的具体病症：wpp 大时旧实现画不出东西 ──────────────
+    // ── 4. 内置 DOTS（点 + 空白）间距正确 ──────────────────────
+    {
+        Sink s;
+        Render(MakeBuiltinDots(), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(!s.points.empty(), "内置 DOTS 画得出点");
+        Check(s.segs.empty(), "内置 DOTS 不画线段（只有点笔划）");
+        if (!s.points.empty())
+        {
+            std::vector<double> xs;
+            for (const auto& p : s.points)
+                if (Near(p.y, s.points.front().y, 1e-9)) xs.push_back(p.x);
+            std::sort(xs.begin(), xs.end());
+            const double d = xs.size() >= 2 ? xs[1] - xs[0] : -1.0;
+            std::printf("    内置 DOTS 同行点数 %zu，相邻间距 %.6f（应为 1.5875）\n", xs.size(), d);
+            // 点 + 空白 1.5875 ⇒ 点间距 = 1.5875 = 线间距
+            Check(Near(d, 1.5875, 1e-6), "内置 DOTS 点间距 = 空白长 1.5875");
+        }
+    }
+
+    // ── 5. 点与缩放无关（点图元是屏幕像素）─────────────────────
     //
-    // 旧实现点长 = 0.1 × scale，与 wpp 无关。
-    // wpp = 1（1 像素 = 1 世界单位）时旧点长 0.1 世界单位 = 0.1px ⇒ 看不见。
-    // 新实现：下限 1.5 × wpp = 1.5，上限 dy/2 = 5（间距 10）⇒ 取 1.5。
+    // 这是走点图元的核心好处：不需要 worldPerPixel，任何缩放大小的点
+    // 都是 1 个屏幕像素。测试通过"同一个 sink 不提供视口信息也照常输出"
+    // 来体现（旧实现拿不到 wpp 时会退成 0.1 世界单位的线）。
     {
-        const auto segs = RenderDots(10.0, 1.0, 1.0, 0.0, 0.0, 200.0, 200.0);
-        Check(!segs.empty(), "wpp=1（缩小视图）下仍画得出点");
-        if (!segs.empty())
-        {
-            const double l = Len(segs.front());
-            std::printf("    wpp=1 时点长 %.6f（旧实现为 0.1 × scale）\n", l);
-            Check(l > 0.5, "点长 > 0.5 世界单位（旧实现只有 0.1，亚像素）");
-            Check(Near(l, 1.5, 1e-6), "点长 = 1.5 × worldPerPixel（与 EmitStyled 同规则）");
-        }
+        Sink a, b;
+        Render(MakeDots(1.0), 1.0, a, 0.0, 0.0, 20.0, 20.0);   // 默认 GetWorldPerPixel() = 0
+        Render(MakeDots(1.0), 1.0, b, 0.0, 0.0, 20.0, 20.0);
+        Check(a.points.size() == b.points.size() && !a.points.empty(),
+              "拿不到视口信息时点数一致（点大小与缩放无关，不需要 wpp）");
     }
 
-    // ── 3b. 点长不超过半个线间距（否则连成实线）─────────────────
-    //
-    // DOTS 的间距只有 1.5875。缩小到 wpp 很大时 1.5px 对应的世界尺寸会超过
-    // 半个间距，此时必须被间距兜住，否则点阵糊成一条实线。
+    // ── 6. 点仍在填充边界内 ────────────────────────────────────
     {
-        const auto segs = RenderDots(1.0, 1.0, 1.0, 0.0, 0.0, 20.0, 20.0);
-        Check(!segs.empty(), "小间距点阵仍画得出点");
-        if (!segs.empty())
-        {
-            const double l = Len(segs.front());
-            std::printf("    间距 1、wpp=1 时点长 %.6f（上限 = 半个间距 0.5）\n", l);
-            Check(Near(l, 0.5, 1e-6), "点长被半个间距兜住（不糊成实线）");
-        }
+        Sink s;
+        Render(MakeDots(1.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        bool inside = true;
+        for (const auto& p : s.points)
+            if (p.x < -1e-9 || p.x > 20.0 + 1e-9 || p.y < -1e-9 || p.y > 20.0 + 1e-9)
+                inside = false;
+        Check(inside, "所有点都落在填充边界内");
     }
 
-    // ── 4. 拿不到视口信息时退到旧行为（不崩、有输出）─────────────
+    // ── 7. 图案比例仍参与（scale 影响间距）─────────────────────
     {
-        const auto segs = RenderDots(1.0, 1.0, 0.0, 0.0, 0.0, 20.0, 20.0);
-        Check(!segs.empty(), "worldPerPixel 未知时仍画得出点（退到 0.1 × scale）");
-        if (!segs.empty())
-        {
-            const double l = Len(segs.front());
-            std::printf("    wpp 未知时点长 %.6f\n", l);
-            Check(Near(l, 0.1, 1e-6), "wpp 未知时点长 = 0.1 × scale（旧行为兜底）");
-        }
+        Sink s1, s2;
+        Render(MakeDots(1.0), 1.0, s1, 0.0, 0.0, 20.0, 20.0);
+        Render(MakeDots(1.0), 2.0, s2, 0.0, 0.0, 20.0, 20.0);
+        Check(!s1.points.empty() && !s2.points.empty(), "两种比例下都画得出点");
+        std::printf("    scale=1 点数 %zu；scale=2 点数 %zu\n", s1.points.size(), s2.points.size());
+        Check(s2.points.size() < s1.points.size(), "比例放大后点数减少（间距变大）");
     }
 
-    // ── 5. 图案比例仍参与（scale 影响间距与点长下限）─────────────
+    // ── 8. 大坐标图纸（百万量级）也不消失 ──────────────────────
     {
-        const auto s1 = RenderDots(1.0, 1.0, 0.001, 0.0, 0.0, 20.0, 20.0);
-        const auto s2 = RenderDots(1.0, 2.0, 0.001, 0.0, 0.0, 20.0, 20.0);
-        Check(!s1.empty() && !s2.empty(), "两种比例下都画得出点");
-        if (!s1.empty() && !s2.empty())
-        {
-            // scale=2 ⇒ 间距翻倍 ⇒ 同样范围内的点数减半
-            std::printf("    scale=1 点数 %zu；scale=2 点数 %zu\n", s1.size(), s2.size());
-            Check(s2.size() < s1.size(), "比例放大后点数减少（间距变大）");
-            // 点长下限 = max(0.1 × scale, 1.5 × wpp)：scale=2 时是 0.2
-            Check(Near(Len(s2.front()), 0.2, 1e-6), "scale=2 时点长下限 = 0.1 × 2 = 0.2");
-        }
+        Sink s;
+        Render(MakeDots(100.0), 1.0, s, 1e6, 1e6, 1e6 + 20000.0, 1e6 + 20000.0);
+        Check(!s.points.empty(), "大坐标图纸（1e6）下仍画得出点");
+        Check(s.segs.empty(), "大坐标图纸下点仍不走线段");
+        if (!s.points.empty())
+            std::printf("    大坐标图纸点数 %zu\n", s.points.size());
     }
 
-    // ── 6. 大坐标图纸（百万量级）也不消失 ────────────────────────
+    // ── 9. 混合图案：点与实线各自走各路 ────────────────────────
     {
-        // 图纸坐标在百万量级，正常缩放下 wpp 可能到几十
-        const auto segs = RenderDots(100.0, 1.0, 10.0, 1e6, 1e6, 1e6 + 20000.0, 1e6 + 20000.0);
-        Check(!segs.empty(), "大坐标图纸（1e6）下仍画得出点");
-        if (!segs.empty())
-        {
-            const double l = Len(segs.front());
-            std::printf("    大坐标图纸点长 %.6f（= 1.5 × wpp = 15）\n", l);
-            Check(Near(l, 15.0, 1e-6), "大坐标图纸点长 = 1.5 × worldPerPixel");
-        }
+        HatchPattern p;
+        p.Name  = "MIX";
+        p.Solid = false;
+        HatchLineFamily fam;
+        fam.AngleDeg = 0.0;
+        fam.Spacing  = 1.0;
+        fam.Dashes.push_back(1.0);      // 实线 1.0
+        fam.Dashes.push_back(0.0);      // 点
+        p.Families.push_back(fam);
+
+        Sink s;
+        Render(p, 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(!s.segs.empty(), "混合图案画出了实线段");
+        Check(!s.points.empty(), "混合图案画出了点");
+        std::printf("    混合图案：线段 %zu，点 %zu\n", s.segs.size(), s.points.size());
+
+        // 实线段长度应等于 dash 的 1.0（不被点影响）
+        double maxSeg = 0.0;
+        for (const auto& g : s.segs)
+            maxSeg = std::max(maxSeg, std::hypot(g.b.x - g.a.x, g.b.y - g.a.y));
+        Check(Near(maxSeg, 1.0, 1e-6), "混合图案的实线段长 = dash 长 1.0");
     }
 
     const int n = g_failures - before;

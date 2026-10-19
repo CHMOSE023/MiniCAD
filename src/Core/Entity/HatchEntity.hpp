@@ -450,25 +450,15 @@ namespace MiniCAD
             const double nLast  = std::floor((vmax - vO) / dy);
             if (nLast - nFirst > static_cast<double>(budget)) { budget = 0; return; }
 
-            // “点”（.pat 的 dash = 0）的可见长度。
+            // “点”（.pat 的 dash = 0）走**点图元**（sink.DrawPoint）：一个顶点一个点，
+            // 由渲染器画成恒定 1 屏幕像素，与缩放无关。所以这里**不需要**算点长。
             //
-            // ⚠ 原来这里写死 `0.1 * m_scale`（纯世界单位）。图案填充的几何常是
+            // ⚠ 原来把点画成 `0.1 * m_scale` 世界单位的短线段。图案填充的几何常是
             //   毫米量级、视图又常缩放，0.1 世界单位在正常缩放开下远小于 1px
             //   ⇒ DOTS 之类的点阵整片消失（用户报的现象）。
             //   大坐标图纸（百万量级）里这个问题更极端。
-            //
-            // 修法（与 DrawContext::EmitStyled 的虚线点同源）：
-            //   ① 下限按**屏幕像素**算，至少 ~1.5px，保证再缩小也看得见；
-            //   ② 上限取半个线间距 —— 点是周期的一部分，画得比间隔还大就连成实线，
-            //      DOTS（间距 1.5875）在 1.5px 很大的缩小视图下就会这样。
-            //   ③ 拿不到 worldPerPixel 时（离屏探针）退到 0.1 × scale 的旧行为，
-            //      至少保证有输出、不为 0。
-            //
-            // 必须在 period 之前算：周期判定要用到它。
-            double dotLen = 0.1 * m_scale;
-            if (const double wpp = sink.GetWorldPerPixel(); wpp > 0.0)
-                dotLen = std::max(dotLen, wpp * 1.5);
-            dotLen = std::min(dotLen, dy * 0.5);
+            //   也试过"按屏幕像素换算的短线段"：那仍是世界尺寸的线，
+            //   缩小到点长超过线间距时会糊成一条实线（DOTS 间距只有 1.5875）。
 
             // 虚线周期（虚线长度同样是图案单位，乘以缩放）。
             //
@@ -528,11 +518,14 @@ namespace MiniCAD
                     if (pureDots)
                     {
                         // 纯点阵（dash 全是 0、没有空白项）：每周期一个点。
-                        // 必须显式推进 s，否则点全挤在同一位置（靠 budget 兜住
-                        // 也只是输出一堆重叠点）。
+                        // 必须显式推进 s，否则点全挤在同一位置。
                         while (s < b && budget > 0)
                         {
-                            if (s >= a) emit(s, std::min(s + dotLen, b), v);
+                            if (s >= a && s <= b)
+                            {
+                                sink.DrawPoint(toWorld(s, v), color, false);
+                                --budget;
+                            }
                             s += period;
                         }
                         continue;
@@ -558,15 +551,18 @@ namespace MiniCAD
                         }
                         else if (d == 0.0)
                         {
-                            // .pat 的 dash = 0 是"点"：画一小段（长度见上方 dotLen）。
+                            // .pat 的 dash = 0 是"点" ⇒ 走点图元（恒定 1 屏幕像素）。
                             //
-                            // ⚠ 原来这里 `len == 0` 且用 `for (double d : fam.Dashes)`
-                            //   从头重放序列 ⇒ s 不推进、每次都命中同一个点，
+                            // ⚠ 原来这里用 `for (double d : fam.Dashes)` 从头重放序列，
+                            //   而 `len == 0` 使 s 不推进 ⇒ 每次都命中同一个点，
                             //   反复 emit 到 budget 耗尽（实测 dashes={0} 时
                             //   500000 段全挤在同一个位置，其余全空）。
                             //   现在点不占相位（s 不动），靠下标前进落到下一项。
                             if (s >= a && s <= b)
-                                emit(s, std::min(s + dotLen, b), v);
+                            {
+                                sink.DrawPoint(toWorld(s, v), color, false);
+                                --budget;
+                            }
                         }
                         else
                         {

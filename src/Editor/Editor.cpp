@@ -2798,6 +2798,7 @@ namespace MiniCAD
         m_scratchFills.clear();
         m_scratchTexts.clear();
         m_scratchGlyphs.clear();
+        ctx.ClearPoints();
         ctx.ResetViewDependentFlag();
 
         ctx.BeginEntity(&entity.GetAttr());
@@ -2806,6 +2807,7 @@ namespace MiniCAD
 
         c.lines         = m_scratchLines;
         c.fills         = m_scratchFills;
+        c.points        = ctx.TakePoints();
         c.texts         = m_scratchTexts;
         c.glyphs        = m_scratchGlyphs;
         c.viewDependent = ctx.HasViewDependentGeometry();
@@ -2833,6 +2835,8 @@ namespace MiniCAD
             m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
             m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
         }
+        // 点图元不随视图变化（点是恒定屏幕像素），总进静态流
+        m_scenePointVertices.insert(m_scenePointVertices.end(), c.points.begin(), c.points.end());
         if (c.viewDependent || !c.wipes.empty())
             m_dynOrder.push_back(id);
         m_sceneViewDependent |= c.viewDependent;
@@ -3198,6 +3202,7 @@ namespace MiniCAD
 
         vs.Scene        = m_sceneVertices;
         vs.SceneFill    = m_sceneFillVertices;
+        vs.ScenePoints  = m_scenePointVertices;
         vs.Overlay      = m_overlayVertices;
         vs.TextScene    = m_textVertices;
         vs.Images       = m_sceneImages;
