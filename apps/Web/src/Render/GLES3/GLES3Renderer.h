@@ -71,7 +71,7 @@ namespace MiniCAD
             bool     valid    = false;
         };
 
-        void UseProgram(Program p, const Math::Mat4& viewProj, bool blend);
+        void UseProgram(Program p, const Math::Mat4& viewProj, bool depth, bool blend);
         void InitVertexBuffer(VertexBuffer& vb, bool textured);
         void Upload(VertexBuffer& vb, const void* data, size_t bytes, GLenum usage);
         void Draw(VertexBuffer& vb, GLenum mode, GLsizei count);

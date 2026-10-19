@@ -276,7 +276,7 @@ namespace MiniCAD
         return it->second;
     }
 
-    void GLES3Renderer::UseProgram(Program p, const Math::Mat4& viewProj, bool blend)
+    void GLES3Renderer::UseProgram(Program p, const Math::Mat4& viewProj, bool depth, bool blend)
     {
         const ProgramInfo& info = m_programs[static_cast<int>(p)];
         float m[16];
@@ -285,6 +285,16 @@ namespace MiniCAD
         glUseProgram(info.program);
         glUniformMatrix4fv(info.viewProj, 1, GL_FALSE, m);
         glUniform1f(info.light, p == Program::Image ? -1.0f : (m_lightBackground ? 1.0f : 0.0f));
+
+        // 深度：与 D3D11Renderer 相同——不测试 / 混合的只测试不写入 / 不混合的测试并写入（三维视图的着色面）
+        if (!depth)
+            glDisable(GL_DEPTH_TEST);
+        else
+        {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(blend ? GL_FALSE : GL_TRUE);
+        }
 
         if (blend)
         {
@@ -316,7 +326,9 @@ namespace MiniCAD
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glDepthMask(GL_TRUE);
+        glClearDepthf(1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
     void GLES3Renderer::EndFrame()
@@ -324,25 +336,27 @@ namespace MiniCAD
         m_currentTarget = nullptr;
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);   // 与界面层共用上下文：恢复默认深度状态
+        glDepthMask(GL_TRUE);
     }
 
     // =========================================================
     // 提交
     // =========================================================
-    void GLES3Renderer::Submit(std::span<const Vertex_P3_C4> verts, const Math::Mat4& viewProj, PrimitiveType type, bool, bool blend)
+    void GLES3Renderer::Submit(std::span<const Vertex_P3_C4> verts, const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {
         if (verts.empty())
             return;
-        UseProgram(Program::Color, viewProj, blend);
+        UseProgram(Program::Color, viewProj, depth, blend);
         Upload(m_stream, verts.data(), verts.size_bytes(), GL_STREAM_DRAW);
         Draw(m_stream, type == PrimitiveType::Line ? GL_LINES : GL_TRIANGLES, static_cast<GLsizei>(verts.size()));
     }
 
-    void GLES3Renderer::SubmitTextured(std::span<const Vertex_P3_C4_UV> verts, const Math::Mat4& viewProj, void* nativeSRV, bool, bool blend)
+    void GLES3Renderer::SubmitTextured(std::span<const Vertex_P3_C4_UV> verts, const Math::Mat4& viewProj, void* nativeSRV, bool depth, bool blend)
     {
         if (verts.empty() || !nativeSRV)
             return;
-        UseProgram(Program::Text, viewProj, blend);
+        UseProgram(Program::Text, viewProj, depth, blend);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, TextureFromHandle(nativeSRV));
         Upload(m_textStream, verts.data(), verts.size_bytes(), GL_STREAM_DRAW);
@@ -373,7 +387,7 @@ namespace MiniCAD
         if (!it->second)
             return;
 
-        UseProgram(Program::Image, viewProj, true);
+        UseProgram(Program::Image, viewProj, false, true);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, it->second);
         Upload(m_textStream, quad.data(), quad.size_bytes(), GL_STREAM_DRAW);
@@ -419,7 +433,7 @@ namespace MiniCAD
 
     void GLES3Renderer::SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
                                            std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
-                                           const Math::Mat4& viewProj, PrimitiveType type, bool, bool blend)
+                                           const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {
         GlyphSlot& gs = m_glyphSlots[slot];
         if (!gs.instances.valid || gs.instances.version != version)
@@ -436,7 +450,7 @@ namespace MiniCAD
             return;
         const GLuint meshVbo = type == PrimitiveType::Triangle ? m_glyphFillVbo : m_glyphLineVbo;
 
-        UseProgram(Program::Glyph, viewProj, blend);
+        UseProgram(Program::Glyph, viewProj, depth, blend);
         glBindVertexArray(m_glyphVao);
         glBindBuffer(GL_ARRAY_BUFFER, meshVbo);
         glEnableVertexAttribArray(0);
@@ -474,7 +488,7 @@ namespace MiniCAD
     }
 
     void GLES3Renderer::SubmitCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4> verts,
-                                     const Math::Mat4& viewProj, PrimitiveType type, bool, bool blend)
+                                     const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {
         VertexBuffer& vb = Cached(m_cached, slot, false);
         if (!vb.valid || vb.version != version)
@@ -486,12 +500,12 @@ namespace MiniCAD
         }
         if (vb.count == 0)
             return;
-        UseProgram(Program::Color, viewProj, blend);
+        UseProgram(Program::Color, viewProj, depth, blend);
         Draw(vb, type == PrimitiveType::Line ? GL_LINES : GL_TRIANGLES, vb.count);
     }
 
     void GLES3Renderer::SubmitTexturedCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4_UV> verts,
-                                             const Math::Mat4& viewProj, void* nativeSRV, bool, bool blend)
+                                             const Math::Mat4& viewProj, void* nativeSRV, bool depth, bool blend)
     {
         if (!nativeSRV)
             return;
@@ -505,7 +519,7 @@ namespace MiniCAD
         }
         if (vb.count == 0)
             return;
-        UseProgram(Program::Text, viewProj, blend);
+        UseProgram(Program::Text, viewProj, depth, blend);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, TextureFromHandle(nativeSRV));
         Draw(vb, GL_TRIANGLES, vb.count);

@@ -1,4 +1,5 @@
 #include "EntityRotate.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -43,6 +44,11 @@ namespace MiniCAD
 
     void RotateEntityInPlace(Entity& entity, const Math::Point3& pivot, double angle)
     {
+        if (entity.IsKindOf<Solid3DEntity>())
+        {
+            static_cast<Solid3DEntity&>(entity).ApplyTransform(Solid3DEntity::RotateMatrix(pivot, angle));
+            return;
+        }
         if (entity.IsKindOf<PointEntity>())
         {
             auto& pe = static_cast<PointEntity&>(entity);

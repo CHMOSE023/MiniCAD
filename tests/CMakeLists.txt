@@ -3,6 +3,7 @@
 # UI/            MiniGUI 单元测试        → MiniGUITests
 # UI/Golden/     MiniGUI 截图对比测试    → MiniGUIGolden（基准图片在 UI/Golden/baseline）
 # Serialization/ MiniDWG 单元测试        → MiniDWGTests
+# Solid/         SMLib 冒烟测试、ISolidKernel 接口测试、三维实体、建模命令、出图、三维视图 → SMLibSmokeTests、SolidKernelTests、Solid3DEntityTests、SolidToolTests、SolidDrawingTests、SolidViewTests（MINICAD_WITH_SOLID 时）
 # Data/          测试数据：Dwg/ 样例图纸（来自 ACadSharp，MIT），UI/ 截图测试用图标
 # 各测试程序输出到构建目录根（out/<preset>/），与 ctest 一起使用
 
@@ -242,3 +243,48 @@ if(MSVC)
 endif()
 minicad_test_output(MiniDWGTests)
 add_test(NAME MiniDWGTests COMMAND MiniDWGTests)
+
+# ── SMLib 冒烟测试（静态链接的实体建模内核）─────────────────────────────
+if(MINICAD_WITH_SOLID)
+    add_executable(SMLibSmokeTests "Solid/SMLibSmokeTests.cpp")
+    target_link_libraries(SMLibSmokeTests PRIVATE SM_API)
+    if(MSVC)
+        target_compile_options(SMLibSmokeTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SMLibSmokeTests COMMAND SMLibSmokeTests)
+
+    add_executable(SolidKernelTests "Solid/SolidKernelTests.cpp")
+    target_link_libraries(SolidKernelTests PRIVATE MiniCADSolid)
+    if(MSVC)
+        target_compile_options(SolidKernelTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SolidKernelTests COMMAND SolidKernelTests)
+
+    add_executable(Solid3DEntityTests "Solid/Solid3DEntityTests.cpp")
+    target_link_libraries(Solid3DEntityTests PRIVATE MiniCADSolid MiniDWG)
+    if(MSVC)
+        target_compile_options(Solid3DEntityTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME Solid3DEntityTests COMMAND Solid3DEntityTests)
+
+    add_executable(SolidToolTests "Solid/SolidToolTests.cpp")
+    target_link_libraries(SolidToolTests PRIVATE MiniCADSolid MiniDWG)
+    if(MSVC)
+        target_compile_options(SolidToolTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SolidToolTests COMMAND SolidToolTests)
+
+    add_executable(SolidDrawingTests "Solid/SolidDrawingTests.cpp")
+    target_link_libraries(SolidDrawingTests PRIVATE MiniCADSolid MiniDWG)
+    if(MSVC)
+        target_compile_options(SolidDrawingTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SolidDrawingTests COMMAND SolidDrawingTests)
+
+    add_executable(SolidViewTests "Solid/SolidViewTests.cpp")
+    target_link_libraries(SolidViewTests PRIVATE MiniCADSolid MiniDWG)
+    if(MSVC)
+        target_compile_options(SolidViewTests PRIVATE /utf-8)
+    endif()
+    add_test(NAME SolidViewTests COMMAND SolidViewTests)
+endif()

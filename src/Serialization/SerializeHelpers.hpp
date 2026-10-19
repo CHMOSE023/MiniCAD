@@ -5,12 +5,16 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Vec3.hpp"
 #include "Core/Math/Color4.hpp"
+#include "Core/Math/Mat4.hpp"
 #include "Core/Entity/EntityAttr.hpp"
 #include "Core/Entity/DimensionEntity.hpp"   // DimStyle
 #include "Core/Entity/MLeaderEntity.hpp"     // MLeaderStyle
 #include "Core/GeomKernel/Polyline.hpp"
 #include "Core/GeomKernel/Spline.hpp"
 #include "Core/GeomKernel/Ellipse.hpp"
+#include <algorithm>
+#include <cstdint>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -55,6 +59,80 @@ namespace MiniCAD::Ser
             for (size_t i = 0; i + 2 < flat.size(); i += 3)
                 pts.push_back({ flat[i], flat[i + 1], flat[i + 2] });
         }
+    }
+
+    // 二进制数据写为 base64 字符串（JSON 与二进制格式通用）。读入时遇到非法字符返回空。
+    inline std::string Base64Encode(const std::vector<uint8_t>& bytes)
+    {
+        static constexpr char kTable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve((bytes.size() + 2) / 3 * 4);
+        for (size_t i = 0; i < bytes.size(); i += 3)
+        {
+            const uint32_t b0 = bytes[i];
+            const uint32_t b1 = i + 1 < bytes.size() ? bytes[i + 1] : 0;
+            const uint32_t b2 = i + 2 < bytes.size() ? bytes[i + 2] : 0;
+            const uint32_t v  = (b0 << 16) | (b1 << 8) | b2;
+            out.push_back(kTable[(v >> 18) & 63]);
+            out.push_back(kTable[(v >> 12) & 63]);
+            out.push_back(i + 1 < bytes.size() ? kTable[(v >> 6) & 63] : '=');
+            out.push_back(i + 2 < bytes.size() ? kTable[v & 63] : '=');
+        }
+        return out;
+    }
+
+    inline std::vector<uint8_t> Base64Decode(const std::string& text)
+    {
+        auto value = [](char c) -> int
+        {
+            if (c >= 'A' && c <= 'Z') return c - 'A';
+            if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+            if (c >= '0' && c <= '9') return c - '0' + 52;
+            if (c == '+') return 62;
+            if (c == '/') return 63;
+            return -1;
+        };
+        std::vector<uint8_t> out;
+        if (text.size() % 4 != 0)
+            return out;
+        out.reserve(text.size() / 4 * 3);
+        for (size_t i = 0; i < text.size(); i += 4)
+        {
+            const int pad = (text[i + 3] == '=') + (text[i + 2] == '=' && text[i + 3] == '=');
+            if (pad > 0 && i + 4 != text.size())
+                return {};
+            int v[4];
+            for (int k = 0; k < 4; ++k)
+            {
+                v[k] = (k >= 4 - pad) ? 0 : value(text[i + k]);
+                if (v[k] < 0)
+                    return {};
+            }
+            const uint32_t bits = (uint32_t(v[0]) << 18) | (uint32_t(v[1]) << 12) | (uint32_t(v[2]) << 6) | uint32_t(v[3]);
+            out.push_back(static_cast<uint8_t>(bits >> 16));
+            if (pad < 2) out.push_back(static_cast<uint8_t>(bits >> 8));
+            if (pad < 1) out.push_back(static_cast<uint8_t>(bits));
+        }
+        return out;
+    }
+
+    inline void Bytes(ISerializer& s, const char* key, std::vector<uint8_t>& bytes)
+    {
+        std::string text;
+        if (!s.IsLoading())
+            text = Base64Encode(bytes);
+        s.Value(key, text);
+        if (s.IsLoading())
+            bytes = Base64Decode(text);
+    }
+
+    // 4×4 矩阵写为 16 个数（行优先，与 Math::Mat4::m 相同）
+    inline void Value(ISerializer& s, const char* key, Math::Mat4& m)
+    {
+        std::vector<double> v(m.m, m.m + 16);
+        s.Value(key, v);
+        if (s.IsLoading() && v.size() == 16)
+            std::copy(v.begin(), v.end(), m.m);
     }
 
     // 枚举按底层整型读写。

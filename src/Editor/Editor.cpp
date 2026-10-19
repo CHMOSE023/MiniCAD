@@ -85,6 +85,8 @@
 #include "Editor/Tools/Modify/ExtendTool.h"
 #include "Editor/Tools/Modify/BreakTool.h"
 #include "Editor/Tools/Modify/OffsetTool.h"
+#include "Editor/Tools/SolidTools.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include <cstdio>
 #include <memory>
@@ -379,6 +381,63 @@ namespace MiniCAD
         RegisterTool("Stretch", [] { return std::make_unique<StretchTool>(); });     // 自带交叉窗口选择，无需预选
         RegisterTool("Break",  [] { return std::make_unique<BreakTool>();  });
 
+        // ── 三维实体（需要内核，见 ActivateToolById）──────────────
+        RegisterTool("Box", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<BoxTool>(std::move(*env)) : nullptr;
+        });
+        RegisterTool("Cylinder", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<RoundSolidTool>(RoundSolidTool::Kind::Cylinder, std::move(*env)) : nullptr;
+        });
+        RegisterTool("Sphere", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<RoundSolidTool>(RoundSolidTool::Kind::Sphere, std::move(*env)) : nullptr;
+        });
+        RegisterTool("Extrude", [this]() -> std::unique_ptr<ITool> {   // 预选闭合对象
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<ExtrudeTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("SolidSection", [this]() -> std::unique_ptr<ITool> {   // 预选三维实体
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<SectionTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("Flatshot", [this]() -> std::unique_ptr<ITool> {       // 预选三维实体
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<FlatshotTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("Revolve", [this]() -> std::unique_ptr<ITool> {        // 预选闭合对象
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<RevolveTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("Sweep", [this]() -> std::unique_ptr<ITool> {          // 预选闭合对象，再点选路径
+            auto env = MakeSolidToolEnv();
+            std::vector<Object::ObjectID> ids = EditableSelectionIds();
+            if (!env || ids.empty())
+                return nullptr;
+            return std::make_unique<SweepTool>(std::move(ids), std::move(*env));
+        });
+        RegisterTool("FilletEdge", [this]() -> std::unique_ptr<ITool> {     // 自带点选边，无需预选
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<SolidEdgeTool>(SolidEdgeTool::Kind::Fillet, &m_solidFilletRadius, std::move(*env)) : nullptr;
+        });
+        RegisterTool("ChamferEdge", [this]() -> std::unique_ptr<ITool> {
+            auto env = MakeSolidToolEnv();
+            return env ? std::make_unique<SolidEdgeTool>(SolidEdgeTool::Kind::Chamfer, &m_solidChamferDistance, std::move(*env)) : nullptr;
+        });
+
         // ── 快捷键绑定 ────────────────────────────────────────
         RegisterAlias("P",      "Previous");
         RegisterAlias("L",      "Line");
@@ -406,8 +465,34 @@ namespace MiniCAD
         RegisterAlias("UNI",    "Union");
         RegisterAlias("SU",     "Subtract");
         RegisterAlias("IN",     "Intersect");
+        RegisterAlias("BOX",      "Box");
+        RegisterAlias("CYLINDER", "Cylinder");
+        RegisterAlias("CYL",      "Cylinder");
+        RegisterAlias("SPHERE",   "Sphere");
+        RegisterAlias("EXTRUDE",  "Extrude");
+        RegisterAlias("EXT",      "Extrude");
+        RegisterAlias("SOLSECTION", "SolidSection");
+        RegisterAlias("SECTION",    "SolidSection");
+        RegisterAlias("SEC",        "SolidSection");
+        RegisterAlias("FLATSHOT",   "Flatshot");
+        RegisterAlias("FSHOT",      "Flatshot");
+        RegisterAlias("REVOLVE",     "Revolve");
+        RegisterAlias("REV",         "Revolve");
+        RegisterAlias("SWEEP",       "Sweep");
+        RegisterAlias("FILLETEDGE",  "FilletEdge");
+        RegisterAlias("CHAMFEREDGE", "ChamferEdge");
         RegisterAlias("Z",      "Zoom");
         RegisterAlias("ZOOMALL", "ZoomAll");
+        RegisterAlias("PLAN",      "ViewTop");     // 视图与视觉样式是特例命令(非工具),全名也走别名表
+        for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
+                                  "ViewSWIso", "ViewSEIso", "ViewNEIso", "ViewNWIso" })
+        {
+            std::string upper = view;
+            std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            RegisterAlias(upper, view);
+        }
+        RegisterAlias("SHADE",     "Shade");
+        RegisterAlias("WIREFRAME", "Wireframe");
         RegisterAlias("IM",     "Image");   // Image 是特例命令(非工具),全名也走别名表
         RegisterAlias("IMAGE",  "Image");
         RegisterAlias("C",      "Circle");
@@ -557,6 +642,9 @@ namespace MiniCAD
         names.push_back("SelectAll");   // 特例命令(非工具):全选
         names.push_back("Zoom");        // 特例命令(非工具):视图缩放（A 全部 / E 窗口）
         names.push_back("Explode");     // 特例命令(非工具):分解
+        for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
+                                  "ViewSWIso", "ViewSEIso", "ViewNEIso", "ViewNWIso", "Shade", "Wireframe" })
+            names.push_back(view);      // 特例命令(非工具):标准视图、视觉样式（M6）
         std::sort(names.begin(), names.end());
         return names;
     }
@@ -573,7 +661,7 @@ namespace MiniCAD
         }
         Camera& cam = m_viewport->GetCamera();
         const CameraState before = cam.GetState();
-        cam.ZoomToBounds(box.Min.x, box.Min.y, box.Max.x, box.Max.y);
+        cam.ZoomToBounds(box);   // 俯视时只按 XY；三维视图按视图方向投影
         const CameraState after = cam.GetState();
         if (undoable)
         {
@@ -693,10 +781,41 @@ namespace MiniCAD
             return;
         }
 
+        // 标准视图与视觉样式（M6，特例命令）
+        static const std::pair<const char*, StandardView> kViews[] = {
+            { "ViewTop", StandardView::Top }, { "ViewBottom", StandardView::Bottom }, { "ViewFront", StandardView::Front },
+            { "ViewBack", StandardView::Back }, { "ViewLeft", StandardView::Left }, { "ViewRight", StandardView::Right },
+            { "ViewSWIso", StandardView::SWIso }, { "ViewSEIso", StandardView::SEIso }, { "ViewNEIso", StandardView::NEIso },
+            { "ViewNWIso", StandardView::NWIso } };
+        for (const auto& [name, view] : kViews)
+            if (toolId == name)
+            {
+                m_commandLine.Echo(std::string("命令: ") + name);
+                SetStandardView(view);
+                m_lastCommand = name;
+                return;
+            }
+        if (toolId == "Shade" || toolId == "Wireframe")
+        {
+            const bool shaded = toolId == "Shade";
+            SetVisualStyle(shaded ? VisualStyle::Shaded : VisualStyle::Wireframe);
+            m_commandLine.Echo(shaded ? "视觉样式：着色" : "视觉样式：线框");
+            m_lastCommand = toolId;
+            return;
+        }
+
         if (toolId == "Zoom")          // 只输入 ZOOM（别名 Z、补全到全名后空格 / 回车）：等待下一行输入选项
         {
             m_commandLine.Echo("命令: ZOOM");
             m_zoomPending = true;
+            return;
+        }
+
+        if ((toolId == "Box" || toolId == "Cylinder" || toolId == "Sphere" || toolId == "Extrude"
+             || toolId == "SolidSection" || toolId == "Flatshot" || toolId == "Revolve" || toolId == "Sweep"
+             || toolId == "FilletEdge" || toolId == "ChamferEdge") && !m_solidKernel)
+        {
+            m_commandLine.Echo(toolId + ": 三维建模不可用（此版本没有实体内核）");
             return;
         }
 
@@ -1179,10 +1298,261 @@ namespace MiniCAD
         m_commandLine.Echo("原对象已保留；不再需要时请自行删除");
     }
 
+    std::unique_ptr<Entity> SolidToolDetail::MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b)
+    {
+        return std::make_unique<LineEntity>(id, a, b);
+    }
+
+    std::optional<std::pair<Math::Point3, Math::Point3>> SolidToolDetail::LineEndpoints(const Entity& e)
+    {
+        if (!e.IsKindOf<LineEntity>())
+            return std::nullopt;
+        const auto& l = static_cast<const LineEntity&>(e).GetLine();
+        return std::make_pair(l.Start, l.End);
+    }
+
+    std::optional<SolidToolEnv> Editor::MakeSolidToolEnv()
+    {
+        if (!m_doc || !m_solidKernel)
+            return std::nullopt;
+        return SolidToolEnv{ m_doc->GetScene(), m_doc->GetCommandStack(), m_picking, m_overlay, *m_solidKernel,
+                             [this](const std::string& text) { m_commandLine.Echo(text); } };
+    }
+
+    // ── 三维视图（M6）──────────────────────────────────────────────
+    void Editor::SetVisualStyle(VisualStyle style)
+    {
+        if (style == m_visualStyle)
+            return;
+        m_visualStyle = style;
+        m_shadedValid = false;   // 下一帧重建着色面
+    }
+
+    void Editor::SetStandardView(StandardView view)
+    {
+        if (!m_viewport)
+            return;
+        Camera probe = m_viewport->GetCamera();
+        probe.SetStandardView(view);
+        SetViewDirection(probe.GetAzimuth(), probe.GetElevation());
+    }
+
+    void Editor::SetViewDirection(double azimuthDeg, double elevationDeg)
+    {
+        if (!m_doc || !m_viewport)
+            return;
+        Camera& cam = m_viewport->GetCamera();
+        const CameraState before = cam.GetState();
+        cam.SetView(azimuthDeg, elevationDeg);
+        if (AABB box = AABB::Empty(); m_doc->GetScene().GetExtents(box))
+            cam.ZoomToBounds(box);
+        const CameraState after = cam.GetState();
+        cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
+        m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+    }
+
+    // 三维实体随视图变化的部分：着色面与轮廓线。场景重建、视线方向或视觉样式变化时重建，平移、缩放不重建。
+    // 着色：光源跟着相机（从视线的左上方照来），颜色 = 实体颜色 × (环境光 0.25 + 漫反射 0.55)；朝外的法线背对视线时翻过来
+    //（开放网格的背面）。亮度最高 0.8：边（实体颜色）画在面上看得清；纯白顶点在浅色背景下会被渲染器画成黑色（7 号色语义），
+    // 着色面也不应参与。
+    // 轮廓线：面内部的网格边两侧三角形一个朝向眼睛、一个背向眼睛（圆柱、球的外轮廓），两种视觉样式都画
+    void Editor::UpdateShadedVertices(bool sceneRebuilt)
+    {
+        const Camera& cam = m_viewport->GetCamera();
+        const Math::Vec3 f = cam.GetViewDir();
+        const bool viewChanged = (f - m_shadedViewDir).LengthSq() > 1e-18;
+        if (m_shadedValid && !sceneRebuilt && !viewChanged && m_shadedSceneVersion == m_sceneVersion)
+            return;
+
+        m_shadedVertices.clear();
+        m_silhouetteVertices.clear();
+        m_shadedViewDir      = f;
+        m_shadedSceneVersion = m_sceneVersion;
+        m_shadedValid        = true;
+        ++m_shadedVersion;
+
+        const bool shaded = m_visualStyle == VisualStyle::Shaded;
+        const Math::Vec3 r = cam.GetRight(), u = cam.GetUp();
+        const Math::Vec3 light = (-f * 0.75 + u * 0.55 - r * 0.35).Normalized();
+        auto dot = [](const Math::Vec3& a, const Math::Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+        auto toFloat3 = [](const Math::Point3& p) { return Math::Float3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) }; };
+
+        const Scene& scene = m_doc->GetScene();
+        const LayerManager& layers = scene.GetLayerManager();
+        std::vector<double> facing;
+        scene.ForEachObject([&](const Object& o)
+        {
+            if (!o.IsKindOf<Solid3DEntity>())
+                return;
+            const auto& solid = static_cast<const Solid3DEntity&>(o);
+            const auto& attr  = solid.GetAttr();
+            const Layer* layer = layers.GetLayer(attr.LayerId);
+            if (!attr.Visible || (layer && !layer->IsVisible()))
+                return;
+            const auto& mesh = solid.GetLocalMesh();
+            if (mesh.Empty())
+                return;
+            const Math::Color4 base = attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor()
+                                                                                          : static_cast<Math::Color4>(attr.Color);
+            const Math::Mat4& m = solid.GetTransform();
+
+            if (shaded)
+            {
+                const auto& normals = solid.GetLocalCornerNormals();
+                m_shadedVertices.reserve(m_shadedVertices.size() + mesh.Indices.size());
+                for (size_t c = 0; c < mesh.Indices.size(); ++c)
+                {
+                    const Math::Point3 p = m.TransformPoint(mesh.Positions[mesh.Indices[c]]);
+                    Math::Vec3 n = m.TransformVector(normals[c]).Normalized();
+                    if (dot(n, f) > 0.0)
+                        n = -n;
+                    const double k = 0.25 + 0.55 * std::max(0.0, dot(n, light));
+                    const Math::Float4 color{ static_cast<float>(base.r * k), static_cast<float>(base.g * k), static_cast<float>(base.b * k), 1.0f };
+                    m_shadedVertices.push_back({ toFloat3(p), color });
+                }
+            }
+
+            // 轮廓线：三角形朝向（世界坐标下的面法线与视线的点积）在面内部的边两侧变号
+            const auto& edges = solid.GetLocalSmoothEdges();
+            if (edges.empty())
+                return;
+            facing.assign(mesh.TriangleCount(), 0.0);
+            for (size_t t = 0; t < facing.size(); ++t)
+            {
+                const auto& a = mesh.Positions[mesh.Indices[t * 3]];
+                const Math::Vec3 e1 = mesh.Positions[mesh.Indices[t * 3 + 1]] - a;
+                const Math::Vec3 e2 = mesh.Positions[mesh.Indices[t * 3 + 2]] - a;
+                const Math::Vec3 n{ e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+                facing[t] = dot(m.TransformVector(n), f);
+            }
+            const VertexColor lineColor(Math::Float4{ static_cast<float>(base.r), static_cast<float>(base.g), static_cast<float>(base.b), 1.0f });
+            for (const auto& e : edges)
+                if ((facing[e.TriA] < 0.0) != (facing[e.TriB] < 0.0))
+                {
+                    m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.A])), lineColor });
+                    m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.B])), lineColor });
+                }
+        });
+
+        // 三角形从远到近排序：俯视时着色面不做深度测试（与二维内容一样按绘制顺序叠放），近的面要画在后面
+        if (m_shadedVertices.size() >= 6)
+        {
+            const size_t triCount = m_shadedVertices.size() / 3;
+            std::vector<std::pair<double, uint32_t>> order(triCount);
+            for (size_t t = 0; t < triCount; ++t)
+            {
+                double d = 0.0;
+                for (int i = 0; i < 3; ++i)
+                {
+                    const auto& p = m_shadedVertices[t * 3 + i].pos;
+                    d += p.x * f.x + p.y * f.y + p.z * f.z;
+                }
+                order[t] = { -d, static_cast<uint32_t>(t) };
+            }
+            std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<Vertex_P3_C4> sorted;
+            sorted.reserve(m_shadedVertices.size());
+            for (const auto& [key, t] : order)
+                for (int i = 0; i < 3; ++i)
+                    sorted.push_back(m_shadedVertices[t * 3 + i]);
+            m_shadedVertices.swap(sorted);
+        }
+    }
+
+    void Editor::SolidBoolean(BooleanOp op)
+    {
+        static const char* kNames[] = { "Union", "Subtract", "Intersect" };
+        static const char* kLabel[] = { "并集", "差集", "交集" };
+        const int opi = static_cast<int>(op);
+        m_commandLine.Echo(std::string("命令: ") + kNames[opi]);
+        m_lastCommand = kNames[opi];
+        if (!m_solidKernel)
+        {
+            m_commandLine.Echo(std::string(kNames[opi]) + ": 三维实体运算不可用（此版本没有实体内核）");
+            return;
+        }
+
+        // 操作数：选择集里的三维实体，按 ID 升序（差集以最先创建的为被减对象）
+        auto& scene = m_doc->GetScene();
+        std::map<Object::ObjectID, const Solid3DEntity*> solids;
+        int others = 0, locked = 0;
+        for (auto id : m_picking.GetSelection())
+        {
+            const Object* o = scene.GetEntity(id);
+            if (!o || !o->IsKindOf<Entity>()) continue;
+            if (!o->IsKindOf<Solid3DEntity>()) { ++others; continue; }
+            if (scene.IsEntityLocked(*o)) { ++locked; continue; }
+            solids[id] = static_cast<const Solid3DEntity*>(o);
+        }
+        std::string notes;
+        if (others > 0) notes += "（" + std::to_string(others) + " 个不是三维实体的对象已忽略）";
+        if (locked > 0) notes += "（" + std::to_string(locked) + " 个实体在锁定的图层上，已跳过）";
+        if (solids.size() < 2)
+        {
+            m_commandLine.Echo(std::string(kNames[opi]) + ": 需要至少选择两个三维实体" + notes);
+            return;
+        }
+
+        const auto kop = op == BooleanOp::Union ? Solid::BooleanOp::Union
+                       : op == BooleanOp::Subtract ? Solid::BooleanOp::Difference : Solid::BooleanOp::Intersection;
+        Solid::BodyPtr result;
+        for (const auto& [id, solid] : solids)
+        {
+            Solid::BodyPtr body = solid->GetWorldBody(*m_solidKernel);
+            if (body && result)
+                body = m_solidKernel->Boolean(kop, result, body);
+            if (!body)
+            {
+                m_commandLine.Echo(std::string(kLabel[opi]) + "失败，未做修改（" + m_solidKernel->LastError() + "）");
+                return;
+            }
+            result = body;
+        }
+
+        auto entity = Solid3DEntity::Create(scene.NextObjectID(), *m_solidKernel, result);
+        if (!entity || entity->GetLocalWire().empty())
+        {
+            m_commandLine.Echo(std::string(kLabel[opi]) + "：结果为空" + (op == BooleanOp::Intersect ? "（这些实体没有公共部分）" : "") + "，未做修改");
+            return;
+        }
+        entity->SetAttr(solids.begin()->second->GetAttr());   // 属性取自 ID 最小的原实体
+        const double volume = m_solidKernel->Volume(result);
+
+        // 原实体替换为结果，作为一步操作（撤销一次全部还原）
+        std::vector<GeometryEditCommand::Item> items;
+        for (const auto& [id, solid] : solids)
+        {
+            GeometryEditCommand::Item it;
+            it.id     = id;
+            it.before = solid->Clone(id);
+            items.push_back(std::move(it));
+        }
+        GeometryEditCommand::Item add;
+        add.id    = entity->GetID();
+        add.after = std::move(entity);
+        items.push_back(std::move(add));
+
+        m_picking.ClearSelection();
+        m_picking.MarkDirty();
+        m_gripEditor.MarkDirty();
+        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>(std::string("实体") + kLabel[opi], std::move(items)), scene);
+
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s：%zu 个实体合成一个，体积 = %.4f", kLabel[opi], solids.size(), volume);
+        m_commandLine.Echo(buf + notes);
+    }
+
     void Editor::RegionBoolean(BooleanOp op)
     {
         if (!m_doc)
             return;
+        // 选择集里有三维实体：做实体布尔（同 AutoCAD 的 UNION / SUBTRACT / INTERSECT 对面域与实体都适用）
+        for (auto id : m_picking.GetSelection())
+            if (const Object* o = m_doc->GetScene().GetEntity(id); o && o->IsKindOf<Solid3DEntity>())
+            {
+                SolidBoolean(op);
+                return;
+            }
         static const char* kNames[] = { "Union", "Subtract", "Intersect" };
         static const char* kLabel[] = { "并集", "差集", "交集" };
         const int opi = static_cast<int>(op);
@@ -1926,6 +2296,13 @@ namespace MiniCAD
             return false;
         }
 
+        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift))
+        {
+            // Shift + 中键拖动：绕视图中心环绕（同 AutoCAD 的 3DORBIT）
+            m_viewport->GetCamera().Orbit(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
+            return true;
+        }
+
         if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle))
         {
             m_viewport->Pan(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
@@ -2275,6 +2652,7 @@ namespace MiniCAD
         m_picking.SyncIndex();
 
         bool sceneRebuilt = UpdateSceneVertices(worldPerPixel, zoomChanged);
+        UpdateShadedVertices(sceneRebuilt);
 
         // 场景或选择集变化时清预览、重建夹点（原先在场景重建路径内）
         if ((sceneRebuilt || selectionDirty) && !IsActiveTool() && !dragging)
@@ -2814,6 +3192,21 @@ namespace MiniCAD
         vs.SceneDyn        = m_sceneDynVertices;
         vs.SceneDynFill    = m_sceneDynFillVertices;
         vs.SceneDynVersion = m_sceneDynVersion;
+        vs.Shaded          = m_shadedVertices;
+        vs.Silhouettes     = m_silhouetteVertices;
+        vs.ShadedVersion   = m_shadedVersion;
+        if (!m_viewport->GetCamera().IsPlanView())
+        {
+            // 三维视图的深度范围：按场景版本缓存（全图遍历一次）
+            if (!m_sceneBoundsValid || m_sceneBoundsVersion != m_sceneVersion)
+            {
+                m_sceneBounds = AABB::Empty();
+                scene.GetExtents(m_sceneBounds);
+                m_sceneBoundsVersion = m_sceneVersion;
+                m_sceneBoundsValid   = true;
+            }
+            vs.SceneBounds = m_sceneBounds;
+        }
         vs.Glyphs          = m_glyphInstances;
         vs.GlyphBatches    = m_glyphBatches;
         vs.GlyphMeshes     = m_glyphLibrary.View();

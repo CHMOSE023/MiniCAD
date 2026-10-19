@@ -1,4 +1,5 @@
 #include "EntityMirror.h"
+#include "Core/Entity/Solid3DEntity.hpp"
 
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -56,6 +57,11 @@ namespace MiniCAD
 
     void MirrorEntityInPlace(Entity& entity, const MirrorAxis& axis)
     {
+        if (entity.IsKindOf<Solid3DEntity>())
+        {
+            static_cast<Solid3DEntity&>(entity).ApplyTransform(Solid3DEntity::MirrorMatrix(axis.P0, axis.P1));
+            return;
+        }
         if (entity.IsKindOf<PointEntity>())
         {
             auto& pe = static_cast<PointEntity&>(entity);

@@ -22,6 +22,9 @@ include(cmake/MiniDWG.cmake)
 # ── MiniGUI（保留模式界面库）─────────────────────────────────────────
 include(cmake/MiniGUI.cmake)
 
+# ── SMLib（第三方实体建模内核，可选，MINICAD_WITH_SOLID）─────────────────
+include(cmake/SMLib.cmake)
+
 # ── MiniCAD（平台无关的 CAD 核心库）──────────────────────────────────
 include(cmake/MiniCAD.cmake)
 

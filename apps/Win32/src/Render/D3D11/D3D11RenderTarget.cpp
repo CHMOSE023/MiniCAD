@@ -19,6 +19,12 @@ namespace MiniCAD
         m_device->CreateRenderTargetView  (m_texture.Get(), nullptr, &m_rtv);
         m_device->CreateShaderResourceView(m_texture.Get(), nullptr, &m_srv);
 
+        D3D11_TEXTURE2D_DESC depthDesc = desc;
+        depthDesc.Format    = DXGI_FORMAT_D32_FLOAT;
+        depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        if (m_texture && SUCCEEDED(m_device->CreateTexture2D(&depthDesc, nullptr, &m_depth)))
+            m_device->CreateDepthStencilView(m_depth.Get(), nullptr, &m_dsv);
+
         // 记录尺寸：调用方按 GetWidth/GetHeight 判断是否需要 Resize。
         // （以前 Resize 先记尺寸再 Release，Release 又把尺寸清零，GetWidth 恒为 0，
         //   导致调用方每帧都"发现尺寸变了"而重建纹理）
@@ -37,6 +43,8 @@ namespace MiniCAD
 
     void D3D11RenderTarget::Release()
     {
+        m_dsv.Reset();
+        m_depth.Reset();
         m_srv.Reset();
         m_rtv.Reset();
         m_texture.Reset();

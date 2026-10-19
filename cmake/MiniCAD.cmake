@@ -130,3 +130,14 @@ option(MINICAD_BUILD_LEGACY_WASM "Build the legacy C-API WASM target (wasm/) ins
 if(EMSCRIPTEN AND MINICAD_BUILD_LEGACY_WASM)
     target_compile_definitions(MiniCAD PUBLIC MINICAD_WEB)
 endif()
+
+# ── 三维实体内核适配层（MINICAD_WITH_SOLID，见 docs/Solid/PLAN.md）──────────
+# 接口 Solid/ISolidKernel.h 属于核心库（只用 MiniCAD 的类型）；SMLib 实现单独成库，私有链接 SM_API，
+# 不继承核心库的 UNICODE 定义（SMLib 按它切换宽字符文件名）。使用方链接 MiniCADSolid 并调用 CreateSMLibKernel()
+if(MINICAD_WITH_SOLID)
+    add_library(MiniCADSolid STATIC "${MINICAD_SRC}/Solid/SMLib/SMLibKernel.cpp")
+    target_link_libraries(MiniCADSolid PUBLIC MiniCAD PRIVATE SM_API)
+    if(MSVC)
+        target_compile_options(MiniCADSolid PRIVATE /utf-8 /W4)
+    endif()
+endif()

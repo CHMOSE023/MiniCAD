@@ -87,6 +87,12 @@ target_link_libraries(MiniCADWin PRIVATE
     D3DCompiler
 )
 
+# 三维实体内核（SMLib，见 docs/Solid/PLAN.md）
+if(MINICAD_WITH_SOLID)
+    target_link_libraries(MiniCADWin PRIVATE MiniCADSolid)
+    target_compile_definitions(MiniCADWin PRIVATE MINICAD_WITH_SOLID)
+endif()
+
 if(MSVC)
     target_compile_options(MiniCADWin PRIVATE
         /utf-8

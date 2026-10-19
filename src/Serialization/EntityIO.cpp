@@ -11,6 +11,7 @@
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
@@ -267,6 +268,115 @@ namespace MiniCAD::EntityIO
             std::uint32_t flags = 0; s.Value("invisibleEdges", flags);
             return std::make_unique<Face3DEntity>(id, r.P1, r.P2, r.P3, r.P4, flags);
         }
+        // 三维实体：内核数据（base64）、变换矩阵、局部坐标下的线框（没有内核时用来显示）
+        // 三维实体的网格打包成一段字节（小端）：顶点数 u32、顶点 3 × f64、三角形数 u32、索引 3 × u32、边标志 u8
+        std::vector<uint8_t> PackSolidMesh(const Solid3DEntity::SurfaceMesh& m)
+        {
+            std::vector<uint8_t> out;
+            auto put = [&out](const void* p, size_t n) { const auto* b = static_cast<const uint8_t*>(p); out.insert(out.end(), b, b + n); };
+            const uint32_t nv = static_cast<uint32_t>(m.Positions.size()), nt = static_cast<uint32_t>(m.TriangleCount());
+            put(&nv, 4);
+            for (const auto& p : m.Positions)
+            {
+                const double xyz[3]{ p.x, p.y, p.z };
+                put(xyz, sizeof(xyz));
+            }
+            put(&nt, 4);
+            put(m.Indices.data(), m.Indices.size() * 4);
+            put(m.EdgeFlags.data(), m.EdgeFlags.size());
+            return out;
+        }
+
+        // 数据不完整或索引越界时返回空网格
+        Solid3DEntity::SurfaceMesh UnpackSolidMesh(const std::vector<uint8_t>& in)
+        {
+            Solid3DEntity::SurfaceMesh m;
+            size_t pos = 0;
+            auto get = [&](void* p, size_t n) {
+                if (pos + n > in.size()) return false;
+                std::memcpy(p, in.data() + pos, n);
+                pos += n;
+                return true;
+            };
+            uint32_t nv = 0, nt = 0;
+            if (!get(&nv, 4) || in.size() < 4 + size_t(nv) * 24)
+                return {};
+            m.Positions.resize(nv);
+            for (auto& p : m.Positions)
+            {
+                double xyz[3];
+                get(xyz, sizeof(xyz));
+                p = { xyz[0], xyz[1], xyz[2] };
+            }
+            if (!get(&nt, 4) || in.size() - pos != size_t(nt) * 13)
+                return {};
+            m.Indices.resize(size_t(nt) * 3);
+            m.EdgeFlags.resize(nt);
+            get(m.Indices.data(), m.Indices.size() * 4);
+            get(m.EdgeFlags.data(), nt);
+            for (uint32_t i : m.Indices)
+                if (i >= nv)
+                    return {};
+            return m;
+        }
+
+        void WriteSolid3D(ISerializer& s, const Solid3DEntity& e)
+        {
+            std::vector<uint8_t> bytes = e.GetBytes();
+            Ser::Bytes(s, "data", bytes);
+            Math::Mat4 m = e.GetTransform();
+            Ser::Value(s, "transform", m);
+            const AABB& b = e.GetLocalBounds();
+            std::vector<double> bounds{ b.Min.x, b.Min.y, b.Min.z, b.Max.x, b.Max.y, b.Max.z };
+            s.Value("bounds", bounds);
+            if (!e.GetLocalMesh().Empty())
+            {
+                std::vector<uint8_t> mesh = PackSolidMesh(e.GetLocalMesh());
+                Ser::Bytes(s, "mesh", mesh);
+            }
+            size_t n = e.GetLocalWire().size();
+            if (s.BeginArray("wire", n))
+            {
+                for (size_t i = 0; i < n; ++i)
+                {
+                    if (!s.BeginElement(i)) continue;
+                    std::vector<Point3> line = e.GetLocalWire()[i];
+                    Ser::Value(s, "pts", line);
+                    s.EndElement();
+                }
+                s.EndArray();
+            }
+        }
+
+        std::unique_ptr<Entity> ReadSolid3D(ISerializer& s, Object::ObjectID id)
+        {
+            std::vector<uint8_t> bytes;
+            Ser::Bytes(s, "data", bytes);
+            Math::Mat4 m = Math::Mat4::Identity();
+            Ser::Value(s, "transform", m);
+            AABB bounds = AABB::Empty();
+            std::vector<double> b;
+            s.Value("bounds", b);
+            if (b.size() == 6)
+                bounds = AABB({ b[0], b[1], b[2] }, { b[3], b[4], b[5] });
+            std::vector<uint8_t> meshBytes;
+            Ser::Bytes(s, "mesh", meshBytes);
+            Solid3DEntity::Wire wire;
+            size_t n = 0;
+            if (s.BeginArray("wire", n))
+            {
+                wire.resize(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    if (!s.BeginElement(i)) continue;
+                    Ser::Value(s, "pts", wire[i]);
+                    s.EndElement();
+                }
+                s.EndArray();
+            }
+            return std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), m, bounds, UnpackSolidMesh(meshBytes));
+        }
+
         std::unique_ptr<Entity> ReadSolid(ISerializer& s, Object::ObjectID id)
         {
             Rectangle r;
@@ -971,6 +1081,7 @@ namespace MiniCAD::EntityIO
             { "ImageEntity",     &WriteThunk<ImageEntity, &WriteImage>,         &ReadImage     },
             { "WipeoutEntity",   &WriteThunk<WipeoutEntity, &WriteWipeout>,     &ReadWipeout   },
             { "SolidEntity",   &WriteThunk<SolidEntity, &WriteSolid>,         &ReadSolid     },
+            { "Solid3DEntity",   &WriteThunk<Solid3DEntity, &WriteSolid3D>,     &ReadSolid3D   },
             { "RayEntity",       &WriteThunk<RayEntity, &WriteRay>,             &ReadRay       },
             { "XLineEntity",     &WriteThunk<XLineEntity, &WriteXLine>,         &ReadXLine     },
             { "TextEntity",      &WriteThunk<TextEntity, &WriteText>,           &ReadText      },

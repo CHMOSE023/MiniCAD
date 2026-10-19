@@ -118,8 +118,11 @@ namespace MiniCAD
         d3dVp.MaxDepth = vp.maxDepth;
 
         m_context->RSSetViewports(1, &d3dVp);
-        m_context->OMSetRenderTargets(1, &rtv, nullptr); // nullptr 深度缓冲区
+        ID3D11DepthStencilView* dsv = d3dTarget.GetDepthView();
+        m_context->OMSetRenderTargets(1, &rtv, dsv);
         m_context->ClearRenderTargetView(rtv, clear);    // 清空
+        if (dsv)
+            m_context->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         m_context->IASetInputLayout(pso.layout);
         m_context->VSSetShader(pso.shader->vs.Get(), nullptr, 0);
         m_context->PSSetShader(pso.shader->ps.Get(), nullptr, 0);

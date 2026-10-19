@@ -129,6 +129,16 @@ namespace MiniCAD
             { "region.union",     "Union",     "并集(&U)",     "" },
             { "region.subtract",  "Subtract",  "差集(&S)",     "" },
             { "region.intersect", "Intersect", "交集(&I)",     "" },
+            { "solid.box",      "Box",      "长方体(&B)",   "" },
+            { "solid.cylinder", "Cylinder", "圆柱体(&C)",   "" },
+            { "solid.sphere",   "Sphere",   "球体(&S)",     "" },
+            { "solid.extrude",  "Extrude",  "拉伸(&X)",     "" },
+            { "solid.revolve",  "Revolve",  "旋转(&R)",     "" },
+            { "solid.sweep",    "Sweep",    "扫掠(&W)",     "" },
+            { "solid.filletedge",  "FilletEdge",  "圆角边(&F)", "" },
+            { "solid.chamferedge", "ChamferEdge", "倒角边(&H)", "" },
+            { "solid.section",  "SolidSection", "截面(&E)",  "" },
+            { "solid.flatshot", "Flatshot", "平面投影(&P)", "" },
             { "inquiry.area",  "Area",      "面积(&A)",     "" },
             { "draw.wipeout",  "Wipeout",   "区域覆盖(&W)", "" },
             { "draw.hatch",    "Hatch",   "图案填充(&H)…", "" },
@@ -196,6 +206,29 @@ namespace MiniCAD
                               .tooltip = "忽略线宽，所有线按 1 像素细线显示（只影响显示，不修改图纸）",
                               .execute   = [this, &dm] { dm.GetEditor().ToggleThinLines(); m_viewport->RequestRender(); },
                               .isChecked = [&dm] { return dm.GetEditor().IsThinLines(); } });
+
+        // ── 三维视图（M6）：标准视图（可撤销，同缩放）与视觉样式 ──────────
+        static const struct { const char* id; const char* label; StandardView view; } kViews[] = {
+            { "view.top",    "俯视(&T)",       StandardView::Top },   { "view.bottom", "仰视(&B)",       StandardView::Bottom },
+            { "view.left",   "左视(&L)",       StandardView::Left },  { "view.right",  "右视(&R)",       StandardView::Right },
+            { "view.front",  "前视(&F)",       StandardView::Front }, { "view.back",   "后视(&K)",       StandardView::Back },
+            { "view.swiso",  "西南等轴测(&S)", StandardView::SWIso }, { "view.seiso",  "东南等轴测(&E)", StandardView::SEIso },
+            { "view.neiso",  "东北等轴测(&N)", StandardView::NEIso }, { "view.nwiso",  "西北等轴测(&W)", StandardView::NWIso } };
+        for (const auto& v : kViews)
+            m_commands.Register({ .id = v.id, .label = v.label,
+                                  .execute    = [this, &dm, view = v.view] { dm.GetEditor().SetStandardView(view); m_viewport->RequestRender(); },
+                                  .canExecute = hasDoc });
+        auto visualStyle = [this, &dm](const char* id, const char* label, Editor::VisualStyle style)
+        {
+            m_commands.Register({ .id = id, .label = label,
+                                  .execute   = [this, &dm, style] { dm.GetEditor().SetVisualStyle(style); m_viewport->RequestRender(); },
+                                  .isChecked = [&dm, style] { return dm.GetEditor().GetVisualStyle() == style; } });
+        };
+        visualStyle("view.style.wireframe", "线框(&W)", Editor::VisualStyle::Wireframe);
+        visualStyle("view.style.shaded",    "着色(&S)", Editor::VisualStyle::Shaded);
+        m_commands.Register({ .id = "view.viewcube", .label = "显示视图方块(&V)",
+                              .execute   = [this] { SetViewCubeVisible(!m_viewCubeVisible); },
+                              .isChecked = [this] { return m_viewCubeVisible; } });
 
         // ── 绘图辅助：功能键在输入框有焦点时也生效 ──────────────────
         m_commands.Register({ .id = "aux.snap",  .label = "对象捕捉(&S)", .shortcut = "F3", .allowInTextInput = true,

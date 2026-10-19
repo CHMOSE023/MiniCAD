@@ -11,6 +11,7 @@
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/XLineEntity.hpp"
 #include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Math/MathUtils.hpp"
 #include "Core/Math/Constants.hpp"
 #include <cmath>
@@ -19,6 +20,88 @@ namespace MiniCAD
 {
     namespace
     {
+        // ── 三维实体的边（世界坐标折线，见 Solid3DEntity::GetWorldWire）────────
+        //   端点 → 不闭合的边的两端，另加圆形边的圆心（同圆 / 圆弧的端点捕捉习惯）；
+        //   中点 → 不闭合的边按长度的中点；圆心 → 落在同一个圆上的边（整圆或圆弧）的圆心
+        bool IsClosed(const std::vector<Math::Point3>& line)
+        {
+            return line.size() > 2 && (line.front() - line.back()).Length() < Math::LengthEPS;
+        }
+
+        Math::Point3 PointAtHalfLength(const std::vector<Math::Point3>& line)
+        {
+            double total = 0.0;
+            for (size_t i = 1; i < line.size(); ++i)
+                total += (line[i] - line[i - 1]).Length();
+            double remain = total * 0.5;
+            for (size_t i = 1; i < line.size(); ++i)
+            {
+                const double len = (line[i] - line[i - 1]).Length();
+                if (remain <= len && len > 0.0)
+                    return line[i - 1] + (line[i] - line[i - 1]) * (remain / len);
+                remain -= len;
+            }
+            return line.back();
+        }
+
+        // 过三点的圆心（三维）；三点共线时返回 false
+        bool Circumcenter(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, Math::Point3& center)
+        {
+            const Math::Vec3 ab = b - a, ac = c - a;
+            const Math::Vec3 n(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
+            const double n2 = n.LengthSq();
+            if (n2 < 1e-24)
+                return false;
+            // center = a + (|ac|²·(n × ab) + |ab|²·(ac × n)) / (2|n|²)
+            const Math::Vec3 nxab(n.y * ab.z - n.z * ab.y, n.z * ab.x - n.x * ab.z, n.x * ab.y - n.y * ab.x);
+            const Math::Vec3 acxn(ac.y * n.z - ac.z * n.y, ac.z * n.x - ac.x * n.z, ac.x * n.y - ac.y * n.x);
+            center = a + (nxab * ac.LengthSq() + acxn * ab.LengthSq()) / (2.0 * n2);
+            return true;
+        }
+
+        bool CircleCenter(const std::vector<Math::Point3>& line, Math::Point3& center)
+        {
+            const size_t n = IsClosed(line) ? line.size() - 1 : line.size();
+            if (n < 3 || !Circumcenter(line[0], line[n / 3], line[2 * n / 3], center))
+                return false;
+            const double r = (line[0] - center).Length();
+            for (size_t i = 0; i < n; ++i)
+                if (std::abs((line[i] - center).Length() - r) > std::max(1e-6, r * 1e-6))
+                    return false;
+            return true;
+        }
+
+        void SolidFeatures(const Solid3DEntity& solid, FeatureKind kind, std::vector<Math::Point3>& out)
+        {
+            for (const auto& line : solid.GetWorldWire())
+            {
+                if (line.size() < 2)
+                    continue;
+                const bool closed = IsClosed(line);
+                switch (kind)
+                {
+                case FeatureKind::Endpoint:
+                {
+                    if (!closed) { out.push_back(line.front()); out.push_back(line.back()); }
+                    Math::Point3 c;
+                    if (CircleCenter(line, c)) out.push_back(c);
+                    break;
+                }
+                case FeatureKind::Midpoint:
+                    if (!closed) out.push_back(PointAtHalfLength(line));
+                    break;
+                case FeatureKind::Center:
+                {
+                    Math::Point3 c;
+                    if (CircleCenter(line, c)) out.push_back(c);
+                    break;
+                }
+                case FeatureKind::Quadrant:
+                    break;
+                }
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // 端点
         //   Point → 位置；Line → 起点 / 终点；Rectangle → 四个角点；
@@ -218,6 +301,11 @@ namespace MiniCAD
 
     void CollectFeaturePoints(const Entity& e, FeatureKind kind, std::vector<Math::Point3>& out)
     {
+        if (e.IsKindOf<Solid3DEntity>())
+        {
+            SolidFeatures(static_cast<const Solid3DEntity&>(e), kind, out);
+            return;
+        }
         switch (kind)
         {
         case FeatureKind::Endpoint: Endpoints(e, out); break;

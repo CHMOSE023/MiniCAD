@@ -247,6 +247,9 @@ namespace MiniCAD
         m_docManager.GetEditor().SetHatchDialogEnabled(true);
         LoadHatchPatterns();
 
+        // 三维实体内核（桌面版 SMLib；网页版没有，建模命令提示不可用）
+        m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
+
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
         m_layout->RegisterPanel("documents",  CreateDocumentArea());
@@ -797,7 +800,11 @@ namespace MiniCAD
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
         const KeyCode code = ToKeyCode(e.key);
-        if (code == KeyCode::Unknown || code == KeyCode::Tab || !m_docManager.GetActive())
+        if (code == KeyCode::Unknown || !m_docManager.GetActive())
+            return false;
+        // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
+        const bool tab = code == KeyCode::Tab;
+        if (tab && !m_docManager.GetEditor().IsActiveTool())
             return false;
         // Alt+字母留给菜单栏助记符（UIContext 在没有节点处理时才打开菜单），不能被命令行或下面的"按下一律吃掉"截走
         if (e.modifiers == static_cast<uint8_t>(MiniGUI::ModifierKey::Alt) && e.key >= MiniGUI::Key::A && e.key <= MiniGUI::Key::Z)
@@ -820,7 +827,7 @@ namespace MiniCAD
         const bool handled = m_docManager.GetEditor().OnInput(ie);
         NoteInput();
         StateChanged();
-        return handled || ie.Type == InputEventType::KeyDown;
+        return handled || (ie.Type == InputEventType::KeyDown && !tab);
     }
 
     // =========================================================
@@ -840,6 +847,13 @@ namespace MiniCAD
         {
             Editor& editor = m_docManager.GetEditor();
             editor.Render();
+            // 视图方块跟着视线方向（环绕、标准视图、切换文档）
+            if (const CameraState cam = vp.GetCamera().GetState(); m_viewCube && (cam.Azimuth != m_cubeAzimuth || cam.Elevation != m_cubeElevation))
+            {
+                m_cubeAzimuth   = cam.Azimuth;
+                m_cubeElevation = cam.Elevation;
+                m_viewCube->Invalidate();
+            }
             IRenderer&      renderer = m_platform->GetRenderer();
             const ViewState vs       = editor.BuildViewState();
             vp.Render(renderer, target, vs);

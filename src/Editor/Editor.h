@@ -18,6 +18,8 @@
 #include "Editor/Properties/PropertyTable.h"
 #include "Editor/Tools/HatchSettings.h"
 #include "Editor/Tools/MLineSettings.h"
+#include "Editor/Tools/SolidTools.h"
+#include "Solid/ISolidKernel.h"
 #include "Document/GlyphTypes.h"
 #include "Core/GeomKernel/Line.hpp"
 #include "Core/Object/Object.hpp"
@@ -29,6 +31,7 @@
 #include <unordered_set>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -182,8 +185,27 @@ namespace MiniCAD
         void ReportArea();                                   // 报告选中对象的面积与周长
         // 面域布尔运算：对选择集中的面域 / 封闭对象运算，结果是一个新面域，原对象被替换（可一步撤销）。
         // 差集：ID 最小（最先画的）为被减对象，其余为减去的对象。
+        // 选择集里有三维实体时改为实体布尔（SolidBoolean），规则相同，只对实体运算
         enum class BooleanOp { Union, Subtract, Intersect };
-        void RegionBoolean(BooleanOp op);                                   // 报告选中对象的面积与周长
+        void RegionBoolean(BooleanOp op);
+
+        // ── 三维实体（docs/Solid/PLAN.md）───────────────────
+        // 内核由宿主提供（桌面版为 SMLib，网页版没有）；为空时建模命令提示不可用。不拥有，宿主保证生命周期
+        void                 SetSolidKernel(Solid::ISolidKernel* kernel) { m_solidKernel = kernel; }
+        Solid::ISolidKernel* GetSolidKernel() const                      { return m_solidKernel; }
+
+        // ── 三维视图（M6）──────────────────────────────────────
+        // 视觉样式：线框只画边；着色在边之下画三维实体的面（按视线方向算明暗），三维视图里被挡住的边看不见
+        enum class VisualStyle { Wireframe, Shaded };
+        void        SetVisualStyle(VisualStyle style);
+        VisualStyle GetVisualStyle() const { return m_visualStyle; }
+        // 标准视图（俯视、前视、西南等轴测……）：改视图方向并缩放到全图，可撤销（同缩放）
+        void        SetStandardView(StandardView view);
+        // 任意视图方向（方位角 / 仰角，度，见 CameraState）：同标准视图，缩放到全图、可撤销（视图方块用）
+        void        SetViewDirection(double azimuthDeg, double elevationDeg);
+        // 着色面与轮廓线的顶点（测试用）
+        const std::vector<Vertex_P3_C4>& GetShadedVertices()     const { return m_shadedVertices; }
+        const std::vector<Vertex_P3_C4>& GetSilhouetteVertices() const { return m_silhouetteVertices; }
         void RequestArray();                                 // 检查选择,弹对话框(无选择则提示)
         void SubmitArray();                                  // 按 Params 执行阵列
         void CancelArray();                                  // 关闭对话框,清预览
@@ -364,6 +386,11 @@ namespace MiniCAD
 
         void RegisterBuiltinTools();
 
+        // 三维实体：建模工具的环境（文档不存在或没有内核时返回空）、实体布尔
+        std::optional<SolidToolEnv> MakeSolidToolEnv();
+        void SolidBoolean(BooleanOp op);
+        void UpdateShadedVertices(bool sceneRebuilt);
+
         // 场景顶点流：所有实体按未选中态绘制；仅几何/图层变化时重建。
         // 拖动跟随中的实体被排除（由选中流绘制）。返回本帧是否重建。
         bool UpdateSceneVertices(double worldPerPixel, bool zoomChanged);
@@ -399,6 +426,19 @@ namespace MiniCAD
         std::unique_ptr<ITool> m_tool;
         bool                   m_toolSuspended    = false;
         bool                   m_pendingToolReset = false;
+        Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
+        VisualStyle            m_visualStyle = VisualStyle::Shaded;
+        std::vector<Vertex_P3_C4> m_shadedVertices;            // 着色面（世界坐标、已算好明暗）
+        std::vector<Vertex_P3_C4> m_silhouetteVertices;        // 三维实体的轮廓线（随视线方向变化）
+        uint64_t               m_shadedVersion      = 0;
+        uint64_t               m_shadedSceneVersion = 0;       // 着色面对应的场景版本
+        Math::Vec3             m_shadedViewDir;                // 着色面对应的视线方向
+        bool                   m_shadedValid = false;
+        AABB                   m_sceneBounds = AABB::Empty();  // 三维视图的深度范围用，按场景版本缓存
+        uint64_t               m_sceneBoundsVersion = 0;
+        bool                   m_sceneBoundsValid   = false;
+        double                 m_solidFilletRadius    = 1.0;   // 圆角边 / 倒角边的半径与距离（命令之间保留）
+        double                 m_solidChamferDistance = 1.0;
         double                 m_filletRadius = 1.0;           // 圆角半径，多次圆角之间保留
         double                 m_chamferD1 = 1.0;              // 倒角距离，多次倒角之间保留
         double                 m_chamferD2 = 1.0;

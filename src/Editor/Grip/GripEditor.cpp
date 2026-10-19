@@ -18,6 +18,7 @@
 #include "MLeaderGripHandler.h"
 #include "HatchGripHandler.h"
 #include "InsertGripHandler.h"
+#include "Solid3DGripHandler.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
@@ -64,6 +65,7 @@ namespace MiniCAD
         RegisterHandler<MLeaderEntity>  (std::make_unique<MLeaderGripHandler>());
         RegisterHandler<HatchEntity>    (std::make_unique<HatchGripHandler>());
         RegisterHandler<InsertEntity>   (std::make_unique<InsertGripHandler>());
+        RegisterHandler<Solid3DEntity>  (std::make_unique<Solid3DGripHandler>());
     }
 
     void GripEditor::Bind(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay)

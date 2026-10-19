@@ -15,13 +15,14 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）与 `Platform/Web`（`MiniGUI_Web`：DOM 输入、经隐藏 textarea 接入输入法、剪贴板、打包的界面字体）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD（网页版也包含），核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。开发计划：`docs/MiniDWG/PLAN.md`；`*.g.cpp` 由已归档的 MiniDWG 仓库 `tools/` 里的脚本生成，不要手改
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`：`MainFrame`、命令、面板、命令行、对话框）。平台服务经 `AppPlatform` 接口（`apps/Common/src/GUI/AppPlatform.h`）提供
+- 注意：根目录 `.gitignore` 的 `tools` 规则也会命中 `src/Editor/Tools/`，在那里新增文件要 `git add -f`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（无边框窗口、D3D11、消息循环，实现 `AppPlatform`），目标 `MiniCADWin`；自测 `Host/SelfTest.cpp`。`src/Render/` 下是 CAD 渲染器 `D3D11Renderer` 与 MiniGUI 后端（`D3D11/D3D11Backend` → `MiniGUI_D3D11`，`Software/SoftwareBackend` → `MiniGUI_Software`）
 - `apps/Web/`：网页版宿主 `WebApp`（经 `WebHost` 管理画布与 WebGL2，浏览器文件选择与下载，实现 `AppPlatform`），目标 `MiniCADWeb`。`src/Render/` 下是 CAD 渲染器 `GLES3Renderer` + `GLRenderTarget` 与 MiniGUI 的 `WebGL2/WebGL2Backend`（`MiniGUI_WebGL2`）。`MiniGUIWebGallery` 是浏览器里的 MiniGUI 控件展示
 - `wasm/`：旧版 C 接口 WASM（给仓库外的 HTML/JS 前端用）。只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译，此时核心库定义 `MINICAD_WEB`（文字输入交给 JS、块名自动命名、文字走纹理图集），并且不编译 `apps/Web`
 - `tests/`：`Core/`（MiniCAD）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
 - `tools/make_web_font.py`：重新生成 `assets/fonts/NotoSansSC-UI.ttf`（网页版界面字体，Noto Sans SC Regular 子集，OFL）
 - `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
-- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）
+- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.0 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（桌面版默认开、网页版默认关）；静态库、`SM_STATIC`，本地修改与使用注意（静态库只能单线程使用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `docs/`：早期 MiniCAD 项目的教程（描述的是旧架构）、各库开发计划、发布说明 `release-notes/`
 
 ### include 根目录（重要）
@@ -35,7 +36,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 核心系统
 
 **实体**（`src/Core/Entity/`）
-- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等
+- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵；导出 DWG / DXF 时写成多面网格，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）
 - 支持克隆、包围盒、绘制到 draw sink、序列化；`ICurveEntity` 提供几何操作接口（捕捉、求交、编辑）
 - 颜色 `EntityColor` 同时保存 DXF 语义（ByLayer / ByBlock / ACI / 真彩）和解析后的 RGBA
 
@@ -58,6 +59,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **渲染**（`src/Viewport/` + 平台渲染器）
 - `Viewport`：相机、收集顶点、分两层绘制（不常变的场景画进缓存层，每帧只叠加光标、夹点等动态内容）
 - 渲染器实现 `IRenderer`：`D3D11Renderer`（桌面）、`GLES3Renderer`（网页）。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
+- 三维视图（M6，见 `docs/Solid/PLAN.md` 第 6 节）：相机有视线方向（`CameraState::Azimuth` / `Elevation`），俯视（`Camera::IsPlanView`）时与二维完全相同；三维视图按场景范围设置深度，着色面写深度、线只测试（渲染目标都带深度缓冲）。着色面与轮廓线由 `Editor` 在 CPU 上随视线方向生成（`ViewState::Shaded` / `Silhouettes`），明暗写在顶点颜色里，不需要新着色器。标准视图命令 `ViewTop` / `ViewSWIso` 等、Shift + 中键环绕、视觉样式 `Shade` / `Wireframe`；绘图区右上角的视图方块 `GUI/ViewCube`（点面 / 棱 / 角或东南西北切换视图、拖动环绕；右键菜单或命令 `NAVVCUBE` 隐藏 / 显示，开关存进 `layout.json`）
 - 背景深浅（`IRenderer::SetLightBackground`，7 号色语义）：浅色背景时纯白顶点画成纯黑、深色背景时纯黑画成纯白，在两个渲染器的顶点着色器里处理（光栅图像不变）。`MainFrame::RenderFrame` 每帧按界面主题设置 `Viewport::SetLightBackground`；图层颜色块在 `LayerPanels.cpp` 的 `SwatchColor` 里做同样的反转
 
 **序列化**（`src/Serialization/`）
@@ -67,7 +69,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **DWG/DXF 交换**（`src/Import/CadExchange.*`）
 - `ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转；`Document::LoadFromFile` / `SaveToFile` 按扩展名 `.dwg` / `.dxf` 分派，DXF 写 ASCII
 - 写出版本 `CadSaveVersion`：2018（AC1032）、2013（AC1027，AutoCAD 2013～2017 共用，界面上标为"2013/2014"）、2010、2007、2004、2000；新建文档默认 2004（`kDefaultCadSaveVersion`）。2007 只能写 DXF，DWG 2007 改写为 2010（MiniDWG 没有实现 AC1021 的写出）；2007 以前的版本按 `ANSI_936` 代码页写中文。打开文件时记住其版本（`Document::GetCadSaveVersion`），另存为时由用户选择，格式列表 `kSaveFormats`（`AppPlatform.h`）桌面版与网页版共用
-- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
+- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
 - 以原图为底另存：打开时 `Document` 留下原图 `CadSource`（原始字节、场景实体 ↔ 原图句柄、导入时的签名）。另存为同格式同版本时 `ExportCad` 重新读出原图，只改写变化的实体与表项，未修改的实体（包括天正 `TCH_*` 等自定义对象）、跳过的实体、图纸空间原样写回；格式或版本不同时重新生成整张图纸。天正对象的显示适配在 `src/Import/Tch*.h`
 
 **文字与字体**（`src/Text/`）
@@ -78,11 +80,11 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 主窗口与平台（桌面版、网页版）
 
 整个界面由 MiniGUI 绘制。界面由 MiniGUI 后端渲染（`D3D11Backend` / `WebGL2Backend`），CAD 视口由 CAD 渲染器渲染（`D3D11Renderer` / `GLES3Renderer`），两者不是一回事。
-`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、后台任务（`RunInBackground`：桌面版用线程读图纸，网页版先画一帧再同步执行）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
+`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、三维实体内核（`GetSolidKernel`，桌面版为 SMLib，网页版为空）、后台任务（`RunInBackground`：桌面版用线程读图纸，网页版先画一帧再同步执行）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
-- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏
+- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏、视图方块
 - `Host/Win32Window`（桌面）：无边框窗口（`MiniGUI::Win32Frame`）、D3D11 设备与交换链、消息循环、监视界面描述文件；另存为用系统对话框，"保存类型"里区分 2018 与 2013/2014
 - `Host/WebApp`（网页）：`WebHost` 负责画布、WebGL2、DPI（`ResizeObserver` + devicePixelRatio 监听）、`requestAnimationFrame` 按需刷新；打开文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本
 
@@ -111,6 +113,8 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Bui
 
 VS 安装路径不同时自行修改；在"Developer PowerShell / Command Prompt for VS"或 Visual Studio 里构建则不需要。
 
+**头文件依赖的坑**：Ninja 靠 MSVC `/showIncludes` 的输出记录头文件依赖，前缀（"注意: 包含文件:"）在配置时按 GBK 写进 `rules.ninja`。控制台代码页是 UTF-8（65001）时 cl 输出的前缀对不上，编译输出里会刷出大量“注意: 包含文件”，依赖记录为空——之后改头文件不会触发重编，新旧对象文件混用，程序可能直接崩溃。用 `chcp 936` 再构建（`cmd /c "chcp 936 >nul && ...vcvars64.bat... && cmake --build out/debug"`）；`ninja -C out/debug -t deps` 里出现 `#deps 0` 就说明出过这种情况，需要让相关源文件重编一次。
+
 运行：`out/debug/MiniCADWin/MiniCADWin.exe`（Release 在 `out/release/...`）。
 
 需要：CMake 3.20+、Ninja、MSVC（C++20）、Windows SDK（D3D11）。
@@ -136,6 +140,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
 - `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
+- `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest
@@ -201,7 +206,7 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 ## 文件组织
 
 - `src/*/` 下按模块组织，`#include "Module/File.h"` 相对于 `src/`
-- 源文件逐个列出（不用通配）：MiniCAD 在 `cmake/MiniCAD.cmake`，MiniGUI 在 `cmake/MiniGUI.cmake`，MiniDWG 在 `cmake/MiniDWG.cmake`，共用应用在 `apps/Common/CMakeLists.txt`，桌面 / 网页宿主在 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试在 `tests/CMakeLists.txt`；新增 `.cpp` 要加到对应位置。实体是纯头文件（`.hpp`），一般不用改 CMake
+- 源文件逐个列出（不用通配）：MiniCAD 在 `cmake/MiniCAD.cmake`，MiniGUI 在 `cmake/MiniGUI.cmake`，MiniDWG 在 `cmake/MiniDWG.cmake`，共用应用在 `apps/Common/CMakeLists.txt`，桌面 / 网页宿主在 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试在 `tests/CMakeLists.txt`；新增 `.cpp` 要加到对应位置。例外：第三方 `3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配收集。实体是纯头文件（`.hpp`），一般不用改 CMake
 - `src/Core/Object/Object.hpp`：所有场景对象的基类（类型信息、ID）
 - `src/Render/VertexTypes.hpp`：平台无关的顶点格式
 

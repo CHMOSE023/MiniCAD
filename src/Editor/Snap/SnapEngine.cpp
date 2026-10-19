@@ -12,6 +12,7 @@
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/XLineEntity.hpp"
 #include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/ICurveEntity.hpp"
 #include "Core/GeomKernel/CurveIntersect.hpp"
 #include "Document/FeaturePoints.h"
@@ -258,6 +259,15 @@ namespace MiniCAD
                     // 用 Spline::ClosestPoint（内部逐段采样）
                     Math::Point3 closest = sp_.ClosestPoint(worldMouse);
                     TryUpdateBest(closest, sp, cam, m_snapRadiusPx, bestDist, best, T, id);
+                }
+
+                // ── Solid3D：线框各段上最近点 ───────────────────────────────
+                if (obj.IsKindOf<Solid3DEntity>())
+                {
+                    for (const auto& line : static_cast<const Solid3DEntity&>(obj).GetWorldWire())
+                        for (size_t i = 1; i < line.size(); ++i)
+                            TryUpdateBest(Math::ClosestPointOnSegment(worldMouse, line[i - 1], line[i]),
+                                sp, cam, m_snapRadiusPx, bestDist, best, T, id);
                 }
 
                 // ── XLine：无限直线上最近点（参数不设限）──────────────────────

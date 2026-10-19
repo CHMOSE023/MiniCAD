@@ -136,6 +136,7 @@ namespace MiniCAD
 
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
+        void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
@@ -187,6 +188,10 @@ namespace MiniCAD
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;
         MiniGUI::Node*                         m_noDocHint  = nullptr;   // 没有文档时代替视口显示
+        MiniGUI::Node*                         m_viewCube   = nullptr;   // 视口右上角的视图方块（M6）
+        bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（保存在用户布局文件里）
+        double                                 m_cubeAzimuth   = 0.0;    // 视图方块上次绘制时的视线方向
+        double                                 m_cubeElevation = 0.0;
         StatusBarView*                         m_statusBar  = nullptr;
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
         MiniGUI::ListView*                     m_layerList  = nullptr;
