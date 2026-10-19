@@ -141,6 +141,10 @@ namespace MiniCAD
         if (m_pointStyleDialog && m_pointStyleDoc != doc)
             m_pointStyleDialog->Close();
 
+        // 线型比例：同上，改动实时生效，只在原文档仍是活动文档时保留
+        if (m_lineTypeScaleDialog && m_lineTypeScaleDoc != doc)
+            m_lineTypeScaleDialog->Close();
+
         const auto& array = editor.GetArrayRequest();
         const bool  arrayOpen = doc && array.Active && !array.PickingCenter;
         if (arrayOpen && !m_arrayDialog)
@@ -1062,6 +1066,111 @@ namespace MiniCAD
 
             void Commit() { if (onApply) onApply(); }
         };
+
+        // ── 线型比例预览：把当前线型按比例铺一条横线 ────────────────────────
+        //
+        // 用与 DrawContext::EmitStyled **完全相同的规则**走 Pattern 序列
+        //（>0 画实线段、<0 跳过、==0 画点，长度都乘 scale），
+        // 预览的疏密就是图里的疏密。自己另写一套 dash 画法必然对不上。
+        //
+        // ⚠ DrawList 没有文字接口（文字走 TextSystem / Label 控件），
+        //   所以"周期过密""连续线"这类提示由对话框用 Label 显示，这里只画图形。
+        class LineTypeScalePreview : public MiniGUI::Node
+        {
+        public:
+            // 当前线型记录与两个乘数。由对话框每次改动后刷新并 Invalidate。
+            const LineTypeRecord* rec   = nullptr;
+            double               global = 1.0;
+            double               entity = 1.0;
+
+            // 预览固定 1 像素 = 0.1 世界单位：让不同比例下的疏密差异看得出来，
+            // 又不至于 $LTSCALE=1000 时一个周期长到画不下一格。
+            static constexpr double kWorldPerPixel = 0.1;
+            // 点的可见长度（与 EmitStyled 的 ~1.5px 同量级）
+            static constexpr float  kDotPx = 2.0f;
+
+            void OnPaint(MiniGUI::DrawList& dl, const MiniGUI::Rect& r) override
+            {
+                dl.AddRectFilled(r, Theme::Background, 3.0f);
+                dl.AddRect(r, Theme::Border, 3.0f);
+
+                constexpr float kPad = 10.0f;
+                const float y  = r.Center().y;
+                const float x0 = r.min.x + kPad, x1 = r.max.x - kPad;
+
+                auto Solid = [&]
+                { dl.AddLine({ x0, y }, { x1, y }, Theme::Text, 1.4f); };
+
+                if (!rec || rec->IsContinuous() || !(rec->PatternLength > 0.0))
+                {
+                    Solid();
+                    return;
+                }
+
+                const double scale = entity * global;
+                const double cyclePx = rec->PatternLength * scale / kWorldPerPixel;
+
+                // 周期不足 4px：视口会退化成实线，预览也按实线画
+                if (cyclePx < 4.0)
+                {
+                    Solid();
+                    return;
+                }
+
+                // 与 EmitStyled 同一条循环：按 Pattern 走，正画负跳过零画点
+                double t   = 0.0;                       // 已走过的世界长度
+                size_t idx = 0;
+                const double totalWorld = (x1 - x0) * kWorldPerPixel;
+                while (t < totalWorld)
+                {
+                    const double seg = rec->Pattern[idx % rec->Pattern.size()] * scale;
+                    ++idx;
+                    if (seg > 0.0)
+                    {
+                        const double t1 = std::min(t + seg, totalWorld);
+                        dl.AddLine({ x0 + static_cast<float>(t / kWorldPerPixel), y },
+                                   { x0 + static_cast<float>(t1 / kWorldPerPixel), y },
+                                   Theme::Text, 1.4f);
+                        t = t1;
+                    }
+                    else if (seg < 0.0)
+                    {
+                        t += -seg;
+                    }
+                    else
+                    {
+                        const double t1 = std::min(t + kDotPx * kWorldPerPixel, totalWorld);
+                        dl.AddLine({ x0 + static_cast<float>(t / kWorldPerPixel), y },
+                                   { x0 + static_cast<float>(t1 / kWorldPerPixel), y },
+                                   Theme::Text, 1.4f);
+                        t = t1;
+                    }
+                }
+            }
+        };
+
+        class LineTypeScaleDialog : public MiniGUI::Dialog
+        {
+        public:
+            LineTypeScaleDialog() : MiniGUI::Dialog("线型比例") {}
+
+            // ── 对话框自身持有全部状态 ─────────────────────────────────
+            // ⚠ 必须是成员：回调在对话框存活期间随时触发，按引用捕获
+            //   OpenLineTypeScaleDialog 的局部变量会是悬垂引用。
+            double scale     = 1.0;      // $LTSCALE
+            double origScale = 1.0;      // 打开时的原值（「取消」还原）
+            bool   Accept    = false;
+
+            Document* doc = nullptr;
+
+            MiniGUI::NumberBox*          scaleBox = nullptr;
+            MiniGUI::Label*              hint     = nullptr;
+            LineTypeScalePreview*        preview  = nullptr;
+
+            std::function<void()> onApply;
+
+            void Commit() { if (onApply) onApply(); }
+        };
     }
 
     void MainFrame::OpenTextStyleDialog()
@@ -1446,5 +1555,143 @@ namespace MiniCAD
         m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
         m_pointStyleDialog = raw;
         m_pointStyleDoc    = doc;
+    }
+
+    // =========================================================
+    // 格式 → 线型比例…（图纸级 HEADER 的 $LTSCALE）
+    // =========================================================
+    void MainFrame::OpenLineTypeScaleDialog()
+    {
+        using namespace MiniGUI;
+        Document* doc = m_docManager.GetActive();
+        if (!doc)
+            return;
+
+        auto dialog = std::make_unique<LineTypeScaleDialog>();
+        LineTypeScaleDialog* raw = dialog.get();
+        Node* body = raw->GetBody();
+        LayoutStyle bs = ColumnStyle(8.0f);
+        bs.padding = Edges::Symmetric(14.0f, 6.0f);
+        body->SetLayoutStyle(bs);
+
+        Scene& scene = doc->GetScene();
+        raw->doc = doc;
+
+        // ── 当前值 ─────────────────────────────────────────────────────
+        raw->scale     = scene.GetLineTypeScale();
+        raw->origScale = raw->scale;
+
+        body->AddChild<Label>(
+            "全局线型比例（$LTSCALE）。虚线一个周期的实际长度 =\n"
+            "线型图案周期 × 实体线型比例 × 本值。", 12.0f, Theme::TextDim);
+
+        // ── 比例输入 ───────────────────────────────────────────────────
+        body->AddChild<Separator>();
+        auto* scaleBox = AddRow<NumberBox>(body, "全局比例", raw->scale, 0.001, 1.0e6, 0.1, 4);
+        scaleBox->SetTooltip("大尺寸图纸常设为几百上千；1 是默认值");
+        raw->scaleBox = scaleBox;
+
+        // ── 预览 ───────────────────────────────────────────────────────
+        auto* preview = body->AddChild<LineTypeScalePreview>();
+        preview->EditLayoutStyle().width  = 320.0f;
+        preview->EditLayoutStyle().height = 44.0f;
+        raw->preview = preview;
+
+        Label* hint = body->AddChild<Label>("", 12.0f, Theme::TextDim);
+        raw->hint = hint;
+
+        // ── 唯一的"应用"入口（只捕获生命周期更长的对象）────────────────
+        // ⚠ 不要按引用捕获本函数的局部变量：函数返回后它们就销毁了，
+        //   而控件回调在对话框存活期间随时会触发 —— 那是悬垂引用。
+        raw->onApply = [this, raw]()
+        {
+            if (!raw->doc || raw->doc != m_docManager.GetActive())
+                return;
+            Scene& scene = raw->doc->GetScene();
+
+            const double v = raw->scaleBox ? raw->scaleBox->GetValue() : raw->scale;
+            // 非正值按 1 处理（与 Scene::SetLineTypeScale 一致）
+            const double s = (v > 0.0) ? v : 1.0;
+            raw->scale = s;
+
+            scene.SetLineTypeScale(s);
+
+            if (raw->preview)
+            {
+                raw->preview->global = s;
+                raw->preview->Invalidate();
+            }
+            // Label 显示实际周期 + 状态提示。
+            // ⚠ 不能读 preview->note：那是 OnPaint 的副作用，Invalidate 之后
+            //   要等下一帧才重绘，此刻还是旧值。这里按同一套规则自己算。
+            if (raw->hint)
+            {
+                const LineTypeScalePreview* pv = raw->preview;
+                const LineTypeRecord* rec = pv ? pv->rec : nullptr;
+                const double entity = pv ? pv->entity : 1.0;
+                std::string txt;
+                if (rec && !rec->IsContinuous() && rec->PatternLength > 0.0)
+                {
+                    const double cycle = rec->PatternLength * entity * s;
+                    const double cyclePx = cycle / LineTypeScalePreview::kWorldPerPixel;
+                    char buf[96];
+                    std::snprintf(buf, sizeof(buf), "虚线周期 = %.6g × %.6g × %.6g = %.6g 世界单位",
+                                  rec->PatternLength, entity, s, cycle);
+                    txt = buf;
+                    // 与 EmitStyled / 预览同一档护栏：周期不足 4px 图里退化为实线
+                    if (cyclePx < 4.0)
+                        txt += "；周期过密，图里将显示为实线";
+                }
+                else
+                {
+                    txt = "当前线型是连续线，比例不影响显示";
+                }
+                raw->hint->SetText(txt);
+            }
+
+            // 虚线疏密变了但几何（实体位置）没变 ⇒ MarkDisplayDirty，
+            // 不重建拾取索引（大图纸整表重建要上百毫秒）
+            scene.MarkDisplayDirty();
+            m_viewport->RequestRender();
+            StateChanged();
+        };
+
+        // 初始刷新一次预览的线型记录（取当前线型表里第一个非连续线型，
+        // 这样预览看得出疏密；全是连续线时 preview 自己会画实线并说明）
+        {
+            const LineTypeTable& table = scene.GetLineTypeTable();
+            const LineTypeRecord* pick  = nullptr;
+            for (const auto& r : table.Records())
+                if (!r.IsContinuous()) { pick = &r; break; }
+            preview->rec    = pick;
+            preview->global = raw->scale;
+            preview->entity = 1.0;
+            preview->Invalidate();
+        }
+
+        scaleBox->SetOnChanged([raw](double) { raw->Commit(); });
+
+        raw->AddButton("确定", [raw] { raw->Accept = true; raw->Close(); },
+                       DialogButtonRole::Default);
+        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->SetOnClosed([this, raw]
+        {
+            // 「取消」= 还原打开时的值（改动是实时生效的，所以必须撤销）
+            if (!raw->Accept && raw->doc && raw->doc == m_docManager.GetActive())
+            {
+                Scene& scene = raw->doc->GetScene();
+                scene.SetLineTypeScale(raw->origScale);
+                scene.MarkDisplayDirty();
+            }
+            if (m_lineTypeScaleDialog == raw)
+                m_lineTypeScaleDialog = nullptr;
+            m_lineTypeScaleDoc = nullptr;
+            if (m_viewport->IsVisible())
+                m_viewport->Focus();
+            StateChanged();
+        });
+        m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
+        m_lineTypeScaleDialog = raw;
+        m_lineTypeScaleDoc    = doc;
     }
 }

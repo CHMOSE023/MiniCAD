@@ -2928,6 +2928,10 @@ namespace MiniCAD
         ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
         ctx.SetViewportHeightPx(m_viewport ? static_cast<double>(m_viewport->GetHeight()) : 0.0);
 
+        // 全局线型比例（HEADER 的 $LTSCALE）。虚线实际周期 = LTYPE图案周期 ×
+        // 实体级组码 48 × 本值；实体拿不到 Scene，只能在这里经 sink 传下去。
+        ctx.SetLineTypeScale(scene.GetLineTypeScale());
+
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
@@ -3148,6 +3152,8 @@ namespace MiniCAD
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
+            // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
+            ctx.SetLineTypeScale(scene.GetLineTypeScale());
 
             auto drawOne = [&](Object::ObjectID id)
             {

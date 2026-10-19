@@ -128,6 +128,7 @@ namespace MiniCAD
         void OpenHatchDialog();
         void OpenTextStyleDialog();
         void OpenPointStyleDialog();                             // 格式 → 点样式…（$PDMODE/$PDSIZE）
+        void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
         void RefreshLayerPanel();
@@ -208,6 +209,8 @@ namespace MiniCAD
         MiniGUI::Dialog*                       m_textStyleDialog = nullptr;
         MiniGUI::Dialog*                       m_pointStyleDialog = nullptr;  // 点样式对话框（$PDMODE/$PDSIZE）
         Document*                              m_pointStyleDoc    = nullptr;  // 它对应的文档；文档换了就关掉
+        MiniGUI::Dialog*                       m_lineTypeScaleDialog = nullptr;  // 线型比例对话框（$LTSCALE）
+        Document*                              m_lineTypeScaleDoc    = nullptr;  // 同上
         std::vector<uint32_t>                  m_layerIds;               // 图层面板每一行对应的图层 ID
         std::string                            m_layerSignature;         // 图层面板当前显示的内容，没变时不重建行
         void*                                  m_viewSRV    = nullptr;   // 当前登记的视口 SRV（尺寸变化后会重建）

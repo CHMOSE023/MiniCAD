@@ -41,6 +41,7 @@ int RunAttribAxisTests();    // AttribAxisTests.cpp，返回失败项数
 int RunPolylineWidthTests(); // PolylineWidthTests.cpp，返回失败项数
 int RunBulgeDirectionTests(); // BulgeDirectionTests.cpp，返回失败项数
 int RunPointStyleTests();     // PointStyleTests.cpp，返回失败项数
+int RunLineTypeScaleTests();  // LineTypeScaleTests.cpp，返回失败项数
 int RunMatrixInverseTests(); // MatrixInverseTests.cpp，返回失败项数
 int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
 
@@ -306,6 +307,7 @@ int main()
     g_failures += RunPolylineWidthTests();
     g_failures += RunBulgeDirectionTests();
     g_failures += RunPointStyleTests();
+    g_failures += RunLineTypeScaleTests();
     g_failures += RunMatrixInverseTests();
     g_failures += RunRecentFilesTests();
 

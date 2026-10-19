@@ -97,6 +97,9 @@ namespace MiniCAD
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
 
+        // 全局线型比例（Scene 的 $LTSCALE）。与实体级组码 48 相乘得到虚线实际周期。
+        void SetLineTypeScale(double s) { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
+
         // 点图元：画成一个屏幕像素的实心小点（POINT 的 $PDMODE=0 与退路）。
         // 世界坐标下的点无法表达"一个像素"，所以这里只记录位置与颜色，
         // 由渲染端按像素尺寸画（与网格点、夹点标记同一机制）。
@@ -444,8 +447,12 @@ namespace MiniCAD
         {
             bool continuous = (!rec || rec->IsContinuous());
 
-            const double scale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
-                                     ? m_curAttr->LinetypeScale : 1.0;
+            // 实体级比例(组码48) × 全局 $LTSCALE。
+            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍 —— 再叠加下面
+            // 「一个周期不足 4px 退化为实线」的护栏，虚线会整条消失。
+            const double entityScale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
+                                          ? m_curAttr->LinetypeScale : 1.0;
+            const double scale = entityScale * m_lineTypeScale;
 
             double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
             double len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -575,6 +582,7 @@ namespace MiniCAD
         double                         m_viewportHeightPx = 0.0;   // 视口像素高度（$PDSIZE<=0 换算世界尺寸用）
         int                            m_pointMode = 0;    // $PDMODE：点样式
         double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
+        double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;

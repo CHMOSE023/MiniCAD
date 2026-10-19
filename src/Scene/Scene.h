@@ -70,6 +70,17 @@ namespace MiniCAD
 		Lineweight GetCurrentLineweight() const          { return m_currentLineweight; }
 		void       SetCurrentLineweight(Lineweight lw)   { m_currentLineweight = lw; }
 
+		// ── 全局线型比例（DXF HEADER 的 $LTSCALE）─────────────────────────────
+		// 虚线铺设的实际周期 = LTYPE图案周期 × 实体线型比例(组码48) × 本值。
+		//
+		// 为什么必须带着它：大尺寸图纸（坐标在百万量级）为了让虚线在图上物理长度合理，
+		// 会把 $LTSCALE 设成几百上千（实测 test0.dwg = 1000），而 LTYPE 表里的
+		// 图案周期是小数值（DASH = 0.35）。少了这一乘，周期会小 1000 倍 ——
+		// 再叠加渲染层「一个周期不足 4 像素就退化为实线」的护栏，虚线会整条消失。
+		double GetLineTypeScale() const      { return m_lineTypeScale; }
+		// <= 0 视为无效，按 1 处理（AutoCAD 也不接受非正值）
+		void   SetLineTypeScale(double s)    { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
+
 		// ── 点样式（DXF HEADER 的 $PDMODE / $PDSIZE）──────────────────
 		//
 		// POINT 实体**自身不带显示信息**：DXF/DWG 里只有坐标（10/20/30）、
@@ -164,6 +175,7 @@ namespace MiniCAD
 		LineTypeID    m_currentLineType   = LineTypeTable::ByLayerID;  // 当前线型(CELTYPE)
 		Lineweight    m_currentLineweight = Lineweight::ByLayer;       // 当前线宽(CELWEIGHT)
 		int           m_pointDisplayMode   = 0;      // $PDMODE：0 = 一个像素小点（AutoCAD 默认）
+		double        m_lineTypeScale      = 1.0;    // $LTSCALE：全局线型比例
 		double        m_pointDisplaySize   = 0.0;    // $PDSIZE：0 = 按视口高度百分比
 		bool          m_dirty    = false;
 		bool          m_allDirty = false;                  // 全局脏：所有实体顶点缓存失效
