@@ -1,15 +1,13 @@
 # MiniCAD 持续集成与发布
-#   - 推送到 main、向 main 提交 PR：编译桌面版与网页版，运行单元测试
-#   - 推送 v* 标签（例如 v0.1.0）：另外把两个版本打包成 zip，创建 GitHub Release 并上传；
+#   - 只在推送 v* 标签（例如 v0.2.1.1）时自动运行：编译桌面版与网页版、运行单元测试、打包 zip、
+#     创建 GitHub Release 并上传，网页版部署到 Cloudflare Pages；
 #     发布说明取自 docs/release-notes/<标签>.md（没有该文件时只写一行默认说明）
+#   - 推送分支、提交 PR 不自动运行；需要时在 Actions 页面手动运行（workflow_dispatch，只编译、测试、打包）
 name: Build
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -101,13 +99,14 @@ jobs:
           path: dist/*.zip
           retention-days: 7
 
+      # 只在主仓库的标签构建部署（fork 没有密钥）
       - name: Deploy to Cloudflare Pages
-        if: github.repository == 'CHMOSE023/MiniCAD' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.repository == 'CHMOSE023/MiniCAD' && github.ref_type == 'tag'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist/MiniCAD-dev-web --project-name=minicad --branch=main
+          command: pages deploy dist/MiniCAD-${{ env.PACKAGE_VERSION }}-web --project-name=minicad --branch=main
 
   # ── 发布：推送 v* 标签时创建 GitHub Release ────────────────────────────────
   release:

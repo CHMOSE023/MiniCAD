@@ -7,7 +7,7 @@
 MiniCAD 是用现代 C++（C++20）编写的跨平台二维 CAD 编辑器。一个仓库里包含三个库和两个应用：
 平台无关的核心库 MiniCAD、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
 Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代码（`apps/Common`）绘制同一套 MiniGUI 界面。
-仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.1。
+仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.1.1。
 
 ### 目录
 
@@ -143,11 +143,11 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
-- CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest
+- CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest；只在推送 `v*` 标签时自动运行，推送分支、PR 不运行（可在 Actions 页面手动运行）
 
 ## 发布
 
-推送 `v*` 标签后 CI 自动：编译桌面版与网页版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` 与 `MiniCAD-<标签>-web.zip`、创建 GitHub Release。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好它。
+推送 `v*` 标签后 CI 自动：编译桌面版与网页版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` 与 `MiniCAD-<标签>-web.zip`、创建 GitHub Release，网页版部署到 Cloudflare Pages。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段，四段时第四段作为 exe 产品版本的第四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好它。
 
 ## 约定
 
