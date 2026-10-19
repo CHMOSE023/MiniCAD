@@ -57,6 +57,19 @@ namespace
         { points.push_back(p); }
     };
 
+    // 模拟**拾取收集器**（Picking.cpp 的 PickCollectSink）：只实现 DrawLine /
+    // FillTriangle，不重写 DrawPoint。用来守住"点必须走 DrawPoint"这个不变量 ——
+    // 若哪天又把点画回线段，这个 sink 会收到线段，下面的断言就会失败。
+    class LineOnlySink : public IDrawSink
+    {
+    public:
+        std::vector<Seg> segs;
+        void DrawLine(const Math::Point3& a, const Math::Point3& b,
+                      const Math::Color4&, bool) override
+        { segs.push_back({ a, b }); }
+        // 故意不重写 DrawPoint：走 IDrawSink 的空默认实现
+    };
+
     // 只有一个 dash = 0 的图案族：沿 v 方向每隔 spacing 铺一个点
     HatchPattern MakeDots(double spacing)
     {
@@ -88,7 +101,9 @@ namespace
         return p;
     }
 
-    void Render(const HatchPattern& p, double scale, Sink& sink,
+    // 把图案画进任意 sink（线段收集器或点收集器都用它）
+    template <class SinkT>
+    void Render(const HatchPattern& p, double scale, SinkT& sink,
                 double x0, double y0, double x1, double y1)
     {
         HatchEntity h(1, Polyline({ { x0, y0, 0 }, { x1, y0, 0 },
@@ -247,6 +262,38 @@ int RunHatchDotsTests()
         for (const auto& g : s.segs)
             maxSeg = std::max(maxSeg, std::hypot(g.b.x - g.a.x, g.b.y - g.a.y));
         Check(Near(maxSeg, 1.0, 1e-6), "混合图案的实线段长 = dash 长 1.0");
+    }
+
+    // ── 10. 点必须走 DrawPoint（守住拾取的通路）──────────────────
+    //
+    // 拾取收集器（Picking.cpp 的 PickCollectSink）只实现 DrawLine /
+    // FillTriangle + DrawPoint。若点被画成线段，收集器虽仍能收到几何，
+    // 但场景流里就不再有点图元；反之若点走 DrawPoint 而收集器没收，
+    // 就是"能显示、拾取不到"（本轮修的就是这个）。
+    //
+    // 这里用一个**只收线段**的 sink 验证：点阵填充在该 sink 下什么都收不到。
+    // 这说明点的几何只经 DrawPoint 流出 —— 也正是收集器必须重写它的原因。
+    {
+        LineOnlySink s;
+        Render(MakeDots(1.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(s.segs.empty(),
+              "点阵在只收线段的 sink 下零输出（点的几何只经 DrawPoint 流出）");
+    }
+    {
+        // 对照：混合图案（实线 + 点）在同一下能收到实线段
+        HatchPattern p;
+        p.Name  = "MIX2";
+        p.Solid = false;
+        HatchLineFamily fam;
+        fam.AngleDeg = 0.0;
+        fam.Spacing  = 1.0;
+        fam.Dashes.push_back(1.0);
+        fam.Dashes.push_back(0.0);
+        p.Families.push_back(fam);
+
+        LineOnlySink s;
+        Render(p, 1.0, s, 0.0, 0.0, 20.0, 20.0);
+        Check(!s.segs.empty(), "混合图案在只收线段的 sink 下能收到实线段");
     }
 
     const int n = g_failures - before;

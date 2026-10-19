@@ -151,6 +151,10 @@ namespace MiniCAD
         {
             std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
             std::vector<std::array<Math::Point3, 3>>           Triangles;
+            // 点图元（.pat 的 dash = 0，如 DOTS 点阵）。点走 IDrawSink::DrawPoint，
+            // 不产线段/三角形，若不单独收集就**完全拾取不到**（表现为能显示但不能选中）。
+            // 点的屏幕尺寸是 1 像素，命中判定按世界距离 + 阈值即可。
+            std::vector<Math::Point3>                          Points;
         };
         const PickGeometry& GetPickGeometry(const Object& obj);
         std::unordered_map<ObjectID, PickGeometry> m_pickGeometry;
