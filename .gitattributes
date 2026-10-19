@@ -1,3 +1,5 @@
+# 文本文件在仓库里统一存为 LF；工作区的换行由各自的 core.autocrlf 决定
+* text=auto
 *.bat text eol=crlf
 *.png binary
 # 样例图纸按原字节保存：ASCII DXF 是 CRLF 换行，转换换行会改变内容
