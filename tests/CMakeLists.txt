@@ -121,6 +121,7 @@ if(WIN32)
         "Core/BulgeDirectionTests.cpp"
         "Core/PointStyleTests.cpp"
         "Core/LineTypeScaleTests.cpp"
+        "Core/HatchDotsTests.cpp"
         "Core/MatrixInverseTests.cpp"
         "Core/RecentFilesTests.cpp"
     )
