@@ -415,13 +415,16 @@ namespace MiniCAD
     }
 
     // =========================================================
-    // 工具栏里的 图层 / 线型 / 线宽 下拉框（仿 AutoCAD 特性工具栏，作用于新建对象）
+    // 工具栏里的 图层 / 线型 / 线宽 下拉框（仿 AutoCAD 特性工具栏）：
+    // 没有选择时显示并设置当前值（作用于新建对象）；有选择时显示选中对象的值（不同时为"*多种*"），选择即修改选中对象
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerBar()
     {
         using namespace MiniGUI;
         DocumentManager& dm = m_docManager;
         auto doc = [&dm]() -> Document* { return dm.GetActive(); };
+        Editor& editor = dm.GetEditor();
+        auto hasSelection = [&editor, doc] { return doc() && !editor.GetSelection().empty(); };
 
         auto bar = std::make_unique<Node>();
         LayoutStyle s;
@@ -444,7 +447,8 @@ namespace MiniCAD
 
         // ── 图层 ─────────────────────────────────────────────────
         auto* layer = bar->AddChild<ComboBox>();
-        styleCombo(layer, 190.0f, "当前图层（新建对象所在的图层）");
+        m_layerBarLayer = layer;
+        styleCombo(layer, 190.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
         layer->SetDropDownWidth(230.0f);
         layer->SetItemPainter([this, layer, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -457,18 +461,31 @@ namespace MiniCAD
                     DrawLayerRow(layer->GetContext(), dl, box, *l);
         });
         m_bindings.BindChoice(layer,
-            [doc]() -> std::optional<int>
+            [doc, &editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
                 const auto ids = SortedLayerIds(*d);
-                const auto it  = std::find(ids.begin(), ids.end(), d->GetLayerManager().GetActiveLayerID());
-                return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
+                auto indexOf = [&ids](LayerID id)
+                {
+                    const auto it = std::find(ids.begin(), ids.end(), id);
+                    return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
+                };
+                if (hasSelection())
+                    return SelectionCommonIndex(editor, [&indexOf](const EntityAttr& a) { return indexOf(a.LayerId); });
+                return indexOf(d->GetLayerManager().GetActiveLayerID());
             },
-            [doc](const int& i)
+            [doc, &editor, hasSelection](const int& i)
             {
-                if (Document* d = doc())
-                    d->GetLayerManager().SetActiveLayerID(SortedLayerIds(*d)[static_cast<size_t>(i)]);
+                Document* d = doc();
+                if (!d) return;
+                const auto ids = SortedLayerIds(*d);
+                if (i < 0 || static_cast<size_t>(i) >= ids.size())
+                    return;
+                if (hasSelection())
+                    editor.ChangeSelectionAttr(AttrChange{ .Layer = ids[static_cast<size_t>(i)] });
+                else
+                    d->GetLayerManager().SetActiveLayerID(ids[static_cast<size_t>(i)]);
             },
             [doc]
             {
@@ -481,7 +498,7 @@ namespace MiniCAD
 
         // ── 线型 ─────────────────────────────────────────────────
         auto* linetype = bar->AddChild<ComboBox>();
-        styleCombo(linetype, 160.0f, "当前线型（新建对象）");
+        styleCombo(linetype, 160.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
         linetype->SetDropDownWidth(220.0f);
         linetype->SetItemPainter([linetype, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -493,8 +510,23 @@ namespace MiniCAD
                 DrawLinetype(linetype->GetContext(), dl, box, recs[static_cast<size_t>(index)]);
         });
         m_bindings.BindChoice(linetype,
-            [doc]() -> std::optional<int> { Document* d = doc(); return d ? static_cast<int>(d->GetScene().GetCurrentLineType()) : -1; },
-            [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i)); },
+            [doc, &editor, hasSelection]() -> std::optional<int>
+            {
+                Document* d = doc();
+                if (!d) return -1;
+                if (hasSelection())
+                    return SelectionCommonIndex(editor, [](const EntityAttr& a) { return static_cast<int>(a.LineType); });
+                return static_cast<int>(d->GetScene().GetCurrentLineType());
+            },
+            [doc, &editor, hasSelection](const int& i)
+            {
+                Document* d = doc();
+                if (!d || i < 0) return;
+                if (hasSelection())
+                    editor.ChangeSelectionAttr(AttrChange{ .LineType = static_cast<LineTypeID>(i) });
+                else
+                    d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i));
+            },
             [doc]
             {
                 std::vector<std::string> names;
@@ -509,23 +541,37 @@ namespace MiniCAD
         for (const auto& it : kLineweightItems)
             lwLabels.emplace_back(it.label);
         auto* lineweight = bar->AddChild<ComboBox>(lwLabels);
-        styleCombo(lineweight, 140.0f, "当前线宽（新建对象）");
+        styleCombo(lineweight, 140.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
         lineweight->SetItemPainter([lineweight](DrawList& dl, const Rect& box, int index, bool)
         {
             if (index >= 0 && index < static_cast<int>(std::size(kLineweightItems)))
                 DrawLineweight(lineweight->GetContext(), dl, box, kLineweightItems[index].lw);
         });
         m_bindings.BindChoice(lineweight,
-            [doc]() -> std::optional<int>
+            [doc, &editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
-                for (int i = 0; i < static_cast<int>(std::size(kLineweightItems)); ++i)
-                    if (kLineweightItems[i].lw == d->GetScene().GetCurrentLineweight())
-                        return i;
-                return -1;
+                auto indexOf = [](Lineweight lw)
+                {
+                    for (int i = 0; i < static_cast<int>(std::size(kLineweightItems)); ++i)
+                        if (kLineweightItems[i].lw == lw)
+                            return i;
+                    return -1;
+                };
+                if (hasSelection())
+                    return SelectionCommonIndex(editor, [&indexOf](const EntityAttr& a) { return indexOf(a.Lineweight); });
+                return indexOf(d->GetScene().GetCurrentLineweight());
             },
-            [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
+            [doc, &editor, hasSelection](const int& i)
+            {
+                Document* d = doc();
+                if (!d || i < 0 || static_cast<size_t>(i) >= std::size(kLineweightItems)) return;
+                if (hasSelection())
+                    editor.ChangeSelectionAttr(AttrChange{ .Lineweight = kLineweightItems[i].lw });
+                else
+                    d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw);
+            });
 
         return bar;
     }

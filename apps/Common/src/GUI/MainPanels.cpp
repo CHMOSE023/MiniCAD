@@ -60,27 +60,6 @@ namespace MiniCAD
                 { "type": "panel", "name": "statusbar" } ] }
         })json";
 
-        // 选中实体的公共属性；没有选中返回 -1（下拉框显示占位文字），取值不同返回 nullopt（显示"*多种*"）
-        template<typename F>
-        std::optional<int> CommonIndex(Editor& editor, F indexOf)
-        {
-            std::optional<int> result;
-            bool any = false;
-            for (Object* obj : editor.GetSelectedObjects())
-            {
-                const auto* e = dynamic_cast<const Entity*>(obj);
-                if (!e)
-                    continue;
-                const int idx = indexOf(e->GetAttr());
-                if (!any)
-                    result = idx;
-                else if (result && *result != idx)
-                    return std::nullopt;
-                any = true;
-            }
-            return any ? result : std::optional<int>(-1);
-        }
-
         int LineweightIndex(Lineweight lw)
         {
             for (int i = 0; i < static_cast<int>(std::size(kLineweightItems)); ++i)
@@ -133,6 +112,25 @@ namespace MiniCAD
                 labels.emplace_back(it.label);
             return labels;
         }
+    }
+
+    std::optional<int> MainFrame::SelectionCommonIndex(Editor& editor, const std::function<int(const EntityAttr&)>& indexOf)
+    {
+        std::optional<int> result;
+        bool any = false;
+        for (Object* obj : editor.GetSelectedObjects())
+        {
+            const auto* e = dynamic_cast<const Entity*>(obj);
+            if (!e)
+                continue;
+            const int idx = indexOf(e->GetAttr());
+            if (!any)
+                result = idx;
+            else if (result && *result != idx)
+                return std::nullopt;
+            any = true;
+        }
+        return any ? result : std::optional<int>(-1);
     }
 
     // =========================================================
@@ -329,7 +327,7 @@ namespace MiniCAD
                 Document* d = doc();
                 if (!d) return -1;
                 const auto ids = SortedLayerIds(*d);
-                return CommonIndex(editor, [&ids](const EntityAttr& a)
+                return SelectionCommonIndex(editor, [&ids](const EntityAttr& a)
                 {
                     return static_cast<int>(std::find(ids.begin(), ids.end(), a.LayerId) - ids.begin());
                 });
@@ -350,7 +348,7 @@ namespace MiniCAD
             [&editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return CommonIndex(editor, [](const EntityAttr& a) { return ColorIndex(a.Color); });
+                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return ColorIndex(a.Color); });
             },
             [&editor](const int& i)
             {
@@ -365,7 +363,7 @@ namespace MiniCAD
             [&editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return CommonIndex(editor, [](const EntityAttr& a) { return static_cast<int>(a.LineType); });
+                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return static_cast<int>(a.LineType); });
             },
             [&editor](const int& i)
             {
@@ -407,7 +405,7 @@ namespace MiniCAD
             [&editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return CommonIndex(editor, [](const EntityAttr& a) { return LineweightIndex(a.Lineweight); });
+                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return LineweightIndex(a.Lineweight); });
             },
             [&editor](const int& i)
             {

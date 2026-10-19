@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,6 +42,7 @@ namespace MiniGUI
 namespace MiniCAD
 {
     class StatusBarView;
+    struct EntityAttr;
     class DynamicInputBox;
 
     // MiniCAD 主窗口的界面与逻辑（桌面版和网页版共用）。整个界面由 MiniGUI 绘制，平台相关的部分
@@ -129,6 +131,8 @@ namespace MiniCAD
         void ShowAbout();
         void RefreshLayerPanel();
         static std::vector<uint32_t> SortedLayerIds(Document& doc);     // 按 ID（创建顺序）排列，下拉框和图层面板都用这个顺序
+        // 选中实体的公共属性下标：没有选中返回 -1，取值不同返回 nullopt（"*多种*"）。特性面板与工具栏下拉框共用
+        static std::optional<int> SelectionCommonIndex(Editor& editor, const std::function<int(const EntityAttr&)>& indexOf);
 
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
@@ -186,6 +190,7 @@ namespace MiniCAD
         StatusBarView*                         m_statusBar  = nullptr;
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
         MiniGUI::ListView*                     m_layerList  = nullptr;
+        MiniGUI::ComboBox*                     m_layerBarLayer = nullptr;  // 工具栏的图层下拉框（自测用）
         MiniGUI::CommandConsole*               m_console    = nullptr;
         DynamicInputBox*                       m_dynInput   = nullptr;
         MiniGUI::Popup*                        m_textPopup  = nullptr;   // 文字 / 多行文字原位编辑
@@ -202,7 +207,7 @@ namespace MiniCAD
         uint64_t                               m_viewTexRebuilds = 0;    // 视口渲染目标重建（重新登记纹理）的次数，自测用
         std::string                            m_title;                  // 标题栏文字
         std::string                            m_pendingSavePath;        // 另存为对话框选定的路径，交给 DocumentManager 的文件对话框回调
-        CadSaveVersion                         m_pendingSaveVersion = CadSaveVersion::R2018;
+        CadSaveVersion                         m_pendingSaveVersion = kDefaultCadSaveVersion;
 
         // ── 命令与界面描述（注册表要比工具栏活得久：先声明、后销毁）──
         MiniGUI::CommandRegistry               m_commands;

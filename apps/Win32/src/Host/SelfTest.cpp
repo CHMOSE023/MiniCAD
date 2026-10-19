@@ -18,6 +18,7 @@
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
 #include "Widgets/AutoComplete.h"
+#include "Widgets/ComboBox.h"
 #include "Widgets/CommandConsole.h"
 #include "Widgets/CommandUI.h"
 #include "Widgets/Dialog.h"
@@ -258,6 +259,50 @@ namespace MiniCAD
             RenderFrame();
             check(lm.GetLayer(newId) != nullptr && lm.GetActiveLayerID() == newId && m_layerList->GetItemCount() == rows + 1,
                   "重做：同一个 ID 的图层回来并重新成为当前");
+        }
+
+        // ── 9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单 ──
+        {
+            Document* doc   = m_docManager.GetActive();
+            Scene&    scene = doc->GetScene();
+            Editor&   editor = m_docManager.GetEditor();
+            LayerManager& lm = doc->GetLayerManager();
+            const LayerID active = lm.GetActiveLayerID();
+            const auto ids = SortedLayerIds(*doc);
+            auto indexOf = [&ids](LayerID id) { return static_cast<int>(std::find(ids.begin(), ids.end(), id) - ids.begin()); };
+            const auto lid = scene.NextObjectID();
+            scene.AddEntity(std::make_unique<LineEntity>(lid, Math::Point3{ -500, -500, 0 }, Math::Point3{ -400, -500, 0 }));
+            const LayerID entityLayer = static_cast<const Entity*>(scene.GetEntity(lid))->GetAttr().LayerId;
+            check(m_layerBarLayer != nullptr, "工具栏有图层下拉框");
+            if (m_layerBarLayer && entityLayer != active)
+            {
+                RenderFrame();
+                check(m_layerBarLayer->GetSelectedIndex() == indexOf(active), "没有选择：图层框显示当前图层");
+                editor.SetSelection({ lid });
+                StateChanged();
+                RenderFrame();
+                check(m_layerBarLayer->GetSelectedIndex() == indexOf(entityLayer), "选中对象：图层框显示对象所在的图层");
+                editor.SetSelection({});
+                StateChanged();
+                RenderFrame();
+                check(m_layerBarLayer->GetSelectedIndex() == indexOf(active), "取消选择：图层框回到当前图层");
+            }
+            else
+                check(false, "自测前提：当前图层与新对象的图层不同");
+            scene.RemoveEntity(lid);
+
+            m_viewport->Focus();
+            RenderFrame();
+            const uint8_t alt = static_cast<uint8_t>(MiniGUI::ModifierKey::Alt);
+            m_ui->KeyDown(MiniGUI::Key::Alt, alt);
+            m_ui->KeyDown(MiniGUI::Key::F, alt);
+            m_ui->KeyUp(MiniGUI::Key::F, alt);
+            m_ui->KeyUp(MiniGUI::Key::Alt, 0);
+            RenderFrame();
+            check(m_ui->GetTopPopup() != nullptr, "绘图区有焦点时 Alt+F 打开文件菜单");
+            m_ui->CloseAllPopups();
+            m_viewport->Focus();
+            RenderFrame();
         }
 
         // ── 10. 命令行：绘图区直接打字、补全、空格执行、提示、Esc、空回车重复 ──

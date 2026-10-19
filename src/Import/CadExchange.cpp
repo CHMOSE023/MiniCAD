@@ -2348,6 +2348,9 @@ namespace MiniCAD
                     h.ModelSpaceYAxis = Dwg::XYZ::AxisY();
                     h.PaperSpaceUcsXAxis = Dwg::XYZ::AxisX();
                     h.PaperSpaceUcsYAxis = Dwg::XYZ::AxisY();
+                    // 2007 以前的文字按 $DWGCODEPAGE 编码（2007 起为 Unicode），默认的 ANSI_1252 写不出中文
+                    if (m_version < Dwg::CadVersion::AC1021)
+                        h.CodePage = "ANSI_936";
                 }
 
                 ExportLineTypes();
@@ -3161,6 +3164,58 @@ namespace MiniCAD
         };
     }
 
+    namespace
+    {
+        Dwg::CadVersion ToCadVersion(CadSaveVersion version)
+        {
+            switch (version)
+            {
+            case CadSaveVersion::R2000: return Dwg::CadVersion::AC1015;
+            case CadSaveVersion::R2004: return Dwg::CadVersion::AC1018;
+            case CadSaveVersion::R2007: return Dwg::CadVersion::AC1021;
+            case CadSaveVersion::R2010: return Dwg::CadVersion::AC1024;
+            case CadSaveVersion::R2013: return Dwg::CadVersion::AC1027;
+            case CadSaveVersion::R2018: break;
+            }
+            return Dwg::CadVersion::AC1032;
+        }
+
+        // 文件版本 → 写出版本；2000 以前的旧格式按 2000 写出
+        CadSaveVersion FromCadVersion(Dwg::CadVersion version)
+        {
+            switch (version)
+            {
+            case Dwg::CadVersion::AC1018: return CadSaveVersion::R2004;
+            case Dwg::CadVersion::AC1021: return CadSaveVersion::R2007;
+            case Dwg::CadVersion::AC1024: return CadSaveVersion::R2010;
+            case Dwg::CadVersion::AC1027: return CadSaveVersion::R2013;
+            case Dwg::CadVersion::AC1032: return CadSaveVersion::R2018;
+            case Dwg::CadVersion::Unknown: return kDefaultCadSaveVersion;
+            default:                       return CadSaveVersion::R2000;
+            }
+        }
+    }
+
+    const char* CadSaveVersionName(CadSaveVersion version)
+    {
+        switch (version)
+        {
+        case CadSaveVersion::R2000: return "2000";
+        case CadSaveVersion::R2004: return "2004";
+        case CadSaveVersion::R2007: return "2007";
+        case CadSaveVersion::R2010: return "2010";
+        case CadSaveVersion::R2013: return "2013";
+        case CadSaveVersion::R2018: break;
+        }
+        return "2018";
+    }
+
+    bool CadSaveVersionSupported(CadFileKind kind, CadSaveVersion version)
+    {
+        // MiniDWG 没有实现 2007 DWG 的压缩与页格式（ACadSharp 也没有）
+        return kind != CadFileKind::Dwg || version != CadSaveVersion::R2007;
+    }
+
     CadFileKind CadKindFromPath(const std::string& path)
     {
         const size_t dot = path.find_last_of('.');
@@ -3203,7 +3258,7 @@ namespace MiniCAD
             return fail(firstError.empty() ? "文件已损坏或版本不受支持" : firstError);
 
         if (version)
-            *version = db->GetVersion() == Dwg::CadVersion::AC1027 ? CadSaveVersion::R2013 : CadSaveVersion::R2018;
+            *version = FromCadVersion(db->GetVersion());
         std::shared_ptr<CadSource> src;
         if (source != nullptr)
         {
@@ -3231,7 +3286,12 @@ namespace MiniCAD
                                         const CadSource* source)
     {
         std::string firstError;
-        const Dwg::CadVersion target = version == CadSaveVersion::R2013 ? Dwg::CadVersion::AC1027 : Dwg::CadVersion::AC1032;
+        if (!CadSaveVersionSupported(kind, version))
+        {
+            LOG_WARN("DWG/DXF 导出：%s 格式的 DWG 不支持写出，改写为 2010 格式", CadSaveVersionName(version));
+            version = CadSaveVersion::R2010;
+        }
+        const Dwg::CadVersion target = ToCadVersion(version);
 
         // 格式与版本都与原图相同：以重新读出的原图为底（未建模对象的原始数据只能写回同一格式、同一版本）
         std::unique_ptr<Dwg::CadDatabase> db;

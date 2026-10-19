@@ -43,17 +43,25 @@ namespace MiniCAD
             return s;
         }
 
-        // 保存对话框的筛选器：扩展名 + DWG / DXF 版本（顺序与 lpstrFilter 一致）
-        struct SaveFilter { const wchar_t* ext; CadSaveVersion version; };
-        constexpr SaveFilter kSaveFilters[] =
+        // 保存对话框的筛选器（顺序与 kSaveFormats 一致）："名称\0*.ext\0" 逐项拼接，末尾再加一个 \0
+        const std::wstring& SaveFilterString()
         {
-            { L".mcad", CadSaveVersion::R2018 },
-            { L".dwg",  CadSaveVersion::R2018 },
-            { L".dwg",  CadSaveVersion::R2013 },
-            { L".dxf",  CadSaveVersion::R2018 },
-            { L".dxf",  CadSaveVersion::R2013 },
-            { L".json", CadSaveVersion::R2018 },
-        };
+            static const std::wstring filter = []
+            {
+                std::wstring f;
+                for (const SaveFormat& fmt : kSaveFormats)
+                {
+                    const std::wstring ext = ToWide(fmt.ext);
+                    f += ToWide(fmt.label);
+                    f += L'\0';
+                    f += L'*' + ext;
+                    f += L'\0';
+                }
+                f += L'\0';
+                return f;
+            }();
+            return filter;
+        }
 
         constexpr wchar_t kDrawingFilter[] = L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
 
@@ -72,12 +80,7 @@ namespace MiniCAD
             if (kind == FileKind::Image)
                 ofn.lpstrFilter = L"图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif\0所有文件 (*.*)\0*.*\0";
             else if (save)
-                ofn.lpstrFilter = L"MiniCAD 文档 (*.mcad)\0*.mcad\0"
-                                  L"AutoCAD 2018 图形 (*.dwg)\0*.dwg\0"
-                                  L"AutoCAD 2013/2014 图形 (*.dwg)\0*.dwg\0"
-                                  L"AutoCAD 2018 DXF (*.dxf)\0*.dxf\0"
-                                  L"AutoCAD 2013/2014 DXF (*.dxf)\0*.dxf\0"
-                                  L"JSON 文件 (*.json)\0*.json\0";
+                ofn.lpstrFilter = SaveFilterString().c_str();
             else
                 ofn.lpstrFilter = kDrawingFilter;
             ofn.lpstrFile   = buf;
@@ -87,24 +90,20 @@ namespace MiniCAD
             if (save && kind == FileKind::Drawing)
             {
                 // 默认筛选器：沿用文档当前的格式（按文件名扩展名）和版本
-                const wchar_t* dot = wcsrchr(buf, L'.');
-                for (DWORD i = 0; i < static_cast<DWORD>(std::size(kSaveFilters)); ++i)
-                    if (dot && _wcsicmp(dot, kSaveFilters[i].ext) == 0 && (!version || kSaveFilters[i].version == *version))
-                    {
-                        ofn.nFilterIndex = i + 1;
-                        break;
-                    }
+                const int i = FindSaveFormat(suggestedName, version ? *version : kDefaultCadSaveVersion);
+                if (i >= 0)
+                    ofn.nFilterIndex = static_cast<DWORD>(i) + 1;
             }
             if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn)))
                 return {};
             const wchar_t* fileName = wcsrchr(buf, L'\\') ? wcsrchr(buf, L'\\') + 1 : buf;
             if (save && kind == FileKind::Drawing)
             {
-                const DWORD idx = ofn.nFilterIndex >= 1 && ofn.nFilterIndex <= std::size(kSaveFilters) ? ofn.nFilterIndex - 1 : 0;
+                const DWORD idx = ofn.nFilterIndex >= 1 && ofn.nFilterIndex <= std::size(kSaveFormats) ? ofn.nFilterIndex - 1 : 0;
                 if (!wcschr(fileName, L'.'))
-                    wcsncat_s(buf, kSaveFilters[idx].ext, _TRUNCATE);
+                    wcsncat_s(buf, ToWide(kSaveFormats[idx].ext).c_str(), _TRUNCATE);
                 if (version)
-                    *version = kSaveFilters[idx].version;
+                    *version = kSaveFormats[idx].version;
             }
             return ToUtf8(buf);
         }

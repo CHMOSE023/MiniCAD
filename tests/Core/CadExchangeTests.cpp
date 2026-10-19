@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 
 using namespace MiniCAD;
@@ -89,7 +90,9 @@ namespace
         scene.AddEntity(std::move(ins));
     }
 
-    void CheckRoundTrip(CadFileKind kind, const char* label, CadSaveVersion version = CadSaveVersion::R2018)
+    // expected：读回的版本，默认与写出的版本相同（2007 DWG 写不出，改写为 2010）
+    void CheckRoundTrip(CadFileKind kind, const char* label, CadSaveVersion version = CadSaveVersion::R2018,
+                        std::optional<CadSaveVersion> expected = std::nullopt)
     {
         Scene src;
         BuildScene(src);
@@ -103,7 +106,7 @@ namespace
         Scene dst;
         CadSaveVersion readVersion = CadSaveVersion::R2018;
         Check(ImportCad(bytes, dst, &err, &readVersion), (std::string(label) + "：导入成功").c_str());
-        Check(readVersion == version, (std::string(label) + "：读回的版本与写出的版本一致").c_str());
+        Check(readVersion == expected.value_or(version), (std::string(label) + "：读回的版本与写出的版本一致").c_str());
 
         Check(CountAll(dst) == CountAll(src), (std::string(label) + "：实体数量一致").c_str());
 
@@ -289,6 +292,14 @@ int RunCadExchangeTests()
     CheckRoundTrip(CadFileKind::Dwg, "DWG");
     CheckRoundTrip(CadFileKind::Dxf, "DXF 2013", CadSaveVersion::R2013);
     CheckRoundTrip(CadFileKind::Dwg, "DWG 2013", CadSaveVersion::R2013);
+    CheckRoundTrip(CadFileKind::Dxf, "DXF 2010", CadSaveVersion::R2010);
+    CheckRoundTrip(CadFileKind::Dwg, "DWG 2010", CadSaveVersion::R2010);
+    CheckRoundTrip(CadFileKind::Dxf, "DXF 2007", CadSaveVersion::R2007);
+    CheckRoundTrip(CadFileKind::Dwg, "DWG 2007（改写为 2010）", CadSaveVersion::R2007, CadSaveVersion::R2010);
+    CheckRoundTrip(CadFileKind::Dxf, "DXF 2004", CadSaveVersion::R2004);
+    CheckRoundTrip(CadFileKind::Dwg, "DWG 2004", CadSaveVersion::R2004);
+    CheckRoundTrip(CadFileKind::Dxf, "DXF 2000", CadSaveVersion::R2000);
+    CheckRoundTrip(CadFileKind::Dwg, "DWG 2000", CadSaveVersion::R2000);
     CheckHatchWipeoutSpline(CadFileKind::Dwg, "DWG");
     CheckHatchWipeoutSpline(CadFileKind::Dxf, "DXF");
 

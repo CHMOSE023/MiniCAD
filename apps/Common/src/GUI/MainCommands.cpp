@@ -35,7 +35,7 @@ namespace MiniCAD
                     doc->SetCadSaveVersion(m_pendingSaveVersion);
                 return m_pendingSavePath;           // 另存为对话框（没有系统对话框的平台）已经选好
             }
-            CadSaveVersion version = doc ? doc->GetCadSaveVersion() : CadSaveVersion::R2018;
+            CadSaveVersion version = doc ? doc->GetCadSaveVersion() : kDefaultCadSaveVersion;
             const std::string path = platform->ChooseSavePath(doc ? doc->GetName() : "未命名", version);
             if (doc && !path.empty())
                 doc->SetCadSaveVersion(version);    // DWG / DXF 按所选版本写出

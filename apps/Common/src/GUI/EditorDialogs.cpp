@@ -351,32 +351,15 @@ namespace MiniCAD
     void MainFrame::OpenSaveAsDialog(Document* doc, std::function<void()> onSaved)
     {
         using namespace MiniGUI;
-        struct Format { const char* label; const char* ext; CadSaveVersion version; };
-        static const Format kFormats[] =
-        {
-            { "MiniCAD 文档 (*.mcad)",          ".mcad", CadSaveVersion::R2018 },
-            { "AutoCAD 2018 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2018 },
-            { "AutoCAD 2013/2014 图形 (*.dwg)", ".dwg",  CadSaveVersion::R2013 },
-            { "AutoCAD 2018 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2018 },
-            { "AutoCAD 2013/2014 DXF (*.dxf)",  ".dxf",  CadSaveVersion::R2013 },
-            { "JSON 文件 (*.json)",             ".json", CadSaveVersion::R2018 },
-        };
-
         // 默认文件名去掉已知扩展名；默认格式沿用当前文件的格式和 DWG / DXF 版本
-        std::string base   = doc->GetName();
-        int         format = 0;
-        bool        matched = false;
+        std::string base = doc->GetName();
+        const std::string current = doc->HasPath() ? doc->GetPath() : doc->GetName();
+        const int found = FindSaveFormat(current, doc->GetCadSaveVersion());
+        const int format = found >= 0 ? found : 0;
         auto lower = [](std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
-        const std::string current = lower(doc->HasPath() ? doc->GetPath() : doc->GetName());
-        for (int i = 0; i < static_cast<int>(std::size(kFormats)); ++i)
+        for (const SaveFormat& f : kSaveFormats)
         {
-            const std::string ext = kFormats[i].ext;
-            if (!matched && current.size() > ext.size() && current.compare(current.size() - ext.size(), ext.size(), ext) == 0
-                && (kFormats[i].version == doc->GetCadSaveVersion() || ext == ".mcad" || ext == ".json"))
-            {
-                format  = i;
-                matched = true;
-            }
+            const std::string ext = f.ext;
             if (lower(base).size() > ext.size() && lower(base).compare(base.size() - ext.size(), ext.size(), ext) == 0)
                 base.resize(base.size() - ext.size());
         }
@@ -391,7 +374,7 @@ namespace MiniCAD
         TextBox* name = AddRow<TextBox>(body, "文件名", base);
         name->EditLayoutStyle().width = kFieldWidth;
         std::vector<std::string> labels;
-        for (const Format& f : kFormats)
+        for (const SaveFormat& f : kSaveFormats)
             labels.emplace_back(f.label);
         ComboBox* type = AddRow<ComboBox>(body, "格式", labels, format);
         type->EditLayoutStyle().width = kFieldWidth;
@@ -401,7 +384,7 @@ namespace MiniCAD
         LayoutStyle hs = ColumnStyle(2.0f);
         hs.margin = Edges::Make(80.0f, 0.0f, 0.0f, 0.0f);
         hints->SetLayoutStyle(hs);
-        hints->AddChild<Label>("AutoCAD 2013～2017 共用 2013 格式", 12.0f, Theme::TextDim);
+        hints->AddChild<Label>("AutoCAD 2013～2017 共用 2013 格式；DWG 不支持 2007 格式", 12.0f, Theme::TextDim);
         hints->AddChild<Label>("保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
@@ -416,9 +399,9 @@ namespace MiniCAD
                 return;
 
             ActivateDocument(doc);
-            CadSaveVersion version = kFormats[i].version;
-            m_pendingSavePath    = m_platform->ChooseSavePath(n + kFormats[i].ext, version);
-            m_pendingSaveVersion = kFormats[i].version;
+            CadSaveVersion version = kSaveFormats[i].version;
+            m_pendingSavePath    = m_platform->ChooseSavePath(n + kSaveFormats[i].ext, version);
+            m_pendingSaveVersion = kSaveFormats[i].version;
             const std::string path = m_pendingSavePath;
             if (!path.empty())
                 m_docManager.SaveAs();          // 文件对话框回调返回 m_pendingSavePath

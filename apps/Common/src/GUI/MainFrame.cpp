@@ -799,6 +799,9 @@ namespace MiniCAD
         const KeyCode code = ToKeyCode(e.key);
         if (code == KeyCode::Unknown || code == KeyCode::Tab || !m_docManager.GetActive())
             return false;
+        // Alt+字母留给菜单栏助记符（UIContext 在没有节点处理时才打开菜单），不能被命令行或下面的"按下一律吃掉"截走
+        if (e.modifiers == static_cast<uint8_t>(MiniGUI::ModifierKey::Alt) && e.key >= MiniGUI::Key::A && e.key <= MiniGUI::Key::Z)
+            return false;
         if (RouteKeyToDynamicInput(e) || RouteKeyToCommandLine(e))
             return true;
 

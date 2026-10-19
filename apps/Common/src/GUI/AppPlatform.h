@@ -1,6 +1,8 @@
 #pragma once
 #include "Render/IRenderBackend.h"
 #include "Import/CadExchange.h"
+#include <cctype>
+#include <iterator>
 #include <functional>
 #include <string>
 #include <vector>
@@ -22,6 +24,60 @@ namespace MiniCAD
         Drawing,    // .mcad / .dwg / .dxf / .json
         Image,      // .png / .jpg / .bmp / .tga / .gif
     };
+
+    // 另存为可选的格式（桌面版系统对话框的筛选器与网页版另存为对话框共用，顺序即列表顺序）
+    struct SaveFormat
+    {
+        const char*    label;
+        const char*    ext;         // 小写，带点
+        CadSaveVersion version;     // 只对 .dwg / .dxf 有意义
+    };
+    // DWG 没有 2007：MiniDWG 不能写 2007 格式的 DWG（见 CadSaveVersionSupported）
+    inline constexpr SaveFormat kSaveFormats[] =
+    {
+        { "MiniCAD 文档 (*.mcad)",          ".mcad", kDefaultCadSaveVersion },
+        { "AutoCAD 2018 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2018 },
+        { "AutoCAD 2013/2014 图形 (*.dwg)", ".dwg",  CadSaveVersion::R2013 },
+        { "AutoCAD 2010 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2010 },
+        { "AutoCAD 2004 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2004 },
+        { "AutoCAD 2000 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2000 },
+        { "AutoCAD 2018 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2018 },
+        { "AutoCAD 2013/2014 DXF (*.dxf)",  ".dxf",  CadSaveVersion::R2013 },
+        { "AutoCAD 2010 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2010 },
+        { "AutoCAD 2007 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2007 },
+        { "AutoCAD 2004 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2004 },
+        { "AutoCAD 2000 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2000 },
+        { "JSON 文件 (*.json)",             ".json", kDefaultCadSaveVersion },
+    };
+
+    // 文件名（不区分大小写）与版本对应的另存格式下标：扩展名相同时优先版本一致的，
+    // 版本在该格式下不可选（如 2007 DWG）时取该格式的默认版本（2004）；扩展名不认识返回 -1
+    inline int FindSaveFormat(const std::string& fileName, CadSaveVersion version)
+    {
+        auto hasExt = [&fileName](const char* ext)
+        {
+            const size_t n = std::char_traits<char>::length(ext);
+            if (fileName.size() <= n)
+                return false;
+            for (size_t i = 0; i < n; ++i)
+                if (std::tolower(static_cast<unsigned char>(fileName[fileName.size() - n + i])) != ext[i])
+                    return false;
+            return true;
+        };
+        int byExt = -1, byDefault = -1;
+        for (int i = 0; i < static_cast<int>(std::size(kSaveFormats)); ++i)
+        {
+            if (!hasExt(kSaveFormats[i].ext))
+                continue;
+            if (kSaveFormats[i].version == version)
+                return i;
+            if (byExt < 0)
+                byExt = i;
+            if (byDefault < 0 && kSaveFormats[i].version == kDefaultCadSaveVersion)
+                byDefault = i;
+        }
+        return byDefault >= 0 ? byDefault : byExt;
+    }
 
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）
     // 与网页版（画布 + WebGL2，apps/Web/src/Host/WebApp）各实现一份；MainFrame 本身不含平台代码。
