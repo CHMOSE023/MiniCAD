@@ -704,6 +704,10 @@ namespace MiniCAD
             PickGeometry g;
             g.Segments  = std::move(sink.Segments);
             g.Triangles = std::move(sink.Triangles);
+            // 点图元（.pat 的 dash = 0）也必须搬过来：HitTest 读的是 g.Points，
+            // 漏了它则点的命中判定永远拿不到几何 —— 表现为点阵填充
+            // 框选能选中（框选路径直接用 sink），但悬停 / 点选选不中。
+            g.Points    = std::move(sink.Points);
             it = m_pickGeometry.emplace(obj.GetID(), std::move(g)).first;
         }
         return it->second;

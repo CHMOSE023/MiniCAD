@@ -139,7 +139,10 @@ int RunHatchPatternTests()
         const auto segs = Render(*lib.Find("LINE"), 1.0, 0.0, 0, 0, 100, 100);
         bool horizontal = true;
         for (const auto& s : segs) horizontal = horizontal && std::abs(s.a.y - s.b.y) < 1e-9 && std::abs(Len(s) - 100.0) < 1e-6;
-        Check(segs.size() == 31 && horizontal, "LINE：100×100 区域内 31 条完整水平线（间距 3.175）");
+        // 32 条：v = 0, 3.175, ..., 98.425（nFirst=0 起、nLast=floor(100/3.175)=31）。
+        // v = 0 撞底边，修好后也出图（原来是两端都开的区间判定，这条被漏掉，
+        // 那时是 31 条 —— 缺陷不是特性）。
+        Check(segs.size() == 32 && horizontal, "LINE：100×100 区域内 32 条完整水平线（间距 3.175）");
 
         const auto rot = Render(*lib.Find("ANSI31"), 1.0, 45.0, 0, 0, 100, 100);
         bool vertical = !rot.empty();
@@ -147,13 +150,15 @@ int RunHatchPatternTests()
         Check(vertical, "ANSI31 旋转 45° 后为竖线");
 
         const auto scaled = Render(*lib.Find("LINE"), 2.0, 0.0, 0, 0, 100, 100);
-        Check(scaled.size() == 15, "比例 2：间距加倍，条数减半");
+        Check(scaled.size() == 16, "比例 2：间距加倍，条数减半（32 → 16）");
     }
 
     // ── 4. 虚线：实线占比 ────────────────────────────────────────
     {
         const auto dash = Render(*lib.Find("DASH"), 1.0, 0.0, 0, 0, 127, 127);      // 127 = 20 个周期
-        const double full = 39.0 * 127.0;                                           // 39 条线（127/3.175=40，开区间去掉一条）
+        // 41 条：v = 0, 3.175, ..., 127（nFirst=0、nLast=floor(127/3.175)=40）。
+        // v = 0 撞底边、v = 127 撞顶边，两端都出图（修前 39 条，两端都漏）。
+        const double full = 41.0 * 127.0;
         Check(std::abs(TotalLen(dash) / full - 0.5) < 0.01, "DASH：实线占一半");
 
         bool inside = true;

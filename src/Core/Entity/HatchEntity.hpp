@@ -494,8 +494,26 @@ namespace MiniCAD
                     {
                         double va = toV(poly[i].x,     poly[i].y);
                         double vb = toV(poly[i + 1].x, poly[i + 1].y);
-                        double lo = std::min(va, vb), hi = std::max(va, vb);
-                        if (v <= lo || v >= hi) continue;
+
+                        // ── 扫描线与边的相交判定 ────────────────────────────
+                        //
+                        // ⚠ 原来是 `v <= lo || v >= hi`（两端都开）。扫描线正好落在
+                        //   边的端点上时该边被整条跳过 ⇒ 与填充边界重合的扫描线不出图。
+                        //   实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条
+                        //   （漏掉 v = 0 撞底边、v = 20 撞顶边两条）。
+                        //
+                        // 改为 `v < lo || v > hi`（两端都闭）：扫描线撞到 shared vertex
+                        // 时共享该顶点的两条边都计入 —— 这正是扫描线填充要的：
+                        // 顶点处的交点数必须是偶数才能两两配对成 [a,b] 区间。
+                        // 只计入一条会破坏配对（该顶点剩一个孤立交点，
+                        // 与相邻扫描线的交点混在一起排序后区间错乱）。
+                        const double lo = std::min(va, vb), hi = std::max(va, vb);
+                        if (v < lo || v > hi) continue;
+                        // 水平边（va == vb）在上面的区间判定里会被 v == lo == hi 命中，
+                        // 但 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线。
+                        // 水平边与扫描线平行（重合），不产生交点，必须排除。
+                        if (std::abs(vb - va) < 1e-12) continue;
+
                         double t  = (v - va) / (vb - va);
                         double ua = toU(poly[i].x,     poly[i].y);
                         double ub = toU(poly[i + 1].x, poly[i + 1].y);
