@@ -17,6 +17,8 @@
 #include "Import/CadExchange.h"
 #include "Scene/Scene.h"
 #include "Core/Entity/PolylineEntity.hpp"
+#include "Editor/Tools/PolylineTool.h"
+#include "Editor/Grip/PolylineGripHandler.h"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -138,6 +140,100 @@ int RunBulgeDirectionTests()
         Check(b > 0.0, "**起点切向朝下 ⇒ 凸度为正（与 ComputeArc 同一约定）**");
         Check(Near(g.SweepAngle, Math::PI, 1e-6), "还原出的弧是半圆");
         Check(NearP(ArcMid(g), 1, -1, 1e-6), "还原出的弧仍过 (1,-1)");
+    }
+
+    // ── 6. 非半圆：BulgeFromTangent 必须还原出**同一条**弧 ────────────────────
+    //
+    // ⚠ 上面第 5 节用的是半圆。半圆时圆心恰好落在弦上（side == 0），
+    //   「圆心在右 ⇒ 正」与「圆心在右 ⇒ 负」两种符号给出的 |bulge| 都是 1，
+    //   于是符号写反了也测不出来。必须用非半圆。
+    {
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 };
+        // 圆心在弦右侧的劣弧：bulge = -0.4
+        const ArcGeom truth = Polyline::ComputeArc(A, B, -0.4);
+        // 取该弧在 A 处的真实切向（沿行进方向）
+        const Math::Point3 T{ -std::sin(truth.StartAngle), std::cos(truth.StartAngle), 0.0 };
+        const double b = Polyline::BulgeFromTangent(A, B, T);
+        const ArcGeom got = Polyline::ComputeArc(A, B, b);
+        std::printf("    非半圆：bulge=%.4f，圆心=(%.3f,%.3f)，切向=(%.3f,%.3f)\n",
+                    b, truth.Center.x, truth.Center.y, T.x, T.y);
+        Check(Near(b, -0.4, 1e-9), "**非半圆：切向还原出的凸度为 -0.4（圆心在右 ⇒ 负）**");
+        Check(NearP(got.Center, truth.Center.x, truth.Center.y, 1e-9),
+              "**非半圆：还原出的圆心与真值一致（修前会到弦的另一侧）**");
+        Check(Near(got.SweepAngle, truth.SweepAngle, 1e-9),
+              "**非半圆：还原出的包角与真值一致**");
+    }
+    {
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 };
+        // 圆心在弦左侧的劣弧：bulge = +0.4
+        const ArcGeom truth = Polyline::ComputeArc(A, B, 0.4);
+        const Math::Point3 T{ -std::sin(truth.StartAngle), std::cos(truth.StartAngle), 0.0 };
+        const double b = Polyline::BulgeFromTangent(A, B, T);
+        const ArcGeom got = Polyline::ComputeArc(A, B, b);
+        Check(Near(b, 0.4, 1e-9), "**非半圆：切向还原出的凸度为 +0.4（圆心在左 ⇒ 正）**");
+        Check(NearP(got.Center, truth.Center.x, truth.Center.y, 1e-9),
+              "**非半圆：圆心在左时同样还原正确**");
+    }
+
+    // ── 7. 三点弧必须经过中间点（工具真正使用的函数）────────────────────────
+    //
+    // PolylineTool 画圆弧、PolylineGripHandler 拖弧中点夹点，用的都是
+    // ComputeBulgeFromThreePoints(A, M, B)。它与 ComputeArc 必须是同一套约定，
+    // 否则画出的弧不经过用户点、预览同样如此。
+    {
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 }, M{ 1, -0.5, 0 };
+        const double b = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const ArcGeom g = Polyline::ComputeArc(A, B, b);
+        std::printf("    三点弧 M=(1,-0.5)：bulge = %.4f，弧中点 = (%.4f, %.4f)\n",
+                    b, ArcMid(g).x, ArcMid(g).y);
+        Check(b > 0.0, "**三点弧：中点在弦下方 ⇒ 凸度为正**");
+        Check(NearP(ArcMid(g), 1, -0.5, 1e-6), "**画出的弧经过中间点 (1,-0.5)**");
+        Check(!Near(std::abs(b), 1.0, 1e-9), "该例不是半圆（符号判据有效）");
+    }
+    {
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 }, M{ 1, 0.5, 0 };
+        const double b = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const ArcGeom g = Polyline::ComputeArc(A, B, b);
+        Check(b < 0.0, "**三点弧：中点在弦上方 ⇒ 凸度为负**");
+        Check(NearP(ArcMid(g), 1, 0.5, 1e-6), "**画出的弧经过中间点 (1,+0.5)**");
+    }
+    {
+        // 非半圆 + 非对称：A=(0,0) → B=(4,0)，M 在 (1,-0.5)
+        const Math::Point3 A{ 0, 0, 0 }, B{ 4, 0, 0 }, M{ 1, -0.5, 0 };
+        const double b = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const ArcGeom g = Polyline::ComputeArc(A, B, b);
+        // M 在圆上的参数
+        const double am = std::atan2(M.y - g.Center.y, M.x - g.Center.x);
+        double t = (am - g.StartAngle) / g.SweepAngle;
+        while (t < 0.0) t += 1.0;
+        while (t > 1.0) t -= 1.0;
+        const Math::Point3 p = ArcMid(ArcGeom{ g.Center, g.Radius,
+                                               g.StartAngle + g.SweepAngle * t, 0.0 });
+        std::printf("    三点弧 A=(0,0) B=(4,0) M=(1,-0.5)：bulge = %.4f, t(M) = %.4f\n", b, t);
+        Check(b > 0.0, "**非对称三点弧：中点在弦下方 ⇒ 凸度为正**");
+        Check(NearP(p, 1, -0.5, 1e-6), "**非对称三点弧经过 M**");
+    }
+    {
+        // 旋转坐标系：A=(0,0) → B=(0,2)，M=(0.5,1)（弦右侧）
+        const Math::Point3 A{ 0, 0, 0 }, B{ 0, 2, 0 }, M{ 0.5, 1, 0 };
+        const double b = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const ArcGeom g = Polyline::ComputeArc(A, B, b);
+        Check(NearP(ArcMid(g), 0.5, 1, 1e-6), "**三点弧与坐标系无关（旋转后仍经过 M）**");
+    }
+    {
+        // 交换起终点 ⇒ 同一条弧，凸度取反
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 }, M{ 1, -0.5, 0 };
+        const double f = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const double r = PolylineTool::ComputeBulgeFromThreePoints(B, M, A);
+        Check(Near(f, -r, 1e-9), "**三点弧：交换起终点后凸度取反（同一条弧）**");
+    }
+    {
+        // PolylineGripHandler 里那份拷贝必须给同样的结果
+        const Math::Point3 A{ 0, 0, 0 }, B{ 2, 0, 0 }, M{ 1, -0.5, 0 };
+        const double tool = PolylineTool::ComputeBulgeFromThreePoints(A, M, B);
+        const double grip = PolylineGripHandler::ComputeBulgeFromThreePoints(A, M, B);
+        Check(Near(tool, grip, 1e-12),
+              "**PolylineGripHandler 与 PolylineTool 的三点求凸度结果一致**");
     }
 
     std::printf("凸度方向用例失败：%d\n", g_fail);

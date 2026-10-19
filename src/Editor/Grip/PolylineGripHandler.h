@@ -170,10 +170,16 @@ namespace MiniCAD
             plEnt->SetPolyline(state->Base);
         }
 
-    private: 
+    public:
 
-            // 三点求 Bulge（与 PolylineTool::ComputeBulgeFromThreePoints 一致）
-            // A=弧起点，M=弧上经过点（光标），B=弧终点
+        // 三点求 Bulge（与 PolylineTool::ComputeBulgeFromThreePoints 一致）
+        // A=弧起点，M=弧上经过点（光标），B=弧终点
+        //
+        // 符号必须与 Polyline::ComputeArc 的 DXF 组码 42 约定一致：
+        //   bulge > 0 ⇒ 逆时针(CCW) ⇒ 圆心在 A→B 左侧；bulge < 0 ⇒ 圆心在右侧。
+        // cross = (M−A) × (B−A) > 0 ⇒ M 在弦左侧 ⇒ 逆时针 ⇒ 圆心在右 ⇒ bulge 负。
+        // 改 Polyline::ComputeArc 的约定时必须同步这里，否则拖动弧中点会把弧甩到另一侧。
+            // （详见 PolylineTool.h 里同一函数的注释；半圆时 cross == 0，测不出符号。）
         static double ComputeBulgeFromThreePoints(const Math::Point3& A, const Math::Point3& M, const Math::Point3& B)
         {
                 double ax = A.x, ay = A.y;
@@ -200,15 +206,17 @@ namespace MiniCAD
                 double sweep;
                 if (cross >= 0.0)
                 {
+                    // M 在弦左侧 ⇒ 逆时针 ⇒ 圆心在右 ⇒ bulge 负
                     sweep = ea - sa;
                     if (sweep <= 0.0) sweep += Math::TwoPI;
-                    return -std::tan(sweep * 0.25);   // CCW → bulge 负
+                    return std::tan(sweep * 0.25);
                 }
                 else
                 {
+                    // M 在弦右侧 ⇒ 顺时针 ⇒ 圆心在左 ⇒ bulge 正
                     sweep = sa - ea;
                     if (sweep <= 0.0) sweep += Math::TwoPI;
-                    return std::tan(sweep * 0.25);    // CW  → bulge 正
+                    return -std::tan(sweep * 0.25);
                 }
             }
         // 直线段几何中点

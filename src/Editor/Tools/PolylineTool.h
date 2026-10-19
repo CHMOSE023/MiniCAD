@@ -170,6 +170,20 @@ namespace MiniCAD
             RefreshOverlay();
         }
 
+    public:
+
+        // 三点求 Bulge：A = 弧起点，M = 弧上经过点（光标），B = 弧终点。
+        //
+        // 符号必须与 Polyline::ComputeArc 的 DXF 组码 42 约定一致：
+        //   bulge > 0 ⇒ 逆时针(CCW) ⇒ 圆心在 A→B 左侧；bulge < 0 ⇒ 圆心在右侧。
+        // cross = (M−A) × (B−A) > 0 ⇒ M 在弦左侧 ⇒ A→M→B 逆时针 ⇒ 圆心在弦右侧 ⇒ bulge 负。
+        //
+        // ⚠ v0.2.0 之前 ComputeArc 把整套约定写反了（正凸度 = 顺时针），这里为与之匹配
+        //   也取了反，两者恰好抵消。ComputeArc 改成 DXF 约定后不再抵消：交互绘制的弧会
+        //   画到弦的**另一侧**、不经过用户点的那一点（预览同样如此）。因此这里必须一并翻过来。
+        //   同一函数在 PolylineGripHandler 里有一份拷贝，改这里必须同步那边。
+        //   半圆时圆心落在弦上（cross == 0），两种符号给出的 |bulge| 都是 1，测不出符号。
+        // public 是为了让测试直接调用（tests/Core/BulgeDirectionTests.cpp）。
         static double ComputeBulgeFromThreePoints(
             const Math::Point3& A,
             const Math::Point3& M,
@@ -198,15 +212,17 @@ namespace MiniCAD
             double sweep;
             if (cross >= 0.0)
             {
+                // M 在弦左侧 ⇒ 逆时针 ⇒ 圆心在右 ⇒ bulge 负
                 sweep = ea - sa;
                 if (sweep <= 0.0) sweep += Math::TwoPI;
-                return -std::tan(sweep * 0.25);
+                return std::tan(sweep * 0.25);
             }
             else
             {
+                // M 在弦右侧 ⇒ 顺时针 ⇒ 圆心在左 ⇒ bulge 正
                 sweep = sa - ea;
                 if (sweep <= 0.0) sweep += Math::TwoPI;
-                return std::tan(sweep * 0.25);
+                return -std::tan(sweep * 0.25);
             }
         }
 

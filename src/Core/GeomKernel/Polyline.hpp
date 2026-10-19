@@ -243,8 +243,18 @@ namespace MiniCAD
             double mx   = (A.x + B.x) * 0.5, my = (A.y + B.y) * 0.5;
             double side = (cx - mx) * rpx + (cy - my) * rpy;
 
-            // side > 0 → centre is to the right of A→B → bulge > 0 (bows LEFT)
-            return (side >= 0.0 ? 1.0 : -1.0) * std::tan(theta / 4.0);
+            // side > 0 → centre is to the RIGHT of A→B.
+            //
+            // DXF 组码 42 约定（与 ComputeArc 相同，见文件头的约定说明）：
+            //   正 bulge ⇒ 逆时针 CCW、圆心在 A→B 左侧、弧向行进方向右侧鼓出；
+            //   负 bulge ⇒ 顺时针 CW、圆心在右侧。
+            // 因此圆心在右侧（side > 0）时必须给**负**号；写成"圆心在右 ⇒ 正"是
+            // ComputeArc 的旧约定（v0.2.0 之前），与 DXF 相反，会让 BulgeFromTangent
+            // 生成的弧画到弦的另一侧。
+            //
+            // 半圆时圆心恰好落在弦上（side == 0），两种符号给出的 |bulge| 都是 1，
+            // 因此半圆用例区分不出符号 —— 测试必须用非半圆（见 tests/Core/BulgeDirectionTests.cpp）。
+            return (side > 0.0 ? -1.0 : 1.0) * std::tan(theta / 4.0);
         }
 
         // ── Segment length ────────────────────────────────────────────────────
