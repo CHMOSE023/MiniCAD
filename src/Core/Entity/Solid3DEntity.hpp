@@ -323,8 +323,8 @@ namespace MiniCAD
 
         DECLARE_RUNTIME_TYPE(Solid3DEntity, Entity)
 
-    private:
-        // 不随变换改变的部分，克隆之间共享（实体缓存在第一次需要时加载，仍视为不可变）
+    protected:
+        // 不随变换改变的部分，克隆之间共享（MeshEntity 也用它）（实体缓存在第一次需要时加载，仍视为不可变）
         struct Data
         {
             std::vector<uint8_t>   Bytes;

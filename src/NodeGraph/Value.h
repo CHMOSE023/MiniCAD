@@ -10,7 +10,7 @@
 #include <vector>
 
 // 节点图的数据类型与值（开发计划见 docs/NodeGraph/PLAN.md 第 3.1 节）。
-// 值都不可变：曲线是不在场景里的曲线实体（共享、只读），空间曲线是 NurbsCurve 数据，实体与曲面是内核的 BodyPtr，
+// 值都不可变：曲线是不在场景里的曲线实体（共享、只读），空间曲线是 NurbsCurve 数据，实体与曲面是内核的 BodyPtr，网格是 Solid::Mesh 数据，
 // 所以列表可以在节点之间随意复制、共享。
 namespace MiniCAD
 {
@@ -33,6 +33,7 @@ namespace MiniCAD::Nodes
         Geometry,   // 只用于端口：Vector / Plane / Curve / Curve3D / Body
         Domain,     // 区间 [Min, Max]；数值转区间为 [0, x]
         Plane,      // 工作平面（原点 + 单位 X / Y 轴）；与点互转（原点 / 过该点的 XY 平面）
+        Mesh,       // 三角网格（Solid::Mesh，顶点共用）；实体 / 曲面连到网格端口时按默认精度网格化（需要内核）
     };
 
     // 区间
@@ -64,10 +65,12 @@ namespace MiniCAD::Nodes
 
     using CurvePtr   = std::shared_ptr<const Entity>;
     using Curve3DPtr = std::shared_ptr<const Solid::NurbsCurve>;
+    // 节点图里的网格：顶点共用（焊接过），Normals 为顶点法线（面积加权，可能为空），三角形逆时针为正面
+    using MeshPtr    = std::shared_ptr<const Solid::Mesh>;
 
     struct Value
     {
-        std::variant<std::monostate, double, int64_t, bool, std::string, Math::Vec3, CurvePtr, Solid::BodyPtr, Curve3DPtr, Nodes::Domain, Nodes::Plane> Data;
+        std::variant<std::monostate, double, int64_t, bool, std::string, Math::Vec3, CurvePtr, Solid::BodyPtr, Curve3DPtr, Nodes::Domain, Nodes::Plane, MeshPtr> Data;
         // 实体的角色（只用于 Body）：空心形体只用来切除实心（形体合并、剪切几何），预览为橙色线框、不烘焙（PLAN.md 第 5.2 节）
         bool Void = false;
 
@@ -85,6 +88,8 @@ namespace MiniCAD::Nodes
         Value(Solid::NurbsCurve v)      : Data(std::make_shared<const Solid::NurbsCurve>(std::move(v))) {}
         Value(const Nodes::Domain& v)   : Data(v) {}
         Value(const Nodes::Plane& v)    : Data(v) {}
+        Value(MeshPtr v)                : Data(std::move(v)) {}
+        Value(Solid::Mesh v)            : Data(std::make_shared<const Solid::Mesh>(std::move(v))) {}
 
         // 带空心标记的实体
         static Value VoidBody(Solid::BodyPtr b, bool isVoid = true)
@@ -108,6 +113,7 @@ namespace MiniCAD::Nodes
         const Curve3DPtr&  AsCurve3D() const { return std::get<Curve3DPtr>(Data); }
         const Nodes::Domain& AsDomain() const { return std::get<Nodes::Domain>(Data); }
         const Nodes::Plane&  AsPlane()  const { return std::get<Nodes::Plane>(Data); }
+        const MeshPtr&       AsMesh()   const { return std::get<MeshPtr>(Data); }
     };
 
     using DataList = std::vector<Value>;
@@ -125,7 +131,7 @@ namespace MiniCAD::Nodes
 
     inline bool IsGeometryType(DataType t)
     {
-        return t == DataType::Vector || t == DataType::Plane || t == DataType::Curve || t == DataType::Curve3D || t == DataType::Body ||
+        return t == DataType::Vector || t == DataType::Plane || t == DataType::Curve || t == DataType::Curve3D || t == DataType::Body || t == DataType::Mesh ||
                t == DataType::Geometry;
     }
 }

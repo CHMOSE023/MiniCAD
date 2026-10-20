@@ -22,6 +22,7 @@ namespace MiniCAD::Nodes
         case 8: return DataType::Curve3D;
         case 9: return DataType::Domain;
         case 10: return DataType::Plane;
+        case 11: return DataType::Mesh;
         default: return DataType::Any;
         }
     }
@@ -97,6 +98,7 @@ namespace MiniCAD::Nodes
             { DataType::Geometry, "geometry", "几何" },
             { DataType::Domain,   "domain",   "区间" },
             { DataType::Plane,    "plane",    "平面" },
+            { DataType::Mesh,     "mesh",     "网格" },
         };
 
         bool IsScalar(DataType t) { return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean; }
@@ -151,6 +153,8 @@ namespace MiniCAD::Nodes
             return true;                                // 解析，失败时求值报错
         if (from == DataType::Curve && to == DataType::Curve3D)
             return true;                                // 曲线实体 → NURBS（精确表示圆弧），不能转换的求值时报错
+        if (from == DataType::Body && to == DataType::Mesh)
+            return true;                                // 按默认精度网格化：需要内核，由 Graph 求值时处理
         if (IsScalar(from) && to == DataType::Domain)
             return true;                                // x → [0, x]
         if ((from == DataType::Plane && to == DataType::Vector) || (from == DataType::Vector && to == DataType::Plane))
@@ -271,6 +275,13 @@ namespace MiniCAD::Nodes
                              : std::abs(n.x) > 1 - 1e-9 && std::abs(pl.X.y) > 1 - 1e-9 ? "YZ 平面"
                              : std::abs(n.y) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? "XZ 平面" : "平面";
             return std::string(name) + "（原点 " + vec(pl.Origin) + "，法向 " + vec(n) + "）";
+        }
+        case DataType::Mesh:
+        {
+            const auto& m = v.AsMesh();
+            if (!m)
+                return "网格（空）";
+            return "网格（" + std::to_string(m->Positions.size()) + " 个顶点，" + std::to_string(m->TriangleCount()) + " 个面）";
         }
         case DataType::Curve3D:
         {

@@ -17,6 +17,8 @@
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/GeomKernel/PolylineOps.hpp"
 #include "NodeGraph/CurveOps.h"
+#include "NodeGraph/MeshOps.h"
+#include "Core/Entity/MeshEntity.hpp"
 #include "NodeGraph/GeometryOps.h"
 #include "Solid/SMLib/SMLibKernel.h"
 #include "Dwg/Read/DwgReader.h"
@@ -1056,6 +1058,211 @@ namespace
         Check(f.Ok(rbLine) && f.Number(rbLine, 1) < 1e-9, "N6b rebuild: a line stays exact");
     }
 
+    // N9：网格——创建 / 修改 / 分析在没有内核时也能用（网页版）；网格化、网格转实体经内核；预览、烘焙、读写、DWG / DXF 多面网格
+    void TestN9Meshes()
+    {
+        Fixture f;
+        f.ctx.Kernel = nullptr;   // 网格运算不依赖内核
+        Graph& g = f.g;
+        auto out = [&](NodeId id, int port = 0) -> const DataList& { return g.GetNode(id)->Outputs[port]; };
+        auto mesh = [&](NodeId id, size_t i = 0) -> const Solid::Mesh* { return i < out(id).size() ? out(id)[i].AsMesh().get() : nullptr; };
+        auto faces = [&](NodeId id, size_t i = 0) { return mesh(id, i) ? mesh(id, i)->TriangleCount() : size_t(0); };
+        auto op = [&](const char* type, NodeId src, int port = 0)
+        {
+            const NodeId n = Add(g, type);
+            g.Connect({ src, 0, n, port });
+            return n;
+        };
+        auto pt = [&](double x, double y, double z = 0)
+        {
+            const NodeId n = Add(g, "vector.point");
+            g.SetInputValue(n, 0, x);
+            g.SetInputValue(n, 1, y);
+            g.SetInputValue(n, 2, z);
+            return n;
+        };
+
+        // ── 创建 ──
+        const NodeId box = Add(g, "mesh.box"), box2 = Add(g, "mesh.box"), sphere = Add(g, "mesh.sphere"), plane = Add(g, "mesh.plane");
+        g.SetInputValue(box2, 2, Value(int64_t(2)));
+        const NodeId boxInfo = op("mesh.info", box), box2Info = op("mesh.info", box2), sphInfo = op("mesh.info", sphere), planeInfo = op("mesh.info", plane);
+        f.Eval();
+        Check(f.Ok(boxInfo) && out(boxInfo, 0)[0].AsInteger() == 8 && out(boxInfo, 1)[0].AsInteger() == 12 && out(boxInfo, 2)[0].AsBool() &&
+                  Near(out(boxInfo, 4)[0].AsNumber(), 1000.0),
+              "N9 box: 8 vertices, 12 faces, closed, volume 1000 (no kernel)");
+        Check(out(box2Info, 0)[0].AsInteger() == 26 && out(box2Info, 1)[0].AsInteger() == 48 && Near(out(box2Info, 4)[0].AsNumber(), 1000.0),
+              "N9 box: 2 segments per edge → 26 vertices, 48 faces");
+        const double ball = 4.0 / 3.0 * kPi * 125;
+        Check(out(sphInfo, 0)[0].AsInteger() == 24 * 11 + 2 && out(sphInfo, 1)[0].AsInteger() == 2 * 24 * 11 && out(sphInfo, 2)[0].AsBool() &&
+                  out(sphInfo, 4)[0].AsNumber() < ball && out(sphInfo, 4)[0].AsNumber() > ball * 0.95,
+              "N9 sphere: 266 vertices, 528 faces, closed, volume just under 4/3πr³");
+        Check(out(planeInfo, 1)[0].AsInteger() == 200 && !out(planeInfo, 2)[0].AsBool() && Near(out(planeInfo, 3)[0].AsNumber(), 100.0),
+              "N9 plane: 10 × 10 cells, open, area 100");
+
+        // 构造网格：一个四边形 → 两个三角形，面积 6
+        const NodeId cons = Add(g, "mesh.construct");
+        const double quad[4][2] = { { 0, 0 }, { 3, 0 }, { 3, 2 }, { 0, 2 } };
+        for (int i = 0; i < 4; ++i)
+            g.Connect({ pt(quad[i][0], quad[i][1]), 0, cons, 0 }, i == 0);
+        for (int i = 0; i < 4; ++i)
+        {
+            const NodeId k = Add(g, "input.integer");
+            g.SetParam(k, 0, int64_t(i));
+            g.Connect({ k, 0, cons, 1 }, i == 0);
+        }
+        g.SetParam(cons, 0, int64_t(1));
+        const NodeId consInfo = op("mesh.info", cons);
+        f.Eval();
+        Check(f.Ok(cons) && faces(cons) == 2 && Near(out(consInfo, 3)[0].AsNumber(), 6.0), "N9 construct: a quad becomes two triangles");
+
+        // Delaunay：伪随机 40 个点，三角形数 = 2n − 2 − h（h 为凸包顶点数）
+        const NodeId del = Add(g, "mesh.delaunay");
+        std::vector<std::pair<double, double>> pts;
+        uint32_t seed = 12345;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) / double(1 << 24); };
+        for (int i = 0; i < 40; ++i)
+        {
+            pts.push_back({ rnd() * 100, rnd() * 100 });
+            g.Connect({ pt(pts.back().first, pts.back().second), 0, del, 0 }, i == 0);
+        }
+        // 凸包（单调链）
+        auto sorted = pts;
+        std::sort(sorted.begin(), sorted.end());
+        auto cross = [](auto o, auto a, auto b) { return (a.first - o.first) * (b.second - o.second) - (a.second - o.second) * (b.first - o.first); };
+        std::vector<std::pair<double, double>> hull;
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const size_t start = hull.size();
+            for (const auto& p : sorted)
+            {
+                while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), p) <= 0)
+                    hull.pop_back();
+                hull.push_back(p);
+            }
+            hull.pop_back();
+            std::reverse(sorted.begin(), sorted.end());
+        }
+        f.Eval();
+        Check(f.Ok(del) && faces(del) == 2 * 40 - 2 - hull.size(), "N9 delaunay: 2n − 2 − h triangles");
+        bool up = f.Ok(del);
+        for (size_t t = 0; up && t < faces(del); ++t)
+            up = MeshOps::FaceNormal(*mesh(del), t).z > 0.99;
+        Check(up, "N9 delaunay: triangles face the plane normal");
+
+        // 闭合曲线网格：20 × 10 的矩形带 r 2 的圆洞 → 面积 200 − 4π（圆按折线采样，略大）
+        const NodeId fill = Add(g, "mesh.fromcurve");
+        g.Connect({ Add(g, "curve.rectangle"), 0, fill, 0 });
+        const NodeId hole = Add(g, "curve.circle");
+        g.SetInputValue(hole, 1, 2.0);
+        g.Connect({ hole, 0, fill, 1 });
+        const NodeId fillInfo = op("mesh.info", fill);
+        f.Eval();
+        Check(f.Ok(fill) && Near(out(fillInfo, 3)[0].AsNumber(), 200 - 4 * kPi, 5e-3), "N9 fromcurve: rectangle with a round hole");
+
+        // ── 修改 ──
+        // 两个相同的长方体合并后 16 个顶点，焊接回 8 个；平移后的长方体合并再拆分得到 2 块
+        const NodeId join = Add(g, "mesh.join");
+        g.Connect({ box, 0, join, 0 });
+        g.Connect({ Add(g, "mesh.box"), 0, join, 0 }, false);
+        const NodeId weld = op("mesh.weld", join);
+        const NodeId moved = op("xform.move", box);
+        g.SetInputValue(moved, 1, Value(Math::Vec3{ 20, 0, 0 }));
+        const NodeId join2 = Add(g, "mesh.join");
+        g.Connect({ box, 0, join2, 0 });
+        g.Connect({ moved, 0, join2, 0 }, false);
+        const NodeId split = op("mesh.split", join2);
+        f.Eval();
+        Check(mesh(join)->Positions.size() == 16 && f.Ok(weld) && mesh(weld)->Positions.size() == 8, "N9 weld: duplicate vertices merged");
+        Check(f.Ok(split) && out(split).size() == 2 && faces(split, 0) == 12 && faces(split, 1) == 12, "N9 split: two disjoint boxes");
+
+        // 翻转：体积变负；镜像变换后体积仍为正
+        const NodeId flipInfo = op("mesh.info", op("mesh.flip", box));
+        const NodeId mirror = op("xform.mirror", box);
+        const NodeId mirrorInfo = op("mesh.info", mirror);
+        f.Eval();
+        Check(Near(out(flipInfo, 4)[0].AsNumber(), -1000.0) && Near(out(mirrorInfo, 4)[0].AsNumber(), 1000.0), "N9 flip and mirror orientation");
+
+        // 细分：面数 ×4、仍封闭、体积变小；平滑：锁定边界的平面不变，球体积变小；简化到 100 面以内仍封闭
+        const NodeId sub = op("mesh.subdivide", box);
+        const NodeId subInfo = op("mesh.info", sub);
+        const NodeId smoothPlane = op("mesh.smooth", plane), smoothBall = op("mesh.smooth", sphere);
+        const NodeId spInfo = op("mesh.info", smoothPlane), sbInfo = op("mesh.info", smoothBall);
+        const NodeId reduce = op("mesh.reduce", sphere);
+        const NodeId redInfo = op("mesh.info", reduce);
+        f.Eval();
+        Check(f.Ok(sub) && faces(sub) == 48 && out(subInfo, 2)[0].AsBool() && out(subInfo, 4)[0].AsNumber() < 1000.0, "N9 subdivide: ×4 faces, closed, shrinks");
+        Check(Near(out(spInfo, 3)[0].AsNumber(), 100.0) && out(sbInfo, 4)[0].AsNumber() < out(sphInfo, 4)[0].AsNumber(), "N9 smooth: locked plane unchanged, sphere shrinks");
+        Check(faces(reduce) <= 100 && faces(reduce) > 50 && out(redInfo, 2)[0].AsBool() && Near(out(redInfo, 4)[0].AsNumber(), ball, 0.1),
+              "N9 reduce: sphere to at most 100 faces, still closed");
+
+        // ── 分析 ──
+        const NodeId cl = op("mesh.closest", box);
+        g.SetInputValue(cl, 1, Value(Math::Vec3{ 20, 0, 0 }));
+        const NodeId dec = op("mesh.deconstruct", box);
+        f.Eval();
+        Check(f.Ok(cl) && Near(out(cl, 0)[0].AsVector().x, 5.0) && Near(out(cl, 1)[0].AsNumber(), 15.0), "N9 closest: point on the box face");
+        Check(out(dec, 0).size() == 8 && out(dec, 1).size() == 36 && out(dec, 2).size() == 12, "N9 deconstruct: vertices, indices, normals");
+
+        // 没有内核时：实体节点没有输出，网格化也就没有结果（不会崩溃）
+        const NodeId noKernel = op("mesh.from", Add(g, "solid.box"));
+        f.Eval();
+        Check(f.State(noKernel) != NodeState::Ok && out(noKernel).empty(), "N9 mesh.from without the kernel gives nothing");
+
+        // ── 内核：网格化、实体隐式转网格、网格转实体 ──
+        f.ctx.Kernel = f.kernel;
+        const NodeId sbox = Add(g, "solid.box");
+        const NodeId tess = op("mesh.from", sbox);
+        const NodeId tessInfo = op("mesh.info", tess);
+        const NodeId implicitInfo = op("mesh.info", Add(g, "solid.sphere"));   // 实体直接连到网格端口
+        const NodeId toBody = op("mesh.tobody", box2);
+        const NodeId openBody = op("mesh.tobody", plane);
+        f.Eval();
+        Check(f.Ok(tess) && out(tessInfo, 2)[0].AsBool() && Near(out(tessInfo, 4)[0].AsNumber(), 1000.0), "N9 mesh.from: box tessellates to a closed mesh");
+        Check(f.Ok(implicitInfo) && Near(out(implicitInfo, 4)[0].AsNumber(), ball, 0.03), "N9 body to mesh port: implicit tessellation");
+        Check(f.Ok(toBody) && f.kernel->IsSolid(f.Body(toBody)) && Near(f.Volume(toBody), 1000.0), "N9 mesh.tobody: closed mesh becomes a solid");
+        Check(f.Ok(openBody) && !f.kernel->IsSolid(f.Body(openBody)) && Near(f.kernel->Area(f.Body(openBody)), 100.0), "N9 mesh.tobody: open mesh becomes a surface");
+
+        // ── 预览、烘焙、读写、DWG / DXF ──
+        Document doc;
+        Viewport viewport(800.0f, 600.0f);
+        Editor   editor;
+        editor.Bind(doc, viewport);
+        Graph& dg = doc.GetNodeGraph();
+        const NodeId dsph = Add(dg, "mesh.sphere");
+        (void)dsph;
+        SolveContext ctx;   // 没有内核
+        dg.Evaluate(ctx);
+        PreviewBuilder builder;
+        PreviewSet set = builder.Build(dg, {}, nullptr);
+        Check(set.Entities.size() == 1 && set.Entities[0]->IsKindOf<MeshEntity>(), "N9 preview: a mesh entity without the kernel");
+        editor.SetPreviewGeometry(set.Entities, set.Points, set.HighlightPoints);
+        editor.Render();
+        Check(!editor.GetShadedVertices().empty(), "N9 preview: the mesh is shaded");
+
+        const int baked = Bake(dg, {}, doc.GetScene(), doc.GetCommandStack(), nullptr);
+        const MeshEntity* me = nullptr;
+        doc.GetScene().ForEachObject([&](const Object& o) { if (o.IsKindOf<MeshEntity>()) me = static_cast<const MeshEntity*>(&o); });
+        Check(baked == 1 && me && me->GetLocalMesh().TriangleCount() == 528 && me->GetLocalWire().size() == 528 * 3 / 2, "N9 bake: a mesh entity with every edge in its wireframe");
+
+        const auto dir = std::filesystem::temp_directory_path() / "minicad_node_mesh";
+        std::filesystem::create_directories(dir);
+        for (const char* name : { "mesh.mcad", "mesh.json", "mesh.dxf", "mesh.dwg" })
+        {
+            const std::string path = (dir / name).string();
+            const bool cad = std::string(name).ends_with(".dxf") || std::string(name).ends_with(".dwg");
+            Check(cad ? doc.SaveToFile(path) : doc.SaveAs(path), name);
+            Document back;
+            Check(back.LoadFromFile(path), "load back");
+            const MeshEntity* bm = nullptr;
+            back.GetScene().ForEachObject([&](const Object& o) { if (o.IsKindOf<MeshEntity>()) bm = static_cast<const MeshEntity*>(&o); });
+            const double vol = bm ? MeshOps::Volume(bm->ToWorldMesh()) : 0.0;
+            Check(bm && bm->GetLocalMesh().TriangleCount() == 528 && Near(vol, out(sphInfo, 4)[0].AsNumber()),
+                  cad ? "N9 DWG / DXF: the mesh round-trips as a polyface mesh" : "N9 round trip: the baked mesh keeps its triangles");
+        }
+        doc.Undo();
+        Check(doc.GetScene().EntityCount() == 0, "N9 bake: one undo step");
+    }
+
     // N8：曲面的创建（平面带洞、挤出、直纹放样、单轨 / 双轨扫描、边界、网络、拟合、参数曲面）、
     // 修改（修剪、分割、炸开 → 拼接成实体、封口、翻转、延伸、重建）、分析（分解、等参线、最近点、求交、曲率）
     void TestN8Surfaces()
@@ -1306,6 +1513,7 @@ int main()
     TestN7Forms();
     TestN8Surfaces();
     TestN6bCurves();
+    TestN9Meshes();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

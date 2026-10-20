@@ -1,5 +1,6 @@
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/Expression.h"
+#include "NodeGraph/MeshOps.h"
 #include "Serialization/ISerializer.h"
 #include "Serialization/JsonSerializer.h"
 #include <algorithm>
@@ -564,7 +565,17 @@ namespace MiniCAD::Nodes
             for (size_t k = 0; k < raw.size(); ++k)
             {
                 Value v;
-                if (!Convert(raw[k], spec.Type, v))
+                if (spec.Type == DataType::Mesh && raw[k].Type() == DataType::Body)
+                {
+                    // 实体 / 曲面连到网格端口：按默认精度网格化（需要内核）
+                    if (!ctx.Kernel)
+                        return finish(NodeState::Error, "输入“" + spec.Name + "”：实体 / 曲面转网格需要实体内核");
+                    Solid::Mesh mesh = raw[k].AsBody() ? MeshOps::FromBody(*ctx.Kernel, raw[k].AsBody()) : Solid::Mesh{};
+                    if (mesh.TriangleCount() == 0)
+                        return finish(NodeState::Error, "输入“" + spec.Name + "”第 " + std::to_string(k + 1) + " 项网格化失败");
+                    v = Value(std::move(mesh));
+                }
+                else if (!Convert(raw[k], spec.Type, v))
                     return finish(NodeState::Error, "输入“" + spec.Name + "”第 " + std::to_string(k + 1) + " 项（" + TypeName(raw[k].Type()) +
                                                     "）不能转换为" + TypeName(spec.Type));
                 inputs[i].push_back(std::move(v));

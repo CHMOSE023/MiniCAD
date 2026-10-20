@@ -24,6 +24,7 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -2283,10 +2284,50 @@ namespace MiniCAD
                 return Make<SplineEntity>(s, nullptr, std::move(sp));
             }
 
-            // 旧式 POLYLINE（R12 的 DXF）：二维 / 三维折线；网格不支持
+            // 多面网格（POLYLINE，AcDbPolyFaceMesh）→ MeshEntity：四边形面拆成两个三角形，面记录的负索引（边不可见）按绝对值
+            std::unique_ptr<Entity> ConvertPolyface(const Dwg::Polyline& e)
+            {
+                Solid3DEntity::SurfaceMesh mesh;
+                std::vector<const Dwg::VertexFaceRecord*> faces;
+                auto take = [&](Dwg::Handle h)
+                {
+                    const auto* v = m_db.FindAs<Dwg::Vertex>(h);
+                    if (!v)
+                        return;
+                    if (const auto* f = dynamic_cast<const Dwg::VertexFaceRecord*>(v))
+                        faces.push_back(f);
+                    else
+                        mesh.Positions.push_back({ v->Location.X, v->Location.Y, v->Location.Z });
+                };
+                for (Dwg::Handle h : e.Vertices)
+                    take(h);
+                if (const auto* pf = dynamic_cast<const Dwg::PolyfaceMesh*>(&e))
+                    for (Dwg::Handle h : pf->Faces)
+                        take(h);
+                const int n = static_cast<int>(mesh.Positions.size());
+                for (const auto* f : faces)
+                {
+                    const int raw[4] = { std::abs(f->Index1), std::abs(f->Index2), std::abs(f->Index3), std::abs(f->Index4) };
+                    std::vector<uint32_t> idx;
+                    for (int r : raw)
+                        if (r >= 1 && r <= n)
+                            idx.push_back(static_cast<uint32_t>(r - 1));
+                    if (idx.size() >= 3)
+                        mesh.Indices.insert(mesh.Indices.end(), { idx[0], idx[1], idx[2] });
+                    if (idx.size() == 4)
+                        mesh.Indices.insert(mesh.Indices.end(), { idx[0], idx[2], idx[3] });
+                }
+                if (mesh.Indices.empty())
+                    return Skip(e);
+                return Make<MeshEntity>(e, nullptr, std::move(mesh), Math::Mat4::Identity());
+            }
+
+            // 旧式 POLYLINE（R12 的 DXF）：二维 / 三维折线、多面网格；多边形网格（M × N）不支持
             std::unique_ptr<Entity> ConvertOldPolyline(const Dwg::Polyline& e)
             {
-                if (Any(e.Flags & (Dwg::PolylineFlags::PolygonMesh | Dwg::PolylineFlags::PolyfaceMesh)))
+                if (Any(e.Flags & Dwg::PolylineFlags::PolyfaceMesh))
+                    return ConvertPolyface(e);
+                if (Any(e.Flags & Dwg::PolylineFlags::PolygonMesh))
                     return Skip(e);
 
                 std::vector<Math::Point3> pts;
@@ -2936,6 +2977,7 @@ namespace MiniCAD
                         d->Vertices.push_back(added->ObjectHandle);
                 };
                 const Math::Mat4& m = solid.GetTransform();
+                const bool allVisible = solid.IsKindOf<MeshEntity>();   // 网格：全部边可见（实体只画面的边界）
                 for (const auto& p : mesh.Positions)
                 {
                     auto v = std::make_unique<Dwg::VertexFaceMesh>();
@@ -2951,7 +2993,7 @@ namespace MiniCAD
                     for (int i = 0; i < 3; ++i)
                     {
                         idx[i] = static_cast<std::int16_t>(mesh.Indices[t * 3 + i] + 1);   // 从 1 开始
-                        if (mesh.EdgeFlags[t] & (1u << i))
+                        if (!allVisible && (mesh.EdgeFlags[t] & (1u << i)))
                             idx[i] = static_cast<std::int16_t>(-idx[i]);                     // 负数：从该顶点出发的边不可见
                     }
                     f->Index1 = idx[0]; f->Index2 = idx[1]; f->Index3 = idx[2];

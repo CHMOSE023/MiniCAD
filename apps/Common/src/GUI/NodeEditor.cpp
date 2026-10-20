@@ -70,6 +70,7 @@ namespace MiniCAD
             case DataType::Curve3D:  return RGBA(240, 215, 70);
             case DataType::Domain:   return RGBA(150, 200, 230);
             case DataType::Plane:    return RGBA(90, 200, 170);
+            case DataType::Mesh:     return RGBA(235, 140, 60);
             case DataType::Geometry: return RGBA(200, 120, 210);
             default:                 return RGBA(225, 225, 225);
             }

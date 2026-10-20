@@ -326,3 +326,12 @@ SM_API → SMLib
 | `ProjectCurve(curve, target, direction)` | `SmApiProjectCurve`（`CreateParallelProjectionCurves`） | 投影不到时 SMLib 返回错误，适配层按空结果处理 |
 
 测试在 `NodeSolidTests` 的 `TestN6bCurves`。
+
+## 15. 网格转实体与多面网格（节点 N9）
+
+| 接口 / 类型 | 实现 | 注意 |
+|---|---|---|
+| `FromMesh(mesh)` | 每个三角形用三条直线 B 样条（`CreateLineSegment`）围成平面面（`CreatePlanarFaceWith3DCurves`），再 `SmApiStitchIntoSolid`，不成实体时 `SmApiStitchAdvanced` | 封闭网格得到多面实体（`IsSolid` 为真），开放网格得到多面曲面；退化三角形跳过；面数多时慢 |
+| `MeshEntity` | 继承 `Solid3DEntity`，没有内核数据（`GetBytes` 为空），只有局部网格与变换 | 线框为全部网格边；导出多面网格时全部边可见；`ImportCad` 把多面网格（POLYLINE，AcDbPolyFaceMesh）映射为它（四边形面拆成两个三角形）；实体布尔命令跳过它 |
+
+测试在 `NodeSolidTests` 的 `TestN9Meshes`。

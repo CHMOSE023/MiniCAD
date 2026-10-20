@@ -64,6 +64,7 @@ namespace MiniCAD::Nodes
             "曲线/基本", "曲线/NURBS", "曲线/修改", "曲线/分析",
             "曲面/创建", "曲面/修改", "曲面/分析",
             "实体/创建", "实体/空心", "实体/运算", "实体/修改", "实体/分析",
+            "网格/创建", "网格/修改", "网格/转换", "网格/分析",
             "变换/基本", "变换/阵列",
         };
         return kOrder;
@@ -295,6 +296,7 @@ namespace MiniCAD::Nodes
             RegisterSurfaceNodes(r);
             RegisterCurveXformNodes(r);
             RegisterCurveModifyNodes(r);
+            RegisterMeshNodes(r);
             r.Ordered();   // 先建好菜单顺序的缓存：之后只读，其他线程（后台读图纸）也可以用
             return r;
         }();

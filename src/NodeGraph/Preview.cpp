@@ -1,5 +1,6 @@
 #include "NodeGraph/Preview.h"
 #include "NodeGraph/GeometryOps.h"
+#include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Scene/Scene.h"
@@ -47,6 +48,7 @@ namespace MiniCAD::Nodes
         PreviewSet set;
         decltype(m_bodyCache) used;
         decltype(m_voidCache) usedVoids;
+        decltype(m_meshCache) usedMeshes;
         for (const PreviewItem& item : CollectPreview(g, selected))
         {
             const Math::Color4& color = item.Highlight ? Highlight : Normal;
@@ -151,12 +153,32 @@ namespace MiniCAD::Nodes
                 set.Entities.push_back(std::move(e));
                 break;
             }
+            case DataType::Mesh:
+            {
+                const MeshPtr& mesh = item.v.AsMesh();
+                if (!mesh || mesh->TriangleCount() == 0)
+                    break;
+                auto it = usedMeshes.find(mesh.get());
+                if (it == usedMeshes.end())
+                {
+                    auto cached = m_meshCache.find(mesh.get());
+                    if (cached != m_meshCache.end() && cached->second.first == mesh)
+                        it = usedMeshes.insert(*cached).first;
+                    else
+                        it = usedMeshes.insert({ mesh.get(), { mesh, std::shared_ptr<Entity>(MeshEntity::FromMesh(Object::InvalidID, *mesh)) } }).first;
+                }
+                std::shared_ptr<Entity> e = it->second.second->Clone(Object::InvalidID);
+                e->SetAttr(attr);
+                set.Entities.push_back(std::move(e));
+                break;
+            }
             default:
                 break;
             }
         }
         m_bodyCache = std::move(used);
         m_voidCache = std::move(usedVoids);
+        m_meshCache = std::move(usedMeshes);
         return set;
     }
 
@@ -205,6 +227,10 @@ namespace MiniCAD::Nodes
                 }
                 else if (kernel && item.v.AsBody())
                     e = Solid3DEntity::Create(scene.NextObjectID(), *kernel, item.v.AsBody());
+                break;
+            case DataType::Mesh:
+                if (item.v.AsMesh() && item.v.AsMesh()->TriangleCount() > 0)
+                    e = MeshEntity::FromMesh(scene.NextObjectID(), *item.v.AsMesh());
                 break;
             default:
                 break;

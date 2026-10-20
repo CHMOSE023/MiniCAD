@@ -87,6 +87,7 @@
 #include "Editor/Tools/Modify/OffsetTool.h"
 #include "Editor/Tools/SolidTools.h"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/MeshEntity.hpp"
 
 #include <cstdio>
 #include <memory>
@@ -1589,7 +1590,7 @@ namespace MiniCAD
         {
             const Object* o = scene.GetEntity(id);
             if (!o || !o->IsKindOf<Entity>()) continue;
-            if (!o->IsKindOf<Solid3DEntity>()) { ++others; continue; }
+            if (!o->IsKindOf<Solid3DEntity>() || o->IsKindOf<MeshEntity>()) { ++others; continue; }   // 网格没有内核实体
             if (scene.IsEntityLocked(*o)) { ++locked; continue; }
             solids[id] = static_cast<const Solid3DEntity*>(o);
         }
@@ -1662,7 +1663,7 @@ namespace MiniCAD
             return;
         // 选择集里有三维实体：做实体布尔（同 AutoCAD 的 UNION / SUBTRACT / INTERSECT 对面域与实体都适用）
         for (auto id : m_picking.GetSelection())
-            if (const Object* o = m_doc->GetScene().GetEntity(id); o && o->IsKindOf<Solid3DEntity>())
+            if (const Object* o = m_doc->GetScene().GetEntity(id); o && o->IsKindOf<Solid3DEntity>() && !o->IsKindOf<MeshEntity>())
             {
                 SolidBoolean(op);
                 return;

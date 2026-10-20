@@ -229,6 +229,10 @@ namespace MiniCAD::Solid
         // 两个实体 / 曲面的交线（没有交线返回空）
         virtual std::vector<NurbsCurve> IntersectBodies(const BodyPtr& a, const BodyPtr& b) = 0;
 
+        // 网格转实体（docs/NodeGraph/PLAN.md 第 8 节，N9）：每个三角形一个平面面，按容差缝合；
+        // 封闭网格得到多面实体（IsSolid 为真，可做布尔），开放网格得到多面曲面
+        virtual BodyPtr FromMesh(const Mesh& mesh) = 0;
+
         // ── 读写（内核自己的格式，用于 .mcad / JSON）────────────────────
         // Load 先校验数据（格式标记、长度、校验和），损坏的数据返回空指针，不会交给内核解析
         virtual std::vector<uint8_t> Save(const BodyPtr& body) = 0;   // 失败返回空

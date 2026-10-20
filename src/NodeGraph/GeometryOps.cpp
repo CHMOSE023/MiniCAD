@@ -1,7 +1,9 @@
 #include "NodeGraph/GeometryOps.h"
+#include "NodeGraph/MeshOps.h"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
+#include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
@@ -66,7 +68,7 @@ namespace MiniCAD::Nodes::Geo
         if (action == "pickPoints")
             return e.IsKindOf<PointEntity>();
         if (action == "pickBodies")
-            return e.IsKindOf<Solid3DEntity>();
+            return e.IsKindOf<Solid3DEntity>() && !e.IsKindOf<MeshEntity>();   // 网格没有内核实体
         return false;
     }
 
@@ -182,6 +184,10 @@ namespace MiniCAD::Nodes::Geo
             }
             return Value::VoidBody(b, v.Void);   // 保留空心标记
         }
+        case DataType::Mesh:
+            if (!v.AsMesh())
+                return {};
+            return Value(MeshOps::Transform(*v.AsMesh(), x.Matrix()));   // 镜像时三角形反向，正面仍朝外
         case DataType::Curve3D:
         {
             if (!v.AsCurve3D())

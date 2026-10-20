@@ -12,6 +12,7 @@
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
@@ -375,6 +376,24 @@ namespace MiniCAD::EntityIO
                 s.EndArray();
             }
             return std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), m, bounds, UnpackSolidMesh(meshBytes));
+        }
+
+        // 多面网格：变换矩阵与局部网格（同三维实体的网格打包格式），线框由网格重新求出
+        void WriteMesh(ISerializer& s, const MeshEntity& e)
+        {
+            Math::Mat4 m = e.GetTransform();
+            Ser::Value(s, "transform", m);
+            std::vector<uint8_t> mesh = PackSolidMesh(e.GetLocalMesh());
+            Ser::Bytes(s, "mesh", mesh);
+        }
+
+        std::unique_ptr<Entity> ReadMesh(ISerializer& s, Object::ObjectID id)
+        {
+            Math::Mat4 m = Math::Mat4::Identity();
+            Ser::Value(s, "transform", m);
+            std::vector<uint8_t> meshBytes;
+            Ser::Bytes(s, "mesh", meshBytes);
+            return std::make_unique<MeshEntity>(id, UnpackSolidMesh(meshBytes), m);
         }
 
         std::unique_ptr<Entity> ReadSolid(ISerializer& s, Object::ObjectID id)
@@ -1082,6 +1101,7 @@ namespace MiniCAD::EntityIO
             { "WipeoutEntity",   &WriteThunk<WipeoutEntity, &WriteWipeout>,     &ReadWipeout   },
             { "SolidEntity",   &WriteThunk<SolidEntity, &WriteSolid>,         &ReadSolid     },
             { "Solid3DEntity",   &WriteThunk<Solid3DEntity, &WriteSolid3D>,     &ReadSolid3D   },
+            { "MeshEntity",      &WriteThunk<MeshEntity, &WriteMesh>,           &ReadMesh      },
             { "RayEntity",       &WriteThunk<RayEntity, &WriteRay>,             &ReadRay       },
             { "XLineEntity",     &WriteThunk<XLineEntity, &WriteXLine>,         &ReadXLine     },
             { "TextEntity",      &WriteThunk<TextEntity, &WriteText>,           &ReadText      },

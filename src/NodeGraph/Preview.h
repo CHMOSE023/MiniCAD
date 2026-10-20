@@ -17,7 +17,7 @@ namespace MiniCAD
 
 namespace MiniCAD::Nodes
 {
-    // 预览几何：不在场景里的实体（曲线、空间曲线 → 样条、三维实体与曲面）与点
+    // 预览几何：不在场景里的实体（曲线、空间曲线 → 样条、三维实体与曲面、网格 → 多面网格）与点
     struct PreviewSet
     {
         std::vector<std::shared_ptr<const Entity>> Entities;
@@ -52,10 +52,12 @@ namespace MiniCAD::Nodes
         std::map<const Solid::IBody*, std::pair<Solid::BodyPtr, std::shared_ptr<Entity>>> m_bodyCache;
         // 空心形体的线框（各条边的折线）：同样按 BodyPtr 缓存
         std::map<const Solid::IBody*, std::pair<Solid::BodyPtr, std::vector<std::shared_ptr<Entity>>>> m_voidCache;
+        // 网格 → 显示用的 MeshEntity（着色网格 + 全部网格边）：按网格缓存
+        std::map<const Solid::Mesh*, std::pair<MeshPtr, std::shared_ptr<Entity>>> m_meshCache;
     };
 
     // 烘焙：有选中节点时烘焙选中节点的全部几何输出，否则烘焙所有预览的叶子输出；
-    // 复制成文档实体放在当前图层，经 BatchAddCommand 一步撤销。返回加入的实体数；kernel 为空时跳过三维实体。
+    // 复制成文档实体放在当前图层，经 BatchAddCommand 一步撤销（网格烘焙为 MeshEntity，不需要内核）。返回加入的实体数；kernel 为空时跳过三维实体。
     // 空心形体与平面不烘焙，跳过的空心个数写进 skippedVoids
     int Bake(const Graph& g, const std::set<NodeId>& selected, Scene& scene, CommandStack& stack, Solid::ISolidKernel* kernel,
              int* skippedVoids = nullptr);

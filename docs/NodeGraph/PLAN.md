@@ -14,7 +14,8 @@
 > N8 已实现（2026-10-20）：Grasshopper 式曲面——创建（平面、挤出、直纹 / 闭合放样、单轨 / 双轨扫描、边界、网络、拟合、参数曲面）、
 > 修改（翻转、延伸、修剪、分割、拼接、封口、炸开、重建）、分析（分解、等参线、最近点、求交、曲率）（第 6 节，差异见第 6.1 节）。
 > N6b 已实现（2026-10-20）：曲线修改——偏移、曲线圆角、分割、子曲线、延伸、连接、炸开、反转、投影、重建（第 4.2 节“曲线/修改”，实现见第 4.5 节）。
-> 规划（2026-10-20）：N9、N10——网格、几何运算与实体 / 曲面 / 网格之间的转换（第 7、8 节）。
+> N9 已实现（2026-10-20）：网格——`Mesh` 类型、`MeshOps`（不依赖内核）、创建 / 修改 / 转换 / 分析节点、`MeshEntity` 与 DWG / DXF 多面网格（第 8 节）。
+> 规划（2026-10-20）：N10——几何运算与实体 / 曲面 / 网格之间的转换（第 7 节）。
 > 定位：把 MiniCAD 已有的几何能力（二维实体、`ISolidKernel` / SMLib 三维实体内核）封装成可连接的**功能节点**，
 > 用节点图 + 数据流 + 依赖调度实现类似 Grasshopper、Blender Geometry Nodes、UE5 Blueprint 的可视化参数化建模；
 > 实体建模的概念与命名参照 Revit 族编辑器（形体、空心、参数），曲面与网格参照 Grasshopper。
@@ -83,7 +84,7 @@ MiniCAD 实体（曲线）  +  ISolidKernel（三维实体、曲面）  +  Scene
 | `Curve` | `shared_ptr<const Entity>` | MiniCAD 的曲线实体（ID 为 0，不在场景里），不可变 |
 | `Curve3D` | `shared_ptr<const Solid::NurbsCurve>` | 空间 NURBS 曲线（“空间曲线”），不可变。曲线实体连到 `Curve3D` 端口时自动转换：直线、全是直线段的多段线（可以是空间折线）→ 一次曲线，圆弧、圆、带圆弧段的水平多段线、矩形 → 二次有理曲线（精确），带控制点的样条原样；反过来不能转换 |
 | `Body` | `BodyValue { Solid::BodyPtr; bool Void; }` | 内核实体或开放曲面（`ISolidKernel::IsSolid` 区分），不可变；端口上显示为“实体 / 曲面”。`Void` 🆕 为空心标记（第 5 节），变换、阵列、列表节点原样传递 |
-| `Mesh` 🆕 | `shared_ptr<const Solid::Mesh>` | 三角网格（顶点、法线、索引；`Solid::Mesh` 已用于离散），不可变。`Body` 连到 `Mesh` 端口时按默认精度自动网格化；反过来不能自动转换（要经“网格转实体”节点） |
+| `Mesh` ✅ | `shared_ptr<const Solid::Mesh>` | 三角网格（顶点共用、顶点法线、索引；`Solid::Mesh` 也用于离散），不可变。`Body` 连到 `Mesh` 端口时按默认精度自动网格化；反过来不能自动转换（要经“网格转实体”节点） |
 | `Geometry` | — | 只用于端口：接受 `Vector` / `Plane` / `Curve` / `Curve3D` / `Body` / `Mesh`（变换、阵列节点） |
 | `Any` | — | 只用于端口：接受任何值（列表节点、面板） |
 
@@ -138,8 +139,7 @@ MiniCAD 实体（曲线）  +  ISolidKernel（三维实体、曲面）  +  Scene
 - 烘焙：把预览几何复制成文档实体（当前图层），经 `BatchAddCommand` 一步撤销
 - ✅ 空心（`Value::Void`）：预览画成橙色线框（实体的各条边，按 `BodyPtr` 缓存；不着色、不写深度），选中时加亮；**不烘焙**
   （`Bake` 跳过并经 `skippedVoids` 返回个数，命令行提示“跳过 n 个空心”），与 Revit 族里空心只用来切除的语义一致
-- 🆕 网格：预览着色 + 细线画网格边（开关“显示网格线”）；烘焙为多面网格实体（新增 `MeshEntity`，导出 DWG / DXF 为多面网格；
-  在此之前退路是烘焙为 `Solid3DEntity`，见第 8 节）
+- ✅ 网格：预览为 `MeshEntity`（着色 + 全部网格边，按网格缓存，不需要内核）；烘焙为 `MeshEntity`，导出 DWG / DXF 为多面网格（见第 8 节）
 - ✅ 平面：预览画成以原点为中心、边长 10 的方框 + 三色轴（X 红、Y 绿、Z 蓝），不烘焙
 
 ### 3.6 撤销（`GraphHistory`）
@@ -287,13 +287,13 @@ N7 已完成加端口的升级（拉伸的起点 / 工作平面、旋转的起�
 
 | 小类 | 节点（ID） | 状态 | 说明 |
 |---|---|---|---|
-| 创建 | 网格长方体 `mesh.box`、网格球 `mesh.sphere`、网格平面 `mesh.plane` | 🆕 | 带细分数 |
-| | 构造网格 `mesh.construct`（顶点 + 面索引）、三角化 `mesh.delaunay`（点集 Delaunay，投影到平面）、闭合曲线网格 `mesh.fromcurve` | 🆕 | |
-| 修改 | 焊接 `mesh.weld`、翻转 `mesh.flip`、合并 `mesh.join`、拆分 `mesh.split`（连通块）、细分 `mesh.subdivide`（Loop）、平滑 `mesh.smooth`（Laplacian）、简化 `mesh.reduce`（边折叠，目标面数） | 🆕 | |
-| 转换 | 网格化 `mesh.from` | 🆕 | 实体 / 曲面 → 网格，精度：角度、弦高、最大边长（`ISolidKernel::Tessellate`） |
-| | 网格转实体 `mesh.tobody` | 🆕 | 封闭网格 → 多面实体，开放 → 多面曲面（之后可布尔、加厚） |
-| | 分解网格 `mesh.deconstruct` | 🆕 | 顶点、面（三个索引）、面法线 |
-| 分析 | 网格信息 `mesh.info`（顶点数、面数、是否封闭、面积、体积）、网格最近点 `mesh.closest` | 🆕 | 用户需求只列了创建 / 修改 / 转换，补“分析”与曲面、实体对齐 |
+| 创建 | 网格长方体 `mesh.box`、网格球 `mesh.sphere`、网格平面 `mesh.plane` | ✅ | 带细分数 |
+| | 构造网格 `mesh.construct`（顶点 + 面索引）、三角化 `mesh.delaunay`（点集 Delaunay，投影到平面）、闭合曲线网格 `mesh.fromcurve` | ✅ | |
+| 修改 | 焊接 `mesh.weld`、翻转 `mesh.flip`、合并 `mesh.join`、拆分 `mesh.split`（连通块）、细分 `mesh.subdivide`（Loop）、平滑 `mesh.smooth`（Laplacian）、简化 `mesh.reduce`（边折叠，目标面数） | ✅ | |
+| 转换 | 网格化 `mesh.from` | ✅ | 实体 / 曲面 → 网格，精度：角度、弦高（`ISolidKernel::Tessellate`，同一位置的顶点焊接） |
+| | 网格转实体 `mesh.tobody` | ✅ | 封闭网格 → 多面实体，开放 → 多面曲面（之后可布尔、加厚） |
+| | 分解网格 `mesh.deconstruct` | ✅ | 顶点、面（三个索引）、面法线 |
+| 分析 | 网格信息 `mesh.info`（顶点数、面数、是否封闭、面积、体积）、网格最近点 `mesh.closest` | ✅ | 用户需求只列了创建 / 修改 / 转换，补“分析”与曲面、实体对齐 |
 
 #### 变换
 
@@ -495,16 +495,26 @@ Revit 与 Grasshopper 的中文叫法有冲突，按以下约定区分（关键�
 
 ## 8. 网格（N9）
 
-- 数据：`Solid::Mesh`（顶点、顶点法线、三角形索引）。第一版只支持三角形；四边形在“构造网格”里自动拆成两个三角形
-- 运算在 `src/NodeGraph/MeshOps.*`，**不依赖内核**（网页版可用）：焊接（按容差合并顶点、重算法线）、Loop 细分、Laplacian 平滑（可锁定边界）、
-  边折叠简化（二次误差度量）、Delaunay 三角化（平面点集，Bowyer–Watson）、连通块拆分
-- 只有“网格化”（需要 `Tessellate`）与“网格转实体”（需要内核新接口 `FromMesh`）依赖内核
-- 预览：网格直接进着色流（不需要经 `Solid3DEntity` 离散），网格线可选
-- 烘焙：新增 `MeshEntity`（顶点 + 三角形，`.mcad` / JSON 读写，导出 DWG / DXF 为多面网格 PolyfaceMesh，导入的 PolyfaceMesh 也可映射到它）。
-  `MeshEntity` 做完之前的退路：烘焙为一组 `Face3DEntity`（会丢失“是一个对象”的语义）
+- 数据：`Solid::Mesh`（顶点共用、面积加权的顶点法线、三角形索引，逆时针为正面）。只支持三角形；四边形在“构造网格”里自动拆成两个三角形
+- 运算在 `src/NodeGraph/MeshOps.*`，**不依赖内核**（网页版可用）：长方体 / 经纬球 / 平面网格、构造、Delaunay 三角化（Bowyer–Watson，投影到平面）、
+  带洞平面多边形的耳切三角化（洞经桥接边接到外圈）、焊接（空间哈希按容差合并顶点）、翻转、合并、连通块拆分、Loop 细分（边界按三次 B 样条规则）、
+  Laplacian 平滑（可锁定边界）、边折叠简化（二次误差度量，边界边加大权重；会翻转三角形或破坏流形的折叠跳过）、仿射变换（镜像时三角形反向）、
+  面积、体积、封闭判断、最近点
+- 只有“网格化”（`Tessellate`）与“网格转实体”（新接口 `FromMesh`）依赖内核；实体 / 曲面连到网格端口时由 `Graph` 按默认精度网格化（没有内核时报错）
+- `MeshEntity`（`src/Core/Entity/MeshEntity.hpp`）继承 `Solid3DEntity`：网格就是没有内核数据的“三维实体”，移动 / 旋转 / 镜像 / 缩放、夹点、捕捉、
+  着色（两侧夹角小于 30° 的边按光滑处理）、轮廓线、导出多面网格都直接沿用；不同的是线框画全部网格边、导出时全部边可见，
+  实体布尔与“引用实体”跳过它。`.mcad` / JSON 只存变换与网格（类型名 `MeshEntity`）；导入 DWG / DXF 的多面网格（POLYLINE，AcDbPolyFaceMesh）也映射到它
+- 预览：网格 → `MeshEntity`（按网格缓存）进着色流；烘焙为 `MeshEntity`
 
-验收（N9）：网格长方体 / 球的面数与体积、焊接后顶点数、细分一次面数 ×4、简化到目标面数、Delaunay 三角形数 = 2n − 2 − h、
-实体 → 网格 → 实体体积误差在精度内；网页版网格节点可用。
+验收（N9 ✅，`NodeSolidTests` 的 `TestN9Meshes`，前半部分不设内核）：网格长方体 8 顶点 12 面封闭体积 1000、每边 2 段时 26 顶点 48 面；
+经纬球 266 顶点 528 面、体积略小于 4/3·πr³；平面网格 200 面面积 100；四边形构造；40 个伪随机点的 Delaunay 三角形数 = 2n − 2 − h 且朝平面法向；
+20 × 10 矩形带 r 2 圆洞的闭合曲线网格面积 200 − 4π；两个长方体合并 16 顶点焊接回 8 个、平移后合并再拆分成 2 块；翻转后体积为负、镜像后仍为正；
+细分面数 ×4 仍封闭、平滑（锁定边界的平面不变、球变小）、简化到 100 面以内仍封闭且体积误差 10% 以内；最近点、分解；
+有内核时：长方体网格化封闭体积 1000、实体直接连网格端口、封闭网格转实体（体积 1000）与开放网格转曲面（面积 100）；
+预览（没有内核也是着色的 `MeshEntity`）、烘焙（线框为全部网格边）、`.mcad` / JSON / DXF / DWG 往返三角形数与体积不变、一步撤销。
+
+与原设计的差异（留待以后）：网格化没有“最大边长”（`TessParams` 没有这一项）；没有“显示网格线”开关（网格总是画全部边）；
+网格转实体每个三角形一个面，不合并共面的三角形；简化、细分不保留纹理 / 顶点颜色（`Mesh` 没有这些数据）。
 
 ---
 
@@ -599,7 +609,7 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | ✅ `JoinSurfaces(bodies, tol)`（`CopyFaces` + `SmApiStitchIntoSolid`）、`CapPlanarHoles`（边界边连环、共面的补 `SmApiCreatePlanarFaces`）、`ExplodeFaces`、`FlipSurface`、`ExtendSurface`、`RebuildSurface` | 拼接、封口、炸开等 | — |
 | ✅ `EdgeCurves(body)`（精确 `NurbsCurve`）、`IsoCurve`、`ClosestPoint`、`IntersectCurve`、`IntersectBodies`、`SurfaceDerivatives`（曲率在节点侧由一阶导数差分） | 分解、分析、求交 | — |
 | ✅ `Section(body, plane)`（已有，节点侧加任意平面） | 截面 | — |
-| `FromMesh(mesh)` | 网格转实体 | — |
+| ✅ `FromMesh(mesh)`：每个三角形三条直线边围成平面面（同 `SmBrep::CreateFromTriangleBag`）后 `SmApiStitchIntoSolid` | 网格转实体 | — |
 | ✅ `OffsetCurve`（`CreateSimpleOffset`）、`JoinCurves`（升阶 + `CreateByJoining`）、`ProjectCurve`（`SmApiProjectCurve`）；分割、重建、求交、同阶连接在节点侧（`CurveOps`）计算 | 曲线/修改、分析 | 水平面内的曲线实体走 `PolylineOps` |
 
 ---
@@ -618,7 +628,7 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | **N6b** ✅ | 曲线修改：偏移、曲线圆角、分割、子曲线、延伸、连接、炸开、反转、投影、重建（第 4.2 节“曲线/修改”；`BuiltinCurveModifyNodes.cpp`、`CurveOps.cpp`） | 第 4.5 节 |
 | **N7** ✅ | 实体形体：拉伸 / 旋转 / 放样升级、融合、放样融合、圆锥、圆环；五种空心、`Void` 标记、形体合并、剪切几何、分割实体、抽壳、实心 / 空心切换、任意平面截面；命名参数、公式、参数表与类型（第 5 节；`BuiltinFormNodes.cpp`，内核接口见第 10 节） | 第 5.5 节；差异见第 5.6 节 |
 | **N8** ✅ | 曲面：平面、挤出、单 / 双轨扫描、边界、网络、拟合、参数曲面；修剪、分割、延伸、拼接、封口、炸开、翻转、重建；分解、等参线、最近点、求交、曲率（第 6 节；`BuiltinSurfaceOps.cpp`） | 第 6 节验收；差异见第 6.1 节 |
-| **N9** | 网格：`Mesh` 类型、`MeshOps`、创建 / 修改 / 转换 / 分析节点、`MeshEntity` 与 DWG / DXF 多面网格（第 8 节） | 第 8 节验收 |
+| **N9** ✅ | 网格：`Mesh` 类型、`MeshOps`、创建 / 修改 / 转换 / 分析节点、`MeshEntity` 与 DWG / DXF 多面网格（第 8 节；`BuiltinMeshNodes.cpp`、`MeshOps.cpp`） | 第 8 节验收 |
 | **N10** | 运算与转换收尾：第 7.2 节矩阵里的每一格都有节点或隐式转换，补齐遗漏；求交的退路与性能警告 | 转换矩阵逐格测试；示例图（参数化窗框：拉伸 + 空心切除；曲面屋顶：网络曲面 → 加厚 → 布尔；网格化导出） |
 | N11 | 后台单线程求值（大模型拖滑块不卡界面）、求值取消；组节点（第 12 节） | |
 | N12 | 稳定拓扑命名后的圆角选边、草图约束求解节点（Revit 式尺寸约束、参照平面锁定） | |

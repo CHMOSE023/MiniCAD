@@ -37,7 +37,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 核心系统
 
 **实体**（`src/Core/Entity/`）
-- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵；导出 DWG / DXF 时写成多面网格，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）
+- 可绘制对象继承 `Entity`（基类 `Object` 负责类型信息与 ID）；30 种左右实体：`LineEntity`、`CircleEntity`、`ArcEntity`、`TextEntity`、`DimensionEntity`、`InsertEntity` 等；三维实体 `Solid3DEntity`（内核数据 + 变换矩阵，编辑只改矩阵；导出 DWG / DXF 时写成多面网格，见 `docs/Solid/PLAN.md`；`SolidEntity` 是二维填充）；多面网格 `MeshEntity` 继承 `Solid3DEntity`（只有局部网格，没有内核数据）
 - 支持克隆、包围盒、绘制到 draw sink、序列化；`ICurveEntity` 提供几何操作接口（捕捉、求交、编辑）
 - 颜色 `EntityColor` 同时保存 DXF 语义（ByLayer / ByBlock / ACI / 真彩）和解析后的 RGBA
 
@@ -70,7 +70,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **DWG/DXF 交换**（`src/Import/CadExchange.*`）
 - `ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转；`Document::LoadFromFile` / `SaveToFile` 按扩展名 `.dwg` / `.dxf` 分派，DXF 写 ASCII
 - 写出版本 `CadSaveVersion`：2018（AC1032）、2013（AC1027，AutoCAD 2013～2017 共用，界面上标为"2013/2014"）、2010、2007、2004、2000；新建文档默认 2004（`kDefaultCadSaveVersion`）。2007 只能写 DXF，DWG 2007 改写为 2010（MiniDWG 没有实现 AC1021 的写出）；2007 以前的版本按 `ANSI_936` 代码页写中文。打开文件时记住其版本（`Document::GetCadSaveVersion`），另存为时由用户选择，格式列表 `kSaveFormats`（`AppPlatform.h`）桌面版与网页版共用
-- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
+- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；多面网格（PolyfaceMesh）与 `MeshEntity` 互转；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
 - 以原图为底另存：打开时 `Document` 留下原图 `CadSource`（原始字节、场景实体 ↔ 原图句柄、导入时的签名）。另存为同格式同版本时 `ExportCad` 重新读出原图，只改写变化的实体与表项，未修改的实体（包括天正 `TCH_*` 等自定义对象）、跳过的实体、图纸空间原样写回；格式或版本不同时重新生成整张图纸。天正对象的显示适配在 `src/Import/Tch*.h`
 
 **文字与字体**（`src/Text/`）

@@ -1359,6 +1359,51 @@ namespace MiniCAD::Solid
             return Finish(std::move(brep));
         }
 
+        BodyPtr FromMesh(const Mesh& mesh) override
+        {
+            Begin();
+            if (mesh.TriangleCount() == 0)
+                return Fail("网格转实体: 网格为空");
+            const SmContext& ctx = *SmApiGetOrCreateContext();
+            BrepPtr brep(new (ctx) SmBrep());
+            size_t made = 0;
+            for (size_t t = 0; t < mesh.TriangleCount(); ++t)
+            {
+                const Math::Point3 p[3] = { mesh.Positions[mesh.Indices[t * 3]], mesh.Positions[mesh.Indices[t * 3 + 1]], mesh.Positions[mesh.Indices[t * 3 + 2]] };
+                const Math::Vec3 u = p[1] - p[0], w = p[2] - p[0];
+                if (Math::Vec3{ u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x }.Length() < 1e-14)
+                    continue;   // 退化三角形
+                // 同 SmBrep::CreateFromTriangleBag：三条直线边围成平面面（曲线交给新边）
+                SmTArray<SmCurve*> curves;
+                for (int i = 0; i < 3; ++i)
+                {
+                    SmBSplineCurve* seg = nullptr;
+                    if (SmBSplineCurve::CreateLineSegment(ctx, 3, ToSm(p[i]), ToSm(p[(i + 1) % 3]), seg) != SM_SUCCESS || !seg)
+                    {
+                        for (ULONG k = 0; k < curves.GetSize(); ++k)
+                            delete curves[k];
+                        return Fail("网格转实体: 第 " + std::to_string(t + 1) + " 个三角形的边创建失败");
+                    }
+                    curves.Add(seg);
+                }
+                SmFace* face = nullptr;
+                if (brep->CreatePlanarFaceWith3DCurves(brep->GetInfiniteRegion(), curves, brep->GetTolerance(), face) == SM_SUCCESS && face)
+                    ++made;
+            }
+            if (made == 0)
+                return Fail("网格转实体: 没有生成面");
+            SmBoolean solid = FALSE;
+            ULONG stitched = 0;
+            double vertexGap = 0.0, edgeGap = 0.0;
+            SmApiStitchIntoSolid(brep.get(), solid, stitched, vertexGap, edgeGap);
+            if (!solid)
+            {
+                ULONG lamina = 0;
+                SmApiStitchAdvanced(brep.get(), 1e-9, FALSE, FALSE, TRUE, FALSE, stitched, lamina, vertexGap, edgeGap);
+            }
+            return Finish(std::move(brep));
+        }
+
         BodyPtr CapPlanarHoles(const BodyPtr& body) override
         {
             Begin();
