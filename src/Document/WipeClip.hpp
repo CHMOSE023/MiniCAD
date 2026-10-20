@@ -596,6 +596,23 @@ namespace MiniCAD::WipeClip
             v.resize(w);
         }
 
+        // 点图元流（每个顶点一个点）：落在任一适用的多边形内则删去，只处理下标 from 起的顶点
+        void ClipPoints(std::vector<Vertex_P3_C4>& v, int stream, size_t from = 0)
+        {
+            if (m_polys.empty() || v.size() <= from) return;
+            BuildGrid();
+            size_t w = from;
+            for (size_t k = from; k < v.size(); ++k)
+            {
+                const double x = v[k].pos.x, y = v[k].pos.y;
+                Candidates(x, y, x, y, k, stream);
+                if (std::any_of(m_cand.begin(), m_cand.end(), [&](uint32_t pi) { return m_polys[pi].Contains(x, y); }))
+                    continue;
+                v[w++] = v[k];
+            }
+            v.resize(w);
+        }
+
         // 字形实例流（见 GlyphMeshLibrary），只处理下标 from 起的实例：外包框与适用的遮罩相交的实例从流中删去，
         // 展开成线段与三角形、用这些遮罩裁剪后追加到 lines / fills 尾部。
         // 要在 lines / fills 两条流本身的裁剪之后调用：追加的顶点下标超出记录的流长度，不会被再裁剪一次

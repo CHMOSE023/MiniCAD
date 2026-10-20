@@ -11,6 +11,9 @@
 //   修复前 周期 0.35 → 只画 1 段（实线）
 //   修复后 周期 350.0 = 0.35 × 1000，虚线正常
 #include "Scene/Scene.h"
+#include "Document/Document.h"
+#include "Document/Command/DrawingVarsCommand.h"
+#include <filesystem>
 #include "Document/DrawContext.hpp"
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Entity/EntityAttr.hpp"
@@ -171,6 +174,42 @@ int RunLineTypeScaleTests()
             std::printf("    周期过密：段数 %.0f\n", count);
             Check(count <= 1.0, "周期不足 4px 时退化为实线（护栏仍在）");
         }
+    }
+
+    // ── .mcad / JSON 往返：$PDMODE / $PDSIZE / $LTSCALE 随文档保存 ─────────
+    for (const char* ext : { ".mcad", ".json" })
+    {
+        const auto path = std::filesystem::temp_directory_path() / (std::string("MiniCADDrawingVars") + ext);
+        const auto u8 = path.u8string();
+        const std::string file(u8.begin(), u8.end());
+        {
+            Document doc;
+            doc.GetScene().SetPointDisplayMode(34);
+            doc.GetScene().SetPointDisplaySize(-7.5);
+            doc.GetScene().SetLineTypeScale(1000.0);
+            Check(doc.SaveAs(file), "保存带图纸变量的文档");
+        }
+        Document doc;
+        const bool ok = doc.LoadFromFile(file);
+        std::filesystem::remove(path);
+        const Scene& s = doc.GetScene();
+        Check(ok && s.GetPointDisplayMode() == 34 && Near(s.GetPointDisplaySize(), -7.5) && Near(s.GetLineTypeScale(), 1000.0),
+              ext[1] == 'm' ? ".mcad 往返保留点样式与线型比例" : "JSON 往返保留点样式与线型比例");
+    }
+
+    // ── 修改图纸变量走命令：可撤销、标记文档已修改 ─────────────────────
+    {
+        Document doc;
+        Scene& s = doc.GetScene();
+        const DrawingVars orig = DrawingVars::From(s);
+        DrawingVars changed = orig;
+        changed.PointMode     = 3;
+        changed.LineTypeScale = 50.0;
+        doc.GetCommandStack().Execute(std::make_unique<SetDrawingVarsCommand>(orig, changed, "测试"), s);
+        Check(s.GetPointDisplayMode() == 3 && Near(s.GetLineTypeScale(), 50.0), "SetDrawingVarsCommand 执行后生效");
+        Check(doc.IsDirty(), "SetDrawingVarsCommand 执行后文档标记为已修改");
+        doc.GetCommandStack().Undo(s);
+        Check(DrawingVars::From(s) == orig, "撤销后图纸变量还原");
     }
 
     const int n = g_failures - before;

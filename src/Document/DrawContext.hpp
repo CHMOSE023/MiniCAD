@@ -93,6 +93,7 @@ namespace MiniCAD
 
         double GetWorldPerPixel() const override    { return m_worldPerPixel; }
         double GetViewportHeightPx() const override { return m_viewportHeightPx; }
+        void MarkViewDependent() override { if (m_worldPerPixel > 0.0) m_viewDependent = true; }
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
@@ -105,7 +106,7 @@ namespace MiniCAD
         //
         // ⚠ 走**独立的点流** m_points，不与线段流混：
         //   · 图元类型不同（POINTLIST vs LINELIST），混在一起没法提交；
-        //   · 点流也参与区域覆盖裁剪（WipeClip），与线段同规则。
+        //   · 点流也参与区域覆盖裁剪（WipeClip 的 ClipPoints），与线段同规则。
         // 不能进 overlay：那是每帧清空的动态层，承载不了场景几何。
         void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) override
         {
@@ -134,6 +135,7 @@ namespace MiniCAD
                 m_entityFills = m_fillVerts.size();
                 m_entityTexts = m_textVerts.size();
                 m_entityGlyphs = m_glyphs ? m_glyphs->size() : 0;
+                m_entityPoints = m_points.size();
             }
         }
 
@@ -171,7 +173,7 @@ namespace MiniCAD
         // 由 Editor 在拼接顶点流时按绘制序裁剪
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
-            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0 });
+            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0, m_points.size() });
             m_wipes.push_back(polygon);
         }
         std::vector<std::vector<Math::Point3>> TakeWipes()
@@ -420,6 +422,7 @@ namespace MiniCAD
             m_pendingWipes.ClipLines(m_verts, 0, m_entityLines);
             m_pendingWipes.ClipFills(m_fillVerts, 1, 5, m_entityFills);
             m_pendingWipes.ClipTexts(m_textVerts, 2, m_entityTexts);
+            m_pendingWipes.ClipPoints(m_points, 4, m_entityPoints);
             if (m_glyphs)
                 m_pendingWipes.ClipGlyphs(*m_glyphs, 3, m_entityGlyphs, *m_glyphLib, m_verts, m_fillVerts);
             m_pendingWipes.Clear();
@@ -598,10 +601,11 @@ namespace MiniCAD
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
-        WipeClip::Batch                m_pendingWipes{ 4 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例四条流）
+        WipeClip::Batch                m_pendingWipes{ 5 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例、点五条流）
         size_t                         m_entityLines = 0;   // 当前实体在各顶点流中的起点（块内遮罩只裁剪本实体先画的部分）
         size_t                         m_entityFills = 0;
         size_t                         m_entityTexts = 0;
+        size_t                         m_entityPoints = 0;
         size_t                         m_entityGlyphs = 0;
         std::vector<GlyphInstance>*    m_glyphs   = nullptr;   // 字形实例输出（为空时字形展开成顶点）
         GlyphMeshLibrary*              m_glyphLib = nullptr;

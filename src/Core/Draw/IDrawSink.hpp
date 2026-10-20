@@ -59,6 +59,8 @@ namespace MiniCAD
         virtual double GetWorldPerPixel() const { return 0.0; }
         // 视口高度（像素）。=0 表示未知。
         virtual double GetViewportHeightPx() const { return 0.0; }
+        // 几何按当前缩放烘焙（如 $PDSIZE<=0 的点图形按视口百分比换算成世界尺寸）：缩放后要重新细分
+        virtual void MarkViewDependent() {}
 
         // 按线型铺设有宽度的线段（width 为模型单位）。粗多段线无法整体填充成一条带宽度、
         // 又带线型的路径：填充几何不经过线型解析，虚线会被画成实线。所以虚线粗线逐段走这里，

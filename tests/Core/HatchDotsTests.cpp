@@ -339,6 +339,30 @@ int RunHatchDotsTests()
         // v = 0,2,...,20 共 11 条完整横线（修前 9 条，两端都漏）
         Check(s.segs.size() == 11, "连续线：撞边界的扫描线也出图（11 条，修前 9 条）");
     }
+    {
+        // 扫描线正好穿过"经过型"顶点（边界在此从下穿到上）时只能算 1 个交点。
+        // 左边界折向 (2,2)：y = 2 的扫描线与边界交于 x = 2（顶点）和 x = 10，
+        // 两端都闭的判定会把顶点算两次 ⇒ 交点 2、2、10 配对错位，这条线画不出来。
+        HatchPattern p;
+        p.Name  = "LINES";
+        p.Solid = false;
+        HatchLineFamily fam;
+        fam.AngleDeg = 0.0;
+        fam.Spacing  = 1.0;
+        p.Families.push_back(fam);
+
+        HatchEntity h(1, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 4, 0 }, { 0, 4, 0 },
+                                    { 2, 2, 0 }, { 0, 0, 0 } }), p);
+        Sink s;
+        h.Draw(s, false, false);
+        bool mid = false;
+        for (const auto& g : s.segs)
+            if (Near(g.a.y, 2.0) && Near(std::min(g.a.x, g.b.x), 2.0, 1e-9) && Near(std::max(g.a.x, g.b.x), 10.0, 1e-9))
+                mid = true;
+        std::printf("    经过型顶点：线段 %zu\n", s.segs.size());
+        Check(mid, "扫描线穿过经过型顶点：y = 2 画出 x 2～10 的一整段");
+        Check(s.segs.size() == 5, "经过型顶点：y = 0～4 共 5 条线，没有多余的线段");
+    }
 
     const int n = g_failures - before;
     std::printf("图案填充点用例失败：%d\n", n);

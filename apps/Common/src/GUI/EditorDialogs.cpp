@@ -10,6 +10,7 @@
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"     // 点样式（$PDMODE/$PDSIZE）预览与图案
+#include "Document/Command/DrawingVarsCommand.h"
 #include "Document/TextStyleResolver.h"
 #include <filesystem>
 #include "Style/Theme.hpp"
@@ -1044,12 +1045,9 @@ namespace MiniCAD
             double size     = 0.1;       // $PDSIZE 的绝对值
             bool   relative = false;     // true ⇒ 写回时 $PDSIZE 取 <= 0（视口百分比）
 
-            // 打开时的原值：「取消」要按 AutoCAD 的语义**还原**。
-            // 因为改动是**实时**生效的，所以必须自己记住原值才能撤销。
-            int    origMode     = 34;
-            double origSize     = 0.1;
-            bool   origRelative = false;
-            bool   Accept       = false;   // 点过「确定」；否则关闭时还原原值
+            // 改动是**实时**生效的，所以要记住打开时的值：「取消」按 AutoCAD 的语义还原，「确定」据此入撤销栈
+            bool        Accept = false;    // 点过「确定」；否则关闭时还原原值
+            DrawingVars origVars;
 
             // 打开时的文档。**所有回调都经它取 Scene**，绝不按引用捕获 Scene&：
             // 文档可能在对话框开着的时候被关掉，那时的 Scene 引用就是悬垂的。
@@ -1158,8 +1156,8 @@ namespace MiniCAD
             // ⚠ 必须是成员：回调在对话框存活期间随时触发，按引用捕获
             //   OpenLineTypeScaleDialog 的局部变量会是悬垂引用。
             double scale     = 1.0;      // $LTSCALE
-            double origScale = 1.0;      // 打开时的原值（「取消」还原）
-            bool   Accept    = false;
+            bool        Accept = false;
+            DrawingVars origVars;        // 打开时的图纸变量：「确定」时据此入撤销栈，「取消」时还原
 
             Document* doc = nullptr;
 
@@ -1406,6 +1404,22 @@ namespace MiniCAD
         m_ui->OpenPopup(std::move(dialog));
     }
 
+    namespace
+    {
+        // 实时预览的对话框关闭时：accept 则把 before → 当前值作为一条命令入撤销栈，否则还原 before
+        void CommitDrawingVars(Document& doc, const DrawingVars& before, bool accept, const char* name)
+        {
+            Scene& scene = doc.GetScene();
+            const DrawingVars after = DrawingVars::From(scene);
+            if (after == before)
+                return;
+            if (accept)
+                doc.GetCommandStack().Execute(std::make_unique<SetDrawingVarsCommand>(before, after, name), scene);
+            else
+                before.ApplyTo(scene);
+        }
+    }
+
     // =========================================================
     // 格式 → 点样式…（图纸级 HEADER 的 $PDMODE / $PDSIZE）
     // =========================================================
@@ -1432,9 +1446,7 @@ namespace MiniCAD
         raw->relative = scene.GetPointDisplaySize() <= 0.0;
         if (raw->relative && raw->size == 0.0)
             raw->size = 5.0;                            // 0 = 默认 5%
-        raw->origMode     = raw->mode;
-        raw->origSize     = raw->size;
-        raw->origRelative = raw->relative;
+        raw->origVars = DrawingVars::From(scene);
 
         // ── 图标网格（与 AutoCAD 的 20 个图标一一对应）────────────────────
         auto* grid = body->AddChild<PointStyleGrid>();
@@ -1535,16 +1547,10 @@ namespace MiniCAD
         raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
         raw->SetOnClosed([this, raw]
         {
-            // 「取消」= 还原打开时的值（改动是实时生效的，所以必须撤销）。
-            if (!raw->Accept && raw->doc && raw->doc == m_docManager.GetActive())
-            {
-                Scene& scene = raw->doc->GetScene();
-                scene.SetPointDisplayMode(raw->origMode);
-                scene.SetPointDisplaySize(raw->origRelative
-                    ? ((std::abs(raw->origSize - 5.0) < 1e-9) ? 0.0 : -raw->origSize)
-                    : raw->origSize);
-                scene.MarkDisplayDirty();
-            }
+            // 改动是实时生效的：「确定」把打开前后的差别作为一条命令入撤销栈（同时标记文档已修改），
+            // 「取消」还原打开时的值
+            if (raw->doc && raw->doc == m_docManager.GetActive())
+                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, "点样式");
             if (m_pointStyleDialog == raw)
                 m_pointStyleDialog = nullptr;
             m_pointStyleDoc = nullptr;
@@ -1579,7 +1585,7 @@ namespace MiniCAD
 
         // ── 当前值 ─────────────────────────────────────────────────────
         raw->scale     = scene.GetLineTypeScale();
-        raw->origScale = raw->scale;
+        raw->origVars  = DrawingVars::From(scene);
 
         body->AddChild<Label>(
             "全局线型比例（$LTSCALE）。虚线一个周期的实际长度 =\n"
@@ -1676,13 +1682,9 @@ namespace MiniCAD
         raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
         raw->SetOnClosed([this, raw]
         {
-            // 「取消」= 还原打开时的值（改动是实时生效的，所以必须撤销）
-            if (!raw->Accept && raw->doc && raw->doc == m_docManager.GetActive())
-            {
-                Scene& scene = raw->doc->GetScene();
-                scene.SetLineTypeScale(raw->origScale);
-                scene.MarkDisplayDirty();
-            }
+            // 同点样式：「确定」入撤销栈，「取消」还原
+            if (raw->doc && raw->doc == m_docManager.GetActive())
+                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, "线型比例");
             if (m_lineTypeScaleDialog == raw)
                 m_lineTypeScaleDialog = nullptr;
             m_lineTypeScaleDoc = nullptr;

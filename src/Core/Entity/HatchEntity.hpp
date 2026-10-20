@@ -502,17 +502,35 @@ namespace MiniCAD
                         //   实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条
                         //   （漏掉 v = 0 撞底边、v = 20 撞顶边两条）。
                         //
-                        // 改为 `v < lo || v > hi`（两端都闭）：扫描线撞到 shared vertex
-                        // 时共享该顶点的两条边都计入 —— 这正是扫描线填充要的：
-                        // 顶点处的交点数必须是偶数才能两两配对成 [a,b] 区间。
-                        // 只计入一条会破坏配对（该顶点剩一个孤立交点，
-                        // 与相邻扫描线的交点混在一起排序后区间错乱）。
+                        // 改为两端都闭，但扫描线正好穿过顶点时要按顶点类型计数，
+                        // 否则交点个数的奇偶会错，[a,b] 两两配对整条错位：
+                        //   · 经过型顶点（边界在此从下穿到上）只能算 1 次；
+                        //   · 极值顶点（两侧边界都在同一侧）算 0 次或 2 次。
+                        // 做法：边的下端点（lo）总计入；上端点（hi）只在边界越过该顶点后
+                        // （跳过与扫描线等高的水平边）**不再向上**时计入 —— 向上时
+                        // 这个交点已由上面那条边的下端点计过。
+                        // 这样与填充边界重合的首末扫描线（矩形的底边、顶边）也都出图。
                         const double lo = std::min(va, vb), hi = std::max(va, vb);
                         if (v < lo || v > hi) continue;
                         // 水平边（va == vb）在上面的区间判定里会被 v == lo == hi 命中，
                         // 但 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线。
                         // 水平边与扫描线平行（重合），不产生交点，必须排除。
                         if (std::abs(vb - va) < 1e-12) continue;
+                        if (v == hi)
+                        {
+                            // 从上端点沿远离本边的方向找第一个不等高的顶点（poly 首尾相同，共 m 条边）
+                            const size_t m   = poly.size() - 1;
+                            const size_t j   = (va == hi) ? i : i + 1;
+                            const bool   fwd = (j == i + 1);
+                            double next = v;
+                            for (size_t s = 1; s <= m; ++s)
+                            {
+                                const size_t k = fwd ? (j + s) % m : (j + m - s % m) % m;
+                                const double vk = toV(poly[k].x, poly[k].y);
+                                if (vk != v) { next = vk; break; }
+                            }
+                            if (next > v) continue;
+                        }
 
                         double t  = (v - va) / (vb - va);
                         double ua = toU(poly[i].x,     poly[i].y);
@@ -553,9 +571,10 @@ namespace MiniCAD
                     // dash = 0 的"点"在相位上不占长度（.pat 语义），
                     // 但必须让下标前进，否则永远卡在第一项上。
                     //   DOTS = `0, -1.5875`：点 + 空白 1.5875 ⇒ 点间距 = 1.5875 = 线间距。
+                    // 至少有一项非零（纯点阵已在上面处理），每走完一轮 s 前进一个周期，
+                    // 迭代次数受上面"(b - a) / period"的预算检查约束，不需要另设上限。
                     size_t di = 0;
-                    int    guard = 0;
-                    while (s < b && budget > 0 && guard++ < 100000)
+                    while (s < b && budget > 0)
                     {
                         const double d = fam.Dashes[di];
                         di = (di + 1) % fam.Dashes.size();

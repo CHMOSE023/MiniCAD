@@ -33,8 +33,8 @@ namespace MiniCAD
     constexpr uint32_t kSlotDyn       = 10;
     constexpr uint32_t kSlotGlyph     = 11;
     constexpr uint32_t kSlotShaded    = 12;
-    constexpr uint32_t kSlotScenePoint = 13;
     constexpr uint32_t kSlotSilhouette = 13;
+    constexpr uint32_t kSlotScenePoint = 14;
 
     namespace
     {
@@ -91,6 +91,7 @@ namespace MiniCAD
         // 没有字体纹理时文字流不提交，也就不需要保留
         return renderer.IsCached(kSlotSceneFill, viewState.SceneVersion, false)
             && renderer.IsCached(kSlotScene, viewState.SceneVersion, false)
+            && renderer.IsCached(kSlotScenePoint, viewState.SceneVersion, false)
             && (!viewState.FontTexture || renderer.IsCached(kSlotSceneText, viewState.SceneVersion, true))
             && (viewState.Glyphs.empty() || renderer.IsGlyphCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes.Version));
     }

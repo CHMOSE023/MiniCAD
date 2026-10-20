@@ -542,6 +542,7 @@ namespace MiniCAD
         };
         std::vector<HoverCacheEntry> m_hoverCache;
         uint64_t                     m_hoverCacheGeomVersion = 0;
+        double                       m_hoverCacheWorldPerPixel = 0.0;
         uint64_t                     m_hoverTick = 0;
         void*                        m_fontTexture    = nullptr;
         GlyphProvider                m_glyphProvider;           // 由应用层注入

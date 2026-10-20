@@ -168,6 +168,9 @@ namespace MiniCAD
 
 			const double sHalf = ResolveHalfSize(size, sink.GetWorldPerPixel(),
 			                                     sink.GetViewportHeightPx());
+			// 相对尺寸按当前缩放换算成世界尺寸：缩放后要重新细分，屏幕上才保持视口高度的百分比
+			if (size <= 0.0 && mode != 0)
+				sink.MarkViewDependent();
 
 			// mode == 0，或尺寸取不到（相对尺寸但没有视口信息）：
 			// 一律用 **1 像素的点图元**。
