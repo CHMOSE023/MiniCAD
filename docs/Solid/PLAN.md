@@ -288,3 +288,29 @@ SM_API → SMLib
 | `Shell(body, thickness, openFaces)` | `SmApiShellBrepFull`（偏移 −thickness，即向内） | `openFaces` 为去掉的面（序号同 `FaceCount`），为空时得到带封闭空腔的实体；10³ 长方体厚 1：空腔 488、去掉一个面 424 |
 
 `NurbsCurve::Reversed()` 给出反向的同一条曲线（截面方向统一用）。测试在 `NodeSolidTests` 的 `TestN7Forms`（经节点）。
+
+---
+
+## 13. 曲面的创建、修改与分析（节点 N8）
+
+`docs/NodeGraph/PLAN.md` 第 6 节的曲面节点用到的接口，都在 `SMLibKernel.cpp`，输入不变（修改类在副本上做）：
+
+| 接口 | SMLib | 注意 |
+|---|---|---|
+| `PlanarSurface(loops)` | `SmApiCreatePlanarFaces` | 成功时曲线被接管，失败时由适配层释放 |
+| `ExtrudeCurve(curve, vector)` | `SmApiCreateExtrude` | 开放曲面，不封口 |
+| `SweepSurface(section, rail)` | `SmApiCreateCurveSweep`（`bMoveToProfile`） | SMLib 把截面起点移到轨道起点再扫，结果移回截面所在位置：截面起点应在轨道起点 |
+| `CoonsSurface(bottom, right, top, left)` | `SmBSplineSurface::CreateCoonsPatch`（双线性） | SMLib 按左、右、下、上的顺序读取，对边方向要一致 |
+| `NetworkSurface(u, v)` | `SmBSplineSurface::CreateGordonSurface` | |
+| `FitSurface(points, controlPoints)` | `SmBSplineSurface::ApproximateRandomPoints`（复杂度 1） | 点投影到平面上分配参数 |
+| `TrimSurface(surface, cutter, direction, keepPoint, split)` | `SmApiTrimProjectParallel` | 成功时副本被接管；失败时副本归调用方 |
+| `JoinSurfaces(bodies, tol)` | `SmBrep::CopyFaces`（不合并）+ `SmApiStitchIntoSolid`，不成实体时 `SmApiStitchAdvanced` | |
+| `CapPlanarHoles(body)` | 边界边（`SmEdge::IsLamina`）按顶点连环，共面的环用 `SmApiCreatePlanarFaces` 补面后缝合 | 非平面开口跳过；一个也补不上时失败 |
+| `ExplodeFaces(body)` | 每个面 `CopyFaces` 到新实体 | |
+| `FlipSurface` / `ExtendSurface` / `RebuildSurface` | 面所在曲面的 B 样条副本：`Reverse(SM_SP_U)` / `CreateExtendedSurface(G1)` / `RebuildSurface` | 只用于单个面；按整张曲面计算，面被修剪过（面积与整张曲面不同）时失败 |
+| `EdgeCurves(body)` | 边的曲线转成 B 样条（`MakeExactBSplineIfPossible`）后 `Trim` 到边的区间 | 顺序同 `Edges()` |
+| `IsoCurve(surface, face, alongU, t)` | `SmSurface::CreateIsoParametricCurve` | 按整张曲面，不按修剪 |
+| `ClosestPoint` / `IntersectCurve` / `IntersectBodies` | `SmApiBrepClosestPoint` / `SmApiIntersectCurveBrep` / `SmApiIntersectBreps` | 没有交点时 SMLib 返回错误，适配层按空结果处理 |
+| `SurfaceDerivatives(surface, face, u, v)` | `SmApiEvaluateSurfaceDerivatives` | 导数是对归一化参数的；曲率由节点用相邻参数处的一阶导数差分 |
+
+已知问题：带洞的修剪面（如投影圆修剪后的方板）`SmApiBrepComputeArea` 的结果偏小约 3%，离散网格的面积正确。测试在 `NodeSolidTests` 的 `TestN8Surfaces`。

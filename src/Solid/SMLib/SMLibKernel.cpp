@@ -14,6 +14,7 @@
 #include <SmApiPrimitives.h>
 #include <SmApiQueries.h>
 #include <SmApiSurfaces.h>
+#include <SmApiTrimmedSurfaces.h>
 #include <SmBSplineSurface.h>
 
 #include <array>
@@ -1082,6 +1083,463 @@ namespace MiniCAD::Solid
             return true;
         }
 
+
+        bool SurfaceDerivatives(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& du, Math::Vec3& dv) override
+        {
+            Begin();
+            const SmSurface* srf = FaceSurface(surface, face);
+            if (!srf)
+                return false;
+            const SmExtent2d d = srf->GetNaturalUVDomain();
+            const double ru = d.GetMax().x - d.GetMin().x, rv = d.GetMax().y - d.GetMin().y;
+            const SmVector2d uv(d.GetMin().x + ru * std::clamp(u, 0.0, 1.0), d.GetMin().y + rv * std::clamp(v, 0.0, 1.0));
+            SmVector3d p, a, b;
+            if (const SmApiStatus status = SmApiEvaluateSurfaceDerivatives(srf, uv, p, a, b); status != SM_SUCCESS)
+            {
+                Fail("SmApiEvaluateSurfaceDerivatives", status);
+                return false;
+            }
+            point = { p.x, p.y, p.z };
+            du    = Math::Vec3{ a.x, a.y, a.z } * ru;   // 对归一化参数求导
+            dv    = Math::Vec3{ b.x, b.y, b.z } * rv;
+            return true;
+        }
+
+        // ── 曲面（N8）────────────────────────────────────────────────
+
+        BodyPtr PlanarSurface(std::span<const NurbsCurve> loops) override
+        {
+            Begin();
+            if (loops.empty())
+                return Fail("平面曲面: 没有曲线");
+            SmTArray<SmCurve*> curves;
+            for (size_t i = 0; i < loops.size(); ++i)
+            {
+                SmCurvePtr c = ToSmCurve(loops[i]);
+                if (!c)
+                {
+                    for (ULONG k = 0; k < curves.GetSize(); ++k)
+                        delete curves[k];
+                    return Fail("平面曲面: 第 " + std::to_string(i + 1) + " 条曲线无效");
+                }
+                curves.Add(c.release());
+            }
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreatePlanarFaces(curves, raw);   // 成功时接管曲线
+            if (status != SM_SUCCESS)
+                for (ULONG k = 0; k < curves.GetSize(); ++k)
+                    delete curves[k];
+            return Wrap(status, raw, "SmApiCreatePlanarFaces（曲线应共面、闭合、互不相交）");
+        }
+
+        BodyPtr ExtrudeCurve(const NurbsCurve& curve, const Math::Vec3& vector) override
+        {
+            Begin();
+            if (vector.Length() < 1e-12)
+                return Fail("挤出曲面: 向量为零");
+            SmCurvePtr c = ToSmCurve(curve);
+            if (!c)
+                return Fail("挤出曲面: 曲线无效");
+            SmSurface* raw = nullptr;
+            const SmApiStatus status = SmApiCreateExtrude(c.get(), ToSm(vector), raw);
+            if (status != SM_SUCCESS || !raw)
+            {
+                delete raw;
+                return Fail("SmApiCreateExtrude", status);
+            }
+            return SheetFromSurface(SurfacePtr(raw), "挤出曲面");
+        }
+
+        BodyPtr SweepSurface(const NurbsCurve& section, const NurbsCurve& rail) override
+        {
+            Begin();
+            SmCurvePtr s = ToSmCurve(section), r = ToSmCurve(rail);
+            if (!s || !r)
+                return Fail("单轨扫描: 曲线无效");
+            SmTArray<SmCurve*> curves;
+            curves.Add(s.get());
+            SmSweepOptions options;   // 不封口；截面起点放在轨道起点，再把结果移回截面所在位置
+            options.bMoveToProfile = TRUE;
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateCurveSweep(curves, r.get(), nullptr, nullptr, &options, raw, nullptr, nullptr, nullptr);
+            return Wrap(status, raw, "SmApiCreateCurveSweep");
+        }
+
+        BodyPtr CoonsSurface(const NurbsCurve& bottom, const NurbsCurve& right, const NurbsCurve& top, const NurbsCurve& left) override
+        {
+            Begin();
+            SmCurvePtr b = ToSmCurve(bottom), r = ToSmCurve(right), t = ToSmCurve(top), l = ToSmCurve(left);
+            if (!b || !r || !t || !l)
+                return Fail("边界曲面: 曲线无效");
+            SmTArray<SmBSplineCurve*> edges, derivs;   // SMLib 的顺序：左、右、下、上
+            edges.Add(l.get());
+            edges.Add(r.get());
+            edges.Add(b.get());
+            edges.Add(t.get());
+            SmBSplineSurface* raw = nullptr;
+            const SmStatus status = SmBSplineSurface::CreateCoonsPatch(*SmApiGetOrCreateContext(), 1e-6, TRUE, edges, derivs, raw);
+            if (status != SM_SUCCESS || !raw)
+            {
+                delete raw;
+                return Fail("SmBSplineSurface::CreateCoonsPatch（四条边应首尾相接）", status);
+            }
+            return SheetFromSurface(SurfacePtr(raw), "边界曲面");
+        }
+
+        BodyPtr NetworkSurface(std::span<const NurbsCurve> u, std::span<const NurbsCurve> v) override
+        {
+            Begin();
+            if (u.size() < 2 || v.size() < 2)
+                return Fail("网络曲面: 两个方向各至少需要 2 条曲线");
+            std::vector<SmCurvePtr> owned;
+            SmTArray<SmBSplineCurve*> us, vs;
+            for (auto [list, out] : { std::pair{ u, &us }, std::pair{ v, &vs } })
+                for (const auto& c : list)
+                {
+                    SmCurvePtr sc = ToSmCurve(c);
+                    if (!sc)
+                        return Fail("网络曲面: 曲线无效");
+                    out->Add(sc.get());
+                    owned.push_back(std::move(sc));
+                }
+            SmBSplineSurface* raw = nullptr;
+            const SmStatus status = SmBSplineSurface::CreateGordonSurface(*SmApiGetOrCreateContext(), us, vs, raw);
+            if (status != SM_SUCCESS || !raw)
+            {
+                delete raw;
+                return Fail("SmBSplineSurface::CreateGordonSurface（两组曲线应两两相交）", status);
+            }
+            return SheetFromSurface(SurfacePtr(raw), "网络曲面");
+        }
+
+        BodyPtr FitSurface(std::span<const Math::Point3> points, int controlPoints) override
+        {
+            Begin();
+            if (points.size() < 9)
+                return Fail("拟合曲面: 至少需要 9 个点");
+            if (controlPoints < 2)
+                return Fail("拟合曲面: 控制点数至少为 2");
+            SmTArray<SmPoint3d> pts;
+            for (const auto& p : points)
+                pts.Add(ToSm(p));
+            const ULONG n = static_cast<ULONG>(controlPoints), degree = std::min<ULONG>(3, n - 1);
+            SmBSplineSurface* raw = nullptr;
+            const SmStatus status = SmBSplineSurface::ApproximateRandomPoints(*SmApiGetOrCreateContext(), pts, n, n, degree, degree, nullptr, 1, raw);
+            if (status != SM_SUCCESS || !raw)
+            {
+                delete raw;
+                return Fail("SmBSplineSurface::ApproximateRandomPoints", status);
+            }
+            return SheetFromSurface(SurfacePtr(raw), "拟合曲面");
+        }
+
+        BodyPtr TrimSurface(const BodyPtr& surface, const NurbsCurve& cutter, const Math::Vec3& direction, const Math::Point3& keepPoint, bool split) override
+        {
+            Begin();
+            if (direction.Length() < 1e-12)
+                return Fail("修剪: 投影方向为零");
+            SmCurvePtr c = ToSmCurve(cutter);
+            if (!c)
+                return Fail("修剪: 切割曲线无效");
+            BrepPtr copy = CopyOf(surface);
+            if (!copy)
+                return nullptr;
+            SmBrep* work = copy.release();   // 成功时被接管；失败时仍归调用方
+            SmBrep* raw  = nullptr;
+            const SmApiStatus status = SmApiTrimProjectParallel(work, c.get(), ToSm(direction), ToSm(keepPoint), split ? SM_TT_SPLIT : SM_TT_KEEP_POINT, raw);
+            if (status != SM_SUCCESS || !raw)
+            {
+                if (raw != work)
+                    delete work;
+                delete raw;
+                return Fail("SmApiTrimProjectParallel（切割曲线投影后应穿过曲面）", status);
+            }
+            if (raw != work)
+                delete work;
+            return Finish(BrepPtr(raw));
+        }
+
+        BodyPtr JoinSurfaces(std::span<const BodyPtr> bodies, double tolerance) override
+        {
+            Begin();
+            if (bodies.empty())
+                return Fail("拼接: 没有曲面");
+            BrepPtr brep(new (*SmApiGetOrCreateContext()) SmBrep());
+            for (const BodyPtr& b : bodies)
+            {
+                SmTArray<SmFace*> faces;
+                if (!FacesOf(b, faces))
+                    return nullptr;
+                if (const SmStatus status = BrepOf(b)->CopyFaces(faces, brep.get(), nullptr, FALSE); status != SM_SUCCESS)
+                    return Fail("拼接: 复制面失败", status);
+            }
+            SmBoolean solid = FALSE;
+            ULONG stitched = 0;
+            double vertexGap = 0.0, edgeGap = 0.0;
+            SmApiStitchIntoSolid(brep.get(), solid, stitched, vertexGap, edgeGap);
+            if (!solid)
+            {
+                ULONG lamina = 0;
+                SmApiStitchAdvanced(brep.get(), std::max(tolerance, 1e-9), FALSE, FALSE, TRUE, FALSE, stitched, lamina, vertexGap, edgeGap);
+            }
+            return Finish(std::move(brep));
+        }
+
+        BodyPtr CapPlanarHoles(const BodyPtr& body) override
+        {
+            Begin();
+            BrepPtr brep = CopyOf(body);
+            if (!brep)
+                return nullptr;
+            // 边界边（只属于一个面）按顶点连成环
+            SmTArray<SmEdge*> all;
+            if (const SmApiStatus status = SmApiGetEdges(brep.get(), all); status != SM_SUCCESS)
+                return Fail("SmApiGetEdges", status);
+            std::vector<SmEdge*> open;
+            for (ULONG i = 0; i < all.GetSize(); ++i)
+                if (all[i]->IsLamina())
+                    open.push_back(all[i]);
+            if (open.empty())
+                return Fail("封口: 没有开口");
+            int capped = 0;
+            while (!open.empty())
+            {
+                std::vector<SmEdge*> loop{ open.back() };
+                open.pop_back();
+                SmVertex* start = loop.front()->GetStartVertex();
+                SmVertex* cur   = loop.front()->GetEndVertex();
+                while (cur != start)
+                {
+                    auto it = std::find_if(open.begin(), open.end(), [&](SmEdge* e) { return e->GetStartVertex() == cur || e->GetEndVertex() == cur; });
+                    if (it == open.end())
+                        break;
+                    cur = (*it)->GetOtherVertex(cur);
+                    loop.push_back(*it);
+                    open.erase(it);
+                }
+                if (cur != start)
+                    continue;   // 不闭合的边界
+                // 环上的点要共面
+                std::vector<Math::Point3> pts;
+                SmTArray<SmCurve*> curves;
+                bool ok = true;
+                for (SmEdge* e : loop)
+                {
+                    SmBSplineCurve* c = EdgeBSpline(e);
+                    if (!c)
+                    {
+                        ok = false;
+                        break;
+                    }
+                    curves.Add(c);
+                    const NurbsCurve nc = FromSmCurve(*c);
+                    for (const auto& p : nc.Sample(4))
+                        pts.push_back(p);
+                }
+                if (ok)
+                    ok = IsPlanar(pts);
+                SmBrep* cap = nullptr;
+                const SmApiStatus status = ok ? SmApiCreatePlanarFaces(curves, cap) : SM_ERR;
+                if (status != SM_SUCCESS)
+                {
+                    for (ULONG k = 0; k < curves.GetSize(); ++k)
+                        delete curves[k];
+                    delete cap;
+                    continue;
+                }
+                BrepPtr capBrep(cap);
+                SmTArray<SmFace*> capFaces;
+                SmApiGetFaces(capBrep.get(), capFaces);
+                if (capBrep->CopyFaces(capFaces, brep.get(), nullptr, FALSE) == SM_SUCCESS)
+                    ++capped;
+            }
+            if (capped == 0)
+                return Fail("封口: 没有平面的开口（非平面开口可先用“边界曲面”补面再拼接）");
+            SmBoolean solid = FALSE;
+            ULONG stitched = 0;
+            double vertexGap = 0.0, edgeGap = 0.0;
+            SmApiStitchIntoSolid(brep.get(), solid, stitched, vertexGap, edgeGap);
+            if (!solid)
+                Stitch(*brep);
+            return Finish(std::move(brep));
+        }
+
+        std::vector<BodyPtr> ExplodeFaces(const BodyPtr& body) override
+        {
+            Begin();
+            std::vector<BodyPtr> out;
+            SmTArray<SmFace*> faces;
+            if (!FacesOf(body, faces))
+                return out;
+            for (ULONG i = 0; i < faces.GetSize(); ++i)
+            {
+                BrepPtr brep(new (*SmApiGetOrCreateContext()) SmBrep());
+                SmTArray<SmFace*> one;
+                one.Add(faces[i]);
+                if (const SmStatus status = BrepOf(body)->CopyFaces(one, brep.get(), nullptr, FALSE); status != SM_SUCCESS)
+                {
+                    Fail("炸开: 复制面失败", status);
+                    return {};
+                }
+                out.push_back(Finish(std::move(brep)));
+            }
+            return out;
+        }
+
+        BodyPtr FlipSurface(const BodyPtr& surface) override
+        {
+            Begin();
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, "翻转");
+            if (!raw)
+                return nullptr;
+            SurfacePtr owned(raw);
+            if (const SmStatus status = raw->Reverse(SM_SP_U); status != SM_SUCCESS)
+                return Fail("翻转: 反转参数失败", status);
+            return SheetFromSurface(std::move(owned), "翻转");
+        }
+
+        BodyPtr ExtendSurface(const BodyPtr& surface, double distance) override
+        {
+            Begin();
+            if (!(distance > 0.0))
+                return Fail("延伸: 距离必须为正");
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, "延伸");
+            if (!raw)
+                return nullptr;
+            SurfacePtr owned(raw);
+            SmSurface* extended = nullptr;
+            const SmStatus status = raw->CreateExtendedSurface(*SmApiGetOrCreateContext(), distance, SM_CT_G1, extended);
+            if (status != SM_SUCCESS || !extended)
+            {
+                delete extended;
+                return Fail("SmBSplineSurface::CreateExtendedSurface", status);
+            }
+            return SheetFromSurface(SurfacePtr(extended), "延伸");
+        }
+
+        BodyPtr RebuildSurface(const BodyPtr& surface, int uCount, int vCount) override
+        {
+            Begin();
+            if (uCount < 4 || vCount < 4)
+                return Fail("重建: 每个方向至少 4 个控制点");
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, "重建");
+            if (!raw)
+                return nullptr;
+            SurfacePtr owned(raw);
+            double maxDiff = 0.0;
+            SmBSplineSurface* rebuilt = nullptr;
+            const SmStatus status = raw->RebuildSurface(*SmApiGetOrCreateContext(), nullptr, &maxDiff, rebuilt, static_cast<ULONG>(uCount), static_cast<ULONG>(vCount));
+            if (status != SM_SUCCESS || !rebuilt)
+            {
+                delete rebuilt;
+                return Fail("SmBSplineSurface::RebuildSurface", status);
+            }
+            return SheetFromSurface(SurfacePtr(rebuilt), "重建");
+        }
+
+        std::vector<NurbsCurve> EdgeCurves(const BodyPtr& body) override
+        {
+            Begin();
+            std::vector<NurbsCurve> out;
+            SmBrep* brep = BrepOf(body);
+            if (!brep)
+                return out;
+            SmTArray<SmEdge*> edges;
+            if (const SmApiStatus status = SmApiGetEdges(brep, edges); status != SM_SUCCESS)
+            {
+                Fail("SmApiGetEdges", status);
+                return out;
+            }
+            for (ULONG i = 0; i < edges.GetSize(); ++i)
+            {
+                SmCurvePtr c(EdgeBSpline(edges[i]));
+                NurbsCurve nc = c ? FromSmCurve(*c) : NurbsCurve{};
+                if (!nc.IsValid())
+                {
+                    Fail("边曲线: 第 " + std::to_string(i + 1) + " 条边转换失败");
+                    return {};
+                }
+                out.push_back(std::move(nc));
+            }
+            return out;
+        }
+
+        NurbsCurve IsoCurve(const BodyPtr& surface, int face, bool alongU, double t) override
+        {
+            Begin();
+            const SmSurface* srf = FaceSurface(surface, face);
+            if (!srf)
+                return {};
+            const SmExtent2d d = srf->GetNaturalUVDomain();
+            t = std::clamp(t, 0.0, 1.0);
+            // alongU：v 固定（SM_SP_V 为常数 v 的曲线）
+            const double param = alongU ? d.GetMin().y + (d.GetMax().y - d.GetMin().y) * t : d.GetMin().x + (d.GetMax().x - d.GetMin().x) * t;
+            SmBSplineCurve* raw = nullptr;
+            const SmStatus status = srf->CreateIsoParametricCurve(*SmApiGetOrCreateContext(), alongU ? SM_SP_V : SM_SP_U, param, SmTol::GetApproxTol3d(), raw);
+            SmCurvePtr c(raw);
+            if (status != SM_SUCCESS || !c)
+                return FailCurve("CreateIsoParametricCurve", status);
+            return FromSmCurve(*c);
+        }
+
+        bool ClosestPoint(const BodyPtr& body, const Math::Point3& p, Math::Point3& closest, double& distance) override
+        {
+            Begin();
+            SmBrep* brep = BrepOf(body);
+            if (!brep)
+                return false;
+            SmPoint3d q;
+            if (const SmApiStatus status = SmApiBrepClosestPoint(brep, ToSm(p), q, distance); status != SM_SUCCESS)
+            {
+                Fail("SmApiBrepClosestPoint", status);
+                return false;
+            }
+            closest = ToPoint(q);
+            return true;
+        }
+
+        std::vector<Math::Point3> IntersectCurve(const BodyPtr& body, const NurbsCurve& curve) override
+        {
+            Begin();
+            std::vector<Math::Point3> out;
+            SmBrep* brep = BrepOf(body);
+            SmCurvePtr c = ToSmCurve(curve);
+            if (!brep || !c)
+            {
+                if (brep)
+                    Fail("求交: 曲线无效");
+                return out;
+            }
+            SmTArray<SmCurve*> overlaps;
+            SmTArray<SmPoint3d> points;
+            SmApiIntersectCurveBrep(c.get(), brep, overlaps, points);   // 没有交点时返回错误：按空结果处理
+            for (ULONG i = 0; i < overlaps.GetSize(); ++i)
+                delete overlaps[i];
+            for (ULONG i = 0; i < points.GetSize(); ++i)
+                out.push_back(ToPoint(points[i]));
+            return out;
+        }
+
+        std::vector<NurbsCurve> IntersectBodies(const BodyPtr& a, const BodyPtr& b) override
+        {
+            Begin();
+            std::vector<NurbsCurve> out;
+            SmBrep* ba = BrepOf(a);
+            SmBrep* bb = ba ? BrepOf(b) : nullptr;
+            if (!ba || !bb)
+                return out;
+            SmTArray<SmCurve*> curves;
+            SmApiIntersectBreps(ba, bb, curves, nullptr);
+            for (ULONG i = 0; i < curves.GetSize(); ++i)
+            {
+                NurbsCurve nc = curves[i] ? FromSmCurve(*curves[i]) : NurbsCurve{};
+                if (nc.IsValid())
+                    out.push_back(std::move(nc));
+                delete curves[i];
+            }
+            return out;
+        }
+
     private:
         std::string m_lastError;
 
@@ -1381,6 +1839,105 @@ namespace MiniCAD::Solid
             const Math::Vec3 u = mesh.Positions[mesh.Indices[i + 1]] - a;
             const Math::Vec3 w = mesh.Positions[mesh.Indices[i + 2]] - a;
             return { u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x };
+        }
+
+        // 第 face 个面所在的曲面（借用，不要释放）
+        const SmSurface* FaceSurface(const BodyPtr& body, int face)
+        {
+            SmTArray<SmFace*> faces;
+            if (!FacesOf(body, faces))
+                return nullptr;
+            if (face < 0 || static_cast<ULONG>(face) >= faces.GetSize())
+            {
+                Fail("面的序号超出范围（共 " + std::to_string(faces.GetSize()) + " 个面）");
+                return nullptr;
+            }
+            return faces[static_cast<ULONG>(face)]->GetSurface();
+        }
+
+        // 只有一个面的曲面：面所在整张曲面的 B 样条副本（调用方拥有）。面被修剪过（面积与整张曲面不同）时失败
+        SmBSplineSurface* SingleFaceBSpline(const BodyPtr& body, const char* what)
+        {
+            SmTArray<SmFace*> faces;
+            if (!FacesOf(body, faces))
+                return nullptr;
+            if (faces.GetSize() != 1)
+            {
+                Fail(std::string(what) + ": 只用于单个面的曲面（可先“炸开”）");
+                return nullptr;
+            }
+            SmBSplineSurface* copy = nullptr;
+            if (faces[0]->GetSurface()->MakeExactBSplineIfPossible(copy) != SM_SUCCESS || !copy)
+            {
+                delete copy;
+                Fail(std::string(what) + ": 曲面不能转换为 B 样条");
+                return nullptr;
+            }
+            BrepPtr whole(new (*SmApiGetOrCreateContext()) SmBrep());
+            SmSurface* probe = nullptr;
+            double faceArea = -1.0, wholeArea = -1.0;
+            SmApiBrepComputeArea(BrepOf(body), 1e-7, faceArea);
+            if (copy->Copy(*SmApiGetOrCreateContext(), probe) == SM_SUCCESS && probe && AddSurfaceFaces(*whole, SurfacePtr(probe), what))
+                SmApiBrepComputeArea(whole.get(), 1e-7, wholeArea);
+            if (faceArea < 0 || wholeArea < 0 || std::abs(faceArea - wholeArea) > 1e-6 * std::max(1.0, wholeArea))
+            {
+                delete copy;
+                Fail(std::string(what) + ": 修剪过的面暂不支持");
+                return nullptr;
+            }
+            return copy;
+        }
+
+        // 边在其区间上的 B 样条曲线副本（调用方拥有），方向同边
+        static SmBSplineCurve* EdgeBSpline(const SmEdge* edge)
+        {
+            const SmCurve* curve = edge ? edge->GetCurve() : nullptr;
+            if (!curve)
+                return nullptr;
+            SmBSplineCurve* b = nullptr;
+            if (curve->IsKindOf(SmBSplineCurve_TYPE))
+                static_cast<const SmBSplineCurve*>(curve)->Copy(*SmApiGetOrCreateContext(), b);
+            else
+                curve->MakeExactBSplineIfPossible(b);
+            if (!b)
+                return nullptr;
+            SmExtent1d interval = edge->GetInterval();
+            if (b->Trim(interval) != SM_SUCCESS)
+            {
+                delete b;
+                return nullptr;
+            }
+            return b;
+        }
+
+        // 点集共面（到最佳平面的距离不超过尺寸的 1e-6）
+        static bool IsPlanar(const std::vector<Math::Point3>& pts)
+        {
+            if (pts.size() < 3)
+                return false;
+            Math::Point3 c{ 0, 0, 0 };
+            for (const auto& p : pts)
+                c = { c.x + p.x, c.y + p.y, c.z + p.z };
+            c = { c.x / pts.size(), c.y / pts.size(), c.z / pts.size() };
+            // 法向：相对质心的点两两叉积之和（Newell）
+            Math::Vec3 n{ 0, 0, 0 };
+            double size = 0.0;
+            for (size_t i = 0; i < pts.size(); ++i)
+            {
+                const Math::Vec3 a = pts[i] - c, b = pts[(i + 1) % pts.size()] - c;
+                n = n + Math::Vec3{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+                size = std::max(size, a.Length());
+            }
+            if (n.Length() < 1e-12 * std::max(1.0, size * size))
+                return false;
+            n = n.Normalized();
+            for (const auto& p : pts)
+            {
+                const Math::Vec3 d = p - c;
+                if (std::abs(d.x * n.x + d.y * n.y + d.z * n.z) > 1e-6 * std::max(1.0, size))
+                    return false;
+            }
+            return true;
         }
 
         // 临时文件：析构时删除

@@ -2,7 +2,8 @@
 // 基本体、拉伸（含圆角矩形，验证凸度方向）、旋转、扫掠、阵列 + 并集、差集、交集、圆角 / 倒角、实体信息、截面、
 // 变换、预览（离散缓存、绘图区着色面）与烘焙；空间曲线与曲面（放样、加厚、旋转曲面、点阵曲面、管道、读写往返与导出）；
 // N6：引用图纸里的三维实体、实体的定向 / 任意轴旋转 / 非均匀缩放 / 沿曲线阵列、平面预览；
-// N7：五种形体与空心、圆锥 / 圆环、形体合并、剪切几何、分割、抽壳、实心 / 空心、任意平面截面、旧图兼容
+// N7：五种形体与空心、圆锥 / 圆环、形体合并、剪切几何、分割、抽壳、实心 / 空心、任意平面截面、旧图兼容；
+// N8：曲面的创建、修改（修剪、分割、炸开、拼接、封口、翻转、延伸、重建）与分析（分解、等参线、最近点、求交、曲率）
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/Preview.h"
 #include "Document/Document.h"
@@ -801,6 +802,238 @@ namespace
         Check(oe->State == NodeState::Ok && Near(f.kernel->Volume(oe->Outputs[0][0].AsBody()), 20 * 10 * 7) && os->Outputs[0].size() == 1,
               "N7 old graph: extrude height and horizontal section unchanged");
     }
+    // N8：曲面的创建（平面带洞、挤出、直纹放样、单轨 / 双轨扫描、边界、网络、拟合、参数曲面）、
+    // 修改（修剪、分割、炸开 → 拼接成实体、封口、翻转、延伸、重建）、分析（分解、等参线、最近点、求交、曲率）
+    void TestN8Surfaces()
+    {
+        Fixture f;
+        Graph& g = f.g;
+        auto area = [&](NodeId id, int port = 0, size_t i = 0)
+        {
+            const auto& o = g.GetNode(id)->Outputs[port];
+            return i < o.size() ? f.kernel->Area(o[i].AsBody()) : -1.0;
+        };
+        auto line = [&](Math::Vec3 a, Math::Vec3 b)
+        {
+            const NodeId l = Add(g, "curve.line");
+            g.SetInputValue(l, 0, Value(a));
+            g.SetInputValue(l, 1, Value(b));
+            return l;
+        };
+        auto circle = [&](Math::Vec3 c, double r)
+        {
+            const NodeId n = Add(g, "curve.circle");
+            g.SetInputValue(n, 0, Value(c));
+            g.SetInputValue(n, 1, r);
+            return n;
+        };
+        auto evalAt = [&](NodeId surface, double u, double v)
+        {
+            Math::Point3 p;
+            Math::Vec3 n;
+            f.kernel->EvaluateSurface(f.Body(surface), 0, u, v, p, n);
+            return std::pair{ p, n };
+        };
+
+        // 平面曲面：同心圆 r 5、r 2 → 圆环面 21π
+        const NodeId planar = Add(g, "surface.planar");
+        g.Connect({ circle({}, 5), 0, planar, 0 });
+        g.Connect({ circle({}, 2), 0, planar, 0 }, false);
+        f.Eval();
+        Check(f.Ok(planar) && Near(area(planar), 21 * kPi), "N8 planar: a disc with a hole");
+
+        // 挤出曲面：圆 r 5 沿 Z 挤出 10 → 侧面 100π，开放
+        const NodeId ext = Add(g, "surface.extrude");
+        g.Connect({ circle({}, 5), 0, ext, 0 });
+        f.Eval();
+        Check(f.Ok(ext) && Near(area(ext), 100 * kPi) && !f.kernel->IsSolid(f.Body(ext)), "N8 extrude: an open tube");
+
+        // 直纹放样：三条直线成两片直纹面
+        const NodeId loft = Add(g, "surface.loft");
+        g.Connect({ line({ 0, 0, 0 }, { 10, 0, 0 }), 0, loft, 0 });
+        g.Connect({ line({ 0, 5, 5 }, { 10, 5, 5 }), 0, loft, 0 }, false);
+        g.Connect({ line({ 0, 10, 0 }, { 10, 10, 0 }), 0, loft, 0 }, false);
+        g.SetParam(loft, 0, true);
+        f.Eval();
+        Check(f.Ok(loft) && Near(area(loft), 2 * 10 * std::sqrt(50.0)), "N8 loft: ruled through three lines");
+
+        // 单轨扫描：长 5 的线段沿长 10 的竖直线扫过 → 50
+        const NodeId sw1 = Add(g, "surface.sweep1");
+        g.Connect({ line({ 0, 0, 0 }, { 0, 0, 10 }), 0, sw1, 0 });
+        g.Connect({ line({ 0, 0, 0 }, { 5, 0, 0 }), 0, sw1, 1 });
+        f.Eval();
+        Check(f.Ok(sw1) && Near(area(sw1), 50.0), "N8 sweep1: a segment along a line");
+
+        // 双轨扫描：半圆截面（r 5）沿两条平行直线 → 半圆柱面 50π；第二条轨道张开时截面随间距放大
+        const NodeId arc = Add(g, "curve.arc"), sw2 = Add(g, "surface.sweep2");
+        g.SetInputValue(arc, 0, Value(Math::Vec3{ 5, 0, 0 }));
+        g.SetInputValue(arc, 2, 0.0);
+        g.SetInputValue(arc, 3, 180.0);   // (10, 0, 0) → (0, 0, 0)
+        const NodeId rail1 = line({ 10, 0, 0 }, { 10, 0, 10 }), rail2 = line({ 0, 0, 0 }, { 0, 0, 10 });
+        g.Connect({ rail1, 0, sw2, 0 });
+        g.Connect({ rail2, 0, sw2, 1 });
+        g.Connect({ arc, 0, sw2, 2 });
+        f.Eval();
+        Check(f.Ok(sw2) && Near(area(sw2), 50 * kPi), "N8 sweep2: half cylinder between parallel rails");
+        g.SetInputValue(rail2, 1, Value(Math::Vec3{ -10, 0, 10 }));
+        f.Eval();
+        const AABB sb = f.Count(sw2) ? f.kernel->Bounds(f.Body(sw2)) : AABB::Empty();
+        Check(f.Ok(sw2) && Near(sb.Min.x, -10.0, 1e-2) && Near(sb.Max.y, 10.0, 1e-2), "N8 sweep2: the section scales with the rail distance");
+
+        // 边界曲面与网络曲面：马鞍面 z = 0.1·x·y，中点 (5, 5, 2.5)
+        const NodeId edge = Add(g, "surface.edge");
+        g.Connect({ line({ 0, 0, 0 }, { 10, 0, 0 }), 0, edge, 0 });
+        g.Connect({ line({ 10, 10, 10 }, { 10, 0, 0 }), 0, edge, 0 }, false);   // 方向随意
+        g.Connect({ line({ 10, 10, 10 }, { 0, 10, 0 }), 0, edge, 0 }, false);
+        g.Connect({ line({ 0, 10, 0 }, { 0, 0, 0 }), 0, edge, 0 }, false);
+        const NodeId net = Add(g, "surface.network");
+        for (int i = 0; i < 3; ++i)
+        {
+            g.Connect({ line({ 0, i * 5.0, 0 }, { 10, i * 5.0, i * 5.0 }), 0, net, 0 }, i > 0 ? false : true);
+            g.Connect({ line({ i * 5.0, 0, 0 }, { i * 5.0, 10, i * 5.0 }), 0, net, 1 }, i > 0 ? false : true);
+        }
+        f.Eval();
+        const auto [ep, en] = f.Ok(edge) ? evalAt(edge, 0.5, 0.5) : std::pair{ Math::Point3{}, Math::Vec3{} };
+        const auto [np, nn] = f.Ok(net) ? evalAt(net, 0.5, 0.5) : std::pair{ Math::Point3{}, Math::Vec3{} };
+        Check(f.Ok(edge) && Near(ep.x, 5) && Near(ep.y, 5) && Near(ep.z, 2.5), "N8 edge surface: Coons saddle");
+        Check(f.Ok(net) && Near(np.x, 5) && Near(np.y, 5) && Near(np.z, 2.5), "N8 network surface: Gordon saddle");
+
+        // 拟合曲面：打乱顺序的 25 个马鞍面上的点，最近点距离接近 0
+        const NodeId fit = Add(g, "surface.fit"), probe = Add(g, "surface.closest");
+        for (int i = 0; i < 25; ++i)
+        {
+            const int j = (i * 7) % 25;
+            const double x = (j % 5) * 2.5, y = (j / 5) * 2.5;
+            const NodeId pt = Add(g, "vector.point");
+            g.SetInputValue(pt, 0, x);
+            g.SetInputValue(pt, 1, y);
+            g.SetInputValue(pt, 2, 0.1 * x * y);
+            g.Connect({ pt, 0, fit, 0 }, i == 0);
+        }
+        g.Connect({ fit, 0, probe, 0 });
+        g.SetInputValue(probe, 1, Value(Math::Vec3{ 5, 5, 2.5 }));
+        f.Eval();
+        Check(f.Ok(fit) && f.Ok(probe) && f.Number(probe, 1) < 1e-3, "N8 fit surface: passes near the points");
+
+        // 参数曲面：圆柱 x = 5cos(u)、y = 5sin(u)、z = v → 侧面 100π
+        const NodeId param = Add(g, "surface.param");
+        f.Eval();
+        Check(f.Ok(param) && Near(area(param), 100 * kPi, 1e-2) && f.Count(param, 1) == 24 * 8, "N8 parametric surface: a cylinder");
+
+        // 修剪与分割：10 × 10 的平面被上方 r 2 的圆投影切开
+        const NodeId sq = Add(g, "curve.rectangle"), plate = Add(g, "surface.planar"), trim = Add(g, "surface.trim"), split = Add(g, "surface.split");
+        g.SetInputValue(sq, 1, 10.0);
+        g.SetInputValue(sq, 2, 10.0);
+        g.Connect({ sq, 0, plate, 0 });
+        const NodeId cutter = circle({ 0, 0, 1 }, 2);
+        g.Connect({ plate, 0, trim, 0 });
+        g.Connect({ cutter, 0, trim, 1 });
+        g.Connect({ plate, 0, split, 0 });
+        g.Connect({ cutter, 0, split, 1 });
+        f.Eval();
+        Check(f.Ok(trim) && Near(area(trim), 4 * kPi, 1e-2), "N8 trim: keep the side with the point");
+        // 带洞的修剪面的面积 SmApiBrepComputeArea 算不准（差约 3%），这里按离散网格的面积检查
+        auto meshArea = [&](const Solid::BodyPtr& b)
+        {
+            const Solid::Mesh m = f.kernel->Tessellate(b);
+            double s = 0.0;
+            for (size_t i = 0; i + 2 < m.Indices.size(); i += 3)
+            {
+                const Math::Vec3 u = m.Positions[m.Indices[i + 1]] - m.Positions[m.Indices[i]], w = m.Positions[m.Indices[i + 2]] - m.Positions[m.Indices[i]];
+                s += 0.5 * Math::Vec3{ u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x }.Length();
+            }
+            return s;
+        };
+        const auto& pieces = g.GetNode(split)->Outputs[0];
+        Check(f.Ok(split) && pieces.size() == 2 && Near(meshArea(pieces[0].AsBody()) + meshArea(pieces[1].AsBody()), 100.0, 1e-2),
+              "N8 split: two pieces");
+
+        // 炸开长方体 → 6 个面 → 拼接回实体；管状曲面封口成实体
+        const NodeId box = Add(g, "solid.box"), explode = Add(g, "surface.explode"), join = Add(g, "surface.join");
+        g.Connect({ box, 0, explode, 0 });
+        g.Connect({ explode, 0, join, 0 });
+        const NodeId tube = Add(g, "surface.extrude"), cap = Add(g, "surface.cap");
+        g.Connect({ circle({}, 5), 0, tube, 0 });
+        g.Connect({ tube, 0, cap, 0 });
+        f.Eval();
+        Check(f.Ok(explode) && f.Count(explode) == 6 && !f.kernel->IsSolid(f.Body(explode)), "N8 explode: a box gives six faces");
+        Check(f.Ok(join) && f.kernel->IsSolid(f.Body(join)) && Near(f.Volume(join), 1000.0), "N8 join: six faces stitch into a solid");
+        Check(f.Ok(cap) && f.kernel->IsSolid(f.Body(cap)) && Near(f.Volume(cap), 250 * kPi, 1e-2), "N8 cap: an open tube becomes a cylinder");
+
+        // 翻转、延伸、重建：用点阵曲面（没有修剪的单个面）
+        // 用 4 个角点构造 10 × 10 的平面点阵
+        const NodeId flat = Add(g, "surface.points");
+        for (int i = 0; i < 4; ++i)
+        {
+            const NodeId pt = Add(g, "vector.point");
+            g.SetInputValue(pt, 0, (i % 2) * 10.0);
+            g.SetInputValue(pt, 1, (i / 2) * 10.0);
+            g.Connect({ pt, 0, flat, 0 }, i == 0);
+        }
+        g.SetInputValue(flat, 1, int64_t(2));
+        const NodeId flip = Add(g, "surface.flip"), extend = Add(g, "surface.extend"), rebuild = Add(g, "surface.rebuild");
+        g.Connect({ flat, 0, flip, 0 });
+        g.Connect({ flat, 0, extend, 0 });
+        g.Connect({ flat, 0, rebuild, 0 });
+        f.Eval();
+        const auto [fp0, fn0] = evalAt(flat, 0.5, 0.5);
+        const auto [fp1, fn1] = f.Ok(flip) ? evalAt(flip, 0.5, 0.5) : std::pair{ Math::Point3{}, Math::Vec3{} };
+        Check(f.Ok(flip) && std::abs(fn0.z) > 0.99 && fn0.z * fn1.z < 0, "N8 flip: the normal is reversed");
+        Check(f.Ok(extend) && Near(area(extend), 144.0, 1e-2), "N8 extend: 10 × 10 grows to 12 × 12");
+        Check(f.Ok(rebuild) && Near(area(rebuild), 100.0, 1e-2), "N8 rebuild: same shape");
+        const NodeId flipTrimmed = Add(g, "surface.flip");
+        g.Connect({ trim, 0, flipTrimmed, 0 });
+        f.Eval();
+        Check(f.State(flipTrimmed) == NodeState::Error, "N8 flip: trimmed faces are rejected");
+
+        // 分解：长方体 6 面、12 条边、8 个顶点；边是精确曲线（总长 120）
+        const NodeId dec = Add(g, "surface.deconstruct");
+        g.Connect({ box, 0, dec, 0 });
+        f.Eval();
+        double edgeLength = 0.0;
+        for (const auto& e : g.GetNode(dec)->Outputs[1])
+            edgeLength += e.AsCurve3D()->Length();
+        Check(f.Ok(dec) && f.Count(dec, 0) == 6 && f.Count(dec, 1) == 12 && f.Count(dec, 2) == 8 && Near(edgeLength, 120.0, 1e-3),
+              "N8 deconstruct: faces, edges and vertices of a box");
+
+        // 等参线：10 × 10 平面中间的 U 向线长 10
+        const NodeId iso = Add(g, "surface.isocurve");
+        g.Connect({ flat, 0, iso, 0 });
+        f.Eval();
+        Check(f.Ok(iso) && f.Count(iso) == 1 && Near(g.GetNode(iso)->Outputs[0][0].AsCurve3D()->Length(), 10.0, 1e-3), "N8 isocurve: across a plane");
+
+        // 求交：竖直线穿过平面 → 1 个交点；球与平面 → 交线（圆，周长 2π·4）
+        const NodeId hit = Add(g, "surface.intersect");
+        g.Connect({ flat, 0, hit, 0 });
+        g.Connect({ line({ 3, 4, -5 }, { 3, 4, 5 }), 0, hit, 1 });
+        const NodeId sph = Add(g, "solid.sphere"), cut = Add(g, "surface.intersect"), big = Add(g, "surface.points");
+        for (int i = 0; i < 4; ++i)
+        {
+            const NodeId pt = Add(g, "vector.point");
+            g.SetInputValue(pt, 0, (i % 2) * 20.0 - 10.0);
+            g.SetInputValue(pt, 1, (i / 2) * 20.0 - 10.0);
+            g.SetInputValue(pt, 2, 3.0);
+            g.Connect({ pt, 0, big, 0 }, i == 0);
+        }
+        g.SetInputValue(big, 1, int64_t(2));
+        g.Connect({ sph, 0, cut, 0 });
+        g.Connect({ big, 0, cut, 1 });
+        f.Eval();
+        const auto& hp = g.GetNode(hit)->Outputs[0];
+        Check(f.Ok(hit) && hp.size() == 1 && Near(hp[0].AsVector().x, 3) && Near(hp[0].AsVector().z, 0), "N8 intersect: curve × surface");
+        double loop = 0.0;
+        for (const auto& c : g.GetNode(cut)->Outputs[1])
+            loop += c.AsCurve3D()->Length();
+        Check(f.Ok(cut) && Near(loop, 2 * kPi * 4, 1e-2), "N8 intersect: sphere × plane is a circle");
+
+        // 曲率：半径 5 的球 |K| = 1/25、|H| = 1/5
+        const NodeId curv = Add(g, "surface.curvature");
+        g.Connect({ sph, 0, curv, 0 });
+        g.SetInputValue(curv, 2, 0.3);
+        f.Eval();
+        Check(f.Ok(curv) && Near(std::abs(f.Number(curv, 0)), 0.04, 1e-3) && Near(std::abs(f.Number(curv, 1)), 0.2, 1e-3) &&
+              Near(f.Number(curv, 2), f.Number(curv, 3), 1e-3), "N8 curvature: a sphere is umbilic with K = 1/r²");
+    }
 }
 
 int main()
@@ -817,6 +1050,7 @@ int main()
     TestSurfacePreviewBakeAndFiles();
     TestN6WithKernel();
     TestN7Forms();
+    TestN8Surfaces();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

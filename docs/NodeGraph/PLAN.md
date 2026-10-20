@@ -11,7 +11,9 @@
 > 曲线分析（端点、信息、最近点、求交）、引用点 / 引用实体、任意轴旋转、非均匀缩放、定向、矩形阵列、沿曲线阵列；曲线修改（“曲线/修改”）留在 N6b。
 > N7 已实现（2026-10-20）：Revit 式实体形体（拉伸 / 旋转 / 放样升级，融合、放样融合，各自的空心）、圆锥、圆环、空心标记与线框预览、
 > 形体合并、剪切几何、分割实体、抽壳、实心 / 空心切换、任意平面截面；命名参数、公式、参数表与类型（第 5 节，实现与原设计的差异见第 5.6 节）。
-> 规划（2026-10-20）：N6b、N8～N10——曲线修改、Grasshopper 式曲面、网格、
+> N8 已实现（2026-10-20）：Grasshopper 式曲面——创建（平面、挤出、直纹 / 闭合放样、单轨 / 双轨扫描、边界、网络、拟合、参数曲面）、
+> 修改（翻转、延伸、修剪、分割、拼接、封口、炸开、重建）、分析（分解、等参线、最近点、求交、曲率）（第 6 节，差异见第 6.1 节）。
+> 规划（2026-10-20）：N6b、N9、N10——曲线修改、网格、
 > 几何运算与实体 / 曲面 / 网格之间的转换（第 4～11 节）。
 > 定位：把 MiniCAD 已有的几何能力（二维实体、`ISolidKernel` / SMLib 三维实体内核）封装成可连接的**功能节点**，
 > 用节点图 + 数据流 + 依赖调度实现类似 Grasshopper、Blender Geometry Nodes、UE5 Blueprint 的可视化参数化建模；
@@ -245,21 +247,21 @@ N7 已完成加端口的升级（拉伸的起点 / 工作平面、旋转的起�
 
 | 小类 | 节点（ID） | 状态 | 说明 |
 |---|---|---|---|
-| 创建 | 平面曲面 `surface.planar` | 🆕 | 闭合平面曲线（可含内环）围成的面 |
-| | 挤出曲面 `surface.extrude` | 🆕 | 曲线沿向量挤出（开放曲线 → 开放曲面，不封口；与“实体/拉伸”区分） |
+| 创建 | 平面曲面 `surface.planar` | ✅ | 共面闭合曲线围成的面，被包含的为洞 |
+| | 挤出曲面 `surface.extrude` | ✅ | 曲线沿向量挤出（不封口；与“实体/拉伸”区分） |
 | | 旋转曲面 `surface.revolve` | ✅ | |
-| | 放样曲面 `surface.loft` | ⬆ | 显示名“放样”改为“放样曲面”（关键词保留“放样 loft”）；加参数：类型（普通 / 直纹 / 松弛）、闭合 |
+| | 放样曲面 `surface.loft` | ✅ | 参数“直纹”（相邻截面间各一片直纹面再拼接）、“闭合”（最后一条连回第一条）；“松弛”未做 |
 | | 直纹面 `surface.ruled` | ✅ | |
-| | 单轨扫描 `surface.sweep1`、双轨扫描 `surface.sweep2` | 🆕 | 截面可以多条（沿轨道过渡） |
+| | 单轨扫描 `surface.sweep1`、双轨扫描 `surface.sweep2` | ✅ | 单轨：一条截面（起点在轨道起点）；双轨：1～2 条截面，两端沿两轨滑动、随间距等比缩放 |
 | | 管道 `surface.pipe` | ✅ | |
-| | 边界曲面 `surface.edge`、曲线网络曲面 `surface.network` | 🆕 | 2～4 条边围成（Coons）；两组交叉曲线（Gordon） |
+| | 边界曲面 `surface.edge`、曲线网络曲面 `surface.network` | ✅ | 2～4 条边（自动首尾排序、定向；2 条为直纹，3 条时第四边退化为点）围成的 Coons 面；两组交叉曲线（Gordon） |
 | | 点阵曲面 `surface.points` | ✅ | 点序同“点阵”节点：先 X 后 Y |
-| | 拟合曲面 `surface.fit` | 🆕 | 散乱点（或曲线上的点）按容差最小二乘拟合 |
-| | 参数曲面 `surface.param` | 🆕 | x(u,v)、y(u,v)、z(u,v) 三个表达式 + u / v 区间与采样数 → 点阵曲面 |
+| | 拟合曲面 `surface.fit` | ✅ | 散乱点最小二乘逼近，参数“控制点数”（每个方向）；不按容差 |
+| | 参数曲面 `surface.param` | ✅ | x(u,v)、y(u,v)、z(u,v) 三个公式（可用参数名）+ u / v 区间与采样数 → 点阵曲面；另输出采样点 |
 | 修改 | 偏移曲面 `surface.offset`、加厚 `surface.thicken` | ✅ | |
-| | 翻转 `surface.flip`、延伸 `surface.extend`、修剪 `surface.trim`（用曲线 / 曲面切掉一侧）、分割 `surface.split`、拼接 `surface.join`（缝合成多重曲面，封闭则成为实体）、封口 `surface.cap`（平面开口补面 → 实体）、炸开 `surface.explode`（实体 / 多重曲面 → 单个面）、重建 `surface.rebuild` | 🆕 | 实体 ↔ 曲面的转换都在这里 |
+| | 翻转 `surface.flip`、延伸 `surface.extend`、修剪 `surface.trim`（曲线沿方向投影切开，保留保留点一侧）、分割 `surface.split`（按面输出）、拼接 `surface.join`（缝合成多重曲面，封闭则成为实体）、封口 `surface.cap`（平面开口补面 → 实体）、炸开 `surface.explode`（实体 / 多重曲面 → 单个面）、重建 `surface.rebuild` | ✅ | 实体 ↔ 曲面的转换都在这里；翻转、延伸、重建只用于没有修剪的单个面 |
 | 分析 | 曲面取点 `surface.evaluate`、曲面信息 `surface.info` | ✅ | |
-| | 分解 `surface.deconstruct`（面、边、顶点；实体也可）、等参线 `surface.isocurve`、曲面最近点 `surface.closest`、曲面求交 `surface.intersect`（曲线 × 曲面 → 点，曲面 × 曲面 → 交线）、曲率 `surface.curvature` | 🆕 | |
+| | 分解 `surface.deconstruct`（面、精确边曲线、顶点；实体也可）、等参线 `surface.isocurve`、曲面最近点 `surface.closest`、曲面求交 `surface.intersect`（曲线 × 曲面 → 点，曲面 × 曲面 → 交线）、曲率 `surface.curvature`（高斯、平均、主曲率） | ✅ | |
 
 #### 实体
 
@@ -413,10 +415,22 @@ Revit 与 Grasshopper 的中文叫法有冲突，按以下约定区分（关键�
 - **参数曲面**：三个表达式在 u / v 区间上按采样数取点，再交给点阵曲面（插值）；不需要新的内核接口
 - **修改**：修剪 / 分割的切割者可以是曲线（投影到曲面上）或曲面；拼接按容差缝合，结果封闭时 `IsSolid` 为真，下游就能做布尔；
   封口只补平面开口（非平面开口报错并提示用“边界曲面”补面再拼接）
-- **分析**：分解输出的面是单面 `Body`、边是 `Curve3D`（需要内核给出精确边曲线，现在的 `Edges` 只给折线）、顶点是 `Vector`
+- **分析**：分解输出的面是单面 `Body`、边是 `Curve3D`（`EdgeCurves`：边所在曲线转成 B 样条后按边的区间截取）、顶点是 `Vector`
 
-验收（N8）：平面曲面带洞的面积、挤出曲面面积、单轨 / 双轨扫描与已知解析曲面比较、边界曲面（四边）与点阵曲面一致、网络曲面经过全部输入曲线、
-参数曲面（球面方程）面积接近 4πr²；修剪 → 拼接 → 封口得到封闭实体并能布尔。
+实现在 `BuiltinSurfaceOps.cpp`（曲面的全部节点，注册顺序即菜单顺序；`BuiltinSurfaceNodes.cpp` 只剩“曲线/NURBS”），内核接口见第 10 节。
+
+验收（N8 ✅，`NodeSolidTests` 的 `TestN8Surfaces`）：平面曲面带洞的面积 21π、挤出曲面面积 100π（开放）、三条直线的直纹放样、
+单轨扫描（线段沿直线，面积 50）、双轨扫描（半圆截面沿两条平行直线得到半圆柱面 50π；轨道张开时截面随间距放大）、
+边界曲面（四条边乱序、反向给出）与网络曲面（3 × 3 直线）都得到马鞍面 z = 0.1xy（中点 (5, 5, 2.5)）、拟合曲面经过散乱点、
+参数曲面（圆柱方程）面积 100π；修剪（保留圆内 4π）、分割（两块面积之和 100）、长方体炸开 6 面后拼接回体积 1000 的实体、
+管状曲面封口成圆柱（体积 250π）、翻转法线、延伸（10 × 10 → 12 × 12）、重建、修剪过的面拒绝翻转；
+分解长方体（6 面、12 条精确边总长 120、8 个顶点）、等参线、线 × 面交点、球 × 平面交线（周长 8π）、球面曲率（|K| = 1/r²、|H| = 1/r、脐点）。
+
+### 6.1 与原设计的差异（留待以后）
+- 放样没有“松弛”类型；没有“对齐方向”参数（截面方向与接缝仍要用户保证，边界曲面的四条边会自动排序与定向）
+- 单轨扫描只有一条截面；双轨扫描的截面最多两条，曲线轨道按 12 个截面放样近似
+- 拟合曲面按控制点数逼近，不按容差；修剪 / 分割的切割者只能是曲线（沿方向投影），不能是曲面（可先“曲面求交”得到交线再修剪）
+- 翻转、延伸、重建只用于没有修剪的单个面（按整张曲面计算）；带洞的修剪面的面积 `SmApiBrepComputeArea` 算不准（差约 3%，测试改用网格面积）
 
 ---
 
@@ -547,14 +561,14 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | `Profile` 支持任意平面（或节点侧先把 XY 轮廓变换到工作平面后再交内核） | 工作平面 | 节点侧变换（首选，不改接口） |
 | ✅ `LoftSolid(sections, ruled)`：多截面放样并封口（`SmApiCreateSkinPrimitive`） | 融合、放样融合 | — |
 | ✅ `SweepAlong(profile, path)`：沿空间曲线扫掠并封口（`SmApiCreateCurveSweep`，轮廓包围盒中心对准路径起点） | 放样（空间路径） | — |
-| `Sweep1(rail, sections)`、`Sweep2(rail1, rail2, sections)` | 单轨 / 双轨扫描 | 双轨：沿轨道采样截面后放样 |
-| `ExtrudeCurve(curve, dir)`、`PlanarSurface(loops)` | 挤出曲面、平面曲面、封口 | |
-| `EdgeSurface(curves)`、`NetworkSurface(u, v)`、`FitSurface(points, tol)` | 边界、网络、拟合曲面 | 网络：采样交点后用点阵曲面 |
+| ✅ `SweepSurface(section, rail)`（`SmApiCreateCurveSweep`，不封口）；双轨扫描在节点侧沿轨道放置截面后 `Loft` | 单轨 / 双轨扫描 | — |
+| ✅ `ExtrudeCurve(curve, vector)`（`SmApiCreateExtrude`）、`PlanarSurface(loops)`（`SmApiCreatePlanarFaces`） | 挤出曲面、平面曲面、封口 | — |
+| ✅ `CoonsSurface(bottom, right, top, left)`、`NetworkSurface(u, v)`（Gordon）、`FitSurface(points, controlPoints)`（`ApproximateRandomPoints`） | 边界、网络、拟合曲面 | — |
 | ✅ `Cone`、`Torus`（`SmApiCreateCone` / `SmApiCreateTorus`） | 基本体 | — |
 | ✅ `Shell(body, thickness, openFaces)`（`SmApiShellBrepFull`，向内） | 抽壳 | — |
-| `Split(body, cutter)`、`Trim(surface, cutter, keepSide)` | 曲面分割、修剪 | 实体用平面分割已在节点侧用大长方体的交集 / 差集实现 |
-| `Join(bodies, tol)`、`Cap(body)`、`Explode(body)`、`Flip(body)`、`ExtendSurface`、`RebuildSurface` | 拼接、封口、炸开等 | |
-| `EdgeCurves(body)`（精确 `NurbsCurve`）、`IsoCurve`、`ClosestPoint`、`Intersect(curve/body, body)`、`Curvature` | 分解、分析、求交 | 求交退路：网格求交（精度低，警告） |
+| ✅ `TrimSurface(surface, cutter, direction, keepPoint, split)`（`SmApiTrimProjectParallel`，在副本上做） | 曲面修剪、分割 | 实体用平面分割已在节点侧用大长方体的交集 / 差集实现 |
+| ✅ `JoinSurfaces(bodies, tol)`（`CopyFaces` + `SmApiStitchIntoSolid`）、`CapPlanarHoles`（边界边连环、共面的补 `SmApiCreatePlanarFaces`）、`ExplodeFaces`、`FlipSurface`、`ExtendSurface`、`RebuildSurface` | 拼接、封口、炸开等 | — |
+| ✅ `EdgeCurves(body)`（精确 `NurbsCurve`）、`IsoCurve`、`ClosestPoint`、`IntersectCurve`、`IntersectBodies`、`SurfaceDerivatives`（曲率在节点侧由一阶导数差分） | 分解、分析、求交 | — |
 | ✅ `Section(body, plane)`（已有，节点侧加任意平面） | 截面 | — |
 | `FromMesh(mesh)` | 网格转实体 | — |
 | 空间曲线运算：`OffsetCurve`、`SplitCurve`、`JoinCurves`、`ProjectCurve`、`RebuildCurve`、`IntersectCurves` | 曲线/修改、分析 | 平面曲线走 `ICurveEntity` |
@@ -574,7 +588,7 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | **N6** ✅ | 数据与基础节点补全：`Domain`、`Plane` 类型；数学（取余、取整、反三角、常数、表达式、比较、条件、区间、重映射）、列表（子列表、排序、筛选、移位、交叉引用）、向量与平面、曲线（三点圆弧、椭圆、分析）、变换（旋转任意轴、非均匀缩放、定向、矩形阵列、沿曲线阵列）；引用点 / 引用实体（`BuiltinDataNodes.cpp`、`BuiltinCurveXformNodes.cpp`） | `NodeGraphTests` 的 `TestExpression`（含错误位置）、`TestDataNodes`；`NodeSolidTests` 的 `TestN6WithKernel`（引用实体、实体定向 / 旋转 / 非均匀缩放 / 沿曲线阵列、平面预览不烘焙） |
 | **N6b** | 曲线修改：偏移、修剪 / 分割、延伸、连接、炸开、反转、曲线圆角、投影、重建（第 4.2 节“曲线/修改”） | 平面曲线与偏移 / 修剪命令结果一致；空间曲线经内核 |
 | **N7** ✅ | 实体形体：拉伸 / 旋转 / 放样升级、融合、放样融合、圆锥、圆环；五种空心、`Void` 标记、形体合并、剪切几何、分割实体、抽壳、实心 / 空心切换、任意平面截面；命名参数、公式、参数表与类型（第 5 节；`BuiltinFormNodes.cpp`，内核接口见第 10 节） | 第 5.5 节；差异见第 5.6 节 |
-| **N8** | 曲面：平面、挤出、单 / 双轨扫描、边界、网络、拟合、参数曲面；修剪、分割、延伸、拼接、封口、炸开、翻转、重建；分解、等参线、最近点、求交、曲率（第 6 节） | 第 6 节验收 |
+| **N8** ✅ | 曲面：平面、挤出、单 / 双轨扫描、边界、网络、拟合、参数曲面；修剪、分割、延伸、拼接、封口、炸开、翻转、重建；分解、等参线、最近点、求交、曲率（第 6 节；`BuiltinSurfaceOps.cpp`） | 第 6 节验收；差异见第 6.1 节 |
 | **N9** | 网格：`Mesh` 类型、`MeshOps`、创建 / 修改 / 转换 / 分析节点、`MeshEntity` 与 DWG / DXF 多面网格（第 8 节） | 第 8 节验收 |
 | **N10** | 运算与转换收尾：第 7.2 节矩阵里的每一格都有节点或隐式转换，补齐遗漏；求交的退路与性能警告 | 转换矩阵逐格测试；示例图（参数化窗框：拉伸 + 空心切除；曲面屋顶：网络曲面 → 加厚 → 布尔；网格化导出） |
 | N11 | 后台单线程求值（大模型拖滑块不卡界面）、求值取消；组节点（第 12 节） | |

@@ -183,6 +183,45 @@ namespace MiniCAD::Solid
         // 法线朝向与 Tessellate 的三角形外侧一致
         virtual bool EvaluateSurface(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& normal) = 0;
 
+        // 曲面上一点的位置与对归一化参数 (u, v) 的一阶导数（曲率由调用方用相邻参数处的导数差分得到）
+        virtual bool SurfaceDerivatives(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& du, Math::Vec3& dv) = 0;
+
+        // ── 曲面：创建、修改、分析（docs/NodeGraph/PLAN.md 第 6 节，N8）──────
+        // 平面曲面：共面的闭合曲线围成的面，被包含的曲线为洞
+        virtual BodyPtr PlanarSurface(std::span<const NurbsCurve> loops) = 0;
+        // 挤出曲面：曲线沿向量平移扫过的开放曲面（不封口）
+        virtual BodyPtr ExtrudeCurve(const NurbsCurve& curve, const Math::Vec3& vector) = 0;
+        // 单轨扫描：截面沿轨道扫过的开放曲面（截面的起点应在轨道起点，截面随轨道转动）
+        virtual BodyPtr SweepSurface(const NurbsCurve& section, const NurbsCurve& rail) = 0;
+        // 边界曲面（Coons）：四条边，方向为 bottom P00→P10、right P10→P11、top P01→P11、left P00→P01
+        virtual BodyPtr CoonsSurface(const NurbsCurve& bottom, const NurbsCurve& right, const NurbsCurve& top, const NurbsCurve& left) = 0;
+        // 曲线网络曲面（Gordon）：两组交叉的曲线（各至少 2 条），曲面经过全部曲线
+        virtual BodyPtr NetworkSurface(std::span<const NurbsCurve> u, std::span<const NurbsCurve> v) = 0;
+        // 拟合曲面：散乱点（至少 9 个，投影到最佳平面上分配参数）最小二乘逼近，每个方向 controlPoints 个控制点、三次
+        virtual BodyPtr FitSurface(std::span<const Math::Point3> points, int controlPoints) = 0;
+        // 修剪 / 分割：曲线沿 direction 投影到曲面上切开；split 时保留两侧（结果的面数增加），否则只保留 keepPoint 所在一侧
+        virtual BodyPtr TrimSurface(const BodyPtr& surface, const NurbsCurve& cutter, const Math::Vec3& direction, const Math::Point3& keepPoint, bool split) = 0;
+        // 拼接：全部面合进一个实体并按容差缝合；围成封闭体积时结果是实体（IsSolid 为真）
+        virtual BodyPtr JoinSurfaces(std::span<const BodyPtr> bodies, double tolerance) = 0;
+        // 封口：开口（边界边连成的环）是平面的补上平面面并缝合；全部开口都补上时得到实体。没有平面开口时失败
+        virtual BodyPtr CapPlanarHoles(const BodyPtr& body) = 0;
+        // 炸开：每个面成为一个单独的曲面
+        virtual std::vector<BodyPtr> ExplodeFaces(const BodyPtr& body) = 0;
+        // 翻转法线、延伸、重建：只用于单个面的曲面，按面所在的整张曲面计算（修剪过的面会失败）
+        virtual BodyPtr FlipSurface(const BodyPtr& surface) = 0;
+        virtual BodyPtr ExtendSurface(const BodyPtr& surface, double distance) = 0;                       // 四周各延伸 distance（线性）
+        virtual BodyPtr RebuildSurface(const BodyPtr& surface, int uCount, int vCount) = 0;               // 各方向的控制点数
+        // 精确的边曲线（与 Edges() 的顺序相同）
+        virtual std::vector<NurbsCurve> EdgeCurves(const BodyPtr& body) = 0;
+        // 等参线：第 face 个面在归一化参数 t 处的 u 向（alongU：v = t、u 变化）或 v 向曲线（按整张曲面，不按修剪）
+        virtual NurbsCurve IsoCurve(const BodyPtr& surface, int face, bool alongU, double t) = 0;
+        // 最近点（在修剪后的面上）
+        virtual bool ClosestPoint(const BodyPtr& body, const Math::Point3& p, Math::Point3& closest, double& distance) = 0;
+        // 曲线与实体 / 曲面的交点（没有交点返回空，不算失败）
+        virtual std::vector<Math::Point3> IntersectCurve(const BodyPtr& body, const NurbsCurve& curve) = 0;
+        // 两个实体 / 曲面的交线（没有交线返回空）
+        virtual std::vector<NurbsCurve> IntersectBodies(const BodyPtr& a, const BodyPtr& b) = 0;
+
         // ── 读写（内核自己的格式，用于 .mcad / JSON）────────────────────
         // Load 先校验数据（格式标记、长度、校验和），损坏的数据返回空指针，不会交给内核解析
         virtual std::vector<uint8_t> Save(const BodyPtr& body) = 0;   // 失败返回空
