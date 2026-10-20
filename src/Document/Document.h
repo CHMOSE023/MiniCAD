@@ -2,11 +2,13 @@
 #include "Import/CadExchange.h"
 
 namespace MiniCAD { class FontSystem; }
+namespace MiniCAD::Nodes { class Graph; }
 
 #include "Scene/Scene.h"
 #include "Scene/LayerManager.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Viewport/Camera.h"
+#include <memory>
 #include <string>
 
 namespace MiniCAD
@@ -16,6 +18,7 @@ namespace MiniCAD
 	{
 	public:
 		Document();
+		~Document();
 
 	    // ── 数据访问 ──────────────────────────────────────────
         Scene&              GetScene()              { return m_scene; }
@@ -70,6 +73,11 @@ namespace MiniCAD
 		const CameraState& GetCameraState() const    { return m_cameraState; }
 		void SetCameraState(const CameraState& s)    { m_cameraState = s; }
 
+		// ── 节点图（参数化定义，docs/NodeGraph/PLAN.md）──────────────
+		// 每个文档一张，随 .mcad / JSON 保存（DWG / DXF 不保存）。修改后由编辑器调用 MarkDirty
+		Nodes::Graph&       GetNodeGraph();
+		const Nodes::Graph* FindNodeGraph() const { return m_nodeGraph.get(); }   // 还没有创建时为空
+
 		// ── 序列化 ───────────────────────────────────────────
 		void Serialize(ISerializer& s) const;
 		void Deserialize(ISerializer& s);
@@ -86,5 +94,6 @@ namespace MiniCAD
 
 		FontSystem*    m_fontSystem = nullptr;
 		CameraState    m_cameraState;
+		std::unique_ptr<Nodes::Graph> m_nodeGraph;
 	};
 }

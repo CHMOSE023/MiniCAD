@@ -19,7 +19,7 @@
 **静态库**：用宏 `SM_STATIC` 控制（`cmake/SMLib.cmake` 里定义），不定义时与上游一致。
 
 - `SMLib/inc/SmTypes.h`、`SMLib/inc/nurbs.h`、`SM_API/inc/SmApiTypes.h`：`SM_STATIC` 时 `SM_EXPORT`、`GW_EXPORT`、`SMAPI_EXPORT` 为空（静态库不导入 / 导出符号）
-- `SMLib/src/SmThreadLocalStorage.cpp`：`SM_STATIC` 时 Windows 不走 `TlsAlloc` 路径，改用与 Linux / macOS 构建相同的进程全局路径（静态库没有 `DllMain` 来分配 TLS 槽）。因此内核只能在一个线程里使用
+- `SMLib/src/SmThreadLocalStorage.cpp`：`SM_STATIC` 时 Windows 不走 `TlsAlloc` 路径，改用与 Linux / macOS 构建相同的进程全局路径（静态库没有 `DllMain` 来分配 TLS 槽）。因此内核不能并发使用：`src/Solid/SMLib/SMLibKernel.cpp` 的每个内核方法与实体析构都持有同一把进程级递归锁，多个线程只能轮流调用
 
 **C++20**：上游按 C++17 编译，C++20 会为 `a == b` 额外合成参数对调的候选（`b == a`），下面两类写法因此产生歧义（C2666）。改动不影响 C++17 下的行为。
 

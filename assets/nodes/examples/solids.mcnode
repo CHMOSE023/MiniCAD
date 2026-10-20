@@ -1,0 +1,376 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input.number",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "number",
+          "v": 8
+        },
+        {
+          "t": "number",
+          "v": 4
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "integer",
+          "v": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "input.integer",
+      "x": 0,
+      "y": 120,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "integer",
+          "v": 6
+        },
+        {
+          "t": "integer",
+          "v": 3
+        },
+        {
+          "t": "integer",
+          "v": 12
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "input.number",
+      "x": 0,
+      "y": 240,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "number",
+          "v": 8
+        },
+        {
+          "t": "number",
+          "v": 3
+        },
+        {
+          "t": "number",
+          "v": 12
+        },
+        {
+          "t": "integer",
+          "v": 1
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "solid.box",
+      "x": 230,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 70
+        },
+        {
+          "t": "number",
+          "v": 70
+        },
+        {
+          "t": "number",
+          "v": 10
+        }
+      ],
+      "params": [
+        {
+          "t": "boolean",
+          "v": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "solid.fillet",
+      "x": 460,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 1.5
+        },
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "math.expression",
+      "x": 230,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "a + 20"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "solid.cylinder",
+      "x": 460,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 14
+        },
+        {
+          "t": "number",
+          "v": 10
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 8,
+      "type": "solid.union",
+      "x": 690,
+      "y": 60,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 9,
+      "type": "solid.cylinder",
+      "x": 230,
+      "y": 300,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            22,
+            0,
+            -5
+          ]
+        },
+        {
+          "t": "number",
+          "v": 3
+        },
+        {
+          "t": "number",
+          "v": 60
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 10,
+      "type": "xform.polararray",
+      "x": 460,
+      "y": 300,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "integer",
+          "v": 6
+        },
+        {
+          "t": "number",
+          "v": 360
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 11,
+      "type": "solid.cylinder",
+      "x": 460,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            -5
+          ]
+        },
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "number",
+          "v": 60
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 12,
+      "type": "solid.difference",
+      "x": 920,
+      "y": 180,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 3
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 6,
+      "fromPort": 0,
+      "to": 7,
+      "toPort": 2
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 8,
+      "toPort": 0
+    },
+    {
+      "from": 7,
+      "fromPort": 0,
+      "to": 8,
+      "toPort": 0
+    },
+    {
+      "from": 9,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 2
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 1
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 12,
+      "toPort": 0
+    },
+    {
+      "from": 10,
+      "fromPort": 0,
+      "to": 12,
+      "toPort": 1
+    },
+    {
+      "from": 11,
+      "fromPort": 0,
+      "to": 12,
+      "toPort": 1
+    }
+  ]
+}

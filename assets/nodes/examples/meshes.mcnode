@@ -1,0 +1,327 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input.number",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "number",
+          "v": 6
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 15
+        },
+        {
+          "t": "integer",
+          "v": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "vector.grid",
+      "x": 0,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "integer",
+          "v": 16
+        },
+        {
+          "t": "integer",
+          "v": 16
+        },
+        {
+          "t": "number",
+          "v": 4
+        },
+        {
+          "t": "number",
+          "v": 4
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "type": "vector.deconstruct",
+      "x": 230,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 4,
+      "type": "math.expression",
+      "x": 460,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "c * sin(a * 6) * cos(b * 4)"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "vector.point",
+      "x": 690,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "mesh.delaunay",
+      "x": 920,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 7,
+      "type": "input.integer",
+      "x": 0,
+      "y": 300,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "integer",
+          "v": 10
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "integer",
+          "v": 40
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "mesh.box",
+      "x": 230,
+      "y": 300,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            -25,
+            30,
+            8
+          ]
+        },
+        {
+          "t": "vector",
+          "v": [
+            24,
+            16,
+            16
+          ]
+        },
+        {
+          "t": "integer",
+          "v": 1
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 9,
+      "type": "mesh.subdivide",
+      "x": 460,
+      "y": 300,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "integer",
+          "v": 2
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 10,
+      "type": "mesh.smooth",
+      "x": 690,
+      "y": 300,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "integer",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0.5
+        }
+      ],
+      "params": [
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 1,
+      "to": 4,
+      "toPort": 1
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 2
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 1,
+      "to": 5,
+      "toPort": 1
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 2
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 9,
+      "toPort": 0
+    },
+    {
+      "from": 9,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 0
+    },
+    {
+      "from": 7,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 1
+    }
+  ]
+}

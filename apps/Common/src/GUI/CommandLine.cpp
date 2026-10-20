@@ -97,6 +97,16 @@ namespace MiniCAD
                 upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
             const size_t space = upper.find(' ');
             const std::string name = upper.substr(0, space), option = space == std::string::npos ? "" : upper.substr(space + 1);
+            if (name == "NODES" || name == "NODEBAKE")
+            {
+                editor.GetCmdLine().Echo(std::string("命令: ") + text);
+                if (name == "NODES")
+                    ShowNodePanel(false);
+                else
+                    BakeNodeGraph();
+                StateChanged();
+                return;
+            }
             if (name == "NAVVCUBE" || name == "VIEWCUBE")
             {
                 const bool show = option == "ON" ? true : option == "OFF" ? false : !m_viewCubeVisible;

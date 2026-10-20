@@ -19,6 +19,7 @@
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
 #include "Widgets/AutoComplete.h"
+#include "Widgets/Button.h"
 #include "Widgets/ComboBox.h"
 #include "Widgets/CommandConsole.h"
 #include "Widgets/CommandUI.h"
@@ -35,6 +36,9 @@
 #include "Style/Theme.hpp"
 #include "Widgets/ViewportHost.h"
 #include "GUI/ViewCube.h"
+#include "GUI/NodeEditor.h"
+#include "NodeGraph/Examples.h"
+#include "Widgets/DockSpace.h"
 #include "D3D11/D3D11RenderTarget.h"
 #include <wrl/client.h>
 #include "Widgets/UiLayout.h"
@@ -43,10 +47,13 @@
 #include <shlobj.h>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <functional>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -1034,6 +1041,507 @@ namespace MiniCAD
                 m_docManager.Undo();   // 长方体
                 camera.SetState(savedCamera);
             }
+        }
+
+        // ── 16c''. 节点编辑器（docs/NodeGraph/PLAN.md）：经界面输入连线、键入数值、拖滑块，绘图区实时预览，烘焙与撤销 ──
+        if (Solid::ISolidKernel* kernel = editor.GetSolidKernel())
+        {
+            using namespace Nodes;
+            Scene& scene = doc->GetScene();
+            m_nodeEvalSync = true;   // 下面逐帧检查求值结果：同步求值（后台求值在本节最后单独检查）
+            ShowNodePanel(false);
+            m_ui->Update();
+            RenderFrame();
+            auto* dock = m_layout->GetDock("main");
+            check(m_nodeEditor && dock && dock->IsPanelVisible("nodes") && m_nodeEditor->GetSize().y > 150.0f,
+                  "节点编辑器：打开面板（停靠在绘图区下方）");
+            Graph& graph = doc->GetNodeGraph();
+            if (m_nodeEditor && graph.Empty())
+            {
+                NodeEditorView& ne = *m_nodeEditor;
+                const NodeId slider = ne.AddNodeAt("input.integer", { 30.0f, 20.0f });
+                const NodeId box    = ne.AddNodeAt("solid.box", { 30.0f, 150.0f });
+                const NodeId arr    = ne.AddNodeAt("xform.lineararray", { 300.0f, 40.0f });
+                const NodeId uni    = ne.AddNodeAt("solid.union", { 560.0f, 60.0f });
+                ne.SetSelection({});
+                m_ui->Update();
+                RenderFrame();
+                auto toWindow = [&](MiniGUI::Vec2 local)
+                {
+                    const MiniGUI::Rect r = ne.GetScreenBounds();
+                    return MiniGUI::Vec2{ r.min.x + local.x, r.min.y + local.y };
+                };
+                auto drag = [&](MiniGUI::Vec2 a, MiniGUI::Vec2 b, uint8_t mods = 0)
+                {
+                    m_ui->PointerMove(a, mods);
+                    m_ui->PointerDown(a, MiniGUI::MouseButton::Left, mods);
+                    m_ui->PointerMove({ (a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f }, mods);
+                    m_ui->PointerMove(b, mods);
+                    m_ui->PointerUp(b, MiniGUI::MouseButton::Left, mods);
+                    RenderFrame();
+                };
+                auto port = [&](NodeId id, int i, bool output) { return toWindow(*ne.PortPosition(id, i, output)); };
+                drag(port(box, 0, true), port(arr, 0, false));
+                drag(port(arr, 0, true), port(uni, 0, false));
+                drag(port(slider, 0, true), port(arr, 2, false));
+                check(graph.GetLinks().size() == 3 && graph.IsInputConnected(arr, 2), "节点编辑器：从输出端口拖到输入端口连线（3 条）");
+
+                // 双击“间距”的内联值，键入 8, 0, 0 回车：相邻长方体重叠 2
+                const MiniGUI::Vec2 field = toWindow(*ne.InputFieldPosition(arr, 1));
+                m_ui->PointerMove(field, 0);
+                m_ui->PointerDown(field, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(field, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerDown(field, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(field, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                m_ui->TextInput("8, 0, 0");
+                m_ui->KeyDown(MiniGUI::Key::Enter, 0);
+                m_ui->KeyUp(MiniGUI::Key::Enter, 0);
+                RenderFrame();
+                const Node* arrNode = graph.GetNode(arr);
+                check(arrNode && arrNode->InputValues[1].Type() == DataType::Vector && std::abs(arrNode->InputValues[1].AsVector().x - 8.0) < 1e-9,
+                      "节点编辑器：双击内联值键入向量");
+                auto unionVolume = [&]
+                {
+                    const Node* n = graph.GetNode(uni);
+                    return n && !n->Outputs[0].empty() ? kernel->Volume(n->Outputs[0][0].AsBody()) : -1.0;
+                };
+                check(editor.GetPreviewEntityCount() == 6, "节点编辑器：选中的节点（阵列）额外高亮预览它的 5 个输出");
+                ne.SetSelection({});
+                RenderFrame();
+                check(std::abs(unionVolume() - (10.0 + 4 * 8.0) * 100.0) < 1e-3 && editor.GetPreviewEntityCount() == 1,
+                      "节点编辑器：5 个长方体并成一个（42 × 10 × 10），绘图区预览并集结果");
+
+                // 拖动整数滑块到最右端（10）：下游重算，长方体本身不重算
+                const uint64_t boxSolves = graph.GetNode(box)->SolveCount;
+                const MiniGUI::Vec2 knob = toWindow(*ne.ParamPosition(slider, 0));
+                drag(knob, { knob.x + 400.0f, knob.y });
+                check(graph.GetNode(slider)->Outputs[0][0].AsInteger() == 10 && std::abs(unionVolume() - (10.0 + 9 * 8.0) * 100.0) < 1e-3 &&
+                      graph.GetNode(box)->SolveCount == boxSolves, "节点编辑器：拖滑块到 10，阵列与并集重算，上游的长方体不重算");
+
+                // 三维视图里看预览（截图）
+                RunCommandLine("ViewSWIso");
+                Camera& camera = m_docManager.GetViewport().GetCamera();
+                if (AABB pb; editor.GetPreviewBounds(pb))
+                    camera.ZoomToBounds(AABB({ pb.Min.x - 10, pb.Min.y - 10, pb.Min.z }, { pb.Max.x + 10, pb.Max.y + 10, pb.Max.z }));
+                ne.SetSelection({ box });   // 选中的节点高亮预览
+                RenderFrame();
+                RenderFrame();
+                check(!editor.GetShadedVertices().empty(), "节点编辑器：三维视图里预览实体着色");
+                SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_nodes.bmp");
+                ne.SetSelection({});
+                RenderFrame();
+
+                // 烘焙：一个实体加入图纸，一步撤销
+                auto solidCount = [&] { int n = 0; scene.ForEachObject([&](const Object& o) { n += o.IsKindOf<Solid3DEntity>() ? 1 : 0; }); return n; };
+                const int solidsBefore = solidCount();
+                m_commands.Execute("nodes.bake");
+                check(solidCount() == solidsBefore + 1, "节点编辑器：烘焙把并集结果加入图纸");
+                m_docManager.Undo();
+                check(solidCount() == solidsBefore, "节点编辑器：烘焙可撤销");
+
+                // 节点编辑器有焦点时 Ctrl+Z 撤销节点图的编辑（滑块回到 5）
+                ne.Focus();
+                m_ui->KeyDown(MiniGUI::Key::Z, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                m_ui->KeyUp(MiniGUI::Key::Z, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                RenderFrame();
+                check(graph.GetNode(slider) && graph.GetNode(slider)->Outputs[0][0].AsInteger() == 5 &&
+                      std::abs(unionVolume() - (10.0 + 4 * 8.0) * 100.0) < 1e-3, "节点编辑器：Ctrl+Z 撤销节点图的修改（滑块回到 5）");
+
+                // Delete 删除选中的节点，下游缺少输入
+                ne.SetSelection({ box });
+                m_ui->KeyDown(MiniGUI::Key::Delete, 0);
+                m_ui->KeyUp(MiniGUI::Key::Delete, 0);
+                RenderFrame();
+                check(!graph.GetNode(box) && graph.GetNode(arr)->State == NodeState::Warning && editor.GetPreviewEntityCount() == 0,
+                      "节点编辑器：Delete 删除节点，下游提示缺少输入，预览清空");
+
+                m_docManager.Undo();   // 视图
+                graph.Clear();
+                ne.ResetView();
+                ne.FrameAll();   // 空图：回到原点、缩放 1
+                RenderFrame();
+
+                // 搜索框：Tab 打开，键入中文名回车，节点加在光标处
+                auto key = [&](MiniGUI::Key k, uint8_t mods = 0)
+                {
+                    m_ui->KeyDown(k, mods);
+                    m_ui->KeyUp(k, mods);
+                    RenderFrame();
+                };
+                auto lastNode = [&]() -> const Node* { return graph.GetNodes().empty() ? nullptr : graph.GetNodes().back().get(); };
+                const uint8_t ctrlKey = static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl);
+                ne.Focus();
+                m_ui->PointerMove(toWindow({ 60.0f, 40.0f }), 0);
+                key(MiniGUI::Key::Tab);
+                const bool searchOpened = ne.IsSearchOpen();
+                m_ui->TextInput("长方体");
+                key(MiniGUI::Key::Enter);
+                const Node* sbox = lastNode();
+                const MiniGUI::Vec2 boxAt = ne.LocalToGraph({ 60.0f, 40.0f });
+                check(searchOpened && !ne.IsSearchOpen() && graph.GetNodes().size() == 1 && sbox->TypeId == "solid.box" &&
+                      std::abs(sbox->X - std::round(boxAt.x)) < 1.0f && std::abs(sbox->Y - std::round(boxAt.y)) < 1.0f,
+                      "节点编辑器：Tab 打开搜索框，键入“长方体”回车，在光标处添加节点");
+                const NodeId boxId = sbox->Id;
+
+                // 空白处双击打开搜索框，按英文 ID 搜索
+                const MiniGUI::Vec2 blank = toWindow({ 320.0f, 40.0f });
+                m_ui->PointerMove(blank, 0);
+                m_ui->PointerDown(blank, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(blank, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerDown(blank, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(blank, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                const bool dblOpened = ne.IsSearchOpen();
+                m_ui->TextInput("linear");
+                key(MiniGUI::Key::Enter);
+                check(dblOpened && graph.GetNodes().size() == 2 && lastNode()->TypeId == "xform.lineararray",
+                      "节点编辑器：空白处双击打开搜索框，按英文 ID（linear）添加线性阵列");
+                const NodeId arrId = lastNode()->Id;
+
+                // 从输出端口拖到空白处：打开搜索框，选中的节点自动连上；Esc 关闭不添加
+                drag(port(boxId, 0, true), toWindow({ 620.0f, 60.0f }));
+                const bool linkOpened = ne.IsSearchOpen();
+                key(MiniGUI::Key::Escape);
+                check(linkOpened && !ne.IsSearchOpen() && graph.GetNodes().size() == 2, "节点编辑器：拖到空白处打开搜索框，Esc 关闭不添加节点");
+                drag(port(boxId, 0, true), toWindow({ 620.0f, 60.0f }));
+                m_ui->TextInput("并集");
+                key(MiniGUI::Key::Enter);
+                const NodeId uniId = lastNode()->Id;
+                check(graph.GetNodes().size() == 3 && lastNode()->TypeId == "solid.union" && graph.LinksInto(uniId, 0).size() == 1 &&
+                      graph.LinksInto(uniId, 0)[0].FromNode == boxId, "节点编辑器：从输出端口拖到空白处搜索“并集”，新节点自动连上");
+                drag(port(boxId, 0, true), port(arrId, 0, false));   // 一条连到复制范围以外的连线
+
+                // Alt + 单击引脚：输入引脚断开它的连线，输出引脚断开它的全部连线，各自一步撤销
+                const uint8_t altKey = static_cast<uint8_t>(MiniGUI::ModifierKey::Alt);
+                auto altClick = [&](MiniGUI::Vec2 p)
+                {
+                    m_ui->PointerMove(p, altKey);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, altKey);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, altKey);
+                    RenderFrame();
+                };
+                ne.Focus();
+                altClick(port(arrId, 0, false));
+                const bool inCut = graph.LinksInto(arrId, 0).empty() && graph.LinksFrom(boxId, 0).size() == 1;
+                key(MiniGUI::Key::Z, ctrlKey);
+                const bool inUndone = graph.LinksInto(arrId, 0).size() == 1;
+                altClick(port(boxId, 0, true));
+                const bool outCut = graph.GetLinks().empty() && graph.GetNodes().size() == 3;
+                key(MiniGUI::Key::Z, ctrlKey);
+                check(inCut && inUndone && outCut && graph.LinksFrom(boxId, 0).size() == 2,
+                      "节点编辑器：Alt + 单击输入 / 输出引脚断开连线，Ctrl+Z 恢复");
+                const size_t linksBeforeAlt = graph.GetLinks().size();
+                altClick(port(arrId, 0, true));   // 没有连线的输出引脚：什么也不做，也不开始拖线
+                check(graph.GetLinks().size() == linksBeforeAlt && !ne.IsSearchOpen(), "节点编辑器：Alt + 单击没有连线的引脚不做任何事");
+
+                // 复制粘贴：Ctrl+C 写入剪贴板，Ctrl+V 粘贴到光标处，ID 重新分配，内部连线保留、外部连线丢弃
+                MiniGUI::IClipboard& clip = m_ui->GetClipboard();
+                const std::string savedClip = clip.GetText();
+                ne.SetSelection({ boxId, uniId });
+                ne.Focus();
+                key(MiniGUI::Key::C, ctrlKey);
+                const bool copied = clip.GetText().find("MiniCAD-NodeGraph") != std::string::npos;
+                const MiniGUI::Vec2 pasteLocal{ 450.0f, 120.0f };
+                m_ui->PointerMove(toWindow(pasteLocal), 0);
+                key(MiniGUI::Key::V, ctrlKey);
+                const auto& sel = ne.GetSelection();
+                const Node* pbox = nullptr;
+                const Node* puni = nullptr;
+                for (NodeId id : sel)
+                    if (const Node* n = graph.GetNode(id))
+                        (n->TypeId == "solid.box" ? pbox : puni) = n;
+                const MiniGUI::Vec2 pasteAt = ne.LocalToGraph(pasteLocal);
+                check(copied && graph.GetNodes().size() == 5 && sel.size() == 2 && pbox && puni && pbox->Id > uniId && puni->Id > uniId &&
+                      std::abs(pbox->X - std::round(pasteAt.x)) < 1.0f && std::abs(pbox->Y - std::round(pasteAt.y)) < 1.0f,
+                      "节点编辑器：Ctrl+C / Ctrl+V 复制粘贴节点到光标处，ID 重新分配");
+                check(pbox && puni && graph.GetLinks().size() == 3 && graph.LinksInto(puni->Id, 0).size() == 1 &&
+                      graph.LinksInto(puni->Id, 0)[0].FromNode == pbox->Id && graph.LinksInto(arrId, 0).size() == 1,
+                      "节点编辑器：粘贴保留内部连线，丢弃连到外部的连线");
+                key(MiniGUI::Key::Z, ctrlKey);
+                check(graph.GetNodes().size() == 3 && graph.GetLinks().size() == 2, "节点编辑器：Ctrl+Z 撤销粘贴");
+                clip.SetText(savedClip);
+
+                // 参数表（N7）：两个参数（一个带公式）与一个类型；在参数表里切换类型、点“确定”，参数值与公式结果更新，一步撤销
+                graph.Clear();
+                const NodeId pw = ne.AddNodeAt(kParamNodeType, { 30.0f, 20.0f });
+                const NodeId ph = ne.AddNodeAt(kParamNodeType, { 30.0f, 140.0f });
+                graph.SetParam(pw, 0, std::string("宽度"));
+                graph.SetParam(pw, 2, 600.0);
+                graph.SetParam(ph, 0, std::string("高度"));
+                graph.SetParam(ph, 3, std::string("宽度 × 2"));
+                graph.SaveParamType("小", { { "宽度", 300.0 } });
+                RenderFrame();
+                OpenNodeParamsDialog();
+                m_ui->Update();
+                RenderFrame();
+                auto* dlg = dynamic_cast<MiniGUI::Dialog*>(m_ui->GetTopPopup());
+                // 对话框里的控件（按出现顺序）
+                std::vector<MiniGUI::ComboBox*> combos;
+                std::vector<MiniGUI::TextBox*> boxes;
+                std::vector<MiniGUI::Button*> buttons;
+                std::function<void(MiniGUI::Node*)> walk = [&](MiniGUI::Node* n)
+                {
+                    if (auto* c = dynamic_cast<MiniGUI::ComboBox*>(n)) combos.push_back(c);
+                    if (auto* t = dynamic_cast<MiniGUI::TextBox*>(n)) boxes.push_back(t);
+                    if (auto* b = dynamic_cast<MiniGUI::Button*>(n)) buttons.push_back(b);
+                    for (const auto& ch : n->GetChildren())
+                        walk(ch.get());
+                };
+                if (dlg)
+                    walk(dlg);
+                // 每个参数一行：名称、值、公式三个文字框 + 类别下拉框；最后是类型下拉框与新类型名称
+                check(dlg && dlg->GetTitle() == "参数" && combos.size() == 3 && boxes.size() == 7 && boxes[1]->GetText() == "600" &&
+                      boxes[4]->GetText() == "1200", "参数表：打开，列出参数，公式参数显示算出的值");
+                SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_params.bmp");
+                auto clickButton = [&](const char* text)
+                {
+                    for (MiniGUI::Button* b : buttons)
+                        if (b->GetLabel() && b->GetLabel()->GetText() == text)
+                        {
+                            const MiniGUI::Vec2 c = b->GetScreenBounds().Center();
+                            m_ui->PointerMove(c, 0);
+                            m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
+                            m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
+                            RenderFrame();
+                            return true;
+                        }
+                    return false;
+                };
+                if (combos.size() == 3 && boxes.size() == 7)
+                {
+                    combos[2]->Focus(MiniGUI::FocusReason::Program);
+                    key(MiniGUI::Key::Down);   // 收起时 ↓ 直接选中下一项（类型“小”）
+                    check(combos[2]->GetSelectedText() == "小" && boxes[1]->GetText() == "300", "参数表：选择类型，值填进参数");
+                    check(clickButton("确定") && m_ui->GetTopPopup() == nullptr, "参数表：确定后关闭");
+                    SyncNodeGraph();
+                    const auto& vals = graph.Parameters().Values;
+                    check(vals.count("宽度") && std::abs(vals.at("宽度").AsNumber() - 300.0) < 1e-9 && vals.count("高度") &&
+                          std::abs(vals.at("高度").AsNumber() - 600.0) < 1e-9, "参数表：切换类型后参数与公式结果更新");
+                    ne.Focus();
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    SyncNodeGraph();
+                    check(std::abs(graph.Parameters().Values.at("宽度").AsNumber() - 600.0) < 1e-9, "参数表：Ctrl+Z 一步撤销");
+                }
+                else if (dlg)
+                    dlg->Cancel();
+
+                // 示例（N10，示例是 nodes/examples 里的节点图文件）：点工具行的“示例”，菜单里 ↓↓↓ 回车选第三项“实体：法兰座”，
+                // 插入后求值得到法兰座，一步撤销
+                graph.Clear();
+                MiniGUI::Button* exampleButton = nullptr;
+                std::function<void(MiniGUI::Node*)> findButton = [&](MiniGUI::Node* n)
+                {
+                    if (auto* b = dynamic_cast<MiniGUI::Button*>(n); b && b->GetLabel() && b->GetLabel()->GetText() == "示例")
+                        exampleButton = b;
+                    for (const auto& ch : n->GetChildren())
+                        findButton(ch.get());
+                };
+                if (ne.GetParent())
+                    findButton(ne.GetParent());
+                if (exampleButton)
+                {
+                    const MiniGUI::Vec2 c = exampleButton->GetScreenBounds().Center();
+                    m_ui->PointerMove(c, 0);
+                    m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                }
+                const bool menuOpened = m_ui->GetTopPopup() != nullptr;
+                for (int i = 0; i < 3; ++i)
+                    key(MiniGUI::Key::Down);
+                key(MiniGUI::Key::Enter);
+                SyncNodeGraph();
+                const Node* flange = nullptr;
+                for (const auto& n : graph.GetNodes())
+                    if (n->TypeId == "solid.difference")
+                        flange = n.get();
+                check(exampleButton && menuOpened && graph.GetNodes().size() > 10 && ne.GetSelection().size() == graph.GetNodes().size() && flange &&
+                      flange->State == NodeState::Ok && !flange->Outputs[0].empty(),
+                      "节点编辑器：“示例”菜单从文件插入法兰座，求值得到实体");
+                RenderFrame();
+                SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_example.bmp");
+                ne.Focus();
+                key(MiniGUI::Key::Z, ctrlKey);
+                check(graph.Empty(), "节点编辑器：Ctrl+Z 撤销插入的示例");
+
+                graph.Clear();
+                RenderFrame();
+
+                // N11 后台求值：界面不等待；改动正在算的节点取消重来；“停止”后不再自动求值，修改节点图后继续
+                m_nodeEvalSync = false;
+                m_nodeSyncBudget = -1.0;   // 先检查后台：不论轻重都交给工作线程
+                const NodeId bbox = ne.AddNodeAt("solid.box", { 30.0f, 20.0f });
+                const NodeId barr = ne.AddNodeAt("xform.lineararray", { 300.0f, 20.0f });
+                const NodeId buni = ne.AddNodeAt("solid.union", { 560.0f, 20.0f });
+                graph.SetInputValue(barr, 1, Value(Math::Vec3{ 5, 0, 0 }));
+                graph.SetInputValue(barr, 2, int64_t(40));
+                graph.Connect({ bbox, 0, barr, 0 });
+                graph.Connect({ barr, 0, buni, 0 });
+                auto bgVolume = [&]
+                {
+                    const Node* n = graph.GetNode(buni);
+                    return n && !n->Dirty && !n->Outputs[0].empty() ? kernel->Volume(n->Outputs[0][0].AsBody()) : -1.0;
+                };
+                auto waitNodes = [&]
+                {
+                    const int64_t start = NowTicks();
+                    while (m_nodeJob && NowTicks() - start < 60 * kTicksPerSecond)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        RenderFrame();
+                    }
+                    RenderFrame();
+                };
+                int64_t t0 = NowTicks();
+                RenderFrame();
+                const double frameMs = static_cast<double>(NowTicks() - t0) * 1000.0 / static_cast<double>(kTicksPerSecond);
+                const bool started = m_nodeJob != nullptr;
+                check(started && graph.GetNode(buni)->Dirty && m_nodeStop && m_nodeStop->IsVisible() && m_nodeStatus &&
+                      m_nodeStatus->GetText().find("求值中") != std::string::npos,
+                      "后台求值：节点图交给工作线程，这一帧不等结果，工具行显示进度与“停止”");
+                LOG_INFO("后台求值：开始求值的一帧 %.1f ms", frameMs);
+                graph.SetInputValue(barr, 2, int64_t(30));
+                RenderFrame();
+                check(!m_nodeJob || !m_nodeJob->cancel.load(), "后台求值：改了正在算的阵列数量，这次求值不取消（算完先显示，再接着算新的值）");
+                waitNodes();
+                check(!m_nodeJob && std::abs(bgVolume() - (10.0 + 29 * 5.0) * 100.0) < 1e-3 && !graph.NeedsEvaluate(NodeSolveContext(*doc)) &&
+                      !m_nodeStop->IsVisible(), "后台求值：重新求值得到 30 个长方体的并集");
+
+                graph.SetInputValue(barr, 2, int64_t(60));
+                RenderFrame();
+                bool stopped = false;
+                if (m_nodeJob && !m_nodeJob->finished.load())
+                {
+                    const MiniGUI::Vec2 c = m_nodeStop->GetScreenBounds().Center();
+                    m_ui->PointerMove(c, 0);
+                    m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
+                    stopped = m_nodeJob && m_nodeJob->userStop.load();
+                    waitNodes();
+                    RenderFrame();
+                }
+                check(stopped && !m_nodeJob && graph.GetNode(buni)->Dirty && m_nodeStatus->GetText().find("已停止") != std::string::npos,
+                      "后台求值：点“停止”取消求值，之后不再自动求值");
+                graph.SetInputValue(barr, 2, int64_t(20));
+                RenderFrame();
+                waitNodes();
+                check(std::abs(bgVolume() - (10.0 + 19 * 5.0) * 100.0) < 1e-3, "后台求值：修改节点图后继续求值");
+
+                // 轻的节点图：上次耗时已知且不多时在界面线程上当帧算完，不经过后台（与 N11 之前一样没有延迟）
+                m_nodeSyncBudget = 40.0;
+                graph.Clear();
+                const NodeId ls = ne.AddNodeAt("input.number", { 30.0f, 20.0f });
+                const NodeId la = ne.AddNodeAt("math.add", { 260.0f, 20.0f });
+                graph.Connect({ ls, 0, la, 0 });
+                RenderFrame();
+                waitNodes();   // 新节点耗时未知：第一次交给后台
+                graph.SetParam(ls, 0, 7.0);
+                RenderFrame();
+                const Node* laNode = graph.GetNode(la);
+                check(!m_nodeJob && laNode && !laNode->Dirty && !laNode->Outputs[0].empty() && std::abs(laNode->Outputs[0][0].AsNumber() - 7.0) < 1e-9,
+                      "后台求值：轻的节点图改值后当帧出结果，不交给后台");
+                graph.Clear();
+                RenderFrame();
+                m_nodeEvalSync = true;
+
+                // N11b 组节点：Ctrl+G 建组，双击进入，组内键入数值同步到实例，Esc 返回，Ctrl+Shift+G 解组，Ctrl+Z 撤销
+                {
+                    const NodeId gs  = ne.AddNodeAt("input.number", { 30.0f, 60.0f });
+                    const NodeId ga  = ne.AddNodeAt("math.add", { 260.0f, 60.0f });
+                    const NodeId gm  = ne.AddNodeAt("math.mul", { 490.0f, 60.0f });
+                    const NodeId gn  = ne.AddNodeAt("math.neg", { 720.0f, 60.0f });
+                    graph.SetParam(gs, 0, 3.0);
+                    graph.SetInputValue(ga, 1, 1.0);
+                    graph.SetInputValue(gm, 1, 2.0);
+                    graph.Connect({ gs, 0, ga, 0 });
+                    graph.Connect({ ga, 0, gm, 0 });
+                    graph.Connect({ gm, 0, gn, 0 });
+                    auto negValue = [&](NodeId id)
+                    {
+                        const Node* n = graph.GetNode(id);
+                        return n && !n->Outputs.empty() && !n->Outputs[0].empty() ? n->Outputs[0][0].AsNumber() : 1e9;
+                    };
+                    ne.Focus();
+                    ne.SetSelection({ ga, gm });
+                    key(MiniGUI::Key::G, ctrlKey);
+                    const NodeId inst = ne.GetSelection().size() == 1 ? *ne.GetSelection().begin() : kInvalidNode;
+                    const Node* instNode = graph.GetNode(inst);
+                    check(instNode && instNode->IsGroup() && graph.GetNodes().size() == 3 && graph.GetLinks().size() == 2 && std::abs(negValue(gn) + 8.0) < 1e-9,
+                          "组节点：Ctrl+G 把选中的两个节点收成组，外部连线接到组实例，结果不变");
+
+                    ne.FrameAll();   // 选中的组实例放到画布中央
+                    RenderFrame();
+                    // 双击组实例的标题栏进入组内
+                    const MiniGUI::Vec2 head = toWindow(ne.GraphToLocal(instNode->X + 30.0f, instNode->Y + NodeEditorView::kHeaderH * 0.5f));
+                    m_ui->PointerMove(head, 0);
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        m_ui->PointerDown(head, MiniGUI::MouseButton::Left, 0);
+                        m_ui->PointerUp(head, MiniGUI::MouseButton::Left, 0);
+                    }
+                    RenderFrame();
+                    Graph* inner = ne.CurrentGraph();
+                    check(ne.GetPath().size() == 1 && inner && inner != &graph && inner->GetNode(gm), "组节点：双击组实例进入组内编辑，画布显示组内的图");
+                    SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_group.bmp");
+
+                    // 组内双击乘法的 B 键入 3：写回定义，主图的结果更新
+                    if (inner && ne.InputFieldPosition(gm, 1))
+                    {
+                        const MiniGUI::Vec2 f = toWindow(*ne.InputFieldPosition(gm, 1));
+                        m_ui->PointerMove(f, 0);
+                        for (int i = 0; i < 2; ++i)
+                        {
+                            m_ui->PointerDown(f, MiniGUI::MouseButton::Left, 0);
+                            m_ui->PointerUp(f, MiniGUI::MouseButton::Left, 0);
+                        }
+                        RenderFrame();
+                        m_ui->TextInput("3");
+                        key(MiniGUI::Key::Enter);
+                    }
+                    SyncNodeGraph();
+                    check(std::abs(negValue(gn) + 12.0) < 1e-9, "组节点：组内改值同步到组定义，主图的结果更新为 -(3 + 1) × 3");
+
+                    // Esc：先取消选择，再返回主图（选中刚才的组）
+                    ne.Focus();
+                    key(MiniGUI::Key::Escape);
+                    key(MiniGUI::Key::Escape);
+                    check(ne.GetPath().empty() && ne.CurrentGraph() == &graph && ne.GetSelection() == std::set<NodeId>{ inst },
+                          "组节点：Esc 返回主图，选中刚才的组");
+
+                    // 解组：节点放回主图，组定义随之删除；Ctrl+Z 恢复组
+                    key(MiniGUI::Key::G, static_cast<uint8_t>(ctrlKey | static_cast<uint8_t>(MiniGUI::ModifierKey::Shift)));
+                    SyncNodeGraph();
+                    check(!graph.GetNode(inst) && graph.GetNodes().size() == 4 && graph.Groups().Empty() && std::abs(negValue(gn) + 12.0) < 1e-9,
+                          "组节点：Ctrl+Shift+G 解组，节点与连线放回主图，没有实例的组定义删除");
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    SyncNodeGraph();
+                    check(graph.GetNode(inst) && graph.GetNode(inst)->IsGroup() && !graph.Groups().Empty() && std::abs(negValue(gn) + 12.0) < 1e-9,
+                          "组节点：Ctrl+Z 撤销解组");
+                    graph.Clear();
+                    RenderFrame();
+                }
+
+                // 节点图文件：空图时直接替换，再插入一份，Ctrl+Z 撤销插入（文件对话框不能自动操作，直接用读出的文本）
+                {
+                    const std::string text = graph.CopyToString({});   // 空图：不是节点图
+                    const std::string demo = Nodes::ReadTextFile(m_platform->GetResourceDir() + "/nodes/examples/meshes.mcnode");
+                    check(text.empty() && LoadNodeGraphText(demo, true), "节点图文件：替换为文件里的节点图");
+                    const size_t n = graph.GetNodes().size();
+                    check(n > 0 && LoadNodeGraphText(demo, false) && graph.GetNodes().size() == 2 * n, "节点图文件：插入到已有节点的右侧");
+                    ne.Focus();
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    check(graph.GetNodes().size() == n, "节点图文件：Ctrl+Z 撤销插入");
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    check(graph.Empty(), "节点图文件：Ctrl+Z 撤销替换，回到空图");
+                    graph.Clear();
+                    RenderFrame();
+                }
+            }
+            ShowNodePanel(true);
+            m_ui->Update();
+            check(!dock || !dock->IsPanelVisible("nodes"), "节点编辑器：再次执行切换命令关闭面板");
+            m_nodeEvalSync = false;
         }
 
         // ── 16d. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销 ─────────

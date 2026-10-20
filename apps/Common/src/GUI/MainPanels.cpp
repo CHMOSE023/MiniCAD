@@ -566,7 +566,7 @@ namespace MiniCAD
         m_statusBar->EditLayoutStyle().grow     = 1.0f;
         m_statusBar->EditLayoutStyle().minWidth = 0.0f;
         m_statusBar->SetOnToggled([this] { StateChanged(); });
-        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：文档数量左边，平时隐藏
+        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：版本号左边，平时隐藏
 
         m_uiStatus = status->AddChild<Label>("", 12.0f, Theme::TextDim);
         m_uiStatus->SetEllipsis(true);
@@ -601,10 +601,11 @@ namespace MiniCAD
         {
             for (const std::string& w : m_layout->GetWarnings())
                 LOG_WARN("界面描述：%s", w.c_str());
+            // 界面描述文件正常时状态栏不显示它（右侧是发布版本），有警告时才显示
             const size_t n = m_layout->GetWarnings().size();
-            std::string text = "界面：" + fileName;
+            std::string text;
             if (n > 0)
-                text += "，" + std::to_string(n) + " 条警告：" + m_layout->GetWarnings().front();
+                text = "界面：" + fileName + "，" + std::to_string(n) + " 条警告：" + m_layout->GetWarnings().front();
             m_uiStatus->SetText(text);
             m_uiStatus->SetColor(n > 0 ? Theme::Danger : Theme::TextDim);
             m_uiStatus->SetTooltip(m_uiPath);

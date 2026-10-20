@@ -3,6 +3,7 @@
 // 确认后回调 Editor 的 Submit*。对话框都是 MiniGUI 的弹层。
 #include "GUI/MainFrame.h"
 #include "Core/UIContext.h"
+#include "MiniCADVersion.h"
 #include "Document/Document.h"
 #include "Scene/BlockTable.h"
 #include "Scene/HatchPatternLibrary.h"
@@ -1390,7 +1391,7 @@ namespace MiniCAD
         s.width   = 340.0f;
         body->SetLayoutStyle(s);
         body->AddChild<Label>("MiniCAD", 22.0f);
-        body->AddChild<Label>("版本 1.0", 13.0f, Theme::TextDim);
+        body->AddChild<Label>("版本 " MINICAD_VERSION_STRING "（文件版本 " MINICAD_FILE_VERSION_STRING "）", 13.0f, Theme::TextDim);
         body->AddChild<Separator>();
         body->AddChild<Label>(std::string("界面：MiniGUI（保留模式，") + m_platform->GetGraphicsName() + " 渲染）", 13.0f);
         body->AddChild<Label>("作者：Hello", 13.0f);

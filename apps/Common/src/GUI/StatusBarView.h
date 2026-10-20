@@ -14,7 +14,7 @@ namespace MiniCAD
     class StatusToggle;
 
     // 状态栏：
-    // 当前工具 | 坐标 | 捕捉(F3) 正交(F8) 悬停 | 当前文档 ● 未保存 ……… 共 N 个文档
+    // 当前工具 | 坐标 | 捕捉(F3) 正交(F8) 悬停 | 当前文档 ● 未保存 ……… 发布版本
     // 保留模式：每帧由 Refresh 把 Editor / 文档状态同步到控件，文字没变时不触发重新布局
     class StatusBarView : public MiniGUI::Node
     {
@@ -44,6 +44,6 @@ namespace MiniCAD
         StatusToggle*    m_thin     = nullptr;
         MiniGUI::Label*  m_docName  = nullptr;
         MiniGUI::Label*  m_docDirty = nullptr;
-        MiniGUI::Label*  m_docCount = nullptr;
+        MiniGUI::Label*  m_version  = nullptr;   // 发布版本（MINICAD_VERSION_STRING）
     };
 }

@@ -65,11 +65,12 @@ target_include_directories(MiniCADWeb PRIVATE
 )
 target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCAD MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
 minicad_web_executable(MiniCADWeb)
-# 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui
+# 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui、/nodes（示例节点图）
 target_link_options(MiniCADWeb PRIVATE
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/icons@/icons"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/patterns@/patterns"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/ui@/ui"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/nodes@/nodes"
 )
 set_target_properties(MiniCADWeb PROPERTIES OUTPUT_NAME "index")

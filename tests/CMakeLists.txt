@@ -3,6 +3,7 @@
 # UI/            MiniGUI 单元测试        → MiniGUITests
 # UI/Golden/     MiniGUI 截图对比测试    → MiniGUIGolden（基准图片在 UI/Golden/baseline）
 # Serialization/ MiniDWG 单元测试        → MiniDWGTests
+# NodeGraph/     节点式参数化建模 → NodeGraphTests；NodeSolidTests（MINICAD_WITH_SOLID 时）
 # Solid/         SMLib 冒烟测试、ISolidKernel 接口测试、三维实体、建模命令、出图、三维视图 → SMLibSmokeTests、SolidKernelTests、Solid3DEntityTests、SolidToolTests、SolidDrawingTests、SolidViewTests（MINICAD_WITH_SOLID 时）
 # Data/          测试数据：Dwg/ 样例图纸（来自 ACadSharp，MIT），UI/ 截图测试用图标
 # 各测试程序输出到构建目录根（out/<preset>/），与 ctest 一起使用
@@ -246,6 +247,24 @@ if(MSVC)
 endif()
 minicad_test_output(MiniDWGTests)
 add_test(NAME MiniDWGTests COMMAND MiniDWGTests)
+
+# ── 节点图（docs/NodeGraph/PLAN.md）──────────────────────────────────
+add_executable(NodeGraphTests "NodeGraph/NodeGraphTests.cpp")
+target_link_libraries(NodeGraphTests PRIVATE MiniCAD MiniDWG)
+if(MSVC)
+    target_compile_options(NodeGraphTests PRIVATE /utf-8)
+endif()
+add_test(NAME NodeGraphTests COMMAND NodeGraphTests)
+
+if(MINICAD_WITH_SOLID)
+    add_executable(NodeSolidTests "NodeGraph/NodeSolidTests.cpp")
+    target_link_libraries(NodeSolidTests PRIVATE MiniCADSolid MiniDWG)
+    if(MSVC)
+        target_compile_options(NodeSolidTests PRIVATE /utf-8)
+    endif()
+    target_compile_definitions(NodeSolidTests PRIVATE MINICAD_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")   # 示例节点图文件
+    add_test(NAME NodeSolidTests COMMAND NodeSolidTests)
+endif()
 
 # ── SMLib 冒烟测试（静态链接的实体建模内核）─────────────────────────────
 if(MINICAD_WITH_SOLID)
