@@ -19,6 +19,7 @@
 #include "Core/Entity/EntityAttr.hpp"
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <vector>
 
 using namespace MiniCAD;
@@ -177,9 +178,39 @@ int RunLineTypeScaleTests()
     }
 
     // ── .mcad / JSON 往返：$PDMODE / $PDSIZE / $LTSCALE 随文档保存 ─────────
+    //
+    // 临时目录用「先 %TEMP%、失败退当前目录」的探测式选法（与 RecentFilesTests 的
+    // TempDir() 同一套）：实测在有些进程里 %TEMP% 建不出文件（errno 13 / EACCES），
+    // 而同一个路径在别的进程里可写 —— 只看目录存在或只看 temp_directory_path()
+    // 都发现不了，必须真的写一个文件试。探测失败就静默降级，否则整条往返用例
+    // 会因为环境而不是代码失败。
     for (const char* ext : { ".mcad", ".json" })
     {
-        const auto path = std::filesystem::temp_directory_path() / (std::string("MiniCADDrawingVars") + ext);
+        std::error_code ec;
+        std::filesystem::path dir;
+        for (const std::filesystem::path& cand :
+             { std::filesystem::temp_directory_path(ec),
+               std::filesystem::current_path(ec) })
+        {
+            if (cand.empty()) continue;
+            const std::filesystem::path probe = cand / (std::string("minicad_dvars_probe") + ext);
+            {
+                std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+                if (!out) continue;
+                out << "x";
+                out.close();
+            }
+            ec.clear();
+            std::filesystem::remove(probe, ec);
+            if (!ec) { dir = cand; break; }
+        }
+        if (dir.empty())
+        {
+            Check(false, "找不到可写的临时目录（%TEMP% 与当前目录都不可写）");
+            continue;
+        }
+
+        const auto path = dir / (std::string("MiniCADDrawingVars") + ext);
         const auto u8 = path.u8string();
         const std::string file(u8.begin(), u8.end());
         {
