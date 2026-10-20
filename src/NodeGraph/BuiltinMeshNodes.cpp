@@ -34,6 +34,30 @@ namespace MiniCAD::Nodes
             a.Out(port, Value(std::move(m)));
         }
 
+        // 折线输出为一次空间曲线；horizontalPort ≥ 0 时，整条在一个水平面上的折线另外输出为多段线（曲线实体，可直接拉伸）
+        void OutPolylines(SolveArgs& a, int port, std::vector<MeshOps::Polyline> lines, int horizontalPort = -1)
+        {
+            for (auto& l : lines)
+            {
+                if (horizontalPort >= 0 &&
+                    std::all_of(l.Points.begin(), l.Points.end(), [&](const Math::Point3& p) { return std::abs(p.z - l.Points[0].z) <= 1e-9 * std::max(1.0, std::abs(p.z)); }))
+                    a.Out(horizontalPort, Geo::MakePolyline(l.Points, {}, l.Closed));
+                a.Out(port, Geo::PolylineCurve(std::move(l.Points), l.Closed));
+            }
+        }
+
+        // 曲线类的值 → 折线（按显示精度采样）；不是曲线返回 false
+        bool PolylineOf(const Value& v, std::vector<Math::Point3>& pts)
+        {
+            if (v.Type() == DataType::Curve && v.AsCurve())
+                pts = Geo::Sample(*v.AsCurve());
+            else if (v.Type() == DataType::Curve3D && v.AsCurve3D() && v.AsCurve3D()->IsValid())
+                pts = v.AsCurve3D()->Sample(16);
+            else
+                return false;
+            return pts.size() >= 2;
+        }
+
         // 闭合曲线 → 平面上的折线（不重复首点）与所在平面
         bool LoopOf(SolveArgs& a, const Value& v, std::vector<Math::Point3>& pts, std::optional<Plane>& plane)
         {
@@ -399,6 +423,46 @@ namespace MiniCAD::Nodes
                 };
                 r.Register(std::move(t));
             }
+            // 网格 → 曲线（N10）
+            {
+                NodeTypeInfo t{ .Id = "mesh.edges", .Name = "网格边", .Category = cat,
+                                .Description = "网格的边连成折线（空间曲线）：边界（只属于一个面的边，即开口的轮廓）、折边（两侧面的夹角大于“角度”的边，含边界）或全部边。"
+                                               "按共用顶点判断相邻，没有焊接的网格先“焊接”" };
+                t.Keywords = "mesh edges boundary naked crease feature 边界 开口 折边 特征线 网格线";
+                t.Group    = 1;
+                t.Inputs   = { In("网格", DataType::Mesh), In("角度", DataType::Number, 30.0, "折边：两侧面法线的夹角下限（度）") };
+                t.Params   = { Choice("边", { "边界", "折边", "全部" }, 0) };
+                t.Outputs  = { Out("曲线", DataType::Curve3D) };
+                t.Solve    = [](SolveArgs& a)
+                {
+                    const Mesh* m = MeshOf(a, 0);
+                    if (!m)
+                        return;
+                    if (a.Number(1) < 0 || a.Number(1) > 180)
+                        return a.Error("角度应在 0～180 之间");
+                    const auto kind = static_cast<MeshOps::EdgeKind>(std::clamp<int64_t>(a.ParamInteger(0), 0, 2));
+                    OutPolylines(a, 0, MeshOps::Edges(*m, kind, a.Number(1)));
+                };
+                r.Register(std::move(t));
+            }
+            {
+                NodeTypeInfo t{ .Id = "mesh.outline", .Name = "网格轮廓线", .Category = cat,
+                                .Description = "沿“方向”看网格时的轮廓：两侧面一个朝向、一个背向观察者的边，以及边界边，连成折线（仍在原位置，需要平面图时接“投影”）" };
+                t.Keywords = "mesh outline silhouette contour shadow 轮廓 外轮廓 剪影";
+                t.Group    = 1;
+                t.Inputs   = { In("网格", DataType::Mesh), In("方向", DataType::Vector, Vec(0, 0, -1), "视线方向（默认从上往下看）") };
+                t.Outputs  = { Out("曲线", DataType::Curve3D) };
+                t.Solve    = [](SolveArgs& a)
+                {
+                    const Mesh* m = MeshOf(a, 0);
+                    if (!m)
+                        return;
+                    if (a.Vector(1).LengthSq() < 1e-24)
+                        return a.Error("方向不能为零向量");
+                    OutPolylines(a, 0, MeshOps::Outline(*m, a.Vector(1)));
+                };
+                r.Register(std::move(t));
+            }
         }
 
         void RegisterAnalysis(NodeRegistry& r)
@@ -443,6 +507,70 @@ namespace MiniCAD::Nodes
                     a.Out(0, V(q));
                     a.Out(1, d);
                     a.Out(2, static_cast<int64_t>(f));
+                };
+                r.Register(std::move(t));
+            }
+            // 截面与求交（N10）
+            {
+                NodeTypeInfo t{ .Id = "mesh.section", .Name = "网格截面", .Category = cat,
+                                .Description = "网格与平面（沿法向偏移“高度”）的截交线（折线）：水平截面另外输出曲线（多段线），与实体的“截面”相同" };
+                t.Keywords = "mesh section slice contour plane 剖切 截面 切片 等高线";
+                t.Group    = 1;
+                t.Inputs   = { In("网格", DataType::Mesh), In("高度", DataType::Number, 5.0, "截平面沿平面法向的偏移"), In("平面", DataType::Plane, Value(Plane{})) };
+                t.Outputs  = { Out("曲线", DataType::Curve, "水平截面的多段线（截平面不水平时为空）"), Out("空间曲线", DataType::Curve3D) };
+                t.Solve    = [](SolveArgs& a)
+                {
+                    const Mesh* m = MeshOf(a, 0);
+                    if (!m)
+                        return;
+                    const Plane& pl = a.In(2).AsPlane();
+                    const Math::Vec3 n = pl.Normal();
+                    const bool horizontal = std::abs(std::abs(n.z) - 1.0) < 1e-12;
+                    OutPolylines(a, 1, MeshOps::Section(*m, P(pl.Origin + n * a.Number(1)), n), horizontal ? 0 : -1);
+                };
+                r.Register(std::move(t));
+            }
+            {
+                NodeTypeInfo t{ .Id = "mesh.intersect", .Name = "网格求交", .Category = cat,
+                                .Description = "网格 A 与 B 求交：B 为网格时输出交线，为曲线 / 空间曲线时输出交点（曲线按显示精度采样），为平面时同“网格截面”；"
+                                               "B 为实体 / 曲面时先按默认精度网格化（需要内核）" };
+                t.Keywords = "mesh intersect intersection clash 求交 交线 交点 相交 碰撞";
+                t.Group    = 1;
+                t.Inputs   = { In("A", DataType::Mesh), In("B", DataType::Geometry, {}, "网格、曲线、空间曲线、平面或实体 / 曲面") };
+                t.Outputs  = { Out("点", DataType::Vector), Out("曲线", DataType::Curve3D) };
+                t.Solve    = [](SolveArgs& a)
+                {
+                    const Mesh* m = MeshOf(a, 0);
+                    if (!m)
+                        return;
+                    const Value& b = a.In(1);
+                    switch (b.Type())
+                    {
+                    case DataType::Mesh:
+                        if (!b.AsMesh())
+                            return a.Error("B 为空");
+                        return OutPolylines(a, 1, MeshOps::Intersect(*m, *b.AsMesh()));
+                    case DataType::Body:
+                    {
+                        auto* k = a.Kernel();
+                        if (!k)
+                            return;
+                        const Mesh mb = MeshOps::FromBody(*k, b.AsBody());
+                        if (mb.TriangleCount() == 0)
+                            return a.Error("B 网格化失败：" + k->LastError());
+                        return OutPolylines(a, 1, MeshOps::Intersect(*m, mb));
+                    }
+                    case DataType::Plane:
+                        return OutPolylines(a, 1, MeshOps::Section(*m, P(b.AsPlane().Origin), b.AsPlane().Normal()));
+                    default:
+                    {
+                        std::vector<Math::Point3> pts;
+                        if (!PolylineOf(b, pts))
+                            return a.Error("B 应为网格、曲线、平面或实体 / 曲面");
+                        for (const auto& p : MeshOps::IntersectPolyline(*m, pts))
+                            a.Out(0, V(p));
+                    }
+                    }
                 };
                 r.Register(std::move(t));
             }

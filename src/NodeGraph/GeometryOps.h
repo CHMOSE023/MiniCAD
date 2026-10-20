@@ -66,4 +66,9 @@ namespace MiniCAD::Nodes::Geo
     std::vector<double> DivideByLength(const Solid::NurbsCurve& c, int count);
     // 空间曲线在参数 u 处的单位切线（求不出时为零向量）
     Math::Vec3 TangentAt(const Solid::NurbsCurve& c, double u);
+    // 性能警告（PLAN.md 第 7.2 节）：实体的面数超过 kManyFaces（多由“网格转实体”得到）时警告——布尔、求交、切除会很慢
+    inline constexpr int kManyFaces = 2000;
+    void WarnManyFaces(SolveArgs& a, Solid::ISolidKernel& k, const Solid::BodyPtr& body, const std::string& what);
+    // 折线 → 一次空间曲线（闭合时末尾补上首点）
+    Solid::NurbsCurve PolylineCurve(std::vector<Math::Point3> points, bool closed);
 }

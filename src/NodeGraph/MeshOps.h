@@ -32,6 +32,8 @@ namespace MiniCAD::Nodes::MeshOps
 
     // 实体 / 曲面网格化（ISolidKernel::Tessellate），同一位置的顶点焊接；失败返回空网格
     Mesh FromBody(Solid::ISolidKernel& kernel, const Solid::BodyPtr& body, const Solid::TessParams& params = {});
+    // 求交退路用的较细的网格化：角度 5°，弦高为包围盒对角线的千分之一（N10）
+    Mesh FromBodyFine(Solid::ISolidKernel& kernel, const Solid::BodyPtr& body);
 
     // ── 修改 ─────────────────────────────────────────────────────────
     // 焊接：距离不超过 tolerance 的顶点合并（tolerance ≤ 0 时取尺寸的 1e-9），去掉退化的三角形与没用到的顶点，重算法线
@@ -59,4 +61,26 @@ namespace MiniCAD::Nodes::MeshOps
     Math::Vec3 FaceNormal(const Mesh& m, size_t face);   // 单位法线（退化三角形为零向量）
     // 最近点：返回最近点、距离、三角形序号；空网格返回 false
     bool   ClosestPoint(const Mesh& m, const Math::Point3& p, Math::Point3& closest, double& distance, size_t& face);
+
+    // ── 网格 → 曲线、求交（N10，PLAN.md 第 7 节）────────────────────────
+    // 折线：闭合时不重复首点
+    struct Polyline
+    {
+        std::vector<Math::Point3> Points;
+        bool                      Closed = false;
+    };
+    // 截面：网格与平面（过 origin、法线 normal）的截交线。正好在平面上的顶点按平面正侧处理，所以每条截交线只出现一次
+    std::vector<Polyline> Section(const Mesh& m, const Math::Point3& origin, const Math::Vec3& normal);
+    // 网格边（按共用顶点判断相邻，没焊接的网格先“焊接”）：Boundary 只被一个三角形用到的边；
+    // Crease 两侧法线夹角大于 angleDeg 的边与边界边；All 全部边。相连的边连成折线
+    enum class EdgeKind { Boundary, Crease, All };
+    std::vector<Polyline> Edges(const Mesh& m, EdgeKind kind, double angleDeg = 30.0);
+    // 轮廓线：沿 direction 看过去，两侧三角形一个朝向、一个背向观察者的边，以及边界边
+    std::vector<Polyline> Outline(const Mesh& m, const Math::Vec3& direction);
+    // 两个网格的交线（三角形两两求交，包围盒树加速；共面的三角形对跳过）
+    std::vector<Polyline> Intersect(const Mesh& a, const Mesh& b);
+    // 折线（按顺序的点，不闭合）与网格的交点，按沿折线的顺序；同一点只给一次
+    std::vector<Math::Point3> IntersectPolyline(const Mesh& m, const std::vector<Math::Point3>& points);
+    // 首尾相接的线段连成折线：端点距离不超过 tolerance 视为同一点；重复的线段只算一次，分叉处断开
+    std::vector<Polyline> ChainSegments(const std::vector<std::pair<Math::Point3, Math::Point3>>& segments, double tolerance);
 }

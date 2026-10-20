@@ -109,6 +109,8 @@ set(MINICAD_NODEGRAPH_SOURCES
     "${MINICAD_SRC}/NodeGraph/CurveOps.cpp"
     "${MINICAD_SRC}/NodeGraph/BuiltinMeshNodes.cpp"
     "${MINICAD_SRC}/NodeGraph/MeshOps.cpp"
+    "${MINICAD_SRC}/NodeGraph/MeshIntersect.cpp"
+    "${MINICAD_SRC}/NodeGraph/Examples.cpp"
     "${MINICAD_SRC}/NodeGraph/BuiltinFormNodes.cpp"
     "${MINICAD_SRC}/NodeGraph/BuiltinSurfaceOps.cpp"
 )

@@ -3,6 +3,7 @@
 #include "GUI/NodeEditor.h"
 #include "Core/UIContext.h"
 #include "Core/Entity/Entity.hpp"
+#include "NodeGraph/Examples.h"
 #include "NodeGraph/GeometryOps.h"
 #include "Style/Theme.hpp"
 #include "Widgets/Button.h"
@@ -11,6 +12,7 @@
 #include "Widgets/TextBox.h"
 #include "Widgets/DockSpace.h"
 #include "Widgets/Label.h"
+#include "Widgets/Menu.h"
 #include "Widgets/Panel.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
@@ -70,6 +72,32 @@ namespace MiniCAD
             const Vec2 size = m_nodeEditor->GetSize();
             m_nodeEditor->Focus();
             m_nodeEditor->OpenAddMenuAt({ size.x * 0.35f, size.y * 0.3f });   // 新节点放在画布中部偏左上
+        });
+        // 示例菜单挂在按钮下方：按钮在 addTool 返回后才有，经共享的指针取到
+        auto exampleButton = std::make_shared<Button*>(nullptr);
+        *exampleButton = addTool("示例", "插入示例节点图（参数化窗框、曲面屋顶、网格化导出、网格截面与求交）；与已有参数重名的参数会自动改名", [this, exampleButton]
+        {
+            if (!m_nodeEditor || !*exampleButton)
+                return;
+            // 没有实体内核（网页版）时，用到三维实体 / 曲面的示例禁用
+            const bool kernel = m_platform->GetSolidKernel() != nullptr;
+            std::vector<MenuItem> items;
+            for (const auto& e : Nodes::Examples())
+            {
+                const std::string id = e.Id;
+                const bool usable = kernel || !e.NeedsKernel;
+                MenuItem item(usable ? std::string(e.Name) : std::string(e.Name) + "（需要实体内核）", [this, id]
+                {
+                    if (const Nodes::ExampleGraph* ex = Nodes::FindExample(id); ex && m_nodeEditor)
+                    {
+                        m_nodeEditor->Focus();
+                        m_nodeEditor->InsertGraph(Nodes::ExampleToString(*ex));
+                    }
+                });
+                items.push_back(std::move(item.Enabled(usable)));
+            }
+            const Rect r = (*exampleButton)->GetScreenBounds();
+            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
         });
         addTool("参数", "参数表：集中编辑全部“参数”节点的名称、类别、值、公式，保存与切换类型（族类型）", [this] { OpenNodeParamsDialog(); });
         addTool("烘焙", "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销", [this] { BakeNodeGraph(); });
@@ -155,10 +183,13 @@ namespace MiniCAD
         {
             double ms = 0.0;
             int errors = 0;
+            const Nodes::Node* slowest = nullptr;
             for (const auto& n : g.GetNodes())
             {
                 ms += n->Millis;
                 errors += n->State == Nodes::NodeState::Error ? 1 : 0;
+                if (!slowest || n->Millis > slowest->Millis)
+                    slowest = n.get();
             }
             char buf[128];
             if (g.Empty())
@@ -167,7 +198,13 @@ namespace MiniCAD
                 std::snprintf(buf, sizeof(buf), "%zu 个节点，%d 个错误，%.1f ms", g.GetNodes().size(), errors, ms);
             else
                 std::snprintf(buf, sizeof(buf), "%zu 个节点，%.1f ms", g.GetNodes().size(), ms);
-            m_nodeStatus->SetText(buf);
+            std::string status = buf;
+            if (slowest && slowest->Millis >= 1000)   // 性能警告：指出最慢的节点
+            {
+                std::snprintf(buf, sizeof(buf), "，最慢：%s %.1f s", slowest->Title().c_str(), slowest->Millis / 1000);
+                status += buf;
+            }
+            m_nodeStatus->SetText(status);
         }
     }
 

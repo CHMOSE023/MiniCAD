@@ -3,7 +3,9 @@
 // 变换、预览（离散缓存、绘图区着色面）与烘焙；空间曲线与曲面（放样、加厚、旋转曲面、点阵曲面、管道、读写往返与导出）；
 // N6：引用图纸里的三维实体、实体的定向 / 任意轴旋转 / 非均匀缩放 / 沿曲线阵列、平面预览；
 // N7：五种形体与空心、圆锥 / 圆环、形体合并、剪切几何、分割、抽壳、实心 / 空心、任意平面截面、旧图兼容；
-// N8：曲面的创建、修改（修剪、分割、炸开、拼接、封口、翻转、延伸、重建）与分析（分解、等参线、最近点、求交、曲率）
+// N8：曲面的创建、修改（修剪、分割、炸开、拼接、封口、翻转、延伸、重建）与分析（分解、等参线、最近点、求交、曲率）；
+// N9：网格；N10：网格 → 曲线、网格求交、求交退路与性能警告、转换矩阵逐格、示例图
+#include "NodeGraph/Examples.h"
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/Preview.h"
 #include "Document/Document.h"
@@ -1263,6 +1265,260 @@ namespace
         Check(doc.GetScene().EntityCount() == 0, "N9 bake: one undo step");
     }
 
+    // 折线 / 空间曲线的总长
+    double TotalLength(const DataList& list)
+    {
+        double len = 0.0;
+        for (const auto& v : list)
+            if (v.Type() == DataType::Curve3D && v.AsCurve3D())
+                len += v.AsCurve3D()->Length();
+        return len;
+    }
+
+    const Node* FirstOfType(const Graph& g, const char* type)
+    {
+        for (const auto& n : g.GetNodes())
+            if (n->TypeId == type)
+                return n.get();
+        return nullptr;
+    }
+
+    // N10：网格 → 曲线（截面、网格边、轮廓线）、网格求交、求交的退路与性能警告、第 7.2 节转换矩阵逐格、示例图
+    void TestN10()
+    {
+        Fixture f;
+        Graph& g = f.g;
+        auto out = [&](NodeId id, int port = 0) -> const DataList& { return g.GetNode(id)->Outputs[port]; };
+        auto op = [&](const char* type, NodeId src, int port = 0, int fromPort = 0)
+        {
+            const NodeId n = Add(g, type);
+            g.Connect({ src, fromPort, n, port });
+            return n;
+        };
+        auto closedCount = [&](NodeId id, int port)
+        {
+            size_t n = 0;
+            for (const auto& v : out(id, port))
+                n += v.AsCurve3D() && v.AsCurve3D()->IsClosed() ? 1 : 0;
+            return n;
+        };
+
+        // ── 网格 → 曲线（不需要内核）──
+        f.ctx.Kernel = nullptr;
+        const NodeId box = Add(g, "mesh.box"), sphere = Add(g, "mesh.sphere"), plane = Add(g, "mesh.plane");
+        const NodeId secBox = op("mesh.section", box), secTilt = op("mesh.section", sphere);
+        g.SetInputValue(secBox, 1, 0.0);
+        g.SetInputValue(secTilt, 1, 0.0);
+        g.SetInputValue(secTilt, 2, Value(*Plane::FromNormal({ 0, 0, 0 }, { 1, 1, 1 })));
+        const NodeId boundary = op("mesh.edges", plane), crease = op("mesh.edges", box), all = op("mesh.edges", box);
+        g.SetParam(crease, 0, int64_t(1));
+        g.SetParam(all, 0, int64_t(2));
+        const NodeId outline = op("mesh.outline", sphere);
+        f.Eval();
+        Check(f.Ok(secBox) && out(secBox, 1).size() == 1 && closedCount(secBox, 1) == 1 && Near(TotalLength(out(secBox, 1)), 40.0) &&
+                  out(secBox, 0).size() == 1,
+              "N10 mesh.section: a box cut at mid height is one closed square (also as a polyline)");
+        Check(f.Ok(secTilt) && closedCount(secTilt, 1) == 1 && out(secTilt, 0).empty() && Near(TotalLength(out(secTilt, 1)), 2 * kPi * 5, 0.02),
+              "N10 mesh.section: a tilted plane through the sphere centre is a great circle (no polyline output)");
+        Check(f.Ok(boundary) && out(boundary).size() == 1 && closedCount(boundary, 0) == 1 && Near(TotalLength(out(boundary)), 40.0),
+              "N10 mesh.edges: the boundary of the 10 × 10 plane mesh");
+        Check(f.Ok(crease) && out(crease).size() == 12 && Near(TotalLength(out(crease)), 120.0), "N10 mesh.edges: 12 crease edges of the box");
+        Check(f.Ok(all) && Near(TotalLength(out(all)), 120.0 + 6 * 10 * std::sqrt(2.0)), "N10 mesh.edges: every edge incl. face diagonals");
+        Check(f.Ok(outline) && out(outline).size() == 1 && closedCount(outline, 0) == 1 && Near(TotalLength(out(outline)), 24 * 10 * std::sin(kPi / 24)),
+              "N10 mesh.outline: the sphere seen from above outlines at the equator");
+
+        // 网格求交：盒子与平移 (3, 4, 2.5) 的盒子 → 一圈交线，长 2 × (30 − 3 − 4 − 2.5)；直线 → 两个交点；平面 → 截面；实体 → 没有内核时报错
+        const NodeId moved = op("xform.move", box);
+        g.SetInputValue(moved, 1, Value(Math::Vec3{ 3, 4, 2.5 }));
+        const NodeId mm = op("mesh.intersect", box);
+        g.Connect({ moved, 0, mm, 1 });
+        const NodeId line = Add(g, "curve.line");
+        g.SetInputValue(line, 0, Value(Math::Vec3{ -20, 0.3, 0.2 }));
+        g.SetInputValue(line, 1, Value(Math::Vec3{ 20, 0.3, 0.2 }));
+        const NodeId ml = op("mesh.intersect", box);
+        g.Connect({ line, 0, ml, 1 });
+        const NodeId mp = op("mesh.intersect", box);
+        g.SetInputValue(mp, 1, Value(Plane{}));
+        f.Eval();
+        Check(f.Ok(mm) && out(mm, 1).size() == 1 && closedCount(mm, 1) == 1 && Near(TotalLength(out(mm, 1)), 41.0),
+              "N10 mesh.intersect: two overlapping boxes meet in one closed loop");
+        Check(f.Ok(ml) && out(ml, 0).size() == 2 && Near(std::abs(out(ml, 0)[0].AsVector().x), 5.0) && out(ml, 0)[0].AsVector().x < 0,
+              "N10 mesh.intersect: a line pierces the box twice, in order along the line");
+        Check(f.Ok(mp) && closedCount(mp, 1) == 1 && Near(TotalLength(out(mp, 1)), 40.0), "N10 mesh.intersect: a plane gives the section");
+
+        // ── 有内核 ──
+        f.ctx.Kernel = f.kernel;
+        // 曲面求交：球与长方体（顶面在球心高度）交于赤道；“网格近似”与精确结果一致
+        const NodeId ball = Add(g, "solid.sphere"), slab = Add(g, "solid.box");
+        g.SetInputValue(slab, 0, Value(Math::Vec3{ -10, -10, -10 }));
+        g.SetInputValue(slab, 1, 20.0);
+        g.SetInputValue(slab, 2, 20.0);
+        g.SetInputValue(slab, 3, 10.0);
+        const NodeId exact = op("surface.intersect", ball), approx = op("surface.intersect", ball);
+        g.Connect({ slab, 0, exact, 1 });
+        g.Connect({ slab, 0, approx, 1 });
+        g.SetParam(approx, 0, int64_t(1));
+        const NodeId pierceExact = op("surface.intersect", ball), pierceApprox = op("surface.intersect", ball);
+        for (NodeId n : { pierceExact, pierceApprox })
+            g.Connect({ line, 0, n, 1 });
+        g.SetParam(pierceApprox, 0, int64_t(1));
+        f.Eval();
+        Check(f.Ok(exact) && Near(TotalLength(out(exact, 1)), 2 * kPi * 5, 1e-3), "N10 surface.intersect exact: the equator");
+        Check(f.Ok(approx) && closedCount(approx, 1) == 1 && Near(TotalLength(out(approx, 1)), 2 * kPi * 5, 5e-3),
+              "N10 surface.intersect mesh approximation: one closed loop close to the equator");
+        Check(f.Ok(pierceExact) && f.Ok(pierceApprox) && out(pierceExact, 0).size() == 2 && out(pierceApprox, 0).size() == 2 &&
+                  Near(std::abs(out(pierceApprox, 0)[0].AsVector().x), std::sqrt(25 - 0.09 - 0.04), 1e-2),
+              "N10 surface.intersect: a line pierces the sphere twice (exact and mesh)");
+
+        // 隐式转换：实体连到网格节点（截面、轮廓线）
+        const NodeId bodySec = op("mesh.section", ball);
+        g.SetInputValue(bodySec, 1, 0.0);
+        f.Eval();
+        Check(f.Ok(bodySec) && closedCount(bodySec, 1) == 1 && Near(TotalLength(out(bodySec, 1)), 2 * kPi * 5, 0.02),
+              "N10 a solid on a mesh port is tessellated implicitly (section)");
+
+        // 性能警告：面数超过 2000 的多面实体参与布尔
+        const NodeId fine = Add(g, "mesh.sphere");
+        g.SetInputValue(fine, 2, Value(int64_t(48)));
+        g.SetInputValue(fine, 3, Value(int64_t(24)));
+        const NodeId poly = op("mesh.tobody", fine);
+        const NodeId uni = Add(g, "solid.union");
+        g.Connect({ poly, 0, uni, 0 });
+        const NodeId small = Add(g, "solid.box");
+        g.SetInputValue(small, 0, Value(Math::Vec3{ 2, 2, 2 }));
+        g.Connect({ small, 0, uni, 0 }, false);
+        f.Eval();
+        const Node* un = g.GetNode(uni);
+        Check(f.Ok(poly) && un->State == NodeState::Warning && un->Message.find("个面") != std::string::npos,
+              "N10 boolean on a 2208-face polyhedral solid warns about speed");
+        std::printf("  (mesh.tobody %.0f ms, union %.0f ms)\n", g.GetNode(poly)->Millis, un->Millis);
+
+        // ── 第 7.2 节转换矩阵：每一格都有节点或隐式转换 ──
+        {
+            Fixture m;
+            Graph& h = m.g;
+            auto o = [&](NodeId id, int port = 0) -> const DataList& { return h.GetNode(id)->Outputs[port]; };
+            auto conv = [&](const char* type, NodeId src, int fromPort = 0)
+            {
+                const NodeId n = Add(h, type);
+                h.Connect({ src, fromPort, n, 0 });
+                return n;
+            };
+            auto isType = [&](NodeId id, int port, DataType t) { return h.GetNode(id)->State != NodeState::Error && !o(id, port).empty() && o(id, port)[0].Type() == t; };
+            auto solid = [&](NodeId id) { return isType(id, 0, DataType::Body) && m.kernel->IsSolid(o(id)[0].AsBody()); };
+            auto surface = [&](NodeId id) { return isType(id, 0, DataType::Body) && !m.kernel->IsSolid(o(id)[0].AsBody()); };
+
+            const NodeId circle = Add(h, "curve.circle");
+            const NodeId c2c = conv("curve.info", circle);            // 曲线 → 空间曲线（隐式）
+            const NodeId c2s = conv("surface.extrude", circle);       // 曲线 → 曲面
+            const NodeId c2b = conv("solid.extrude", circle);         // 曲线 → 实体
+            const NodeId c2m = conv("mesh.fromcurve", circle);        // 曲线 → 网格
+            const NodeId s2c = conv("surface.isocurve", c2s);         // 曲面 → 曲线
+            const NodeId s2s = conv("surface.offset", c2s);           // 曲面 → 曲面
+            const NodeId s2b = conv("surface.thicken", c2s);          // 曲面 → 实体
+            const NodeId s2m = conv("mesh.info", c2s);                // 曲面 → 网格（隐式）
+            const NodeId b2c = conv("solid.section", c2b);            // 实体 → 曲线
+            const NodeId b2s = conv("surface.explode", c2b);          // 实体 → 曲面
+            const NodeId b2m = conv("mesh.from", c2b);                // 实体 → 网格
+            const NodeId m2c = conv("mesh.edges", c2m);               // 网格 → 曲线（N10）
+            const NodeId m2s = conv("mesh.tobody", c2m);              // 网格 → 曲面（开放网格）
+            const NodeId m2b = conv("mesh.tobody", b2m);              // 网格 → 实体（封闭网格）
+            m.Eval();
+            Check(isType(c2c, 0, DataType::Boolean), "N10 matrix: curve → curve (implicit to Curve3D)");
+            Check(surface(c2s) && solid(c2b) && isType(c2m, 0, DataType::Mesh), "N10 matrix: curve → surface / solid / mesh");
+            Check(isType(s2c, 0, DataType::Curve3D) && surface(s2s) && solid(s2b) && isType(s2m, 0, DataType::Integer),
+                  "N10 matrix: surface → curve / surface / solid / mesh (implicit)");
+            Check(isType(b2c, 1, DataType::Curve3D) && surface(b2s) && isType(b2m, 0, DataType::Mesh), "N10 matrix: solid → curve / surface / mesh");
+            Check(isType(m2c, 0, DataType::Curve3D) && surface(m2s) && solid(m2b), "N10 matrix: mesh → curve / surface / solid");
+        }
+
+        // ── 示例图：经 ExampleToString / PasteFromString 插入空图，求值后检查结果 ──
+        for (const auto& ex : Examples())
+        {
+            Fixture e;
+            if (!ex.NeedsKernel)
+                e.ctx.Kernel = nullptr;   // 不需要内核的示例在网页版也能用
+            const auto ids = e.g.PasteFromString(ExampleToString(ex), 0, 0);
+            e.Eval();
+            int errors = 0;
+            for (const auto& n : e.g.GetNodes())
+                if (n->State == NodeState::Error)
+                {
+                    std::printf("  %s: %s — %s\n", ex.Id, n->Title().c_str(), n->Message.c_str());
+                    ++errors;
+                }
+            Check(!ids.empty() && errors == 0, (std::string("N10 example evaluates without errors: ") + ex.Name).c_str());
+        }
+        {
+            // 网格截面与求交：球与长方体一圈交线、7 圈等高线、轮廓线（没有内核）
+            Fixture e;
+            e.ctx.Kernel = nullptr;
+            e.g.PasteFromString(ExampleToString(*FindExample("meshCurves")), 0, 0);
+            e.Eval();
+            const Node* cut = FirstOfType(e.g, "mesh.intersect");
+            const Node* contours = FirstOfType(e.g, "mesh.section");
+            const Node* outline = FirstOfType(e.g, "mesh.outline");
+            Check(cut && cut->Outputs[1].size() == 1 && cut->Outputs[1][0].AsCurve3D()->IsClosed() && contours && contours->Outputs[1].size() == 7 &&
+                      outline && !outline->Outputs[0].empty(),
+                  "N10 example mesh curves: one intersection loop, 7 contours, an outline (no kernel)");
+        }
+        {
+            // 窗框：体积 = 厚 × (宽 × 高 − (宽 − 2 框宽) × (高 − 3 框宽))；改宽度后重新计算
+            Fixture e;
+            e.g.PasteFromString(ExampleToString(*FindExample("window")), 0, 0);
+            e.Eval();
+            const Node* info = FirstOfType(e.g, "solid.info");
+            Check(info && !info->Outputs[0].empty() && Near(info->Outputs[0][0].AsNumber(), 80.0 * (1200 * 1500 - 1080.0 * 1320)),
+                  "N10 example window: frame volume from the parameters");
+            for (NodeId id : e.g.ParameterNodes())
+                if (e.g.GetNode(id)->Params[0].AsText() == "宽")
+                    e.g.SetParam(id, 2, 1000.0);
+            e.Eval();
+            Check(info && !info->Outputs[0].empty() && Near(info->Outputs[0][0].AsNumber(), 80.0 * (1000 * 1500 - 880.0 * 1320)),
+                  "N10 example window: changing the width parameter updates the frame");
+        }
+        {
+            // 曲面屋顶：加厚后的实体减去天窗，仍是实体、体积略小
+            Fixture e;
+            e.g.PasteFromString(ExampleToString(*FindExample("roof")), 0, 0);
+            e.Eval();
+            const Node* thick = FirstOfType(e.g, "surface.thicken");
+            const Node* roof = FirstOfType(e.g, "solid.difference");
+            const double before = thick && !thick->Outputs[0].empty() ? e.kernel->Volume(thick->Outputs[0][0].AsBody()) : 0.0;
+            const double after = roof && !roof->Outputs[0].empty() ? e.kernel->Volume(roof->Outputs[0][0].AsBody()) : 0.0;
+            Check(before > 20 * 12 * 0.3 && e.kernel->IsSolid(roof->Outputs[0][0].AsBody()) && after < before - kPi * 1.5 * 1.5 * 0.29 &&
+                      after > before - kPi * 1.5 * 1.5 * 0.4,
+                  "N10 example roof: thickened network surface minus the skylight");
+        }
+        {
+            // 网格化导出：封闭网格 + 6 圈等高线；烘焙后导出 DXF，读回仍是同样面数的网格
+            Document doc;
+            Graph& dg = doc.GetNodeGraph();
+            dg.PasteFromString(ExampleToString(*FindExample("meshExport")), 0, 0);
+            SolveContext ctx;
+            ctx.Kernel = f.kernel;
+            dg.Evaluate(ctx);
+            const Node* mesh = FirstOfType(dg, "mesh.from");
+            const Node* contours = FirstOfType(dg, "mesh.section");
+            size_t loops = 0;
+            for (const auto& v : contours->Outputs[1])
+                loops += v.AsCurve3D()->IsClosed() ? 1 : 0;
+            const Solid::Mesh* m = mesh && !mesh->Outputs[0].empty() ? mesh->Outputs[0][0].AsMesh().get() : nullptr;
+            Check(m && MeshOps::IsClosed(*m) && loops == 6 && contours->Outputs[0].size() == 6, "N10 example mesh export: closed mesh and 6 contours");
+            const int baked = Bake(dg, {}, doc.GetScene(), doc.GetCommandStack(), f.kernel);
+            size_t faces = 0;
+            doc.GetScene().ForEachObject([&](const Object& o) { if (o.IsKindOf<MeshEntity>()) faces = static_cast<const MeshEntity&>(o).GetLocalMesh().TriangleCount(); });
+            const auto path = (std::filesystem::temp_directory_path() / "minicad_node_example.dxf").string();
+            Check(m && baked == 1 + 12 && faces == m->TriangleCount() && doc.SaveToFile(path),
+                  "N10 example mesh export: bake the mesh and 6 contours (polyline + spline each), save DXF");
+            Document back;
+            size_t backFaces = 0;
+            if (back.LoadFromFile(path))
+                back.GetScene().ForEachObject([&](const Object& o) { if (o.IsKindOf<MeshEntity>()) backFaces = static_cast<const MeshEntity&>(o).GetLocalMesh().TriangleCount(); });
+            Check(faces > 0 && backFaces == faces, "N10 example mesh export: the DXF reads back as the same polyface mesh");
+        }
+    }
+
     // N8：曲面的创建（平面带洞、挤出、直纹放样、单轨 / 双轨扫描、边界、网络、拟合、参数曲面）、
     // 修改（修剪、分割、炸开 → 拼接成实体、封口、翻转、延伸、重建）、分析（分解、等参线、最近点、求交、曲率）
     void TestN8Surfaces()
@@ -1514,6 +1770,7 @@ int main()
     TestN8Surfaces();
     TestN6bCurves();
     TestN9Meshes();
+    TestN10();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

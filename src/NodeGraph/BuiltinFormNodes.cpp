@@ -399,6 +399,7 @@ namespace MiniCAD::Nodes
             for (size_t i = 0; i < cutters.size(); ++i)
             {
                 const Solid::BodyPtr& c = cutters[i].AsBody();
+                Geo::WarnManyFaces(a, k, c, "第 " + std::to_string(i + 1) + " 个" + noun);
                 if (!k.IsSolid(c))
                 {
                     a.Error("第 " + std::to_string(i + 1) + " 个" + noun + "是开放曲面（可先“加厚”）");
@@ -447,6 +448,7 @@ namespace MiniCAD::Nodes
                             voids.push_back(v);
                             continue;
                         }
+                        Geo::WarnManyFaces(a, *k, v.AsBody(), "第 " + std::to_string(i + 1) + " 个形体");
                         if (!k->IsSolid(v.AsBody()))
                             return a.Error("第 " + std::to_string(i + 1) + " 个形体是开放曲面（可先“加厚”）");
                         acc = acc ? k->Boolean(Solid::BooleanOp::Union, acc, v.AsBody()) : v.AsBody();
@@ -470,6 +472,7 @@ namespace MiniCAD::Nodes
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
+                    Geo::WarnManyFaces(a, *k, a.Body(0), "被切实体");
                     if (!k->IsSolid(a.Body(0)))
                         return a.Error("被切实体是开放曲面（可先“加厚”）");
                     if (Solid::BodyPtr b = Subtract(a, *k, a.Body(0), a.List(1), "切除体"))

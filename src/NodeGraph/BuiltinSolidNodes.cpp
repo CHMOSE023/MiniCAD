@@ -1,7 +1,9 @@
 // 内置节点：三维实体与分析（docs/NodeGraph/PLAN.md 第 4 节），全部经 ISolidKernel
 #include "NodeGraph/BuiltinHelpers.h"
 #include "NodeGraph/GeometryOps.h"
+#include "NodeGraph/MeshOps.h"
 #include "Core/Entity/Entity.hpp"
+#include "Core/Math/MathUtils.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -21,9 +23,11 @@ namespace MiniCAD::Nodes
             a.Out(port, b);
         }
 
-        // 布尔运算只适用于封闭实体：列表里有开放曲面时报错并返回 false
+        // 布尔运算只适用于封闭实体：列表里有开放曲面时报错并返回 false；面数很多的给出性能警告
         bool RequireSolids(SolveArgs& a, Solid::ISolidKernel& k, const DataList& list, const char* what)
         {
+            for (size_t i = 0; i < list.size(); ++i)
+                Geo::WarnManyFaces(a, k, list[i].AsBody(), std::string(what) + "的第 " + std::to_string(i + 1) + " 项");
             for (size_t i = 0; i < list.size(); ++i)
                 if (!k.IsSolid(list[i].AsBody()))
                 {
@@ -31,6 +35,22 @@ namespace MiniCAD::Nodes
                     return false;
                 }
             return true;
+        }
+
+        // 平面（过 origin、法线 n）是否穿过包围盒
+        bool CrossesBounds(const AABB& box, const Math::Vec3& origin, const Math::Vec3& n)
+        {
+            if (!(box.Min.x <= box.Max.x))
+                return false;
+            bool pos = false, neg = false;
+            for (int c = 0; c < 8; ++c)
+            {
+                const Math::Vec3 corner{ (c & 1) ? box.Max.x : box.Min.x, (c & 2) ? box.Max.y : box.Min.y, (c & 4) ? box.Max.z : box.Min.z };
+                const double d = Math::Dot(corner - origin, n);
+                pos = pos || d >= 0;
+                neg = neg || d <= 0;
+            }
+            return pos && neg;
         }
 
         // 截交线：内核按面给出一段段折线，首尾相接的连成一条（闭合的去掉重复的末点，closed 为真）
@@ -289,9 +309,21 @@ namespace MiniCAD::Nodes
                     const Plane& pl = a.In(2).AsPlane();
                     const Math::Vec3 n = pl.Normal();
                     const Math::Vec3 origin = pl.Origin + n * a.Number(1);
-                    const auto lines = k->Section(a.Body(0), P(origin), n);
+                    auto lines = k->Section(a.Body(0), P(origin), n).Lines;
+                    if (lines.empty() && CrossesBounds(k->Bounds(a.Body(0)), origin, n))
+                    {
+                        // 退路（PLAN.md 第 7.1 节）：内核没有截出结果而平面穿过实体时，按细网格截
+                        for (auto& l : MeshOps::Section(MeshOps::FromBodyFine(*k, a.Body(0)), P(origin), n))
+                        {
+                            if (l.Closed)
+                                l.Points.push_back(l.Points.front());
+                            lines.push_back(std::move(l.Points));
+                        }
+                        if (!lines.empty())
+                            a.Warning("内核没有截出结果，已改用网格近似（误差约为网格弦高）");
+                    }
                     const bool horizontal = std::abs(std::abs(n.z) - 1.0) < 1e-12;
-                    for (Chain& c : ChainLines(lines.Lines))
+                    for (Chain& c : ChainLines(std::move(lines)))
                     {
                         std::vector<Math::Point3> ctrl = c.Points;
                         if (c.Closed)

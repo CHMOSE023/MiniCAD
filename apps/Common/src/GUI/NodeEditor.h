@@ -60,6 +60,8 @@ namespace MiniCAD
         bool CopySelection();                   // 没有选中的节点返回 false
         void CutSelection();
         bool PasteFromClipboard();              // 粘贴到光标处（光标不在画布上时放在画布中央）；剪贴板里不是节点图返回 false
+        // 插入一张子图（Graph::CopyToString 的格式，如示例图）：放在已有节点的右侧，选中并适应窗口；可撤销
+        bool InsertGraph(const std::string& text);
 
         // ── 坐标（测试用）──
         MiniGUI::Vec2 GraphToLocal(float gx, float gy) const { return { gx * m_zoom + m_pan.x, gy * m_zoom + m_pan.y }; }

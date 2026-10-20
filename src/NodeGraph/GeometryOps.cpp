@@ -378,4 +378,17 @@ namespace MiniCAD::Nodes::Geo
         }
         return false;
     }
+
+    Solid::NurbsCurve PolylineCurve(std::vector<Math::Point3> points, bool closed)
+    {
+        if (closed && !points.empty())
+            points.push_back(points.front());
+        return Solid::NurbsCurve::FromControlPoints(std::move(points), 1);
+    }
+
+    void WarnManyFaces(SolveArgs& a, Solid::ISolidKernel& k, const Solid::BodyPtr& body, const std::string& what)
+    {
+        if (const int faces = body ? k.FaceCount(body) : 0; faces > kManyFaces)
+            a.Warning(what + "有 " + std::to_string(faces) + " 个面（多由网格转实体得到），运算很慢（可先“简化”网格）");
+    }
 }

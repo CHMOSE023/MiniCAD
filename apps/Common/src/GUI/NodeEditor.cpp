@@ -814,6 +814,35 @@ namespace MiniCAD
         return true;
     }
 
+    bool NodeEditorView::InsertGraph(const std::string& text)
+    {
+        Graph* g = G();
+        if (!g)
+            return false;
+        float x = 0.0f, y = 0.0f;
+        bool first = true;
+        for (const auto& n : g->GetNodes())
+        {
+            const Card c = Layout(*n);
+            x = first ? c.Box.max.x : std::max(x, c.Box.max.x);
+            y = first ? c.Box.min.y : std::min(y, c.Box.min.y);
+            first = false;
+        }
+        if (!first)
+            x += 80.0f;
+        m_editBegun = false;
+        BeginEdit();
+        const auto ids = g->PasteFromString(text, std::round(x), std::round(y));
+        m_editBegun = false;
+        if (ids.empty())
+            return false;
+        m_selection = std::set<NodeId>(ids.begin(), ids.end());
+        Edited(true);
+        SelectionChanged();
+        FrameAll();
+        return true;
+    }
+
     void NodeEditorView::OpenChoiceMenu(NodeId id, int param, Vec2 local)
     {
         MiniGUI::UIContext* ctx = GetContext();
@@ -1596,10 +1625,14 @@ namespace MiniCAD
             text.Draw(dl, Rect{ S(c.Box.min.x + 8, n.Y), S(c.Box.max.x - right - 34, n.Y + kHeaderH) }, title, hp);
             if (n.Millis >= 1.0)
             {
+                // 超过 1 秒的按秒显示并用橙色提醒（性能警告，PLAN.md 第 7.2 节）
                 char buf[32];
-                std::snprintf(buf, sizeof(buf), n.Millis >= 100 ? "%.0f ms" : "%.1f ms", n.Millis);
+                if (n.Millis >= 1000)
+                    std::snprintf(buf, sizeof(buf), "%.1f s", n.Millis / 1000);
+                else
+                    std::snprintf(buf, sizeof(buf), n.Millis >= 100 ? "%.0f ms" : "%.1f ms", n.Millis);
                 hp.size   = 10.0f * z;
-                hp.color  = RGBA(235, 235, 235, 190);
+                hp.color  = n.Millis >= 1000 ? RGBA(255, 190, 90) : RGBA(235, 235, 235, 190);
                 hp.hAlign = MiniGUI::TextAlign::End;
                 text.Draw(dl, Rect{ S(c.Box.max.x - right - 60, n.Y), S(c.Box.max.x - right - 2, n.Y + kHeaderH) }, buf, hp);
             }

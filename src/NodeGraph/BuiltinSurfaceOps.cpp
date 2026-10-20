@@ -5,6 +5,7 @@
 #include "Core/Math/MathUtils.hpp"
 #include "NodeGraph/Expression.h"
 #include "NodeGraph/GeometryOps.h"
+#include "NodeGraph/MeshOps.h"
 #include <algorithm>
 #include <cmath>
 
@@ -766,25 +767,70 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "surface.intersect", .Name = "曲面求交", .Category = cat,
-                                .Description = "A（曲面或实体）与 B 求交：B 为曲线时输出交点，B 为曲面 / 实体时输出交线；没有相交时输出为空" };
+                                .Description = "A（曲面或实体）与 B 求交：B 为曲线时输出交点，B 为曲面 / 实体时输出交线；没有相交时输出为空。"
+                                               "方法“精确”由内核求交，内核没有结果而两者的网格相交时改用网格近似并给出警告；“网格近似”直接按细网格求交（交线为折线）" };
                 t.Keywords = "intersect 求交 交线 交点 相交";
                 t.Inputs  = { In("A", DataType::Body), In("B", DataType::Geometry, {}, "曲线、空间曲线、曲面或实体") };
+                t.Params  = { Choice("方法", { "精确", "网格近似" }, 0) };
                 t.Outputs = { Out("点", DataType::Vector), Out("曲线", DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
+                    const bool meshOnly = a.ParamInteger(0) == 1;
                     const Value& b = a.In(1);
+                    // 退路：按细网格求交（PLAN.md 第 7.1 节）
+                    auto meshOf = [&](const Solid::BodyPtr& body, const char* name)
+                    {
+                        Solid::Mesh m = MeshOps::FromBodyFine(*k, body);
+                        if (m.TriangleCount() == 0)
+                            a.Error(std::string(name) + "网格化失败：" + k->LastError());
+                        return m;
+                    };
+                    const char* fallback = "内核没有求出结果，已改用网格近似（误差约为网格弦高）";
                     if (b.Type() == DataType::Body)
                     {
-                        for (auto& c : k->IntersectBodies(a.Body(0), b.AsBody()))
-                            a.Out(1, Value(std::move(c)));
+                        if (!meshOnly)
+                        {
+                            Geo::WarnManyFaces(a, *k, a.Body(0), "A ");
+                            Geo::WarnManyFaces(a, *k, b.AsBody(), "B ");
+                            auto curves = k->IntersectBodies(a.Body(0), b.AsBody());
+                            for (auto& c : curves)
+                                a.Out(1, Value(std::move(c)));
+                            if (!curves.empty() || !k->Bounds(a.Body(0)).Intersects(k->Bounds(b.AsBody())))
+                                return;
+                        }
+                        const Solid::Mesh ma = meshOf(a.Body(0), "A "), mb = ma.TriangleCount() ? meshOf(b.AsBody(), "B ") : Solid::Mesh{};
+                        if (mb.TriangleCount() == 0)
+                            return;
+                        auto lines = MeshOps::Intersect(ma, mb);
+                        if (!meshOnly && !lines.empty())
+                            a.Warning(fallback);
+                        for (auto& l : lines)
+                            a.Out(1, Geo::PolylineCurve(std::move(l.Points), l.Closed));
                         return;
                     }
                     Value curve;
                     if (!Convert(b, DataType::Curve3D, curve) || !curve.AsCurve3D())
                         return a.Error("B 应为曲线或曲面 / 实体");
-                    for (const auto& p : k->IntersectCurve(a.Body(0), *curve.AsCurve3D()))
+                    if (!meshOnly)
+                    {
+                        const auto pts = k->IntersectCurve(a.Body(0), *curve.AsCurve3D());
+                        for (const auto& p : pts)
+                            a.Out(0, V(p));
+                        AABB cb = AABB::Empty();   // 控制点的包围盒包含整条曲线
+                        for (const auto& p : curve.AsCurve3D()->ControlPoints)
+                            cb.Expand(p);
+                        if (!pts.empty() || !k->Bounds(a.Body(0)).Intersects(cb))
+                            return;
+                    }
+                    const Solid::Mesh ma = meshOf(a.Body(0), "A ");
+                    if (ma.TriangleCount() == 0)
+                        return;
+                    const auto pts = MeshOps::IntersectPolyline(ma, curve.AsCurve3D()->Sample(32));
+                    if (!meshOnly && !pts.empty())
+                        a.Warning(fallback);
+                    for (const auto& p : pts)
                         a.Out(0, V(p));
                 };
                 r.Register(std::move(t));
