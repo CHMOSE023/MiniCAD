@@ -6,6 +6,9 @@
 #include "NodeGraph/GeometryOps.h"
 #include "Style/Theme.hpp"
 #include "Widgets/Button.h"
+#include "Widgets/ComboBox.h"
+#include "Widgets/Dialog.h"
+#include "Widgets/TextBox.h"
 #include "Widgets/DockSpace.h"
 #include "Widgets/Label.h"
 #include "Widgets/Panel.h"
@@ -13,6 +16,8 @@
 #include "Widgets/ViewportHost.h"
 #include <algorithm>
 #include <cstdio>
+#include <map>
+#include <memory>
 
 namespace MiniCAD
 {
@@ -66,6 +71,7 @@ namespace MiniCAD
             m_nodeEditor->Focus();
             m_nodeEditor->OpenAddMenuAt({ size.x * 0.35f, size.y * 0.3f });   // 新节点放在画布中部偏左上
         });
+        addTool("参数", "参数表：集中编辑全部“参数”节点的名称、类别、值、公式，保存与切换类型（族类型）", [this] { OpenNodeParamsDialog(); });
         addTool("烘焙", "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销", [this] { BakeNodeGraph(); });
         addTool("适应窗口", "显示全部节点（有选中时显示选中的节点），快捷键 F", [this] { if (m_nodeEditor) m_nodeEditor->FrameAll(); });
         addTool("清空", "删除全部节点（可在节点编辑器里按 Ctrl+Z 撤销）", [this]
@@ -204,6 +210,210 @@ namespace MiniCAD
         }
     }
 
+    void MainFrame::OpenNodeParamsDialog()
+    {
+        using namespace MiniGUI;
+        Document* doc = m_docManager.GetActive();
+        if (!doc)
+            return;
+        Nodes::Graph& g = doc->GetNodeGraph();
+        g.Evaluate(NodeSolveContext(*doc));   // 公式参数显示最新的值
+
+        auto dialog = std::make_unique<Dialog>("参数");
+        Dialog* raw = dialog.get();
+        Node* body = raw->GetBody();
+        LayoutStyle bs;
+        bs.direction = FlexDirection::Column;
+        bs.gap       = 6.0f;
+        bs.padding   = Edges::Symmetric(8.0f, 4.0f);
+        body->SetLayoutStyle(bs);
+        auto row = [](Node* parent)
+        {
+            Node* r = parent->AddChild<Node>();
+            LayoutStyle rs;
+            rs.direction  = FlexDirection::Row;
+            rs.alignItems = Align::Center;
+            rs.gap        = 6.0f;
+            r->SetLayoutStyle(rs);
+            return r;
+        };
+        constexpr float kName = 120.0f, kCat = 70.0f, kValue = 100.0f, kFormula = 220.0f;
+        auto sized = [](Node* n, float w) { n->EditLayoutStyle().width = w; return n; };
+
+        // 每个参数一行：名称、类别、值（有公式时只读，显示公式算出的值）、公式
+        struct Row
+        {
+            Nodes::NodeId Id;
+            TextBox*  Name;
+            ComboBox* Category;
+            TextBox*  Value;
+            TextBox*  Formula;
+        };
+        auto rows = std::make_shared<std::vector<Row>>();
+        const std::vector<Nodes::NodeId> ids = g.ParameterNodes();
+        if (ids.empty())
+            body->AddChild<Label>("节点图里还没有参数：在添加节点菜单“输入”里添加“参数”节点。", 13.0f, Theme::TextDim);
+        else
+        {
+            Node* head = row(body);
+            sized(head->AddChild<Label>("名称", 12.0f, Theme::TextDim), kName);
+            sized(head->AddChild<Label>("类别", 12.0f, Theme::TextDim), kCat);
+            sized(head->AddChild<Label>("值", 12.0f, Theme::TextDim), kValue);
+            sized(head->AddChild<Label>("公式（引用其他参数名，如 宽度 × 2）", 12.0f, Theme::TextDim), kFormula);
+        }
+        const Nodes::ParameterTable& table = g.Parameters();
+        for (Nodes::NodeId id : ids)
+        {
+            const Nodes::Node* n = g.GetNode(id);
+            Node* r = row(body);
+            Row rr{ id };
+            const std::string& name = n->Params[0].AsText();
+            rr.Name = static_cast<TextBox*>(sized(r->AddChild<TextBox>(name), kName));
+            rr.Category = static_cast<ComboBox*>(sized(r->AddChild<ComboBox>(Nodes::ParamCategoryNames(), static_cast<int>(n->Params[1].AsInteger())), kCat));
+            const bool hasFormula = !n->Params[3].AsText().empty();
+            std::string value = Nodes::ToDisplayString(n->Params[2]);
+            if (hasFormula)
+            {
+                const auto v = table.Values.find(name);
+                value = table.Errors.count(name) ? std::string("错误") : v != table.Values.end() ? Nodes::ToDisplayString(v->second) : std::string();
+            }
+            rr.Value = static_cast<TextBox*>(sized(r->AddChild<TextBox>(value), kValue));
+            rr.Value->SetReadOnly(hasFormula);
+            rr.Formula = static_cast<TextBox*>(sized(r->AddChild<TextBox>(n->Params[3].AsText()), kFormula));
+            TextBox* valueBox = rr.Value;
+            rr.Formula->SetOnChanged([valueBox](const std::string& f) { valueBox->SetReadOnly(!f.empty()); });
+            if (const auto e = table.Errors.find(name); e != table.Errors.end())
+                r->AddChild<Label>(e->second, 12.0f, Theme::Danger);
+            rows->push_back(rr);
+        }
+
+        // 类型（族类型）：选择后把类型里的值填进各参数；“保存为类型”记下当前填写的值
+        Node* typeRow = row(body);
+        typeRow->EditLayoutStyle().margin = Edges{ 0.0f, 8.0f, 0.0f, 0.0f };
+        typeRow->AddChild<Label>("类型", 13.0f);
+        auto typeNames = [&g]
+        {
+            std::vector<std::string> names;
+            for (const auto& t : g.ParamTypes())
+                names.push_back(t.Name);
+            return names;
+        };
+        ComboBox* types = static_cast<ComboBox*>(sized(typeRow->AddChild<ComboBox>(typeNames()), 160.0f));
+        types->SetPlaceholder(g.ParamTypes().empty() ? "（还没有类型）" : "（选择类型）");
+        TextBox* typeName = static_cast<TextBox*>(sized(typeRow->AddChild<TextBox>(), 120.0f));
+        typeName->SetPlaceholder("新类型名称");
+        Label* error = body->AddChild<Label>("", 12.0f, Theme::Danger);
+        error->SetVisible(false);
+
+        auto showError = [error](const std::string& msg)
+        {
+            error->SetText(msg);
+            error->SetVisible(!msg.empty());
+        };
+        // 对话框里填写的值（没有公式的参数）；数值不对时报错并返回空
+        auto collect = [rows, showError](bool& ok)
+        {
+            std::map<std::string, double> values;
+            ok = true;
+            for (const Row& r : *rows)
+            {
+                if (!r.Formula->GetText().empty())
+                    continue;
+                Nodes::Value v;
+                if (!Nodes::Convert(Nodes::Value(r.Value->GetText()), Nodes::DataType::Number, v))
+                {
+                    showError("参数“" + r.Name->GetText() + "”的值不是数值");
+                    ok = false;
+                    return values;
+                }
+                values[r.Name->GetText()] = v.AsNumber();
+            }
+            return values;
+        };
+        types->SetOnChanged([this, rows, types](int)
+        {
+            Document* d = m_docManager.GetActive();
+            if (!d)
+                return;
+            for (const auto& t : d->GetNodeGraph().ParamTypes())
+                if (t.Name == types->GetSelectedText())
+                    for (const Row& r : *rows)
+                        if (const auto v = t.Values.find(r.Name->GetText()); v != t.Values.end() && r.Formula->GetText().empty())
+                            r.Value->SetText(Nodes::ToDisplayString(Nodes::Value(v->second)));
+        });
+        Button* save = typeRow->AddChild<Button>("保存为类型", [this, types, typeName, collect, showError, typeNames]
+        {
+            Document* d = m_docManager.GetActive();
+            const std::string name = !typeName->GetText().empty() ? typeName->GetText() : types->GetSelectedText();
+            if (!d || name.empty())
+                return showError("请填写新类型名称，或选择要覆盖的类型");
+            bool ok = false;
+            auto values = collect(ok);
+            if (!ok)
+                return;
+            showError({});
+            NodeHistory(*d).Snapshot(d->GetNodeGraph());
+            d->GetNodeGraph().SaveParamType(name, std::move(values));
+            d->MarkDirty();
+            types->SetItems(typeNames());
+            const auto& items = types->GetItems();
+            types->SetSelectedIndex(static_cast<int>(std::find(items.begin(), items.end(), name) - items.begin()));
+            typeName->SetText({});
+        });
+        save->SetTooltip("把上面填写的值存为一个类型（同名的覆盖）；切换类型时一次改全部参数");
+        typeRow->AddChild<Button>("删除类型", [this, types, typeNames]
+        {
+            Document* d = m_docManager.GetActive();
+            if (!d || types->GetSelectedText().empty())
+                return;
+            NodeHistory(*d).Snapshot(d->GetNodeGraph());
+            d->GetNodeGraph().RemoveParamType(types->GetSelectedText());
+            d->MarkDirty();
+            types->SetItems(typeNames());
+            types->SetSelectedIndex(-1);
+        });
+
+        raw->AddButton("确定", [this, raw, rows, collect]
+        {
+            Document* d = m_docManager.GetActive();
+            if (!d)
+                return raw->Close();
+            bool ok = false;
+            collect(ok);
+            if (!ok)
+                return;
+            Nodes::Graph& gg = d->GetNodeGraph();
+            NodeHistory(*d).Snapshot(gg);   // 全部修改一步撤销
+            bool changed = false;
+            for (const Row& r : *rows)
+            {
+                const Nodes::Node* n = gg.GetNode(r.Id);
+                if (!n)
+                    continue;
+                auto set = [&](int index, const Nodes::Value& v)
+                {
+                    if (Nodes::ToDisplayString(n->Params[index]) != Nodes::ToDisplayString(v) || n->Params[index].Type() != v.Type())
+                        changed |= gg.SetParam(r.Id, index, v);
+                };
+                set(0, Nodes::Value(r.Name->GetText()));
+                set(1, Nodes::Value(static_cast<int64_t>(std::max(0, r.Category->GetSelectedIndex()))));
+                set(3, Nodes::Value(r.Formula->GetText()));
+                Nodes::Value v;
+                if (r.Formula->GetText().empty() && Nodes::Convert(Nodes::Value(r.Value->GetText()), Nodes::DataType::Number, v))
+                    set(2, v);
+            }
+            if (changed)
+                d->MarkDirty();
+            raw->Close();
+            m_platform->RequestRedraw();
+            UpdateTitle();
+        }, DialogButtonRole::Default);
+        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        if (!rows->empty())
+            raw->SetInitialFocus(rows->front().Value);
+        m_ui->OpenPopup(std::move(dialog));
+    }
+
     void MainFrame::BakeNodeGraph()
     {
         Document* doc = m_docManager.GetActive();
@@ -213,9 +423,11 @@ namespace MiniCAD
         Nodes::Graph& g = doc->GetNodeGraph();
         g.Evaluate(NodeSolveContext(*doc));
         const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
-        const int n = Nodes::Bake(g, sel, doc->GetScene(), doc->GetCommandStack(), m_platform->GetSolidKernel());
-        editor.GetCmdLine().Echo(n > 0 ? "烘焙节点图：已加入 " + std::to_string(n) + " 个对象（可撤销）"
-                                       : "烘焙节点图：没有可烘焙的几何（先在节点编辑器里搭建并预览）");
+        int voids = 0;
+        const int n = Nodes::Bake(g, sel, doc->GetScene(), doc->GetCommandStack(), m_platform->GetSolidKernel(), &voids);
+        const std::string skipped = voids > 0 ? "，跳过 " + std::to_string(voids) + " 个空心（空心只用来切除实心）" : std::string();
+        editor.GetCmdLine().Echo(n > 0 ? "烘焙节点图：已加入 " + std::to_string(n) + " 个对象（可撤销）" + skipped
+                                       : "烘焙节点图：没有可烘焙的几何" + (skipped.empty() ? std::string("（先在节点编辑器里搭建并预览）") : skipped));
         m_viewport->RequestRender();
         StateChanged();
     }

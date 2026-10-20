@@ -260,7 +260,7 @@ namespace MiniCAD::Nodes
                 if (type == key) return std::string("曲线（") + name + "）";
             return "曲线（" + type + "）";
         }
-        case DataType::Body:    return v.AsBody() ? "实体 / 曲面" : "实体 / 曲面（空）";
+        case DataType::Body:    return !v.AsBody() ? "实体 / 曲面（空）" : v.Void ? "空心形体" : "实体 / 曲面";
         case DataType::Domain:  return FormatNumber(v.AsDomain().Min) + " 至 " + FormatNumber(v.AsDomain().Max);
         case DataType::Plane:
         {

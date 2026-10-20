@@ -131,6 +131,18 @@ namespace MiniCAD::Solid
                 p = m.TransformPoint(p);
         }
 
+        // 方向相反的同一条曲线（参数区间不变）
+        NurbsCurve Reversed() const
+        {
+            NurbsCurve r = *this;
+            std::reverse(r.ControlPoints.begin(), r.ControlPoints.end());
+            std::reverse(r.Weights.begin(), r.Weights.end());
+            const double a = Knots.front(), b = Knots.back();
+            for (size_t i = 0; i < Knots.size(); ++i)
+                r.Knots[i] = a + b - Knots[Knots.size() - 1 - i];
+            return r;
+        }
+
         // ── 构造 ─────────────────────────────────────────────────────
 
         // 控制点 + 阶数，两端夹持的均匀节点矢量；控制点不够时阶数自动降低

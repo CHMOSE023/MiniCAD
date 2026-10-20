@@ -105,6 +105,7 @@ set(MINICAD_NODEGRAPH_SOURCES
     "${MINICAD_SRC}/NodeGraph/BuiltinSolidNodes.cpp"
     "${MINICAD_SRC}/NodeGraph/BuiltinSurfaceNodes.cpp"
     "${MINICAD_SRC}/NodeGraph/BuiltinCurveXformNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinFormNodes.cpp"
 )
 
 # ── 源文件汇总 ──────────────────────────────────────────────────────

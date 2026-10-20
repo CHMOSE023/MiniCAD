@@ -19,6 +19,7 @@
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
 #include "Widgets/AutoComplete.h"
+#include "Widgets/Button.h"
 #include "Widgets/ComboBox.h"
 #include "Widgets/CommandConsole.h"
 #include "Widgets/CommandUI.h"
@@ -45,6 +46,7 @@
 #include <shlobj.h>
 #include <cstring>
 #include <algorithm>
+#include <functional>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
@@ -1255,6 +1257,70 @@ namespace MiniCAD
                 key(MiniGUI::Key::Z, ctrlKey);
                 check(graph.GetNodes().size() == 3 && graph.GetLinks().size() == 2, "节点编辑器：Ctrl+Z 撤销粘贴");
                 clip.SetText(savedClip);
+
+                // 参数表（N7）：两个参数（一个带公式）与一个类型；在参数表里切换类型、点“确定”，参数值与公式结果更新，一步撤销
+                graph.Clear();
+                const NodeId pw = ne.AddNodeAt(kParamNodeType, { 30.0f, 20.0f });
+                const NodeId ph = ne.AddNodeAt(kParamNodeType, { 30.0f, 140.0f });
+                graph.SetParam(pw, 0, std::string("宽度"));
+                graph.SetParam(pw, 2, 600.0);
+                graph.SetParam(ph, 0, std::string("高度"));
+                graph.SetParam(ph, 3, std::string("宽度 × 2"));
+                graph.SaveParamType("小", { { "宽度", 300.0 } });
+                RenderFrame();
+                OpenNodeParamsDialog();
+                m_ui->Update();
+                RenderFrame();
+                auto* dlg = dynamic_cast<MiniGUI::Dialog*>(m_ui->GetTopPopup());
+                // 对话框里的控件（按出现顺序）
+                std::vector<MiniGUI::ComboBox*> combos;
+                std::vector<MiniGUI::TextBox*> boxes;
+                std::vector<MiniGUI::Button*> buttons;
+                std::function<void(MiniGUI::Node*)> walk = [&](MiniGUI::Node* n)
+                {
+                    if (auto* c = dynamic_cast<MiniGUI::ComboBox*>(n)) combos.push_back(c);
+                    if (auto* t = dynamic_cast<MiniGUI::TextBox*>(n)) boxes.push_back(t);
+                    if (auto* b = dynamic_cast<MiniGUI::Button*>(n)) buttons.push_back(b);
+                    for (const auto& ch : n->GetChildren())
+                        walk(ch.get());
+                };
+                if (dlg)
+                    walk(dlg);
+                // 每个参数一行：名称、值、公式三个文字框 + 类别下拉框；最后是类型下拉框与新类型名称
+                check(dlg && dlg->GetTitle() == "参数" && combos.size() == 3 && boxes.size() == 7 && boxes[1]->GetText() == "600" &&
+                      boxes[4]->GetText() == "1200", "参数表：打开，列出参数，公式参数显示算出的值");
+                SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_params.bmp");
+                auto clickButton = [&](const char* text)
+                {
+                    for (MiniGUI::Button* b : buttons)
+                        if (b->GetLabel() && b->GetLabel()->GetText() == text)
+                        {
+                            const MiniGUI::Vec2 c = b->GetScreenBounds().Center();
+                            m_ui->PointerMove(c, 0);
+                            m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
+                            m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
+                            RenderFrame();
+                            return true;
+                        }
+                    return false;
+                };
+                if (combos.size() == 3 && boxes.size() == 7)
+                {
+                    combos[2]->Focus(MiniGUI::FocusReason::Program);
+                    key(MiniGUI::Key::Down);   // 收起时 ↓ 直接选中下一项（类型“小”）
+                    check(combos[2]->GetSelectedText() == "小" && boxes[1]->GetText() == "300", "参数表：选择类型，值填进参数");
+                    check(clickButton("确定") && m_ui->GetTopPopup() == nullptr, "参数表：确定后关闭");
+                    SyncNodeGraph();
+                    const auto& vals = graph.Parameters().Values;
+                    check(vals.count("宽度") && std::abs(vals.at("宽度").AsNumber() - 300.0) < 1e-9 && vals.count("高度") &&
+                          std::abs(vals.at("高度").AsNumber() - 600.0) < 1e-9, "参数表：切换类型后参数与公式结果更新");
+                    ne.Focus();
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    SyncNodeGraph();
+                    check(std::abs(graph.Parameters().Values.at("宽度").AsNumber() - 600.0) < 1e-9, "参数表：Ctrl+Z 一步撤销");
+                }
+                else if (dlg)
+                    dlg->Cancel();
 
                 graph.Clear();
                 RenderFrame();

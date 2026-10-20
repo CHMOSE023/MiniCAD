@@ -1,6 +1,7 @@
 #pragma once
 #include "NodeGraph/NodeType.h"
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,6 +19,18 @@ namespace MiniCAD::Nodes
     constexpr NodeId kInvalidNode = 0;
 
     enum class NodeState : uint8_t { Ok, Warning, Error };
+
+    // “参数”节点（Revit 族参数）：参数 0 名称、1 类别、2 值、3 公式
+    inline constexpr const char* kParamNodeType = "input.param";
+    enum class ParamCategory : int { Length, Angle, Number, Integer, YesNo };
+    const std::vector<std::string>& ParamCategoryNames();   // 长度、角度、数值、整数、是否
+
+    // 族类型：一组参数值（名称 → 值），切换类型 = 一次改全部（没有公式的）参数
+    struct ParamTypeDef
+    {
+        std::string                   Name;
+        std::map<std::string, double> Values;
+    };
 
     struct Link
     {
@@ -118,6 +131,17 @@ namespace MiniCAD::Nodes
         // 求值次数（有节点被重算的求值）
         uint64_t EvalVersion() const { return m_evalVersion; }
 
+        // ── 命名参数与类型（PLAN.md 第 5.4 节）──
+        // 最近一次求值时的参数值与错误（Evaluate 开头按公式依赖顺序计算全部参数）
+        const ParameterTable& Parameters() const { return m_params; }
+        std::vector<NodeId>   ParameterNodes() const;                 // 全部参数节点，按节点顺序
+        const std::vector<ParamTypeDef>& ParamTypes() const { return m_paramTypes; }
+        // 保存类型：同名的覆盖；values 为空时取当前全部没有公式的参数的值
+        void SaveParamType(const std::string& name, std::map<std::string, double> values = {});
+        bool RemoveParamType(const std::string& name);
+        // 切换类型：把类型里的值写进同名、没有公式的参数；返回是否有参数改变
+        bool ApplyParamType(const std::string& name);
+
         // ── 读写 ──
         void Serialize(ISerializer& s) const;
         bool Deserialize(ISerializer& s);           // 先清空；未知类型保留为缺失节点
@@ -129,6 +153,8 @@ namespace MiniCAD::Nodes
         bool  Reaches(NodeId from, NodeId to) const;    // 从 from 沿连线能否到达 to
         std::vector<NodeId> TopologicalOrder() const;
         void  SolveNode(Node& node, const SolveContext& ctx);
+        void  ResolveParameters();                       // 计算全部参数值，值或错误变了的参数节点与表达式节点标脏
+        void  UniqueParamName(Node& node);               // 参数节点：名称与其他参数重复（或为空）时改成不重复的
         void  Touch() { ++m_version; }
 
         const NodeRegistry*                 m_registry;
@@ -137,6 +163,8 @@ namespace MiniCAD::Nodes
         NodeId                              m_nextId = 1;
         uint64_t                            m_version = 0;
         uint64_t                            m_evalVersion = 0;
+        ParameterTable                      m_params;
+        std::vector<ParamTypeDef>           m_paramTypes;
     };
 
     // 输入端口 port 当前收到的数据（连线拼接，或内联值），编辑器显示提示用

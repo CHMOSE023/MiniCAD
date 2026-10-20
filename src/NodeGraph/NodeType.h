@@ -51,12 +51,23 @@ namespace MiniCAD::Nodes
         double                   Min = -1e300, Max = 1e300;         // Field：取值范围
     };
 
+    // 命名参数（“参数”节点，PLAN.md 第 5.4 节）求值后的值：名称 → 值（按类别：数值 / 整数 / 布尔），以及出错的参数
+    struct ParameterTable
+    {
+        std::map<std::string, Value>       Values;
+        std::map<std::string, std::string> Errors;    // 名称 → 原因（名称重复、公式有误、循环引用……）
+
+        // 表达式取变量用：数值形式（布尔为 1 / 0）
+        bool Number(const std::string& name, double& out) const;
+    };
+
     // 求值上下文：节点能访问的外部对象（可空）
     struct SolveContext
     {
         Solid::ISolidKernel* Kernel       = nullptr;   // 三维实体内核（网页版为空）
         const Scene*         DocScene     = nullptr;   // 引用节点读取的场景
         uint64_t             SceneVersion = 0;         // 场景几何版本：变化时依赖场景的节点重算
+        const ParameterTable* Params      = nullptr;   // 由 Graph::Evaluate 填写
     };
 
     // 一次求值（一项）的输入输出，由 Graph 的求值器实现
@@ -175,4 +186,5 @@ namespace MiniCAD::Nodes
     void RegisterSolidNodes(NodeRegistry& r);      // 三维实体、分析
     void RegisterSurfaceNodes(NodeRegistry& r);    // 空间曲线、曲面
     void RegisterCurveXformNodes(NodeRegistry& r); // 曲线、图纸引用、变换补充（N6）
+    void RegisterFormNodes(NodeRegistry& r);       // 实体形体与空心、形体合并、剪切、分割、抽壳（N7）
 }

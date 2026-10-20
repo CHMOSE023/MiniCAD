@@ -98,7 +98,7 @@ namespace MiniCAD::Nodes
 
             {
                 NodeTypeInfo t{ .Id = "math.expression", .Name = "表达式", .Category = expr,
-                                .Description = "按公式计算，变量为 a、b、c、d；语法同 Revit 公式：+ − × ÷ ^ %、比较、if(条件, 真, 假)、"
+                                .Description = "按公式计算，变量为 a、b、c、d 以及“参数”节点的名称；语法同 Revit 公式：+ − × ÷ ^ %、比较、if(条件, 真, 假)、"
                                                "sin / cos / tan（度）、sqrt、abs、round、roundup、rounddown、min、max、pi" };
                 t.Keywords = "expression formula 公式 计算 eval";
                 t.Inputs   = { In("a", DataType::Number, 0.0), In("b", DataType::Number, 0.0), In("c", DataType::Number, 0.0), In("d", DataType::Number, 0.0) };
@@ -120,7 +120,8 @@ namespace MiniCAD::Nodes
                                 v = a.Number(i);
                                 return true;
                             }
-                        return false;
+                        const ParameterTable* params = a.Context().Params;   // 命名参数
+                        return params && params->Number(name, v);
                     }, out, error);
                     if (!ok)
                         return a.Error(error);

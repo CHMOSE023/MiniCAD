@@ -68,6 +68,8 @@ namespace MiniCAD::Nodes
     struct Value
     {
         std::variant<std::monostate, double, int64_t, bool, std::string, Math::Vec3, CurvePtr, Solid::BodyPtr, Curve3DPtr, Nodes::Domain, Nodes::Plane> Data;
+        // 实体的角色（只用于 Body）：空心形体只用来切除实心（形体合并、剪切几何），预览为橙色线框、不烘焙（PLAN.md 第 5.2 节）
+        bool Void = false;
 
         Value() = default;
         Value(double v)                 : Data(v) {}
@@ -83,6 +85,14 @@ namespace MiniCAD::Nodes
         Value(Solid::NurbsCurve v)      : Data(std::make_shared<const Solid::NurbsCurve>(std::move(v))) {}
         Value(const Nodes::Domain& v)   : Data(v) {}
         Value(const Nodes::Plane& v)    : Data(v) {}
+
+        // 带空心标记的实体
+        static Value VoidBody(Solid::BodyPtr b, bool isVoid = true)
+        {
+            Value v(std::move(b));
+            v.Void = isVoid;
+            return v;
+        }
 
         bool IsEmpty() const { return std::holds_alternative<std::monostate>(Data); }
         // 值本身的类型（空值为 Any）

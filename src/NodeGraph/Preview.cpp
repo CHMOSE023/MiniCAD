@@ -46,6 +46,7 @@ namespace MiniCAD::Nodes
     {
         PreviewSet set;
         decltype(m_bodyCache) used;
+        decltype(m_voidCache) usedVoids;
         for (const PreviewItem& item : CollectPreview(g, selected))
         {
             const Math::Color4& color = item.Highlight ? Highlight : Normal;
@@ -105,6 +106,35 @@ namespace MiniCAD::Nodes
                 const Solid::BodyPtr& body = item.v.AsBody();
                 if (!body || !kernel)
                     break;
+                if (item.v.Void)
+                {
+                    // 空心：各条边画成折线（不着色、不写深度），与 Revit 族编辑器里空心的显示相同
+                    auto vit = usedVoids.find(body.get());
+                    if (vit == usedVoids.end())
+                    {
+                        auto cached = m_voidCache.find(body.get());
+                        if (cached != m_voidCache.end() && cached->second.first == body)
+                            vit = usedVoids.insert(*cached).first;
+                        else
+                        {
+                            std::vector<std::shared_ptr<Entity>> wires;
+                            for (const auto& line : kernel->Edges(body).Lines)
+                                for (size_t i = 1; i < line.size(); ++i)
+                                    wires.push_back(std::const_pointer_cast<Entity>(Geo::MakeLine(line[i - 1], line[i])));
+                            vit = usedVoids.insert({ body.get(), { body, std::move(wires) } }).first;
+                        }
+                    }
+                    const Math::Color4& vc = item.Highlight ? VoidHighlight : Void;
+                    EntityAttr voidAttr;
+                    voidAttr.Color = EntityColor::FromRgb(vc.r, vc.g, vc.b);
+                    for (const auto& w : vit->second.second)
+                    {
+                        std::shared_ptr<Entity> e = w->Clone(Object::InvalidID);
+                        e->SetAttr(voidAttr);
+                        set.Entities.push_back(std::move(e));
+                    }
+                    break;
+                }
                 auto it = used.find(body.get());
                 if (it == used.end())
                 {
@@ -126,11 +156,14 @@ namespace MiniCAD::Nodes
             }
         }
         m_bodyCache = std::move(used);
+        m_voidCache = std::move(usedVoids);
         return set;
     }
 
-    int Bake(const Graph& g, const std::set<NodeId>& selected, Scene& scene, CommandStack& stack, Solid::ISolidKernel* kernel)
+    int Bake(const Graph& g, const std::set<NodeId>& selected, Scene& scene, CommandStack& stack, Solid::ISolidKernel* kernel, int* skippedVoids)
     {
+        if (skippedVoids)
+            *skippedVoids = 0;
         std::vector<PreviewItem> items;
         if (selected.empty())
             items = CollectPreview(g, {});
@@ -165,7 +198,12 @@ namespace MiniCAD::Nodes
                     e = Geo::MakeSplineEntity(*item.v.AsCurve3D(), scene.NextObjectID());   // 样条（控制点形式）
                 break;
             case DataType::Body:
-                if (kernel && item.v.AsBody())
+                if (item.v.Void)
+                {
+                    if (skippedVoids)
+                        ++*skippedVoids;   // 空心只用来切除，不烘焙
+                }
+                else if (kernel && item.v.AsBody())
                     e = Solid3DEntity::Create(scene.NextObjectID(), *kernel, item.v.AsBody());
                 break;
             default:

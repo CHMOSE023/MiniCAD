@@ -272,3 +272,19 @@ SM_API → SMLib
 - 没有曲面的修剪、分割、曲面间求交 / 圆角（SMLib 有 `SmApiTrimSurfaceWith3dCurves`、`SmApiSurfaceSurfaceFillet`，留待以后）
 - 绘图工具仍不能直接画空间曲线（没有 UCS），空间曲线只在节点图里生成
 - `CreateFacesFromSurface` 失败时曲面的所有权不确定（可能已挂到 brep 上），适配层宁可泄漏也不重复释放
+
+---
+
+## 12. 实体形体（节点 N7）
+
+节点式参数化建模的 Revit 式形体（`docs/NodeGraph/PLAN.md` 第 5 节）需要的接口，都在 `SMLibKernel.cpp`：
+
+| 接口 | SMLib | 说明 |
+|---|---|---|
+| `Cone(baseCenter, radiusBase, radiusTop, height)` | `SmApiCreateCone` | 顶面半径为 0 时是尖顶圆锥，两个半径不能都为 0 |
+| `Torus(center, majorRadius, minorRadius)` | `SmApiCreateTorus` | 轴沿 +Z，主半径 > 截面半径 > 0 |
+| `LoftSolid(sections, ruled)` | `SmApiCreateSkinPrimitive` | 依次经过各闭合截面并两端封口；`ruled` 时一次，否则阶数为 min(3, 截面数 − 1)。截面方向要一致（节点侧统一为逆时针） |
+| `SweepAlong(profile, path)` | `SmApiCreateCurveSweep` | 闭合轮廓沿空间曲线扫掠并封口。只设 `bMoveProfileCenterToPath`：轮廓的包围盒中心移到路径起点（不设时 SMLib 把轮廓的**起点**移到路径起点，圆形轮廓沿螺旋线扫掠的体积会大约 9%）；轮廓的朝向由调用方放好 |
+| `Shell(body, thickness, openFaces)` | `SmApiShellBrepFull`（偏移 −thickness，即向内） | `openFaces` 为去掉的面（序号同 `FaceCount`），为空时得到带封闭空腔的实体；10³ 长方体厚 1：空腔 488、去掉一个面 424 |
+
+`NurbsCurve::Reversed()` 给出反向的同一条曲线（截面方向统一用）。测试在 `NodeSolidTests` 的 `TestN7Forms`（经节点）。

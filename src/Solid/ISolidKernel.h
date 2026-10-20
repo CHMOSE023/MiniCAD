@@ -117,6 +117,16 @@ namespace MiniCAD::Solid
         // 扫掠：轮廓先移到路径起点、转到与路径起点切线垂直（轮廓包围盒中心落在路径上），再沿路径扫掠；
         // 路径的折角处斜接，不闭合的路径两端封口
         virtual BodyPtr Sweep(const Profile& profile, const SweepPath& path) = 0;
+        // 圆锥（圆台）：底面圆心、底面半径、顶面半径（0 为尖顶，两者不能都为 0）、高度（沿 +Z）
+        virtual BodyPtr Cone(const Math::Point3& baseCenter, double radiusBase, double radiusTop, double height) = 0;
+        // 圆环：中心、轴沿 +Z；主半径 > 截面半径 > 0
+        virtual BodyPtr Torus(const Math::Point3& center, double majorRadius, double minorRadius) = 0;
+        // 封口放样：依次经过各闭合截面曲线（至少 2 条，方向一致）、两端用平面封口的实体；
+        // ruled 时相邻截面之间为直纹（一次），否则光滑（阶数最高为 3）
+        virtual BodyPtr LoftSolid(std::span<const NurbsCurve> sections, bool ruled) = 0;
+        // 沿空间曲线扫掠：闭合轮廓（第一条为外轮廓，其余为洞；调用方已把它转到与路径起点切线垂直的方向）
+        // 先平移到包围盒中心落在路径起点，再沿 path 扫掠，轮廓随路径转动，两端封口
+        virtual BodyPtr SweepAlong(std::span<const NurbsCurve> profile, const NurbsCurve& path) = 0;
 
         // ── 修改（都返回新实体）──────────────────────────────────────
         virtual BodyPtr Boolean(BooleanOp op, const BodyPtr& a, const BodyPtr& b) = 0;
@@ -126,6 +136,8 @@ namespace MiniCAD::Solid
         virtual BodyPtr Chamfer(const BodyPtr& body, std::span<const int> edgeIds, double distance) = 0;
         // 任意仿射变换（行向量约定，与 Math::Mat4 相同）；非均匀缩放会把几何转成 NURBS
         virtual BodyPtr Transform(const BodyPtr& body, const Math::Mat4& m) = 0;
+        // 抽壳：封闭实体向内留下厚度 thickness 的壳；openFaces 为去掉的面（序号同 FaceCount），为空时得到带封闭空腔的实体
+        virtual BodyPtr Shell(const BodyPtr& body, double thickness, std::span<const int> openFaces) = 0;
 
         // ── 显示与查询 ───────────────────────────────────────────────
         virtual Mesh      Tessellate(const BodyPtr& body, const TessParams& params = {}) = 0;

@@ -1,5 +1,6 @@
 // 内置节点：输入、数学、向量、列表（docs/NodeGraph/PLAN.md 第 4 节）
 #include "NodeGraph/BuiltinHelpers.h"
+#include "NodeGraph/Graph.h"
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -59,6 +60,29 @@ namespace MiniCAD::Nodes
                 t.Params  = { Param("值", false, ParamWidget::Toggle) };
                 t.Outputs = { Out("布尔", DataType::Boolean) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, a.ParamBool(0)); };
+                r.Register(std::move(t));
+            }
+            {
+                NodeTypeInfo t{ .Id = kParamNodeType, .Name = "参数", .Category = cat,
+                                .Description = "命名参数（Revit 族参数）：名称在图内唯一，可以填公式引用其他参数（语法同“表达式”，有公式时“值”不起作用）；"
+                                               "“表达式”节点也能直接用参数名。全部参数与类型在面板的“参数”表里集中编辑" };
+                t.Keywords = "parameter param 族参数 命名参数 公式 变量 类型 family";
+                t.Params  = { Param("名称", std::string("参数1")), Choice("类别", ParamCategoryNames(), 0), Param("值", 10.0), Param("公式", std::string()) };
+                t.Outputs = { Out("值", DataType::Number, "按类别：长度 / 角度 / 数值为数值，整数为整数，是否为布尔") };
+                t.Solve   = [](SolveArgs& a)
+                {
+                    // 参数值由 Graph::Evaluate 按公式依赖顺序算好（ResolveParameters），这里只取出来
+                    const std::string& name = a.Param(0).AsText();
+                    if (name.empty())
+                        return a.Error("参数没有名称");
+                    const ParameterTable* table = a.Context().Params;
+                    if (!table)
+                        return a.Error("参数只能在节点图里求值");
+                    if (const auto e = table->Errors.find(name); e != table->Errors.end())
+                        return a.Error(e->second);
+                    if (const auto v = table->Values.find(name); v != table->Values.end())
+                        a.Out(0, v->second);
+                };
                 r.Register(std::move(t));
             }
             {

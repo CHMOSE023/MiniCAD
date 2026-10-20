@@ -1,9 +1,11 @@
 #include "NodeGraph/Graph.h"
+#include "NodeGraph/Expression.h"
 #include "Serialization/ISerializer.h"
 #include "Serialization/JsonSerializer.h"
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -41,6 +43,7 @@ namespace MiniCAD::Nodes
         Node* n = NewNode(typeId, m_nextId);
         n->X = x;
         n->Y = y;
+        UniqueParamName(*n);
         return n;
     }
 
@@ -84,6 +87,8 @@ namespace MiniCAD::Nodes
     {
         m_nodes.clear();
         m_links.clear();
+        m_paramTypes.clear();
+        m_params = {};
         m_nextId = 1;
         Touch();
     }
@@ -289,6 +294,7 @@ namespace MiniCAD::Nodes
             n->InputValues = src->InputValues;
             n->Params      = src->Params;
             n->Preview     = src->Preview;
+            UniqueParamName(*n);
             remap[id] = n->Id;
             out.push_back(n->Id);
         }
@@ -349,6 +355,7 @@ namespace MiniCAD::Nodes
             n->InputValues = src->InputValues;
             n->Params      = src->Params;
             n->Preview     = src->Preview;
+            UniqueParamName(*n);
             remap[src->Id] = n->Id;
             out.push_back(n->Id);
         }
@@ -420,6 +427,10 @@ namespace MiniCAD::Nodes
 
     bool Graph::Evaluate(const SolveContext& ctx)
     {
+        ResolveParameters();
+        SolveContext c = ctx;
+        c.Params = &m_params;
+
         for (auto& n : m_nodes)
             if (n->Type && n->Type->DependsOnScene && n->m_sceneVersion != ctx.SceneVersion)
             {
@@ -433,7 +444,7 @@ namespace MiniCAD::Nodes
             Node* n = GetNode(id);
             if (!n || !n->Dirty)
                 continue;
-            SolveNode(*n, ctx);
+            SolveNode(*n, c);
             solved = true;
         }
         if (solved)
@@ -610,6 +621,280 @@ namespace MiniCAD::Nodes
         finish(NodeState::Ok, {});
     }
 
+    // ═════════════════════════════ 命名参数与类型 ═════════════════════════════
+
+    const std::vector<std::string>& ParamCategoryNames()
+    {
+        static const std::vector<std::string> kNames = { "长度", "角度", "数值", "整数", "是否" };
+        return kNames;
+    }
+
+    bool ParameterTable::Number(const std::string& name, double& out) const
+    {
+        const auto it = Values.find(name);
+        if (it == Values.end())
+            return false;
+        Value v;
+        if (!Convert(it->second, DataType::Number, v))
+            return false;
+        out = v.AsNumber();
+        return true;
+    }
+
+    namespace
+    {
+        bool IsParamNode(const Node& n) { return n.Type && n.TypeId == kParamNodeType && n.Params.size() >= 4; }
+        const std::string& ParamName(const Node& n) { return n.Params[0].AsText(); }
+        const std::string& ParamFormula(const Node& n) { return n.Params[3].AsText(); }
+
+        // 按类别把数值变成参数值：整数取整、是否为布尔
+        Value ParamValueOf(const Node& n, double x)
+        {
+            switch (static_cast<ParamCategory>(n.Params[1].AsInteger()))
+            {
+            case ParamCategory::Integer: return Value(static_cast<int64_t>(std::llround(x)));
+            case ParamCategory::YesNo:   return Value(x != 0.0);
+            default:                     return Value(x);
+            }
+        }
+
+        // 名称要能在公式里当变量用：解析出来正好是这一个变量（不能是数值、函数名、常数 pi / e，不能带运算符）
+        bool IsValidParamName(const std::string& name)
+        {
+            std::string error;
+            const auto e = Expression::Parse(name, error);
+            return e && e->Variables().size() == 1 && e->Variables()[0] == name;
+        }
+
+        bool SameValue(const Value& a, const Value& b)
+        {
+            if (a.Type() != b.Type())
+                return false;
+            switch (a.Type())
+            {
+            case DataType::Number:  return a.AsNumber() == b.AsNumber();
+            case DataType::Integer: return a.AsInteger() == b.AsInteger();
+            case DataType::Boolean: return a.AsBool() == b.AsBool();
+            default:                return a.IsEmpty() && b.IsEmpty();
+            }
+        }
+    }
+
+    std::vector<NodeId> Graph::ParameterNodes() const
+    {
+        std::vector<NodeId> out;
+        for (const auto& n : m_nodes)
+            if (IsParamNode(*n))
+                out.push_back(n->Id);
+        return out;
+    }
+
+    void Graph::UniqueParamName(Node& node)
+    {
+        if (!IsParamNode(node))
+            return;
+        auto taken = [&](const std::string& name)
+        {
+            for (const auto& n : m_nodes)
+                if (n.get() != &node && IsParamNode(*n) && ParamName(*n) == name)
+                    return true;
+            return false;
+        };
+        const std::string name = ParamName(node);
+        if (!name.empty() && !taken(name))
+            return;
+        // 去掉末尾的数字再编号：“宽度2” → “宽度3”
+        std::string base = name.empty() ? std::string("参数") : name;
+        while (!base.empty() && base.back() >= '0' && base.back() <= '9')
+            base.pop_back();
+        for (int i = 1;; ++i)
+            if (!taken(base + std::to_string(i)))
+            {
+                node.Params[0] = Value(base + std::to_string(i));
+                return;
+            }
+    }
+
+    void Graph::ResolveParameters()
+    {
+        ParameterTable table;
+        std::map<std::string, Node*> byName;
+        std::vector<Node*> params;
+        for (const auto& n : m_nodes)
+        {
+            if (!IsParamNode(*n))
+                continue;
+            const std::string& name = ParamName(*n);
+            if (name.empty())
+                continue;   // 没有名称：节点自己报错
+            if (!IsValidParamName(name))
+                table.Errors[name] = "名称“" + name + "”不能用在公式里（不能是数值、函数名、常数，不能含运算符或空格）";
+            else if (byName.count(name))
+                table.Errors[name] = "参数名称“" + name + "”重复";
+            byName.emplace(name, n.get());
+            params.push_back(n.get());
+        }
+
+        // 按公式依赖的深度优先顺序求值；正在求值的参数再次被引用即为循环引用
+        std::map<std::string, int> state;   // 0 未求值、1 求值中、2 完成
+        std::vector<std::string>   stack;
+        std::function<void(const std::string&)> resolve = [&](const std::string& name)
+        {
+            int& st = state[name];
+            if (st == 2)
+                return;
+            if (st == 1)
+            {
+                // 环：从栈里第一次出现 name 处到栈顶
+                auto it = std::find(stack.begin(), stack.end(), name);
+                std::string path;
+                for (auto p = it; p != stack.end(); ++p)
+                    path += *p + " → ";
+                path += name;
+                for (auto p = it; p != stack.end(); ++p)
+                    table.Errors[*p] = "参数之间循环引用：" + path;
+                return;
+            }
+            st = 1;
+            stack.push_back(name);
+            Node& n = *byName.at(name);
+            const std::string& formula = ParamFormula(n);
+            if (table.Errors.count(name) == 0)
+            {
+                if (formula.empty())
+                {
+                    Value v;
+                    Convert(n.Params[2], DataType::Number, v);
+                    table.Values[name] = ParamValueOf(n, v.IsEmpty() ? 0.0 : v.AsNumber());
+                }
+                else
+                {
+                    std::string error;
+                    const auto e = Expression::Parse(formula, error);
+                    if (!e)
+                        table.Errors[name] = "公式有误，" + error;
+                    else
+                    {
+                        for (const std::string& var : e->Variables())
+                        {
+                            if (!byName.count(var))
+                            {
+                                table.Errors[name] = "公式里的“" + var + "”不是参数";
+                                break;
+                            }
+                            resolve(var);
+                            if (table.Errors.count(name))
+                                break;   // 在环上
+                            if (table.Errors.count(var))
+                            {
+                                table.Errors[name] = "引用的参数“" + var + "”有错误";
+                                break;
+                            }
+                        }
+                        double x = 0.0;
+                        if (!table.Errors.count(name))
+                        {
+                            if (e->Evaluate([&](const std::string& var, double& out) { return table.Number(var, out); }, x, error))
+                                table.Values[name] = ParamValueOf(n, x);
+                            else
+                                table.Errors[name] = error;
+                        }
+                    }
+                }
+            }
+            stack.pop_back();
+            st = 2;
+        };
+        for (Node* n : params)
+            resolve(ParamName(*n));
+
+        // 值或错误变了的参数节点、以及引用了变化参数的表达式节点要重算
+        std::set<std::string> changed;
+        auto collect = [&](const auto& before, const auto& after, auto same)
+        {
+            for (const auto& [name, v] : after)
+            {
+                const auto it = before.find(name);
+                if (it == before.end() || !same(it->second, v))
+                    changed.insert(name);
+            }
+            for (const auto& [name, v] : before)
+                if (!after.count(name))
+                    changed.insert(name);
+        };
+        collect(m_params.Values, table.Values, SameValue);
+        collect(m_params.Errors, table.Errors, [](const std::string& a, const std::string& b) { return a == b; });
+        m_params = std::move(table);
+        if (changed.empty())
+            return;
+        for (const auto& n : m_nodes)
+        {
+            if (IsParamNode(*n) && changed.count(ParamName(*n)))
+                MarkDirty(n->Id);
+            else if (n->TypeId == "math.expression" && !n->Params.empty() && n->Params[0].Type() == DataType::Text)
+            {
+                std::string error;
+                if (const auto e = Expression::Parse(n->Params[0].AsText(), error))
+                    for (const std::string& var : e->Variables())
+                        if (changed.count(var))
+                        {
+                            MarkDirty(n->Id);
+                            break;
+                        }
+            }
+        }
+    }
+
+    void Graph::SaveParamType(const std::string& name, std::map<std::string, double> values)
+    {
+        if (values.empty())
+            for (const auto& n : m_nodes)
+                if (IsParamNode(*n) && !ParamName(*n).empty() && ParamFormula(*n).empty())
+                {
+                    Value v;
+                    if (Convert(n->Params[2], DataType::Number, v))
+                        values[ParamName(*n)] = v.AsNumber();
+                }
+        auto it = std::find_if(m_paramTypes.begin(), m_paramTypes.end(), [&](const ParamTypeDef& t) { return t.Name == name; });
+        if (it == m_paramTypes.end())
+            m_paramTypes.push_back({ name, std::move(values) });
+        else
+            it->Values = std::move(values);
+        Touch();
+    }
+
+    bool Graph::RemoveParamType(const std::string& name)
+    {
+        const size_t before = m_paramTypes.size();
+        std::erase_if(m_paramTypes, [&](const ParamTypeDef& t) { return t.Name == name; });
+        if (m_paramTypes.size() == before)
+            return false;
+        Touch();
+        return true;
+    }
+
+    bool Graph::ApplyParamType(const std::string& name)
+    {
+        auto it = std::find_if(m_paramTypes.begin(), m_paramTypes.end(), [&](const ParamTypeDef& t) { return t.Name == name; });
+        if (it == m_paramTypes.end())
+            return false;
+        bool changed = false;
+        for (const auto& n : m_nodes)
+        {
+            if (!IsParamNode(*n) || !ParamFormula(*n).empty())
+                continue;
+            const auto v = it->Values.find(ParamName(*n));
+            if (v == it->Values.end())
+                continue;
+            Value cur;
+            if (Convert(n->Params[2], DataType::Number, cur) && cur.AsNumber() == v->second)
+                continue;
+            SetParam(n->Id, 2, v->second);
+            changed = true;
+        }
+        return changed;
+    }
+
     // ═════════════════════════════ 读写 ═════════════════════════════
 
     namespace
@@ -750,6 +1035,34 @@ namespace MiniCAD::Nodes
             s.EndArray();
         }
 
+        size_t types = m_paramTypes.size();
+        if (!m_paramTypes.empty() && s.BeginArray("types", types))
+        {
+            for (const auto& t : m_paramTypes)
+            {
+                if (!s.BeginElement(0))
+                    continue;
+                std::string name = t.Name;
+                s.Value("name", name);
+                size_t count = t.Values.size();
+                if (s.BeginArray("values", count))
+                {
+                    for (const auto& [param, value] : t.Values)
+                        if (s.BeginElement(0))
+                        {
+                            std::string pn = param;
+                            double pv = value;
+                            s.Value("param", pn);
+                            s.Value("value", pv);
+                            s.EndElement();
+                        }
+                    s.EndArray();
+                }
+                s.EndElement();
+            }
+            s.EndArray();
+        }
+
         size_t m = m_links.size();
         if (s.BeginArray("links", m))
         {
@@ -859,6 +1172,37 @@ namespace MiniCAD::Nodes
                 {
                     m_links.push_back(link);   // 连到缺失节点的连线也保留，类型修复后恢复
                 }
+            }
+            s.EndArray();
+        }
+        size_t types = 0;
+        if (s.BeginArray("types", types))
+        {
+            for (size_t i = 0; i < types; ++i)
+            {
+                if (!s.BeginElement(i))
+                    continue;
+                ParamTypeDef t;
+                s.Value("name", t.Name);
+                size_t count = 0;
+                if (s.BeginArray("values", count))
+                {
+                    for (size_t k = 0; k < count; ++k)
+                        if (s.BeginElement(k))
+                        {
+                            std::string pn;
+                            double pv = 0.0;
+                            s.Value("param", pn);
+                            s.Value("value", pv);
+                            if (!pn.empty())
+                                t.Values[pn] = pv;
+                            s.EndElement();
+                        }
+                    s.EndArray();
+                }
+                s.EndElement();
+                if (!t.Name.empty())
+                    m_paramTypes.push_back(std::move(t));
             }
             s.EndArray();
         }

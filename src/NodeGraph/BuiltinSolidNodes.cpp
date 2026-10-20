@@ -33,6 +33,61 @@ namespace MiniCAD::Nodes
             return true;
         }
 
+        // 截交线：内核按面给出一段段折线，首尾相接的连成一条（闭合的去掉重复的末点，closed 为真）
+        struct Chain
+        {
+            std::vector<Math::Point3> Points;
+            bool                      Closed = false;
+        };
+        std::vector<Chain> ChainLines(std::vector<std::vector<Math::Point3>> lines)
+        {
+            double size = 0.0;
+            for (const auto& l : lines)
+                for (const auto& p : l)
+                    size = std::max({ size, std::abs(p.x), std::abs(p.y), std::abs(p.z) });
+            const double tol = 1e-9 * std::max(1.0, size);
+            auto same = [&](const Math::Point3& a, const Math::Point3& b) { return (a - b).Length() <= tol; };
+            std::vector<Chain> out;
+            std::erase_if(lines, [](const auto& l) { return l.size() < 2; });
+            while (!lines.empty())
+            {
+                std::vector<Math::Point3> cur = std::move(lines.back());
+                lines.pop_back();
+                for (bool grew = true; grew && !same(cur.front(), cur.back());)
+                {
+                    grew = false;
+                    for (size_t i = 0; i < lines.size(); ++i)
+                    {
+                        auto& l = lines[i];
+                        if (same(cur.back(), l.back()) || same(cur.front(), l.front()))
+                            std::reverse(l.begin(), l.end());
+                        if (same(cur.back(), l.front()))
+                            cur.insert(cur.end(), l.begin() + 1, l.end());
+                        else if (same(cur.front(), l.back()))
+                            cur.insert(cur.begin(), l.begin(), l.end() - 1);
+                        else
+                            continue;
+                        lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(i));
+                        grew = true;
+                        break;
+                    }
+                }
+                Chain c;
+                c.Closed = cur.size() >= 4 && same(cur.front(), cur.back());
+                if (c.Closed)
+                    cur.pop_back();
+                c.Points = std::move(cur);
+                out.push_back(std::move(c));
+            }
+            return out;
+        }
+
+        // 布尔运算不区分实心 / 空心（按输入的位置运算），结果的角色取第一个输入的
+        Value RoleOfFirst(const Solid::BodyPtr& b, const DataList& list)
+        {
+            return Value::VoidBody(b, !list.empty() && list.front().Void);
+        }
+
         void RegisterPrimitives(NodeRegistry& r)
         {
             const char* cat = "实体/创建";   // 基本体在形体之后（Group 1，菜单里画分隔线）
@@ -93,70 +148,6 @@ namespace MiniCAD::Nodes
             }
         }
 
-        void RegisterFeatures(NodeRegistry& r)
-        {
-            const char* cat = "实体/创建";
-            {
-                NodeTypeInfo t{ .Id = "solid.extrude", .Name = "拉伸", .Category = cat,
-                                .Description = "闭合轮廓（圆、闭合多段线、矩形）沿 Z 拉伸；高度为负沿 −Z" };
-                t.Keywords = "extrusion 拉伸体 挤出";
-                t.Inputs  = { In("轮廓", DataType::Curve), In("高度", DataType::Number, 10.0) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
-                t.Solve   = [](SolveArgs& a)
-                {
-                    auto* k = a.Kernel();
-                    if (!k) return;
-                    const auto profile = Geo::ProfileOf(*a.Curve(0));
-                    if (!profile)
-                        return a.Error("轮廓不是闭合的水平曲线（圆、闭合多段线、矩形）");
-                    if (std::abs(a.Number(1)) < 1e-12)
-                        return a.Error("高度不能为 0");
-                    OutBody(a, *k, 0, k->Extrude(*profile, a.Number(1)), "拉伸");
-                };
-                r.Register(std::move(t));
-            }
-            {
-                NodeTypeInfo t{ .Id = "solid.revolve", .Name = "旋转", .Category = cat,
-                                .Description = "闭合轮廓绕轴旋转（角度为度，360 为整圈）；轴不能穿过轮廓" };
-                t.Keywords = "旋转成体 revolve";
-                t.Inputs  = { In("轮廓", DataType::Curve), In("轴点", DataType::Vector, Vec(0, 0, 0)), In("轴方向", DataType::Vector, Vec(0, 1, 0)),
-                              In("角度", DataType::Number, 360.0) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
-                t.Solve   = [](SolveArgs& a)
-                {
-                    auto* k = a.Kernel();
-                    if (!k) return;
-                    const auto profile = Geo::ProfileOf(*a.Curve(0));
-                    if (!profile)
-                        return a.Error("轮廓不是闭合的水平曲线");
-                    if (a.Vector(2).Length() < 1e-12)
-                        return a.Error("轴方向不能为零向量");
-                    OutBody(a, *k, 0, k->Revolve(*profile, P(a.Vector(1)), a.Vector(2).Normalized(), a.Number(3)), "旋转");
-                };
-                r.Register(std::move(t));
-            }
-            {
-                NodeTypeInfo t{ .Id = "solid.sweep", .Name = "放样", .Category = cat,
-                                .Description = "闭合轮廓沿水平路径（直线、圆弧、圆、多段线）扫掠" };
-                t.Keywords = "扫掠 sweep 路径";
-                t.Inputs  = { In("轮廓", DataType::Curve), In("路径", DataType::Curve) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
-                t.Solve   = [](SolveArgs& a)
-                {
-                    auto* k = a.Kernel();
-                    if (!k) return;
-                    const auto profile = Geo::ProfileOf(*a.Curve(0));
-                    if (!profile)
-                        return a.Error("轮廓不是闭合的水平曲线");
-                    const auto path = Geo::PathOf(*a.Curve(1));
-                    if (!path)
-                        return a.Error("路径应为同一水平面上的直线、圆弧、圆或多段线");
-                    OutBody(a, *k, 0, k->Sweep(*profile, *path), "扫掠");
-                };
-                r.Register(std::move(t));
-            }
-        }
-
         void RegisterBooleans(NodeRegistry& r)
         {
             const char* cat = "实体/运算";
@@ -176,7 +167,7 @@ namespace MiniCAD::Nodes
                         if (!acc)
                             return a.Error("并集失败：" + k->LastError());
                     }
-                    a.Out(0, acc);
+                    a.Out(0, RoleOfFirst(acc, a.List(0)));
                 };
                 r.Register(std::move(t));
             }
@@ -196,7 +187,7 @@ namespace MiniCAD::Nodes
                         if (!acc)
                             return a.Error("差集失败：" + k->LastError());
                     }
-                    a.Out(0, acc);
+                    a.Out(0, Value::VoidBody(acc, a.In(0).Void));
                 };
                 r.Register(std::move(t));
             }
@@ -216,7 +207,7 @@ namespace MiniCAD::Nodes
                         if (!acc)
                             return a.Error("交集失败（可能没有公共部分）：" + k->LastError());
                     }
-                    a.Out(0, acc);
+                    a.Out(0, RoleOfFirst(acc, a.List(0)));
                 };
                 r.Register(std::move(t));
             }
@@ -285,25 +276,29 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.section", .Name = "水平截面", .Category = cat,
-                                .Description = "实体在高度 Z 处的截交线（折线）" };
-                t.Keywords = "section 剖切 截面";
-                t.Inputs  = { In("实体", DataType::Body), In("高度", DataType::Number, 5.0) };
-                t.Outputs = { Out("曲线", DataType::Curve) };
+                NodeTypeInfo t{ .Id = "solid.section", .Name = "截面", .Category = cat,
+                                .Description = "实体与平面（沿法向偏移“高度”）的截交线：水平截面输出曲线（多段线），任意平面输出空间曲线（折线）" };
+                t.Keywords = "section 剖切 截面 水平截面";
+                t.Inputs  = { In("实体", DataType::Body), In("高度", DataType::Number, 5.0, "截平面沿平面法向的偏移"),
+                              In("平面", DataType::Plane, Value(Plane{})) };
+                t.Outputs = { Out("曲线", DataType::Curve, "水平截面的多段线（截平面不水平时为空）"), Out("空间曲线", DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
-                    const auto lines = k->Section(a.Body(0), { 0, 0, a.Number(1) }, { 0, 0, 1 });
-                    for (const auto& line : lines.Lines)
+                    const Plane& pl = a.In(2).AsPlane();
+                    const Math::Vec3 n = pl.Normal();
+                    const Math::Vec3 origin = pl.Origin + n * a.Number(1);
+                    const auto lines = k->Section(a.Body(0), P(origin), n);
+                    const bool horizontal = std::abs(std::abs(n.z) - 1.0) < 1e-12;
+                    for (Chain& c : ChainLines(lines.Lines))
                     {
-                        if (line.size() < 2)
-                            continue;
-                        std::vector<Math::Point3> pts = line;
-                        const bool closed = pts.size() >= 4 && pts.front() == pts.back();
-                        if (closed)
-                            pts.pop_back();
-                        a.Out(0, Geo::MakePolyline(std::move(pts), {}, closed));
+                        std::vector<Math::Point3> ctrl = c.Points;
+                        if (c.Closed)
+                            ctrl.push_back(ctrl.front());
+                        a.Out(1, Solid::NurbsCurve::FromControlPoints(std::move(ctrl), 1));
+                        if (horizontal)
+                            a.Out(0, Geo::MakePolyline(std::move(c.Points), {}, c.Closed));
                     }
                 };
                 r.Register(std::move(t));
@@ -313,8 +308,7 @@ namespace MiniCAD::Nodes
 
     void RegisterSolidNodes(NodeRegistry& r)
     {
-        RegisterPrimitives(r);
-        RegisterFeatures(r);
+        RegisterPrimitives(r);   // 拉伸、旋转、放样等形体在 BuiltinFormNodes.cpp
         RegisterBooleans(r);
         RegisterEdgeOp(r, "solid.fillet", "圆角", "半径", 1.0, false, "fillet 倒圆 圆角");
         RegisterEdgeOp(r, "solid.chamfer", "倒角", "距离", 1.0, true, "chamfer 斜角");

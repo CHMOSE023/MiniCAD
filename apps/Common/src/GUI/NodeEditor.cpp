@@ -317,7 +317,7 @@ namespace MiniCAD
             return false;
         const DataType t = n.Type->Inputs[port].Type;
         return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean || t == DataType::Text || t == DataType::Vector ||
-               t == DataType::Domain;
+               t == DataType::Domain || t == DataType::Plane;
     }
 
     NodeEditorView::Hit NodeEditorView::HitTest(Vec2 local, bool includeLinks) const
@@ -843,6 +843,39 @@ namespace MiniCAD
         MiniGUI::ShowContextMenu(*ctx, std::move(items), { sr.min.x + local.x, sr.min.y + local.y });
     }
 
+    void NodeEditorView::OpenPlaneMenu(NodeId id, int port, Vec2 local)
+    {
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!ctx || !n || !n->Type || port < 0 || port >= static_cast<int>(n->InputValues.size()) || n->InputValues[port].Type() != DataType::Plane)
+            return;
+        const Plane cur = n->InputValues[port].AsPlane();
+        // 标准平面（原点不变），与“标准平面”节点相同：XY 法向 +Z、YZ 法向 +X、XZ 法向 −Y
+        const struct { const char* Name; Math::Vec3 X, Y; } kPlanes[] = {
+            { "XY 平面", { 1, 0, 0 }, { 0, 1, 0 } }, { "YZ 平面", { 0, 1, 0 }, { 0, 0, 1 } }, { "XZ 平面", { 1, 0, 0 }, { 0, 0, 1 } } };
+        std::vector<MiniGUI::MenuItem> items;
+        for (const auto& k : kPlanes)
+        {
+            const Plane p{ cur.Origin, k.X, k.Y };
+            MiniGUI::MenuItem item(k.Name, [this, id, port, p]
+            {
+                if (Graph* gg = G())
+                {
+                    m_editBegun = false;
+                    BeginEdit();
+                    gg->SetInputValue(id, port, Value(p));
+                    m_editBegun = false;
+                    Edited(true);
+                }
+            });
+            item.checked = (cur.X - k.X).Length() < 1e-9 && (cur.Y - k.Y).Length() < 1e-9;
+            items.push_back(std::move(item));
+        }
+        const Rect sr = GetScreenBounds();
+        MiniGUI::ShowContextMenu(*ctx, std::move(items), { sr.min.x + local.x, sr.min.y + local.y });
+    }
+
     void NodeEditorView::BeginTextEdit(const Hit& hit)
     {
         Graph* g = G();
@@ -854,7 +887,7 @@ namespace MiniCAD
         if (isParam && n->Type->Params[hit.Index].Widget != ParamWidget::Field && n->Type->Params[hit.Index].Widget != ParamWidget::Slider)
             return;
         const DataType type = isParam ? v.Type() : n->Type->Inputs[hit.Index].Type;
-        if (type == DataType::Boolean)
+        if (type == DataType::Boolean || type == DataType::Plane)
             return;
 
         const Card c = Layout(*n);
@@ -1271,6 +1304,8 @@ namespace MiniCAD
                     const Value& cur = isParam ? n->Params[m_valueHit.Index] : n->InputValues[m_valueHit.Index];
                     if (w == ParamWidget::Choice)
                         OpenChoiceMenu(m_valueHit.Node, m_valueHit.Index, local);
+                    else if (!isParam && cur.Type() == DataType::Plane)
+                        OpenPlaneMenu(m_valueHit.Node, m_valueHit.Index, local);
                     else if (cur.Type() == DataType::Boolean)
                     {
                         BeginEdit();
@@ -1797,7 +1832,10 @@ namespace MiniCAD
                             MiniGUI::TextParams vp = tp;
                             vp.hAlign = MiniGUI::TextAlign::Center;
                             vp.size   = (v.Type() == DataType::Vector ? 10.5f : kFontSize) * z;
-                            text.Draw(dl, Rect{ fr.min.x + 3, fr.min.y, fr.max.x - 3, fr.max.y }, ToDisplayString(v), vp);
+                            std::string s = ToDisplayString(v);
+                            if (v.Type() == DataType::Plane)
+                                s = s.substr(0, s.find("（"));   // “XY 平面”，原点与法向见悬停提示
+                            text.Draw(dl, Rect{ fr.min.x + 3, fr.min.y, fr.max.x - 3, fr.max.y }, s, vp);
                         }
                     }
                 }

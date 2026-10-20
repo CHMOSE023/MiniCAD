@@ -123,6 +123,7 @@ namespace MiniCAD
         std::vector<Nodes::Link> LinksToCut(const Hit& h) const;
         bool CutLinksAt(const Hit& h);              // 断开 LinksToCut(h)，一步撤销；没有可断开的返回 false
         void OpenChoiceMenu(Nodes::NodeId id, int param, MiniGUI::Vec2 local);
+        void OpenPlaneMenu(Nodes::NodeId id, int port, MiniGUI::Vec2 local);   // 平面输入的内联值：XY / YZ / XZ
         void BeginTextEdit(const Hit& hit);
         void ApplyValueDrag(MiniGUI::Vec2 local, uint8_t modifiers);
         void FinishLinkDrag(MiniGUI::Vec2 local, uint8_t modifiers);

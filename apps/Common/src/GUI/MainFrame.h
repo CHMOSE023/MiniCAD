@@ -122,6 +122,7 @@ namespace MiniCAD
         void SyncNodeGraph();                                     // 每帧：求值当前文档的节点图（引用的图纸变了也重算），需要时刷新绘图区预览
         void RefreshNodePreview(Document& doc);
         void BakeNodeGraph();                                     // 烘焙：结果加入图纸（可撤销）
+        void OpenNodeParamsDialog();                              // 参数表：全部命名参数的名称、类别、值、公式，以及类型（族类型）
         void ShowNodePanel(bool toggle);                          // 第一次显示时停靠在绘图区下方
         bool NodeEditorHasFocus() const;                          // 节点编辑器有焦点时 Ctrl+Z / Y / A / C / X / V 作用于节点图
         bool NodeGraphUndo(bool redo);

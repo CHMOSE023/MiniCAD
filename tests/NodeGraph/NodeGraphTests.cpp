@@ -1,7 +1,7 @@
 // 节点图核心测试（docs/NodeGraph/PLAN.md）：不需要实体内核的部分。
 // 注册表与分类顺序表、按端口搜索、连线规则（类型、环、替换 / 追加、断开输出）、脏标记与只重算脏节点、最长列表匹配、类型转换、
 // 读写往返（含未知节点类型）、撤销 / 重做、复制、曲线 / 变换 / 引用节点、没有内核时实体节点的报错、
-// 文档保存节点图、预览收集、烘焙与撤销
+// 文档保存节点图、预览收集、烘焙与撤销；命名参数、公式与族类型（N7）
 #include "NodeGraph/Expression.h"
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/GraphHistory.h"
@@ -747,6 +747,102 @@ namespace
         Check(empty.SaveToString().find("nodeGraph") == std::string::npos, "document: no node graph → nothing written");
     }
 
+    // N7：命名参数（名称唯一、公式依赖链、表达式引用参数名、循环引用与错误）、类别、族类型（保存、切换、读写往返）、撤销
+    void TestParameters()
+    {
+        Graph g;
+        SolveContext ctx;
+        const NodeId w = Add(g, kParamNodeType), h = Add(g, kParamNodeType), area = Add(g, kParamNodeType);
+        auto name = [&](NodeId id) { return g.GetNode(id)->Params[0].AsText(); };
+        Check(name(w) == "参数1" && name(h) == "参数2" && name(area) == "参数3", "params: new parameters get unique names");
+        const std::vector<NodeId> dup = g.Duplicate({ w }, 10, 10);
+        Check(dup.size() == 1 && name(dup[0]) == "参数4", "params: a duplicated parameter is renamed");
+        g.RemoveNode(dup[0]);
+
+        g.SetParam(w, 0, std::string("宽度"));
+        g.SetParam(w, 2, 600.0);
+        g.SetParam(h, 0, std::string("高度"));
+        g.SetParam(h, 3, std::string("宽度 × 2"));
+        g.SetParam(area, 0, std::string("面积"));
+        g.SetParam(area, 3, std::string("宽度 * 高度"));
+        const NodeId expr = Add(g, "math.expression");
+        g.SetParam(expr, 0, std::string("宽度 + a"));
+        g.SetInputValue(expr, 0, 1.0);
+        g.Evaluate(ctx);
+        Check(Near(Num(g, w), 600) && Near(Num(g, h), 1200) && Near(Num(g, area), 720000), "params: formulas follow the dependency chain");
+        Check(Near(Num(g, expr), 601), "params: an expression node uses parameter names");
+
+        // 改一个参数：依赖它的公式参数与表达式都重算
+        g.SetParam(w, 2, 800.0);
+        g.Evaluate(ctx);
+        Check(Near(Num(g, h), 1600) && Near(Num(g, area), 1280000) && Near(Num(g, expr), 801), "params: a change propagates through formulas");
+        const uint64_t solvesBefore = g.GetNode(expr)->SolveCount;
+        g.SetParam(area, 2, 5.0);   // 有公式的参数改“值”不影响结果
+        g.Evaluate(ctx);
+        Check(g.GetNode(expr)->SolveCount == solvesBefore, "params: unrelated changes do not re-solve the expression");
+
+        // 类别：整数取整，是否为布尔
+        const NodeId cnt = Add(g, kParamNodeType), flag = Add(g, kParamNodeType);
+        g.SetParam(cnt, 0, std::string("数量"));
+        g.SetParam(cnt, 1, int64_t(static_cast<int>(ParamCategory::Integer)));
+        g.SetParam(cnt, 3, std::string("宽度 / 300"));
+        g.SetParam(flag, 0, std::string("开启"));
+        g.SetParam(flag, 1, int64_t(static_cast<int>(ParamCategory::YesNo)));
+        g.SetParam(flag, 3, std::string("宽度 > 700"));
+        g.Evaluate(ctx);
+        Check(Out(g, cnt).size() == 1 && Out(g, cnt)[0].Type() == DataType::Integer && Out(g, cnt)[0].AsInteger() == 3, "params: integer category rounds");
+        Check(Out(g, flag).size() == 1 && Out(g, flag)[0].Type() == DataType::Boolean && Out(g, flag)[0].AsBool(), "params: yes / no category is a boolean");
+
+        // 错误：循环引用、未知参数、名称重复、名称不能当变量
+        g.SetParam(w, 3, std::string("面积 / 2"));
+        g.Evaluate(ctx);
+        Check(g.GetNode(w)->State == NodeState::Error && g.GetNode(w)->Message.find("循环引用") != std::string::npos &&
+              g.GetNode(area)->State == NodeState::Error && g.GetNode(expr)->State == NodeState::Error, "params: a cycle is reported");
+        g.SetParam(w, 3, std::string("长度 + 1"));
+        g.Evaluate(ctx);
+        Check(g.GetNode(w)->State == NodeState::Error && g.GetNode(w)->Message.find("不是参数") != std::string::npos, "params: unknown name in a formula");
+        g.SetParam(w, 3, std::string());
+        g.Evaluate(ctx);
+        Check(g.GetNode(w)->State == NodeState::Ok && Near(Num(g, h), 1600), "params: fixing the formula recovers");
+        g.SetParam(cnt, 0, std::string("宽度"));
+        g.Evaluate(ctx);
+        Check(g.GetNode(cnt)->State == NodeState::Error && g.GetNode(cnt)->Message.find("重复") != std::string::npos, "params: duplicate names");
+        g.SetParam(cnt, 0, std::string("a b"));
+        g.Evaluate(ctx);
+        Check(g.GetNode(cnt)->State == NodeState::Error, "params: a name with a space is rejected");
+        g.SetParam(cnt, 0, std::string("数量"));
+
+        // 类型：保存两组值，切换后参数与下游都变；有公式的参数不受影响
+        g.SaveParamType("600 宽");
+        g.SetParam(w, 2, 600.0);
+        g.SaveParamType("小", { { "宽度", 300.0 } });
+        g.SetParam(w, 2, 800.0);
+        Check(g.ParamTypes().size() == 2 && Near(g.ParamTypes()[0].Values.at("宽度"), 800) && g.ParamTypes()[0].Values.count("高度") == 0,
+              "types: saved with the values of parameters without formulas");
+        Check(g.ApplyParamType("小"), "types: applying changes a parameter");
+        g.Evaluate(ctx);
+        Check(Near(Num(g, w), 300) && Near(Num(g, h), 600) && Near(Num(g, expr), 301), "types: switching a type updates the graph");
+        Check(!g.ApplyParamType("小") && !g.ApplyParamType("不存在"), "types: applying the current or a missing type changes nothing");
+
+        // 撤销：切换类型可以一步撤销（快照包括类型）
+        GraphHistory history;
+        history.Snapshot(g);
+        g.ApplyParamType("600 宽");
+        g.Evaluate(ctx);
+        Check(Near(Num(g, w), 800), "types: switched back");
+        history.Undo(g);
+        g.Evaluate(ctx);
+        Check(Near(Num(g, w), 300) && g.ParamTypes().size() == 2, "types: undo restores the values and keeps the types");
+
+        // 读写往返
+        Graph copy;
+        Check(copy.LoadFromString(g.SaveToString()) && copy.ParamTypes().size() == 2 && copy.ParamTypes()[1].Name == "小" &&
+              Near(copy.ParamTypes()[1].Values.at("宽度"), 300), "types: round trip");
+        copy.Evaluate(ctx);
+        Check(Near(Num(copy, area), 300.0 * 600.0), "params: round trip evaluates the formulas");
+        Check(copy.RemoveParamType("小") && copy.ParamTypes().size() == 1, "types: remove");
+    }
+
     void TestPreviewAndBake()
     {
         Document doc;
@@ -823,6 +919,7 @@ int main(int argc, char** argv)
     TestCurvesWithoutKernel();
     TestReferenceAndDocument();
     TestPreviewAndBake();
+    TestParameters();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

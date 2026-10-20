@@ -180,7 +180,7 @@ namespace MiniCAD::Nodes::Geo
                 args.Error("变换失败：" + k->LastError());
                 return {};
             }
-            return Value(b);
+            return Value::VoidBody(b, v.Void);   // 保留空心标记
         }
         case DataType::Curve3D:
         {

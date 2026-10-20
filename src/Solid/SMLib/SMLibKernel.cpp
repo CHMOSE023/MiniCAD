@@ -326,6 +326,76 @@ namespace MiniCAD::Solid
             return Wrap(status, raw, "SmApiCreateSweepAlongPlanarPath");
         }
 
+        BodyPtr Cone(const Math::Point3& baseCenter, double radiusBase, double radiusTop, double height) override
+        {
+            Begin();
+            if (!(radiusBase >= 0.0 && radiusTop >= 0.0 && radiusBase + radiusTop > 0.0 && height > 0.0))
+                return Fail("Cone: 半径不能为负且不能都为 0，高度必须为正");
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateCone(ToSm(baseCenter), radiusBase, radiusTop, height, raw);
+            return Wrap(status, raw, "SmApiCreateCone");
+        }
+
+        BodyPtr Torus(const Math::Point3& center, double majorRadius, double minorRadius) override
+        {
+            Begin();
+            if (!(minorRadius > 0.0 && majorRadius > minorRadius))
+                return Fail("Torus: 应满足 主半径 > 截面半径 > 0");
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateTorus(ToSm(center), majorRadius, minorRadius, raw);
+            return Wrap(status, raw, "SmApiCreateTorus");
+        }
+
+        BodyPtr LoftSolid(std::span<const NurbsCurve> sections, bool ruled) override
+        {
+            Begin();
+            if (sections.size() < 2)
+                return Fail("封口放样: 至少需要 2 条截面曲线");
+            std::vector<SmCurvePtr> owned;
+            SmTArray<ULONG> counts;
+            SmTArray<const SmCurve*> curves;   // 只读，不接管
+            for (size_t i = 0; i < sections.size(); ++i)
+            {
+                SmCurvePtr c = ToSmCurve(sections[i]);
+                if (!c)
+                    return Fail("封口放样: 第 " + std::to_string(i + 1) + " 条截面曲线无效");
+                counts.Add(1);
+                curves.Add(c.get());
+                owned.push_back(std::move(c));
+            }
+            const ULONG degree = ruled ? 1 : static_cast<ULONG>(std::min<size_t>(3, sections.size() - 1));
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateSkinPrimitive(counts, curves, degree, TRUE, raw, nullptr, nullptr, nullptr);
+            return Wrap(status, raw, "SmApiCreateSkinPrimitive");
+        }
+
+        BodyPtr SweepAlong(std::span<const NurbsCurve> profile, const NurbsCurve& path) override
+        {
+            Begin();
+            if (profile.empty())
+                return Fail("扫掠: 没有轮廓");
+            std::vector<SmCurvePtr> owned;
+            SmTArray<SmCurve*> curves;   // 只读，不接管
+            for (size_t i = 0; i < profile.size(); ++i)
+            {
+                SmCurvePtr c = ToSmCurve(profile[i]);
+                if (!c)
+                    return Fail("扫掠: 第 " + std::to_string(i + 1) + " 条轮廓曲线无效");
+                curves.Add(c.get());
+                owned.push_back(std::move(c));
+            }
+            SmCurvePtr rail = ToSmCurve(path);
+            if (!rail)
+                return Fail("扫掠: 路径曲线无效");
+            SmSweepOptions options;
+            options.bCapEndsArg = TRUE;
+            // 轮廓的包围盒中心移到路径起点（不设时 SMLib 把轮廓的起点移到路径起点）；方向已由调用方放好，不再转动
+            options.bMoveProfileCenterToPath = TRUE;
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiCreateCurveSweep(curves, rail.get(), nullptr, nullptr, &options, raw, nullptr, nullptr, nullptr);
+            return Wrap(status, raw, "SmApiCreateCurveSweep");
+        }
+
         // ── 修改 ─────────────────────────────────────────────────────
 
         BodyPtr Boolean(BooleanOp op, const BodyPtr& a, const BodyPtr& b) override
@@ -361,6 +431,29 @@ namespace MiniCAD::Solid
         BodyPtr Chamfer(const BodyPtr& body, std::span<const int> edgeIds, double distance) override
         {
             return BlendEdges(body, edgeIds, distance, 0 /* 平面截面 */, "Chamfer");
+        }
+
+        BodyPtr Shell(const BodyPtr& body, double thickness, std::span<const int> openFaces) override
+        {
+            Begin();
+            if (!(thickness > 0.0))
+                return Fail("抽壳: 厚度必须为正");
+            SmBrep* brep = BrepOf(body);
+            if (!brep)
+                return nullptr;
+            SmTArray<SmFace*> faces;
+            if (const SmApiStatus status = SmApiGetFaces(brep, faces); status != SM_SUCCESS)
+                return Fail("SmApiGetFaces", status);
+            SmTArray<const SmFace*> open;   // 去掉的面（开口）
+            for (int id : openFaces)
+            {
+                if (id < 0 || static_cast<ULONG>(id) >= faces.GetSize())
+                    return Fail("抽壳: 面的序号超出范围（共 " + std::to_string(faces.GetSize()) + " 个面）");
+                open.Add(faces[static_cast<ULONG>(id)]);
+            }
+            SmBrep* raw = nullptr;
+            const SmApiStatus status = SmApiShellBrepFull(brep, -thickness /* 向内 */, TRUE, TRUE, FALSE, open, raw);
+            return Wrap(status, raw, "SmApiShellBrepFull");
         }
 
         BodyPtr Transform(const BodyPtr& body, const Math::Mat4& m) override
