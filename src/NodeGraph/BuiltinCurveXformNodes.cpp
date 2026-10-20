@@ -2,6 +2,7 @@
 // 变换补充（任意轴旋转、非均匀缩放、定向、矩形阵列、沿曲线阵列）（docs/NodeGraph/PLAN.md 第 4.2 节）
 #include "NodeGraph/BuiltinHelpers.h"
 #include "Core/Math/MathUtils.hpp"
+#include "NodeGraph/CurveOps.h"
 #include "NodeGraph/GeometryOps.h"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
@@ -34,98 +35,10 @@ namespace MiniCAD::Nodes
             return c.get();
         }
 
-        double Lerp(const Solid::NurbsCurve& c, double t) { return c.StartParam() + (c.EndParam() - c.StartParam()) * t; }
-        double Unlerp(const Solid::NurbsCurve& c, double u)
-        {
-            const double span = c.EndParam() - c.StartParam();
-            return span > 0 ? (u - c.StartParam()) / span : 0.0;
-        }
-
-        // 曲线上离 p 最近的参数：先密集采样，再在相邻区间里三分搜索
-        double ClosestParam(const Solid::NurbsCurve& c, const Math::Point3& p)
-        {
-            constexpr int kSamples = 512;
-            const double u0 = c.StartParam(), u1 = c.EndParam();
-            int best = 0;
-            double bestD = 1e300;
-            for (int i = 0; i <= kSamples; ++i)
-            {
-                const double d = (c.PointAt(u0 + (u1 - u0) * i / kSamples) - p).LengthSq();
-                if (d < bestD)
-                    bestD = d, best = i;
-            }
-            double lo = u0 + (u1 - u0) * std::max(best - 1, 0) / kSamples;
-            double hi = u0 + (u1 - u0) * std::min(best + 1, kSamples) / kSamples;
-            for (int it = 0; it < 80; ++it)
-            {
-                const double m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
-                if ((c.PointAt(m1) - p).LengthSq() < (c.PointAt(m2) - p).LengthSq())
-                    hi = m2;
-                else
-                    lo = m1;
-            }
-            return (lo + hi) * 0.5;
-        }
-
-        // 两条曲线的交点（参数对）：折线段两两求最近点，距离在容差内的再用牛顿法在 (u, v) 上细化
-        std::vector<std::pair<double, double>> IntersectCurves(const Solid::NurbsCurve& a, const Solid::NurbsCurve& b, double tol)
-        {
-            constexpr int kSeg = 256;
-            auto sample = [](const Solid::NurbsCurve& c)
-            {
-                std::vector<std::pair<double, Math::Point3>> pts;
-                for (int i = 0; i <= kSeg; ++i)
-                {
-                    const double u = c.StartParam() + (c.EndParam() - c.StartParam()) * i / kSeg;
-                    pts.push_back({ u, c.PointAt(u) });
-                }
-                return pts;
-            };
-            const auto pa = sample(a), pb = sample(b);
-            std::vector<std::pair<double, double>> hits;
-            for (int i = 0; i < kSeg; ++i)
-                for (int j = 0; j < kSeg; ++j)
-                {
-                    // 两条线段的最近点
-                    const Math::Vec3 d1 = pa[i + 1].second - pa[i].second, d2 = pb[j + 1].second - pb[j].second, r = pa[i].second - pb[j].second;
-                    const double aa = Math::Dot(d1, d1), ee = Math::Dot(d2, d2), f = Math::Dot(d2, r), c = Math::Dot(d1, r), bb = Math::Dot(d1, d2);
-                    const double denom = aa * ee - bb * bb;
-                    double s = denom > 1e-18 ? std::clamp((bb * f - c * ee) / denom, 0.0, 1.0) : 0.0;
-                    double t = ee > 1e-18 ? std::clamp((bb * s + f) / ee, 0.0, 1.0) : 0.0;
-                    s = aa > 1e-18 ? std::clamp((bb * t - c) / aa, 0.0, 1.0) : 0.0;
-                    const Math::Vec3 gap = (pa[i].second + d1 * s) - (pb[j].second + d2 * t);
-                    const double seg = std::max(std::sqrt(aa), std::sqrt(ee));
-                    if (gap.Length() > tol + seg * 0.5)
-                        continue;
-                    // 牛顿法：最小化 |A(u) − B(v)|²
-                    double u = pa[i].first + (pa[i + 1].first - pa[i].first) * s;
-                    double v = pb[j].first + (pb[j + 1].first - pb[j].first) * t;
-                    for (int it = 0; it < 30; ++it)
-                    {
-                        const Math::Vec3 e = a.PointAt(u) - b.PointAt(v);
-                        const Math::Vec3 du = a.DerivativeAt(u), dv = b.DerivativeAt(v);
-                        // 正规方程 J^T J Δ = −J^T e，J = [du, −dv]
-                        const double m11 = Math::Dot(du, du), m12 = -Math::Dot(du, dv), m22 = Math::Dot(dv, dv);
-                        const double r1 = -Math::Dot(du, e), r2 = Math::Dot(dv, e);
-                        const double det = m11 * m22 - m12 * m12;
-                        if (std::abs(det) < 1e-20)
-                            break;
-                        const double du_ = (r1 * m22 - m12 * r2) / det, dv_ = (m11 * r2 - m12 * r1) / det;
-                        u = std::clamp(u + du_, a.StartParam(), a.EndParam());
-                        v = std::clamp(v + dv_, b.StartParam(), b.EndParam());
-                        if (std::abs(du_) + std::abs(dv_) < 1e-14)
-                            break;
-                    }
-                    if ((a.PointAt(u) - b.PointAt(v)).Length() > tol)
-                        continue;
-                    const Math::Point3 hp = a.PointAt(u);
-                    const bool dup = std::any_of(hits.begin(), hits.end(), [&](const auto& h) { return (a.PointAt(h.first) - hp).Length() <= tol * 10; });
-                    if (!dup)
-                        hits.push_back({ u, v });
-                }
-            std::sort(hits.begin(), hits.end());
-            return hits;
-        }
+        using CurveOps::ClosestParam;
+        using CurveOps::IntersectCurves;
+        using CurveOps::Lerp;
+        using CurveOps::Unlerp;
 
         // 曲线上的局部坐标系：X 沿切线，Y 水平（切线竖直时取世界 Y），用于沿曲线阵列
         Plane FrameAt(const Solid::NurbsCurve& c, double u)

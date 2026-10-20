@@ -186,6 +186,7 @@ namespace MiniCAD::Nodes
     void RegisterSolidNodes(NodeRegistry& r);      // 三维实体、分析
     void RegisterSurfaceNodes(NodeRegistry& r);    // 空间曲线、曲面
     void RegisterCurveXformNodes(NodeRegistry& r); // 曲线、图纸引用、变换补充（N6）
-    void RegisterFormNodes(NodeRegistry& r);
-    void RegisterSurfaceOpsNodes(NodeRegistry& r); // 曲面的创建、修改、分析（N8，由 RegisterSurfaceNodes 调用）       // 实体形体与空心、形体合并、剪切、分割、抽壳（N7）
+    void RegisterFormNodes(NodeRegistry& r);       // 实体形体与空心、形体合并、剪切、分割、抽壳（N7）
+    void RegisterSurfaceOpsNodes(NodeRegistry& r); // 曲面的创建、修改、分析（N8，由 RegisterSurfaceNodes 调用）
+    void RegisterCurveModifyNodes(NodeRegistry& r);// 曲线修改（N6b）
 }

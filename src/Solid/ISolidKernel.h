@@ -163,6 +163,13 @@ namespace MiniCAD::Solid
         virtual NurbsCurve FitCurve(std::span<const Math::Point3> points, double tolerance = 0.0) = 0;
         // 螺旋线：轴沿 +Z 过 base，高 height，底部 / 顶部半径（不同时为锥形），圈数，右旋 / 左旋；起点在 base + (radius0, 0, 0)
         virtual NurbsCurve Helix(const Math::Point3& base, double height, double radius0, double radius1, double turns, bool rightHanded = true) = 0;
+        // 偏移（docs/NodeGraph/PLAN.md 第 4.2 节“曲线/修改”，N6b）：曲线须在 z 为常数的水平面内，
+        // distance > 0 偏向前进方向的左侧（+Z × 切线），< 0 偏向右侧
+        virtual NurbsCurve OffsetCurve(const NurbsCurve& curve, double distance) = 0;
+        // 连接：已排好顺序、方向的首尾相接的曲线连成一条（阶数不同时自动升阶）
+        virtual NurbsCurve JoinCurves(std::span<const NurbsCurve> curves) = 0;
+        // 投影：曲线沿 direction 投影到实体 / 曲面上，得到 0～n 条曲线（投影不到时返回空，不算失败）
+        virtual std::vector<NurbsCurve> ProjectCurve(const NurbsCurve& curve, const BodyPtr& target, const Math::Vec3& direction) = 0;
 
         // ── 曲面（结果一般是开放曲面片：BodyPtr，IsSolid 为 false）────────
         // 放样（蒙皮）：依次经过各截面曲线的曲面（至少 2 条；截面全部闭合时得到管状曲面，不封口）

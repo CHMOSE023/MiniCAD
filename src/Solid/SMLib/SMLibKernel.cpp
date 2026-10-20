@@ -909,6 +909,80 @@ namespace MiniCAD::Solid
             return FromSmCurve(*curve);
         }
 
+        NurbsCurve OffsetCurve(const NurbsCurve& curve, double distance) override
+        {
+            Begin();
+            SmCurvePtr c = ToSmCurve(curve);
+            if (!c)
+                return FailCurve("偏移: 曲线无效");
+            // 逼近容差按曲线尺寸取；SMLib 的正值偏向右侧（从平面法线正向看），这里约定正值偏向左侧
+            const double tol = std::max(1e-6, curve.BoundsSize() * 1e-6);
+            SmBSplineCurve* raw = nullptr;
+            double gap = 0.0;
+            const SmStatus status = c->CreateSimpleOffset(*SmApiGetOrCreateContext(), tol, SmVector3d(0, 0, 1), -distance, raw, gap);
+            SmCurvePtr out(raw);
+            if (status != SM_SUCCESS || !out)
+                return FailCurve("偏移: SMLib 偏移失败（距离过大或曲线自交）", status);
+            return FromSmCurve(*out);
+        }
+
+        NurbsCurve JoinCurves(std::span<const NurbsCurve> curves) override
+        {
+            Begin();
+            if (curves.empty())
+                return FailCurve("连接: 没有曲线");
+            std::vector<SmCurvePtr> owned;
+            int degree = 1;
+            for (const auto& c : curves)
+                degree = std::max(degree, c.Degree);
+            SmTArray<SmBSplineCurve*> segments;
+            for (size_t i = 0; i < curves.size(); ++i)
+            {
+                SmCurvePtr c = ToSmCurve(curves[i]);
+                if (!c)
+                    return FailCurve("连接: 第 " + std::to_string(i + 1) + " 条曲线无效");
+                if (curves[i].Degree < degree && c->DegreeElevate(static_cast<ULONG>(degree)) != SM_SUCCESS)
+                    return FailCurve("连接: 升阶失败");
+                segments.Add(c.get());
+                owned.push_back(std::move(c));
+            }
+            SmBSplineCurve* raw = nullptr;
+            const SmStatus status = SmBSplineCurve::CreateByJoining(*SmApiGetOrCreateContext(), segments, nullptr, raw);
+            SmCurvePtr out(raw);
+            if (status != SM_SUCCESS || !out)
+                return FailCurve("连接: SMLib 连接失败（曲线没有首尾相接）", status);
+            return FromSmCurve(*out);
+        }
+
+        std::vector<NurbsCurve> ProjectCurve(const NurbsCurve& curve, const BodyPtr& target, const Math::Vec3& direction) override
+        {
+            Begin();
+            std::vector<NurbsCurve> out;
+            SmBrep* brep = BrepOf(target);
+            SmCurvePtr c = brep ? ToSmCurve(curve) : nullptr;
+            if (!brep || !c)
+            {
+                if (brep)
+                    Fail("投影: 曲线无效");
+                return out;
+            }
+            if (direction.Length() < 1e-12)
+            {
+                Fail("投影: 方向为零");
+                return out;
+            }
+            SmTArray<SmCurve*> curves;
+            SmApiProjectCurve(brep, c.get(), ToSm(direction), curves);   // 投影不到时返回错误：按空结果处理
+            for (ULONG i = 0; i < curves.GetSize(); ++i)
+            {
+                NurbsCurve nc = curves[i] ? FromSmCurve(*curves[i]) : NurbsCurve{};
+                if (nc.IsValid())
+                    out.push_back(std::move(nc));
+                delete curves[i];
+            }
+            return out;
+        }
+
         // ── 曲面 ─────────────────────────────────────────────────────
 
         BodyPtr Loft(std::span<const NurbsCurve> sections) override

@@ -314,3 +314,15 @@ SM_API → SMLib
 | `SurfaceDerivatives(surface, face, u, v)` | `SmApiEvaluateSurfaceDerivatives` | 导数是对归一化参数的；曲率由节点用相邻参数处的一阶导数差分 |
 
 已知问题：带洞的修剪面（如投影圆修剪后的方板）`SmApiBrepComputeArea` 的结果偏小约 3%，离散网格的面积正确。测试在 `NodeSolidTests` 的 `TestN8Surfaces`。
+
+## 14. 空间曲线的修改（节点 N6b）
+
+`docs/NodeGraph/PLAN.md` 第 4.5 节的曲线修改节点用到的接口（分割、子曲线、延伸、重建、同阶连接在节点侧的 `CurveOps` 里计算，不经内核）：
+
+| 接口 | SMLib | 注意 |
+|---|---|---|
+| `OffsetCurve(curve, distance)` | `SmBSplineCurve::CreateSimpleOffset`（平面法向 +Z，逼近容差为曲线尺寸的 1e-6） | 曲线须在水平面内（节点先变换到曲线平面的坐标系）；SMLib 的正值偏向右侧，接口约定正值偏向左侧 |
+| `JoinCurves(curves)` | `DegreeElevate` 到最高阶后 `SmBSplineCurve::CreateByJoining` | 曲线须已排好顺序、方向且首尾相接 |
+| `ProjectCurve(curve, target, direction)` | `SmApiProjectCurve`（`CreateParallelProjectionCurves`） | 投影不到时 SMLib 返回错误，适配层按空结果处理 |
+
+测试在 `NodeSolidTests` 的 `TestN6bCurves`。
