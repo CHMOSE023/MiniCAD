@@ -1,4 +1,4 @@
-﻿#include "Shader.h" 
+#include "Shader.h" 
 #include "D3D11Renderer.h" 
 #include "D3D11RenderTarget.h"
 #include <d3d11.h>
@@ -139,7 +139,10 @@ namespace MiniCAD
         m_context->PSSetShader(pso.shader->ps.Get(), nullptr, 0);
 
         // ===== topology =====
-        m_context->IASetPrimitiveTopology(type == PrimitiveType::Line ? D3D11_PRIMITIVE_TOPOLOGY_LINELIST : D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_context->IASetPrimitiveTopology(
+            type == PrimitiveType::Line      ? D3D11_PRIMITIVE_TOPOLOGY_LINELIST :
+            type == PrimitiveType::Point     ? D3D11_PRIMITIVE_TOPOLOGY_POINTLIST :
+                                               D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // ===== depth =====
         if (!depth)
@@ -199,8 +202,9 @@ namespace MiniCAD
 
         // ===== batch upload + draw =====
         // 顶点数可能超过顶点缓冲容量(m_maxVertices)，需要分多批绘制。
-        // 每批大小按图元顶点数对齐(线=2, 三角=3)，避免跨批拆分图元。
-        const size_t primSize    = (type == PrimitiveType::Line) ? 2 : 3;
+        // 每批大小按图元顶点数对齐(点=1, 线=2, 三角=3)，避免跨批拆分图元。
+        const size_t primSize    = (type == PrimitiveType::Line) ? 2
+                                 : (type == PrimitiveType::Point) ? 1 : 3;
         const size_t maxPerBatch = ((size_t)m_maxVertices / primSize) * primSize;
 
         for (size_t base = 0; base < verts.size(); base += maxPerBatch)

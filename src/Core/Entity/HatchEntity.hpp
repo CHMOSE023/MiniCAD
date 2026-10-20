@@ -450,12 +450,31 @@ namespace MiniCAD
             const double nLast  = std::floor((vmax - vO) / dy);
             if (nLast - nFirst > static_cast<double>(budget)) { budget = 0; return; }
 
-            // 虚线周期（虚线长度同样是图案单位，乘以缩放）；全部为 0（只有点）时周期取 0，按连续线处理没有意义，直接跳过
+            // “点”（.pat 的 dash = 0）走**点图元**（sink.DrawPoint）：一个顶点一个点，
+            // 由渲染器画成恒定 1 屏幕像素，与缩放无关。所以这里**不需要**算点长。
+            //
+            // ⚠ 原来把点画成 `0.1 * m_scale` 世界单位的短线段。图案填充的几何常是
+            //   毫米量级、视图又常缩放，0.1 世界单位在正常缩放开下远小于 1px
+            //   ⇒ DOTS 之类的点阵整片消失（用户报的现象）。
+            //   大坐标图纸（百万量级）里这个问题更极端。
+            //   也试过"按屏幕像素换算的短线段"：那仍是世界尺寸的线，
+            //   缩小到点长超过线间距时会糊成一条实线（DOTS 间距只有 1.5875）。
+
+            // 虚线周期（虚线长度同样是图案单位，乘以缩放）。
+            //
+            // ⚠ 周期**不含**点的可见长度：dash = 0 在相位上不占位（见下方循环），
+            //   DOTS = `0, -1.5875` 的周期就是 1.5875，点间距等于线间距。
+            //
+            // 全部 dash 都是 0（纯点阵、连空白项都没有）时周期为 0。那不是
+            // "按连续线处理"，而是每 dy 一个点 —— 原来这里直接 return，
+            // 整个点阵被跳过（一个点都没有）。此时把周期设为 dy，
+            // 并让循环按周期推进（见下方 pureDots 分支）。
             double period = 0.0;
             for (double d : fam.Dashes) period += std::abs(d) * m_scale;
             const bool dashed = !fam.Dashes.empty();
-            if (dashed && period < 1e-9) return;
-            const double dotLen = 0.1 * m_scale;        // 点（dash = 0）画成很短的线段
+            const bool pureDots = dashed && period < 1e-9;
+            if (pureDots)
+                period = dy;
 
             auto emit = [&](double u0, double u1, double v)
             {
@@ -475,8 +494,44 @@ namespace MiniCAD
                     {
                         double va = toV(poly[i].x,     poly[i].y);
                         double vb = toV(poly[i + 1].x, poly[i + 1].y);
-                        double lo = std::min(va, vb), hi = std::max(va, vb);
-                        if (v <= lo || v >= hi) continue;
+
+                        // ── 扫描线与边的相交判定 ────────────────────────────
+                        //
+                        // ⚠ 原来是 `v <= lo || v >= hi`（两端都开）。扫描线正好落在
+                        //   边的端点上时该边被整条跳过 ⇒ 与填充边界重合的扫描线不出图。
+                        //   实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条
+                        //   （漏掉 v = 0 撞底边、v = 20 撞顶边两条）。
+                        //
+                        // 改为两端都闭，但扫描线正好穿过顶点时要按顶点类型计数，
+                        // 否则交点个数的奇偶会错，[a,b] 两两配对整条错位：
+                        //   · 经过型顶点（边界在此从下穿到上）只能算 1 次；
+                        //   · 极值顶点（两侧边界都在同一侧）算 0 次或 2 次。
+                        // 做法：边的下端点（lo）总计入；上端点（hi）只在边界越过该顶点后
+                        // （跳过与扫描线等高的水平边）**不再向上**时计入 —— 向上时
+                        // 这个交点已由上面那条边的下端点计过。
+                        // 这样与填充边界重合的首末扫描线（矩形的底边、顶边）也都出图。
+                        const double lo = std::min(va, vb), hi = std::max(va, vb);
+                        if (v < lo || v > hi) continue;
+                        // 水平边（va == vb）在上面的区间判定里会被 v == lo == hi 命中，
+                        // 但 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线。
+                        // 水平边与扫描线平行（重合），不产生交点，必须排除。
+                        if (std::abs(vb - va) < 1e-12) continue;
+                        if (v == hi)
+                        {
+                            // 从上端点沿远离本边的方向找第一个不等高的顶点（poly 首尾相同，共 m 条边）
+                            const size_t m   = poly.size() - 1;
+                            const size_t j   = (va == hi) ? i : i + 1;
+                            const bool   fwd = (j == i + 1);
+                            double next = v;
+                            for (size_t s = 1; s <= m; ++s)
+                            {
+                                const size_t k = fwd ? (j + s) % m : (j + m - s % m) % m;
+                                const double vk = toV(poly[k].x, poly[k].y);
+                                if (vk != v) { next = vk; break; }
+                            }
+                            if (next > v) continue;
+                        }
+
                         double t  = (v - va) / (vb - va);
                         double ua = toU(poly[i].x,     poly[i].y);
                         double ub = toU(poly[i + 1].x, poly[i + 1].y);
@@ -492,23 +547,63 @@ namespace MiniCAD
                     const double a = us[k], b = us[k + 1];
                     if (!dashed) { emit(a, b, v); continue; }
 
-                    // 从覆盖 a 的那个周期开始，逐段输出落在 [a, b] 内的实线 / 点
+                    // 从覆盖 a 的那个周期开始，逐项输出落在 [a, b] 内的实线 / 点
                     if ((b - a) / period > static_cast<double>(budget) * 4.0) { budget = 0; return; }
                     double s = phase + std::floor((a - phase) / period) * period;
+
+                    if (pureDots)
+                    {
+                        // 纯点阵（dash 全是 0、没有空白项）：每周期一个点。
+                        // 必须显式推进 s，否则点全挤在同一位置。
+                        while (s < b && budget > 0)
+                        {
+                            if (s >= a && s <= b)
+                            {
+                                sink.DrawPoint(toWorld(s, v), color, false);
+                                --budget;
+                            }
+                            s += period;
+                        }
+                        continue;
+                    }
+
+                    // 按 dash 序列的**下标**走，而不是每次重放整个序列：
+                    // dash = 0 的"点"在相位上不占长度（.pat 语义），
+                    // 但必须让下标前进，否则永远卡在第一项上。
+                    //   DOTS = `0, -1.5875`：点 + 空白 1.5875 ⇒ 点间距 = 1.5875 = 线间距。
+                    // 至少有一项非零（纯点阵已在上面处理），每走完一轮 s 前进一个周期，
+                    // 迭代次数受上面"(b - a) / period"的预算检查约束，不需要另设上限。
+                    size_t di = 0;
                     while (s < b && budget > 0)
                     {
-                        for (double d : fam.Dashes)
+                        const double d = fam.Dashes[di];
+                        di = (di + 1) % fam.Dashes.size();
+
+                        const double len = std::abs(d) * m_scale;
+                        if (d > 0.0)
                         {
-                            const double len = std::abs(d) * m_scale;
-                            if (d > 0.0)
-                            {
-                                const double s0 = std::max(s, a), s1 = std::min(s + len, b);
-                                if (s1 > s0) emit(s0, s1, v);
-                            }
-                            else if (d == 0.0 && s >= a && s <= b)
-                                emit(s, std::min(s + dotLen, b), v);
+                            const double s0 = std::max(s, a), s1 = std::min(s + len, b);
+                            if (s1 > s0) emit(s0, s1, v);
                             s += len;
-                            if (s >= b) break;
+                        }
+                        else if (d == 0.0)
+                        {
+                            // .pat 的 dash = 0 是"点" ⇒ 走点图元（恒定 1 屏幕像素）。
+                            //
+                            // ⚠ 原来这里用 `for (double d : fam.Dashes)` 从头重放序列，
+                            //   而 `len == 0` 使 s 不推进 ⇒ 每次都命中同一个点，
+                            //   反复 emit 到 budget 耗尽（实测 dashes={0} 时
+                            //   500000 段全挤在同一个位置，其余全空）。
+                            //   现在点不占相位（s 不动），靠下标前进落到下一项。
+                            if (s >= a && s <= b)
+                            {
+                                sink.DrawPoint(toWorld(s, v), color, false);
+                                --budget;
+                            }
+                        }
+                        else
+                        {
+                            s += len;      // 空白段
                         }
                     }
                 }

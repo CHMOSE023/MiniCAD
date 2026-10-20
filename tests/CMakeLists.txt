@@ -119,6 +119,9 @@ if(WIN32)
         "Core/AttribAxisTests.cpp"
         "Core/PolylineWidthTests.cpp"
         "Core/BulgeDirectionTests.cpp"
+        "Core/PointStyleTests.cpp"
+        "Core/LineTypeScaleTests.cpp"
+        "Core/HatchDotsTests.cpp"
         "Core/MatrixInverseTests.cpp"
         "Core/RecentFilesTests.cpp"
     )

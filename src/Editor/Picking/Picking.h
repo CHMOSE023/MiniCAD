@@ -114,12 +114,16 @@ namespace MiniCAD
         // 屏幕矩形 [x0,y0]-[x1,y1] 反投影为世界空间查询 AABB（z 取全范围）。
         AABB ScreenRectToWorldAABB(double x0, double y0, double x1, double y1) const;
 
+    public:
+        // 像素阈值：悬停 / 点选的命中半径（屏幕空间）。测试与诊断要用，故公开。
+        // 悬停略大于点选，更容易"扫到"；点选略小，避免"看起来没选中却点中了"。
+        static constexpr float HOVER_THRESH = 6.0f;
+        static constexpr float PICK_THRESH  = 5.0f;
+
     private:
-        enum class DragState : uint8_t { Idle, Pressing, BoxSelecting }; 
+        enum class DragState : uint8_t { Idle, Pressing, BoxSelecting };
 
         static constexpr float DRAG_THRESH  = 2.0f; // 像素阈值：用于区分“点击”和“拖拽”      过小 → 容易误触拖拽，过大 → 拖拽响应迟钝
-        static constexpr float HOVER_THRESH = 6.0f; // 像素阈值：悬浮检测半径（屏幕空间）     一般略大于 PICK_THRESH，提高可用性（更容易“扫到”）
-        static constexpr float PICK_THRESH  = 5.0f; // 像素阈值：点击选中检测半径（屏幕空间） 通常略小于 HOVER_THRESH，避免“看起来没选中却点中了”
 
         Scene*    m_scene    = nullptr;
         Viewport* m_viewport = nullptr;
@@ -151,6 +155,10 @@ namespace MiniCAD
         {
             std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
             std::vector<std::array<Math::Point3, 3>>           Triangles;
+            // 点图元（.pat 的 dash = 0，如 DOTS 点阵）。点走 IDrawSink::DrawPoint，
+            // 不产线段/三角形，若不单独收集就**完全拾取不到**（表现为能显示但不能选中）。
+            // 点的屏幕尺寸是 1 像素，命中判定按世界距离 + 阈值即可。
+            std::vector<Math::Point3>                          Points;
         };
         const PickGeometry& GetPickGeometry(const Object& obj);
         std::unordered_map<ObjectID, PickGeometry> m_pickGeometry;

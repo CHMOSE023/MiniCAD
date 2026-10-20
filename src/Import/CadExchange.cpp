@@ -352,6 +352,8 @@ namespace MiniCAD
                 ImportLineTypes();
                 ImportLayers();
                 ImportTextStyles();
+                ImportPointStyle();
+                ImportLineTypeScale();
                 // 门窗：先全部解码（模型空间与块内，天正图常把墙和门窗整体做成块），生成墙体时据此留出断口
                 ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
                 if (const Dwg::BlockRecord* model = m_db.ModelSpace())
@@ -395,6 +397,40 @@ namespace MiniCAD
                 for (Dwg::Handle h : table->Entries)
                     if (const T* e = m_db.FindAs<T>(h))
                         fn(*e);
+            }
+
+            // $PDMODE / $PDSIZE：POINT 实体的显示完全由这两个图纸级变量决定。
+            //
+            // 为什么必须读：POINT 实体自身**只有坐标**（组码 10/20/30 + 可选 50），
+            // 不带任何"画成什么样、多大"的信息。不读这两个就只画得出写死的十字
+            // （实测 sample_AC1032.dwg：$PDMODE=34、$PDSIZE=0.1，
+            //  CAD 里是 ⊕（圆+十字），我们画出来是个尺寸也不对的十字）。
+            void ImportPointStyle()
+            {
+                const Dwg::CadHeader& h = m_db.Header;
+                m_scene.SetPointDisplayMode(static_cast<int>(h.PointDisplayMode));
+                m_scene.SetPointDisplaySize(h.PointDisplaySize);
+            }
+
+            // 全局线型比例（$LTSCALE）：虚线实际周期的三层乘数之一。
+            // 不读它，大尺寸图纸的虚线会密到退化成实线（见 Scene::SetLineTypeScale）。
+            void ImportLineTypeScale()
+            {
+                const double lts = m_db.Header.LineTypeScale;
+
+                // 护栏：某些版本的头部段位流解出来是错位的垃圾值（V0.0.1 实测 AC1021/AC1024
+                // 得到过 1.5e-231 / 1.7e-77，只有 AC1018 给出真值）。垃圾值乘进周期比不读更糟，
+                // 所以落在合理区间外就按 1 处理。
+                // 区间取 [1e-4, 1e7]：正常图纸的 $LTSCALE 极少超出（1 是默认，上千很常见）。
+                constexpr double kMin = 1e-4;
+                constexpr double kMax = 1e7;
+                if (!(lts >= kMin && lts <= kMax))
+                {
+                    if (lts != 0.0)
+                        LOG_WARN("DWG/DXF 导入：$LTSCALE=%.6g 超出合理范围，按 1 处理", lts);
+                    return;                       // Scene 默认 1.0
+                }
+                m_scene.SetLineTypeScale(lts);
             }
 
             void ImportLineTypes()
@@ -2352,6 +2388,17 @@ namespace MiniCAD
                     // 2007 以前的文字按 $DWGCODEPAGE 编码（2007 起为 Unicode），默认的 ANSI_1252 写不出中文
                     if (m_version < Dwg::CadVersion::AC1021)
                         h.CodePage = "ANSI_936";
+
+                    // 点样式写回（$PDMODE / $PDSIZE）。**必须与导入成对**：
+                    // 只导入不写出，用户一存盘点样式就退回 AutoCAD 默认（0 = 一像素小点），
+                    // 整张图的 POINT 看起来全变了。
+                    h.PointDisplayMode = static_cast<std::int16_t>(m_scene.GetPointDisplayMode());
+                    h.PointDisplaySize = m_scene.GetPointDisplaySize();
+
+                    // 全局线型比例写回（$LTSCALE）。**同样必须与导入成对**：
+                    // 不写就会被 AutoCAD 当成 1，大尺寸图纸的虚线周期会小几百上千倍，
+                    // 密到看不出线型（与点样式同一类教训）。
+                    h.LineTypeScale = m_scene.GetLineTypeScale();
                 }
 
                 ExportLineTypes();

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # 版本号的唯一来源：发布时只改这里（桌面版的 exe 版本信息由它生成，见 apps/Win32）
-set(MINICAD_VERSION 0.2.1.1)
+set(MINICAD_VERSION 0.2.1.3)
 
 project(MiniCAD VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 

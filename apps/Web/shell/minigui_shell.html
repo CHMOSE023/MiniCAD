@@ -7,21 +7,95 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1e1f22; }
   #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
-  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-            color: #9da0a6; font: 14px system-ui, sans-serif; pointer-events: none; }
+
+  /* 加载画面：上方旋转的 logo，下方百分比与进度条；加载完成后淡出 */
+  #loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: 28px; background: #1e1f22; color: #9da0a6;
+            font: 14px system-ui, sans-serif; user-select: none; transition: opacity .35s ease; }
+  #loader.done { opacity: 0; pointer-events: none; }
+  #loader-logo { width: 72px; height: 72px; animation: loader-spin 1.6s linear infinite;
+                 filter: drop-shadow(0 0 14px rgba(88, 226, 19, .35)); }
+  #loader.failed #loader-logo { animation: none; filter: grayscale(1); opacity: .5; }
+  @keyframes loader-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #loader-logo { animation-duration: 6s; } }
+  #loader-percent { color: #e4e6ea; font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums;
+                    letter-spacing: .02em; }
+  #loader-bar { width: 220px; height: 4px; border-radius: 2px; background: #2e3035; overflow: hidden; }
+  #loader-fill { width: 0; height: 100%; border-radius: 2px; background: #58e213; transition: width .2s ease; }
+  #loader-text { min-height: 1.4em; max-width: 80vw; text-align: center; }
+  #loader.failed #loader-text { color: #f28b82; }
+  .loader-info { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div id="status">正在加载…</div>
+<div id="loader" role="progressbar" aria-label="正在加载" aria-valuemin="0" aria-valuemax="100">
+  <!-- 与 assets/icons/app.png 同形的 logo（圆角五边形） -->
+  <svg id="loader-logo" viewBox="0 0 32 32" aria-hidden="true">
+    <polygon points="9,4.5 23.5,4.5 28,17.5 16,28 4,18" fill="#58e213" stroke="#58e213"
+             stroke-width="3" stroke-linejoin="round"/>
+  </svg>
+  <div class="loader-info">
+    <div id="loader-percent">0%</div>
+    <div id="loader-bar"><div id="loader-fill"></div></div>
+    <div id="loader-text">正在加载…</div>
+  </div>
+</div>
 <script>
+  // 构建后由 cmake/WebCacheBust.cmake 写入内容哈希，避免浏览器拿缓存的旧文件配新文件
+  var kBuildTag = "";
+
+  var Loader = (function () {
+    var root = document.getElementById("loader");
+    var percent = document.getElementById("loader-percent");
+    var fill = document.getElementById("loader-fill");
+    var text = document.getElementById("loader-text");
+    var shown = 0, failed = false;
+    function setPercent(p) {
+      p = Math.max(shown, Math.min(100, Math.floor(p)));     // 只增不减
+      shown = p;
+      percent.textContent = p + "%";
+      fill.style.width = p + "%";
+      root.setAttribute("aria-valuenow", p);
+    }
+    return {
+      // Emscripten 的状态文字："Downloading data... (已下载/总数)"、"Running..."，空串表示完成
+      status: function (msg) {
+        if (failed) return;
+        if (!msg) {
+          setPercent(100);
+          root.classList.add("done");
+          setTimeout(function () { root.remove(); }, 400);
+          return;
+        }
+        var m = msg.match(/\(([\d.]+)\/([\d.]+)\)/);
+        if (m && +m[2] > 0) {
+          setPercent(+m[1] / +m[2] * 99);                     // 留 1% 给编译与启动
+          text.textContent = "正在下载…";
+        } else if (/^Running/.test(msg)) {
+          setPercent(99);
+          text.textContent = "正在启动…";
+        } else if (/^Preparing/.test(msg)) {
+          text.textContent = "正在准备…";
+        }
+      },
+      fail: function (what) {
+        failed = true;
+        root.classList.add("failed");
+        what = what ? String(what).split("\n")[0] : "";
+        if (what.length > 80) what = what.slice(0, 80) + "…";
+        text.textContent = "加载失败，请刷新页面重试" + (what ? "（" + what + "）" : "");
+      }
+    };
+  })();
+
   var Module = {
     canvas: document.getElementById("canvas"),
-    setStatus: function (text) {
-      var s = document.getElementById("status");
-      if (!s) return;
-      if (text) s.textContent = text; else s.remove();     // 空字符串表示加载完成
+    locateFile: function (path, prefix) {
+      return prefix + path + (kBuildTag ? "?v=" + kBuildTag : "");
     },
+    setStatus: Loader.status,
+    onAbort: function (what) { Loader.fail(what); },
     print: function (text) { console.log(text); },
     printErr: function (text) { console.error(text); }
   };

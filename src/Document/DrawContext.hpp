@@ -72,6 +72,56 @@ namespace MiniCAD
             return !layer || layer->IsVisible();
         }
 
+        std::string GetLayerName(LayerID layerId) const override
+        {
+            const Layer* layer = m_layerManager.GetLayer(layerId);
+            return layer ? layer->GetName() : std::string();
+        }
+
+        // 点样式（HEADER 的 $PDMODE/$PDSIZE）。默认 0/0 = AutoCAD 默认"实心小点"。
+        bool GetPointStyle(int& mode, double& size) const override
+        {
+            mode = m_pointMode;
+            size = m_pointSize;
+            return true;
+        }
+        void SetPointStyle(int mode, double size)
+        {
+            m_pointMode = mode;
+            m_pointSize = size;
+        }
+
+        double GetWorldPerPixel() const override    { return m_worldPerPixel; }
+        double GetViewportHeightPx() const override { return m_viewportHeightPx; }
+        void MarkViewDependent() override { if (m_worldPerPixel > 0.0) m_viewDependent = true; }
+        // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
+        // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
+        void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
+
+        // 全局线型比例（Scene 的 $LTSCALE）。与实体级组码 48 相乘得到虚线实际周期。
+        void SetLineTypeScale(double s) { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
+
+        // 点图元：一个顶点一个点，渲染端按 POINTLIST / GL_POINTS 画成
+        // 恒定 1 屏幕像素。用途：图案填充的 dash=0 点笔划、POINT 的 $PDMODE=0。
+        //
+        // ⚠ 走**独立的点流** m_points，不与线段流混：
+        //   · 图元类型不同（POINTLIST vs LINELIST），混在一起没法提交；
+        //   · 点流也参与区域覆盖裁剪（WipeClip 的 ClipPoints），与线段同规则。
+        // 不能进 overlay：那是每帧清空的动态层，承载不了场景几何。
+        void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) override
+        {
+            if (isOverlay)
+            {
+                m_overlay.AddPoint(p, color);
+                return;
+            }
+            m_points.push_back(ToVertex(p, color));
+        }
+
+        // 本次细分产出的点图元（调用方取走后清空）
+        std::vector<Vertex_P3_C4> TakePoints() { return std::move(m_points); }
+        void ClearPoints() { m_points.clear(); }
+
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {
@@ -85,6 +135,7 @@ namespace MiniCAD
                 m_entityFills = m_fillVerts.size();
                 m_entityTexts = m_textVerts.size();
                 m_entityGlyphs = m_glyphs ? m_glyphs->size() : 0;
+                m_entityPoints = m_points.size();
             }
         }
 
@@ -122,7 +173,7 @@ namespace MiniCAD
         // 由 Editor 在拼接顶点流时按绘制序裁剪
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
-            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0 });
+            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0, m_points.size() });
             m_wipes.push_back(polygon);
         }
         std::vector<std::vector<Math::Point3>> TakeWipes()
@@ -371,6 +422,7 @@ namespace MiniCAD
             m_pendingWipes.ClipLines(m_verts, 0, m_entityLines);
             m_pendingWipes.ClipFills(m_fillVerts, 1, 5, m_entityFills);
             m_pendingWipes.ClipTexts(m_textVerts, 2, m_entityTexts);
+            m_pendingWipes.ClipPoints(m_points, 4, m_entityPoints);
             if (m_glyphs)
                 m_pendingWipes.ClipGlyphs(*m_glyphs, 3, m_entityGlyphs, *m_glyphLib, m_verts, m_fillVerts);
             m_pendingWipes.Clear();
@@ -408,8 +460,12 @@ namespace MiniCAD
         {
             bool continuous = (!rec || rec->IsContinuous());
 
-            const double scale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
-                                     ? m_curAttr->LinetypeScale : 1.0;
+            // 实体级比例(组码48) × 全局 $LTSCALE。
+            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍 —— 再叠加下面
+            // 「一个周期不足 4px 退化为实线」的护栏，虚线会整条消失。
+            const double entityScale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
+                                          ? m_curAttr->LinetypeScale : 1.0;
+            const double scale = entityScale * m_lineTypeScale;
 
             double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
             double len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -531,19 +587,25 @@ namespace MiniCAD
 
         std::vector<Vertex_P3_C4>&     m_verts;
         std::vector<Vertex_P3_C4>&     m_fillVerts;
+        std::vector<Vertex_P3_C4>      m_points;     // 点图元（POINTLIST，与线段/填充分开提交）
         std::vector<Vertex_P3_C4_UV>&  m_textVerts;
         Overlay&                       m_overlay;
         const LayerManager&            m_layerManager;
         const LineTypeTable&           m_lineTypes;
         double                         m_worldPerPixel = 0.0;   // 1 屏幕像素对应的世界长度
+        double                         m_viewportHeightPx = 0.0;   // 视口像素高度（$PDSIZE<=0 换算世界尺寸用）
+        int                            m_pointMode = 0;    // $PDMODE：点样式
+        double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
+        double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
-        WipeClip::Batch                m_pendingWipes{ 4 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例四条流）
+        WipeClip::Batch                m_pendingWipes{ 5 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例、点五条流）
         size_t                         m_entityLines = 0;   // 当前实体在各顶点流中的起点（块内遮罩只裁剪本实体先画的部分）
         size_t                         m_entityFills = 0;
         size_t                         m_entityTexts = 0;
+        size_t                         m_entityPoints = 0;
         size_t                         m_entityGlyphs = 0;
         std::vector<GlyphInstance>*    m_glyphs   = nullptr;   // 字形实例输出（为空时字形展开成顶点）
         GlyphMeshLibrary*              m_glyphLib = nullptr;

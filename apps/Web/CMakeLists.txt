@@ -30,6 +30,11 @@ function(minicad_web_executable target)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${target}"
         LINK_DEPENDS "${MINICAD_WEB_SHELL}"
     )
+    # 给 .js / .wasm / .data 的地址加内容哈希参数，发版后浏览器不会混用新旧文件
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -DHTML=$<TARGET_FILE:${target}> -P "${CMAKE_SOURCE_DIR}/cmake/WebCacheBust.cmake"
+        VERBATIM
+    )
 endfunction()
 
 # ── MiniGUI 网页原型：控件展示（Gallery）────────────────────────────

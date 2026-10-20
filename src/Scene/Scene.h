@@ -70,6 +70,40 @@ namespace MiniCAD
 		Lineweight GetCurrentLineweight() const          { return m_currentLineweight; }
 		void       SetCurrentLineweight(Lineweight lw)   { m_currentLineweight = lw; }
 
+		// ── 全局线型比例（DXF HEADER 的 $LTSCALE）─────────────────────────────
+		// 虚线铺设的实际周期 = LTYPE图案周期 × 实体线型比例(组码48) × 本值。
+		//
+		// 为什么必须带着它：大尺寸图纸（坐标在百万量级）为了让虚线在图上物理长度合理，
+		// 会把 $LTSCALE 设成几百上千（实测 test0.dwg = 1000），而 LTYPE 表里的
+		// 图案周期是小数值（DASH = 0.35）。少了这一乘，周期会小 1000 倍 ——
+		// 再叠加渲染层「一个周期不足 4 像素就退化为实线」的护栏，虚线会整条消失。
+		double GetLineTypeScale() const      { return m_lineTypeScale; }
+		// <= 0 视为无效，按 1 处理（AutoCAD 也不接受非正值）
+		void   SetLineTypeScale(double s)    { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
+
+		// ── 点样式（DXF HEADER 的 $PDMODE / $PDSIZE）──────────────────
+		//
+		// POINT 实体**自身不带显示信息**：DXF/DWG 里只有坐标（10/20/30）、
+		// 可选的挤出方向（210）和角度（50）。画成什么样完全由图纸级 $PDMODE 决定。
+		//
+		// $PDMODE 是位组合（与 AutoCAD / LibreCAD 一致）：
+		//     低 4 位选"基本形"：0=实心小点 1=什么都不画 2=十字 3=叉 4=竖线
+		//     bit5 (32) = 外加一个外接圆
+		//     bit6 (64) = 外加一个外接方
+		//     96 = 32|64 = 圆和方都加
+		// 例：34 = 32|2 = 圆 + 十字 = ⊕。
+		// 低 4 位取 0~4 之外时按"十字"处理。
+		//
+		// $PDSIZE 是图形尺寸：**>0 = 世界单位**；=0 = 视口高度的 5%；
+		// <0 = 视口高度的 |值|%。后两种是**屏幕相对**的，换算还需要
+		// worldPerPixel 与视口像素高度（由绘制时经 IDrawSink 提供）。
+		//
+		// 默认 0/0 = AutoCAD 默认"实心小点"。
+		int    GetPointDisplayMode() const   { return m_pointDisplayMode; }
+		void   SetPointDisplayMode(int m)    { m_pointDisplayMode = m; }
+		double GetPointDisplaySize() const   { return m_pointDisplaySize; }
+		void   SetPointDisplaySize(double s) { m_pointDisplaySize = s; }
+
 		// 把单个 INSERT 的非拥有块指针解析到块表中的块定义（绘制前必需）。
 		void ResolveInsert(InsertEntity& ins);
 		// 批量重解析所有 INSERT（反序列化 / 加载完成后调用）。
@@ -140,6 +174,9 @@ namespace MiniCAD
 		MLineStyleID    m_currentMLineStyle = MLineStyleTable::StandardID;   // 当前多线样式(CMLSTYLE)
 		LineTypeID    m_currentLineType   = LineTypeTable::ByLayerID;  // 当前线型(CELTYPE)
 		Lineweight    m_currentLineweight = Lineweight::ByLayer;       // 当前线宽(CELWEIGHT)
+		int           m_pointDisplayMode   = 0;      // $PDMODE：0 = 一个像素小点（AutoCAD 默认）
+		double        m_lineTypeScale      = 1.0;    // $LTSCALE：全局线型比例
+		double        m_pointDisplaySize   = 0.0;    // $PDSIZE：0 = 按视口高度百分比
 		bool          m_dirty    = false;
 		bool          m_allDirty = false;                  // 全局脏：所有实体顶点缓存失效
 		bool          m_geomAllDirty = false;              // 全局几何脏：拾取空间索引需整表重建

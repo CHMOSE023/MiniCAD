@@ -203,6 +203,13 @@ namespace MiniCAD
 		}
 		uint32_t cms = m_currentMLineStyle;
 		s.Value("currentMLineStyle", cms);
+		// 图纸级显示变量（HEADER 的 $PDMODE / $PDSIZE / $LTSCALE）
+		int32_t pdm = m_pointDisplayMode;
+		s.Value("pointDisplayMode", pdm);
+		double pds = m_pointDisplaySize;
+		s.Value("pointDisplaySize", pds);
+		double lts = m_lineTypeScale;
+		s.Value("lineTypeScale", lts);
 
 		// 实体按 ID 升序写出,保证文件内容确定(unordered_map 无序)。
 		std::vector<ObjectID> ids = GetAllIDs();
@@ -265,6 +272,17 @@ namespace MiniCAD
 		uint32_t cms = MLineStyleTable::StandardID;
 		s.Value("currentMLineStyle", cms);
 		m_currentMLineStyle = m_mlineStyleTable.Find(cms) ? cms : MLineStyleTable::StandardID;
+
+		// 旧文件没有这几项：按 AutoCAD 默认（实心小点、线型比例 1）
+		int32_t pdm = 0;
+		s.Value("pointDisplayMode", pdm);
+		m_pointDisplayMode = pdm;
+		double pds = 0.0;
+		s.Value("pointDisplaySize", pds);
+		m_pointDisplaySize = pds;
+		double lts = 1.0;
+		s.Value("lineTypeScale", lts);
+		SetLineTypeScale(lts);
 
 		size_t n = 0;
 		if (s.BeginArray("entities", n))
