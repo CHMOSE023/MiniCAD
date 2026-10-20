@@ -16,10 +16,12 @@
 #include "Widgets/Panel.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
+#include "Core/PathUtils.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <thread>
@@ -68,6 +70,54 @@ namespace MiniCAD
             b->EditLayoutStyle().padding = Edges::Symmetric(8.0f, 3.0f);
             return b;
         };
+        // 顺序按常见软件的习惯：文件（打开 / 保存 / 示例）→ 编辑（添加节点、参数）→ 视图 → 输出（烘焙），会删掉全部内容的“清空”放最后
+        // 菜单挂在按钮下方：按钮在 addTool 返回后才有，经共享的指针取到
+        auto fileButton = std::make_shared<Button*>(nullptr);
+        *fileButton = addTool("文件", "打开 / 保存节点图文件（.mcnode）：在不同图纸之间复用节点图；节点图本身也随图纸保存", [this, fileButton]
+        {
+            if (!m_nodeEditor || !*fileButton)
+                return;
+            const bool selected = !m_nodeEditor->GetSelection().empty();
+            std::vector<MenuItem> items;
+            items.emplace_back("打开节点图…", [this] { OpenNodeGraphFile(); });
+            items.push_back(MenuItem::Separator());
+            items.emplace_back("保存节点图…", [this] { SaveNodeGraphFile(false); });
+            items.push_back(std::move(MenuItem("保存选中的节点…", [this] { SaveNodeGraphFile(true); }).Enabled(selected)));
+            const Rect r = (*fileButton)->GetScreenBounds();
+            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+        });
+        auto exampleButton = std::make_shared<Button*>(nullptr);
+        *exampleButton = addTool("示例", "插入示例节点图（随程序发布的 .mcnode 文件，在 nodes/examples 目录）；与已有参数重名的参数会自动改名", [this, exampleButton]
+        {
+            if (!m_nodeEditor || !*exampleButton)
+                return;
+            // 示例是资源目录里的节点图文件，每次打开菜单时读索引（改了文件不用重启）；
+            // 没有实体内核（网页版）时，用到三维实体 / 曲面的示例禁用
+            const bool kernel = m_platform->GetSolidKernel() != nullptr;
+            std::vector<MenuItem> items;
+            std::string group;
+            for (const auto& e : Nodes::ReadExampleIndex(m_platform->GetResourceDir() + "/nodes/examples"))
+            {
+                if (!items.empty() && e.Group != group)
+                    items.push_back(MenuItem::Separator());
+                group = e.Group;
+                const bool usable = kernel || !e.NeedsKernel;
+                MenuItem item(usable ? e.Name : e.Name + "（需要实体内核）", [this, e]
+                {
+                    const std::string text = Nodes::ReadTextFile(e.Path);
+                    if (!m_nodeEditor)
+                        return;
+                    m_nodeEditor->Focus();
+                    const bool ok = m_nodeEditor->InsertGraph(text);
+                    m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + e.Name + "——" + e.Description : "示例：读不出 " + e.Path);
+                });
+                items.push_back(std::move(item.Enabled(usable)));
+            }
+            if (items.empty())
+                items.push_back(std::move(MenuItem("（没有找到示例文件）").Enabled(false)));
+            const Rect r = (*exampleButton)->GetScreenBounds();
+            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+        });
         addTool("添加节点", "按分类添加节点（也可在画布上按 Tab 或双击空白处搜索，空白处右键按分类添加）", [this]
         {
             if (!m_nodeEditor)
@@ -76,35 +126,9 @@ namespace MiniCAD
             m_nodeEditor->Focus();
             m_nodeEditor->OpenAddMenuAt({ size.x * 0.35f, size.y * 0.3f });   // 新节点放在画布中部偏左上
         });
-        // 示例菜单挂在按钮下方：按钮在 addTool 返回后才有，经共享的指针取到
-        auto exampleButton = std::make_shared<Button*>(nullptr);
-        *exampleButton = addTool("示例", "插入示例节点图（参数化窗框、曲面屋顶、网格化导出、网格截面与求交）；与已有参数重名的参数会自动改名", [this, exampleButton]
-        {
-            if (!m_nodeEditor || !*exampleButton)
-                return;
-            // 没有实体内核（网页版）时，用到三维实体 / 曲面的示例禁用
-            const bool kernel = m_platform->GetSolidKernel() != nullptr;
-            std::vector<MenuItem> items;
-            for (const auto& e : Nodes::Examples())
-            {
-                const std::string id = e.Id;
-                const bool usable = kernel || !e.NeedsKernel;
-                MenuItem item(usable ? std::string(e.Name) : std::string(e.Name) + "（需要实体内核）", [this, id]
-                {
-                    if (const Nodes::ExampleGraph* ex = Nodes::FindExample(id); ex && m_nodeEditor)
-                    {
-                        m_nodeEditor->Focus();
-                        m_nodeEditor->InsertGraph(Nodes::ExampleToString(*ex));
-                    }
-                });
-                items.push_back(std::move(item.Enabled(usable)));
-            }
-            const Rect r = (*exampleButton)->GetScreenBounds();
-            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
-        });
         addTool("参数", "参数表：集中编辑全部“参数”节点的名称、类别、值、公式，保存与切换类型（族类型）", [this] { OpenNodeParamsDialog(); });
-        addTool("烘焙", "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销", [this] { BakeNodeGraph(); });
         addTool("适应窗口", "显示全部节点（有选中时显示选中的节点），快捷键 F", [this] { if (m_nodeEditor) m_nodeEditor->FrameAll(); });
+        addTool("烘焙", "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销", [this] { BakeNodeGraph(); });
         addTool("清空", "删除全部节点（可在节点编辑器里按 Ctrl+Z 撤销）", [this]
         {
             Document* doc = m_docManager.GetActive();
@@ -609,6 +633,105 @@ namespace MiniCAD
                                        : "烘焙节点图：没有可烘焙的几何" + (skipped.empty() ? std::string("（先在节点编辑器里搭建并预览）") : skipped));
         m_viewport->RequestRender();
         StateChanged();
+    }
+
+    void MainFrame::SaveNodeGraphFile(bool selectionOnly)
+    {
+        Document* doc = m_docManager.GetActive();
+        if (!doc || !m_nodeEditor)
+            return;
+        Editor& editor = m_docManager.GetEditor();
+        // 整张图存顶层（含组定义与参数类型）；只存选中时存当前显示的那一层里选中的节点（剪贴板格式，带上用到的组定义）
+        std::string text;
+        if (selectionOnly)
+        {
+            const auto& sel = m_nodeEditor->GetSelection();
+            text = ShownNodeGraph(*doc).CopyToString(std::vector<Nodes::NodeId>(sel.begin(), sel.end()));
+        }
+        else if (!doc->GetNodeGraph().Empty())
+            text = doc->GetNodeGraph().SaveToString();
+        if (text.empty())
+        {
+            editor.GetCmdLine().Echo(selectionOnly ? "保存节点图：没有选中的节点" : "保存节点图：节点图是空的");
+            return;
+        }
+        std::string name = doc->GetName();
+        if (const size_t dot = name.find_last_of('.'); dot != std::string::npos && dot > 0)
+            name.resize(dot);
+        const std::string path = m_platform->ChooseExportPath(FileKind::NodeGraph, (name.empty() ? std::string("节点图") : name) + ".mcnode");
+        if (path.empty())
+            return;
+        std::ofstream out(Utf8ToPath(path), std::ios::binary);
+        out << text;
+        out.close();
+        if (!out)
+        {
+            MiniGUI::ShowMessageBox(*m_ui, "保存节点图失败", "无法写入文件：" + path);
+            return;
+        }
+        m_platform->OnDocumentSaved(path);
+        editor.GetCmdLine().Echo("保存节点图：" + path);
+    }
+
+    void MainFrame::OpenNodeGraphFile()
+    {
+        m_platform->PickFile(FileKind::NodeGraph, [this](const std::string& path)
+        {
+            const std::string text = Nodes::ReadTextFile(path);
+            if (text.find("MiniCAD-NodeGraph") == std::string::npos)
+            {
+                MiniGUI::ShowMessageBox(*m_ui, "打开节点图失败", "不是 MiniCAD 节点图文件：" + path);
+                return;
+            }
+            Document* doc = m_docManager.GetActive();
+            if (!doc)
+                return;
+            // 当前节点图是空的：直接替换（保留参数类型）；否则问插入还是替换
+            if (doc->GetNodeGraph().Empty() && doc->GetNodeGraph().Groups().Empty())
+            {
+                LoadNodeGraphText(text, true);
+                return;
+            }
+            MiniGUI::ShowMessageBox(*m_ui, "打开节点图", "当前节点图不是空的。\n插入：加到已有节点的右侧（当前所在的一层）；替换：整张节点图换成文件里的。两种都可撤销。",
+                                    { "插入", "替换", "取消" }, [this, text](int choice)
+            {
+                if (choice == 0 || choice == 1)
+                    LoadNodeGraphText(text, choice == 1);
+            });
+        });
+    }
+
+    bool MainFrame::LoadNodeGraphText(const std::string& text, bool replace)
+    {
+        Document* doc = m_docManager.GetActive();
+        if (!doc || !m_nodeEditor)
+            return false;
+        Editor& editor = m_docManager.GetEditor();
+        if (!replace)
+        {
+            m_nodeEditor->Focus();
+            const bool ok = m_nodeEditor->InsertGraph(text);
+            editor.GetCmdLine().Echo(ok ? "打开节点图：已插入" : "打开节点图：文件里没有可用的节点");
+            return ok;
+        }
+        Nodes::Graph loaded(doc->GetNodeGraph().Registry());
+        if (!loaded.LoadFromString(text))
+        {
+            MiniGUI::ShowMessageBox(*m_ui, "打开节点图失败", "节点图文件格式不正确");
+            return false;
+        }
+        WaitNodeEvaluation();
+        m_nodeEditor->LeaveGroup(0);
+        Nodes::Graph& g = doc->GetNodeGraph();
+        NodeHistory(*doc).Snapshot(g);
+        g.LoadFromString(text);
+        doc->MarkDirty();
+        m_nodeEditor->SetSelection({});
+        m_nodeEditor->FrameAll();
+        editor.GetCmdLine().Echo("打开节点图：已替换（" + std::to_string(g.GetNodes().size()) + " 个节点，可在节点编辑器里按 Ctrl+Z 撤销）");
+        m_platform->RequestRedraw();
+        UpdateTitle();
+        return true;
     }
 
     void MainFrame::ShowNodePanel(bool toggle)

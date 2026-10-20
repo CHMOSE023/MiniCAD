@@ -127,6 +127,9 @@ namespace MiniCAD
         void RefreshNodePreview(Document& doc);
         Nodes::Graph& ShownNodeGraph(Document& doc);              // 节点编辑器正在显示的图（主图或进入的组内图）
         void BakeNodeGraph();                                     // 烘焙：结果加入图纸（可撤销）
+        void SaveNodeGraphFile(bool selectionOnly);               // 节点图存为 .mcnode（selectionOnly：只存选中的节点）
+        void OpenNodeGraphFile();                                 // 打开 .mcnode：插入当前节点图，或替换整张图
+        bool LoadNodeGraphText(const std::string& text, bool replace);
         void OpenNodeParamsDialog();                              // 参数表：全部命名参数的名称、类别、值、公式，以及类型（族类型）
         void ShowNodePanel(bool toggle);                          // 第一次显示时停靠在绘图区下方
         bool NodeEditorHasFocus() const;                          // 节点编辑器有焦点时 Ctrl+Z / Y / A / C / X / V 作用于节点图

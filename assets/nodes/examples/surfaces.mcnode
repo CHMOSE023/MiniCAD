@@ -1,0 +1,389 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input.number",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 8
+        },
+        {
+          "t": "integer",
+          "v": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "math.series",
+      "x": 0,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "integer",
+          "v": 5
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "type": "math.expression",
+      "x": 230,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "8 + b * sin(a * 9)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "vector.point",
+      "x": 230,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 5,
+      "type": "curve.circle",
+      "x": 460,
+      "y": 60,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 5
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "surface.loft",
+      "x": 690,
+      "y": 60,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        }
+      ],
+      "params": [
+        {
+          "t": "boolean",
+          "v": false
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "surface.param",
+      "x": 690,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "domain",
+          "v": [
+            0,
+            40
+          ]
+        },
+        {
+          "t": "domain",
+          "v": [
+            0,
+            40
+          ]
+        },
+        {
+          "t": "integer",
+          "v": 24
+        },
+        {
+          "t": "integer",
+          "v": 24
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "30 + u"
+        },
+        {
+          "t": "text",
+          "v": "v - 20"
+        },
+        {
+          "t": "text",
+          "v": "3 * sin(u * 6) * cos(v * 6)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "math.series",
+      "x": 0,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 4
+        },
+        {
+          "t": "integer",
+          "v": 5
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 9,
+      "type": "math.expression",
+      "x": 230,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "-27 + 10 * sqrt(a / 4)"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "vector.point",
+      "x": 460,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 11,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 12,
+      "type": "surface.revolve",
+      "x": 920,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "vector",
+          "v": [
+            -30,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            1
+          ]
+        },
+        {
+          "t": "number",
+          "v": 360
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 1
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 2
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 1
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 9,
+      "toPort": 0
+    },
+    {
+      "from": 9,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 0
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 2
+    },
+    {
+      "from": 10,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 0
+    },
+    {
+      "from": 11,
+      "fromPort": 0,
+      "to": 12,
+      "toPort": 0
+    }
+  ]
+}

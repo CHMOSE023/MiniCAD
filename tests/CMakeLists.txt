@@ -262,6 +262,7 @@ if(MINICAD_WITH_SOLID)
     if(MSVC)
         target_compile_options(NodeSolidTests PRIVATE /utf-8)
     endif()
+    target_compile_definitions(NodeSolidTests PRIVATE MINICAD_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")   # 示例节点图文件
     add_test(NAME NodeSolidTests COMMAND NodeSolidTests)
 endif()
 

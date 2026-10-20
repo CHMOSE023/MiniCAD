@@ -37,6 +37,7 @@
 #include "Widgets/ViewportHost.h"
 #include "GUI/ViewCube.h"
 #include "GUI/NodeEditor.h"
+#include "NodeGraph/Examples.h"
 #include "Widgets/DockSpace.h"
 #include "D3D11/D3D11RenderTarget.h"
 #include <wrl/client.h>
@@ -1325,7 +1326,8 @@ namespace MiniCAD
                 else if (dlg)
                     dlg->Cancel();
 
-                // 示例（N10）：点工具行的“示例”，菜单里 ↓ 回车选第一项“参数化窗框”，插入后求值得到窗框，一步撤销
+                // 示例（N10，示例是 nodes/examples 里的节点图文件）：点工具行的“示例”，菜单里 ↓↓↓ 回车选第三项“实体：法兰座”，
+                // 插入后求值得到法兰座，一步撤销
                 graph.Clear();
                 MiniGUI::Button* exampleButton = nullptr;
                 std::function<void(MiniGUI::Node*)> findButton = [&](MiniGUI::Node* n)
@@ -1346,16 +1348,17 @@ namespace MiniCAD
                     RenderFrame();
                 }
                 const bool menuOpened = m_ui->GetTopPopup() != nullptr;
-                key(MiniGUI::Key::Down);
+                for (int i = 0; i < 3; ++i)
+                    key(MiniGUI::Key::Down);
                 key(MiniGUI::Key::Enter);
                 SyncNodeGraph();
-                const Node* combine = nullptr;
+                const Node* flange = nullptr;
                 for (const auto& n : graph.GetNodes())
-                    if (n->TypeId == "solid.combine")
-                        combine = n.get();
-                check(exampleButton && menuOpened && graph.GetNodes().size() > 15 && ne.GetSelection().size() == graph.GetNodes().size() && combine &&
-                      combine->State == NodeState::Ok && !combine->Outputs[0].empty() && graph.Parameters().Values.count("中梃高"),
-                      "节点编辑器：“示例”菜单插入参数化窗框，求值得到窗框");
+                    if (n->TypeId == "solid.difference")
+                        flange = n.get();
+                check(exampleButton && menuOpened && graph.GetNodes().size() > 10 && ne.GetSelection().size() == graph.GetNodes().size() && flange &&
+                      flange->State == NodeState::Ok && !flange->Outputs[0].empty(),
+                      "节点编辑器：“示例”菜单从文件插入法兰座，求值得到实体");
                 RenderFrame();
                 SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_example.bmp");
                 ne.Focus();
@@ -1515,6 +1518,22 @@ namespace MiniCAD
                     SyncNodeGraph();
                     check(graph.GetNode(inst) && graph.GetNode(inst)->IsGroup() && !graph.Groups().Empty() && std::abs(negValue(gn) + 12.0) < 1e-9,
                           "组节点：Ctrl+Z 撤销解组");
+                    graph.Clear();
+                    RenderFrame();
+                }
+
+                // 节点图文件：空图时直接替换，再插入一份，Ctrl+Z 撤销插入（文件对话框不能自动操作，直接用读出的文本）
+                {
+                    const std::string text = graph.CopyToString({});   // 空图：不是节点图
+                    const std::string demo = Nodes::ReadTextFile(m_platform->GetResourceDir() + "/nodes/examples/meshes.mcnode");
+                    check(text.empty() && LoadNodeGraphText(demo, true), "节点图文件：替换为文件里的节点图");
+                    const size_t n = graph.GetNodes().size();
+                    check(n > 0 && LoadNodeGraphText(demo, false) && graph.GetNodes().size() == 2 * n, "节点图文件：插入到已有节点的右侧");
+                    ne.Focus();
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    check(graph.GetNodes().size() == n, "节点图文件：Ctrl+Z 撤销插入");
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    check(graph.Empty(), "节点图文件：Ctrl+Z 撤销替换，回到空图");
                     graph.Clear();
                     RenderFrame();
                 }

@@ -7,14 +7,14 @@
 MiniCAD 是用现代 C++（C++20）编写的跨平台二维 CAD 编辑器。一个仓库里包含三个库和两个应用：
 平台无关的核心库 MiniCAD、保留模式界面库 MiniGUI、DWG/DXF 读写库 MiniDWG；
 Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代码（`apps/Common`）绘制同一套 MiniGUI 界面。
-仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.1.2。
+仓库于 2026-10 由原 MiniCADLib、MiniGUI、MiniDWG 三个仓库合并而成（未保留历史）。当前版本 v0.2.2.0。
 
 ### 目录
 
 - `src/`：核心库（目标 `MiniCAD`，定义在 `cmake/MiniCAD.cmake`，命名空间 `MiniCAD`）
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）与 `Platform/Web`（`MiniGUI_Web`：DOM 输入、经隐藏 textarea 接入输入法、剪贴板、打包的界面字体）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD（网页版也包含），核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。开发计划：`docs/MiniDWG/PLAN.md`；`*.g.cpp` 由已归档的 MiniDWG 仓库 `tools/` 里的脚本生成，不要手改
-- `src/NodeGraph/`：节点式参数化建模（核心库，命名空间 `MiniCAD::Nodes`）：值与类型、节点类型注册表、节点图（依赖调度求值、读写）、撤销快照、预览与烘焙、内置节点（`Builtin*Nodes.cpp`，几何经 MiniCAD 曲线实体与 `ISolidKernel`；网格运算与网格求交在 `MeshOps` / `MeshIntersect.cpp`，不依赖内核，也是内核求交失败时的退路）、示例图（`Examples.cpp`，编辑器工具行的“示例”菜单）、组节点（`Group.h`：组库属于顶层的图，组实例类型 `group:<编号>`，每个实例持有自己的组内图）。节点图随文档保存（`Document::GetNodeGraph`，`.mcad` / JSON 的 `nodeGraph`）。编辑器是 `apps/Common/src/GUI/NodeEditor`（停靠面板 `nodes`，`NodePanel.cpp` 负责求值、预览、烘焙；桌面版把节点图副本交给单个工作线程求值，按脏戳合并回来，改动正在算的节点会取消重来，见 `docs/NodeGraph/PLAN.md` 第 3.4 节）。开发计划：`docs/NodeGraph/PLAN.md`
+- `src/NodeGraph/`：节点式参数化建模（核心库，命名空间 `MiniCAD::Nodes`）：值与类型、节点类型注册表、节点图（依赖调度求值、读写）、撤销快照、预览与烘焙、内置节点（`Builtin*Nodes.cpp`，几何经 MiniCAD 曲线实体与 `ISolidKernel`；网格运算与网格求交在 `MeshOps` / `MeshIntersect.cpp`，不依赖内核，也是内核求交失败时的退路）、示例图（节点图文件 `assets/nodes/examples/*.mcnode`，索引 `examples.json` 定顺序、名称与是否需要内核；`Examples.cpp` 只负责读取，编辑器工具行的“示例”菜单）、组节点（`Group.h`：组库属于顶层的图，组实例类型 `group:<编号>`，每个实例持有自己的组内图）。节点图随文档保存（`Document::GetNodeGraph`，`.mcad` / JSON 的 `nodeGraph`），也可经节点面板的“文件”菜单单独存成 / 打开 `.mcnode`。编辑器是 `apps/Common/src/GUI/NodeEditor`（停靠面板 `nodes`，`NodePanel.cpp` 负责求值、预览、烘焙；桌面版把节点图副本交给单个工作线程求值，按脏戳合并回来，改动正在算的节点会取消重来，见 `docs/NodeGraph/PLAN.md` 第 3.4 节）。开发计划：`docs/NodeGraph/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`：`MainFrame`、命令、面板、命令行、对话框）。平台服务经 `AppPlatform` 接口（`apps/Common/src/GUI/AppPlatform.h`）提供
 - 注意：根目录 `.gitignore` 的 `tools` 规则也会命中 `src/Editor/Tools/`，在那里新增文件要 `git add -f`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（无边框窗口、D3D11、消息循环，实现 `AppPlatform`），目标 `MiniCADWin`；自测 `Host/SelfTest.cpp`。`src/Render/` 下是 CAD 渲染器 `D3D11Renderer` 与 MiniGUI 后端（`D3D11/D3D11Backend` → `MiniGUI_D3D11`，`Software/SoftwareBackend` → `MiniGUI_Software`）
@@ -22,7 +22,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `wasm/`：旧版 C 接口 WASM（给仓库外的 HTML/JS 前端用）。只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译，此时核心库定义 `MINICAD_WEB`（文字输入交给 JS、块名自动命名、文字走纹理图集），并且不编译 `apps/Web`
 - `tests/`：`Core/`（MiniCAD）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
 - `tools/make_web_font.py`：重新生成 `assets/fonts/NotoSansSC-UI.ttf`（网页版界面字体，Noto Sans SC Regular 子集，OFL）
-- `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
+- `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`、示例节点图 `nodes/examples/`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
 - `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.0 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（桌面版默认开、网页版默认关）；静态库、`SM_STATIC`，本地修改与使用注意（静态库不能并发使用，`SMLibKernel` 内部加锁让多个线程轮流调用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `docs/`：早期 MiniCAD 项目的教程（描述的是旧架构）、各库开发计划、发布说明 `release-notes/`
 

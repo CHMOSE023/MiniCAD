@@ -1,4 +1,4 @@
-// 由 cmake/MiniCADVersion.cmake 在每次构建时从 apps/Win32/src/MiniCADVersion.h.in 生成，不要手改。
+// 由 cmake/MiniCADVersion.cmake 在每次构建时从 apps/Common/src/MiniCADVersion.h.in 生成，不要手改。
 // 前三段来自根 CMakeLists.txt 的 MINICAD_VERSION；文件版本第四段为构建号（git 提交数，取不到时为 0），
 // 产品版本第四段：MINICAD_VERSION 为四段时取其第四段，否则同构建号。
 #define MINICAD_VERSION_MAJOR @MINICAD_VERSION_MAJOR@
@@ -6,7 +6,8 @@
 #define MINICAD_VERSION_PATCH @MINICAD_VERSION_PATCH@
 #define MINICAD_VERSION_BUILD @MINICAD_VERSION_BUILD@
 #define MINICAD_VERSION_TWEAK @MINICAD_VERSION_TWEAK@
-#define MINICAD_VERSION_STRING "@MINICAD_VERSION@"
+#define MINICAD_VERSION_STRING "@MINICAD_VERSION@"                                    // 发布版本（与发布标签 v… 相同）
+#define MINICAD_FILE_VERSION_STRING "@MINICAD_VERSION_BASE@.@MINICAD_VERSION_BUILD@"   // 文件版本（第四段为构建号）
 
 // 资源文件（MiniCAD.rc）用的字符串，末尾的 \0 是 VERSIONINFO 字符串要求的结束符
 #define MINICAD_FILE_VERSION_STR "@MINICAD_VERSION_BASE@.@MINICAD_VERSION_BUILD@\0"

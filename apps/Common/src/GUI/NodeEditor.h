@@ -24,7 +24,7 @@ namespace MiniCAD
     //   - 连线：从端口拖到兼容的端口（不兼容的变暗），Shift 追加；拖动已连接的输入可拔下改接；拖到空白处打开添加节点菜单并自动连上；
     //     Alt + 单击连线删除，Alt + 单击引脚断开引脚上的全部连线（按住 Alt 悬停时将被断开的连线画成红色虚线）
     //   - 改值：在数值框 / 滑条上左右拖动（Shift 精细，Ctrl 取整），双击键入；开关单击切换，选项单击弹出菜单
-    //   - 选择：单击、Shift / Ctrl 多选、空白处框选；拖动移动；Delete 删除、Ctrl+D 复制、P 切换预览、Esc 取消
+    //   - 选择：单击、Shift / Ctrl 多选、空白处框选；拖动移动；Delete 删除、Ctrl+D 创建副本、P 切换预览、Esc 取消
     //   - 剪贴板：Ctrl+C / Ctrl+X / Ctrl+V 复制 / 剪切 / 粘贴选中的节点（子图 JSON，见 Graph::CopyToString），粘贴到光标处
     //   - 添加节点：Tab 或空白处双击打开搜索框（按名称、分类、ID 模糊匹配），空白处右键按分类添加
     //   - 组（PLAN.md 第 12 节）：Ctrl+G 把选中的节点收成组，Ctrl+Shift+G 解组；双击组实例（或选中一个组时按 Tab）进入组内编辑，
@@ -62,7 +62,8 @@ namespace MiniCAD
         // 剪贴板（经 UIContext::GetClipboard，桌面版与网页版都可用）
         bool CopySelection();                   // 没有选中的节点返回 false
         void CutSelection();
-        bool PasteFromClipboard();              // 粘贴到光标处（光标不在画布上时放在画布中央）；剪贴板里不是节点图返回 false
+        // 粘贴到 at（局部坐标；不给时为光标处，光标不在画布上时放在画布中央）；剪贴板里不是节点图返回 false
+        bool PasteFromClipboard(std::optional<MiniGUI::Vec2> at = std::nullopt);
         // 插入一张子图（Graph::CopyToString 的格式，如示例图）：放在已有节点的右侧，选中并适应窗口；可撤销
         bool InsertGraph(const std::string& text);
 
@@ -130,7 +131,8 @@ namespace MiniCAD
         void SelectionChanged();
         void SyncGraph();                           // 图对象变了（切换文档）：清空状态
 
-        void OpenAddMenu(MiniGUI::Vec2 local);
+        // canvasItems：空白处右键时在分类后面加上粘贴、全选、适应窗口
+        void OpenAddMenu(MiniGUI::Vec2 local, bool canvasItems = false);
         void OpenSearch(MiniGUI::Vec2 local);
         // 从端口拖出后待连接的引脚的类型与实体 / 曲面子类型；没有待连接的引脚时为空
         std::optional<std::pair<Nodes::DataType, Nodes::BodyKind>> PendingPin() const;

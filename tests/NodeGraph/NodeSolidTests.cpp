@@ -1433,28 +1433,32 @@ namespace
             Check(isType(m2c, 0, DataType::Curve3D) && surface(m2s) && solid(m2b), "N10 matrix: mesh → curve / surface / solid");
         }
 
-        // ── 示例图：经 ExampleToString / PasteFromString 插入空图，求值后检查结果 ──
-        for (const auto& ex : Examples())
+        // ── 示例图：assets/nodes/examples 里的节点图文件，按索引逐个插入空图，求值后检查结果 ──
+        const std::string exampleDir = std::string(MINICAD_ASSET_DIR) + "/nodes/examples";
+        auto example = [&](const char* file) { return ReadTextFile(exampleDir + "/" + file); };
+        const auto examples = ReadExampleIndex(exampleDir);
+        Check(examples.size() == 8, "examples: index lists 8 example files");
+        for (const auto& ex : examples)
         {
             Fixture e;
             if (!ex.NeedsKernel)
                 e.ctx.Kernel = nullptr;   // 不需要内核的示例在网页版也能用
-            const auto ids = e.g.PasteFromString(ExampleToString(ex), 0, 0);
+            const auto ids = e.g.PasteFromString(ReadTextFile(ex.Path), 0, 0);
             e.Eval();
             int errors = 0;
             for (const auto& n : e.g.GetNodes())
                 if (n->State == NodeState::Error)
                 {
-                    std::printf("  %s: %s — %s\n", ex.Id, n->Title().c_str(), n->Message.c_str());
+                    std::printf("  %s: %s — %s\n", ex.Name.c_str(), n->Title().c_str(), n->Message.c_str());
                     ++errors;
                 }
-            Check(!ids.empty() && errors == 0, (std::string("N10 example evaluates without errors: ") + ex.Name).c_str());
+            Check(!ids.empty() && errors == 0, ("N10 example evaluates without errors: " + ex.Name).c_str());
         }
         {
             // 网格截面与求交：球与长方体一圈交线、7 圈等高线、轮廓线（没有内核）
             Fixture e;
             e.ctx.Kernel = nullptr;
-            e.g.PasteFromString(ExampleToString(*FindExample("meshCurves")), 0, 0);
+            e.g.PasteFromString(example("mesh-curves.mcnode"), 0, 0);
             e.Eval();
             const Node* cut = FirstOfType(e.g, "mesh.intersect");
             const Node* contours = FirstOfType(e.g, "mesh.section");
@@ -1464,24 +1468,79 @@ namespace
                   "N10 example mesh curves: one intersection loop, 7 contours, an outline (no kernel)");
         }
         {
+            // 演示：曲线（没有内核）——3 条偏移线，外圆 18 等分的小圆与放射线；边数改 8 后变成 24 个
+            Fixture e;
+            e.ctx.Kernel = nullptr;
+            e.g.PasteFromString(example("curves.mcnode"), 0, 0);
+            e.Eval();
+            const Node* offset = FirstOfType(e.g, "curve.offset");
+            const Node* rays = FirstOfType(e.g, "curve.line");
+            const Node* sides = FirstOfType(e.g, "input.integer");
+            Check(offset && offset->Outputs[0].size() == 3 && rays && rays->Outputs[0].size() == 18, "example curve demo: 3 offsets, 18 rays");
+            if (sides)
+                e.g.SetParam(sides->Id, 0, Value(int64_t(8)));
+            e.Eval();
+            Check(rays && rays->Outputs[0].size() == 24, "example curve demo: the sides slider drives the division");
+        }
+        {
+            // 演示：曲面——花瓶、波浪面、碗都是曲面（不封闭）
+            Fixture e;
+            e.g.PasteFromString(example("surfaces.mcnode"), 0, 0);
+            e.Eval();
+            int surfaces = 0;
+            for (const char* type : { "surface.loft", "surface.param", "surface.revolve" })
+                if (const Node* n = FirstOfType(e.g, type); n && !n->Outputs[0].empty() && !e.kernel->IsSolid(n->Outputs[0][0].AsBody()))
+                    ++surfaces;
+            Check(surfaces == 3, "example surface demo: vase, wave and bowl surfaces");
+        }
+        {
+            // 演示：实体——法兰座是实体，体积小于没打孔的本体；孔数滑块改 8 后体积变小
+            Fixture e;
+            e.g.PasteFromString(example("solids.mcnode"), 0, 0);
+            e.Eval();
+            const Node* body = FirstOfType(e.g, "solid.union");
+            const Node* flange = FirstOfType(e.g, "solid.difference");
+            auto volume = [&](const Node* n) { return n && !n->Outputs[0].empty() ? e.kernel->Volume(n->Outputs[0][0].AsBody()) : 0.0; };
+            const double v6 = volume(flange);
+            Check(v6 > 0 && e.kernel->IsSolid(flange->Outputs[0][0].AsBody()) && v6 < volume(body) - 6 * kPi * 9 * 8 * 0.9,
+                  "example solid demo: flange is a solid with the holes cut");
+            if (const Node* holes = FirstOfType(e.g, "input.integer"))
+                e.g.SetParam(holes->Id, 0, Value(int64_t(8)));
+            e.Eval();
+            Check(Near(v6 - volume(flange), 2 * kPi * 9 * 8, 0.01), "example solid demo: the hole count slider adds two holes");
+        }
+        {
+            // 演示：网格（没有内核）——16 × 16 点的三角网 450 个三角形；光顺后的块仍封闭
+            Fixture e;
+            e.ctx.Kernel = nullptr;
+            e.g.PasteFromString(example("meshes.mcnode"), 0, 0);
+            e.Eval();
+            const Node* terrain = FirstOfType(e.g, "mesh.delaunay");
+            const Node* smooth = FirstOfType(e.g, "mesh.smooth");
+            Check(terrain && terrain->Outputs[0].size() == 1 && terrain->Outputs[0][0].AsMesh()->TriangleCount() == 450 && smooth &&
+                      smooth->Outputs[0].size() == 1 && MeshOps::IsClosed(*smooth->Outputs[0][0].AsMesh()),
+                  "example mesh demo: terrain triangulation and a closed smoothed block");
+        }
+        {
             // 窗框：体积 = 厚 × (宽 × 高 − (宽 − 2 框宽) × (高 − 3 框宽))；改宽度后重新计算
             Fixture e;
-            e.g.PasteFromString(ExampleToString(*FindExample("window")), 0, 0);
+            e.g.PasteFromString(example("window.mcnode"), 0, 0);
             e.Eval();
-            const Node* info = FirstOfType(e.g, "solid.info");
-            Check(info && !info->Outputs[0].empty() && Near(info->Outputs[0][0].AsNumber(), 80.0 * (1200 * 1500 - 1080.0 * 1320)),
+            const Node* frame = FirstOfType(e.g, "solid.combine");   // 最终结果是叶子输出（预览、烘焙）
+            auto volume = [&] { return frame && !frame->Outputs[0].empty() ? e.kernel->Volume(frame->Outputs[0][0].AsBody()) : 0.0; };
+            Check(Near(volume(), 80.0 * (1200 * 1500 - 1080.0 * 1320)),
                   "N10 example window: frame volume from the parameters");
             for (NodeId id : e.g.ParameterNodes())
                 if (e.g.GetNode(id)->Params[0].AsText() == "宽")
                     e.g.SetParam(id, 2, 1000.0);
             e.Eval();
-            Check(info && !info->Outputs[0].empty() && Near(info->Outputs[0][0].AsNumber(), 80.0 * (1000 * 1500 - 880.0 * 1320)),
+            Check(Near(volume(), 80.0 * (1000 * 1500 - 880.0 * 1320)),
                   "N10 example window: changing the width parameter updates the frame");
         }
         {
             // 曲面屋顶：加厚后的实体减去天窗，仍是实体、体积略小
             Fixture e;
-            e.g.PasteFromString(ExampleToString(*FindExample("roof")), 0, 0);
+            e.g.PasteFromString(example("roof.mcnode"), 0, 0);
             e.Eval();
             const Node* thick = FirstOfType(e.g, "surface.thicken");
             const Node* roof = FirstOfType(e.g, "solid.difference");
@@ -1495,7 +1554,7 @@ namespace
             // 网格化导出：封闭网格 + 6 圈等高线；烘焙后导出 DXF，读回仍是同样面数的网格
             Document doc;
             Graph& dg = doc.GetNodeGraph();
-            dg.PasteFromString(ExampleToString(*FindExample("meshExport")), 0, 0);
+            dg.PasteFromString(example("mesh-export.mcnode"), 0, 0);
             SolveContext ctx;
             ctx.Kernel = f.kernel;
             dg.Evaluate(ctx);

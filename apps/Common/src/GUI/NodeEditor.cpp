@@ -625,7 +625,7 @@ namespace MiniCAD
         SelectionChanged();   // 预览集合变了
     }
 
-    void NodeEditorView::OpenAddMenu(Vec2 local)
+    void NodeEditorView::OpenAddMenu(Vec2 local, bool canvasItems)
     {
         MiniGUI::UIContext* ctx = GetContext();
         const Graph* g = G();
@@ -675,6 +675,24 @@ namespace MiniCAD
                     sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(cats[i]), nodesOf(cats[i])));
             }
             items.push_back(MiniGUI::MenuItem::Sub(top, std::move(sub)));
+        }
+        if (canvasItems)
+        {
+            // 空白处右键：节点分类（最常用）在上，画布操作在下，顺序同常见软件的编辑菜单
+            const bool clip = ctx->GetClipboard().GetText().find("MiniCAD-NodeGraph") != std::string::npos;
+            items.push_back(MiniGUI::MenuItem::Separator());
+            items.push_back(std::move(MiniGUI::MenuItem("粘贴", [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
+            items.push_back(std::move(MiniGUI::MenuItem("全选", [this]
+            {
+                std::set<NodeId> all;
+                if (const Graph* gg = G())
+                    for (const auto& n : gg->GetNodes())
+                        all.insert(n->Id);
+                SetSelection(std::move(all));
+            }, "Ctrl+A").Enabled(!g->Empty())));
+            items.emplace_back("适应窗口", [this] { FrameAll(); }, "F");
+            if (!m_path.empty())
+                items.emplace_back("返回上一层", [this] { LeaveGroup(m_path.size() - 1); }, "Esc");
         }
         if (items.empty())
             return;
@@ -841,7 +859,7 @@ namespace MiniCAD
             DeleteSelection();
     }
 
-    bool NodeEditorView::PasteFromClipboard()
+    bool NodeEditorView::PasteFromClipboard(std::optional<Vec2> at)
     {
         Graph* g = G();
         MiniGUI::UIContext* ctx = GetContext();
@@ -852,7 +870,7 @@ namespace MiniCAD
             return false;
         // 放在光标处；光标不在画布上时放在画布中央偏左上。在同一处连续粘贴时依次错开
         const Vec2 size = GetSize();
-        Vec2 local = m_mouseInside ? m_mouseLocal : Vec2{ size.x * 0.35f, size.y * 0.3f };
+        Vec2 local = at ? *at : m_mouseInside ? m_mouseLocal : Vec2{ size.x * 0.35f, size.y * 0.3f };
         Vec2 p = LocalToGraph(local);
         p = { std::round(p.x), std::round(p.y) };
         m_pasteRepeat = m_lastPaste && std::abs(m_lastPaste->x - p.x) < 1.0f && std::abs(m_lastPaste->y - p.y) < 1.0f ? m_pasteRepeat + 1 : 0;
@@ -1463,37 +1481,44 @@ namespace MiniCAD
         if (h.K == Hit::Kind::None)
         {
             m_pendingLink.reset();
-            OpenAddMenu(local);
+            OpenAddMenu(local, true);
             return true;
         }
-        // 节点上：删除、复制、预览
+        // 节点上，顺序同常见软件的右键菜单：针对点中位置的操作（断开连线）在最上；
+        // 剪切 / 复制 / 粘贴 / 创建副本 / 删除；组操作；显示开关（预览）在最后
         if (!m_selection.count(h.Node))
         {
             m_selection = { h.Node };
             SelectionChanged();
         }
         std::vector<MiniGUI::MenuItem> items;
-        items.emplace_back("预览", [this] { TogglePreviewOfSelection(); }, "P");
-        if (const Nodes::Node* n = g->GetNode(h.Node))
-            items.back().checked = n->Preview;
-        items.emplace_back("复制", [this] { DuplicateSelection(); }, "Ctrl+D");
-        items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
-        items.push_back(MiniGUI::MenuItem::Separator());
-        items.emplace_back("创建组", [this] { GroupSelection(); }, "Ctrl+G");
-        if (const Nodes::Node* n = g->GetNode(h.Node); n && n->IsGroup())
-        {
-            const NodeId id = h.Node;
-            items.emplace_back("进入组", [this, id] { EnterGroup(id); }, "双击");
-            items.emplace_back("重命名组…", [this, id] { BeginRenameGroup(id); });
-            items.emplace_back("解组", [this] { UngroupSelection(); }, "Ctrl+Shift+G");
-        }
         const bool inLinked  = h.K == Hit::Kind::InPort && g->IsInputConnected(h.Node, h.Index);
         const bool outLinked = h.K == Hit::Kind::OutPort && g->IsOutputConnected(h.Node, h.Index);
         if (inLinked || outLinked)
         {
-            items.push_back(MiniGUI::MenuItem::Separator());
             items.emplace_back(inLinked ? "断开此输入" : "断开此输出", [this, h] { CutLinksAt(h); }, "Alt+单击");
+            items.push_back(MiniGUI::MenuItem::Separator());
         }
+        const bool clip = ctx->GetClipboard().GetText().find("MiniCAD-NodeGraph") != std::string::npos;
+        items.emplace_back("剪切", [this] { CutSelection(); }, "Ctrl+X");
+        items.emplace_back("复制", [this] { CopySelection(); }, "Ctrl+C");
+        items.push_back(std::move(MiniGUI::MenuItem("粘贴", [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
+        items.emplace_back("创建副本", [this] { DuplicateSelection(); }, "Ctrl+D");
+        items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
+        items.push_back(MiniGUI::MenuItem::Separator());
+        const Nodes::Node* hitNode = g->GetNode(h.Node);
+        if (hitNode && hitNode->IsGroup())
+        {
+            const NodeId id = h.Node;
+            items.emplace_back("进入组", [this, id] { EnterGroup(id); }, "双击");
+            items.emplace_back("重命名组…", [this, id] { BeginRenameGroup(id); });
+        }
+        items.emplace_back("创建组", [this] { GroupSelection(); }, "Ctrl+G");
+        if (hitNode && hitNode->IsGroup())
+            items.emplace_back("解组", [this] { UngroupSelection(); }, "Ctrl+Shift+G");
+        items.push_back(MiniGUI::MenuItem::Separator());
+        items.emplace_back("预览", [this] { TogglePreviewOfSelection(); }, "P");
+        items.back().checked = hitNode && hitNode->Preview;
         MiniGUI::ShowContextMenu(*ctx, std::move(items), windowPos);
         return true;
     }

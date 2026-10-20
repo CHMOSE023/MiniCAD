@@ -1,0 +1,809 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "math.series",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "integer",
+          "v": 5
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 2,
+      "type": "math.series",
+      "x": 0,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 3
+        },
+        {
+          "t": "integer",
+          "v": 5
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "type": "surface.network",
+      "x": 920,
+      "y": 360,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 4,
+      "type": "math.expression",
+      "x": 230,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "vector.point",
+      "x": 460,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 7,
+      "type": "math.expression",
+      "x": 230,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "vector.point",
+      "x": 460,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 9,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 10,
+      "type": "math.expression",
+      "x": 230,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 6
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "vector.point",
+      "x": 460,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 6
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 12,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 13,
+      "type": "math.expression",
+      "x": 230,
+      "y": 600,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "vector.point",
+      "x": 460,
+      "y": 600,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 15,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 600,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 16,
+      "type": "math.expression",
+      "x": 230,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 12
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "vector.point",
+      "x": 460,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 12
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 18,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 19,
+      "type": "math.expression",
+      "x": 230,
+      "y": 720,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "4 + 0.03 * (a - 10) ^ 2 - 0.05 * (b - 6) ^ 2"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "vector.point",
+      "x": 460,
+      "y": 720,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 21,
+      "type": "nurbs.interpolate",
+      "x": 690,
+      "y": 720,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "boolean",
+          "v": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 22,
+      "type": "surface.thicken",
+      "x": 1150,
+      "y": 360,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 1
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 23,
+      "type": "input.param",
+      "x": 920,
+      "y": 540,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "屋面厚度"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0.3
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "solid.cylinder",
+      "x": 1150,
+      "y": 600,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            10,
+            6,
+            -5
+          ]
+        },
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "number",
+          "v": 20
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 25,
+      "type": "input.param",
+      "x": 920,
+      "y": 720,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "天窗半径"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 1.5
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "solid.difference",
+      "x": 1380,
+      "y": 360,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 0
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 5,
+      "toPort": 2
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 6,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 7,
+      "toPort": 1
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 8,
+      "toPort": 1
+    },
+    {
+      "from": 7,
+      "fromPort": 0,
+      "to": 8,
+      "toPort": 2
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 9,
+      "toPort": 0
+    },
+    {
+      "from": 9,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 1
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 0
+    },
+    {
+      "from": 10,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 2
+    },
+    {
+      "from": 11,
+      "fromPort": 0,
+      "to": 12,
+      "toPort": 0
+    },
+    {
+      "from": 12,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 13,
+      "toPort": 1
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 14,
+      "toPort": 1
+    },
+    {
+      "from": 13,
+      "fromPort": 0,
+      "to": 14,
+      "toPort": 2
+    },
+    {
+      "from": 14,
+      "fromPort": 0,
+      "to": 15,
+      "toPort": 0
+    },
+    {
+      "from": 15,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 1
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 16,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 17,
+      "toPort": 0
+    },
+    {
+      "from": 16,
+      "fromPort": 0,
+      "to": 17,
+      "toPort": 2
+    },
+    {
+      "from": 17,
+      "fromPort": 0,
+      "to": 18,
+      "toPort": 0
+    },
+    {
+      "from": 18,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 19,
+      "toPort": 1
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 20,
+      "toPort": 1
+    },
+    {
+      "from": 19,
+      "fromPort": 0,
+      "to": 20,
+      "toPort": 2
+    },
+    {
+      "from": 20,
+      "fromPort": 0,
+      "to": 21,
+      "toPort": 0
+    },
+    {
+      "from": 21,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 1
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 22,
+      "toPort": 0
+    },
+    {
+      "from": 23,
+      "fromPort": 0,
+      "to": 22,
+      "toPort": 1
+    },
+    {
+      "from": 25,
+      "fromPort": 0,
+      "to": 24,
+      "toPort": 1
+    },
+    {
+      "from": 22,
+      "fromPort": 0,
+      "to": 26,
+      "toPort": 0
+    },
+    {
+      "from": 24,
+      "fromPort": 0,
+      "to": 26,
+      "toPort": 1
+    }
+  ]
+}

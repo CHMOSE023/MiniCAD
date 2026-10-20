@@ -1,4 +1,4 @@
-# 每次构建时由 apps/Win32/CMakeLists.txt 以 cmake -P 调用，生成 MiniCADVersion.h。
+# 每次构建时由 apps/Common/CMakeLists.txt 以 cmake -P 调用，生成 MiniCADVersion.h。
 # 参数：VERSION（三段或四段，来自根 CMakeLists.txt 的 MINICAD_VERSION）、SOURCE_DIR（仓库根）、INPUT、OUTPUT。
 # 文件版本第四段为构建号，取 git 提交数（git rev-list --count HEAD）；没有 git 或不是完整克隆时为 0。
 # 产品版本：VERSION 为四段（如 0.2.1.1）时第四段用它自己的，三段时同文件版本取构建号。

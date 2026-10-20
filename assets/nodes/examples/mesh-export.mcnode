@@ -1,0 +1,182 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "solid.box",
+      "x": 0,
+      "y": 0,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 20
+        }
+      ],
+      "params": [
+        {
+          "t": "boolean",
+          "v": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "solid.sphere",
+      "x": 0,
+      "y": 180,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            10
+          ]
+        },
+        {
+          "t": "number",
+          "v": 13
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "type": "solid.intersection",
+      "x": 230,
+      "y": 60,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 4,
+      "type": "mesh.from",
+      "x": 460,
+      "y": 60,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 15
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 5,
+      "type": "math.series",
+      "x": 230,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 2
+        },
+        {
+          "t": "number",
+          "v": 3
+        },
+        {
+          "t": "integer",
+          "v": 6
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "mesh.section",
+      "x": 460,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 0
+    },
+    {
+      "from": 3,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 1
+    }
+  ]
+}

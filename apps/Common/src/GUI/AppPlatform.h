@@ -24,6 +24,7 @@ namespace MiniCAD
     {
         Drawing,    // .mcad / .dwg / .dxf / .json
         Image,      // .png / .jpg / .bmp / .tga / .gif
+        NodeGraph,  // .mcnode（节点图，JSON 文本）/ .json
     };
 
     // 另存为可选的格式（桌面版系统对话框的筛选器与网页版另存为对话框共用，顺序即列表顺序）
@@ -128,7 +129,10 @@ namespace MiniCAD
         // 没有时 MainFrame 先用自己的对话框问文件名、格式和版本，suggestedName 是带扩展名的文件名，version 不变
         virtual std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) = 0;
         virtual bool HasSaveDialog() const { return true; }
-        virtual void OnDocumentSaved(const std::string& path) { (void)path; }   // 网页版：保存后下载到本机
+        // 导出文件（如节点图）的保存路径（UTF-8，空串 = 取消）：桌面版弹系统对话框；
+        // 网页版直接返回内存文件系统里的路径（suggestedName 补上扩展名），写完后调用 OnDocumentSaved 下载
+        virtual std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) = 0;
+        virtual void OnDocumentSaved(const std::string& path) { (void)path; }   // 网页版：保存（或导出）后下载到本机
         virtual std::string GetResourceDir() const = 0;     // icons/ ui/ patterns/ fonts/ 所在目录（UTF-8）
         virtual std::string GetUserDataDir() const = 0;     // 用户布局等文件的目录（UTF-8）；空串 = 不保存
         // 可执行文件所在目录（UTF-8）：随程序一起携带的小数据文件放在这里（如最近打开列表）。

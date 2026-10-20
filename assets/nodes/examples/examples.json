@@ -1,0 +1,61 @@
+{
+  "format": "MiniCAD-NodeExamples",
+  "examples": [
+    {
+      "file": "curves.mcnode",
+      "name": "曲线：圆角、偏移与等分",
+      "group": "基础",
+      "kernel": false,
+      "description": "正多边形 → 圆角 → 多重偏移，外圆等分点上的小圆与放射线；拖动半径、边数、圆角滑块"
+    },
+    {
+      "file": "surfaces.mcnode",
+      "name": "曲面：放样、参数曲面与旋转",
+      "group": "基础",
+      "kernel": true,
+      "description": "圆放样成花瓶（腰身滑块）、参数波浪面、插值轮廓旋转成碗"
+    },
+    {
+      "file": "solids.mcnode",
+      "name": "实体：法兰座",
+      "group": "基础",
+      "kernel": true,
+      "description": "方形底板倒圆角 + 轴台，减去环形阵列的螺栓孔与中心孔；拖动板厚、孔数、孔径滑块"
+    },
+    {
+      "file": "meshes.mcnode",
+      "name": "网格：地形与光顺",
+      "group": "基础",
+      "kernel": false,
+      "description": "公式地形 → Delaunay 三角网，长方体网格细分 + 光顺；拖动高度、光顺次数滑块"
+    },
+    {
+      "file": "window.mcnode",
+      "name": "参数化窗框",
+      "group": "应用",
+      "kernel": true,
+      "description": "拉伸外框 + 两个空心拉伸洞口，形体合并；改“参数”表里的宽、高、框宽、厚度、中梃高"
+    },
+    {
+      "file": "roof.mcnode",
+      "name": "曲面屋顶",
+      "group": "应用",
+      "kernel": true,
+      "description": "马鞍面上的插值曲线 → 网络曲面 → 加厚 → 差集开天窗"
+    },
+    {
+      "file": "mesh-export.mcnode",
+      "name": "网格化导出",
+      "group": "应用",
+      "kernel": true,
+      "description": "长方体与球求交 → 网格化 → 网格截面等高线；烘焙后网格可导出为 DWG / DXF 多面网格"
+    },
+    {
+      "file": "mesh-curves.mcnode",
+      "name": "网格截面与求交",
+      "group": "应用",
+      "kernel": false,
+      "description": "网格球与网格长方体的交线、球的等高线、长方体的轮廓线"
+    }
+  ]
+}
