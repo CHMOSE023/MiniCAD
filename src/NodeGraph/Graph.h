@@ -84,8 +84,10 @@ namespace MiniCAD::Nodes
         // replace：先断开目标输入上已有的连线（编辑器默认），否则追加（Shift）
         bool Connect(const Link& link, bool replace = true);
         bool Disconnect(const Link& link);
-        void DisconnectInput(NodeId node, int port);
+        void DisconnectInput(NodeId node, int port);    // 断开输入上的全部连线
+        void DisconnectOutput(NodeId node, int port);   // 断开输出上的全部连线（下游节点标脏）
         std::vector<Link> LinksInto(NodeId node, int port) const;
+        std::vector<Link> LinksFrom(NodeId node, int port) const;
         bool IsOutputConnected(NodeId node, int port) const;
         bool IsInputConnected(NodeId node, int port) const;
 

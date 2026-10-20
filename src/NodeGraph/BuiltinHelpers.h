@@ -43,6 +43,19 @@ namespace MiniCAD::Nodes::Builtin
         return p;
     }
 
+    // Body 端口的子类型提示（搜索排序与提示用，不限制连线）
+    inline PortSpec SolidPort(PortSpec p)
+    {
+        p.Kind = BodyKind::Solid;
+        return p;
+    }
+
+    inline PortSpec SurfacePort(PortSpec p)
+    {
+        p.Kind = BodyKind::Surface;
+        return p;
+    }
+
     inline ParamSpec Param(std::string name, Value def, ParamWidget widget = ParamWidget::Field)
     {
         ParamSpec p;

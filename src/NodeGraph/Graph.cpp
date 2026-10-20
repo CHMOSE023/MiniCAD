@@ -173,6 +173,26 @@ namespace MiniCAD::Nodes
         }
     }
 
+    void Graph::DisconnectOutput(NodeId node, int port)
+    {
+        const std::vector<Link> links = LinksFrom(node, port);
+        if (links.empty())
+            return;
+        std::erase_if(m_links, [&](const Link& l) { return l.FromNode == node && l.FromPort == port; });
+        for (const Link& l : links)
+            MarkDirty(l.ToNode);
+        Touch();
+    }
+
+    std::vector<Link> Graph::LinksFrom(NodeId node, int port) const
+    {
+        std::vector<Link> out;
+        for (const auto& l : m_links)
+            if (l.FromNode == node && l.FromPort == port)
+                out.push_back(l);
+        return out;
+    }
+
     std::vector<Link> Graph::LinksInto(NodeId node, int port) const
     {
         std::vector<Link> out;

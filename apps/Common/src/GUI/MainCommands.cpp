@@ -115,7 +115,7 @@ namespace MiniCAD
                                   dm.GetEditor().SelectAll();
                               },
                               .canExecute = [&dm] { return dm.GetActive() && !dm.GetEditor().IsToolRunning(); } });
-        // 剪切 / 复制 / 粘贴：节点编辑器有焦点时作用于节点（子图经剪贴板，见 docs/NodeGraph/PLAN.md 第 5 节）
+        // 剪切 / 复制 / 粘贴：节点编辑器有焦点时作用于节点（子图经剪贴板，见 docs/NodeGraph/PLAN.md 第 9 节）
         auto hasNodeOrEntitySelection = [this, hasSelection]
         {
             return NodeEditorHasFocus() ? !m_nodeEditor->GetSelection().empty() : hasSelection();

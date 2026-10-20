@@ -19,6 +19,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "input.number", .Name = "数值滑块", .Category = cat,
                                 .Description = "拖动滑条改变数值；范围与小数位可调" };
+                t.Keywords = "slider 参数 数值";
                 ParamSpec value = Param("值", 5.0, ParamWidget::Slider);
                 value.SliderMin = 1;
                 value.SliderMax = 2;
@@ -38,6 +39,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "input.integer", .Name = "整数滑块", .Category = cat, .Description = "拖动滑条改变整数" };
+                t.Keywords = "slider 参数 整数";
                 ParamSpec value = Param("值", int64_t(5), ParamWidget::Slider);
                 value.SliderMin = 1;
                 value.SliderMax = 2;
@@ -53,6 +55,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "input.toggle", .Name = "布尔开关", .Category = cat, .Description = "单击切换真 / 假" };
+                t.Keywords = "boolean switch 是否";
                 t.Params  = { Param("值", false, ParamWidget::Toggle) };
                 t.Outputs = { Out("布尔", DataType::Boolean) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, a.ParamBool(0)); };
@@ -61,6 +64,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "input.panel", .Name = "面板", .Category = cat,
                                 .Description = "显示接入的数据；没有接入时输出自己的文字" };
+                t.Keywords = "text 文字 显示 查看";
                 t.Display = true;
                 t.Inputs  = { InList("数据", DataType::Any, /*optional=*/true) };
                 t.Params  = { Param("文字", std::string()) };
@@ -80,7 +84,7 @@ namespace MiniCAD::Nodes
         void Binary(NodeRegistry& r, const char* id, const char* name, const char* desc, double a0, double b0,
                     std::function<bool(double, double, double&)> op)
         {
-            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "数学", .Description = desc };
+            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "数学/运算", .Description = desc };
             t.Inputs  = { In("A", DataType::Number, a0), In("B", DataType::Number, b0) };
             t.Outputs = { Out("结果", DataType::Number) };
             t.Solve   = [op](SolveArgs& a)
@@ -93,10 +97,10 @@ namespace MiniCAD::Nodes
             r.Register(std::move(t));
         }
 
-        void Unary(NodeRegistry& r, const char* id, const char* name, const char* inName, const char* desc,
+        void Unary(NodeRegistry& r, const char* cat, const char* id, const char* name, const char* inName, const char* desc,
                    std::function<double(double)> op)
         {
-            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "数学", .Description = desc };
+            NodeTypeInfo t{ .Id = id, .Name = name, .Category = cat, .Description = desc };
             t.Inputs  = { In(inName, DataType::Number, 0.0) };
             t.Outputs = { Out("结果", DataType::Number) };
             t.Solve   = [op](SolveArgs& a)
@@ -118,15 +122,16 @@ namespace MiniCAD::Nodes
             Binary(r, "math.pow", "乘方", "A 的 B 次方", 2.0, 2.0, [](double a, double b, double& o) { o = std::pow(a, b); return true; });
             Binary(r, "math.min", "最小", "A、B 中较小的", 0.0, 0.0, [](double a, double b, double& o) { o = std::min(a, b); return true; });
             Binary(r, "math.max", "最大", "A、B 中较大的", 0.0, 0.0, [](double a, double b, double& o) { o = std::max(a, b); return true; });
-            Unary(r, "math.neg",  "取负",   "数值", "−x", [](double x) { return -x; });
-            Unary(r, "math.abs",  "绝对值", "数值", "|x|", [](double x) { return std::abs(x); });
-            Unary(r, "math.sqrt", "平方根", "数值", "√x（负数报错）", [](double x) { return x < 0 ? NAN : std::sqrt(x); });
-            Unary(r, "math.sin",  "正弦",   "角度", "sin（角度为度）", [](double x) { return std::sin(x * kDeg); });
-            Unary(r, "math.cos",  "余弦",   "角度", "cos（角度为度）", [](double x) { return std::cos(x * kDeg); });
+            Unary(r, "数学/运算", "math.neg",  "取负",   "数值", "−x", [](double x) { return -x; });
+            Unary(r, "数学/运算", "math.abs",  "绝对值", "数值", "|x|", [](double x) { return std::abs(x); });
+            Unary(r, "数学/函数", "math.sqrt", "平方根", "数值", "√x（负数报错）", [](double x) { return x < 0 ? NAN : std::sqrt(x); });
+            Unary(r, "数学/函数", "math.sin",  "正弦",   "角度", "sin（角度为度）", [](double x) { return std::sin(x * kDeg); });
+            Unary(r, "数学/函数", "math.cos",  "余弦",   "角度", "cos（角度为度）", [](double x) { return std::cos(x * kDeg); });
 
             {
-                NodeTypeInfo t{ .Id = "math.range", .Name = "区间等分", .Category = "数学",
+                NodeTypeInfo t{ .Id = "math.range", .Name = "区间等分", .Category = "数学/序列",
                                 .Description = "把起点到终点等分为 N 段，输出 N + 1 个数" };
+                t.Keywords = "range 等分 区间";
                 t.Inputs  = { In("起点", DataType::Number, 0.0), In("终点", DataType::Number, 1.0), In("段数", DataType::Integer, int64_t(10)) };
                 t.Outputs = { Out("数值", DataType::Number) };
                 t.Solve   = [](SolveArgs& a)
@@ -140,7 +145,8 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "math.series", .Name = "等差序列", .Category = "数学", .Description = "起始值开始，按步长输出若干个数" };
+                NodeTypeInfo t{ .Id = "math.series", .Name = "等差序列", .Category = "数学/序列", .Description = "起始值开始，按步长输出若干个数" };
+                t.Keywords = "series 数列";
                 t.Inputs  = { In("起始", DataType::Number, 0.0), In("步长", DataType::Number, 1.0), In("个数", DataType::Integer, int64_t(10)) };
                 t.Outputs = { Out("数值", DataType::Number) };
                 t.Solve   = [](SolveArgs& a)
@@ -154,7 +160,8 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "math.random", .Name = "随机数", .Category = "数学", .Description = "按种子生成可重复的随机数" };
+                NodeTypeInfo t{ .Id = "math.random", .Name = "随机数", .Category = "数学/序列", .Description = "按种子生成可重复的随机数" };
+                t.Keywords = "random 随机";
                 t.Inputs  = { In("个数", DataType::Integer, int64_t(10)), In("最小", DataType::Number, 0.0), In("最大", DataType::Number, 1.0),
                               In("种子", DataType::Integer, int64_t(1)) };
                 t.Outputs = { Out("数值", DataType::Number) };
@@ -171,7 +178,7 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "math.sum", .Name = "求和", .Category = "数学", .Description = "列表中所有数值之和" };
+                NodeTypeInfo t{ .Id = "math.sum", .Name = "求和", .Category = "数学/序列", .Description = "列表中所有数值之和" };
                 t.Inputs  = { InList("数值", DataType::Number) };
                 t.Outputs = { Out("和", DataType::Number) };
                 t.Solve   = [](SolveArgs& a)
@@ -187,16 +194,17 @@ namespace MiniCAD::Nodes
 
         void RegisterVector(NodeRegistry& r)
         {
-            const char* cat = "向量";
+            const char* pt = "向量/点", *vec = "向量/向量";
             {
-                NodeTypeInfo t{ .Id = "vector.point", .Name = "构造点", .Category = cat, .Description = "由 X、Y、Z 构造点（向量）" };
+                NodeTypeInfo t{ .Id = "vector.point", .Name = "构造点", .Category = pt, .Description = "由 X、Y、Z 构造点（向量）" };
+                t.Keywords = "point xyz 点";
                 t.Inputs  = { In("X", DataType::Number, 0.0), In("Y", DataType::Number, 0.0), In("Z", DataType::Number, 0.0) };
                 t.Outputs = { Out("点", DataType::Vector) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, Vec(a.Number(0), a.Number(1), a.Number(2))); };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.deconstruct", .Name = "分解点", .Category = cat, .Description = "点（向量）的 X、Y、Z" };
+                NodeTypeInfo t{ .Id = "vector.deconstruct", .Name = "分解点", .Category = pt, .Description = "点（向量）的 X、Y、Z" };
                 t.Inputs  = { In("点", DataType::Vector, Vec(0, 0, 0)) };
                 t.Outputs = { Out("X", DataType::Number), Out("Y", DataType::Number), Out("Z", DataType::Number) };
                 t.Solve   = [](SolveArgs& a)
@@ -209,21 +217,21 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.add", .Name = "向量相加", .Category = cat, .Description = "A + B" };
+                NodeTypeInfo t{ .Id = "vector.add", .Name = "向量相加", .Category = vec, .Description = "A + B" };
                 t.Inputs  = { In("A", DataType::Vector, Vec(0, 0, 0)), In("B", DataType::Vector, Vec(0, 0, 0)) };
                 t.Outputs = { Out("结果", DataType::Vector) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, a.Vector(0) + a.Vector(1)); };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.scale", .Name = "向量缩放", .Category = cat, .Description = "向量 × 系数" };
+                NodeTypeInfo t{ .Id = "vector.scale", .Name = "向量缩放", .Category = vec, .Description = "向量 × 系数" };
                 t.Inputs  = { In("向量", DataType::Vector, Vec(1, 0, 0)), In("系数", DataType::Number, 1.0) };
                 t.Outputs = { Out("结果", DataType::Vector) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, a.Vector(0) * a.Number(1)); };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.unit", .Name = "单位向量", .Category = cat, .Description = "沿 X / Y / Z 轴、长度为系数的向量" };
+                NodeTypeInfo t{ .Id = "vector.unit", .Name = "单位向量", .Category = vec, .Description = "沿 X / Y / Z 轴、长度为系数的向量" };
                 t.Inputs  = { In("系数", DataType::Number, 1.0) };
                 t.Params  = { Choice("方向", { "X", "Y", "Z" }) };
                 t.Outputs = { Out("向量", DataType::Vector) };
@@ -240,15 +248,17 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.distance", .Name = "两点距离", .Category = cat, .Description = "A、B 两点间的距离" };
+                NodeTypeInfo t{ .Id = "vector.distance", .Name = "两点距离", .Category = pt, .Description = "A、B 两点间的距离" };
+                t.Keywords = "distance 距离";
                 t.Inputs  = { In("A", DataType::Vector, Vec(0, 0, 0)), In("B", DataType::Vector, Vec(1, 0, 0)) };
                 t.Outputs = { Out("距离", DataType::Number) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, (a.Vector(1) - a.Vector(0)).Length()); };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "vector.grid", .Name = "点阵", .Category = cat,
+                NodeTypeInfo t{ .Id = "vector.grid", .Name = "点阵", .Category = pt,
                                 .Description = "从原点起沿 X、Y 方向等间距排列的点（先 X 后 Y）" };
+                t.Keywords = "grid 网格点 阵列点";
                 t.Inputs  = { In("原点", DataType::Vector, Vec(0, 0, 0)), In("X 数量", DataType::Integer, int64_t(3)),
                               In("Y 数量", DataType::Integer, int64_t(3)), In("X 间距", DataType::Number, 10.0), In("Y 间距", DataType::Number, 10.0) };
                 t.Outputs = { Out("点", DataType::Vector) };

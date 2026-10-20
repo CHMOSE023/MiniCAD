@@ -1,5 +1,5 @@
 // 节点图核心测试（docs/NodeGraph/PLAN.md）：不需要实体内核的部分。
-// 注册表、连线规则（类型、环、替换 / 追加）、脏标记与只重算脏节点、最长列表匹配、类型转换、
+// 注册表与分类顺序表、按端口搜索、连线规则（类型、环、替换 / 追加、断开输出）、脏标记与只重算脏节点、最长列表匹配、类型转换、
 // 读写往返（含未知节点类型）、撤销 / 重做、复制、曲线 / 变换 / 引用节点、没有内核时实体节点的报错、
 // 文档保存节点图、预览收集、烘焙与撤销
 #include "NodeGraph/Graph.h"
@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
+#include <set>
 #include <numbers>
 #include <string>
 
@@ -54,11 +56,11 @@ namespace
         Check(r.Find("solid.box") && r.Find("math.add") && r.Find("curve.rectangle") && r.Find("doc.curves") && !r.Find("nope"),
               "registry: lookup by id");
         const auto cats = r.Categories();
-        Check(cats.size() >= 8 && cats.front() == "输入", "registry: categories in registration order");
-        Check(r.Find("solid.box")->Category == "实体/基本体" && r.Find("solid.extrude")->Category == "实体/成形" &&
-              r.Find("solid.union")->Category == "实体/布尔" && r.Find("solid.fillet")->Category == "实体/边处理",
-              "registry: solid nodes are grouped (primitives, forming, booleans, edges)");
-        Check(TopCategory("实体/布尔") == "实体" && SubCategory("实体/布尔") == "布尔" && TopCategory("数学") == "数学" && SubCategory("数学").empty(),
+        Check(cats == NodeRegistry::CategoryOrder(), "registry: categories follow the category order table");
+        Check(r.Find("solid.box")->Category == "实体/创建" && r.Find("solid.extrude")->Category == "实体/创建" &&
+              r.Find("solid.union")->Category == "实体/运算" && r.Find("solid.fillet")->Category == "实体/修改" &&
+              r.Find("solid.info")->Category == "实体/分析", "registry: solid nodes are grouped (create, operate, modify, analyze)");
+        Check(TopCategory("实体/运算") == "实体" && SubCategory("实体/运算") == "运算" && TopCategory("列表") == "列表" && SubCategory("列表").empty(),
               "registry: category path helpers");
         bool defaultsTyped = true;
         for (const auto& t : r.All())
@@ -108,6 +110,88 @@ namespace
               "error: downstream of a failed node warns about missing input");
     }
 
+    // 分类顺序表与菜单一致（docs/NodeGraph/PLAN.md 第 4.1 节）：每个节点的分类都在表里、表里每个分类都有节点、
+    // ID 不重复、同一分类里显示名不重复；菜单顺序按表、同一分类里按 Group
+    void TestCategoryOrder()
+    {
+        const auto& r = NodeRegistry::Builtin();
+        const auto& order = NodeRegistry::CategoryOrder();
+        std::set<std::string> used, ids;
+        std::map<std::string, std::set<std::string>> names;
+        bool inTable = true, uniqueIds = true, uniqueNames = true;
+        for (const auto& t : r.All())
+        {
+            inTable &= std::find(order.begin(), order.end(), t->Category) != order.end();
+            used.insert(t->Category);
+            uniqueIds &= ids.insert(t->Id).second;
+            uniqueNames &= names[t->Category].insert(t->Name).second;
+        }
+        Check(inTable, "order: every node category is in the order table");
+        Check(used.size() == order.size(), "order: every category in the table has nodes (no empty submenu)");
+        Check(uniqueIds && uniqueNames, "order: ids are unique, names are unique within a category");
+
+        const auto& ordered = r.Ordered();
+        auto rank = [&](const NodeTypeInfo* t) { return std::find(order.begin(), order.end(), t->Category) - order.begin(); };
+        bool sorted = ordered.size() == r.All().size();
+        for (size_t i = 1; i < ordered.size(); ++i)
+        {
+            const auto a = rank(ordered[i - 1]), b = rank(ordered[i]);
+            sorted &= a < b || (a == b && ordered[i - 1]->Group <= ordered[i]->Group);
+        }
+        Check(sorted, "order: menu order follows the table, then Group");
+        auto pos = [&](const char* id) { return std::find_if(ordered.begin(), ordered.end(), [&](auto* t) { return t->Id == id; }) - ordered.begin(); };
+        Check(pos("solid.extrude") < pos("solid.revolve") && pos("solid.sweep") < pos("solid.box") && pos("solid.box") < pos("solid.sphere") &&
+              pos("input.number") == 0 && pos("curve.line") < pos("surface.loft") && pos("surface.loft") < pos("solid.extrude") &&
+              pos("solid.extrude") < pos("xform.move"), "order: forms before primitives; curves → surfaces → solids → transforms");
+        Check(r.Find("solid.sweep")->Name == "放样" && r.Find("surface.loft")->Name == "放样曲面" && r.Find("solid.revolve")->Name == "旋转",
+              "order: Revit names for solid forms, surface loft renamed");
+    }
+
+    // 从端口拖出连线后的搜索（docs/NodeGraph/PLAN.md 第 9.2 节）
+    void TestSearchForPort()
+    {
+        const auto& r = NodeRegistry::Builtin();
+        auto ids = [&](const std::string& q, DataType t, BodyKind k, bool fromOutput)
+        {
+            std::vector<std::string> out;
+            for (const PortCandidate& c : r.SearchForPort(q, t, k, fromOutput))
+                out.push_back(c.Type->Id);
+            return out;
+        };
+        auto has = [](const std::vector<std::string>& v, const char* id) { return std::find(v.begin(), v.end(), id) != v.end(); };
+        auto index = [](const std::vector<std::string>& v, const char* id) { return std::find(v.begin(), v.end(), id) - v.begin(); };
+
+        // 从“管道”的路径输入（空间曲线）拖出：曲线、NURBS 节点都能提供，实体不能
+        const auto toCurve3D = ids("", DataType::Curve3D, BodyKind::Any, /*fromOutput=*/false);
+        Check(has(toCurve3D, "nurbs.interpolate") && has(toCurve3D, "curve.line") && !has(toCurve3D, "solid.box") && !has(toCurve3D, "math.add"),
+              "port search: from a Curve3D input lists curve nodes (with conversion), not solids");
+        Check(index(toCurve3D, "nurbs.interpolate") < index(toCurve3D, "curve.line"), "port search: exact type ranks before conversion");
+        Check(!has(toCurve3D, "list.item") && has(ids("列表项", DataType::Curve3D, BodyKind::Any, false), "list.item"),
+              "port search: generic (Any) nodes are hidden until typed");
+
+        // 从“加厚”的曲面输入拖出：曲面节点排在实体节点前面
+        const auto toSurface = ids("", DataType::Body, BodyKind::Surface, false);
+        Check(has(toSurface, "surface.loft") && has(toSurface, "solid.box") && index(toSurface, "surface.loft") < index(toSurface, "solid.box"),
+              "port search: surface producers rank before solids for a surface input");
+        // 从数值输出拖出：只看候选的输入端口
+        const auto fromNumber = ids("", DataType::Number, BodyKind::Any, /*fromOutput=*/true);
+        Check(has(fromNumber, "math.add") && has(fromNumber, "solid.box") && !has(fromNumber, "solid.union") && !has(fromNumber, "list.merge"),
+              "port search: from a number output lists nodes with numeric inputs");
+        // 有文字时按文字匹配度
+        const auto typed = ids("放样", DataType::Curve, BodyKind::Any, true);
+        Check(!typed.empty() && typed.front() == "solid.sweep" && has(typed, "surface.loft"), "port search: text match first (Revit name)");
+
+        const PortCandidate best = NodeRegistry::BestPort(*r.Find("surface.thicken"), DataType::Body, BodyKind::Surface, true);
+        Check(best.Port == 0 && best.Match == PortMatch::Exact, "port search: best port and exact kind match");
+        Check(MatchPorts(DataType::Body, BodyKind::Solid, DataType::Body, BodyKind::Surface) == PortMatch::Convert &&
+              MatchPorts(DataType::Curve, BodyKind::Any, DataType::Curve3D, BodyKind::Any) == PortMatch::Convert &&
+              MatchPorts(DataType::Number, BodyKind::Any, DataType::Any, BodyKind::Any) == PortMatch::Generic &&
+              MatchPorts(DataType::Number, BodyKind::Any, DataType::Curve, BodyKind::Any) == PortMatch::None,
+              "port search: match levels");
+        Check(r.Search("扫掠").front()->Id == "solid.sweep" && r.Search("旋转成体").front()->Id == "solid.revolve" &&
+              r.Search("loft").front()->Id == "surface.loft", "search: keywords keep old names and English aliases");
+    }
+
     void TestLinksRules()
     {
         Graph g;
@@ -136,6 +220,20 @@ namespace
         g.DisconnectInput(sum, 0);
         g.Evaluate({});
         Check(g.GetNode(sum)->State == NodeState::Warning, "links: disconnecting a required list input warns");
+
+        // 断开输出：一个输出上的全部连线（Alt + 单击输出引脚）
+        const NodeId fan = Add(g, "math.add"), t1 = Add(g, "math.add"), t2 = Add(g, "math.add");
+        g.Connect({ fan, 0, t1, 0 });
+        g.Connect({ fan, 0, t2, 1 });
+        g.Evaluate({});
+        Check(g.LinksFrom(fan, 0).size() == 2, "links: links from an output");
+        const size_t before = g.GetLinks().size();
+        g.DisconnectOutput(fan, 0);
+        Check(g.LinksFrom(fan, 0).empty() && g.GetLinks().size() == before - 2 && g.GetNode(t1)->Dirty && g.GetNode(t2)->Dirty,
+              "links: disconnecting an output removes all its wires and dirties downstream");
+        g.RemoveNode(fan);
+        g.RemoveNode(t1);
+        g.RemoveNode(t2);
 
         g.RemoveNode(b);
         Check(g.GetLinks().size() == 0 && !g.GetNode(b), "links: removing a node removes its wires");
@@ -444,9 +542,38 @@ namespace
     }
 }
 
-int main()
+// 按菜单顺序输出节点清单（Markdown），用来核对 docs/NodeGraph/PLAN.md 第 4.2 节
+void DumpNodes()
 {
+    std::string cat;
+    for (const NodeTypeInfo* t : NodeRegistry::Builtin().Ordered())
+    {
+        if (t->Category != cat)
+        {
+            cat = t->Category;
+            std::printf("\n### %s\n\n| 节点 | ID | 输入 | 输出 |\n|---|---|---|---|\n", cat.c_str());
+        }
+        auto ports = [](const std::vector<PortSpec>& ps)
+        {
+            std::string s;
+            for (const auto& p : ps)
+                s += (s.empty() ? "" : "、") + p.Name + "（" + KindName(p.Type, p.Kind) + "）";
+            return s;
+        };
+        std::printf("| %s | `%s` | %s | %s |\n", t->Name.c_str(), t->Id.c_str(), ports(t->Inputs).c_str(), ports(t->Outputs).c_str());
+    }
+}
+
+int main(int argc, char** argv)
+{
+    if (argc > 1 && std::string(argv[1]) == "--dump-nodes")
+    {
+        DumpNodes();
+        return 0;
+    }
     TestRegistry();
+    TestCategoryOrder();
+    TestSearchForPort();
     TestBasicsAndDirty();
     TestLinksRules();
     TestLongestList();

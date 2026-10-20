@@ -34,16 +34,15 @@ namespace MiniCAD
         constexpr float kFontSize = 12.0f;
         constexpr int   kDisplayLines = 8;
 
-        // 标题栏颜色：先按完整分类（"实体/布尔"），再按大类
+        // 标题栏颜色：先按完整分类（"实体/空心"），再按大类（docs/NodeGraph/PLAN.md 第 4.1 节）
         Color32 CategoryColor(const std::string& cat)
         {
             static const std::map<std::string, Color32> kColors = {
-                { "输入", RGBA(74, 111, 165) },  { "数学", RGBA(92, 122, 58) },  { "向量", RGBA(58, 122, 114) },
-                { "列表", RGBA(105, 105, 110) }, { "曲线", RGBA(150, 98, 45) },  { "图纸", RGBA(122, 74, 138) },
-                { "变换", RGBA(47, 111, 143) },  { "实体", RGBA(154, 59, 59) },  { "曲面", RGBA(150, 62, 118) },
-                { "分析", RGBA(130, 112, 42) },
-                { "实体/基本体", RGBA(154, 59, 59) }, { "实体/成形", RGBA(166, 82, 48) },
-                { "实体/布尔", RGBA(138, 52, 92) },  { "实体/边处理", RGBA(120, 66, 66) },
+                { "输入", RGBA(100, 104, 112) }, { "图纸", RGBA(42, 128, 140) },  { "数学", RGBA(78, 98, 128) },
+                { "列表", RGBA(88, 104, 126) },  { "向量", RGBA(62, 128, 76) },   { "曲线", RGBA(120, 138, 40) },
+                { "曲面", RGBA(150, 62, 118) },  { "实体", RGBA(50, 96, 170) },   { "网格", RGBA(196, 116, 36) },
+                { "变换", RGBA(128, 88, 58) },
+                { "实体/空心", RGBA(206, 84, 50) },
             };
             auto it = kColors.find(cat);
             if (it == kColors.end())
@@ -141,15 +140,23 @@ namespace MiniCAD
             return s;
         }
 
+        // 搜索框的一行候选：节点类型，以及从端口拖出时要连接的端口与说明（"→ 轮廓（曲线 → 空间曲线）"）
+        struct SearchRow
+        {
+            const NodeTypeInfo* Type = nullptr;
+            int                 Port = -1;
+            std::string         Note;
+        };
+
         // 节点搜索框：输入框 + 候选列表。焦点留在输入框：↑↓ 选择，回车或单击添加，Esc / 点击别处关闭
         class NodeSearchPopup : public MiniGUI::Popup
         {
         public:
-            using Filter = std::function<bool(const NodeTypeInfo&)>;
-            using Pick   = std::function<void(const std::string& typeId)>;
+            using Source = std::function<std::vector<SearchRow>(const std::string& query)>;
+            using Pick   = std::function<void(const std::string& typeId, int port)>;
 
-            NodeSearchPopup(const NodeRegistry& reg, Filter filter, Pick pick)
-                : m_registry(reg), m_filter(std::move(filter)), m_pick(std::move(pick))
+            NodeSearchPopup(Source source, Pick pick)
+                : m_source(std::move(source)), m_pick(std::move(pick))
             {
                 MiniGUI::LayoutStyle ps = GetLayoutStyle();
                 ps.gap = 4.0f;
@@ -173,22 +180,19 @@ namespace MiniCAD
             void OnOpened() override { m_box->Focus(MiniGUI::FocusReason::Program); }
 
         private:
-            static constexpr float kWidth   = 330.0f;
+            static constexpr float kWidth   = 380.0f;
             static constexpr int   kMaxRows = 12;
 
             void Refresh()
             {
-                m_types.clear();
-                for (const NodeTypeInfo* t : m_registry.Search(m_box->GetText()))
-                    if (!m_filter || m_filter(*t))
-                        m_types.push_back(t);
+                m_rows = m_source(m_box->GetText());
                 std::vector<MiniGUI::ListItem> items;
-                for (const NodeTypeInfo* t : m_types)
+                for (const SearchRow& row : m_rows)
                 {
                     MiniGUI::ListItem item;
-                    item.text   = t->Name;
-                    item.detail = CategoryLabel(t->Category) + "  " + t->Id;
-                    item.swatch = CategoryColor(t->Category);
+                    item.text   = row.Type->Name;
+                    item.detail = CategoryLabel(row.Type->Category) + (row.Note.empty() ? "" : "  " + row.Note) + "  " + row.Type->Id;
+                    item.swatch = CategoryColor(row.Type->Category);
                     items.push_back(std::move(item));
                 }
                 if (items.empty())
@@ -199,7 +203,7 @@ namespace MiniCAD
                 ls.width  = kWidth;
                 ls.height = m_list->GetRowHeight() * static_cast<float>(rows);
                 m_list->SetLayoutStyle(ls);
-                if (!m_types.empty())
+                if (!m_rows.empty())
                     m_list->SetCurrent(0);
             }
 
@@ -207,7 +211,7 @@ namespace MiniCAD
             {
                 if (e.modifiers != 0)
                     return false;
-                const int n = static_cast<int>(m_types.size()), cur = m_list->GetCurrent();
+                const int n = static_cast<int>(m_rows.size()), cur = m_list->GetCurrent();
                 const int page = kMaxRows - 1;
                 switch (e.key)
                 {
@@ -224,20 +228,19 @@ namespace MiniCAD
 
             void Accept(int index)
             {
-                if (index < 0 || index >= static_cast<int>(m_types.size()))
+                if (index < 0 || index >= static_cast<int>(m_rows.size()))
                     return;
-                const std::string id = m_types[static_cast<size_t>(index)]->Id;
+                const SearchRow row = m_rows[static_cast<size_t>(index)];
                 Pick pick = m_pick;
-                pick(id);
+                pick(row.Type->Id, row.Port);
                 Close();
             }
 
-            const NodeRegistry&              m_registry;
-            Filter                           m_filter;
-            Pick                             m_pick;
-            MiniGUI::TextBox*                m_box  = nullptr;
-            MiniGUI::ListView*               m_list = nullptr;
-            std::vector<const NodeTypeInfo*> m_types;
+            Source                 m_source;
+            Pick                   m_pick;
+            MiniGUI::TextBox*      m_box  = nullptr;
+            MiniGUI::ListView*     m_list = nullptr;
+            std::vector<SearchRow> m_rows;
         };
     }
 
@@ -478,7 +481,7 @@ namespace MiniCAD
         Invalidate();
     }
 
-    NodeId NodeEditorView::AddNodeAt(const std::string& typeId, Vec2 local)
+    NodeId NodeEditorView::AddNodeAt(const std::string& typeId, Vec2 local, int linkPort)
     {
         Graph* g = G();
         if (!g || !g->Registry().Find(typeId))
@@ -487,15 +490,23 @@ namespace MiniCAD
         BeginEdit();
         const Vec2 p = LocalToGraph(local);
         Nodes::Node* n = g->AddNode(typeId, std::round(p.x), std::round(p.y));
-        // 从端口拖到空白处打开的菜单：连上第一个兼容的端口
+        // 从端口拖到空白处打开的搜索框 / 菜单：连上指定的端口；没有指定时连匹配程度最高的端口，连不上再试其余端口
         if (m_pendingLink)
         {
             const auto [fromOutput, src] = *m_pendingLink;
             const size_t count = fromOutput ? n->InputCount() : n->OutputCount();
+            std::vector<int> order;
+            if (linkPort >= 0)
+                order.push_back(linkPort);
+            if (const auto pin = PendingPin(); pin && n->Type)
+                order.push_back(NodeRegistry::BestPort(*n->Type, pin->first, pin->second, fromOutput).Port);
             for (size_t i = 0; i < count; ++i)
+                order.push_back(static_cast<int>(i));
+            for (int i : order)
             {
-                const Link l = fromOutput ? Link{ src.first, src.second, n->Id, static_cast<int>(i) }
-                                          : Link{ n->Id, static_cast<int>(i), src.first, src.second };
+                if (i < 0 || i >= static_cast<int>(count))
+                    continue;
+                const Link l = fromOutput ? Link{ src.first, src.second, n->Id, i } : Link{ n->Id, i, src.first, src.second };
                 if (g->CanConnect(l))
                 {
                     g->Connect(l);
@@ -566,61 +577,106 @@ namespace MiniCAD
         const Graph* g = G();
         if (!ctx || !g)
             return;
-        // 两级菜单：大类 → 节点，或大类 → 小类 → 节点（分类写成 "实体/基本体"），都按注册顺序
+        // 两级菜单：大类 → 节点，或大类 → 小类 → 节点（分类写成 "实体/创建"），按分类顺序表（NodeRegistry::Ordered），
+        // 同一分类里 Group 变化处画分隔线；从端口拖出后打开时只列出能连上的节点，空的子菜单不显示
         std::vector<MiniGUI::MenuItem> items;
-        const auto& reg = g->Registry();
+        std::vector<const NodeTypeInfo*> types;
+        for (const NodeTypeInfo* t : g->Registry().Ordered())
+            if (FitsPendingLink(*t))
+                types.push_back(t);
         auto nodesOf = [&](const std::string& cat)
         {
             std::vector<MiniGUI::MenuItem> list;
-            for (const auto& t : reg.All())
+            const NodeTypeInfo* prev = nullptr;
+            for (const NodeTypeInfo* t : types)
                 if (t->Category == cat)
                 {
+                    if (prev && prev->Group != t->Group)
+                        list.push_back(MiniGUI::MenuItem::Separator());
+                    prev = t;
                     const std::string id = t->Id;
                     list.emplace_back(t->Name, [this, id, local] { AddNodeAt(id, local); });
                 }
             return list;
         };
-        std::vector<std::string> tops;
-        for (const std::string& cat : reg.Categories())
-            if (std::find(tops.begin(), tops.end(), TopCategory(cat)) == tops.end())
-                tops.push_back(TopCategory(cat));
-        for (const std::string& top : tops)
+        std::vector<std::string> cats;
+        for (const NodeTypeInfo* t : types)
+            if (cats.empty() || cats.back() != t->Category)
+                cats.push_back(t->Category);
+        for (size_t i = 0; i < cats.size();)
         {
+            const std::string top = TopCategory(cats[i]);
             std::vector<MiniGUI::MenuItem> sub;
-            for (const std::string& cat : reg.Categories())
+            for (; i < cats.size() && TopCategory(cats[i]) == top; ++i)
             {
-                if (TopCategory(cat) != top)
-                    continue;
-                if (SubCategory(cat).empty())
+                if (SubCategory(cats[i]).empty())
                 {
-                    auto list = nodesOf(cat);
+                    auto list = nodesOf(cats[i]);
                     sub.insert(sub.end(), std::make_move_iterator(list.begin()), std::make_move_iterator(list.end()));
                 }
                 else
-                    sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(cat), nodesOf(cat)));
+                    sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(cats[i]), nodesOf(cats[i])));
             }
             items.push_back(MiniGUI::MenuItem::Sub(top, std::move(sub)));
         }
+        if (items.empty())
+            return;
         const Rect sr = GetScreenBounds();
         MiniGUI::ShowContextMenu(*ctx, std::move(items), { sr.min.x + local.x, sr.min.y + local.y });
     }
 
-    bool NodeEditorView::FitsPendingLink(const NodeTypeInfo& t) const
+    std::optional<std::pair<DataType, BodyKind>> NodeEditorView::PendingPin() const
     {
         const Graph* g = G();
         if (!m_pendingLink || !g)
-            return true;
+            return std::nullopt;
         const auto [fromOutput, src] = *m_pendingLink;
         const Nodes::Node* n = g->GetNode(src.first);
         if (!n || !n->Type)
-            return true;
-        if (fromOutput)
+            return std::nullopt;
+        const auto& ports = fromOutput ? n->Type->Outputs : n->Type->Inputs;
+        if (src.second < 0 || src.second >= static_cast<int>(ports.size()))
+            return std::nullopt;
+        return std::make_pair(ports[src.second].Type, ports[src.second].Kind);
+    }
+
+    bool NodeEditorView::FitsPendingLink(const NodeTypeInfo& t) const
+    {
+        const auto pin = PendingPin();
+        return !pin || NodeRegistry::BestPort(t, pin->first, pin->second, m_pendingLink->first).Match != PortMatch::None;
+    }
+
+    std::vector<Link> NodeEditorView::LinksToCut(const Hit& h) const
+    {
+        const Graph* g = G();
+        if (!g)
+            return {};
+        switch (h.K)
         {
-            const DataType from = n->Type->Outputs[src.second].Type;
-            return std::any_of(t.Inputs.begin(), t.Inputs.end(), [&](const PortSpec& p) { return CanConvert(from, p.Type); });
+        case Hit::Kind::Link:    return { h.L };
+        case Hit::Kind::InPort:  return g->LinksInto(h.Node, h.Index);
+        case Hit::Kind::OutPort: return g->LinksFrom(h.Node, h.Index);
+        default:                 return {};
         }
-        const DataType to = n->Type->Inputs[src.second].Type;
-        return std::any_of(t.Outputs.begin(), t.Outputs.end(), [&](const PortSpec& p) { return CanConvert(p.Type, to); });
+    }
+
+    bool NodeEditorView::CutLinksAt(const Hit& h)
+    {
+        Graph* g = G();
+        const std::vector<Link> links = LinksToCut(h);
+        if (!g || links.empty())
+            return false;
+        m_editBegun = false;
+        BeginEdit();
+        if (h.K == Hit::Kind::InPort)
+            g->DisconnectInput(h.Node, h.Index);
+        else if (h.K == Hit::Kind::OutPort)
+            g->DisconnectOutput(h.Node, h.Index);
+        else
+            g->Disconnect(h.L);
+        m_editBegun = false;
+        Edited(true);
+        return true;
     }
 
     void NodeEditorView::OpenSearch(Vec2 local)
@@ -632,10 +688,39 @@ namespace MiniCAD
         if (MiniGUI::Popup* old = std::exchange(m_search, nullptr))
             old->Close();   // 先摘掉指针：它的关闭回调不会清掉刚设置的 m_pendingLink
         const std::weak_ptr<int> alive = m_alive;
+        const NodeRegistry& reg = g->Registry();
+        NodeSearchPopup::Source source;
+        if (const auto pin = PendingPin())
+        {
+            // 从端口拖出：只列出能连上的节点，显示要连接的端口，需要转换时注明（docs/NodeGraph/PLAN.md 第 9.2 节）
+            const auto [type, kind] = *pin;
+            const bool fromOutput = m_pendingLink->first;
+            source = [&reg, type, kind, fromOutput](const std::string& q)
+            {
+                std::vector<SearchRow> rows;
+                for (const PortCandidate& c : reg.SearchForPort(q, type, kind, fromOutput))
+                {
+                    const PortSpec& p = (fromOutput ? c.Type->Inputs : c.Type->Outputs)[static_cast<size_t>(c.Port)];
+                    std::string note = fromOutput ? "→ " + p.Name : p.Name + " →";
+                    if (c.Match == PortMatch::Convert)
+                        note += fromOutput ? "（" + KindName(type, kind) + " → " + KindName(p.Type, p.Kind) + "）"
+                                           : "（" + KindName(p.Type, p.Kind) + " → " + KindName(type, kind) + "）";
+                    rows.push_back({ c.Type, c.Port, std::move(note) });
+                }
+                return rows;
+            };
+        }
+        else
+            source = [&reg](const std::string& q)
+            {
+                std::vector<SearchRow> rows;
+                for (const NodeTypeInfo* t : reg.Search(q))
+                    rows.push_back({ t });
+                return rows;
+            };
         auto popup = std::make_unique<NodeSearchPopup>(
-            g->Registry(),
-            [this, alive](const NodeTypeInfo& t) { return !alive.expired() && FitsPendingLink(t); },
-            [this, alive, local](const std::string& id) { if (!alive.expired()) AddNodeAt(id, local); });
+            std::move(source),
+            [this, alive, local](const std::string& id, int port) { if (!alive.expired()) AddNodeAt(id, local, port); });
         const Rect sr = GetScreenBounds();
         popup->SetPoint({ sr.min.x + local.x, sr.min.y + local.y });
         MiniGUI::Popup* raw = popup.get();
@@ -943,16 +1028,16 @@ namespace MiniCAD
                 BeginTextEdit(h);
                 break;
             }
+            // Alt + 单击引脚：断开引脚上的全部连线；Alt + 单击连线：删除这条连线。没有连线的引脚上什么也不做（不开始拖线）
+            if (alt && (h.K == Hit::Kind::Link || h.K == Hit::Kind::InPort || h.K == Hit::Kind::OutPort))
+            {
+                ctx->ReleaseCapture();
+                m_drag = Drag::None;
+                CutLinksAt(h);
+                break;
+            }
             switch (h.K)
             {
-            case Hit::Kind::Link:
-                m_editBegun = false;
-                BeginEdit();
-                g->Disconnect(h.L);
-                m_editBegun = false;
-                Edited(true);
-                ctx->ReleaseCapture();
-                break;
             case Hit::Kind::OutPort:
                 m_drag = Drag::Link;
                 m_linkFromOutput = true;
@@ -1077,12 +1162,17 @@ namespace MiniCAD
                 Invalidate();
                 break;
             case Drag::None:
-                if (const Hit h = HitTest(local); h.K != m_hover.K || h.Node != m_hover.Node || h.Index != m_hover.Index)
+            {
+                const bool alt = e.HasModifier(MiniGUI::ModifierKey::Alt);
+                const Hit h = HitTest(local, alt);
+                if (h.K != m_hover.K || h.Node != m_hover.Node || h.Index != m_hover.Index || !(h.L == m_hover.L) || alt != m_hoverAlt)
                 {
-                    m_hover = h;
+                    m_hover    = h;
+                    m_hoverAlt = alt;
                     Invalidate();
                 }
                 break;
+            }
             }
             m_lastLocal = local;
             e.handled = true;
@@ -1209,22 +1299,12 @@ namespace MiniCAD
             items.back().checked = n->Preview;
         items.emplace_back("复制", [this] { DuplicateSelection(); }, "Ctrl+D");
         items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
-        if (h.K == Hit::Kind::InPort && g->IsInputConnected(h.Node, h.Index))
+        const bool inLinked  = h.K == Hit::Kind::InPort && g->IsInputConnected(h.Node, h.Index);
+        const bool outLinked = h.K == Hit::Kind::OutPort && g->IsOutputConnected(h.Node, h.Index);
+        if (inLinked || outLinked)
         {
-            const NodeId id = h.Node;
-            const int port = h.Index;
             items.push_back(MiniGUI::MenuItem::Separator());
-            items.emplace_back("断开此输入", [this, id, port]
-            {
-                if (Graph* gg = G())
-                {
-                    m_editBegun = false;
-                    BeginEdit();
-                    gg->DisconnectInput(id, port);
-                    m_editBegun = false;
-                    Edited(true);
-                }
-            });
+            items.emplace_back(inLinked ? "断开此输入" : "断开此输出", [this, h] { CutLinksAt(h); }, "Alt+单击");
         }
         MiniGUI::ShowContextMenu(*ctx, std::move(items), windowPos);
         return true;
@@ -1327,15 +1407,20 @@ namespace MiniCAD
         if (m_hover.K == Hit::Kind::OutPort && m_hover.Index < static_cast<int>(n->Outputs.size()))
         {
             const PortSpec& p = n->Type->Outputs[m_hover.Index];
-            return p.Name + "（" + TypeName(p.Type) + "）" + Summary(n->Outputs[m_hover.Index]);
+            std::string s = p.Name + "（" + KindName(p.Type, p.Kind) + "）" + Summary(n->Outputs[m_hover.Index]);
+            if (const size_t links = g->LinksFrom(n->Id, m_hover.Index).size())
+                s += "\nAlt + 单击断开 " + std::to_string(links) + " 条连线";
+            return s;
         }
         if (m_hover.K == Hit::Kind::InPort)
         {
             const PortSpec& p = n->Type->Inputs[m_hover.Index];
-            std::string s = p.Name + "（" + TypeName(p.Type) + (p.Acc == Access::List ? "，列表" : "") + (p.Optional ? "，可选" : "") + "）";
+            std::string s = p.Name + "（" + KindName(p.Type, p.Kind) + (p.Acc == Access::List ? "，列表" : "") + (p.Optional ? "，可选" : "") + "）";
             s += Summary(GatherInput(*g, *n, m_hover.Index));
             if (!p.Tip.empty())
                 s += "\n" + p.Tip;
+            if (const size_t links = g->LinksInto(n->Id, m_hover.Index).size())
+                s += "\nAlt + 单击断开 " + std::to_string(links) + " 条连线";
             return s;
         }
         if (m_hover.K == Hit::Kind::Header)
@@ -1366,18 +1451,26 @@ namespace MiniCAD
     {
         const Graph* g = G();
         auto toScreen = [&](Vec2 p) { return Vec2{ origin.x + p.x, origin.y + p.y }; };
+        // 按住 Alt 悬停在引脚 / 连线上：将被断开的连线画成红色虚线
+        const std::vector<Link> cut = m_hoverAlt && m_drag == Drag::None ? LinksToCut(m_hover) : std::vector<Link>{};
         for (const Link& l : g->GetLinks())
         {
             const auto a = PortPosition(l.FromNode, l.FromPort, true);
             const auto b = PortPosition(l.ToNode, l.ToPort, false);
             if (!a || !b)
                 continue;
+            auto pts = LinkCurve(toScreen(*a), toScreen(*b), m_zoom);
+            if (std::find(cut.begin(), cut.end(), l) != cut.end())
+            {
+                for (size_t i = 0; i + 1 < pts.size(); i += 2)
+                    dl.AddLine(pts[i], pts[i + 1], kErrorColor, 2.5f * std::max(m_zoom, 0.6f));
+                continue;
+            }
             const Nodes::Node* src = g->GetNode(l.FromNode);
             Color32 color = src && src->Type ? TypeColor(src->Type->Outputs[l.FromPort].Type) : RGBA(200, 200, 200);
             const bool hot = m_selection.count(l.FromNode) || m_selection.count(l.ToNode);
             if (src && src->State == NodeState::Error)
                 color = kErrorColor;
-            auto pts = LinkCurve(toScreen(*a), toScreen(*b), m_zoom);
             dl.AddPolyline(pts, hot ? color : MiniGUI::ColorScaleAlpha(color, 0.75f), false, (hot ? 3.0f : 2.0f) * std::max(m_zoom, 0.6f));
         }
         if (m_drag == Drag::Link)

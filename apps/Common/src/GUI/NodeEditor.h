@@ -17,12 +17,12 @@ namespace MiniGUI
 
 namespace MiniCAD
 {
-    // 节点编辑器（docs/NodeGraph/PLAN.md 第 5 节）：MiniGUI 控件，在画布上编辑当前文档的节点图。桌面版与网页版共用。
+    // 节点编辑器（docs/NodeGraph/PLAN.md 第 9 节）：MiniGUI 控件，在画布上编辑当前文档的节点图。桌面版与网页版共用。
     //   - 画布：网格；中键 / 右键拖动平移，滚轮以光标为中心缩放，F 适应全部（有选中时适应选中）
     //   - 节点卡片：标题栏按分类着色，上面是输出端口，中间是参数，下面是输入端口（没有连线时显示内联值）；
     //     错误红框、警告橙框，消息显示在卡片下方，耗时显示在标题栏右侧；标题栏右端的圆点切换预览
     //   - 连线：从端口拖到兼容的端口（不兼容的变暗），Shift 追加；拖动已连接的输入可拔下改接；拖到空白处打开添加节点菜单并自动连上；
-    //     Alt + 单击连线删除
+    //     Alt + 单击连线删除，Alt + 单击引脚断开引脚上的全部连线（按住 Alt 悬停时将被断开的连线画成红色虚线）
     //   - 改值：在数值框 / 滑条上左右拖动（Shift 精细，Ctrl 取整），双击键入；开关单击切换，选项单击弹出菜单
     //   - 选择：单击、Shift / Ctrl 多选、空白处框选；拖动移动；Delete 删除、Ctrl+D 复制、P 切换预览、Esc 取消
     //   - 剪贴板：Ctrl+C / Ctrl+X / Ctrl+V 复制 / 剪切 / 粘贴选中的节点（子图 JSON，见 Graph::CopyToString），粘贴到光标处
@@ -47,8 +47,9 @@ namespace MiniCAD
         void SetSelection(std::set<Nodes::NodeId> ids);
         void FrameAll();                        // 适应全部（有选中时适应选中）
         void ResetView();                       // 切换文档后：清空选择、取消拖动，适应全部
-        // 在画布局部坐标处添加节点（菜单、测试用），返回新节点 ID
-        Nodes::NodeId AddNodeAt(const std::string& typeId, MiniGUI::Vec2 local);
+        // 在画布局部坐标处添加节点（菜单、测试用），返回新节点 ID。
+        // 从端口拖出后添加时自动连线：linkPort 为新节点上要连的端口，-1 表示取匹配程度最高的端口
+        Nodes::NodeId AddNodeAt(const std::string& typeId, MiniGUI::Vec2 local, int linkPort = -1);
         void OpenAddMenuAt(MiniGUI::Vec2 local) { m_pendingLink.reset(); OpenAddMenu(local); }   // 添加节点菜单，新节点放在 local
         void OpenSearchAt(MiniGUI::Vec2 local)  { m_pendingLink.reset(); OpenSearch(local); }    // 节点搜索框，新节点放在 local
         bool IsSearchOpen() const { return m_search != nullptr; }
@@ -115,7 +116,12 @@ namespace MiniCAD
 
         void OpenAddMenu(MiniGUI::Vec2 local);
         void OpenSearch(MiniGUI::Vec2 local);
+        // 从端口拖出后待连接的引脚的类型与实体 / 曲面子类型；没有待连接的引脚时为空
+        std::optional<std::pair<Nodes::DataType, Nodes::BodyKind>> PendingPin() const;
         bool FitsPendingLink(const Nodes::NodeTypeInfo& t) const;   // 从端口拖出时：新节点有能连上的端口
+        // Alt 单击引脚 / 连线时会断开的连线（悬停时画成红色虚线）
+        std::vector<Nodes::Link> LinksToCut(const Hit& h) const;
+        bool CutLinksAt(const Hit& h);              // 断开 LinksToCut(h)，一步撤销；没有可断开的返回 false
         void OpenChoiceMenu(Nodes::NodeId id, int param, MiniGUI::Vec2 local);
         void BeginTextEdit(const Hit& hit);
         void ApplyValueDrag(MiniGUI::Vec2 local, uint8_t modifiers);
@@ -150,6 +156,7 @@ namespace MiniCAD
         Nodes::Value            m_valueStart;
         // 悬停
         Hit                     m_hover;
+        bool                    m_hoverAlt    = false;   // 悬停时按着 Alt：m_hover 含连线，显示将被断开的连线
         bool                    m_mouseInside = false;
         // 搜索框（打开时非空）、上次粘贴的位置（在同一处连续粘贴时错开）
         MiniGUI::Popup*         m_search = nullptr;

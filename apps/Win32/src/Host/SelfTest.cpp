@@ -1206,6 +1206,29 @@ namespace MiniCAD
                       graph.LinksInto(uniId, 0)[0].FromNode == boxId, "节点编辑器：从输出端口拖到空白处搜索“并集”，新节点自动连上");
                 drag(port(boxId, 0, true), port(arrId, 0, false));   // 一条连到复制范围以外的连线
 
+                // Alt + 单击引脚：输入引脚断开它的连线，输出引脚断开它的全部连线，各自一步撤销
+                const uint8_t altKey = static_cast<uint8_t>(MiniGUI::ModifierKey::Alt);
+                auto altClick = [&](MiniGUI::Vec2 p)
+                {
+                    m_ui->PointerMove(p, altKey);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, altKey);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, altKey);
+                    RenderFrame();
+                };
+                ne.Focus();
+                altClick(port(arrId, 0, false));
+                const bool inCut = graph.LinksInto(arrId, 0).empty() && graph.LinksFrom(boxId, 0).size() == 1;
+                key(MiniGUI::Key::Z, ctrlKey);
+                const bool inUndone = graph.LinksInto(arrId, 0).size() == 1;
+                altClick(port(boxId, 0, true));
+                const bool outCut = graph.GetLinks().empty() && graph.GetNodes().size() == 3;
+                key(MiniGUI::Key::Z, ctrlKey);
+                check(inCut && inUndone && outCut && graph.LinksFrom(boxId, 0).size() == 2,
+                      "节点编辑器：Alt + 单击输入 / 输出引脚断开连线，Ctrl+Z 恢复");
+                const size_t linksBeforeAlt = graph.GetLinks().size();
+                altClick(port(arrId, 0, true));   // 没有连线的输出引脚：什么也不做，也不开始拖线
+                check(graph.GetLinks().size() == linksBeforeAlt && !ne.IsSearchOpen(), "节点编辑器：Alt + 单击没有连线的引脚不做任何事");
+
                 // 复制粘贴：Ctrl+C 写入剪贴板，Ctrl+V 粘贴到光标处，ID 重新分配，内部连线保留、外部连线丢弃
                 MiniGUI::IClipboard& clip = m_ui->GetClipboard();
                 const std::string savedClip = clip.GetText();

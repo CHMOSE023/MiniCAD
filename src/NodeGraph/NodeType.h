@@ -17,6 +17,9 @@ namespace MiniCAD::Nodes
     // 输入端口的访问方式：按项（最长列表匹配，逐项求值）或整个列表一次交给节点
     enum class Access : uint8_t { Item, List };
 
+    // Body 端口的子类型提示：不限制连线（实体与开放曲面都是 Body，求值时才知道），只用于搜索排序与提示
+    enum class BodyKind : uint8_t { Any, Solid, Surface };
+
     struct PortSpec
     {
         std::string Name;
@@ -25,6 +28,7 @@ namespace MiniCAD::Nodes
         Value       Default;                 // 输入：没有连线时的内联值（编辑器里可改）；空值表示没有内联值
         bool        Optional = false;        // 输入：可以没有数据（空列表），否则节点提示缺少输入
         std::string Tip;
+        BodyKind    Kind     = BodyKind::Any; // Body 端口：期望 / 产生实体还是曲面
     };
 
     // 参数：不是端口的设置，画在节点卡片上（滑块的范围、运算种类……）
@@ -98,7 +102,7 @@ namespace MiniCAD::Nodes
     {
         std::string            Id;          // 存档用（如 "solid.box"），发布后不能改
         std::string            Name;        // 显示名
-        std::string            Category;    // 分类（编辑器菜单与标题栏颜色）；"大类/小类" 时菜单里分两级（如 "实体/基本体"）
+        std::string            Category;    // 分类（编辑器菜单与标题栏颜色）；"大类/小类" 时菜单里分两级（如 "实体/创建"）
         std::string            Description;
         std::vector<PortSpec>  Inputs;
         std::vector<PortSpec>  Outputs;
@@ -107,6 +111,21 @@ namespace MiniCAD::Nodes
         bool DependsOnScene = false;        // 读取图纸：场景几何版本变化时重算
         bool Display        = false;        // 显示类节点（面板）：编辑器在卡片上显示输入数据
         std::string Action;                 // 编辑器在卡片上显示的操作按钮（如 "pickCurves"：用图纸的选择集设置引用），由宿主实现
+        std::string Keywords;               // 搜索用的别名（空格分开，可中英混写；改名后在这里留下旧名）
+        int         Group = 0;              // 同一分类里的分组：菜单按组排序，组之间画分隔线
+    };
+
+    // 一对端口的匹配程度（从高到低）：类型相同且实体 / 曲面子类型也相同 > 类型相同 > 需要转换 > 只能经 Any / Geometry / Text 接上
+    enum class PortMatch : uint8_t { None, Generic, Convert, Type, Exact };
+    PortMatch MatchPorts(DataType from, BodyKind fromKind, DataType to, BodyKind toKind);
+    std::string KindName(DataType t, BodyKind k);   // 端口类型的显示名，Body 带子类型（"曲面"）
+
+    // 从某个端口拖出连线时，一个候选节点类型以及它能连上的最好端口
+    struct PortCandidate
+    {
+        const NodeTypeInfo* Type  = nullptr;
+        int                 Port  = -1;           // 候选节点上的端口（拖出的是输出时为输入端口，反之为输出端口）
+        PortMatch           Match = PortMatch::None;
     };
 
     // 分类路径 "大类/小类" 的两部分；没有 "/" 时小类为空
@@ -124,17 +143,29 @@ namespace MiniCAD::Nodes
         const NodeTypeInfo* Find(const std::string& id) const;
         // 按注册顺序
         const std::vector<std::unique_ptr<NodeTypeInfo>>& All() const { return m_types; }
-        std::vector<std::string> Categories() const;    // 按首次出现的顺序
-        // 节点搜索框：按显示名、ID、分类（以及说明）模糊匹配，不区分大小写；空格分开的每个词都要匹配。
-        // 完全相同 > 开头相同 > 包含 > 按顺序包含各个字符（如 "lnar" 匹配 "lineararray"），同分按注册顺序；空文字返回全部
+        // 菜单顺序：按分类顺序表（CategoryOrder），同一分类里按 Group、再按注册顺序；不在表里的分类排在最后
+        const std::vector<const NodeTypeInfo*>& Ordered() const;
+        std::vector<std::string> Categories() const;    // 有节点的分类，按分类顺序表
+        // 分类顺序表（docs/NodeGraph/PLAN.md 第 4.1 节）：添加节点菜单、搜索结果、节点清单都按它排列
+        static const std::vector<std::string>& CategoryOrder();
+        // 节点搜索框：按显示名、ID、关键词、分类（以及说明）模糊匹配，不区分大小写；空格分开的每个词都要匹配。
+        // 完全相同 > 开头相同 > 包含 > 按顺序包含各个字符（如 "lnar" 匹配 "lineararray"），同分按菜单顺序；空文字返回全部
         std::vector<const NodeTypeInfo*> Search(const std::string& query) const;
+        // 从端口拖出连线后的搜索：只列出有端口能连上的节点类型（fromOutput = true 时拖出的是 type 类型的输出，看候选的输入端口）。
+        // 有文字时按文字匹配度、同分按匹配程度；没有文字时按匹配程度、再按菜单顺序，并略去只能经 Any / Geometry / Text 接上的通用节点
+        std::vector<PortCandidate> SearchForPort(const std::string& query, DataType type, BodyKind kind, bool fromOutput) const;
+        // 一个节点类型能连上该端口的最好端口（Match 为 None 表示连不上）
+        static PortCandidate BestPort(const NodeTypeInfo& t, DataType type, BodyKind kind, bool fromOutput);
 
         // 内置节点（BuiltinNodes*.cpp）已注册的全局注册表
         static const NodeRegistry& Builtin();
 
     private:
+        std::vector<std::pair<int, const NodeTypeInfo*>> Scored(const std::string& query) const;
+
         std::vector<std::unique_ptr<NodeTypeInfo>> m_types;
         std::map<std::string, NodeTypeInfo*>       m_byId;
+        mutable std::vector<const NodeTypeInfo*>   m_ordered;   // Ordered() 的缓存，注册时清空
     };
 
     // 内置节点注册（按分类分在几个文件里）

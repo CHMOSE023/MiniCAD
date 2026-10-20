@@ -44,6 +44,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "nurbs.interpolate", .Name = "插值曲线", .Category = cat,
                                 .Description = "依次经过全部点的光滑空间曲线（三次 NURBS，至少 3 个点）；“闭合”时首尾光滑相接" };
+                t.Keywords = "interpolate spline 样条";
                 t.Inputs  = { InList("点", DataType::Vector), In("闭合", DataType::Boolean, false) };
                 t.Outputs = { Out("曲线", DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
@@ -57,6 +58,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "nurbs.fit", .Name = "拟合曲线", .Category = cat,
                                 .Description = "逼近全部点的光滑曲线（不一定经过各点）；各点到曲线的距离不超过容差，容差为 0 时取点集尺寸的 1/1000" };
+                t.Keywords = "fit spline 样条";
                 t.Inputs  = { InList("点", DataType::Vector), In("容差", DataType::Number, 0.0) };
                 t.Outputs = { Out("曲线", DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
@@ -72,6 +74,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "nurbs.control", .Name = "控制点曲线", .Category = cat,
                                 .Description = "以点列表为控制点的 NURBS 曲线（两端经过首末点）；点数不够时阶数自动降低。不需要实体内核" };
+                t.Keywords = "control nurbs spline 样条";
                 t.Inputs  = { InList("控制点", DataType::Vector), In("阶数", DataType::Integer, int64_t(3)) };
                 t.Outputs = { Out("曲线", DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
@@ -89,6 +92,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "nurbs.helix", .Name = "螺旋线", .Category = cat,
                                 .Description = "轴沿 +Z 过基点的螺旋线，起点在基点 + (底部半径, 0, 0)；顶部半径不同时为锥形螺旋线" };
+                t.Keywords = "helix spiral 弹簧 螺旋";
                 t.Inputs  = { In("基点", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0), In("顶部半径", DataType::Number, 5.0),
                               In("高度", DataType::Number, 20.0), In("圈数", DataType::Number, 4.0) };
                 t.Params  = { Param("右旋", true, ParamWidget::Toggle) };
@@ -104,8 +108,9 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "nurbs.evaluate", .Name = "曲线取点", .Category = cat,
+                NodeTypeInfo t{ .Id = "nurbs.evaluate", .Name = "曲线取点", .Category = "曲线/分析",
                                 .Description = "空间曲线上参数 t（0～1，按参数而不是按长度）处的点与单位切线；曲线实体自动转换" };
+                t.Keywords = "evaluate 切线 参数点";
                 t.Inputs  = { In("曲线", DataType::Curve3D), In("t", DataType::Number, 0.5) };
                 t.Outputs = { Out("点", DataType::Vector), Out("切线", DataType::Vector), Out("长度", DataType::Number) };
                 t.Solve   = [](SolveArgs& a)
@@ -126,10 +131,11 @@ namespace MiniCAD::Nodes
         {
             const char* create = "曲面/创建", *modify = "曲面/修改", *analysis = "曲面/分析";
             {
-                NodeTypeInfo t{ .Id = "surface.loft", .Name = "放样", .Category = create,
+                NodeTypeInfo t{ .Id = "surface.loft", .Name = "放样曲面", .Category = create,
                                 .Description = "依次经过各截面曲线的曲面（至少 2 条；截面方向要一致）。截面闭合时得到不封口的管状曲面，可再加厚" };
+                t.Keywords = "放样 loft skin 蒙皮";
                 t.Inputs  = { InList("截面", DataType::Curve3D) };
-                t.Outputs = { Out("曲面", DataType::Body) };
+                t.Outputs = { SurfacePort(Out("曲面", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -145,8 +151,9 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "surface.ruled", .Name = "直纹面", .Category = create, .Description = "两条曲线对应点之间连直线形成的曲面" };
+                t.Keywords = "ruled 直纹";
                 t.Inputs  = { In("A", DataType::Curve3D), In("B", DataType::Curve3D) };
-                t.Outputs = { Out("曲面", DataType::Body) };
+                t.Outputs = { SurfacePort(Out("曲面", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -158,9 +165,10 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "surface.revolve", .Name = "旋转曲面", .Category = create,
                                 .Description = "曲线（可以不闭合）绕轴旋转形成的曲面；角度为度，右手定则，360 为整圈" };
+                t.Keywords = "revolve 旋转";
                 t.Inputs  = { In("曲线", DataType::Curve3D), In("轴点", DataType::Vector, Vec(0, 0, 0)), In("轴方向", DataType::Vector, Vec(0, 0, 1)),
                               In("角度", DataType::Number, 360.0) };
-                t.Outputs = { Out("曲面", DataType::Body) };
+                t.Outputs = { SurfacePort(Out("曲面", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -176,8 +184,9 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "surface.points", .Name = "点阵曲面", .Category = create,
                                 .Description = "经过点阵中全部点的曲面：点按行排列（先 X 后 Y，同“点阵”节点），每行“列数”个点；行、列都至少 2 个" };
+                t.Keywords = "surface from points 点网格";
                 t.Inputs  = { InList("点", DataType::Vector), In("列数", DataType::Integer, int64_t(4)) };
-                t.Outputs = { Out("曲面", DataType::Body) };
+                t.Outputs = { SurfacePort(Out("曲面", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -194,8 +203,9 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "surface.offset", .Name = "偏移曲面", .Category = modify,
                                 .Description = "开放曲面沿法线（“曲面取点”的法线方向）偏移；距离为负时反向" };
-                t.Inputs  = { In("曲面", DataType::Body), In("距离", DataType::Number, 1.0) };
-                t.Outputs = { Out("曲面", DataType::Body) };
+                t.Keywords = "offset 偏移";
+                t.Inputs  = { SurfacePort(In("曲面", DataType::Body)), In("距离", DataType::Number, 1.0) };
+                t.Outputs = { SurfacePort(Out("曲面", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -209,9 +219,10 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "surface.pipe", .Name = "管道", .Category = create,
                                 .Description = "圆截面沿空间曲线扫掠（如螺旋线 → 弹簧）；“封口”时两端封闭成实体" };
+                t.Keywords = "pipe tube 圆管";
                 t.Inputs  = { In("路径", DataType::Curve3D), In("半径", DataType::Number, 1.0) };
                 t.Params  = { Param("封口", true, ParamWidget::Toggle) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -225,8 +236,9 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "surface.thicken", .Name = "加厚", .Category = modify,
                                 .Description = "开放曲面沿法线方向加厚成实体（厚度为负时反向），侧边封闭" };
-                t.Inputs  = { In("曲面", DataType::Body), In("厚度", DataType::Number, 1.0) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Keywords = "thicken 增厚 加厚";
+                t.Inputs  = { SurfacePort(In("曲面", DataType::Body)), In("厚度", DataType::Number, 1.0) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();

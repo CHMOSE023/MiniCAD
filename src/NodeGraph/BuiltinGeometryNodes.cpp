@@ -21,9 +21,10 @@ namespace MiniCAD::Nodes
 
         void RegisterCurves(NodeRegistry& r)
         {
-            const char* cat = "曲线";
+            const char* cat = "曲线/基本";
             {
                 NodeTypeInfo t{ .Id = "curve.line", .Name = "直线", .Category = cat, .Description = "两点之间的直线段" };
+                t.Keywords = "line 线段";
                 t.Inputs  = { In("起点", DataType::Vector, Vec(0, 0, 0)), In("终点", DataType::Vector, Vec(10, 0, 0)) };
                 t.Outputs = { Out("曲线", DataType::Curve) };
                 t.Solve   = [](SolveArgs& a)
@@ -64,6 +65,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "curve.rectangle", .Name = "矩形", .Category = cat,
                                 .Description = "以中心点、宽、高给出的闭合矩形，可倒圆角" };
+                t.Keywords = "rectangle rect";
                 t.Inputs  = { In("中心", DataType::Vector, Vec(0, 0, 0)), In("宽", DataType::Number, 20.0), In("高", DataType::Number, 10.0),
                               In("圆角", DataType::Number, 0.0) };
                 t.Outputs = { Out("曲线", DataType::Curve) };
@@ -89,6 +91,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "curve.polygon", .Name = "正多边形", .Category = cat, .Description = "外接圆半径给出的正多边形" };
+                t.Keywords = "polygon 多边形";
                 t.Inputs  = { In("中心", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0), In("边数", DataType::Integer, int64_t(6)),
                               In("旋转", DataType::Number, 0.0) };
                 t.Outputs = { Out("曲线", DataType::Curve) };
@@ -111,6 +114,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "curve.polyline", .Name = "多段线", .Category = cat, .Description = "依次连接点列表（同一水平面才能拉伸）" };
+                t.Keywords = "polyline pline 折线";
                 t.Inputs  = { InList("点", DataType::Vector), In("闭合", DataType::Boolean, false) };
                 t.Outputs = { Out("曲线", DataType::Curve) };
                 t.Solve   = [](SolveArgs& a)
@@ -129,8 +133,9 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.divide", .Name = "曲线等分", .Category = cat,
+                NodeTypeInfo t{ .Id = "curve.divide", .Name = "曲线等分", .Category = "曲线/分析",
                                 .Description = "按长度等分曲线，输出分点（闭合曲线不重复终点）" };
+                t.Keywords = "divide 等分点";
                 t.Inputs  = { In("曲线", DataType::Curve), In("段数", DataType::Integer, int64_t(10)) };
                 t.Outputs = { Out("点", DataType::Vector) };
                 t.Solve   = [](SolveArgs& a)
@@ -160,7 +165,7 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.length", .Name = "曲线长度", .Category = cat, .Description = "曲线的长度" };
+                NodeTypeInfo t{ .Id = "curve.length", .Name = "曲线长度", .Category = "曲线/分析", .Description = "曲线的长度" };
                 t.Inputs  = { In("曲线", DataType::Curve) };
                 t.Outputs = { Out("长度", DataType::Number) };
                 t.Solve   = [](SolveArgs& a) { a.Out(0, Geo::Length(*a.Curve(0))); };
@@ -172,6 +177,7 @@ namespace MiniCAD::Nodes
         {
             NodeTypeInfo t{ .Id = "doc.curves", .Name = "引用曲线", .Category = "图纸",
                             .Description = "读取图纸里的直线、圆弧、圆、多段线、矩形；先在绘图区选择，再点节点上的“用选择集设置”。图纸改动后自动重算" };
+            t.Keywords = "reference 拾取 选择";
             t.Params         = { Param("实体", std::string(), ParamWidget::Hidden) };   // 逗号分隔的实体 ID
             t.Outputs        = { Out("曲线", DataType::Curve) };
             t.DependsOnScene = true;
@@ -204,9 +210,10 @@ namespace MiniCAD::Nodes
 
         void RegisterTransforms(NodeRegistry& r)
         {
-            const char* cat = "变换";
+            const char* cat = "变换/基本";
             {
                 NodeTypeInfo t{ .Id = "xform.move", .Name = "移动", .Category = cat, .Description = "沿向量平移点、曲线或实体" };
+                t.Keywords = "move translate 平移";
                 t.Inputs  = { In("几何", DataType::Geometry), In("向量", DataType::Vector, Vec(10, 0, 0)) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
                 t.Solve   = [](SolveArgs& a)
@@ -220,6 +227,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "xform.rotate", .Name = "旋转", .Category = cat, .Description = "绕过中心的轴旋转（角度为度，右手定则；曲线只能绕 Z）" };
+                t.Keywords = "rotate 旋转";
                 t.Inputs  = { In("几何", DataType::Geometry), In("角度", DataType::Number, 45.0), In("中心", DataType::Vector, Vec(0, 0, 0)) };
                 t.Params  = { Choice("轴", { "X", "Y", "Z" }, 2) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
@@ -236,6 +244,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "xform.scale", .Name = "缩放", .Category = cat, .Description = "以中心为基点等比缩放" };
+                t.Keywords = "scale 比例";
                 t.Inputs  = { In("几何", DataType::Geometry), In("系数", DataType::Number, 2.0), In("中心", DataType::Vector, Vec(0, 0, 0)) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
                 t.Solve   = [](SolveArgs& a)
@@ -252,6 +261,7 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "xform.mirror", .Name = "镜像", .Category = cat, .Description = "以水平面内过 A、B 两点的直线为镜像线" };
+                t.Keywords = "mirror 对称";
                 t.Inputs  = { In("几何", DataType::Geometry), In("A", DataType::Vector, Vec(0, 0, 0)), In("B", DataType::Vector, Vec(0, 1, 0)) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
                 t.Solve   = [](SolveArgs& a)
@@ -267,7 +277,8 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.lineararray", .Name = "线性阵列", .Category = cat, .Description = "沿方向向量等距复制（含原件）" };
+                NodeTypeInfo t{ .Id = "xform.lineararray", .Name = "线性阵列", .Category = "变换/阵列", .Description = "沿方向向量等距复制（含原件）" };
+                t.Keywords = "array 复制 矩形";
                 t.Inputs  = { In("几何", DataType::Geometry), In("间距", DataType::Vector, Vec(10, 0, 0)), In("数量", DataType::Integer, int64_t(5)) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
                 t.Solve   = [](SolveArgs& a)
@@ -286,8 +297,9 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.polararray", .Name = "环形阵列", .Category = cat,
+                NodeTypeInfo t{ .Id = "xform.polararray", .Name = "环形阵列", .Category = "变换/阵列",
                                 .Description = "绕中心的 Z 轴均布复制（含原件）；总角度 360° 时首尾不重复" };
+                t.Keywords = "array polar 圆周阵列 复制";
                 t.Inputs  = { In("几何", DataType::Geometry), In("中心", DataType::Vector, Vec(0, 0, 0)), In("数量", DataType::Integer, int64_t(6)),
                               In("总角度", DataType::Number, 360.0) };
                 t.Outputs = { Out("几何", DataType::Geometry) };

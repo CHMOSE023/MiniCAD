@@ -1,4 +1,4 @@
-// 节点编辑器面板与节点图的求值、预览、烘焙（docs/NodeGraph/PLAN.md 第 5 节）
+// 节点编辑器面板与节点图的求值、预览、烘焙（docs/NodeGraph/PLAN.md 第 9 节）
 #include "GUI/MainFrame.h"
 #include "GUI/NodeEditor.h"
 #include "Core/UIContext.h"

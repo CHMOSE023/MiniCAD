@@ -35,14 +35,16 @@ namespace MiniCAD::Nodes
 
         void RegisterPrimitives(NodeRegistry& r)
         {
-            const char* cat = "实体/基本体";
+            const char* cat = "实体/创建";   // 基本体在形体之后（Group 1，菜单里画分隔线）
             {
                 NodeTypeInfo t{ .Id = "solid.box", .Name = "长方体", .Category = cat,
                                 .Description = "以基点和三个边长给出的长方体；“居中”时基点为底面中心" };
+                t.Keywords = "box cube 立方体";
+                t.Group    = 1;
                 t.Inputs  = { In("基点", DataType::Vector, Vec(0, 0, 0)), In("长", DataType::Number, 10.0), In("宽", DataType::Number, 10.0),
                               In("高", DataType::Number, 10.0) };
                 t.Params  = { Param("居中", false, ParamWidget::Toggle) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -59,8 +61,10 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "solid.cylinder", .Name = "圆柱", .Category = cat, .Description = "底面中心、半径、高度（沿 +Z）" };
+                t.Keywords = "cylinder 圆柱体";
+                t.Group    = 1;
                 t.Inputs  = { In("底面中心", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0), In("高", DataType::Number, 10.0) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -73,8 +77,10 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "solid.sphere", .Name = "球", .Category = cat, .Description = "中心、半径" };
+                t.Keywords = "sphere 球体";
+                t.Group    = 1;
                 t.Inputs  = { In("中心", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -89,12 +95,13 @@ namespace MiniCAD::Nodes
 
         void RegisterFeatures(NodeRegistry& r)
         {
-            const char* cat = "实体/成形";
+            const char* cat = "实体/创建";
             {
                 NodeTypeInfo t{ .Id = "solid.extrude", .Name = "拉伸", .Category = cat,
                                 .Description = "闭合轮廓（圆、闭合多段线、矩形）沿 Z 拉伸；高度为负沿 −Z" };
+                t.Keywords = "extrusion 拉伸体 挤出";
                 t.Inputs  = { In("轮廓", DataType::Curve), In("高度", DataType::Number, 10.0) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -109,11 +116,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.revolve", .Name = "旋转成体", .Category = cat,
+                NodeTypeInfo t{ .Id = "solid.revolve", .Name = "旋转", .Category = cat,
                                 .Description = "闭合轮廓绕轴旋转（角度为度，360 为整圈）；轴不能穿过轮廓" };
+                t.Keywords = "旋转成体 revolve";
                 t.Inputs  = { In("轮廓", DataType::Curve), In("轴点", DataType::Vector, Vec(0, 0, 0)), In("轴方向", DataType::Vector, Vec(0, 1, 0)),
                               In("角度", DataType::Number, 360.0) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -128,10 +136,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.sweep", .Name = "扫掠", .Category = cat,
+                NodeTypeInfo t{ .Id = "solid.sweep", .Name = "放样", .Category = cat,
                                 .Description = "闭合轮廓沿水平路径（直线、圆弧、圆、多段线）扫掠" };
+                t.Keywords = "扫掠 sweep 路径";
                 t.Inputs  = { In("轮廓", DataType::Curve), In("路径", DataType::Curve) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -150,11 +159,12 @@ namespace MiniCAD::Nodes
 
         void RegisterBooleans(NodeRegistry& r)
         {
-            const char* cat = "实体/布尔";
+            const char* cat = "实体/运算";
             {
                 NodeTypeInfo t{ .Id = "solid.union", .Name = "并集", .Category = cat, .Description = "列表中所有实体合并为一个" };
-                t.Inputs  = { InList("实体", DataType::Body) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Keywords = "union 布尔 合并 加";
+                t.Inputs  = { SolidPort(InList("实体", DataType::Body)) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -172,8 +182,9 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "solid.difference", .Name = "差集", .Category = cat, .Description = "A 减去 B 列表中的全部实体" };
-                t.Inputs  = { In("A", DataType::Body), InList("B", DataType::Body, /*optional=*/true) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Keywords = "difference subtract 布尔 减 剪切";
+                t.Inputs  = { SolidPort(In("A", DataType::Body)), SolidPort(InList("B", DataType::Body, /*optional=*/true)) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -191,8 +202,9 @@ namespace MiniCAD::Nodes
             }
             {
                 NodeTypeInfo t{ .Id = "solid.intersection", .Name = "交集", .Category = cat, .Description = "列表中所有实体的公共部分" };
-                t.Inputs  = { InList("实体", DataType::Body) };
-                t.Outputs = { Out("实体", DataType::Body) };
+                t.Keywords = "intersection 布尔 相交";
+                t.Inputs  = { SolidPort(InList("实体", DataType::Body)) };
+                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -211,12 +223,13 @@ namespace MiniCAD::Nodes
         }
 
         // 圆角 / 倒角：边编号列表为空时处理全部边
-        void RegisterEdgeOp(NodeRegistry& r, const char* id, const char* name, const char* amount, double def, bool chamfer)
+        void RegisterEdgeOp(NodeRegistry& r, const char* id, const char* name, const char* amount, double def, bool chamfer, const char* keywords)
         {
-            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "实体/边处理",
+            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "实体/修改",
                             .Description = std::string(chamfer ? "对实体的边倒角" : "对实体的边倒圆角") + "；“边”为边的编号（见“实体信息”的边数），不接时处理全部边" };
-            t.Inputs  = { In("实体", DataType::Body), In(amount, DataType::Number, def), InList("边", DataType::Integer, /*optional=*/true) };
-            t.Outputs = { Out("实体", DataType::Body) };
+            t.Keywords = keywords;
+            t.Inputs  = { SolidPort(In("实体", DataType::Body)), In(amount, DataType::Number, def), InList("边", DataType::Integer, /*optional=*/true) };
+            t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
             t.Solve   = [chamfer, name](SolveArgs& a)
             {
                 auto* k = a.Kernel();
@@ -244,11 +257,12 @@ namespace MiniCAD::Nodes
 
         void RegisterAnalysis(NodeRegistry& r)
         {
-            const char* cat = "分析";
+            const char* cat = "实体/分析";
             {
                 NodeTypeInfo t{ .Id = "solid.info", .Name = "实体信息", .Category = cat,
                                 .Description = "体积、边数、包围盒；开放曲面没有体积（输出 0 并提示，面积见“曲面信息”）" };
-                t.Inputs  = { In("实体", DataType::Body) };
+                t.Keywords = "volume 体积 包围盒";
+                t.Inputs  = { SolidPort(In("实体", DataType::Body)) };
                 t.Outputs = { Out("体积", DataType::Number), Out("边数", DataType::Integer), Out("最小点", DataType::Vector),
                               Out("最大点", DataType::Vector), Out("中心", DataType::Vector) };
                 t.Solve   = [](SolveArgs& a)
@@ -273,6 +287,7 @@ namespace MiniCAD::Nodes
             {
                 NodeTypeInfo t{ .Id = "solid.section", .Name = "水平截面", .Category = cat,
                                 .Description = "实体在高度 Z 处的截交线（折线）" };
+                t.Keywords = "section 剖切 截面";
                 t.Inputs  = { In("实体", DataType::Body), In("高度", DataType::Number, 5.0) };
                 t.Outputs = { Out("曲线", DataType::Curve) };
                 t.Solve   = [](SolveArgs& a)
@@ -301,8 +316,8 @@ namespace MiniCAD::Nodes
         RegisterPrimitives(r);
         RegisterFeatures(r);
         RegisterBooleans(r);
-        RegisterEdgeOp(r, "solid.fillet", "圆角", "半径", 1.0, false);
-        RegisterEdgeOp(r, "solid.chamfer", "倒角", "距离", 1.0, true);
+        RegisterEdgeOp(r, "solid.fillet", "圆角", "半径", 1.0, false, "fillet 倒圆 圆角");
+        RegisterEdgeOp(r, "solid.chamfer", "倒角", "距离", 1.0, true, "chamfer 斜角");
         RegisterAnalysis(r);
     }
 }

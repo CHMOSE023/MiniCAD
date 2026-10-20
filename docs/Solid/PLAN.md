@@ -228,7 +228,7 @@ SM_API → SMLib
 
 ## 11. 空间曲线与曲面（M7）
 
-第一版的建模只有封闭实体，轮廓、路径都是水平面上的二维曲线实体，没有曲面。M7 把 SMLib 的 NURBS 曲线、曲面接口经 `ISolidKernel` 开放出来，主要给节点式参数化建模用（`docs/NodeGraph/PLAN.md` 第 4 节“曲面”）。
+第一版的建模只有封闭实体，轮廓、路径都是水平面上的二维曲线实体，没有曲面。M7 把 SMLib 的 NURBS 曲线、曲面接口经 `ISolidKernel` 开放出来，主要给节点式参数化建模用（`docs/NodeGraph/PLAN.md` 第 4.4 节“曲面”）。
 
 ### 11.1 数据
 
