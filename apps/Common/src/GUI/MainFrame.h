@@ -16,6 +16,9 @@
 #include "Data/CommandRegistry.h"
 #include "Widgets/Binding.h"
 #include "Widgets/Menu.h"
+#include "NodeGraph/GraphHistory.h"
+#include "NodeGraph/Preview.h"
+#include <map>
 
 namespace MiniGUI
 {
@@ -42,6 +45,7 @@ namespace MiniGUI
 namespace MiniCAD
 {
     class StatusBarView;
+    class NodeEditorView;
     struct EntityAttr;
     class DynamicInputBox;
 
@@ -112,6 +116,17 @@ namespace MiniCAD
         void SyncCommandLine();                                   // 回显与提示同步到命令行
         void RunCommandLine(const std::string& text);             // 命令行提交
         bool RouteKeyToCommandLine(const MiniGUI::KeyEvent& e);   // 绘图区直接打字进入命令行
+
+        // ── 节点图（NodePanel.cpp，docs/NodeGraph/PLAN.md）──────────
+        std::unique_ptr<MiniGUI::Node> CreateNodePanel();         // 节点编辑器面板：工具行 + 画布
+        void SyncNodeGraph();                                     // 每帧：求值当前文档的节点图（引用的图纸变了也重算），需要时刷新绘图区预览
+        void RefreshNodePreview(Document& doc);
+        void BakeNodeGraph();                                     // 烘焙：结果加入图纸（可撤销）
+        void ShowNodePanel(bool toggle);                          // 第一次显示时停靠在绘图区下方
+        bool NodeEditorHasFocus() const;                          // 节点编辑器有焦点时 Ctrl+Z / Y / A / C / X / V 作用于节点图
+        bool NodeGraphUndo(bool redo);
+        Nodes::SolveContext  NodeSolveContext(Document& doc) const;
+        Nodes::GraphHistory& NodeHistory(const Document& doc);
 
         // ── 动态输入（DynamicInput.cpp）与 Editor 请求的对话框（EditorDialogs.cpp）──
         void SyncDynamicInput();                                  // 光标旁的长度 / 角度输入框跟随 Editor 状态
@@ -226,6 +241,15 @@ namespace MiniCAD
         bool                                   m_useUserLayout = true;
         bool                                   m_syncing    = false;     // SyncDocuments 进行中：忽略标签的选中回调
         RecentFiles                            m_recentFiles;            // 「文件 > 最近打开」，存到 exe 目录下的 recent.txt
+
+        // ── 节点图 ──────────────────────────────────────────────
+        NodeEditorView*                        m_nodeEditor = nullptr;
+        MiniGUI::Label*                        m_nodeStatus = nullptr;
+        Nodes::PreviewBuilder                  m_nodePreview;            // 预览几何（缓存内核实体的离散结果）
+        std::map<const Document*, std::unique_ptr<Nodes::GraphHistory>> m_nodeHistory;   // 每个文档一份节点图撤销历史
+        const Document*                        m_nodePreviewDoc = nullptr;   // 预览对应的文档
+        uint64_t                               m_nodePreviewSig = 0;         // 预览对应的求值版本、预览开关、连线、选择
+        bool                                   m_nodePanelPlaced = false;    // 节点面板已经放进过停靠区
 
         // ── 后台打开图纸（OpenDrawings）───────────────────────────
         struct OpenJob;                                                  // 一张图纸的读取任务，与后台线程共享（MainFrame.cpp）

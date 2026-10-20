@@ -1,0 +1,162 @@
+#include "NodeGraph/Preview.h"
+#include "NodeGraph/GeometryOps.h"
+#include "Core/Entity/PointEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
+#include "Scene/Scene.h"
+#include "Document/Command/BatchAddCommand.h"
+#include "Document/CommandStack/CommandStack.h"
+
+namespace MiniCAD::Nodes
+{
+    namespace
+    {
+        void Flatten(const Node& n, int port, bool highlight, std::vector<PreviewItem>& out)
+        {
+            if (port < 0 || port >= static_cast<int>(n.Outputs.size()))
+                return;
+            for (const auto& v : n.Outputs[port])
+                if (IsGeometryType(v.Type()))
+                    out.push_back({ v, highlight });
+        }
+    }
+
+    std::vector<PreviewItem> CollectPreview(const Graph& g, const std::set<NodeId>& selected)
+    {
+        std::vector<PreviewItem> out;
+        for (const auto& n : g.GetNodes())
+        {
+            if (!n->Type)
+                continue;
+            const bool sel = selected.count(n->Id) > 0;
+            for (int p = 0; p < static_cast<int>(n->Type->Outputs.size()); ++p)
+            {
+                const DataType t = n->Type->Outputs[p].Type;
+                if (!IsGeometryType(t) && t != DataType::Any)
+                    continue;
+                if (sel)
+                    Flatten(*n, p, true, out);
+                else if (n->Preview && !g.IsOutputConnected(n->Id, p))
+                    Flatten(*n, p, false, out);
+            }
+        }
+        return out;
+    }
+
+    PreviewSet PreviewBuilder::Build(const Graph& g, const std::set<NodeId>& selected, Solid::ISolidKernel* kernel)
+    {
+        PreviewSet set;
+        decltype(m_bodyCache) used;
+        for (const PreviewItem& item : CollectPreview(g, selected))
+        {
+            const Math::Color4& color = item.Highlight ? Highlight : Normal;
+            EntityAttr attr;
+            attr.Color = EntityColor::FromRgb(color.r, color.g, color.b);
+            switch (item.v.Type())
+            {
+            case DataType::Vector:
+            {
+                const auto& p = item.v.AsVector();
+                (item.Highlight ? set.HighlightPoints : set.Points).push_back({ p.x, p.y, p.z });
+                break;
+            }
+            case DataType::Curve:
+                if (item.v.AsCurve())
+                {
+                    std::shared_ptr<Entity> c = item.v.AsCurve()->Clone(Object::InvalidID);
+                    attr.Extrusion = c->GetAttr().Extrusion;
+                    c->SetAttr(attr);
+                    set.Entities.push_back(std::move(c));
+                }
+                break;
+            case DataType::Curve3D:
+                if (item.v.AsCurve3D() && item.v.AsCurve3D()->IsValid())
+                {
+                    std::shared_ptr<Entity> c = Geo::MakeSplineEntity(*item.v.AsCurve3D(), Object::InvalidID);
+                    c->SetAttr(attr);
+                    set.Entities.push_back(std::move(c));
+                }
+                break;
+            case DataType::Body:
+            {
+                const Solid::BodyPtr& body = item.v.AsBody();
+                if (!body || !kernel)
+                    break;
+                auto it = used.find(body.get());
+                if (it == used.end())
+                {
+                    auto cached = m_bodyCache.find(body.get());
+                    if (cached != m_bodyCache.end() && cached->second.first == body)
+                        it = used.insert(*cached).first;
+                    else if (std::shared_ptr<Entity> e = Solid3DEntity::Create(Object::InvalidID, *kernel, body))
+                        it = used.insert({ body.get(), { body, std::move(e) } }).first;
+                    else
+                        break;
+                }
+                std::shared_ptr<Entity> e = it->second.second->Clone(Object::InvalidID);   // 克隆共享内核数据与网格
+                e->SetAttr(attr);
+                set.Entities.push_back(std::move(e));
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        m_bodyCache = std::move(used);
+        return set;
+    }
+
+    int Bake(const Graph& g, const std::set<NodeId>& selected, Scene& scene, CommandStack& stack, Solid::ISolidKernel* kernel)
+    {
+        std::vector<PreviewItem> items;
+        if (selected.empty())
+            items = CollectPreview(g, {});
+        else
+            for (const PreviewItem& it : CollectPreview(g, selected))
+                if (it.Highlight)
+                    items.push_back(it);
+
+        EntityAttr attr;
+        attr.LayerId    = scene.GetLayerManager().GetActiveLayerID();
+        attr.LineType   = scene.GetCurrentLineType();
+        attr.Lineweight = scene.GetCurrentLineweight();
+
+        std::vector<std::unique_ptr<Object>> entities;
+        for (const PreviewItem& item : items)
+        {
+            std::unique_ptr<Entity> e;
+            switch (item.v.Type())
+            {
+            case DataType::Vector:
+            {
+                const auto& p = item.v.AsVector();
+                e = std::make_unique<PointEntity>(scene.NextObjectID(), Math::Point3{ p.x, p.y, p.z });
+                break;
+            }
+            case DataType::Curve:
+                if (item.v.AsCurve())
+                    e = item.v.AsCurve()->Clone(scene.NextObjectID());
+                break;
+            case DataType::Curve3D:
+                if (item.v.AsCurve3D() && item.v.AsCurve3D()->IsValid())
+                    e = Geo::MakeSplineEntity(*item.v.AsCurve3D(), scene.NextObjectID());   // 样条（控制点形式）
+                break;
+            case DataType::Body:
+                if (kernel && item.v.AsBody())
+                    e = Solid3DEntity::Create(scene.NextObjectID(), *kernel, item.v.AsBody());
+                break;
+            default:
+                break;
+            }
+            if (!e)
+                continue;
+            EntityAttr a = attr;
+            a.Extrusion  = e->GetAttr().Extrusion;
+            e->SetAttr(a);
+            entities.push_back(std::move(e));
+        }
+        const int count = static_cast<int>(entities.size());
+        if (count > 0)
+            stack.Execute(std::make_unique<BatchAddCommand>(std::move(entities)), scene);
+        return count;
+    }
+}

@@ -1,0 +1,1744 @@
+#include "GUI/NodeEditor.h"
+#include "Core/Clipboard.h"
+#include "Core/Popup.h"
+#include "Core/UIContext.h"
+#include "Paint/DrawList.h"
+#include "Style/Theme.hpp"
+#include "Text/TextSystem.h"
+#include "Widgets/ListView.h"
+#include "Widgets/Menu.h"
+#include "Widgets/TextBox.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <map>
+#include <utility>
+
+namespace MiniCAD
+{
+    using MiniGUI::Color32;
+    using MiniGUI::ColorRef;
+    using MiniGUI::Rect;
+    using MiniGUI::Vec2;
+    using MiniGUI::RGBA;
+    namespace Theme = MiniGUI::Theme;
+    using namespace MiniCAD::Nodes;
+
+    namespace
+    {
+        constexpr float kPortR    = 5.0f;
+        constexpr float kPortHit  = 9.0f;
+        constexpr float kMinZoom  = 0.25f;
+        constexpr float kMaxZoom  = 2.5f;
+        constexpr float kFontSize = 12.0f;
+        constexpr int   kDisplayLines = 8;
+
+        // 标题栏颜色：先按完整分类（"实体/布尔"），再按大类
+        Color32 CategoryColor(const std::string& cat)
+        {
+            static const std::map<std::string, Color32> kColors = {
+                { "输入", RGBA(74, 111, 165) },  { "数学", RGBA(92, 122, 58) },  { "向量", RGBA(58, 122, 114) },
+                { "列表", RGBA(105, 105, 110) }, { "曲线", RGBA(150, 98, 45) },  { "图纸", RGBA(122, 74, 138) },
+                { "变换", RGBA(47, 111, 143) },  { "实体", RGBA(154, 59, 59) },  { "曲面", RGBA(150, 62, 118) },
+                { "分析", RGBA(130, 112, 42) },
+                { "实体/基本体", RGBA(154, 59, 59) }, { "实体/成形", RGBA(166, 82, 48) },
+                { "实体/布尔", RGBA(138, 52, 92) },  { "实体/边处理", RGBA(120, 66, 66) },
+            };
+            auto it = kColors.find(cat);
+            if (it == kColors.end())
+                it = kColors.find(TopCategory(cat));
+            return it == kColors.end() ? RGBA(90, 90, 90) : it->second;
+        }
+
+        std::string CategoryLabel(const std::string& cat)
+        {
+            const std::string sub = SubCategory(cat);
+            return sub.empty() ? cat : TopCategory(cat) + " › " + sub;
+        }
+
+        Color32 TypeColor(DataType t)
+        {
+            switch (t)
+            {
+            case DataType::Number:   return RGBA(170, 170, 170);
+            case DataType::Integer:  return RGBA(80, 160, 220);
+            case DataType::Boolean:  return RGBA(225, 140, 190);
+            case DataType::Text:     return RGBA(120, 195, 120);
+            case DataType::Vector:   return RGBA(120, 120, 235);
+            case DataType::Curve:    return RGBA(235, 170, 60);
+            case DataType::Body:     return RGBA(225, 90, 90);
+            case DataType::Curve3D:  return RGBA(240, 215, 70);
+            case DataType::Geometry: return RGBA(200, 120, 210);
+            default:                 return RGBA(225, 225, 225);
+            }
+        }
+
+        constexpr Color32 kWarnColor  = RGBA(230, 150, 40);
+        constexpr Color32 kErrorColor = RGBA(225, 70, 70);
+
+        Vec2 Bezier(Vec2 a, Vec2 b, Vec2 c, Vec2 d, float t)
+        {
+            const float u = 1.0f - t;
+            return { u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x,
+                     u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y };
+        }
+
+        // 连线曲线的采样点（局部坐标）
+        std::array<Vec2, 25> LinkCurve(Vec2 from, Vec2 to, float zoom)
+        {
+            const float dx = std::max(40.0f * zoom, std::abs(to.x - from.x) * 0.5f);
+            std::array<Vec2, 25> pts;
+            for (size_t i = 0; i < pts.size(); ++i)
+                pts[i] = Bezier(from, { from.x + dx, from.y }, { to.x - dx, to.y }, to, static_cast<float>(i) / (pts.size() - 1));
+            return pts;
+        }
+
+        float DistToSegment(Vec2 p, Vec2 a, Vec2 b)
+        {
+            const float vx = b.x - a.x, vy = b.y - a.y;
+            const float len2 = vx * vx + vy * vy;
+            float t = len2 > 0 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2 : 0.0f;
+            t = std::clamp(t, 0.0f, 1.0f);
+            return std::hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+        }
+
+        bool ParseVector(const std::string& text, Math::Vec3& out)
+        {
+            std::string s;
+            for (char c : text)
+                s.push_back(c == '{' || c == '}' || c == '(' || c == ')' || c == ';' ? ' ' : c == ',' ? ' ' : c);
+            double v[3] = { 0, 0, 0 };
+            int n = 0;
+            const char* p = s.c_str();
+            while (*p && n < 3)
+            {
+                char* end = nullptr;
+                const double d = std::strtod(p, &end);
+                if (end == p)
+                {
+                    ++p;
+                    continue;
+                }
+                v[n++] = d;
+                p = end;
+            }
+            if (n == 0)
+                return false;
+            out = { v[0], v[1], v[2] };
+            return true;
+        }
+
+        std::string Summary(const DataList& list)
+        {
+            if (list.empty())
+                return "（没有数据）";
+            std::string s = std::to_string(list.size()) + " 项：";
+            for (size_t i = 0; i < list.size() && i < 4; ++i)
+                s += (i ? "，" : "") + ToDisplayString(list[i]);
+            if (list.size() > 4)
+                s += "，…";
+            return s;
+        }
+
+        // 节点搜索框：输入框 + 候选列表。焦点留在输入框：↑↓ 选择，回车或单击添加，Esc / 点击别处关闭
+        class NodeSearchPopup : public MiniGUI::Popup
+        {
+        public:
+            using Filter = std::function<bool(const NodeTypeInfo&)>;
+            using Pick   = std::function<void(const std::string& typeId)>;
+
+            NodeSearchPopup(const NodeRegistry& reg, Filter filter, Pick pick)
+                : m_registry(reg), m_filter(std::move(filter)), m_pick(std::move(pick))
+            {
+                MiniGUI::LayoutStyle ps = GetLayoutStyle();
+                ps.gap = 4.0f;
+                SetLayoutStyle(ps);
+
+                m_box = AddChild<MiniGUI::TextBox>();
+                m_box->SetPlaceholder("搜索节点（名称、分类或 ID）");
+                MiniGUI::LayoutStyle bs;
+                bs.width = kWidth;
+                m_box->SetLayoutStyle(bs);
+                m_box->SetOnChanged([this](const std::string&) { Refresh(); });
+                m_box->SetKeyPreview([this](MiniGUI::KeyEvent& e) { return OnBoxKey(e); });
+
+                m_list = AddChild<MiniGUI::ListView>();
+                m_list->SetFocusable(false);   // 点击候选时焦点留在输入框
+                m_list->SetOnItemClicked([this](int i) { Accept(i); });
+                Refresh();
+            }
+
+        protected:
+            void OnOpened() override { m_box->Focus(MiniGUI::FocusReason::Program); }
+
+        private:
+            static constexpr float kWidth   = 330.0f;
+            static constexpr int   kMaxRows = 12;
+
+            void Refresh()
+            {
+                m_types.clear();
+                for (const NodeTypeInfo* t : m_registry.Search(m_box->GetText()))
+                    if (!m_filter || m_filter(*t))
+                        m_types.push_back(t);
+                std::vector<MiniGUI::ListItem> items;
+                for (const NodeTypeInfo* t : m_types)
+                {
+                    MiniGUI::ListItem item;
+                    item.text   = t->Name;
+                    item.detail = CategoryLabel(t->Category) + "  " + t->Id;
+                    item.swatch = CategoryColor(t->Category);
+                    items.push_back(std::move(item));
+                }
+                if (items.empty())
+                    items.push_back(MiniGUI::ListItem{ .text = "没有匹配的节点" });
+                const int rows = std::clamp(static_cast<int>(items.size()), 1, kMaxRows);
+                m_list->SetItems(std::move(items));
+                MiniGUI::LayoutStyle ls;
+                ls.width  = kWidth;
+                ls.height = m_list->GetRowHeight() * static_cast<float>(rows);
+                m_list->SetLayoutStyle(ls);
+                if (!m_types.empty())
+                    m_list->SetCurrent(0);
+            }
+
+            bool OnBoxKey(MiniGUI::KeyEvent& e)
+            {
+                if (e.modifiers != 0)
+                    return false;
+                const int n = static_cast<int>(m_types.size()), cur = m_list->GetCurrent();
+                const int page = kMaxRows - 1;
+                switch (e.key)
+                {
+                case MiniGUI::Key::Down:     if (n) m_list->SetCurrent(std::min(cur + 1, n - 1)); return true;
+                case MiniGUI::Key::Up:       if (n) m_list->SetCurrent(std::max(cur - 1, 0)); return true;
+                case MiniGUI::Key::PageDown: if (n) m_list->SetCurrent(std::min(cur + page, n - 1)); return true;
+                case MiniGUI::Key::PageUp:   if (n) m_list->SetCurrent(std::max(cur - page, 0)); return true;
+                case MiniGUI::Key::Enter:
+                case MiniGUI::Key::Tab:      Accept(cur < 0 ? 0 : cur); return true;
+                case MiniGUI::Key::Escape:   Close(); return true;
+                default:                     return false;
+                }
+            }
+
+            void Accept(int index)
+            {
+                if (index < 0 || index >= static_cast<int>(m_types.size()))
+                    return;
+                const std::string id = m_types[static_cast<size_t>(index)]->Id;
+                Pick pick = m_pick;
+                pick(id);
+                Close();
+            }
+
+            const NodeRegistry&              m_registry;
+            Filter                           m_filter;
+            Pick                             m_pick;
+            MiniGUI::TextBox*                m_box  = nullptr;
+            MiniGUI::ListView*               m_list = nullptr;
+            std::vector<const NodeTypeInfo*> m_types;
+        };
+    }
+
+    NodeEditorView::NodeEditorView(Host host) : m_host(std::move(host))
+    {
+        SetFocusable(true);
+        SetClipChildren(true);
+    }
+
+
+    // ═════════════════════════════ 布局与命中 ═════════════════════════════
+
+    NodeEditorView::Card NodeEditorView::Layout(const Nodes::Node& n) const
+    {
+        Card c;
+        float y = n.Y + kHeaderH + 4.0f;
+        auto row = [&] { const float cy = y + kRowH * 0.5f; y += kRowH; return cy; };
+        for (size_t i = 0; i < n.OutputCount(); ++i)
+            c.OutY.push_back(row());
+        if (n.Type)
+        {
+            for (size_t i = 0; i < n.Type->Params.size(); ++i)
+                if (n.Type->Params[i].Widget != ParamWidget::Hidden)
+                {
+                    c.ParamIndex.push_back(static_cast<int>(i));
+                    c.ParamY.push_back(row());
+                }
+            if (!n.Type->Action.empty())
+                c.ActionY = row();
+            if (n.Type->Display)
+            {
+                const size_t lines = std::clamp<size_t>(n.DisplayData.size(), 1, kDisplayLines) + (n.DisplayData.size() > kDisplayLines ? 1 : 0);
+                c.DisplayY = y + 2.0f;
+                c.DisplayH = static_cast<float>(lines) * 16.0f + 8.0f;
+                y += c.DisplayH + 4.0f;
+            }
+        }
+        for (size_t i = 0; i < n.InputCount(); ++i)
+            c.InY.push_back(row());
+        c.Box = Rect{ n.X, n.Y, n.X + kNodeWidth, y + 4.0f };
+        return c;
+    }
+
+    Rect NodeEditorView::FieldRect(const Card& c, float y) const
+    {
+        return Rect{ c.Box.min.x + kNodeWidth * 0.44f, y - 9.0f, c.Box.max.x - 8.0f, y + 9.0f };
+    }
+
+    bool NodeEditorView::InputEditable(const Nodes::Node& n, int port) const
+    {
+        if (!n.Type || port < 0 || port >= static_cast<int>(n.Type->Inputs.size()) || n.InputValues[port].IsEmpty())
+            return false;
+        const DataType t = n.Type->Inputs[port].Type;
+        return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean || t == DataType::Text || t == DataType::Vector;
+    }
+
+    NodeEditorView::Hit NodeEditorView::HitTest(Vec2 local, bool includeLinks) const
+    {
+        Hit hit;
+        const Graph* g = G();
+        if (!g)
+            return hit;
+        const Vec2 p = LocalToGraph(local);
+        const float portHit = kPortHit / std::min(m_zoom, 1.0f);
+        const auto& nodes = g->GetNodes();
+        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it)
+        {
+            const Nodes::Node& n = **it;
+            const Card c = Layout(n);
+            for (size_t i = 0; i < c.OutY.size(); ++i)
+                if (std::hypot(p.x - c.Box.max.x, p.y - c.OutY[i]) <= portHit)
+                    return { Hit::Kind::OutPort, n.Id, static_cast<int>(i) };
+            for (size_t i = 0; i < c.InY.size(); ++i)
+                if (std::hypot(p.x - c.Box.min.x, p.y - c.InY[i]) <= portHit)
+                    return { Hit::Kind::InPort, n.Id, static_cast<int>(i) };
+            if (!c.Box.Contains(p))
+                continue;
+            if (p.y < n.Y + kHeaderH)
+            {
+                if (n.OutputCount() > 0 && std::hypot(p.x - (c.Box.max.x - 14.0f), p.y - (n.Y + kHeaderH * 0.5f)) <= 9.0f)
+                    return { Hit::Kind::Preview, n.Id };
+                return { Hit::Kind::Header, n.Id };
+            }
+            for (size_t i = 0; i < c.InY.size(); ++i)
+                if (InputEditable(n, static_cast<int>(i)) && !g->IsInputConnected(n.Id, static_cast<int>(i)) && FieldRect(c, c.InY[i]).Contains(p))
+                    return { Hit::Kind::InField, n.Id, static_cast<int>(i) };
+            for (size_t i = 0; i < c.ParamY.size(); ++i)
+                if (FieldRect(c, c.ParamY[i]).Contains(p))
+                    return { Hit::Kind::Param, n.Id, c.ParamIndex[i] };
+            if (c.ActionY >= 0 && std::abs(p.y - c.ActionY) <= 10.0f && p.x > c.Box.min.x + 8 && p.x < c.Box.max.x - 8)
+                return { Hit::Kind::Action, n.Id };
+            return { Hit::Kind::Body, n.Id };
+        }
+        if (includeLinks)
+        {
+            for (const Link& l : g->GetLinks())
+            {
+                const auto a = PortPosition(l.FromNode, l.FromPort, true);
+                const auto b = PortPosition(l.ToNode, l.ToPort, false);
+                if (!a || !b)
+                    continue;
+                const auto pts = LinkCurve(*a, *b, m_zoom);
+                for (size_t i = 1; i < pts.size(); ++i)
+                    if (DistToSegment(local, pts[i - 1], pts[i]) <= 5.0f)
+                    {
+                        Hit h;
+                        h.K = Hit::Kind::Link;
+                        h.L = l;
+                        return h;
+                    }
+            }
+        }
+        return hit;
+    }
+
+    std::optional<Vec2> NodeEditorView::PortPosition(NodeId id, int port, bool output) const
+    {
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!n)
+            return std::nullopt;
+        const Card c = Layout(*n);
+        const auto& ys = output ? c.OutY : c.InY;
+        if (port < 0 || port >= static_cast<int>(ys.size()))
+            return std::nullopt;
+        return GraphToLocal(output ? c.Box.max.x : c.Box.min.x, ys[port]);
+    }
+
+    std::optional<Vec2> NodeEditorView::InputFieldPosition(NodeId id, int port) const
+    {
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!n || port < 0 || port >= static_cast<int>(n->InputCount()))
+            return std::nullopt;
+        const Card c = Layout(*n);
+        const Rect r = FieldRect(c, c.InY[port]);
+        return GraphToLocal((r.min.x + r.max.x) * 0.5f, (r.min.y + r.max.y) * 0.5f);
+    }
+
+    std::optional<Vec2> NodeEditorView::ParamPosition(NodeId id, int index) const
+    {
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!n)
+            return std::nullopt;
+        const Card c = Layout(*n);
+        for (size_t i = 0; i < c.ParamIndex.size(); ++i)
+            if (c.ParamIndex[i] == index)
+            {
+                const Rect r = FieldRect(c, c.ParamY[i]);
+                return GraphToLocal((r.min.x + r.max.x) * 0.5f, (r.min.y + r.max.y) * 0.5f);
+            }
+        return std::nullopt;
+    }
+
+    // ═════════════════════════════ 编辑操作 ═════════════════════════════
+
+    void NodeEditorView::BeginEdit()
+    {
+        if (m_editBegun)
+            return;
+        m_editBegun = true;
+        if (m_host.beforeEdit)
+            m_host.beforeEdit();
+    }
+
+    void NodeEditorView::Edited(bool evaluate)
+    {
+        if (m_host.edited)
+            m_host.edited(evaluate);
+        Invalidate();
+    }
+
+    void NodeEditorView::SelectionChanged()
+    {
+        if (m_host.selectionChanged)
+            m_host.selectionChanged();
+        Invalidate();
+    }
+
+    void NodeEditorView::SyncGraph()
+    {
+        Graph* g = G();
+        if (g == m_graph)
+            return;
+        m_graph = g;
+        m_selection.clear();
+        m_drag = Drag::None;
+        m_hover = {};
+        m_pendingLink.reset();
+        if (m_inline.IsActive())
+            m_inline.Cancel();
+        if (g && !g->Empty())
+            FrameAll();
+    }
+
+    void NodeEditorView::SetSelection(std::set<NodeId> ids)
+    {
+        m_selection = std::move(ids);
+        SelectionChanged();
+    }
+
+    void NodeEditorView::ResetView()
+    {
+        m_graph = nullptr;
+        SyncGraph();
+        Invalidate();
+    }
+
+    void NodeEditorView::FrameAll()
+    {
+        const Graph* g = G();
+        if (!g || g->Empty())
+        {
+            m_pan  = { 40.0f, 40.0f };
+            m_zoom = 1.0f;
+            Invalidate();
+            return;
+        }
+        Rect box{ 1e30f, 1e30f, -1e30f, -1e30f };
+        for (const auto& n : g->GetNodes())
+        {
+            if (!m_selection.empty() && !m_selection.count(n->Id))
+                continue;
+            const Card c = Layout(*n);
+            box.min.x = std::min(box.min.x, c.Box.min.x);
+            box.min.y = std::min(box.min.y, c.Box.min.y);
+            box.max.x = std::max(box.max.x, c.Box.max.x);
+            box.max.y = std::max(box.max.y, c.Box.max.y + 30.0f);
+        }
+        if (box.min.x > box.max.x)
+            return;
+        const Vec2 size = GetSize();
+        const float w = std::max(size.x, 100.0f), h = std::max(size.y, 100.0f);
+        const float margin = 40.0f;
+        m_zoom = std::clamp(std::min((w - 2 * margin) / std::max(box.Width(), 1.0f), (h - 2 * margin) / std::max(box.Height(), 1.0f)), kMinZoom, 1.25f);
+        m_pan  = { w * 0.5f - (box.min.x + box.max.x) * 0.5f * m_zoom, h * 0.5f - (box.min.y + box.max.y) * 0.5f * m_zoom };
+        Invalidate();
+    }
+
+    NodeId NodeEditorView::AddNodeAt(const std::string& typeId, Vec2 local)
+    {
+        Graph* g = G();
+        if (!g || !g->Registry().Find(typeId))
+            return kInvalidNode;
+        m_editBegun = false;
+        BeginEdit();
+        const Vec2 p = LocalToGraph(local);
+        Nodes::Node* n = g->AddNode(typeId, std::round(p.x), std::round(p.y));
+        // 从端口拖到空白处打开的菜单：连上第一个兼容的端口
+        if (m_pendingLink)
+        {
+            const auto [fromOutput, src] = *m_pendingLink;
+            const size_t count = fromOutput ? n->InputCount() : n->OutputCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const Link l = fromOutput ? Link{ src.first, src.second, n->Id, static_cast<int>(i) }
+                                          : Link{ n->Id, static_cast<int>(i), src.first, src.second };
+                if (g->CanConnect(l))
+                {
+                    g->Connect(l);
+                    break;
+                }
+            }
+            if (!fromOutput)   // 新节点放在输入端口的左侧
+                g->SetPosition(n->Id, n->X - kNodeWidth - 40.0f, n->Y);
+            m_pendingLink.reset();
+        }
+        m_selection = { n->Id };
+        m_editBegun = false;
+        Edited(true);
+        SelectionChanged();
+        return n->Id;
+    }
+
+    void NodeEditorView::DeleteSelection()
+    {
+        Graph* g = G();
+        if (!g || m_selection.empty())
+            return;
+        m_editBegun = false;
+        BeginEdit();
+        for (NodeId id : m_selection)
+            g->RemoveNode(id);
+        m_selection.clear();
+        m_editBegun = false;
+        Edited(true);
+        SelectionChanged();
+    }
+
+    void NodeEditorView::DuplicateSelection()
+    {
+        Graph* g = G();
+        if (!g || m_selection.empty())
+            return;
+        m_editBegun = false;
+        BeginEdit();
+        const auto copies = g->Duplicate(std::vector<NodeId>(m_selection.begin(), m_selection.end()), 30.0f, 30.0f);
+        m_selection = std::set<NodeId>(copies.begin(), copies.end());
+        m_editBegun = false;
+        Edited(true);
+        SelectionChanged();
+    }
+
+    void NodeEditorView::TogglePreviewOfSelection()
+    {
+        Graph* g = G();
+        if (!g || m_selection.empty())
+            return;
+        m_editBegun = false;
+        BeginEdit();
+        bool anyOff = false;
+        for (NodeId id : m_selection)
+            if (const Nodes::Node* n = g->GetNode(id); n && !n->Preview)
+                anyOff = true;
+        for (NodeId id : m_selection)
+            g->SetPreview(id, anyOff);
+        m_editBegun = false;
+        Edited(false);
+        SelectionChanged();   // 预览集合变了
+    }
+
+    void NodeEditorView::OpenAddMenu(Vec2 local)
+    {
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        if (!ctx || !g)
+            return;
+        // 两级菜单：大类 → 节点，或大类 → 小类 → 节点（分类写成 "实体/基本体"），都按注册顺序
+        std::vector<MiniGUI::MenuItem> items;
+        const auto& reg = g->Registry();
+        auto nodesOf = [&](const std::string& cat)
+        {
+            std::vector<MiniGUI::MenuItem> list;
+            for (const auto& t : reg.All())
+                if (t->Category == cat)
+                {
+                    const std::string id = t->Id;
+                    list.emplace_back(t->Name, [this, id, local] { AddNodeAt(id, local); });
+                }
+            return list;
+        };
+        std::vector<std::string> tops;
+        for (const std::string& cat : reg.Categories())
+            if (std::find(tops.begin(), tops.end(), TopCategory(cat)) == tops.end())
+                tops.push_back(TopCategory(cat));
+        for (const std::string& top : tops)
+        {
+            std::vector<MiniGUI::MenuItem> sub;
+            for (const std::string& cat : reg.Categories())
+            {
+                if (TopCategory(cat) != top)
+                    continue;
+                if (SubCategory(cat).empty())
+                {
+                    auto list = nodesOf(cat);
+                    sub.insert(sub.end(), std::make_move_iterator(list.begin()), std::make_move_iterator(list.end()));
+                }
+                else
+                    sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(cat), nodesOf(cat)));
+            }
+            items.push_back(MiniGUI::MenuItem::Sub(top, std::move(sub)));
+        }
+        const Rect sr = GetScreenBounds();
+        MiniGUI::ShowContextMenu(*ctx, std::move(items), { sr.min.x + local.x, sr.min.y + local.y });
+    }
+
+    bool NodeEditorView::FitsPendingLink(const NodeTypeInfo& t) const
+    {
+        const Graph* g = G();
+        if (!m_pendingLink || !g)
+            return true;
+        const auto [fromOutput, src] = *m_pendingLink;
+        const Nodes::Node* n = g->GetNode(src.first);
+        if (!n || !n->Type)
+            return true;
+        if (fromOutput)
+        {
+            const DataType from = n->Type->Outputs[src.second].Type;
+            return std::any_of(t.Inputs.begin(), t.Inputs.end(), [&](const PortSpec& p) { return CanConvert(from, p.Type); });
+        }
+        const DataType to = n->Type->Inputs[src.second].Type;
+        return std::any_of(t.Outputs.begin(), t.Outputs.end(), [&](const PortSpec& p) { return CanConvert(p.Type, to); });
+    }
+
+    void NodeEditorView::OpenSearch(Vec2 local)
+    {
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        if (!ctx || !g)
+            return;
+        if (MiniGUI::Popup* old = std::exchange(m_search, nullptr))
+            old->Close();   // 先摘掉指针：它的关闭回调不会清掉刚设置的 m_pendingLink
+        const std::weak_ptr<int> alive = m_alive;
+        auto popup = std::make_unique<NodeSearchPopup>(
+            g->Registry(),
+            [this, alive](const NodeTypeInfo& t) { return !alive.expired() && FitsPendingLink(t); },
+            [this, alive, local](const std::string& id) { if (!alive.expired()) AddNodeAt(id, local); });
+        const Rect sr = GetScreenBounds();
+        popup->SetPoint({ sr.min.x + local.x, sr.min.y + local.y });
+        MiniGUI::Popup* raw = popup.get();
+        raw->SetOnClosed([this, alive, raw]
+        {
+            if (alive.expired() || m_search != raw)
+                return;
+            m_search = nullptr;
+            m_pendingLink.reset();   // 没有选节点就关闭：放弃自动连线
+            Invalidate();
+        });
+        m_search = raw;
+        ctx->OpenPopup(std::move(popup));
+    }
+
+    bool NodeEditorView::CopySelection()
+    {
+        const Graph* g = G();
+        MiniGUI::UIContext* ctx = GetContext();
+        if (!g || !ctx || m_selection.empty())
+            return false;
+        // 按绘制顺序写出，粘贴后的前后层次不变
+        std::vector<NodeId> ids;
+        for (const auto& n : g->GetNodes())
+            if (m_selection.count(n->Id))
+                ids.push_back(n->Id);
+        const std::string text = g->CopyToString(ids);
+        if (text.empty())
+            return false;
+        ctx->GetClipboard().SetText(text);
+        m_lastPaste.reset();
+        return true;
+    }
+
+    void NodeEditorView::CutSelection()
+    {
+        if (CopySelection())
+            DeleteSelection();
+    }
+
+    bool NodeEditorView::PasteFromClipboard()
+    {
+        Graph* g = G();
+        MiniGUI::UIContext* ctx = GetContext();
+        if (!g || !ctx)
+            return false;
+        const std::string text = ctx->GetClipboard().GetText();
+        if (text.find("MiniCAD-NodeGraph") == std::string::npos)
+            return false;
+        // 放在光标处；光标不在画布上时放在画布中央偏左上。在同一处连续粘贴时依次错开
+        const Vec2 size = GetSize();
+        Vec2 local = m_mouseInside ? m_mouseLocal : Vec2{ size.x * 0.35f, size.y * 0.3f };
+        Vec2 p = LocalToGraph(local);
+        p = { std::round(p.x), std::round(p.y) };
+        m_pasteRepeat = m_lastPaste && std::abs(m_lastPaste->x - p.x) < 1.0f && std::abs(m_lastPaste->y - p.y) < 1.0f ? m_pasteRepeat + 1 : 0;
+        m_lastPaste = p;
+        const float offset = 30.0f * static_cast<float>(m_pasteRepeat);
+        m_editBegun = false;
+        BeginEdit();
+        const auto ids = g->PasteFromString(text, p.x + offset, p.y + offset);
+        m_editBegun = false;
+        if (ids.empty())
+            return false;
+        m_selection = std::set<NodeId>(ids.begin(), ids.end());
+        Edited(true);
+        SelectionChanged();
+        return true;
+    }
+
+    void NodeEditorView::OpenChoiceMenu(NodeId id, int param, Vec2 local)
+    {
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!ctx || !n || !n->Type)
+            return;
+        std::vector<MiniGUI::MenuItem> items;
+        const auto& spec = n->Type->Params[param];
+        for (size_t i = 0; i < spec.Choices.size(); ++i)
+        {
+            MiniGUI::MenuItem item(spec.Choices[i], [this, id, param, i]
+            {
+                if (Graph* gg = G())
+                {
+                    m_editBegun = false;
+                    BeginEdit();
+                    gg->SetParam(id, param, Value(static_cast<int64_t>(i)));
+                    m_editBegun = false;
+                    Edited(true);
+                }
+            });
+            Value cur;
+            item.checked = Convert(n->Params[param], DataType::Integer, cur) && cur.AsInteger() == static_cast<int64_t>(i);
+            items.push_back(std::move(item));
+        }
+        const Rect sr = GetScreenBounds();
+        MiniGUI::ShowContextMenu(*ctx, std::move(items), { sr.min.x + local.x, sr.min.y + local.y });
+    }
+
+    void NodeEditorView::BeginTextEdit(const Hit& hit)
+    {
+        Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(hit.Node) : nullptr;
+        if (!n || !n->Type)
+            return;
+        const bool isParam = hit.K == Hit::Kind::Param;
+        const Value& v = isParam ? n->Params[hit.Index] : n->InputValues[hit.Index];
+        if (isParam && n->Type->Params[hit.Index].Widget != ParamWidget::Field && n->Type->Params[hit.Index].Widget != ParamWidget::Slider)
+            return;
+        const DataType type = isParam ? v.Type() : n->Type->Inputs[hit.Index].Type;
+        if (type == DataType::Boolean)
+            return;
+
+        const Card c = Layout(*n);
+        float y = 0.0f;
+        if (isParam)
+        {
+            for (size_t i = 0; i < c.ParamIndex.size(); ++i)
+                if (c.ParamIndex[i] == hit.Index) y = c.ParamY[i];
+        }
+        else
+            y = c.InY[hit.Index];
+        const Rect gr = FieldRect(c, y);
+        const Vec2 a = GraphToLocal(gr.min.x, gr.min.y), b = GraphToLocal(gr.max.x, gr.max.y);
+        const Rect lr{ a.x, a.y - 2.0f, std::max(b.x, a.x + 60.0f), std::max(b.y + 2.0f, a.y + 20.0f) };
+        std::string text = v.Type() == DataType::Vector
+                               ? [&] { char buf[96]; std::snprintf(buf, sizeof(buf), "%g, %g, %g", v.AsVector().x, v.AsVector().y, v.AsVector().z); return std::string(buf); }()
+                               : ToDisplayString(v);
+        const NodeId id = hit.Node;
+        const int index = hit.Index;
+        m_inline.Begin(this, this, lr, text, [this, id, index, isParam, type](const std::string& s)
+        {
+            Graph* gg = G();
+            if (!gg)
+                return true;
+            Value nv;
+            if (type == DataType::Vector)
+            {
+                Math::Vec3 p;
+                if (!ParseVector(s, p))
+                    return false;
+                nv = Value(p);
+            }
+            else if (!Convert(Value(s), type, nv))
+                return false;
+            m_editBegun = false;
+            BeginEdit();
+            const bool ok = isParam ? gg->SetParam(id, index, nv) : gg->SetInputValue(id, index, nv);
+            m_editBegun = false;
+            if (ok)
+                Edited(true);
+            return ok;
+        });
+        if (MiniGUI::TextBox* box = m_inline.GetTextBox())
+        {
+            box->Focus(MiniGUI::FocusReason::Program);
+            box->SelectAll();
+        }
+    }
+
+    void NodeEditorView::ApplyValueDrag(Vec2 local, uint8_t modifiers)
+    {
+        Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(m_valueHit.Node) : nullptr;
+        if (!n || !n->Type)
+            return;
+        const bool isParam = m_valueHit.K == Hit::Kind::Param;
+        const bool shift = (modifiers & static_cast<uint8_t>(MiniGUI::ModifierKey::Shift)) != 0;
+        const bool ctrl  = (modifiers & static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl)) != 0;
+        Value nv;
+
+        if (isParam && n->Type->Params[m_valueHit.Index].Widget == ParamWidget::Slider)
+        {
+            // 滑条：按指针在轨道上的位置取值
+            const ParamSpec& spec = n->Type->Params[m_valueHit.Index];
+            Value lo, hi;
+            Convert(n->Params[spec.SliderMin], DataType::Number, lo);
+            Convert(n->Params[spec.SliderMax], DataType::Number, hi);
+            const Card c = Layout(*n);
+            float y = 0.0f;
+            for (size_t i = 0; i < c.ParamIndex.size(); ++i)
+                if (c.ParamIndex[i] == m_valueHit.Index) y = c.ParamY[i];
+            const Rect r = FieldRect(c, y);
+            const float gx = LocalToGraph(local).x;
+            const double t = std::clamp((gx - r.min.x) / std::max(r.Width(), 1.0f), 0.0f, 1.0f);
+            double v = lo.AsNumber() + (hi.AsNumber() - lo.AsNumber()) * t;
+            if (ctrl)
+                v = std::round(v);
+            nv = Value(v);
+        }
+        else
+        {
+            const float dx = (local.x - m_pressLocal.x);
+            if (m_valueStart.Type() == DataType::Integer)
+                nv = Value(m_valueStart.AsInteger() + static_cast<int64_t>(std::lround(dx / (shift ? 24.0f : 6.0f))));
+            else if (m_valueStart.Type() == DataType::Number)
+            {
+                double v = m_valueStart.AsNumber() + dx * (shift ? 0.01 : 0.1);
+                if (ctrl)
+                    v = std::round(v);
+                else
+                    v = std::round(v * 1000.0) / 1000.0;
+                nv = Value(v);
+            }
+            else
+                return;
+        }
+        BeginEdit();
+        const bool ok = isParam ? g->SetParam(m_valueHit.Node, m_valueHit.Index, nv) : g->SetInputValue(m_valueHit.Node, m_valueHit.Index, nv);
+        if (ok)
+            Edited(true);
+    }
+
+    void NodeEditorView::FinishLinkDrag(Vec2 local, uint8_t modifiers)
+    {
+        Graph* g = G();
+        if (!g)
+            return;
+        const Hit h = HitTest(local);
+        const bool append = (modifiers & static_cast<uint8_t>(MiniGUI::ModifierKey::Shift)) != 0;
+        std::optional<Link> link;
+        if (m_linkFromOutput && h.K == Hit::Kind::InPort)
+            link = Link{ m_linkNode, m_linkPort, h.Node, h.Index };
+        else if (!m_linkFromOutput && h.K == Hit::Kind::OutPort)
+            link = Link{ h.Node, h.Index, m_linkNode, m_linkPort };
+
+        if (link)
+        {
+            if (g->CanConnect(*link) || std::find(g->GetLinks().begin(), g->GetLinks().end(), *link) != g->GetLinks().end())
+            {
+                BeginEdit();
+                g->Connect(*link, !append);
+                Edited(true);
+            }
+            else if (m_editBegun)
+                Edited(true);   // 拔下的连线没有接到别处
+            return;
+        }
+        if (m_editBegun)
+            Edited(true);
+        if (h.K == Hit::Kind::None)
+        {
+            m_pendingLink = std::make_pair(m_linkFromOutput, std::make_pair(m_linkNode, m_linkPort));
+            OpenSearch(local);
+        }
+    }
+
+    // ═════════════════════════════ 输入 ═════════════════════════════
+
+    void NodeEditorView::OnPointerEvent(MiniGUI::PointerEvent& e)
+    {
+        using MiniGUI::PointerEventType;
+        using MiniGUI::MouseButton;
+        if (e.phase != MiniGUI::EventPhase::Target)
+            return;   // 子节点（在位编辑框）的事件不处理
+        SyncGraph();
+        Graph* g = G();
+        const Vec2 local = e.localPosition;
+        m_mouseLocal = local;
+        m_mouseInside = e.type != MiniGUI::PointerEventType::Leave;
+        MiniGUI::UIContext* ctx = GetContext();
+
+        switch (e.type)
+        {
+        case PointerEventType::Wheel:
+        {
+            const float factor = std::pow(1.15f, e.wheelDelta.y);
+            const float z = std::clamp(m_zoom * factor, kMinZoom, kMaxZoom);
+            const Vec2 gp = LocalToGraph(local);
+            m_zoom = z;
+            m_pan  = { local.x - gp.x * z, local.y - gp.y * z };
+            Invalidate();
+            e.handled = true;
+            break;
+        }
+        case PointerEventType::Down:
+        {
+            if (m_inline.IsActive())
+                m_inline.Commit();
+            Focus(MiniGUI::FocusReason::Pointer);
+            m_pressLocal = m_lastLocal = local;
+            m_moved      = false;
+            m_editBegun  = false;
+            if (e.button == MouseButton::Middle || e.button == MouseButton::Right)
+            {
+                m_drag = Drag::Pan;
+                m_rightPanned = false;
+                ctx->SetCapture(this);
+                e.handled = true;
+                break;
+            }
+            if (e.button != MouseButton::Left || !g)
+                break;
+            const bool shift = e.HasModifier(MiniGUI::ModifierKey::Shift);
+            const bool ctrl  = e.HasModifier(MiniGUI::ModifierKey::Ctrl);
+            const bool alt   = e.HasModifier(MiniGUI::ModifierKey::Alt);
+            const Hit h = HitTest(local, alt);
+            ctx->SetCapture(this);
+            e.handled = true;
+
+            if (e.clickCount == 2 && (h.K == Hit::Kind::InField || h.K == Hit::Kind::Param))
+            {
+                ctx->ReleaseCapture();
+                m_drag = Drag::None;
+                BeginTextEdit(h);
+                break;
+            }
+            switch (h.K)
+            {
+            case Hit::Kind::Link:
+                m_editBegun = false;
+                BeginEdit();
+                g->Disconnect(h.L);
+                m_editBegun = false;
+                Edited(true);
+                ctx->ReleaseCapture();
+                break;
+            case Hit::Kind::OutPort:
+                m_drag = Drag::Link;
+                m_linkFromOutput = true;
+                m_linkNode = h.Node;
+                m_linkPort = h.Index;
+                break;
+            case Hit::Kind::InPort:
+            {
+                const auto links = g->LinksInto(h.Node, h.Index);
+                m_drag = Drag::Link;
+                if (!links.empty() && !shift)
+                {
+                    // 拔下最后一条连线，从它的源端口继续拖动
+                    BeginEdit();
+                    g->Disconnect(links.back());
+                    m_linkFromOutput = true;
+                    m_linkNode = links.back().FromNode;
+                    m_linkPort = links.back().FromPort;
+                }
+                else
+                {
+                    m_linkFromOutput = false;
+                    m_linkNode = h.Node;
+                    m_linkPort = h.Index;
+                }
+                break;
+            }
+            case Hit::Kind::InField:
+            case Hit::Kind::Param:
+            {
+                const Nodes::Node* n = g->GetNode(h.Node);
+                m_drag       = Drag::Value;
+                m_valueHit   = h;
+                m_valueStart = h.K == Hit::Kind::Param ? n->Params[h.Index] : n->InputValues[h.Index];
+                if (!m_selection.count(h.Node))
+                {
+                    m_selection = { h.Node };
+                    SelectionChanged();
+                }
+                if (h.K == Hit::Kind::Param && n->Type->Params[h.Index].Widget == ParamWidget::Slider)
+                    ApplyValueDrag(local, e.modifiers);   // 点在滑条上即取值
+                break;
+            }
+            case Hit::Kind::Action:
+                ctx->ReleaseCapture();
+                if (m_host.action)
+                    if (const Nodes::Node* n = g->GetNode(h.Node); n && n->Type)
+                        m_host.action(h.Node, n->Type->Action);
+                break;
+            case Hit::Kind::Preview:
+            {
+                ctx->ReleaseCapture();
+                const Nodes::Node* n = g->GetNode(h.Node);
+                m_editBegun = false;
+                BeginEdit();
+                g->SetPreview(h.Node, !n->Preview);
+                m_editBegun = false;
+                Edited(false);
+                SelectionChanged();
+                break;
+            }
+            case Hit::Kind::Header:
+            case Hit::Kind::Body:
+                if (shift || ctrl)
+                {
+                    if (!m_selection.erase(h.Node))
+                        m_selection.insert(h.Node);
+                }
+                else if (!m_selection.count(h.Node))
+                    m_selection = { h.Node };
+                g->BringToFront(h.Node);
+                m_drag = m_selection.count(h.Node) ? Drag::Nodes : Drag::None;
+                SelectionChanged();
+                break;
+            case Hit::Kind::None:
+                if (e.clickCount == 2)
+                {
+                    ctx->ReleaseCapture();
+                    OpenSearchAt(local);
+                    break;
+                }
+                if (!shift && !ctrl && !m_selection.empty())
+                {
+                    m_selection.clear();
+                    SelectionChanged();
+                }
+                m_drag = Drag::Box;
+                break;
+            }
+            break;
+        }
+        case PointerEventType::Move:
+        {
+            const Vec2 delta{ local.x - m_lastLocal.x, local.y - m_lastLocal.y };
+            if (std::hypot(local.x - m_pressLocal.x, local.y - m_pressLocal.y) > 3.0f)
+                m_moved = true;
+            switch (m_drag)
+            {
+            case Drag::Pan:
+                m_pan = { m_pan.x + delta.x, m_pan.y + delta.y };
+                if (m_moved)
+                    m_rightPanned = true;
+                Invalidate();
+                break;
+            case Drag::Nodes:
+                if (m_moved && g)
+                {
+                    BeginEdit();
+                    for (NodeId id : m_selection)
+                        if (const Nodes::Node* n = g->GetNode(id))
+                            g->SetPosition(id, n->X + delta.x / m_zoom, n->Y + delta.y / m_zoom);
+                    Invalidate();
+                }
+                break;
+            case Drag::Value:
+                if (m_moved || (m_valueHit.K == Hit::Kind::Param && g && g->GetNode(m_valueHit.Node) &&
+                                g->GetNode(m_valueHit.Node)->Type->Params[m_valueHit.Index].Widget == ParamWidget::Slider))
+                    ApplyValueDrag(local, e.modifiers);
+                break;
+            case Drag::Box:
+            case Drag::Link:
+                Invalidate();
+                break;
+            case Drag::None:
+                if (const Hit h = HitTest(local); h.K != m_hover.K || h.Node != m_hover.Node || h.Index != m_hover.Index)
+                {
+                    m_hover = h;
+                    Invalidate();
+                }
+                break;
+            }
+            m_lastLocal = local;
+            e.handled = true;
+            break;
+        }
+        case PointerEventType::Up:
+        {
+            const Drag drag = m_drag;
+            m_drag = Drag::None;
+            if (ctx->GetCapture() == this)
+                ctx->ReleaseCapture();
+            e.handled = true;
+            // 右键按下时捕获了指针（右键拖动平移），UIContext 不再弹右键菜单：没有拖动时由这里打开
+            if (drag == Drag::Pan && e.button == MouseButton::Right && !m_moved)
+            {
+                m_rightPanned = false;
+                OnContextMenu(e.position);
+                break;
+            }
+            if (!g)
+                break;
+            switch (drag)
+            {
+            case Drag::Nodes:
+                if (m_editBegun)
+                    Edited(false);
+                break;
+            case Drag::Box:
+            {
+                const Vec2 a = LocalToGraph(m_pressLocal), b = LocalToGraph(local);
+                const Rect sel{ std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y) };
+                bool changed = false;
+                for (const auto& n : g->GetNodes())
+                {
+                    const Card c = Layout(*n);
+                    if (c.Box.max.x >= sel.min.x && c.Box.min.x <= sel.max.x && c.Box.max.y >= sel.min.y && c.Box.min.y <= sel.max.y)
+                        changed |= m_selection.insert(n->Id).second;
+                }
+                if (changed)
+                    SelectionChanged();
+                Invalidate();
+                break;
+            }
+            case Drag::Link:
+                FinishLinkDrag(local, e.modifiers);
+                Invalidate();
+                break;
+            case Drag::Value:
+                if (!m_moved)
+                {
+                    const Nodes::Node* n = g->GetNode(m_valueHit.Node);
+                    if (!n || !n->Type)
+                        break;
+                    const bool isParam = m_valueHit.K == Hit::Kind::Param;
+                    const ParamWidget w = isParam ? n->Type->Params[m_valueHit.Index].Widget : ParamWidget::Field;
+                    const Value& cur = isParam ? n->Params[m_valueHit.Index] : n->InputValues[m_valueHit.Index];
+                    if (w == ParamWidget::Choice)
+                        OpenChoiceMenu(m_valueHit.Node, m_valueHit.Index, local);
+                    else if (cur.Type() == DataType::Boolean)
+                    {
+                        BeginEdit();
+                        if (isParam)
+                            g->SetParam(m_valueHit.Node, m_valueHit.Index, Value(!cur.AsBool()));
+                        else
+                            g->SetInputValue(m_valueHit.Node, m_valueHit.Index, Value(!cur.AsBool()));
+                        Edited(true);
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+            m_editBegun = false;
+            break;
+        }
+        case PointerEventType::Leave:
+            if (m_hover.K != Hit::Kind::None)
+            {
+                m_hover = {};
+                Invalidate();
+            }
+            break;
+        case PointerEventType::Cancel:
+            m_drag = Drag::None;
+            m_editBegun = false;
+            Invalidate();
+            break;
+        default:
+            break;
+        }
+    }
+
+    bool NodeEditorView::OnContextMenu(Vec2 windowPos)
+    {
+        // 右键拖动是平移，不弹菜单
+        if (m_rightPanned)
+        {
+            m_rightPanned = false;
+            return true;
+        }
+        SyncGraph();
+        const Rect sr = GetScreenBounds();
+        const Vec2 local{ windowPos.x - sr.min.x, windowPos.y - sr.min.y };
+        const Hit h = HitTest(local);
+        MiniGUI::UIContext* ctx = GetContext();
+        Graph* g = G();
+        if (!ctx || !g)
+            return true;
+        if (h.K == Hit::Kind::None)
+        {
+            m_pendingLink.reset();
+            OpenAddMenu(local);
+            return true;
+        }
+        // 节点上：删除、复制、预览
+        if (!m_selection.count(h.Node))
+        {
+            m_selection = { h.Node };
+            SelectionChanged();
+        }
+        std::vector<MiniGUI::MenuItem> items;
+        items.emplace_back("预览", [this] { TogglePreviewOfSelection(); }, "P");
+        if (const Nodes::Node* n = g->GetNode(h.Node))
+            items.back().checked = n->Preview;
+        items.emplace_back("复制", [this] { DuplicateSelection(); }, "Ctrl+D");
+        items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
+        if (h.K == Hit::Kind::InPort && g->IsInputConnected(h.Node, h.Index))
+        {
+            const NodeId id = h.Node;
+            const int port = h.Index;
+            items.push_back(MiniGUI::MenuItem::Separator());
+            items.emplace_back("断开此输入", [this, id, port]
+            {
+                if (Graph* gg = G())
+                {
+                    m_editBegun = false;
+                    BeginEdit();
+                    gg->DisconnectInput(id, port);
+                    m_editBegun = false;
+                    Edited(true);
+                }
+            });
+        }
+        MiniGUI::ShowContextMenu(*ctx, std::move(items), windowPos);
+        return true;
+    }
+
+    void NodeEditorView::OnKeyEvent(MiniGUI::KeyEvent& e)
+    {
+        using MiniGUI::Key;
+        if (e.type != MiniGUI::KeyEventType::Down || e.phase != MiniGUI::EventPhase::Target)
+            return;
+        SyncGraph();
+        const bool ctrl = e.Ctrl();
+        switch (e.key)
+        {
+        case Key::Delete:
+        case Key::Backspace:
+            DeleteSelection();
+            break;
+        case Key::D:
+            if (!ctrl) return;
+            DuplicateSelection();
+            break;
+        // Ctrl+C / X / V 通常由全局命令 edit.copy / cut / paste 按焦点分流过来（快捷键先于焦点控件处理），这里兜底
+        case Key::C:
+            if (!ctrl) return;
+            CopySelection();
+            break;
+        case Key::X:
+            if (!ctrl) return;
+            CutSelection();
+            break;
+        case Key::V:
+            if (!ctrl) return;
+            PasteFromClipboard();
+            break;
+        case Key::Tab:
+            if (e.modifiers != 0) return;
+            OpenSearchAt(m_mouseInside ? m_mouseLocal : Vec2{ GetSize().x * 0.35f, GetSize().y * 0.3f });
+            break;
+        case Key::A:
+            if (!ctrl) return;
+            if (const Graph* g = G())
+            {
+                std::set<NodeId> all;
+                for (const auto& n : g->GetNodes())
+                    all.insert(n->Id);
+                SetSelection(std::move(all));
+            }
+            break;
+        case Key::F:
+            if (ctrl) return;
+            FrameAll();
+            break;
+        case Key::P:
+            if (ctrl) return;
+            TogglePreviewOfSelection();
+            break;
+        case Key::Escape:
+            if (m_drag != Drag::None)
+            {
+                m_drag = Drag::None;
+                if (GetContext()->GetCapture() == this)
+                    GetContext()->ReleaseCapture();
+            }
+            else if (!m_selection.empty())
+                SetSelection({});
+            Invalidate();
+            break;
+        default:
+            return;
+        }
+        e.handled = true;
+    }
+
+    MiniGUI::CursorShape NodeEditorView::GetCursor(Vec2 local) const
+    {
+        if (m_drag == Drag::Pan)
+            return MiniGUI::CursorShape::SizeAll;
+        const Hit h = HitTest(local);
+        switch (h.K)
+        {
+        case Hit::Kind::InField:
+        case Hit::Kind::Param:  return MiniGUI::CursorShape::SizeWE;
+        case Hit::Kind::Action:
+        case Hit::Kind::Preview:
+        case Hit::Kind::InPort:
+        case Hit::Kind::OutPort: return MiniGUI::CursorShape::Hand;
+        default:                 return MiniGUI::CursorShape::Arrow;
+        }
+    }
+
+    // ═════════════════════════════ 绘制 ═════════════════════════════
+
+    std::string NodeEditorView::HoverText() const
+    {
+        const Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(m_hover.Node) : nullptr;
+        if (!n || !n->Type)
+            return {};
+        if (m_hover.K == Hit::Kind::OutPort && m_hover.Index < static_cast<int>(n->Outputs.size()))
+        {
+            const PortSpec& p = n->Type->Outputs[m_hover.Index];
+            return p.Name + "（" + TypeName(p.Type) + "）" + Summary(n->Outputs[m_hover.Index]);
+        }
+        if (m_hover.K == Hit::Kind::InPort)
+        {
+            const PortSpec& p = n->Type->Inputs[m_hover.Index];
+            std::string s = p.Name + "（" + TypeName(p.Type) + (p.Acc == Access::List ? "，列表" : "") + (p.Optional ? "，可选" : "") + "）";
+            s += Summary(GatherInput(*g, *n, m_hover.Index));
+            if (!p.Tip.empty())
+                s += "\n" + p.Tip;
+            return s;
+        }
+        if (m_hover.K == Hit::Kind::Header)
+            return n->Type->Description;
+        return {};
+    }
+
+    void NodeEditorView::PaintGrid(MiniGUI::DrawList& dl, const Rect& r)
+    {
+        dl.AddRectFilled(r, Theme::Background);
+        const float step = 20.0f * m_zoom;
+        if (step < 6.0f)
+            return;
+        const ColorRef minor(MiniGUI::ThemeColor::GridLine, 110), major(MiniGUI::ThemeColor::GridLine, 255);
+        const float ox = r.min.x + std::fmod(m_pan.x, step * 5.0f) - step * 5.0f;
+        const float oy = r.min.y + std::fmod(m_pan.y, step * 5.0f) - step * 5.0f;
+        int i = 0;
+        for (float x = ox; x < r.max.x; x += step, ++i)
+            if (x >= r.min.x)
+                dl.AddLine({ x, r.min.y }, { x, r.max.y }, i % 5 == 0 ? major : minor);
+        i = 0;
+        for (float y = oy; y < r.max.y; y += step, ++i)
+            if (y >= r.min.y)
+                dl.AddLine({ r.min.x, y }, { r.max.x, y }, i % 5 == 0 ? major : minor);
+    }
+
+    void NodeEditorView::PaintLinks(MiniGUI::DrawList& dl, Vec2 origin)
+    {
+        const Graph* g = G();
+        auto toScreen = [&](Vec2 p) { return Vec2{ origin.x + p.x, origin.y + p.y }; };
+        for (const Link& l : g->GetLinks())
+        {
+            const auto a = PortPosition(l.FromNode, l.FromPort, true);
+            const auto b = PortPosition(l.ToNode, l.ToPort, false);
+            if (!a || !b)
+                continue;
+            const Nodes::Node* src = g->GetNode(l.FromNode);
+            Color32 color = src && src->Type ? TypeColor(src->Type->Outputs[l.FromPort].Type) : RGBA(200, 200, 200);
+            const bool hot = m_selection.count(l.FromNode) || m_selection.count(l.ToNode);
+            if (src && src->State == NodeState::Error)
+                color = kErrorColor;
+            auto pts = LinkCurve(toScreen(*a), toScreen(*b), m_zoom);
+            dl.AddPolyline(pts, hot ? color : MiniGUI::ColorScaleAlpha(color, 0.75f), false, (hot ? 3.0f : 2.0f) * std::max(m_zoom, 0.6f));
+        }
+        if (m_drag == Drag::Link)
+        {
+            const auto port = PortPosition(m_linkNode, m_linkPort, m_linkFromOutput);
+            if (port)
+            {
+                const Vec2 p = toScreen(*port), m = toScreen(m_mouseLocal);
+                auto pts = m_linkFromOutput ? LinkCurve(p, m, m_zoom) : LinkCurve(m, p, m_zoom);
+                dl.AddPolyline(pts, Theme::Accent, false, 2.0f);
+            }
+        }
+    }
+
+    void NodeEditorView::PaintCard(MiniGUI::DrawList& dl, Vec2 origin, const Nodes::Node& n)
+    {
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        auto& text = ctx->GetTextSystem();
+        const Card c = Layout(n);
+        auto S = [&](float gx, float gy) { const Vec2 l = GraphToLocal(gx, gy); return Vec2{ origin.x + l.x, origin.y + l.y }; };
+        auto SR = [&](const Rect& r) { return Rect{ S(r.min.x, r.min.y), S(r.max.x, r.max.y) }; };
+        const float z = m_zoom;
+        const bool showText = z >= 0.45f;
+        MiniGUI::TextParams tp;
+        tp.size     = kFontSize * z;
+        tp.color    = Theme::Text;
+        tp.vAlign   = MiniGUI::TextAlign::Center;
+        tp.ellipsis = true;
+
+        const Rect box = SR(c.Box);
+        const bool selected = m_selection.count(n.Id) > 0;
+        const float round = 6.0f * z;
+
+        // 阴影、主体、标题栏
+        dl.AddRectFilled(Rect{ box.min.x + 3, box.min.y + 4, box.max.x + 3, box.max.y + 4 }, ColorRef(MiniGUI::ThemeColor::Shadow, 160), round);
+        dl.AddRectFilled(box, Theme::Panel, round);
+        const Color32 headColor = n.Type ? CategoryColor(n.Type->Category) : kErrorColor;
+        dl.AddRectFilled(Rect{ box.min, S(c.Box.max.x, n.Y + kHeaderH) }, headColor, round);
+        dl.AddRectFilled(Rect{ S(c.Box.min.x, n.Y + kHeaderH - 6.0f), S(c.Box.max.x, n.Y + kHeaderH) }, headColor);
+        if (showText)
+        {
+            MiniGUI::TextParams hp = tp;
+            hp.color = RGBA(245, 245, 245);
+            const float right = n.OutputCount() > 0 ? 26.0f : 8.0f;
+            std::string title = n.Title();
+            text.Draw(dl, Rect{ S(c.Box.min.x + 8, n.Y), S(c.Box.max.x - right - 34, n.Y + kHeaderH) }, title, hp);
+            if (n.Millis >= 1.0)
+            {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), n.Millis >= 100 ? "%.0f ms" : "%.1f ms", n.Millis);
+                hp.size   = 10.0f * z;
+                hp.color  = RGBA(235, 235, 235, 190);
+                hp.hAlign = MiniGUI::TextAlign::End;
+                text.Draw(dl, Rect{ S(c.Box.max.x - right - 60, n.Y), S(c.Box.max.x - right - 2, n.Y + kHeaderH) }, buf, hp);
+            }
+        }
+        if (n.OutputCount() > 0)
+        {
+            const Vec2 eye = S(c.Box.max.x - 14.0f, n.Y + kHeaderH * 0.5f);
+            dl.AddCircle(eye, 5.0f * z, RGBA(245, 245, 245, 220), 1.5f);
+            if (n.Preview)
+                dl.AddCircleFilled(eye, 3.0f * z, RGBA(245, 245, 245, 230));
+        }
+
+        // 边框：选中 > 错误 > 警告
+        if (n.State == NodeState::Error)
+            dl.AddRect(box, kErrorColor, round, 2.0f);
+        else if (n.State == NodeState::Warning)
+            dl.AddRect(box, kWarnColor, round, 2.0f);
+        else
+            dl.AddRect(box, Theme::BorderSubtle, round, 1.0f);
+        if (selected)
+            dl.AddRect(Rect{ box.min.x - 2, box.min.y - 2, box.max.x + 2, box.max.y + 2 }, Theme::Accent, round + 2, 2.0f);
+
+        // 端口：连线拖动时不兼容的变暗
+        auto portUsable = [&](bool isInput, int port) -> bool
+        {
+            if (m_drag != Drag::Link || !g)
+                return true;
+            if (isInput != m_linkFromOutput)
+                return false;
+            const Link l = isInput ? Link{ m_linkNode, m_linkPort, n.Id, port } : Link{ n.Id, port, m_linkNode, m_linkPort };
+            return g->CanConnect(l);
+        };
+        auto drawPort = [&](Vec2 p, DataType t, bool usable, bool list)
+        {
+            const Color32 col = usable ? TypeColor(t) : MiniGUI::ColorScaleAlpha(TypeColor(t), 0.25f);
+            const float r = kPortR * std::max(z, 0.6f);
+            if (list)   // 列表输入画成方块
+                dl.AddRectFilled(Rect{ p.x - r, p.y - r, p.x + r, p.y + r }, col, 1.5f);
+            else
+                dl.AddCircleFilled(p, r, col);
+            dl.AddCircle(p, r, RGBA(20, 20, 20, usable ? 200 : 60), 1.0f);
+        };
+
+        if (n.Type)
+        {
+            for (size_t i = 0; i < c.OutY.size(); ++i)
+            {
+                const PortSpec& p = n.Type->Outputs[i];
+                drawPort(S(c.Box.max.x, c.OutY[i]), p.Type, portUsable(false, static_cast<int>(i)), false);
+                if (showText)
+                {
+                    MiniGUI::TextParams op = tp;
+                    op.hAlign = MiniGUI::TextAlign::End;
+                    std::string label = p.Name;
+                    if (i < n.Outputs.size() && n.Outputs[i].size() != 1)
+                        label += "  [" + std::to_string(n.Outputs[i].size()) + "]";
+                    text.Draw(dl, Rect{ S(c.Box.min.x + 8, c.OutY[i] - kRowH * 0.5f), S(c.Box.max.x - 12, c.OutY[i] + kRowH * 0.5f) }, label, op);
+                }
+            }
+
+            // 参数
+            for (size_t k = 0; k < c.ParamIndex.size(); ++k)
+            {
+                const int pi = c.ParamIndex[k];
+                const ParamSpec& spec = n.Type->Params[pi];
+                const Value& v = n.Params[pi];
+                const float y = c.ParamY[k];
+                const Rect fr = SR(FieldRect(c, y));
+                const bool hot = (m_hover.K == Hit::Kind::Param && m_hover.Node == n.Id && m_hover.Index == pi) ||
+                                 (m_drag == Drag::Value && m_valueHit.K == Hit::Kind::Param && m_valueHit.Node == n.Id && m_valueHit.Index == pi);
+                if (showText)
+                {
+                    MiniGUI::TextParams lp = tp;
+                    lp.color = Theme::TextDim;
+                    text.Draw(dl, Rect{ S(c.Box.min.x + 10, y - kRowH * 0.5f), S(c.Box.min.x + kNodeWidth * 0.43f, y + kRowH * 0.5f) }, spec.Name, lp);
+                }
+                switch (spec.Widget)
+                {
+                case ParamWidget::Slider:
+                {
+                    Value lo, hi, cur;
+                    Convert(n.Params[spec.SliderMin], DataType::Number, lo);
+                    Convert(n.Params[spec.SliderMax], DataType::Number, hi);
+                    Convert(v, DataType::Number, cur);
+                    const double span = hi.AsNumber() - lo.AsNumber();
+                    const float t = span != 0 ? static_cast<float>(std::clamp((cur.AsNumber() - lo.AsNumber()) / span, 0.0, 1.0)) : 0.0f;
+                    dl.AddRectFilled(fr, Theme::Background, 3.0f * z);
+                    dl.AddRectFilled(Rect{ fr.min.x, fr.min.y, fr.min.x + fr.Width() * t, fr.max.y }, ColorRef(MiniGUI::ThemeColor::Accent, hot ? 200 : 150), 3.0f * z);
+                    dl.AddRect(fr, hot ? Theme::BorderHover : Theme::Border, 3.0f * z);
+                    if (showText)
+                    {
+                        MiniGUI::TextParams vp = tp;
+                        vp.hAlign = MiniGUI::TextAlign::Center;
+                        // 显示求值后的输出（已按范围与小数位处理）
+                        std::string s = !n.Outputs.empty() && !n.Outputs[0].empty() ? ToDisplayString(n.Outputs[0][0]) : ToDisplayString(v);
+                        text.Draw(dl, fr, s, vp);
+                    }
+                    break;
+                }
+                case ParamWidget::Toggle:
+                {
+                    const bool on = v.Type() == DataType::Boolean && v.AsBool();
+                    const float h = fr.Height();
+                    const Rect sw{ fr.min.x, fr.min.y, fr.min.x + h * 1.9f, fr.max.y };
+                    dl.AddRectFilled(sw, on ? ColorRef(Theme::Accent) : ColorRef(Theme::Control), h * 0.5f);
+                    const float kx = on ? sw.max.x - h * 0.5f : sw.min.x + h * 0.5f;
+                    dl.AddCircleFilled({ kx, (sw.min.y + sw.max.y) * 0.5f }, h * 0.38f, RGBA(245, 245, 245));
+                    if (showText)
+                    {
+                        MiniGUI::TextParams vp = tp;
+                        text.Draw(dl, Rect{ sw.max.x + 6, fr.min.y, fr.max.x, fr.max.y }, on ? "真" : "假", vp);
+                    }
+                    break;
+                }
+                case ParamWidget::Choice:
+                {
+                    dl.AddRectFilled(fr, hot ? Theme::Control : Theme::Background, 3.0f * z);
+                    dl.AddRect(fr, Theme::Border, 3.0f * z);
+                    Value idx;
+                    Convert(v, DataType::Integer, idx);
+                    const size_t i = static_cast<size_t>(std::max<int64_t>(0, idx.AsInteger()));
+                    if (showText && i < spec.Choices.size())
+                    {
+                        MiniGUI::TextParams vp = tp;
+                        text.Draw(dl, Rect{ fr.min.x + 6, fr.min.y, fr.max.x - 14, fr.max.y }, spec.Choices[i], vp);
+                        text.Draw(dl, Rect{ fr.max.x - 14, fr.min.y, fr.max.x - 2, fr.max.y }, "▾", vp);
+                    }
+                    break;
+                }
+                default:
+                {
+                    dl.AddRectFilled(fr, hot ? Theme::Control : Theme::Background, 3.0f * z);
+                    dl.AddRect(fr, hot ? Theme::BorderHover : Theme::Border, 3.0f * z);
+                    if (showText)
+                    {
+                        MiniGUI::TextParams vp = tp;
+                        vp.hAlign = MiniGUI::TextAlign::Center;
+                        text.Draw(dl, Rect{ fr.min.x + 4, fr.min.y, fr.max.x - 4, fr.max.y }, ToDisplayString(v), vp);
+                    }
+                    break;
+                }
+                }
+            }
+
+            // 操作按钮（如引用节点的"用选择集设置"）
+            if (c.ActionY >= 0)
+            {
+                const Rect br = SR(Rect{ c.Box.min.x + 8, c.ActionY - 9, c.Box.max.x - 8, c.ActionY + 9 });
+                const bool hot = m_hover.K == Hit::Kind::Action && m_hover.Node == n.Id;
+                dl.AddRectFilled(br, hot ? Theme::ControlHover : Theme::Control, 3.0f * z);
+                if (showText)
+                {
+                    MiniGUI::TextParams bp = tp;
+                    bp.hAlign = MiniGUI::TextAlign::Center;
+                    std::string label = "用选择集设置";
+                    if (n.Type->Action == "pickCurves" && !n.Params.empty() && n.Params[0].Type() == DataType::Text)
+                    {
+                        const std::string& ids = n.Params[0].AsText();
+                        const size_t count = ids.empty() ? 0 : std::count(ids.begin(), ids.end(), ',') + 1;
+                        label += "（已引用 " + std::to_string(count) + " 个）";
+                    }
+                    text.Draw(dl, br, label, bp);
+                }
+            }
+
+            // 面板：显示数据
+            if (c.DisplayY >= 0)
+            {
+                const Rect dr = SR(Rect{ c.Box.min.x + 8, c.DisplayY, c.Box.max.x - 8, c.DisplayY + c.DisplayH });
+                dl.AddRectFilled(dr, Theme::Background, 3.0f * z);
+                if (showText)
+                {
+                    MiniGUI::TextParams dp = tp;
+                    dp.size   = 11.0f * z;
+                    dp.vAlign = MiniGUI::TextAlign::Start;
+                    float yy = c.DisplayY + 4;
+                    const DataList& data = n.DisplayData.empty() && !n.Outputs.empty() ? n.Outputs[0] : n.DisplayData;
+                    if (data.empty())
+                    {
+                        dp.color = Theme::TextDim;
+                        text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }), "（空）", dp);
+                    }
+                    for (size_t i = 0; i < data.size() && i < static_cast<size_t>(kDisplayLines); ++i, yy += 16)
+                        text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }),
+                                  std::to_string(i) + "  " + ToDisplayString(data[i]), dp);
+                    if (data.size() > static_cast<size_t>(kDisplayLines))
+                    {
+                        dp.color = Theme::TextDim;
+                        text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }),
+                                  "… 共 " + std::to_string(data.size()) + " 项", dp);
+                    }
+                }
+            }
+
+            // 输入
+            for (size_t i = 0; i < c.InY.size(); ++i)
+            {
+                const PortSpec& p = n.Type->Inputs[i];
+                const float y = c.InY[i];
+                const bool connected = g->IsInputConnected(n.Id, static_cast<int>(i));
+                drawPort(S(c.Box.min.x, y), p.Type, portUsable(true, static_cast<int>(i)), p.Acc == Access::List);
+                const bool editable = !connected && InputEditable(n, static_cast<int>(i));
+                if (showText)
+                {
+                    MiniGUI::TextParams lp = tp;
+                    lp.color = p.Optional && !connected && n.InputValues[i].IsEmpty() ? Theme::TextDim : Theme::Text;
+                    text.Draw(dl, Rect{ S(c.Box.min.x + 12, y - kRowH * 0.5f), S(editable ? c.Box.min.x + kNodeWidth * 0.43f : c.Box.max.x - 8, y + kRowH * 0.5f) },
+                              p.Name, lp);
+                }
+                if (editable)
+                {
+                    const Rect fr = SR(FieldRect(c, y));
+                    const bool hot = (m_hover.K == Hit::Kind::InField && m_hover.Node == n.Id && m_hover.Index == static_cast<int>(i)) ||
+                                     (m_drag == Drag::Value && m_valueHit.K == Hit::Kind::InField && m_valueHit.Node == n.Id && m_valueHit.Index == static_cast<int>(i));
+                    const Value& v = n.InputValues[i];
+                    if (v.Type() == DataType::Boolean)
+                    {
+                        const float h = fr.Height();
+                        const Rect cb{ fr.min.x, fr.min.y + 1, fr.min.x + h - 2, fr.max.y - 1 };
+                        dl.AddRectFilled(cb, v.AsBool() ? ColorRef(Theme::Accent) : ColorRef(Theme::Background), 3.0f * z);
+                        dl.AddRect(cb, Theme::Border, 3.0f * z);
+                        if (v.AsBool())
+                            dl.AddCross({ (cb.min.x + cb.max.x) * 0.5f, (cb.min.y + cb.max.y) * 0.5f }, h * 0.22f, RGBA(250, 250, 250), 1.5f);
+                    }
+                    else
+                    {
+                        dl.AddRectFilled(fr, hot ? Theme::Control : Theme::Background, 3.0f * z);
+                        dl.AddRect(fr, hot ? Theme::BorderHover : Theme::BorderSubtle, 3.0f * z);
+                        if (showText)
+                        {
+                            MiniGUI::TextParams vp = tp;
+                            vp.hAlign = MiniGUI::TextAlign::Center;
+                            vp.size   = (v.Type() == DataType::Vector ? 10.5f : kFontSize) * z;
+                            text.Draw(dl, Rect{ fr.min.x + 3, fr.min.y, fr.max.x - 3, fr.max.y }, ToDisplayString(v), vp);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 状态消息（卡片下方）
+        if (n.State != NodeState::Ok && !n.Message.empty() && showText)
+        {
+            MiniGUI::TextParams mp = tp;
+            mp.size     = 11.0f * z;
+            mp.color    = n.State == NodeState::Error ? kErrorColor : kWarnColor;
+            mp.vAlign   = MiniGUI::TextAlign::Start;
+            mp.wrap     = true;
+            mp.ellipsis = false;
+            text.Draw(dl, SR(Rect{ c.Box.min.x, c.Box.max.y + 4, c.Box.max.x + 60, c.Box.max.y + 40 }), n.Message, mp);
+        }
+    }
+
+    void NodeEditorView::OnPaint(MiniGUI::DrawList& dl, const Rect& screenRect)
+    {
+        SyncGraph();
+        PaintGrid(dl, screenRect);
+        dl.PushClipRect(screenRect);
+        MiniGUI::UIContext* ctx = GetContext();
+        const Graph* g = G();
+        MiniGUI::TextParams tp;
+        tp.size   = 13.0f;
+        tp.color  = Theme::TextDim;
+        tp.hAlign = MiniGUI::TextAlign::Center;
+        tp.vAlign = MiniGUI::TextAlign::Center;
+        tp.wrap   = true;
+        if (!g)
+        {
+            ctx->GetTextSystem().Draw(dl, screenRect, "没有打开的图纸", tp);
+            dl.PopClipRect();
+            return;
+        }
+        if (g->Empty())
+            ctx->GetTextSystem().Draw(dl, screenRect, "按 Tab 或双击空白处搜索添加节点，右键按分类添加；从端口拖出连线。\n节点图随图纸保存，结果实时显示在绘图区，点“烘焙”加入图纸", tp);
+
+        const Vec2 origin = screenRect.min;
+        PaintLinks(dl, origin);
+        for (const auto& n : g->GetNodes())
+            PaintCard(dl, origin, *n);
+
+        if (m_drag == Drag::Box)
+        {
+            const Rect r{ std::min(m_pressLocal.x, m_mouseLocal.x) + origin.x, std::min(m_pressLocal.y, m_mouseLocal.y) + origin.y,
+                          std::max(m_pressLocal.x, m_mouseLocal.x) + origin.x, std::max(m_pressLocal.y, m_mouseLocal.y) + origin.y };
+            dl.AddRectFilled(r, ColorRef(MiniGUI::ThemeColor::Accent, 40));
+            dl.AddRect(r, Theme::Accent);
+        }
+
+        // 悬停提示（端口数据、节点说明）
+        if (m_drag == Drag::None && m_hover.K != Hit::Kind::None)
+        {
+            const std::string tip = HoverText();
+            if (!tip.empty())
+            {
+                MiniGUI::TextParams hp;
+                hp.size  = 12.0f;
+                hp.color = Theme::Text;
+                hp.wrap  = true;
+                const Vec2 size = ctx->GetTextSystem().Measure(tip, hp, 320.0f);
+                Vec2 p{ origin.x + m_mouseLocal.x + 14.0f, origin.y + m_mouseLocal.y + 18.0f };
+                p.x = std::min(p.x, screenRect.max.x - size.x - 14.0f);
+                p.y = std::min(p.y, screenRect.max.y - size.y - 10.0f);
+                const Rect r{ p.x - 6, p.y - 4, p.x + size.x + 6, p.y + size.y + 4 };
+                dl.AddRectFilled(r, Theme::TooltipBackground, 4.0f);
+                dl.AddRect(r, Theme::TooltipBorder, 4.0f);
+                ctx->GetTextSystem().Draw(dl, Rect{ p.x, p.y, p.x + size.x + 1, p.y + size.y }, tip, hp);
+            }
+        }
+        dl.PopClipRect();
+    }
+}

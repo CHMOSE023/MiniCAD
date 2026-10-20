@@ -2,6 +2,7 @@
 #include "Core/Log.h"
 #include "Document/DimAssoc.h"
 #include "Import/CadExchange.h"
+#include "NodeGraph/Graph.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/BinarySerializer.h"
 #include "Serialization/SerializeHelpers.hpp"
@@ -45,6 +46,15 @@ namespace MiniCAD
         m_cmdStack.SetOnMutate([this] { MarkDirty(); });
         // 每条命令生效后让关联标注跟上几何,跟随的改动与该命令一起撤销
         m_cmdStack.SetPostCommandHook([this] { return DimAssoc::Sync(m_scene); });
+    }
+
+    Document::~Document() = default;
+
+    Nodes::Graph& Document::GetNodeGraph()
+    {
+        if (!m_nodeGraph)
+            m_nodeGraph = std::make_unique<Nodes::Graph>();
+        return *m_nodeGraph;
     }
 
     void Document::SetPath(const std::string& path)
@@ -278,6 +288,12 @@ namespace MiniCAD
             m_scene.Serialize(s);
             s.EndObject();
         }
+
+        if (m_nodeGraph && !m_nodeGraph->Empty() && s.BeginObject("nodeGraph"))
+        {
+            m_nodeGraph->Serialize(s);
+            s.EndObject();
+        }
     }
 
     void Document::Deserialize(ISerializer& s)
@@ -299,6 +315,13 @@ namespace MiniCAD
         if (s.BeginObject("scene"))
         {
             m_scene.Deserialize(s);
+            s.EndObject();
+        }
+
+        m_nodeGraph.reset();
+        if (s.Has("nodeGraph") && s.BeginObject("nodeGraph"))
+        {
+            GetNodeGraph().Deserialize(s);
             s.EndObject();
         }
     }

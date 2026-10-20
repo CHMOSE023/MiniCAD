@@ -91,6 +91,19 @@ set(MINICAD_GEOM_SOURCES
     "${MINICAD_SRC}/Core/GeomKernel/CurveIntersect.cpp"
 )
 
+# ── NodeGraph（节点式参数化建模，见 docs/NodeGraph/PLAN.md）─────────
+set(MINICAD_NODEGRAPH_SOURCES
+    "${MINICAD_SRC}/NodeGraph/Value.cpp"
+    "${MINICAD_SRC}/NodeGraph/NodeType.cpp"
+    "${MINICAD_SRC}/NodeGraph/Graph.cpp"
+    "${MINICAD_SRC}/NodeGraph/GeometryOps.cpp"
+    "${MINICAD_SRC}/NodeGraph/Preview.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinMathNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinGeometryNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinSolidNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinSurfaceNodes.cpp"
+)
+
 # ── 源文件汇总 ──────────────────────────────────────────────────────
 set(MINICAD_SOURCES
     "${MINICAD_SRC}/MiniCADEngine.cpp"
@@ -102,6 +115,7 @@ set(MINICAD_SOURCES
     ${MINICAD_VIEWPORT_SOURCES}
     ${MINICAD_TEXT_SOURCES}
     ${MINICAD_GEOM_SOURCES}
+    ${MINICAD_NODEGRAPH_SOURCES}
 )
 
 add_library(MiniCAD STATIC ${MINICAD_SOURCES})

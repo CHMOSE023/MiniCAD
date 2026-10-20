@@ -7,7 +7,7 @@
 // - layout：titlebar / row / column / menubar / toolbar / panel / splitter / separator / spacer / label / dock
 //   titlebar：无边框窗口的标题栏，children 放在图标右边（菜单栏），右侧按钮执行 window.minimize / window.maximize / window.close
 //   宿主提供的面板：documents（文档标签 + 视口）、commandline（命令行）、properties（特性）、layers（图层）、
-//   layerbar（图层 / 线型 / 线宽下拉框）、statusbar（状态栏）
+//   layerbar（图层 / 线型 / 线宽下拉框）、statusbar（状态栏）、nodes（节点编辑器，默认不在布局里，"视图 > 面板 > 节点编辑器"打开）
 // - dock：停靠区，root 为布局树（split: row / column，tabs: 面板列表，size: 尺寸）。
 //   用户拖动后的布局保存在 %LOCALAPPDATA%\MiniCAD\layout.json，启动时优先使用；"视图 > 面板 > 重置面板布局"恢复这里的默认布局
 {
@@ -27,6 +27,7 @@
     "solid.sweep": { "tooltip": "先选择闭合的圆、多段线或矩形，再选择路径（直线、圆弧、圆、多段线），沿路径扫掠为三维实体" },
     "solid.filletedge": { "tooltip": "点选三维实体的边倒圆角，键入数值改半径，回车完成（Tab 切换重叠的边）" },
     "solid.chamferedge": { "tooltip": "点选三维实体的边倒角，键入数值改距离，回车完成（Tab 切换重叠的边）" },
+    "view.panel.nodes": { "tooltip": "节点式参数化建模：把几何运算连成节点图，改参数实时更新，点“烘焙”加入图纸（命令行 NODES）" },
     "solid.section": { "tooltip": "先选择三维实体：键入高度得到水平截面，或点取两点得到铅垂剖面图" },
     "solid.flatshot": { "tooltip": "先选择三维实体，按俯视、前视、右视等方向投影成二维图（含隐藏线）" },
     "region.union": { "tooltip": "合并选中的面域或三维实体" },
@@ -70,7 +71,7 @@
         },
         {
           "title": "面板",
-          "items": [ "view.panel.properties", "view.panel.layers", "view.panel.commandline", "-", "view.resetLayout" ]
+          "items": [ "view.panel.properties", "view.panel.layers", "view.panel.commandline", "view.panel.nodes", "-", "view.resetLayout" ]
         },
         "-",
         "ui.theme",
@@ -152,7 +153,7 @@
     },
     {
       "title": "建模(&L)",
-      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "solid.revolve", "solid.sweep", "-", "region.union", "region.subtract", "region.intersect", "-", "solid.filletedge", "solid.chamferedge", "-", "solid.section", "solid.flatshot" ]
+      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "solid.revolve", "solid.sweep", "-", "region.union", "region.subtract", "region.intersect", "-", "solid.filletedge", "solid.chamferedge", "-", "solid.section", "solid.flatshot", "-", "view.panel.nodes", "nodes.bake" ]
     },
     {
       "title": "窗口(&W)",
@@ -225,6 +226,7 @@
       {
         "type": "dock",
         "id": "main",
+        "panels": [ "nodes" ],
         "grow": 1,
         "root": {
           "split": "row",

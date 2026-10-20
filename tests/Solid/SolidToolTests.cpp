@@ -207,6 +207,14 @@ namespace
         f.editor.ActivateToolById("Union");
         Check(f.All<Solid3DEntity>().size() == 1 && f.LastMessageHas("至少选择两个三维实体"), "UNION with one solid reports and changes nothing");
 
+        // 开放曲面（如节点图烘焙的放样面）不能做实体布尔
+        const Solid::NurbsCurve rims[] = { Solid::NurbsCurve::FromSegments({ { 3, 0, 0 }, { -3, 0, 0 } }, { 1.0, 1.0 }, true),
+                                           Solid::NurbsCurve::FromSegments({ { 3, 0, 5 }, { -3, 0, 5 } }, { 1.0, 1.0 }, true) };
+        const auto sheet = f.Add(Solid3DEntity::Create(f.scene().NextObjectID(), k, k.Loft(rims)));
+        f.editor.SetSelection({ id, sheet });
+        f.editor.ActivateToolById("Union");
+        Check(f.All<Solid3DEntity>().size() == 2 && f.LastMessageHas("只适用于封闭实体"), "UNION with an open surface reports and changes nothing");
+
         // 只有圆（没有实体）时仍是面域布尔
         Fixture g(&k);
         const auto c1 = g.Add(std::make_unique<CircleEntity>(g.scene().NextObjectID(), Point3{ 0, 0, 0 }, 2.0));

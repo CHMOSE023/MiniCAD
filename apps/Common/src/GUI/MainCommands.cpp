@@ -1,6 +1,7 @@
 // ── MiniCAD 命令注册：菜单栏、工具栏、快捷键都引用这里的命令 ID ─────────
 // 名称、图标、快捷键是默认值，界面描述文件（ui/minicad_ui.json）的 "commands" 可以覆盖
 #include "GUI/MainFrame.h"
+#include "GUI/NodeEditor.h"
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
 #include "Widgets/TabView.h"
@@ -86,10 +87,13 @@ namespace MiniCAD
         m_commands.Register({ .id = "doc.prev", .label = "上一个文档(&P)", .shortcut = "Ctrl+Shift+Tab", .execute = [stepDoc] { stepDoc(-1); }, .canExecute = multiDoc });
 
         // ── 编辑 ─────────────────────────────────────────────────
+        // 节点编辑器有焦点时，撤销 / 重做 / 全选作用于节点图（节点图有自己的撤销历史，见 docs/NodeGraph/PLAN.md 第 3.6 节）
         m_commands.Register({ .id = "edit.undo", .label = "撤销(&U)", .icon = "Undo.png", .shortcut = "Ctrl+Z",
-                              .execute = [this, &dm] { dm.Undo(); m_viewport->RequestRender(); }, .canExecute = [&dm] { return dm.GetActive() && dm.GetActive()->CanUndo(); } });
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(false); return; } dm.Undo(); m_viewport->RequestRender(); },
+                              .canExecute = [this, &dm] { return dm.GetActive() && (NodeEditorHasFocus() ? NodeHistory(*dm.GetActive()).CanUndo() : dm.GetActive()->CanUndo()); } });
         m_commands.Register({ .id = "edit.redo", .label = "重做(&R)", .icon = "Redo.png", .shortcut = "Ctrl+Y",
-                              .execute = [this, &dm] { dm.Redo(); m_viewport->RequestRender(); }, .canExecute = [&dm] { return dm.GetActive() && dm.GetActive()->CanRedo(); } });
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(true); return; } dm.Redo(); m_viewport->RequestRender(); },
+                              .canExecute = [this, &dm] { return dm.GetActive() && (NodeEditorHasFocus() ? NodeHistory(*dm.GetActive()).CanRedo() : dm.GetActive()->CanRedo()); } });
         // 删除：与视口里按 Delete 键是同一个操作（Delete 键由 Editor 处理，这里不再注册快捷键，避免文本框里按 Delete 被抢走）
         m_commands.Register({ .id = "edit.delete", .label = "删除(&D)",
                               .execute = [&dm] { dm.GetEditor().DeleteSelected(); },
@@ -98,12 +102,34 @@ namespace MiniCAD
                               .execute = [&dm] { dm.GetEditor().ExplodeSelection(); },
                               .canExecute = [&dm] { return dm.GetActive() && !dm.GetEditor().GetSelection().empty() && !dm.GetEditor().IsToolRunning(); } });
         m_commands.Register({ .id = "edit.selectAll", .label = "全选(&A)", .shortcut = "Ctrl+A",
-                              .execute = [&dm] { dm.GetEditor().SelectAll(); },
+                              .execute = [this, &dm]
+                              {
+                                  if (NodeEditorHasFocus())
+                                  {
+                                      std::set<Nodes::NodeId> all;
+                                      for (const auto& n : dm.GetActive()->GetNodeGraph().GetNodes())
+                                          all.insert(n->Id);
+                                      m_nodeEditor->SetSelection(std::move(all));
+                                      return;
+                                  }
+                                  dm.GetEditor().SelectAll();
+                              },
                               .canExecute = [&dm] { return dm.GetActive() && !dm.GetEditor().IsToolRunning(); } });
-        m_commands.Register({ .id = "edit.cut",      .label = "剪切(&T)",       .shortcut = "Ctrl+X",       .execute = [&dm] { dm.CutSelected(); },          .canExecute = hasSelection });
-        m_commands.Register({ .id = "edit.copy",     .label = "复制(&C)",       .shortcut = "Ctrl+C",       .execute = [&dm] { dm.CopySelected(); },         .canExecute = hasSelection });
+        // 剪切 / 复制 / 粘贴：节点编辑器有焦点时作用于节点（子图经剪贴板，见 docs/NodeGraph/PLAN.md 第 5 节）
+        auto hasNodeOrEntitySelection = [this, hasSelection]
+        {
+            return NodeEditorHasFocus() ? !m_nodeEditor->GetSelection().empty() : hasSelection();
+        };
+        m_commands.Register({ .id = "edit.cut",      .label = "剪切(&T)",       .shortcut = "Ctrl+X",
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->CutSelection(); return; } dm.CutSelected(); },
+                              .canExecute = hasNodeOrEntitySelection });
+        m_commands.Register({ .id = "edit.copy",     .label = "复制(&C)",       .shortcut = "Ctrl+C",
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->CopySelection(); return; } dm.CopySelected(); },
+                              .canExecute = hasNodeOrEntitySelection });
         m_commands.Register({ .id = "edit.copyBase", .label = "带基点复制(&B)", .shortcut = "Ctrl+Shift+C", .execute = [&dm] { dm.CopySelectedWithBase(); }, .canExecute = hasSelection });
-        m_commands.Register({ .id = "edit.paste",    .label = "粘贴(&P)",       .shortcut = "Ctrl+V",       .execute = [&dm] { dm.Paste(); },                .canExecute = hasDoc });
+        m_commands.Register({ .id = "edit.paste",    .label = "粘贴(&P)",       .shortcut = "Ctrl+V",
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->PasteFromClipboard(); return; } dm.Paste(); },
+                              .canExecute = hasDoc });
 
         // ── 绘图 / 修改：启动 Editor 的工具，工具进行中时按钮显示为选中 ─────
         // 第二列是 Editor 的工具 ID：无论从工具栏、菜单还是命令行启动，按钮都据此显示选中
@@ -252,6 +278,15 @@ namespace MiniCAD
         panelToggle("view.panel.layers",     "layers",     "图层(&L)");
         panelToggle("view.panel.commandline", "commandline", "命令行(&C)");
         m_commands.Find("view.panel.commandline")->shortcut = "Ctrl+9";     // 同 AutoCAD
+        m_commands.Register({ .id = "view.panel.nodes", .label = "节点编辑器(&N)",
+                              .tooltip = "节点式参数化建模：把几何运算连成节点图，改参数实时更新（docs/NodeGraph/PLAN.md）",
+                              .shortcut = "Ctrl+Shift+N",
+                              .execute   = [this] { ShowNodePanel(true); },
+                              .canExecute = [this] { auto* d = m_layout->GetDock("main"); return d && d->HasPanel("nodes"); },
+                              .isChecked = [this] { auto* d = m_layout->GetDock("main"); return d && d->IsPanelVisible("nodes"); } });
+        m_commands.Register({ .id = "nodes.bake", .label = "烘焙节点图(&B)",
+                              .tooltip = "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销",
+                              .execute = [this] { BakeNodeGraph(); }, .canExecute = hasDoc });
         m_commands.Register({ .id = "view.resetLayout", .label = "重置面板布局(&R)",
                               .tooltip = "删除保存的面板布局，恢复界面描述文件里的默认布局",
                               .execute = [this] { ResetLayout(); } });

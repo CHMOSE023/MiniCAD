@@ -1,6 +1,7 @@
 # 三维实体建模开发计划
 
 > 状态：M0～M6 已完成（2026-10-18）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、旋转、扫掠、实体并 / 差 / 交、边圆角 / 倒角）；截面、平面投影出二维图，DWG / DXF 导出为多面网格；三维视图（标准视图、环绕、着色、隐藏线、轮廓线）
+> M7 已完成（2026-10-20）：空间 NURBS 曲线（`NurbsCurve`：插值、拟合、螺旋线）与曲面（放样、直纹面、旋转曲面、点阵曲面、偏移曲面、管道、加厚、曲面取点），开放曲面也是 `BodyPtr`，经 `Solid3DEntity` 显示、读写、导出；节点图里的“曲线/NURBS”与“曲面”节点见 `docs/NodeGraph/PLAN.md`。见第 11 节
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -64,14 +65,16 @@ SM_API → SMLib
 |---|---|
 | `src/Solid/ISolidKernel.h` | 接口，属于核心库，只用 MiniCAD 的类型（`Point3`、`Vec3`、`Mat4`、`AABB`） |
 | `src/Solid/SMLib/SMLibKernel.h/.cpp` | SMLib 实现与工厂 `CreateSMLibKernel()`；目标 `MiniCADSolid`（`cmake/MiniCAD.cmake`），私有链接 `SM_API`。单独成库是因为核心库定义了 `UNICODE`，SMLib 按它切换宽字符文件名 |
-| `tests/Solid/SolidKernelTests.cpp` | 接口测试（69 项），只经接口调用，换内核实现时应原样通过 |
+| `src/Solid/NurbsCurve.h` | 空间 NURBS 曲线数据（M7）：求值、采样、仿射变换、直线 / 圆弧段 → 二次有理曲线，不依赖内核 |
+| `tests/Solid/SolidKernelTests.cpp` | 接口测试（123 项，其中 M7 的曲线与曲面 54 项），只经接口调用，换内核实现时应原样通过 |
 
 - `BodyPtr = shared_ptr<const IBody>`：实体不可变，所有运算返回新实体、输入不变，可在撤销栈、剪贴板间共享
 - 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`、`Sweep`（M5，轮廓沿 `SweepPath` 扫掠）
 - 轮廓 `Profile`：z = 常数平面上的闭合多段线，顶点带凸度（tan(圆心角 / 4)，**正值为逆时针，与 DXF 相同、与 MiniCAD 的 `Polyline` 相反**；顺 / 逆时针绕行都可以），或整圆
 - 扫掠路径 `SweepPath`：同一水平面上首尾相接的直线 / 圆弧（顶点带凸度，约定同 `Profile`），可闭合
 - 修改：`Boolean`（并 / 差 / 交）、`Fillet` / `Chamfer`（M5，按 `Edges()` 给出的边编号）、`Transform`（任意 `Mat4`，含镜像、非均匀缩放）
-- 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`
+- 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`；M7 增加 `Area`、`IsSolid`、`FaceCount`
+- 空间曲线与曲面（M7）：`InterpolateCurve`、`FitCurve`、`Helix`、`Loft`、`RuledSurface`、`RevolveSurface`、`SurfaceFromPoints`、`OffsetSurface`、`Pipe`、`Thicken`、`EvaluateSurface`，见第 11 节
 - 读写：`Save` / `Load`，数据 = 16 字节头（`SMLB`、版本、长度、CRC32）+ SMLib 二进制格式；`Load` 先校验，损坏的数据不交给 SMLib（它的读取器遇到乱码会崩溃）
 - 失败：返回空指针 / 空结果，原因由 `LastError()` 给出
 
@@ -200,6 +203,7 @@ SM_API → SMLib
 | **M4** ✅ | 截面（`SolidSection`）、平面投影（`Flatshot`）出二维图，拟合为直线 / 圆弧 / 圆；DWG / DXF 导出为多面网格；测试 `SolidDrawingTests` | 出图结果可标注、可导出 DWG |
 | **M5** ✅ | 第二批命令：旋转（`Revolve`）、扫掠（`Sweep`）、边圆角（`FilletEdge`）、边倒角（`ChamferEdge`），俯视图里选边（Tab 切换重叠的边）；内核增加 `Sweep`、`Chamfer` | 桌面版里实际旋转、扫掠、选边圆角 / 倒角、撤销 |
 | **M6** ✅ | 三维视图（显示第二期）：标准视图、Shift + 中键环绕、着色 / 线框、深度测试消隐、轮廓线；两个渲染器的渲染目标加深度缓冲；测试 `SolidViewTests` | 桌面版里等轴测看到着色的实体，被挡住的边不显示 |
+| **M7** ✅ | 空间 NURBS 曲线与开放曲面（第 11 节）：`NurbsCurve`；内核增加插值 / 拟合 / 螺旋线、放样、直纹面、旋转曲面、点阵曲面、偏移、管道、加厚、曲面取点、面积与是否封闭；节点图的“曲线/NURBS”与“曲面”节点；测试 `SolidKernelTests`、`NodeSolidTests` | 节点图里放样 → 加厚得到实体；开放曲面着色、烘焙、读写、导出 DWG / DXF |
 | — | 网页版评估：Emscripten 编译、异常、WASM 体积 | 决定网页版是否默认带 |
 
 ---
@@ -219,3 +223,52 @@ SM_API → SMLib
 | DWG 三维实体无法互通 | 明确为非目标；导出退化为网格并提示 |
 | 网页版体积（Release 静态库 `SMLib.lib` 约 100 MB，但链接后只带进用到的部分，冒烟测试 exe 仅 4.9 MB） | 先测 WASM 实际体积再决定 |
 | 跟进上游更新 | 本地修改都记在 `3rd/SMLib/README.md`，更新时重新应用 |
+
+---
+
+## 11. 空间曲线与曲面（M7）
+
+第一版的建模只有封闭实体，轮廓、路径都是水平面上的二维曲线实体，没有曲面。M7 把 SMLib 的 NURBS 曲线、曲面接口经 `ISolidKernel` 开放出来，主要给节点式参数化建模用（`docs/NodeGraph/PLAN.md` 第 4 节“曲面”）。
+
+### 11.1 数据
+
+- **空间曲线** `Solid::NurbsCurve`（`src/Solid/NurbsCurve.h`，纯头文件，核心库）：阶数、控制点、完整的节点矢量（长度 = 控制点数 + 阶数 + 1，与 DXF SPLINE、MiniCAD 的 `Spline` 相同）、权重（空为非有理）。它是 MiniCAD 自己的数据：求值（齐次坐标 de Boor）、导数（中心差分）、按节点区间采样、长度、仿射变换（只变换控制点）都不需要内核，网页版也能显示、变换。
+  - `FromControlPoints(点, 阶数)`：两端夹持的均匀节点，点数不够时降阶
+  - `FromSegments(点, 凸度, 闭合)`：首尾相接的直线 / 圆弧段（凸度约定同 `ProfileVertex`：正值逆时针）→ 二次有理曲线，圆弧按不超过 90° 分段，精确表示圆；每段占一个单位参数区间，内部节点重复 2 次
+- **曲面**：仍是 `BodyPtr`。开放的曲面片（一个或多个面、不围成体积）与实体用同一个类型，`IsSolid()` 区分（`SmApiBrepIsManifoldSolid`）。好处是变换、离散、边、截面、读写、`Solid3DEntity` 的显示与导出全部沿用，不需要新的实体类型
+
+### 11.2 接口与实现（`SMLibKernel.cpp`）
+
+| 接口 | 实现 | 说明 |
+|---|---|---|
+| `InterpolateCurve(点, 闭合)` | `SmBSplineCurve::CreateInterpolatingCurve`（弦长参数化、三次） | 至少 3 个点、相邻点不重合。闭合时首点加到末尾、两端给同一个切线向量（方向取首点两侧点的连线，长度按“总弦长 / 参数域长”换算：先插值一次取参数域），接点处 C1 |
+| `FitCurve(点, 容差)` | `SmBSplineCurve::CreateApproximatingCurve`（弦长、三次） | `SmApiCreateCurveApproxPoints` 的控制点数固定为点数的 1/4，正弦样例偏差 0.37。改为从 1/4 起每次增加一半，直到每个点到曲线的距离 ≤ 容差（默认点集尺寸的 1/1000），最多等于点数（即插值） |
+| `Helix` | `SmApiCreateHelix` | 拟合容差取最大半径的 1e-5；圈数 ≤ 124（SM_API 的上限） |
+| `Loft` | `SmApiCreateSkin` | 截面全部闭合时得到不封口的管状曲面 |
+| `RuledSurface` | `SmApiCreateRuledSurface` | |
+| `RevolveSurface` | `SmApiCreateSurfaceRevolution` | 负角度改为轴反向、角度取正（右手定则下等价） |
+| `SurfaceFromPoints` | `SmBSplineSurface::ApproximatePoints`（控制点数 = 点数，即经过各点） | 与 `SmApiCreateSurfaceFromOrderedPoints` 相同，但阶数取 min(3, 点数 − 1)：后者固定三次，行或列少于 4 个点时失败 |
+| `OffsetSurface` | 每个面的曲面 `SmApiCreateOffsetSurface` | 沿面的外侧（见下）；裁剪过的面按整个曲面偏移 |
+| `Pipe` | `SmApiCreatePipeSweep` | 封口时得到实体（螺旋线 → 弹簧） |
+| `Thicken` | `SmApiShellBrepFull(…, bCreateOffsetSolid = TRUE, 面列表为空)` | 面列表是“不偏移、原样保留”的面（如抽壳时开口的面），加厚时必须为空，传全部面会失败；侧边由 SMLib 用直纹面封闭并缝合成实体 |
+| `EvaluateSurface(面, u, v)` | `SmApiEvaluateSurfacePoint` / `Normal` | u、v 归一化到面所在曲面的参数域 |
+| `Area` / `IsSolid` / `FaceCount` | `SmApiBrepComputeArea` / `SmApiBrepIsManifoldSolid` / `SmApiGetFaces` | |
+
+- **曲面 → BRep**：`SmBrep::CreateFacesFromSurface(曲面, 参数域, SM_CT_C1)`，曲面交给 brep（拆分时原曲面被删除）。在 C1 不连续处拆成几个面：`Tessellate` 在同一个面内平滑法线，放样经过矩形截面时折痕留在一个面里会被抹平（两个正方形放样得到 4 个侧面）。之后 `SmApiStitchAdvanced`（只缝合单侧边）把闭合曲面的接缝、拆开的相邻面连起来，加厚才能得到封闭的实体
+- **法线方向**：面的第一个面使用（faceuse）的法线就是曲面法线；它在无穷区域（实体外面）时外侧即曲面法线方向，开放曲面两侧都在无穷区域，取曲面法线。`EvaluateSurface` 的法线、`OffsetSurface` / `Thicken` 的正方向都按这个外侧，测试检查它与离散网格的三角形朝向一致
+- **曲线转换**：`NurbsCurve` ↔ `SmBSplineCurve` 经 `SmApiCreateCanonicalCurve` / `GetCanonical`（唯一节点 + 重复度）；节点矢量要两端夹持
+
+### 11.3 显示、读写与导出
+
+开放曲面放进 `Solid3DEntity` 不需要改实体：离散、线框（边界边）、包围盒、读写（内核字节 + 网格）、DWG / DXF 多面网格都按原来的方式工作——网格的边界边只属于一个三角形，导出时是可见边。着色本来就把背对视线的法线翻过来（双面光照），曲面的背面同样有明暗。
+
+- 对开放曲面无意义的操作给出明确提示：节点的“实体信息”对开放曲面输出体积 0 并警告（面积见“曲面信息”）；节点的并 / 差 / 交与桌面版 `UNION` / `SUBTRACT` / `INTERSECT` 遇到开放曲面报错“只适用于封闭实体”；“加厚”“偏移曲面”的输入是实体时报错
+- 空间曲线烘焙为带控制点的 `SplineEntity`（精确求值，`.mcad` / JSON 保存控制点、节点、权重）；DWG / DXF 导出仍跳过样条（`CadExchange` 的已知限制）
+
+### 11.4 已知限制
+
+- 放样的截面要方向一致、起点大致对齐，否则曲面会扭转（SMLib 不自动对齐）；没有导轨、没有封口选项（可以先加厚，或用“管道”）
+- 偏移曲面对裁剪过的面按整个曲面偏移；`SmApiCreateOffsetSurface` 是近似（容差 0.001）
+- 没有曲面的修剪、分割、曲面间求交 / 圆角（SMLib 有 `SmApiTrimSurfaceWith3dCurves`、`SmApiSurfaceSurfaceFillet`，留待以后）
+- 绘图工具仍不能直接画空间曲线（没有 UCS），空间曲线只在节点图里生成
+- `CreateFacesFromSurface` 失败时曲面的所有权不确定（可能已挂到 brep 上），适配层宁可泄漏也不重复释放

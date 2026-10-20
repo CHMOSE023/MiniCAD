@@ -3,6 +3,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Vec3.hpp"
 #include "Core/GeomKernel/AABB.hpp"
+#include "Solid/NurbsCurve.h"
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -15,6 +16,7 @@
 namespace MiniCAD::Solid
 {
     // 实体（BRep）。不可变：所有运算都返回新的实体，输入不变，因此可以在撤销栈、剪贴板等处共享。
+    // 开放的曲面片（放样、直纹面等的结果：一个或多个面，不围成封闭的体积）也用它表示，见 IsSolid
     class IBody
     {
     public:
@@ -133,8 +135,41 @@ namespace MiniCAD::Solid
         virtual HiddenLineResult HiddenLines(const BodyPtr& body, const Math::Vec3& viewDir) = 0;
         // 与平面的截交线
         virtual Polylines Section(const BodyPtr& body, const Math::Point3& planePoint, const Math::Vec3& planeNormal) = 0;
-        virtual double    Volume(const BodyPtr& body) = 0;   // 失败返回负数
+        virtual double    Volume(const BodyPtr& body) = 0;   // 失败返回负数；开放曲面没有体积，结果无意义（先用 IsSolid 判断）
         virtual AABB      Bounds(const BodyPtr& body) = 0;   // 失败返回 AABB::Empty()
+        virtual double    Area(const BodyPtr& body) = 0;     // 全部面的面积之和（实体与开放曲面都可以），失败返回负数
+        // 封闭的流形实体（有体积）为 true；开放曲面、失败为 false
+        virtual bool      IsSolid(const BodyPtr& body) = 0;
+        virtual int       FaceCount(const BodyPtr& body) = 0;   // 失败返回 0
+
+        // ── 空间曲线（结果是 NurbsCurve 数据，失败时 IsValid() 为 false）──────
+        // 插值：曲线依次经过全部点（至少 3 个，相邻点不能重合；按弦长参数化，三次）。
+        // closed：首尾相接、接点处切线连续（不要重复首点）
+        virtual NurbsCurve InterpolateCurve(std::span<const Math::Point3> points, bool closed = false) = 0;
+        // 拟合：逼近全部点的光滑三次曲线（不一定经过各点，至少 4 个点），各点到曲线的距离不超过 tolerance
+        //（≤ 0 时取点集尺寸的 1/1000）；控制点从点数的 1/4 起逐步增加，直到满足容差
+        virtual NurbsCurve FitCurve(std::span<const Math::Point3> points, double tolerance = 0.0) = 0;
+        // 螺旋线：轴沿 +Z 过 base，高 height，底部 / 顶部半径（不同时为锥形），圈数，右旋 / 左旋；起点在 base + (radius0, 0, 0)
+        virtual NurbsCurve Helix(const Math::Point3& base, double height, double radius0, double radius1, double turns, bool rightHanded = true) = 0;
+
+        // ── 曲面（结果一般是开放曲面片：BodyPtr，IsSolid 为 false）────────
+        // 放样（蒙皮）：依次经过各截面曲线的曲面（至少 2 条；截面全部闭合时得到管状曲面，不封口）
+        virtual BodyPtr Loft(std::span<const NurbsCurve> sections) = 0;
+        // 直纹面：两条曲线对应点之间连直线
+        virtual BodyPtr RuledSurface(const NurbsCurve& a, const NurbsCurve& b) = 0;
+        // 旋转曲面：曲线绕轴旋转 angleDeg 度（右手定则，360 为整圈）
+        virtual BodyPtr RevolveSurface(const NurbsCurve& curve, const Math::Point3& axisPoint, const Math::Vec3& axisDir, double angleDeg) = 0;
+        // 点阵曲面：rows × columns 个点（points[r * columns + c]），曲面经过全部点；行、列都至少 2 个（不足 4 个时该方向的阶数降低）
+        virtual BodyPtr SurfaceFromPoints(std::span<const Math::Point3> points, int rows, int columns) = 0;
+        // 偏移曲面：每个面沿法线偏移 distance（负值反向）；裁剪过的面按整个曲面偏移
+        virtual BodyPtr OffsetSurface(const BodyPtr& surface, double distance) = 0;
+        // 管道：半径为 radius 的圆截面沿空间曲线扫掠；capEnds 时两端封口成实体（路径闭合时不需要封口）
+        virtual BodyPtr Pipe(const NurbsCurve& path, double radius, bool capEnds = true) = 0;
+        // 加厚：开放曲面沿法线方向加厚 thickness（负值反向），侧边用直纹面封闭，得到实体
+        virtual BodyPtr Thicken(const BodyPtr& surface, double thickness) = 0;
+        // 曲面上的点与单位法线：face 为面的序号（0 起，见 FaceCount），u、v 为归一化参数 ∈ [0, 1]（按面所在曲面的参数域）。
+        // 法线朝向与 Tessellate 的三角形外侧一致
+        virtual bool EvaluateSurface(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& normal) = 0;
 
         // ── 读写（内核自己的格式，用于 .mcad / JSON）────────────────────
         // Load 先校验数据（格式标记、长度、校验和），损坏的数据返回空指针，不会交给内核解析

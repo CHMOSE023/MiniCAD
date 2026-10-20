@@ -11,6 +11,8 @@ add_library(MiniCADApp STATIC
     src/GUI/EditorDialogs.cpp
     src/GUI/StatusBarView.cpp
     src/GUI/ViewCube.cpp
+    src/GUI/NodeEditor.cpp
+    src/GUI/NodePanel.cpp
 )
 
 target_include_directories(MiniCADApp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

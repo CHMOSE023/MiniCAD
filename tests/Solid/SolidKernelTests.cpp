@@ -2,6 +2,7 @@
 // 几何取解析可算的情形，体积、包围盒、长度与公式比对
 #include "Solid/ISolidKernel.h"
 #include "Solid/SMLib/SMLibKernel.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <numbers>
@@ -397,6 +398,252 @@ namespace
 
         Check(k.Load({}) == nullptr && !k.LastError().empty(), "loading nothing fails with an error");
     }
+
+    // ── 空间曲线与曲面（docs/Solid/PLAN.md 第 11 节）──────────────────
+
+    // 点到折线（曲线的密集采样）的最小距离
+    double DistanceToSamples(const Point3& p, const std::vector<Point3>& pts)
+    {
+        double best = 1e300;
+        for (size_t i = 1; i < pts.size(); ++i)
+        {
+            const Vec3 d = pts[i] - pts[i - 1];
+            const double len2 = d.LengthSq();
+            const double t = len2 > 0 ? std::clamp(((p.x - pts[i - 1].x) * d.x + (p.y - pts[i - 1].y) * d.y + (p.z - pts[i - 1].z) * d.z) / len2, 0.0, 1.0) : 0.0;
+            best = std::min(best, (p - (pts[i - 1] + d * t)).Length());
+        }
+        return best;
+    }
+
+    NurbsCurve CircleCurve(double cx, double cy, double z, double r)
+    {
+        return NurbsCurve::FromSegments({ { cx + r, cy, z }, { cx - r, cy, z } }, { 1.0, 1.0 }, true);
+    }
+
+    NurbsCurve LineCurve(const Point3& a, const Point3& b)
+    {
+        return NurbsCurve::FromSegments({ a, b }, {}, false);
+    }
+
+    // 网格三角形的平均朝向（面积加权的法线之和，未归一化）
+    Vec3 MeshNormalSum(const Mesh& mesh)
+    {
+        Vec3 sum;
+        for (size_t i = 0; i + 2 < mesh.Indices.size(); i += 3)
+        {
+            const Point3& a = mesh.Positions[mesh.Indices[i]];
+            const Vec3 u = mesh.Positions[mesh.Indices[i + 1]] - a, w = mesh.Positions[mesh.Indices[i + 2]] - a;
+            sum += Vec3{ u.y * w.z - u.z * w.y, u.z * w.x - u.x * w.z, u.x * w.y - u.y * w.x };
+        }
+        return sum;
+    }
+
+    void TestNurbsCurve()
+    {
+        // 二次有理曲线精确表示圆弧：整圆（两段半圆，凸度 1）上每个采样点到圆心的距离都是半径
+        const NurbsCurve circle = CircleCurve(1, 2, 3, 5);
+        bool onCircle = circle.IsValid() && circle.IsRational() && circle.Degree == 2;
+        for (const auto& p : circle.Sample(16))
+            onCircle = onCircle && Near(std::hypot(p.x - 1, p.y - 2), 5, 1e-9) && Near(p.z, 3, 1e-12);
+        Check(onCircle, "nurbs: circle from two bulge-1 segments is exact");
+        Check(circle.IsClosed() && NearRel(circle.Length(), 10 * kPi, 1e-4), "nurbs: circle is closed, length 10π");
+
+        // 凸度方向：正值逆时针。(0,0) → (10,0) 凸度 1 的半圆在弦的右侧（y < 0）
+        const NurbsCurve half = NurbsCurve::FromSegments({ { 0, 0, 0 }, { 10, 0, 0 } }, { 1.0 }, false);
+        const Point3 mid = half.PointAt((half.StartParam() + half.EndParam()) / 2);
+        Check(NearPoint(mid, { 5, -5, 0 }, 1e-9), "nurbs: positive bulge is counter-clockwise (arc below the chord)");
+
+        // 多段线：直线 + 圆弧，首尾相接
+        const NurbsCurve slot = NurbsCurve::FromSegments({ { 0, 0, 0 }, { 6, 0, 0 }, { 6, 2, 0 }, { 0, 2, 0 } }, { 0, 1, 0, 1 }, true);
+        Check(slot.IsValid() && slot.IsClosed() && NearRel(slot.Length(), 12 + 2 * kPi, 1e-4), "nurbs: closed slot length 12 + 2π");
+
+        const NurbsCurve ctrl = NurbsCurve::FromControlPoints({ { 0, 0, 0 }, { 1, 1, 0 }, { 2, 0, 0 }, { 3, 1, 0 }, { 4, 0, 0 } }, 3);
+        Check(ctrl.IsValid() && NearPoint(ctrl.PointAt(ctrl.StartParam()), { 0, 0, 0 }) && NearPoint(ctrl.PointAt(ctrl.EndParam()), { 4, 0, 0 }),
+              "nurbs: clamped control-point curve starts and ends at the end points");
+
+        NurbsCurve moved = circle;
+        moved.Transform(Math::Mat4::Translation({ 0, 0, 10 }));
+        Check(Near(moved.PointAt(0.3).z, 13, 1e-12), "nurbs: affine transform moves the control points");
+    }
+
+    void TestSpaceCurves(ISolidKernel& k)
+    {
+        const std::vector<Point3> pts = { { 0, 0, 0 }, { 3, 2, 1 }, { 6, -1, 4 }, { 9, 3, 2 }, { 12, 0, 0 } };
+        const NurbsCurve interp = k.InterpolateCurve(pts);
+        const auto samples = interp.Sample(512);
+        double worst = 0.0;
+        for (const auto& p : pts)
+            worst = std::max(worst, DistanceToSamples(p, samples));
+        Check(interp.IsValid() && worst < 1e-3, "interpolate: the curve passes through every point");
+        Check(NearPoint(interp.PointAt(interp.StartParam()), pts.front(), 1e-6) && NearPoint(interp.PointAt(interp.EndParam()), pts.back(), 1e-6),
+              "interpolate: starts and ends at the first / last point");
+
+        // 闭合：首尾相接，接点两侧切线方向相同
+        const std::vector<Point3> ring = { { 10, 0, 0 }, { 0, 10, 2 }, { -10, 0, 0 }, { 0, -10, -2 } };
+        const NurbsCurve closed = k.InterpolateCurve(ring, true);
+        const Vec3 d0 = closed.IsValid() ? closed.DerivativeAt(closed.StartParam()).Normalized() : Vec3{};
+        const Vec3 d1 = closed.IsValid() ? closed.DerivativeAt(closed.EndParam()).Normalized() : Vec3{};
+        Check(closed.IsValid() && closed.IsClosed(1e-6) && (d0 - d1).Length() < 1e-3, "interpolate closed: closed with a smooth joint");
+        double ringWorst = 0.0;
+        for (const auto& p : ring)
+            ringWorst = std::max(ringWorst, DistanceToSamples(p, closed.Sample(64)));
+        Check(ringWorst < 1e-3, "interpolate closed: passes through every point");
+
+        Check(!k.InterpolateCurve(std::vector<Point3>{ { 0, 0, 0 }, { 1, 0, 0 } }).IsValid() && !k.LastError().empty(), "interpolate: two points fail with an error");
+        Check(!k.InterpolateCurve(std::vector<Point3>{ { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 2, 0, 0 } }).IsValid(), "interpolate: duplicate points fail");
+
+        // 拟合：正弦曲线上的 30 个点，拟合曲线离各点都很近
+        std::vector<Point3> wave;
+        for (int i = 0; i < 30; ++i)
+            wave.push_back({ i * 0.5, std::sin(i * 0.5), 0 });
+        const NurbsCurve fit = k.FitCurve(wave);
+        double fitWorst = 0.0;
+        for (const auto& p : wave)
+            fitWorst = std::max(fitWorst, DistanceToSamples(p, fit.Sample(64)));
+        Check(fit.IsValid() && fitWorst < 0.015, "fit: every point within the default tolerance (1/1000 of the size)");
+        const NurbsCurve coarse = k.FitCurve(wave, 0.2);
+        Check(coarse.IsValid() && coarse.ControlPoints.size() < fit.ControlPoints.size(), "fit: a looser tolerance needs fewer control points");
+
+        // 螺旋线：半径 5、高 10、两圈；每个采样点到轴的距离都是半径，长度 = √((2π·5·2)² + 10²)
+        const NurbsCurve helix = k.Helix({ 1, 1, 0 }, 10, 5, 5, 2, true);
+        bool onCylinder = helix.IsValid();
+        for (const auto& p : helix.Sample(16))
+            onCylinder = onCylinder && Near(std::hypot(p.x - 1, p.y - 1), 5, 1e-3) && p.z > -1e-6 && p.z < 10 + 1e-6;
+        Check(onCylinder, "helix: every sample lies on the cylinder r = 5, 0 ≤ z ≤ 10");
+        Check(NearRel(helix.Length(), std::hypot(20 * kPi, 10), 1e-3), "helix: length √((20π)² + 10²)");
+        Check(NearPoint(helix.PointAt(helix.StartParam()), { 6, 1, 0 }, 1e-4) && NearPoint(helix.PointAt(helix.EndParam()), { 6, 1, 10 }, 1e-4),
+              "helix: starts at base + (r, 0, 0), two full turns end above it");
+        // 右旋：从上往下看逆时针，起点之后 y 增大
+        const Point3 early = helix.PointAt(helix.StartParam() + (helix.EndParam() - helix.StartParam()) * 0.02);
+        const NurbsCurve left = k.Helix({ 1, 1, 0 }, 10, 5, 5, 2, false);
+        const Point3 earlyLeft = left.PointAt(left.StartParam() + (left.EndParam() - left.StartParam()) * 0.02);
+        Check(early.y > 1 && earlyLeft.y < 1, "helix: right handed turns counter-clockwise, left handed clockwise");
+        const NurbsCurve cone = k.Helix({ 0, 0, 0 }, 10, 2, 6, 3, true);
+        Check(cone.IsValid() && NearPoint(cone.PointAt(cone.EndParam()), { 6, 0, 10 }, 1e-3), "helix: conical helix ends at the top radius");
+        Check(!k.Helix({ 0, 0, 0 }, 10, 0, 5, 2).IsValid() && !k.LastError().empty(), "helix: zero radius fails with an error");
+    }
+
+    void TestSurfaces(ISolidKernel& k)
+    {
+        // 放样：两个半径 5 的水平圆，间距 10 → 圆柱侧面，面积 2π·5·10
+        const NurbsCurve sections[] = { CircleCurve(0, 0, 0, 5), CircleCurve(0, 0, 10, 5) };
+        auto tube = k.Loft(sections);
+        Check(tube && NearRel(k.Area(tube), 100 * kPi, 1e-4), "loft two circles: cylinder side area 100π");
+        Check(tube && !k.IsSolid(tube), "loft: the result is an open surface, not a solid");
+        const AABB tb = tube ? k.Bounds(tube) : AABB::Empty();
+        Check(NearPoint(tb.Min, { -5, -5, 0 }, 1e-3) && NearPoint(tb.Max, { 5, 5, 10 }, 1e-3), "loft: bounds of the tube");
+        const Mesh tm = tube ? k.Tessellate(tube) : Mesh{};
+        Check(tm.TriangleCount() > 0 && !k.Edges(tube).Lines.empty(), "loft: tessellates and has boundary edges");
+
+        const NurbsCurve bulge[] = { CircleCurve(0, 0, 0, 5), CircleCurve(0, 0, 5, 7), CircleCurve(0, 0, 10, 5) };
+        auto vase = k.Loft(bulge);
+        const AABB vb = vase ? k.Bounds(vase) : AABB::Empty();
+        Check(vase && Near(vb.Max.x, 7, 0.05) && Near(vb.Max.z, 10, 1e-3), "loft three circles: passes through the middle section (r = 7)");
+
+        // 两个正方形截面：四个侧面，折痕处拆成单独的面（离散法线不跨过棱边平滑）
+        auto square = [](double z, double h) {
+            return NurbsCurve::FromSegments({ { -h, -h, z }, { h, -h, z }, { h, h, z }, { -h, h, z } }, {}, true);
+        };
+        const NurbsCurve squares[] = { square(0, 5), square(5, 5) };
+        auto boxSides = k.Loft(squares);
+        Check(boxSides && NearRel(k.Area(boxSides), 200.0, 1e-4) && k.FaceCount(boxSides) == 4, "loft two squares: 4 side faces, area 200");
+        Check(k.Loft(std::span<const NurbsCurve>(sections, 1)) == nullptr && !k.LastError().empty(), "loft: one section fails with an error");
+
+        // 直纹面：两条平行线段 → 矩形 10 × 5
+        auto ruled = k.RuledSurface(LineCurve({ 0, 0, 0 }, { 10, 0, 0 }), LineCurve({ 0, 0, 5 }, { 10, 0, 5 }));
+        Check(ruled && NearRel(k.Area(ruled), 50.0, 1e-6), "ruled surface between two lines: area 50");
+        auto twisted = k.RuledSurface(LineCurve({ 0, 0, 0 }, { 10, 0, 0 }), LineCurve({ 0, 10, 5 }, { 10, 10, -5 }));
+        Check(twisted && k.Area(twisted) > 100.0, "ruled surface between skew lines (hyperbolic paraboloid)");
+
+        // 旋转曲面：斜线绕 Z 轴 → 圆锥面，底半径 3、高 4、母线 5，面积 π·3·5；半圈面积减半
+        const NurbsCurve slant = LineCurve({ 3, 0, 0 }, { 0, 0, 4 });
+        auto coneSurf = k.RevolveSurface(slant, { 0, 0, 0 }, { 0, 0, 1 }, 360);
+        Check(coneSurf && NearRel(k.Area(coneSurf), 15 * kPi, 1e-4), "revolve surface: cone area 15π");
+        auto halfCone = k.RevolveSurface(slant, { 0, 0, 0 }, { 0, 0, 1 }, 180);
+        const AABB hb = halfCone ? k.Bounds(halfCone) : AABB::Empty();
+        Check(halfCone && NearRel(k.Area(halfCone), 7.5 * kPi, 1e-3) && hb.Min.y > -1e-6, "revolve surface 180° (right-hand rule): half cone on +Y");
+        auto halfConeNeg = k.RevolveSurface(slant, { 0, 0, 0 }, { 0, 0, 1 }, -180);
+        const AABB hnb = halfConeNeg ? k.Bounds(halfConeNeg) : AABB::Empty();
+        Check(halfConeNeg && hnb.Max.y < 1e-6, "revolve surface −180°: half cone on −Y");
+        auto cylSurf = k.RevolveSurface(LineCurve({ 5, 0, 0 }, { 5, 0, 10 }), { 0, 0, 0 }, { 0, 0, 1 }, 360);
+        Check(cylSurf && NearRel(k.Area(cylSurf), 100 * kPi, 1e-4), "revolve surface: vertical line → cylinder area 100π");
+
+        // 点阵曲面：平面上 4 × 4 个点 → 30 × 30 的平面片；角点就是输入的角点
+        std::vector<Point3> grid;
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                grid.push_back({ c * 10.0, r * 10.0, 0.0 });
+        auto plate = k.SurfaceFromPoints(grid, 4, 4);
+        Check(plate && NearRel(k.Area(plate), 900.0, 1e-6) && !k.IsSolid(plate), "surface from 4×4 points: flat 30 × 30 sheet");
+        Point3 p;
+        Vec3 n;
+        bool corners = plate != nullptr;
+        for (auto [u, v] : { std::pair{ 0.0, 0.0 }, std::pair{ 1.0, 0.0 }, std::pair{ 0.0, 1.0 }, std::pair{ 1.0, 1.0 } })
+            if (!k.EvaluateSurface(plate, 0, u, v, p, n) || !((Near(p.x, 0) || Near(p.x, 30)) && (Near(p.y, 0) || Near(p.y, 30)) && Near(p.z, 0)))
+                corners = false;
+        Check(corners, "evaluate: the parameter corners are the grid corners");
+        Check(k.EvaluateSurface(plate, 0, 0.5, 0.5, p, n) && NearPoint(p, { 15, 15, 0 }, 1e-6) && Near(std::abs(n.z), 1.0, 1e-9),
+              "evaluate: midpoint and unit normal ±Z");
+        // 法线与离散网格的外侧一致
+        const Vec3 meshDir = MeshNormalSum(k.Tessellate(plate));
+        Check(meshDir.z * n.z > 0, "evaluate: the normal agrees with the tessellation's outside");
+        Check(!k.EvaluateSurface(plate, 5, 0.5, 0.5, p, n) && !k.LastError().empty(), "evaluate: face index out of range fails");
+
+        std::vector<Point3> hump;
+        for (int r = 0; r < 5; ++r)
+            for (int c = 0; c < 5; ++c)
+                hump.push_back({ c * 5.0, r * 5.0, (r == 2 && c == 2) ? 6.0 : 0.0 });
+        auto humpSurf = k.SurfaceFromPoints(hump, 5, 5);
+        Point3 top;
+        Check(humpSurf && k.EvaluateSurface(humpSurf, 0, 0.5, 0.5, top, n) && Near(top.z, 6.0, 1e-6), "surface from points: passes through the raised middle point");
+        Check(k.SurfaceFromPoints(grid, 3, 4) == nullptr && !k.LastError().empty(), "surface from points: wrong count fails with an error");
+        // 行、列少于 4 个点：阶数降低（2 × 2 为双线性面片，2 × 3 一个方向二次）
+        const std::vector<Point3> quad = { { 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 }, { 10, 10, 0 } };
+        auto bilinear = k.SurfaceFromPoints(quad, 2, 2);
+        Check(bilinear && NearRel(k.Area(bilinear), 100.0, 1e-6), "surface from 2 × 2 points: bilinear patch, area 100");
+        const std::vector<Point3> arch = { { 0, 0, 0 }, { 5, 0, 3 }, { 10, 0, 0 }, { 0, 8, 0 }, { 5, 8, 3 }, { 10, 8, 0 } };
+        auto archSurf = k.SurfaceFromPoints(arch, 2, 3);
+        Check(archSurf && k.EvaluateSurface(archSurf, 0, 0.5, 0.5, top, n) && Near(top.z, 3.0, 1e-6), "surface from 2 × 3 points: quadratic across, passes through the ridge");
+
+        // 偏移：平面片沿法线偏移 2
+        Vec3 plateNormal;
+        k.EvaluateSurface(plate, 0, 0.5, 0.5, p, plateNormal);
+        auto offset = k.OffsetSurface(plate, 2);
+        const AABB ob = offset ? k.Bounds(offset) : AABB::Empty();
+        Check(offset && Near(ob.Min.z, 2 * plateNormal.z, 1e-3) && Near(ob.Max.z, 2 * plateNormal.z, 1e-3) && NearRel(k.Area(offset), 900.0, 1e-4),
+              "offset surface: the flat sheet moves 2 along its normal");
+        auto tubeOffset = tube ? k.OffsetSurface(tube, 1) : nullptr;
+        const double toa = tubeOffset ? k.Area(tubeOffset) : 0.0;
+        Check(tubeOffset && (NearRel(toa, 120 * kPi, 1e-3) || NearRel(toa, 80 * kPi, 1e-3)), "offset surface: the tube becomes r = 6 or r = 4");
+
+        // 加厚：平面片 → 30 × 30 × 2 的实体
+        auto slab = k.Thicken(plate, 2);
+        Check(slab && k.IsSolid(slab) && NearRel(k.Volume(slab), 1800.0, 1e-4), "thicken: flat sheet → solid slab, volume 1800");
+        const AABB sb = slab ? k.Bounds(slab) : AABB::Empty();
+        Check(Near(sb.Max.z - sb.Min.z, 2, 1e-3) && Near(plateNormal.z > 0 ? sb.Max.z : sb.Min.z, 2 * plateNormal.z, 1e-3), "thicken: along the surface normal");
+        auto wall = tube ? k.Thicken(tube, 1) : nullptr;
+        const double wv = wall ? k.Volume(wall) : 0.0;
+        Check(wall && k.IsSolid(wall) && (NearRel(wv, 110 * kPi, 1e-3) || NearRel(wv, 90 * kPi, 1e-3)), "thicken: tube → pipe wall 1 thick");
+        Check(k.Thicken(plate, 0) == nullptr && !k.LastError().empty(), "thicken: zero thickness fails with an error");
+
+        // 管道：沿直线 → 圆柱体积 π·r²·L；沿螺旋线 → 实体（弹簧）
+        auto rod = k.Pipe(LineCurve({ 0, 0, 0 }, { 0, 0, 10 }), 1, true);
+        Check(rod && k.IsSolid(rod) && NearRel(k.Volume(rod), 10 * kPi, 1e-3), "pipe along a line: cylinder volume 10π");
+        const NurbsCurve coil = k.Helix({ 0, 0, 0 }, 20, 10, 10, 2, true);
+        auto spring = k.Pipe(coil, 1, true);
+        Check(spring && k.IsSolid(spring) && NearRel(k.Volume(spring), kPi * coil.Length(), 1e-2), "pipe along a helix: spring volume ≈ π·r²·L");
+        Check(k.Pipe(coil, 0, true) == nullptr && !k.LastError().empty(), "pipe: zero radius fails with an error");
+
+        // 实体的 IsSolid、面积
+        auto box = k.Box({ 0, 0, 0 }, 1, 2, 3);
+        Check(k.IsSolid(box) && NearRel(k.Area(box), 22.0, 1e-6) && k.FaceCount(box) == 6, "box: solid, area 22, 6 faces");
+
+        // 读写：开放曲面往返后仍是开放曲面，面积不变；变换照常
+        auto loaded = tube ? k.Load(k.Save(tube)) : nullptr;
+        Check(loaded && !k.IsSolid(loaded) && NearRel(k.Area(loaded), 100 * kPi, 1e-4), "save / load an open surface");
+        auto movedTube = tube ? k.Transform(tube, Math::Mat4::Translation({ 0, 0, 5 })) : nullptr;
+        Check(movedTube && Near(k.Bounds(movedTube).Min.z, 5, 1e-3), "transform an open surface");
+    }
 }
 
 int main()
@@ -418,6 +665,9 @@ int main()
     TestHiddenLines(*kernel);
     TestSection(*kernel);
     TestSaveLoad(*kernel);
+    TestNurbsCurve();
+    TestSpaceCurves(*kernel);
+    TestSurfaces(*kernel);
 
     std::printf("\n%d failed\n", g_failed);
     return g_failed;

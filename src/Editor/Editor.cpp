@@ -96,6 +96,22 @@ namespace MiniCAD
 {
     namespace
     {
+        // 节点图预览的线：实体 Draw() 输出的线段按各自的颜色写入顶点（填充三角形不画）
+        class PreviewLineSink : public IDrawSink
+        {
+        public:
+            explicit PreviewLineSink(std::vector<Vertex_P3_C4>& out) : m_out(out) {}
+            void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& c, bool) override
+            {
+                const VertexColor color(Math::Float4{ static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f });
+                m_out.push_back({ { static_cast<float>(a.x), static_cast<float>(a.y), static_cast<float>(a.z) }, color });
+                m_out.push_back({ { static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(b.z) }, color });
+            }
+
+        private:
+            std::vector<Vertex_P3_C4>& m_out;
+        };
+
         // 悬停高亮收集器：把实体 Draw() 输出的几何以固定高亮色直接写入 overlay 顶点缓冲。
         // 用于每帧重建“当前悬停实体”的高亮，无需触碰整场景顶点。
         class HoverHighlightSink : public IDrawSink
@@ -166,6 +182,8 @@ namespace MiniCAD
         auto& cmdStack = doc.GetCommandStack();
          
         m_overlay.Bind(viewport);
+        m_previewOverlay.Bind(viewport);
+        ClearPreviewGeometry();
         m_picking.Bind(scene, viewport);
         m_gripEditor.Bind(viewport, scene, cmdStack, m_picking, m_overlay);
 
@@ -654,7 +672,13 @@ namespace MiniCAD
         if (!m_doc || !m_viewport)
             return;
         AABB box = AABB::Empty();
-        if (!m_doc->GetScene().GetExtents(box))
+        bool any = m_doc->GetScene().GetExtents(box);
+        if (AABB preview; GetPreviewBounds(preview))   // 节点图预览也算在全图范围内
+        {
+            box.Expand(preview);
+            any = true;
+        }
+        if (!any)
         {
             m_commandLine.Echo("图形中没有可显示的对象");
             return;
@@ -1344,11 +1368,42 @@ namespace MiniCAD
         Camera& cam = m_viewport->GetCamera();
         const CameraState before = cam.GetState();
         cam.SetView(azimuthDeg, elevationDeg);
-        if (AABB box = AABB::Empty(); m_doc->GetScene().GetExtents(box))
+        AABB box = AABB::Empty(), preview;
+        const bool hasScene   = m_doc->GetScene().GetExtents(box);
+        const bool hasPreview = GetPreviewBounds(preview);   // 节点图预览也算在全图范围内
+        if (hasPreview)
+            box.Expand(preview);
+        if (hasScene || hasPreview)
             cam.ZoomToBounds(box);
         const CameraState after = cam.GetState();
         cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
         m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+    }
+
+    void Editor::SetPreviewGeometry(std::vector<std::shared_ptr<const Entity>> entities, std::vector<Math::Point3> points,
+                                    std::vector<Math::Point3> highlightPoints)
+    {
+        if (entities.empty() && points.empty() && highlightPoints.empty() && m_previewEntities.empty() &&
+            m_previewPoints.empty() && m_previewHighlightPoints.empty())
+            return;
+        m_previewEntities        = std::move(entities);
+        m_previewPoints          = std::move(points);
+        m_previewHighlightPoints = std::move(highlightPoints);
+        m_previewBounds          = AABB::Empty();
+        for (const auto& e : m_previewEntities)
+            m_previewBounds.Expand(e->GetBoundingBox());
+        for (const auto* list : { &m_previewPoints, &m_previewHighlightPoints })
+            for (const auto& p : *list)
+                m_previewBounds.Expand(p);
+        ++m_previewVersion;
+    }
+
+    bool Editor::GetPreviewBounds(AABB& out) const
+    {
+        if (m_previewBounds.Min.x > m_previewBounds.Max.x)
+            return false;
+        out = m_previewBounds;
+        return true;
     }
 
     // 三维实体随视图变化的部分：着色面与轮廓线。场景重建、视线方向或视觉样式变化时重建，平移、缩放不重建。
@@ -1361,8 +1416,9 @@ namespace MiniCAD
         const Camera& cam = m_viewport->GetCamera();
         const Math::Vec3 f = cam.GetViewDir();
         const bool viewChanged = (f - m_shadedViewDir).LengthSq() > 1e-18;
-        if (m_shadedValid && !sceneRebuilt && !viewChanged && m_shadedSceneVersion == m_sceneVersion)
+        if (m_shadedValid && !sceneRebuilt && !viewChanged && m_shadedSceneVersion == m_sceneVersion && m_shadedPreviewVersion == m_previewVersion)
             return;
+        m_shadedPreviewVersion = m_previewVersion;
 
         m_shadedVertices.clear();
         m_silhouetteVertices.clear();
@@ -1380,20 +1436,11 @@ namespace MiniCAD
         const Scene& scene = m_doc->GetScene();
         const LayerManager& layers = scene.GetLayerManager();
         std::vector<double> facing;
-        scene.ForEachObject([&](const Object& o)
+        auto addSolid = [&](const Solid3DEntity& solid, const Math::Color4& base)
         {
-            if (!o.IsKindOf<Solid3DEntity>())
-                return;
-            const auto& solid = static_cast<const Solid3DEntity&>(o);
-            const auto& attr  = solid.GetAttr();
-            const Layer* layer = layers.GetLayer(attr.LayerId);
-            if (!attr.Visible || (layer && !layer->IsVisible()))
-                return;
             const auto& mesh = solid.GetLocalMesh();
             if (mesh.Empty())
                 return;
-            const Math::Color4 base = attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor()
-                                                                                          : static_cast<Math::Color4>(attr.Color);
             const Math::Mat4& m = solid.GetTransform();
 
             if (shaded)
@@ -1432,7 +1479,27 @@ namespace MiniCAD
                     m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.A])), lineColor });
                     m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.B])), lineColor });
                 }
+        };
+        scene.ForEachObject([&](const Object& o)
+        {
+            if (!o.IsKindOf<Solid3DEntity>())
+                return;
+            const auto& solid = static_cast<const Solid3DEntity&>(o);
+            const auto& attr  = solid.GetAttr();
+            const Layer* layer = layers.GetLayer(attr.LayerId);
+            if (!attr.Visible || (layer && !layer->IsVisible()))
+                return;
+            addSolid(solid, attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color));
         });
+
+        // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试
+        for (const auto& e : m_previewEntities)
+        {
+            if (e->IsKindOf<Solid3DEntity>())
+                addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
+            PreviewLineSink sink(m_silhouetteVertices);
+            e->Draw(sink, false, false);
+        }
 
         // 三角形从远到近排序：俯视时着色面不做深度测试（与二维内容一样按绘制顺序叠放），近的面要画在后面
         if (m_shadedVertices.size() >= 6)
@@ -1499,6 +1566,11 @@ namespace MiniCAD
         for (const auto& [id, solid] : solids)
         {
             Solid::BodyPtr body = solid->GetWorldBody(*m_solidKernel);
+            if (body && !m_solidKernel->IsSolid(body))
+            {
+                m_commandLine.Echo(std::string(kLabel[opi]) + "只适用于封闭实体：选择集里有开放曲面（可在节点编辑器里先“加厚”），未做修改");
+                return;
+            }
             if (body && result)
                 body = m_solidKernel->Boolean(kop, result, body);
             if (!body)
@@ -2667,6 +2739,15 @@ namespace MiniCAD
                                 (zoomChanged && m_selViewDependent));
 
         m_overlay.ToVertices(m_overlayVertices);
+        if (!m_previewPoints.empty() || !m_previewHighlightPoints.empty())
+        {
+            m_previewOverlay.Clear();
+            for (const auto& p : m_previewPoints)
+                m_previewOverlay.AddPoint(p, Math::Color4{ 0.86, 0.36, 0.30, 1.0 });
+            for (const auto& p : m_previewHighlightPoints)
+                m_previewOverlay.AddPoint(p, Math::Color4{ 0.30, 0.85, 0.40, 1.0 });
+            m_previewOverlay.ToVertices(m_overlayVertices);
+        }
 
         // 约束辅助线：直接写入「每帧重建」的 m_overlayVertices，绝不入持久的
         // m_overlay。后者只在工具 MouseMove/结束或场景/选择变化时才清空，把辅助线
@@ -3206,6 +3287,8 @@ namespace MiniCAD
                 m_sceneBoundsValid   = true;
             }
             vs.SceneBounds = m_sceneBounds;
+            if (m_previewBounds.Min.x <= m_previewBounds.Max.x)
+                vs.SceneBounds.Expand(m_previewBounds);   // 节点图预览也不能被深度范围裁掉
         }
         vs.Glyphs          = m_glyphInstances;
         vs.GlyphBatches    = m_glyphBatches;
