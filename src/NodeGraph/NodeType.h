@@ -170,7 +170,9 @@ namespace MiniCAD::Nodes
 
     // 内置节点注册（按分类分在几个文件里）
     void RegisterMathNodes(NodeRegistry& r);       // 输入、数学、向量、列表
+    void RegisterDataNodes(NodeRegistry& r);       // 数学 / 列表 / 向量补充、平面（N6）
     void RegisterGeometryNodes(NodeRegistry& r);   // 曲线、图纸引用、变换、阵列
     void RegisterSolidNodes(NodeRegistry& r);      // 三维实体、分析
     void RegisterSurfaceNodes(NodeRegistry& r);    // 空间曲线、曲面
+    void RegisterCurveXformNodes(NodeRegistry& r); // 曲线、图纸引用、变换补充（N6）
 }

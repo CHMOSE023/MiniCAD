@@ -59,6 +59,30 @@ namespace MiniCAD::Nodes
                 (item.Highlight ? set.HighlightPoints : set.Points).push_back({ p.x, p.y, p.z });
                 break;
             }
+            case DataType::Plane:
+            {
+                // 平面：以原点为中心、边长 10 的方框 + X（红）/ Y（绿）/ Z（蓝）轴，只预览不烘焙
+                const Plane& pl = item.v.AsPlane();
+                auto pt = [&](double u, double v, double w = 0.0) { return Geo::P(pl.PointAt(u, v, w)); };
+                const Math::Point3 corners[4] = { pt(-5, -5), pt(5, -5), pt(5, 5), pt(-5, 5) };
+                for (int i = 0; i < 4; ++i)
+                {
+                    std::shared_ptr<Entity> e = std::const_pointer_cast<Entity>(Geo::MakeLine(corners[i], corners[(i + 1) % 4]));
+                    e->SetAttr(attr);
+                    set.Entities.push_back(std::move(e));
+                }
+                const Math::Point3 axisEnds[3] = { pt(4, 0), pt(0, 4), pt(0, 0, 4) };
+                const double axisColors[3][3] = { { 0.90, 0.24, 0.24 }, { 0.24, 0.78, 0.31 }, { 0.27, 0.47, 0.94 } };
+                for (int i = 0; i < 3; ++i)
+                {
+                    std::shared_ptr<Entity> e = std::const_pointer_cast<Entity>(Geo::MakeLine(pt(0, 0), axisEnds[i]));
+                    EntityAttr axisAttr = attr;
+                    axisAttr.Color = EntityColor::FromRgb(axisColors[i][0], axisColors[i][1], axisColors[i][2]);
+                    e->SetAttr(axisAttr);
+                    set.Entities.push_back(std::move(e));
+                }
+                break;
+            }
             case DataType::Curve:
                 if (item.v.AsCurve())
                 {

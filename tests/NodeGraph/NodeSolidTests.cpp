@@ -1,6 +1,7 @@
 // 节点图的三维实体节点测试（docs/NodeGraph/PLAN.md，MINICAD_WITH_SOLID）：
 // 基本体、拉伸（含圆角矩形，验证凸度方向）、旋转、扫掠、阵列 + 并集、差集、交集、圆角 / 倒角、实体信息、截面、
-// 变换、预览（离散缓存、绘图区着色面）与烘焙；空间曲线与曲面（放样、加厚、旋转曲面、点阵曲面、管道、读写往返与导出）
+// 变换、预览（离散缓存、绘图区着色面）与烘焙；空间曲线与曲面（放样、加厚、旋转曲面、点阵曲面、管道、读写往返与导出）；
+// N6：引用图纸里的三维实体、实体的定向 / 任意轴旋转 / 非均匀缩放 / 沿曲线阵列、平面预览
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/Preview.h"
 #include "Document/Document.h"
@@ -521,6 +522,76 @@ namespace
     }
 }
 
+namespace
+{
+    void TestN6WithKernel()
+    {
+        Fixture f;
+        Graph& g = f.g;
+
+        // 引用图纸里的三维实体（带变换矩阵）：体积与位置都是图纸里的样子
+        Document doc;
+        Scene& scene = doc.GetScene();
+        const auto solidId = scene.NextObjectID();
+        auto solid = Solid3DEntity::Create(solidId, *f.kernel, f.kernel->Box({ 0, 0, 0 }, 10, 10, 10));
+        solid->ApplyTransform(Math::Mat4::Translation({ 100, 0, 0 }));
+        scene.AddEntity(std::move(solid));
+        f.ctx.DocScene     = &scene;
+        f.ctx.SceneVersion = scene.GeometryVersion();
+        const NodeId ref = Add(g, "doc.bodies"), info = Add(g, "solid.info");
+        g.SetParam(ref, 0, std::to_string(solidId));
+        g.Connect({ ref, 0, info, 0 });
+        f.Eval();
+        const AABB rb = f.Count(ref) == 1 ? f.kernel->Bounds(f.Body(ref)) : AABB::Empty();
+        Check(f.Ok(ref) && Near(f.Volume(ref), 1000.0) && Near(rb.Min.x, 100.0) && Near(f.Number(info), 1000.0),
+              "N6 reference: a drawing solid (with its transform) becomes a body");
+
+        // 实体定向到竖直平面：体积不变，Z 方向的高度变成了宽度
+        const NodeId box = Add(g, "solid.box"), orient = Add(g, "xform.orient"), target = Add(g, "plane.make");
+        g.SetInputValue(box, 3, 2.0);   // 10 × 10 × 2
+        g.Connect({ box, 0, orient, 0 });
+        g.SetInputValue(target, 1, Value(Math::Vec3{ 1, 0, 0 }));   // 法向 +X 的竖直平面
+        g.Connect({ target, 0, orient, 2 });
+        f.Eval();
+        const AABB ob = f.Count(orient) == 1 ? f.kernel->Bounds(f.Body(orient)) : AABB::Empty();
+        Check(f.Ok(orient) && Near(f.Volume(orient), 200.0) && Near(ob.Max.x - ob.Min.x, 2.0) && Near(ob.Max.z - ob.Min.z, 10.0),
+              "N6 orient: a slab laid onto a vertical plane");
+
+        // 任意轴旋转与非均匀缩放
+        const NodeId rot = Add(g, "xform.rotate"), nu = Add(g, "xform.scalenu");
+        g.Connect({ box, 0, rot, 0 });
+        g.SetParam(rot, 0, int64_t(3));                              // 自定义轴
+        g.SetInputValue(rot, 1, 90.0);
+        g.SetInputValue(rot, 3, Value(Math::Vec3{ 0, 1, 0 }));       // 绕 Y 轴 90°：Z 高度 2 变成 X 宽度
+        g.Connect({ box, 0, nu, 0 });
+        g.SetInputValue(nu, 2, Value(Math::Vec3{ 1, 3, 2 }));
+        f.Eval();
+        const AABB rb2 = f.Count(rot) == 1 ? f.kernel->Bounds(f.Body(rot)) : AABB::Empty();
+        Check(f.Ok(rot) && Near(rb2.Max.x - rb2.Min.x, 2.0) && Near(f.Volume(rot), 200.0), "N6 rotate: a body about a custom axis");
+        Check(f.Ok(nu) && Near(f.Volume(nu), 1200.0), "N6 scale: non-uniform scaling multiplies the volume by 1 × 3 × 2");
+
+        // 沿曲线阵列实体
+        const NodeId cyl = Add(g, "solid.cylinder"), circle = Add(g, "curve.circle"), arr = Add(g, "xform.curvearray");
+        g.SetInputValue(cyl, 1, 1.0);
+        g.SetInputValue(circle, 1, 30.0);
+        g.Connect({ cyl, 0, arr, 0 });
+        g.Connect({ circle, 0, arr, 1 });
+        g.SetInputValue(arr, 2, int64_t(6));
+        f.Eval();
+        Check(f.Ok(arr) && f.Count(arr) == 6 && Near(f.Volume(arr), 6 * kPi * 10, 1e-2), "N6 array: bodies along a circle");
+
+        // 平面预览：方框 4 条边 + 3 条轴；烘焙时跳过
+        Graph pg;
+        const NodeId pl = Add(pg, "plane.standard");
+        pg.Evaluate(f.ctx);
+        PreviewBuilder builder;
+        const PreviewSet set = builder.Build(pg, {}, f.kernel);
+        Check(set.Entities.size() == 7, "N6 preview: a plane shows a square and three axes");
+        Check(Bake(pg, {}, scene, doc.GetCommandStack(), f.kernel) == 0, "N6 bake: planes are not baked");
+        (void)pl;
+    }
+}
+
 int main()
 {
     auto kernel = Solid::CreateSMLibKernel();
@@ -533,6 +604,7 @@ int main()
     TestCurve3D();
     TestSurfaceNodes();
     TestSurfacePreviewBakeAndFiles();
+    TestN6WithKernel();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

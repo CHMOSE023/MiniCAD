@@ -106,9 +106,10 @@ namespace MiniCAD
         host.action = [this](Nodes::NodeId id, const std::string& action)
         {
             Document* doc = m_docManager.GetActive();
-            if (!doc || action != "pickCurves")
+            if (!doc || (action != "pickCurves" && action != "pickPoints" && action != "pickBodies"))
                 return;
-            // 引用曲线：图纸里当前选中的曲线
+            // 引用节点：图纸里当前选中的、该节点能引用的对象（曲线 / 点 / 三维实体）
+            const std::string noun = Nodes::Geo::ReferenceNoun(action);
             std::vector<Object::ObjectID> ids(m_docManager.GetEditor().GetSelection().begin(), m_docManager.GetEditor().GetSelection().end());
             std::sort(ids.begin(), ids.end());
             std::string text;
@@ -116,7 +117,7 @@ namespace MiniCAD
             for (auto oid : ids)
             {
                 const Object* o = doc->GetScene().GetEntity(oid);
-                if (!o || !o->IsKindOf<Entity>() || !Nodes::Geo::CurveFromEntity(static_cast<const Entity&>(*o)))
+                if (!o || !o->IsKindOf<Entity>() || !Nodes::Geo::CanReference(action, static_cast<const Entity&>(*o)))
                     continue;
                 text += (text.empty() ? "" : ",") + std::to_string(oid);
                 ++count;
@@ -125,8 +126,8 @@ namespace MiniCAD
             NodeHistory(*doc).Snapshot(g);
             g.SetParam(id, 0, Nodes::Value(text));
             doc->MarkDirty();
-            m_docManager.GetEditor().GetCmdLine().Echo(count > 0 ? "引用曲线：已引用 " + std::to_string(count) + " 个对象"
-                                                                 : "引用曲线：选择集里没有直线、圆弧、圆、多段线或矩形，已清空引用");
+            m_docManager.GetEditor().GetCmdLine().Echo(count > 0 ? "引用" + noun + "：已引用 " + std::to_string(count) + " 个对象"
+                                                                 : "引用" + noun + "：选择集里没有可引用的" + noun + "，已清空引用");
             m_platform->RequestRedraw();
         };
         auto editor = std::make_unique<NodeEditorView>(std::move(host));

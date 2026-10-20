@@ -7,7 +7,9 @@
 > 曲面（2026-10-20）：空间 NURBS 曲线类型 `Curve3D`、“曲线/NURBS”（插值 / 拟合 / 控制点曲线、螺旋线、曲线取点）与“曲面”大类
 >（创建：放样、直纹面、旋转曲面、点阵曲面、管道；修改：偏移曲面、加厚；分析：曲面取点、曲面信息），内核接口见 `docs/Solid/PLAN.md` 第 11 节。
 > N5 已实现（2026-10-20）：从引脚拖出时的搜索过滤与排序、Alt 单击引脚断开、分类顺序表与菜单统一、已有节点改名与换分类（第 4.1、9.2～9.4 节）。
-> 规划（2026-10-20）：N6～N10——Revit 式实体形体（5 种实心 + 5 种空心）、Grasshopper 式曲面、网格、
+> N6 第一批已实现（2026-10-20）：`Domain` / `Plane` 类型、表达式（`Expression`）、数学 / 列表 / 向量 / 平面补充、三点圆弧、椭圆、
+> 曲线分析（端点、信息、最近点、求交）、引用点 / 引用实体、任意轴旋转、非均匀缩放、定向、矩形阵列、沿曲线阵列；曲线修改（“曲线/修改”）留在 N6b。
+> 规划（2026-10-20）：N6b～N10——曲线修改、Revit 式实体形体（5 种实心 + 5 种空心）、Grasshopper 式曲面、网格、
 > 几何运算与实体 / 曲面 / 网格之间的转换（第 4～11 节）。
 > 定位：把 MiniCAD 已有的几何能力（二维实体、`ISolidKernel` / SMLib 三维实体内核）封装成可连接的**功能节点**，
 > 用节点图 + 数据流 + 依赖调度实现类似 Grasshopper、Blender Geometry Nodes、UE5 Blueprint 的可视化参数化建模；
@@ -72,8 +74,8 @@ MiniCAD 实体（曲线）  +  ISolidKernel（三维实体、曲面）  +  Scene
 | `Boolean` | `bool` | 数值非 0 为真 |
 | `Text` | `std::string` | 任何值都能转成文字（面板节点显示用） |
 | `Vector` | `Math::Vec3` | 点与向量不区分（同 Grasshopper 的 Point / Vector 互转） |
-| `Domain` 🆕 | `{double Min, Max}` | 区间（参数曲面、曲线 / 曲面的参数范围、重映射）。数值转区间为 `[0, x]` |
-| `Plane` 🆕 | 原点 + 单位 X / Y 轴（Z = X × Y） | 工作平面（Revit 的工作平面 / 参照平面，Grasshopper 的 Plane）。平面转 `Vector` 取原点；`Vector` 转平面为过该点的 XY 平面 |
+| `Domain` ✅ | `{double Min, Max}` | 区间（参数曲面、曲线 / 曲面的参数范围、重映射）。数值转区间为 `[0, x]` |
+| `Plane` ✅ | 原点 + 单位 X / Y 轴（Z = X × Y） | 工作平面（Revit 的工作平面 / 参照平面，Grasshopper 的 Plane）。平面转 `Vector` 取原点；`Vector` 转平面为过该点的 XY 平面 |
 | `Curve` | `shared_ptr<const Entity>` | MiniCAD 的曲线实体（ID 为 0，不在场景里），不可变 |
 | `Curve3D` | `shared_ptr<const Solid::NurbsCurve>` | 空间 NURBS 曲线（“空间曲线”），不可变。曲线实体连到 `Curve3D` 端口时自动转换：直线、全是直线段的多段线（可以是空间折线）→ 一次曲线，圆弧、圆、带圆弧段的水平多段线、矩形 → 二次有理曲线（精确），带控制点的样条原样；反过来不能转换 |
 | `Body` | `BodyValue { Solid::BodyPtr; bool Void; }` | 内核实体或开放曲面（`ISolidKernel::IsSolid` 区分），不可变；端口上显示为“实体 / 曲面”。`Void` 🆕 为空心标记（第 5 节），变换、阵列、列表节点原样传递 |
@@ -134,7 +136,7 @@ MiniCAD 实体（曲线）  +  ISolidKernel（三维实体、曲面）  +  Scene
   与 Revit 族里空心只用来切除的语义一致
 - 🆕 网格：预览着色 + 细线画网格边（开关“显示网格线”）；烘焙为多面网格实体（新增 `MeshEntity`，导出 DWG / DXF 为多面网格；
   在此之前退路是烘焙为 `Solid3DEntity`，见第 8 节）
-- 🆕 平面：预览画成以原点为中心的小方框 + 三色轴（不烘焙）
+- ✅ 平面：预览画成以原点为中心、边长 10 的方框 + 三色轴（X 红、Y 绿、Z 蓝），不烘焙
 
 ### 3.6 撤销（`GraphHistory`）
 
@@ -176,7 +178,7 @@ MiniCAD 实体（曲线）  +  ISolidKernel（三维实体、曲面）  +  Scene
 
 状态：✅ 已有；⬆ 已有，需升级（改名、换分类或加端口，ID 不变）；🆕 计划。表格顺序即菜单顺序；“｜”表示菜单分隔线。
 N5 已完成全部只改名 / 换分类的升级（分类见 `NodeRegistry::CategoryOrder()`，`NodeGraphTests --dump-nodes` 输出当前清单）；
-表中 ⬆ 剩下的是加端口的部分（拉伸的起点 / 终点、旋转的角度范围、放样的空间路径、截面的平面、旋转任意轴、非均匀缩放），在 N6 / N7 做。
+表中 ⬆ 剩下的是加端口的部分（拉伸的起点 / 终点、旋转的角度范围、放样的空间路径、截面的平面），在 N7 做。
 
 #### 输入
 
@@ -193,27 +195,29 @@ N5 已完成全部只改名 / 换分类的升级（分类见 `NodeRegistry::Cate
 | 节点 | ID | 状态 | 说明 |
 |---|---|---|---|
 | 引用曲线 | `doc.curves` | ✅ | 图纸里选中的直线 / 圆弧 / 圆 / 多段线 / 矩形；节点上的“用选择集设置” |
-| 引用点 | `doc.points` | 🆕 | 点实体、或曲线的端点（选择集） |
-| 引用实体 | `doc.bodies` | 🆕 | 图纸里的 `Solid3DEntity` → `Body`（可作为被空心切除的对象、布尔运算的输入） |
+| 引用点 | `doc.points` | ✅ | 图纸里的点对象（选择集；曲线端点用“端点”节点取） |
+| 引用实体 | `doc.bodies` | ✅ | 图纸里的 `Solid3DEntity`（含变换矩阵）→ `Body`（可作为被空心切除的对象、布尔运算的输入）；没有内核时报错 |
+
+“用选择集设置”按 `NodeTypeInfo::Action`（`pickCurves` / `pickPoints` / `pickBodies`）由宿主实现，能否引用由 `Geo::CanReference` 判断。
 
 #### 数学
 
 | 小类 | 节点（ID） | 状态 |
 |---|---|---|
 | 运算 | 加 `math.add`、减 `math.sub`、乘 `math.mul`、除 `math.div`、乘方 `math.pow`、取负 `math.neg`、绝对值 `math.abs`、最小 `math.min`、最大 `math.max` | ✅（现在的分类是“数学”，改为“数学/运算”） |
-| | 取余 `math.mod`、取整 `math.round`（四舍五入 / 向下 / 向上） | 🆕 |
+| | 取余 `math.mod`、取整 `math.round`（四舍五入 / 向下 / 向上，输出整数） | ✅ |
 | 函数 | 平方根 `math.sqrt`、正弦 `math.sin`、余弦 `math.cos`（角度为度） | ✅ |
-| | 正切 `math.tan`、反正弦 `math.asin`、反余弦 `math.acos`、反正切 `math.atan2`、常数 `math.const`（π、e、黄金比） | 🆕 |
-| 表达式 | 表达式 `math.expression`（变量 a、b、c… 或命名参数名；语法同 Revit 公式，含 `if()`、`and()`、`not()`、`round()`）、比较 `math.compare`（> ≥ = ≠ ≤ <）、条件选择 `math.if` | 🆕 |
+| | 正切 `math.tan`、反正弦 `math.asin`、反余弦 `math.acos`、反正切 `math.atan2`、常数 `math.const`（π、e、黄金比、√2） | ✅ |
+| 表达式 | 表达式 `math.expression`（变量 a、b、c、d，N7 起可用命名参数名；语法同 Revit 公式，含 `if()`、`and()`、`not()`、`round()`，见 `NodeGraph/Expression.h`）、比较 `math.compare`（> ≥ = ≠ ≤ <）、条件选择 `math.if` | ✅ |
 | 序列 | 区间等分 `math.range`、等差序列 `math.series`、随机数 `math.random`、求和 `math.sum` | ✅ |
-| | 区间 `math.domain`（构造 / 分解区间）、重映射 `math.remap` | 🆕 |
+| | 区间 `math.domain`、分解区间 `math.domainparts`、重映射 `math.remap` | ✅ |
 
 #### 列表
 
 | 节点（ID） | 状态 |
 |---|---|
 | 合并 `list.merge`、列表项 `list.item`、列表长度 `list.length`、反转 `list.reverse`、重复 `list.repeat` | ✅ |
-| 子列表 `list.slice`、排序 `list.sort`（按键排序，同时排列另一列表）、按布尔筛选 `list.filter`、移位 `list.shift`、交叉引用 `list.cross`（笛卡尔积，配合最长列表做网格） | 🆕 |
+| 子列表 `list.slice`、排序 `list.sort`（按键排序，同时排列另一列表）、按布尔筛选 `list.filter`、移位 `list.shift`、交叉引用 `list.cross`（笛卡尔积，配合最长列表做网格） | ✅ |
 
 #### 向量
 
@@ -221,19 +225,19 @@ N5 已完成全部只改名 / 换分类的升级（分类见 `NodeRegistry::Cate
 |---|---|---|
 | 点 | 构造点 `vector.point`、分解点 `vector.deconstruct`、点阵 `vector.grid`、两点距离 `vector.distance` | ✅（现在的分类是“向量”，改为“向量/点”） |
 | 向量 | 向量相加 `vector.add`、向量缩放 `vector.scale`、单位向量 `vector.unit`（X / Y / Z） | ✅ |
-| | 两点向量 `vector.between`、向量长度 `vector.length`、叉积 `vector.cross`、点积 `vector.dot`、夹角 `vector.angle` | 🆕 |
-| 平面 | 标准平面 `plane.standard`（XY / YZ / XZ，可偏移）、构造平面 `plane.make`（原点 + 法向，或原点 + X + Y）、三点平面 `plane.points`、分解平面 `plane.deconstruct`（原点、X / Y / Z 轴）、平面偏移 `plane.offset`、平面坐标 `plane.coords`（平面内坐标 ↔ 世界点） | 🆕 |
+| | 两点向量 `vector.between`、向量长度 `vector.length`、叉积 `vector.cross`、点积 `vector.dot`、夹角 `vector.angle` | ✅ |
+| 平面 | 标准平面 `plane.standard`（XY / YZ / XZ，可偏移）、构造平面 `plane.make`（原点 + 法向，或原点 + X + Y）、三点平面 `plane.points`、分解平面 `plane.deconstruct`（原点、X / Y / Z 轴）、平面偏移 `plane.offset`、平面坐标 `plane.coords`（平面内坐标 → 世界点）、点的平面坐标 `plane.tocoords`（世界点 → 平面内坐标） | ✅ |
 
 #### 曲线
 
 | 小类 | 节点（ID） | 状态 | 说明 |
 |---|---|---|---|
 | 基本 | 直线 `curve.line`、圆 `curve.circle`、圆弧 `curve.arc`、矩形 `curve.rectangle`（可倒圆角）、正多边形 `curve.polygon`、多段线 `curve.polyline` | ✅ | 现在的分类是“曲线”，改为“曲线/基本” |
-| | 三点圆弧 `curve.arc3pt`、椭圆 `curve.ellipse` | 🆕 | |
+| | 三点圆弧 `curve.arc3pt`、椭圆 `curve.ellipse` | ✅ | 椭圆输出空间曲线（平面 + 两个半径，精确的有理 NURBS） |
 | NURBS | 插值曲线 `nurbs.interpolate`、拟合曲线 `nurbs.fit`、控制点曲线 `nurbs.control`、螺旋线 `nurbs.helix` | ✅ | |
-| 修改 | 偏移 `curve.offset`、修剪 / 分割 `curve.split`（按参数或点）、延伸 `curve.extend`、连接 `curve.join`、炸开 `curve.explode`、反转 `curve.reverse`、曲线圆角 `curve.fillet`、投影 `curve.project`（到平面 / 曲面）、重建 `curve.rebuild`（控制点数、阶数） | 🆕 | 平面曲线优先用 MiniCAD 的 `ICurveEntity`（与偏移 / 修剪命令同一套几何），空间曲线经内核 |
-| 分析 | 曲线长度 `curve.length`、曲线等分 `curve.divide`、曲线取点 `nurbs.evaluate` | ⬆ | 换分类：等分、长度从“曲线”、取点从“曲线/NURBS”移到这里 |
-| | 端点 `curve.endpoints`、曲线信息 `curve.info`（闭合、是否平面、阶数、控制点）、曲线最近点 `curve.closest`、曲线求交 `curve.intersect`（曲线 × 曲线、曲线 × 平面） | 🆕 | |
+| 修改 | 偏移 `curve.offset`、修剪 / 分割 `curve.split`（按参数或点）、延伸 `curve.extend`、连接 `curve.join`、炸开 `curve.explode`、反转 `curve.reverse`、曲线圆角 `curve.fillet`、投影 `curve.project`（到平面 / 曲面）、重建 `curve.rebuild`（控制点数、阶数） | 🆕 N6b | 平面曲线优先用 MiniCAD 的 `ICurveEntity`（与偏移 / 修剪命令同一套几何），空间曲线经内核 |
+| 分析 | 曲线长度 `curve.length`、曲线等分 `curve.divide`、曲线取点 `nurbs.evaluate` | ✅ | N5 已从“曲线”“曲线/NURBS”移到这里 |
+| | 端点 `curve.endpoints`、曲线信息 `curve.info`（闭合、是否平面、阶数、控制点）、曲线最近点 `curve.closest`、曲线求交 `curve.intersect`（曲线 × 曲线，按距离容差）、曲线与平面求交 `curve.planeintersect` | ✅ | 输入都是空间曲线（曲线实体自动转换）；参数 t 按 0～1，同“曲线取点” |
 
 #### 曲面
 
@@ -291,12 +295,14 @@ N5 已完成全部只改名 / 换分类的升级（分类见 `NodeRegistry::Cate
 
 | 小类 | 节点（ID） | 状态 | 说明 |
 |---|---|---|---|
-| 基本 | 移动 `xform.move`、旋转 `xform.rotate`、缩放 `xform.scale`、镜像 `xform.mirror` | ⬆ | 现在的分类是“变换”，改为“变换/基本”。旋转：曲线绕非 Z 轴时转换为空间曲线输出（现在只绕 Z）；缩放：加非均匀缩放（X / Y / Z 系数，平面） |
-| | 定向 `xform.orient` | 🆕 | 平面 → 平面（把 XY 上画的轮廓放到任意工作平面） |
-| 阵列 | 线性阵列 `xform.lineararray`、环形阵列 `xform.polararray` | ⬆ | 换分类到“变换/阵列” |
-| | 矩形阵列 `xform.rectarray`、沿曲线阵列 `xform.curvearray`（等分点处按切线定向） | 🆕 | |
+| 基本 | 移动 `xform.move`、旋转 `xform.rotate`、缩放 `xform.scale`、镜像 `xform.mirror` | ✅ | 旋转加了“自定义”轴（末尾的“轴方向”输入）；曲线绕非 Z 轴时转换为空间曲线输出 |
+| | 非均匀缩放 `xform.scalenu`、定向 `xform.orient` | ✅ | 非均匀缩放做成单独的节点（平面 + X / Y / Z 系数）；定向：平面 → 平面（把 XY 上画的轮廓放到任意工作平面） |
+| 阵列 | 线性阵列 `xform.lineararray`、环形阵列 `xform.polararray` | ✅ | |
+| | 矩形阵列 `xform.rectarray`、沿曲线阵列 `xform.curvearray`（按弧长等分，可沿切线定向） | ✅ | |
 
 变换节点作用于 `Geometry`（点、平面、曲线、空间曲线、实体、曲面、网格），实体的 `Void` 标记保留。
+曲线实体只能做水平面内的刚体变换、平移与等比缩放（结果仍是曲线实体，可以直接拉伸）；绕水平轴旋转、非均匀缩放、定向到斜平面时
+先精确转换为空间曲线再变换控制点（`Geo::Xform::Kind::Matrix`，`GeometryOps.cpp` 的 `PlanarRigid` 判断能否保留为曲线实体）。
 
 ### 4.3 命名冲突
 
@@ -542,7 +548,8 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | 曲面 ✅ | 空间曲线类型 `Curve3D`、“曲线/NURBS”与“曲面”大类的节点；内核接口见 `docs/Solid/PLAN.md` 第 11 节（M7） | 放样 → 加厚得到实体、螺旋线 → 管道得到弹簧，着色预览、烘焙、读写、导出多面网格 |
 | N4 | ✅ 节点搜索框、复制粘贴到剪贴板；组节点（子图，设计见第 12 节）、数据树未做 | `NodeGraphTests` 测子图复制粘贴（ID 重新分配、内部连线保留、外部连线丢弃）与搜索排序；桌面版自测经界面输入验证 Tab / 双击 / 拖到空白处打开搜索框添加节点、Ctrl+C / Ctrl+V 与撤销 |
 | **N5** ✅ | 编辑器与节点库整理：搜索按引脚过滤与排序（9.2）、Alt 单击引脚断开（9.3）、分类顺序表与菜单统一（4.1、9.4）、`Keywords` / `Group` / `BodyKind`、已有节点改名与换分类（第 4.2 节的 ⬆ 中只改名 / 分类的部分） | `NodeGraphTests` 的 `TestCategoryOrder`、`TestSearchForPort`、断开输出；自测 Alt 断开；`--dump-nodes` 输出清单；只改显示名与分类，存档 ID 不变 |
-| **N6** | 数据与基础节点补全：`Domain`、`Plane` 类型；数学（取余、取整、反三角、常数、表达式、比较、条件、区间、重映射）、列表（子列表、排序、筛选、移位、交叉引用）、向量与平面、曲线（三点圆弧、椭圆、修改、分析）、变换（旋转任意轴、非均匀缩放、定向、矩形阵列、沿曲线阵列）；引用点 / 引用实体 | 每个节点的单元测试；表达式解析错误定位到字符 |
+| **N6** ✅ | 数据与基础节点补全：`Domain`、`Plane` 类型；数学（取余、取整、反三角、常数、表达式、比较、条件、区间、重映射）、列表（子列表、排序、筛选、移位、交叉引用）、向量与平面、曲线（三点圆弧、椭圆、分析）、变换（旋转任意轴、非均匀缩放、定向、矩形阵列、沿曲线阵列）；引用点 / 引用实体（`BuiltinDataNodes.cpp`、`BuiltinCurveXformNodes.cpp`） | `NodeGraphTests` 的 `TestExpression`（含错误位置）、`TestDataNodes`；`NodeSolidTests` 的 `TestN6WithKernel`（引用实体、实体定向 / 旋转 / 非均匀缩放 / 沿曲线阵列、平面预览不烘焙） |
+| **N6b** | 曲线修改：偏移、修剪 / 分割、延伸、连接、炸开、反转、曲线圆角、投影、重建（第 4.2 节“曲线/修改”） | 平面曲线与偏移 / 修剪命令结果一致；空间曲线经内核 |
 | **N7** | 实体形体：拉伸 / 旋转 / 放样升级、融合、放样融合、圆锥、圆环；五种空心、`Void` 标记、形体合并、剪切几何、分割实体、抽壳、实心 / 空心切换、任意平面截面；命名参数、公式、参数表与类型（第 5 节） | 第 5.5 节 |
 | **N8** | 曲面：平面、挤出、单 / 双轨扫描、边界、网络、拟合、参数曲面；修剪、分割、延伸、拼接、封口、炸开、翻转、重建；分解、等参线、最近点、求交、曲率（第 6 节） | 第 6 节验收 |
 | **N9** | 网格：`Mesh` 类型、`MeshOps`、创建 / 修改 / 转换 / 分析节点、`MeshEntity` 与 DWG / DXF 多面网格（第 8 节） | 第 8 节验收 |
@@ -550,7 +557,7 @@ N7～N10 需要的新接口（都只用 MiniCAD 类型；SMLib 不支持的标�
 | N11 | 后台单线程求值（大模型拖滑块不卡界面）、求值取消；组节点（第 12 节） | |
 | N12 | 稳定拓扑命名后的圆角选边、草图约束求解节点（Revit 式尺寸约束、参照平面锁定） | |
 
-N5 只动编辑器与注册信息，可以先做；N6 是 N7、N8 的基础（平面、表达式）；N7 与 N8 互不依赖，可以并行；N9 只依赖 N6 的类型改动。
+N5 只动编辑器与注册信息，可以先做；N6 是 N7、N8 的基础（平面、表达式）；N6b 与 N7、N8 互不依赖；N7 与 N8 互不依赖，可以并行；N9 只依赖 N6 的类型改动。
 
 ---
 

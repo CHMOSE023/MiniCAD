@@ -4,6 +4,7 @@
 #include "Solid/ISolidKernel.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -29,7 +30,36 @@ namespace MiniCAD::Nodes
         Curve,      // MiniCAD 的曲线实体：直线、圆弧、圆、多段线、矩形
         Body,       // 三维实体或开放曲面（ISolidKernel 的 BodyPtr，见 ISolidKernel::IsSolid）
         Curve3D,    // 空间 NURBS 曲线（Solid::NurbsCurve）；曲线实体可以转换过来
-        Geometry,   // 只用于端口：Vector / Curve / Curve3D / Body
+        Geometry,   // 只用于端口：Vector / Plane / Curve / Curve3D / Body
+        Domain,     // 区间 [Min, Max]；数值转区间为 [0, x]
+        Plane,      // 工作平面（原点 + 单位 X / Y 轴）；与点互转（原点 / 过该点的 XY 平面）
+    };
+
+    // 区间
+    struct Domain
+    {
+        double Min = 0.0, Max = 1.0;
+
+        double Length() const { return Max - Min; }
+        double At(double t) const { return Min + (Max - Min) * t; }   // t ∈ [0, 1] → 区间内的值
+    };
+
+    // 平面：原点 + 互相垂直的单位轴 X、Y，法向 Z = X × Y（右手系）。平面坐标 (u, v, w) → 原点 + u·X + v·Y + w·Z
+    struct Plane
+    {
+        Math::Vec3 Origin;
+        Math::Vec3 X{ 1, 0, 0 };
+        Math::Vec3 Y{ 0, 1, 0 };
+
+        Math::Vec3 Normal() const;
+        Math::Vec3 PointAt(double u, double v, double w = 0.0) const { return Origin + X * u + Y * v + Normal() * w; }
+        Math::Vec3 Coordinates(const Math::Vec3& p) const;      // 世界点 → 平面坐标 (u, v, w)
+        // 平面坐标系 → 世界坐标系的矩阵（行向量约定 P' = P · M：前三行是 X、Y、Z 轴，第四行是原点）
+        Math::Mat4 ToWorld() const;
+        // 由原点、法向（X 轴可选，不给或与法向平行时自动取）构造；法向为零返回空
+        static std::optional<Plane> FromNormal(const Math::Vec3& origin, const Math::Vec3& normal, const Math::Vec3& xHint = {});
+        // 由原点、X 方向、XY 平面内另一方向构造（Y 正交化）；共线返回空
+        static std::optional<Plane> FromAxes(const Math::Vec3& origin, const Math::Vec3& x, const Math::Vec3& yHint);
     };
 
     using CurvePtr   = std::shared_ptr<const Entity>;
@@ -37,7 +67,7 @@ namespace MiniCAD::Nodes
 
     struct Value
     {
-        std::variant<std::monostate, double, int64_t, bool, std::string, Math::Vec3, CurvePtr, Solid::BodyPtr, Curve3DPtr> Data;
+        std::variant<std::monostate, double, int64_t, bool, std::string, Math::Vec3, CurvePtr, Solid::BodyPtr, Curve3DPtr, Nodes::Domain, Nodes::Plane> Data;
 
         Value() = default;
         Value(double v)                 : Data(v) {}
@@ -51,6 +81,8 @@ namespace MiniCAD::Nodes
         Value(Solid::BodyPtr v)         : Data(std::move(v)) {}
         Value(Curve3DPtr v)             : Data(std::move(v)) {}
         Value(Solid::NurbsCurve v)      : Data(std::make_shared<const Solid::NurbsCurve>(std::move(v))) {}
+        Value(const Nodes::Domain& v)   : Data(v) {}
+        Value(const Nodes::Plane& v)    : Data(v) {}
 
         bool IsEmpty() const { return std::holds_alternative<std::monostate>(Data); }
         // 值本身的类型（空值为 Any）
@@ -64,6 +96,8 @@ namespace MiniCAD::Nodes
         const CurvePtr&    AsCurve()   const { return std::get<CurvePtr>(Data); }
         const Solid::BodyPtr& AsBody() const { return std::get<Solid::BodyPtr>(Data); }
         const Curve3DPtr&  AsCurve3D() const { return std::get<Curve3DPtr>(Data); }
+        const Nodes::Domain& AsDomain() const { return std::get<Nodes::Domain>(Data); }
+        const Nodes::Plane&  AsPlane()  const { return std::get<Nodes::Plane>(Data); }
     };
 
     using DataList = std::vector<Value>;
@@ -81,6 +115,7 @@ namespace MiniCAD::Nodes
 
     inline bool IsGeometryType(DataType t)
     {
-        return t == DataType::Vector || t == DataType::Curve || t == DataType::Curve3D || t == DataType::Body || t == DataType::Geometry;
+        return t == DataType::Vector || t == DataType::Plane || t == DataType::Curve || t == DataType::Curve3D || t == DataType::Body ||
+               t == DataType::Geometry;
     }
 }

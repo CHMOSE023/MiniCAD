@@ -631,6 +631,19 @@ namespace MiniCAD::Nodes
                 s.Value("v", xyz);
                 break;
             }
+            case DataType::Domain:
+            {
+                std::vector<double> d{ v.AsDomain().Min, v.AsDomain().Max };
+                s.Value("v", d);
+                break;
+            }
+            case DataType::Plane:
+            {
+                const Plane& p = v.AsPlane();
+                std::vector<double> d{ p.Origin.x, p.Origin.y, p.Origin.z, p.X.x, p.X.y, p.X.z, p.Y.x, p.Y.y, p.Y.z };
+                s.Value("v", d);
+                break;
+            }
             default: break;
             }
         }
@@ -653,6 +666,22 @@ namespace MiniCAD::Nodes
                 s.Value("v", xyz);
                 xyz.resize(3, 0.0);
                 return Value(Math::Vec3{ xyz[0], xyz[1], xyz[2] });
+            }
+            case DataType::Domain:
+            {
+                std::vector<double> d;
+                s.Value("v", d);
+                d.resize(2, 0.0);
+                return Value(Domain{ d[0], d[1] });
+            }
+            case DataType::Plane:
+            {
+                std::vector<double> d;
+                s.Value("v", d);
+                if (d.size() < 9)
+                    return Value(Plane{});
+                const auto p = Plane::FromAxes({ d[0], d[1], d[2] }, { d[3], d[4], d[5] }, { d[6], d[7], d[8] });
+                return Value(p ? *p : Plane{ { d[0], d[1], d[2] } });
             }
             default: return {};
             }

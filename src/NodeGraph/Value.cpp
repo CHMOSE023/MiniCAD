@@ -3,6 +3,7 @@
 #include "Core/Entity/Entity.hpp"
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 
 namespace MiniCAD::Nodes
@@ -19,8 +20,65 @@ namespace MiniCAD::Nodes
         case 6: return DataType::Curve;
         case 7: return DataType::Body;
         case 8: return DataType::Curve3D;
+        case 9: return DataType::Domain;
+        case 10: return DataType::Plane;
         default: return DataType::Any;
         }
+    }
+
+    namespace
+    {
+        Math::Vec3 CrossV(const Math::Vec3& a, const Math::Vec3& b) { return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x }; }
+        double     DotV(const Math::Vec3& a, const Math::Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+    }
+
+    Math::Vec3 Plane::Normal() const { return CrossV(X, Y); }
+
+    Math::Vec3 Plane::Coordinates(const Math::Vec3& p) const
+    {
+        const Math::Vec3 d = p - Origin;
+        return { DotV(d, X), DotV(d, Y), DotV(d, Normal()) };
+    }
+
+    Math::Mat4 Plane::ToWorld() const
+    {
+        const Math::Vec3 z = Normal();
+        Math::Mat4 m = Math::Mat4::Identity();
+        const Math::Vec3 rows[4] = { X, Y, z, Origin };
+        for (int r = 0; r < 4; ++r)
+        {
+            m.m[r * 4 + 0] = rows[r].x;
+            m.m[r * 4 + 1] = rows[r].y;
+            m.m[r * 4 + 2] = rows[r].z;
+        }
+        return m;
+    }
+
+    std::optional<Plane> Plane::FromNormal(const Math::Vec3& origin, const Math::Vec3& normal, const Math::Vec3& xHint)
+    {
+        const Math::Vec3 z = normal.Normalized();
+        if (z.LengthSq() < 0.5)
+            return std::nullopt;
+        Math::Vec3 x = xHint - z * DotV(xHint, z);   // 投影到平面内
+        if (x.Length() < 1e-9)
+        {
+            // 法向接近 Z 时取世界 X，否则取 Z × 法向（水平方向），与 AutoCAD 的任意轴算法思路一致
+            x = std::abs(z.z) > 0.9 ? Math::Vec3{ 1, 0, 0 } - z * z.x : CrossV({ 0, 0, 1 }, z);
+        }
+        x = x.Normalized();
+        return Plane{ origin, x, CrossV(z, x) };
+    }
+
+    std::optional<Plane> Plane::FromAxes(const Math::Vec3& origin, const Math::Vec3& x, const Math::Vec3& yHint)
+    {
+        const Math::Vec3 xa = x.Normalized();
+        if (xa.LengthSq() < 0.5)
+            return std::nullopt;
+        const Math::Vec3 z = CrossV(xa, yHint);
+        if (z.Length() < 1e-9 * std::max(1.0, yHint.Length()))
+            return std::nullopt;
+        const Math::Vec3 za = z.Normalized();
+        return Plane{ origin, xa, CrossV(za, xa) };
     }
 
     namespace
@@ -37,6 +95,8 @@ namespace MiniCAD::Nodes
             { DataType::Body,     "body",     "实体 / 曲面" },
             { DataType::Curve3D,  "curve3d",  "空间曲线" },
             { DataType::Geometry, "geometry", "几何" },
+            { DataType::Domain,   "domain",   "区间" },
+            { DataType::Plane,    "plane",    "平面" },
         };
 
         bool IsScalar(DataType t) { return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean; }
@@ -91,6 +151,10 @@ namespace MiniCAD::Nodes
             return true;                                // 解析，失败时求值报错
         if (from == DataType::Curve && to == DataType::Curve3D)
             return true;                                // 曲线实体 → NURBS（精确表示圆弧），不能转换的求值时报错
+        if (IsScalar(from) && to == DataType::Domain)
+            return true;                                // x → [0, x]
+        if ((from == DataType::Plane && to == DataType::Vector) || (from == DataType::Vector && to == DataType::Plane))
+            return true;                                // 平面的原点 / 过该点的 XY 平面
         if (to == DataType::Geometry)
             return IsGeometryType(from);
         if (from == DataType::Geometry)
@@ -129,6 +193,17 @@ namespace MiniCAD::Nodes
             return true;
         }
 
+        if (from == DataType::Plane && to == DataType::Vector)
+        {
+            out = Value(v.AsPlane().Origin);
+            return true;
+        }
+        if (from == DataType::Vector && to == DataType::Plane)
+        {
+            out = Value(Plane{ v.AsVector() });
+            return true;
+        }
+
         double num = 0.0;
         bool   haveNum = true;
         switch (from)
@@ -153,6 +228,7 @@ namespace MiniCAD::Nodes
         case DataType::Number:  out = Value(num); return true;
         case DataType::Integer: out = Value(static_cast<int64_t>(std::llround(num))); return true;
         case DataType::Boolean: out = Value(num != 0.0); return true;
+        case DataType::Domain:  out = Value(Domain{ 0.0, num }); return true;
         default: return false;
         }
     }
@@ -185,6 +261,17 @@ namespace MiniCAD::Nodes
             return "曲线（" + type + "）";
         }
         case DataType::Body:    return v.AsBody() ? "实体 / 曲面" : "实体 / 曲面（空）";
+        case DataType::Domain:  return FormatNumber(v.AsDomain().Min) + " 至 " + FormatNumber(v.AsDomain().Max);
+        case DataType::Plane:
+        {
+            const Plane& pl = v.AsPlane();
+            const Math::Vec3 n = pl.Normal();
+            auto vec = [](const Math::Vec3& p) { return "{" + FormatNumber(p.x) + ", " + FormatNumber(p.y) + ", " + FormatNumber(p.z) + "}"; };
+            const char* name = std::abs(n.z) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? "XY 平面"
+                             : std::abs(n.x) > 1 - 1e-9 && std::abs(pl.X.y) > 1 - 1e-9 ? "YZ 平面"
+                             : std::abs(n.y) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? "XZ 平面" : "平面";
+            return std::string(name) + "（原点 " + vec(pl.Origin) + "，法向 " + vec(n) + "）";
+        }
         case DataType::Curve3D:
         {
             const auto& c = v.AsCurve3D();

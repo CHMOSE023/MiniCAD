@@ -58,9 +58,9 @@ namespace MiniCAD::Nodes
         static const std::vector<std::string> kOrder = {
             "输入",
             "图纸",
-            "数学/运算", "数学/函数", "数学/序列",
+            "数学/运算", "数学/函数", "数学/表达式", "数学/序列",
             "列表",
-            "向量/点", "向量/向量",
+            "向量/点", "向量/向量", "向量/平面",
             "曲线/基本", "曲线/NURBS", "曲线/分析",
             "曲面/创建", "曲面/修改", "曲面/分析",
             "实体/创建", "实体/运算", "实体/修改", "实体/分析",
@@ -288,9 +288,11 @@ namespace MiniCAD::Nodes
         {
             NodeRegistry r;
             RegisterMathNodes(r);
+            RegisterDataNodes(r);
             RegisterGeometryNodes(r);
             RegisterSolidNodes(r);
             RegisterSurfaceNodes(r);
+            RegisterCurveXformNodes(r);
             r.Ordered();   // 先建好菜单顺序的缓存：之后只读，其他线程（后台读图纸）也可以用
             return r;
         }();

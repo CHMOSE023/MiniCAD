@@ -68,6 +68,8 @@ namespace MiniCAD
             case DataType::Curve:    return RGBA(235, 170, 60);
             case DataType::Body:     return RGBA(225, 90, 90);
             case DataType::Curve3D:  return RGBA(240, 215, 70);
+            case DataType::Domain:   return RGBA(150, 200, 230);
+            case DataType::Plane:    return RGBA(90, 200, 170);
             case DataType::Geometry: return RGBA(200, 120, 210);
             default:                 return RGBA(225, 225, 225);
             }
@@ -100,6 +102,26 @@ namespace MiniCAD
             float t = len2 > 0 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2 : 0.0f;
             t = std::clamp(t, 0.0f, 1.0f);
             return std::hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+        }
+
+        // 文字里的数（逗号、空格、分号、括号分隔），最多 max 个
+        std::vector<double> ParseNumbers(const std::string& text, size_t max)
+        {
+            std::vector<double> out;
+            const char* p = text.c_str();
+            while (*p && out.size() < max)
+            {
+                char* end = nullptr;
+                const double d = std::strtod(p, &end);
+                if (end == p)
+                {
+                    ++p;
+                    continue;
+                }
+                out.push_back(d);
+                p = end;
+            }
+            return out;
         }
 
         bool ParseVector(const std::string& text, Math::Vec3& out)
@@ -294,7 +316,8 @@ namespace MiniCAD
         if (!n.Type || port < 0 || port >= static_cast<int>(n.Type->Inputs.size()) || n.InputValues[port].IsEmpty())
             return false;
         const DataType t = n.Type->Inputs[port].Type;
-        return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean || t == DataType::Text || t == DataType::Vector;
+        return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean || t == DataType::Text || t == DataType::Vector ||
+               t == DataType::Domain;
     }
 
     NodeEditorView::Hit NodeEditorView::HitTest(Vec2 local, bool includeLinks) const
@@ -846,9 +869,18 @@ namespace MiniCAD
         const Rect gr = FieldRect(c, y);
         const Vec2 a = GraphToLocal(gr.min.x, gr.min.y), b = GraphToLocal(gr.max.x, gr.max.y);
         const Rect lr{ a.x, a.y - 2.0f, std::max(b.x, a.x + 60.0f), std::max(b.y + 2.0f, a.y + 20.0f) };
-        std::string text = v.Type() == DataType::Vector
-                               ? [&] { char buf[96]; std::snprintf(buf, sizeof(buf), "%g, %g, %g", v.AsVector().x, v.AsVector().y, v.AsVector().z); return std::string(buf); }()
-                               : ToDisplayString(v);
+        std::string text = ToDisplayString(v);
+        char buf[96];
+        if (v.Type() == DataType::Vector)
+        {
+            std::snprintf(buf, sizeof(buf), "%g, %g, %g", v.AsVector().x, v.AsVector().y, v.AsVector().z);
+            text = buf;
+        }
+        else if (v.Type() == DataType::Domain)
+        {
+            std::snprintf(buf, sizeof(buf), "%g, %g", v.AsDomain().Min, v.AsDomain().Max);
+            text = buf;
+        }
         const NodeId id = hit.Node;
         const int index = hit.Index;
         m_inline.Begin(this, this, lr, text, [this, id, index, isParam, type](const std::string& s)
@@ -863,6 +895,14 @@ namespace MiniCAD
                 if (!ParseVector(s, p))
                     return false;
                 nv = Value(p);
+            }
+            else if (type == DataType::Domain)
+            {
+                // “a, b”为区间 [a, b]，只有一个数 x 时为 [0, x]
+                const auto nums = ParseNumbers(s, 2);
+                if (nums.empty())
+                    return false;
+                nv = nums.size() == 1 ? Value(Domain{ 0.0, nums[0] }) : Value(Domain{ nums[0], nums[1] });
             }
             else if (!Convert(Value(s), type, nv))
                 return false;
@@ -1679,7 +1719,7 @@ namespace MiniCAD
                     MiniGUI::TextParams bp = tp;
                     bp.hAlign = MiniGUI::TextAlign::Center;
                     std::string label = "用选择集设置";
-                    if (n.Type->Action == "pickCurves" && !n.Params.empty() && n.Params[0].Type() == DataType::Text)
+                    if (n.Type->Action.starts_with("pick") && !n.Params.empty() && n.Params[0].Type() == DataType::Text)
                     {
                         const std::string& ids = n.Params[0].AsText();
                         const size_t count = ids.empty() ? 0 : std::count(ids.begin(), ids.end(), ',') + 1;

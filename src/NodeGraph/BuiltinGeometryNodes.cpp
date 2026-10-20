@@ -226,10 +226,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.rotate", .Name = "旋转", .Category = cat, .Description = "绕过中心的轴旋转（角度为度，右手定则；曲线只能绕 Z）" };
+                NodeTypeInfo t{ .Id = "xform.rotate", .Name = "旋转", .Category = cat,
+                                .Description = "绕过中心的轴旋转（角度为度，右手定则）；轴选“自定义”时用“轴方向”。曲线绕水平轴转出水平面时变为空间曲线" };
                 t.Keywords = "rotate 旋转";
-                t.Inputs  = { In("几何", DataType::Geometry), In("角度", DataType::Number, 45.0), In("中心", DataType::Vector, Vec(0, 0, 0)) };
-                t.Params  = { Choice("轴", { "X", "Y", "Z" }, 2) };
+                t.Inputs  = { In("几何", DataType::Geometry), In("角度", DataType::Number, 45.0), In("中心", DataType::Vector, Vec(0, 0, 0)),
+                              In("轴方向", DataType::Vector, Vec(0, 0, 1)) };
+                t.Params  = { Choice("轴", { "X", "Y", "Z", "自定义" }, 2) };
                 t.Outputs = { Out("几何", DataType::Geometry) };
                 t.Solve   = [](SolveArgs& a)
                 {
@@ -238,6 +240,13 @@ namespace MiniCAD::Nodes
                     x.Angle  = a.Number(1) * kDeg;
                     x.Center = P(a.Vector(2));
                     x.Axis   = static_cast<int>(a.ParamInteger(0));
+                    if (x.Axis == 3)
+                    {
+                        if (a.Vector(3).Length() < 1e-12)
+                            return a.Error("轴方向为零向量");
+                        x.K = Geo::Xform::Kind::Matrix;
+                        x.M = Geo::RotationAbout(x.Center, a.Vector(3), x.Angle);
+                    }
                     a.Out(0, Geo::Transform(a.In(0), x, a));
                 };
                 r.Register(std::move(t));
