@@ -45,6 +45,28 @@ namespace MiniCAD::Nodes
         m_ordered.clear();
     }
 
+    NodeTypeInfo* NodeRegistry::Upsert(NodeTypeInfo info)
+    {
+        m_ordered.clear();
+        if (auto it = m_byId.find(info.Id); it != m_byId.end())
+        {
+            *it->second = std::move(info);
+            return it->second;
+        }
+        auto owned = std::make_unique<NodeTypeInfo>(std::move(info));
+        NodeTypeInfo* raw = owned.get();
+        m_byId[raw->Id] = raw;
+        m_types.push_back(std::move(owned));
+        return raw;
+    }
+
+    void NodeRegistry::Unregister(const std::string& id)
+    {
+        m_byId.erase(id);
+        std::erase_if(m_types, [&](const auto& t) { return t->Id == id; });
+        m_ordered.clear();
+    }
+
     const NodeTypeInfo* NodeRegistry::Find(const std::string& id) const
     {
         auto it = m_byId.find(id);
@@ -66,6 +88,7 @@ namespace MiniCAD::Nodes
             "实体/创建", "实体/空心", "实体/运算", "实体/修改", "实体/分析",
             "网格/创建", "网格/修改", "网格/转换", "网格/分析",
             "变换/基本", "变换/阵列",
+            "组",
         };
         return kOrder;
     }
@@ -297,6 +320,7 @@ namespace MiniCAD::Nodes
             RegisterCurveXformNodes(r);
             RegisterCurveModifyNodes(r);
             RegisterMeshNodes(r);
+            RegisterGroupNodes(r);
             r.Ordered();   // 先建好菜单顺序的缓存：之后只读，其他线程（后台读图纸）也可以用
             return r;
         }();

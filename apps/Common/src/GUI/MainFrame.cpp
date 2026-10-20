@@ -146,6 +146,7 @@ namespace MiniCAD
 
     MainFrame::~MainFrame()
     {
+        WaitNodeEvaluation();   // 节点图的后台求值在用内核与文档的节点图
         // 后台还在读图纸：没开始的不再开始；正在读的让它中止并等它退出（它引用了 m_docManager）
         if (m_openJob)
         {

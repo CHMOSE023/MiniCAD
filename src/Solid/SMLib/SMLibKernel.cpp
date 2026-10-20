@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <numbers>
 #include <tuple>
 #include <unordered_map>
@@ -34,6 +35,14 @@ namespace MiniCAD::Solid
 {
     namespace
     {
+        // SMLib 静态库的对象管理走进程全局的路径，不能并发使用：每次内核调用与实体析构都持有这把锁，
+        // 节点图的后台求值线程与界面线程因此可以轮流使用同一个内核（递归锁：内核方法之间会互相调用）
+        std::recursive_mutex& KernelMutex()
+        {
+            static std::recursive_mutex m;
+            return m;
+        }
+
         using BrepPtr     = std::unique_ptr<SmBrep>;
         using PolyBrepPtr = std::unique_ptr<SmPolyBrep>;
         using SmCurvePtr  = std::unique_ptr<SmBSplineCurve>;
@@ -43,6 +52,11 @@ namespace MiniCAD::Solid
         {
         public:
             explicit SMLibBody(BrepPtr brep) : m_brep(std::move(brep)) {}
+            ~SMLibBody() override
+            {
+                std::lock_guard lock(KernelMutex());   // 最后一个引用可能在任一线程上释放
+                m_brep.reset();
+            }
 
             // SM_API 的查询函数多数要非 const 指针（会建立缓存），实体在逻辑上仍不可变
             SmBrep* Brep() const { return m_brep.get(); }
@@ -222,6 +236,7 @@ namespace MiniCAD::Solid
     public:
         SMLibKernel()
         {
+            std::lock_guard lock(KernelMutex());
             static bool s_contextCreated = false;
             if (!s_contextCreated)
             {
@@ -231,13 +246,13 @@ namespace MiniCAD::Solid
         }
 
         const char*        Name()      const override { return "SMLib"; }
-        const std::string& LastError() const override { return m_lastError; }
+        const std::string& LastError() const override { return t_lastError; }
 
         // ── 创建 ─────────────────────────────────────────────────────
 
         BodyPtr Box(const Math::Point3& origin, double dx, double dy, double dz) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(dx > 0.0 && dy > 0.0 && dz > 0.0))
                 return Fail("Box: 边长必须为正");
             SmBrep* raw = nullptr;
@@ -247,7 +262,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Cylinder(const Math::Point3& baseCenter, double radius, double height) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(radius > 0.0 && height > 0.0))
                 return Fail("Cylinder: 半径和高度必须为正");
             SmBrep* raw = nullptr;
@@ -257,7 +272,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Sphere(const Math::Point3& center, double radius) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(radius > 0.0))
                 return Fail("Sphere: 半径必须为正");
             SmBrep* raw = nullptr;
@@ -267,7 +282,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Extrude(const Profile& profile, double height) override
         {
-            Begin();
+            const auto lock = Begin();
             if (std::abs(height) < 1e-12)
                 return Fail("Extrude: 高度不能为 0");
             SmTArray<SmCurve*> curves;
@@ -283,7 +298,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Revolve(const Profile& profile, const Math::Point3& axisPoint, const Math::Vec3& axisDir, double angleDeg) override
         {
-            Begin();
+            const auto lock = Begin();
             if (axisDir.LengthSq() < 1e-24 || std::abs(angleDeg) < 1e-9)
                 return Fail("Revolve: 轴方向为零或角度为 0");
             SmTArray<SmCurve*> curves;
@@ -316,7 +331,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Sweep(const Profile& profile, const SweepPath& path) override
         {
-            Begin();
+            const auto lock = Begin();
             SmTArray<SmCurve*> curves, pathCurves;
             SmObjsDelete<SmCurve*> cleanup(&curves), cleanupPath(&pathCurves);   // 只读，不接管
             if (!MakeProfileCurves(profile, curves) || !MakePathCurves(path, pathCurves))
@@ -329,7 +344,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Cone(const Math::Point3& baseCenter, double radiusBase, double radiusTop, double height) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(radiusBase >= 0.0 && radiusTop >= 0.0 && radiusBase + radiusTop > 0.0 && height > 0.0))
                 return Fail("Cone: 半径不能为负且不能都为 0，高度必须为正");
             SmBrep* raw = nullptr;
@@ -339,7 +354,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Torus(const Math::Point3& center, double majorRadius, double minorRadius) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(minorRadius > 0.0 && majorRadius > minorRadius))
                 return Fail("Torus: 应满足 主半径 > 截面半径 > 0");
             SmBrep* raw = nullptr;
@@ -349,7 +364,7 @@ namespace MiniCAD::Solid
 
         BodyPtr LoftSolid(std::span<const NurbsCurve> sections, bool ruled) override
         {
-            Begin();
+            const auto lock = Begin();
             if (sections.size() < 2)
                 return Fail("封口放样: 至少需要 2 条截面曲线");
             std::vector<SmCurvePtr> owned;
@@ -372,7 +387,7 @@ namespace MiniCAD::Solid
 
         BodyPtr SweepAlong(std::span<const NurbsCurve> profile, const NurbsCurve& path) override
         {
-            Begin();
+            const auto lock = Begin();
             if (profile.empty())
                 return Fail("扫掠: 没有轮廓");
             std::vector<SmCurvePtr> owned;
@@ -401,7 +416,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Boolean(BooleanOp op, const BodyPtr& a, const BodyPtr& b) override
         {
-            Begin();
+            const auto lock = Begin();
             BrepPtr copyA = CopyOf(a), copyB = CopyOf(b);
             if (!copyA || !copyB)
                 return nullptr;
@@ -436,7 +451,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Shell(const BodyPtr& body, double thickness, std::span<const int> openFaces) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(thickness > 0.0))
                 return Fail("抽壳: 厚度必须为正");
             SmBrep* brep = BrepOf(body);
@@ -459,7 +474,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Transform(const BodyPtr& body, const Math::Mat4& m) override
         {
-            Begin();
+            const auto lock = Begin();
             BrepPtr copy = CopyOf(body);
             if (!copy)
                 return nullptr;
@@ -478,7 +493,7 @@ namespace MiniCAD::Solid
 
         Mesh Tessellate(const BodyPtr& body, const TessParams& params) override
         {
-            Begin();
+            const auto lock = Begin();
             Mesh mesh;
             SmBrep* brep = BrepOf(body);
             if (!brep)
@@ -575,7 +590,7 @@ namespace MiniCAD::Solid
 
         Polylines Edges(const BodyPtr& body, double angleTolDeg) override
         {
-            Begin();
+            const auto lock = Begin();
             Polylines result;
             SmBrep* brep = BrepOf(body);
             if (!brep)
@@ -617,7 +632,7 @@ namespace MiniCAD::Solid
 
         HiddenLineResult HiddenLines(const BodyPtr& body, const Math::Vec3& viewDir) override
         {
-            Begin();
+            const auto lock = Begin();
             HiddenLineResult result;
             SmBrep* brep = BrepOf(body);
             if (!brep)
@@ -652,7 +667,7 @@ namespace MiniCAD::Solid
 
         Polylines Section(const BodyPtr& body, const Math::Point3& planePoint, const Math::Vec3& planeNormal) override
         {
-            Begin();
+            const auto lock = Begin();
             Polylines result;
             SmBrep* brep = BrepOf(body);
             if (!brep)
@@ -677,7 +692,7 @@ namespace MiniCAD::Solid
 
         double Volume(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return -1.0;
@@ -692,7 +707,7 @@ namespace MiniCAD::Solid
 
         AABB Bounds(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return AABB::Empty();
@@ -712,7 +727,7 @@ namespace MiniCAD::Solid
 
         std::vector<uint8_t> Save(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return {};
@@ -743,7 +758,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Load(std::span<const uint8_t> bytes) override
         {
-            Begin();
+            const auto lock = Begin();
             if (bytes.size() <= kHeaderSize || std::memcmp(bytes.data(), kMagic, 4) != 0)
                 return Fail("Load: 不是 SMLib 实体数据");
             if (GetU32(bytes.data() + 4) != kFormatVersion)
@@ -768,7 +783,7 @@ namespace MiniCAD::Solid
 
         double Area(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return -1.0;
@@ -783,7 +798,7 @@ namespace MiniCAD::Solid
 
         bool IsSolid(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return false;
@@ -798,7 +813,7 @@ namespace MiniCAD::Solid
 
         int FaceCount(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             SmTArray<SmFace*> faces;
             return FacesOf(body, faces) ? static_cast<int>(faces.GetSize()) : 0;
         }
@@ -807,7 +822,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve InterpolateCurve(std::span<const Math::Point3> points, bool closed) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<Math::Point3> pts(points.begin(), points.end());
             if (closed && pts.size() >= 2 && (pts.front() - pts.back()).Length() < 1e-12)
                 pts.pop_back();
@@ -856,7 +871,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve FitCurve(std::span<const Math::Point3> points, double tolerance) override
         {
-            Begin();
+            const auto lock = Begin();
             if (points.size() < 4)
                 return FailCurve("拟合曲线: 至少需要 4 个点");
             SmTArray<SmPoint3d> smPoints;
@@ -894,7 +909,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve Helix(const Math::Point3& base, double height, double radius0, double radius1, double turns, bool rightHanded) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(height > 0.0 && radius0 > 0.0 && radius1 > 0.0 && turns > 0.0))
                 return FailCurve("螺旋线: 高度、半径、圈数都必须为正");
             if (turns > 124.0)
@@ -911,7 +926,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve OffsetCurve(const NurbsCurve& curve, double distance) override
         {
-            Begin();
+            const auto lock = Begin();
             SmCurvePtr c = ToSmCurve(curve);
             if (!c)
                 return FailCurve("偏移: 曲线无效");
@@ -928,7 +943,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve JoinCurves(std::span<const NurbsCurve> curves) override
         {
-            Begin();
+            const auto lock = Begin();
             if (curves.empty())
                 return FailCurve("连接: 没有曲线");
             std::vector<SmCurvePtr> owned;
@@ -956,7 +971,7 @@ namespace MiniCAD::Solid
 
         std::vector<NurbsCurve> ProjectCurve(const NurbsCurve& curve, const BodyPtr& target, const Math::Vec3& direction) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<NurbsCurve> out;
             SmBrep* brep = BrepOf(target);
             SmCurvePtr c = brep ? ToSmCurve(curve) : nullptr;
@@ -987,7 +1002,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Loft(std::span<const NurbsCurve> sections) override
         {
-            Begin();
+            const auto lock = Begin();
             if (sections.size() < 2)
                 return Fail("放样: 至少需要 2 条截面曲线");
             std::vector<SmCurvePtr> owned;
@@ -1012,7 +1027,7 @@ namespace MiniCAD::Solid
 
         BodyPtr RuledSurface(const NurbsCurve& a, const NurbsCurve& b) override
         {
-            Begin();
+            const auto lock = Begin();
             SmCurvePtr ca = ToSmCurve(a), cb = ToSmCurve(b);
             if (!ca || !cb)
                 return Fail("直纹面: 曲线无效");
@@ -1028,7 +1043,7 @@ namespace MiniCAD::Solid
 
         BodyPtr RevolveSurface(const NurbsCurve& curve, const Math::Point3& axisPoint, const Math::Vec3& axisDir, double angleDeg) override
         {
-            Begin();
+            const auto lock = Begin();
             if (axisDir.LengthSq() < 1e-24 || std::abs(angleDeg) < 1e-9)
                 return Fail("旋转曲面: 轴方向为零或角度为 0");
             SmCurvePtr c = ToSmCurve(curve);
@@ -1048,7 +1063,7 @@ namespace MiniCAD::Solid
 
         BodyPtr SurfaceFromPoints(std::span<const Math::Point3> points, int rows, int columns) override
         {
-            Begin();
+            const auto lock = Begin();
             if (rows < 2 || columns < 2 || points.size() != static_cast<size_t>(rows) * static_cast<size_t>(columns))
                 return Fail("点阵曲面: 行、列至少各 2 个，点数应为行数 × 列数");
             SmTArray<SmPoint3d> smPoints;
@@ -1070,7 +1085,7 @@ namespace MiniCAD::Solid
 
         BodyPtr OffsetSurface(const BodyPtr& surface, double distance) override
         {
-            Begin();
+            const auto lock = Begin();
             SmTArray<SmFace*> faces;
             if (!FacesOf(surface, faces))
                 return nullptr;
@@ -1096,7 +1111,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Pipe(const NurbsCurve& path, double radius, bool capEnds) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(radius > 0.0))
                 return Fail("管道: 半径必须为正");
             SmCurvePtr c = ToSmCurve(path);
@@ -1109,7 +1124,7 @@ namespace MiniCAD::Solid
 
         BodyPtr Thicken(const BodyPtr& surface, double thickness) override
         {
-            Begin();
+            const auto lock = Begin();
             if (std::abs(thickness) < 1e-12)
                 return Fail("加厚: 厚度不能为 0");
             SmBrep* brep = BrepOf(surface);
@@ -1128,7 +1143,7 @@ namespace MiniCAD::Solid
 
         bool EvaluateSurface(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& normal) override
         {
-            Begin();
+            const auto lock = Begin();
             SmTArray<SmFace*> faces;
             if (!FacesOf(surface, faces))
                 return false;
@@ -1160,7 +1175,7 @@ namespace MiniCAD::Solid
 
         bool SurfaceDerivatives(const BodyPtr& surface, int face, double u, double v, Math::Point3& point, Math::Vec3& du, Math::Vec3& dv) override
         {
-            Begin();
+            const auto lock = Begin();
             const SmSurface* srf = FaceSurface(surface, face);
             if (!srf)
                 return false;
@@ -1183,7 +1198,7 @@ namespace MiniCAD::Solid
 
         BodyPtr PlanarSurface(std::span<const NurbsCurve> loops) override
         {
-            Begin();
+            const auto lock = Begin();
             if (loops.empty())
                 return Fail("平面曲面: 没有曲线");
             SmTArray<SmCurve*> curves;
@@ -1208,7 +1223,7 @@ namespace MiniCAD::Solid
 
         BodyPtr ExtrudeCurve(const NurbsCurve& curve, const Math::Vec3& vector) override
         {
-            Begin();
+            const auto lock = Begin();
             if (vector.Length() < 1e-12)
                 return Fail("挤出曲面: 向量为零");
             SmCurvePtr c = ToSmCurve(curve);
@@ -1226,7 +1241,7 @@ namespace MiniCAD::Solid
 
         BodyPtr SweepSurface(const NurbsCurve& section, const NurbsCurve& rail) override
         {
-            Begin();
+            const auto lock = Begin();
             SmCurvePtr s = ToSmCurve(section), r = ToSmCurve(rail);
             if (!s || !r)
                 return Fail("单轨扫描: 曲线无效");
@@ -1241,7 +1256,7 @@ namespace MiniCAD::Solid
 
         BodyPtr CoonsSurface(const NurbsCurve& bottom, const NurbsCurve& right, const NurbsCurve& top, const NurbsCurve& left) override
         {
-            Begin();
+            const auto lock = Begin();
             SmCurvePtr b = ToSmCurve(bottom), r = ToSmCurve(right), t = ToSmCurve(top), l = ToSmCurve(left);
             if (!b || !r || !t || !l)
                 return Fail("边界曲面: 曲线无效");
@@ -1262,7 +1277,7 @@ namespace MiniCAD::Solid
 
         BodyPtr NetworkSurface(std::span<const NurbsCurve> u, std::span<const NurbsCurve> v) override
         {
-            Begin();
+            const auto lock = Begin();
             if (u.size() < 2 || v.size() < 2)
                 return Fail("网络曲面: 两个方向各至少需要 2 条曲线");
             std::vector<SmCurvePtr> owned;
@@ -1288,7 +1303,7 @@ namespace MiniCAD::Solid
 
         BodyPtr FitSurface(std::span<const Math::Point3> points, int controlPoints) override
         {
-            Begin();
+            const auto lock = Begin();
             if (points.size() < 9)
                 return Fail("拟合曲面: 至少需要 9 个点");
             if (controlPoints < 2)
@@ -1309,7 +1324,7 @@ namespace MiniCAD::Solid
 
         BodyPtr TrimSurface(const BodyPtr& surface, const NurbsCurve& cutter, const Math::Vec3& direction, const Math::Point3& keepPoint, bool split) override
         {
-            Begin();
+            const auto lock = Begin();
             if (direction.Length() < 1e-12)
                 return Fail("修剪: 投影方向为零");
             SmCurvePtr c = ToSmCurve(cutter);
@@ -1335,7 +1350,7 @@ namespace MiniCAD::Solid
 
         BodyPtr JoinSurfaces(std::span<const BodyPtr> bodies, double tolerance) override
         {
-            Begin();
+            const auto lock = Begin();
             if (bodies.empty())
                 return Fail("拼接: 没有曲面");
             BrepPtr brep(new (*SmApiGetOrCreateContext()) SmBrep());
@@ -1361,7 +1376,7 @@ namespace MiniCAD::Solid
 
         BodyPtr FromMesh(const Mesh& mesh) override
         {
-            Begin();
+            const auto lock = Begin();
             if (mesh.TriangleCount() == 0)
                 return Fail("网格转实体: 网格为空");
             const SmContext& ctx = *SmApiGetOrCreateContext();
@@ -1406,7 +1421,7 @@ namespace MiniCAD::Solid
 
         BodyPtr CapPlanarHoles(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             BrepPtr brep = CopyOf(body);
             if (!brep)
                 return nullptr;
@@ -1485,7 +1500,7 @@ namespace MiniCAD::Solid
 
         std::vector<BodyPtr> ExplodeFaces(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<BodyPtr> out;
             SmTArray<SmFace*> faces;
             if (!FacesOf(body, faces))
@@ -1507,7 +1522,7 @@ namespace MiniCAD::Solid
 
         BodyPtr FlipSurface(const BodyPtr& surface) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBSplineSurface* raw = SingleFaceBSpline(surface, "翻转");
             if (!raw)
                 return nullptr;
@@ -1519,7 +1534,7 @@ namespace MiniCAD::Solid
 
         BodyPtr ExtendSurface(const BodyPtr& surface, double distance) override
         {
-            Begin();
+            const auto lock = Begin();
             if (!(distance > 0.0))
                 return Fail("延伸: 距离必须为正");
             SmBSplineSurface* raw = SingleFaceBSpline(surface, "延伸");
@@ -1538,7 +1553,7 @@ namespace MiniCAD::Solid
 
         BodyPtr RebuildSurface(const BodyPtr& surface, int uCount, int vCount) override
         {
-            Begin();
+            const auto lock = Begin();
             if (uCount < 4 || vCount < 4)
                 return Fail("重建: 每个方向至少 4 个控制点");
             SmBSplineSurface* raw = SingleFaceBSpline(surface, "重建");
@@ -1558,7 +1573,7 @@ namespace MiniCAD::Solid
 
         std::vector<NurbsCurve> EdgeCurves(const BodyPtr& body) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<NurbsCurve> out;
             SmBrep* brep = BrepOf(body);
             if (!brep)
@@ -1585,7 +1600,7 @@ namespace MiniCAD::Solid
 
         NurbsCurve IsoCurve(const BodyPtr& surface, int face, bool alongU, double t) override
         {
-            Begin();
+            const auto lock = Begin();
             const SmSurface* srf = FaceSurface(surface, face);
             if (!srf)
                 return {};
@@ -1603,7 +1618,7 @@ namespace MiniCAD::Solid
 
         bool ClosestPoint(const BodyPtr& body, const Math::Point3& p, Math::Point3& closest, double& distance) override
         {
-            Begin();
+            const auto lock = Begin();
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return false;
@@ -1619,7 +1634,7 @@ namespace MiniCAD::Solid
 
         std::vector<Math::Point3> IntersectCurve(const BodyPtr& body, const NurbsCurve& curve) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<Math::Point3> out;
             SmBrep* brep = BrepOf(body);
             SmCurvePtr c = ToSmCurve(curve);
@@ -1641,7 +1656,7 @@ namespace MiniCAD::Solid
 
         std::vector<NurbsCurve> IntersectBodies(const BodyPtr& a, const BodyPtr& b) override
         {
-            Begin();
+            const auto lock = Begin();
             std::vector<NurbsCurve> out;
             SmBrep* ba = BrepOf(a);
             SmBrep* bb = ba ? BrepOf(b) : nullptr;
@@ -1660,15 +1675,21 @@ namespace MiniCAD::Solid
         }
 
     private:
-        std::string m_lastError;
+        // 每个线程各自的最近错误：后台求值与界面线程交替调用时不互相覆盖
+        static inline thread_local std::string t_lastError;
 
-        void Begin() { m_lastError.clear(); }
+        [[nodiscard]] std::unique_lock<std::recursive_mutex> Begin()
+        {
+            std::unique_lock lock(KernelMutex());
+            t_lastError.clear();
+            return lock;
+        }
 
         std::nullptr_t Fail(const char* what, SmApiStatus status = SM_ERR)
         {
-            m_lastError = what;
+            t_lastError = what;
             if (status != SM_ERR)
-                m_lastError += "（状态 " + std::to_string(status) + "）";
+                t_lastError += "（状态 " + std::to_string(status) + "）";
             return nullptr;
         }
 
@@ -1712,7 +1733,7 @@ namespace MiniCAD::Solid
         // 圆角 / 倒角：截面类型 0 = 平面，1 = 圆形；半径为滚球半径
         BodyPtr BlendEdges(const BodyPtr& body, std::span<const int> edgeIds, double radius, ULONG xsectType, const char* what)
         {
-            Begin();
+            const auto lock = Begin();
             if (edgeIds.empty() || !(radius > 0.0))
                 return Fail(std::string(what) + ": 没有边或半径不为正");
             BrepPtr copy = CopyOf(body);

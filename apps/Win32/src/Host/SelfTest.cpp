@@ -46,11 +46,13 @@
 #include <shlobj.h>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <functional>
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -1045,6 +1047,7 @@ namespace MiniCAD
         {
             using namespace Nodes;
             Scene& scene = doc->GetScene();
+            m_nodeEvalSync = true;   // 下面逐帧检查求值结果：同步求值（后台求值在本节最后单独检查）
             ShowNodePanel(false);
             m_ui->Update();
             RenderFrame();
@@ -1361,10 +1364,165 @@ namespace MiniCAD
 
                 graph.Clear();
                 RenderFrame();
+
+                // N11 后台求值：界面不等待；改动正在算的节点取消重来；“停止”后不再自动求值，修改节点图后继续
+                m_nodeEvalSync = false;
+                m_nodeSyncBudget = -1.0;   // 先检查后台：不论轻重都交给工作线程
+                const NodeId bbox = ne.AddNodeAt("solid.box", { 30.0f, 20.0f });
+                const NodeId barr = ne.AddNodeAt("xform.lineararray", { 300.0f, 20.0f });
+                const NodeId buni = ne.AddNodeAt("solid.union", { 560.0f, 20.0f });
+                graph.SetInputValue(barr, 1, Value(Math::Vec3{ 5, 0, 0 }));
+                graph.SetInputValue(barr, 2, int64_t(40));
+                graph.Connect({ bbox, 0, barr, 0 });
+                graph.Connect({ barr, 0, buni, 0 });
+                auto bgVolume = [&]
+                {
+                    const Node* n = graph.GetNode(buni);
+                    return n && !n->Dirty && !n->Outputs[0].empty() ? kernel->Volume(n->Outputs[0][0].AsBody()) : -1.0;
+                };
+                auto waitNodes = [&]
+                {
+                    const int64_t start = NowTicks();
+                    while (m_nodeJob && NowTicks() - start < 60 * kTicksPerSecond)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        RenderFrame();
+                    }
+                    RenderFrame();
+                };
+                int64_t t0 = NowTicks();
+                RenderFrame();
+                const double frameMs = static_cast<double>(NowTicks() - t0) * 1000.0 / static_cast<double>(kTicksPerSecond);
+                const bool started = m_nodeJob != nullptr;
+                check(started && graph.GetNode(buni)->Dirty && m_nodeStop && m_nodeStop->IsVisible() && m_nodeStatus &&
+                      m_nodeStatus->GetText().find("求值中") != std::string::npos,
+                      "后台求值：节点图交给工作线程，这一帧不等结果，工具行显示进度与“停止”");
+                LOG_INFO("后台求值：开始求值的一帧 %.1f ms", frameMs);
+                graph.SetInputValue(barr, 2, int64_t(30));
+                RenderFrame();
+                check(!m_nodeJob || !m_nodeJob->cancel.load(), "后台求值：改了正在算的阵列数量，这次求值不取消（算完先显示，再接着算新的值）");
+                waitNodes();
+                check(!m_nodeJob && std::abs(bgVolume() - (10.0 + 29 * 5.0) * 100.0) < 1e-3 && !graph.NeedsEvaluate(NodeSolveContext(*doc)) &&
+                      !m_nodeStop->IsVisible(), "后台求值：重新求值得到 30 个长方体的并集");
+
+                graph.SetInputValue(barr, 2, int64_t(60));
+                RenderFrame();
+                bool stopped = false;
+                if (m_nodeJob && !m_nodeJob->finished.load())
+                {
+                    const MiniGUI::Vec2 c = m_nodeStop->GetScreenBounds().Center();
+                    m_ui->PointerMove(c, 0);
+                    m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
+                    stopped = m_nodeJob && m_nodeJob->userStop.load();
+                    waitNodes();
+                    RenderFrame();
+                }
+                check(stopped && !m_nodeJob && graph.GetNode(buni)->Dirty && m_nodeStatus->GetText().find("已停止") != std::string::npos,
+                      "后台求值：点“停止”取消求值，之后不再自动求值");
+                graph.SetInputValue(barr, 2, int64_t(20));
+                RenderFrame();
+                waitNodes();
+                check(std::abs(bgVolume() - (10.0 + 19 * 5.0) * 100.0) < 1e-3, "后台求值：修改节点图后继续求值");
+
+                // 轻的节点图：上次耗时已知且不多时在界面线程上当帧算完，不经过后台（与 N11 之前一样没有延迟）
+                m_nodeSyncBudget = 40.0;
+                graph.Clear();
+                const NodeId ls = ne.AddNodeAt("input.number", { 30.0f, 20.0f });
+                const NodeId la = ne.AddNodeAt("math.add", { 260.0f, 20.0f });
+                graph.Connect({ ls, 0, la, 0 });
+                RenderFrame();
+                waitNodes();   // 新节点耗时未知：第一次交给后台
+                graph.SetParam(ls, 0, 7.0);
+                RenderFrame();
+                const Node* laNode = graph.GetNode(la);
+                check(!m_nodeJob && laNode && !laNode->Dirty && !laNode->Outputs[0].empty() && std::abs(laNode->Outputs[0][0].AsNumber() - 7.0) < 1e-9,
+                      "后台求值：轻的节点图改值后当帧出结果，不交给后台");
+                graph.Clear();
+                RenderFrame();
+                m_nodeEvalSync = true;
+
+                // N11b 组节点：Ctrl+G 建组，双击进入，组内键入数值同步到实例，Esc 返回，Ctrl+Shift+G 解组，Ctrl+Z 撤销
+                {
+                    const NodeId gs  = ne.AddNodeAt("input.number", { 30.0f, 60.0f });
+                    const NodeId ga  = ne.AddNodeAt("math.add", { 260.0f, 60.0f });
+                    const NodeId gm  = ne.AddNodeAt("math.mul", { 490.0f, 60.0f });
+                    const NodeId gn  = ne.AddNodeAt("math.neg", { 720.0f, 60.0f });
+                    graph.SetParam(gs, 0, 3.0);
+                    graph.SetInputValue(ga, 1, 1.0);
+                    graph.SetInputValue(gm, 1, 2.0);
+                    graph.Connect({ gs, 0, ga, 0 });
+                    graph.Connect({ ga, 0, gm, 0 });
+                    graph.Connect({ gm, 0, gn, 0 });
+                    auto negValue = [&](NodeId id)
+                    {
+                        const Node* n = graph.GetNode(id);
+                        return n && !n->Outputs.empty() && !n->Outputs[0].empty() ? n->Outputs[0][0].AsNumber() : 1e9;
+                    };
+                    ne.Focus();
+                    ne.SetSelection({ ga, gm });
+                    key(MiniGUI::Key::G, ctrlKey);
+                    const NodeId inst = ne.GetSelection().size() == 1 ? *ne.GetSelection().begin() : kInvalidNode;
+                    const Node* instNode = graph.GetNode(inst);
+                    check(instNode && instNode->IsGroup() && graph.GetNodes().size() == 3 && graph.GetLinks().size() == 2 && std::abs(negValue(gn) + 8.0) < 1e-9,
+                          "组节点：Ctrl+G 把选中的两个节点收成组，外部连线接到组实例，结果不变");
+
+                    ne.FrameAll();   // 选中的组实例放到画布中央
+                    RenderFrame();
+                    // 双击组实例的标题栏进入组内
+                    const MiniGUI::Vec2 head = toWindow(ne.GraphToLocal(instNode->X + 30.0f, instNode->Y + NodeEditorView::kHeaderH * 0.5f));
+                    m_ui->PointerMove(head, 0);
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        m_ui->PointerDown(head, MiniGUI::MouseButton::Left, 0);
+                        m_ui->PointerUp(head, MiniGUI::MouseButton::Left, 0);
+                    }
+                    RenderFrame();
+                    Graph* inner = ne.CurrentGraph();
+                    check(ne.GetPath().size() == 1 && inner && inner != &graph && inner->GetNode(gm), "组节点：双击组实例进入组内编辑，画布显示组内的图");
+                    SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_group.bmp");
+
+                    // 组内双击乘法的 B 键入 3：写回定义，主图的结果更新
+                    if (inner && ne.InputFieldPosition(gm, 1))
+                    {
+                        const MiniGUI::Vec2 f = toWindow(*ne.InputFieldPosition(gm, 1));
+                        m_ui->PointerMove(f, 0);
+                        for (int i = 0; i < 2; ++i)
+                        {
+                            m_ui->PointerDown(f, MiniGUI::MouseButton::Left, 0);
+                            m_ui->PointerUp(f, MiniGUI::MouseButton::Left, 0);
+                        }
+                        RenderFrame();
+                        m_ui->TextInput("3");
+                        key(MiniGUI::Key::Enter);
+                    }
+                    SyncNodeGraph();
+                    check(std::abs(negValue(gn) + 12.0) < 1e-9, "组节点：组内改值同步到组定义，主图的结果更新为 -(3 + 1) × 3");
+
+                    // Esc：先取消选择，再返回主图（选中刚才的组）
+                    ne.Focus();
+                    key(MiniGUI::Key::Escape);
+                    key(MiniGUI::Key::Escape);
+                    check(ne.GetPath().empty() && ne.CurrentGraph() == &graph && ne.GetSelection() == std::set<NodeId>{ inst },
+                          "组节点：Esc 返回主图，选中刚才的组");
+
+                    // 解组：节点放回主图，组定义随之删除；Ctrl+Z 恢复组
+                    key(MiniGUI::Key::G, static_cast<uint8_t>(ctrlKey | static_cast<uint8_t>(MiniGUI::ModifierKey::Shift)));
+                    SyncNodeGraph();
+                    check(!graph.GetNode(inst) && graph.GetNodes().size() == 4 && graph.Groups().Empty() && std::abs(negValue(gn) + 12.0) < 1e-9,
+                          "组节点：Ctrl+Shift+G 解组，节点与连线放回主图，没有实例的组定义删除");
+                    key(MiniGUI::Key::Z, ctrlKey);
+                    SyncNodeGraph();
+                    check(graph.GetNode(inst) && graph.GetNode(inst)->IsGroup() && !graph.Groups().Empty() && std::abs(negValue(gn) + 12.0) < 1e-9,
+                          "组节点：Ctrl+Z 撤销解组");
+                    graph.Clear();
+                    RenderFrame();
+                }
             }
             ShowNodePanel(true);
             m_ui->Update();
             check(!dock || !dock->IsPanelVisible("nodes"), "节点编辑器：再次执行切换命令关闭面板");
+            m_nodeEvalSync = false;
         }
 
         // ── 16d. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销 ─────────

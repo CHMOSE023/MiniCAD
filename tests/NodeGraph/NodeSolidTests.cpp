@@ -33,6 +33,7 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <thread>
 #include <type_traits>
 
 using namespace MiniCAD;
@@ -1751,6 +1752,51 @@ namespace
         Check(f.Ok(curv) && Near(std::abs(f.Number(curv, 0)), 0.04, 1e-3) && Near(std::abs(f.Number(curv, 1)), 0.2, 1e-3) &&
               Near(f.Number(curv, 2), f.Number(curv, 3), 1e-3), "N8 curvature: a sphere is umbilic with K = 1/r²");
     }
+
+    // N11：后台求值。工作线程求值实体节点图的副本，同时主线程也在用内核（内核内部加锁轮流使用），
+    // 实体最后在哪个线程上释放都可以；求值中途取消，算完的节点照样合并
+    void TestN11Background()
+    {
+        Fixture f;
+        const NodeId box = Add(f.g, "solid.box"), arr = Add(f.g, "xform.lineararray"), uni = Add(f.g, "solid.union");
+        f.g.SetInputValue(arr, 1, Value(Math::Vec3{ 5, 0, 0 }));
+        f.g.SetInputValue(arr, 2, int64_t(20));
+        f.g.Connect({ box, 0, arr, 0 });
+        f.g.Connect({ arr, 0, uni, 0 });
+        auto copy = f.g.PrepareBackground(f.ctx);
+        std::atomic<bool> done{ false };
+        SolveContext wctx;
+        wctx.Kernel = f.kernel;
+        std::thread worker([&] { copy->Evaluate(wctx); done = true; });
+        int mainCalls = 0;
+        bool mainOk = true;
+        while (!done || mainCalls < 5)
+        {
+            Solid::BodyPtr b = f.kernel->Box({ 0, 0, 0 }, 1, 2, 3);
+            mainOk = mainOk && b && Near(f.kernel->Volume(b), 6.0);
+            ++mainCalls;
+        }
+        worker.join();
+        Check(mainOk && f.g.MergeEvaluated(*copy) == 3 && Near(f.Volume(uni), (10 + 19 * 5) * 100.0, 1e-3),
+              "background: worker thread and main thread share the kernel");
+        copy.reset();   // 副本里的实体在主线程上释放
+
+        // 实体在工作线程上释放（最后一个引用）
+        Solid::BodyPtr body = f.kernel->Box({ 0, 0, 0 }, 1, 1, 1);
+        std::thread([b = std::move(body)]() mutable { b.reset(); }).join();
+
+        // 求值中途取消：长方体算完后取消，阵列与并集保持为脏，之后同步补算
+        f.g.SetInputValue(box, 1, 20.0);
+        std::atomic<bool> cancel{ false };
+        wctx.Cancel = &cancel;
+        wctx.Solved = [&] { cancel = true; };
+        copy = f.g.PrepareBackground(f.ctx);
+        std::thread([&] { copy->Evaluate(wctx); }).join();
+        Check(f.g.MergeEvaluated(*copy) == 1 && !f.g.GetNode(box)->Dirty && f.g.GetNode(uni)->Dirty,
+              "background: cancelled after the first node, finished nodes merge");
+        f.Eval();
+        Check(Near(f.Volume(uni), (20 + 19 * 5) * 100.0, 1e-3), "background: the rest is solved afterwards");
+    }
 }
 
 int main()
@@ -1771,6 +1817,7 @@ int main()
     TestN6bCurves();
     TestN9Meshes();
     TestN10();
+    TestN11Background();
     std::printf("\n%s：%d 项失败\n", g_failed == 0 ? "全部通过" : "有失败", g_failed);
     return g_failed;
 }

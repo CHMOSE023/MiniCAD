@@ -42,7 +42,7 @@ namespace MiniCAD
                 { "列表", RGBA(88, 104, 126) },  { "向量", RGBA(62, 128, 76) },   { "曲线", RGBA(120, 138, 40) },
                 { "曲面", RGBA(150, 62, 118) },  { "实体", RGBA(50, 96, 170) },   { "网格", RGBA(196, 116, 36) },
                 { "变换", RGBA(128, 88, 58) },
-                { "实体/空心", RGBA(206, 84, 50) },
+                { "实体/空心", RGBA(206, 84, 50) },  { "组", RGBA(118, 84, 172) },
             };
             auto it = kColors.find(cat);
             if (it == kColors.end())
@@ -445,11 +445,35 @@ namespace MiniCAD
         Invalidate();
     }
 
+    Graph* NodeEditorView::G() const
+    {
+        Graph* root = m_host.graph ? m_host.graph() : nullptr;
+        if (!root || root != m_root || m_path.empty())
+            return root;   // 换了文档时 SyncGraph 清空路径
+        return root->ResolvePath(m_path);
+    }
+
     void NodeEditorView::SyncGraph()
     {
-        Graph* g = G();
-        if (g == m_graph)
+        Graph* root = m_host.graph ? m_host.graph() : nullptr;
+        if (root == m_root)
+        {
+            Graph* g = G();
+            if (m_viewStack.size() > m_path.size())
+                m_viewStack.resize(m_path.size());
+            if (g == m_graph)
+                return;
+            // 同一文档里显示的图对象换了（撤销后重建了组内图、后台求值换了组内图、路径失效）：保留视图，去掉不存在的选中节点
+            m_graph = g;
+            std::erase_if(m_selection, [g](NodeId id) { return !g || !g->GetNode(id); });
+            m_drag = Drag::None;
+            m_hover = {};
             return;
+        }
+        m_root = root;
+        m_path.clear();
+        m_viewStack.clear();
+        Graph* g = G();
         m_graph = g;
         m_selection.clear();
         m_drag = Drag::None;
@@ -508,7 +532,7 @@ namespace MiniCAD
     NodeId NodeEditorView::AddNodeAt(const std::string& typeId, Vec2 local, int linkPort)
     {
         Graph* g = G();
-        if (!g || !g->Registry().Find(typeId))
+        if (!g || !g->FindType(typeId) || !g->CanAddType(typeId))
             return kInvalidNode;
         m_editBegun = false;
         BeginEdit();
@@ -555,11 +579,17 @@ namespace MiniCAD
             return;
         m_editBegun = false;
         BeginEdit();
+        std::set<std::string> groups;
         for (NodeId id : m_selection)
+        {
+            if (const Nodes::Node* n = g->GetNode(id); n && n->IsGroup())
+                groups.insert(n->TypeId);
             g->RemoveNode(id);
+        }
         m_selection.clear();
         m_editBegun = false;
         Edited(true);
+        PruneGroups(groups);
         SelectionChanged();
     }
 
@@ -606,7 +636,10 @@ namespace MiniCAD
         std::vector<MiniGUI::MenuItem> items;
         std::vector<const NodeTypeInfo*> types;
         for (const NodeTypeInfo* t : g->Registry().Ordered())
-            if (FitsPendingLink(*t))
+            if (FitsPendingLink(*t) && (!g->IsTopLevel() || (t->Id != kGroupInputType && t->Id != kGroupOutputType)))   // 组输入 / 输出只在组内有用
+                types.push_back(t);
+        for (const NodeTypeInfo* t : g->Groups().Types().Ordered())   // 本文档的组，排在“组”大类里
+            if (FitsPendingLink(*t) && g->CanAddType(t->Id))
                 types.push_back(t);
         auto nodesOf = [&](const std::string& cat)
         {
@@ -719,10 +752,22 @@ namespace MiniCAD
             // 从端口拖出：只列出能连上的节点，显示要连接的端口，需要转换时注明（docs/NodeGraph/PLAN.md 第 9.2 节）
             const auto [type, kind] = *pin;
             const bool fromOutput = m_pendingLink->first;
-            source = [&reg, type, kind, fromOutput](const std::string& q)
+            source = [this, &reg, type, kind, fromOutput](const std::string& q)
             {
                 std::vector<SearchRow> rows;
-                for (const PortCandidate& c : reg.SearchForPort(q, type, kind, fromOutput))
+                std::vector<PortCandidate> found = reg.SearchForPort(q, type, kind, fromOutput);
+                if (const Graph* gg = G())
+                {
+                    // 本文档的组：有文字时排在前面（多半是在找它），没有文字时排在后面
+                    std::vector<PortCandidate> groups;
+                    for (const PortCandidate& c : gg->Groups().Types().SearchForPort(q, type, kind, fromOutput))
+                        if (gg->CanAddType(c.Type->Id))
+                            groups.push_back(c);
+                    found.insert(q.empty() ? found.end() : found.begin(), groups.begin(), groups.end());
+                    if (gg->IsTopLevel())
+                        std::erase_if(found, [](const PortCandidate& c) { return c.Type->Id == kGroupInputType || c.Type->Id == kGroupOutputType; });
+                }
+                for (const PortCandidate& c : found)
                 {
                     const PortSpec& p = (fromOutput ? c.Type->Inputs : c.Type->Outputs)[static_cast<size_t>(c.Port)];
                     std::string note = fromOutput ? "→ " + p.Name : p.Name + " →";
@@ -735,10 +780,21 @@ namespace MiniCAD
             };
         }
         else
-            source = [&reg](const std::string& q)
+            source = [this, &reg](const std::string& q)
             {
+                std::vector<const NodeTypeInfo*> found = reg.Search(q);
+                if (const Graph* gg = G())
+                {
+                    std::vector<const NodeTypeInfo*> groups;
+                    for (const NodeTypeInfo* t : gg->Groups().Types().Search(q))
+                        if (gg->CanAddType(t->Id))
+                            groups.push_back(t);
+                    found.insert(q.empty() ? found.end() : found.begin(), groups.begin(), groups.end());
+                    if (gg->IsTopLevel())
+                        std::erase_if(found, [](const NodeTypeInfo* t) { return t->Id == kGroupInputType || t->Id == kGroupOutputType; });
+                }
                 std::vector<SearchRow> rows;
-                for (const NodeTypeInfo* t : reg.Search(q))
+                for (const NodeTypeInfo* t : found)
                     rows.push_back({ t });
                 return rows;
             };
@@ -1120,9 +1176,27 @@ namespace MiniCAD
             const bool shift = e.HasModifier(MiniGUI::ModifierKey::Shift);
             const bool ctrl  = e.HasModifier(MiniGUI::ModifierKey::Ctrl);
             const bool alt   = e.HasModifier(MiniGUI::ModifierKey::Alt);
+            // 路径栏：返回到点中的那一层
+            for (const auto& [r, depth] : m_crumbs)
+                if (r.Contains(local))
+                {
+                    e.handled = true;
+                    LeaveGroup(depth);
+                    return;
+                }
             const Hit h = HitTest(local, alt);
             ctx->SetCapture(this);
             e.handled = true;
+
+            // 双击组实例：进入组内编辑
+            if (e.clickCount == 2 && (h.K == Hit::Kind::Header || h.K == Hit::Kind::Body))
+                if (const Nodes::Node* n = g->GetNode(h.Node); n && n->IsGroup())
+                {
+                    ctx->ReleaseCapture();
+                    m_drag = Drag::None;
+                    EnterGroup(h.Node);
+                    break;
+                }
 
             if (e.clickCount == 2 && (h.K == Hit::Kind::InField || h.K == Hit::Kind::Param))
             {
@@ -1404,6 +1478,15 @@ namespace MiniCAD
             items.back().checked = n->Preview;
         items.emplace_back("复制", [this] { DuplicateSelection(); }, "Ctrl+D");
         items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
+        items.push_back(MiniGUI::MenuItem::Separator());
+        items.emplace_back("创建组", [this] { GroupSelection(); }, "Ctrl+G");
+        if (const Nodes::Node* n = g->GetNode(h.Node); n && n->IsGroup())
+        {
+            const NodeId id = h.Node;
+            items.emplace_back("进入组", [this, id] { EnterGroup(id); }, "双击");
+            items.emplace_back("重命名组…", [this, id] { BeginRenameGroup(id); });
+            items.emplace_back("解组", [this] { UngroupSelection(); }, "Ctrl+Shift+G");
+        }
         const bool inLinked  = h.K == Hit::Kind::InPort && g->IsInputConnected(h.Node, h.Index);
         const bool outLinked = h.K == Hit::Kind::OutPort && g->IsOutputConnected(h.Node, h.Index);
         if (inLinked || outLinked)
@@ -1446,8 +1529,23 @@ namespace MiniCAD
             PasteFromClipboard();
             break;
         case Key::Tab:
+        {
             if (e.modifiers != 0) return;
-            OpenSearchAt(m_mouseInside ? m_mouseLocal : Vec2{ GetSize().x * 0.35f, GetSize().y * 0.3f });
+            // 选中一个组实例时进入组，否则打开搜索框
+            const Graph* g = G();
+            const Nodes::Node* only = g && m_selection.size() == 1 ? g->GetNode(*m_selection.begin()) : nullptr;
+            if (only && only->IsGroup())
+                EnterGroup(only->Id);
+            else
+                OpenSearchAt(m_mouseInside ? m_mouseLocal : Vec2{ GetSize().x * 0.35f, GetSize().y * 0.3f });
+            break;
+        }
+        case Key::G:
+            if (!ctrl) return;
+            if (e.Shift())
+                UngroupSelection();
+            else
+                GroupSelection();
             break;
         case Key::A:
             if (!ctrl) return;
@@ -1476,6 +1574,8 @@ namespace MiniCAD
             }
             else if (!m_selection.empty())
                 SetSelection({});
+            else if (!m_path.empty())
+                LeaveGroup(m_path.size() - 1);   // 没有选中的节点时 Esc 返回上一层
             Invalidate();
             break;
         default:
@@ -1623,7 +1723,14 @@ namespace MiniCAD
             const float right = n.OutputCount() > 0 ? 26.0f : 8.0f;
             std::string title = n.Title();
             text.Draw(dl, Rect{ S(c.Box.min.x + 8, n.Y), S(c.Box.max.x - right - 34, n.Y + kHeaderH) }, title, hp);
-            if (n.Millis >= 1.0)
+            if (n.Dirty && m_host.evaluating && m_host.evaluating())
+            {
+                hp.size   = 10.0f * z;
+                hp.color  = RGBA(235, 235, 235, 190);
+                hp.hAlign = MiniGUI::TextAlign::End;
+                text.Draw(dl, Rect{ S(c.Box.max.x - right - 60, n.Y), S(c.Box.max.x - right - 2, n.Y + kHeaderH) }, "计算中…", hp);
+            }
+            else if (n.Millis >= 1.0)
             {
                 // 超过 1 秒的按秒显示并用橙色提醒（性能警告，PLAN.md 第 7.2 节）
                 char buf[32];
@@ -1909,12 +2016,15 @@ namespace MiniCAD
             return;
         }
         if (g->Empty())
-            ctx->GetTextSystem().Draw(dl, screenRect, "按 Tab 或双击空白处搜索添加节点，右键按分类添加；从端口拖出连线。\n节点图随图纸保存，结果实时显示在绘图区，点“烘焙”加入图纸", tp);
+            ctx->GetTextSystem().Draw(dl, screenRect, m_path.empty()
+                ? "按 Tab 或双击空白处搜索添加节点，右键按分类添加；从端口拖出连线。\n节点图随图纸保存，结果实时显示在绘图区，点“烘焙”加入图纸"
+                : "组内是空的：添加节点，用“组输入 / 组输出”节点作为组的接口。按 Esc 返回", tp);
 
         const Vec2 origin = screenRect.min;
         PaintLinks(dl, origin);
         for (const auto& n : g->GetNodes())
             PaintCard(dl, origin, *n);
+        PaintPath(dl, screenRect);
 
         if (m_drag == Drag::Box)
         {
@@ -1945,5 +2055,186 @@ namespace MiniCAD
             }
         }
         dl.PopClipRect();
+    }
+
+    // ═════════════════════════════ 组 ═════════════════════════════
+
+    void NodeEditorView::GroupSelection()
+    {
+        Graph* g = G();
+        if (!g || m_selection.empty())
+            return;
+        std::vector<NodeId> ids;
+        for (const auto& n : g->GetNodes())
+            if (m_selection.count(n->Id))
+                ids.push_back(n->Id);
+        m_editBegun = false;
+        BeginEdit();
+        const NodeId inst = g->CreateGroup(ids);
+        m_editBegun = false;
+        if (inst == kInvalidNode)
+            return;
+        m_selection = { inst };
+        Edited(true);
+        SelectionChanged();
+    }
+
+    void NodeEditorView::UngroupSelection()
+    {
+        Graph* g = G();
+        if (!g)
+            return;
+        std::vector<NodeId> groups;
+        for (const auto& n : g->GetNodes())
+            if (m_selection.count(n->Id) && n->IsGroup())
+                groups.push_back(n->Id);
+        if (groups.empty())
+            return;
+        m_editBegun = false;
+        BeginEdit();
+        std::set<NodeId> restored;
+        std::set<std::string> defs;
+        for (NodeId id : groups)
+        {
+            defs.insert(g->GetNode(id)->TypeId);
+            for (NodeId r : g->Ungroup(id))
+                restored.insert(r);
+        }
+        m_editBegun = false;
+        m_selection = std::move(restored);
+        Edited(true);
+        PruneGroups(defs);
+        SelectionChanged();
+    }
+
+    void NodeEditorView::PruneGroups(const std::set<std::string>& defIds)
+    {
+        // 组定义随最后一个实例删除（撤销时连同定义一起恢复）；要在 Edited 之后：组内编辑先写回定义
+        if (Graph* root = m_host.graph ? m_host.graph() : nullptr)
+            for (const std::string& id : defIds)
+                root->RemoveGroupIfUnused(id);
+    }
+
+    void NodeEditorView::EnterGroup(NodeId id)
+    {
+        SyncGraph();
+        Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!n || !n->IsGroup())
+            return;
+        if (m_inline.IsActive())
+            m_inline.Commit();
+        m_viewStack.push_back({ m_pan, m_zoom });
+        m_path.push_back(id);
+        m_graph = G();
+        m_selection.clear();
+        m_drag = Drag::None;
+        m_hover = {};
+        m_pendingLink.reset();
+        FrameAll();
+        SelectionChanged();
+    }
+
+    void NodeEditorView::LeaveGroup(size_t depth)
+    {
+        if (depth >= m_path.size())
+            return;
+        if (m_inline.IsActive())
+            m_inline.Commit();
+        const NodeId inst = m_path[depth];
+        m_path.resize(depth);
+        if (depth < m_viewStack.size())
+        {
+            m_pan  = m_viewStack[depth].Pan;
+            m_zoom = m_viewStack[depth].Zoom;
+            m_viewStack.resize(depth);
+        }
+        m_graph = G();
+        m_selection = { inst };   // 回到上一层时选中刚才所在的组
+        m_drag = Drag::None;
+        m_hover = {};
+        m_pendingLink.reset();
+        SelectionChanged();
+    }
+
+    void NodeEditorView::BeginRenameGroup(NodeId id)
+    {
+        Graph* g = G();
+        const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+        if (!n || !n->IsGroup())
+            return;
+        const Card c = Layout(*n);
+        const Vec2 a = GraphToLocal(c.Box.min.x, n->Y), b = GraphToLocal(c.Box.max.x, n->Y + kHeaderH);
+        const Rect lr{ a.x, a.y, std::max(b.x, a.x + 120.0f), std::max(b.y, a.y + 22.0f) };
+        const std::string defId = n->TypeId, current = n->Title();
+        m_inline.Begin(this, this, lr, current, [this, defId, current](const std::string& text)
+        {
+            const size_t b0 = text.find_first_not_of(" \t"), e0 = text.find_last_not_of(" \t");
+            const std::string name = b0 == std::string::npos ? std::string() : text.substr(b0, e0 - b0 + 1);
+            Graph* gg = G();
+            if (name.empty())
+                return false;
+            if (!gg || name == current)
+                return true;
+            m_editBegun = false;
+            BeginEdit();
+            gg->RenameGroup(defId, name);
+            m_editBegun = false;
+            Edited(false);
+            Invalidate();
+            return true;
+        });
+        if (MiniGUI::TextBox* box = m_inline.GetTextBox())
+        {
+            box->Focus(MiniGUI::FocusReason::Program);
+            box->SelectAll();
+        }
+    }
+
+    void NodeEditorView::PaintPath(MiniGUI::DrawList& dl, const Rect& screenRect)
+    {
+        m_crumbs.clear();
+        MiniGUI::UIContext* ctx = GetContext();
+        Graph* g = m_host.graph ? m_host.graph() : nullptr;
+        if (m_path.empty() || !ctx || !g)
+            return;
+        // 路径栏：主图 › 组 A › 组 B（前面各层可点，返回到那一层）
+        std::vector<std::string> names{ "主图" };
+        for (NodeId id : m_path)
+        {
+            const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
+            names.push_back(n ? n->Title() : "?");
+            g = n && n->Inner ? n->Inner.get() : nullptr;
+        }
+        constexpr float kBarH = 26.0f;
+        const Rect bar{ screenRect.min.x, screenRect.min.y, screenRect.max.x, screenRect.min.y + kBarH };
+        dl.AddRectFilled(bar, Theme::Panel);
+        dl.AddLine({ bar.min.x, bar.max.y - 1.0f }, { bar.max.x, bar.max.y - 1.0f }, Theme::Accent, 2.0f);
+        MiniGUI::TextParams tp;
+        tp.size   = 12.5f;
+        tp.vAlign = MiniGUI::TextAlign::Center;
+        MiniGUI::TextSystem& ts = ctx->GetTextSystem();
+        float x = bar.min.x + 10.0f;
+        for (size_t i = 0; i < names.size(); ++i)
+        {
+            const bool last = i + 1 == names.size();
+            tp.color = last ? Theme::Text : Theme::Accent;
+            const float w = ts.Measure(names[i], tp).x;
+            ts.Draw(dl, Rect{ x, bar.min.y, x + w + 1.0f, bar.max.y }, names[i], tp);
+            if (!last)
+                m_crumbs.emplace_back(Rect{ x - 4.0f - screenRect.min.x, 0.0f, x + w + 4.0f - screenRect.min.x, kBarH }, i);
+            x += w;
+            if (!last)
+            {
+                tp.color = Theme::TextDim;
+                x += 8.0f;
+                const float sw = ts.Measure("›", tp).x;
+                ts.Draw(dl, Rect{ x, bar.min.y, x + sw + 1.0f, bar.max.y }, "›", tp);
+                x += sw + 8.0f;
+            }
+        }
+        tp.color  = Theme::TextDim;
+        tp.hAlign = MiniGUI::TextAlign::End;
+        ts.Draw(dl, Rect{ x + 20.0f, bar.min.y, bar.max.x - 10.0f, bar.max.y }, "组内编辑会同步到这个组的全部实例 · Esc 返回", tp);
     }
 }

@@ -14,7 +14,18 @@ namespace MiniCAD::Nodes
 {
     // ═════════════════════════════ 节点与连线 ═════════════════════════════
 
-    Graph::Graph(const NodeRegistry& registry) : m_registry(&registry) {}
+    Graph::Graph(const NodeRegistry& registry) : m_registry(&registry)
+    {
+        static std::atomic<uint64_t> s_uid{ 0 };
+        m_uid       = ++s_uid;
+        m_ownGroups = std::make_unique<GroupLibrary>(registry);
+        m_groups    = m_ownGroups.get();
+    }
+
+    const NodeTypeInfo* Graph::FindType(const std::string& id) const
+    {
+        return IsGroupTypeId(id) ? m_groups->Find(id) : m_registry->Find(id);
+    }
     Graph::~Graph() = default;
 
     Node* Graph::NewNode(const std::string& typeId, NodeId id)
@@ -22,7 +33,8 @@ namespace MiniCAD::Nodes
         auto node    = std::make_unique<Node>();
         node->Id     = id;
         node->TypeId = typeId;
-        node->Type   = m_registry->Find(typeId);
+        node->Type   = FindType(typeId);
+        SetDirty(*node);
         if (node->Type)
         {
             for (const auto& p : node->Type->Inputs)
@@ -39,7 +51,7 @@ namespace MiniCAD::Nodes
 
     Node* Graph::AddNode(const std::string& typeId, float x, float y)
     {
-        if (!m_registry->Find(typeId))
+        if (!FindType(typeId) || !CanAddType(typeId))
             return nullptr;
         Node* n = NewNode(typeId, m_nextId);
         n->X = x;
@@ -91,6 +103,9 @@ namespace MiniCAD::Nodes
         m_paramTypes.clear();
         m_params = {};
         m_nextId = 1;
+        m_groupInputs.clear();
+        if (IsTopLevel())
+            m_ownGroups->Clear();   // 组库属于顶层的图
         Touch();
     }
 
@@ -312,6 +327,23 @@ namespace MiniCAD::Nodes
     std::string Graph::CopyToString(const std::vector<NodeId>& ids) const
     {
         Graph sub(*m_registry);
+        // 用到的组定义（含嵌套）一起带上，被用到的在前
+        std::set<std::string> needed;
+        std::function<void(const std::string&)> need = [&](const std::string& id)
+        {
+            const GroupDef* d = m_groups->Get(id);
+            if (!d || !needed.insert(id).second)
+                return;
+            for (const auto& n : d->Inner->GetNodes())
+                if (IsGroupTypeId(n->TypeId))
+                    need(n->TypeId);
+        };
+        for (NodeId id : ids)
+            if (const Node* src = GetNode(id); src && IsGroupTypeId(src->TypeId))
+                need(src->TypeId);
+        for (const GroupDef* d : m_groups->DependencyOrder())
+            if (needed.count(d->Id))
+                sub.Groups().Add(d->Name, d->Inner->CloneDefinition(&sub.Groups()), d->Id);
         for (NodeId id : ids)
         {
             const Node* src = GetNode(id);
@@ -337,6 +369,17 @@ namespace MiniCAD::Nodes
         Graph sub(*m_registry);
         if (json.find("MiniCAD-NodeGraph") == std::string::npos || !sub.LoadFromString(json))
             return {};
+        // 组定义：组库里已有同 ID、内容相同的直接用；同 ID 内容不同的作为新定义（改 ID），被用到的先处理
+        std::map<std::string, std::string> typeRemap;
+        for (const GroupDef* d : sub.Groups().DependencyOrder())
+        {
+            auto candidate = d->Inner->CloneDefinition(m_groups, &typeRemap);
+            const GroupDef* existing = m_groups->Get(d->Id);
+            if (existing && existing->Name == d->Name && existing->Inner->SaveToString() == candidate->SaveToString())
+                typeRemap[d->Id] = existing->Id;
+            else
+                typeRemap[d->Id] = m_groups->Add(d->Name, std::move(candidate), existing ? std::string() : d->Id).Id;
+        }
         float minX = 1e30f, minY = 1e30f;
         for (const auto& n : sub.m_nodes)
             if (n->Type)
@@ -348,9 +391,11 @@ namespace MiniCAD::Nodes
         std::vector<NodeId> out;
         for (const auto& src : sub.m_nodes)
         {
-            if (!src->Type)   // 本程序不认识的节点类型不粘贴
+            const auto mapped = typeRemap.find(src->TypeId);
+            const std::string typeId = mapped != typeRemap.end() ? mapped->second : src->TypeId;
+            if (!src->Type || !CanAddType(typeId))   // 本程序不认识的节点类型不粘贴；组内不粘贴用到本组的组实例
                 continue;
-            Node* n        = NewNode(src->TypeId, m_nextId);
+            Node* n        = NewNode(typeId, m_nextId);
             n->X           = src->X - minX + x;
             n->Y           = src->Y - minY + y;
             n->InputValues = src->InputValues;
@@ -382,7 +427,7 @@ namespace MiniCAD::Nodes
             if (!seen.insert(cur).second)
                 continue;
             if (Node* n = GetNode(cur))
-                n->Dirty = true;
+                SetDirty(*n);
             for (const auto& l : m_links)
                 if (l.FromNode == cur)
                     stack.push_back(l.ToNode);
@@ -392,7 +437,7 @@ namespace MiniCAD::Nodes
     void Graph::MarkAllDirty()
     {
         for (auto& n : m_nodes)
-            n->Dirty = true;
+            SetDirty(*n);
     }
 
     bool Graph::NeedsEvaluate(const SolveContext& ctx) const
@@ -442,15 +487,228 @@ namespace MiniCAD::Nodes
         bool solved = false;
         for (NodeId id : TopologicalOrder())
         {
+            if (c.Cancelled())
+                break;
             Node* n = GetNode(id);
             if (!n || !n->Dirty)
                 continue;
-            SolveNode(*n, c);
+            if (!SolveNode(*n, c))
+                break;
             solved = true;
+            if (c.Solved)
+                c.Solved();
         }
         if (solved)
             ++m_evalVersion;
         return solved;
+    }
+
+    std::unique_ptr<Graph> Graph::PrepareBackground(const SolveContext& ctx)
+    {
+        ResolveParameters();
+        SolveContext c = ctx;
+        c.Params = &m_params;
+
+        // 依赖图纸的节点（引用节点、组内有引用节点的组实例）读场景，在这里先算好，连同它们的脏上游；副本里它们就是干净的
+        for (auto& n : m_nodes)
+            if (n->Type && n->Type->DependsOnScene && n->m_sceneVersion != ctx.SceneVersion)
+            {
+                n->m_sceneVersion = ctx.SceneVersion;
+                MarkDirty(n->Id);
+            }
+        std::set<NodeId> here;
+        std::vector<NodeId> stack;
+        for (const auto& n : m_nodes)
+            if (n->Dirty && n->Type && n->Type->DependsOnScene)
+                stack.push_back(n->Id);
+        while (!stack.empty())
+        {
+            const NodeId cur = stack.back();
+            stack.pop_back();
+            if (!here.insert(cur).second)
+                continue;
+            for (const auto& l : m_links)
+                if (l.ToNode == cur)
+                    if (const Node* src = GetNode(l.FromNode); src && src->Dirty)
+                        stack.push_back(l.FromNode);
+        }
+        bool solved = false;
+        if (!here.empty())
+            for (NodeId id : TopologicalOrder())
+                if (Node* n = GetNode(id); n && n->Dirty && here.count(id))
+                {
+                    SolveNode(*n, c);
+                    solved = true;
+                }
+        if (solved)
+            ++m_evalVersion;
+
+        std::set<NodeId> dirty;
+        for (const auto& n : m_nodes)
+            if (n->Dirty)
+                dirty.insert(n->Id);
+        if (dirty.empty())
+            return nullptr;
+        // 干净节点的输出只在连到脏节点时才需要
+        std::set<NodeId> feeding;
+        for (const auto& l : m_links)
+            if (dirty.count(l.ToNode))
+                feeding.insert(l.FromNode);
+
+        // 组库深复制：界面线程可能在后台求值期间编辑组定义
+        auto copy = std::make_unique<Graph>(*m_registry);
+        copy->m_ownGroups = m_groups->Clone();
+        copy->m_groups    = copy->m_ownGroups.get();
+        copy->m_owner     = m_owner;
+        for (const auto& n : m_nodes)
+        {
+            auto c2 = std::make_unique<Node>();
+            Node& d = *c2;
+            d.Id = n->Id;  d.TypeId = n->TypeId;  d.Type = copy->FindType(n->TypeId);
+            d.InputValues = n->InputValues;
+            d.Params      = n->Params;
+            d.Dirty       = n->Dirty;
+            d.m_sceneVersion = n->m_sceneVersion;
+            d.m_stamp        = n->m_stamp;
+            if (!n->Dirty && feeding.count(n->Id))
+                d.Outputs = n->Outputs;
+            else
+                d.Outputs.resize(n->Outputs.size());
+            if (n->Dirty && n->Inner)   // 要重算的组实例：带上组内图（只重算组内脏的部分）
+            {
+                d.Inner        = n->Inner->CloneFull(copy->m_groups);
+                d.InnerVersion = n->InnerVersion;
+            }
+            copy->m_nodes.push_back(std::move(c2));
+        }
+        copy->m_links      = m_links;
+        copy->m_nextId     = m_nextId;
+        copy->m_params     = m_params;
+        copy->m_paramTypes = m_paramTypes;
+        copy->m_stampSeq   = m_stampSeq;
+        return copy;
+    }
+
+    int Graph::MergeEvaluated(Graph& solved)
+    {
+        int merged = 0, shown = 0;
+        for (auto& s : solved.m_nodes)
+        {
+            if (s->Dirty)
+                continue;
+            Node* n = GetNode(s->Id);
+            if (!n || !n->Dirty || n->TypeId != s->TypeId)
+                continue;
+            if (n->m_stamp != s->m_stamp)
+            {
+                // 期间被改动：结果已过时，节点保持为脏；先拿来显示（脏节点的输出在重算前只用于预览与提示，下游重算时上游先重算）
+                if (n->Outputs.size() == s->Outputs.size())
+                {
+                    n->Outputs     = std::move(s->Outputs);
+                    n->DisplayData = std::move(s->DisplayData);
+                    n->State       = s->State;
+                    n->Message     = std::move(s->Message);
+                    n->Millis      = s->Millis;
+                    ++shown;
+                }
+                continue;
+            }
+            if (s->Inner)
+            {
+                if (!n->Inner || n->InnerVersion != s->InnerVersion)
+                {
+                    // 副本里重建过组内图：整个拿过来，改用本图的组库
+                    n->Inner        = std::move(s->Inner);
+                    n->InnerVersion = s->InnerVersion;
+                    n->Inner->BindLibrary(m_groups);
+                }
+                else   // 实例的脏戳没变，组内图期间也没被改过：整个采用副本的结果（对象不换，编辑器可能正显示着它）
+                    n->Inner->AdoptEvaluated(*s->Inner);
+            }
+            n->Outputs     = std::move(s->Outputs);
+            n->DisplayData = std::move(s->DisplayData);
+            n->State       = s->State;
+            n->Message     = std::move(s->Message);
+            n->Millis      = s->Millis;
+            n->SolveCount += s->SolveCount;
+            n->Dirty       = false;
+            ++merged;
+        }
+        if (merged > 0 || shown > 0)
+            ++m_evalVersion;
+        return merged;
+    }
+
+    double Graph::EstimatedMillis() const
+    {
+        double ms = 0.0;
+        for (const auto& n : m_nodes)
+            if (n->Dirty)
+            {
+                if (n->SolveCount == 0)
+                    return -1.0;
+                ms += n->Millis;
+            }
+        return ms;
+    }
+
+    void Graph::AdoptEvaluated(Graph& solved)
+    {
+        for (auto& s : solved.m_nodes)
+        {
+            Node* n = GetNode(s->Id);
+            if (!n || n->TypeId != s->TypeId)
+                continue;
+            n->Outputs     = std::move(s->Outputs);
+            n->DisplayData = std::move(s->DisplayData);
+            n->State       = s->State;
+            n->Message     = std::move(s->Message);
+            n->Millis      = s->Millis;
+            n->SolveCount += s->SolveCount;
+            n->Dirty       = s->Dirty;
+            n->m_stamp        = s->m_stamp;
+            n->m_sceneVersion = s->m_sceneVersion;
+            if (s->Inner)
+            {
+                if (n->Inner && n->InnerVersion == s->InnerVersion)
+                    n->Inner->AdoptEvaluated(*s->Inner);
+                else
+                {
+                    n->Inner        = std::move(s->Inner);
+                    n->InnerVersion = s->InnerVersion;
+                    n->Inner->BindLibrary(m_groups);
+                }
+            }
+        }
+        m_stampSeq    = std::max(m_stampSeq, solved.m_stampSeq);
+        m_params      = std::move(solved.m_params);
+        m_groupInputs = std::move(solved.m_groupInputs);
+        ++m_evalVersion;
+    }
+
+    bool Graph::AnyDirty() const
+    {
+        return std::any_of(m_nodes.begin(), m_nodes.end(), [](const auto& n) { return n->Dirty; });
+    }
+
+    std::vector<std::pair<NodeId, uint64_t>> Graph::DirtyStamps() const
+    {
+        std::vector<std::pair<NodeId, uint64_t>> out;
+        for (const auto& n : m_nodes)
+            if (n->Dirty)
+                out.emplace_back(n->Id, n->m_stamp);
+        return out;
+    }
+
+    bool Graph::IsStale(const std::vector<std::pair<NodeId, uint64_t>>& pending) const
+    {
+        for (const auto& [id, stamp] : pending)
+        {
+            const Node* n = GetNode(id);
+            if (!n || n->m_stamp != stamp)
+                return true;
+        }
+        return false;
     }
 
     DataList GatherInput(const Graph& g, const Node& node, int port)
@@ -533,7 +791,7 @@ namespace MiniCAD::Nodes
         };
     }
 
-    void Graph::SolveNode(Node& node, const SolveContext& ctx)
+    bool Graph::SolveNode(Node& node, const SolveContext& ctx)
     {
         const auto t0 = std::chrono::steady_clock::now();
         node.Dirty = false;
@@ -549,6 +807,7 @@ namespace MiniCAD::Nodes
             node.State   = st;
             node.Message = std::move(msg);
             node.Millis  = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            return true;
         };
 
         if (!node.Type)
@@ -584,6 +843,30 @@ namespace MiniCAD::Nodes
         if (type.Display && !inputs.empty())
             node.DisplayData = inputs[0];
 
+        // 组输入：输出组实例传进来的数据，没有时输出“默认”
+        if (type.Id == kGroupInputType)
+        {
+            const DataList* given = nullptr;
+            if (ctx.GroupInputs)
+                if (auto it = ctx.GroupInputs->find(node.Id); it != ctx.GroupInputs->end() && !it->second.empty())
+                    given = &it->second;
+            if (!node.Outputs.empty())
+                node.Outputs[0] = given ? *given : inputs[0];
+            return finish(NodeState::Ok, {});
+        }
+        if (node.IsGroup())
+        {
+            NodeState   st = NodeState::Ok;
+            std::string msg;
+            if (!SolveGroup(node, ctx, inputs, st, msg))
+            {
+                node.Dirty = true;   // 被取消：组内已算完的部分留着，下次接着算
+                --node.SolveCount;
+                return false;
+            }
+            return finish(st, std::move(msg));
+        }
+
         // 迭代次数：按项访问的输入取最长列表；必需的输入没有数据时不求值
         size_t count = 1;
         bool   anyItem = false;
@@ -605,6 +888,12 @@ namespace MiniCAD::Nodes
         Args args(node, ctx, inputs);
         for (size_t it = 0; it < count; ++it)
         {
+            if (ctx.Cancelled())
+            {
+                node.Dirty = true;   // 结果不完整，留待下次重算（脏戳不变）
+                --node.SolveCount;
+                return false;
+            }
             args.SetIteration(static_cast<int>(it));
             try
             {
@@ -619,6 +908,12 @@ namespace MiniCAD::Nodes
                 args.Error("求值异常");
             }
         }
+        if (ctx.Cancelled())   // 节点自己检查了取消、提前返回：结果不完整
+        {
+            node.Dirty = true;
+            --node.SolveCount;
+            return false;
+        }
 
         if (!args.m_error.empty())
         {
@@ -629,7 +924,7 @@ namespace MiniCAD::Nodes
         }
         if (!args.m_warning.empty())
             return finish(NodeState::Warning, args.m_warning);
-        finish(NodeState::Ok, {});
+        return finish(NodeState::Ok, {});
     }
 
     // ═════════════════════════════ 命名参数与类型 ═════════════════════════════
@@ -1022,6 +1317,8 @@ namespace MiniCAD::Nodes
         s.Value("format", format);
         int32_t version = 1;
         s.Value("version", version);
+        if (IsTopLevel() && !m_groups->Empty())
+            m_groups->Serialize(s);
 
         size_t n = m_nodes.size();
         if (s.BeginArray("nodes", n))
@@ -1100,6 +1397,8 @@ namespace MiniCAD::Nodes
         s.Value("format", format);
         if (format != "MiniCAD-NodeGraph")
             return false;
+        if (IsTopLevel())
+            m_groups->Deserialize(s);   // 先读组库：节点里的组类型要用
 
         size_t n = 0;
         if (s.BeginArray("nodes", n))
@@ -1235,5 +1534,502 @@ namespace MiniCAD::Nodes
         if (!s.Parse(json))
             return false;
         return Deserialize(s);
+    }
+
+    // ═════════════════════════════ 组（PLAN.md 第 12 节）═════════════════════════════
+
+    namespace
+    {
+        int IndexOf(const std::vector<uint32_t>& v, NodeId id)
+        {
+            const auto it = std::find(v.begin(), v.end(), id);
+            return it == v.end() ? -1 : static_cast<int>(it - v.begin());
+        }
+
+        int IndexOf(const std::vector<std::string>& v, const std::string& s)
+        {
+            const auto it = std::find(v.begin(), v.end(), s);
+            return it == v.end() ? -1 : static_cast<int>(it - v.begin());
+        }
+    }
+
+    bool Graph::CanAddType(const std::string& typeId) const
+    {
+        return m_owner.empty() || !IsGroupTypeId(typeId) || !m_groups->Uses(typeId, m_owner);
+    }
+
+    void Graph::BindLibrary(GroupLibrary* lib)
+    {
+        m_groups = lib;
+        for (auto& n : m_nodes)
+        {
+            n->Type = FindType(n->TypeId);
+            if (n->Inner)
+                n->Inner->BindLibrary(lib);
+        }
+    }
+
+    std::unique_ptr<Graph> Graph::CloneDefinition(GroupLibrary* lib, const std::map<std::string, std::string>* typeRemap) const
+    {
+        auto g = std::make_unique<Graph>(*m_registry);
+        g->BindLibrary(lib);
+        g->m_owner = m_owner;
+        for (const auto& src : m_nodes)
+        {
+            std::string typeId = src->TypeId;
+            if (typeRemap)
+                if (const auto it = typeRemap->find(typeId); it != typeRemap->end())
+                    typeId = it->second;
+            Node* n        = g->NewNode(typeId, src->Id);
+            n->X           = src->X;
+            n->Y           = src->Y;
+            n->InputValues = src->InputValues;
+            n->Params      = src->Params;
+            n->Preview     = src->Preview;
+        }
+        g->m_links      = m_links;
+        g->m_nextId     = m_nextId;
+        g->m_paramTypes = m_paramTypes;
+        return g;
+    }
+
+    std::unique_ptr<Graph> Graph::CloneFull(GroupLibrary* lib) const
+    {
+        auto g = std::make_unique<Graph>(*m_registry);
+        g->BindLibrary(lib);
+        for (const auto& src : m_nodes)
+        {
+            auto n = std::make_unique<Node>();
+            n->Id          = src->Id;
+            n->TypeId      = src->TypeId;
+            n->Type        = g->FindType(src->TypeId);
+            n->X           = src->X;
+            n->Y           = src->Y;
+            n->InputValues = src->InputValues;
+            n->Params      = src->Params;
+            n->Preview     = src->Preview;
+            n->Outputs     = src->Outputs;
+            n->DisplayData = src->DisplayData;
+            n->State       = src->State;
+            n->Message     = src->Message;
+            n->Millis      = src->Millis;
+            n->Dirty       = src->Dirty;
+            n->m_sceneVersion = src->m_sceneVersion;
+            n->m_stamp        = src->m_stamp;
+            if (src->Inner)
+            {
+                n->Inner        = src->Inner->CloneFull(lib);
+                n->InnerVersion = src->InnerVersion;
+            }
+            g->m_nodes.push_back(std::move(n));
+        }
+        g->m_links       = m_links;
+        g->m_nextId      = m_nextId;
+        g->m_params      = m_params;
+        g->m_paramTypes  = m_paramTypes;
+        g->m_stampSeq    = m_stampSeq;
+        g->m_owner       = m_owner;
+        g->m_groupInputs = m_groupInputs;
+        return g;
+    }
+
+    bool Graph::SolveGroup(Node& node, const SolveContext& ctx, std::vector<DataList>& inputs, NodeState& state, std::string& message)
+    {
+        const GroupDef* def = m_groups->Get(node.TypeId);
+        if (!def)
+        {
+            state   = NodeState::Error;
+            message = "组定义不存在：" + node.TypeId;
+            return true;
+        }
+        if (!node.Inner || node.InnerVersion != def->Version)
+        {
+            node.Inner        = def->Inner->CloneDefinition(m_groups);
+            node.InnerVersion = def->Version;
+        }
+        Graph& in = *node.Inner;
+
+        // 各输入整列交给组内对应的组输入节点；数据变了的组输入标脏（实例的输入没变时组内不重算）
+        std::map<NodeId, DataList> given;
+        for (size_t i = 0; i < def->InputNodes.size() && i < inputs.size(); ++i)
+            given[def->InputNodes[i]] = std::move(inputs[i]);
+        for (const auto& [id, list] : given)
+            if (const auto it = in.m_groupInputs.find(id); it == in.m_groupInputs.end() || !SameList(it->second, list))
+                in.MarkDirty(id);
+        for (const auto& [id, list] : in.m_groupInputs)
+            if (!given.count(id))
+                in.MarkDirty(id);
+        in.m_groupInputs = std::move(given);
+
+        SolveContext ic = ctx;
+        ic.Solved      = nullptr;
+        ic.Params      = nullptr;
+        ic.GroupInputs = &in.m_groupInputs;
+        in.Evaluate(ic);
+        if (ctx.Cancelled() && in.AnyDirty())
+            return false;
+
+        bool any = false;
+        for (size_t k = 0; k < def->OutputNodes.size() && k < node.Outputs.size(); ++k)
+            if (const Node* o = in.GetNode(def->OutputNodes[k]))
+            {
+                node.Outputs[k] = GatherInput(in, *o, 0);
+                any = any || !node.Outputs[k].empty();
+            }
+        int errors = 0;
+        for (const auto& n : in.m_nodes)
+            errors += n->State == NodeState::Error ? 1 : 0;
+        if (errors > 0)
+        {
+            state   = any ? NodeState::Warning : NodeState::Error;
+            message = "组内 " + std::to_string(errors) + " 个节点出错（双击进入查看）";
+        }
+        return true;
+    }
+
+    NodeId Graph::CreateGroup(const std::vector<NodeId>& ids, const std::string& name)
+    {
+        std::set<NodeId> in;
+        std::vector<const Node*> sel;
+        for (NodeId id : ids)
+            if (const Node* n = GetNode(id); n && in.insert(id).second)
+                sel.push_back(n);
+        if (sel.empty())
+            return kInvalidNode;
+        float minX = 1e30f, minY = 1e30f, maxX = -1e30f;
+        for (const Node* n : sel)
+        {
+            minX = std::min(minX, n->X);
+            minY = std::min(minY, n->Y);
+            maxX = std::max(maxX, n->X);
+        }
+
+        // 组内的图：选中的节点（ID 不变）与它们之间的连线
+        auto inner = std::make_unique<Graph>(*m_registry);
+        inner->BindLibrary(m_groups);
+        for (const Node* n : sel)
+        {
+            Node* c        = inner->NewNode(n->TypeId, n->Id);
+            c->X           = n->X;
+            c->Y           = n->Y;
+            c->InputValues = n->InputValues;
+            c->Params      = n->Params;
+            c->Preview     = n->Preview;
+        }
+        std::vector<Link> incoming, outgoing;
+        for (const Link& l : m_links)
+        {
+            const bool from = in.count(l.FromNode) > 0, to = in.count(l.ToNode) > 0;
+            if (from && to)
+                inner->m_links.push_back(l);
+            else if (to)
+                incoming.push_back(l);
+            else if (from)
+                outgoing.push_back(l);
+        }
+
+        // 穿过边界的连线变成接口：同一个源端口只生成一个；组输入按目标节点的位置、组输出按源节点的位置从上到下排列
+        using Key = std::pair<NodeId, int>;
+        auto portName = [&](const Key& k)
+        {
+            const Node* n = GetNode(k.first);
+            return n && n->Type && k.second >= 0 && k.second < static_cast<int>(n->Type->Outputs.size()) ? n->Type->Outputs[k.second].Name : std::string();
+        };
+        auto collect = [&](const std::vector<Link>& links, bool byTarget)
+        {
+            std::vector<Key> keys;
+            std::map<Key, float> y;
+            for (const Link& l : links)
+            {
+                const Key k{ l.FromNode, l.FromPort };
+                const float ny = GetNode(byTarget ? l.ToNode : l.FromNode)->Y;
+                if (!y.count(k))
+                {
+                    keys.push_back(k);
+                    y[k] = ny;
+                }
+                else
+                    y[k] = std::min(y[k], ny);
+            }
+            std::stable_sort(keys.begin(), keys.end(), [&](const Key& a, const Key& b) { return y[a] < y[b]; });
+            return keys;
+        };
+        constexpr float kGap = 240.0f, kStep = 80.0f;
+        std::map<Key, NodeId> inNode, outNode;
+        const std::vector<Key> inKeys = collect(incoming, true), outKeys = collect(outgoing, false);
+        for (size_t i = 0; i < inKeys.size(); ++i)
+        {
+            Node* gi      = inner->NewNode(kGroupInputType, inner->m_nextId);
+            gi->X         = minX - kGap;
+            gi->Y         = minY + kStep * static_cast<float>(i);
+            gi->Params[0] = Value(portName(inKeys[i]));
+            inNode[inKeys[i]] = gi->Id;
+        }
+        for (size_t i = 0; i < outKeys.size(); ++i)
+        {
+            Node* go      = inner->NewNode(kGroupOutputType, inner->m_nextId);
+            go->X         = maxX + kGap;
+            go->Y         = minY + kStep * static_cast<float>(i);
+            go->Params[0] = Value(portName(outKeys[i]));
+            outNode[outKeys[i]] = go->Id;
+            inner->m_links.push_back({ outKeys[i].first, outKeys[i].second, go->Id, 0 });
+        }
+        for (const Link& l : incoming)
+            inner->m_links.push_back({ inNode[{ l.FromNode, l.FromPort }], 0, l.ToNode, l.ToPort });
+
+        const GroupDef& def = m_groups->Add(name, std::move(inner));
+        for (NodeId id : in)
+            RemoveNode(id);
+        Node* inst = NewNode(def.Id, m_nextId);
+        inst->X = minX;
+        inst->Y = minY;
+        const NodeId instId = inst->Id;
+        for (const Link& l : incoming)
+            if (const int k = IndexOf(def.InputNodes, inNode[{ l.FromNode, l.FromPort }]); k >= 0)
+                Connect({ l.FromNode, l.FromPort, instId, k }, false);
+        for (const Link& l : outgoing)
+            if (const int k = IndexOf(def.OutputNodes, outNode[{ l.FromNode, l.FromPort }]); k >= 0)
+                Connect({ instId, k, l.ToNode, l.ToPort }, false);
+        MarkDirty(instId);
+        Touch();
+        return instId;
+    }
+
+    std::vector<NodeId> Graph::Ungroup(NodeId instance)
+    {
+        const Node* inst = GetNode(instance);
+        if (!inst || !inst->IsGroup())
+            return {};
+        const GroupDef* def = m_groups->Get(inst->TypeId);
+        if (!def)
+            return {};
+        const Graph& src = *def->Inner;
+        auto isInterface = [](const Node& n) { return n.TypeId == kGroupInputType || n.TypeId == kGroupOutputType; };
+        float minX = 1e30f, minY = 1e30f;
+        for (const auto& n : src.m_nodes)
+            if (!isInterface(*n))
+            {
+                minX = std::min(minX, n->X);
+                minY = std::min(minY, n->Y);
+            }
+        if (minX > 1e29f)
+            minX = minY = 0.0f;
+
+        // 组内节点放回本图：左上角对齐实例
+        const float x0 = inst->X, y0 = inst->Y;
+        std::map<NodeId, NodeId> remap;
+        std::vector<NodeId> out;
+        for (const auto& n : src.m_nodes)
+        {
+            if (isInterface(*n) || !CanAddType(n->TypeId))
+                continue;
+            Node* c        = NewNode(n->TypeId, m_nextId);
+            c->X           = n->X - minX + x0;
+            c->Y           = n->Y - minY + y0;
+            c->InputValues = n->InputValues;
+            c->Params      = n->Params;
+            c->Preview     = n->Preview;
+            UniqueParamName(*c);
+            remap[n->Id] = c->Id;
+            out.push_back(c->Id);
+        }
+        const std::vector<Link> outerIn = [&] { std::vector<Link> v; for (const Link& l : m_links) if (l.ToNode == instance) v.push_back(l); return v; }();
+        const std::vector<Link> outerOut = [&] { std::vector<Link> v; for (const Link& l : m_links) if (l.FromNode == instance) v.push_back(l); return v; }();
+
+        // 连线：组内的照原样；组输入 → 组内节点 换成 外部源 → 组内节点（实例上没有连线时用组输入的“默认”的来源）；
+        // 组内节点 → 组输出 换成 组内节点 → 外部目标
+        std::vector<Link> add;
+        for (const Link& l : src.m_links)
+        {
+            const int k = IndexOf(def->InputNodes, l.FromNode);   // 从组输入出来
+            const int j = IndexOf(def->OutputNodes, l.ToNode);    // 进入组输出
+            const bool fromMapped = remap.count(l.FromNode) > 0, toMapped = remap.count(l.ToNode) > 0;
+            if (fromMapped && toMapped)
+                add.push_back({ remap[l.FromNode], l.FromPort, remap[l.ToNode], l.ToPort });
+            else if (k >= 0 && (toMapped || j >= 0))
+            {
+                std::vector<std::pair<NodeId, int>> sources;
+                for (const Link& o : outerIn)
+                    if (o.ToPort == k)
+                        sources.emplace_back(o.FromNode, o.FromPort);
+                if (sources.empty())
+                    for (const Link& d : src.LinksInto(l.FromNode, 0))
+                        if (remap.count(d.FromNode))
+                            sources.emplace_back(remap[d.FromNode], d.FromPort);
+                for (const auto& [sn, sp] : sources)
+                {
+                    if (toMapped)
+                        add.push_back({ sn, sp, remap[l.ToNode], l.ToPort });
+                    else   // 组输入直接连到组输出：外部源直接连到外部目标
+                        for (const Link& o : outerOut)
+                            if (o.FromPort == j)
+                                add.push_back({ sn, sp, o.ToNode, o.ToPort });
+                }
+            }
+            else if (j >= 0 && fromMapped)
+                for (const Link& o : outerOut)
+                    if (o.FromPort == j)
+                        add.push_back({ remap[l.FromNode], l.FromPort, o.ToNode, o.ToPort });
+        }
+        RemoveNode(instance);
+        for (const Link& l : add)
+            Connect(l, false);
+        Touch();
+        return out;
+    }
+
+    bool Graph::UsesGroup(const std::string& defId) const
+    {
+        for (const auto& n : m_nodes)
+            if (IsGroupTypeId(n->TypeId) && m_groups->Uses(n->TypeId, defId))
+                return true;
+        return false;
+    }
+
+    bool Graph::RemoveGroupIfUnused(const std::string& defId)
+    {
+        if (!m_groups->Get(defId) || UsesGroup(defId))
+            return false;
+        for (const auto& d : m_groups->Defs())
+            if (d->Id != defId && d->Inner->UsesGroup(defId))
+                return false;
+        m_groups->Remove(defId);
+        Touch();
+        return true;
+    }
+
+    bool Graph::RenameGroup(const std::string& defId, const std::string& name)
+    {
+        GroupDef* def = m_groups->Get(defId);
+        if (!def || name.empty() || def->Name == name)
+            return false;
+        def->Name = name;
+        m_groups->Refresh(*def);
+        Touch();
+        return true;
+    }
+
+    Graph* Graph::ResolvePath(std::vector<NodeId>& path)
+    {
+        std::vector<Graph*> chain{ this };
+        Graph* g = this;
+        bool rebuilt = false;
+        size_t depth = 0;
+        for (; depth < path.size(); ++depth)
+        {
+            Node* n = g->GetNode(path[depth]);
+            const GroupDef* def = n && n->IsGroup() ? m_groups->Get(n->TypeId) : nullptr;
+            if (!def)
+                break;
+            if (!n->Inner || n->InnerVersion != def->Version)
+            {
+                n->Inner        = def->Inner->CloneDefinition(m_groups);
+                n->InnerVersion = def->Version;
+                rebuilt = true;
+            }
+            g = n->Inner.get();
+            chain.push_back(g);
+        }
+        path.resize(depth);
+        if (rebuilt)   // 新建的组内图还没有结果：沿途的实例重算
+            for (size_t k = 0; k < path.size(); ++k)
+                chain[k]->MarkDirty(path[k]);
+        return g;
+    }
+
+    void Graph::CommitGroupEdit(const std::vector<NodeId>& path, bool contentChanged)
+    {
+        Graph* g = this;
+        Node* inst = nullptr;
+        for (NodeId id : path)
+        {
+            inst = g->GetNode(id);
+            if (!inst || !inst->IsGroup() || !inst->Inner)
+                return;
+            g = inst->Inner.get();
+        }
+        GroupDef* def = inst ? m_groups->Get(inst->TypeId) : nullptr;
+        if (!def)
+            return;
+        // 编辑的是这个实例的组内图：写回定义，这个实例不必重建
+        def->Inner = inst->Inner->CloneDefinition(m_groups);
+        ++def->Version;
+        inst->InnerVersion = def->Version;
+
+        GroupChange ch;
+        ch.Id    = def->Id;
+        ch.Ports = m_groups->Refresh(*def, &ch.OldIn, &ch.OldOut);
+        for (const auto& p : def->Type->Inputs)
+            ch.NewIn.push_back(p.Name);
+        for (const auto& p : def->Type->Outputs)
+            ch.NewOut.push_back(p.Name);
+        ch.Content = contentChanged || ch.Ports;
+        m_groups->RefreshAll();   // 用到它的组：端口类型、是否读图纸
+        if (ch.Content)
+        {
+            // 全部实例（含各实例组内图里嵌套的）重算、按名称重新对应端口，沿途的实例标脏；定义里的嵌套实例也重新对应
+            ApplyGroupChanges({ ch });
+            for (const auto& d : m_groups->Defs())
+                d->Inner->ApplyGroupChanges({ ch });
+        }
+        Touch();
+    }
+
+    bool Graph::ApplyGroupChanges(const std::vector<GroupChange>& changes)
+    {
+        bool any = false;
+        for (size_t i = 0; i < m_nodes.size(); ++i)
+        {
+            Node& n = *m_nodes[i];
+            bool mark = n.Inner && n.Inner->ApplyGroupChanges(changes);
+            for (const GroupChange& ch : changes)
+                if (n.TypeId == ch.Id)
+                {
+                    if (ch.Ports)
+                        RemapGroupPorts(n, ch);
+                    mark = true;
+                }
+            if (mark)
+            {
+                MarkDirty(n.Id);
+                any = true;
+            }
+        }
+        if (any)
+            Touch();
+        return any;
+    }
+
+    void Graph::RemapGroupPorts(Node& node, const GroupChange& ch)
+    {
+        std::vector<Value> inputs(ch.NewIn.size());
+        for (size_t i = 0; i < ch.OldIn.size() && i < node.InputValues.size(); ++i)
+            if (const int j = IndexOf(ch.NewIn, ch.OldIn[i]); j >= 0)
+                inputs[j] = node.InputValues[i];
+        node.InputValues = std::move(inputs);
+        node.Outputs.assign(ch.NewOut.size(), {});
+        std::vector<Link> kept;
+        for (Link l : m_links)
+        {
+            if (l.ToNode == node.Id)
+            {
+                const int j = l.ToPort >= 0 && l.ToPort < static_cast<int>(ch.OldIn.size()) ? IndexOf(ch.NewIn, ch.OldIn[l.ToPort]) : -1;
+                if (j < 0)
+                    continue;   // 端口没了：连线丢弃
+                l.ToPort = j;
+            }
+            if (l.FromNode == node.Id)
+            {
+                const int j = l.FromPort >= 0 && l.FromPort < static_cast<int>(ch.OldOut.size()) ? IndexOf(ch.NewOut, ch.OldOut[l.FromPort]) : -1;
+                if (j < 0)
+                {
+                    MarkDirty(l.ToNode);
+                    continue;
+                }
+                l.FromPort = j;
+            }
+            kept.push_back(l);
+        }
+        m_links = std::move(kept);
     }
 }

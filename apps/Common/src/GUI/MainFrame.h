@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -16,6 +18,7 @@
 #include "Data/CommandRegistry.h"
 #include "Widgets/Binding.h"
 #include "Widgets/Menu.h"
+#include "NodeGraph/Graph.h"
 #include "NodeGraph/GraphHistory.h"
 #include "NodeGraph/Preview.h"
 #include <map>
@@ -38,6 +41,7 @@ namespace MiniGUI
 
 namespace MiniGUI
 {
+    class Button;
     class Dialog;
     class Popup;
 }
@@ -121,12 +125,19 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Node> CreateNodePanel();         // 节点编辑器面板：工具行 + 画布
         void SyncNodeGraph();                                     // 每帧：求值当前文档的节点图（引用的图纸变了也重算），需要时刷新绘图区预览
         void RefreshNodePreview(Document& doc);
+        Nodes::Graph& ShownNodeGraph(Document& doc);              // 节点编辑器正在显示的图（主图或进入的组内图）
         void BakeNodeGraph();                                     // 烘焙：结果加入图纸（可撤销）
         void OpenNodeParamsDialog();                              // 参数表：全部命名参数的名称、类别、值、公式，以及类型（族类型）
         void ShowNodePanel(bool toggle);                          // 第一次显示时停靠在绘图区下方
         bool NodeEditorHasFocus() const;                          // 节点编辑器有焦点时 Ctrl+Z / Y / A / C / X / V 作用于节点图
         bool NodeGraphUndo(bool redo);
         Nodes::SolveContext  NodeSolveContext(Document& doc) const;
+        // 后台求值（N11）：桌面版把节点图的副本交给单个工作线程求值，界面线程不等待；改了正在算的节点就取消重来
+        void StartNodeEvaluation(Nodes::Graph& g, std::unique_ptr<Nodes::Graph> copy, const Nodes::SolveContext& ctx);
+        bool CollectNodeEvaluation();                             // 后台求值完成时把结果合并回节点图，返回是否合并了
+        void StopNodeEvaluation();                                // 用户停止：取消，修改节点图（或图纸）之前不再自动求值
+        void WaitNodeEvaluation();                                // 取消并等工作线程退出（关闭程序、自测）
+        void UpdateNodeStatus(const Nodes::Graph& g);
         Nodes::GraphHistory& NodeHistory(const Document& doc);
 
         // ── 动态输入（DynamicInput.cpp）与 Editor 请求的对话框（EditorDialogs.cpp）──
@@ -257,6 +268,25 @@ namespace MiniCAD
         const Document*                        m_nodePreviewDoc = nullptr;   // 预览对应的文档
         uint64_t                               m_nodePreviewSig = 0;         // 预览对应的求值版本、预览开关、连线、选择
         bool                                   m_nodePanelPlaced = false;    // 节点面板已经放进过停靠区
+        // 一次后台求值，与工作线程共享：工作线程只碰 copy（节点图的副本）与几个原子量，界面线程在 finished 之后才读 copy
+        struct NodeEvalJob
+        {
+            std::unique_ptr<Nodes::Graph>                   copy;
+            uint64_t                                        graph = 0;   // 节点图的 Uid
+            std::vector<std::pair<Nodes::NodeId, uint64_t>> pending;     // 要算的节点与脏戳：本图里有变化就取消
+            std::atomic<bool>                               cancel{ false };
+            std::atomic<bool>                               userStop{ false };
+            std::atomic<bool>                               finished{ false };
+            std::atomic<int>                                solved{ 0 };
+            std::atomic<int64_t>                            lastRedraw{ 0 };   // 上次为进度请求重绘的时间（毫秒），限流用
+            std::chrono::steady_clock::time_point           start;
+        };
+        std::shared_ptr<NodeEvalJob>           m_nodeJob;                    // 正在后台求值；空 = 空闲
+        struct { uint64_t graph = 0, dirty = 0, scene = 0; } m_nodePause;    // 用户停止求值时的图、标脏次数、场景版本
+        bool                                   m_nodeEvalSync = false;       // 不用后台线程（自测里检查同步结果）
+        // 脏节点上次耗时之和不超过它（毫秒）时在界面线程上同步求值，当帧出结果，与 N11 之前一样；更重的交给后台
+        double                                 m_nodeSyncBudget = 40.0;
+        MiniGUI::Button*                       m_nodeStop   = nullptr;       // 工具行的“停止”按钮，只在后台求值时显示
 
         // ── 后台打开图纸（OpenDrawings）───────────────────────────
         struct OpenJob;                                                  // 一张图纸的读取任务，与后台线程共享（MainFrame.cpp）

@@ -96,6 +96,7 @@ set(MINICAD_NODEGRAPH_SOURCES
     "${MINICAD_SRC}/NodeGraph/Value.cpp"
     "${MINICAD_SRC}/NodeGraph/NodeType.cpp"
     "${MINICAD_SRC}/NodeGraph/Graph.cpp"
+    "${MINICAD_SRC}/NodeGraph/Group.cpp"
     "${MINICAD_SRC}/NodeGraph/GeometryOps.cpp"
     "${MINICAD_SRC}/NodeGraph/Expression.cpp"
     "${MINICAD_SRC}/NodeGraph/Preview.cpp"

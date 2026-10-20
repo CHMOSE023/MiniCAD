@@ -27,6 +27,8 @@ namespace MiniCAD
     //   - 选择：单击、Shift / Ctrl 多选、空白处框选；拖动移动；Delete 删除、Ctrl+D 复制、P 切换预览、Esc 取消
     //   - 剪贴板：Ctrl+C / Ctrl+X / Ctrl+V 复制 / 剪切 / 粘贴选中的节点（子图 JSON，见 Graph::CopyToString），粘贴到光标处
     //   - 添加节点：Tab 或空白处双击打开搜索框（按名称、分类、ID 模糊匹配），空白处右键按分类添加
+    //   - 组（PLAN.md 第 12 节）：Ctrl+G 把选中的节点收成组，Ctrl+Shift+G 解组；双击组实例（或选中一个组时按 Tab）进入组内编辑，
+    //     画布顶部显示路径，点路径或按 Esc 返回。组内编辑的是双击的那个实例的组内图（有实际的输入数据），每次修改写回定义并同步到全部实例
     // 所有修改都经 Host 回调：编辑前存快照（撤销），编辑后求值、刷新预览、标记文档已修改
     class NodeEditorView : public MiniGUI::Node
     {
@@ -38,6 +40,7 @@ namespace MiniCAD
             std::function<void(bool evaluate)>                edited;         // 编辑之后；evaluate = false 表示只改了位置
             std::function<void()>                             selectionChanged;
             std::function<void(Nodes::NodeId, const std::string&)> action;   // 节点上的操作按钮（NodeTypeInfo::Action）
+            std::function<bool()>                             evaluating;     // 正在后台求值：脏节点的卡片显示“计算中…”
         };
 
         explicit NodeEditorView(Host host);
@@ -62,6 +65,15 @@ namespace MiniCAD
         bool PasteFromClipboard();              // 粘贴到光标处（光标不在画布上时放在画布中央）；剪贴板里不是节点图返回 false
         // 插入一张子图（Graph::CopyToString 的格式，如示例图）：放在已有节点的右侧，选中并适应窗口；可撤销
         bool InsertGraph(const std::string& text);
+
+        // ── 组 ──
+        void GroupSelection();                  // 选中的节点收成一个组（Ctrl+G）
+        void UngroupSelection();                // 选中的组实例解组（Ctrl+Shift+G）
+        void EnterGroup(Nodes::NodeId id);      // 进入组实例编辑
+        void LeaveGroup(size_t depth);          // 返回到第 depth 层（0 为主图）
+        void BeginRenameGroup(Nodes::NodeId id);
+        const std::vector<Nodes::NodeId>& GetPath() const { return m_path; }   // 进入的组实例，逐层
+        Nodes::Graph* CurrentGraph() const { return G(); }                      // 正在显示的图（主图或组内图）
 
         // ── 坐标（测试用）──
         MiniGUI::Vec2 GraphToLocal(float gx, float gy) const { return { gx * m_zoom + m_pan.x, gy * m_zoom + m_pan.y }; }
@@ -110,7 +122,9 @@ namespace MiniCAD
         MiniGUI::Rect FieldRect(const Card& c, float y) const;
         bool InputEditable(const Nodes::Node& n, int port) const;
 
-        Nodes::Graph* G() const { return m_host.graph ? m_host.graph() : nullptr; }
+        Nodes::Graph* G() const;                    // 正在显示的图：主图沿 m_path 进入
+        void PruneGroups(const std::set<std::string>& defIds);   // 删掉不再有实例的组定义
+        void PaintPath(MiniGUI::DrawList& dl, const MiniGUI::Rect& screenRect);
         void BeginEdit();                           // 本次手势里第一次修改前存快照
         void Edited(bool evaluate);
         void SelectionChanged();
@@ -138,7 +152,12 @@ namespace MiniCAD
         enum class Drag { None, Pan, Nodes, Box, Link, Value };
 
         Host                    m_host;
-        Nodes::Graph*           m_graph = nullptr;  // 上次看到的图（变了就重置）
+        Nodes::Graph*           m_root  = nullptr;  // 上次看到的主图（换了文档就重置）
+        Nodes::Graph*           m_graph = nullptr;  // 上次显示的图
+        mutable std::vector<Nodes::NodeId> m_path;  // 进入的组实例（ResolvePath 会去掉已不存在的部分）
+        struct View { MiniGUI::Vec2 Pan; float Zoom; };
+        std::vector<View>       m_viewStack;        // 进入组之前各层的视图
+        std::vector<std::pair<MiniGUI::Rect, size_t>> m_crumbs;   // 路径栏上各层的按钮（局部坐标）
         std::set<Nodes::NodeId> m_selection;
         MiniGUI::Vec2           m_pan  { 40.0f, 40.0f };
         float                   m_zoom = 1.0f;

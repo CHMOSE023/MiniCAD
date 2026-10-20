@@ -289,7 +289,7 @@ namespace MiniCAD
             s.EndObject();
         }
 
-        if (m_nodeGraph && !m_nodeGraph->Empty() && s.BeginObject("nodeGraph"))
+        if (m_nodeGraph && (!m_nodeGraph->Empty() || !m_nodeGraph->Groups().Empty()) && s.BeginObject("nodeGraph"))
         {
             m_nodeGraph->Serialize(s);
             s.EndObject();

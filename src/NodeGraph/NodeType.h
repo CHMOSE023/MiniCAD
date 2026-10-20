@@ -1,5 +1,7 @@
 #pragma once
 #include "NodeGraph/Value.h"
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
@@ -68,6 +70,20 @@ namespace MiniCAD::Nodes
         const Scene*         DocScene     = nullptr;   // 引用节点读取的场景
         uint64_t             SceneVersion = 0;         // 场景几何版本：变化时依赖场景的节点重算
         const ParameterTable* Params      = nullptr;   // 由 Graph::Evaluate 填写
+        // 取消求值（后台求值时由界面线程置位）：Graph::Evaluate 在节点之间、节点的各项之间检查，被打断的节点保持为脏
+        const std::atomic<bool>* Cancel   = nullptr;
+        std::function<void()>    Solved;               // 每算完一个节点调用（后台求值据此刷新进度；在求值的线程上调用）
+        // 组实例的内部图求值时：组输入节点（按节点 ID）从实例收到的数据（PLAN.md 第 12.2 节）
+        const std::map<uint32_t, DataList>* GroupInputs = nullptr;
+
+        // 同步求值的时间上限：到了就像取消一样停下（没算完的节点保持为脏，交给后台）；默认没有上限
+        std::chrono::steady_clock::time_point Deadline{};
+
+        bool Cancelled() const
+        {
+            return (Cancel && Cancel->load(std::memory_order_relaxed)) ||
+                   (Deadline != std::chrono::steady_clock::time_point{} && std::chrono::steady_clock::now() > Deadline);
+        }
     };
 
     // 一次求值（一项）的输入输出，由 Graph 的求值器实现
@@ -105,6 +121,8 @@ namespace MiniCAD::Nodes
         virtual int  Iteration() const = 0;               // 当前是第几项（0 起）
 
         virtual const SolveContext& Context() const = 0;
+        // 求值已被取消：耗时的节点可以在自己的循环里检查，提前返回（结果会被丢弃）
+        bool Cancelled() const { return Context().Cancelled(); }
         // 内核：没有时报错并返回空（调用方直接 return）
         Solid::ISolidKernel* Kernel();
     };
@@ -151,6 +169,9 @@ namespace MiniCAD::Nodes
     {
     public:
         void Register(NodeTypeInfo info);
+        // 组节点用：同 ID 的类型已存在时就地替换内容（地址不变，节点里的 Type 指针仍然有效），否则新增
+        NodeTypeInfo* Upsert(NodeTypeInfo info);
+        void Unregister(const std::string& id);
         const NodeTypeInfo* Find(const std::string& id) const;
         // 按注册顺序
         const std::vector<std::unique_ptr<NodeTypeInfo>>& All() const { return m_types; }
@@ -190,4 +211,5 @@ namespace MiniCAD::Nodes
     void RegisterSurfaceOpsNodes(NodeRegistry& r); // 曲面的创建、修改、分析（N8，由 RegisterSurfaceNodes 调用）
     void RegisterCurveModifyNodes(NodeRegistry& r);// 曲线修改（N6b）
     void RegisterMeshNodes(NodeRegistry& r);       // 网格（N9）
+    void RegisterGroupNodes(NodeRegistry& r);      // 组输入、组输出（N11b，Group.cpp）
 }

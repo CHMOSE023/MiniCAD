@@ -21,6 +21,18 @@ namespace MiniCAD::Nodes
         }
     }
 
+    namespace
+    {
+        // 叶子输出：没有连线，或只连到组输出（组内图里流向组输出的就是组的结果）
+        bool IsLeafOutput(const Graph& g, NodeId id, int port)
+        {
+            for (const Link& l : g.LinksFrom(id, port))
+                if (const Node* d = g.GetNode(l.ToNode); !d || d->TypeId != kGroupOutputType)
+                    return false;
+            return true;
+        }
+    }
+
     std::vector<PreviewItem> CollectPreview(const Graph& g, const std::set<NodeId>& selected)
     {
         std::vector<PreviewItem> out;
@@ -36,7 +48,7 @@ namespace MiniCAD::Nodes
                     continue;
                 if (sel)
                     Flatten(*n, p, true, out);
-                else if (n->Preview && !g.IsOutputConnected(n->Id, p))
+                else if (n->Preview && IsLeafOutput(g, n->Id, p))
                     Flatten(*n, p, false, out);
             }
         }

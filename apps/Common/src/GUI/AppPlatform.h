@@ -148,10 +148,12 @@ namespace MiniCAD
         // 在界面线程上稍后执行 fn：当前消息（包括正在进行的绘制）处理完之后。
         // 绘制过程中要改界面并重绘时用它——绘制结束会清掉绘制期间提出的重绘请求
         virtual void Post(std::function<void()> fn) { fn(); }
+        // RunInBackground 真的在另一个线程上执行（桌面版）。为 false 时节点图在界面线程上同步求值
+        virtual bool HasBackgroundThread() const { return false; }
 
         // ── 三维实体内核（docs/Solid/PLAN.md）──────────────────────
         // 平台拥有，整个程序运行期间有效；没有内核（网页版）返回空，建模命令提示不可用。
-        // 内核只能在界面线程上使用
+        // 内核不能并发使用：实现内部加锁，界面线程与节点图的后台求值线程轮流调用
         virtual Solid::ISolidKernel* GetSolidKernel() { return nullptr; }
     };
 }

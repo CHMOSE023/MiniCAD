@@ -69,6 +69,7 @@ namespace MiniCAD
         std::string GetUserDataDir() const override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;
+        bool HasBackgroundThread() const override { return true; }
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

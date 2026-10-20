@@ -17,9 +17,12 @@
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <thread>
 
 namespace MiniCAD
 {
@@ -116,6 +119,8 @@ namespace MiniCAD
         });
         tools->AddChild<Node>()->EditLayoutStyle().grow = 1.0f;
         m_nodeStatus = tools->AddChild<Label>("", 12.0f, Theme::TextDim);
+        m_nodeStop = addTool("停止", "停止后台求值（已算完的节点保留结果）；修改节点图后重新开始", [this] { StopNodeEvaluation(); });
+        m_nodeStop->SetVisible(false);
 
         // ── 画布 ─────────────────────────────────────────────────
         NodeEditorView::Host host;
@@ -129,10 +134,15 @@ namespace MiniCAD
             if (Document* doc = m_docManager.GetActive())
                 NodeHistory(*doc).Snapshot(doc->GetNodeGraph());
         };
-        host.edited = [this](bool)
+        host.edited = [this](bool evaluate)
         {
             if (Document* doc = m_docManager.GetActive())
+            {
+                // 在组内编辑：写回组定义，同步到全部实例（PLAN.md 第 12.3 节）
+                if (m_nodeEditor && !m_nodeEditor->GetPath().empty())
+                    doc->GetNodeGraph().CommitGroupEdit(m_nodeEditor->GetPath(), evaluate);
                 doc->MarkDirty();
+            }
             m_platform->RequestRedraw();   // 下一帧 SyncNodeGraph 求值并刷新预览
             UpdateTitle();
         };
@@ -164,48 +174,140 @@ namespace MiniCAD
                                                                  : "引用" + noun + "：选择集里没有可引用的" + noun + "，已清空引用");
             m_platform->RequestRedraw();
         };
+        host.evaluating = [this] { return m_nodeJob != nullptr; };
         auto editor = std::make_unique<NodeEditorView>(std::move(host));
         editor->EditLayoutStyle().grow = 1.0f;
         m_nodeEditor = static_cast<NodeEditorView*>(panel->AddChild(std::move(editor)));
         return panel;
     }
 
+    Nodes::Graph& MainFrame::ShownNodeGraph(Document& doc)
+    {
+        // 进入组内编辑时预览、烘焙的是组内图
+        Nodes::Graph* shown = m_nodeEditor ? m_nodeEditor->CurrentGraph() : nullptr;
+        return shown ? *shown : doc.GetNodeGraph();
+    }
+
     void MainFrame::RefreshNodePreview(Document& doc)
     {
-        Nodes::Graph& g = doc.GetNodeGraph();
+        Nodes::Graph& g = ShownNodeGraph(doc);
         Editor& editor = m_docManager.GetEditor();
         const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
         Nodes::PreviewSet set = m_nodePreview.Build(g, sel, m_platform->GetSolidKernel());
         editor.SetPreviewGeometry(std::move(set.Entities), std::move(set.Points), std::move(set.HighlightPoints));
         m_viewport->RequestRender();
+    }
 
-        if (m_nodeStatus)
+    void MainFrame::UpdateNodeStatus(const Nodes::Graph& g)
+    {
+        if (m_nodeStop)
+            m_nodeStop->SetVisible(m_nodeJob != nullptr);
+        if (!m_nodeStatus)
+            return;
+        char buf[160];
+        if (m_nodeJob)
         {
-            double ms = 0.0;
-            int errors = 0;
-            const Nodes::Node* slowest = nullptr;
-            for (const auto& n : g.GetNodes())
-            {
-                ms += n->Millis;
-                errors += n->State == Nodes::NodeState::Error ? 1 : 0;
-                if (!slowest || n->Millis > slowest->Millis)
-                    slowest = n.get();
-            }
-            char buf[128];
-            if (g.Empty())
-                buf[0] = '\0';
-            else if (errors > 0)
-                std::snprintf(buf, sizeof(buf), "%zu 个节点，%d 个错误，%.1f ms", g.GetNodes().size(), errors, ms);
-            else
-                std::snprintf(buf, sizeof(buf), "%zu 个节点，%.1f ms", g.GetNodes().size(), ms);
-            std::string status = buf;
-            if (slowest && slowest->Millis >= 1000)   // 性能警告：指出最慢的节点
-            {
-                std::snprintf(buf, sizeof(buf), "，最慢：%s %.1f s", slowest->Title().c_str(), slowest->Millis / 1000);
-                status += buf;
-            }
-            m_nodeStatus->SetText(status);
+            std::snprintf(buf, sizeof(buf), "求值中… %d / %zu 个节点", m_nodeJob->solved.load(), m_nodeJob->pending.size());
+            m_nodeStatus->SetText(buf);
+            return;
         }
+        if (m_nodePause.graph == g.Uid() && m_nodePause.dirty == g.DirtyVersion())
+        {
+            m_nodeStatus->SetText("已停止求值，修改节点图后继续");
+            return;
+        }
+        double ms = 0.0;
+        int errors = 0;
+        const Nodes::Node* slowest = nullptr;
+        for (const auto& n : g.GetNodes())
+        {
+            ms += n->Millis;
+            errors += n->State == Nodes::NodeState::Error ? 1 : 0;
+            if (!slowest || n->Millis > slowest->Millis)
+                slowest = n.get();
+        }
+        if (g.Empty())
+            buf[0] = '\0';
+        else if (errors > 0)
+            std::snprintf(buf, sizeof(buf), "%zu 个节点，%d 个错误，%.1f ms", g.GetNodes().size(), errors, ms);
+        else
+            std::snprintf(buf, sizeof(buf), "%zu 个节点，%.1f ms", g.GetNodes().size(), ms);
+        std::string status = buf;
+        if (slowest && slowest->Millis >= 1000)   // 性能警告：指出最慢的节点
+        {
+            std::snprintf(buf, sizeof(buf), "，最慢：%s %.1f s", slowest->Title().c_str(), slowest->Millis / 1000);
+            status += buf;
+        }
+        m_nodeStatus->SetText(status);
+    }
+
+    void MainFrame::StartNodeEvaluation(Nodes::Graph& g, std::unique_ptr<Nodes::Graph> copy, const Nodes::SolveContext& ctx)
+    {
+        auto job = std::make_shared<NodeEvalJob>();
+        job->graph   = g.Uid();
+        job->pending = copy->DirtyStamps();
+        job->copy    = std::move(copy);
+        job->start   = std::chrono::steady_clock::now();
+        // 工作线程上不读场景（依赖图纸的节点已在 PrepareBackground 里算好）
+        Nodes::SolveContext wctx;
+        wctx.Kernel       = ctx.Kernel;
+        wctx.SceneVersion = ctx.SceneVersion;
+        wctx.Cancel       = &job->cancel;
+        AppPlatform* platform = m_platform;
+        NodeEvalJob* raw = job.get();
+        wctx.Solved = [raw, platform]
+        {
+            raw->solved.fetch_add(1, std::memory_order_relaxed);
+            // 刷新进度：最多每 100 ms 一次，免得节点多时界面一直在重画
+            const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t last = raw->lastRedraw.load(std::memory_order_relaxed);
+            if (now - last >= 100 && raw->lastRedraw.compare_exchange_strong(last, now))
+                platform->RequestRedraw();
+        };
+        m_nodeJob = job;
+        m_platform->RunInBackground([job, wctx, platform]
+        {
+            job->copy->Evaluate(wctx);
+            job->finished = true;
+            platform->RequestRedraw();
+        }, [] {});
+    }
+
+    bool MainFrame::CollectNodeEvaluation()
+    {
+        if (!m_nodeJob || !m_nodeJob->finished.load())
+            return false;
+        const std::shared_ptr<NodeEvalJob> job = std::move(m_nodeJob);
+        m_nodeJob.reset();
+        int merged = 0;
+        for (const auto& d : m_docManager.GetAll())
+            if (d->GetNodeGraph().Uid() == job->graph)
+            {
+                Nodes::Graph& g = d->GetNodeGraph();
+                merged = g.MergeEvaluated(*job->copy);
+                if (job->userStop)
+                    m_nodePause = { g.Uid(), g.DirtyVersion(), d->GetScene().GeometryVersion() };
+            }
+        return merged > 0;
+    }
+
+    void MainFrame::StopNodeEvaluation()
+    {
+        if (!m_nodeJob)
+            return;
+        m_nodeJob->userStop = true;
+        m_nodeJob->cancel   = true;
+        m_platform->RequestRedraw();
+    }
+
+    void MainFrame::WaitNodeEvaluation()
+    {
+        if (!m_nodeJob)
+            return;
+        m_nodeJob->cancel = true;
+        while (!m_nodeJob->finished.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CollectNodeEvaluation();
     }
 
     void MainFrame::SyncNodeGraph()
@@ -227,12 +329,43 @@ namespace MiniCAD
         }
         Nodes::Graph& g = doc->GetNodeGraph();
         const Nodes::SolveContext ctx = NodeSolveContext(*doc);
-        if (g.NeedsEvaluate(ctx))
-            g.Evaluate(ctx);
+        std::unique_ptr<Nodes::Graph> copy;   // 预览刷新之后再交给工作线程（预览要用内核离散实体）
+        CollectNodeEvaluation();
+        if (m_nodeJob)
+        {
+            // 换了文档：取消。正在算的节点被改动（拖滑块）：让它算完，结果先拿来显示，接着按最新的值重算——
+            // 拖动过程中能连续看到结果；只有已经算了很久的才取消，免得最新的值等太久
+            const double running = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_nodeJob->start).count();
+            if (m_nodeJob->graph != g.Uid() || (running > 1.5 && g.IsStale(m_nodeJob->pending)))
+                m_nodeJob->cancel = true;
+        }
+        else if (g.NeedsEvaluate(ctx))
+        {
+            const bool paused = m_nodePause.graph == g.Uid() && m_nodePause.dirty == g.DirtyVersion() && m_nodePause.scene == ctx.SceneVersion;
+            if (!m_platform->HasBackgroundThread() || m_nodeEvalSync)
+                g.Evaluate(ctx);
+            else if (!paused)
+            {
+                m_nodePause = {};
+                // 轻的（上次耗时已知且不多）在界面线程上当帧算完，没有线程切换与一帧的延迟；
+                // 设时间上限兜底（这次比上次慢很多时），没算完的与重的一起交给后台
+                const double estimate = g.EstimatedMillis();
+                if (estimate >= 0.0 && estimate <= m_nodeSyncBudget)
+                {
+                    Nodes::SolveContext quick = ctx;
+                    quick.Deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                                            std::chrono::duration<double, std::milli>(m_nodeSyncBudget * 2.0));
+                    g.Evaluate(quick);
+                }
+                if (g.NeedsEvaluate(ctx))
+                    copy = g.PrepareBackground(ctx);
+            }
+        }
 
         // 预览：求值结果、预览开关、连线、选择变了，或换了文档（Editor::Bind 清空了预览）时重建
-        uint64_t sig = g.EvalVersion() * 1000003ull + g.GetLinks().size();
-        for (const auto& n : g.GetNodes())
+        const Nodes::Graph& shown = ShownNodeGraph(*doc);
+        uint64_t sig = shown.EvalVersion() * 1000003ull + shown.GetLinks().size() + reinterpret_cast<uintptr_t>(&shown) * 7919ull;
+        for (const auto& n : shown.GetNodes())
             sig = sig * 31 + n->Id * 2 + (n->Preview ? 1 : 0);
         if (m_nodeEditor)
             for (Nodes::NodeId id : m_nodeEditor->GetSelection())
@@ -245,6 +378,13 @@ namespace MiniCAD
             if (m_nodeEditor)
                 m_nodeEditor->Invalidate();
         }
+        if (copy)
+        {
+            StartNodeEvaluation(g, std::move(copy), ctx);
+            if (m_nodeEditor)
+                m_nodeEditor->Invalidate();   // 卡片上显示“计算中”
+        }
+        UpdateNodeStatus(g);
     }
 
     void MainFrame::OpenNodeParamsDialog()
@@ -254,6 +394,7 @@ namespace MiniCAD
         if (!doc)
             return;
         Nodes::Graph& g = doc->GetNodeGraph();
+        WaitNodeEvaluation();                 // 后台算到一半的先停下（算完的结果合并回来），剩下的在这里同步算
         g.Evaluate(NodeSolveContext(*doc));   // 公式参数显示最新的值
 
         auto dialog = std::make_unique<Dialog>("参数");
@@ -457,8 +598,9 @@ namespace MiniCAD
         if (!doc)
             return;
         Editor& editor = m_docManager.GetEditor();
-        Nodes::Graph& g = doc->GetNodeGraph();
-        g.Evaluate(NodeSolveContext(*doc));
+        WaitNodeEvaluation();
+        doc->GetNodeGraph().Evaluate(NodeSolveContext(*doc));   // 烘焙要完整的结果：后台没算完的在这里同步算
+        Nodes::Graph& g = ShownNodeGraph(*doc);                  // 在组内时烘焙组内图（选中的节点或叶子）
         const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
         int voids = 0;
         const int n = Nodes::Bake(g, sel, doc->GetScene(), doc->GetCommandStack(), m_platform->GetSolidKernel(), &voids);
