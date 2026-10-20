@@ -8,6 +8,19 @@ namespace MiniCAD
 {
     namespace
     {
+        // PrimitiveType → GL 图元模式。点图元（.pat 的 dash = 0 等）走 GL_POINTS，
+        // 一个顶点一个点。GLES3 / WebGL2 没有 glPointSize，点大小由顶点着色器的 gl_PointSize 给出（见 kVertexColor）。
+        GLenum PrimitiveMode(PrimitiveType type)
+        {
+            switch (type)
+            {
+            case PrimitiveType::Line:     return GL_LINES;
+            case PrimitiveType::Point:    return GL_POINTS;
+            case PrimitiveType::Triangle:
+            default:                      return GL_TRIANGLES;
+            }
+        }
+
         // 顶点着色器：Mat4 为行向量约定（P' = P · M），按行存放的 16 个数直接上传为 GLSL 的列主序矩阵，
         // 得到 M 的转置，于是 uViewProj * v 与 HLSL 的 mul(v, M) 相同
         const char* kVertexColor = R"(#version 300 es
@@ -31,6 +44,7 @@ namespace MiniCAD
             {
                 vColor = MapColor(aColor);
                 gl_Position = uViewProj * vec4(aPos, 1.0);
+                gl_PointSize = 1.0;     // 点图元恒定 1 物理像素（与 D3D11 的 POINTLIST 一致）；线、三角形忽略此值
             })";
 
         const char* kVertexTextured = R"(#version 300 es
@@ -349,7 +363,7 @@ namespace MiniCAD
             return;
         UseProgram(Program::Color, viewProj, depth, blend);
         Upload(m_stream, verts.data(), verts.size_bytes(), GL_STREAM_DRAW);
-        Draw(m_stream, type == PrimitiveType::Line ? GL_LINES : GL_TRIANGLES, static_cast<GLsizei>(verts.size()));
+        Draw(m_stream, PrimitiveMode(type), static_cast<GLsizei>(verts.size()));
     }
 
     void GLES3Renderer::SubmitTextured(std::span<const Vertex_P3_C4_UV> verts, const Math::Mat4& viewProj, void* nativeSRV, bool depth, bool blend)
@@ -501,7 +515,7 @@ namespace MiniCAD
         if (vb.count == 0)
             return;
         UseProgram(Program::Color, viewProj, depth, blend);
-        Draw(vb, type == PrimitiveType::Line ? GL_LINES : GL_TRIANGLES, vb.count);
+        Draw(vb, PrimitiveMode(type), vb.count);
     }
 
     void GLES3Renderer::SubmitTexturedCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4_UV> verts,

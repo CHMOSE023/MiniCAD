@@ -34,6 +34,7 @@ namespace MiniCAD
     constexpr uint32_t kSlotGlyph     = 11;
     constexpr uint32_t kSlotShaded    = 12;
     constexpr uint32_t kSlotSilhouette = 13;
+    constexpr uint32_t kSlotScenePoint = 14;
 
     namespace
     {
@@ -90,6 +91,7 @@ namespace MiniCAD
         // 没有字体纹理时文字流不提交，也就不需要保留
         return renderer.IsCached(kSlotSceneFill, viewState.SceneVersion, false)
             && renderer.IsCached(kSlotScene, viewState.SceneVersion, false)
+            && renderer.IsCached(kSlotScenePoint, viewState.SceneVersion, false)
             && (!viewState.FontTexture || renderer.IsCached(kSlotSceneText, viewState.SceneVersion, true))
             && (viewState.Glyphs.empty() || renderer.IsGlyphCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes.Version));
     }
@@ -156,6 +158,9 @@ namespace MiniCAD
             }
 
             // 场景几何走缓存提交：版本未变时 GPU 缓冲直接复用，不重新上传
+            // 点图元画在线之前、填充之后：图案填充的点（POINTLIST，恒定 1 屏幕像素）
+            // 与场景线同版本，不随视图变化
+            renderer.SubmitCached(kSlotScenePoint, viewState.SceneVersion, viewState.ScenePoints, vp, PrimitiveType::Point, true, true);
             renderer.SubmitCached(kSlotSceneFill, viewState.SceneVersion,    viewState.SceneFill,    vp, PrimitiveType::Triangle, true, true);
             renderer.SubmitCached(kSlotDynFill,   viewState.SceneDynVersion, viewState.SceneDynFill, vp, PrimitiveType::Triangle, true, true);
             // 文字字形（实例化）：三角形在填充之后、线之前，轮廓线在线之后

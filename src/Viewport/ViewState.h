@@ -59,6 +59,9 @@ namespace MiniCAD
         // ===== Geometry =====
         std::span<const Vertex_P3_C4>    Scene;       // 场景线段
         std::span<const Vertex_P3_C4>    SceneFill;   // 场景填充三角形（线宽 > 1）
+        // 点图元流（POINTLIST，一个顶点一个点，渲染成恒定 1 屏幕像素）：
+        // 图案填充的 dash=0 点笔划、POINT 的 $PDMODE=0。与线段分开提交。
+        std::span<const Vertex_P3_C4>    ScenePoints;
         std::span<const Vertex_P3_C4>    Overlay;     // 预览线段
         std::span<const Vertex_P3_C4_UV> TextScene;   // 场景文字四边形
         std::span<const ImageDraw>       Images;      // 场景光栅图像（画在填充、线、文字之下）

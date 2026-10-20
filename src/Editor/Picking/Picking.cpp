@@ -48,6 +48,7 @@ namespace MiniCAD
 
             std::vector<std::pair<Math::Point3, Math::Point3>> Segments;
             std::vector<std::array<Math::Point3, 3>>           Triangles;
+            std::vector<Math::Point3>                          Points;
 
             // 块内关闭 / 冻结图层上的子实体不参与拾取
             bool IsLayerVisible(LayerID layerId) const override
@@ -63,6 +64,13 @@ namespace MiniCAD
             void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
             {
                 Triangles.push_back({ a, b, c });
+            }
+            // 点图元（.pat 的 dash = 0）：必须单独收集。
+            // IDrawSink::DrawPoint 的默认实现是空的，不重写就收不到 ——
+            // 于是 DOTS 之类的点阵填充能显示、却完全拾取不到。
+            void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override
+            {
+                Points.push_back(p);
             }
             // 文本不参与拾取几何:标注 / 引线 / 公差的框线、引线本身已足够命中。
 
@@ -601,6 +609,9 @@ namespace MiniCAD
                                               Math::Distance(pt, Math::ClosestPointOnSegment(pt, b, c)),
                                               Math::Distance(pt, Math::ClosestPointOnSegment(pt, c, a)) });
                         }
+                        // 点图元：屏幕 1 像素，投影后直接求像素距离
+                        for (const auto& p : geom.Points)
+                            minD = std::min(minD, Math::Distance(pt, camera.WorldToScreen(p)));
                         if (minD < thresh && minD < bestDist)
                         {
                             bestDist = minD;
@@ -647,6 +658,15 @@ namespace MiniCAD
                         minD = std::min(minD, Math::Distance(pw, Math::ClosestPointOnSegment(pw, c, a)));
                     }
 
+                    // 点图元（.pat 的 dash = 0）：世界距离即世界直线距离，与线段同规则。
+                    // 点本身是 1 屏幕像素，但光标很难正好压在 1px 上，所以按拾取阈值判。
+                    for (const auto& p : geom.Points)
+                    {
+                        if (p.x > pw.x + tw || p.x < pw.x - tw
+                            || p.y > pw.y + tw || p.y < pw.y - tw) continue;
+                        minD = std::min(minD, Math::Distance(pw, P2(p)));
+                    }
+
                     if (minD < std::numeric_limits<double>::max())
                         minD /= wpp;   // 换回屏幕像素
                     if (minD < thresh && minD < bestDist)
@@ -684,6 +704,10 @@ namespace MiniCAD
             PickGeometry g;
             g.Segments  = std::move(sink.Segments);
             g.Triangles = std::move(sink.Triangles);
+            // 点图元（.pat 的 dash = 0）也必须搬过来：HitTest 读的是 g.Points，
+            // 漏了它则点的命中判定永远拿不到几何 —— 表现为点阵填充
+            // 框选能选中（框选路径直接用 sink），但悬停 / 点选选不中。
+            g.Points    = std::move(sink.Points);
             it = m_pickGeometry.emplace(obj.GetID(), std::move(g)).first;
         }
         return it->second;
@@ -1148,9 +1172,9 @@ namespace MiniCAD
                 }
 
                 // ── 通用框选回退 ──────────────────────────────────────────────────────
-                // 未单独特化的实体:收集其 Draw() 输出的线段(三角形拆为三条边),
-                // 投影到屏幕空间。右框(fullyContain)要求全部顶点在框内;左框(crossing)
-                // 任一段触碰框即命中。
+                // 未单独特化的实体:收集其 Draw() 输出的线段(三角形拆为三条边)
+                // 与点图元，投影到屏幕空间。右框(fullyContain)要求全部顶点在框内;
+                // 左框(crossing)任一段/点触碰框即命中。
                 if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
                 {
                     const auto* ent = static_cast<const Entity*>(&obj);
@@ -1170,26 +1194,35 @@ namespace MiniCAD
                         addSeg(t[2], t[0]);
                     }
 
-                    if (!segs.empty())
-                    {
-                        bool hit;
-                        if (fullyContain)
-                        {
-                            hit = true;
-                            for (const auto& s : segs)
-                                if (!box.Contains(s.first) || !box.Contains(s.second)) { hit = false; break; }
-                        }
-                        else
-                        {
-                            hit = false;
-                            for (const auto& s : segs)
-                                if (box.Contains(s.first) || box.Contains(s.second) ||
-                                    Math::SegmentIntersectsBox2(s.first, s.second, box)) { hit = true; break; }
-                        }
+                    // 点图元（.pat 的 dash = 0）：只有点的实体（DOTS 点阵）一条线段都没有，
+                    // 不收它就框选也选不到。
+                    std::vector<Math::Point2> pts;
+                    for (const auto& p : sink.Points)
+                        pts.push_back(camera.WorldToScreen(p));
 
+                    bool hit = false;
+                    if (fullyContain)
+                    {
+                        // 右框要求全部几何都在框内；纯点时要求全部点在框内
+                        hit = !segs.empty() || !pts.empty();
+                        for (const auto& s : segs)
+                            if (!box.Contains(s.first) || !box.Contains(s.second)) { hit = false; break; }
                         if (hit)
-                            result.insert(obj.GetID());
+                            for (const auto& p : pts)
+                                if (!box.Contains(p)) { hit = false; break; }
                     }
+                    else
+                    {
+                        for (const auto& s : segs)
+                            if (box.Contains(s.first) || box.Contains(s.second) ||
+                                Math::SegmentIntersectsBox2(s.first, s.second, box)) { hit = true; break; }
+                        if (!hit)
+                            for (const auto& p : pts)
+                                if (box.Contains(p)) { hit = true; break; }
+                    }
+
+                    if (hit)
+                        result.insert(obj.GetID());
                 }
 
             };

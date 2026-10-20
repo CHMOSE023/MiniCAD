@@ -11,7 +11,11 @@
 
 namespace MiniCAD 
 {
-    enum class PrimitiveType { Line, Triangle };
+    // Line / Triangle 是线段与三角形；Point 是**点图元**（一个顶点 = 一个点）。
+    // 点图元由后端保证恒定 1 屏幕像素，与缩放无关 —— 图案填充的"点"笔划
+    // （.pat 的 dash = 0）必须走这条路：画成世界尺寸的短线段会在缩小视图时
+    // 小于 1px 而整片消失。
+    enum class PrimitiveType { Line, Triangle, Point };
 
     struct ViewportDesc
     {

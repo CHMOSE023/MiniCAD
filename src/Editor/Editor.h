@@ -484,6 +484,10 @@ namespace MiniCAD
         // 渲染数据（每帧收集）
         std::vector<Vertex_P3_C4>    m_sceneVertices;
         std::vector<Vertex_P3_C4>    m_sceneFillVertices;
+        // 点图元流（POINTLIST，恒定 1 屏幕像素）：图案填充的 dash=0 点笔划、
+        // POINT 的 $PDMODE=0。与线段/填充分开提交（图元类型不同）。
+        // 不随视图变化（点大小是屏幕像素），所以总在静态流。
+        std::vector<Vertex_P3_C4>    m_scenePointVertices;
         std::vector<ImageDraw>       m_sceneImages;
         ImageLibrary                 m_imageLibrary;
         std::vector<Vertex_P3_C4_UV> m_textVertices;
@@ -511,6 +515,7 @@ namespace MiniCAD
         {
             std::vector<Vertex_P3_C4>    lines;
             std::vector<Vertex_P3_C4>    fills;
+            std::vector<Vertex_P3_C4>    points;         // 点图元（POINTLIST，恒定 1 屏幕像素）
             std::vector<Vertex_P3_C4_UV> texts;
             std::vector<GlyphInstance>   glyphs;          // 矢量文字的字形实例
             bool                         viewDependent = false;   // 线宽/虚线按像素烘焙：缩放后需重新细分
@@ -551,6 +556,7 @@ namespace MiniCAD
         };
         std::vector<HoverCacheEntry> m_hoverCache;
         uint64_t                     m_hoverCacheGeomVersion = 0;
+        double                       m_hoverCacheWorldPerPixel = 0.0;
         uint64_t                     m_hoverTick = 0;
         void*                        m_fontTexture    = nullptr;
         GlyphProvider                m_glyphProvider;           // 由应用层注入

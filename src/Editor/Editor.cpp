@@ -112,6 +112,16 @@ namespace MiniCAD
             std::vector<Vertex_P3_C4>& m_out;
         };
 
+        // 高亮（选中 / 悬停）里的点图元：高亮流只有线段，点画成按当前缩放 ±2 像素的小十字
+        void AppendPointMark(std::vector<Vertex_P3_C4>& out, const Math::Float3& p, const VertexColor& color, double worldPerPixel)
+        {
+            const float d = static_cast<float>(2.0 * worldPerPixel);
+            out.push_back({ { p.x - d, p.y, p.z }, color });
+            out.push_back({ { p.x + d, p.y, p.z }, color });
+            out.push_back({ { p.x, p.y - d, p.z }, color });
+            out.push_back({ { p.x, p.y + d, p.z }, color });
+        }
+
         // 悬停高亮收集器：把实体 Draw() 输出的几何以固定高亮色直接写入 overlay 顶点缓冲。
         // 用于每帧重建“当前悬停实体”的高亮，无需触碰整场景顶点。
         class HoverHighlightSink : public IDrawSink
@@ -119,6 +129,31 @@ namespace MiniCAD
         public:
             HoverHighlightSink(std::vector<Vertex_P3_C4>& out, const Math::Color4& color, const LayerManager& layers)
                 : m_out(out), m_color(color), m_layers(layers) {}
+
+            // 点样式与场景流一致（POINT 的 $PDMODE/$PDSIZE），否则悬停时 ⊕ 等图形不出高亮
+            void SetPointStyle(int mode, double size, double worldPerPixel, double viewportHeightPx)
+            {
+                m_pointMode = mode;  m_pointSize = size;
+                m_worldPerPixel = worldPerPixel;  m_viewportHeightPx = viewportHeightPx;
+                m_hasPointStyle = true;
+            }
+            bool GetPointStyle(int& mode, double& size) const override
+            {
+                mode = m_pointMode;  size = m_pointSize;
+                return m_hasPointStyle;
+            }
+            double GetWorldPerPixel() const override    { return m_worldPerPixel; }
+            double GetViewportHeightPx() const override { return m_viewportHeightPx; }
+            std::string GetLayerName(LayerID layerId) const override
+            {
+                const Layer* layer = m_layers.GetLayer(layerId);
+                return layer ? layer->GetName() : std::string();
+            }
+            void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override
+            {
+                if (m_worldPerPixel > 0.0)
+                    AppendPointMark(m_out, V(p).pos, V(p).color, m_worldPerPixel);
+            }
 
             // 块内关闭 / 冻结图层上的子实体不高亮
             bool IsLayerVisible(LayerID layerId) const override
@@ -143,6 +178,13 @@ namespace MiniCAD
                 m_out.push_back(V(c)); m_out.push_back(V(a));
             }
             // EmitText / EmitMText: 文字字形不经线段输出，悬停反馈由包围盒勾边补充。
+
+        private:
+            int    m_pointMode = 0;
+            double m_pointSize = 0.0;
+            double m_worldPerPixel = 0.0;
+            double m_viewportHeightPx = 0.0;
+            bool   m_hasPointStyle = false;
 
         private:
             Vertex_P3_C4 V(const Math::Point3& p) const
@@ -2790,10 +2832,13 @@ namespace MiniCAD
         if (hovered.empty()) return;
 
         auto& scene = m_doc->GetScene();
-        if (invalidate || m_hoverCacheGeomVersion != scene.GeometryVersion())
+        // 缩放变化也要失效：点的高亮十字、相对尺寸的点图形按当前缩放烘焙
+        const double wpp = m_viewport->GetCamera().GetWorldPerPixel();
+        if (invalidate || m_hoverCacheGeomVersion != scene.GeometryVersion() || m_hoverCacheWorldPerPixel != wpp)
         {
             m_hoverCache.clear();
-            m_hoverCacheGeomVersion = scene.GeometryVersion();
+            m_hoverCacheGeomVersion   = scene.GeometryVersion();
+            m_hoverCacheWorldPerPixel = wpp;
         }
 
         const auto& selection = m_picking.GetSelection();
@@ -2849,6 +2894,8 @@ namespace MiniCAD
             return;
 
         HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager());
+        sink.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize(),
+                           m_viewport->GetCamera().GetWorldPerPixel(), static_cast<double>(m_viewport->GetHeight()));
         entity.Draw(sink, /*isSelected*/ false, /*isHovered*/ true);
 
         // 文字类实体：字形不输出线段，用包围盒勾边作为悬停反馈
@@ -2879,6 +2926,7 @@ namespace MiniCAD
         m_scratchFills.clear();
         m_scratchTexts.clear();
         m_scratchGlyphs.clear();
+        ctx.ClearPoints();
         ctx.ResetViewDependentFlag();
 
         ctx.BeginEntity(&entity.GetAttr());
@@ -2887,6 +2935,7 @@ namespace MiniCAD
 
         c.lines         = m_scratchLines;
         c.fills         = m_scratchFills;
+        c.points        = ctx.TakePoints();
         c.texts         = m_scratchTexts;
         c.glyphs        = m_scratchGlyphs;
         c.viewDependent = ctx.HasViewDependentGeometry();
@@ -2900,7 +2949,8 @@ namespace MiniCAD
     {
         for (const auto& w : c.wipes)
             wipes.Add(w, { m_sceneVertices.size(), m_sceneFillVertices.size(), m_textVertices.size(),
-                           m_sceneDynVertices.size(), m_sceneDynFillVertices.size(), m_glyphInstances.size() });
+                           m_sceneDynVertices.size(), m_sceneDynFillVertices.size(), m_glyphInstances.size(),
+                           m_scenePointVertices.size() });
         m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
         m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
         m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
@@ -2914,6 +2964,8 @@ namespace MiniCAD
             m_sceneVertices.insert(m_sceneVertices.end(), c.lines.begin(), c.lines.end());
             m_sceneFillVertices.insert(m_sceneFillVertices.end(), c.fills.begin(), c.fills.end());
         }
+        // 点图元不随视图变化（点是恒定屏幕像素），总进静态流
+        m_scenePointVertices.insert(m_scenePointVertices.end(), c.points.begin(), c.points.end());
         if (c.viewDependent || !c.wipes.empty())
             m_dynOrder.push_back(id);
         m_sceneViewDependent |= c.viewDependent;
@@ -3002,6 +3054,17 @@ namespace MiniCAD
         ctx.SetThinLines(m_thinLines);
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
 
+        // 图纸级点样式（HEADER 的 $PDMODE/$PDSIZE）+ 视口像素高度。
+        // POINT 实体自身只有坐标，画成什么样完全由这两个变量决定；实体拿不到 Scene，
+        // 所以只能在这里经 sink 传下去（与图层颜色同一条路）。
+        // $PDSIZE<=0 是视口高度百分比，没有像素高度换算不出世界尺寸（点退化成 1 像素小点）。
+        ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
+        ctx.SetViewportHeightPx(m_viewport ? static_cast<double>(m_viewport->GetHeight()) : 0.0);
+
+        // 全局线型比例（HEADER 的 $LTSCALE）。虚线实际周期 = LTYPE图案周期 ×
+        // 实体级组码 48 × 本值；实体拿不到 Scene，只能在这里经 sink 传下去。
+        ctx.SetLineTypeScale(scene.GetLineTypeScale());
+
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
@@ -3056,7 +3119,7 @@ namespace MiniCAD
 
                     EntityVertexCache c;
                     TessellateEntity(entity, ctx, c);
-                    WipeClip::Batch wipes(6);
+                    WipeClip::Batch wipes(7);
                     AppendToSceneStreams(id, c, wipes);
                     FlushSceneWipes(wipes);
                     m_entityVertexCache.emplace(id, std::move(c));
@@ -3086,6 +3149,7 @@ namespace MiniCAD
 
         m_sceneVertices.clear();
         m_sceneFillVertices.clear();
+        m_scenePointVertices.clear();
         m_sceneDynVertices.clear();
         m_sceneDynFillVertices.clear();
         m_textVertices.clear();
@@ -3140,7 +3204,7 @@ namespace MiniCAD
         m_glyphInstances.reserve(glyphCount);
         m_sceneImages.reserve(imageCount);
         {
-            WipeClip::Batch wipes(6);
+            WipeClip::Batch wipes(7);
             for (const auto& [id, c] : visible)
                 AppendToSceneStreams(id, *c, wipes);
             FlushSceneWipes(wipes);
@@ -3165,6 +3229,7 @@ namespace MiniCAD
         // 与空容器交换才归还存储（clear 保留容量）
         std::vector<Vertex_P3_C4>{}.swap(m_sceneVertices);
         std::vector<Vertex_P3_C4>{}.swap(m_sceneFillVertices);
+        std::vector<Vertex_P3_C4>{}.swap(m_scenePointVertices);
         std::vector<Vertex_P3_C4_UV>{}.swap(m_textVertices);
         std::vector<GlyphInstance>{}.swap(m_glyphInstances);
         std::vector<GlyphBatch>{}.swap(m_glyphBatches);
@@ -3195,6 +3260,7 @@ namespace MiniCAD
         wipes.ClipTexts(m_textVertices, 2);
         wipes.ClipLines(m_sceneDynVertices, 3);
         wipes.ClipFills(m_sceneDynFillVertices, 4);
+        wipes.ClipPoints(m_scenePointVertices, 6);
         // 被遮罩盖到的字形实例展开成顶点裁剪，追加到静态流（在静态流自身的裁剪之后）
         wipes.ClipGlyphs(m_glyphInstances, 5, 0, m_glyphLibrary, m_sceneVertices, m_sceneFillVertices);
     }
@@ -3222,6 +3288,11 @@ namespace MiniCAD
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
+            // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
+            ctx.SetLineTypeScale(scene.GetLineTypeScale());
+            // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示
+            ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
+            ctx.SetViewportHeightPx(static_cast<double>(m_viewport->GetHeight()));
 
             auto drawOne = [&](Object::ObjectID id)
             {
@@ -3248,6 +3319,13 @@ namespace MiniCAD
                     drawOne(id);
 
             m_selViewDependent = ctx.HasViewDependentGeometry();
+
+            // 选中流只有线段：点图元（$PDMODE=0 的 POINT、点阵填充）画成小十字，随缩放重建
+            const auto points = ctx.TakePoints();
+            for (const auto& p : points)
+                AppendPointMark(m_selVertices, p.pos, p.color, worldPerPixel);
+            if (!points.empty())
+                m_selViewDependent = true;
         }
         else
         {
@@ -3266,6 +3344,7 @@ namespace MiniCAD
 
         vs.Scene        = m_sceneVertices;
         vs.SceneFill    = m_sceneFillVertices;
+        vs.ScenePoints  = m_scenePointVertices;
         vs.Overlay      = m_overlayVertices;
         vs.TextScene    = m_textVertices;
         vs.Images       = m_sceneImages;
