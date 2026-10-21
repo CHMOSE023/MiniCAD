@@ -140,6 +140,10 @@ namespace MiniCAD
         // 没有本地文件系统的平台返回空串（不保存）
         virtual std::string GetAppDir() const { return ""; }
 
+        // ── 系统 ─────────────────────────────────────────────────
+        // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
+        virtual bool OpenUrl(const std::string& url) { (void)url; return false; }
+
         // ── 后台任务 ─────────────────────────────────────────────
         // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。
         // work 只能访问自己的数据；可以调用 RequestRedraw 让界面刷新进度（各平台的实现都是线程安全的）。

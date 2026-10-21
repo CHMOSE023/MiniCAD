@@ -1,3 +1,4 @@
+#pragma once
 // 由 cmake/MiniCADVersion.cmake 在每次构建时从 apps/Common/src/MiniCADVersion.h.in 生成，不要手改。
 // 前三段来自根 CMakeLists.txt 的 MINICAD_VERSION；文件版本第四段为构建号（git 提交数，取不到时为 0），
 // 产品版本第四段：MINICAD_VERSION 为四段时取其第四段，否则同构建号。

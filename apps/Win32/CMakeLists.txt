@@ -47,6 +47,7 @@ endif()
 add_executable(MiniCADWin
     src/Host/GuiMain.cpp
     src/Host/Win32Window.cpp
+    src/Host/Win32Shell.cpp
     src/Host/SelfTest.cpp
     src/MiniCAD.rc
     src/Render/D3D11/D3D11Renderer.cpp

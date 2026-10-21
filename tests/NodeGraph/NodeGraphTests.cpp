@@ -8,9 +8,11 @@
 #include "NodeGraph/Preview.h"
 #include "Document/Document.h"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/SplineEntity.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -730,6 +732,40 @@ namespace
         Check(g.NeedsEvaluate(ctx), "reference: a new scene version needs evaluation");
         g.Evaluate(ctx);
         Check(Near(Num(g, len), 10.0), "reference: follows the drawing");
+
+        // 样条也是曲线：能引用，且拟合点样条按段精确转成三次 NURBS（端点节点经 Curve → Curve3D）
+        const auto splineId = scene.NextObjectID();
+        scene.AddEntity(std::make_unique<SplineEntity>(splineId, std::vector<Math::Point3>{ { 0, 0, 0 }, { 5, 5, 0 }, { 10, 0, 0 } }));
+        const NodeId refSpline = Add(g, "doc.curves"), ends = Add(g, "curve.endpoints");
+        g.Connect({ refSpline, 0, ends, 0 });
+        g.SetParam(refSpline, 0, std::to_string(splineId));
+        ctx.SceneVersion = scene.GeometryVersion();
+        g.Evaluate(ctx);
+        const DataList& startPt = Out(g, ends, 0);
+        const DataList& endPt   = Out(g, ends, 1);
+        Check(Out(g, refSpline).size() == 1 && g.GetNode(refSpline)->State == NodeState::Ok &&
+              startPt.size() == 1 && endPt.size() == 1 &&
+              Near(startPt[0].AsVector().x, 0.0) && Near(endPt[0].AsVector().x, 10.0),
+              "reference: splines are curves and convert to NURBS");
+        g.RemoveNode(ends);
+        g.RemoveNode(refSpline);
+
+        // 椭圆：整椭圆 → 有理二次 NURBS（闭合、阶数 2，四段共 9 个控制点）
+        const auto ellipseId = scene.NextObjectID();
+        scene.AddEntity(std::make_unique<EllipseEntity>(ellipseId, Ellipse(Math::Point3{ 0, 0, 0 }, 10.0, 5.0)));
+        const NodeId refEllipse = Add(g, "doc.curves"), info = Add(g, "curve.info");
+        g.Connect({ refEllipse, 0, info, 0 });
+        g.SetParam(refEllipse, 0, std::to_string(ellipseId));
+        ctx.SceneVersion = scene.GeometryVersion();
+        g.Evaluate(ctx);
+        const DataList& closed = Out(g, info, 0);
+        const DataList& degree = Out(g, info, 2);
+        Check(Out(g, refEllipse).size() == 1 && g.GetNode(refEllipse)->State == NodeState::Ok &&
+              closed.size() == 1 && closed[0].Type() == DataType::Boolean && closed[0].AsBool() &&
+              degree.size() == 1 && degree[0].AsInteger() == 2 && Out(g, info, 3).size() == 9,
+              "reference: ellipses are curves and convert to rational NURBS");
+        g.RemoveNode(info);
+        g.RemoveNode(refEllipse);
 
         // 文档保存 / 读取节点图（JSON 与 .mcad）
         const auto dir = std::filesystem::temp_directory_path();

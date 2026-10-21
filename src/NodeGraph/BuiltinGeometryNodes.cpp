@@ -176,7 +176,7 @@ namespace MiniCAD::Nodes
         void RegisterReference(NodeRegistry& r)
         {
             NodeTypeInfo t{ .Id = "doc.curves", .Name = "引用曲线", .Category = "图纸",
-                            .Description = "读取图纸里的直线、圆弧、圆、多段线、矩形；先在绘图区选择，再点节点上的“用选择集设置”。图纸改动后自动重算" };
+                            .Description = "读取图纸里的直线、圆弧、圆、椭圆、多段线、矩形、样条；先在绘图区选择，再点节点上的“用选择集设置”。图纸改动后自动重算" };
             t.Keywords = "reference 拾取 选择";
             t.Params         = { Param("实体", std::string(), ParamWidget::Hidden) };   // 逗号分隔的实体 ID
             t.Outputs        = { Out("曲线", DataType::Curve) };

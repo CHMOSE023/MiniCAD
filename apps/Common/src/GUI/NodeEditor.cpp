@@ -292,12 +292,16 @@ namespace MiniCAD
                     c.ParamY.push_back(row());
                 }
             if (!n.Type->Action.empty())
-                c.ActionY = row();
+            {
+                c.HasAction = true;
+                c.ActionY   = row();
+            }
             if (n.Type->Display)
             {
                 const size_t lines = std::clamp<size_t>(n.DisplayData.size(), 1, kDisplayLines) + (n.DisplayData.size() > kDisplayLines ? 1 : 0);
-                c.DisplayY = y + 2.0f;
-                c.DisplayH = static_cast<float>(lines) * 16.0f + 8.0f;
+                c.HasDisplay = true;
+                c.DisplayY   = y + 2.0f;
+                c.DisplayH   = static_cast<float>(lines) * 16.0f + 8.0f;
                 y += c.DisplayH + 4.0f;
             }
         }
@@ -354,7 +358,7 @@ namespace MiniCAD
             for (size_t i = 0; i < c.ParamY.size(); ++i)
                 if (FieldRect(c, c.ParamY[i]).Contains(p))
                     return { Hit::Kind::Param, n.Id, c.ParamIndex[i] };
-            if (c.ActionY >= 0 && std::abs(p.y - c.ActionY) <= 10.0f && p.x > c.Box.min.x + 8 && p.x < c.Box.max.x - 8)
+            if (c.HasAction && std::abs(p.y - c.ActionY) <= 10.0f && p.x > c.Box.min.x + 8 && p.x < c.Box.max.x - 8)
                 return { Hit::Kind::Action, n.Id };
             return { Hit::Kind::Body, n.Id };
         }
@@ -1910,7 +1914,7 @@ namespace MiniCAD
             }
 
             // 操作按钮（如引用节点的"用选择集设置"）
-            if (c.ActionY >= 0)
+            if (c.HasAction)
             {
                 const Rect br = SR(Rect{ c.Box.min.x + 8, c.ActionY - 9, c.Box.max.x - 8, c.ActionY + 9 });
                 const bool hot = m_hover.K == Hit::Kind::Action && m_hover.Node == n.Id;
@@ -1931,7 +1935,7 @@ namespace MiniCAD
             }
 
             // 面板：显示数据
-            if (c.DisplayY >= 0)
+            if (c.HasDisplay)
             {
                 const Rect dr = SR(Rect{ c.Box.min.x + 8, c.DisplayY, c.Box.max.x - 8, c.DisplayY + c.DisplayH });
                 dl.AddRectFilled(dr, Theme::Background, 3.0f * z);

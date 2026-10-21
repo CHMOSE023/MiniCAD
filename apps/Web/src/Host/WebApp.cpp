@@ -227,6 +227,17 @@ namespace MiniCAD
         LOG_INFO("MiniCAD 网页版：关闭浏览器标签页即可退出");
     }
 
+    bool WebApp::OpenUrl(const std::string& url)
+    {
+        if (url.empty())
+            return false;
+        // 在用户点击的回调里调用，浏览器不会把它当作弹出窗口拦截
+        EM_ASM({
+            window.open(UTF8ToString($0), "_blank", "noopener,noreferrer");
+        }, url.c_str());
+        return true;
+    }
+
     // =========================================================
     // AppPlatform：文件
     // =========================================================

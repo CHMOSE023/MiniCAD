@@ -125,13 +125,14 @@ namespace MiniCAD
         // ── 右侧：文档数量 ───────────────────────────────────────
         Node* spacer = AddChild<Node>();
         spacer->EditLayoutStyle().grow = 1.0f;
-        spacer->SetHitTestVisible(false);
-        m_version = AddChild<Label>("版本 " MINICAD_VERSION_STRING, 13.0f, Theme::TextDim);
-        m_version->SetTooltip("MiniCAD " MINICAD_VERSION_STRING "（文件版本 " MINICAD_FILE_VERSION_STRING "）");
+        spacer->SetHitTestVisible(false); 
 
         // 窗口变窄时只压缩文档名（显示省略号），其余项保持自然宽度，避免文字互相重叠
         for (const auto& child : GetChildren())
+        {
             child->EditLayoutStyle().shrink = 0.0f;
+        }
+
         m_docName->EditLayoutStyle().shrink = 1.0f;
     }
 

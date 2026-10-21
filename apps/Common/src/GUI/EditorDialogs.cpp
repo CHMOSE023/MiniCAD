@@ -25,6 +25,7 @@
 #include "Widgets/Panel.h"
 #include "Widgets/TextBox.h"
 #include "Widgets/ViewportHost.h"
+#include "Paint/DrawList.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -78,6 +79,73 @@ namespace MiniCAD
             s.gap       = gap;
             return s;
         }
+
+        // 可点击的链接文字：强调色 + 下划线 + 手形光标；点击后交由平台用默认程序打开。
+        // Label 默认不接收点击，这里打开命中测试并自己处理左键。
+        class LinkLabel : public MiniGUI::Label
+        {
+        public:
+            LinkLabel(std::string text, float fontSize, std::function<void()> onClick)
+                : Label(std::move(text), fontSize, Theme::Accent)
+                , m_onClick(std::move(onClick))
+            {
+                SetHitTestVisible(true);
+            }
+
+            MiniGUI::CursorShape GetCursor(MiniGUI::Vec2) const override { return MiniGUI::CursorShape::Hand; }
+
+        protected:
+            void OnPointerEvent(MiniGUI::PointerEvent& e) override
+            {
+                using namespace MiniGUI;
+                if (e.phase != EventPhase::Target)
+                    return;
+
+                switch (e.type)
+                {
+                case PointerEventType::Enter:
+                    SetColor(Theme::AccentHover);
+                    break;
+                case PointerEventType::Leave:
+                    SetColor(Theme::Accent);
+                    break;
+                case PointerEventType::Up:
+                    if (e.button == MiniGUI::MouseButton::Left && IsHovered())
+                    {
+                        e.handled = true;
+                        auto onClick = m_onClick;   // 回调里可能关闭对话框
+                        if (onClick)
+                            onClick();
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            void OnPaint(MiniGUI::DrawList& dl, const MiniGUI::Rect& screenRect) override
+            {
+                using namespace MiniGUI;
+                Label::OnPaint(dl, screenRect);
+
+                UIContext* ctx = GetContext();
+                if (!ctx || GetText().empty())
+                    return;
+
+                const Edges& pad = GetLayoutStyle().padding;
+                const Rect box{ screenRect.min.x + pad.left, screenRect.min.y + pad.top,
+                                screenRect.max.x - pad.right, screenRect.max.y - pad.bottom };
+                TextSystem&      text   = ctx->GetTextSystem();
+                const TextParams& params = GetParams();
+                const float width = text.Measure(GetText(), params).x;
+                const float lineH = text.GetLineHeight(params.size);
+                const float y     = std::round(box.Center().y + lineH * 0.5f - 3.0f);
+                dl.AddRectFilled(Rect{ box.min.x, y, box.min.x + width, y + 1.0f }, params.color);
+            }
+
+        private:
+            std::function<void()> m_onClick;
+        };
     }
 
     // =========================================================
@@ -1384,24 +1452,35 @@ namespace MiniCAD
     void MainFrame::ShowAbout()
     {
         using namespace MiniGUI;
-        auto dialog = std::make_unique<Dialog>("关于 MiniCAD");
-        Node* body = dialog->GetBody();
-        LayoutStyle s = ColumnStyle(6.0f);
-        s.padding = Edges::Symmetric(8.0f, 4.0f);
-        s.width   = 340.0f;
+        auto dialog   = std::make_unique<Dialog>("关于");
+        Node* body    = dialog->GetBody();
+
+        LayoutStyle s = ColumnStyle(12.0f);
+        s.padding     = Edges::Symmetric(18.0f,12.0f); 
+
         body->SetLayoutStyle(s);
-        body->AddChild<Label>("MiniCAD", 22.0f);
-        body->AddChild<Label>("版本 " MINICAD_VERSION_STRING "（文件版本 " MINICAD_FILE_VERSION_STRING "）", 13.0f, Theme::TextDim);
-        body->AddChild<Separator>();
-        body->AddChild<Label>(std::string("界面：MiniGUI（保留模式，") + m_platform->GetGraphicsName() + " 渲染）", 13.0f);
-        body->AddChild<Label>("作者：Hello", 13.0f);
-        body->AddChild<Label>("鸣谢：Qizhiwoniu（七只蜗牛）", 13.0f);
-        body->AddChild<Separator>();
-        Label* path = body->AddChild<Label>("界面描述文件：" + m_uiPath, 12.0f, Theme::TextDim);
-        path->SetWrap(true);
+
+        body->AddChild<Label>("MiniCAD", 18.0f);
+        
+        LayoutStyle rowStyle;
+        rowStyle.direction  = FlexDirection::Row;
+        rowStyle.alignItems = Align::Center;
+        rowStyle.gap        = 8.0f;
+
+        // 项目地址：点击交给平台用默认程序（浏览器）打开
+        Node* linkRow = body->AddChild<Node>();
+        linkRow->SetLayoutStyle(rowStyle);
+        linkRow->AddChild<Label>("源码 ", 13.0f, Theme::TextDim);
+        AppPlatform* platform = m_platform;
+
+        LinkLabel* link = linkRow->AddChild<LinkLabel>("https://github.com/CHMOSE023/MiniCAD", 13.0f,   [platform] { platform->OpenUrl("https://github.com/CHMOSE023/MiniCAD"); });
+        link->SetTooltip("使用默认浏览器打开"); 
+
+        body->AddChild<Label>("版本 v" MINICAD_VERSION_STRING " ", 13.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
-        raw->AddButton("关闭", [raw] { raw->Close(); }, DialogButtonRole::Default);
+        raw->AddButton("确定", [raw] { raw->Close(); }, DialogButtonRole::Default);
+
         m_ui->OpenPopup(std::move(dialog));
     }
 
