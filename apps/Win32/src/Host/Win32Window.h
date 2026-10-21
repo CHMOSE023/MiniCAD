@@ -68,6 +68,7 @@ namespace MiniCAD
         std::string GetResourceDir() const override;
         std::string GetAppDir() const override;
         std::string GetUserDataDir() const override;
+        bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;
         bool HasBackgroundThread() const override { return true; }

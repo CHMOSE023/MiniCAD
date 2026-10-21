@@ -2,6 +2,7 @@
 #include "NodeGraph/MeshOps.h"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
@@ -45,7 +46,10 @@ namespace MiniCAD::Nodes::Geo
 
     CurvePtr CurveFromEntity(const Entity& e)
     {
-        if (e.IsKindOf<LineEntity>() || e.IsKindOf<ArcEntity>() || e.IsKindOf<CircleEntity>() || e.IsKindOf<PolylineEntity>())
+        // 样条、椭圆也能引用：样条在 NurbsOf 里按段精确转成三次 NURBS，
+        // 椭圆转成有理二次 NURBS（都是精确表示，不是采样近似）
+        if (e.IsKindOf<LineEntity>() || e.IsKindOf<ArcEntity>() || e.IsKindOf<CircleEntity>() ||
+            e.IsKindOf<PolylineEntity>() || e.IsKindOf<SplineEntity>() || e.IsKindOf<EllipseEntity>())
         {
             std::shared_ptr<Entity> c = e.Clone(Object::InvalidID);
             return c;
@@ -241,13 +245,98 @@ namespace MiniCAD::Nodes::Geo
     std::optional<Solid::Profile>   ProfileOf(const Entity& curve) { return SolidToolDetail::ProfileOf(curve); }
     std::optional<Solid::SweepPath> PathOf(const Entity& curve)    { return SolidToolDetail::PathOf(curve); }
 
+    namespace
+    {
+        // 拟合点样条（Spline::Segments 是三次多项式段 P(t) = A + B t + C t² + D t³）
+        // → 三次 NURBS：每段换成 Bézier 控制点 A、A + B/3、A + 2B/3 + C/3、A + B + C + D，
+        // 相邻段共用端点，内节点重复 3 次（C0 拼接）。控制点精确对应原曲线的每一段，不是采样近似
+        std::optional<Solid::NurbsCurve> SplineSegmentsToNurbs(const Spline& sp)
+        {
+            const auto& segs = sp.Segments;
+            if (segs.empty())
+                return std::nullopt;
+            // A/B/C/D 与 P(t) 一样是 Point3，系数要当向量用：B、C、D 表示各级导数（位移量）
+            auto Vec = [](const Math::Point3& p) { return Math::Vec3{ p.x, p.y, p.z }; };
+            Solid::NurbsCurve c;
+            c.Degree = 3;
+            c.ControlPoints.reserve(segs.size() * 3 + 1);
+            for (size_t i = 0; i < segs.size(); ++i)
+            {
+                const SplineSegment& s = segs[i];
+                if (i == 0)
+                    c.ControlPoints.push_back(s.A);
+                c.ControlPoints.push_back(s.A + Vec(s.B) * (1.0 / 3.0));
+                c.ControlPoints.push_back(s.A + Vec(s.B) * (2.0 / 3.0) + Vec(s.C) * (1.0 / 3.0));
+                c.ControlPoints.push_back(s.A + Vec(s.B) + Vec(s.C) + Vec(s.D));
+            }
+            const double last = static_cast<double>(segs.size());
+            c.Knots = { 0.0, 0.0, 0.0, 0.0 };
+            for (size_t i = 1; i < segs.size(); ++i)
+            {
+                const double k = static_cast<double>(i);
+                c.Knots.insert(c.Knots.end(), { k, k, k });
+            }
+            c.Knots.insert(c.Knots.end(), { last, last, last, last });
+            if (!c.IsValid())
+                return std::nullopt;
+            return c;
+        }
+
+        // 椭圆 / 椭圆弧 → 有理二次 NURBS：参数段按 ≤ 90° 切开，每段是一条有理 Bézier，
+        // 中间控制点在“圆心 → 段中点”的射线上、距离放大 1/cos(Δ/2)，权重即 cos(Δ/2)。
+        // 二次有理 Bézier 在仿射变换下保持权重不变，所以对旋转 / 非等比半轴的椭圆同样精确
+        std::optional<Solid::NurbsCurve> EllipseToNurbs(const Ellipse& el)
+        {
+            if (!el.IsValid())
+                return std::nullopt;
+            const double sweep = el.SweepParam();
+            const int    n     = std::max(1, static_cast<int>(std::ceil(sweep / (Math::PI * 0.5) - 1e-9)));
+            const double dt    = sweep / n;
+            const double w     = std::cos(dt * 0.5);
+            if (w <= 1e-9)
+                return std::nullopt;
+            Solid::NurbsCurve c;
+            c.Degree = 2;
+            c.ControlPoints.reserve(static_cast<size_t>(n) * 2 + 1);
+            c.Weights.reserve(static_cast<size_t>(n) * 2 + 1);
+            for (int i = 0; i < n; ++i)
+            {
+                const double t0 = el.StartParam + dt * i;
+                const double t1 = t0 + dt;
+                const Math::Point3 p0 = el.PointAt(t0);
+                const Math::Point3 pm = el.PointAt((t0 + t1) * 0.5);
+                const Math::Point3 p2 = el.PointAt(t1);
+                if (i == 0)
+                {
+                    c.ControlPoints.push_back(p0);
+                    c.Weights.push_back(1.0);
+                }
+                const Math::Vec3 toMid{ pm.x - el.Center.x, pm.y - el.Center.y, pm.z - el.Center.z };
+                c.ControlPoints.push_back(el.Center + toMid / w);
+                c.Weights.push_back(w);
+                c.ControlPoints.push_back(p2);
+                c.Weights.push_back(1.0);
+            }
+            c.Knots = { 0.0, 0.0, 0.0 };
+            for (int i = 1; i < n; ++i)
+            {
+                c.Knots.push_back(static_cast<double>(i));
+                c.Knots.push_back(static_cast<double>(i));
+            }
+            c.Knots.insert(c.Knots.end(), { static_cast<double>(n), static_cast<double>(n), static_cast<double>(n) });
+            if (!c.IsValid())
+                return std::nullopt;
+            return c;
+        }
+    }
+
     std::optional<Solid::NurbsCurve> NurbsOf(const Entity& curve)
     {
         if (curve.IsKindOf<SplineEntity>())
         {
             const Spline& sp = static_cast<const SplineEntity&>(curve).GetSpline();
             if (!sp.HasControlData())
-                return std::nullopt;
+                return SplineSegmentsToNurbs(sp);   // 拟合点样条：按段转成三次 NURBS
             Solid::NurbsCurve c;
             c.Degree        = sp.Degree;
             c.ControlPoints = sp.ControlPoints;
@@ -284,6 +373,9 @@ namespace MiniCAD::Nodes::Geo
                 return Solid::NurbsCurve::FromControlPoints(std::move(pts), 1);
             }
         }
+        // 椭圆 / 椭圆弧：有理二次 NURBS（精确）
+        if (curve.IsKindOf<EllipseEntity>())
+            return EllipseToNurbs(static_cast<const EllipseEntity&>(curve).GetEllipse());
         // 其余经扫掠路径（同一水平面上的直线 / 圆弧段，凸度已是内核约定：正值逆时针）
         const auto path = PathOf(curve);
         if (!path)
@@ -316,8 +408,12 @@ namespace MiniCAD::Nodes::Geo
     std::vector<Math::Point3> Sample(const Entity& curve)
     {
         std::vector<Math::Point3> pts;
+        // 样条没有实现 ICurveEntity（只有拟合点 / 控制点两套数据），单独取细分点
+        if (curve.IsKindOf<SplineEntity>())
+            return static_cast<const SplineEntity&>(curve).GetSpline().Tessellate(256);
         if (const ICurveEntity* ce = curve.AsCurveEntity())
-            ce->MakeCurve()->Tessellate(pts, 256);
+            if (const auto ic = ce->MakeCurve())
+                ic->Tessellate(pts, 256);
         return pts;
     }
 
@@ -371,6 +467,10 @@ namespace MiniCAD::Nodes::Geo
     {
         if (curve.IsKindOf<CircleEntity>())
             return true;
+        if (curve.IsKindOf<EllipseEntity>())
+            return static_cast<const EllipseEntity&>(curve).GetEllipse().IsFull();
+        if (curve.IsKindOf<SplineEntity>())
+            return static_cast<const SplineEntity&>(curve).GetSpline().IsClosed();
         if (curve.IsKindOf<PolylineEntity>())
         {
             const auto& pts = static_cast<const PolylineEntity&>(curve).GetPolyline().Points;

@@ -684,8 +684,8 @@ namespace MiniCAD
         }
         if (m_ui->HasModal())
             return;             // 已经在询问了（例如连续点了两次关闭）
-        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档尚未保存。",
-            { "全部保存并退出", "不保存，直接退出", "取消" },
+        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档未保存。",
+            { "全部保存", "不保存", "取消" },
             [this](int r)
             {
                 if (r == 0)

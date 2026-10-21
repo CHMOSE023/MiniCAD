@@ -104,9 +104,13 @@ namespace MiniCAD
             MiniGUI::Rect      Box;
             std::vector<float> OutY, InY, ParamY;
             std::vector<int>   ParamIndex;          // 显示出来的参数（隐藏的不占行）
-            float              ActionY  = -1.0f;
-            float              DisplayY = -1.0f;    // 面板节点的数据区
-            float              DisplayH = 0.0f;
+            // 有 / 没有这一行用单独的标记判断：画布坐标可以为负（节点放在原点上方），
+            // 不能拿坐标的符号当“没有”（见 NodeEditor.cpp 的 Layout）
+            bool               HasAction = false;
+            float              ActionY   = 0.0f;
+            bool               HasDisplay = false;
+            float              DisplayY   = 0.0f;   // 面板节点的数据区
+            float              DisplayH   = 0.0f;
         };
         Card Layout(const Nodes::Node& n) const;
 

@@ -257,7 +257,8 @@ namespace MiniCAD::Nodes
                 return "曲线（空）";
             static const std::pair<const char*, const char*> kNames[] = {
                 { "LineEntity", "直线" }, { "ArcEntity", "圆弧" }, { "CircleEntity", "圆" },
-                { "PolylineEntity", "多段线" }, { "RectangleEntity", "矩形" },
+                { "PolylineEntity", "多段线" }, { "RectangleEntity", "矩形" }, { "SplineEntity", "样条" },
+                { "EllipseEntity", "椭圆" },
             };
             const std::string type = c->GetTypeInfo()->Name;
             for (const auto& [key, name] : kNames)
