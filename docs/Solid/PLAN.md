@@ -19,7 +19,7 @@
 - **不与 AutoCAD 互通三维实体**：DWG 的 3DSOLID 存的是 ACIS（SAT/SAB）数据，SMLib 读写不了。DWG 里已有的三维实体仍由 MiniDWG 原样保留，不转成可编辑的实体；MiniCAD 建的实体导出 DWG 时只能退化为网格 / 3DFACE
 - 不做 STEP / IGES 交换（SMLib 没有，需要时考虑 OCCT）
 - 不做参数化（特征树、约束），见第 9 节，作为独立模块另做
-- 网页版暂不带（`MINICAD_WITH_SOLID` 在 Emscripten 下默认关），体积与异常支持评估后再定
+- 网页版也带（`MINICAD_WITH_SOLID` 默认开）：Emscripten 下同样编入 SMLib，`WebApp::GetSolidKernel` 第一次请求时创建；实测 `.wasm` 从 3.65 MB 增到 9.89 MB，需要更小的网页版可配置 `-DMINICAD_WITH_SOLID=OFF`
 - 不改内核算法：SMLib 只做构建适配（见 `3rd/SMLib/README.md`）
 
 ---
@@ -97,7 +97,7 @@ SM_API → SMLib
 `src/Core/Entity/Solid3DEntity.hpp`（纯头文件，核心库）。命名：MiniCAD 已有 `SolidEntity`（二维填充，DXF 的 SOLID），三维实体用 `Solid3DEntity`（对应 DXF 3DSOLID）。
 
 - **几何 = 共享数据 + 变换矩阵**：内核数据（`Save` 的字节）与局部坐标下的线框在 `Create(id, kernel, body)` 时一次求出、之后不变，克隆之间共享（`shared_ptr`）；变换矩阵 `Mat4`（局部 → 世界，行向量约定）每个实体一份
-- **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（网页版）也能显示、移动、原样保存
+- **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（默认构建的网页版）也能显示、移动、原样保存
 - **显示**（第一期）：世界坐标线框 = 实体所有边的折线，经 `IDrawSink::DrawLine` 输出。暂不画曲面轮廓线（球只显示接缝和赤道）
 - **包围盒**：创建时由内核求出局部坐标下的精确包围盒（`GetLocalBounds`，与字节一起保存），变换后取 8 个角点；只用线框会偏小（球的线框只覆盖半个球），影响缩放到全图、空间索引和夹点位置
 - **变换只改矩阵**：`TranslateEntityInPlace` / `Rotate` / `Mirror` / `Scale` 各加一个分支（复制、阵列、缩放工具经它们生效）；移动 / 旋转 / 镜像命令的 `MoveEntityEntry` 与夹点的 `DragEntityEntry` 增加 `Kind::Transform`，保存前后矩阵用于撤销
@@ -139,7 +139,16 @@ SM_API → SMLib
 
 ### 内核从哪里来
 
-`AppPlatform::GetSolidKernel()`（默认返回空）：桌面版 `Win32Window` 在 `MINICAD_WITH_SOLID` 时第一次请求时创建 SMLib 内核并持有；网页版不实现。`MainFrame::Initialize` 把它交给 `Editor::SetSolidKernel`。没有内核时建模命令只在命令行提示“不可用”。
+`AppPlatform::GetSolidKernel()`（默认返回空）：桌面版 `Win32Window` 在 `MINICAD_WITH_SOLID` 时第一次请求时创建 SMLib 内核并持有；网页版 `WebApp` 同样在 `MINICAD_WITH_SOLID` 时第一次请求时创建。`MainFrame::Initialize` 把它交给 `Editor::SetSolidKernel`。没有内核时建模命令只在命令行提示“不可用”。
+
+网页版构建（默认带内核；已有的构建目录要先 `build_wasm.bat configure` 让 CMake 重新取默认值）：
+
+```powershell
+build_wasm.bat configure
+build_wasm.bat serve
+```
+
+Emscripten 默认 64 KB 的栈会让 SMLib 在建模时溢出，`apps/Web/CMakeLists.txt` 在开启内核时链接 `-sSTACK_SIZE=8388608`。不想要内核（页面小约 6 MB）时，在 `emcmake cmake` 加 `-DMINICAD_WITH_SOLID=OFF`。
 
 ### 第一批命令（`src/Editor/Tools/SolidTools.h`，注册在 `Editor::RegisterBuiltinTools`）
 
