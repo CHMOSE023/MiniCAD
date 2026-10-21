@@ -2393,6 +2393,20 @@ namespace MiniCAD
         // ── 中键平移 ────────────────────────────────────────────
         if (e.Type == InputEventType::MouseButtonDown && e.Button == MouseButton::Middle)
         {
+            // 双击中键 = 缩放全图（与 AutoCAD 的「双击中键 → ZOOM E」一致）。
+            //
+            // 判定放在平移之前：双击的第一下已经开始了平移，但用户没有移动鼠标的话
+            // 平移量是 0；这里在第二下按下时直接缩放，并跳过本次平移的准备工作。
+            // 连击计数由 UI 层算好（同按键、双击时间窗内、位置接近），见 UIContext::PointerDown。
+            //
+            // undoable = false：与中键平移、滚轮缩放同类，**视图操作不进撤销栈**。
+            // 否则用户会为了"回到上一视图"按 Ctrl+Z，结果把真正的几何编辑撤销掉。
+            if (e.ClickCount >= 2)
+            {
+                ZoomAll(/*undoable=*/false);
+                return true;
+            }
+
             if (m_tool && !m_toolSuspended)
             {
                 m_tool->OnFocusLost();
@@ -2897,7 +2911,39 @@ namespace MiniCAD
         HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager());
         sink.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize(),
                            m_viewport->GetCamera().GetWorldPerPixel(), static_cast<double>(m_viewport->GetHeight()));
+
+        // 块裁剪（XCLIP）：悬停高亮是**叠加绘制**的，绕过了场景流的裁剪 ⇒
+        // 不裁的话悬停一个被裁剪的块会把它整块高亮出来（用户报的
+        //「鼠标悬停在图块上时，不应显示整个块，而是显示到裁剪线」）。
+        // 这里只能裁**本次追加**的那一段，不能对整个向量裁（里面还有别的实体）。
+        const size_t from = out.size();
         entity.Draw(sink, /*isSelected*/ false, /*isHovered*/ true);
+
+        if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
+            ins && ins->HasClipBoundary())
+        {
+            // 边界在块坐标系里，经插入变换落到世界坐标后才能与已画出的顶点比较
+            const Math::Mat4 m = ins->CellMatrix(0, 0);
+            std::vector<Math::Point3> world;
+            world.reserve(ins->GetClipBoundary().size());
+            for (const auto& p : ins->GetClipBoundary())
+                world.push_back(m * p);
+
+            WipeClip::Poly poly(world);
+            if (poly.Valid() && out.size() > from)
+            {
+                std::vector<Vertex_P3_C4> tail(out.begin() + static_cast<std::ptrdiff_t>(from), out.end());
+                WipeClip::ClipLines(tail, poly, /*keepInside*/ true);
+                out.resize(from);
+                out.insert(out.end(), tail.begin(), tail.end());
+            }
+
+            // 悬停时把裁剪框也画出来，让用户看清"这个块的显示被裁到哪里"
+            if (ins->IsClipFrameVisible())
+                for (size_t i = 0; i < world.size(); ++i)
+                    sink.DrawLine(world[i], world[(i + 1) % world.size()],
+                                  IDrawSink::kHoverColor, false);
+        }
 
         // 文字类实体：字形不输出线段，用包围盒勾边作为悬停反馈
         if (obj->IsKindOf<TextEntity>() || obj->IsKindOf<MTextEntity>())
@@ -2933,6 +2979,33 @@ namespace MiniCAD
         ctx.BeginEntity(&entity.GetAttr());
         entity.Draw(ctx, /*isSelected*/ false, false);
         ctx.BeginEntity(nullptr);
+
+        // 块裁剪边框（$XCLIPFRAME）：平时也要画，不能只在选中时才出现 ——
+        // AutoCAD 里裁剪框是一个常驻的视觉提示，用户据此知道这个块被裁过、裁到哪儿。
+        // 必须画在**裁剪之后**（这里是 entity.Draw 返回后），否则边框会被自己的裁剪吃掉。
+        // 颜色随块（ByLayer 时取图层色），与 WIPEOUTFRAME / IMAGEFRAME 的做法一致。
+        if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
+            ins && ins->HasClipBoundary() && ins->IsClipFrameVisible())
+        {
+            const auto& poly = ins->GetClipBoundary();
+            if (poly.size() >= 2)
+            {
+                // 边界是**块坐标系**里的，要经本块的插入变换才落到世界坐标
+                const Math::Mat4 m = ins->CellMatrix(0, 0);
+                const Math::Color4 color = ins->ResolveDrawColor(ctx);
+                for (size_t i = 0; i < poly.size(); ++i)
+                {
+                    const Math::Point3 a = m * poly[i];
+                    const Math::Point3 b = m * poly[(i + 1) % poly.size()];
+                    m_scratchLines.push_back({ { static_cast<float>(a.x), static_cast<float>(a.y), static_cast<float>(a.z) },
+                                               { static_cast<float>(color.r), static_cast<float>(color.g),
+                                                 static_cast<float>(color.b), static_cast<float>(color.a) } });
+                    m_scratchLines.push_back({ { static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(b.z) },
+                                               { static_cast<float>(color.r), static_cast<float>(color.g),
+                                                 static_cast<float>(color.b), static_cast<float>(color.a) } });
+                }
+            }
+        }
 
         c.lines         = m_scratchLines;
         c.fills         = m_scratchFills;
@@ -3308,9 +3381,33 @@ namespace MiniCAD
                     layer && !layer->IsVisible())
                     return;
 
+                // 块裁剪（XCLIP）：选中流同样是叠加绘制，块参照必须按裁剪后的样子画，
+                // 否则选中一个被裁剪的块会把它整块画出来。
+                //
+                // 例外：正在拖**基点**时按**完整**图块绘制（临时忽略裁剪）——
+                // 拖动基点 = 在固定的取景窗口下搬动图元，只画框内那一小块会让人
+                // 以为图块缺了图元，也看不清要放到哪里。
+                auto* ins = dynamic_cast<InsertEntity*>(obj);
+                const bool showWhole = ins && m_gripEditor.IsDraggingBasePoint(id);
+                if (ins)
+                    ins->SetShowWholeWhileDraggingBase(showWhole);
+
                 ctx.BeginEntity(&attr);
                 entity.Draw(ctx, /*isSelected*/ true, false);
                 ctx.BeginEntity(nullptr);
+
+                if (ins)
+                    ins->SetShowWholeWhileDraggingBase(false);
+
+                // 裁剪边框线：$XCLIPFRAME 允许显示时才画，用选中高亮色。
+                // 边框画在**裁剪之后**，否则它自己会被裁掉。
+                if (ins && ins->HasClipBoundary() && ins->IsClipFrameVisible())
+                {
+                    const auto& poly = ins->GetClipBoundary();
+                    for (size_t i = 0; i < poly.size(); ++i)
+                        ctx.DrawLine(poly[i], poly[(i + 1) % poly.size()],
+                                     IDrawSink::kSelectionColor, false);
+                }
             };
 
             for (auto id : selection)

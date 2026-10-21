@@ -125,6 +125,8 @@ if(WIN32)
         "Core/HatchDotsTests.cpp"
         "Core/MatrixInverseTests.cpp"
         "Core/RecentFilesTests.cpp"
+        "Core/BlockFixTests.cpp"
+        "Core/MiddleDoubleClickZoomTests.cpp"
     )
     target_link_libraries(MiniCADTests PRIVATE MiniCAD)
     target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")

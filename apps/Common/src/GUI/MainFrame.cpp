@@ -733,6 +733,7 @@ namespace MiniCAD
         InputEvent ie   = {};
         ie.Modifiers    = e.modifiers;          // 两边的修饰键掩码相同
         ie.MouseButtons = ToButtonState(e.buttons);
+        ie.ClickCount   = e.clickCount;         // 连击计数（双击中键 = 缩放全图）
         ie.MouseX       = x;
         ie.MouseY       = y;
         ie.LastMouseX   = m_mouseX;

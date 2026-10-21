@@ -177,8 +177,19 @@ namespace MiniCAD
                 if (e.Kind == DragEntityEntry::Kind::Insert)
                 {
                     auto* ins = static_cast<InsertEntity*>(obj);
-                    const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
-                    ins->SetPosition(p);
+                    // 裁剪边界被夹点编辑过：只还原边界。
+                    // ⚠ 不能同时写位置 —— 拖裁剪夹点时块本身没动，
+                    //   BeforePoint/AfterPoint 是空的（0,0,0），写了会把块搬到原点。
+                    if (e.EditedClip)
+                    {
+                        ins->SetClipBoundaryRaw(useAfter ? e.AfterClip : e.BeforeClip);
+                    }
+                    // ClipOnly 表示这次拖拽**只**改了边界，位置必须保持原样
+                    if (!e.ClipOnly)
+                    {
+                        const auto& p = useAfter ? e.AfterPoint : e.BeforePoint;
+                        ins->SetPosition(p);
+                    }
                 }
 
                 if (e.Kind == DragEntityEntry::Kind::Transform)
