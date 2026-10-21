@@ -64,6 +64,14 @@ target_include_directories(MiniCADWeb PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
 )
 target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCAD MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
+# 三维实体内核（SMLib，见 docs/Solid/PLAN.md）：默认编入网页版，
+# 配置 -DMINICAD_WITH_SOLID=OFF 可去掉（.wasm 小约 6 MB）
+if(MINICAD_WITH_SOLID)
+    target_link_libraries(MiniCADWeb PRIVATE MiniCADSolid)
+    target_compile_definitions(MiniCADWeb PRIVATE MINICAD_WITH_SOLID)
+    # SMLib 的数值算法递归较深，emcc 默认 64 KB 的栈在建模时会溢出（表现为 call_indirect 报错），给 8 MB
+    target_link_options(MiniCADWeb PRIVATE -sSTACK_SIZE=8388608)
+endif()
 minicad_web_executable(MiniCADWeb)
 # 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui、/nodes（示例节点图）
 target_link_options(MiniCADWeb PRIVATE

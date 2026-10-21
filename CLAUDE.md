@@ -23,7 +23,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `tests/`：`Core/`（MiniCAD）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
 - `tools/make_web_font.py`：重新生成 `assets/fonts/NotoSansSC-UI.ttf`（网页版界面字体，Noto Sans SC Regular 子集，OFL）
 - `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`、示例节点图 `nodes/examples/`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
-- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.0 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（桌面版默认开、网页版默认关）；静态库、`SM_STATIC`，本地修改与使用注意（静态库不能并发使用，`SMLibKernel` 内部加锁让多个线程轮流调用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
+- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.0 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（默认开；网页版要小体积可 `-DMINICAD_WITH_SOLID=OFF`）；静态库、`SM_STATIC`，本地修改与使用注意（静态库不能并发使用，`SMLibKernel` 内部加锁让多个线程轮流调用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `docs/`：早期 MiniCAD 项目的教程（描述的是旧架构）、各库开发计划、发布说明 `release-notes/`
 
 ### include 根目录（重要）
@@ -81,7 +81,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 ### 主窗口与平台（桌面版、网页版）
 
 整个界面由 MiniGUI 绘制。界面由 MiniGUI 后端渲染（`D3D11Backend` / `WebGL2Backend`），CAD 视口由 CAD 渲染器渲染（`D3D11Renderer` / `GLES3Renderer`），两者不是一回事。
-`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、三维实体内核（`GetSolidKernel`，桌面版为 SMLib，网页版为空）、后台任务（`RunInBackground`：桌面版用线程读图纸、求值节点图，网页版先画一帧再同步执行；`HasBackgroundThread` 区分两者）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
+`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、三维实体内核（`GetSolidKernel`，桌面版与网页版都是 SMLib，网页版可 `-DMINICAD_WITH_SOLID=OFF` 去掉）、后台任务（`RunInBackground`：桌面版用线程读图纸、求值节点图，网页版先画一帧再同步执行；`HasBackgroundThread` 区分两者）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
@@ -128,7 +128,7 @@ build_wasm.bat configure    # 清空 out\build\wasm 后重新配置
 build_wasm.bat serve        # 构建后在 http://localhost:8080 启动本地服务器
 ```
 
-Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/MiniCADWeb/index.html`（必须经 HTTP 打开，`file://` 不行）。脚本默认 emsdk 在 `D:\dev\emsdk`，并在 Visual Studio 安装目录里找 Ninja，工具链位置变了就改脚本顶部。本地验证过的 Emscripten 版本为 5.0.7（CI 固定同一版本）。
+Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/MiniCADWeb/index.html`（必须经 HTTP 打开，`file://` 不行）。脚本默认 emsdk 在 `D:\dev\emsdk`，并在 Visual Studio 安装目录里找 Ninja，工具链位置变了就改脚本顶部。本地验证过的 Emscripten 版本为 5.0.7（CI 固定同一版本）。网页版默认带三维实体内核（SMLib，`.wasm` 约 9.9 MB，另加 8 MB 栈）；要小体积构建在 `emcmake cmake` 加 `-DMINICAD_WITH_SOLID=OFF`（`.wasm` 约 3.6 MB）。已有的 `out\build\wasm` 要先 `build_wasm.bat configure` 一次才会改用新默认。
 
 ### 验证改动
 

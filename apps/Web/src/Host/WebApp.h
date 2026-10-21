@@ -61,19 +61,21 @@ namespace MiniCAD
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
-        bool HasSaveDialog() const override { return false; }  // 文件名和格式由 MainFrame 的另存为对话框询问
+        bool HasSaveDialog() const override { return false; }          // 文件名和格式由 MainFrame 的另存为对话框询问
         std::string GetResourceDir() const override { return ""; }     // 资源在虚拟文件系统根目录：/icons、/ui ...
         std::string GetUserDataDir() const override { return ""; }     // 暂不保存用户布局
         bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;
+        Solid::ISolidKernel* GetSolidKernel() override;   // MINICAD_WITH_SOLID 时为 SMLib，第一次请求时创建
 
     private:
-        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 渲染器 → 界面后端 → WebGL 上下文
+        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 渲染器 → 界面后端 → WebGL 上下文
         WebHost                                 m_host;
         std::unique_ptr<MiniGUI::WebGL2Backend> m_backend;
         std::unique_ptr<GLES3Renderer>          m_renderer;
         std::unique_ptr<GLRenderTarget>         m_viewportRT;
+        std::unique_ptr<Solid::ISolidKernel>    m_solidKernel;   // 声明在 MainFrame 之前，销毁时晚于它
         MainFrame                               m_main;
         std::unique_ptr<MiniGUI::WebInput>      m_input;
 

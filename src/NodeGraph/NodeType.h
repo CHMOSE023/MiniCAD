@@ -66,7 +66,7 @@ namespace MiniCAD::Nodes
     // 求值上下文：节点能访问的外部对象（可空）
     struct SolveContext
     {
-        Solid::ISolidKernel* Kernel       = nullptr;   // 三维实体内核（网页版为空）
+        Solid::ISolidKernel* Kernel       = nullptr;   // 三维实体内核（关闭内核的构建为空）
         const Scene*         DocScene     = nullptr;   // 引用节点读取的场景
         uint64_t             SceneVersion = 0;         // 场景几何版本：变化时依赖场景的节点重算
         const ParameterTable* Params      = nullptr;   // 由 Graph::Evaluate 填写

@@ -9,6 +9,9 @@
 #include "Platform/Web/WebFonts.h"
 #include "Widgets/Dialog.h"
 #include "Platform/Web/WebInput.h"
+#ifdef MINICAD_WITH_SOLID
+#include "Solid/SMLib/SMLibKernel.h"
+#endif
 #include <emscripten.h>
 #include <GLES3/gl3.h>
 #include <algorithm>
@@ -186,6 +189,19 @@ namespace MiniCAD
         // 视口画面来自帧缓冲：第一行在底部，显示时上下翻转
         const auto texture = static_cast<GLuint>(reinterpret_cast<uintptr_t>(nativeShaderResource));
         return m_backend->RegisterExternalTexture(texture, true);
+    }
+
+    // =========================================================
+    // AppPlatform：三维实体内核
+    // =========================================================
+    Solid::ISolidKernel* WebApp::GetSolidKernel()
+    {
+#ifdef MINICAD_WITH_SOLID
+        // 与桌面版相同：第一次请求时创建，之后一直持有。网页版没有后台线程，调用天然是串行的
+        if (!m_solidKernel)
+            m_solidKernel = Solid::CreateSMLibKernel();
+#endif
+        return m_solidKernel.get();
     }
 
     bool WebApp::LoadUiFonts(MiniGUI::TextSystem& text)

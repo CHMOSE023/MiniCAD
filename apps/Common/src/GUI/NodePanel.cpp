@@ -92,7 +92,7 @@ namespace MiniCAD
             if (!m_nodeEditor || !*exampleButton)
                 return;
             // 示例是资源目录里的节点图文件，每次打开菜单时读索引（改了文件不用重启）；
-            // 没有实体内核（网页版）时，用到三维实体 / 曲面的示例禁用
+            // 没有实体内核时（配置 -DMINICAD_WITH_SOLID=OFF 的构建），用到三维实体 / 曲面的示例禁用
             const bool kernel = m_platform->GetSolidKernel() != nullptr;
             std::vector<MenuItem> items;
             std::string group;
