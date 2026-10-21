@@ -91,6 +91,31 @@ set(MINICAD_GEOM_SOURCES
     "${MINICAD_SRC}/Core/GeomKernel/CurveIntersect.cpp"
 )
 
+# ── NodeGraph（节点式参数化建模，见 docs/NodeGraph/PLAN.md）─────────
+set(MINICAD_NODEGRAPH_SOURCES
+    "${MINICAD_SRC}/NodeGraph/Value.cpp"
+    "${MINICAD_SRC}/NodeGraph/NodeType.cpp"
+    "${MINICAD_SRC}/NodeGraph/Graph.cpp"
+    "${MINICAD_SRC}/NodeGraph/Group.cpp"
+    "${MINICAD_SRC}/NodeGraph/GeometryOps.cpp"
+    "${MINICAD_SRC}/NodeGraph/Expression.cpp"
+    "${MINICAD_SRC}/NodeGraph/Preview.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinMathNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinDataNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinGeometryNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinSolidNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinSurfaceNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinCurveXformNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinCurveModifyNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/CurveOps.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinMeshNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/MeshOps.cpp"
+    "${MINICAD_SRC}/NodeGraph/MeshIntersect.cpp"
+    "${MINICAD_SRC}/NodeGraph/Examples.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinFormNodes.cpp"
+    "${MINICAD_SRC}/NodeGraph/BuiltinSurfaceOps.cpp"
+)
+
 # ── 源文件汇总 ──────────────────────────────────────────────────────
 set(MINICAD_SOURCES
     "${MINICAD_SRC}/MiniCADEngine.cpp"
@@ -102,6 +127,7 @@ set(MINICAD_SOURCES
     ${MINICAD_VIEWPORT_SOURCES}
     ${MINICAD_TEXT_SOURCES}
     ${MINICAD_GEOM_SOURCES}
+    ${MINICAD_NODEGRAPH_SOURCES}
 )
 
 add_library(MiniCAD STATIC ${MINICAD_SOURCES})

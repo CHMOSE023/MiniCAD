@@ -1,0 +1,213 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "mesh.sphere",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 6
+        },
+        {
+          "t": "integer",
+          "v": 32
+        },
+        {
+          "t": "integer",
+          "v": 16
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 2,
+      "type": "mesh.box",
+      "x": 0,
+      "y": 180,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            6,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "vector",
+          "v": [
+            10,
+            10,
+            10
+          ]
+        },
+        {
+          "t": "integer",
+          "v": 4
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "type": "mesh.join",
+      "x": 230,
+      "y": 60,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 4,
+      "type": "mesh.intersect",
+      "x": 230,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 5,
+      "type": "math.series",
+      "x": 230,
+      "y": 420,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": -4.5
+        },
+        {
+          "t": "number",
+          "v": 1.5
+        },
+        {
+          "t": "integer",
+          "v": 7
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 6,
+      "type": "mesh.section",
+      "x": 460,
+      "y": 360,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 5
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 7,
+      "type": "mesh.outline",
+      "x": 460,
+      "y": 180,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "vector",
+          "v": [
+            -1,
+            -1,
+            -1
+          ]
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 3,
+      "toPort": 0
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 0
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 4,
+      "toPort": 1
+    },
+    {
+      "from": 1,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 0
+    },
+    {
+      "from": 5,
+      "fromPort": 0,
+      "to": 6,
+      "toPort": 1
+    },
+    {
+      "from": 2,
+      "fromPort": 0,
+      "to": 7,
+      "toPort": 0
+    }
+  ]
+}

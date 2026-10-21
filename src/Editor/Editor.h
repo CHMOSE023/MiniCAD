@@ -203,6 +203,14 @@ namespace MiniCAD
         void        SetStandardView(StandardView view);
         // 任意视图方向（方位角 / 仰角，度，见 CameraState）：同标准视图，缩放到全图、可撤销（视图方块用）
         void        SetViewDirection(double azimuthDeg, double elevationDeg);
+        // ── 节点图预览（docs/NodeGraph/PLAN.md 第 3.5 节）────────
+        // 不在场景里的实体（曲线、三维实体）与点，只用于显示：线与三维视图里的轮廓线一起按深度绘制，实体的面进着色流，
+        // 点画成屏幕大小固定的圆圈（highlightPoints 为选中节点的点）。替换上一次的预览；切换文档（Bind）时清空
+        void SetPreviewGeometry(std::vector<std::shared_ptr<const Entity>> entities, std::vector<Math::Point3> points,
+                                std::vector<Math::Point3> highlightPoints = {});
+        void ClearPreviewGeometry() { SetPreviewGeometry({}, {}, {}); }
+        size_t GetPreviewEntityCount() const { return m_previewEntities.size(); }
+        bool   GetPreviewBounds(AABB& out) const;   // 预览几何的范围（没有预览返回 false）
         // 着色面与轮廓线的顶点（测试用）
         const std::vector<Vertex_P3_C4>& GetShadedVertices()     const { return m_shadedVertices; }
         const std::vector<Vertex_P3_C4>& GetSilhouetteVertices() const { return m_silhouetteVertices; }
@@ -434,6 +442,12 @@ namespace MiniCAD
         uint64_t               m_shadedSceneVersion = 0;       // 着色面对应的场景版本
         Math::Vec3             m_shadedViewDir;                // 着色面对应的视线方向
         bool                   m_shadedValid = false;
+        std::vector<std::shared_ptr<const Entity>> m_previewEntities;   // 节点图预览（SetPreviewGeometry）
+        std::vector<Math::Point3> m_previewPoints, m_previewHighlightPoints;
+        uint64_t               m_previewVersion       = 0;
+        uint64_t               m_shadedPreviewVersion = 0;     // 着色面对应的预览版本
+        AABB                   m_previewBounds = AABB::Empty();
+        Overlay                m_previewOverlay;               // 预览点（屏幕大小的圆圈，每帧按相机重建）
         AABB                   m_sceneBounds = AABB::Empty();  // 三维视图的深度范围用，按场景版本缓存
         uint64_t               m_sceneBoundsVersion = 0;
         bool                   m_sceneBoundsValid   = false;

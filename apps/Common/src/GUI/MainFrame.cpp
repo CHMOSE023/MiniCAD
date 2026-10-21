@@ -146,6 +146,7 @@ namespace MiniCAD
 
     MainFrame::~MainFrame()
     {
+        WaitNodeEvaluation();   // 节点图的后台求值在用内核与文档的节点图
         // 后台还在读图纸：没开始的不再开始；正在读的让它中止并等它退出（它引用了 m_docManager）
         if (m_openJob)
         {
@@ -258,6 +259,7 @@ namespace MiniCAD
         m_layout->RegisterPanel("layerbar",   CreateLayerBar());
         m_layout->RegisterPanel("commandline", CreateCommandLine(), "命令行");
         m_layout->RegisterPanel("statusbar",  CreateStatusBar());
+        m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
@@ -682,8 +684,8 @@ namespace MiniCAD
         }
         if (m_ui->HasModal())
             return;             // 已经在询问了（例如连续点了两次关闭）
-        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档尚未保存。",
-            { "全部保存并退出", "不保存，直接退出", "取消" },
+        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档未保存。",
+            { "全部保存", "不保存", "取消" },
             [this](int r)
             {
                 if (r == 0)
@@ -895,6 +897,9 @@ namespace MiniCAD
             return;
         auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
         int64_t t = NowTicks();
+
+        // 0. 节点图：参数或引用的图纸变了就求值，刷新绘图区预览（在视口渲染之前）
+        SyncNodeGraph();
 
         // 1. 同步状态栏文字与读取进度（会触发布局，所以放在 Update 之前）
         UpdateStatus();

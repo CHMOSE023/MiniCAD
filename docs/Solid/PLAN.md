@@ -1,6 +1,7 @@
 # 三维实体建模开发计划
 
 > 状态：M0～M6 已完成（2026-10-18）：SMLib 静态库构建（C++20）；`ISolidKernel` 接口与 SMLib 适配层；`Solid3DEntity`（俯视线框、变换、拾取、捕捉、夹点、撤销、读写）；桌面版建模命令（长方体、圆柱、球、拉伸、旋转、扫掠、实体并 / 差 / 交、边圆角 / 倒角）；截面、平面投影出二维图，DWG / DXF 导出为多面网格；三维视图（标准视图、环绕、着色、隐藏线、轮廓线）
+> M7 已完成（2026-10-20）：空间 NURBS 曲线（`NurbsCurve`：插值、拟合、螺旋线）与曲面（放样、直纹面、旋转曲面、点阵曲面、偏移曲面、管道、加厚、曲面取点），开放曲面也是 `BodyPtr`，经 `Solid3DEntity` 显示、读写、导出；节点图里的“曲线/NURBS”与“曲面”节点见 `docs/NodeGraph/PLAN.md`。见第 11 节
 > 定位：在 MiniCAD 里加入**三维实体**（布尔、圆角、截面出图），几何内核用 NVIDIA usd-brep 的 SMLib（Apache-2.0），经 MiniCAD 自己的接口 `ISolidKernel` 隔离，以后可以换成或并用其他内核（如 OCCT）。
 
 ---
@@ -29,7 +30,7 @@
 |---|---|
 | 内核 | SMLib + SM_API（usd-brep 1.0.0，提交 c9c5979），源码在 `3rd/SMLib`，目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake` |
 | 构建 | 静态库，`SM_STATIC`，C++20，`/MT`；源文件按目录通配 |
-| 线程 | 静态库走进程全局的线程局部存储路径，**内核只能在一个线程里使用**。桌面版的耗时运算若放到后台，只能用单个工作线程并串行化 |
+| 线程 | 静态库走进程全局的线程局部存储路径，**内核不能并发使用**。`SMLibKernel` 的每个调用与实体析构持有同一把进程级递归锁，多个线程轮流使用（节点图的后台求值线程与界面线程，见 `docs/NodeGraph/PLAN.md` 第 3.4 节） |
 | 上下文 | 使用前调用一次 `SmApiCreateContext()` |
 | 头文件隔离 | SMLib 头文件带 `ULONG`、`TRUE` 等宏，只在适配层的 `.cpp` 里包含；MiniCAD 的公开头文件里不出现任何 `Sm*` 类型（与 MiniDWG `PRIVATE` 链接同理） |
 | 内存 | SM_API 有大量"由调用方释放"的返回值，所有权约定写在各函数注释里；适配层负责全部释放，接口外只交出 MiniCAD 的数据或句柄 |
@@ -64,14 +65,16 @@ SM_API → SMLib
 |---|---|
 | `src/Solid/ISolidKernel.h` | 接口，属于核心库，只用 MiniCAD 的类型（`Point3`、`Vec3`、`Mat4`、`AABB`） |
 | `src/Solid/SMLib/SMLibKernel.h/.cpp` | SMLib 实现与工厂 `CreateSMLibKernel()`；目标 `MiniCADSolid`（`cmake/MiniCAD.cmake`），私有链接 `SM_API`。单独成库是因为核心库定义了 `UNICODE`，SMLib 按它切换宽字符文件名 |
-| `tests/Solid/SolidKernelTests.cpp` | 接口测试（69 项），只经接口调用，换内核实现时应原样通过 |
+| `src/Solid/NurbsCurve.h` | 空间 NURBS 曲线数据（M7）：求值、采样、仿射变换、直线 / 圆弧段 → 二次有理曲线，不依赖内核 |
+| `tests/Solid/SolidKernelTests.cpp` | 接口测试（123 项，其中 M7 的曲线与曲面 54 项），只经接口调用，换内核实现时应原样通过 |
 
 - `BodyPtr = shared_ptr<const IBody>`：实体不可变，所有运算返回新实体、输入不变，可在撤销栈、剪贴板间共享
 - 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`、`Sweep`（M5，轮廓沿 `SweepPath` 扫掠）
 - 轮廓 `Profile`：z = 常数平面上的闭合多段线，顶点带凸度（tan(圆心角 / 4)，**正值为逆时针，与 DXF 相同、与 MiniCAD 的 `Polyline` 相反**；顺 / 逆时针绕行都可以），或整圆
 - 扫掠路径 `SweepPath`：同一水平面上首尾相接的直线 / 圆弧（顶点带凸度，约定同 `Profile`），可闭合
 - 修改：`Boolean`（并 / 差 / 交）、`Fillet` / `Chamfer`（M5，按 `Edges()` 给出的边编号）、`Transform`（任意 `Mat4`，含镜像、非均匀缩放）
-- 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`
+- 显示与查询：`Tessellate`（顶点按面拆分、面内平滑法线、三角形逆时针朝外）、`Edges`（每条边一条折线 + 编号）、`HiddenLines`（隐藏线消除：可见 / 被挡住的边与轮廓线）、`Section`、`Volume`、`Bounds`；M7 增加 `Area`、`IsSolid`、`FaceCount`
+- 空间曲线与曲面（M7）：`InterpolateCurve`、`FitCurve`、`Helix`、`Loft`、`RuledSurface`、`RevolveSurface`、`SurfaceFromPoints`、`OffsetSurface`、`Pipe`、`Thicken`、`EvaluateSurface`，见第 11 节
 - 读写：`Save` / `Load`，数据 = 16 字节头（`SMLB`、版本、长度、CRC32）+ SMLib 二进制格式；`Load` 先校验，损坏的数据不交给 SMLib（它的读取器遇到乱码会崩溃）
 - 失败：返回空指针 / 空结果，原因由 `LastError()` 给出
 
@@ -185,7 +188,7 @@ SM_API → SMLib
 ### 之后
 
 - 不等距倒角（两个距离）、变半径圆角；按面选边（选一个面的全部边）
-- 耗时运算：桌面版可交给单个后台工作线程（内核只能单线程），网页版同步执行，与打开图纸的做法一致。目前在界面线程同步执行
+- 耗时运算：桌面版可交给单个后台工作线程（内核内部加锁，轮流使用），网页版同步执行，与打开图纸的做法一致。建模命令目前在界面线程同步执行，节点图已在后台求值（节点图 N11）
 
 ---
 
@@ -200,6 +203,7 @@ SM_API → SMLib
 | **M4** ✅ | 截面（`SolidSection`）、平面投影（`Flatshot`）出二维图，拟合为直线 / 圆弧 / 圆；DWG / DXF 导出为多面网格；测试 `SolidDrawingTests` | 出图结果可标注、可导出 DWG |
 | **M5** ✅ | 第二批命令：旋转（`Revolve`）、扫掠（`Sweep`）、边圆角（`FilletEdge`）、边倒角（`ChamferEdge`），俯视图里选边（Tab 切换重叠的边）；内核增加 `Sweep`、`Chamfer` | 桌面版里实际旋转、扫掠、选边圆角 / 倒角、撤销 |
 | **M6** ✅ | 三维视图（显示第二期）：标准视图、Shift + 中键环绕、着色 / 线框、深度测试消隐、轮廓线；两个渲染器的渲染目标加深度缓冲；测试 `SolidViewTests` | 桌面版里等轴测看到着色的实体，被挡住的边不显示 |
+| **M7** ✅ | 空间 NURBS 曲线与开放曲面（第 11 节）：`NurbsCurve`；内核增加插值 / 拟合 / 螺旋线、放样、直纹面、旋转曲面、点阵曲面、偏移、管道、加厚、曲面取点、面积与是否封闭；节点图的“曲线/NURBS”与“曲面”节点；测试 `SolidKernelTests`、`NodeSolidTests` | 节点图里放样 → 加厚得到实体；开放曲面着色、烘焙、读写、导出 DWG / DXF |
 | — | 网页版评估：Emscripten 编译、异常、WASM 体积 | 决定网页版是否默认带 |
 
 ---
@@ -215,7 +219,119 @@ SM_API → SMLib
 | 风险 | 应对 |
 |---|---|
 | SMLib 刚开源，复杂模型上布尔、圆角的鲁棒性未经公开验证 | 积累真实测试模型，必要时与 OCCT 对比；接口隔离保证可替换 |
-| 内核只能单线程 | 运算串行化；界面线程执行或单个后台线程 |
+| 内核不能并发 | 内核内部加锁串行化；界面线程执行或单个后台线程 |
 | DWG 三维实体无法互通 | 明确为非目标；导出退化为网格并提示 |
 | 网页版体积（Release 静态库 `SMLib.lib` 约 100 MB，但链接后只带进用到的部分，冒烟测试 exe 仅 4.9 MB） | 先测 WASM 实际体积再决定 |
 | 跟进上游更新 | 本地修改都记在 `3rd/SMLib/README.md`，更新时重新应用 |
+
+---
+
+## 11. 空间曲线与曲面（M7）
+
+第一版的建模只有封闭实体，轮廓、路径都是水平面上的二维曲线实体，没有曲面。M7 把 SMLib 的 NURBS 曲线、曲面接口经 `ISolidKernel` 开放出来，主要给节点式参数化建模用（`docs/NodeGraph/PLAN.md` 第 4.4 节“曲面”）。
+
+### 11.1 数据
+
+- **空间曲线** `Solid::NurbsCurve`（`src/Solid/NurbsCurve.h`，纯头文件，核心库）：阶数、控制点、完整的节点矢量（长度 = 控制点数 + 阶数 + 1，与 DXF SPLINE、MiniCAD 的 `Spline` 相同）、权重（空为非有理）。它是 MiniCAD 自己的数据：求值（齐次坐标 de Boor）、导数（中心差分）、按节点区间采样、长度、仿射变换（只变换控制点）都不需要内核，网页版也能显示、变换。
+  - `FromControlPoints(点, 阶数)`：两端夹持的均匀节点，点数不够时降阶
+  - `FromSegments(点, 凸度, 闭合)`：首尾相接的直线 / 圆弧段（凸度约定同 `ProfileVertex`：正值逆时针）→ 二次有理曲线，圆弧按不超过 90° 分段，精确表示圆；每段占一个单位参数区间，内部节点重复 2 次
+- **曲面**：仍是 `BodyPtr`。开放的曲面片（一个或多个面、不围成体积）与实体用同一个类型，`IsSolid()` 区分（`SmApiBrepIsManifoldSolid`）。好处是变换、离散、边、截面、读写、`Solid3DEntity` 的显示与导出全部沿用，不需要新的实体类型
+
+### 11.2 接口与实现（`SMLibKernel.cpp`）
+
+| 接口 | 实现 | 说明 |
+|---|---|---|
+| `InterpolateCurve(点, 闭合)` | `SmBSplineCurve::CreateInterpolatingCurve`（弦长参数化、三次） | 至少 3 个点、相邻点不重合。闭合时首点加到末尾、两端给同一个切线向量（方向取首点两侧点的连线，长度按“总弦长 / 参数域长”换算：先插值一次取参数域），接点处 C1 |
+| `FitCurve(点, 容差)` | `SmBSplineCurve::CreateApproximatingCurve`（弦长、三次） | `SmApiCreateCurveApproxPoints` 的控制点数固定为点数的 1/4，正弦样例偏差 0.37。改为从 1/4 起每次增加一半，直到每个点到曲线的距离 ≤ 容差（默认点集尺寸的 1/1000），最多等于点数（即插值） |
+| `Helix` | `SmApiCreateHelix` | 拟合容差取最大半径的 1e-5；圈数 ≤ 124（SM_API 的上限） |
+| `Loft` | `SmApiCreateSkin` | 截面全部闭合时得到不封口的管状曲面 |
+| `RuledSurface` | `SmApiCreateRuledSurface` | |
+| `RevolveSurface` | `SmApiCreateSurfaceRevolution` | 负角度改为轴反向、角度取正（右手定则下等价） |
+| `SurfaceFromPoints` | `SmBSplineSurface::ApproximatePoints`（控制点数 = 点数，即经过各点） | 与 `SmApiCreateSurfaceFromOrderedPoints` 相同，但阶数取 min(3, 点数 − 1)：后者固定三次，行或列少于 4 个点时失败 |
+| `OffsetSurface` | 每个面的曲面 `SmApiCreateOffsetSurface` | 沿面的外侧（见下）；裁剪过的面按整个曲面偏移 |
+| `Pipe` | `SmApiCreatePipeSweep` | 封口时得到实体（螺旋线 → 弹簧） |
+| `Thicken` | `SmApiShellBrepFull(…, bCreateOffsetSolid = TRUE, 面列表为空)` | 面列表是“不偏移、原样保留”的面（如抽壳时开口的面），加厚时必须为空，传全部面会失败；侧边由 SMLib 用直纹面封闭并缝合成实体 |
+| `EvaluateSurface(面, u, v)` | `SmApiEvaluateSurfacePoint` / `Normal` | u、v 归一化到面所在曲面的参数域 |
+| `Area` / `IsSolid` / `FaceCount` | `SmApiBrepComputeArea` / `SmApiBrepIsManifoldSolid` / `SmApiGetFaces` | |
+
+- **曲面 → BRep**：`SmBrep::CreateFacesFromSurface(曲面, 参数域, SM_CT_C1)`，曲面交给 brep（拆分时原曲面被删除）。在 C1 不连续处拆成几个面：`Tessellate` 在同一个面内平滑法线，放样经过矩形截面时折痕留在一个面里会被抹平（两个正方形放样得到 4 个侧面）。之后 `SmApiStitchAdvanced`（只缝合单侧边）把闭合曲面的接缝、拆开的相邻面连起来，加厚才能得到封闭的实体
+- **法线方向**：面的第一个面使用（faceuse）的法线就是曲面法线；它在无穷区域（实体外面）时外侧即曲面法线方向，开放曲面两侧都在无穷区域，取曲面法线。`EvaluateSurface` 的法线、`OffsetSurface` / `Thicken` 的正方向都按这个外侧，测试检查它与离散网格的三角形朝向一致
+- **曲线转换**：`NurbsCurve` ↔ `SmBSplineCurve` 经 `SmApiCreateCanonicalCurve` / `GetCanonical`（唯一节点 + 重复度）；节点矢量要两端夹持
+
+### 11.3 显示、读写与导出
+
+开放曲面放进 `Solid3DEntity` 不需要改实体：离散、线框（边界边）、包围盒、读写（内核字节 + 网格）、DWG / DXF 多面网格都按原来的方式工作——网格的边界边只属于一个三角形，导出时是可见边。着色本来就把背对视线的法线翻过来（双面光照），曲面的背面同样有明暗。
+
+- 对开放曲面无意义的操作给出明确提示：节点的“实体信息”对开放曲面输出体积 0 并警告（面积见“曲面信息”）；节点的并 / 差 / 交与桌面版 `UNION` / `SUBTRACT` / `INTERSECT` 遇到开放曲面报错“只适用于封闭实体”；“加厚”“偏移曲面”的输入是实体时报错
+- 空间曲线烘焙为带控制点的 `SplineEntity`（精确求值，`.mcad` / JSON 保存控制点、节点、权重）；DWG / DXF 导出仍跳过样条（`CadExchange` 的已知限制）
+
+### 11.4 已知限制
+
+- 放样的截面要方向一致、起点大致对齐，否则曲面会扭转（SMLib 不自动对齐）；没有导轨、没有封口选项（可以先加厚，或用“管道”）
+- 偏移曲面对裁剪过的面按整个曲面偏移；`SmApiCreateOffsetSurface` 是近似（容差 0.001）
+- 没有曲面的修剪、分割、曲面间求交 / 圆角（SMLib 有 `SmApiTrimSurfaceWith3dCurves`、`SmApiSurfaceSurfaceFillet`，留待以后）
+- 绘图工具仍不能直接画空间曲线（没有 UCS），空间曲线只在节点图里生成
+- `CreateFacesFromSurface` 失败时曲面的所有权不确定（可能已挂到 brep 上），适配层宁可泄漏也不重复释放
+
+---
+
+## 12. 实体形体（节点 N7）
+
+节点式参数化建模的 Revit 式形体（`docs/NodeGraph/PLAN.md` 第 5 节）需要的接口，都在 `SMLibKernel.cpp`：
+
+| 接口 | SMLib | 说明 |
+|---|---|---|
+| `Cone(baseCenter, radiusBase, radiusTop, height)` | `SmApiCreateCone` | 顶面半径为 0 时是尖顶圆锥，两个半径不能都为 0 |
+| `Torus(center, majorRadius, minorRadius)` | `SmApiCreateTorus` | 轴沿 +Z，主半径 > 截面半径 > 0 |
+| `LoftSolid(sections, ruled)` | `SmApiCreateSkinPrimitive` | 依次经过各闭合截面并两端封口；`ruled` 时一次，否则阶数为 min(3, 截面数 − 1)。截面方向要一致（节点侧统一为逆时针） |
+| `SweepAlong(profile, path)` | `SmApiCreateCurveSweep` | 闭合轮廓沿空间曲线扫掠并封口。只设 `bMoveProfileCenterToPath`：轮廓的包围盒中心移到路径起点（不设时 SMLib 把轮廓的**起点**移到路径起点，圆形轮廓沿螺旋线扫掠的体积会大约 9%）；轮廓的朝向由调用方放好 |
+| `Shell(body, thickness, openFaces)` | `SmApiShellBrepFull`（偏移 −thickness，即向内） | `openFaces` 为去掉的面（序号同 `FaceCount`），为空时得到带封闭空腔的实体；10³ 长方体厚 1：空腔 488、去掉一个面 424 |
+
+`NurbsCurve::Reversed()` 给出反向的同一条曲线（截面方向统一用）。测试在 `NodeSolidTests` 的 `TestN7Forms`（经节点）。
+
+---
+
+## 13. 曲面的创建、修改与分析（节点 N8）
+
+`docs/NodeGraph/PLAN.md` 第 6 节的曲面节点用到的接口，都在 `SMLibKernel.cpp`，输入不变（修改类在副本上做）：
+
+| 接口 | SMLib | 注意 |
+|---|---|---|
+| `PlanarSurface(loops)` | `SmApiCreatePlanarFaces` | 成功时曲线被接管，失败时由适配层释放 |
+| `ExtrudeCurve(curve, vector)` | `SmApiCreateExtrude` | 开放曲面，不封口 |
+| `SweepSurface(section, rail)` | `SmApiCreateCurveSweep`（`bMoveToProfile`） | SMLib 把截面起点移到轨道起点再扫，结果移回截面所在位置：截面起点应在轨道起点 |
+| `CoonsSurface(bottom, right, top, left)` | `SmBSplineSurface::CreateCoonsPatch`（双线性） | SMLib 按左、右、下、上的顺序读取，对边方向要一致 |
+| `NetworkSurface(u, v)` | `SmBSplineSurface::CreateGordonSurface` | |
+| `FitSurface(points, controlPoints)` | `SmBSplineSurface::ApproximateRandomPoints`（复杂度 1） | 点投影到平面上分配参数 |
+| `TrimSurface(surface, cutter, direction, keepPoint, split)` | `SmApiTrimProjectParallel` | 成功时副本被接管；失败时副本归调用方 |
+| `JoinSurfaces(bodies, tol)` | `SmBrep::CopyFaces`（不合并）+ `SmApiStitchIntoSolid`，不成实体时 `SmApiStitchAdvanced` | |
+| `CapPlanarHoles(body)` | 边界边（`SmEdge::IsLamina`）按顶点连环，共面的环用 `SmApiCreatePlanarFaces` 补面后缝合 | 非平面开口跳过；一个也补不上时失败 |
+| `ExplodeFaces(body)` | 每个面 `CopyFaces` 到新实体 | |
+| `FlipSurface` / `ExtendSurface` / `RebuildSurface` | 面所在曲面的 B 样条副本：`Reverse(SM_SP_U)` / `CreateExtendedSurface(G1)` / `RebuildSurface` | 只用于单个面；按整张曲面计算，面被修剪过（面积与整张曲面不同）时失败 |
+| `EdgeCurves(body)` | 边的曲线转成 B 样条（`MakeExactBSplineIfPossible`）后 `Trim` 到边的区间 | 顺序同 `Edges()` |
+| `IsoCurve(surface, face, alongU, t)` | `SmSurface::CreateIsoParametricCurve` | 按整张曲面，不按修剪 |
+| `ClosestPoint` / `IntersectCurve` / `IntersectBodies` | `SmApiBrepClosestPoint` / `SmApiIntersectCurveBrep` / `SmApiIntersectBreps` | 没有交点时 SMLib 返回错误，适配层按空结果处理 |
+| `SurfaceDerivatives(surface, face, u, v)` | `SmApiEvaluateSurfaceDerivatives` | 导数是对归一化参数的；曲率由节点用相邻参数处的一阶导数差分 |
+
+已知问题：带洞的修剪面（如投影圆修剪后的方板）`SmApiBrepComputeArea` 的结果偏小约 3%，离散网格的面积正确。测试在 `NodeSolidTests` 的 `TestN8Surfaces`。
+
+## 14. 空间曲线的修改（节点 N6b）
+
+`docs/NodeGraph/PLAN.md` 第 4.5 节的曲线修改节点用到的接口（分割、子曲线、延伸、重建、同阶连接在节点侧的 `CurveOps` 里计算，不经内核）：
+
+| 接口 | SMLib | 注意 |
+|---|---|---|
+| `OffsetCurve(curve, distance)` | `SmBSplineCurve::CreateSimpleOffset`（平面法向 +Z，逼近容差为曲线尺寸的 1e-6） | 曲线须在水平面内（节点先变换到曲线平面的坐标系）；SMLib 的正值偏向右侧，接口约定正值偏向左侧 |
+| `JoinCurves(curves)` | `DegreeElevate` 到最高阶后 `SmBSplineCurve::CreateByJoining` | 曲线须已排好顺序、方向且首尾相接 |
+| `ProjectCurve(curve, target, direction)` | `SmApiProjectCurve`（`CreateParallelProjectionCurves`） | 投影不到时 SMLib 返回错误，适配层按空结果处理 |
+
+测试在 `NodeSolidTests` 的 `TestN6bCurves`。
+
+## 15. 网格转实体与多面网格（节点 N9）
+
+| 接口 / 类型 | 实现 | 注意 |
+|---|---|---|
+| `FromMesh(mesh)` | 每个三角形用三条直线 B 样条（`CreateLineSegment`）围成平面面（`CreatePlanarFaceWith3DCurves`），再 `SmApiStitchIntoSolid`，不成实体时 `SmApiStitchAdvanced` | 封闭网格得到多面实体（`IsSolid` 为真），开放网格得到多面曲面；退化三角形跳过；面数多时慢 |
+| `MeshEntity` | 继承 `Solid3DEntity`，没有内核数据（`GetBytes` 为空），只有局部网格与变换 | 线框为全部网格边；导出多面网格时全部边可见；`ImportCad` 把多面网格（POLYLINE，AcDbPolyFaceMesh）映射为它（四边形面拆成两个三角形）；实体布尔命令跳过它 |
+
+测试在 `NodeSolidTests` 的 `TestN9Meshes`。

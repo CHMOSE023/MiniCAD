@@ -1,0 +1,786 @@
+{
+  "format": "MiniCAD-NodeGraph",
+  "version": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input.param",
+      "x": 0,
+      "y": 0,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "宽"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 1200
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "input.param",
+      "x": 0,
+      "y": 120,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "高"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 1500
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "input.param",
+      "x": 0,
+      "y": 240,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "框宽"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 60
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "input.param",
+      "x": 0,
+      "y": 360,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "厚度"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 80
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "input.param",
+      "x": 0,
+      "y": 480,
+      "preview": true,
+      "inputs": [],
+      "params": [
+        {
+          "t": "text",
+          "v": "中梃高"
+        },
+        {
+          "t": "integer",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 900
+        },
+        {
+          "t": "text",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "math.expression",
+      "x": 230,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "高 / 2"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "vector.point",
+      "x": 345,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 8,
+      "type": "math.expression",
+      "x": 230,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "高"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "math.expression",
+      "x": 230,
+      "y": 120,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "宽"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "curve.rectangle",
+      "x": 460,
+      "y": 0,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 11,
+      "type": "solid.extrude",
+      "x": 690,
+      "y": 0,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 12,
+      "type": "math.expression",
+      "x": 230,
+      "y": 360,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "宽 - 2 * 框宽"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "math.expression",
+      "x": 230,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "(框宽 + 中梃高 - 框宽 / 2) / 2"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "vector.point",
+      "x": 345,
+      "y": 360,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 15,
+      "type": "math.expression",
+      "x": 230,
+      "y": 600,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "中梃高 - 1.5 * 框宽"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "curve.rectangle",
+      "x": 460,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 17,
+      "type": "void.extrude",
+      "x": 690,
+      "y": 240,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 18,
+      "type": "math.expression",
+      "x": 230,
+      "y": 720,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "(中梃高 + 框宽 / 2 + 高 - 框宽) / 2"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "vector.point",
+      "x": 345,
+      "y": 720,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 20,
+      "type": "math.expression",
+      "x": 230,
+      "y": 840,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": [
+        {
+          "t": "text",
+          "v": "高 - 中梃高 - 1.5 * 框宽"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "curve.rectangle",
+      "x": 460,
+      "y": 480,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "vector",
+          "v": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "t": "number",
+          "v": 20
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 22,
+      "type": "void.extrude",
+      "x": 690,
+      "y": 480,
+      "preview": false,
+      "inputs": [
+        {
+          "t": "any"
+        },
+        {
+          "t": "number",
+          "v": 10
+        },
+        {
+          "t": "number",
+          "v": 0
+        },
+        {
+          "t": "plane",
+          "v": [
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "params": []
+    },
+    {
+      "id": 23,
+      "type": "solid.combine",
+      "x": 920,
+      "y": 240,
+      "preview": true,
+      "inputs": [
+        {
+          "t": "any"
+        }
+      ],
+      "params": []
+    }
+  ],
+  "links": [
+    {
+      "from": 6,
+      "fromPort": 0,
+      "to": 7,
+      "toPort": 1
+    },
+    {
+      "from": 7,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 0
+    },
+    {
+      "from": 9,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 1
+    },
+    {
+      "from": 8,
+      "fromPort": 0,
+      "to": 10,
+      "toPort": 2
+    },
+    {
+      "from": 10,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 0
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 11,
+      "toPort": 1
+    },
+    {
+      "from": 13,
+      "fromPort": 0,
+      "to": 14,
+      "toPort": 1
+    },
+    {
+      "from": 14,
+      "fromPort": 0,
+      "to": 16,
+      "toPort": 0
+    },
+    {
+      "from": 12,
+      "fromPort": 0,
+      "to": 16,
+      "toPort": 1
+    },
+    {
+      "from": 15,
+      "fromPort": 0,
+      "to": 16,
+      "toPort": 2
+    },
+    {
+      "from": 16,
+      "fromPort": 0,
+      "to": 17,
+      "toPort": 0
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 17,
+      "toPort": 1
+    },
+    {
+      "from": 18,
+      "fromPort": 0,
+      "to": 19,
+      "toPort": 1
+    },
+    {
+      "from": 19,
+      "fromPort": 0,
+      "to": 21,
+      "toPort": 0
+    },
+    {
+      "from": 12,
+      "fromPort": 0,
+      "to": 21,
+      "toPort": 1
+    },
+    {
+      "from": 20,
+      "fromPort": 0,
+      "to": 21,
+      "toPort": 2
+    },
+    {
+      "from": 21,
+      "fromPort": 0,
+      "to": 22,
+      "toPort": 0
+    },
+    {
+      "from": 4,
+      "fromPort": 0,
+      "to": 22,
+      "toPort": 1
+    },
+    {
+      "from": 11,
+      "fromPort": 0,
+      "to": 23,
+      "toPort": 0
+    },
+    {
+      "from": 17,
+      "fromPort": 0,
+      "to": 23,
+      "toPort": 0
+    },
+    {
+      "from": 22,
+      "fromPort": 0,
+      "to": 23,
+      "toPort": 0
+    }
+  ]
+}

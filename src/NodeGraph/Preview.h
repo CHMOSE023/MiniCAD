@@ -1,0 +1,64 @@
+#pragma once
+#include "NodeGraph/Graph.h"
+#include "Core/Math/Color4.hpp"
+#include "Core/Math/Point3.hpp"
+#include <map>
+#include <memory>
+#include <set>
+#include <vector>
+
+// 预览与烘焙（docs/NodeGraph/PLAN.md 第 3.5 节）
+namespace MiniCAD
+{
+    class Entity;
+    class Scene;
+    class CommandStack;
+}
+
+namespace MiniCAD::Nodes
+{
+    // 预览几何：不在场景里的实体（曲线、空间曲线 → 样条、三维实体与曲面、网格 → 多面网格）与点
+    struct PreviewSet
+    {
+        std::vector<std::shared_ptr<const Entity>> Entities;
+        std::vector<Math::Point3>                  Points;
+        std::vector<Math::Point3>                  HighlightPoints;   // 选中节点的点
+        bool Empty() const { return Entities.empty() && Points.empty() && HighlightPoints.empty(); }
+    };
+
+    // 哪些输出参与预览：开着预览的节点里没有连到下游的几何输出（叶子），以及选中节点的全部几何输出
+    struct PreviewItem
+    {
+        Value v;
+        bool  Highlight = false;
+    };
+    std::vector<PreviewItem> CollectPreview(const Graph& g, const std::set<NodeId>& selected);
+
+    class PreviewBuilder
+    {
+    public:
+        // 普通预览色与选中高亮色（RGB 0～1）
+        Math::Color4 Normal    { 0.86, 0.36, 0.30, 1.0 };
+        Math::Color4 Highlight { 0.30, 0.85, 0.40, 1.0 };
+        // 空心形体：橙色线框（不着色），选中时加亮
+        Math::Color4 Void          { 0.95, 0.55, 0.15, 1.0 };
+        Math::Color4 VoidHighlight { 1.00, 0.80, 0.35, 1.0 };
+
+        // kernel 为空时三维实体不显示
+        PreviewSet Build(const Graph& g, const std::set<NodeId>& selected, Solid::ISolidKernel* kernel);
+
+    private:
+        // 内核实体 → 显示用的 Solid3DEntity（离散代价高）：按 BodyPtr 缓存，只保留本次用到的
+        std::map<const Solid::IBody*, std::pair<Solid::BodyPtr, std::shared_ptr<Entity>>> m_bodyCache;
+        // 空心形体的线框（各条边的折线）：同样按 BodyPtr 缓存
+        std::map<const Solid::IBody*, std::pair<Solid::BodyPtr, std::vector<std::shared_ptr<Entity>>>> m_voidCache;
+        // 网格 → 显示用的 MeshEntity（着色网格 + 全部网格边）：按网格缓存
+        std::map<const Solid::Mesh*, std::pair<MeshPtr, std::shared_ptr<Entity>>> m_meshCache;
+    };
+
+    // 烘焙：有选中节点时烘焙选中节点的全部几何输出，否则烘焙所有预览的叶子输出；
+    // 复制成文档实体放在当前图层，经 BatchAddCommand 一步撤销（网格烘焙为 MeshEntity，不需要内核）。返回加入的实体数；kernel 为空时跳过三维实体。
+    // 空心形体与平面不烘焙，跳过的空心个数写进 skippedVoids
+    int Bake(const Graph& g, const std::set<NodeId>& selected, Scene& scene, CommandStack& stack, Solid::ISolidKernel* kernel,
+             int* skippedVoids = nullptr);
+}

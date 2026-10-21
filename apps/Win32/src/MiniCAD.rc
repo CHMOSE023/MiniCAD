@@ -50,8 +50,8 @@ VALUE "FileDescription", "MiniCAD\0"
 VALUE "FileVersion", MINICAD_FILE_VERSION_STR
 VALUE "ProductVersion", MINICAD_PRODUCT_VERSION_STR
 VALUE "ProductName", "MiniCAD\0"
-VALUE "CompanyName", "Hello\0"
-VALUE "LegalCopyright", "Hello\0"
+VALUE "CompanyName", "CHMOSE023\0"
+VALUE "LegalCopyright", "CHMOSE023\0"
 END
 END
 

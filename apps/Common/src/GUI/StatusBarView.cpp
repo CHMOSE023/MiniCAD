@@ -1,6 +1,7 @@
 // ── 状态栏：当前工具 / 坐标 / 捕捉 / 正交 / 悬停 / 文档信息 ──────
 #include "GUI/StatusBarView.h"
 #include "Document/Document.h"
+#include "MiniCADVersion.h"
 #include "Document/DocumentManager.h"
 #include "Editor/Editor.h"
 #include "Editor/Snap/SnapEngine.h"
@@ -124,12 +125,14 @@ namespace MiniCAD
         // ── 右侧：文档数量 ───────────────────────────────────────
         Node* spacer = AddChild<Node>();
         spacer->EditLayoutStyle().grow = 1.0f;
-        spacer->SetHitTestVisible(false);
-        m_docCount = AddChild<Label>("", 13.0f, Theme::TextDim);
+        spacer->SetHitTestVisible(false); 
 
         // 窗口变窄时只压缩文档名（显示省略号），其余项保持自然宽度，避免文字互相重叠
         for (const auto& child : GetChildren())
+        {
             child->EditLayoutStyle().shrink = 0.0f;
+        }
+
         m_docName->EditLayoutStyle().shrink = 1.0f;
     }
 
@@ -138,7 +141,7 @@ namespace MiniCAD
         const auto& children = GetChildren();
         size_t index = children.size();
         for (size_t i = 0; i < children.size(); ++i)
-            if (children[i].get() == m_docCount)
+            if (children[i].get() == m_version)
                 index = i;
         item->EditLayoutStyle().shrink = 0.0f;
         return InsertChild(index, std::move(item));
@@ -179,8 +182,6 @@ namespace MiniCAD
         m_docName->SetText(doc->GetName());
         m_docDirty->SetVisible(doc->IsDirty());
 
-        std::snprintf(buf, sizeof(buf), "共 %zu 个文档", m_dm.GetAll().size());
-        m_docCount->SetText(buf);
     }
 
     // =========================================================

@@ -227,6 +227,17 @@ namespace MiniCAD
         LOG_INFO("MiniCAD 网页版：关闭浏览器标签页即可退出");
     }
 
+    bool WebApp::OpenUrl(const std::string& url)
+    {
+        if (url.empty())
+            return false;
+        // 在用户点击的回调里调用，浏览器不会把它当作弹出窗口拦截
+        EM_ASM({
+            window.open(UTF8ToString($0), "_blank", "noopener,noreferrer");
+        }, url.c_str());
+        return true;
+    }
+
     // =========================================================
     // AppPlatform：文件
     // =========================================================
@@ -237,7 +248,10 @@ namespace MiniCAD
         {
             if (done && !paths.empty()) done(paths.front());
         }, {} };
-        MiniCADWeb_PickFile(id, kind == FileKind::Image ? ".png,.jpg,.jpeg,.bmp,.tga,.gif" : ".mcad,.dwg,.dxf,.json", 0);
+        const char* accept = kind == FileKind::Image ? ".png,.jpg,.jpeg,.bmp,.tga,.gif"
+                           : kind == FileKind::NodeGraph ? ".mcnode,.json"
+                           : ".mcad,.dwg,.dxf,.json";
+        MiniCADWeb_PickFile(id, accept, 0);
     }
 
     void WebApp::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
@@ -277,6 +291,17 @@ namespace MiniCAD
         std::replace(name.begin(), name.end(), '/', '_');
         if (!HasExtension(name, ".mcad") && !HasExtension(name, ".dwg") && !HasExtension(name, ".dxf") && !HasExtension(name, ".json"))
             name += ".mcad";
+        EM_ASM({ try { FS.mkdir("/download"); } catch (e) {} });
+        return "/download/" + name;
+    }
+
+    std::string WebApp::ChooseExportPath(FileKind kind, const std::string& suggestedName)
+    {
+        // 与 ChooseSavePath 相同：写进内存文件系统，写完后 OnDocumentSaved 下载
+        std::string name = suggestedName.empty() ? std::string("未命名") : suggestedName;
+        std::replace(name.begin(), name.end(), '/', '_');
+        if (kind == FileKind::NodeGraph && !HasExtension(name, ".mcnode") && !HasExtension(name, ".json"))
+            name += ".mcnode";
         EM_ASM({ try { FS.mkdir("/download"); } catch (e) {} });
         return "/download/" + name;
     }

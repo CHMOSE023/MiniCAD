@@ -62,13 +62,16 @@ namespace MiniCAD
         void Quit() override;
 
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
+        std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         std::string GetResourceDir() const override;
         std::string GetAppDir() const override;
         std::string GetUserDataDir() const override;
+        bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;
+        bool HasBackgroundThread() const override { return true; }
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
