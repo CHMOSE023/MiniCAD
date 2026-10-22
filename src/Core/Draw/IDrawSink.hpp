@@ -22,6 +22,15 @@ namespace MiniCAD
         // 供 sink 解析 ByLayer 线型/线宽;传 nullptr 清除。默认实现忽略。
         virtual void BeginEntity(const EntityAttr* attr) {}
 
+        // 块内子实体的上下文切换：**只**更换线型 / 线宽 / 线型比例解析所用的属性，
+        // 不做 BeginEntity 的实体边界处理（不 flush 区域覆盖、不清 wipe 记录、不重置实体起点）。
+        //
+        // 为什么需要它：块参照展开时，一个 INSERT 内含多个子实体，而 DrawContext 解析
+        // 线型靠的是 m_curAttr。若整块只在外层设一次上下文，块内成员**自己的**线型会被
+        // 外层 INSERT 的覆盖 —— 块内 DASHED 的线一律画成实线（实测：产出 1 段直线）。
+        // 又不能改用 BeginEntity：它会把 m_wipes 清空，块内的区域覆盖记录随之丢失。
+        virtual void SetEntityContext(const EntityAttr* attr) { (void)attr; }
+
         virtual Math::Color4 GetLayerColor(LayerID layerId) const { return Math::Color4::White(); }
         // 图层是否显示（关闭或冻结为 false）：块参照展开时据此跳过块内隐藏图层上的子实体。默认都显示
         virtual bool IsLayerVisible(LayerID layerId) const { return true; }

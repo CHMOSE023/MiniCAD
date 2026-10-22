@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Core/Math/Point3.hpp"
 #include "KeyCode.h"
 #include <cstdint>  
@@ -47,6 +47,11 @@ namespace MiniCAD
         int            PressMouseY = 0;
         float          WheelDelta = 0.f;
 
+        // 连击计数：同一按键在双击时间内、位置接近的连续按下。
+        // 由 UI 层（UIContext::PointerDown）算好，经 ViewportHost 转发过来；
+        // 没有 UI 的场景（自测注入事件）保持默认 1 = 单击。
+        int            ClickCount = 1;
+
         KeyCode        Key = KeyCode::Unknown;
 
         bool               HasSnap = false;  // 是否捕获
@@ -92,6 +97,13 @@ namespace MiniCAD
         bool IsMiddleDrag() const  // 中键拖拽（用于 Pan）
         {
             return Type == InputEventType::MouseMove && IsMouseButtonDown(MouseButton::Middle);
+        }
+
+        // 双击中键 = 缩放全图（ZOOM E）。只在**按下**瞬间成立，且要求连击计数 >= 2
+        bool IsMiddleDoubleClick() const
+        {
+            return Type == InputEventType::MouseButtonDown &&
+                   Button == MouseButton::Middle && ClickCount >= 2;
         }
 
         bool IsZoom() const      // 滚轮缩放

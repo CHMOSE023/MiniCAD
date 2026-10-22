@@ -25,6 +25,8 @@ namespace MiniCAD
         Math::Color4 GetLayerColor(LayerID layerId) const override { return m_target.GetLayerColor(layerId); }
         bool IsLayerVisible(LayerID layerId) const override        { return m_target.IsLayerVisible(layerId); }
         void BeginEntity(const EntityAttr* attr) override          { m_target.BeginEntity(attr); }
+        // 块内成员自己的线型上下文（见 IDrawSink::SetEntityContext）
+        void SetEntityContext(const EntityAttr* attr) override     { m_target.SetEntityContext(attr); }
 
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) override
         {

@@ -1007,6 +1007,10 @@ namespace MiniCAD::EntityIO
             if (e.HasClipBoundary())
             {
                 auto clip = e.GetClipBoundary();  Ser::Value(s, "clip", clip);
+                // 裁剪边框开关（$XCLIPFRAME）也是块的状态，不存就会在保存/打开后丢失，
+                // 表现为"裁剪还在、框不见了"。序列化层没有 bool 重载，按 0/1 存整数。
+                int32_t frame = e.IsClipFrameVisible() ? 1 : 0;
+                s.Value("clipFrame", frame);
             }
 
             size_t n = e.GetAttribs().size();
@@ -1048,6 +1052,8 @@ namespace MiniCAD::EntityIO
             {
                 std::vector<Point3> clip;         Ser::Value(s, "clip", clip);
                 e->SetClipBoundary(std::move(clip));
+                int32_t frame = 0;                s.Value("clipFrame", frame);
+                e->SetClipFrameVisible(frame != 0);
             }
 
             size_t n = 0;

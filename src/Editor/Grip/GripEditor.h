@@ -62,6 +62,21 @@ namespace MiniCAD
             return ids;
         }
 
+        // 该实体是否正在被拖动**基点（插入点）**夹点。
+        //
+        // 用途：拖动基点时把图块按**完整**内容绘制（临时忽略块裁剪）。
+        // 裁剪框是个固定的取景窗口，只显示框内那一小块；用户在搬动图块时需要
+        // 看到整个图块才能判断位置，否则"拖走一半内容"的操作会让人以为图块缺了图元。
+        bool IsDraggingBasePoint(Object::ObjectID id) const
+        {
+            if (!m_following)
+                return false;
+            for (const auto& e : m_dragEntries)
+                if (e.Id == id && e.ActiveGrip.GripType == Grip::Type::Start)
+                    return true;
+            return false;
+        }
+
         // 仅在 IsActivated() 为 true 时有效
         const Grip* GetActiveGrip() const
         {

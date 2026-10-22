@@ -177,6 +177,13 @@ namespace MiniCAD
         // Solid3DEntity 变换矩阵快照
         Math::Mat4 BeforeTransform = Math::Mat4::Identity();
         Math::Mat4 AfterTransform  = Math::Mat4::Identity();
+
+        // InsertEntity 的裁剪边界（XCLIP）快照：夹点编辑裁剪线时只改边界、不动插入点。
+        // ClipOnly 消费端据此跳过 SetPosition，否则块会被移到 (0,0,0)。
+        std::vector<Math::Point3> BeforeClip;
+        std::vector<Math::Point3> AfterClip;
+        bool                      EditedClip = false;
+        bool                      ClipOnly   = false;
     };
 
     // ─────────────────────────────────────────────

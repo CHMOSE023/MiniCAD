@@ -47,6 +47,7 @@
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
 #include "Dwg/Read/DwgReader.h"
+#include "Dwg/Write/DwgBitWriter.h"
 #include "Dwg/Write/DwgWriter.h"
 #include "Dxf/Read/DxfReader.h"
 #include "Dxf/Write/DxfWriter.h"
@@ -1554,7 +1555,17 @@ namespace MiniCAD
                     if (e->ColumnCount > 1 || e->RowCount > 1)
                         ins.SetArray(e->ColumnCount, e->RowCount, e->ColumnSpacing, e->RowSpacing);
                     if (auto clip = ReadClipBoundary(*e); !clip.empty())
+                    {
                         ins.SetClipBoundary(std::move(clip));
+                        // $XCLIPFRAME：是否**显示**裁剪框。
+                        //   None = 0            ⇒ 不显示
+                        //   DisplayAndPlot = 1  ⇒ 显示并打印
+                        //   DisplayNotPlot = 2  ⇒ **显示**但不打印
+                        // 只有 None 才不显示 —— 这里容易理解反：判定的是"显示"维度，
+                        // 不是"打印"维度（曾经写成 != DisplayNotPlot 导致边框整批不显示）。
+                        ins.SetClipFrameVisible(m_db.Header.ExternalReferenceClippingBoundaryType !=
+                                                Dwg::XClipFrameType::None);
+                    }
 
                     // ── ATTRIB：块引用的属性文字（轴号、图签字段等）────────────────
                     //
@@ -1587,8 +1598,13 @@ namespace MiniCAD
                     if (it == m_blocks.end())
                         return Skip(src);
                     const BlockEntity* blk = m_scene.GetBlockTable().Find(it->second);
+                    // 组码 12（InsertionPoint）是标注匿名块的**平移量**：
+                    // 匿名几何建在世界坐标上，AutoCAD 靠 `local = worldGeom + code12`
+                    // 把它挪回该出现的位置。写死 (0,0,0) 会把整条标注画在匿名块自身的
+                    // 坐标上（实测《总说明.dwg》：实绘宽度 910056 而非 7525，错位 92 万单位）。
+                    const Math::Point3 insPoint = ToPoint(e->InsertionPoint);
                     return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(it->second),
-                                              blk ? blk->GetName() : std::string(), Math::Point3{ 0, 0, 0 });
+                                              blk ? blk->GetName() : std::string(), insPoint);
                 }
 
                 return Skip(src);
@@ -2456,8 +2472,18 @@ namespace MiniCAD
                     {
                         if (!o.IsKindOf<Entity>())
                             return;
+                        m_pendingClips.clear();
                         if (auto conv = Convert(static_cast<const Entity&>(o)))
-                            m_db.AddEntity(model, std::move(conv));
+                        {
+                            const std::vector<PendingClip> pending = std::move(m_pendingClips);
+                            m_pendingClips.clear();
+                            Dwg::Entity* added = m_db.AddEntity(model, std::move(conv));
+                            if (added != nullptr)
+                                for (const auto& c : pending)
+                                    AttachClipBoundary(c, added->ObjectHandle,
+                                                       dynamic_cast<Dwg::Insert*>(added));
+                        }
+                        m_pendingClips.clear();
                     });
                 }
 
@@ -2684,8 +2710,21 @@ namespace MiniCAD
             void FillBlock(Dwg::BlockRecord* rec, const BlockEntity& blk)
             {
                 for (const auto& e : blk.GetEntities())
+                {
+                    // 每个实体入库前清空待挂接队列：Convert 里最多为一个 INSERT 记一项
+                    m_pendingClips.clear();
                     if (auto conv = Convert(*e))
-                        m_db.AddEntity(rec, std::move(conv));
+                    {
+                        Dwg::Insert* ins = dynamic_cast<Dwg::Insert*>(conv.get());
+                        const std::vector<PendingClip> pending = std::move(m_pendingClips);
+                        m_pendingClips.clear();
+                        Dwg::Entity* added = m_db.AddEntity(rec, std::move(conv));
+                        if (added != nullptr && ins != nullptr)
+                            for (const auto& c : pending)
+                                AttachClipBoundary(c, added->ObjectHandle, static_cast<Dwg::Insert*>(added));
+                    }
+                    m_pendingClips.clear();
+                }
             }
 
             // 块参照指向的块记录：按名称查找；以原图为底时找不到就现建（先建记录再填内容，嵌套引用自身也能找到）
@@ -2732,6 +2771,131 @@ namespace MiniCAD
             {
                 const Math::Vec3& n = e.GetExtrusion();
                 return { n.x, n.y, n.z };
+            }
+
+            // 块裁剪（XCLIP）写回：把待写对象暂存，等实体入库拿到句柄后再挂接。
+            //
+            // 为什么必须延后：SPATIAL_FILTER 的字典链要从**实体自己的句柄**挂起
+            // （d1->OwnerHandle = insertHandle、INSERT 的 XDictionaryHandle = d1），
+            // 而句柄是 m_db.AddEntity / Add 时才分配的，Convert 阶段还没有。
+            // 待写回的块裁剪边界（Convert 阶段记下，实体入库拿到句柄后再建对象链）
+            struct PendingClip
+            {
+                std::vector<Dwg::XY> World;        // 边界（世界坐标）
+                Math::Mat4           BlockToWorld; // 插入变换（块坐标 → 世界坐标）
+            };
+
+            // 块裁剪（XCLIP）写回：把待写对象暂存，等实体入库拿到句柄后再挂接。
+            //
+            // 为什么必须延后：SPATIAL_FILTER 的字典链要从**实体自己的句柄**挂起
+            // （d1->OwnerHandle = insertHandle、INSERT 的 XDictionaryHandle = d1），
+            // 而句柄是 m_db.AddEntity / Add 时才分配的，Convert 阶段还没有。
+            void AttachClipBoundary(const PendingClip& clip, Dwg::Handle insertHandle,
+                                    Dwg::Insert* insert)
+            {
+                if (insert == nullptr || clip.World.size() < 2)
+                    return;
+
+                const auto& world = clip.World;
+                double x0 = world[0].X, x1 = x0, y0 = world[0].Y, y1 = y0;
+                for (const auto& p : world)
+                {
+                    x0 = std::min(x0, p.X); x1 = std::max(x1, p.X);
+                    y0 = std::min(y0, p.Y); y1 = std::max(y1, p.Y);
+                }
+
+                // 逆块变换的 3×4 行主序：块坐标 = M⁻¹ × 世界坐标。
+                // 导入侧读的就是这 12 个 double（见 ReadClipBoundary 的 apply：
+                //   nx = m[0]*x + m[1]*y + m[2]*z + m[3]
+                //   ny = m[4]*x + m[5]*y + m[6]*z + m[7]  ← 平移在**第 4 列**）
+                //
+                // ⚠ 本工程的 `Mat4` 是**行向量约定**（P' = P·M，见 Mat4.hpp），
+                //   平移分量在 m[12]/m[13]/m[14]，不是 m[3]/m[7]/m[11]。
+                //   而 SPATIAL_FILTER 的 3×4 是「行主序 + 平移在第 4 列」的经典形式，
+                //   两者布局不同，必须显式转置 —— 直接搬 m[] 会让边界整体偏移一个插入点。
+                const Math::Mat4 inv = Math::Mat4::Inverse(clip.BlockToWorld);
+                const double* mv = inv.Data();
+                // inv 的列向量约定视角：x' = x*m[0]+y*m[4]+z*m[8]+m[12]
+                //   ⇒ 3×4 行主序应为 [m0 m4 m8 m12; m1 m5 m9 m13; m2 m6 m10 m14]
+                double inv3x4[12] = {
+                    mv[0], mv[4], mv[8],  mv[12],
+                    mv[1], mv[5], mv[9],  mv[13],
+                    mv[2], mv[6], mv[10], mv[14],
+                };
+
+                // 对象链：D1(ACAD_FILTER) → D2(SPATIAL) → SPATIAL_FILTER
+                auto* d2 = m_db.Add(std::make_unique<Dwg::CadDictionary>());
+                auto* d1 = m_db.Add(std::make_unique<Dwg::CadDictionary>());
+                if (d1 == nullptr || d2 == nullptr)
+                    return;
+
+                auto filter = std::make_unique<Dwg::UnknownObject>();
+                filter->Raw.DxfName = "SPATIAL_FILTER";
+                filter->Raw.FixedType = 0;
+
+                // ── DXF 组码 ───────────────────────────────────────────────
+                // 与样例 sample_AC1015_ascii.dxf 的 SPATIAL_FILTER 逐项对齐
+                filter->Raw.Dxf.Version = m_version;
+                auto& g = filter->Raw.Dxf.Groups;
+                auto add = [&g](std::int16_t code, Dwg::DxfValue v) { g.push_back({ code, std::move(v) }); };
+                add(100, Dwg::DxfValue(std::string("AcDbFilter")));
+                add(100, Dwg::DxfValue(std::string("AcDbSpatialFilter")));
+                add(70,  Dwg::DxfValue(static_cast<std::int64_t>(2)));   // 边界点数
+                add(10,  Dwg::DxfValue(x0));
+                add(20,  Dwg::DxfValue(y0));
+                add(10,  Dwg::DxfValue(x1));
+                add(20,  Dwg::DxfValue(y1));
+                add(210, Dwg::DxfValue(0.0));
+                add(220, Dwg::DxfValue(0.0));
+                add(230, Dwg::DxfValue(1.0));                            // 法向
+                add(11,  Dwg::DxfValue(0.0));
+                add(21,  Dwg::DxfValue(0.0));
+                add(31,  Dwg::DxfValue(0.0));                            // 原点
+                add(71,  Dwg::DxfValue(static_cast<std::int64_t>(1)));   // 启用裁剪
+                add(72,  Dwg::DxfValue(static_cast<std::int64_t>(0)));   // 前裁剪
+                add(73,  Dwg::DxfValue(static_cast<std::int64_t>(0)));   // 后裁剪
+                // 24 个 double：逆块变换（12）+ 边界变换（12，单位阵）
+                for (int i = 0; i < 12; ++i)
+                    add(40, Dwg::DxfValue(inv3x4[i]));
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        add(40, Dwg::DxfValue(r == c ? 1.0 : 0.0));
+
+                // ── DWG 二进制 ─────────────────────────────────────────────
+                // 未建模对象只能原样写回同一版本；版本不符时写回会跳过它（不写坏文件）。
+                {
+                    Dwg::DwgBitWriter w;
+                    w.WriteBitShort(2);                              // 点数
+                    w.Write2RawDouble({ x0, y0 });
+                    w.Write2RawDouble({ x1, y1 });
+                    w.Write3BitDouble({ 0.0, 0.0, 1.0 });            // 法向
+                    w.Write3BitDouble({ 0.0, 0.0, 0.0 });            // 原点
+                    w.WriteBitShort(1);                              // 启用
+                    w.WriteBitShort(0);                              // 无前裁剪距离
+                    w.WriteBitShort(0);                              // 无后裁剪距离
+                    for (int i = 0; i < 12; ++i)
+                        w.WriteBitDouble(inv3x4[i]);
+                    for (int r = 0; r < 3; ++r)
+                        for (int c = 0; c < 4; ++c)
+                            w.WriteBitDouble(r == c ? 1.0 : 0.0);    // 边界变换 = 单位阵
+                    filter->Raw.Dwg.Version = m_version;
+                    filter->Raw.Dwg.Main     = w.Data();
+                    filter->Raw.Dwg.MainBits = w.PositionInBits();
+                }
+
+                auto* added = m_db.Add(std::move(filter));
+                if (added == nullptr)
+                    return;
+
+                d1->OwnerHandle = insertHandle;
+                d2->OwnerHandle = d1->ObjectHandle;
+                added->OwnerHandle = d2->ObjectHandle;
+                d1->EntryNames.push_back("ACAD_FILTER");
+                d1->EntryHandles.push_back(d2->ObjectHandle);
+                d2->EntryNames.push_back("SPATIAL");
+                d2->EntryHandles.push_back(added->ObjectHandle);
+
+                insert->XDictionaryHandle = d1->ObjectHandle;
             }
 
             Dwg::Handle StyleHandle(TextStyleID id)
@@ -2941,6 +3105,23 @@ namespace MiniCAD
                         if (Dwg::AttributeEntity* added = m_db.Add(std::move(att)))
                             d->Attributes.push_back(added->ObjectHandle);
                     }
+
+                    // 块裁剪（XCLIP）：边界是**块坐标**，SPATIAL_FILTER 里要**世界坐标**，
+                    // 所以先经插入变换映射。句柄此时还没有（Add 时才分配），
+                    // 先记下待挂接项，实体入库后再建对象链。
+                    if (s->HasClipBoundary() && s->GetClipBoundary().size() >= 3)
+                    {
+                        PendingClip pending;
+                        pending.BlockToWorld = s->CellMatrix(0, 0);
+                        pending.World.reserve(s->GetClipBoundary().size());
+                        for (const auto& p : s->GetClipBoundary())
+                        {
+                            const Math::Point3 w = pending.BlockToWorld * p;
+                            pending.World.push_back({ w.x, w.y });
+                        }
+                        m_pendingClips.push_back(std::move(pending));
+                    }
+
                     return Finish(e, std::move(d));
                 }
                 return Skip(e);
@@ -3312,6 +3493,7 @@ namespace MiniCAD
             int                                m_solidNoMesh   = 0;
             int                                m_solidTooLarge = 0;
             std::map<std::string, int>         m_skipped;
+            std::vector<PendingClip>           m_pendingClips;   // Convert 产生、待实体入库后挂接的裁剪边界
         };
     }
 

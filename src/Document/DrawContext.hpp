@@ -139,6 +139,10 @@ namespace MiniCAD
             }
         }
 
+        // 块内子实体：只换线型/线宽解析所用的属性，不做实体边界处理。
+        // 见 IDrawSink::SetEntityContext 的说明（块内成员自己的线型此前被 INSERT 覆盖）。
+        void SetEntityContext(const EntityAttr* attr) override { m_curAttr = attr; }
+
         // 矢量文字按字形实例输出（见 GlyphMeshLibrary）：每个字一条实例，字形网格进网格库。
         // 不设置时（选中流等）字形照旧展开成世界坐标的线段与三角形
         void SetGlyphInstanceSink(std::vector<GlyphInstance>* instances, GlyphMeshLibrary* library)

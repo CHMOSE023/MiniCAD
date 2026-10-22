@@ -45,6 +45,8 @@ int RunLineTypeScaleTests();  // LineTypeScaleTests.cpp，返回失败项数
 int RunHatchDotsTests();      // HatchDotsTests.cpp，返回失败项数
 int RunMatrixInverseTests(); // MatrixInverseTests.cpp，返回失败项数
 int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
+int RunBlockFixTests();      // BlockFixTests.cpp，返回失败项数
+int RunMiddleDoubleClickZoomTests();  // MiddleDoubleClickZoomTests.cpp，返回失败项数
 
 namespace
 {
@@ -312,6 +314,8 @@ int main()
     g_failures += RunHatchDotsTests();
     g_failures += RunMatrixInverseTests();
     g_failures += RunRecentFilesTests();
+    g_failures += RunBlockFixTests();
+    g_failures += RunMiddleDoubleClickZoomTests();
 
     std::printf("%s：%d 项失败\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures;

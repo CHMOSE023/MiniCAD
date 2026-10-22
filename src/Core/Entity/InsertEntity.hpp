@@ -72,6 +72,45 @@ namespace MiniCAD
         const std::vector<Math::Point3>& GetClipBoundary() const { return m_clip; }
         bool HasClipBoundary() const { return m_clip.size() >= 3; }
 
+        // 直接替换整条边界（撤销 / 拖拽取消时还原用）
+        void SetClipBoundaryRaw(std::vector<Math::Point3> polygon) { m_clip = std::move(polygon); }
+
+        // ── 裁剪边界的夹点编辑 ──────────────────────────────────────────────
+        // 拖**顶点**：只移动被拖的那一个，其余顶点一律不动（4 点边界因此可变成任意四边形）。
+        // 这是夹点编辑的基本语义 —— 拖哪个动哪个；不能"顺手"把相邻角一起挪再按 min/max 重排。
+        void MoveClipBoundaryPoint(int index, const Math::Point3& p)
+        {
+            if (index < 0 || index >= static_cast<int>(m_clip.size()))
+                return;
+            m_clip[index] = p;
+        }
+
+        // 拖**边**（边 i 连接顶点 i 与 (i+1)%n）：整条边平移，两端点按边中点的位移一起移动。
+        // 对轴对齐矩形而言，垂直于边拖动就是"改该侧范围"，与人的直觉一致。
+        void MoveClipBoundaryEdge(int edgeIndex, const Math::Point3& p)
+        {
+            const int n = static_cast<int>(m_clip.size());
+            if (n < 3 || edgeIndex < 0 || edgeIndex >= n)
+                return;
+            const int i0 = edgeIndex, i1 = (edgeIndex + 1) % n;
+            const double mx = (m_clip[i0].x + m_clip[i1].x) * 0.5;
+            const double my = (m_clip[i0].y + m_clip[i1].y) * 0.5;
+            const double dx = p.x - mx, dy = p.y - my;
+            m_clip[i0].x += dx; m_clip[i0].y += dy;
+            m_clip[i1].x += dx; m_clip[i1].y += dy;
+        }
+
+        // 是否**绘制**裁剪边框线（头变量 $XCLIPFRAME 与块自身状态共同决定）。
+        // 不画边框但裁剪仍生效 —— 这是 AutoCAD 的常见状态（$XCLIPFRAME=2 时边框可见）。
+        void SetClipFrameVisible(bool v) { m_clipFrameVisible = v; }
+        bool IsClipFrameVisible() const  { return m_clipFrameVisible; }
+
+        // 拖动**基点（插入点）**夹点期间，临时按**完整**图块绘制（忽略裁剪）。
+        // 裁剪框是固定的取景窗口，平时只显示框内那一小块；搬动图块时只画框内部分
+        // 会让人以为图块缺了图元，也看不清要放到哪儿。由 GripEditor 在拖拽期间置位。
+        void SetShowWholeWhileDraggingBase(bool v) { m_showWhole = v; }
+        bool ShowWholeWhileDraggingBase() const    { return m_showWhole; }
+
         // 块/继承属性变更后需重建展开缓存时调用(SetBlock 已自动置位)。
         void MarkResolveDirty() { m_resolvedDirty = true; }
 
@@ -152,9 +191,12 @@ namespace MiniCAD
                 for (int c = 0; c < m_colCount; ++c)
                 {
                     TransformDrawSink tsink(sink, CellMatrix(c, r));
-                    // 有裁剪边界时子实体先在块坐标系中裁剪，再施加插入变换
+                    // 有裁剪边界时子实体先在块坐标系中裁剪，再施加插入变换。
+                    // 例外：正在拖**基点**期间按完整图块绘制（临时忽略裁剪）——
+                    // 只画框内那一小块会让人以为图块缺了图元，也看不清要放到哪儿。
                     ClipDrawSink csink(tsink, m_clip);
-                    IDrawSink& xsink = csink.Valid() ? static_cast<IDrawSink&>(csink) : tsink;
+                    const bool clipped = csink.Valid() && !m_showWhole;
+                    IDrawSink& xsink = clipped ? static_cast<IDrawSink&>(csink) : tsink;
                     // 块内设置了不可见标志（DWG 的 invisible，如被隐藏的嵌套块参照）或在关闭 / 冻结图层上的子实体不画；
                     // 0 层上的子实体已解析为插入所在的图层
                     for (const auto& e : m_resolved)
@@ -167,7 +209,17 @@ namespace MiniCAD
                         if (const auto* def = dynamic_cast<const AttDefEntity*>(e.get()))
                             if (!def->ShowsInBlockReference())
                                 continue;
+                        // ⚠ 必须逐个成员切到**它自己的**属性上下文：DrawContext 解析线型 /
+                        //   线宽 / 线型比例靠的是它的当前属性。此前整块只在外层设过一次
+                        //   （外层是 InsertEntity 自己的 attr），块内成员自己的线型被完全忽略
+                        //   —— 块内 DASHED 的线一律画成实线。实测：块内一条 DASHED 线、
+                        //   插入为 Continuous ⇒ 产出 1 段直线（应为多段虚线）。
+                        //   用 SetEntityContext 而非 BeginEntity：后者会清空区域覆盖记录。
+                        //   块内 ByBlock 的线型已在 EnsureResolved 里换成插入的线型，
+                        //   再设一次也不会把 ByBlock 画错。
+                        xsink.SetEntityContext(&e->GetAttr());
                         e->Draw(xsink, isSelected, isHovered);
+                        xsink.SetEntityContext(nullptr);
                     }
                 }
 
@@ -197,6 +249,8 @@ namespace MiniCAD
             e->m_colSpacing = m_colSpacing;
             e->m_rowSpacing = m_rowSpacing;
             e->m_clip       = m_clip;
+            // 裁剪边框开关一并复制，否则复制/镜像后的块会丢掉边框显示设置
+            e->m_clipFrameVisible = m_clipFrameVisible;
             for (const auto& a : m_attribs)
                 e->m_attribs.push_back(std::unique_ptr<AttribEntity>(
                     static_cast<AttribEntity*>(a->Clone(a->GetID()).release())));
@@ -261,6 +315,8 @@ namespace MiniCAD
 
         std::vector<std::unique_ptr<AttribEntity>> m_attribs;
         std::vector<Math::Point3>                  m_clip;     // 裁剪边界（块坐标系），空 = 不裁剪
+        bool                                      m_clipFrameVisible = false;  // $XCLIPFRAME：是否画边框
+        mutable bool                              m_showWhole        = false;  // 拖基点期间临时忽略裁剪
 
         // 展开缓存(仅随块/继承属性变化重建)。
         mutable std::vector<std::unique_ptr<Entity>> m_resolved;

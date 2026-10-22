@@ -183,7 +183,62 @@ namespace MiniCAD
 
         // 按 UTF-8 码点(而非字节)推进:一个汉字只量一次宽度,
         // 且折行点不会落在多字节序列中间。
+        //
+        // ── 折行规则（与 AutoCAD 一致）────────────────────────────────
+        // AutoCAD 的 MTEXT 只在**词边界**折行：遇到放不下时，回退到本行内
+        // 最后一个可折位置（空格 / 连字符之后，或汉字之间）再断行。
+        // **不含空格的超长 token 不会被拆开**，而是溢出栏宽。
+        //
+        // 早期实现是"逐字符折行"（放不下就在当前字符前断），于是
+        // 「420114001037GB10066」这种无空格的编号被强行拆成 4 行 ——
+        // 用户报的「文字被强行换行」就是这个。
+        // 实测（铂尔曼核位红线图改.dwg，MTEXT 2992）：
+        //   41(栏宽)=53.926  字高=15  文本=18 字符无空格  排版总宽=166.364
+        //   逐字符折行 → 4 行（错）；词边界折行 → 1 行（与 CAD 一致）
         const size_t n = text.size();
+
+        // 在 s 里找最后一个可折位置（返回断点字节下标；0 = 无可折点）
+        //   可折点：空格、制表符、连字符之**后**；或两个 CJK/全角字符之**间**
+        auto lastBreakPos = [](const std::string& s) -> size_t
+        {
+            // 从后往前扫，找第一个"其**后**可以断"的位置
+            size_t pos = s.size();
+            while (pos > 0)
+            {
+                // 找 s 中最后一个码点的起点
+                size_t q = pos - 1;
+                while (q > 0 && (static_cast<unsigned char>(s[q]) & 0xC0) == 0x80) --q;
+
+                const unsigned char c0 = static_cast<unsigned char>(s[q]);
+                // 空白 / 连字符：断在它**之后**（含该字符）
+                if (c0 == ' ' || c0 == '\t' || c0 == '-')
+                    return pos;
+
+                // CJK / 全角：可与前一个字符之间断行（中文无空格也能折）
+                uint32_t cp = 0;
+                if (c0 < 0x80) cp = c0;
+                else if ((c0 & 0xE0) == 0xC0) cp = c0 & 0x1F;
+                else if ((c0 & 0xF0) == 0xE0)
+                    cp = ((c0 & 0x0F) << 12) |
+                         ((q + 1 < s.size() ? (static_cast<unsigned char>(s[q + 1]) & 0x3F) : 0) << 6) |
+                          (q + 2 < s.size() ? (static_cast<unsigned char>(s[q + 2]) & 0x3F) : 0);
+                else if ((c0 & 0xF8) == 0xF0)
+                    cp = ((c0 & 0x07) << 18) |
+                         ((q + 1 < s.size() ? (static_cast<unsigned char>(s[q + 1]) & 0x3F) : 0) << 12) |
+                         ((q + 2 < s.size() ? (static_cast<unsigned char>(s[q + 2]) & 0x3F) : 0) << 6) |
+                          (q + 3 < s.size() ? (static_cast<unsigned char>(s[q + 3]) & 0x3F) : 0);
+
+                const bool cjk = (cp >= 0x2E80 && cp <= 0x9FFF) ||     // CJK 部首 / 汉字
+                                 (cp >= 0xF900 && cp <= 0xFAFF) ||     // CJK 兼容
+                                 (cp >= 0xFF00 && cp <= 0xFF60);       // 全角
+                if (cjk && q > 0)
+                    return q;   // 断在该全角字符**之前**
+
+                pos = q;
+            }
+            return 0;
+        };
+
         size_t i = 0;
         while (i < n)
         {
@@ -200,12 +255,26 @@ namespace MiniCAD
             uint32_t codepoint = DecodeOneUtf8(text, i);
             double advance = font->GetAdvance(codepoint) * scale * widthFactor;
 
-            // 行内已有内容且放不下时折行;单字符超宽则独占一行,避免产生空行。
+            // 放不下：先尝试**词边界**折行；找不到可折点就整体溢出（不拆 token）
             if (boxWidth > 0.0 && !current.empty() && currentWidth + advance > boxWidth)
             {
-                outLines.push_back(current);
-                current.clear();
-                currentWidth = 0.0;
+                const size_t brk = lastBreakPos(current);
+                if (brk > 0 && brk < current.size())
+                {
+                    // 本行断在 brk 处，余下部分移到下一行
+                    std::string rest = current.substr(brk);
+                    current.resize(brk);
+                    // 去掉行尾空白（AutoCAD 不在行首/行尾保留折行空白）
+                    while (!current.empty() && (current.back() == ' ' || current.back() == '\t'))
+                        current.pop_back();
+                    outLines.push_back(current);
+
+                    current = rest;
+                    while (!current.empty() && (current.front() == ' ' || current.front() == '\t'))
+                        current.erase(0, 1);
+                    currentWidth = ComputeLineWidth(current, font, widthFactor) * scale;
+                }
+                // else：整行只有一个不可折的 token ⇒ 不拆，随它溢出栏宽
             }
 
             current.append(text, start, i - start);
