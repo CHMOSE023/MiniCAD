@@ -20,7 +20,7 @@ namespace MiniCAD::Nodes
     Solid::ISolidKernel* SolveArgs::Kernel()
     {
         if (!Context().Kernel)
-            Error("三维实体内核不可用（网页版暂不支持三维实体）");
+            Error("三维实体内核不可用（当前构建没有编入实体内核）");
         return Context().Kernel;
     }
 

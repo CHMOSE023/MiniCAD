@@ -159,8 +159,7 @@ namespace MiniCAD
         // RunInBackground 真的在另一个线程上执行（桌面版）。为 false 时节点图在界面线程上同步求值
         virtual bool HasBackgroundThread() const { return false; }
 
-        // ── 三维实体内核（docs/Solid/PLAN.md）──────────────────────
-        // 平台拥有，整个程序运行期间有效；没有内核（网页版）返回空，建模命令提示不可用。
+        // ── 三维实体内核 
         // 内核不能并发使用：实现内部加锁，界面线程与节点图的后台求值线程轮流调用
         virtual Solid::ISolidKernel* GetSolidKernel() { return nullptr; }
     };

@@ -190,7 +190,7 @@ namespace MiniCAD
         void RegionBoolean(BooleanOp op);
 
         // ── 三维实体（docs/Solid/PLAN.md）───────────────────
-        // 内核由宿主提供（桌面版为 SMLib，网页版没有）；为空时建模命令提示不可用。不拥有，宿主保证生命周期
+        // 内核由宿主提供（桌面版与网页版都是 SMLib）；为空时建模命令提示不可用。不拥有，宿主保证生命周期
         void                 SetSolidKernel(Solid::ISolidKernel* kernel) { m_solidKernel = kernel; }
         Solid::ISolidKernel* GetSolidKernel() const                      { return m_solidKernel; }
 

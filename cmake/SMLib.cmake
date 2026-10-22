@@ -2,13 +2,9 @@
 # 来自 NVIDIA usd-brep 1.0.0（Apache-2.0），只含内核 SMLib 与高层接口 SM_API，说明与本地修改见 3rd/SMLib/README.md。
 # 编成静态库并定义 SM_STATIC：不导入 / 导出符号，也不依赖 DllMain 初始化线程局部存储。
 # SMLib 的头文件带有 ULONG、TRUE 等宏，只应在适配层的 .cpp 里包含，不要出现在 MiniCAD 的公开头文件里。
-
-# 网页版暂不带（体积、异常支持尚未评估）
-if(EMSCRIPTEN)
-    option(MINICAD_WITH_SOLID "Build the SMLib solid modeling kernel" OFF)
-else()
-    option(MINICAD_WITH_SOLID "Build the SMLib solid modeling kernel" ON)
-endif()
+ 
+# SMLib Web版 实体功能 -DMINICAD_WITH_SOLID=OFF
+option(MINICAD_WITH_SOLID "Build the SMLib solid modeling kernel" ON)
 
 set(SMLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rd/SMLib")
 
