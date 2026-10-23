@@ -1718,6 +1718,20 @@ namespace MiniCAD
                 if (auto* e = dynamic_cast<const Dwg::LwPolyline*>(&src))
                     return ConvertLwPolyline(*e);
 
+                // 表格（ACAD_TABLE）
+                //
+                // 此前**没有映射**，落到 Skip() ⇒ 日志「不支持的实体 ACAD_TABLE × N 已跳过」，
+                // 图上什么都看不到（用户报「sample_AC1032.dwg 图纸中，这个图元显示不了」）。
+                //
+                // 表格的图形全部在它引用的**匿名块（*T…）**里：AutoCAD 建表格时生成一个
+                // 内容为表格线框与文字的空块，表格本体只存插入点 / 缩放 / 旋转与块句柄。
+                // 所以按**块参照（INSERT）**还原即可得到与 AutoCAD 一致的观感。
+                //
+                // ⚠ 分派位置：`TableEntity` 派生自 `UnknownEntity`，这里按块参照还原，
+                //   必须排在 `Insert` 分支**之前**，否则会先被 Insert 的逻辑匹配到。
+                if (auto* e = dynamic_cast<const Dwg::TableEntity*>(&src))
+                    return ConvertTable(*e);
+
                 if (auto* e = dynamic_cast<const Dwg::Polyline*>(&src))
                     return ConvertOldPolyline(*e);
 
@@ -2718,6 +2732,27 @@ namespace MiniCAD
                 mesh2->SetOverrideOption(e.OverrideOption);
                 mesh2->SetExplicitEdges(e.Edges);
                 mesh2->SetCreaseValues(e.CreaseValues);
+                return ent;
+            }
+
+            // 表格（ACAD_TABLE）导入：按块参照还原外观。
+            //
+            // 表格本体（`TableEntity`）在 MiniDWG 里只解析出块参照部分（插入点 / 缩放 /
+            // 旋转 / 块句柄），单元格与样式仍按原始字节保留，供同格式同版本写回时原样输出。
+            // 因此这里**只**把它转成引用匿名块的 INSERT —— 单元格内容的编辑能力本来就没有。
+            //
+            // 找不到块（块表没建或引用悬空）时退回 Skip()，与其它引用类实体一致。
+            std::unique_ptr<Entity> ConvertTable(const Dwg::TableEntity& e)
+            {
+                auto it = m_blocks.find(e.BlockHandle);
+                if (it == m_blocks.end())
+                    return Skip(e);
+                const BlockEntity* blk = m_scene.GetBlockTable().Find(it->second);
+                auto ent = Make<InsertEntity>(e, &e.Normal, static_cast<InsertEntity::BlockID>(it->second),
+                                              blk ? blk->GetName() : std::string(), ToPoint(e.InsertPoint));
+                auto& ins = static_cast<InsertEntity&>(*ent);
+                ins.SetScale({ e.XScale, e.YScale, e.ZScale });
+                ins.SetRotation(e.Rotation);
                 return ent;
             }
 
