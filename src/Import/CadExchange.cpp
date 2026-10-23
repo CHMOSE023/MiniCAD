@@ -107,6 +107,10 @@ namespace MiniCAD
 
         bool EqualsNoCase(const std::string& a, const char* b) { return Lower(a) == Lower(b); }
 
+        // MINIDWG_ENUM_FLAGS 枚举的位测试(组码 74 的 RotationIsAbsolute/Text/Shape)。
+        template <class E>
+        bool HasFlag(E flags, E bit) { return (static_cast<std::int64_t>(flags) & static_cast<std::int64_t>(bit)) != 0; }
+
         Math::Point3 ToPoint(const Dwg::XYZ& p) { return { p.X, p.Y, p.Z }; }
         Math::Vec3   ToVec3(const Dwg::XYZ& p)   { return { p.X, p.Y, p.Z }; }
         Dwg::XYZ     ToXYZ(const Math::Point3& p) { return { p.x, p.y, p.z }; }
@@ -467,12 +471,40 @@ namespace MiniCAD
                         LineTypeRecord rec;
                         rec.Name        = lt.Name;
                         rec.Description = lt.Description;
-                        for (const auto& seg : lt.Segments)
+                        // 复杂线型(带字母/符号)的段序列:
+                        //   实测 GAS_LINE(.lin: A,.5,-.2,["GAS",STANDARD,S=.1,X=-.1,Y=-.05],-.25)
+                        //     49 = 0.5(实线) / -0.2(文字GAS) / -0.25(空白)
+                        //   实测 TRACKS(.lin: A,.15,[BOX,ltypeshp.shx,S=.25],.15)
+                        //     49 = 0.15(形BOX) / 0.15(实线)   ← 形段 49 为正,会画出来
+                        //   实测 ZIGZAG / BATTING:0.0001 实线 → 负长的形段 → 空白
+                        //
+                        // 所以 Pattern **必须收下全部 49 段**:文字/形段的 49 沿用 dash
+                        // 的符号约定(负 = 只放符号不画线),丢掉它们会让 GAS_LINE 只剩
+                        // 一个 0.5 ⇒ IsContinuous() ⇒ 整条线变成实线(用户报的问题)。
+                        for (size_t si = 0; si < lt.Segments.size(); ++si)
                         {
-                            if (seg.Flags != Dwg::LineTypeShapeFlags::None)
-                                continue;   // 含文字 / 形的复杂线型：只保留纯线段部分
+                            const Dwg::LineTypeSegment& seg = lt.Segments[si];
                             rec.Pattern.push_back(seg.Length);
                             rec.PatternLength += std::abs(seg.Length);
+
+                            const auto flags = seg.Flags;
+                            const bool isText  = HasFlag(flags, Dwg::LineTypeShapeFlags::Text);
+                            const bool isShape = HasFlag(flags, Dwg::LineTypeShapeFlags::Shape);
+                            if (!isText && !isShape)
+                                continue;                       // 纯 dash/gap 段
+                            if (isShape && seg.Text.empty())
+                                continue;                       // 形段:没有 SHX 字形数据,只能当空白推进
+
+                            LineTypeSymbol sym;
+                            sym.PatternIndex     = si;
+                            sym.Text             = seg.Text;     // 文字段(DXF 组码 9);形段为空
+                            sym.Rotation         = seg.Rotation; // 弧度;0 = 沿线方向
+                            sym.Scale            = seg.Scale > 0.0 ? seg.Scale : 1.0;
+                            sym.OffsetX          = seg.Offset.X; // 沿线方向偏移(组码 44)
+                            sym.OffsetY          = seg.Offset.Y; // 垂直沿线、向上为正(组码 45)
+                            sym.StyleId          = LookupStyle(seg.StyleHandle);
+                            sym.AbsoluteRotation = HasFlag(flags, Dwg::LineTypeShapeFlags::RotationIsAbsolute);
+                            rec.Symbols.push_back(std::move(sym));
                         }
                         id = table.Add(std::move(rec));
                     }
@@ -3373,11 +3405,28 @@ namespace MiniCAD
                     auto lt = std::make_unique<Dwg::LineType>();
                     lt->Name        = records[i].Name;
                     lt->Description = records[i].Description;
-                    for (double v : records[i].Pattern)
+                    lt->Segments.resize(records[i].Pattern.size());
+                    for (size_t k = 0; k < records[i].Pattern.size(); ++k)
+                        lt->Segments[k].Length = records[i].Pattern[k];
+                    // 回写复杂线型的文字段(组码 9/74/75/340/46/50/44/45)。
+                    // Pattern 下标 → 段索引是 1:1,所以直接按 PatternIndex 落位;
+                    // 越界的下标(导入时被裁掉的)跳过,避免写坏表项。
+                    for (const LineTypeSymbol& sy : records[i].Symbols)
                     {
-                        Dwg::LineTypeSegment seg;
-                        seg.Length = v;
-                        lt->Segments.push_back(seg);
+                        if (sy.PatternIndex >= lt->Segments.size())
+                            continue;
+                        Dwg::LineTypeSegment& seg = lt->Segments[sy.PatternIndex];
+                        if (sy.Text.empty())
+                            continue;   // 形段没有字形数据可写,保持纯 dash
+                        seg.Flags     = Dwg::LineTypeShapeFlags::Text;
+                        if (sy.AbsoluteRotation)
+                            seg.Flags |= Dwg::LineTypeShapeFlags::RotationIsAbsolute;
+                        seg.Text       = sy.Text;
+                        seg.Scale      = sy.Scale;
+                        seg.Rotation   = sy.Rotation;
+                        seg.Offset.X   = sy.OffsetX;
+                        seg.Offset.Y   = sy.OffsetY;
+                        seg.StyleHandle = StyleHandle(sy.StyleId);
                     }
                     if (auto* added = m_db.AddTableEntry(m_db.LineTypes(), std::move(lt)))
                         m_lineTypeHandles[static_cast<LineTypeID>(i)] = added->ObjectHandle;

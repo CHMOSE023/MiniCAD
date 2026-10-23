@@ -3399,6 +3399,8 @@ namespace MiniCAD
         // 全局线型比例（HEADER 的 $LTSCALE）。虚线实际周期 = LTYPE图案周期 ×
         // 实体级组码 48 × 本值；实体拿不到 Scene，只能在这里经 sink 传下去。
         ctx.SetLineTypeScale(scene.GetLineTypeScale());
+        // 复杂线型（带字母/符号）文字段的字高要查文字样式表（组码 340 → 样式）
+        ctx.SetTextStyleTable(&scene.GetTextStyleTable());
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
@@ -3649,6 +3651,7 @@ namespace MiniCAD
             ctx.SetThinLines(m_thinLines);
             // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
             ctx.SetLineTypeScale(scene.GetLineTypeScale());
+            ctx.SetTextStyleTable(&scene.GetTextStyleTable());
             // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示
             ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
             ctx.SetViewportHeightPx(static_cast<double>(m_viewport->GetHeight()));
