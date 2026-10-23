@@ -1,4 +1,6 @@
 #include "Import/CadExchange.h"
+#include "Serialization/Database/CadDatabase.h"
+#include "Serialization/Database/Mesh.h"
 #include "Import/TchWall.h"
 #include "Import/TchBlockInsert.h"
 #include "Import/TchProxyGraphics.h"
@@ -25,6 +27,7 @@
 #include "Core/Entity/Face3DEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/MeshEntity.hpp"
+#include "Core/Entity/MLeaderEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -1718,6 +1721,14 @@ namespace MiniCAD
                 if (auto* e = dynamic_cast<const Dwg::Polyline*>(&src))
                     return ConvertOldPolyline(*e);
 
+                // 细分网格（MESH，AcDbSubDMesh）
+                if (auto* e = dynamic_cast<const Dwg::Mesh*>(&src))
+                    return ConvertSubDMesh(*e);
+
+                // 多重引线（MULTILEADER）
+                if (auto* e = dynamic_cast<const Dwg::MultiLeader*>(&src))
+                    return ConvertMLeader(*e);
+
                 if (auto* e = dynamic_cast<const Dwg::Hatch*>(&src))
                     return ConvertHatch(*e);
 
@@ -2660,6 +2671,182 @@ namespace MiniCAD
                 return Make<MeshEntity>(e, nullptr, std::move(mesh), Math::Mat4::Identity());
             }
 
+            // 细分网格（MESH，AcDbSubDMesh）→ MeshEntity。
+            //
+            // 与 PolyfaceMesh 是两种不同的东西：那是 R12 的老式网格（顶点是独立实体、
+            // 靠句柄互相引用），这是 R2007 起的新式 SubD 网格，几何**内嵌**在实体
+            // 自己的位流里（见 Database/Mesh.h）。
+            //
+            // 我们的 MeshEntity 只有三角形表达，所以 N 边面（四边形等）按扇形拆成三角形：
+            //   (v0,v1,v2)、(v0,v2,v3)…
+            // 这是渲染与布尔都吃得下的形式；SubD 的显式边表 / 折痕 / 细分级别等
+            // 元数据另外搬到 MeshEntity 的 SubD 字段里，另存时原样写回。
+            //
+            // 【实测 · sample_AC1032.dwg 的两个 MESH】
+            //   句柄 343：62 顶点 / 72 面（24 三角 + 48 四边形）
+            //   句柄 380：64 顶点 / 64 面（全四边形）
+            std::unique_ptr<Entity> ConvertSubDMesh(const Dwg::Mesh& e)
+            {
+                Solid3DEntity::SurfaceMesh mesh;
+                const auto nv = static_cast<int>(e.Vertices.size());
+                mesh.Positions.reserve(e.Vertices.size());
+                for (const auto& v : e.Vertices)
+                    mesh.Positions.push_back({ v.X, v.Y, v.Z });
+
+                std::vector<int> faceSizes;   // 拆成三角形的各面的顶点数，导出时拼回原来的面
+                for (const auto& face : e.Faces)
+                {
+                    // 索引合法性过滤：损坏文件不能让后面的绘制越界
+                    std::vector<uint32_t> idx;
+                    idx.reserve(face.size());
+                    for (int r : face)
+                        if (r >= 0 && r < nv)
+                            idx.push_back(static_cast<uint32_t>(r));
+                    if (idx.size() < 3)
+                        continue;                       // 少于 3 个顶点画不出面
+                    for (size_t k = 2; k < idx.size(); ++k)   // 扇形三角化
+                        mesh.Indices.insert(mesh.Indices.end(),
+                                            { idx[0], idx[k - 1], idx[k] });
+                    faceSizes.push_back(static_cast<int>(idx.size()));
+                }
+                if (mesh.Indices.empty())
+                    return Skip(e);
+
+                auto ent = Make<MeshEntity>(e, nullptr, std::move(mesh), Math::Mat4::Identity());
+                auto* mesh2 = static_cast<MeshEntity*>(ent.get());
+                mesh2->SetSubDVersion(e.Version);
+                mesh2->SetBlendCrease(e.BlendCrease);
+                mesh2->SetSubdivisionLevel(e.SubdivisionLevel);
+                mesh2->SetOverrideOption(e.OverrideOption);
+                mesh2->SetExplicitEdges(e.Edges);
+                mesh2->SetCreaseValues(e.CreaseValues);
+                mesh2->SetFaceSizes(std::move(faceSizes));
+                return ent;
+            }
+
+            // 多重引线（MULTILEADER）。
+            //
+            // 此前**完全没有映射**，落到 Skip() 被整体丢弃 ⇒ 图上一个多重引线都不显示。
+            //
+            // 关键几何（实测 `1#、2#厂房电气_t3.dwg` 20 个，全部是**单点引线**）：
+            //   · 引线两端**分存两处**：`LEADER_LINE{(10 …)}` 只有**箭头端**，
+            //     内容连接端在 `LEADER{(10 …)}` 即 root.ConnectionPoint
+            //     （与 AutoCAD entget 逐位对照过）。
+            //     若只取 line.Points 且要求 size>=2，单点形态一段线都产不出。
+            //   · 实测 ContentBasePoint = ConnectionPoint + Direction × LandingDistance
+            //     （1966431.53 + 150 = 1966581.53），可直接用外层 LandingDistance。
+            //   · 坐标是 **WCS**，不做 OCS 翻转（实测箭头端点到最近设备点：
+            //     原样 570.088 / X取反 36908.488）。
+            std::unique_ptr<Entity> ConvertMLeader(const Dwg::MultiLeader& e)
+            {
+                const auto& cd = e.ContextData;
+
+                MLeaderStyle style;
+                // 字高：优先 context（本图 400），退化到外层/默认
+                style.TextHeight = cd.TextHeight > 0.0 ? cd.TextHeight : 3.5;
+                // 箭头大小：context 的 ArrowheadSize 本图为 0（样式里才有真值），
+                // 取不到就按字高的 1/6 给个可见默认，避免退化成一个点
+                double arrow = cd.ArrowheadSize > 0.0 ? cd.ArrowheadSize : e.ArrowheadSize;
+                if (arrow <= 0.0)
+                    arrow = style.TextHeight / 6.0;
+                style.ArrowSize = arrow;
+                // 着陆间隙（文字与基线之间）
+                style.LandingGap = cd.LandingGap > 0.0 ? cd.LandingGap : 0.0;
+                // dogleg 长度：外层 LandingDistance（本图 150）
+                style.DoglegLength = e.LandingDistance > 0.0 ? e.LandingDistance : 0.0;
+                style.EnableLanding = e.EnableLanding;
+                style.EnableDogleg  = e.EnableDogleg;
+                style.TextStyle     = LookupStyle(cd.TextStyleHandle);
+
+                auto ent = Make<MLeaderEntity>(e, nullptr, style);
+                auto* ml = static_cast<MLeaderEntity*>(ent.get());
+
+                // ── 引线 ────────────────────────────────────────────────
+                for (const auto& root : cd.LeaderRoots)
+                {
+                    for (const auto& line : root.Lines)
+                    {
+                        if (line.Points.size() >= 2)
+                        {
+                            std::vector<Math::Point3> pts;
+                            pts.reserve(line.Points.size());
+                            for (const auto& p : line.Points)
+                                pts.push_back({ p.X, p.Y, p.Z });
+                            ml->AddLeaderLine(std::move(pts), true);
+                        }
+                        else if (line.Points.size() == 1)
+                        {
+                            // 单点形态：箭头端 + 内容连接端 各存一处，补成两点的引线。
+                            // 顺序与 MLeaderEntity 约定一致：points[0] = 箭头尖端。
+                            ml->AddLeaderLine({ { line.Points[0].X, line.Points[0].Y, line.Points[0].Z },
+                                                 { root.ConnectionPoint.X, root.ConnectionPoint.Y,
+                                                   root.ConnectionPoint.Z } }, true);
+                        }
+                    }
+                }
+
+                // ── 基线 / landing / 文字位置 ───────────────────────────
+                // 实测 20/20（本图）验证的几何模型，误差 0.000000：
+                //
+                //   doglegEnd(landing) = ConnectionPoint + Direction × LandingDistance
+                //   TextLocation       = ConnectionPoint + Direction × (LD + LandingGap)
+                //   ContentBasePoint   = **文字块左下角**
+                //                        · 171=1(Left)  → == doglegEnd.x
+                //                        · 171=3(Right) → == doglegEnd.x − 字宽
+                //                        · .y 恒 == ConnectionPoint.y
+                //   TextLocation.y − ContentBasePoint.y == 1.2 × 字高
+                //
+                // 于是取 doglegDir = −Direction、DoglegLength = LandingDistance：
+                //   DoglegStart() = landing + doglegDir × DoglegLength == ConnectionPoint ✔
+                // 文字则**直接用 ContentBasePoint**（左下角），不必量字宽 ——
+                // 早期实现画在 landing 上，171=3 的那批会整体多走一个文字宽
+                // （本图约 1700–2200 ≈ 字高的 4~5 倍），且全部偏高 1.2 字高。
+                Math::Vec3 dir{ 1, 0, 0 };
+                Math::Point3 conn{ cd.ContentBasePoint.X, cd.ContentBasePoint.Y, cd.ContentBasePoint.Z };
+                if (!cd.LeaderRoots.empty())
+                {
+                    const auto& root = cd.LeaderRoots.front();
+                    conn = { root.ConnectionPoint.X, root.ConnectionPoint.Y, root.ConnectionPoint.Z };
+                    if (std::hypot(root.Direction.X, root.Direction.Y) > 1e-12)
+                        dir = { root.Direction.X, root.Direction.Y, 0.0 };
+                }
+                const double LD = e.LandingDistance > 0.0 ? e.LandingDistance : 0.0;
+
+                style.DoglegLength = LD;
+                ml->SetDoglegDir({ -dir.x, -dir.y, 0.0 });
+                ml->SetLanding({ conn.x + dir.x * LD, conn.y + dir.y * LD, conn.z });
+
+                // 文字左下角 = ContentBasePoint（组码 10）。缺失时退回 landing（≡ 171=1）。
+                double tbx = cd.ContentBasePoint.X, tby = cd.ContentBasePoint.Y;
+                if (std::abs(tbx) < 1e-12 && std::abs(tby) < 1e-12)
+                {
+                    tbx = conn.x + dir.x * LD;
+                    tby = conn.y + dir.y * LD;
+                }
+                ml->SetTextOrigin({ tbx, tby, cd.ContentBasePoint.Z });
+                ml->SetTextAnchor(static_cast<MLeaderTextAnchor>(
+                    ((int)cd.TextAttachmentPoint >= 1 && (int)cd.TextAttachmentPoint <= 3)
+                        ? (int)cd.TextAttachmentPoint : 1));
+                // 文字阅读方向（组码 13）：实测本图 20/20 恒为 (1,0)，
+                // 与引线方向（LEADER{11}）不是一回事（14/20 两者相反）。
+                // 只存下来做无损写回，不参与绘制。
+                ml->SetTextDirection({ cd.Direction.X, cd.Direction.Y, 0.0 });
+                // 文字左/右附着方式（组码 174 / 175）。drawing 要用它判定横线
+                // 该停在内侧还是**外侧**：下划线族（5~8）时 landing 就是文字下划线，
+                // 必须横穿整个文字（用户报的「没到文字的外侧」）。
+                // 实测本图 20/20 均为 6，且 landing.y ≡ CBP.y（Δ=0.0000）。
+                ml->SetTextLeftAttachment(static_cast<int>(cd.TextLeftAttachment));
+                ml->SetTextRightAttachment(static_cast<int>(cd.TextRightAttachment));
+
+                ml->SetStyle(style);
+
+                // ── 内容 ────────────────────────────────────────────────
+                if (cd.HasTextContents != 0 && !cd.TextLabel.empty())
+                    ml->SetText(cd.TextLabel);
+
+                return ent;
+            }
+
             // 旧式 POLYLINE（R12 的 DXF）：二维 / 三维折线、多面网格；多边形网格（M × N）不支持
             std::unique_ptr<Entity> ConvertOldPolyline(const Dwg::Polyline& e)
             {
@@ -3434,6 +3621,18 @@ namespace MiniCAD
                 outMiter = Math::Vec3{ nrm.x * k, nrm.y * k, 0.0 };
             }
 
+            // 多重引线样式句柄：取根字典 ACAD_MLEADERSTYLE 下的 Standard（CreateDefaults 会建），没有就取第一项
+            Dwg::Handle MLeaderStyleHandle() const
+            {
+                const Dwg::CadDictionary* dict = m_db.FindNamedDictionary("ACAD_MLEADERSTYLE");
+                if (dict == nullptr || dict->EntryHandles.empty())
+                    return Dwg::kNullHandle;
+                for (size_t i = 0; i < dict->EntryNames.size() && i < dict->EntryHandles.size(); ++i)
+                    if (EqualsNoCase(dict->EntryNames[i], "Standard"))
+                        return dict->EntryHandles[i];
+                return dict->EntryHandles.front();
+            }
+
             // 多线样式句柄：MultilineStyle 在 DWG 里是**根字典 ACAD_MLINESTYLE 下的条目**
             // （不是符号表），所以走字典查找 / 新建。
             Dwg::Handle MLineStyleHandle(const MLineStyleRecord& rec)
@@ -3624,6 +3823,17 @@ namespace MiniCAD
                     d->Flags = static_cast<Dwg::InvisibleEdgeFlags>(s->GetInvisibleEdges());
                     return Finish(e, std::move(d));
                 }
+                // 细分网格（MESH，AcDbSubDMesh）。**必须排在 Solid3DEntity 分支之前** ——
+                // MeshEntity 派生自 Solid3DEntity，被基类先匹配到就会退化成 PolyfaceMesh
+                // （顶点/面数受 16 位限制，SubD 的细分级别与折痕也全丢）。
+                // 只有原图就是 MESH 的才写回 MESH，且 MESH 是 AutoCAD 2010（AC1024）起才有的实体；
+                // 节点图烘焙、多面网格来源的网格，以及写 2010 以前的版本时，仍写成多面网格。
+                if (auto* s = dynamic_cast<const MeshEntity*>(&e); s && s->IsSubD() && m_version >= Dwg::CadVersion::AC1024)
+                    if (auto d = ConvertSubDMesh(*s))
+                        return d;
+                // 多重引线（MLEADER）。同样必须排在可能匹配到它的基类分支之前。
+                if (auto* s = dynamic_cast<const MLeaderEntity*>(&e))
+                    return ConvertMLeader(*s);
                 if (auto* s = dynamic_cast<const Solid3DEntity*>(&e))
                     return ConvertSolid3D(e, *s);
                 if (auto* s = dynamic_cast<const LineEntity*>(&e))
@@ -3845,6 +4055,176 @@ namespace MiniCAD
                     }
                 }
                 return d;
+            }
+
+            // 细分网格（MESH）写出。**必须与导入成对**：只导入不导出，用户打开图纸看得见
+            // 网格，一旦存盘网格就整批消失（同多重引线的教训）。
+            //
+            // 我们的 MeshEntity 只有三角形表达：按导入时记下的各面顶点数把扇形三角形拼回原来的面
+            // （n 边面 = 连续 n − 2 个三角形 (v0, v[k−1], v[k])），面才与显式边表、折痕对得上；
+            // SubD 的显式边表 / 折痕 / 细分级别等元数据原样回填。
+            // 顶点要施加实体自己的变换（局部 → 世界），镜像过时面反向以保持正面朝外。
+            // 拼不回去（数据对不上）时返回 nullptr，调用方改写多面网格。
+            std::unique_ptr<Dwg::Entity> ConvertSubDMesh(const MeshEntity& s)
+            {
+                const auto& mesh = s.GetLocalMesh();
+                const auto& sizes = s.GetFaceSizes();
+                size_t triCount = 0;
+                for (int n : sizes)
+                    triCount += n >= 3 ? static_cast<size_t>(n - 2) : 0;
+                if (mesh.Empty() || sizes.empty() || triCount != mesh.TriangleCount())
+                    return nullptr;
+
+                auto d = std::make_unique<Dwg::Mesh>();
+                ApplyAttr(s, *d);
+                d->Version          = s.GetSubDVersion();
+                d->BlendCrease      = s.GetBlendCrease();
+                d->SubdivisionLevel = s.GetSubdivisionLevel();
+                d->OverrideOption   = s.GetOverrideOption();
+                d->Edges            = s.GetExplicitEdges();
+                d->CreaseValues     = s.GetCreaseValues();
+
+                const Math::Mat4& m = s.GetTransform();
+                d->Vertices.reserve(mesh.Positions.size());
+                for (const auto& p : mesh.Positions)
+                    d->Vertices.push_back(ToXYZ(m.TransformPoint(p)));
+                const double* a = m.m;
+                const bool mirrored = a[0] * (a[5] * a[10] - a[6] * a[9]) - a[1] * (a[4] * a[10] - a[6] * a[8])
+                                    + a[2] * (a[4] * a[9] - a[5] * a[8]) < 0;
+                d->Faces.reserve(sizes.size());
+                size_t t = 0;
+                for (int n : sizes)
+                {
+                    if (n < 3)
+                        continue;
+                    std::vector<int> face{ static_cast<int>(mesh.Indices[t * 3]), static_cast<int>(mesh.Indices[t * 3 + 1]) };
+                    for (int k = 0; k < n - 2; ++k, ++t)
+                        face.push_back(static_cast<int>(mesh.Indices[t * 3 + 2]));
+                    if (mirrored)
+                        std::reverse(face.begin(), face.end());
+                    d->Faces.push_back(std::move(face));
+                }
+                return Finish(s, std::move(d));
+            }
+
+            // 多重引线（MLEADER）写出。**必须与导入成对**：只导入不导出，用户打开图纸
+            // 看得见引线，一旦存盘引线就整批消失（同细分网格的教训）。
+            //
+            // 这是导入 ConvertMLeader 的严格逆映射，公式来自同一份实测
+            // （`1#、2#厂房电气_t3.dwg` 20/20，误差 0.000000）：
+            //   landing(外端)   = ConnectionPoint + Direction × LandingDistance
+            //   ContentBasePoint = 文字块左下角
+            //   TextLocation     = ConnectionPoint + Direction × (LD + LandingGap) + (0, 1.2×字高)
+            std::unique_ptr<Dwg::Entity> ConvertMLeader(const MLeaderEntity& s)
+            {
+                auto d = std::make_unique<Dwg::MultiLeader>();
+                auto& cd = d->ContextData;
+
+                const auto& style = s.GetStyle();
+                d->ContentType      = Dwg::LeaderContentType::MText;
+                d->ArrowheadSize    = style.ArrowSize;
+                d->LandingDistance  = style.DoglegLength;
+                d->EnableLanding    = style.EnableLanding;
+                d->EnableDogleg     = style.EnableDogleg;
+                d->ScaleFactor      = 1.0;
+                d->TextStyleHandle  = StyleHandle(style.TextStyle);
+                d->StyleHandle      = MLeaderStyleHandle();
+
+                cd.TextStyleHandle   = d->TextStyleHandle;   // 导入取的是 context 里的这个
+                cd.TextHeight        = style.TextHeight;
+                cd.LandingGap        = style.LandingGap;
+                cd.ArrowheadSize     = style.ArrowSize;
+                cd.ScaleFactor       = 1.0;
+                // ContentBasePoint = 文字块左下角（导入侧就是从这里取的，原样回填）
+                const Math::Point3 textOrigin = s.ResolveTextOrigin();   // 新建的没有原点：按 landing 推出
+                cd.ContentBasePoint  = ToXYZ(textOrigin);
+                // TextLocation = 附着点，按已验证公式由 connection/dir/LD/Gap 推出
+                //   TL = ConnectionPoint + Direction × (LD + LandingGap) + (0, 1.2 × 字高)
+                // 不能简单写成 landing —— 那会让右附着（171=3）的文字回来时位置漂移。
+                cd.TextAttachmentPoint = static_cast<Dwg::TextAttachmentPointType>(
+                    static_cast<int>(s.GetTextAnchor()));
+                // 文字左/右附着方式（组码 174 / 175）：原样回填。
+                // **必须写**：漏了它另存后重开，下划线族信息丢失，
+                // 横线会重新缩回文字内侧（本图 20/20 都是 6）。
+                if (s.GetTextLeftAttachment() >= 0)
+                    cd.TextLeftAttachment = static_cast<Dwg::TextAttachmentType>(
+                        s.GetTextLeftAttachment());
+                if (s.GetTextRightAttachment() >= 0)
+                    cd.TextRightAttachment = static_cast<Dwg::TextAttachmentType>(
+                        s.GetTextRightAttachment());
+                // 文字阅读方向（组码 13）：原样回填。实测本图恒为 (1,0)，
+                // **不能**写成 -doglegDir —— 那会把 14/20 条原本正确的字段改反。
+                const auto& dg = s.GetDoglegDir();
+                const auto& td = s.GetTextDirection();
+                cd.Direction   = { td.x, td.y, 0.0 };
+                cd.TextNormal  = { 0.0, 0.0, 1.0 };
+                cd.BasePoint   = ToXYZ(textOrigin);
+                cd.BaseDirection = { 1.0, 0.0, 0.0 };
+                cd.BaseVertical  = { 0.0, 1.0, 0.0 };
+
+                if (!s.GetText().empty())
+                {
+                    cd.HasTextContents = true;
+                    cd.TextLabel       = s.GetText();
+                }
+
+                // 每个 LeaderLine → 一个 root。ConnectionPoint 是各引线汇聚的 dogleg 起点；
+                // LEADER_LINE 存箭头端与中间折点，不含连接点（导入时单点引线再补上它）
+                const Math::Point3& landing = s.GetLanding();
+                const double dl = style.EnableDogleg ? style.DoglegLength : 0.0;
+                const Math::Point3 conn{ landing.x + dg.x * dl, landing.y + dg.y * dl, landing.z };
+                for (const auto& ln : s.GetLeaderLines())
+                {
+                    if (ln.points.empty())
+                        continue;
+                    Dwg::MultiLeaderObjectContextDataLeaderRoot root;
+                    root.ContentValid  = true;
+                    root.ConnectionPoint = ToXYZ(conn);
+                    root.LandingDistance = style.DoglegLength;
+                    // **必须写回 root.Direction（组码 11）**：它是基线的方向，
+                    // 再导入时靠它 + LandingDistance 还原基线外端。漏写会变成
+                    // 零向量（实测 20/20 全丢），另存后基线方向无从恢复。
+                    // 导入侧取的就是它，这里原样回填。
+                    root.Direction = { -dg.x, -dg.y, 0.0 };
+
+                    Dwg::MultiLeaderObjectContextDataLeaderLine line;
+                    size_t n = ln.points.size();
+                    if (n >= 2 && (ln.points.back() - conn).LengthSq() < 1e-18)
+                        --n;                                       // 末点就是连接点：不重复存
+                    for (size_t i = 0; i < n; ++i)
+                        line.Points.push_back(ToXYZ(ln.points[i]));
+                    line.ArrowheadSize = style.ArrowSize;
+                    root.Lines.push_back(std::move(line));
+
+                    cd.LeaderRoots.push_back(std::move(root));
+                }
+                // 一个 root 都没补上时（无引线），给个占位，否则 writer 会写出 0 个 root
+                if (cd.LeaderRoots.empty())
+                {
+                    Dwg::MultiLeaderObjectContextDataLeaderRoot root;
+                    root.ContentValid    = true;
+                    root.ConnectionPoint = ToXYZ(conn);
+                    root.LandingDistance = style.DoglegLength;
+                    root.Direction       = { -dg.x, -dg.y, 0.0 };
+                    cd.LeaderRoots.push_back(std::move(root));
+                }
+
+                // TextLocation（组码 12）= 附着点，由已验证公式从首个 root 推出：
+                //   TL = ConnectionPoint + **root.Direction** × (LD + LandingGap)
+                //                                          + (0, 1.2 × 字高)
+                // ⚠ 方向必须取 root.Direction（= 引线方向 LEADER{11}），
+                //   **不是** cd.Direction（= 文字阅读方向 CONTEXT{13}，本图恒为 (1,0)）——
+                //   实测 14/20 条两者相反，用错会让 TextLocation 偏到另一侧。
+                {
+                    const auto& root0 = cd.LeaderRoots.front();
+                    cd.TextLocation = {
+                        root0.ConnectionPoint.X + root0.Direction.X * (style.DoglegLength + cd.LandingGap),
+                        root0.ConnectionPoint.Y + root0.Direction.Y * (style.DoglegLength + cd.LandingGap)
+                            + 1.2 * style.TextHeight,
+                        0.0 };
+                }
+
+                return Finish(s, std::move(d));
             }
 
             std::unique_ptr<Dwg::Entity> ConvertEllipse(const Entity& e, const Ellipse& el)

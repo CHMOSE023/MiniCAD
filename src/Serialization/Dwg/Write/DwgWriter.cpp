@@ -78,6 +78,9 @@ namespace MiniDWG::DwgWrite
             { "DIMASSOC", "AcDbDimAssoc", kDimAssocApp, 0, false },
             { "MLEADERSTYLE", "AcDbMLeaderStyle", "ACDB_MLEADERSTYLE_CLASS", 4095, false },
             { "MULTILEADER", "AcDbMLeader", "ACDB_MLEADER_CLASS", 1025, true },
+            // 细分网格（SubD）。代理标志 0 与 AutoCAD 一致：它不是代理图形，
+            // 几何完整内嵌在实体自己的位流里（见 Database/Mesh.h）。
+            { "MESH", "AcDbSubDMesh", "AcDbSubDMesh", 0, true },
             // 块裁剪（XCLIP）的边界对象。导入时它是未建模对象（UnknownObject），
             // 写出时同样按未建模对象原样写；但 CLASSES 段必须有它的类定义，
             // 否则 DWG 写出时找不到类号，整个对象被丢掉 —— 表现为"另存后裁剪没了"。

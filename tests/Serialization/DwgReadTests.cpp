@@ -33,12 +33,12 @@ TEST(DwgRead_AllSamples_NoWarnings)
         CHECK(warnings.empty());
         for (const std::string& w : warnings)
             std::printf("    %s：%s\n", v, w.c_str());
-        // 已建模的实体 155 个（另有原样保留的未建模实体）
+        // 已建模的实体 157 个（含 2 个 MESH；另有原样保留的未建模实体）
         CHECK(db->ModelSpace() != nullptr);
         if (db->ModelSpace() != nullptr)
         {
             const auto& es = db->ModelSpace()->Entities;
-            CHECK(std::count_if(es.begin(), es.end(), [&](Handle e) { return db->FindAs<UnknownEntity>(e) == nullptr; }) == 155);
+            CHECK(std::count_if(es.begin(), es.end(), [&](Handle e) { return db->FindAs<UnknownEntity>(e) == nullptr; }) == 157);
         }
         for (const auto& [h, obj] : db->Objects())
         {

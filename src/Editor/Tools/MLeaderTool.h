@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -177,8 +177,12 @@ namespace MiniCAD
             for (const auto& a : m_arrows)
                 ent->AddLeaderLine({ a }, /*arrow=*/true);   // 单点引线:箭头尖端 → dogleg 起点
             ent->SetLanding(landing);
-            ent->SetDoglegDir(DoglegDir(landing));
+            const Math::Vec3 dir = DoglegDir(landing);
+            ent->SetDoglegDir(dir);
             ent->SetText(m_defaultText);                      // 默认注释(同时置内容为 MText)
+            // 不设文字原点：绘制时按 landing 与实际文字宽推出（见 MLeaderEntity::ResolveTextOrigin）。
+            // 引线在右（dir 指向 +x）时文字在左、右缘贴着基线，对应附着点 Right
+            ent->SetTextAnchor(dir.x > 0.0 ? MLeaderTextAnchor::Right : MLeaderTextAnchor::Left);
 
             m_ctx->ApplyCurrentAttr(*ent);
             auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));

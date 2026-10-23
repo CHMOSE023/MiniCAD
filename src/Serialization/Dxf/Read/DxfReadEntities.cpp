@@ -635,6 +635,12 @@ namespace MiniDWG::DxfRead
             return;
         }
 
+        if (dynamic_cast<Mesh*>(obj) != nullptr)
+        {
+            ReadMesh(item, r);
+            return;
+        }
+
         if (auto* wipeout = dynamic_cast<CadWipeoutBase*>(obj))
         {
             Process(item, r, [&](const DxfGroup& g, std::size_t& i, const ParseState&) -> bool {

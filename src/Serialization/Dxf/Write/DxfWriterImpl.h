@@ -1,6 +1,7 @@
 #pragma once
 // DXF 写入器的内部实现（不对外公开）
 #include "Database/CadDatabase.h"
+#include "Database/Mesh.h"
 #include "Dxf/Write/DxfStreamWriter.h"
 #include "Dxf/Write/DxfWriter.h"
 #include <deque>
@@ -82,6 +83,7 @@ namespace MiniDWG::DxfWrite
         void WriteMLine(const MLine& mline);
         void WriteMText(const MText& mtext);
         void WriteMultiLeader(const MultiLeader& ml);                       // DxfWriteMultiLeader.cpp
+        void WriteMesh(const Mesh& mesh);                                   // DxfWriteMesh.cpp
         void WriteMultiLeaderContext(const MultiLeaderObjectContextData& c);
         void WritePoint(const Point& point);
         void WritePolyline(const Polyline& pl);

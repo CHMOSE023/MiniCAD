@@ -12,6 +12,7 @@ set(MINIDWG_DATABASE_SOURCES
     "${MINIDWG_SRC}/Database/UnknownObjects.cpp"
     "${MINIDWG_SRC}/Database/DxfValue.cpp"
     "${MINIDWG_SRC}/Database/Color.cpp"
+    "${MINIDWG_SRC}/Database/Mesh.cpp"
 )
 
 # ── Codec ───────────────────────────────────────────────────────────
@@ -25,11 +26,13 @@ set(MINIDWG_DXF_SOURCES
     "${MINIDWG_SRC}/Dxf/Read/DxfReader.cpp"
     "${MINIDWG_SRC}/Dxf/Read/DxfReadEntities.cpp"
     "${MINIDWG_SRC}/Dxf/Read/DxfReadMultiLeader.cpp"
+    "${MINIDWG_SRC}/Dxf/Read/DxfReadMesh.cpp"
     "${MINIDWG_SRC}/Dxf/Read/DxfReadBuild.cpp"
     "${MINIDWG_SRC}/Dxf/Write/DxfStreamWriter.cpp"
     "${MINIDWG_SRC}/Dxf/Write/DxfWriter.cpp"
     "${MINIDWG_SRC}/Dxf/Write/DxfWriteEntities.cpp"
     "${MINIDWG_SRC}/Dxf/Write/DxfWriteMultiLeader.cpp"
+    "${MINIDWG_SRC}/Dxf/Write/DxfWriteMesh.cpp"
 )
 
 # ── Dwg ─────────────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ set(MINIDWG_DWG_SOURCES
     "${MINIDWG_SRC}/Dwg/Read/DwgReadObjects.cpp"
     "${MINIDWG_SRC}/Dwg/Read/DwgReadEntities.cpp"
     "${MINIDWG_SRC}/Dwg/Read/DwgReadMultiLeader.cpp"
+    "${MINIDWG_SRC}/Dwg/Read/DwgReadMesh.cpp"
     "${MINIDWG_SRC}/Dwg/Read/DwgReadBuild.cpp"
     "${MINIDWG_SRC}/Dwg/Write/DwgBitWriter.cpp"
     "${MINIDWG_SRC}/Dwg/Write/DwgCompress.cpp"
@@ -50,6 +54,7 @@ set(MINIDWG_DWG_SOURCES
     "${MINIDWG_SRC}/Dwg/Write/DwgWriteObjects.cpp"
     "${MINIDWG_SRC}/Dwg/Write/DwgWriteEntities.cpp"
     "${MINIDWG_SRC}/Dwg/Write/DwgWriteMultiLeader.cpp"
+    "${MINIDWG_SRC}/Dwg/Write/DwgWriteMesh.cpp"
     "${MINIDWG_SRC}/Dwg/Write/DwgFileLayout.cpp"
 )
 

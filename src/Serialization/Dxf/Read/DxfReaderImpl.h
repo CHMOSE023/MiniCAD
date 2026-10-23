@@ -2,6 +2,7 @@
 // DXF 读取器的内部实现（不对外公开）
 #include "Database/CadDatabase.h"
 #include "Database/DxfMeta.h"
+#include "Database/Mesh.h"
 #include "Dxf/Read/DxfReader.h"
 #include "Dxf/Read/DxfStreamReader.h"
 #include <cstddef>
@@ -151,6 +152,7 @@ namespace MiniDWG::DxfRead
         void ReadHatch(ReadItem& item, const Record& record);
         void ReadMLine(ReadItem& item, const Record& record);
         void ReadMultiLeader(ReadItem& item, const Record& record);         // DxfReadMultiLeader.cpp
+        void ReadMesh(ReadItem& item, const Record& record);                // DxfReadMesh.cpp
         void ReadMultiLeaderStyle(ReadItem& item, const Record& record);
 
         // ── 对象 ──

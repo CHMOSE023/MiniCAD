@@ -1,6 +1,7 @@
 #pragma once
 // DWG 写入器的内部实现（不对外公开）
 #include "Database/CadDatabase.h"
+#include "Database/Mesh.h"
 #include "Dwg/Write/DwgBitWriter.h"
 #include "Dwg/Write/DwgWriter.h"
 #include <map>
@@ -89,6 +90,7 @@ namespace MiniDWG::DwgWrite
         void WriteDimensionAssociation(const DimensionAssociation& assoc);
         void WriteMultiLeaderStyle(const MultiLeaderStyle& style);          // DwgWriteMultiLeader.cpp
         void WriteMultiLeader(const MultiLeader& ml);
+        void WriteMesh(const Mesh& mesh);                                   // DwgWriteMesh.cpp
         void WriteMLeaderContext(const MultiLeaderObjectContextData& context);
         void WriteDictionaryVariable(const DictionaryVariable& var);
         void WriteGroup(const Group& group);

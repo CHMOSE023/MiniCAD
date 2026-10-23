@@ -237,8 +237,8 @@ namespace MiniCAD
         if (entity.IsKindOf<MLeaderEntity>())
         {
             auto& ml = static_cast<MLeaderEntity&>(entity);
-            ml.SetLanding   (ReflectPoint (ml.GetLanding(),    axis));
-            ml.SetDoglegDir (ReflectVector(ml.GetDoglegDir(),  axis));
+            ml.MoveLanding   (ReflectPoint (ml.GetLanding(),    axis));
+            ml.TurnDogleg   (ReflectVector(ml.GetDoglegDir(),  axis));
             for (auto& ln : ml.GetLeaderLines())
                 for (auto& p : ln.points) p = ReflectPoint(p, axis);
             return;
