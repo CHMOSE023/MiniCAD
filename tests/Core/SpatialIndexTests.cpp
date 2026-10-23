@@ -48,6 +48,8 @@ int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
 int RunBlockFixTests();      // BlockFixTests.cpp，返回失败项数
 int RunMiddleDoubleClickZoomTests();  // MiddleDoubleClickZoomTests.cpp，返回失败项数
 int RunLayoutTests();                 // LayoutTests.cpp，返回失败项数
+int RunMLeaderImportTests();          // MLeaderImportTests.cpp，返回失败项数
+int RunMeshTests();                   // MeshTests.cpp，返回失败项数
 int RunMLineToolTests();              // MLineToolTests.cpp，返回失败项数
 int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项数
 int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
@@ -323,6 +325,8 @@ int main()
     g_failures += RunBlockFixTests();
     g_failures += RunMiddleDoubleClickZoomTests();
     g_failures += RunLayoutTests();
+    g_failures += RunMLeaderImportTests();
+    g_failures += RunMeshTests();
     g_failures += RunMLineToolTests();
     g_failures += RunMLineImportTests();
     g_failures += RunMLineEditTests();

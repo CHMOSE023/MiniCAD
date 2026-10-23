@@ -405,13 +405,51 @@ namespace MiniCAD::EntityIO
             return std::make_unique<Solid3DEntity>(id, std::move(bytes), std::move(wire), m, bounds, UnpackSolidMesh(meshBytes));
         }
 
-        // 多面网格：变换矩阵与局部网格（同三维实体的网格打包格式），线框由网格重新求出
+        // 多面网格：变换矩阵与局部网格（同三维实体的网格打包格式），线框由网格重新求出。
+        // 另存 SubD 元数据（DWG / DXF 的 MESH 专用）：细分级别 / 混合折痕 / 版本 /
+        // 显式边表 / 折痕值 / 覆盖选项。
+        // ⚠ 这些键**必须是可选的**：旧 .mcad 档案没有它们，读时保持默认值
+        //   （默认值即“非 SubD 来源”，见 MeshEntity.hpp 文件头说明）。
         void WriteMesh(ISerializer& s, const MeshEntity& e)
         {
             Math::Mat4 m = e.GetTransform();
             Ser::Value(s, "transform", m);
             std::vector<uint8_t> mesh = PackSolidMesh(e.GetLocalMesh());
             Ser::Bytes(s, "mesh", mesh);
+
+            // SubD 元数据：只在“真的是 SubD 来源”时写，避免给普通网格平添体积
+            if (e.GetSubdivisionLevel() != 0 || e.GetBlendCrease() || e.GetSubDVersion() != 2 ||
+                e.GetOverrideOption() != 0 || !e.GetExplicitEdges().empty() || !e.GetCreaseValues().empty())
+            {
+                int32_t version = e.GetSubDVersion();
+                s.Value("subDVersion", version);
+                int32_t blend = e.GetBlendCrease() ? 1 : 0;
+                s.Value("blendCrease", blend);
+                int32_t level = e.GetSubdivisionLevel();
+                s.Value("subdivisionLevel", level);
+                int32_t overrideOption = e.GetOverrideOption();
+                s.Value("overrideOption", overrideOption);
+                const auto& edges = e.GetExplicitEdges();
+                if (!edges.empty())
+                {
+                    // ISerializer 只内建 vector<double> 的数组重载，
+                    // 所以边表走 double 数组（索引是整数，double 精确表示无损）。
+                    std::vector<double> flat;
+                    flat.reserve(edges.size() * 2);
+                    for (const auto& [a, b] : edges)
+                    {
+                        flat.push_back(static_cast<double>(a));
+                        flat.push_back(static_cast<double>(b));
+                    }
+                    s.Value("explicitEdges", flat);
+                }
+                const auto& creases = e.GetCreaseValues();
+                if (!creases.empty())
+                {
+                    std::vector<double> flat(creases.begin(), creases.end());
+                    s.Value("creaseValues", flat);
+                }
+            }
         }
 
         std::unique_ptr<Entity> ReadMesh(ISerializer& s, Object::ObjectID id)
@@ -420,7 +458,46 @@ namespace MiniCAD::EntityIO
             Ser::Value(s, "transform", m);
             std::vector<uint8_t> meshBytes;
             Ser::Bytes(s, "mesh", meshBytes);
-            return std::make_unique<MeshEntity>(id, UnpackSolidMesh(meshBytes), m);
+            auto e = std::make_unique<MeshEntity>(id, UnpackSolidMesh(meshBytes), m);
+
+            // SubD 元数据：键不存在时 ISerializer::Value 保留实参原值
+            // （即 MeshEntity 的默认值，见其文件头说明）⇒ 旧档案天然兼容。
+            // 注意 ISerializer 只内建 vector<double> 的数组重载，
+            // 所以边表与折痕都走 double 数组（索引是整数，double 精确表示无损）。
+            int32_t version = e->GetSubDVersion();
+            s.Value("subDVersion", version);
+            e->SetSubDVersion(static_cast<std::int16_t>(version));
+            int32_t blend = e->GetBlendCrease() ? 1 : 0;
+            s.Value("blendCrease", blend);
+            e->SetBlendCrease(blend != 0);
+            int32_t level = e->GetSubdivisionLevel();
+            s.Value("subdivisionLevel", level);
+            e->SetSubdivisionLevel(level);
+            int32_t overrideOption = e->GetOverrideOption();
+            s.Value("overrideOption", overrideOption);
+            e->SetOverrideOption(overrideOption);
+
+            std::vector<double> flatEdges;
+            for (const auto& [a, b] : e->GetExplicitEdges())
+            {
+                flatEdges.push_back(static_cast<double>(a));
+                flatEdges.push_back(static_cast<double>(b));
+            }
+            s.Value("explicitEdges", flatEdges);
+            if (flatEdges.size() % 2 == 0)
+            {
+                std::vector<std::pair<int, int>> edges;
+                edges.reserve(flatEdges.size() / 2);
+                for (size_t i = 0; i + 1 < flatEdges.size(); i += 2)
+                    edges.emplace_back(static_cast<int>(flatEdges[i]),
+                                       static_cast<int>(flatEdges[i + 1]));
+                e->SetExplicitEdges(std::move(edges));
+            }
+
+            std::vector<double> creases(e->GetCreaseValues().begin(), e->GetCreaseValues().end());
+            s.Value("creaseValues", creases);
+            e->SetCreaseValues(std::move(creases));
+            return e;
         }
 
         std::unique_ptr<Entity> ReadSolid(ISerializer& s, Object::ObjectID id)
@@ -928,6 +1005,16 @@ namespace MiniCAD::EntityIO
             uint32_t blk = e.GetBlockId();       s.Value("blockId", blk);
             MLeaderStyle st = e.GetStyle();      Ser::MLeaderStyleObj(s, "style", st);
             uint32_t sid = e.GetStyleId();       s.Value("styleId", sid);
+
+            // 文字位置与附着元数据。**必须写**：漏了它们，一存一开就丢
+            // 文字块左下角 / 附着点 / 附着方式 / 阅读方向 —— 右附着（171=3）的
+            // 文字回来会整体漂移一个文字宽，下划线族的横线会缩回文字内侧。
+            // 读侧对缺失键有兼容默认值（见 ReadMLeader），旧档案不受影响。
+            Point3 textOrigin = e.GetTextOrigin();   Ser::Value(s, "textOrigin", textOrigin);
+            auto anchor = e.GetTextAnchor();         Ser::Enum(s, "textAnchor", anchor);
+            int32_t leftAtt = e.GetTextLeftAttachment();   s.Value("textLeftAttachment", leftAtt);
+            int32_t rightAtt = e.GetTextRightAttachment(); s.Value("textRightAttachment", rightAtt);
+            Vec3 textDir = e.GetTextDirection();     Ser::Value(s, "textDirection", textDir);
         }
         std::unique_ptr<Entity> ReadMLeader(ISerializer& s, Object::ObjectID id)
         {
@@ -956,6 +1043,18 @@ namespace MiniCAD::EntityIO
             uint32_t sid = MLeaderStyle_StandardID; s.Value("styleId", sid);           e->SetStyleId(sid);
             // SetText/SetBlockId 会改写内容类型,最后以档案值为准。
             auto content = MLeaderContent::MText; Ser::Enum(s, "content", content);    e->SetContentType(content);
+
+            // 文字位置与附着元数据。缺失时的默认值要与 MLeaderEntity 的成员默认值一致，
+            // 这样旧档案读出来与当年存进去的观感相同：
+            //   textOrigin      (0,0)      → "未设置"，绘制退回 landing
+            //   anchor          Left       → 普通左附着
+            //   左右附着方式     -1         → "未设置"，按普通族画基线（保持旧行为）
+            //   textDirection   (1,0)      → 实测本图恒值
+            Point3 textOrigin;                    Ser::Value(s, "textOrigin", textOrigin); e->SetTextOrigin(textOrigin);
+            auto anchor = MLeaderTextAnchor::Left; Ser::Enum(s, "textAnchor", anchor);      e->SetTextAnchor(anchor);
+            int32_t leftAtt = -1;                 s.Value("textLeftAttachment", leftAtt);   e->SetTextLeftAttachment(leftAtt);
+            int32_t rightAtt = -1;                s.Value("textRightAttachment", rightAtt); e->SetTextRightAttachment(rightAtt);
+            Vec3 textDir{ 1, 0, 0 };              Ser::Value(s, "textDirection", textDir);  e->SetTextDirection(textDir);
             return e;
         }
 

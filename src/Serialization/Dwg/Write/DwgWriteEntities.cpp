@@ -113,6 +113,8 @@ namespace MiniDWG::DwgWrite
             WriteMLine(*mline);
         else if (const auto* vp = dynamic_cast<const Viewport*>(&entity))
             WriteViewport(*vp);
+        else if (const auto* mesh = dynamic_cast<const Mesh*>(&entity))
+            WriteMesh(*mesh);
         else if (const auto* image = dynamic_cast<const CadWipeoutBase*>(&entity))
             WriteImage(*image);
         else

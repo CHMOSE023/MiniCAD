@@ -41,6 +41,16 @@ namespace MiniCAD
         // 块内成员自己的线型上下文（见 IDrawSink::SetEntityContext）
         void SetEntityContext(const EntityAttr* attr) override     { m_target.SetEntityContext(attr); }
 
+        // 文字测量：裁剪不改变文字尺寸，原样转发（多重引线的基线要用）
+        double MeasureMTextWidth(const std::string& text, uint32_t styleId,
+                                 double height, double boxWidth) override
+        { return m_target.MeasureMTextWidth(text, styleId, height, boxWidth); }
+
+        bool MeasureMTextInkBounds(const std::string& text, uint32_t styleId,
+                                   double height, double boxWidth,
+                                   double& outMinX, double& outMaxX) override
+        { return m_target.MeasureMTextInkBounds(text, styleId, height, boxWidth, outMinX, outMaxX); }
+
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) override
         {
             if (std::max(a.x, b.x) < m_minX || std::min(a.x, b.x) > m_maxX || std::max(a.y, b.y) < m_minY || std::min(a.y, b.y) > m_maxY) return;

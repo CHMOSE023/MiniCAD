@@ -119,6 +119,7 @@ namespace MiniDWG::DwgRead
         std::unique_ptr<CadObject> ReadDimensionAssociation();
         std::unique_ptr<CadObject> ReadMultiLeaderStyle();                   // DwgReadMultiLeader.cpp
         std::unique_ptr<CadObject> ReadMultiLeader(ObjectInfo& info);
+        std::unique_ptr<CadObject> ReadMesh(ObjectInfo& info);               // DwgReadMesh.cpp
         void ReadMLeaderContext(MultiLeaderObjectContextData& context);
         void ReadMLeaderRoot(MultiLeaderObjectContextDataLeaderRoot& root);
         void ReadMLeaderLine(MultiLeaderObjectContextDataLeaderLine& line);

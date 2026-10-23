@@ -89,6 +89,130 @@ namespace MiniCAD
         return result;
     }
 
+    // 多行文字排版后的宽度（最宽一行，世界单位）。
+    // 与 Layout() 共用 BreakLines + GetAdvance × scale × widthFactor ⇒ 量与画一致。
+    double TextLayoutEngine::MeasureWidth(const std::string& text,
+        IFont* font,
+        double height,
+        double widthFactor,
+        double boxWidth)
+    {
+        if (!font || text.empty())
+            return 0.0;
+
+        std::vector<std::string> lines;
+        BreakLines(text, font, height, widthFactor, boxWidth, lines);
+
+        double fontH = font->GetHeight();
+        double scale = height * ((fontH > 0.0) ? 1.0 / fontH : 1.0);
+
+        double maxW = 0.0;
+        for (const auto& line : lines)
+        {
+            double w = 0.0;
+            size_t i = 0;
+            while (i < line.size())
+                w += font->GetAdvance(DecodeOneUtf8(line, i)) * scale * widthFactor;
+            maxW = std::max(maxW, w);
+        }
+        return maxW;
+    }
+
+    // 文字**墨迹**的左右边界（相对排版原点，世界单位）。
+    //
+    // 与 MeasureWidth 的差别很关键：MeasureWidth 是**步进宽度**（advance 之和），
+    // 而字形轮廓通常比步进窄 —— 右留白（right side bearing）实测 45~133 单位，
+    // 相当于 0.11~0.44 个字高。多重引线的基线要"画到文字外侧"，
+    // 用步进边就会留出这段空隙。
+    //
+    // 实现与 Layout() 完全同构：同样的折行、同样的 scale、同样的 cursorX 推进，
+    // 只是把每个字形的轮廓包围盒取出来 ⇒ 量与画必然一致。
+    bool TextLayoutEngine::MeasureInkBounds(const std::string& text,
+        IFont* font,
+        double height,
+        double widthFactor,
+        double boxWidth,
+        double& outMinX,
+        double& outMaxX)
+    {
+        outMinX = 0.0;
+        outMaxX = 0.0;
+        if (!font || text.empty())
+            return false;
+
+        std::vector<std::string> lines;
+        BreakLines(text, font, height, widthFactor, boxWidth, lines);
+
+        double fontH = font->GetHeight();
+        double scale = height * ((fontH > 0.0) ? 1.0 / fontH : 1.0);
+
+        bool any = false;
+        double lo = 1e300, hi = -1e300;
+
+        for (const auto& line : lines)
+        {
+            auto codepoints = DecodeLine(line);
+            double cursorX = 0.0;
+
+            for (auto cp : codepoints)
+            {
+                const Glyph& glyph = font->GetGlyph(cp);
+
+                // 无轮廓（空格等）：不贡献墨迹，但仍要推进
+                if (glyph.Lines.empty() && glyph.Triangles.empty())
+                {
+                    cursorX += font->GetAdvance(cp) * scale * widthFactor;
+                    continue;
+                }
+
+                // 字形轮廓（flatten 后的线段 / 三角形）的 x 包围盒。
+                // 优先用字形自带的 MinX/MaxX；为 0 时按几何现算。
+                double gMinX = glyph.MinX, gMaxX = glyph.MaxX;
+                if (gMinX == 0.0 && gMaxX == 0.0)
+                {
+                    bool first = true;
+                    for (const auto& l : glyph.Lines)
+                    {
+                        const double xs[2] = { l.Start.x, l.End.x };
+                        for (double x : xs)
+                        {
+                            if (first) { gMinX = gMaxX = x; first = false; }
+                            else { gMinX = std::min(gMinX, x); gMaxX = std::max(gMaxX, x); }
+                        }
+                    }
+                    for (const auto& t : glyph.Triangles)
+                    {
+                        const double xs[3] = { t.a.x, t.b.x, t.c.x };
+                        for (double x : xs)
+                        {
+                            if (first) { gMinX = gMaxX = x; first = false; }
+                            else { gMinX = std::min(gMinX, x); gMaxX = std::max(gMaxX, x); }
+                        }
+                    }
+                    if (first)
+                    {
+                        cursorX += font->GetAdvance(cp) * scale * widthFactor;
+                        continue;
+                    }
+                }
+
+                // 与 Layout(): instance.m_position = (cursorX, cursorY)，
+                // 字形局部坐标 × scale × widthFactor 后叠加（此处只看 x）。
+                lo = std::min(lo, cursorX + gMinX * scale * widthFactor);
+                hi = std::max(hi, cursorX + gMaxX * scale * widthFactor);
+                any = true;
+
+                cursorX += font->GetAdvance(cp) * scale * widthFactor;
+            }
+        }
+
+        if (!any)
+            return false;
+        outMinX = lo;
+        outMaxX = hi;
+        return true;
+    }
+
     std::vector<uint32_t> TextLayoutEngine::DecodeLine(const std::string& line)
     {
         std::vector<uint32_t> cps;

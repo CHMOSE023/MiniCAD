@@ -159,6 +159,8 @@ namespace MiniDWG::DxfWrite
             WriteVertex(*vertex);
         else if (const auto* vp = dynamic_cast<const Viewport*>(&entity))
             WriteViewport(*vp);
+        else if (const auto* mesh = dynamic_cast<const Mesh*>(&entity))
+            WriteMesh(*mesh);
         else if (const auto* xline = dynamic_cast<const XLine*>(&entity))
             WriteXLine(*xline);
 

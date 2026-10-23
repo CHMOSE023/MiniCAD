@@ -114,5 +114,24 @@ namespace MiniCAD
             (void)hAlign; (void)vAlign; (void)widthFactor;
             EmitMText(pos, utf8Text, styleId, height, rotation, 0.0, color);
         }
+
+        // ── 文字测量（多重引线的基线要画到文字边缘）─────────────────────────
+        //
+        // 存在意义：**我们的字体度量与 AutoCAD 不同**（实测 TSSD 图纸里我们窄约 1.5 倍），
+        // 所以 AutoCAD 记录的文字块宽不能直接拿来当绘制宽度用。多重引线的基线
+        // 要画到文字边缘，只能量我们自己真实渲染的宽度。
+        //
+        // 必须与 EmitMText 用同一套字体解析 + TextLayoutEngine ⇒ "量的"与"画的"一致。
+        // 返回 0 表示无法测量（调用方应退回按记录值绘制）。
+        virtual double MeasureMTextWidth(const std::string& /*utf8Text*/, uint32_t /*styleId*/,
+                                         double /*height*/, double /*boxWidth*/) { return 0.0; }
+
+        // 量多行文字的**墨迹**左右边界（相对排版原点，世界单位）。
+        // 与 MeasureMTextWidth 的差别：后者是步进宽度（advance 之和，含右侧留白），
+        // 墨迹边界才是肉眼看到的字外沿。要把线"画到文字外侧"必须用这个。
+        // 返回 false 表示取不到（调用方退回 MeasureMTextWidth）。
+        virtual bool MeasureMTextInkBounds(const std::string& /*utf8Text*/, uint32_t /*styleId*/,
+                                           double /*height*/, double /*boxWidth*/,
+                                           double& /*outMinX*/, double& /*outMaxX*/) { return false; }
     };
 } 
