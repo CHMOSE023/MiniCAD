@@ -4,9 +4,11 @@
 #include "Viewport/Viewport.h"
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
+#include "Core/Entity/EntityAttr.hpp"
 #include "Core/Math/Point2.hpp"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -21,6 +23,18 @@ namespace MiniCAD
 
         Picking() = default;
         void Bind(Scene& scene, Viewport& viewport);
+
+        // ── 布局过滤（布局页专用）────────────────────────────────────
+        //
+        // 渲染侧由 Editor::UpdateSceneVertices 的 isShown() 调
+        // Document::IsVisibleInActiveLayout 过滤：布局页只画**本布局**的图纸空间实体。
+        // 拾取侧若不过滤同一条件，就会「渲染看不见、拾取仍命中」——
+        // 用户报的「布局页视口外还能选中隐藏的图元」正是这个：
+        // 图纸空间里属于**别的**布局的实体（LayoutKey 不同），画不出来但点得中。
+        //
+        // 传空函数 = 不过滤（模型页，或未绑文档的场景）。
+        using LayoutFilter = std::function<bool(const EntityAttr&)>;
+        void SetLayoutFilter(LayoutFilter filter) { m_layoutFilter = std::move(filter); }
 
         // 输入入口
         bool OnInput(const InputEvent& e);
@@ -82,6 +96,7 @@ namespace MiniCAD
         {
             m_scene    = nullptr;
             m_viewport = nullptr;
+            m_layoutFilter = nullptr;   // 回调捕获的是 Editor，解绑后不得再调用
             m_index    = {};
             m_indexVersion = ~0ull;
             m_displayVersion = ~0ull;
@@ -142,6 +157,10 @@ namespace MiniCAD
         bool m_dirty = false;
 
         bool m_hoverEnabled = false;   // 悬停高亮开关
+
+        // 布局过滤（布局页）：非空时 IsPickable 先用它排除不属于当前布局的图纸空间实体，
+        // 与渲染侧的 Document::IsVisibleInActiveLayout 保持同一口径
+        LayoutFilter m_layoutFilter;
 
         // 空间索引及其同步的几何版本（UINT64_MAX = 尚未构建）
         SpatialIndex m_index;

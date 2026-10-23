@@ -13,6 +13,26 @@
 #include <atomic>
 namespace MiniCAD
 {
+	// ── 图纸布局 ──────────────────────────────────────────────────────────
+	// 模型空间之外的「页」用纸张范围显示；每张布局对应一个图纸空间 BLOCK_RECORD。
+	//
+	// OwnerKey 是 DXF LAYOUT 的组码 330（owner，指向该布局的图纸空间 BLOCK_RECORD）。
+	// 与 EntityAttr::LayoutKey 配对：图纸空间实体在导入时记录自己的组号 330，
+	// 渲染 / 拾取只显示 `LayoutKey == 当前布局.OwnerKey` 的实体 ——
+	// 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批视口内容）。
+	// 0 表示未提供（模型布局 / 老数据）→ 不做归属过滤（退化为全部显示）。
+	struct DrawingLayout
+	{
+		std::string Name  = "模型";
+		bool        Model = true;
+		int         Order = 0;
+		double      MinX = 0.0;
+		double      MinY = 0.0;
+		double      MaxX = 420.0;      // A3 横向，与 AutoCAD 默认图纸相近
+		double      MaxY = 297.0;
+		uint64_t    OwnerKey = 0;      // LAYOUT 组码 330
+	};
+
 	class ISerializer;
 	class InsertEntity;
 	class Scene 
@@ -44,6 +64,13 @@ namespace MiniCAD
 		// ── 块表（BLOCK_RECORD）─────────────────────────────────
 		BlockTable&       GetBlockTable()       { return m_blockTable; }
 		const BlockTable& GetBlockTable() const { return m_blockTable; }
+
+		// ── 图纸布局（LAYOUT）────────────────────────────────────
+		// 至少一项（模型页）。SetLayouts 总会保证第一项是模型页。
+		const std::vector<DrawingLayout>& Layouts() const { return m_layouts; }
+		void SetLayouts(std::vector<DrawingLayout> layouts);
+		// 返回模型页的索引（通常为 0）
+		int  ModelLayoutIndex() const;
 
 		// ── 线型表（LTYPE）──────────────────────────────────────
 		LineTypeTable&       GetLineTypeTable()       { return m_lineTypeTable; }
@@ -172,6 +199,7 @@ namespace MiniCAD
 		TextStyleID    m_currentTextStyle = TextStyleTable::StandardID;   // 当前文字样式(TEXTSTYLE)
 		MLineStyleTable m_mlineStyleTable; // 多线样式表
 		MLineStyleID    m_currentMLineStyle = MLineStyleTable::StandardID;   // 当前多线样式(CMLSTYLE)
+		std::vector<DrawingLayout> m_layouts{ DrawingLayout{} };  // 图纸布局，第 0 项为模型页
 		LineTypeID    m_currentLineType   = LineTypeTable::ByLayerID;  // 当前线型(CELTYPE)
 		Lineweight    m_currentLineweight = Lineweight::ByLayer;       // 当前线宽(CELWEIGHT)
 		int           m_pointDisplayMode   = 0;      // $PDMODE：0 = 一个像素小点（AutoCAD 默认）

@@ -39,6 +39,7 @@ namespace MiniCAD
 {
     class Document;
     class Entity;
+    class ViewportEntity;
     class DrawContext;
     namespace WipeClip { class Batch; }
 
@@ -253,6 +254,12 @@ namespace MiniCAD
         TextStyleRequest&       GetTextStyleRequest()       { return m_textStyleRequest; }
         const TextStyleRequest& GetTextStyleRequest() const { return m_textStyleRequest; }
         void CloseTextStyle() { m_textStyleRequest = {}; }
+
+        // 多线样式（MLSTYLE）对话框：改动实时写进样式表，关闭后新建的多线用它
+        struct MLineStyleRequest { bool Active = false; };
+        MLineStyleRequest&       GetMLineStyleRequest()       { return m_mlineStyleRequest; }
+        const MLineStyleRequest& GetMLineStyleRequest() const { return m_mlineStyleRequest; }
+        void CloseMLineStyle() { m_mlineStyleRequest = {}; }
         void SubmitHatch();                                  // 关闭对话框,按当前设置拾取内部点
         void CancelHatch();
 
@@ -490,6 +497,7 @@ namespace MiniCAD
         bool               m_hatchDialogEnabled = false;
         double             m_textHeight = 2.5;
         TextStyleRequest   m_textStyleRequest;
+        MLineStyleRequest  m_mlineStyleRequest;
         ImageRequest       m_imageRequest;
 
         // 鼠标位置（每帧更新）
@@ -550,6 +558,8 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_dynOrder;
 
         void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
+        // 布局页：把一个视口「看见」的模型空间内容按视口变换画进 ctx（带包围盒预剔除）
+        void ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx);
         void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
         void RebuildDynamicStream(DrawContext& ctx);
         void UpdateSceneStats();

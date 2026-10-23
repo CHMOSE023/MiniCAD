@@ -496,6 +496,38 @@ namespace MiniCAD
                 const double u = u0 + (u1 - u0) * (static_cast<double>(k) / N);
                 pts.push_back(EvaluateNURBS(u));
             }
+
+            // ── 兜底：节向量异常时改用控制点折线 ────────────────────────────
+            //
+            // NURBS 求值要求节向量**非递减**且首尾各重复 degree+1 次。实测有图纸
+            // （「B地块地下室」图框里的 Hatch 边界样条）存着 `[-1,-1,0,0,0,0,…]`，
+            // 开头只重复 2 次（degree=3 需要 4 次），基函数在端点除到 0 长度区间，
+            // 求值退化到原点 —— 整条样条从 (0,0) 起，包围盒横跨 1700 万，
+            // 把图框块的包围盒撑得比布局大 27 倍，布局页内容因此被压到角落。
+            //
+            // 判据：求值结果必须落在控制点包围盒（放宽一半）内。跑出去说明节向量有病，
+            // 直接拿控制点当折线 —— 形状略糙，但位置绝对正确。
+            if (!pts.empty())
+            {
+                double x0 = ControlPoints[0].x, x1 = x0;
+                double y0 = ControlPoints[0].y, y1 = y0;
+                for (const auto& c : ControlPoints)
+                {
+                    x0 = std::min(x0, c.x); x1 = std::max(x1, c.x);
+                    y0 = std::min(y0, c.y); y1 = std::max(y1, c.y);
+                }
+                const double padX = std::max((x1 - x0) * 0.5, 1e-6);
+                const double padY = std::max((y1 - y0) * 0.5, 1e-6);
+                for (const auto& q : pts)
+                {
+                    if (q.x < x0 - padX || q.x > x1 + padX ||
+                        q.y < y0 - padY || q.y > y1 + padY)
+                    {
+                        pts.assign(ControlPoints.begin(), ControlPoints.end());
+                        break;
+                    }
+                }
+            }
             return pts;
         }
 

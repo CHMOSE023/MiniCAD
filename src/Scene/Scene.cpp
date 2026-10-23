@@ -23,6 +23,30 @@ namespace MiniCAD
 		ins.SetBlock(m_blockTable.Find(ins.GetBlockId()));
 	}
 
+	// ── 图纸布局 ──────────────────────────────────────────────────────────
+	// 保证：至少一项，且第一项是模型页。
+	// 导入时 LAYOUT 表可能只给出图纸页（模型页在 DXF 里不写成 LAYOUT 实体），
+	// 所以由这里补上，而不是让每个调用方各自判断。
+	void Scene::SetLayouts(std::vector<DrawingLayout> layouts)
+	{
+		m_layouts = std::move(layouts);
+		if (m_layouts.empty())
+			m_layouts.push_back(DrawingLayout{});
+		// 第一项必须是模型页：「模型页 = 索引 0」这条约定在
+		// Document::SetActiveLayout 与界面标签里都用到了，在这里统一保证
+		if (!m_layouts.front().Model)
+			m_layouts.insert(m_layouts.begin(), DrawingLayout{});
+		MarkDisplayDirty();   // 布局只影响「画什么」，不是几何变化
+	}
+
+	int Scene::ModelLayoutIndex() const
+	{
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+			if (m_layouts[i].Model)
+				return static_cast<int>(i);
+		return 0;
+	}
+
 	bool Scene::IsEntityLocked(const Object& obj) const
 	{
 		if (!obj.IsKindOf<Entity>())

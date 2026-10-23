@@ -142,7 +142,10 @@ namespace MiniCAD::WipeClip
             return (s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0);
         }
 
-        inline void ClipTri(const Poly& poly, const Vertex_P3_C4 t[3], int depth, std::vector<Vertex_P3_C4>& out)
+        // keepInside = false（默认）：保留多边形**外**的部分（挖洞）
+        // keepInside = true        ：保留多边形**内**的部分（布局视口裁剪）
+        inline void ClipTri(const Poly& poly, const Vertex_P3_C4 t[3], int depth,
+                            std::vector<Vertex_P3_C4>& out, bool keepInside = false)
         {
             const Math::Float3 v[3] = { t[0].pos, t[1].pos, t[2].pos };
             const bool partial = TriTouchesBoundary(poly, v);
@@ -151,7 +154,7 @@ namespace MiniCAD::WipeClip
             {
                 const double cx = (v[0].x + v[1].x + v[2].x) / 3.0;
                 const double cy = (v[0].y + v[1].y + v[2].y) / 3.0;
-                if (!poly.Contains(cx, cy))
+                if (poly.Contains(cx, cy) == keepInside)
                     out.insert(out.end(), t, t + 3);
                 return;
             }
@@ -169,10 +172,10 @@ namespace MiniCAD::WipeClip
             const Vertex_P3_C4 c1[3] = { m01, t[1], m12 };
             const Vertex_P3_C4 c2[3] = { m20, m12, t[2] };
             const Vertex_P3_C4 c3[3] = { m01, m12, m20 };
-            ClipTri(poly, c0, depth - 1, out);
-            ClipTri(poly, c1, depth - 1, out);
-            ClipTri(poly, c2, depth - 1, out);
-            ClipTri(poly, c3, depth - 1, out);
+            ClipTri(poly, c0, depth - 1, out, keepInside);
+            ClipTri(poly, c1, depth - 1, out, keepInside);
+            ClipTri(poly, c2, depth - 1, out, keepInside);
+            ClipTri(poly, c3, depth - 1, out, keepInside);
         }
 
         // ── 凸多边形片段（填充三角形被凸遮罩切开后的各块，仍是凸的）──
@@ -272,7 +275,10 @@ namespace MiniCAD::WipeClip
 
     // 线段流（每两个顶点一条）：删去落在多边形内的部分，穿过边界的线段被截断。
     // 只处理下标 from 起的顶点（from 为 2 的倍数）；与多边形外包框都不相交时不重建顶点流
-    inline void ClipLines(std::vector<Vertex_P3_C4>& v, const Poly& poly, size_t from = 0)
+    // keepInside = false（默认）：挖掉多边形内部的线段（区域覆盖）
+    // keepInside = true        ：只保留多边形内部的线段（布局视口裁剪）
+    inline void ClipLines(std::vector<Vertex_P3_C4>& v, const Poly& poly, size_t from = 0,
+                          bool keepInside = false)
     {
         if (!poly.Valid() || v.size() < from + 2) return;
 
@@ -282,8 +288,29 @@ namespace MiniCAD::WipeClip
                                     std::max(a.pos.x, b.pos.x), std::max(a.pos.y, b.pos.y));
         };
         size_t first = from;
-        while (first + 1 < v.size() && !overlaps(v[first], v[first + 1])) first += 2;
-        if (first + 1 >= v.size()) return;
+        if (!keepInside)
+        {
+            // 挖洞：跳过开头不重叠的线段（它们本来就不受这块区域覆盖影响）
+            while (first + 1 < v.size() && !overlaps(v[first], v[first + 1])) first += 2;
+            if (first + 1 >= v.size()) return;
+        }
+        else
+        {
+            // 保留内部：不重叠的线段要直接丢掉。先原地压缩一遍，
+            // 只留下与矩形包围盒有交叠的线段，后面再按多边形边界精确切。
+            std::vector<Vertex_P3_C4> kept;
+            kept.reserve(v.size() - from);
+            for (size_t k = from; k + 1 < v.size(); k += 2)
+                if (overlaps(v[k], v[k + 1]))
+                {
+                    kept.push_back(v[k]);
+                    kept.push_back(v[k + 1]);
+                }
+            v.resize(from);
+            v.insert(v.end(), kept.begin(), kept.end());
+            if (v.size() < from + 2) return;
+            // 压缩后没有需要再判断的前缀，统一从 from 开始按多边形精确切
+        }
 
         std::vector<Vertex_P3_C4> out;
         out.reserve(v.size() - first);
@@ -324,7 +351,10 @@ namespace MiniCAD::WipeClip
             {
                 if (ts[i + 1] - ts[i] < 1e-9) continue;
                 const double tm = (ts[i] + ts[i + 1]) * 0.5;
-                if (poly.Contains(a.pos.x + rx * tm, a.pos.y + ry * tm)) continue;
+                const bool inside = poly.Contains(a.pos.x + rx * tm, a.pos.y + ry * tm);
+                // keepInside=false（默认）= 挖掉多边形内部（区域覆盖的语义）
+                // keepInside=true        = 只保留多边形内部（布局视口裁剪的语义）
+                if (inside != keepInside) continue;
                 out.push_back(i == 0 ? a : at(ts[i]));
                 out.push_back(i + 2 == ts.size() ? b : at(ts[i + 1]));
             }
@@ -335,7 +365,11 @@ namespace MiniCAD::WipeClip
 
     // 填充三角形流（每三个顶点一个）：删去落在多边形内的部分
     // 只处理下标 from 起的顶点（from 为 3 的倍数）
-    inline void ClipFills(std::vector<Vertex_P3_C4>& v, const Poly& poly, int maxDepth = 5, size_t from = 0)
+    //
+    // keepInside = false（默认）：挖掉多边形内部（区域覆盖）
+    // keepInside = true        ：只保留多边形内部（布局视口裁剪）
+    inline void ClipFills(std::vector<Vertex_P3_C4>& v, const Poly& poly, int maxDepth = 5,
+                          size_t from = 0, bool keepInside = false)
     {
         if (!poly.Valid() || v.size() < from + 3) return;
 
@@ -348,8 +382,24 @@ namespace MiniCAD::WipeClip
             return poly.BoxOverlaps(x0, y0, x1, y1);
         };
         size_t first = from;
-        while (first + 2 < v.size() && !overlaps(&v[first])) first += 3;
-        if (first + 2 >= v.size()) return;
+        if (!keepInside)
+        {
+            // 挖洞：跳过开头不重叠的三角形（不受这块区域覆盖影响）
+            while (first + 2 < v.size() && !overlaps(&v[first])) first += 3;
+            if (first + 2 >= v.size()) return;
+        }
+        else
+        {
+            // 保留内部：不重叠的三角形直接丢掉
+            std::vector<Vertex_P3_C4> kept;
+            kept.reserve(v.size() - from);
+            for (size_t k = from; k + 2 < v.size(); k += 3)
+                if (overlaps(&v[k]))
+                    kept.insert(kept.end(), &v[k], &v[k] + 3);
+            v.resize(from);
+            v.insert(v.end(), kept.begin(), kept.end());
+            if (v.size() < from + 3) return;
+        }
 
         std::vector<Vertex_P3_C4> out;
         out.reserve(v.size() - first);
@@ -357,12 +407,36 @@ namespace MiniCAD::WipeClip
         {
             const Vertex_P3_C4* t = &v[k];
             if (!overlaps(t))
-                out.insert(out.end(), t, t + 3);
+            {
+                if (!keepInside)
+                    out.insert(out.end(), t, t + 3);       // 挖洞：区外原样保留
+                // 保留内部：区外的丢掉
+            }
             else
-                detail::ClipTri(poly, t, maxDepth, out);
+                detail::ClipTri(poly, t, maxDepth, out, keepInside);
         }
         v.resize(first);
         v.insert(v.end(), out.begin(), out.end());
+    }
+
+    // 点流（每个顶点一个点）：keepInside=false 删去落在多边形内的点（区域覆盖）；
+    // keepInside=true 只保留落在多边形内的点（布局视口裁剪）。只处理下标 from 起的顶点。
+    inline void ClipPoints(std::vector<Vertex_P3_C4>& v, const Poly& poly, size_t from = 0,
+                           bool keepInside = false)
+    {
+        if (!poly.Valid() || v.size() <= from) return;
+        size_t w = from;
+        for (size_t k = from; k < v.size(); ++k)
+        {
+            const double x = v[k].pos.x, y = v[k].pos.y;
+            const bool inside = poly.Contains(x, y);
+            // 保留条件：keepInside 时保留内部的点，否则保留外部的点
+            if (inside == keepInside)
+            {
+                v[w++] = v[k];
+            }
+        }
+        v.resize(w);
     }
 
     // 纹理文字流（每个字符 6 个顶点）：字符中心落在多边形内则整个字符删去
@@ -389,6 +463,70 @@ namespace MiniCAD::WipeClip
                 out.insert(out.end(), v.begin() + k, v.begin() + k + 6);
         v.resize(first);
         v.insert(v.end(), out.begin(), out.end());
+    }
+
+    // ── 字形实例流的视口裁剪（布局页专用）────────────────────────────────
+    //
+    // 文字在桌面 / 网页两版都走**字形实例**（`GlyphInstance`，见 GlyphInstancing.hpp）：
+    // 每个字只记一条「局部 → 世界的仿射变换 + 颜色」，字形网格在 GlyphMeshLibrary 里
+    // 每个字形只存一份。实例流与线段 / 填充是**分开提交**的，因此必须单独裁。
+    //
+    // ⚠ 这是「布局页视口外图元依然显示」的一个真实来源：
+    //   ComposeModelIntoViewport 此前只裁了线 / 填充 / 点 / 纹理文字四路，
+    //   字形实例一路**完全没裁** —— 模型空间的文字（大图纸里往往是最大的一类）
+    //   整行溢出到视口外的纸面上，看起来就是「没经过视口裁剪」。
+    //
+    // keepInside = true（默认）：只保留落在多边形**内**的实例（布局视口裁剪）；
+    // keepInside = false       ：删去落在多边形内的实例（与区域覆盖同语义，备用）。
+    //
+    // 跨边界的字**不切碎**：按实例原点（tx, ty）落在框内 / 框外整体取舍，
+    // 与 ClipTexts「按字符中心整体取舍」是同一套语义。一行文字横跨视口边界时，
+    // 框外的那几个字消失、框内的照常显示 —— 这正是 ClipTexts 对纹理文字的行为，
+    // 两路文字因此观感一致（不会出现「矢量文字被整行藏掉、纹理文字却被切开」）。
+    // 只处理下标 from 起的实例。
+    inline void ClipGlyphInstances(std::vector<GlyphInstance>& g, const Poly& poly,
+                                   size_t from = 0, bool keepInside = true)
+    {
+        if (!poly.Valid() || g.size() <= from) return;
+        size_t w = from;
+        for (size_t k = from; k < g.size(); ++k)
+        {
+            const bool inside = poly.Contains(g[k].tx, g[k].ty);
+            if (inside == keepInside)
+            {
+                if (w != k) g[w] = g[k];
+                ++w;
+            }
+        }
+        g.resize(w);
+    }
+
+    // ── 光栅图像流的视口裁剪（布局页专用）────────────────────────────────
+    //
+    // 图像（IMAGE）与线段 / 填充 / 文字一样是**单独提交**的一路（Viewport 里
+    // 逐个 SubmitImage）。ComposeModelIntoViewport 若不裁它，贴图就整张溢出到
+    // 视口外的纸面上 —— 与字形实例同属「漏了一路」的问题。
+    //
+    // 按**中心点**整体取舍（与 ClipDrawSink::EmitImage 的既有语义一致）：
+    // 跨边界的图像不切碎，中心在框内就整张画、在框外就整张丢。
+    // 只处理下标 from 起的图像。
+    inline void ClipImages(std::vector<ImageDraw>& v, const Poly& poly,
+                           size_t from = 0, bool keepInside = true)
+    {
+        if (!poly.Valid() || v.size() <= from) return;
+        size_t w = from;
+        for (size_t k = from; k < v.size(); ++k)
+        {
+            // 两个三角形共 6 个顶点，中心取对角顶点 (0, 2) 的中点
+            const double cx = (static_cast<double>(v[k].Verts[0].pos.x) + v[k].Verts[2].pos.x) * 0.5;
+            const double cy = (static_cast<double>(v[k].Verts[0].pos.y) + v[k].Verts[2].pos.y) * 0.5;
+            if (poly.Contains(cx, cy) == keepInside)
+            {
+                if (w != k) v[w] = std::move(v[k]);
+                ++w;
+            }
+        }
+        v.resize(w);
     }
 
     // 批量裁剪：区域覆盖只裁剪在它之前画的内容。逐个遮罩调用上面的函数时，每个遮罩都要把其后的整段顶点流

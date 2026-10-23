@@ -8,8 +8,10 @@ namespace MiniCAD::Nodes { class Graph; }
 #include "Scene/LayerManager.h"
 #include "Document/CommandStack/CommandStack.h"
 #include "Viewport/Camera.h"
+#include "Core/Entity/EntityAttr.hpp"
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace MiniCAD
 {
@@ -73,6 +75,20 @@ namespace MiniCAD
 		const CameraState& GetCameraState() const    { return m_cameraState; }
 		void SetCameraState(const CameraState& s)    { m_cameraState = s; }
 
+		// ── 图纸布局（LAYOUT / 图纸空间）─────────────────────────
+		// 当前活动布局的索引（0 = 模型页，Scene::SetLayouts 保证）
+		int  ActiveLayout() const { return m_activeLayout; }
+		// 当前布局是否为图纸空间（非模型页）
+		bool ActiveLayoutIsPaper() const;
+		// 当前布局的图纸空间归属键（DrawingLayout::OwnerKey）；模型页返回 0 = 不过滤
+		uint64_t ActiveLayoutOwnerKey() const;
+		// 切换布局：保存旧布局的视图、换新布局的视图、清选择集。
+		// 相机状态由调用方使用（Document 不持有 Viewport），返回值是切换后应采用的相机状态
+		bool SetActiveLayout(int index, CameraState& camera);
+		// 实体是否应在**当前布局**下显示。
+		// 模型页：显示模型空间实体；布局页：显示本布局的图纸空间实体。
+		bool IsVisibleInActiveLayout(const EntityAttr& attr) const;
+
 		// ── 节点图（参数化定义，docs/NodeGraph/PLAN.md）──────────────
 		// 每个文档一张，随 .mcad / JSON 保存（DWG / DXF 不保存）。修改后由编辑器调用 MarkDirty
 		Nodes::Graph&       GetNodeGraph();
@@ -95,5 +111,15 @@ namespace MiniCAD
 		FontSystem*    m_fontSystem = nullptr;
 		CameraState    m_cameraState;
 		std::unique_ptr<Nodes::Graph> m_nodeGraph;
+
+		// ── 布局状态 ──────────────────────────────────────────
+		int m_activeLayout = 0;
+		// 每张布局各自的视图（切换布局时保存 / 恢复，避免来回切换后视角乱跳）
+		struct LayoutView
+		{
+			bool         Valid = false;
+			CameraState  Camera;
+		};
+		std::vector<LayoutView> m_layoutViews;
 	};
 }

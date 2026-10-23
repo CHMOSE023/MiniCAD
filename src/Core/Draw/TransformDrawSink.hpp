@@ -73,6 +73,38 @@ namespace MiniCAD
             m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, hAlign, vAlign, widthFactor, color);
         }
 
+        // ── 点 ────────────────────────────────────────────────────────
+        //
+        // ⚠ 这几个**必须转发**，否则块内 / 视口内的点会静默消失：
+        //   基类默认实现是空函数，不转发就等于什么都没画。
+        //   实测「B地块地下室」图纸：模型空间有 3 万个 POINT，布局页里一个都看不到。
+        void DrawPoint(const Math::Point3& p, const Math::Color4& color, bool isOverlay) override
+        {
+            m_target.DrawPoint(m_xform * p, color, isOverlay);
+        }
+
+        // 点样式（$PDMODE/$PDSIZE）是全局设置，直接透传查询
+        bool GetPointStyle(int& outPdMode, double& outPdSize) const override
+        {
+            return m_target.GetPointStyle(outPdMode, outPdSize);
+        }
+
+        // ── 图像 ──────────────────────────────────────────────────────
+        bool EmitImage(const std::string& path, const std::array<Math::Point3, 4>& corners) override
+        {
+            std::array<Math::Point3, 4> c{ m_xform * corners[0], m_xform * corners[1],
+                                           m_xform * corners[2], m_xform * corners[3] };
+            return m_target.EmitImage(path, c);
+        }
+
+        // ── 视图相关量 ────────────────────────────────────────────────
+        //
+        // 线宽 / 虚线是按屏幕像素烘焙进世界顶点的，必须有真实像素比例。
+        // 不转发的话拿到 0，块内的粗线会退化成 1px、虚线判定也会出错。
+        double GetWorldPerPixel() const override   { return m_target.GetWorldPerPixel(); }
+        double GetViewportHeightPx() const override { return m_target.GetViewportHeightPx(); }
+        void   MarkViewDependent() override        { m_target.MarkViewDependent(); }
+
     private:
         IDrawSink&  m_target;
         Math::Mat4  m_xform;
