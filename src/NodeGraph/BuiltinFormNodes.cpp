@@ -164,7 +164,17 @@ namespace MiniCAD::Nodes
             const auto profile = Geo::ProfileOf(*a.Curve(0));
             if (!profile)
                 return a.Error("轮廓不是闭合的水平曲线");
-            if (a.Vector(2).Length() < 1e-12)
+            // 接了轴线时轴点、轴方向取这条直线（起点 → 终点）
+            Math::Vec3 origin = a.Vector(1), dir = a.Vector(2);
+            if (a.Has(6))
+            {
+                const auto line = Geo::NurbsOf(*a.Curve(6));
+                if (!line || !IsStraight(*line))
+                    return a.Error("轴线应为直线");
+                origin = V(line->ControlPoints.front());
+                dir    = V(line->ControlPoints.back()) - origin;
+            }
+            if (dir.Length() < 1e-12)
                 return a.Error("轴方向不能为零向量");
             double start = a.Number(4), end = a.Number(3);
             if (end < start)
@@ -174,10 +184,10 @@ namespace MiniCAD::Nodes
                 return a.Error("起始角度与结束角度不能相同");
             if (sweep > 360.0 + 1e-9)
                 return a.Error("角度范围不能超过 360°");
-            const Math::Vec3 axis = a.Vector(2).Normalized();
-            Solid::BodyPtr b = k->Revolve(*profile, P(a.Vector(1)), axis, std::min(sweep, 360.0));
+            const Math::Vec3 axis = dir.Normalized();
+            Solid::BodyPtr b = k->Revolve(*profile, P(origin), axis, std::min(sweep, 360.0));
             if (b && std::abs(start) > 1e-12 && sweep < 360.0 - 1e-9)
-                b = k->Transform(b, Geo::RotationAbout(P(a.Vector(1)), axis, start * kDeg));
+                b = k->Transform(b, Geo::RotationAbout(P(origin), axis, start * kDeg));
             OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 5)), "旋转", isVoid);
         }
 
@@ -326,7 +336,8 @@ namespace MiniCAD::Nodes
                 t.Description = "闭合轮廓绕轴从起始角度旋转到结束角度（度，范围 360 为整圈）；轴不能穿过轮廓" + voidTip;
                 t.Keywords    = isVoid ? "void revolve 空心旋转" : "旋转成体 revolve 回转";
                 t.Inputs      = { In("轮廓", DataType::Curve), In("轴点", DataType::Vector, Vec(0, 0, 0)), In("轴方向", DataType::Vector, Vec(0, 1, 0)),
-                                  In("结束角度", DataType::Number, 360.0), In("起始角度", DataType::Number, 0.0), plane };
+                                  In("结束角度", DataType::Number, 360.0), In("起始角度", DataType::Number, 0.0), plane,
+                                  Optional(In("轴线", DataType::Curve, {}, "直线（如引用曲线选中的线）：接上时代替轴点、轴方向，方向为起点 → 终点")) };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveRevolve(a, isVoid); };
                 break;
             case Form::Sweep:

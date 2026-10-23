@@ -666,6 +666,14 @@ namespace
         f.Eval();
         const AABB rvb = bounds(rev);
         Check(f.Ok(rev) && Near(f.Volume(rev), kPi * (49 - 25) * 2 / 4), "N7 revolve: 90° to 180° about Y");
+        // 轴线接直线：x = 2 处平行 Y 的线代替轴点、轴方向，截面到轴的距离 3 ~ 5
+        const NodeId axisLine = Add(g, "curve.line"), rev2 = Add(g, "solid.revolve");
+        g.SetInputValue(axisLine, 0, Value(Math::Vec3{ 2, 0, 0 }));
+        g.SetInputValue(axisLine, 1, Value(Math::Vec3{ 2, 5, 0 }));
+        g.Connect({ ring, 0, rev2, 0 });
+        g.Connect({ axisLine, 0, rev2, 6 });
+        f.Eval();
+        Check(f.Ok(rev2) && Near(f.Volume(rev2), kPi * (25 - 9) * 2), "N7 revolve: axis from a line");
 
         // 放样：竖直路径、空间螺旋线、水平路径转 45°
         const NodeId c1 = Add(g, "curve.circle"), vline = Add(g, "curve.line"), sw = Add(g, "solid.sweep");
