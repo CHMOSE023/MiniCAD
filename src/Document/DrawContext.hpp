@@ -338,6 +338,44 @@ namespace MiniCAD
         // --- 矢量多行文字（SHX / TTF 路径）---
         // 字形线段直接输出到 m_verts（场景几何），不走纹理。
 
+        // 量多行文字排版后的宽度（最宽一行，世界单位）。
+        // 与 EmitMText 用**同一套**字体解析 + TextLayoutEngine ⇒ 量与画一致。
+        double MeasureMTextWidth(const std::string& utf8Text,
+                                 uint32_t           styleId,
+                                 double             height,
+                                 double             boxWidth) override
+        {
+            if (utf8Text.empty() || !m_fontResolver)
+                return 0.0;
+
+            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            if (!rs.Font)
+                return 0.0;
+
+            TextLayoutEngine layout;
+            return layout.MeasureWidth(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth);
+        }
+
+        // 量文字的**墨迹**左右边界（相对排版原点）。与 EmitMText 同一套字体与规则。
+        bool MeasureMTextInkBounds(const std::string& utf8Text,
+                                   uint32_t           styleId,
+                                   double             height,
+                                   double             boxWidth,
+                                   double&            outMinX,
+                                   double&            outMaxX) override
+        {
+            if (utf8Text.empty() || !m_fontResolver)
+                return false;
+
+            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            if (!rs.Font)
+                return false;
+
+            TextLayoutEngine layout;
+            return layout.MeasureInkBounds(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth,
+                                           outMinX, outMaxX);
+        }
+
         void EmitMText(const Math::Point3& pos,
                        const std::string&  utf8Text,
                        uint32_t            styleId,

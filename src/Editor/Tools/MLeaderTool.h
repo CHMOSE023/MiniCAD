@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Scene/Scene.h"
 #include "Editor/Tools/ITool.h"
 #include "Editor/EditorContext.h"
@@ -177,8 +177,27 @@ namespace MiniCAD
             for (const auto& a : m_arrows)
                 ent->AddLeaderLine({ a }, /*arrow=*/true);   // 单点引线:箭头尖端 → dogleg 起点
             ent->SetLanding(landing);
-            ent->SetDoglegDir(DoglegDir(landing));
+            const Math::Vec3 dir = DoglegDir(landing);
+            ent->SetDoglegDir(dir);
             ent->SetText(m_defaultText);                      // 默认注释(同时置内容为 MText)
+
+            // 文字位置与附着元数据。**必须给初始值**，否则新建的多重引线没有
+            // ContentBasePoint，绘制时只能退回 landing + doglegDir×LandingGap 估算 ——
+            // 与 DWG 导入来的那条路径不一致（实测导入值在文字块左下角）。
+            //
+            //   textOrigin = dogleg 起点 + dir × LandingGap
+            //     （dir 由内容指向引线，文字落在基线的内容侧）
+            //   anchor  = Left：文字从左缘向右展开（与 textOrigin 语义一致）
+            //   attachment 左右都留 -1 = "未设置" ⇒ 按普通族画基线（只补到近侧边）
+            //   direction   = (1,0)：阅读方向，只用于无损写回，不参与绘制
+            const Math::Point3 doglegStart = LandingToDoglegStart(landing);
+            ent->SetTextOrigin({ doglegStart.x + dir.x * m_style.LandingGap,
+                                 doglegStart.y + dir.y * m_style.LandingGap,
+                                 doglegStart.z });
+            ent->SetTextAnchor(MLeaderTextAnchor::Left);
+            ent->SetTextLeftAttachment(-1);
+            ent->SetTextRightAttachment(-1);
+            ent->SetTextDirection({ 1.0, 0.0, 0.0 });
 
             m_ctx->ApplyCurrentAttr(*ent);
             auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));

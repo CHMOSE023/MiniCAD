@@ -73,6 +73,26 @@ namespace MiniCAD
             m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, hAlign, vAlign, widthFactor, color);
         }
 
+        // 块内文字：宽度也要按插入变换缩放，否则块内多重引线的基线与文字对不上
+        double MeasureMTextWidth(const std::string& utf8Text, uint32_t styleId,
+                                 double height, double boxWidth) override
+        {
+            return m_target.MeasureMTextWidth(utf8Text, styleId, height * m_scale, boxWidth * m_scale)
+                   * m_scale;
+        }
+
+        bool MeasureMTextInkBounds(const std::string& utf8Text, uint32_t styleId,
+                                   double height, double boxWidth,
+                                   double& outMinX, double& outMaxX) override
+        {
+            if (!m_target.MeasureMTextInkBounds(utf8Text, styleId, height * m_scale,
+                                                boxWidth * m_scale, outMinX, outMaxX))
+                return false;
+            outMinX *= m_scale;
+            outMaxX *= m_scale;
+            return true;
+        }
+
         // ── 点 ────────────────────────────────────────────────────────
         //
         // ⚠ 这几个**必须转发**，否则块内 / 视口内的点会静默消失：

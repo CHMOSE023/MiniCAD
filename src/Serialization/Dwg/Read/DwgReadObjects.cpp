@@ -397,6 +397,16 @@ namespace MiniDWG::DwgRead
         if (n == "XRECORD") return ReadXRecord();
         if (n == "ARC_DIMENSION") return ReadDimensionArc(info);
         if (n == "MLEADERSTYLE") return ReadMultiLeaderStyle();
+        if (n == "MESH")
+        {
+            // 细分网格。读不出来（版本不认识 / 数据不合规范）时回退到"原样保留"，
+            // 免得既显示不出又丢数据（与下面 MULTILEADER 同样的处理）。
+            if (auto mesh = ReadMesh(info))
+                return mesh;
+            BeginObject(m_map[m_currentHandle].Offset);
+            info = ObjectInfo{};
+            return ReadUnknown(n, 0, true, info);
+        }
         if (n == "MULTILEADER")
         {
             if (auto ml = ReadMultiLeader(info))

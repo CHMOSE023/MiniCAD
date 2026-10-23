@@ -35,6 +35,32 @@ namespace MiniCAD
         MText = 2
     };
 
+    // 文字附着点(DXF MULTILEADER context 组码 171)：1=左, 2=中, 3=右。
+    //
+    // 注意：**绘制不依赖它**。实测 20/20（`1#、2#厂房电气_t3.dwg`）发现
+    // `ContentBasePoint`（组码 10）**恒为文字块的左下角**，与附着点无关：
+    //   171=3(Right) 时 CBP.x = TextLocation.x − 字宽
+    //   171=1(Left)  时 CBP.x = TextLocation.x − LandingGap
+    //   两种情况 CBP.y 都 == 引线 ConnectionPoint.y
+    // 所以画文字直接用 ContentBasePoint（= m_textOrigin）即可，不需要量字宽；
+    // 附着点只用于**写出时无损回填** 171。
+    enum class MLeaderTextAnchor : uint8_t
+    {
+        Left   = 1,
+        Center = 2,
+        Right  = 3
+    };
+
+    // 文字附着方式(DXF MULTILEADER context 组码 174/175 = TextAttachmentType)。
+    // 这里只关心"是否属于**下划线族**"：
+    //     5 = BottomLine                            （文字底线）
+    //     6 = BottomOfTopLineUnderlineBottomLine    （首行底线 + 末行下划线）
+    //     7 = BottomOfTopLineUnderlineTopLine
+    //     8 = BottomofTopLineUnderlineAll
+    // 这四种 AutoCAD 都会沿文字下沿画一条**通长下划线**，多重引线的基线
+    // （dogleg + landing）就是这条下划线的一部分。
+    inline constexpr bool IsUnderlineAttachment(int v) { return v >= 5 && v <= 8; }
+
     // 多重引线实体(对应 DXF MULTILEADER / MLEADER)。多条引线汇聚到公共基线(landing),
     // 基线再经 dogleg 折弯连到内容(MTEXT 或块)。外观取自引用的 MLEADERSTYLE。
     class MLeaderEntity : public Entity
@@ -68,6 +94,46 @@ namespace MiniCAD
         const Math::Vec3& GetDoglegDir() const { return m_doglegDir; }
         void SetDoglegDir(const Math::Vec3& d) { m_doglegDir = d.Normalized(); }
 
+        // ── 文字块左下角（AutoCAD 的 ContentBasePoint，组码 10）──────────
+        // **绘制就用它**，不需要量字宽：
+        //   实测 20/20（`1#、2#厂房电气_t3.dwg`）ContentBasePoint 恒为文字块的
+        //   左下角，且 .y 恒等于引线的 ConnectionPoint.y（即 dogleg 所在的水平线）：
+        //     171=1(Left)  时 CBP.x = doglegEnd.x                （文字向右展开）
+        //     171=3(Right) 时 CBP.x = doglegEnd.x − 字宽          （文字向左展开）
+        //   早先的实现把文字画在 landing + doglegDir×LandingGap 上，对 171=3
+        //   的那批会整体**多走一个文字宽**（本图约 1700–2200，是字高的 4~5 倍），
+        //   且全部偏高 1.2 字高 —— 这正是"文字位置与 CAD 出入较大"的原因。
+        const Math::Point3& GetTextOrigin() const { return m_textOrigin; }
+        void SetTextOrigin(const Math::Point3& p) { m_textOrigin = p; }
+        bool HasTextOrigin() const
+        {
+            return std::abs(m_textOrigin.x) > 1e-12 || std::abs(m_textOrigin.y) > 1e-12;
+        }
+
+        // 文字附着点（组码 171）。**只用于无损写回**，绘制不依赖它
+        // （ContentBasePoint 已经把附着方式体现为具体坐标了）。
+        MLeaderTextAnchor GetTextAnchor() const { return m_textAnchor; }
+        void SetTextAnchor(MLeaderTextAnchor a) { m_textAnchor = a; }
+
+        // 文字左/右附着方式（context 组码 174 / 175）。**绘制要用**：
+        // 属"下划线族"时，landing 这条横线就是文字的通长下划线，
+        // 必须画到文字的**外侧**那条边（见 Draw）。
+        int  GetTextLeftAttachment() const  { return m_textLeftAttachment; }
+        void SetTextLeftAttachment(int v)   { m_textLeftAttachment = v; }
+        int  GetTextRightAttachment() const { return m_textRightAttachment; }
+        void SetTextRightAttachment(int v)  { m_textRightAttachment = v; }
+        bool HasUnderlineAttachment() const
+        {
+            return IsUnderlineAttachment(m_textLeftAttachment) ||
+                   IsUnderlineAttachment(m_textRightAttachment);
+        }
+
+        // 文字阅读方向（context 组码 13）。实测本图 20/20 恒为 (1,0)，
+        // 与引线方向（LEADER{11}）**不是一回事**（14/20 那条两者相反）。
+        // 仅用于无损写回，不参与绘制。
+        const Math::Vec3& GetTextDirection() const { return m_textDirection; }
+        void SetTextDirection(const Math::Vec3& d) { m_textDirection = d; }
+
         // ── 内容 ───────────────────────────────────────────────────────────
         MLeaderContent GetContentType() const  { return m_content; }
         void SetContentType(MLeaderContent c)   { m_content = c; }
@@ -96,9 +162,25 @@ namespace MiniCAD
             box.Expand(DoglegStart());
             if (!m_text.empty())
             {
-                const Math::Point3 t = m_landing;
-                const double w = static_cast<double>(m_text.size()) * m_style.TextHeight * 0.6;
-                box.Expand({ t.x + w, t.y + m_style.TextHeight, t.z });
+                // 文字块：左下角在 m_textOrigin（有则用，否则退回 landing），
+                // 沿 doglegDir 反方向（= Direction）展开。
+                // 宽度按 UTF-8 逐字符估算（ASCII 0.6 字高、CJK 1.0 字高）——
+                // 不能按 m_text.size()（那是**字节数**，一个汉字 3 字节，会低估到 1/3）。
+                const Math::Point3 t = HasTextOrigin() ? m_textOrigin : m_landing;
+                double w = 0.0;
+                for (size_t i = 0; i < m_text.size(); )
+                {
+                    const unsigned char c = static_cast<unsigned char>(m_text[i]);
+                    const int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2 : ((c >> 4) == 0xE) ? 3 : 1;
+                    w += (len == 1 ? 0.6 : 1.0) * m_style.TextHeight;
+                    i += static_cast<size_t>(len);
+                }
+                // 展开方向：doglegDir 由内容指向引线，故文字向它的反方向排。
+                const double dx = -m_doglegDir.x, dy = -m_doglegDir.y;
+                box.Expand({ t.x,          t.y,          t.z });
+                box.Expand({ t.x + dx * w, t.y + dy * w, t.z });
+                box.Expand({ t.x,          t.y + m_style.TextHeight, t.z });
+                box.Expand({ t.x + dx * w, t.y + dy * w + m_style.TextHeight, t.z });
             }
             if (m_lines.empty() && m_text.empty())
                 box.Expand(m_landing);
@@ -120,7 +202,10 @@ namespace MiniCAD
                 if (ln.points.empty()) continue;
                 for (size_t i = 1; i < ln.points.size(); ++i)
                     sink.DrawLine(ln.points[i - 1], ln.points[i], color, false);
-                sink.DrawLine(ln.points.back(), doglegStart, color, false);
+                // 末点接到 dogleg 起点。两者重合时（正常情形：末点就是 ConnectionPoint，
+                // 而 DoglegStart() 也落在同一点）跳过，避免产出零长段。
+                if ((ln.points.back() - doglegStart).LengthSq() > 1e-18)
+                    sink.DrawLine(ln.points.back(), doglegStart, color, false);
 
                 if (ln.arrow && ln.points.size() >= 2)
                 {
@@ -137,17 +222,74 @@ namespace MiniCAD
             }
 
             // dogleg 基线(自 dogleg 起点到 landing)。
-            if (m_style.EnableLanding && m_style.EnableDogleg)
+            // 起点与 landing 重合时（DoglegLength=0）不画，避免零长段。
+            if (m_style.EnableLanding && m_style.EnableDogleg &&
+                (doglegStart - m_landing).LengthSq() > 1e-18)
                 sink.DrawLine(doglegStart, m_landing, color, false);
 
-            // 内容文字。
+            // 内容文字。**位置用 m_textOrigin（ContentBasePoint，文字块左下角）**，
+            // 不是 landing —— 实测 20/20 证明 CBP 恒为左下角：
+            //     171=1(Left)  CBP.x = doglegEnd.x          （向右展开）
+            //     171=3(Right) CBP.x = doglegEnd.x − 字宽    （向左展开）
+            // 早期实现画在 landing + doglegDir×LandingGap 上，Right 的那批会整体右移一个文字宽。
             if (m_content == MLeaderContent::MText && !m_text.empty())
             {
-                Math::Point3 origin{ m_landing.x + m_doglegDir.x * m_style.LandingGap,
-                                     m_landing.y + m_doglegDir.y * m_style.LandingGap,
-                                     m_landing.z };
+                const Math::Point3 origin = HasTextOrigin() ? m_textOrigin : m_landing;
                 sink.EmitMText(origin, m_text, m_style.TextStyle,
                                m_style.TextHeight, 0.0, 0.0, color);
+
+                // 基线补到**文字边缘**。
+                //
+                // 两处都得对准，缺一处就会留空隙：
+                //  ① AutoCAD 记录的文字块宽与我们渲染出的宽度不同（字体度量差异）——
+                //     PY-2-W04：AutoCAD 认为 1966.11，我们只画 1609.09 → 缺口 357.43。
+                //  ② 即便用我们**自己的**宽度，也得分清"步进宽度"与"墨迹宽度"：
+                //     步进宽度含字形右侧留白，实测 45~133 单位（0.11~0.44 个字高），
+                //     画到步进边会离最后一个字还差这么一段 —— 用户报的
+                //     「端点还是没在文字的外侧」就是这个。
+                //
+                // 所以优先用**墨迹边界**；取不到才退回步进宽度。
+                // 文字在 Draw 里以 rotation=0 送出 ⇒ 沿自身 +x 展开，与 doglegDir 无关。
+                double textMinX = 0.0, textMaxX = 0.0;
+                bool haveInk = sink.MeasureMTextInkBounds(m_text, m_style.TextStyle,
+                                                          m_style.TextHeight, 0.0,
+                                                          textMinX, textMaxX);
+                if (!haveInk)
+                {
+                    const double w = sink.MeasureMTextWidth(m_text, m_style.TextStyle,
+                                                            m_style.TextHeight, 0.0);
+                    if (w > 0.0) { textMinX = 0.0; textMaxX = w; haveInk = true; }
+                }
+                if (haveInk)
+                {
+                    const double t0 = origin.x + textMinX;   // 文字墨迹左缘
+                    const double t1 = origin.x + textMaxX;   // 文字墨迹右缘
+                    const double lx = m_landing.x;           // 基线外端（引线侧）
+                    // 横线该停在哪一端，取决于附着方式（组码 174/175）：
+                    //
+                    //  · **下划线族（5~8）**：landing 这条横线就是文字的下划线，
+                    //    必须横穿整个文字、终止在**外侧**（远离引线）那条边。
+                    //    实测本图 20/20 都是 174=175=6，且 landing.y ≡ CBP.y（Δ=0.0000）
+                    //    —— landing 正落在文字底线上，下划线才画得出来。
+                    //  · 普通族：横线只补到文字的**近侧**边缘即可（本来就是引线端点。
+                    //    171=1 时 landing.x 恰等于文字左缘，无需再画）。
+                    // 注意：变量名不能叫 `far` —— MSVC 仍把它当旧式关键字展开成空，
+                    // 会报一串莫名其妙的 C2059「语法错误: =」。
+                    double endX = 0.0;
+                    bool   doDraw = false;
+                    if (HasUnderlineAttachment())
+                    {
+                        if (lx >= t1)      { endX = t0; doDraw = true; }   // 引线在右，画到左缘
+                        else if (lx <= t0) { endX = t1; doDraw = true; }   // 引线在左，画到右缘
+                    }
+                    else
+                    {
+                        if (lx > t1)       { endX = t1; doDraw = true; }
+                        else if (lx < t0)  { endX = t0; doDraw = true; }
+                    }
+                    if (doDraw && std::abs(endX - lx) > 1e-12)
+                        sink.DrawLine(m_landing, { endX, origin.y, origin.z }, color, false);
+                }
             }
         }
 
@@ -158,6 +300,11 @@ namespace MiniCAD
             e->m_lines     = m_lines;
             e->m_landing   = m_landing;
             e->m_doglegDir = m_doglegDir;
+            e->m_textOrigin = m_textOrigin;
+            e->m_textAnchor = m_textAnchor;
+            e->m_textLeftAttachment  = m_textLeftAttachment;
+            e->m_textRightAttachment = m_textRightAttachment;
+            e->m_textDirection = m_textDirection;
             e->m_content   = m_content;
             e->m_text      = m_text;
             e->m_blockId   = m_blockId;
@@ -192,6 +339,15 @@ namespace MiniCAD
         std::vector<LeaderLine> m_lines;
         Math::Point3            m_landing;
         Math::Vec3              m_doglegDir{ 1, 0, 0 };   // 由内容指向引线侧
+        // 文字块左下角（AutoCAD ContentBasePoint / 组码 10）。
+        // (0,0) 视为"未设置"，此时退回 m_landing（旧数据兼容）。
+        Math::Point3            m_textOrigin;
+        MLeaderTextAnchor       m_textAnchor = MLeaderTextAnchor::Left;
+        // 文字左/右附着方式（context 组码 174 / 175）。
+        // 默认 -1 = "未设置"，此时按**普通族**处理（保持旧行为，不改变既有图纸观感）。
+        int                     m_textLeftAttachment  = -1;
+        int                     m_textRightAttachment = -1;
+        Math::Vec3              m_textDirection{ 1, 0, 0 };   // context 组码 13
         MLeaderContent          m_content = MLeaderContent::MText;
         std::string             m_text;
         uint32_t                m_blockId = 0;

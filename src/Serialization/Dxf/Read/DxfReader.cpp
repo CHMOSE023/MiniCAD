@@ -175,6 +175,9 @@ namespace MiniDWG::DxfRead
             if (!inserted)
                 it->second = nullptr;   // 同名多个类（DIMENSION、POLYLINE、VERTEX）：需要按内容判断
         }
+        // MESH 不在生成类表里（ACadSharp 未生成 AcDbSubDMesh），这里补登，
+        // 使 ENTITIES 段能分派到手写读取（见 Database/Mesh.h 的说明）。
+        m_classByDxfName.try_emplace(Mesh::kDxfName, &Mesh::ClassInfo());
     }
 
     void Reader::Notify(NotificationType type, std::string message)
