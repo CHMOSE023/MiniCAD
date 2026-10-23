@@ -206,8 +206,8 @@ namespace MiniCAD
         if (entity.IsKindOf<MLeaderEntity>())
         {
             auto& ml = static_cast<MLeaderEntity&>(entity);
-            ml.SetLanding(RotatePoint(ml.GetLanding(), pivot, angle));
-            ml.SetDoglegDir(RotateVec2D(ml.GetDoglegDir(), angle));
+            ml.MoveLanding(RotatePoint(ml.GetLanding(), pivot, angle));
+            ml.TurnDogleg(RotateVec2D(ml.GetDoglegDir(), angle));
             for (auto& ln : ml.GetLeaderLines())
                 for (auto& p : ln.points) p = RotatePoint(p, pivot, angle);
             return;

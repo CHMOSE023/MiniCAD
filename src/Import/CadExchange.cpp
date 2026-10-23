@@ -2693,6 +2693,7 @@ namespace MiniCAD
                 for (const auto& v : e.Vertices)
                     mesh.Positions.push_back({ v.X, v.Y, v.Z });
 
+                std::vector<int> faceSizes;   // 拆成三角形的各面的顶点数，导出时拼回原来的面
                 for (const auto& face : e.Faces)
                 {
                     // 索引合法性过滤：损坏文件不能让后面的绘制越界
@@ -2706,6 +2707,7 @@ namespace MiniCAD
                     for (size_t k = 2; k < idx.size(); ++k)   // 扇形三角化
                         mesh.Indices.insert(mesh.Indices.end(),
                                             { idx[0], idx[k - 1], idx[k] });
+                    faceSizes.push_back(static_cast<int>(idx.size()));
                 }
                 if (mesh.Indices.empty())
                     return Skip(e);
@@ -2718,6 +2720,7 @@ namespace MiniCAD
                 mesh2->SetOverrideOption(e.OverrideOption);
                 mesh2->SetExplicitEdges(e.Edges);
                 mesh2->SetCreaseValues(e.CreaseValues);
+                mesh2->SetFaceSizes(std::move(faceSizes));
                 return ent;
             }
 
@@ -3618,6 +3621,18 @@ namespace MiniCAD
                 outMiter = Math::Vec3{ nrm.x * k, nrm.y * k, 0.0 };
             }
 
+            // 多重引线样式句柄：取根字典 ACAD_MLEADERSTYLE 下的 Standard（CreateDefaults 会建），没有就取第一项
+            Dwg::Handle MLeaderStyleHandle() const
+            {
+                const Dwg::CadDictionary* dict = m_db.FindNamedDictionary("ACAD_MLEADERSTYLE");
+                if (dict == nullptr || dict->EntryHandles.empty())
+                    return Dwg::kNullHandle;
+                for (size_t i = 0; i < dict->EntryNames.size() && i < dict->EntryHandles.size(); ++i)
+                    if (EqualsNoCase(dict->EntryNames[i], "Standard"))
+                        return dict->EntryHandles[i];
+                return dict->EntryHandles.front();
+            }
+
             // 多线样式句柄：MultilineStyle 在 DWG 里是**根字典 ACAD_MLINESTYLE 下的条目**
             // （不是符号表），所以走字典查找 / 新建。
             Dwg::Handle MLineStyleHandle(const MLineStyleRecord& rec)
@@ -3811,8 +3826,11 @@ namespace MiniCAD
                 // 细分网格（MESH，AcDbSubDMesh）。**必须排在 Solid3DEntity 分支之前** ——
                 // MeshEntity 派生自 Solid3DEntity，被基类先匹配到就会退化成 PolyfaceMesh
                 // （顶点/面数受 16 位限制，SubD 的细分级别与折痕也全丢）。
-                if (auto* s = dynamic_cast<const MeshEntity*>(&e))
-                    return ConvertSubDMesh(*s);
+                // 只有原图就是 MESH 的才写回 MESH，且 MESH 是 AutoCAD 2010（AC1024）起才有的实体；
+                // 节点图烘焙、多面网格来源的网格，以及写 2010 以前的版本时，仍写成多面网格。
+                if (auto* s = dynamic_cast<const MeshEntity*>(&e); s && s->IsSubD() && m_version >= Dwg::CadVersion::AC1024)
+                    if (auto d = ConvertSubDMesh(*s))
+                        return d;
                 // 多重引线（MLEADER）。同样必须排在可能匹配到它的基类分支之前。
                 if (auto* s = dynamic_cast<const MLeaderEntity*>(&e))
                     return ConvertMLeader(*s);
@@ -4042,17 +4060,20 @@ namespace MiniCAD
             // 细分网格（MESH）写出。**必须与导入成对**：只导入不导出，用户打开图纸看得见
             // 网格，一旦存盘网格就整批消失（同多重引线的教训）。
             //
-            // 我们的 MeshEntity 只有三角形表达，所以这里按三角形逐个写成 N 边面；
+            // 我们的 MeshEntity 只有三角形表达：按导入时记下的各面顶点数把扇形三角形拼回原来的面
+            // （n 边面 = 连续 n − 2 个三角形 (v0, v[k−1], v[k])），面才与显式边表、折痕对得上；
             // SubD 的显式边表 / 折痕 / 细分级别等元数据原样回填。
-            // 顶点要施加实体自己的变换（局部 → 世界）。
+            // 顶点要施加实体自己的变换（局部 → 世界），镜像过时面反向以保持正面朝外。
+            // 拼不回去（数据对不上）时返回 nullptr，调用方改写多面网格。
             std::unique_ptr<Dwg::Entity> ConvertSubDMesh(const MeshEntity& s)
             {
                 const auto& mesh = s.GetLocalMesh();
-                if (mesh.Empty())
-                {
-                    ++m_solidNoMesh;
+                const auto& sizes = s.GetFaceSizes();
+                size_t triCount = 0;
+                for (int n : sizes)
+                    triCount += n >= 3 ? static_cast<size_t>(n - 2) : 0;
+                if (mesh.Empty() || sizes.empty() || triCount != mesh.TriangleCount())
                     return nullptr;
-                }
 
                 auto d = std::make_unique<Dwg::Mesh>();
                 ApplyAttr(s, *d);
@@ -4067,15 +4088,21 @@ namespace MiniCAD
                 d->Vertices.reserve(mesh.Positions.size());
                 for (const auto& p : mesh.Positions)
                     d->Vertices.push_back(ToXYZ(m.TransformPoint(p)));
-                d->Faces.reserve(mesh.TriangleCount());
-                for (size_t t = 0; t < mesh.TriangleCount(); ++t)
-                    d->Faces.push_back({ static_cast<int>(mesh.Indices[t * 3]),
-                                         static_cast<int>(mesh.Indices[t * 3 + 1]),
-                                         static_cast<int>(mesh.Indices[t * 3 + 2]) });
-                if (d->Faces.empty())
+                const double* a = m.m;
+                const bool mirrored = a[0] * (a[5] * a[10] - a[6] * a[9]) - a[1] * (a[4] * a[10] - a[6] * a[8])
+                                    + a[2] * (a[4] * a[9] - a[5] * a[8]) < 0;
+                d->Faces.reserve(sizes.size());
+                size_t t = 0;
+                for (int n : sizes)
                 {
-                    ++m_solidNoMesh;
-                    return nullptr;
+                    if (n < 3)
+                        continue;
+                    std::vector<int> face{ static_cast<int>(mesh.Indices[t * 3]), static_cast<int>(mesh.Indices[t * 3 + 1]) };
+                    for (int k = 0; k < n - 2; ++k, ++t)
+                        face.push_back(static_cast<int>(mesh.Indices[t * 3 + 2]));
+                    if (mirrored)
+                        std::reverse(face.begin(), face.end());
+                    d->Faces.push_back(std::move(face));
                 }
                 return Finish(s, std::move(d));
             }
@@ -4101,13 +4128,16 @@ namespace MiniCAD
                 d->EnableDogleg     = style.EnableDogleg;
                 d->ScaleFactor      = 1.0;
                 d->TextStyleHandle  = StyleHandle(style.TextStyle);
+                d->StyleHandle      = MLeaderStyleHandle();
 
+                cd.TextStyleHandle   = d->TextStyleHandle;   // 导入取的是 context 里的这个
                 cd.TextHeight        = style.TextHeight;
                 cd.LandingGap        = style.LandingGap;
                 cd.ArrowheadSize     = style.ArrowSize;
                 cd.ScaleFactor       = 1.0;
                 // ContentBasePoint = 文字块左下角（导入侧就是从这里取的，原样回填）
-                cd.ContentBasePoint  = ToXYZ(s.GetTextOrigin());
+                const Math::Point3 textOrigin = s.ResolveTextOrigin();   // 新建的没有原点：按 landing 推出
+                cd.ContentBasePoint  = ToXYZ(textOrigin);
                 // TextLocation = 附着点，按已验证公式由 connection/dir/LD/Gap 推出
                 //   TL = ConnectionPoint + Direction × (LD + LandingGap) + (0, 1.2 × 字高)
                 // 不能简单写成 landing —— 那会让右附着（171=3）的文字回来时位置漂移。
@@ -4128,7 +4158,7 @@ namespace MiniCAD
                 const auto& td = s.GetTextDirection();
                 cd.Direction   = { td.x, td.y, 0.0 };
                 cd.TextNormal  = { 0.0, 0.0, 1.0 };
-                cd.BasePoint   = ToXYZ(s.GetTextOrigin());
+                cd.BasePoint   = ToXYZ(textOrigin);
                 cd.BaseDirection = { 1.0, 0.0, 0.0 };
                 cd.BaseVertical  = { 0.0, 1.0, 0.0 };
 
@@ -4138,15 +4168,18 @@ namespace MiniCAD
                     cd.TextLabel       = s.GetText();
                 }
 
-                // 每个 LeaderLine → 一个 root；首点箭头端、末点 connection
+                // 每个 LeaderLine → 一个 root。ConnectionPoint 是各引线汇聚的 dogleg 起点；
+                // LEADER_LINE 存箭头端与中间折点，不含连接点（导入时单点引线再补上它）
+                const Math::Point3& landing = s.GetLanding();
+                const double dl = style.EnableDogleg ? style.DoglegLength : 0.0;
+                const Math::Point3 conn{ landing.x + dg.x * dl, landing.y + dg.y * dl, landing.z };
                 for (const auto& ln : s.GetLeaderLines())
                 {
                     if (ln.points.empty())
                         continue;
                     Dwg::MultiLeaderObjectContextDataLeaderRoot root;
                     root.ContentValid  = true;
-                    root.ConnectionPoint = ToXYZ(ln.points.size() >= 2 ? ln.points[1]
-                                                                        : ln.points[0]);
+                    root.ConnectionPoint = ToXYZ(conn);
                     root.LandingDistance = style.DoglegLength;
                     // **必须写回 root.Direction（组码 11）**：它是基线的方向，
                     // 再导入时靠它 + LandingDistance 还原基线外端。漏写会变成
@@ -4155,7 +4188,11 @@ namespace MiniCAD
                     root.Direction = { -dg.x, -dg.y, 0.0 };
 
                     Dwg::MultiLeaderObjectContextDataLeaderLine line;
-                    line.Points.push_back(ToXYZ(ln.points[0]));   // 仅存箭头端，与 DWG 单点形态一致
+                    size_t n = ln.points.size();
+                    if (n >= 2 && (ln.points.back() - conn).LengthSq() < 1e-18)
+                        --n;                                       // 末点就是连接点：不重复存
+                    for (size_t i = 0; i < n; ++i)
+                        line.Points.push_back(ToXYZ(ln.points[i]));
                     line.ArrowheadSize = style.ArrowSize;
                     root.Lines.push_back(std::move(line));
 
@@ -4166,7 +4203,7 @@ namespace MiniCAD
                 {
                     Dwg::MultiLeaderObjectContextDataLeaderRoot root;
                     root.ContentValid    = true;
-                    root.ConnectionPoint = ToXYZ(s.GetLanding());
+                    root.ConnectionPoint = ToXYZ(conn);
                     root.LandingDistance = style.DoglegLength;
                     root.Direction       = { -dg.x, -dg.y, 0.0 };
                     cd.LeaderRoots.push_back(std::move(root));

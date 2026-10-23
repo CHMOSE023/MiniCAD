@@ -419,7 +419,8 @@ namespace MiniCAD::EntityIO
 
             // SubD 元数据：只在“真的是 SubD 来源”时写，避免给普通网格平添体积
             if (e.GetSubdivisionLevel() != 0 || e.GetBlendCrease() || e.GetSubDVersion() != 2 ||
-                e.GetOverrideOption() != 0 || !e.GetExplicitEdges().empty() || !e.GetCreaseValues().empty())
+                e.GetOverrideOption() != 0 || !e.GetExplicitEdges().empty() || !e.GetCreaseValues().empty() ||
+                !e.GetFaceSizes().empty())
             {
                 int32_t version = e.GetSubDVersion();
                 s.Value("subDVersion", version);
@@ -449,6 +450,12 @@ namespace MiniCAD::EntityIO
                     std::vector<double> flat(creases.begin(), creases.end());
                     s.Value("creaseValues", flat);
                 }
+                const auto& sizes = e.GetFaceSizes();
+                if (!sizes.empty())
+                {
+                    std::vector<double> flat(sizes.begin(), sizes.end());
+                    s.Value("faceSizes", flat);
+                }
             }
         }
 
@@ -477,14 +484,10 @@ namespace MiniCAD::EntityIO
             s.Value("overrideOption", overrideOption);
             e->SetOverrideOption(overrideOption);
 
+            // 边表为空时不调用 SetExplicitEdges（它会重建线框）
             std::vector<double> flatEdges;
-            for (const auto& [a, b] : e->GetExplicitEdges())
-            {
-                flatEdges.push_back(static_cast<double>(a));
-                flatEdges.push_back(static_cast<double>(b));
-            }
             s.Value("explicitEdges", flatEdges);
-            if (flatEdges.size() % 2 == 0)
+            if (!flatEdges.empty() && flatEdges.size() % 2 == 0)
             {
                 std::vector<std::pair<int, int>> edges;
                 edges.reserve(flatEdges.size() / 2);
@@ -497,6 +500,14 @@ namespace MiniCAD::EntityIO
             std::vector<double> creases(e->GetCreaseValues().begin(), e->GetCreaseValues().end());
             s.Value("creaseValues", creases);
             e->SetCreaseValues(std::move(creases));
+
+            std::vector<double> flatSizes;
+            s.Value("faceSizes", flatSizes);
+            std::vector<int> sizes;
+            sizes.reserve(flatSizes.size());
+            for (double v : flatSizes)
+                sizes.push_back(static_cast<int>(v));
+            e->SetFaceSizes(std::move(sizes));
             return e;
         }
 
@@ -1010,7 +1021,11 @@ namespace MiniCAD::EntityIO
             // 文字块左下角 / 附着点 / 附着方式 / 阅读方向 —— 右附着（171=3）的
             // 文字回来会整体漂移一个文字宽，下划线族的横线会缩回文字内侧。
             // 读侧对缺失键有兼容默认值（见 ReadMLeader），旧档案不受影响。
-            Point3 textOrigin = e.GetTextOrigin();   Ser::Value(s, "textOrigin", textOrigin);
+            // 文字原点只在设置过时写（新建的由 landing 推出，见 MLeaderEntity::ResolveTextOrigin）
+            if (e.HasTextOrigin())
+            {
+                Point3 textOrigin = e.GetTextOrigin(); Ser::Value(s, "textOrigin", textOrigin);
+            }
             auto anchor = e.GetTextAnchor();         Ser::Enum(s, "textAnchor", anchor);
             int32_t leftAtt = e.GetTextLeftAttachment();   s.Value("textLeftAttachment", leftAtt);
             int32_t rightAtt = e.GetTextRightAttachment(); s.Value("textRightAttachment", rightAtt);
@@ -1046,11 +1061,13 @@ namespace MiniCAD::EntityIO
 
             // 文字位置与附着元数据。缺失时的默认值要与 MLeaderEntity 的成员默认值一致，
             // 这样旧档案读出来与当年存进去的观感相同：
-            //   textOrigin      (0,0)      → "未设置"，绘制退回 landing
+            //   textOrigin      没有这个键 → "未设置"，绘制时由 landing 推出
             //   anchor          Left       → 普通左附着
             //   左右附着方式     -1         → "未设置"，按普通族画基线（保持旧行为）
             //   textDirection   (1,0)      → 实测本图恒值
-            Point3 textOrigin;                    Ser::Value(s, "textOrigin", textOrigin); e->SetTextOrigin(textOrigin);
+            constexpr double kUnset = 1e300;      // 读不到键时 Value 保留原值：用哨兵判断键是否存在
+            Point3 textOrigin{ kUnset, kUnset, 0 }; Ser::Value(s, "textOrigin", textOrigin);
+            if (textOrigin.x != kUnset)           e->SetTextOrigin(textOrigin);
             auto anchor = MLeaderTextAnchor::Left; Ser::Enum(s, "textAnchor", anchor);      e->SetTextAnchor(anchor);
             int32_t leftAtt = -1;                 s.Value("textLeftAttachment", leftAtt);   e->SetTextLeftAttachment(leftAtt);
             int32_t rightAtt = -1;                s.Value("textRightAttachment", rightAtt); e->SetTextRightAttachment(rightAtt);

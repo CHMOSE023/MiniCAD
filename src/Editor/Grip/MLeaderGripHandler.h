@@ -157,7 +157,7 @@ namespace MiniCAD
         static void Restore(MLeaderEntity* ml, const MLeaderSnapshot& s)
         {
             ml->GetLeaderLines() = s.Lines;
-            ml->SetLanding(s.Landing);
+            ml->MoveLanding(s.Landing);
             ml->SetDoglegDir(s.DoglegDir);
         }
 

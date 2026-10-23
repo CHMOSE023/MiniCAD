@@ -73,23 +73,26 @@ namespace MiniCAD
             m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, hAlign, vAlign, widthFactor, color);
         }
 
-        // 块内文字：宽度也要按插入变换缩放，否则块内多重引线的基线与文字对不上
+        // 块内文字：按 EmitMText 同样放大后的字高去量（世界单位），再换回块的局部单位——
+        // 调用方（如多重引线的基线）在局部坐标里用这个宽度，画出的线再经本变换
         double MeasureMTextWidth(const std::string& utf8Text, uint32_t styleId,
                                  double height, double boxWidth) override
         {
+            if (m_scale <= 0.0) return 0.0;
             return m_target.MeasureMTextWidth(utf8Text, styleId, height * m_scale, boxWidth * m_scale)
-                   * m_scale;
+                   / m_scale;
         }
 
         bool MeasureMTextInkBounds(const std::string& utf8Text, uint32_t styleId,
                                    double height, double boxWidth,
                                    double& outMinX, double& outMaxX) override
         {
-            if (!m_target.MeasureMTextInkBounds(utf8Text, styleId, height * m_scale,
+            if (m_scale <= 0.0 ||
+                !m_target.MeasureMTextInkBounds(utf8Text, styleId, height * m_scale,
                                                 boxWidth * m_scale, outMinX, outMaxX))
                 return false;
-            outMinX *= m_scale;
-            outMaxX *= m_scale;
+            outMinX /= m_scale;
+            outMaxX /= m_scale;
             return true;
         }
 

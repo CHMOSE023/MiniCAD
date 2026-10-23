@@ -256,6 +256,30 @@ int RunMeshTests()
         std::printf("    三角形收边线段数 = %zu\n", before);
     }
 
+    // ── 8. 显式边表也决定捕捉用的线框，克隆共享的数据不被改写 ──────────────
+    {
+        MeshEntity cube = MakeUnitCube(8);
+        const auto clone = cube.Clone(9);
+        const size_t wireBefore = cube.GetWorldWire().size();
+        cube.SetExplicitEdges({ {0,1}, {1,2}, {99,0} });
+        Check(cube.GetWorldWire().size() == 2, "世界线框按显式边表重建（越界的跳过），捕捉不会吸到对角线");
+        Check(static_cast<const MeshEntity*>(clone.get())->GetWorldWire().size() == wireBefore,
+              "改边表前克隆出的网格线框不变（数据写前复制）");
+        cube.SetExplicitEdges({});
+        Check(cube.GetWorldWire().size() == wireBefore, "清空边表后退回三角形收边");
+    }
+
+    // ── 9. 面顶点数：只有有边表与面的才算 SubD 来源，克隆保留 ─────────────
+    {
+        MeshEntity cube = MakeUnitCube(10);
+        Check(!cube.IsSubD(), "没有边表与面的网格不是 SubD 来源（导出写多面网格）");
+        cube.SetExplicitEdges({ {0,1} });
+        cube.SetFaceSizes({ 4, 4, 4, 4, 4, 4 });
+        Check(cube.IsSubD(), "有边表与面的网格是 SubD 来源");
+        const auto c = cube.Clone(11);
+        Check(static_cast<const MeshEntity*>(c.get())->GetFaceSizes().size() == 6, "克隆保留面顶点数");
+    }
+
     std::printf("SubD 网格用例失败：%d\n", g_failures);
     return g_failures;
 }

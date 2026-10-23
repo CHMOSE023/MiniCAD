@@ -240,7 +240,7 @@ namespace MiniCAD
         if (entity.IsKindOf<MLeaderEntity>())
         {
             auto& ml = static_cast<MLeaderEntity&>(entity);
-            ml.SetLanding(sp(ml.GetLanding()));
+            ml.MoveLanding(sp(ml.GetLanding()));
             for (auto& ln : ml.GetLeaderLines())
                 for (auto& p : ln.points) p = sp(p);
             return true;

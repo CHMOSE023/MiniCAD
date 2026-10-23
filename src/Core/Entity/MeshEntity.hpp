@@ -16,7 +16,7 @@ namespace MiniCAD
     //
     // 【SubD 附加字段】另有一组只服务于 DWG / DXF 的 MESH（AcDbSubDMesh）往返的字段：
     // 细分级别 / 混合折痕 / 版本 / 显式边表 / 折痕值 / 覆盖选项。
-    // 它们不参与显示（AutoCAD 的“平滑度”要 Catmull-Clark 细分，本版不做），
+    // 除显式边表用作线框外都不参与显示（AutoCAD 的“平滑度”要 Catmull-Clark 细分，本版不做），
     // 只保证**几何与元数据不丢** —— 另存后重开，值与原图一致。
     class MeshEntity : public Solid3DEntity
     {
@@ -66,10 +66,27 @@ namespace MiniCAD
 
         // 显式边表（组码 90 的边对）与折痕值（组码 140，每个 crease 对应同下标的边）。
         // 空表示“用面边界现算”（非 SubD 来源的网格，如节点图烘焙 / PolyfaceMesh）。
+        // 线框（显示、捕捉、特征点都用它）按显式边表重建：导入时 N 边面扇形拆成了三角形，
+        // 从三角形收边会把每条面对角线也算进去；越界的边跳过。边表为空时退回从三角形收边。
         const std::vector<std::pair<int, int>>& GetExplicitEdges() const { return m_explicitEdges; }
-        void SetExplicitEdges(std::vector<std::pair<int, int>> e) { m_explicitEdges = std::move(e); }
+        void SetExplicitEdges(std::vector<std::pair<int, int>> e)
+        {
+            m_explicitEdges = std::move(e);
+            auto data = std::make_shared<Data>(*m_data);   // 数据在克隆之间共享：写前复制
+            data->LocalWire = m_explicitEdges.empty() ? AllEdges(data->Mesh) : EdgesOf(data->Mesh, m_explicitEdges);
+            m_data = std::move(data);
+            UpdateWorldWire();
+        }
         const std::vector<double>& GetCreaseValues() const { return m_creaseValues; }
         void SetCreaseValues(std::vector<double> c) { m_creaseValues = std::move(c); }
+
+        // 原图各面的顶点数（按面的顺序）。导入时每个 n 边面扇形拆成连续的 n − 2 个三角形，
+        // 导出 MESH 时据此拼回原来的多边形，面才与显式边表对得上。空表示没有原图的面（不是 SubD 来源）
+        const std::vector<int>& GetFaceSizes() const { return m_faceSizes; }
+        void SetFaceSizes(std::vector<int> s) { m_faceSizes = std::move(s); }
+
+        // 是否来自 DWG / DXF 的 MESH（有原图的边表与面），导出时据此写回 MESH，否则写多面网格
+        bool IsSubD() const { return !m_explicitEdges.empty() && !m_faceSizes.empty(); }
 
         std::unique_ptr<Entity> Clone(ObjectID id) const override
         {
@@ -81,44 +98,8 @@ namespace MiniCAD
             e->m_overrideOption   = m_overrideOption;
             e->m_explicitEdges    = m_explicitEdges;
             e->m_creaseValues     = m_creaseValues;
+            e->m_faceSizes        = m_faceSizes;
             return e;
-        }
-
-        // 线框绘制。**有显式边表时按它画**（SubD MESH 的原图边表），
-        // 否则退回基类的"从三角形收边"（节点图烘焙 / PolyfaceMesh 来源）。
-        //
-        // 为什么必须覆盖：我们的 SurfaceMesh 只有三角形表达，导入时把 N 边面
-        // 扇形拆成三角形，基类 AllEdges 从三角形收边 ⇒ **每条四边形面对角线
-        // 也变成一条网格边**被画出来。实测 sample_AC1032.dwg：
-        //     句柄 343：48 个四边形 ⇒ 多画 48 条对角线（132 → 180）
-        //     句柄 380：64 个四边形 ⇒ 多画 64 条对角线（128 → 192）
-        // 用户看到的就是"网格里冒出一堆多余的三角形"。
-        //
-        // 而原图的显式边表是权威的：实测两个网格的「面边界去重边集」
-        // 与文件给的显式边表**完全相等**（V0.1.0 已核对），按它画即不重不漏。
-        void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
-        {
-            const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor
-                                          : isHovered  ? IDrawSink::kHoverColor
-                                                       : ResolveDrawColor(sink);
-
-            if (!m_explicitEdges.empty())
-            {
-                const auto& pos = GetLocalMesh().Positions;
-                const auto& xf  = GetTransform();
-                const int n = static_cast<int>(pos.size());
-                for (const auto& [a, b] : m_explicitEdges)
-                {
-                    // 越界索引跳过（损坏文件不能把绘制搞崩）
-                    if (a < 0 || b < 0 || a >= n || b >= n)
-                        continue;
-                    sink.DrawLine(xf.TransformPoint(pos[static_cast<size_t>(a)]),
-                                  xf.TransformPoint(pos[static_cast<size_t>(b)]),
-                                  color, false);
-                }
-                return;
-            }
-            Solid3DEntity::Draw(sink, isSelected, isHovered);
         }
 
         DECLARE_RUNTIME_TYPE(MeshEntity, Solid3DEntity)
@@ -148,6 +129,17 @@ namespace MiniCAD
                     if (seen.emplace(uint64_t(a) << 32 | b, true).second)
                         wire.push_back({ m.Positions[a], m.Positions[b] });
                 }
+            return wire;
+        }
+
+        // 线框：显式边表的每条边一段（越界的跳过）
+        static Wire EdgesOf(const SurfaceMesh& m, const std::vector<std::pair<int, int>>& edges)
+        {
+            Wire wire;
+            const int n = static_cast<int>(m.Positions.size());
+            for (const auto& [a, b] : edges)
+                if (a >= 0 && b >= 0 && a < n && b < n)
+                    wire.push_back({ m.Positions[static_cast<size_t>(a)], m.Positions[static_cast<size_t>(b)] });
             return wire;
         }
 
@@ -187,5 +179,6 @@ namespace MiniCAD
         std::int32_t                        m_overrideOption   = 0;      // DWG 位流尾部
         std::vector<std::pair<int, int>>    m_explicitEdges;             // 组码 90 边对
         std::vector<double>                 m_creaseValues;              // 组码 140
+        std::vector<int>                    m_faceSizes;                 // 原图各面的顶点数
     };
 }

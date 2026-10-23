@@ -94,6 +94,25 @@ namespace MiniCAD
         const Math::Vec3& GetDoglegDir() const { return m_doglegDir; }
         void SetDoglegDir(const Math::Vec3& d) { m_doglegDir = d.Normalized(); }
 
+        // 编辑用：landing 移到 p，文字块跟着平移（平移、拉伸、夹点、撤销快照都走这里）。
+        // SetLanding 只改 landing 本身，供导入 / 读档按字段赋值。
+        void MoveLanding(const Math::Point3& p)
+        {
+            if (m_hasTextOrigin)
+                m_textOrigin = m_textOrigin + (p - m_landing);
+            m_landing = p;
+        }
+
+        // 编辑用：改 dogleg 方向（旋转、镜像）。文字始终水平，内容从 landing 一侧换到另一侧时，
+        // 文字块以 landing 为轴左右翻过去；翻两次回到原处，撤销按反向变换也能复原。
+        void TurnDogleg(const Math::Vec3& d)
+        {
+            const bool wasLeft = m_doglegDir.x > 0.0;   // doglegDir 指向引线 ⇒ x > 0 时内容在左
+            SetDoglegDir(d);
+            if (m_hasTextOrigin && wasLeft != (m_doglegDir.x > 0.0))
+                m_textOrigin.x = 2.0 * m_landing.x - m_textOrigin.x - EstimateTextWidth();
+        }
+
         // ── 文字块左下角（AutoCAD 的 ContentBasePoint，组码 10）──────────
         // **绘制就用它**，不需要量字宽：
         //   实测 20/20（`1#、2#厂房电气_t3.dwg`）ContentBasePoint 恒为文字块的
@@ -104,10 +123,35 @@ namespace MiniCAD
         //   的那批会整体**多走一个文字宽**（本图约 1700–2200，是字高的 4~5 倍），
         //   且全部偏高 1.2 字高 —— 这正是"文字位置与 CAD 出入较大"的原因。
         const Math::Point3& GetTextOrigin() const { return m_textOrigin; }
-        void SetTextOrigin(const Math::Point3& p) { m_textOrigin = p; }
-        bool HasTextOrigin() const
+        void SetTextOrigin(const Math::Point3& p) { m_textOrigin = p; m_hasTextOrigin = true; }
+        void ClearTextOrigin()                    { m_textOrigin = {}; m_hasTextOrigin = false; }
+        bool HasTextOrigin() const                { return m_hasTextOrigin; }
+
+        // 实际使用的文字左下角。没有 ContentBasePoint（新建、旧档案）时按 landing 与 dogleg 方向推出：
+        // 文字离 landing 一个 LandingGap，排在引线的另一侧；内容在左时右缘对齐，要用到文字宽 textWidth。
+        Math::Point3 ResolveTextOrigin(double textWidth) const
         {
-            return std::abs(m_textOrigin.x) > 1e-12 || std::abs(m_textOrigin.y) > 1e-12;
+            if (m_hasTextOrigin)
+                return m_textOrigin;
+            const double gap = m_style.LandingGap;
+            const double x = m_doglegDir.x > 0.0 ? m_landing.x - gap - textWidth : m_landing.x + gap;
+            return { x, m_landing.y, m_landing.z };
+        }
+        Math::Point3 ResolveTextOrigin() const { return ResolveTextOrigin(EstimateTextWidth()); }
+
+        // 文字宽的估算（不依赖字体）：按 UTF-8 逐字符，ASCII 0.6 字高、其余 1.0 字高。
+        // 不能按 m_text.size()（那是字节数，一个汉字 3 字节）。
+        double EstimateTextWidth() const
+        {
+            double w = 0.0;
+            for (size_t i = 0; i < m_text.size(); )
+            {
+                const unsigned char c = static_cast<unsigned char>(m_text[i]);
+                const int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2 : ((c >> 4) == 0xE) ? 3 : ((c >> 3) == 0x1E) ? 4 : 1;
+                w += (len == 1 ? 0.6 : 1.0) * m_style.TextHeight;
+                i += static_cast<size_t>(len);
+            }
+            return w;
         }
 
         // 文字附着点（组码 171）。**只用于无损写回**，绘制不依赖它
@@ -162,25 +206,11 @@ namespace MiniCAD
             box.Expand(DoglegStart());
             if (!m_text.empty())
             {
-                // 文字块：左下角在 m_textOrigin（有则用，否则退回 landing），
-                // 沿 doglegDir 反方向（= Direction）展开。
-                // 宽度按 UTF-8 逐字符估算（ASCII 0.6 字高、CJK 1.0 字高）——
-                // 不能按 m_text.size()（那是**字节数**，一个汉字 3 字节，会低估到 1/3）。
-                const Math::Point3 t = HasTextOrigin() ? m_textOrigin : m_landing;
-                double w = 0.0;
-                for (size_t i = 0; i < m_text.size(); )
-                {
-                    const unsigned char c = static_cast<unsigned char>(m_text[i]);
-                    const int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2 : ((c >> 4) == 0xE) ? 3 : 1;
-                    w += (len == 1 ? 0.6 : 1.0) * m_style.TextHeight;
-                    i += static_cast<size_t>(len);
-                }
-                // 展开方向：doglegDir 由内容指向引线，故文字向它的反方向排。
-                const double dx = -m_doglegDir.x, dy = -m_doglegDir.y;
-                box.Expand({ t.x,          t.y,          t.z });
-                box.Expand({ t.x + dx * w, t.y + dy * w, t.z });
-                box.Expand({ t.x,          t.y + m_style.TextHeight, t.z });
-                box.Expand({ t.x + dx * w, t.y + dy * w + m_style.TextHeight, t.z });
+                // 文字块：左下角在 ResolveTextOrigin()，文字水平（rotation = 0）向 +x 排，宽度用估算值
+                const double w = EstimateTextWidth();
+                const Math::Point3 t = ResolveTextOrigin(w);
+                box.Expand({ t.x,     t.y,                      t.z });
+                box.Expand({ t.x + w, t.y + m_style.TextHeight, t.z });
             }
             if (m_lines.empty() && m_text.empty())
                 box.Expand(m_landing);
@@ -234,10 +264,6 @@ namespace MiniCAD
             // 早期实现画在 landing + doglegDir×LandingGap 上，Right 的那批会整体右移一个文字宽。
             if (m_content == MLeaderContent::MText && !m_text.empty())
             {
-                const Math::Point3 origin = HasTextOrigin() ? m_textOrigin : m_landing;
-                sink.EmitMText(origin, m_text, m_style.TextStyle,
-                               m_style.TextHeight, 0.0, 0.0, color);
-
                 // 基线补到**文字边缘**。
                 //
                 // 两处都得对准，缺一处就会留空隙：
@@ -260,6 +286,10 @@ namespace MiniCAD
                                                             m_style.TextHeight, 0.0);
                     if (w > 0.0) { textMinX = 0.0; textMaxX = w; haveInk = true; }
                 }
+                // 没有 ContentBasePoint 时，内容在左要按我们自己量出的宽度右对齐
+                const Math::Point3 origin = ResolveTextOrigin(haveInk ? textMaxX : EstimateTextWidth());
+                sink.EmitMText(origin, m_text, m_style.TextStyle,
+                               m_style.TextHeight, 0.0, 0.0, color);
                 if (haveInk)
                 {
                     const double t0 = origin.x + textMinX;   // 文字墨迹左缘
@@ -301,6 +331,7 @@ namespace MiniCAD
             e->m_landing   = m_landing;
             e->m_doglegDir = m_doglegDir;
             e->m_textOrigin = m_textOrigin;
+            e->m_hasTextOrigin = m_hasTextOrigin;
             e->m_textAnchor = m_textAnchor;
             e->m_textLeftAttachment  = m_textLeftAttachment;
             e->m_textRightAttachment = m_textRightAttachment;
@@ -340,8 +371,9 @@ namespace MiniCAD
         Math::Point3            m_landing;
         Math::Vec3              m_doglegDir{ 1, 0, 0 };   // 由内容指向引线侧
         // 文字块左下角（AutoCAD ContentBasePoint / 组码 10）。
-        // (0,0) 视为"未设置"，此时退回 m_landing（旧数据兼容）。
+        // 未设置（m_hasTextOrigin = false）时由 ResolveTextOrigin 按 landing 推出（新建、旧档案）。
         Math::Point3            m_textOrigin;
+        bool                    m_hasTextOrigin = false;
         MLeaderTextAnchor       m_textAnchor = MLeaderTextAnchor::Left;
         // 文字左/右附着方式（context 组码 174 / 175）。
         // 默认 -1 = "未设置"，此时按**普通族**处理（保持旧行为，不改变既有图纸观感）。

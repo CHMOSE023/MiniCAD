@@ -321,7 +321,7 @@ namespace MiniCAD
         {
             const auto& snap = useAfter ? e.AfterMLeader : e.BeforeMLeader;
             auto* ml = static_cast<MLeaderEntity*>(entity);
-            ml->SetLanding(snap.landing);
+            ml->MoveLanding(snap.landing);
             auto& lines = ml->GetLeaderLines();
             for (size_t i = 0; i < snap.linePoints.size() && i < lines.size(); ++i)
                 lines[i].points = snap.linePoints[i];
