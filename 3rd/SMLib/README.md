@@ -1,6 +1,6 @@
 # SMLib（第三方：NURBS BRep 实体建模内核）
 
-来源：NVIDIA USD BRep（usd-brep）1.0.0，提交 `c9c5979f04cea8c38213004d4f04df0dcfb40d05`。
+来源：NVIDIA USD BRep（usd-brep）1.0.1，提交 `3fd5b95`（2026-10-23 由 1.0.0 `c9c5979` 的差异补丁同步）。
 许可证：Apache License 2.0，见同目录 `LICENSE`；各源文件头部保留原版权声明（上游仓库没有 NOTICE 文件）。
 
 只复制了内核与高层接口两部分，USD、Python、OCCT、Hydra 等其余部分不带：
