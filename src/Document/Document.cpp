@@ -325,4 +325,106 @@ namespace MiniCAD
             s.EndObject();
         }
     }
+
+    // ── 图纸布局（LAYOUT / 图纸空间）─────────────────────────────────────
+
+    // 当前布局按归属键认（m_activeKey，0 = 模型页）：布局增删、撤销后下标会变，键不变。
+    // 当前布局被删掉（含撤销新建）时自动回到模型页
+    int Document::ActiveLayout() const
+    {
+        const int i = m_scene.FindLayout(m_activeKey);
+        return i >= 0 ? i : m_scene.ModelLayoutIndex();
+    }
+
+    bool Document::ActiveLayoutIsPaper() const
+    {
+        return m_scene.FindLayout(m_activeKey) >= 0;
+    }
+
+    uint64_t Document::ActiveLayoutOwnerKey() const
+    {
+        return ActiveLayoutIsPaper() ? m_activeKey : 0;     // 模型页：不过滤图纸空间归属
+    }
+
+    bool Document::SetActiveLayout(int index, CameraState& camera)
+    {
+        const auto& layouts = m_scene.Layouts();
+        if (index < 0 || index >= static_cast<int>(layouts.size()))
+            return false;
+        const uint64_t key  = layouts[static_cast<size_t>(index)].Model ? 0 : layouts[static_cast<size_t>(index)].OwnerKey;
+        const uint64_t from = ActiveLayoutOwnerKey();
+        if (key == from && m_activeKey == from)
+            return false;
+
+        // 保存当前布局的视图（当前布局刚被删掉时它的视图也没用了，照样记下无妨）
+        m_layoutViews[from] = camera;
+        m_activeKey = key;
+        m_scene.SetCurrentSpace(key != 0, key);
+
+        // 恢复新布局的视图；首次进入图纸页时把纸张范围交给调用方去框选
+        if (auto it = m_layoutViews.find(key); it != m_layoutViews.end())
+        {
+            camera = it->second;
+        }
+        else if (key != 0)
+        {
+            const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
+            // 布局是二维图纸：模型页可能在三维视图里，进布局时回到俯视
+            camera.Azimuth   = CameraState{}.Azimuth;
+            camera.Elevation = CameraState{}.Elevation;
+            if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+            {
+                // 只把目标点移到纸张中心；**缩放系数不在这里算** ——
+                // Camera::Zoom 的单位是「每像素多少世界单位」的倒数关系
+                // （GetWorldPerPixel = zoom / screenHeight），
+                // 而 Document 不持有 Viewport、拿不到屏幕高度。
+                // 调用方拿到 PaperBox 后调用 ZoomToBounds 统一处理。
+                camera.Target = { (sheet.MinX + sheet.MaxX) * 0.5,
+                                  (sheet.MinY + sheet.MaxY) * 0.5, 0.0 };
+            }
+            // 布局视图一旦进入就记为有效，后续切回来保留用户的平移缩放
+            m_layoutViews[key] = camera;
+        }
+
+        // 切换布局必须让整个场景重建：布局归属是「按当前布局过滤图纸空间实体」，
+        // 过滤条件变了，增量路径并不知道哪些块该消失（它只看实体自身的脏标记）。
+        // 标记全量脏，下次渲染重建全部顶点。
+        MarkDirty();
+        m_scene.MarkDirty();
+        return true;
+    }
+
+    bool Document::ValidateActiveLayout(CameraState& camera)
+    {
+        if (m_activeKey == 0 || ActiveLayoutIsPaper())
+            return false;
+        // 当前布局已不在布局表里：回到模型页，恢复模型页的视图
+        const uint64_t gone = m_activeKey;
+        m_activeKey = 0;
+        m_scene.SetCurrentSpace(false, 0);
+        m_layoutViews.erase(gone);
+        if (auto it = m_layoutViews.find(0); it != m_layoutViews.end())
+            camera = it->second;
+        m_scene.MarkDirty();
+        return true;
+    }
+
+    bool Document::IsVisibleInActiveLayout(const EntityAttr& attr) const
+    {
+        const bool paper = ActiveLayoutIsPaper();
+        // 模型空间实体只在模型页显示；图纸空间实体只在布局页显示
+        if (attr.InPaperSpace != paper)
+            return false;
+
+        // 布局页里进一步按归属键过滤：只显示属于**当前布局**的图纸空间实体。
+        // OwnerKey 为 0（未提供）时不过滤，退化为「显示全部图纸空间实体」，
+        // 这样老数据仍能显示，而不是整页空白。
+        if (paper)
+        {
+            const uint64_t key = ActiveLayoutOwnerKey();
+            if (key != 0 && attr.LayoutKey != 0 && attr.LayoutKey != key)
+                return false;
+        }
+        return true;
+    }
 }

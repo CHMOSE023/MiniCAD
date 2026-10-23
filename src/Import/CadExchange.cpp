@@ -36,6 +36,8 @@
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
+#include "Core/Entity/ViewportEntity.hpp"
+#include "Core/Entity/MLineEntity.hpp"
 #include "Core/Math/OCS.hpp"
 #include "Scene/HatchPatternLibrary.h"
 #include "Scene/Scene.h"
@@ -352,6 +354,7 @@ namespace MiniCAD
             void Run()
             {
                 ImportLineTypes();
+                ImportMLineStyles();     // 多线样式（MLINE 的组码 340 引用它）
                 ImportLayers();
                 ImportTextStyles();
                 ImportPointStyle();
@@ -372,7 +375,9 @@ namespace MiniCAD
                         m_progressTotal += model->Entities.size();
                 }
                 ImportBlocks();
+                ImportLayouts();          // LAYOUT 表：布局名 + 纸张范围 + 归属键
                 ImportModelSpace();
+                ImportPaperSpaceEntities();  // 图纸空间实体（含 VIEWPORT）
                 m_scene.ResolveAllInserts();
                 m_scene.MarkDirty();
                 RecordSource();
@@ -535,6 +540,58 @@ namespace MiniCAD
                 return it == m_styles.end() ? TextStyleTable::StandardID : it->second;
             }
 
+            // ── 多线样式（MLINESTYLE）────────────────────────────────────
+            //
+            // 每个多线实体用组码 340 引用一个 MLINESTYLE 对象，样式里存的是
+            // 各条元素线相对中心线的偏移（组码 49）与颜色 / 线型。
+            // 不导入样式的话，多线只能用内置 Standard —— 用户的墙线样式
+            // （比如 5 条元素线）会被画成 2 条线。
+            void ImportMLineStyles()
+            {
+                MLineStyleTable& table = m_scene.GetMLineStyleTable();
+                for (const auto& [handle, object] : m_db.Objects())
+                {
+                    const auto* st = dynamic_cast<const Dwg::MLineStyle*>(object.get());
+                    if (st == nullptr)
+                        continue;
+
+                    MLineStyleRecord rec;
+                    rec.Name        = st->Name;
+                    rec.Description = st->Description;
+                    // 封口 / 连接：Flags 位（1 = 起点封口、2 = 终点封口、4 = 顶点连接线）
+                    const int flags = static_cast<int>(st->Flags);
+                    rec.StartCap = (flags & 1) != 0;
+                    rec.EndCap   = (flags & 2) != 0;
+                    rec.Joints   = (flags & 4) != 0;
+
+                    for (const auto& el : st->Elements)
+                    {
+                        MLineElement e;
+                        e.Offset = el.Offset;
+                        // 只有元素线自己指定了颜色（非 ByLayer / ByBlock）才覆盖实体色
+                        if (!el.Color.IsByLayer() && !el.Color.IsByBlock())
+                        {
+                            e.UseColor = true;
+                            e.Color    = LayerColorToColor4(el.Color);
+                        }
+                        rec.Elements.push_back(e);
+                    }
+                    rec.Normalize();      // MLineEntity 依赖「偏移从大到小」
+                    if (rec.Elements.empty())
+                        continue;
+
+                    const MLineStyleID id = table.Add(std::move(rec));
+                    m_mlineStyles[handle] = id;
+                }
+                m_mlineStyles[Dwg::kNullHandle] = MLineStyleTable::StandardID;
+            }
+
+            MLineStyleID LookupMLineStyle(Dwg::Handle h) const
+            {
+                auto it = m_mlineStyles.find(h);
+                return it == m_mlineStyles.end() ? MLineStyleTable::StandardID : it->second;
+            }
+
             // ── 块 ──────────────────────────────────────────────────────
             static bool IsLayoutBlock(const std::string& name)
             {
@@ -602,6 +659,178 @@ namespace MiniCAD
                         m_scene.AddEntity(std::move(conv));
                         if (m_source != nullptr)
                             m_source->Links[id].Handle = h;
+                    }
+                }
+            }
+
+            // ── 图纸布局（LAYOUT）────────────────────────────────────────
+            //
+            // AutoCAD 的模型空间与每张布局各对应一个 BLOCK_RECORD：
+            //   *Model_Space            模型页
+            //   *Paper_Space            第 1 张布局
+            //   *Paper_Space0、*Paper_Space1 …  第 2、3… 张
+            // LAYOUT 对象（OBJECTS 段）把「布局名」与「图纸空间块记录」关联起来：
+            //   AssociatedBlockHandle(330) → 该布局的图纸空间 BLOCK_RECORD
+            //   PlotSettings.MaxExtents/… → 纸张范围
+            //
+            // 之前导入只处理模型空间，图纸空间实体（含 VIEWPORT）全部被丢弃 ——
+            // 布局页自然是空白。
+            void ImportLayouts()
+            {
+                std::vector<DrawingLayout> layouts;
+                layouts.push_back(DrawingLayout{});      // 0 = 模型页
+
+                // Layout 对象按 LayoutOrder 排；与块记录的对应关系靠 330。
+                // 模型页在 DXF 里也可能是一个 LAYOUT 对象（组码 71 = 0，关联 *Model_Space），
+                // 必须排除 —— 否则它会被当成一张普通布局，导出时又写一遍（实测会多出一张 "Model"）。
+                std::vector<const Dwg::Layout*> layoutObjs;
+                for (const auto& [handle, object] : m_db.Objects())
+                {
+                    const auto* lay = dynamic_cast<const Dwg::Layout*>(object.get());
+                    if (lay == nullptr || lay->Name.empty())
+                        continue;
+                    // 关联块记录是 *Model_Space → 这是模型页，跳过
+                    if (const auto* rec = m_db.FindAs<Dwg::BlockRecord>(lay->AssociatedBlockHandle);
+                        rec != nullptr && Lower(rec->Name).rfind("*model_space", 0) == 0)
+                        continue;
+                    if (EqualsNoCase(lay->Name, "Model") || EqualsNoCase(lay->Name, "模型"))
+                        continue;
+                    layoutObjs.push_back(lay);
+                }
+                std::sort(layoutObjs.begin(), layoutObjs.end(),
+                          [](const Dwg::Layout* a, const Dwg::Layout* b)
+                          { return a->TabOrder < b->TabOrder; });
+
+
+                for (const Dwg::Layout* lay : layoutObjs)
+                {
+                    // 去重：DXF 读取时会先 `CreateDefaults()` 预置 "Model" 与 "Layout1"，
+                    // 文件里的 LAYOUT 再追加进来 —— 同名就会出现两次
+                    // （实测：导出 3 个 LAYOUT，读回却得到 4 个，多出的是默认的 Layout1）。
+                    //
+                    // 保留哪一个：默认布局关联的 `*Paper_Space` **没有实体**，
+                    // 文件里的布局关联的块才有内容。所以同名时保留块内实体数多的那个。
+                    auto entityCountOf = [&](Dwg::Handle blk) -> size_t
+                    {
+                        const auto* rec = m_db.FindAs<Dwg::BlockRecord>(blk);
+                        return rec != nullptr ? rec->Entities.size() : 0;
+                    };
+                    const bool dup = std::any_of(layouts.begin(), layouts.end(),
+                        [&](const DrawingLayout& x) { return x.Name == lay->Name; });
+                    if (dup)
+                    {
+                        // 已有同名项：若本条关联的块内容更多，替换掉原来那条
+                        for (auto& x : layouts)
+                        {
+                            if (x.Name != lay->Name) continue;
+                            if (entityCountOf(lay->AssociatedBlockHandle) > entityCountOf(static_cast<Dwg::Handle>(x.OwnerKey)))
+                            {
+                                x.OwnerKey = static_cast<uint64_t>(lay->AssociatedBlockHandle);
+                                if (lay->MaxExtents.X > 0.0 && lay->MaxExtents.Y > 0.0)
+                                {
+                                    // MinExtents 可能是负数，不能强行归零（否则布局原点偏移）
+                                    x.MinX = std::min(lay->MinExtents.X, 0.0);
+                                    x.MinY = std::min(lay->MinExtents.Y, 0.0);
+                                    x.MaxX = lay->MaxExtents.X; x.MaxY = lay->MaxExtents.Y;
+                                }
+                            }
+                            break;
+                        }
+                        continue;
+                    }
+
+                    DrawingLayout dl;
+                    dl.Name = lay->Name;
+                    dl.Model = false;
+                    dl.Order = static_cast<int>(layouts.size());
+                    // 纸张范围：Layout 的 MaxExtents(15/25) 是纸张外框，
+                    // 缺失时用 PlotSettings 的 PaperSize 兜底，再不行用 A3。
+                    //
+                    // ⚠ MinExtents **可能是负数**（实测「B地块地下室」图纸为
+                    // (-3736.52, -1500.00)）—— 之前一律当成 0，布局原点就偏了
+                    // 三千多单位，整张图看起来「显示不全」。必须按实际值取。
+                    if (lay->MaxExtents.X > 0.0 && lay->MaxExtents.Y > 0.0)
+                    {
+                        dl.MinX = std::min(lay->MinExtents.X, 0.0);
+                        dl.MinY = std::min(lay->MinExtents.Y, 0.0);
+                        dl.MaxX = lay->MaxExtents.X;
+                        dl.MaxY = lay->MaxExtents.Y;
+                    }
+                    // 归属键：图纸空间实体的 owner（330）就是这张布局的块记录句柄
+                    dl.OwnerKey = static_cast<uint64_t>(lay->AssociatedBlockHandle);
+                    layouts.push_back(std::move(dl));
+                }
+
+                if (layouts.size() > 1)
+                    m_scene.SetLayouts(std::move(layouts));
+            }
+
+            // 导入图纸空间实体：遍历每个 *Paper_Space* 块记录，把其中的实体加进场景，
+            // 并标记 InPaperSpace + LayoutKey（owner 句柄），供布局过滤使用。
+            void ImportPaperSpaceEntities()
+            {
+                for (const auto& rec : m_db.BlockRecords()->Entries)
+                {
+                    const auto* record = m_db.FindAs<Dwg::BlockRecord>(rec);
+                    if (record == nullptr)
+                        continue;
+                    const std::string lower = Lower(record->Name);
+                    if (lower.rfind("*paper_space", 0) != 0)
+                        continue;      // 只看图纸空间块
+
+                    for (Dwg::Handle h : DrawOrder(*record))
+                    {
+                        const auto* e = m_db.FindAs<Dwg::Entity>(h);
+                        if (e == nullptr)
+                            continue;
+
+                        // 跳过“代表纸张本身”的主视口（ShowsModel() == false）。
+                        //
+                        // 两个来源都靠这条清掉：
+                        //   1. `CadDatabase::CreateDefaults()` 自动补的整页视口 ——
+                        //      读取 DXF 时它在解析 OBJECTS 段之前就跑了，那时还没有 LAYOUT，
+                        //      于是补了一个覆盖整张纸的视口。它不是文件内容，
+                        //      算进来会让视口数比原图多 1（实测 6 → 7）。
+                        //   2. 文件里本来就有的图纸空间主视口 —— 它代表纸张、
+                        //      不显示模型内容，AutoCAD 里也不作为可见对象。
+                        //
+                        // 判据用**几何特征**（视图中心与框中心重合、视图高 = 框高），
+                        // 与 ViewportEntity::ShowsModel 保持一致。
+                        if (const auto* vp = dynamic_cast<const Dwg::Viewport*>(e))
+                        {
+                            constexpr double kEps = 1.0e-6;
+                            // 判据一：视图中心与框中心重合、视图高 = 框高（文件里的纸张主视口）
+                            const bool paperSized =
+                                vp->Width > 0.0 && vp->Height > 0.0 && vp->ViewHeight > 0.0 &&
+                                std::abs(vp->ViewCenter.X - vp->Center.X) <= kEps &&
+                                std::abs(vp->ViewCenter.Y - vp->Center.Y) <= kEps &&
+                                std::abs(vp->ViewHeight - vp->Height) <= kEps;
+                            // 判据二：`CreateDefaults` 补的那个视口只设了 Width/Height/Center，
+                            // 视图中心与视图高都是默认 0 —— 同样不是文件内容，必须跳过。
+                            // 没有这条时，往返一轮视口会多 1（实测 3 → 4）。
+                            const bool defaultStub =
+                                vp->Width > 0.0 && vp->Height > 0.0 &&
+                                std::abs(vp->ViewCenter.X) <= kEps &&
+                                std::abs(vp->ViewCenter.Y) <= kEps &&
+                                std::abs(vp->ViewHeight) <= kEps;
+                            if (paperSized || defaultStub)
+                                continue;
+                        }
+
+                        Tick();
+                        if (auto conv = Convert(*e))
+                        {
+                            // 标记图纸空间归属：渲染 / 拾取据此只显示当前布局的实体
+                            EntityAttr attr = conv->GetAttr();
+                            attr.InPaperSpace = true;
+                            attr.LayoutKey    = static_cast<uint64_t>(record->ObjectHandle);
+                            conv->SetAttr(attr);
+
+                            const Object::ObjectID id = conv->GetID();
+                            m_scene.AddEntity(std::move(conv));
+                            if (m_source != nullptr)
+                                m_source->Links[id].Handle = h;
+                        }
                     }
                 }
             }
@@ -1607,6 +1836,99 @@ namespace MiniCAD
                                               blk ? blk->GetName() : std::string(), insPoint);
                 }
 
+                // 图纸空间视口（VIEWPORT）：布局页里靠它把模型内容显示出来
+                if (auto* e = dynamic_cast<const Dwg::Viewport*>(&src))
+                {
+                    auto base = Make<ViewportEntity>(src, nullptr, ToPoint(e->Center),
+                                                     e->Width, e->Height);
+                    auto* vp = static_cast<ViewportEntity*>(base.get());
+                    // ⚠ 组码 12/22（ViewCenter）是 **DCS** 坐标，不是 WCS。
+                    //    DCS 相对 WCS 旋转了 +TwistAngle，必须反向旋转 -Twist
+                    //    才是模型里的真实位置。直接当 WCS 用时，Twist≠0 的
+                    //    视口内容会被画到几十万单位外 —— 视口是空框
+                    //    （实测 `01-曲陵路.dwg` 5 个 Twist=95.7° 的浮动视口）。
+                    vp->SetTwist(e->TwistAngle);
+                    vp->SetViewCenterDcs(Math::Point3{ e->ViewCenter.X, e->ViewCenter.Y, 0.0 },
+                                         e->TwistAngle);
+                    vp->SetViewHeight(e->ViewHeight);
+                    vp->SetViewportId(e->ActiveStatus);
+                    return base;
+                }
+
+                // 多线（MLINE）
+                //
+                // 结构：组码 72 = 顶点数、73 = 元素线数；每个顶点后跟
+                //   11/21/31 位置（中心线上的点）、12/22/32 方向、13/23/33 斜接，
+                //   然后是**每条元素线一段**：74 = 参数个数、41 × n = 参数、75 = 面积填充参数。
+                //
+                // 实测 `sample_AC1015_ascii.dxf` 的 MLINE：
+                //   72=8（顶点）、73=2（元素线），每段 74=2、41=0.75 / 41=0.0
+                //   ⇒ 41 的第一个值是**该元素线相对中心线的偏移距离**（0.75 / -0.75）。
+                // 所以可以直接沿用「路径 + 样式偏移」的模型，不必逐顶点存偏移。
+                if (auto* e = dynamic_cast<const Dwg::MLine*>(&src))
+                {
+                    if (e->Vertices.size() < 2)
+                        return Skip(src);
+
+                    // 中心线路径 = 各顶点的 11/21/31
+                    std::vector<Math::Point3> path;
+                    path.reserve(e->Vertices.size());
+                    for (const auto& v : e->Vertices)
+                        path.push_back(Math::Point3{ v.Position.X, v.Position.Y, v.Position.Z });
+
+                    // 样式：优先用文件里的 MLINESTYLE（组码 340 指向的对象）
+                    MLineStyleRecord style = m_scene.GetMLineStyleTable().Resolve(
+                        LookupMLineStyle(e->StyleHandle));
+
+                    // 若顶点里带的元素线数与样式不符，以顶点为准重建（偏移取第一个顶点的参数）
+                    const auto& segs0 = e->Vertices.front().Segments;
+                    if (!segs0.empty() && style.Elements.size() != segs0.size())
+                    {
+                        style.Elements.clear();
+                        for (const auto& sg : segs0)
+                        {
+                            MLineElement el;
+                            el.Offset = sg.Parameters.empty() ? 0.0 : sg.Parameters.front();
+                            style.Elements.push_back(el);
+                        }
+                        style.Normalize();
+                    }
+                    if (style.Elements.size() < 2)
+                        return Skip(src);       // 少于 2 条元素线画不出多线
+
+                    const bool closed = (static_cast<int>(e->Flags) & 2) != 0;
+                    const MLineJustify justify =
+                        (e->Justification == Dwg::MLineJustification::Top)      ? MLineJustify::Top
+                      : (e->Justification == Dwg::MLineJustification::Bottom)   ? MLineJustify::Bottom
+                                                                                : MLineJustify::Zero;
+                    auto g = Make<MLineEntity>(src, &e->Normal, std::move(path), std::move(style),
+                                               justify, e->ScaleFactor > 0.0 ? e->ScaleFactor : 1.0,
+                                               closed);
+
+                    // ── 保留每顶点每元素线的精确参数 ──────────────────────────
+                    //
+                    // 这些参数带着 AutoCAD 早已算好的斜接信息。最关键的是
+                    // **T 形 / 拐角接头的端头推移**：实测 sample_AC1032.dwg 的
+                    // 横线起点，两条元素线沿路径方向各被推出 2.1309（= 竖线宽度），
+                    // 正好停在竖线内侧边上。只用「路径 + 样式偏移」重算会丢掉这个推移，
+                    // 横线就一直穿到竖线中心线上 —— 看起来是「穿透」而不是「接头」。
+                    if (auto* ml = static_cast<MLineEntity*>(g.get()))
+                    {
+                        MLineEntity::VertexParams vp;
+                        vp.reserve(e->Vertices.size());
+                        for (const auto& v : e->Vertices)
+                        {
+                            std::vector<std::vector<double>> perElem;
+                            perElem.reserve(v.Segments.size());
+                            for (const auto& sg : v.Segments)
+                                perElem.push_back(sg.Parameters);
+                            vp.push_back(std::move(perElem));
+                        }
+                        ml->SetVertexParams(std::move(vp));
+                    }
+                    return g;
+                }
+
                 return Skip(src);
             }
 
@@ -2398,6 +2720,7 @@ namespace MiniCAD
             std::map<Dwg::Handle, LayerID>     m_layers;
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
+            std::map<Dwg::Handle, MLineStyleID> m_mlineStyles;   // MLINESTYLE 句柄 → 样式表 ID
             std::map<Dwg::Handle, BlockID>     m_blocks;
             // 转换进度：已转换 / 全部块与模型空间的实体数
             void Tick()
@@ -2472,12 +2795,24 @@ namespace MiniCAD
                     {
                         if (!o.IsKindOf<Entity>())
                             return;
+                        const auto& ent = static_cast<const Entity&>(o);
                         m_pendingClips.clear();
-                        if (auto conv = Convert(static_cast<const Entity&>(o)))
+                        if (auto conv = Convert(ent))
                         {
+                            // 图纸空间实体挂到它所属布局的 *Paper_Space* 块记录上。
+                            // 写出侧按**所有者**判断是否写组码 67（IsPaperSpaceOwner），
+                            // 挂对了所有者，67 与 330 都会自动正确 —— 不需要额外字段。
+                            Dwg::BlockRecord* owner = model;
+                            if (const EntityAttr& a = ent.GetAttr(); a.InPaperSpace)
+                            {
+                                owner = PaperSpaceRecordFor(a.LayoutKey);
+                                if (owner == nullptr)
+                                    owner = model;   // 找不到对应布局时退回模型空间，至少不丢图元
+                            }
+
                             const std::vector<PendingClip> pending = std::move(m_pendingClips);
                             m_pendingClips.clear();
-                            Dwg::Entity* added = m_db.AddEntity(model, std::move(conv));
+                            Dwg::Entity* added = m_db.AddEntity(owner, std::move(conv));
                             if (added != nullptr)
                                 for (const auto& c : pending)
                                     AttachClipBoundary(c, added->ObjectHandle,
@@ -2486,6 +2821,10 @@ namespace MiniCAD
                         m_pendingClips.clear();
                     });
                 }
+
+                // LAYOUT 对象：把布局名 / 纸张范围 / 对应的图纸空间块记录写进 OBJECTS 段。
+                // 不写的话，另存为后布局标签会整批消失（实体会留着，但无处可去）。
+                ExportLayouts();
 
                 for (const auto& [name, count] : m_skipped)
                     LOG_WARN("DWG/DXF 导出：不支持的实体 %s × %d 已跳过", name.c_str(), count);
@@ -2565,8 +2904,124 @@ namespace MiniCAD
                     LOG_WARN("DWG/DXF 导出：%d 个修改过的天正对象写为普通几何", rewrittenTch);
             }
 
-            void ExportLineTypes()
+            // ── 布局导出 ──────────────────────────────────────────────────
+            //
+            // 布局与图纸空间块记录的对应关系：
+            //   第 1 张布局 → *Paper_Space
+            //   第 2 张     → *Paper_Space0
+            //   第 3 张     → *Paper_Space1  …（AutoCAD 的命名约定）
+            // LAYOUT 对象的 AssociatedBlockHandle(330) 指向该块记录，TabOrder(71) 定顺序。
+            //
+            // 图纸空间实体按 LayoutKey 找到所属布局，挂到对应块记录上 ——
+            // 写出侧据所有者自动写组码 67，实体与布局的归属关系随之保留。
+            Dwg::BlockRecord* PaperSpaceRecordFor(uint64_t layoutKey)
             {
+                // 先按 LayoutKey（= 导入时的块记录句柄）找已存在的记录
+                if (layoutKey != 0)
+                    if (auto* rec = m_db.FindAs<Dwg::BlockRecord>(static_cast<Dwg::Handle>(layoutKey)))
+                        return rec;
+
+                // 找不到（新建文档、或布局换了序号）：按布局名另建 / 复用一个
+                const auto& layouts = m_scene.Layouts();
+                int paperIndex = 0;
+                for (size_t i = 0; i < layouts.size(); ++i)
+                {
+                    if (layouts[i].Model) continue;
+                    if (layouts[i].OwnerKey == layoutKey)
+                        break;
+                    ++paperIndex;
+                }
+                const std::string name = paperIndex == 0 ? "*Paper_Space"
+                                                         : "*Paper_Space" + std::to_string(paperIndex - 1);
+                if (auto* existing = m_db.FindTableEntry<Dwg::BlockRecord>(m_db.BlockRecords(), name))
+                    return existing;
+                return m_db.CreateBlockRecord(name);
+            }
+
+            // 把 Scene 的布局表写成 LAYOUT 对象。
+            // 模型页在 DXF / DWG 里不是一个 LAYOUT 对象（它由 *Model_Space 表达），
+            // 所以这里只导出非模型布局。
+            void ExportLayouts()
+            {
+                const auto& layouts = m_scene.Layouts();
+                if (layouts.size() <= 1)
+                    return;      // 只有模型页：不需要 LAYOUT
+
+                // LAYOUT 挂在根字典的 "ACAD_LAYOUT" 字典下
+                Dwg::CadDictionary* root = m_db.RootDictionary();
+                if (root == nullptr)
+                    return;
+                Dwg::CadDictionary* layoutDict = nullptr;
+                for (size_t i = 0; i < root->EntryNames.size() && i < root->EntryHandles.size(); ++i)
+                    if (root->EntryNames[i] == "ACAD_LAYOUT")
+                        layoutDict = m_db.FindAs<Dwg::CadDictionary>(root->EntryHandles[i]);
+                if (layoutDict == nullptr)
+                {
+                    auto dict = std::make_unique<Dwg::CadDictionary>();
+                    layoutDict = m_db.Add(std::move(dict));
+                    if (layoutDict == nullptr)
+                        return;
+                    root->EntryNames.push_back("ACAD_LAYOUT");
+                    root->EntryHandles.push_back(layoutDict->ObjectHandle);
+                }
+
+                int order = 0;
+                // ⚠ 先清空字典里已有的布局项、并删掉旧 LAYOUT 对象，再按 Scene 的布局表重建。
+                //   两层原因：
+                //     1. `CadDatabase::CreateDefaults()` 会预置一个 "Layout1"，不删就重复；
+                //     2. 以原图为底时读出的原库也带着原图的 LAYOUT，同样要按当前场景重写。
+                //   只清字典项不够 —— 对象本身还在 m_db.Objects() 里，写出时会作为
+                //   「未被引用但所有者已写出」的对象再写一遍（实测 4 张布局读回变 5 张）。
+                // ⚠ 删掉**所有**已有 LAYOUT 对象，再按 Scene 的布局表重建。
+                //   两层来源都要清：
+                //     1. `CadDatabase::CreateDefaults()` 预置的 "Layout1"（关联 *Paper_Space）；
+                //     2. 以原图为底时从原库读出的原图 LAYOUT。
+                //   只按字典项删除不够 —— 实测 CreateDefaults 的那个不在字典项里，
+                //   漏掉就导致「Layout1」重复（4 张布局读回变 5 张）。
+                {
+                    std::vector<Dwg::Handle> stale;
+                    for (const auto& [h, obj] : m_db.Objects())
+                        if (dynamic_cast<const Dwg::Layout*>(obj.get()) != nullptr)
+                            stale.push_back(h);
+                    for (Dwg::Handle h : stale)
+                        m_db.RemoveObject(h);
+                    // 块记录上还挂着 LayoutHandle 反向引用（CreateLayout 里设的），
+                    // 不清掉的话写出时会顺着它把已删的布局再写一遍。
+                    if (const Dwg::CadTable* recs = m_db.BlockRecords())
+                        for (Dwg::Handle rh : recs->Entries)
+                            if (auto* rec = m_db.FindAs<Dwg::BlockRecord>(rh))
+                                rec->LayoutHandle = Dwg::kNullHandle;
+                }
+                layoutDict->EntryNames.clear();
+                layoutDict->EntryHandles.clear();
+
+                for (const DrawingLayout& dl : layouts)
+                {
+                    if (dl.Model) { ++order; continue; }
+
+                    Dwg::BlockRecord* rec = PaperSpaceRecordFor(dl.OwnerKey);
+                    if (rec == nullptr) { ++order; continue; }
+
+                    auto lay = std::make_unique<Dwg::Layout>();
+                    lay->Name          = dl.Name;
+                    lay->TabOrder      = order;
+                    lay->AssociatedBlockHandle = rec->ObjectHandle;
+                    lay->MaxExtents    = Dwg::XYZ{ dl.MaxX, dl.MaxY, 0.0 };
+                    lay->MinExtents    = Dwg::XYZ{ dl.MinX, dl.MinY, 0.0 };
+                    lay->MaxLimits     = Dwg::XY{ dl.MaxX, dl.MaxY };
+                    lay->MinLimits     = Dwg::XY{ dl.MinX, dl.MinY };
+                    lay->InsertionBasePoint = Dwg::XYZ{ 0.0, 0.0, 0.0 };
+
+                    if (Dwg::Layout* added = m_db.Add(std::move(lay)))
+                    {
+                        layoutDict->EntryNames.push_back(dl.Name);
+                        layoutDict->EntryHandles.push_back(added->ObjectHandle);
+                    }
+                    ++order;
+                }
+            }
+
+            void ExportLineTypes()            {
                 m_lineTypeHandles[LineTypeTable::ContinuousID] = HandleOf<Dwg::LineType>(m_db.LineTypes(), "Continuous");
                 m_lineTypeHandles[LineTypeTable::ByBlockID]    = HandleOf<Dwg::LineType>(m_db.LineTypes(), "ByBlock");
                 m_lineTypeHandles[LineTypeTable::ByLayerID]    = Dwg::kNullHandle;
@@ -2765,6 +3220,10 @@ namespace MiniCAD
                 dst.LineTypeScale  = a.LinetypeScale;
                 dst.LineWeight     = static_cast<Dwg::LineWeightType>(LineweightToRaw(a.Lineweight));
                 dst.IsInvisible    = !a.Visible;
+                // 注：图纸空间标志（组码 67）不在这里写 ——
+                // DWG / DXF 写出侧按**实体的所有者**判断（IsPaperSpaceOwner），
+                // 只要把实体挂到对应的 *Paper_Space* 块记录上就会自动带上 67。
+                // 组码 330（布局归属）同样由所有者关系表达，无需额外字段。
             }
 
             static Dwg::XYZ NormalOf(const Entity& e)
@@ -2925,6 +3384,123 @@ namespace MiniCAD
                 return dst;
             }
 
+            // 多线在某个顶点处的「方向」与「斜接方向」。
+            //
+            // 与 MLineEntity::OverlayVertexParams 用同一套算法：
+            //   · 端点：dir = 相邻段方向，miter = dir 的左法线
+            //   · 中间顶点：dir = 两段的角平分方向，miter = 平均方向的法线，
+            //               长度按 1/cos(半角) 归一（直角处得到 (-0.707, 0.707)）
+            //
+            // 导出时用它把元素线的实际坐标反解成 MLINE 的两个参数；
+            // 导入时用它还原坐标。两边一致，往返才不走样。
+            static void VertexDirMiter(const std::vector<Math::Point3>& path, bool closed, size_t i,
+                                       Math::Vec3& outDir, Math::Vec3& outMiter)
+            {
+                const size_t n = path.size();
+                const size_t segCount = (closed && n >= 3) ? n : (n > 0 ? n - 1 : 0);
+                if (segCount == 0)
+                {
+                    outDir = { 1.0, 0.0, 0.0 };
+                    outMiter = { 0.0, 1.0, 0.0 };
+                    return;
+                }
+                auto segDir = [&](size_t s) -> Math::Vec3
+                {
+                    const auto& a = path[s % n];
+                    const auto& b = path[(s + 1) % n];
+                    const double dx = b.x - a.x, dy = b.y - a.y;
+                    const double len = std::sqrt(dx * dx + dy * dy);
+                    return len > 1e-12 ? Math::Vec3{ dx / len, dy / len, 0.0 } : Math::Vec3{ 1.0, 0.0, 0.0 };
+                };
+
+                const bool isEnd = !closed && (i == 0 || i + 1 == n);
+                if (isEnd)
+                {
+                    outDir = (i == 0) ? segDir(0) : segDir(segCount - 1);
+                    outMiter = Math::Vec3{ -outDir.y, outDir.x, 0.0 };
+                    return;
+                }
+
+                const Math::Vec3 d0 = segDir((i + segCount - 1) % segCount);   // 前一段
+                const Math::Vec3 d1 = segDir(i % segCount);                    // 后一段
+                Math::Vec3 bis{ d0.x + d1.x, d0.y + d1.y, 0.0 };
+                const double bl = std::sqrt(bis.x * bis.x + bis.y * bis.y);
+                if (bl < 1e-12) { outDir = d1; outMiter = Math::Vec3{ -d1.y, d1.x, 0.0 }; return; }
+
+                outDir = Math::Vec3{ bis.x / bl, bis.y / bl, 0.0 };
+                const Math::Vec3 nrm{ -d1.y, d1.x, 0.0 };
+                const double cosHalf = nrm.x * (-d0.y) + nrm.y * d0.x;
+                const double k = (std::abs(cosHalf) > 0.2) ? 1.0 / std::abs(cosHalf) : 1.0;
+                outMiter = Math::Vec3{ nrm.x * k, nrm.y * k, 0.0 };
+            }
+
+            // 多线样式句柄：MultilineStyle 在 DWG 里是**根字典 ACAD_MLINESTYLE 下的条目**
+            // （不是符号表），所以走字典查找 / 新建。
+            Dwg::Handle MLineStyleHandle(const MLineStyleRecord& rec)
+            {
+                // 先按名字找已有的条目
+                if (Dwg::CadDictionary* dict = m_db.FindNamedDictionary("ACAD_MLINESTYLE"))
+                {
+                    for (size_t i = 0; i < dict->EntryNames.size() && i < dict->EntryHandles.size(); ++i)
+                        if (EqualsNoCase(dict->EntryNames[i], rec.Name.c_str()))
+                            return dict->EntryHandles[i];
+                }
+                else
+                {
+                    // 还没有这个字典：建一个挂到根字典下
+                    Dwg::CadDictionary* root = m_db.RootDictionary();
+                    if (root == nullptr)
+                        return Dwg::kNullHandle;
+                    auto newDict = std::make_unique<Dwg::CadDictionary>();
+                    Dwg::CadDictionary* addedDict = m_db.Add(std::move(newDict));
+                    if (addedDict == nullptr)
+                        return Dwg::kNullHandle;
+                    root->EntryNames.push_back("ACAD_MLINESTYLE");
+                    root->EntryHandles.push_back(addedDict->ObjectHandle);
+                }
+
+                auto st = std::make_unique<Dwg::MLineStyle>();
+                st->Name        = rec.Name;
+                st->Description = rec.Description;
+                int flags = 0;
+                if (rec.StartCap) flags |= 1;
+                if (rec.EndCap)   flags |= 2;
+                if (rec.Joints)   flags |= 4;
+                st->Flags = static_cast<Dwg::MLineStyleFlags>(flags);
+                for (const auto& el : rec.Elements)
+                {
+                    Dwg::MLineStyleElement e;
+                    e.Offset = el.Offset;
+                    if (el.UseColor)
+                    {
+                        // Math::Color4（0..1 浮点）→ 真彩色 24 位
+                        const auto to255 = [](double v) {
+                            return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0));
+                        };
+                        const std::uint32_t rgb = (to255(el.Color.r) << 16) |
+                                                  (to255(el.Color.g) << 8)  |
+                                                   to255(el.Color.b);
+                        e.Color = Dwg::Color::FromTrueColor(rgb);
+                    }
+                    else
+                    {
+                        e.Color = Dwg::Color::ByLayer();
+                    }
+                    st->Elements.push_back(e);
+                }
+                if (Dwg::MLineStyle* added = m_db.Add(std::move(st)))
+                {
+                    auto* dict = m_db.FindNamedDictionary("ACAD_MLINESTYLE");
+                    if (dict != nullptr)
+                    {
+                        dict->EntryNames.push_back(rec.Name);
+                        dict->EntryHandles.push_back(added->ObjectHandle);
+                    }
+                    return added->ObjectHandle;
+                }
+                return Dwg::kNullHandle;
+            }
+
             // ATTDEF / ATTRIB 的位置与对齐：导入时 Fit/Aligned 取过 10↔11 的中点、并把对齐码
             // 归到了 0/1/2，写出时还原为「插入点 = 对齐点 = 锚点 + 居中对齐」——
             // 往返后锚点与居中都一致（不做逐字拉伸，语义差一个 72=5 的标记，
@@ -2945,6 +3521,90 @@ namespace MiniCAD
 
             std::unique_ptr<Dwg::Entity> Convert(const Entity& e)
             {
+                // 图纸空间视口（VIEWPORT）：布局页里靠它把模型内容显示出来。
+                // 不导出的话另存为后布局页只剩白纸。
+                if (auto* s = dynamic_cast<const ViewportEntity*>(&e))
+                {
+                    auto d = std::make_unique<Dwg::Viewport>();
+                    d->Center     = ToXYZ(s->GetCenter());
+                    d->Width      = s->GetWidth();
+                    d->Height     = s->GetHeight();
+                    // ViewCenter(12/22) 要写 **DCS** 值：内部存的是 WCS，
+                    // 转回去（R(+Twist)）。Twist 为 0 时是恒等变换。
+                    d->ViewCenter = Dwg::XY{ s->GetViewCenterDcs(s->GetTwist()).x,
+                                             s->GetViewCenterDcs(s->GetTwist()).y };
+                    d->ViewHeight = s->GetViewHeight();
+                    d->TwistAngle = s->GetTwist();
+                    d->ActiveStatus = static_cast<std::int16_t>(s->GetViewportId());
+                    d->ViewDirection = Dwg::XYZ::AxisZ();
+                    // ViewTarget(17/27) 是 WCS 下的观察目标点，直接用 WCS 值
+                    d->ViewTarget = Dwg::XYZ{ s->GetViewCenter().x, s->GetViewCenter().y, 0.0 };
+                    return Finish(e, std::move(d));
+                }
+                // 多线（MLINE）：导出中心线路径 + 每顶点每元素线的参数。
+                // 只导入不导出，另存为后多线会整批消失。
+                //
+                // 顶点方向 / 斜接方向按**同一套算法**算（见 VertexDirMiter），
+                // 与导入侧 MLineEntity::OverlayVertexParams 对应，
+                // 否则写出的参数与重算方向对不上，往返后形状会走样。
+                if (auto* s = dynamic_cast<const MLineEntity*>(&e))
+                {
+                    const auto geo = s->ComputeGeometry();
+                    if (geo.Path.size() < 2 || geo.Elements.size() < 2)
+                        return Skip(e);
+
+                    auto d = std::make_unique<Dwg::MLine>();
+                    d->ScaleFactor   = s->GetScale();
+                    d->Normal        = NormalOf(e);
+                    d->StartPoint    = ToXYZ(geo.Path.front());
+                    d->Justification = (s->GetJustify() == MLineJustify::Top)    ? Dwg::MLineJustification::Top
+                                     : (s->GetJustify() == MLineJustify::Bottom) ? Dwg::MLineJustification::Bottom
+                                                                                 : Dwg::MLineJustification::Zero;
+                    int flags = static_cast<int>(Dwg::MLineFlags::HasVertices);
+                    if (s->IsClosed())
+                        flags |= static_cast<int>(Dwg::MLineFlags::Closed);
+                    d->Flags = static_cast<Dwg::MLineFlags>(flags);
+                    // 样式句柄：导出时按样式名找 / 建 MLINESTYLE
+                    d->StyleHandle = MLineStyleHandle(s->GetMLineStyle());
+
+                    // 每个顶点：位置 + 方向 + 斜接 + 每元素线参数
+                    //
+                    // 参数语义（与导入侧一致）：
+                    //   参数[0] = 沿该顶点 **miter 方向** 的偏移（斜接后的横向位置）
+                    //   参数[1] = 沿该顶点 **dir 方向** 的额外延伸（T 形/拐角接头的端头推移）
+                    // 写出时按「元素线实际坐标」反解这两个分量，
+                    // 这样导出再导入能完整还原接头形状。
+                    const size_t n = geo.Path.size();
+                    const size_t segCount = s->IsClosed() ? n : n - 1;
+                    for (size_t i = 0; i < n; ++i)
+                    {
+                        Dwg::MLineVertex v;
+                        v.Position = ToXYZ(geo.Path[i]);
+
+                        // 顶点方向 dir 与斜接方向 miter（与 MLineEntity::OverlayVertexParams 同一套算法，
+                        // 否则反解出的参数与重算的方向对不上）
+                        Math::Vec3 vdir, vmiter;
+                        VertexDirMiter(geo.Path, s->IsClosed(), i, vdir, vmiter);
+                        v.Direction = Dwg::XYZ{ vdir.x, vdir.y, 0.0 };
+                        v.Miter     = Dwg::XYZ{ vmiter.x, vmiter.y, 0.0 };
+
+                        for (size_t k = 0; k < s->GetMLineStyle().Elements.size() && k < geo.Elements.size(); ++k)
+                        {
+                            Dwg::MLineVertexSegment sg;
+                            const Math::Point3& ep = geo.Elements[k][i];
+                            const Math::Point3& cp = geo.Path[i];
+                            const double ox = ep.x - cp.x, oy = ep.y - cp.y;
+                            // 投影到 miter / dir 两个基上
+                            const double pMiter = ox * vmiter.x + oy * vmiter.y;
+                            const double pDir   = ox * vdir.x   + oy * vdir.y;
+                            sg.Parameters.push_back(pMiter);
+                            sg.Parameters.push_back(pDir);
+                            v.Segments.push_back(std::move(sg));
+                        }                        d->Vertices.push_back(std::move(v));
+                    }
+                    (void)segCount;
+                    return Finish(e, std::move(d));
+                }
                 if (auto* s = dynamic_cast<const SolidEntity*>(&e))
                 {
                     // SolidEntity 按周边顺序保存，DWG 按 1-2-4-3 的顺序

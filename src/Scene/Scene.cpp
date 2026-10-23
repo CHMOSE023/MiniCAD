@@ -23,6 +23,80 @@ namespace MiniCAD
 		ins.SetBlock(m_blockTable.Find(ins.GetBlockId()));
 	}
 
+	// ── 图纸布局 ──────────────────────────────────────────────────────────
+	// 保证：至少一项，且第一项是模型页。
+	// 导入时 LAYOUT 表可能只给出图纸页（模型页在 DXF 里不写成 LAYOUT 实体），
+	// 所以由这里补上，而不是让每个调用方各自判断。
+	void Scene::SetLayouts(std::vector<DrawingLayout> layouts)
+	{
+		m_layouts = std::move(layouts);
+		if (m_layouts.empty())
+			m_layouts.push_back(DrawingLayout{});
+		// 第一项必须是模型页：「模型页 = 索引 0」这条约定在
+		// Document::SetActiveLayout 与界面标签里都用到了，在这里统一保证
+		if (!m_layouts.front().Model)
+			m_layouts.insert(m_layouts.begin(), DrawingLayout{});
+		// 图纸布局的归属键非 0 且唯一（模型页为 0）
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+		{
+			DrawingLayout& l = m_layouts[i];
+			if (l.Model)
+			{
+				l.OwnerKey = 0;
+				continue;
+			}
+			bool dup = l.OwnerKey == 0;
+			for (size_t j = 0; j < i && !dup; ++j)
+				dup = m_layouts[j].OwnerKey == l.OwnerKey;
+			if (dup)
+				l.OwnerKey = NewLayoutKey();
+		}
+		MarkDisplayDirty();   // 布局只影响「画什么」，不是几何变化
+	}
+
+	int Scene::FindLayout(uint64_t ownerKey) const
+	{
+		if (ownerKey == 0)
+			return -1;
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+			if (!m_layouts[i].Model && m_layouts[i].OwnerKey == ownerKey)
+				return static_cast<int>(i);
+		return -1;
+	}
+
+	uint64_t Scene::NewLayoutKey() const
+	{
+		constexpr uint64_t kBase = 0x7F00000000000000ull;
+		uint64_t key = kBase;
+		for (const DrawingLayout& l : m_layouts)
+			if (l.OwnerKey >= key)
+				key = l.OwnerKey + 1;
+		return key;
+	}
+
+	// 一张布局的读写（Serialize / Deserialize 共用，按 IsLoading 决定方向）
+	void Scene::SerializeLayout(ISerializer& s, DrawingLayout& l)
+	{
+		s.Value("name", l.Name);
+		s.Value("model", l.Model);
+		int32_t order = l.Order;
+		s.Value("order", order);
+		l.Order = order;
+		s.Value("minX", l.MinX);
+		s.Value("minY", l.MinY);
+		s.Value("maxX", l.MaxX);
+		s.Value("maxY", l.MaxY);
+		s.Value("ownerKey", l.OwnerKey);
+	}
+
+	int Scene::ModelLayoutIndex() const
+	{
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+			if (m_layouts[i].Model)
+				return static_cast<int>(i);
+		return 0;
+	}
+
 	bool Scene::IsEntityLocked(const Object& obj) const
 	{
 		if (!obj.IsKindOf<Entity>())
@@ -211,6 +285,24 @@ namespace MiniCAD
 		double lts = m_lineTypeScale;
 		s.Value("lineTypeScale", lts);
 
+		// 图纸布局：只有模型页时不写（新建文档的常态）
+		if (m_layouts.size() > 1)
+		{
+			size_t nl = m_layouts.size();
+			if (s.BeginArray("layouts", nl))
+			{
+				for (const DrawingLayout& l : m_layouts)
+				{
+					if (!s.BeginElement(0))
+						continue;
+					DrawingLayout c = l;
+					SerializeLayout(s, c);
+					s.EndElement();
+				}
+				s.EndArray();
+			}
+		}
+
 		// 实体按 ID 升序写出,保证文件内容确定(unordered_map 无序)。
 		std::vector<ObjectID> ids = GetAllIDs();
 		std::sort(ids.begin(), ids.end());
@@ -283,6 +375,23 @@ namespace MiniCAD
 		double lts = 1.0;
 		s.Value("lineTypeScale", lts);
 		SetLineTypeScale(lts);
+
+		std::vector<DrawingLayout> layouts;      // 旧文件没有布局表：只有模型页
+		size_t nl = 0;
+		if (s.BeginArray("layouts", nl))
+		{
+			for (size_t i = 0; i < nl; ++i)
+			{
+				if (!s.BeginElement(i))
+					continue;
+				DrawingLayout l;
+				SerializeLayout(s, l);
+				layouts.push_back(std::move(l));
+				s.EndElement();
+			}
+			s.EndArray();
+		}
+		SetLayouts(std::move(layouts));
 
 		size_t n = 0;
 		if (s.BeginArray("entities", n))

@@ -81,7 +81,7 @@ namespace MiniCAD
 
         // 平台对象必须比 MainFrame 活得久。尺寸为逻辑像素，pixelScale = 物理像素 / 逻辑像素
         bool Initialize(AppPlatform& platform, float width, float height, float pixelScale);
-        int  RunSelfTest();
+        int  RunSelfTest(bool full = false);       // full：另跑只打印不判定的耗时测量（20 万条线的大图纸），慢
         int  RunBenchmark(const std::string& path);     // 只有 Win32 版：--bench 图纸，打印打开、滚轮缩放的耗时与内存
 
         // ── 由宿主调用 ───────────────────────────────────────────
@@ -111,6 +111,7 @@ namespace MiniCAD
 
         // ── 宿主面板（MainPanels.cpp / LayerPanels.cpp）─────────────
         std::unique_ptr<MiniGUI::Node> CreateDocumentArea();      // 文档标签 + 视口（没有文档时显示提示）
+        std::unique_ptr<MiniGUI::Node> CreateLayoutTabs();        // 布局页签条（模型 / 图纸空间布局）
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel();
         std::unique_ptr<MiniGUI::Node> CreateStatusBar();
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
@@ -157,6 +158,7 @@ namespace MiniCAD
         void OpenArrayDialog();
         void OpenHatchDialog();
         void OpenTextStyleDialog();
+        void OpenMLineStyleDialog();                              // 多线样式（MLSTYLE）
         void OpenPointStyleDialog();                             // 格式 → 点样式…（$PDMODE/$PDSIZE）
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
@@ -169,6 +171,7 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
+        void UpdateViewCubeVisibility();         // 按开关与当前布局显示视图方块（布局是二维图纸，不显示）
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
@@ -192,6 +195,11 @@ namespace MiniCAD
         void SyncOpenProgress();                // 每帧：把后台读取进度同步到状态栏
         void UpdateTitle();
         void ActivateDocument(Document* doc);
+        // 布局标签（模型 / 图纸空间布局）同步与切换
+        void SyncLayoutTabs();
+        void ActivateLayout(int index);
+        void NewLayout();                       // 新建布局（标签条的 + 与右键菜单、命令 layout.new）
+        void DeleteLayout(int index);           // 删除布局（右键菜单、命令 layout.delete 删当前布局）
         void CloseDocument(Document* doc);      // 未保存时先询问
         // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）。onSaved：当前文档保存成功后调用
         // （平台没有系统另存为对话框时，另存为经 OpenSaveAsDialog 异步完成）
@@ -219,6 +227,9 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;
+        MiniGUI::TabView*                      m_layoutTabs = nullptr;   // 布局标签条（模型 / 图纸空间布局）
+        MiniGUI::Node*                         m_layoutTabsBar = nullptr; // 布局标签条的外层容器（隐藏整行用）
+        bool                                   m_syncingLayouts = false; // 正在程序化同步标签，忽略回调
         MiniGUI::Node*                         m_noDocHint  = nullptr;   // 没有文档时代替视口显示
         MiniGUI::Node*                         m_viewCube   = nullptr;   // 视口右上角的视图方块（M6）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（保存在用户布局文件里）
@@ -237,6 +248,7 @@ namespace MiniCAD
         bool                                   m_arrayPicking    = false;   // 阵列对话框为拾取中心点暂时关闭
         MiniGUI::Dialog*                       m_hatchDialog     = nullptr;
         MiniGUI::Dialog*                       m_textStyleDialog = nullptr;
+        MiniGUI::Dialog*                       m_mlineStyleDialog = nullptr;
         MiniGUI::Dialog*                       m_pointStyleDialog = nullptr;  // 点样式对话框（$PDMODE/$PDSIZE）
         Document*                              m_pointStyleDoc    = nullptr;  // 它对应的文档；文档换了就关掉
         MiniGUI::Dialog*                       m_lineTypeScaleDialog = nullptr;  // 线型比例对话框（$LTSCALE）

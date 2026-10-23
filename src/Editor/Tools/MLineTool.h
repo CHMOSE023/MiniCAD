@@ -29,6 +29,10 @@ namespace MiniCAD
         {
             m_ctx = &ctx;
             m_overlay = &ctx.overlay;      // 事件之外只用它：m_ctx 指向的栈对象事件返回后即失效
+            // ⚠ 样式名必须在这里缓存下来：GetPrompt() 由 Editor::Render() **每帧**调用，
+            //   那时 m_ctx 早已失效（它指向 OnInput 的栈参数）。早先 GetPrompt 里直接
+            //   读 m_ctx->scene ⇒ 第一帧渲染就解引用野指针，点「多线」立刻崩溃。
+            m_styleName = Style().Name;
             const auto& e = ctx.event;
 
             if (e.IsKeyPressed(KeyCode::J))
@@ -102,12 +106,14 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
+            // ⚠ 不要在这里访问 m_ctx：本函数由 Editor::Render() 每帧调用，
+            //   而 m_ctx 指向 OnInput 的栈参数、事件返回后即失效。样式名用缓存值。
             static const char* kJ[] = { "上", "无", "下" };
             char buf[160];
             std::snprintf(buf, sizeof(buf), "%s [J 对正=%s  S 比例=%g  T 样式=%s%s]:",
                           m_pts.empty() ? "指定起点" : "指定下一点",
                           kJ[static_cast<int>(m_settings.Justify)], m_settings.Scale,
-                          StyleName().c_str(), m_pts.size() >= 3 ? "  C 闭合" : "");
+                          m_styleName.c_str(), m_pts.size() >= 3 ? "  C 闭合" : "");
             return buf;
         }
 
@@ -125,7 +131,6 @@ namespace MiniCAD
             const auto& scene = m_ctx->scene;
             return scene.GetMLineStyleTable().Resolve(scene.GetCurrentMLineStyle());
         }
-        std::string StyleName() const { return m_ctx ? Style().Name : std::string("Standard"); }
 
         void CycleStyle()
         {
@@ -177,5 +182,8 @@ namespace MiniCAD
         MLineSettings&            m_settings;
         std::vector<Math::Point3> m_pts;
         Math::Point3              m_cursor{};
+        // 当前样式名（供 GetPrompt 使用）。GetPrompt 在 OnInput 之外被每帧调用，
+        // 那里拿不到 m_ctx，所以把名字缓存下来，在 OnInput 里刷新。
+        std::string               m_styleName = "Standard";
     };
 }

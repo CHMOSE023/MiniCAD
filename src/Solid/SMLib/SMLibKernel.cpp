@@ -21,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -30,6 +31,7 @@
 #include <numbers>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 namespace MiniCAD::Solid
 {
@@ -2090,8 +2092,41 @@ namespace MiniCAD::Solid
                 static std::atomic<unsigned> s_counter{ 0 };
                 const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
                 const auto name  = "minicad_solid_" + std::to_string(ticks) + "_" + std::to_string(s_counter++) + ".smb";
-                std::error_code ec;
-                Path = (std::filesystem::temp_directory_path(ec) / name).string();
+                Path = (Dir() / name).string();
+            }
+            // 临时目录：先用系统 TEMP；写不了时（有的机器上非管理员身份运行时会这样，实体就全建不出来）
+            // 改用程序旁的 tmp 目录。第一次使用时试写一个文件确定，之后不变
+            static const std::filesystem::path& Dir()
+            {
+                static const std::filesystem::path dir = []
+                {
+                    std::vector<std::filesystem::path> candidates;
+                    std::error_code ec;
+                    if (auto temp = std::filesystem::temp_directory_path(ec); !ec)
+                        candidates.push_back(std::move(temp));
+#ifdef _WIN32
+                    // 程序路径：宽字符入口（wWinMain / wmain）只设 _wpgmptr，窄字符入口只设 _pgmptr；
+                    // 不能用 _get_pgmptr / _get_wpgmptr，对应的那个为空时它们按无效参数处理，直接终止程序
+#pragma warning(push)
+#pragma warning(disable : 4996)
+                    if (_wpgmptr && *_wpgmptr)
+                        candidates.push_back(std::filesystem::path(_wpgmptr).parent_path() / "tmp");
+                    else if (_pgmptr && *_pgmptr)
+                        candidates.push_back(std::filesystem::path(_pgmptr).parent_path() / "tmp");
+#pragma warning(pop)
+#endif
+                    for (const auto& d : candidates)
+                    {
+                        std::filesystem::create_directories(d, ec);
+                        const auto probe = d / ("minicad_probe_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                        const bool ok = static_cast<bool>(std::ofstream(probe, std::ios::binary) << 'x');
+                        std::filesystem::remove(probe, ec);
+                        if (ok)
+                            return d;
+                    }
+                    return candidates.empty() ? std::filesystem::path() : candidates.front();
+                }();
+                return dir;
             }
             ~TempFile()
             {

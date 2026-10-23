@@ -64,6 +64,10 @@
           "title": "视觉样式",
           "items": [ "view.style.wireframe", "view.style.shaded" ]
         },
+        {
+          "title": "布局",
+          "items": [ "layout.new", "layout.delete" ]
+        },
         "-",
         {
           "title": "绘图辅助",
@@ -80,7 +84,7 @@
     },
     {
       "title": "格式(&O)",
-      "items": [ "layer.new", "-", "format.textStyle", "format.pointStyle", "format.lineTypeScale" ]
+      "items": [ "layer.new", "-", "format.textStyle", "format.mlineStyle", "format.pointStyle", "format.lineTypeScale" ]
     },
     {
       "title": "绘图(&D)",
@@ -143,6 +147,8 @@
         "modify.extend",
         "modify.break",
         "-",
+        "modify.mledit",
+        "-",
         "modify.array",
         "-",
         {
@@ -168,7 +174,7 @@
   "toolbars": {
     "standard": [ "file.new", "file.open", "file.save", "|", "edit.undo", "edit.redo"],
     "draw": {
-      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "draw.pline", "draw.spline", "draw.text", "draw.mtext" ],
+      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "draw.pline", "draw.mline", "draw.spline", "draw.text", "draw.mtext" ],
       "iconSize": 20
     },
     "modify": [ "modify.move", "modify.copy", "modify.mirror", "modify.rotate" ]

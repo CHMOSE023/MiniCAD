@@ -14,6 +14,7 @@
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -171,7 +172,7 @@ namespace MiniCAD
     // =========================================================
     // 自测：注入窗口消息，验证输入在下一帧（而不是下下帧）生效，以及主窗口的标题栏、多文档、图层
     // =========================================================
-    int MainFrame::RunSelfTest()
+    int MainFrame::RunSelfTest(bool full)
     {
         const HWND hwnd = static_cast<Win32Window*>(m_platform)->GetHwnd();
         std::setvbuf(stdout, nullptr, _IONBF, 0);   // 输出重定向到文件时，中途崩溃也能看到已跑过的检查
@@ -181,6 +182,26 @@ namespace MiniCAD
             std::printf("[%s] %s\n", ok ? "通过" : "失败", what);
             if (!ok)
                 ++failures;
+        };
+        // 当前测试项：控制台先打印名字，上一项结束时打印它的耗时，最后列出最慢的几项
+        std::vector<std::pair<std::string, double>> sectionTimes;
+        std::string sectionName;
+        int64_t     sectionStart = NowTicks();
+        auto endSection = [&]
+        {
+            if (sectionName.empty())
+                return;
+            const double seconds = static_cast<double>(NowTicks() - sectionStart) / static_cast<double>(kTicksPerSecond);
+            std::printf("    （%s 用时 %.2f 秒）\n", sectionName.c_str(), seconds);
+            sectionTimes.emplace_back(sectionName, seconds);
+            sectionName.clear();
+        };
+        auto section = [&](const char* name)
+        {
+            endSection();
+            sectionName  = name;
+            sectionStart = NowTicks();
+            std::printf("\n▶ %s\n", name);
         };
         auto pump = [&]
         {
@@ -207,8 +228,10 @@ namespace MiniCAD
 
         // 处理完启动时的消息，渲染第一帧。v0.2.0 起启动时不再创建演示文档，自测要先有一个活动文档
         pump();
+        // 经命令新建：命令执行后通知界面同步（显示视口、隐藏“没有文档”提示）。直接 DocumentManager::New 时视口仍隐藏、
+        // 尺寸为 0，下面按视口中心注入的鼠标消息全部落空
         if (!m_docManager.GetActive())
-            m_docManager.New();
+            m_commands.Execute("file.new");
         RenderFrame();
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
@@ -220,9 +243,11 @@ namespace MiniCAD
 
         Editor&       editor = m_docManager.GetEditor();
         const Camera& camera = m_docManager.GetViewport().GetCamera();
+        editor.SetViewTransitionSeconds(0.0);   // 视图切换立即生效，切换后马上检查相机（过渡动画单独测）
         const Math::Point3 origin(0.0, 0.0, 0.0);
 
         // ── 1. 十字光标：移动后的第一帧就画在新位置 ──────────────
+        section("1. 十字光标：移动后的第一帧就画在新位置");
         uint64_t frames = m_frames;
         send(WM_MOUSEMOVE, 0, cx + 7, cy + 3);
         RenderFrame();
@@ -234,6 +259,7 @@ namespace MiniCAD
         }
 
         // ── 2. 中键平移：一帧内生效，位移与鼠标一致 ──────────────
+        section("2. 中键平移：一帧内生效，位移与鼠标一致");
         const Math::Point2 before = camera.WorldToScreen(origin);
         send(WM_MBUTTONDOWN, MK_MBUTTON, cx, cy);
         send(WM_MOUSEMOVE, MK_MBUTTON, cx + 40, cy + 25);
@@ -244,6 +270,7 @@ namespace MiniCAD
               "中键平移在下一帧生效，位移等于鼠标位移");
 
         // ── 3. 拖出视口：捕获期间继续平移 ────────────────────────
+        section("3. 拖出视口：捕获期间继续平移");
         send(WM_MOUSEMOVE, MK_MBUTTON, left - 60, cy + 25);     // 拖到左侧面板上
         RenderFrame();
         const Math::Point2 outside = camera.WorldToScreen(origin);
@@ -252,6 +279,7 @@ namespace MiniCAD
         send(WM_MBUTTONUP, 0, left - 60, cy + 25);
 
         // ── 4. 滚轮缩放：以光标为中心，光标下的世界点不动 ────────
+        section("4. 滚轮缩放：以光标为中心，光标下的世界点不动");
         send(WM_MOUSEMOVE, 0, cx, cy);
         RenderFrame();
         const Math::Point3 anchor = camera.ScreenToWorld(cx - left, cy - top);
@@ -274,11 +302,13 @@ namespace MiniCAD
               "缩放以光标为中心（光标下的点偏移小于 1 像素）");
 
         // ── 5. 空闲时不渲染 ──────────────────────────────────────
+        section("5. 空闲时不渲染");
         const uint64_t vpFrames = m_viewportFrames;
         m_ui->Update();
         check(!m_viewport->RenderContent() && m_viewportFrames == vpFrames, "没有输入时视口不重新渲染");
 
         // ── 6. 无边框窗口的命中测试：标题空白处可拖动，菜单和按钮不行，上边缘可缩放 ──
+        section("6. 无边框窗口的命中测试：标题空白处可拖动，菜单和按钮不行，上边缘可缩放");
         {
             MiniGUI::TitleBar* bar = m_layout->GetTitleBar();
             check(bar != nullptr, "界面描述文件里有标题栏");
@@ -304,6 +334,7 @@ namespace MiniCAD
         }
 
         // ── 7. 最大化 / 还原：命令驱动，界面按新尺寸布局，按钮显示还原图标 ──
+        section("7. 最大化 / 还原：命令驱动，界面按新尺寸布局，按钮显示还原图标");
         {
             RECT before{}, after{};
             GetClientRect(hwnd, &before);
@@ -329,6 +360,7 @@ namespace MiniCAD
         }
 
         // ── 8. 多文档：新建、切换（相机随文档恢复）、关闭 ──────────
+        section("8. 多文档：新建、切换（相机随文档恢复）、关闭");
         {
             Document* first = m_docManager.GetActive();
             const Math::Point2 firstOrigin = camera.WorldToScreen(origin);
@@ -359,6 +391,7 @@ namespace MiniCAD
         }
 
         // ── 9. 图层：新建后图层面板和工具栏下拉框同步 ────────────
+        section("9. 图层：新建后图层面板和工具栏下拉框同步");
         {
             const int rows = m_layerList->GetItemCount();
             m_commands.Execute("layer.new");
@@ -383,6 +416,7 @@ namespace MiniCAD
         }
 
         // ── 9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单 ──
+        section("9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单");
         {
             Document* doc   = m_docManager.GetActive();
             Scene&    scene = doc->GetScene();
@@ -427,6 +461,7 @@ namespace MiniCAD
         }
 
         // ── 10. 命令行：绘图区直接打字、补全、空格执行、提示、Esc、空回车重复 ──
+        section("10. 命令行：绘图区直接打字、补全、空格执行、提示、Esc、空回车重复");
         {
             m_viewport->Focus();
             RenderFrame();
@@ -537,6 +572,7 @@ namespace MiniCAD
         }
 
         // ── 11. 命令行坐标输入：绝对、相对、相对极坐标 ─────────────
+        section("11. 命令行坐标输入：绝对、相对、相对极坐标");
         Document* doc = m_docManager.GetActive();
         auto entityCount = [doc] { return doc->GetScene().GetAllIDs().size(); };
         {
@@ -553,6 +589,7 @@ namespace MiniCAD
             check(hasAnchor && std::abs(anchor.x - 10.0) < 1e-6 && std::abs(anchor.y - 5.0) < 1e-6, "相对坐标按上一点计算");
 
             // ── 12. 动态输入：光标旁显示，按数字进入长度框，回车按长度定点 ──
+            section("12. 动态输入：光标旁显示，按数字进入长度框，回车按长度定点");
             const Math::Point2 a = camera.WorldToScreen(anchor);
             send(WM_MOUSEMOVE, 0, left + static_cast<int>(a.x) + 80, top + static_cast<int>(a.y));     // 水平向右
             RenderFrame();
@@ -577,6 +614,7 @@ namespace MiniCAD
         }
 
         // ── 13. 文字原位编辑：单行提交、多行取消 ────────────────
+        section("13. 文字原位编辑：单行提交、多行取消");
         {
             const size_t n0 = entityCount();
             RunCommandLine("Text");
@@ -627,6 +665,7 @@ namespace MiniCAD
         };
 
         // ── 14. 定义块：选择 → B → 基点 → 块名对话框 → 回车 ─────
+        section("14. 定义块：选择 → B → 基点 → 块名对话框 → 回车");
         {
             check(pickLine() == 1, "点选一个对象");
             RunCommandLine("Block");
@@ -641,6 +680,7 @@ namespace MiniCAD
         }
 
         // ── 15. 插入块：对话框选择 → 放置工具 ──────────────────────
+        section("15. 插入块：对话框选择 → 放置工具");
         {
             RunCommandLine("Insert");
             check(m_insertDialog != nullptr, "插入块：打开块表对话框");
@@ -651,6 +691,7 @@ namespace MiniCAD
         }
 
         // ── 16. 阵列：对话框、实时预览、确定 ───────────────────────
+        section("16. 阵列：对话框、实时预览、确定");
         {
             check(pickLine() == 1, "再点选一个对象");
             const size_t n0 = entityCount();
@@ -670,6 +711,7 @@ namespace MiniCAD
         }
 
         // ── 16b. 图案填充：对话框选图案 → 回车 → 拾取内部点 ──────────────
+        section("16b. 图案填充：对话框选图案 → 回车 → 拾取内部点");
         {
             RunCommandLine("Rectangle");
             editor.SubmitPoint(Math::Point3(200.0, 200.0, 0.0));
@@ -705,6 +747,7 @@ namespace MiniCAD
         }
 
         // ── 16c. 标注工具：角度（两条直线）、半径、弧长、折弯、坐标 ─────────
+        section("16c. 标注工具：角度（两条直线）、半径、弧长、折弯、坐标");
         {
             Scene& scene = doc->GetScene();
             auto add = [&](std::unique_ptr<Entity> e) { doc->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::move(e)), scene); };
@@ -760,6 +803,7 @@ namespace MiniCAD
         }
 
         // ── 16d. 文字样式：对话框；新建文字使用当前样式与其固定字高 ──────────
+        section("16d. 文字样式：对话框；新建文字使用当前样式与其固定字高");
         {
             RunCommandLine("ST");
             check(m_textStyleDialog != nullptr && editor.GetTextStyleRequest().Active, "文字样式：打开对话框");
@@ -799,6 +843,7 @@ namespace MiniCAD
         }
 
         // ── 16c'. 三维实体（M3）：命令行建模、拉伸、布尔、显示，一步撤销 ─────────
+        section("16c'. 三维实体（M3）：命令行建模、拉伸、布尔、显示，一步撤销");
         {
             Scene& scene = doc->GetScene();
             auto solids = [&]
@@ -1027,6 +1072,25 @@ namespace MiniCAD
                         m_docManager.Undo();
                     check(camera.IsPlanView(), "视图方块：逐步撤销回到俯视");
 
+                    // 过渡动画：开启后切到前视，只处理消息（不手动绘制、没有鼠标输入），动画也要自己一帧帧推进到前视
+                    editor.SetViewTransitionSeconds(0.3);
+                    RunCommandLine("ViewFront");
+                    // （pump 会一直处理到消息队列空：动画每帧都补发下一帧，所以整个过渡都在 pump 里完成）
+                    const uint64_t animFrames = m_frames;
+                    const int64_t  animStart  = NowTicks();
+                    for (; editor.IsViewTransitioning() && NowTicks() - animStart < 3 * kTicksPerSecond;)
+                    {
+                        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+                        pump();
+                    }
+                    const double animSeconds = static_cast<double>(NowTicks() - animStart) / static_cast<double>(kTicksPerSecond);
+                    std::printf("    过渡用了 %.2f 秒、%llu 帧\n", animSeconds, static_cast<unsigned long long>(m_frames - animFrames));
+                    check(m_frames - animFrames >= 5 && animSeconds > 0.25, "视图切换平缓过渡：没有输入也逐帧推进约 0.3 秒");
+                    check(!editor.IsViewTransitioning() && std::abs(camera.GetAzimuth() + 90.0) < 1e-6 && std::abs(camera.GetElevation()) < 1e-6,
+                          "视图切换过渡结束后正好是前视");
+                    m_docManager.Undo();
+                    editor.SetViewTransitionSeconds(0.0);
+
                     // 隐藏与显示：命令行 NAVVCUBE OFF / ON / 无选项切换，菜单命令 view.viewcube 切换
                     RunCommandLine("NAVVCUBE OFF");
                     check(!cube->IsVisible(), "视图方块：NAVVCUBE OFF 隐藏");
@@ -1044,6 +1108,7 @@ namespace MiniCAD
         }
 
         // ── 16c''. 节点编辑器（docs/NodeGraph/PLAN.md）：经界面输入连线、键入数值、拖滑块，绘图区实时预览，烘焙与撤销 ──
+        section("16c''. 节点编辑器（docs/NodeGraph/PLAN.md）：经界面输入连线、键入数值、拖滑块，绘图区实时预览，烘焙与撤销");
         if (Solid::ISolidKernel* kernel = editor.GetSolidKernel())
         {
             using namespace Nodes;
@@ -1544,7 +1609,8 @@ namespace MiniCAD
             m_nodeEvalSync = false;
         }
 
-        // ── 16d. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销 ─────────
+        // ── 16e. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销 ─────────
+        section("16e. 面域布尔运算：两个交叠的矩形 → 并 / 差 / 交，一步撤销");
         {
             Scene& scene = doc->GetScene();
             auto drawRect = [&](double x0, double y0, double x1, double y1)
@@ -1626,6 +1692,7 @@ namespace MiniCAD
             {
                 auto hasColor = [&](double r, double g, double b)
                 {
+                    m_viewport->RequestRender();   // 直接调 Editor 改属性不会请求重绘（界面里由特性面板请求）
                     RenderFrame();
                     // 拼接流上传 GPU 后已释放，查逐实体缓存；顶点颜色为 8 位，按 8 位比较
                     const VertexColor want(static_cast<float>(r), static_cast<float>(g), static_cast<float>(b), 1.0f);
@@ -2163,6 +2230,7 @@ namespace MiniCAD
         }
 
         // ── 17. F10 = 极轴追踪（同 AutoCAD）：输入框有焦点时也生效，不激活菜单栏 ──
+        section("17. F10 = 极轴追踪（同 AutoCAD）：输入框有焦点时也生效，不激活菜单栏");
         {
             const bool before = editor.IsPolarEnabled();
             m_console->FocusInput();
@@ -2177,12 +2245,14 @@ namespace MiniCAD
         }
 
         // ── 18. 关于 ─────────────────────────────────────────────
+        section("18. 关于");
         m_commands.Execute("help.about");
         check(m_ui->HasModal(), "F1 打开关于对话框");
         m_ui->KeyDown(MiniGUI::Key::Escape, 0);
         check(!m_ui->HasModal(), "Esc 关闭关于对话框");
 
         // ── 19. 帧耗时（只打印，不判定）：2 万条线的图纸上平移；只有界面变化（悬停工具栏）──
+        section("19. 帧耗时（只打印，不判定）：2 万条线的图纸上平移；只有界面变化（悬停工具栏）");
         {
             m_commands.Execute("file.new");
             Document* big = m_docManager.GetActive();
@@ -2260,8 +2330,15 @@ namespace MiniCAD
         }
 
         // ── 20. 大图纸的非逐帧开销（只打印，不判定）：添加实体、首次生成显示数据、整体重建、保存、打开 ──
+        section("20. 大图纸的非逐帧开销（只打印，不判定）：添加实体、首次生成显示数据、整体重建、保存、打开");
+        // 20 万条线（debug 版约 24 秒）只在 --selftest --full 时测
         for (const int count : { 20000, 200000 })
         {
+            if (count > 20000 && !full)
+            {
+                std::printf("    20 万条线的测量已跳过（加 --full 运行）\n");
+                continue;
+            }
             auto msSince = [this](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
             m_commands.Execute("file.new");
             Document* big = m_docManager.GetActive();
@@ -2329,6 +2406,7 @@ namespace MiniCAD
         }
 
         // ── 21. 带线宽、远离原点的大图纸：平移不重新细分；细线显示时缩放也不重新细分 ──
+        section("21. 带线宽、远离原点的大图纸：平移不重新细分；细线显示时缩放也不重新细分");
         {
             m_commands.Execute("file.new");
             Document* big = m_docManager.GetActive();
@@ -2347,6 +2425,12 @@ namespace MiniCAD
             }
             big->MarkSaved();
             m_docManager.ZoomAll();
+            m_viewport->RequestRender();
+            RenderFrame();
+
+            // v0.2.0 起默认细线显示（忽略线宽）：这一项测线宽的显示，先关掉，结束时恢复
+            const bool thinWas = editor.IsThinLines();
+            editor.SetThinLines(false);
             m_viewport->RequestRender();
             RenderFrame();
 
@@ -2392,6 +2476,7 @@ namespace MiniCAD
             m_commands.Execute("view.thinLines");
             RenderFrame();
             check(!editor.IsThinLines(), "关闭细线显示");
+            editor.SetThinLines(thinWas);
 
             std::printf("    2 万条 0.5mm 线宽的线：平移一帧 %.1f ms，滚轮缩放一帧 %.1f ms，细线显示时缩放一帧 %.1f ms\n",
                         panMs, zoomMs, thinZoomMs);
@@ -2400,6 +2485,7 @@ namespace MiniCAD
         }
 
         // ── 22. 关闭大图纸后归还内存（提交内存 = 任务管理器的"提交大小"）──
+        section("22. 关闭大图纸后归还内存（提交内存 = 任务管理器的\"提交大小\"）");
         {
             auto privateMb = []
             {
@@ -2432,7 +2518,8 @@ namespace MiniCAD
             check(closed - before < (opened - before) * 0.25, "关闭大图纸后归还大部分内存");
         }
 
-        // 公共打开入口及真实 WM_DROPFILES 消息走同一 DWG 管线。
+        // ── 23. 公共打开入口及真实 WM_DROPFILES 消息走同一 DWG 管线。
+        section("23. 公共打开入口及真实 WM_DROPFILES 消息走同一 DWG 管线");
         {
             const auto dir = std::filesystem::temp_directory_path() /
                 ("minicad-selftest-open-" + std::to_string(NowTicks()));
@@ -2494,6 +2581,178 @@ namespace MiniCAD
             std::filesystem::remove(dir, ec);
         }
 
+        // ── 24. 模型 / 布局标签条：新建与打开的图纸都显示，点标签切换布局 ──────────
+        section("24. 模型 / 布局标签条：新建与打开的图纸都显示，点标签切换布局");
+        {
+            const MiniGUI::Rect area = m_viewport->GetParent()->GetScreenBounds();
+            auto barShown = [&]
+            {
+                const MiniGUI::Rect b = m_layoutTabsBar->GetScreenBounds();
+                return m_layoutTabsBar->IsVisible() && b.max.y - b.min.y > 20.0f &&
+                       std::abs(b.max.y - area.max.y) < 1.0f;      // 贴在文档区底边、紧邻命令行
+            };
+
+            m_commands.Execute("file.new");
+            RenderFrame();
+            Document* fresh = m_docManager.GetActive();
+            check(barShown(), "新建图纸：文档区底部显示模型 / 布局标签条");
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(0) == "模型" &&
+                  m_layoutTabs->GetTabTitle(1) == "布局1" && m_layoutTabs->GetTabTitle(2) == "布局2" &&
+                  m_layoutTabs->GetSelected() == 0, "新建图纸：标签为 模型 / 布局1 / 布局2，选中模型");
+
+            // 模型页先切到西南等轴测，再进布局：布局是二维图纸，回到俯视、不显示视图方块
+            const bool cubeOn = m_viewCubeVisible;
+            SetViewCubeVisible(true);
+            Camera& cam = m_docManager.GetViewport().GetCamera();
+            m_docManager.GetEditor().SetViewDirection(-135.0, 35.26);
+            for (int i = 0; i < 30; ++i) RenderFrame();      // 走完视图过渡动画
+            const double modelElevation = cam.GetElevation();
+            check(m_viewCube->IsVisible() && modelElevation < 89.0, "模型页：三维视图里显示视图方块");
+
+            m_layoutTabs->SetSelected(1);       // 相当于点击「布局1」
+            RenderFrame();
+            check(fresh && fresh->ActiveLayout() == 1 && fresh->ActiveLayoutIsPaper(), "点击布局1 标签切到图纸空间");
+            check(!m_viewCube->IsVisible(), "布局页不显示视图方块");
+            check(cam.IsPlanView(), "从三维视图进布局时回到俯视");
+            m_commands.Execute("view.swiso");
+            for (int i = 0; i < 30; ++i) RenderFrame();
+            check(cam.IsPlanView(), "布局页上标准视图命令不切三维视图");
+
+            m_layoutTabs->SetSelected(0);
+            RenderFrame();
+            check(fresh && fresh->ActiveLayout() == 0, "点回模型标签回到模型空间");
+            check(m_viewCube->IsVisible() && std::abs(cam.GetElevation() - modelElevation) < 1e-6,
+                  "回到模型页：视图方块重新显示，恢复原来的三维视图");
+            SetViewCubeVisible(cubeOn);
+            m_commands.Execute("view.top");
+            for (int i = 0; i < 30; ++i) RenderFrame();
+
+            // 没有视口的布局不画模型内容（模型里有直线时切到布局1）
+            Editor& ed = m_docManager.GetEditor();
+            fresh->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(
+                fresh->GetScene().NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 300, 200, 0 })), fresh->GetScene());
+            // 静态场景流上传 GPU 后即释放（ViewState 里为空），按拼接时的统计数判断
+            auto drawnCount = [&]
+            {
+                const auto st = ed.GetSceneStreamStats();
+                const ViewState vs = ed.BuildViewState();
+                return st.lines + st.fills + st.texts + st.glyphs + vs.SceneDyn.size() + vs.SceneDynFill.size() +
+                       vs.Shaded.size() + vs.Silhouettes.size();
+            };
+            m_viewport->RequestRender();       // 直接执行命令加的实体：请求重画（界面命令会自动请求）
+            RenderFrame();
+            check(drawnCount() > 0, "模型页显示模型里的直线（对照）");
+            m_layoutTabs->SetSelected(1);
+            RenderFrame();
+            check(drawnCount() == 0, "没有视口的布局不显示模型内容");
+
+            // 布局上画直线：落在该布局上，只在该布局显示
+            {
+                const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
+                auto clickAt = [&](float fx, float fy)
+                {
+                    const MiniGUI::Vec2 p{ vr.min.x + (vr.max.x - vr.min.x) * fx, vr.min.y + (vr.max.y - vr.min.y) * fy };
+                    m_ui->PointerMove(p, 0);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                };
+                const int before = fresh->GetScene().EntityCount();
+                m_commands.Execute("draw.line");
+                clickAt(0.4f, 0.5f);
+                clickAt(0.6f, 0.5f);
+                m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                m_ui->KeyUp(MiniGUI::Key::Escape, 0);
+                RenderFrame();
+                bool onSheet = false;
+                const uint64_t sheetKey = fresh->ActiveLayoutOwnerKey();
+                fresh->GetScene().ForEachObject([&](const Object& o)
+                {
+                    if (o.IsKindOf<LineEntity>() && static_cast<const Entity&>(o).GetAttr().InPaperSpace &&
+                        static_cast<const Entity&>(o).GetAttr().LayoutKey == sheetKey)
+                        onSheet = true;
+                });
+                check(fresh->GetScene().EntityCount() == before + 1 && onSheet && drawnCount() > 0,
+                      "布局上画的直线落在该布局的图纸空间并显示出来");
+            }
+
+            // 新建 / 删除布局，可撤销
+            m_commands.Execute("layout.new");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "新建布局：标签条多出 布局3");
+            m_layoutTabs->SetSelected(3);
+            RenderFrame();
+            check(fresh->ActiveLayout() == 3, "切到新建的布局3");
+            m_commands.Execute("layout.delete");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetSelected() == 0 && !fresh->ActiveLayoutIsPaper() &&
+                  m_viewCube->IsVisible() == m_viewCubeVisible,
+                  "删除当前布局：标签去掉，回到模型页");
+            m_commands.Execute("edit.undo");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "撤销删除：布局3 回来");
+            m_layoutTabs->SetSelected(3);
+            RenderFrame();
+            m_commands.Execute("edit.undo");          // 撤销新建：当前布局没了，回到模型页
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && !fresh->ActiveLayoutIsPaper(), "撤销新建：布局3 去掉，当前在它上面时回到模型页");
+            m_layoutTabs->SetSelected(0);
+            RenderFrame();
+
+            // 带布局的图纸：模型里一条线，图纸A 上一个视口看着它
+            const auto dir = std::filesystem::temp_directory_path() /
+                ("minicad-selftest-layout-" + std::to_string(NowTicks()));
+            std::filesystem::create_directories(dir);
+            const auto file = dir / L"布局 测试.dxf";
+            const auto u8 = file.u8string();
+            const std::string path(u8.begin(), u8.end());
+            {
+                Scene drawing;
+                std::vector<DrawingLayout> layouts(1);
+                DrawingLayout a;
+                a.Name = "图纸A"; a.Model = false; a.Order = 1;
+                layouts.push_back(a);
+                drawing.SetLayouts(std::move(layouts));
+                drawing.AddEntity(std::make_unique<LineEntity>(drawing.NextObjectID(),
+                    Math::Point3{ 0, 0, 0 }, Math::Point3{ 100, 50, 0 }));
+                auto vp = std::make_unique<ViewportEntity>(drawing.NextObjectID(), Math::Point3{ 210, 148, 0 }, 300.0, 200.0);
+                vp->SetViewCenter(Math::Point3{ 50, 25, 0 });
+                vp->SetViewHeight(80.0);
+                vp->GetAttr().InPaperSpace = true;
+                drawing.AddEntity(std::move(vp));
+                const auto data = ExportCad(drawing, CadFileKind::Dxf);
+                std::ofstream out(file, std::ios::binary);
+                out.write(reinterpret_cast<const char*>(data.data()), data.size());
+            }
+            OpenDrawings({ path });
+            waitOpen();
+            RenderFrame();
+            Document* opened = m_docManager.GetActive();
+            bool hasSheet = false;
+            for (int i = 0; i < m_layoutTabs->GetTabCount(); ++i)
+                hasSheet = hasSheet || m_layoutTabs->GetTabTitle(i) == "图纸A";
+            check(opened && opened != fresh && barShown() && hasSheet &&
+                  m_layoutTabs->GetTabCount() == static_cast<int>(opened->GetScene().Layouts().size()),
+                  "打开带布局的图纸：标签条显示图纸里的布局");
+
+            m_docTabs->SetSelected(m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(fresh)));
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(1) == "布局1",
+                  "切换文档后标签条换成该文档的布局");
+
+            if (opened) { opened->MarkSaved(); CloseDocument(opened); }
+            if (fresh)  { fresh->MarkSaved();  CloseDocument(fresh); }
+            RenderFrame();
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+            std::filesystem::remove(dir, ec);
+        }
+
+        endSection();
+        std::sort(sectionTimes.begin(), sectionTimes.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::printf("\n最耗时的测试项：\n");
+        for (size_t i = 0; i < sectionTimes.size() && i < 5; ++i)
+            std::printf("    %6.2f 秒  %s\n", sectionTimes[i].second, sectionTimes[i].first.c_str());
         std::printf("输入→呈现 最近 %.1f ms，最大 %.1f ms；界面 %llu 帧，视口 %llu 帧\n", m_latencyLast, m_latencyMax,
                     static_cast<unsigned long long>(m_frames), static_cast<unsigned long long>(m_viewportFrames));
         std::printf("%s：%d 项失败\n", failures == 0 ? "自测通过" : "自测失败", failures);

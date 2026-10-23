@@ -39,6 +39,7 @@ namespace MiniCAD
 {
     class Document;
     class Entity;
+    class ViewportEntity;
     class DrawContext;
     namespace WipeClip { class Batch; }
 
@@ -203,6 +204,11 @@ namespace MiniCAD
         void        SetStandardView(StandardView view);
         // 任意视图方向（方位角 / 仰角，度，见 CameraState）：同标准视图，缩放到全图、可撤销（视图方块用）
         void        SetViewDirection(double azimuthDeg, double elevationDeg);
+        // 视图切换的过渡时长（秒）：相机从原视图平缓过渡到新视图（方位角走近的一侧，缓动同 CSS cubic-bezier(0.45, 0, 0.55, 1)），每帧在 Render 里推进；
+        // 默认 0 为立即切换（界面由 MainFrame 打开）。
+        // 过渡中相机被平移、缩放、撤销或切换文档改动时停止过渡
+        void        SetViewTransitionSeconds(double seconds) { m_viewAnimSeconds = seconds; }
+        bool        IsViewTransitioning() const              { return m_viewAnim.Active; }
         // ── 节点图预览（docs/NodeGraph/PLAN.md 第 3.5 节）────────
         // 不在场景里的实体（曲线、三维实体）与点，只用于显示：线与三维视图里的轮廓线一起按深度绘制，实体的面进着色流，
         // 点画成屏幕大小固定的圆圈（highlightPoints 为选中节点的点）。替换上一次的预览；切换文档（Bind）时清空
@@ -248,6 +254,12 @@ namespace MiniCAD
         TextStyleRequest&       GetTextStyleRequest()       { return m_textStyleRequest; }
         const TextStyleRequest& GetTextStyleRequest() const { return m_textStyleRequest; }
         void CloseTextStyle() { m_textStyleRequest = {}; }
+
+        // 多线样式（MLSTYLE）对话框：改动实时写进样式表，关闭后新建的多线用它
+        struct MLineStyleRequest { bool Active = false; };
+        MLineStyleRequest&       GetMLineStyleRequest()       { return m_mlineStyleRequest; }
+        const MLineStyleRequest& GetMLineStyleRequest() const { return m_mlineStyleRequest; }
+        void CloseMLineStyle() { m_mlineStyleRequest = {}; }
         void SubmitHatch();                                  // 关闭对话框,按当前设置拾取内部点
         void CancelHatch();
 
@@ -436,6 +448,16 @@ namespace MiniCAD
         bool                   m_pendingToolReset = false;
         Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
         VisualStyle            m_visualStyle = VisualStyle::Shaded;
+        struct ViewTransition
+        {
+            bool        Active = false;
+            CameraState From, To;
+            CameraState Last;          // 上一帧设置的相机状态：相机不再等于它说明被别处改动，停止过渡
+            double      StartTime = -1.0;   // 第一帧推进时的时刻（秒），负数表示还没开始
+        };
+        ViewTransition         m_viewAnim;
+        double                 m_viewAnimSeconds = 0.0;
+        void                   AdvanceViewTransition();
         std::vector<Vertex_P3_C4> m_shadedVertices;            // 着色面（世界坐标、已算好明暗）
         std::vector<Vertex_P3_C4> m_silhouetteVertices;        // 三维实体的轮廓线（随视线方向变化）
         uint64_t               m_shadedVersion      = 0;
@@ -475,6 +497,7 @@ namespace MiniCAD
         bool               m_hatchDialogEnabled = false;
         double             m_textHeight = 2.5;
         TextStyleRequest   m_textStyleRequest;
+        MLineStyleRequest  m_mlineStyleRequest;
         ImageRequest       m_imageRequest;
 
         // 鼠标位置（每帧更新）
@@ -535,6 +558,8 @@ namespace MiniCAD
         std::vector<Object::ObjectID> m_dynOrder;
 
         void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
+        // 布局页：把一个视口「看见」的模型空间内容按视口变换画进 ctx（带包围盒预剔除）
+        void ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx);
         void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
         void RebuildDynamicStream(DrawContext& ctx);
         void UpdateSceneStats();

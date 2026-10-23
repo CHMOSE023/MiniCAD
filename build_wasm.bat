@@ -1,5 +1,15 @@
 @echo off
+rem Keep this block ASCII-only: switch the console to UTF-8 and re-run this file in a fresh cmd.
+rem cmd misreads UTF-8 lines that follow a chcp executed inside the same batch file.
+setlocal
+if defined MINICAD_BAT_UTF8 goto :UTF8
+set "MINICAD_BAT_UTF8=1"
 chcp 65001 >nul
+cmd /d /c ""%~f0" %*"
+exit /b %errorlevel%
+:UTF8
+rem 上面的块必须只含 ASCII：先切到 UTF-8 代码页，再用新的 cmd 从头执行本脚本。
+rem 原因：在脚本中途 chcp 后，cmd 读后面的中文行会错位（起始代码页为 936 时会把"rem 用法"切开当命令执行）
 rem 构建 MiniCAD 网页版（界面与桌面版相同，MiniGUI + WebGL2）
 rem 用法：build_wasm.bat [configure|serve]
 rem   不带参数  增量构建（首次自动配置）

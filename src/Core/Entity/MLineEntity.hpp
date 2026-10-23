@@ -44,6 +44,45 @@ namespace MiniCAD
         bool         IsClosed() const                         { return m_closed; }
         void         SetClosed(bool c)                        { m_closed = c; }
 
+        // ── 每顶点的精确元素线位置（来自 DWG / DXF 的 MLINE 顶点数据）──────────
+        //
+        // 为什么需要它：MLINE 在文件里不只存中心线路径，还存**每个顶点上每条元素线
+        // 的实际位置参数**。这些参数带着 AutoCAD 已经算好的斜接信息 —— 尤其是
+        // 「T 形接头」「拐角接头」这类被 MLEDIT 处理过的多线，端头会被沿路径方向
+        // 推出若干距离（实测 sample_AC1032.dwg 的 #3 起点，两条元素线各被沿
+        // 路径方向推出 2.1309 = 竖线宽度，正好停到竖线内侧边上）。
+        //
+        // 只用「路径 + 样式偏移」重算，在普通直段和直角拐弯处结果相同（巧合），
+        // 但在这种接头处会算错：线直接穿到对方中心线上，看起来就是「穿透」而不是「接头」。
+        //
+        // 结构：[顶点][元素线] = 该元素线在该顶点的位置参数：
+        //   Value[0] = 沿该顶点 miter 方向的偏移（就是样式偏移 × 缩放，斜接后）
+        //   Value[1] = 沿该顶点 dir 方向的额外延伸（T 形 / 拐角接头的端头推移；无则为 0）
+        // 元素数与样式元素线一一对应；为空表示没有精确数据，按样式重算（新建的多线就是这样）。
+        using VertexParams = std::vector<std::vector<std::vector<double>>>;
+        //
+        // 参数里的端头推移、断开区间都是沿路径的长度：设置时记下各段长度，之后只要段长不变
+        // （移动 / 旋转 / 镜像）参数仍然有效；缩放、拉伸、夹点改顶点后段长变了，参数随之作废，
+        // 回到按样式重算（SetVertices 不是虚函数，没法在改顶点时直接清掉）。
+        const VertexParams& GetVertexParams() const { return m_vertexParams; }
+        void SetVertexParams(VertexParams p)
+        {
+            m_vertexParams   = std::move(p);
+            m_paramSegLength = SegmentLengths(GetVertices());
+        }
+        bool HasVertexParams() const
+        {
+            if (m_vertexParams.empty())
+                return false;
+            const auto now = SegmentLengths(GetVertices());
+            if (now.size() != m_paramSegLength.size())
+                return false;
+            for (size_t i = 0; i < now.size(); ++i)
+                if (std::abs(now[i] - m_paramSegLength[i]) > 1e-6 * std::max(1.0, m_paramSegLength[i]))
+                    return false;
+            return true;
+        }
+
         // ── 几何：每条元素线一条折线（closed 时首尾相接，不重复首点）──────────────
         struct Geometry
         {
@@ -53,7 +92,11 @@ namespace MiniCAD
 
         Geometry ComputeGeometry() const
         {
-            return Compute(GetVertices(), m_style, m_justify, m_scale, m_closed);
+            Geometry g = Compute(GetVertices(), m_style, m_justify, m_scale, m_closed);
+            // 有文件里的精确顶点参数时，用它覆盖重算结果 —— 那条路径带着
+            // AutoCAD 已算好的斜接（T 形 / 拐角接头靠它才能显示正确）
+            OverlayVertexParams(g);
+            return g;
         }
 
         // 纯函数版本：供绘制工具预览、测试使用
@@ -145,13 +188,30 @@ namespace MiniCAD
             const bool   closed  = m_closed && n >= 3;
             const size_t segs    = closed ? n : n - 1;
 
+            // 交叉断开区间：文件里存的每顶点参数 [2]、[3] 是「该元素线沿路径方向
+            // 从这个顶点起算的断开区间端点」。被别的多线穿过时，AutoCAD 就在这里断开，
+            // 留出对方宽度的缺口 —— 不处理的话两条多线直接交叉叠在一起，看着就是「穿透」。
+            // 实测 sample_AC1032.dwg 的竖线：3.4628 / 5.0610 正好对应横线两条元素线的位置。
+            const auto breaks = CollectBreaks(g);
+
+            // 路径累计弧长（与 CollectBreaks 同一套基准）
+            std::vector<double> accum(n, 0.0);
+            for (size_t i = 1; i < n; ++i)
+                accum[i] = accum[i - 1] + Dist(g.Path[i - 1], g.Path[i]);
+
             for (size_t k = 0; k < g.Elements.size(); ++k)
             {
                 const auto& el = m_style.Elements[k];
                 const Math::Color4& c = (!isSelected && !isHovered && el.UseColor) ? el.Color : base;
                 const auto& pts = g.Elements[k];
+                const bool hasBreak = k < breaks.size() && !breaks[k].empty();
                 for (size_t i = 0; i < segs; ++i)
-                    sink.DrawLine(pts[i], pts[(i + 1) % n], c, false);
+                {
+                    if (!hasBreak)
+                        sink.DrawLine(pts[i], pts[(i + 1) % n], c, false);
+                    else
+                        DrawSegmentSkippingBreaks(sink, pts, i, n, breaks[k], accum, c);
+                }
             }
 
             // 封口 / 连接线：连接最外侧两条元素线（只有一条元素线时没有意义）
@@ -169,21 +229,223 @@ namespace MiniCAD
         {
             auto e = std::make_unique<MLineEntity>(newId, GetVertices(), m_style, m_justify, m_scale, m_closed);
             e->SetAttr(GetAttr());
+            e->m_vertexParams   = m_vertexParams;      // 连同设置时的段长一起复制，作废的参数复制后仍作废
+            e->m_paramSegLength = m_paramSegLength;
             return e;
         }
 
         DECLARE_RUNTIME_TYPE(MLineEntity, LeaderEntity)
 
     private:
+        // 用文件里的精确顶点参数覆盖 Compute 的结果。
+        //
+        // 每个顶点的元素线位置 = pos + p[0] * miter + p[1] * dir
+        //   p[0] = 沿 miter 方向（即斜接后的横向）偏移 —— 普通直段上就等于样式偏移 × 缩放
+        //   p[1] = 沿 dir 方向的额外延伸 —— T 形 / 拐角接头的端头推移，普通多线是 0
+        //
+        // dir / miter 不直接存在实体里（DXF 导入时也没保留），这里按路径现算：
+        //   dir   = 当前段的单位方向（起点用第一段、终点用最后一段、中间用角平分方向）
+        //   miter = dir 的左法线再按夹角归一（直角处即 (-0.707, 0.707) 这种斜接方向）
+        void OverlayVertexParams(Geometry& g) const
+        {
+            const size_t n = g.Path.size();
+            if (m_vertexParams.size() != n || n < 2 || !HasVertexParams())
+                return;
+            if (g.Elements.empty())
+                return;
+
+            // 每段单位方向
+            const bool closed = m_closed && n >= 3;
+            const size_t segCount = closed ? n : n - 1;
+            std::vector<Math::Vec3> dir(segCount);
+            for (size_t i = 0; i < segCount; ++i)
+            {
+                const auto& a = g.Path[i];
+                const auto& b = g.Path[(i + 1) % n];
+                const double dx = b.x - a.x, dy = b.y - a.y;
+                const double len = std::sqrt(dx * dx + dy * dy);
+                dir[i] = len > 1e-12 ? Math::Vec3{ dx / len, dy / len, 0.0 }
+                                     : Math::Vec3{ 1.0, 0.0, 0.0 };
+            }
+
+            for (size_t i = 0; i < n; ++i)
+            {
+                // 顶点处的方向与斜接方向
+                Math::Vec3 d, m;
+                if (!closed && i == 0)
+                {
+                    d = dir[0];
+                    m = Math::Vec3{ -d.y, d.x, 0.0 };
+                }
+                else if (!closed && i + 1 == n)
+                {
+                    d = dir[segCount - 1];
+                    m = Math::Vec3{ -d.y, d.x, 0.0 };
+                }
+                else
+                {
+                    // 中间顶点：miter 是两段方向的角平分线（按夹角归一），
+                    // dir 取两段的平均方向（只用于端头延伸，普通多线该值为 0 不影响）
+                    const Math::Vec3& d0 = dir[(i + segCount - 1) % segCount];
+                    const Math::Vec3& d1 = dir[i % segCount];
+                    Math::Vec3 bis{ d0.x + d1.x, d0.y + d1.y, 0.0 };
+                    const double bl = std::sqrt(bis.x * bis.x + bis.y * bis.y);
+                    if (bl < 1e-12) { d = d1; m = Math::Vec3{ -d.y, d.x, 0.0 }; }
+                    else
+                    {
+                        d = Math::Vec3{ bis.x / bl, bis.y / bl, 0.0 };
+                        // 斜接方向 = 平均方向的法线，长度按 1/cos(半角) 归一
+                        const Math::Vec3 nrm{ -d1.y, d1.x, 0.0 };
+                        const double cosHalf = nrm.x * (-d0.y) + nrm.y * d0.x;
+                        const double k = (std::abs(cosHalf) > 0.2) ? 1.0 / std::abs(cosHalf) : 1.0;
+                        m = Math::Vec3{ nrm.x * k, nrm.y * k, 0.0 };
+                    }
+                }
+
+                const auto& vp = m_vertexParams[i];
+                for (size_t k = 0; k < g.Elements.size() && k < vp.size(); ++k)
+                {
+                    const auto& params = vp[k];
+                    if (params.empty())
+                        continue;
+                    const double p0 = params[0];
+                    const double p1 = params.size() > 1 ? params[1] : 0.0;
+
+                    // ⚠ 只在参数**携带 Compute 表达不了的信息**时才覆盖：
+                    //   p1（沿路径方向的端头推移）是 T 形 / 拐角接头特有的，
+                    //   Compute 完全算不出来 —— 必须用。
+                    //   而 p0 只是「斜接后的横向偏移」，Compute 已经算对了；
+                    //   无条件拿 p0 重算，等于把斜接量按 miter 又乘一遍，
+                    //   往返一次就会把斜接放大一倍（实测包围盒 10.65 → 11.71）。
+                    if (std::abs(p1) < 1e-9)
+                        continue;
+
+                    const Math::Point3& base = g.Path[i];
+                    g.Elements[k][i] = Math::Point3{
+                        base.x + p0 * m.x + p1 * d.x,
+                        base.y + p0 * m.y + p1 * d.y,
+                        0.0 };
+                }
+            }
+        }
+
         static double Dist2(const Math::Point3& a, const Math::Point3& b)
         {
             const double dx = a.x - b.x, dy = a.y - b.y;
             return dx * dx + dy * dy;
         }
 
+        static double Dist(const Math::Point3& a, const Math::Point3& b)
+        {
+            return std::sqrt(Dist2(a, b));
+        }
+
+        // ── 交叉缺口 ────────────────────────────────────────────────────────
+        //
+        // 文件里每个顶点的每元素线参数是：
+        //   [0] 沿 miter 方向的偏移
+        //   [1] 沿 dir 方向的端头推移（T 形 / 拐角接头）
+        //   [2],[3] 该元素线上的**断开区间**（从本顶点沿路径方向起算的距离）
+        //
+        // 实测 sample_AC1032.dwg 的竖线（顶点0，pos y=37.5406）：
+        //   元素线1 参数 = -2.1309, 0.0, 3.4628, 5.0610
+        //   37.5406 + 3.4628 = 41.003 ≈ 横线下元素线 y
+        //   37.5406 + 5.0610 = 42.602 ≈ 横线上元素线 y
+        // ⇒ 竖线的内侧线在横线穿过的那一段断开，正好留出横线的宽度。
+        // 不画这个缺口，两条多线就交叉叠在一起，看着就是「穿透」。
+        std::vector<std::vector<std::pair<double, double>>>
+        CollectBreaks(const Geometry& g) const
+        {
+            std::vector<std::vector<std::pair<double, double>>> out(g.Elements.size());
+            if (m_vertexParams.size() != g.Path.size() || !HasVertexParams())
+                return out;
+
+            const size_t n = g.Path.size();
+            if (n < 2) return out;
+
+            // 每个顶点在路径上的累计弧长
+            std::vector<double> accum(n, 0.0);
+            for (size_t i = 1; i < n; ++i)
+                accum[i] = accum[i - 1] + Dist(g.Path[i - 1], g.Path[i]);
+
+            for (size_t i = 0; i < n; ++i)
+            {
+                const auto& vp = m_vertexParams[i];
+                for (size_t k = 0; k < out.size() && k < vp.size(); ++k)
+                {
+                    const auto& params = vp[k];
+                    if (params.size() < 4)
+                        continue;
+                    double a = accum[i] + params[2];
+                    double b = accum[i] + params[3];
+                    if (a > b) std::swap(a, b);
+                    out[k].emplace_back(a, b);
+                }
+            }
+            return out;
+        }
+
+        // 画元素线的第 i 段，跳过落在断开区间内的部分
+        void DrawSegmentSkippingBreaks(IDrawSink& sink, const std::vector<Math::Point3>& pts,
+                                       size_t i, size_t n,
+                                       const std::vector<std::pair<double, double>>& breaks,
+                                       const std::vector<double>& accum,
+                                       const Math::Color4& c) const
+        {
+            const Math::Point3& a = pts[i];
+            const Math::Point3& b = pts[(i + 1) % n];
+            const double segLen = Dist(a, b);
+            if (segLen < 1e-12)
+                return;
+
+            const double segStart = (i < accum.size()) ? accum[i] : 0.0;
+
+            struct Span { double t0, t1; };
+            std::vector<Span> holes;
+            for (const auto& br : breaks)
+            {
+                const double lo = std::max(br.first, segStart);
+                const double hi = std::min(br.second, segStart + segLen);
+                if (hi - lo > 1e-12)
+                    holes.push_back({ (lo - segStart) / segLen, (hi - segStart) / segLen });
+            }
+            if (holes.empty())
+            {
+                sink.DrawLine(a, b, c, false);
+                return;
+            }
+
+            std::sort(holes.begin(), holes.end(), [](const Span& x, const Span& y) { return x.t0 < y.t0; });
+            auto at = [&](double t) {
+                return Math::Point3{ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                                     a.z + (b.z - a.z) * t };
+            };
+
+            double cursor = 0.0;
+            for (const auto& h : holes)
+            {
+                if (h.t0 > cursor)
+                    sink.DrawLine(at(cursor), at(h.t0), c, false);
+                cursor = std::max(cursor, h.t1);
+            }
+            if (cursor < 1.0 - 1e-12)
+                sink.DrawLine(at(cursor), at(1.0), c, false);
+        }
+
         MLineStyleRecord m_style;
         MLineJustify     m_justify = MLineJustify::Zero;
         double           m_scale   = 1.0;
         bool             m_closed  = false;
+        // 来自文件的每顶点元素线参数（含斜接 / T 形接头端头推移）；空 = 按样式重算
+        VertexParams     m_vertexParams;
+        std::vector<double> m_paramSegLength;   // 设置参数时各段的长度（判断参数是否仍有效）
+
+        static std::vector<double> SegmentLengths(const std::vector<Math::Point3>& v)
+        {
+            std::vector<double> out;
+            for (size_t i = 1; i < v.size(); ++i)
+                out.push_back(Dist(v[i - 1], v[i]));
+            return out;
+        }
     };
 }

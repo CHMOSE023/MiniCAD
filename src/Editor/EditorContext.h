@@ -36,6 +36,9 @@ namespace MiniCAD
             attr.LayerId    = scene.GetLayerManager().GetActiveLayerID();
             attr.LineType   = scene.GetCurrentLineType();
             attr.Lineweight = scene.GetCurrentLineweight();
+            // 在布局页上画的落在该布局的图纸空间里，否则一画完就因布局过滤看不见了
+            attr.InPaperSpace = scene.CurrentSpaceIsPaper();
+            attr.LayoutKey    = scene.CurrentLayoutKey();
         }
     };
 }

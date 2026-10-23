@@ -434,6 +434,15 @@ namespace MiniGUI
         if (!ctx || tab < 0)
             return Node::OnContextMenu(windowPos);
 
+        if (m_contextMenu)
+        {
+            std::vector<MenuItem> custom = m_contextMenu(tab);
+            if (custom.empty())
+                return Node::OnContextMenu(windowPos);
+            ShowContextMenu(*ctx, std::move(custom), windowPos);
+            return true;
+        }
+
         const bool closable = m_tabs[static_cast<size_t>(tab)].closable;
         std::vector<MenuItem> items =
         {

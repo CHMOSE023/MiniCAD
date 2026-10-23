@@ -198,6 +198,13 @@ namespace MiniCAD
         else if (!textStyle && m_textStyleDialog)
             m_textStyleDialog->Close();
 
+        // 多线样式（MLSTYLE）
+        const bool mlineStyle = doc && editor.GetMLineStyleRequest().Active;
+        if (mlineStyle && !m_mlineStyleDialog)
+            OpenMLineStyleDialog();
+        else if (!mlineStyle && m_mlineStyleDialog)
+            m_mlineStyleDialog->Close();
+
         const bool hatch = doc && editor.GetHatchRequest().Active;
         if (hatch && !m_hatchDialog)
             OpenHatchDialog();
@@ -1775,5 +1782,236 @@ namespace MiniCAD
         m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
         m_lineTypeScaleDialog = raw;
         m_lineTypeScaleDoc    = doc;
+    }
+
+    // =========================================================
+    // 多线样式（MLSTYLE）
+    //
+    // 对应 AutoCAD 的「多线样式」对话框：左边样式列表 + 新建/重命名/删除，
+    // 中间预览，右边元素线表（偏移），底部封口 / 连接线开关。
+    //
+    // 与 CAD 一致的两点：
+    //   · 改样式**不影响已经画好的多线**（实体持有样式快照）；
+    //     只有之后用该样式新建的多线才会变。
+    //   · Standard 不能删除、不能重命名。
+    // =========================================================
+    void MainFrame::OpenMLineStyleDialog()
+    {
+        using namespace MiniGUI;
+        Document* doc = m_docManager.GetActive();
+        if (!doc)
+            return;
+
+        auto dialog = std::make_unique<MiniGUI::Dialog>("多线样式");
+        MiniGUI::Dialog* raw = dialog.get();
+        Node* body = raw->GetBody();
+        LayoutStyle bs = ColumnStyle(8.0f);
+        bs.padding = Edges::Symmetric(12.0f, 4.0f);
+        body->SetLayoutStyle(bs);
+
+        // 注意：不要在 lambda 外持有 `table` 引用再按值捕获 —— 那会拿到 const 副本，
+        // 写入用的 Update/Add/Remove 就调不动了。各 lambda 里用 doc 现取。
+        auto selected = std::make_shared<MLineStyleID>(doc->GetScene().GetCurrentMLineStyle());
+
+        auto* styleCombo = AddRow<ComboBox>(body, "样式");
+        styleCombo->EditLayoutStyle().width = 240.0f;
+        Label* current = body->AddChild<Label>("", 12.0f, Theme::TextDim);
+
+        auto* name = AddRow<TextBox>(body, "名称");
+        name->EditLayoutStyle().width = 240.0f;
+
+        Node* actions = body->AddChild<Node>();
+        {
+            LayoutStyle as;
+            as.direction = FlexDirection::Row;
+            as.gap       = 6.0f;
+            as.padding   = Edges::Make(80.0f, 0.0f, 0.0f, 0.0f);
+            actions->SetLayoutStyle(as);
+        }
+        body->AddChild<Separator>();
+
+        // ── 元素线表：每条一个偏移输入框 ────────────────────────────
+        Label* elemTitle = body->AddChild<Label>("元素线（负值在中心线右侧）", 12.0f, Theme::TextDim);
+        Node* elemRow = body->AddChild<Node>();
+        {
+            LayoutStyle es;
+            es.direction = FlexDirection::Row;
+            es.gap       = 8.0f;
+            es.alignItems = Align::Center;
+            elemRow->SetLayoutStyle(es);
+        }
+
+        body->AddChild<Separator>();
+
+        // ── 封口 / 连接线 ──────────────────────────────────────────
+        auto* startCap = body->AddChild<CheckBox>("起点封口");
+        auto* endCap   = body->AddChild<CheckBox>("终点封口");
+        auto* joints   = body->AddChild<CheckBox>("顶点连接线");
+
+        Label* error = body->AddChild<Label>("", 12.0f, Theme::Danger);
+
+        // 表变化后：重画视口（已有多线用样式快照，不受影响；这里主要刷新状态）。
+        // 样式表随文档保存，标记文档已修改，关闭时才会提示保存
+        auto changed = [this, doc]
+        {
+            doc->MarkDirty();
+            doc->GetScene().MarkDisplayDirty();
+            m_viewport->RequestRender();
+            StateChanged();
+        };
+
+        // 把表内容刷进控件（不触发回调）
+        auto sync = std::make_shared<std::function<void()>>();
+        *sync = [=]
+        {
+            auto& table = doc->GetScene().GetMLineStyleTable();
+            if (!table.Find(*selected))
+                *selected = MLineStyleTable::StandardID;
+
+            std::vector<std::string> names;
+            int sel = 0;
+            for (const auto& r : table.Records())
+            {
+                if (r.Id == *selected) sel = static_cast<int>(names.size());
+                names.push_back(r.Name);
+            }
+            styleCombo->SetItems(names);
+            styleCombo->SetSelectedIndex(sel);
+
+            const MLineStyleRecord& rec = table.Resolve(*selected);
+            current->SetText("当前样式：" + table.Resolve(doc->GetScene().GetCurrentMLineStyle()).Name);
+            name->SetText(rec.Name);
+            startCap->SetChecked(rec.StartCap);
+            endCap->SetChecked(rec.EndCap);
+            joints->SetChecked(rec.Joints);
+
+            // 重建元素线输入框（数量随样式变）：倒序移除，最后一个释放时整体销毁
+            while (!elemRow->GetChildren().empty())
+            {
+                auto removed = elemRow->RemoveChild(elemRow->GetChildren().back().get());
+                (void)removed;
+            }
+            for (size_t i = 0; i < rec.Elements.size(); ++i)
+            {
+                auto* nb = elemRow->AddChild<NumberBox>(rec.Elements[i].Offset, -1000.0, 1000.0, 0.1, 3);
+                nb->EditLayoutStyle().width = 90.0f;
+                const MLineStyleID id = *selected;
+                const size_t idx = i;
+                nb->SetOnChanged([=](double v)
+                {
+                    auto& t = doc->GetScene().GetMLineStyleTable();
+                    MLineStyleRecord edit = t.Resolve(id);
+                    if (idx >= edit.Elements.size()) return;
+                    edit.Elements[idx].Offset = v;
+                    edit.Normalize();
+                    t.Update(id, edit);
+                    changed();
+                });
+            }
+            (void)elemTitle;
+        };
+
+        styleCombo->SetOnChanged([=](int idx)
+        {
+            const auto& recs = doc->GetScene().GetMLineStyleTable().Records();
+            if (idx >= 0 && idx < static_cast<int>(recs.size()))
+            {
+                *selected = recs[static_cast<size_t>(idx)].Id;
+                (*sync)();
+            }
+        });
+
+        // 三个开关：改动立即写回
+        auto bindToggle = [=](CheckBox* box, bool MLineStyleRecord::*field)
+        {
+            box->SetOnChanged([=](bool on)
+            {
+                auto& t = doc->GetScene().GetMLineStyleTable();
+                MLineStyleRecord edit = t.Resolve(*selected);
+                edit.*field = on;
+                t.Update(*selected, edit);
+                changed();
+            });
+        };
+        bindToggle(startCap, &MLineStyleRecord::StartCap);
+        bindToggle(endCap,   &MLineStyleRecord::EndCap);
+        bindToggle(joints,   &MLineStyleRecord::Joints);
+
+        auto addAction = [&](const char* label, std::function<void()> fn)
+        {
+            auto* b = actions->AddChild<Button>(label, std::move(fn));
+            b->EditLayoutStyle().padding = Edges::Symmetric(10.0f, 4.0f);
+        };
+
+        addAction("置为当前", [=]
+        {
+            doc->GetScene().SetCurrentMLineStyle(*selected);
+            error->SetText("");
+            (*sync)();
+            changed();
+        });
+
+        addAction("新建", [=]
+        {
+            auto& table = doc->GetScene().GetMLineStyleTable();
+            MLineStyleRecord rec = table.Resolve(*selected);       // 以选中样式为模板
+            rec.Name = Trimmed(name->GetText());
+            if (rec.Name.empty() || table.FindByName(rec.Name) != MLineStyleTable::InvalidID)
+                for (int n = 1; ; ++n)
+                {
+                    rec.Name = "多线样式" + std::to_string(n);
+                    if (table.FindByName(rec.Name) == MLineStyleTable::InvalidID) break;
+                }
+            *selected = table.Add(rec);
+            error->SetText("");
+            (*sync)();
+            changed();
+        });
+
+        addAction("重命名", [=]
+        {
+            auto& table = doc->GetScene().GetMLineStyleTable();
+            if (*selected == MLineStyleTable::StandardID)
+                error->SetText("Standard 样式不能重命名");
+            else if (!table.Rename(*selected, Trimmed(name->GetText())))
+                error->SetText("名称为空或与其他样式重名");
+            else
+            {
+                error->SetText("");
+                (*sync)();
+                changed();
+            }
+        });
+
+        addAction("删除", [=]
+        {
+            auto& table = doc->GetScene().GetMLineStyleTable();
+            if (*selected == MLineStyleTable::StandardID)
+                error->SetText("Standard 样式不能删除");
+            else if (*selected == doc->GetScene().GetCurrentMLineStyle())
+                error->SetText("当前样式不能删除，请先把其他样式置为当前");
+            else
+            {
+                table.Remove(*selected);
+                *selected = doc->GetScene().GetCurrentMLineStyle();
+                error->SetText("");
+                (*sync)();
+                changed();
+            }
+        });
+
+        (*sync)();
+
+        raw->AddButton("关闭", [raw] { raw->Close(); }, DialogButtonRole::Default);
+        raw->SetOnClosed([this, raw]
+        {
+            if (m_mlineStyleDialog == raw)
+                m_mlineStyleDialog = nullptr;
+            if (m_viewport->IsVisible())
+                m_viewport->Focus();
+            StateChanged();
+        });
+        m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
+        m_mlineStyleDialog = raw;
     }
 }

@@ -21,6 +21,7 @@
 #include "Core/Entity/MTextEntity.hpp"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include "Core/Log.h"
@@ -37,6 +38,7 @@
 #include "Editor/Tools/SolidTool.h"
 #include "Editor/Tools/WipeoutTool.h"
 #include "Editor/Tools/MLineTool.h"
+#include "Editor/Tools/MLineEditTool.h"
 #include "Editor/Tools/TableTool.h"
 #include "Core/Entity/TableEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
@@ -88,6 +90,9 @@
 #include "Editor/Tools/SolidTools.h"
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/MeshEntity.hpp"
+#include "Core/Entity/ViewportEntity.hpp"
+#include "Core/Entity/MLineEntity.hpp"
+#include "Core/Draw/TransformDrawSink.hpp"
 
 #include <cstdio>
 #include <memory>
@@ -217,6 +222,7 @@ namespace MiniCAD
     void Editor::Bind(Document& doc, Viewport& viewport)
     {
         Unbind();
+        m_viewAnim.Active = false;
 
         m_doc      = &doc;
         m_viewport = &viewport;
@@ -228,6 +234,18 @@ namespace MiniCAD
         m_previewOverlay.Bind(viewport);
         ClearPreviewGeometry();
         m_picking.Bind(scene, viewport);
+        // 拾取侧与渲染侧用**同一个**布局过滤（Document::IsVisibleInActiveLayout）：
+        // 少了这一条，布局页上属于别的布局的图纸空间实体画不出来却点得中 ——
+        // 用户报的「布局页视口外还能选中隐藏的图元」
+        m_picking.SetLayoutFilter([this](const EntityAttr& attr)
+        {
+            return m_doc->IsVisibleInActiveLayout(attr);
+        });
+        // 捕捉同理：布局页上看不见的模型实体不能被捕捉到
+        m_snap.SetLayoutFilter([this](const EntityAttr& attr)
+        {
+            return !m_doc || m_doc->IsVisibleInActiveLayout(attr);
+        });
         m_gripEditor.Bind(viewport, scene, cmdStack, m_picking, m_overlay);
 
         scene.MarkDirty();
@@ -315,6 +333,7 @@ namespace MiniCAD
         RegisterTool("Solid",     [] { return std::make_unique<SolidTool>();     });
         // Image 工具需要先选文件，不进注册表：见 ActivateToolById / SubmitImagePath
         RegisterTool("MLine",     [this] { return std::make_unique<MLineTool>(m_mlineSettings); });
+        RegisterTool("MLineEdit", [] { return std::make_unique<MLineEditTool>(); });   // MLEDIT
         RegisterTool("Table",     [this] { return std::make_unique<TableTool>(CurrentTextHeight()); });
         RegisterTool("Wipeout",   [] { return std::make_unique<WipeoutTool>();   });
         RegisterTool("Hatch",     [this] { return std::make_unique<HatchTool>(m_hatchSettings); });
@@ -581,6 +600,9 @@ namespace MiniCAD
         RegisterAlias("H",      "Hatch");
         RegisterAlias("ST",     "Style");
         RegisterAlias("STYLE",  "Style");    // Style 是特例命令(非工具),全名也走别名表
+        RegisterAlias("MLS",    "MLStyle");  // 多线样式（同 AutoCAD 的 MLSTYLE）
+        RegisterAlias("MLSTYLE","MLStyle");
+        RegisterAlias("MLEDIT", "MLineEdit");   // 多线编辑（同 AutoCAD 的 MLEDIT）
         RegisterAlias("B",      "Block");
         RegisterAlias("I",      "Insert");
         RegisterAlias("INSERT", "Insert");   // Insert 是特例命令(非工具),不在工具注册表,全名也走别名表
@@ -699,6 +721,7 @@ namespace MiniCAD
         names.push_back("Image");    // 特例命令(非工具):插入光栅图像
         names.push_back("Array");    // 特例命令(非工具):阵列
         names.push_back("Style");    // 特例命令(非工具):文字样式
+        names.push_back("MLStyle");  // 特例命令(非工具):多线样式
         names.push_back("Erase");    // 特例命令(非工具):删除选择集
         names.push_back("SelectAll");   // 特例命令(非工具):全选
         names.push_back("Zoom");        // 特例命令(非工具):视图缩放（A 全部 / E 窗口）
@@ -933,6 +956,16 @@ namespace MiniCAD
             m_textStyleRequest.Active = true;
             m_commandLine.Echo("命令: Style");
             m_lastCommand = "Style";
+            return;
+        }
+
+        if (toolId == "MLStyle")  // 特例命令:多线样式对话框（同 AutoCAD 的 MLSTYLE）
+        {
+            if (!m_doc)
+                return;
+            m_mlineStyleRequest.Active = true;
+            m_commandLine.Echo("命令: MLSTYLE");
+            m_lastCommand = "MLStyle";
             return;
         }
 
@@ -1387,6 +1420,11 @@ namespace MiniCAD
     }
 
     // ── 三维视图（M6）──────────────────────────────────────────────
+    static double NowSeconds()
+    {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
     void Editor::SetVisualStyle(VisualStyle style)
     {
         if (style == m_visualStyle)
@@ -1408,6 +1446,11 @@ namespace MiniCAD
     {
         if (!m_doc || !m_viewport)
             return;
+        if (m_doc->ActiveLayoutIsPaper())       // 布局是二维图纸，只有俯视
+        {
+            m_commandLine.Echo("布局中不能切换三维视图");
+            return;
+        }
         Camera& cam = m_viewport->GetCamera();
         const CameraState before = cam.GetState();
         cam.SetView(azimuthDeg, elevationDeg);
@@ -1421,6 +1464,78 @@ namespace MiniCAD
         const CameraState after = cam.GetState();
         cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
         m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+
+        // 过渡动画：撤销栈里记的仍是 before → after，这里只把相机放回 before，之后每帧（Render）向 after 插值
+        m_viewAnim.Active = false;
+        if (m_viewAnimSeconds > 0.0)
+        {
+            cam.SetState(before);
+            m_viewAnim = { true, before, after, cam.GetState(), -1.0 };   // 从第一帧开始计时：命令到首帧之间较慢时也不跳过动画
+        }
+    }
+
+    // CSS 的 cubic-bezier(x1, y1, x2, y2)：曲线过 (0, 0)、(1, 1)，按时间比例 t（即 x）求进度 y。
+    // x(u) 单调，先用牛顿法求 u，导数太小时改用二分
+    static double CubicBezierEase(double t, double x1, double y1, double x2, double y2)
+    {
+        auto bezier = [](double u, double p1, double p2) { const double v = 1.0 - u; return 3.0 * v * v * u * p1 + 3.0 * v * u * u * p2 + u * u * u; };
+        auto slope  = [](double u, double p1, double p2) { const double v = 1.0 - u; return 3.0 * v * v * p1 + 6.0 * v * u * (p2 - p1) + 3.0 * u * u * (1.0 - p2); };
+        double u = t;
+        for (int i = 0; i < 8; ++i)
+        {
+            const double dx = bezier(u, x1, x2) - t, d = slope(u, x1, x2);
+            if (std::abs(dx) < 1e-7)
+                return bezier(u, y1, y2);
+            if (std::abs(d) < 1e-6)
+                break;
+            u -= dx / d;
+        }
+        double lo = 0.0, hi = 1.0;
+        u = t;
+        for (int i = 0; i < 30 && hi - lo > 1e-7; ++i)
+        {
+            (bezier(u, x1, x2) < t ? lo : hi) = u;
+            u = 0.5 * (lo + hi);
+        }
+        return bezier(u, y1, y2);
+    }
+
+    void Editor::AdvanceViewTransition()
+    {
+        if (!m_viewAnim.Active)
+            return;
+        Camera& cam = m_viewport->GetCamera();
+        const CameraState cur = cam.GetState();
+        const CameraState& last = m_viewAnim.Last;
+        if (cur.Target.x != last.Target.x || cur.Target.y != last.Target.y || cur.Target.z != last.Target.z || cur.Zoom != last.Zoom || cur.Azimuth != last.Azimuth || cur.Elevation != last.Elevation)
+        {
+            m_viewAnim.Active = false;   // 被平移、缩放、撤销等打断：保留当前相机
+            return;
+        }
+        if (m_viewAnim.StartTime < 0.0)
+            m_viewAnim.StartTime = NowSeconds();
+        const double t = (NowSeconds() - m_viewAnim.StartTime) / m_viewAnimSeconds;
+        if (t >= 1.0)
+        {
+            cam.SetState(m_viewAnim.To);
+            m_viewAnim.Active = false;
+            return;
+        }
+        const double s = CubicBezierEase(t, 0.45, 0.0, 0.55, 1.0);   // 同 CSS cubic-bezier(0.45, 0, 0.55, 1)：起止柔和、中间加速
+        const CameraState& a = m_viewAnim.From;
+        const CameraState& b = m_viewAnim.To;
+        double dAz = std::fmod(b.Azimuth - a.Azimuth, 360.0);   // 方位角走近的一侧
+        if (dAz > 180.0)
+            dAz -= 360.0;
+        else if (dAz < -180.0)
+            dAz += 360.0;
+        CameraState m;
+        m.Target    = a.Target + (b.Target - a.Target) * s;
+        m.Zoom      = (a.Zoom > 0.0 && b.Zoom > 0.0) ? a.Zoom * std::pow(b.Zoom / a.Zoom, s) : a.Zoom + (b.Zoom - a.Zoom) * s;   // 缩放按比例插值
+        m.Azimuth   = a.Azimuth + dAz * s;
+        m.Elevation = a.Elevation + (b.Elevation - a.Elevation) * s;
+        cam.SetState(m);
+        m_viewAnim.Last = cam.GetState();
     }
 
     void Editor::SetPreviewGeometry(std::vector<std::shared_ptr<const Entity>> entities, std::vector<Math::Point3> points,
@@ -1532,16 +1647,23 @@ namespace MiniCAD
             const Layer* layer = layers.GetLayer(attr.LayerId);
             if (!attr.Visible || (layer && !layer->IsVisible()))
                 return;
+            // 与场景流同一个布局过滤：布局页上模型空间的实体只经视口显示（视口里画的是它的边）
+            if (!m_doc->IsVisibleInActiveLayout(attr))
+                return;
             addSolid(solid, attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color));
         });
 
-        // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试
-        for (const auto& e : m_previewEntities)
+        // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试。
+        // 预览在模型空间，布局页上不画
+        if (!m_doc->ActiveLayoutIsPaper())
         {
-            if (e->IsKindOf<Solid3DEntity>())
-                addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
-            PreviewLineSink sink(m_silhouetteVertices);
-            e->Draw(sink, false, false);
+            for (const auto& e : m_previewEntities)
+            {
+                if (e->IsKindOf<Solid3DEntity>())
+                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
+                PreviewLineSink sink(m_silhouetteVertices);
+                e->Draw(sink, false, false);
+            }
         }
 
         // 三角形从远到近排序：俯视时着色面不做深度测试（与二维内容一样按绘制顺序叠放），近的面要画在后面
@@ -2425,7 +2547,9 @@ namespace MiniCAD
             return false;
         }
 
-        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift))
+        // 布局是二维图纸：不环绕，Shift + 中键按普通中键平移处理
+        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift) &&
+            !(m_doc && m_doc->ActiveLayoutIsPaper()))
         {
             // Shift + 中键拖动：绕视图中心环绕（同 AutoCAD 的 3DORBIT）
             m_viewport->GetCamera().Orbit(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
@@ -2759,6 +2883,8 @@ namespace MiniCAD
     {
         if (!m_doc || !m_viewport) return;
 
+        AdvanceViewTransition();
+
         // 命令行提示 = 当前工具的状态提示（无工具时为空）
         m_commandLine.SetPrompt(m_tool ? m_tool->GetPrompt()
                                        : (m_zoomPending ? std::string("ZOOM 选项 [全部(A)/范围(E)]:") : std::string{}));
@@ -2796,7 +2922,8 @@ namespace MiniCAD
                                 (zoomChanged && m_selViewDependent));
 
         m_overlay.ToVertices(m_overlayVertices);
-        if (!m_previewPoints.empty() || !m_previewHighlightPoints.empty())
+        // 节点图预览点在模型空间，布局页上不画（同 UpdateShadedVertices 里的预览实体）
+        if ((!m_previewPoints.empty() || !m_previewHighlightPoints.empty()) && !m_doc->ActiveLayoutIsPaper())
         {
             m_previewOverlay.Clear();
             for (const auto& p : m_previewPoints)
@@ -3007,6 +3134,29 @@ namespace MiniCAD
             }
         }
 
+        // ── 布局页：视口把模型空间内容合成进来 ──────────────────────────
+        //
+        // AutoCAD 的布局页里，图形内容**全部靠视口从模型空间取** ——
+        // 图纸空间本身通常只有视口框（实测 test0.dwg 的 *Paper_Space 完全为空）。
+        // 不合成的话，切到布局页只有一张白纸、框里什么都没有。
+        //
+        // 合成走的是**同一个 ctx**，所以顶点自然落进 m_scratch* 里、与视口边框
+        // 一起组成这个实体的缓存块；不需要另外维护一份缓冲。
+        //
+        // ⚠ 顺序**必须**在下面的 `c.xxx = m_scratchXxx` 之前！
+        //   这两个缓冲是成员变量，合成是把顶点**追加**进去。若先拷贝再合成，
+        //   追加进去的模型内容就永远不会进入这个实体的缓存块 ——
+        //   表现是布局页里只剩视口边框、模型内容一个都不显示，
+        //   但拾取走的是场景数据，仍然能选中（「能选中但看不到」）。
+        //
+        // 优化：先用视口的「模型可见矩形」按实体包围盒**预剔除**。
+        // 没有这一步，每个视口都要遍历全部模型实体 —— 实测有 20 万实体、13 个视口
+        // 时就是 260 万次无用构建。包围盒判断是 O(1)，成本可忽略。
+        if (const auto* vp = dynamic_cast<const ViewportEntity*>(&entity))
+            if (vp->ShowsModel())
+                ComposeModelIntoViewport(*vp, ctx);
+
+        // 合成完成后才取缓冲（顺序见上）
         c.lines         = m_scratchLines;
         c.fills         = m_scratchFills;
         c.points        = ctx.TakePoints();
@@ -3015,6 +3165,117 @@ namespace MiniCAD
         c.viewDependent = ctx.HasViewDependentGeometry();
         c.wipes         = ctx.TakeWipes();
         c.images        = ctx.TakeImages();
+    }
+
+    //
+    // 把一个视口「看见」的模型空间内容按视口变换画进 ctx。
+    //
+    // 视口变换 = 平移(-viewCenter) → 缩放(modelToPaper) → 旋转(-twist) → 平移(+center)，
+    // 可以合成一个仿射矩阵交给 TransformDrawSink —— 与块参照用的是同一套机制，
+    // 文字、线型、线宽、区域覆盖都会自动按变换处理，不必另写一份绘制逻辑。
+    void Editor::ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx)
+    {
+        const AABB visible = vp.ModelVisibleBox();
+        const double s = vp.ModelToPaperScale();
+        if (!(s > 0.0))
+            return;
+
+        // ── 视口裁剪：模型内容只画在视口矩形内 ──────────────────────────
+        //
+        // AutoCAD 里视口就是一个「开向模型空间的窗口」：模型实体的线被视口边界
+        // 硬裁掉，框外一根线都不露。不做这步时，图元会溢出到视口外的纸面上，
+        // 看起来就是「没经过视口裁剪」。
+        //
+        // 实现：记下本视口合成前的缓冲长度，合成结束后只裁**本次追加的区间**
+        // （WipeClip::ClipLines/ClipFills 的 from 参数）。不能用 DrawContext::Wipe —
+        // 那个语义是「裁剪此前已写入的顶点」，而视口要裁的正是随后写入的内容。
+        // 顶点坐标与视口矩形同在纸面坐标系（变换最后一步就是平移到视口中心），
+        // 不需要额外换算。
+        const size_t clipLineFrom  = ctx.LineCount();
+        const size_t clipFillFrom  = ctx.FillCount();
+        const size_t clipTextFrom  = ctx.TextCount();
+        const size_t clipPointFrom = ctx.PointCount();
+        const size_t clipGlyphFrom = ctx.GlyphCount();
+        const size_t clipImageFrom = ctx.ImageCount();
+
+        // 行向量约定（P' = P·M），最左矩阵最先作用
+        using namespace Math;
+        Mat4 m = Mat4::Translation(Vec3{ -vp.GetViewCenter().x, -vp.GetViewCenter().y, 0.0 })
+               * Mat4::Scale(Vec3{ s, s, 1.0 });
+        // ⚠ 内容旋转用 **R(+Twist)**，不是 R(-Twist)。
+        //
+        // 依据（实测 `01-曲陵路.dwg`，5 个 Twist=95.69° 的浮动视口）：
+        //   这 5 个视口在纸面上并排一行（Center.x 步长 +420），各看模型里
+        //   195 宽的一条带（scale=2，195×2=390=框宽）。把 ViewCenter 按
+        //   DCS→WCS 的 R(-Twist) 转过之后，相邻 WCS 位移单位向量恒等于
+        //   该视口的 UcsXAxis=(-0.0991,-0.9951) —— 即「纸面 +X 对应的模型方向」。
+        //   内容变换必须把 UcsXAxis 映射到纸面 +X：
+        //       R(+Twist)·UcsXAxis = (+1.0000, -0.0000)  ✔
+        //       R(-Twist)·UcsXAxis = (-0.9804, +0.1972)  ✘（偏 95.7°）
+        //   ⇒ 只有 R(+Twist) 能让视口横向对上 UCS 横向。
+        //   用 R(-Twist) 时内容整体转错约 90°，视口里的图元相对视口边框是斜的。
+        if (vp.GetTwist() != 0.0)
+            m = m * Mat4::RotationZ(vp.GetTwist());
+        m = m * Mat4::Translation(Vec3{ vp.GetCenter().x, vp.GetCenter().y, 0.0 });
+
+        TransformDrawSink vsink(ctx, m);
+
+        auto& scene = m_doc->GetScene();
+        scene.ForEachObject([&](const Object& obj)
+        {
+            if (!obj.IsKindOf<Entity>())
+                return;
+            const auto& e = static_cast<const Entity&>(obj);
+            // 只合成**模型空间**实体；图纸空间实体（含视口自身）跳过，
+            // 否则会把纸面元素也塞进视口，视口还会自我递归
+            if (e.GetAttr().InPaperSpace)
+                return;
+            if (!e.GetAttr().Visible)
+                return;
+            if (e.IsKindOf<ViewportEntity>())
+                return;
+            if (const Layer* layer = scene.GetLayerManager().GetLayer(e.GetAttr().LayerId);
+                layer && !layer->IsVisible())
+                return;
+
+            // 包围盒预剔除：完全落在视口可见模型矩形外的直接跳过（不做任何构建）
+            const AABB box = e.GetBoundingBox();
+            if (box.Max.x < visible.Min.x || box.Min.x > visible.Max.x ||
+                box.Max.y < visible.Min.y || box.Min.y > visible.Max.y)
+                return;
+
+            // 逐实体切上下文：各实体的线型 / 线宽 / 线型比例不同
+            vsink.BeginEntity(&e.GetAttr());
+            e.Draw(vsink, /*isSelected*/ false, /*isHovered*/ false);
+            vsink.BeginEntity(nullptr);
+        });
+
+        // 循环结束后裁掉本次合成落在视口矩形外的顶点（只裁 [from, end) 区间）
+        const double hw = vp.GetWidth() * 0.5;
+        const double hh = vp.GetHeight() * 0.5;
+        const Math::Point3 vc = vp.GetCenter();
+        const WipeClip::Poly clipRect({ Math::Point3{ vc.x - hw, vc.y - hh, vc.z },
+                                        Math::Point3{ vc.x + hw, vc.y - hh, vc.z },
+                                        Math::Point3{ vc.x + hw, vc.y + hh, vc.z },
+                                        Math::Point3{ vc.x - hw, vc.y + hh, vc.z } });
+        if (clipRect.Valid())
+        {
+            // keepInside=true：只保留视口矩形**内**的内容。
+            // （区域覆盖用默认的 keepInside=false，语义相反：挖掉内部）
+            WipeClip::ClipLines(ctx.Lines(), clipRect, clipLineFrom, /*keepInside*/ true);
+            WipeClip::ClipFills(ctx.Fills(), clipRect, 5, clipFillFrom, /*keepInside*/ true);
+            WipeClip::ClipTexts(ctx.Texts(), clipRect, clipTextFrom);
+            WipeClip::ClipPoints(ctx.Points(), clipRect, clipPointFrom, /*keepInside*/ true);
+            // ⚠ 字形实例是**单独提交**的一路（桌面 / 网页两版的文字都走它），
+            //    漏了它就是漏裁整份文字 —— 表现为「布局页里文字铺到视口外面」。
+            //    少了这一行时上面四路裁得再对也看不出问题：线与填充确实规矩了，
+            //    只有文字一类整行溢出，用户报的就是「图元在视口外还显示」。
+            if (std::vector<GlyphInstance>* glyphs = ctx.Glyphs())
+                WipeClip::ClipGlyphInstances(*glyphs, clipRect, clipGlyphFrom, /*keepInside*/ true);
+            // 光栅图像同样是单独提交的一路（Viewport 里逐个 SubmitImage），
+            // 不裁就整张贴图溢出到视口外的纸面上
+            WipeClip::ClipImages(ctx.Images(), clipRect, clipImageFrom, /*keepInside*/ true);
+        }
     }
 
     // 把一个实体的缓存按绘制序接到场景流尾部：记下它的区域覆盖（裁剪此前的顶点，由 FlushSceneWipes 一次完成），
@@ -3156,9 +3417,26 @@ namespace MiniCAD
         {
             const auto& attr = entity.GetAttr();
             if (!attr.Visible) return false;
+            // 布局过滤：模型页只画模型空间实体，布局页只画本布局的图纸空间实体。
+            // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
+            if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
             return !layer || layer->IsVisible();
         };
+
+        // 布局页上的视口把模型空间内容合成进了自己的缓存（ComposeModelIntoViewport）：
+        // 模型实体变了（含增删、撤销）时视口缓存也要丢掉，否则视口里还是旧内容
+        bool modelTouchedInPaper = false;
+        if (!invalidateAll && m_doc->ActiveLayoutIsPaper())
+            for (auto id : scene.GetDirtyEntities())
+            {
+                const Object* obj = scene.GetEntity(id);
+                if (!obj || !obj->IsKindOf<Entity>() || !static_cast<const Entity&>(*obj).GetAttr().InPaperSpace)
+                {
+                    modelTouchedInPaper = true;
+                    break;
+                }
+            }
 
         // ── 纯新增快路径 ────────────────────────────────────
         // 几万实体的场景里新画一个图形:旧实体缓存全部有效,既不该重新细分,
@@ -3166,7 +3444,8 @@ namespace MiniCAD
         // 时,只细分新实体并追加到现有顶点流尾部(新实体总在实体链表末尾,
         // 与全量重建的绘制序一致)。修改/删除(脏 ID 已在缓存)仍走全量拼接。
         // 拼接流已交给渲染后端释放时没有可追加的流，走全量拼接（缓存命中，不重新细分）
-        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() && !m_sceneStreamsReleased)
+        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() && !m_sceneStreamsReleased &&
+            !modelTouchedInPaper)
         {
             bool pureAppend = !scene.GetDirtyEntities().empty();
             for (auto id : scene.GetDirtyEntities())
@@ -3217,6 +3496,12 @@ namespace MiniCAD
         {
             for (auto id : scene.GetDirtyEntities())   // 含已删除实体：顺带清理
                 m_entityVertexCache.erase(id);
+            if (modelTouchedInPaper)
+                std::erase_if(m_entityVertexCache, [&scene](const auto& kv)
+                {
+                    const Object* obj = scene.GetEntity(kv.first);
+                    return obj && obj->IsKindOf<ViewportEntity>();
+                });
             if (zoomChanged && m_sceneViewDependent)
                 std::erase_if(m_entityVertexCache, [](const auto& kv) { return kv.second.viewDependent; });
         }

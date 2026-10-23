@@ -23,7 +23,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `tests/`：`Core/`（MiniCAD）、`UI/` + `UI/Golden/`（MiniGUI）、`Serialization/`（MiniDWG）、`Data/`（DWG/DXF 样例、截图测试用图标）
 - `tools/make_web_font.py`：重新生成 `assets/fonts/NotoSansSC-UI.ttf`（网页版界面字体，Noto Sans SC Regular 子集，OFL）
 - `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`、示例节点图 `nodes/examples/`；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录（`/fonts`、`/icons`、`/patterns`、`/ui`）
-- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.0 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（默认开；网页版要小体积可 `-DMINICAD_WITH_SOLID=OFF`）；静态库、`SM_STATIC`，本地修改与使用注意（静态库不能并发使用，`SMLibKernel` 内部加锁让多个线程轮流调用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
+- `3rd/`：stb_image、stb_truetype（MiniCAD 与 MiniGUI 共用）；`3rd/SMLib`：NURBS BRep 实体建模内核（NVIDIA usd-brep 1.0.1 的 SMLib + SM_API，Apache-2.0），目标 `SMLib` / `SM_API`，定义在 `cmake/SMLib.cmake`，开关 `MINICAD_WITH_SOLID`（默认开；网页版要小体积可 `-DMINICAD_WITH_SOLID=OFF`）；静态库、`SM_STATIC`，本地修改与使用注意（静态库不能并发使用，`SMLibKernel` 内部加锁让多个线程轮流调用；为 C++20 做的修改）见 `3rd/SMLib/README.md`。MiniCAD 只经 `src/Solid/ISolidKernel.h`（核心库里的接口，只用 MiniCAD 类型）使用实体内核，SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，工厂 `CreateSMLibKernel()`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `docs/`：早期 MiniCAD 项目的教程（描述的是旧架构）、各库开发计划、发布说明 `release-notes/`
 
 ### include 根目录（重要）
@@ -114,7 +114,7 @@ cmd /c "\"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Bui
 
 VS 安装路径不同时自行修改；在"Developer PowerShell / Command Prompt for VS"或 Visual Studio 里构建则不需要。
 
-**头文件依赖的坑**：Ninja 靠 MSVC `/showIncludes` 的输出记录头文件依赖，前缀（"注意: 包含文件:"）在配置时按 GBK 写进 `rules.ninja`。控制台代码页是 UTF-8（65001）时 cl 输出的前缀对不上，编译输出里会刷出大量“注意: 包含文件”，依赖记录为空——之后改头文件不会触发重编，新旧对象文件混用，程序可能直接崩溃。用 `chcp 936` 再构建（`cmd /c "chcp 936 >nul && ...vcvars64.bat... && cmake --build out/debug"`）；`ninja -C out/debug -t deps` 里出现 `#deps 0` 就说明出过这种情况，需要让相关源文件重编一次。
+**头文件依赖的坑（已处理）**：Ninja 靠 MSVC `/showIncludes` 的输出记录头文件依赖。中文版 cl 的前缀"注意: 包含文件:"按构建时控制台代码页（GBK / UTF-8）输出，与配置时写进 `rules.ninja` 的字节对不上时依赖记录为空，改头文件不重编，新旧对象文件混用、运行时崩溃。现在根 `CMakeLists.txt` 让 cl 经启动器 `cmake/ClShowIncludes.cpp`（配置时 `try_compile` 成 `out/<preset>/ClShowIncludes.exe`）运行，它把各种编码的前缀改写成 ASCII 的 `Note: including file:`，`rules.ninja` 也写这个，与代码页无关，不再需要 `chcp`。检查：`ninja -C out/debug -t deps` 里除 SMLib（预编译头，本来就没有）和 `.rc.res` 外不应有 `#deps 0`。
 
 运行：`out/debug/MiniCADWin/MiniCADWin.exe`（Release 在 `out/release/...`）。
 
@@ -144,7 +144,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `NodeGraphTests.exe`、`NodeSolidTests.exe`：节点图核心（调度、最长列表、读写、撤销、曲线 / 引用节点、预览与烘焙、后台求值、组节点）与三维实体节点（`tests/NodeGraph/`，后者只在 `MINICAD_WITH_SOLID` 时编译）
 - `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
-- `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量。截至 v0.1.0 有 2 项已知失败（阵列对话框默认 3×4、改颜色后重新细分），整合前就存在
+- `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量；控制台打印每一项的名字与用时，最后列出最慢的 5 项。20 万条线的耗时测量（只打印、debug 版约 24 秒）默认跳过，加 `--full` 才跑。2026-10-23 起应全部通过（之前的失败是测试本身的问题：视口未显示、细线显示默认值已改）
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest；只在推送 `v*` 标签时自动运行，推送分支、PR 不运行（可在 Actions 页面手动运行）
 
 ## 发布

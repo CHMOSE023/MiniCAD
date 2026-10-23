@@ -2,10 +2,13 @@
 #include "SnapResult.h"
 #include "Scene/Scene.h"
 #include "Core/Object/Object.hpp"
+#include "Core/Entity/Entity.hpp"
+#include "Core/Entity/EntityAttr.hpp"
 #include "Core/Math/Point2.hpp"
 #include "Viewport/Camera.h"
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <unordered_set>
 #include <vector>
 
@@ -65,6 +68,11 @@ namespace MiniCAD
         double GetGridSize() const             { return m_gridSize; }
         void   SetGridSize(double size)        { if (size > 0.0) m_gridSize = size; }
 
+        // ─── 布局过滤（同 Picking::SetLayoutFilter）──
+        // 布局页上只捕捉本布局的图纸空间实体：看不见的模型实体不该被捕捉到。空函数 = 不过滤
+        using LayoutFilter = std::function<bool(const EntityAttr&)>;
+        void SetLayoutFilter(LayoutFilter filter) { m_layoutFilter = std::move(filter); }
+
     private:
         SnapResult TryEndpoint     (const Math::Point2&, const Scene&, const Camera&, const std::unordered_set<Object::ObjectID>&) const;
         SnapResult TryMidpoint     (const Math::Point2&, const Scene&, const Camera&, const std::unordered_set<Object::ObjectID>& ) const;
@@ -76,19 +84,24 @@ namespace MiniCAD
         // 端点 / 中点 / 象限点的共同实现：kind 为 FeatureKind
         SnapResult TryFeature      (const Math::Point2&, const Scene&, const Camera&, const std::unordered_set<Object::ObjectID>&, int kind, SnapResult::Type type) const;
 
-        // 遍历捕捉对象：Query 设置了候选集时只遍历候选，否则全场景。
+        // 遍历捕捉对象：Query 设置了候选集时只遍历候选，否则全场景。不属于当前布局的实体跳过
         template<typename Fn>
         void ForEachSnapObject(const Scene& scene, Fn&& fn) const
         {
+            auto inLayout = [this](const Object& o)
+            {
+                return !m_layoutFilter || !o.IsKindOf<Entity>() ||
+                       m_layoutFilter(static_cast<const Entity&>(o).GetAttr());
+            };
             if (m_queryCandidates)
             {
                 for (auto id : *m_queryCandidates)
-                    if (const Object* o = scene.GetEntity(id))
+                    if (const Object* o = scene.GetEntity(id); o && inLayout(*o))
                         fn(*o);
             }
             else
             {
-                scene.ForEachObject(std::forward<Fn>(fn));
+                scene.ForEachObject([&](const Object& o) { if (inLayout(o)) fn(o); });
             }
         }
 
@@ -102,5 +115,7 @@ namespace MiniCAD
 
         // 本次 Query 的候选集（仅在 Query 执行期间有效；nullptr = 全场景遍历）
         mutable const std::vector<Object::ObjectID>* m_queryCandidates = nullptr;
+
+        LayoutFilter m_layoutFilter;   // 布局过滤（Editor::Bind 设置）
     };
 }

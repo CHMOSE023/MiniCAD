@@ -47,6 +47,12 @@ int RunMatrixInverseTests(); // MatrixInverseTests.cpp，返回失败项数
 int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
 int RunBlockFixTests();      // BlockFixTests.cpp，返回失败项数
 int RunMiddleDoubleClickZoomTests();  // MiddleDoubleClickZoomTests.cpp，返回失败项数
+int RunLayoutTests();                 // LayoutTests.cpp，返回失败项数
+int RunMLineToolTests();              // MLineToolTests.cpp，返回失败项数
+int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项数
+int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
+int RunTransformSinkTests();           // TransformSinkTests.cpp，返回失败项数
+int RunSplineKnotTests();              // TransformSinkTests.cpp，返回失败项数
 
 namespace
 {
@@ -316,6 +322,12 @@ int main()
     g_failures += RunRecentFilesTests();
     g_failures += RunBlockFixTests();
     g_failures += RunMiddleDoubleClickZoomTests();
+    g_failures += RunLayoutTests();
+    g_failures += RunMLineToolTests();
+    g_failures += RunMLineImportTests();
+    g_failures += RunMLineEditTests();
+    g_failures += RunTransformSinkTests();
+    g_failures += RunSplineKnotTests();
 
     std::printf("%s：%d 项失败\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures;

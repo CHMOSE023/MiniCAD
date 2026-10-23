@@ -47,6 +47,9 @@ namespace MiniCAD::Nodes::CurveOps
     Solid::NurbsCurve Rebuild(const Solid::NurbsCurve& c, int count, int degree, double* maxDeviation = nullptr);
     // 切线或曲率不连续的内部参数（节点重复度 ≥ 阶数，两侧切线方向或曲率不同，如直线段与圆弧的接点），炸开用
     std::vector<double> Kinks(const Solid::NurbsCurve& c);
+    // 融合 / 放样融合的两个闭合截面（方向相同）对齐：b 的起点移到与 a 扭转最小处，两者都重新参数化到 [0, 1]、参数与弧长成比例
+    // （先拆成贝塞尔段，形状不变）。内核按参数连接截面，对齐后两条曲线按弧长比例一一对应、不扭转
+    void MatchLoops(Solid::NurbsCurve& a, Solid::NurbsCurve& b);
     // 曲线所在平面的单位法线（按控制点）：不在一个平面上返回空，共线返回零向量
     std::optional<Math::Vec3> PlaneNormal(const Solid::NurbsCurve& c);
 

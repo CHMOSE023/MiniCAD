@@ -7,6 +7,7 @@
 #include "Core/UIContext.h"
 #include "Data/Json.h"
 #include "Document/Document.h"
+#include "Document/Command/LayoutCommands.h"
 #include "Style/Theme.hpp"
 #include "Widgets/Button.h"
 #include "Widgets/ComboBox.h"
@@ -136,6 +137,58 @@ namespace MiniCAD
     }
 
     // =========================================================
+    // 布局页签条：模型 / 各张图纸空间布局
+    // =========================================================
+    // 由 CreateDocumentArea 在**视口之后**加进去，因此贴在文档区底部 ——
+    // 文档区下面是命令行，于是页签栏正好紧贴命令行，中间没有空隙。
+    //
+    // ⚠ 不要把它做成停靠区的独立面板：DockSpace 有 `kMinPanel = 80` 的最小高度，
+    //   一条 34px 的页签栏会被强行拉到 80px，多出的 46px 就成了页签栏与命令行
+    //   之间那块空白（实测间隙就来自这里）。
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayoutTabs()
+    {
+        using namespace MiniGUI;
+        auto bar = std::make_unique<Panel>(Theme::Background);
+        LayoutStyle bs;
+        bs.direction = FlexDirection::Row;
+        // 固定成一条标签栏的高度：它是文档区里的一个固定行，不参与 grow/shrink
+        bs.height = TabView::kStripHeight;
+        bs.shrink = 0.0f;
+        bar->SetLayoutStyle(bs);
+
+        m_layoutTabs = bar->AddChild<TabView>();
+        m_layoutTabs->EditLayoutStyle().grow = 1.0f;
+        m_layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
+        m_layoutTabs->SetShowNewTabButton(true);      // + 新建布局
+        m_layoutTabs->SetOnNewTabRequested([this] { m_commands.Execute("layout.new"); });
+        m_layoutTabs->SetOnSelectionChanged([this](int i)
+        {
+            if (m_syncingLayouts || i < 0)
+                return;
+            ActivateLayout(i);
+            m_viewport->Focus();
+        });
+        // 右键：新建 / 删除布局（布局标签不能关闭，不要默认的「关闭…」几项）
+        m_layoutTabs->SetTabContextMenu([this](int i)
+        {
+            const Document* doc = m_docManager.GetActive();
+            bool canDelete = false;
+            if (doc && i >= 0 && i < static_cast<int>(doc->GetScene().Layouts().size()))
+                canDelete = !doc->GetScene().Layouts()[static_cast<size_t>(i)].Model &&
+                            RemoveLayoutCommand::PaperCount(doc->GetScene()) > 1;
+            return std::vector<MenuItem>{
+                MenuItem("新建布局(&N)", [this] { m_commands.Execute("layout.new"); }),
+                MenuItem("删除布局(&D)", [this, i] { DeleteLayout(i); }).Enabled(canDelete),
+            };
+        });
+
+        // 没有文档时整条隐藏，打开 / 新建文档后由 SyncLayoutTabs 显示
+        bar->SetVisible(false);
+        m_layoutTabsBar = bar.get();
+        return bar;
+    }
+
+    // =========================================================
     // 文档区：文档标签条 + 视口（所有文档共用一个视口，切换标签时换相机状态）
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea()
@@ -161,6 +214,13 @@ namespace MiniCAD
         });
         m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
         m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
+
+        // ── 布局标签条（图纸空间）──────────────────────────────────
+        // AutoCAD 把「模型 + 各张布局」放在绘图区下方的标签条里。
+        // 这里同样用 TabView：只显示标签、内容仍共用同一个视口。
+        // 它在视口**之后**加入文档区（见本函数末尾），因此贴在文档区底部，
+        // 正好紧邻下面的命令行 —— 中间不留空隙。见 CreateLayoutTabs。
+
         m_docTabs->SetTabContextMenuExtra([this](int i)
         {
             Document* doc = reinterpret_cast<Document*>(m_docTabs->GetTabData(i));
@@ -218,6 +278,17 @@ namespace MiniCAD
             return true;
         });
         m_viewCube = cube;
+
+        // ── 模型 / 布局页签条（贴在文档区底部）────────────────────
+        // 放在视口**之后** ⇒ 它占文档区的最下面一行。
+        // 文档区下面是命令行，于是页签栏紧贴命令行，中间没有空隙。
+        // （做成停靠区独立面板不行：DockSpace 最小高度 80，34px 的条会被拉到 80，
+        //   多出的空白正好出现在页签栏与命令行之间。）
+        {
+            std::unique_ptr<Node> tabsBar = CreateLayoutTabs();
+            tabsBar->EditLayoutStyle().shrink = 0.0f;
+            area->AddChild(std::move(tabsBar));
+        }
 
         // ── 没有文档时的提示 ─────────────────────────────────────
         auto* hint = area->AddChild<Node>();
@@ -663,8 +734,7 @@ namespace MiniCAD
             return;
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
-        if (m_viewCube)
-            m_viewCube->SetVisible(m_viewCubeVisible);
+        UpdateViewCubeVisibility();
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
         const JsonValue& known = saved["panels"];
         for (const std::string& id : dock->GetPanelIds())
@@ -693,9 +763,16 @@ namespace MiniCAD
     void MainFrame::SetViewCubeVisible(bool visible)
     {
         m_viewCubeVisible = visible;
-        if (m_viewCube)
-            m_viewCube->SetVisible(visible);
+        UpdateViewCubeVisibility();
         SaveUserLayout();
+    }
+
+    void MainFrame::UpdateViewCubeVisibility()
+    {
+        if (!m_viewCube)
+            return;
+        const Document* doc = m_docManager.GetActive();
+        m_viewCube->SetVisible(m_viewCubeVisible && !(doc && doc->ActiveLayoutIsPaper()));
     }
 
     void MainFrame::SaveUserLayout()

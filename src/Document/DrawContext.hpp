@@ -122,6 +122,26 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4> TakePoints() { return std::move(m_points); }
         void ClearPoints() { m_points.clear(); }
 
+        // 各缓冲当前长度。用于「只裁剪本次追加的一段」——
+        // 典型场景是布局视口合成：先把长度记下来，合成完再裁 [from, end) 区间。
+        size_t LineCount()  const { return m_verts.size(); }
+        size_t FillCount()  const { return m_fillVerts.size(); }
+        size_t TextCount()  const { return m_textVerts.size(); }
+        size_t PointCount() const { return m_points.size(); }
+        // 字形实例流同理；未设置实例接收器（选中流等）时为 0
+        size_t GlyphCount() const { return m_glyphs ? m_glyphs->size() : 0; }
+        // 光栅图像流同理（布局页也要按视口矩形裁，否则贴图溢出到纸面上）
+        size_t ImageCount() const { return m_images.size(); }
+
+        // 可写缓冲（供布局视口做「只裁本次追加区间」的裁剪）
+        std::vector<Vertex_P3_C4>&    Lines()  { return m_verts; }
+        std::vector<Vertex_P3_C4>&    Fills()  { return m_fillVerts; }
+        std::vector<Vertex_P3_C4_UV>& Texts()  { return m_textVerts; }
+        std::vector<Vertex_P3_C4>&    Points() { return m_points; }
+        // 字形实例流（未设置实例接收器时为空指针）
+        std::vector<GlyphInstance>*   Glyphs() { return m_glyphs; }
+        std::vector<ImageDraw>&       Images() { return m_images; }
+
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {
