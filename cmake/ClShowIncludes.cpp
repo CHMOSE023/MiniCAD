@@ -90,6 +90,22 @@ int wmain()
     if (cmdLine.empty())
         return 1;
 
+    // cl 的临时文件放到本程序旁的 cltemp（构建目录里）。有的机器上从项目目录启动的进程写不了系统 TEMP，
+    // cl 带 /Z7 / /Zi 时就会报 D8050“未能将命令行放入调试记录中”
+    {
+        wchar_t self[MAX_PATH] = L"";
+        const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir(self, n);
+        if (const size_t slash = dir.find_last_of(L"\\/"); n > 0 && n < MAX_PATH && slash != std::wstring::npos)
+        {
+            dir.resize(slash + 1);
+            dir += L"cltemp";
+            CreateDirectoryW(dir.c_str(), nullptr);
+            SetEnvironmentVariableW(L"TMP", dir.c_str());
+            SetEnvironmentVariableW(L"TEMP", dir.c_str());
+        }
+    }
+
     SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
     HANDLE rd = nullptr, wr = nullptr;
     if (!CreatePipe(&rd, &wr, &sa, 0))

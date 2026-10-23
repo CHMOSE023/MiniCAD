@@ -36,7 +36,7 @@ if(MSVC)
         UNICODE
         NOMINMAX
         WIN32_LEAN_AND_MEAN
-    )
+    ) 
     target_compile_options(MiniGUI_Software PRIVATE /utf-8 /W4)
 endif()
 

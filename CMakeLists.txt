@@ -21,6 +21,7 @@ if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
     string(REGEX REPLACE " +$" "" _clPrefix "${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}")
     if(NOT _clPrefix MATCHES "^[ -~]*$")   # 含非 ASCII 字符才需要
         set(_clLauncher "${CMAKE_BINARY_DIR}/ClShowIncludes.exe")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/cmake/ClShowIncludes.cpp")   # 改了启动器就重新配置、重新编译它
         if(NOT EXISTS "${_clLauncher}" OR "${CMAKE_SOURCE_DIR}/cmake/ClShowIncludes.cpp" IS_NEWER_THAN "${_clLauncher}")
             try_compile(_clLauncherOk "${CMAKE_BINARY_DIR}/ClShowIncludes" "${CMAKE_SOURCE_DIR}/cmake/ClShowIncludes.cpp"
                         COMPILE_DEFINITIONS /utf-8 COPY_FILE "${_clLauncher}" OUTPUT_VARIABLE _clLauncherLog)
