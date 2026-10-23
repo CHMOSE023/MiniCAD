@@ -441,6 +441,18 @@ namespace MiniCAD
 
         auto& doc = Create();
 
+        // 与 AutoCAD 新建图纸一致：模型页之外预置两张空布局（A3 横向纸张，还没有视口）
+        std::vector<DrawingLayout> layouts(1);
+        for (int i = 1; i <= 2; ++i)
+        {
+            DrawingLayout sheet;
+            sheet.Name  = "布局" + std::to_string(i);
+            sheet.Model = false;
+            sheet.Order = i;
+            layouts.push_back(std::move(sheet));
+        }
+        doc.GetScene().SetLayouts(std::move(layouts));    // 归属键由 SetLayouts 分配
+
         SetActive(&doc);
     }
 

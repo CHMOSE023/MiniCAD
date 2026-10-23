@@ -64,6 +64,10 @@
           "title": "视觉样式",
           "items": [ "view.style.wireframe", "view.style.shaded" ]
         },
+        {
+          "title": "布局",
+          "items": [ "layout.new", "layout.delete" ]
+        },
         "-",
         {
           "title": "绘图辅助",

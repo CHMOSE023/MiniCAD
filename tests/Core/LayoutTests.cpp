@@ -33,6 +33,10 @@
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
+#include "Core/Entity/MeshEntity.hpp"
+#include "Editor/Snap/SnapEngine.h"
+#include "Editor/EditorContext.h"
+#include "Document/Command/LayoutCommands.h"
 #include "Render/ImageDraw.hpp"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/BinarySerializer.h"
@@ -834,6 +838,129 @@ int RunLayoutTests()
         Scene back;
         if (r.Parse(w.Dump())) back.Deserialize(r);
         Check(back.Layouts().size() == 1 && back.Layouts()[0].Model, "保存布局：旧文件读回只有模型页");
+    }
+
+    // ══ 没有视口的布局：模型内容一点都不画 ══════════════════════════════
+    //
+    // 布局页的图形全部靠视口从模型空间取；没有视口就是一张白纸（AutoCAD 同样如此）
+    {
+        Document doc;
+        Scene& scene = doc.GetScene();
+        std::vector<DrawingLayout> layouts(1);
+        DrawingLayout sheet;
+        sheet.Name = "布局1"; sheet.Model = false; sheet.Order = 1;
+        layouts.push_back(sheet);
+        scene.SetLayouts(std::move(layouts));
+        scene.AddEntity(std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 400, 280, 0 }));
+        scene.AddEntity(std::make_unique<TextEntity>(scene.NextObjectID(), Math::Point3{ 50, 50, 0 }, "模型文字", 10.0f));
+        // 三维对象：着色面由 Editor 另外生成（不走场景流），曾经没有按布局过滤
+        {
+            Solid3DEntity::SurfaceMesh tet;
+            tet.Positions = { { 100, 100, 0 }, { 200, 100, 0 }, { 150, 200, 0 }, { 150, 150, 80 } };
+            tet.Indices   = { 0, 2, 1,  0, 1, 3,  1, 2, 3,  2, 0, 3 };
+            scene.AddEntity(std::make_unique<MeshEntity>(scene.NextObjectID(), std::move(tet), Math::Mat4::Identity()));
+        }
+
+        Viewport viewport(1200.f, 900.f);
+        Editor editor;
+        editor.Bind(doc, viewport);
+        editor.SetVisualStyle(Editor::VisualStyle::Shaded);
+        // 节点图预览：同样另外生成（轮廓线流）
+        editor.SetPreviewGeometry({ std::make_shared<LineEntity>(1000, Math::Point3{ 0, 300, 0 }, Math::Point3{ 100, 300, 0 }) }, {}, {});
+        editor.Render();
+        const ViewState model = editor.BuildViewState();
+        const size_t modelCount = model.Scene.size() + model.SceneDyn.size() + model.Glyphs.size() + model.TextScene.size();
+        Check(modelCount > 0, "空布局：模型页正常显示模型内容（对照）");
+        Check(!model.Shaded.empty() && !model.Silhouettes.empty(), "空布局：模型页显示三维对象的着色面与节点图预览（对照）");
+
+        auto snapAtOrigin = [&]
+        {
+            SnapEngine& snap = editor.GetSnapEngine();
+            snap.SetEnableSnap(true);
+            const Math::Point2 sp = viewport.GetCamera().WorldToScreen(Math::Point3{ 0, 0, 0 });
+            return snap.Query(sp, scene, viewport.GetCamera());
+        };
+        Check(snapAtOrigin().IsValid(), "空布局：模型页能捕捉到模型直线的端点（对照）");
+
+        CameraState cs = viewport.GetCamera().GetState();
+        doc.SetActiveLayout(1, cs);
+        viewport.GetCamera().SetState(cs);
+        editor.Render();
+        const ViewState vs = editor.BuildViewState();
+        std::printf("    空布局各路：线 %zu 动态线 %zu 填充 %zu 动态填充 %zu 点 %zu 文字 %zu 字形 %zu 图像 %zu 着色 %zu 轮廓 %zu\n",
+                    vs.Scene.size(), vs.SceneDyn.size(), vs.SceneFill.size(), vs.SceneDynFill.size(), vs.ScenePoints.size(),
+                    vs.TextScene.size(), vs.Glyphs.size(), vs.Images.size(), vs.Shaded.size(), vs.Silhouettes.size());
+        Check(vs.Scene.empty() && vs.SceneDyn.empty() && vs.SceneFill.empty() && vs.SceneDynFill.empty() &&
+              vs.ScenePoints.empty() && vs.TextScene.empty() && vs.Glyphs.empty() && vs.Images.empty() &&
+              vs.Shaded.empty() && vs.Silhouettes.empty(),
+              "空布局：没有视口的布局不显示任何模型内容（含三维对象着色面与节点图预览）");
+        Check(!snapAtOrigin().IsValid(), "空布局：布局页上捕捉不到看不见的模型实体");
+    }
+
+    // ══ 新建 / 删除布局（可撤销），布局上画的东西落在该布局的图纸空间 ═══════
+    {
+        Document doc;
+        Scene& scene = doc.GetScene();
+        std::vector<DrawingLayout> layouts(1);
+        for (int i = 1; i <= 2; ++i)
+        {
+            DrawingLayout l; l.Name = "布局" + std::to_string(i); l.Model = false; l.Order = i;   // 不给键：SetLayouts 分配
+            layouts.push_back(l);
+        }
+        scene.SetLayouts(std::move(layouts));
+        const uint64_t k1 = scene.Layouts()[1].OwnerKey, k2 = scene.Layouts()[2].OwnerKey;
+        Check(k1 != 0 && k2 != 0 && k1 != k2, "布局增删：没有归属键的布局自动分到互不相同的键");
+
+        // 新建
+        auto add = std::make_unique<AddLayoutCommand>(DrawingLayout{ "布局3", false, 3 }, 3);
+        AddLayoutCommand* addRaw = add.get();
+        Check(doc.GetCommandStack().Execute(std::move(add), scene) && scene.Layouts().size() == 4 &&
+              scene.Layouts()[3].Name == "布局3", "布局增删：新建布局排在最后");
+        const uint64_t k3 = addRaw->GetKey();
+        Check(k3 != 0 && k3 != k1 && k3 != k2, "布局增删：新布局分到新的归属键");
+
+        // 在布局3 上画：落在布局3 的图纸空间；切回模型页看不见、切到布局3 看得见
+        CameraState cs;
+        doc.SetActiveLayout(3, cs);
+        auto line = std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ 10, 10, 0 }, Math::Point3{ 100, 10, 0 });
+        Viewport viewport(800.f, 600.f);
+        InputEvent ev = {};
+        SnapEngine snap; ConstraintEngine constraint; Picking picking; Overlay overlay;
+        EditorContext ctx{ ev, scene, viewport, snap, constraint, picking, doc.GetCommandStack(), overlay };
+        ctx.ApplyCurrentAttr(*line);
+        Check(line->GetAttr().InPaperSpace && line->GetAttr().LayoutKey == k3, "布局增删：在布局上画的实体落在该布局的图纸空间");
+        const auto lineId = line->GetID();
+        scene.AddEntity(std::move(line));
+        Check(doc.IsVisibleInActiveLayout(static_cast<const Entity*>(scene.GetEntity(lineId))->GetAttr()),
+              "布局增删：画完在当前布局上看得见");
+
+        // 删除当前布局：连同它的图纸空间实体；当前布局没了 → 回到模型页
+        Check(doc.GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(k3), scene) &&
+              scene.Layouts().size() == 3 && scene.FindLayout(k3) < 0 && !scene.GetEntity(lineId),
+              "布局增删：删除布局连同它上面的实体一起删");
+        CameraState cs2;
+        Check(doc.ValidateActiveLayout(cs2) && !doc.ActiveLayoutIsPaper() && doc.ActiveLayout() == 0 &&
+              !scene.CurrentSpaceIsPaper(), "布局增删：删的是当前布局时回到模型页，新画的回到模型空间");
+
+        // 撤销删除：布局与实体都回来
+        doc.GetCommandStack().Undo(scene);
+        Check(scene.FindLayout(k3) == 3 && scene.GetEntity(lineId) != nullptr, "布局增删：撤销删除，布局与其上的实体都恢复");
+        // 撤销新建
+        doc.GetCommandStack().Undo(scene);
+        Check(scene.Layouts().size() == 3 && scene.FindLayout(k3) < 0, "布局增删：撤销新建，布局去掉");
+
+        // 最后一张图纸布局不能删
+        Check(doc.GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(k2), scene) &&
+              !doc.GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(k1), scene) &&
+              scene.FindLayout(k1) == 1, "布局增删：最后一张图纸布局不能删除");
+
+        // 切换布局：按键认当前布局，前面的布局删掉后仍指着同一张
+        CameraState cs3;
+        doc.GetCommandStack().Undo(scene);                  // 布局2 回来
+        doc.SetActiveLayout(scene.FindLayout(k2), cs3);
+        doc.GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(k1), scene);
+        Check(doc.ActiveLayoutOwnerKey() == k2 && doc.ActiveLayout() == scene.FindLayout(k2),
+              "布局增删：删掉前面的布局后，当前布局仍是原来那张");
     }
 
     std::printf("图纸布局用例失败：%d\n", g_failures);

@@ -14,6 +14,7 @@
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -2574,6 +2575,173 @@ namespace MiniCAD
             RenderFrame();
             check(!m_ui->HasModal(), "打开失败提示可以关闭");
             if (opened && opened->GetPath() == path) CloseDocument(opened);
+            RenderFrame();
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+            std::filesystem::remove(dir, ec);
+        }
+
+        // ── 24. 模型 / 布局标签条：新建与打开的图纸都显示，点标签切换布局 ──────────
+        section("24. 模型 / 布局标签条：新建与打开的图纸都显示，点标签切换布局");
+        {
+            const MiniGUI::Rect area = m_viewport->GetParent()->GetScreenBounds();
+            auto barShown = [&]
+            {
+                const MiniGUI::Rect b = m_layoutTabsBar->GetScreenBounds();
+                return m_layoutTabsBar->IsVisible() && b.max.y - b.min.y > 20.0f &&
+                       std::abs(b.max.y - area.max.y) < 1.0f;      // 贴在文档区底边、紧邻命令行
+            };
+
+            m_commands.Execute("file.new");
+            RenderFrame();
+            Document* fresh = m_docManager.GetActive();
+            check(barShown(), "新建图纸：文档区底部显示模型 / 布局标签条");
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(0) == "模型" &&
+                  m_layoutTabs->GetTabTitle(1) == "布局1" && m_layoutTabs->GetTabTitle(2) == "布局2" &&
+                  m_layoutTabs->GetSelected() == 0, "新建图纸：标签为 模型 / 布局1 / 布局2，选中模型");
+
+            // 模型页先切到西南等轴测，再进布局：布局是二维图纸，回到俯视、不显示视图方块
+            const bool cubeOn = m_viewCubeVisible;
+            SetViewCubeVisible(true);
+            Camera& cam = m_docManager.GetViewport().GetCamera();
+            m_docManager.GetEditor().SetViewDirection(-135.0, 35.26);
+            for (int i = 0; i < 30; ++i) RenderFrame();      // 走完视图过渡动画
+            const double modelElevation = cam.GetElevation();
+            check(m_viewCube->IsVisible() && modelElevation < 89.0, "模型页：三维视图里显示视图方块");
+
+            m_layoutTabs->SetSelected(1);       // 相当于点击「布局1」
+            RenderFrame();
+            check(fresh && fresh->ActiveLayout() == 1 && fresh->ActiveLayoutIsPaper(), "点击布局1 标签切到图纸空间");
+            check(!m_viewCube->IsVisible(), "布局页不显示视图方块");
+            check(cam.IsPlanView(), "从三维视图进布局时回到俯视");
+            m_commands.Execute("view.swiso");
+            for (int i = 0; i < 30; ++i) RenderFrame();
+            check(cam.IsPlanView(), "布局页上标准视图命令不切三维视图");
+
+            m_layoutTabs->SetSelected(0);
+            RenderFrame();
+            check(fresh && fresh->ActiveLayout() == 0, "点回模型标签回到模型空间");
+            check(m_viewCube->IsVisible() && std::abs(cam.GetElevation() - modelElevation) < 1e-6,
+                  "回到模型页：视图方块重新显示，恢复原来的三维视图");
+            SetViewCubeVisible(cubeOn);
+            m_commands.Execute("view.top");
+            for (int i = 0; i < 30; ++i) RenderFrame();
+
+            // 没有视口的布局不画模型内容（模型里有直线时切到布局1）
+            Editor& ed = m_docManager.GetEditor();
+            fresh->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(
+                fresh->GetScene().NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 300, 200, 0 })), fresh->GetScene());
+            // 静态场景流上传 GPU 后即释放（ViewState 里为空），按拼接时的统计数判断
+            auto drawnCount = [&]
+            {
+                const auto st = ed.GetSceneStreamStats();
+                const ViewState vs = ed.BuildViewState();
+                return st.lines + st.fills + st.texts + st.glyphs + vs.SceneDyn.size() + vs.SceneDynFill.size() +
+                       vs.Shaded.size() + vs.Silhouettes.size();
+            };
+            m_viewport->RequestRender();       // 直接执行命令加的实体：请求重画（界面命令会自动请求）
+            RenderFrame();
+            check(drawnCount() > 0, "模型页显示模型里的直线（对照）");
+            m_layoutTabs->SetSelected(1);
+            RenderFrame();
+            check(drawnCount() == 0, "没有视口的布局不显示模型内容");
+
+            // 布局上画直线：落在该布局上，只在该布局显示
+            {
+                const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
+                auto clickAt = [&](float fx, float fy)
+                {
+                    const MiniGUI::Vec2 p{ vr.min.x + (vr.max.x - vr.min.x) * fx, vr.min.y + (vr.max.y - vr.min.y) * fy };
+                    m_ui->PointerMove(p, 0);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                };
+                const int before = fresh->GetScene().EntityCount();
+                m_commands.Execute("draw.line");
+                clickAt(0.4f, 0.5f);
+                clickAt(0.6f, 0.5f);
+                m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                m_ui->KeyUp(MiniGUI::Key::Escape, 0);
+                RenderFrame();
+                bool onSheet = false;
+                const uint64_t sheetKey = fresh->ActiveLayoutOwnerKey();
+                fresh->GetScene().ForEachObject([&](const Object& o)
+                {
+                    if (o.IsKindOf<LineEntity>() && static_cast<const Entity&>(o).GetAttr().InPaperSpace &&
+                        static_cast<const Entity&>(o).GetAttr().LayoutKey == sheetKey)
+                        onSheet = true;
+                });
+                check(fresh->GetScene().EntityCount() == before + 1 && onSheet && drawnCount() > 0,
+                      "布局上画的直线落在该布局的图纸空间并显示出来");
+            }
+
+            // 新建 / 删除布局，可撤销
+            m_commands.Execute("layout.new");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "新建布局：标签条多出 布局3");
+            m_layoutTabs->SetSelected(3);
+            RenderFrame();
+            check(fresh->ActiveLayout() == 3, "切到新建的布局3");
+            m_commands.Execute("layout.delete");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetSelected() == 0 && !fresh->ActiveLayoutIsPaper() &&
+                  m_viewCube->IsVisible() == m_viewCubeVisible,
+                  "删除当前布局：标签去掉，回到模型页");
+            m_commands.Execute("edit.undo");
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "撤销删除：布局3 回来");
+            m_layoutTabs->SetSelected(3);
+            RenderFrame();
+            m_commands.Execute("edit.undo");          // 撤销新建：当前布局没了，回到模型页
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && !fresh->ActiveLayoutIsPaper(), "撤销新建：布局3 去掉，当前在它上面时回到模型页");
+            m_layoutTabs->SetSelected(0);
+            RenderFrame();
+
+            // 带布局的图纸：模型里一条线，图纸A 上一个视口看着它
+            const auto dir = std::filesystem::temp_directory_path() /
+                ("minicad-selftest-layout-" + std::to_string(NowTicks()));
+            std::filesystem::create_directories(dir);
+            const auto file = dir / L"布局 测试.dxf";
+            const auto u8 = file.u8string();
+            const std::string path(u8.begin(), u8.end());
+            {
+                Scene drawing;
+                std::vector<DrawingLayout> layouts(1);
+                DrawingLayout a;
+                a.Name = "图纸A"; a.Model = false; a.Order = 1;
+                layouts.push_back(a);
+                drawing.SetLayouts(std::move(layouts));
+                drawing.AddEntity(std::make_unique<LineEntity>(drawing.NextObjectID(),
+                    Math::Point3{ 0, 0, 0 }, Math::Point3{ 100, 50, 0 }));
+                auto vp = std::make_unique<ViewportEntity>(drawing.NextObjectID(), Math::Point3{ 210, 148, 0 }, 300.0, 200.0);
+                vp->SetViewCenter(Math::Point3{ 50, 25, 0 });
+                vp->SetViewHeight(80.0);
+                vp->GetAttr().InPaperSpace = true;
+                drawing.AddEntity(std::move(vp));
+                const auto data = ExportCad(drawing, CadFileKind::Dxf);
+                std::ofstream out(file, std::ios::binary);
+                out.write(reinterpret_cast<const char*>(data.data()), data.size());
+            }
+            OpenDrawings({ path });
+            waitOpen();
+            RenderFrame();
+            Document* opened = m_docManager.GetActive();
+            bool hasSheet = false;
+            for (int i = 0; i < m_layoutTabs->GetTabCount(); ++i)
+                hasSheet = hasSheet || m_layoutTabs->GetTabTitle(i) == "图纸A";
+            check(opened && opened != fresh && barShown() && hasSheet &&
+                  m_layoutTabs->GetTabCount() == static_cast<int>(opened->GetScene().Layouts().size()),
+                  "打开带布局的图纸：标签条显示图纸里的布局");
+
+            m_docTabs->SetSelected(m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(fresh)));
+            RenderFrame();
+            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(1) == "布局1",
+                  "切换文档后标签条换成该文档的布局");
+
+            if (opened) { opened->MarkSaved(); CloseDocument(opened); }
+            if (fresh)  { fresh->MarkSaved();  CloseDocument(fresh); }
             RenderFrame();
             std::error_code ec;
             std::filesystem::remove(file, ec);

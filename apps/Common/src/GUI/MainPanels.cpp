@@ -7,6 +7,7 @@
 #include "Core/UIContext.h"
 #include "Data/Json.h"
 #include "Document/Document.h"
+#include "Document/Command/LayoutCommands.h"
 #include "Style/Theme.hpp"
 #include "Widgets/Button.h"
 #include "Widgets/ComboBox.h"
@@ -158,7 +159,8 @@ namespace MiniCAD
         m_layoutTabs = bar->AddChild<TabView>();
         m_layoutTabs->EditLayoutStyle().grow = 1.0f;
         m_layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
-        m_layoutTabs->SetShowNewTabButton(false);     // 布局由图纸导入，不在此新建
+        m_layoutTabs->SetShowNewTabButton(true);      // + 新建布局
+        m_layoutTabs->SetOnNewTabRequested([this] { m_commands.Execute("layout.new"); });
         m_layoutTabs->SetOnSelectionChanged([this](int i)
         {
             if (m_syncingLayouts || i < 0)
@@ -166,8 +168,21 @@ namespace MiniCAD
             ActivateLayout(i);
             m_viewport->Focus();
         });
+        // 右键：新建 / 删除布局（布局标签不能关闭，不要默认的「关闭…」几项）
+        m_layoutTabs->SetTabContextMenu([this](int i)
+        {
+            const Document* doc = m_docManager.GetActive();
+            bool canDelete = false;
+            if (doc && i >= 0 && i < static_cast<int>(doc->GetScene().Layouts().size()))
+                canDelete = !doc->GetScene().Layouts()[static_cast<size_t>(i)].Model &&
+                            RemoveLayoutCommand::PaperCount(doc->GetScene()) > 1;
+            return std::vector<MenuItem>{
+                MenuItem("新建布局(&N)", [this] { m_commands.Execute("layout.new"); }),
+                MenuItem("删除布局(&D)", [this, i] { DeleteLayout(i); }).Enabled(canDelete),
+            };
+        });
 
-        // 只有一张布局（模型页）时整条隐藏，不占一行
+        // 没有文档时整条隐藏，打开 / 新建文档后由 SyncLayoutTabs 显示
         bar->SetVisible(false);
         m_layoutTabsBar = bar.get();
         return bar;
@@ -719,8 +734,7 @@ namespace MiniCAD
             return;
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
-        if (m_viewCube)
-            m_viewCube->SetVisible(m_viewCubeVisible);
+        UpdateViewCubeVisibility();
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
         const JsonValue& known = saved["panels"];
         for (const std::string& id : dock->GetPanelIds())
@@ -749,9 +763,16 @@ namespace MiniCAD
     void MainFrame::SetViewCubeVisible(bool visible)
     {
         m_viewCubeVisible = visible;
-        if (m_viewCube)
-            m_viewCube->SetVisible(visible);
+        UpdateViewCubeVisibility();
         SaveUserLayout();
+    }
+
+    void MainFrame::UpdateViewCubeVisibility()
+    {
+        if (!m_viewCube)
+            return;
+        const Document* doc = m_docManager.GetActive();
+        m_viewCube->SetVisible(m_viewCubeVisible && !(doc && doc->ActiveLayoutIsPaper()));
     }
 
     void MainFrame::SaveUserLayout()

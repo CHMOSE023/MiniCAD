@@ -171,6 +171,7 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
+        void UpdateViewCubeVisibility();         // 按开关与当前布局显示视图方块（布局是二维图纸，不显示）
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
@@ -197,6 +198,8 @@ namespace MiniCAD
         // 布局标签（模型 / 图纸空间布局）同步与切换
         void SyncLayoutTabs();
         void ActivateLayout(int index);
+        void NewLayout();                       // 新建布局（标签条的 + 与右键菜单、命令 layout.new）
+        void DeleteLayout(int index);           // 删除布局（右键菜单、命令 layout.delete 删当前布局）
         void CloseDocument(Document* doc);      // 未保存时先询问
         // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）。onSaved：当前文档保存成功后调用
         // （平台没有系统另存为对话框时，另存为经 OpenSaveAsDialog 异步完成）

@@ -328,49 +328,50 @@ namespace MiniCAD
 
     // ── 图纸布局（LAYOUT / 图纸空间）─────────────────────────────────────
 
+    // 当前布局按归属键认（m_activeKey，0 = 模型页）：布局增删、撤销后下标会变，键不变。
+    // 当前布局被删掉（含撤销新建）时自动回到模型页
+    int Document::ActiveLayout() const
+    {
+        const int i = m_scene.FindLayout(m_activeKey);
+        return i >= 0 ? i : m_scene.ModelLayoutIndex();
+    }
+
     bool Document::ActiveLayoutIsPaper() const
     {
-        const auto& layouts = m_scene.Layouts();
-        if (m_activeLayout < 0 || m_activeLayout >= static_cast<int>(layouts.size()))
-            return false;
-        return !layouts[static_cast<size_t>(m_activeLayout)].Model;
+        return m_scene.FindLayout(m_activeKey) >= 0;
     }
 
     uint64_t Document::ActiveLayoutOwnerKey() const
     {
-        const auto& layouts = m_scene.Layouts();
-        if (m_activeLayout < 0 || m_activeLayout >= static_cast<int>(layouts.size()))
-            return 0;
-        const DrawingLayout& sheet = layouts[static_cast<size_t>(m_activeLayout)];
-        if (sheet.Model)
-            return 0;              // 模型页：不过滤图纸空间归属
-        return sheet.OwnerKey;     // 0 = 该布局没给出 owner → 退化为不过滤
+        return ActiveLayoutIsPaper() ? m_activeKey : 0;     // 模型页：不过滤图纸空间归属
     }
 
     bool Document::SetActiveLayout(int index, CameraState& camera)
     {
         const auto& layouts = m_scene.Layouts();
-        if (index < 0 || index >= static_cast<int>(layouts.size()) || index == m_activeLayout)
+        if (index < 0 || index >= static_cast<int>(layouts.size()))
+            return false;
+        const uint64_t key  = layouts[static_cast<size_t>(index)].Model ? 0 : layouts[static_cast<size_t>(index)].OwnerKey;
+        const uint64_t from = ActiveLayoutOwnerKey();
+        if (key == from && m_activeKey == from)
             return false;
 
-        if (static_cast<int>(m_layoutViews.size()) < static_cast<int>(layouts.size()))
-            m_layoutViews.resize(layouts.size());
-
-        // 保存当前布局的视图
-        m_layoutViews[static_cast<size_t>(m_activeLayout)].Valid  = true;
-        m_layoutViews[static_cast<size_t>(m_activeLayout)].Camera = camera;
-
-        m_activeLayout = index;
+        // 保存当前布局的视图（当前布局刚被删掉时它的视图也没用了，照样记下无妨）
+        m_layoutViews[from] = camera;
+        m_activeKey = key;
+        m_scene.SetCurrentSpace(key != 0, key);
 
         // 恢复新布局的视图；首次进入图纸页时把纸张范围交给调用方去框选
-        const LayoutView& saved = m_layoutViews[static_cast<size_t>(index)];
-        if (saved.Valid)
+        if (auto it = m_layoutViews.find(key); it != m_layoutViews.end())
         {
-            camera = saved.Camera;
+            camera = it->second;
         }
-        else if (!layouts[static_cast<size_t>(index)].Model)
+        else if (key != 0)
         {
             const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
+            // 布局是二维图纸：模型页可能在三维视图里，进布局时回到俯视
+            camera.Azimuth   = CameraState{}.Azimuth;
+            camera.Elevation = CameraState{}.Elevation;
             if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
             {
                 // 只把目标点移到纸张中心；**缩放系数不在这里算** ——
@@ -382,14 +383,28 @@ namespace MiniCAD
                                   (sheet.MinY + sheet.MaxY) * 0.5, 0.0 };
             }
             // 布局视图一旦进入就记为有效，后续切回来保留用户的平移缩放
-            m_layoutViews[static_cast<size_t>(index)].Valid  = true;
-            m_layoutViews[static_cast<size_t>(index)].Camera = camera;
+            m_layoutViews[key] = camera;
         }
 
         // 切换布局必须让整个场景重建：布局归属是「按当前布局过滤图纸空间实体」，
         // 过滤条件变了，增量路径并不知道哪些块该消失（它只看实体自身的脏标记）。
         // 标记全量脏，下次渲染重建全部顶点。
         MarkDirty();
+        m_scene.MarkDirty();
+        return true;
+    }
+
+    bool Document::ValidateActiveLayout(CameraState& camera)
+    {
+        if (m_activeKey == 0 || ActiveLayoutIsPaper())
+            return false;
+        // 当前布局已不在布局表里：回到模型页，恢复模型页的视图
+        const uint64_t gone = m_activeKey;
+        m_activeKey = 0;
+        m_scene.SetCurrentSpace(false, 0);
+        m_layoutViews.erase(gone);
+        if (auto it = m_layoutViews.find(0); it != m_layoutViews.end())
+            camera = it->second;
         m_scene.MarkDirty();
         return true;
     }

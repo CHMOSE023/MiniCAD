@@ -4,6 +4,7 @@
 #include "GUI/NodeEditor.h"
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
+#include "Document/Command/LayoutCommands.h"
 #include "Widgets/TabView.h"
 #include "Widgets/TitleBar.h"
 #include "Core/UIContext.h"
@@ -147,7 +148,7 @@ namespace MiniCAD
             { "draw.spline",   "Spline",    "样条曲线(&S)", "Spline.png" },
             { "draw.solid",    "Solid",     "二维填充(&F)", "" },
             { "draw.image",    "Image",     "光栅图像(&I)…", "" },
-            { "draw.mline",    "MLine",     "多线(&M)",     "" },
+            { "draw.mline",    "MLine",     "多线(&M)",     "MLine.png" },
             { "draw.xline",    "XLine",     "构造线(&X)",   "" },
             { "draw.ray",      "Ray",       "射线(&Y)",     "" },
             { "draw.table",    "Table",     "表格(&B)",     "" },
@@ -306,6 +307,20 @@ namespace MiniCAD
                                   LayerChanged();
                               },
                               .canExecute = hasDoc });
+
+        // ── 布局 ─────────────────────────────────────────────────
+        m_commands.Register({ .id = "layout.new", .label = "新建布局(&N)",
+                              .tooltip = "新建一张图纸布局（与当前布局同样的纸张）",
+                              .execute = [this] { NewLayout(); },
+                              .canExecute = hasDoc });
+        m_commands.Register({ .id = "layout.delete", .label = "删除布局(&D)",
+                              .tooltip = "删除当前布局及其上的视口等图纸空间对象（可撤销）",
+                              .execute = [this] { if (Document* d = m_docManager.GetActive()) DeleteLayout(d->ActiveLayout()); },
+                              .canExecute = [this]
+                              {
+                                  const Document* d = m_docManager.GetActive();
+                                  return d && d->ActiveLayoutIsPaper() && RemoveLayoutCommand::PaperCount(d->GetScene()) > 1;
+                              } });
 
         // ── 格式 ─────────────────────────────────────────────────
         m_commands.Register({ .id = "format.mlineStyle", .label = "多线样式(&M)…",

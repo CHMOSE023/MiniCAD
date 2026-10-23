@@ -36,7 +36,42 @@ namespace MiniCAD
 		// Document::SetActiveLayout 与界面标签里都用到了，在这里统一保证
 		if (!m_layouts.front().Model)
 			m_layouts.insert(m_layouts.begin(), DrawingLayout{});
+		// 图纸布局的归属键非 0 且唯一（模型页为 0）
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+		{
+			DrawingLayout& l = m_layouts[i];
+			if (l.Model)
+			{
+				l.OwnerKey = 0;
+				continue;
+			}
+			bool dup = l.OwnerKey == 0;
+			for (size_t j = 0; j < i && !dup; ++j)
+				dup = m_layouts[j].OwnerKey == l.OwnerKey;
+			if (dup)
+				l.OwnerKey = NewLayoutKey();
+		}
 		MarkDisplayDirty();   // 布局只影响「画什么」，不是几何变化
+	}
+
+	int Scene::FindLayout(uint64_t ownerKey) const
+	{
+		if (ownerKey == 0)
+			return -1;
+		for (size_t i = 0; i < m_layouts.size(); ++i)
+			if (!m_layouts[i].Model && m_layouts[i].OwnerKey == ownerKey)
+				return static_cast<int>(i);
+		return -1;
+	}
+
+	uint64_t Scene::NewLayoutKey() const
+	{
+		constexpr uint64_t kBase = 0x7F00000000000000ull;
+		uint64_t key = kBase;
+		for (const DrawingLayout& l : m_layouts)
+			if (l.OwnerKey >= key)
+				key = l.OwnerKey + 1;
+		return key;
 	}
 
 	// 一张布局的读写（Serialize / Deserialize 共用，按 IsLoading 决定方向）

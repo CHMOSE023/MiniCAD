@@ -12,6 +12,7 @@
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
+#include "Document/Command/LayoutCommands.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -551,8 +552,7 @@ namespace MiniCAD
         SyncLayoutTabs();
     }
 
-    // 把当前文档的布局表同步到布局标签条。
-    // 只有模型页时整行隐藏（新建文档的常态，不白占一行高度）。
+    // 把当前文档的布局表同步到布局标签条。没有文档时整行隐藏。
     void MainFrame::SyncLayoutTabs()
     {
         if (!m_layoutTabs)
@@ -567,6 +567,18 @@ namespace MiniCAD
         };
 
         Document* doc = m_docManager.GetActive();
+        if (doc != nullptr)
+        {
+            // 当前布局被删掉了（删除布局、撤销新建布局）：回到模型页并恢复模型页的视图
+            Camera& cam = m_docManager.GetViewport().GetCamera();
+            CameraState state = cam.GetState();
+            if (doc->ValidateActiveLayout(state))
+            {
+                cam.SetState(state);
+                m_docManager.GetEditor().SetSelection({});
+                m_viewport->RequestRender();
+            }
+        }
         if (doc == nullptr)
         {
             m_syncingLayouts = true;
@@ -596,8 +608,9 @@ namespace MiniCAD
         m_layoutTabs->SetSelected(doc->ActiveLayout());
         m_syncingLayouts = false;
 
-        // 只有一张布局（模型页）时整行隐藏
-        setRowVisible(layouts.size() > 1);
+        // 有文档就显示（与 AutoCAD 一致，只有模型页时也显示「模型」）
+        setRowVisible(true);
+        UpdateViewCubeVisibility();      // 切布局 / 切文档后：布局页不显示视图方块
     }
 
     // 切换布局：换相机、清选择、整场景重建（可见实体集合变了）
@@ -631,6 +644,56 @@ namespace MiniCAD
         m_docManager.GetEditor().SetSelection({});
 
         SyncLayoutTabs();
+        m_viewport->RequestRender();
+        StateChanged();
+    }
+
+    // 新建布局（经撤销栈）：名称取「布局N」中没用过的最小 N，纸张同当前布局（模型页时 A3 横向），放在最后
+    void MainFrame::NewLayout()
+    {
+        Document* doc = m_docManager.GetActive();
+        if (doc == nullptr)
+            return;
+        const auto& layouts = doc->GetScene().Layouts();
+        DrawingLayout sheet;
+        if (doc->ActiveLayoutIsPaper())
+            sheet = layouts[static_cast<size_t>(doc->ActiveLayout())];
+        sheet.Model    = false;
+        sheet.OwnerKey = 0;               // 由命令分配新键
+        for (int n = 1; ; ++n)
+        {
+            sheet.Name = "布局" + std::to_string(n);
+            if (std::none_of(layouts.begin(), layouts.end(), [&](const DrawingLayout& l) { return l.Name == sheet.Name; }))
+                break;
+        }
+        sheet.Order = static_cast<int>(layouts.size());
+        doc->GetCommandStack().Execute(std::make_unique<AddLayoutCommand>(sheet, static_cast<int>(layouts.size())), doc->GetScene());
+        m_docManager.GetEditor().GetCmdLine().Echo("新建布局：" + sheet.Name);
+        StateChanged();
+    }
+
+    // 删除布局（经撤销栈）：连同它的视口等图纸空间实体。模型页和最后一张图纸布局不能删；
+    // 删的是当前布局时，SyncLayoutTabs 会回到模型页
+    void MainFrame::DeleteLayout(int index)
+    {
+        Document* doc = m_docManager.GetActive();
+        if (doc == nullptr)
+            return;
+        const auto& layouts = doc->GetScene().Layouts();
+        if (index < 0 || index >= static_cast<int>(layouts.size()) || layouts[static_cast<size_t>(index)].Model)
+            return;
+        auto& cmd = m_docManager.GetEditor().GetCmdLine();
+        if (RemoveLayoutCommand::PaperCount(doc->GetScene()) <= 1)
+        {
+            cmd.Echo("至少要保留一张布局");
+            return;
+        }
+        const std::string name = layouts[static_cast<size_t>(index)].Name;
+        m_docManager.GetEditor().GetGripEditor().CancelDrag();
+        m_docManager.GetEditor().SetSelection({});
+        if (doc->GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(layouts[static_cast<size_t>(index)].OwnerKey),
+                                           doc->GetScene()))
+            cmd.Echo("删除布局：" + name);
         m_viewport->RequestRender();
         StateChanged();
     }

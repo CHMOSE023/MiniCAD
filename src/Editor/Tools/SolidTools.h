@@ -63,6 +63,8 @@ namespace MiniCAD
             attr.LayerId    = env.scene.GetLayerManager().GetActiveLayerID();
             attr.LineType   = env.scene.GetCurrentLineType();
             attr.Lineweight = env.scene.GetCurrentLineweight();
+            attr.InPaperSpace = env.scene.CurrentSpaceIsPaper();      // 当前空间（同 ApplyCurrentAttr）
+            attr.LayoutKey    = env.scene.CurrentLayoutKey();
             env.cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(entity)), env.scene);
             return true;
         }
@@ -281,6 +283,8 @@ namespace MiniCAD
                 attr.LineType      = lineType;
                 attr.Lineweight    = m_env.scene.GetCurrentLineweight();
                 attr.LinetypeScale = lineTypeScale;
+                attr.InPaperSpace  = m_env.scene.CurrentSpaceIsPaper();   // 当前空间（同 ApplyCurrentAttr）
+                attr.LayoutKey     = m_env.scene.CurrentLayoutKey();
                 m_entities.push_back(std::move(e));
             }
 

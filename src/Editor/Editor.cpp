@@ -241,6 +241,11 @@ namespace MiniCAD
         {
             return m_doc->IsVisibleInActiveLayout(attr);
         });
+        // 捕捉同理：布局页上看不见的模型实体不能被捕捉到
+        m_snap.SetLayoutFilter([this](const EntityAttr& attr)
+        {
+            return !m_doc || m_doc->IsVisibleInActiveLayout(attr);
+        });
         m_gripEditor.Bind(viewport, scene, cmdStack, m_picking, m_overlay);
 
         scene.MarkDirty();
@@ -1441,6 +1446,11 @@ namespace MiniCAD
     {
         if (!m_doc || !m_viewport)
             return;
+        if (m_doc->ActiveLayoutIsPaper())       // 布局是二维图纸，只有俯视
+        {
+            m_commandLine.Echo("布局中不能切换三维视图");
+            return;
+        }
         Camera& cam = m_viewport->GetCamera();
         const CameraState before = cam.GetState();
         cam.SetView(azimuthDeg, elevationDeg);
@@ -1637,16 +1647,23 @@ namespace MiniCAD
             const Layer* layer = layers.GetLayer(attr.LayerId);
             if (!attr.Visible || (layer && !layer->IsVisible()))
                 return;
+            // 与场景流同一个布局过滤：布局页上模型空间的实体只经视口显示（视口里画的是它的边）
+            if (!m_doc->IsVisibleInActiveLayout(attr))
+                return;
             addSolid(solid, attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color));
         });
 
-        // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试
-        for (const auto& e : m_previewEntities)
+        // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试。
+        // 预览在模型空间，布局页上不画
+        if (!m_doc->ActiveLayoutIsPaper())
         {
-            if (e->IsKindOf<Solid3DEntity>())
-                addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
-            PreviewLineSink sink(m_silhouetteVertices);
-            e->Draw(sink, false, false);
+            for (const auto& e : m_previewEntities)
+            {
+                if (e->IsKindOf<Solid3DEntity>())
+                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
+                PreviewLineSink sink(m_silhouetteVertices);
+                e->Draw(sink, false, false);
+            }
         }
 
         // 三角形从远到近排序：俯视时着色面不做深度测试（与二维内容一样按绘制顺序叠放），近的面要画在后面
@@ -2530,7 +2547,9 @@ namespace MiniCAD
             return false;
         }
 
-        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift))
+        // 布局是二维图纸：不环绕，Shift + 中键按普通中键平移处理
+        if (e.Type == InputEventType::MouseMove && e.IsMouseButtonDown(MouseButton::Middle) && e.HasModifier(ModifierKey::Shift) &&
+            !(m_doc && m_doc->ActiveLayoutIsPaper()))
         {
             // Shift + 中键拖动：绕视图中心环绕（同 AutoCAD 的 3DORBIT）
             m_viewport->GetCamera().Orbit(e.MouseX - e.LastMouseX, e.MouseY - e.LastMouseY);
@@ -2903,7 +2922,8 @@ namespace MiniCAD
                                 (zoomChanged && m_selViewDependent));
 
         m_overlay.ToVertices(m_overlayVertices);
-        if (!m_previewPoints.empty() || !m_previewHighlightPoints.empty())
+        // 节点图预览点在模型空间，布局页上不画（同 UpdateShadedVertices 里的预览实体）
+        if ((!m_previewPoints.empty() || !m_previewHighlightPoints.empty()) && !m_doc->ActiveLayoutIsPaper())
         {
             m_previewOverlay.Clear();
             for (const auto& p : m_previewPoints)

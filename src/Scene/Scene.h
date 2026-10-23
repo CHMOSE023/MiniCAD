@@ -68,9 +68,20 @@ namespace MiniCAD
 		// ── 图纸布局（LAYOUT）────────────────────────────────────
 		// 至少一项（模型页）。SetLayouts 总会保证第一项是模型页。
 		const std::vector<DrawingLayout>& Layouts() const { return m_layouts; }
+		// 同时保证每张图纸布局的 OwnerKey 非 0 且互不相同（缺的补一个新键，见 NewLayoutKey）：
+		// 布局的增删、撤销、切换都按这个键认布局，导出时也按它区分各张布局的块记录
 		void SetLayouts(std::vector<DrawingLayout> layouts);
 		// 返回模型页的索引（通常为 0）
 		int  ModelLayoutIndex() const;
+		// 按 OwnerKey 找图纸布局，没有返回 -1
+		int  FindLayout(uint64_t ownerKey) const;
+		// 新建布局用的归属键：取在不会与 DWG 句柄冲突的高位区间，导出后读回会换成真正的块记录句柄
+		uint64_t NewLayoutKey() const;
+
+		// 当前空间：新建的实体落在哪里（EditorContext::ApplyCurrentAttr）。由 Document::SetActiveLayout 维护
+		void     SetCurrentSpace(bool paper, uint64_t layoutKey) { m_currentPaper = paper; m_currentLayoutKey = paper ? layoutKey : 0; }
+		bool     CurrentSpaceIsPaper() const { return m_currentPaper; }
+		uint64_t CurrentLayoutKey() const    { return m_currentLayoutKey; }
 		// 一张布局的读写（随 .mcad / JSON 保存，DWG / DXF 经 CadExchange 的 LAYOUT）
 		static void SerializeLayout(ISerializer& s, DrawingLayout& l);
 
@@ -202,6 +213,8 @@ namespace MiniCAD
 		MLineStyleTable m_mlineStyleTable; // 多线样式表
 		MLineStyleID    m_currentMLineStyle = MLineStyleTable::StandardID;   // 当前多线样式(CMLSTYLE)
 		std::vector<DrawingLayout> m_layouts{ DrawingLayout{} };  // 图纸布局，第 0 项为模型页
+		bool          m_currentPaper     = false;   // 当前空间是否为图纸空间
+		uint64_t      m_currentLayoutKey = 0;       // 当前布局的 OwnerKey（模型空间为 0）
 		LineTypeID    m_currentLineType   = LineTypeTable::ByLayerID;  // 当前线型(CELTYPE)
 		Lineweight    m_currentLineweight = Lineweight::ByLayer;       // 当前线宽(CELWEIGHT)
 		int           m_pointDisplayMode   = 0;      // $PDMODE：0 = 一个像素小点（AutoCAD 默认）

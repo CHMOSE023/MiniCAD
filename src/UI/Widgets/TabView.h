@@ -58,6 +58,8 @@ namespace MiniGUI
         void SetOnNewTabRequested(std::function<void()> cb)     { m_onNewTabRequested = std::move(cb); }
         void SetOnTabMoved(std::function<void(int from, int to)> cb) { m_onTabMoved = std::move(cb); }
         void SetTabContextMenuExtra(std::function<std::vector<MenuItem>(int)> cb) { m_contextExtra = std::move(cb); }
+        // 整个替换标签右键菜单（不要默认的「关闭…」几项，例如标签本身不能关闭时）；设置后忽略 Extra
+        void SetTabContextMenu(std::function<std::vector<MenuItem>(int)> cb) { m_contextMenu = std::move(cb); }
 
         static constexpr float kStripHeight = 34.0f;
 
@@ -113,5 +115,6 @@ namespace MiniGUI
         std::function<void()>    m_onNewTabRequested;
         std::function<void(int, int)> m_onTabMoved;
         std::function<std::vector<MenuItem>(int)> m_contextExtra;
+        std::function<std::vector<MenuItem>(int)> m_contextMenu;     // 非空时整个替换默认菜单
     };
 }
