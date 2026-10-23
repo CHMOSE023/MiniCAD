@@ -645,6 +645,15 @@ namespace
         g.Connect({ circ, 0, blend2, 1 });
         f.Eval();
         Check(f.Ok(blend2) && f.kernel->IsSolid(f.Body(blend2)) && f.Volume(blend2) > 0 && Near(bounds(blend2).Max.z, 10.0), "N7 blend: rectangle to circle");
+        // 起点不同的同一个正方形（正四边形转 0° / 90°）：截面对齐后是直棱柱，扭了体积会变小
+        const NodeId p0 = Add(g, "curve.polygon"), p90 = Add(g, "curve.polygon"), blend3 = Add(g, "solid.blend");
+        for (NodeId p : { p0, p90 })
+            g.SetInputValue(p, 2, 4.0);
+        g.SetInputValue(p90, 3, 90.0);
+        g.Connect({ p0, 0, blend3, 0 });
+        g.Connect({ p90, 0, blend3, 1 });
+        f.Eval();
+        Check(f.Ok(blend3) && Near(f.Volume(blend3), 2 * 25 * 10), "N7 blend: same square with a different start vertex is a prism");
 
         // 旋转：从 90° 到 180°，体积为整圈的 1/4
         const NodeId ring = Add(g, "curve.rectangle"), rev = Add(g, "solid.revolve");
@@ -1858,6 +1867,36 @@ namespace
     }
 }
 
+namespace
+{
+    // 融合截面对齐：圆（从 0° 起）与正方形 / 正六边形（从别的角起）对齐后，同一参数处的两点方位角相差不大
+    void TestMatchLoops()
+    {
+        const Solid::NurbsCurve circle = Solid::NurbsCurve::FromSegments({ { 10, 0, 0 }, { -10, 0, 0 } }, { 1.0, 1.0 }, true);
+        const Solid::NurbsCurve square = Solid::NurbsCurve::FromSegments({ { -10, -10, 0 }, { 10, -10, 0 }, { 10, 10, 0 }, { -10, 10, 0 } }, {}, true);
+        std::vector<Math::Point3> hex;
+        for (int i = 0; i < 6; ++i)
+            hex.push_back({ 5 * std::cos((i * 60 + 120) * kPi / 180), 5 * std::sin((i * 60 + 120) * kPi / 180), 0 });
+        const Solid::NurbsCurve hexagon = Solid::NurbsCurve::FromSegments(hex, {}, true);
+        auto worstAngle = [](Solid::NurbsCurve a, Solid::NurbsCurve b)
+        {
+            CurveOps::MatchLoops(a, b);
+            double worst = 0.0;
+            for (int i = 0; i < 200; ++i)
+            {
+                const double u = i / 200.0;
+                const Math::Point3 p = a.PointAt(u), q = b.PointAt(u);
+                double d = std::abs(std::atan2(p.y, p.x) - std::atan2(q.y, q.x));
+                worst = std::max(worst, std::min(d, 2 * kPi - d));
+            }
+            return worst * 180 / kPi;
+        };
+        Check(worstAngle(circle, square) < 6.0, "blend sections: circle and square (start at a corner) line up");
+        Check(worstAngle(square, circle) < 6.0, "blend sections: square and circle line up");
+        Check(worstAngle(hexagon, square) < 16.0, "blend sections: hexagon and square line up");
+    }
+}
+
 int main()
 {
     auto kernel = Solid::CreateSMLibKernel();
@@ -1872,6 +1911,7 @@ int main()
     TestSurfacePreviewBakeAndFiles();
     TestN6WithKernel();
     TestN7Forms();
+    TestMatchLoops();
     TestN8Surfaces();
     TestN6bCurves();
     TestN9Meshes();

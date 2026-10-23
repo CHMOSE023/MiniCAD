@@ -869,4 +869,120 @@ namespace MiniCAD::Nodes::CurveOps
             line(cur, v[0]);
         return out;
     }
+
+    // ── 融合截面对齐 ─────────────────────────────────────────────────
+
+    namespace
+    {
+        // 拆成贝塞尔段（内部节点重复到阶数，形状不变），再把每个节点换成该处的弧长比例：参数区间为 [0, 1]，段端点处参数等于弧长比例。
+        // 各段是独立的贝塞尔曲线，改节点值只改参数速度、不改形状
+        NurbsCurve ByArcLength(NurbsCurve c)
+        {
+            const int    p   = c.Degree;
+            const double eps = KnotEps(c);
+            std::vector<double> inner;
+            for (size_t i = static_cast<size_t>(p) + 1; i < c.ControlPoints.size(); ++i)
+                if (c.Knots[i] > c.StartParam() + eps && c.Knots[i] < c.EndParam() - eps && (inner.empty() || c.Knots[i] > inner.back() + eps))
+                    inner.push_back(c.Knots[i]);
+            for (double u : inner)
+            {
+                int mult = 0;
+                for (double k : c.Knots)
+                    mult += std::abs(k - u) <= eps ? 1 : 0;
+                if (mult < p)
+                    InsertKnot(c, u, p - mult);
+            }
+            std::vector<double> breaks{ c.StartParam() };
+            breaks.insert(breaks.end(), inner.begin(), inner.end());
+            breaks.push_back(c.EndParam());
+
+            constexpr int kPerSpan = 16;
+            std::vector<double> len(breaks.size() - 1, 0.0);
+            double total = 0.0;
+            for (size_t i = 0; i + 1 < breaks.size(); ++i)
+            {
+                Math::Point3 prev = c.PointAt(breaks[i]);
+                for (int j = 1; j <= kPerSpan; ++j)
+                {
+                    const Math::Point3 q = c.PointAt(breaks[i] + (breaks[i + 1] - breaks[i]) * j / kPerSpan);
+                    len[i] += (q - prev).Length();
+                    prev = q;
+                }
+                total += len[i];
+            }
+            if (!(total > 0.0))
+                return c;
+            std::vector<double> frac{ 0.0 };
+            double sum = 0.0;
+            for (double l : len)
+                sum += std::max(l, total * 1e-6);   // 长度为 0 的段也占一点参数，节点保持递增
+            for (double l : len)
+                frac.push_back(frac.back() + std::max(l, total * 1e-6) / sum);
+            frac.back() = 1.0;
+
+            for (double& k : c.Knots)
+            {
+                size_t i = 0;
+                while (i + 2 < breaks.size() && k > breaks[i + 1])
+                    ++i;
+                const double t = std::clamp((k - breaks[i]) / (breaks[i + 1] - breaks[i]), 0.0, 1.0);
+                k = frac[i] + (frac[i + 1] - frac[i]) * t;
+            }
+            return c;
+        }
+
+        // 闭合曲线按参数（≈ 弧长比例）等分取 n 个点，移到重心并按均方根半径缩放：比较两个截面的形状与起点，不受大小、位置影响
+        std::vector<Math::Vec3> NormalizedSamples(const NurbsCurve& c, int n)
+        {
+            std::vector<Math::Vec3> v(static_cast<size_t>(n));
+            Math::Vec3 center{};
+            for (int i = 0; i < n; ++i)
+            {
+                const Math::Point3 q = c.PointAt(c.StartParam() + (c.EndParam() - c.StartParam()) * i / n);
+                v[static_cast<size_t>(i)] = { q.x, q.y, q.z };
+                center = center + v[static_cast<size_t>(i)];
+            }
+            center = center * (1.0 / n);
+            double r2 = 0.0;
+            for (auto& q : v)
+            {
+                q = q - center;
+                r2 += q.LengthSq();
+            }
+            const double s = r2 > 0.0 ? 1.0 / std::sqrt(r2 / n) : 1.0;
+            for (auto& q : v)
+                q = q * s;
+            return v;
+        }
+    }
+
+    void MatchLoops(NurbsCurve& a, NurbsCurve& b)
+    {
+        if (!a.IsValid() || !b.IsValid() || !IsClamped(a) || !IsClamped(b))
+            return;
+        a = ByArcLength(a);
+        b = ByArcLength(b);
+        // b 的起点取 n 个候选位置，选与 a 对应点距离平方和最小的（扭转最小）
+        constexpr int n = 256;
+        const auto va = NormalizedSamples(a, n), vb = NormalizedSamples(b, n);
+        int    best     = 0;
+        double bestCost = 1e300;
+        for (int k = 0; k < n; ++k)
+        {
+            double cost = 0.0;
+            for (int i = 0; i < n; ++i)
+                cost += (va[static_cast<size_t>(i)] - vb[static_cast<size_t>((i + k) % n)]).LengthSq();
+            if (cost < bestCost * (1.0 - 1e-9))
+            {
+                bestCost = cost;
+                best     = k;
+            }
+        }
+        if (best == 0)
+            return;
+        auto [head, tail] = SplitAt(b, static_cast<double>(best) / n);
+        const NurbsCurve rotated = Concatenate(tail, head);
+        if (rotated.IsValid())
+            b = ByArcLength(rotated);
+    }
 }

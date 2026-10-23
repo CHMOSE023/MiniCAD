@@ -3,6 +3,7 @@
 // 形体合并、剪切几何、分割实体、抽壳、实心 / 空心切换
 #include "NodeGraph/BuiltinHelpers.h"
 #include "Core/Math/MathUtils.hpp"
+#include "NodeGraph/CurveOps.h"
 #include "NodeGraph/GeometryOps.h"
 #include "Core/Entity/Entity.hpp"
 #include <algorithm>
@@ -145,6 +146,7 @@ namespace MiniCAD::Nodes
             auto top    = LoopOf(*a.Curve(1));
             if (!bottom || !top)
                 return a.Error("底部、顶部轮廓都应为闭合曲线");
+            CurveOps::MatchLoops(*bottom, *top);   // 起点与参数不对应时内核连出来的侧面是扭的
             const double h = a.Number(2);
             if (std::abs(h) < 1e-12)
                 return a.Error("高度不能为 0");
@@ -233,6 +235,7 @@ namespace MiniCAD::Nodes
             auto l1 = LoopOf(*a.Curve(2));
             if (!l0 || !l1)
                 return a.Error("起点、终点轮廓都应为闭合曲线");
+            CurveOps::MatchLoops(*l0, *l1);
             const double a0 = a.Number(3), a1 = a.Number(4);
             const bool straight = IsStraight(*path);
             const int stations = straight ? 2 : 9;
