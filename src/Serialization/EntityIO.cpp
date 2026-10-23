@@ -282,7 +282,8 @@ namespace MiniCAD::EntityIO
             return e;
         }
 
-        void WriteSolid(ISerializer& s, const SolidEntity& e) { WriteRectangle(s, e); }        void WriteFace3D(ISerializer& s, const Face3DEntity& e)
+        void WriteSolid(ISerializer& s, const SolidEntity& e) { WriteRectangle(s, e); }
+        void WriteFace3D(ISerializer& s, const Face3DEntity& e)
         {
             WriteRectangle(s, e);
             auto flags = e.GetInvisibleEdges(); s.Value("invisibleEdges", flags);
@@ -619,6 +620,8 @@ namespace MiniCAD::EntityIO
             return e;
         }
 
+        void SerializeMLineParams(ISerializer& s, MLineEntity::VertexParams& vp);
+
         void WriteMLine(ISerializer& s, const MLineEntity& e)
         {
             auto verts = e.GetVertices();                          Ser::Value(s, "vertices", verts);
@@ -627,6 +630,36 @@ namespace MiniCAD::EntityIO
             bool closed = e.IsClosed();                            s.Value("closed", closed);
             MLineStyleRecord st = e.GetMLineStyle();
             if (s.BeginObject("style")) { MLineStyleTable::SerializeRecord(s, st); s.EndObject(); }
+            if (e.HasVertexParams())
+            {
+                MLineEntity::VertexParams vp = e.GetVertexParams();
+                SerializeMLineParams(s, vp);
+            }
+        }
+        // 来自 DWG / DXF 的每顶点元素线参数：[顶点][元素线] = 参数列
+        void SerializeMLineParams(ISerializer& s, MLineEntity::VertexParams& vp)
+        {
+            size_t nv = vp.size();
+            if (!s.BeginArray("vertexParams", nv)) return;
+            if (s.IsLoading()) vp.resize(nv);
+            for (size_t i = 0; i < nv; ++i)
+            {
+                if (!s.BeginElement(i)) continue;
+                size_t ne = vp[i].size();
+                if (s.BeginArray("elements", ne))
+                {
+                    if (s.IsLoading()) vp[i].resize(ne);
+                    for (size_t k = 0; k < ne; ++k)
+                    {
+                        if (!s.BeginElement(k)) continue;
+                        s.Value("p", vp[i][k]);
+                        s.EndElement();
+                    }
+                    s.EndArray();
+                }
+                s.EndElement();
+            }
+            s.EndArray();
         }
         std::unique_ptr<Entity> ReadMLine(ISerializer& s, Object::ObjectID id)
         {
@@ -638,8 +671,13 @@ namespace MiniCAD::EntityIO
             if (s.BeginObject("style")) { MLineStyleTable::SerializeRecord(s, st); s.EndObject(); }
             if (st.Elements.empty())
                 st = MLineStyleTable().Resolve(MLineStyleTable::StandardID);
-            return std::make_unique<MLineEntity>(id, std::move(verts), std::move(st),
-                                                 static_cast<MLineJustify>(std::clamp(just, 0, 2)), scale, closed);
+            auto e = std::make_unique<MLineEntity>(id, std::move(verts), std::move(st),
+                                                   static_cast<MLineJustify>(std::clamp(just, 0, 2)), scale, closed);
+            MLineEntity::VertexParams vp;
+            SerializeMLineParams(s, vp);
+            if (!vp.empty())
+                e->SetVertexParams(std::move(vp));
+            return e;
         }
 
         void WriteImage(ISerializer& s, const ImageEntity& e)

@@ -3404,13 +3404,28 @@ namespace MiniCAD
             return !layer || layer->IsVisible();
         };
 
+        // 布局页上的视口把模型空间内容合成进了自己的缓存（ComposeModelIntoViewport）：
+        // 模型实体变了（含增删、撤销）时视口缓存也要丢掉，否则视口里还是旧内容
+        bool modelTouchedInPaper = false;
+        if (!invalidateAll && m_doc->ActiveLayoutIsPaper())
+            for (auto id : scene.GetDirtyEntities())
+            {
+                const Object* obj = scene.GetEntity(id);
+                if (!obj || !obj->IsKindOf<Entity>() || !static_cast<const Entity&>(*obj).GetAttr().InPaperSpace)
+                {
+                    modelTouchedInPaper = true;
+                    break;
+                }
+            }
+
         // ── 纯新增快路径 ────────────────────────────────────
         // 几万实体的场景里新画一个图形:旧实体缓存全部有效,既不该重新细分,
         // 也不该把全场景顶点重新拼接一遍。脏集全部是"缓存中不存在的新实体"
         // 时,只细分新实体并追加到现有顶点流尾部(新实体总在实体链表末尾,
         // 与全量重建的绘制序一致)。修改/删除(脏 ID 已在缓存)仍走全量拼接。
         // 拼接流已交给渲染后端释放时没有可追加的流，走全量拼接（缓存命中，不重新细分）
-        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() && !m_sceneStreamsReleased)
+        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() && !m_sceneStreamsReleased &&
+            !modelTouchedInPaper)
         {
             bool pureAppend = !scene.GetDirtyEntities().empty();
             for (auto id : scene.GetDirtyEntities())
@@ -3461,6 +3476,12 @@ namespace MiniCAD
         {
             for (auto id : scene.GetDirtyEntities())   // 含已删除实体：顺带清理
                 m_entityVertexCache.erase(id);
+            if (modelTouchedInPaper)
+                std::erase_if(m_entityVertexCache, [&scene](const auto& kv)
+                {
+                    const Object* obj = scene.GetEntity(kv.first);
+                    return obj && obj->IsKindOf<ViewportEntity>();
+                });
             if (zoomChanged && m_sceneViewDependent)
                 std::erase_if(m_entityVertexCache, [](const auto& kv) { return kv.second.viewDependent; });
         }

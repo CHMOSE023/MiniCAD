@@ -39,6 +39,21 @@ namespace MiniCAD
 		MarkDisplayDirty();   // 布局只影响「画什么」，不是几何变化
 	}
 
+	// 一张布局的读写（Serialize / Deserialize 共用，按 IsLoading 决定方向）
+	void Scene::SerializeLayout(ISerializer& s, DrawingLayout& l)
+	{
+		s.Value("name", l.Name);
+		s.Value("model", l.Model);
+		int32_t order = l.Order;
+		s.Value("order", order);
+		l.Order = order;
+		s.Value("minX", l.MinX);
+		s.Value("minY", l.MinY);
+		s.Value("maxX", l.MaxX);
+		s.Value("maxY", l.MaxY);
+		s.Value("ownerKey", l.OwnerKey);
+	}
+
 	int Scene::ModelLayoutIndex() const
 	{
 		for (size_t i = 0; i < m_layouts.size(); ++i)
@@ -235,6 +250,24 @@ namespace MiniCAD
 		double lts = m_lineTypeScale;
 		s.Value("lineTypeScale", lts);
 
+		// 图纸布局：只有模型页时不写（新建文档的常态）
+		if (m_layouts.size() > 1)
+		{
+			size_t nl = m_layouts.size();
+			if (s.BeginArray("layouts", nl))
+			{
+				for (const DrawingLayout& l : m_layouts)
+				{
+					if (!s.BeginElement(0))
+						continue;
+					DrawingLayout c = l;
+					SerializeLayout(s, c);
+					s.EndElement();
+				}
+				s.EndArray();
+			}
+		}
+
 		// 实体按 ID 升序写出,保证文件内容确定(unordered_map 无序)。
 		std::vector<ObjectID> ids = GetAllIDs();
 		std::sort(ids.begin(), ids.end());
@@ -307,6 +340,23 @@ namespace MiniCAD
 		double lts = 1.0;
 		s.Value("lineTypeScale", lts);
 		SetLineTypeScale(lts);
+
+		std::vector<DrawingLayout> layouts;      // 旧文件没有布局表：只有模型页
+		size_t nl = 0;
+		if (s.BeginArray("layouts", nl))
+		{
+			for (size_t i = 0; i < nl; ++i)
+			{
+				if (!s.BeginElement(i))
+					continue;
+				DrawingLayout l;
+				SerializeLayout(s, l);
+				layouts.push_back(std::move(l));
+				s.EndElement();
+			}
+			s.EndArray();
+		}
+		SetLayouts(std::move(layouts));
 
 		size_t n = 0;
 		if (s.BeginArray("entities", n))

@@ -60,9 +60,28 @@ namespace MiniCAD
         //   Value[1] = 沿该顶点 dir 方向的额外延伸（T 形 / 拐角接头的端头推移；无则为 0）
         // 元素数与样式元素线一一对应；为空表示没有精确数据，按样式重算（新建的多线就是这样）。
         using VertexParams = std::vector<std::vector<std::vector<double>>>;
+        //
+        // 参数里的端头推移、断开区间都是沿路径的长度：设置时记下各段长度，之后只要段长不变
+        // （移动 / 旋转 / 镜像）参数仍然有效；缩放、拉伸、夹点改顶点后段长变了，参数随之作废，
+        // 回到按样式重算（SetVertices 不是虚函数，没法在改顶点时直接清掉）。
         const VertexParams& GetVertexParams() const { return m_vertexParams; }
-        void SetVertexParams(VertexParams p)        { m_vertexParams = std::move(p); }
-        bool HasVertexParams() const                { return !m_vertexParams.empty(); }
+        void SetVertexParams(VertexParams p)
+        {
+            m_vertexParams   = std::move(p);
+            m_paramSegLength = SegmentLengths(GetVertices());
+        }
+        bool HasVertexParams() const
+        {
+            if (m_vertexParams.empty())
+                return false;
+            const auto now = SegmentLengths(GetVertices());
+            if (now.size() != m_paramSegLength.size())
+                return false;
+            for (size_t i = 0; i < now.size(); ++i)
+                if (std::abs(now[i] - m_paramSegLength[i]) > 1e-6 * std::max(1.0, m_paramSegLength[i]))
+                    return false;
+            return true;
+        }
 
         // ── 几何：每条元素线一条折线（closed 时首尾相接，不重复首点）──────────────
         struct Geometry
@@ -210,7 +229,8 @@ namespace MiniCAD
         {
             auto e = std::make_unique<MLineEntity>(newId, GetVertices(), m_style, m_justify, m_scale, m_closed);
             e->SetAttr(GetAttr());
-            e->SetVertexParams(m_vertexParams);
+            e->m_vertexParams   = m_vertexParams;      // 连同设置时的段长一起复制，作废的参数复制后仍作废
+            e->m_paramSegLength = m_paramSegLength;
             return e;
         }
 
@@ -229,7 +249,7 @@ namespace MiniCAD
         void OverlayVertexParams(Geometry& g) const
         {
             const size_t n = g.Path.size();
-            if (m_vertexParams.size() != n || n < 2)
+            if (m_vertexParams.size() != n || n < 2 || !HasVertexParams())
                 return;
             if (g.Elements.empty())
                 return;
@@ -337,7 +357,7 @@ namespace MiniCAD
         CollectBreaks(const Geometry& g) const
         {
             std::vector<std::vector<std::pair<double, double>>> out(g.Elements.size());
-            if (m_vertexParams.size() != g.Path.size())
+            if (m_vertexParams.size() != g.Path.size() || !HasVertexParams())
                 return out;
 
             const size_t n = g.Path.size();
@@ -418,5 +438,14 @@ namespace MiniCAD
         bool             m_closed  = false;
         // 来自文件的每顶点元素线参数（含斜接 / T 形接头端头推移）；空 = 按样式重算
         VertexParams     m_vertexParams;
+        std::vector<double> m_paramSegLength;   // 设置参数时各段的长度（判断参数是否仍有效）
+
+        static std::vector<double> SegmentLengths(const std::vector<Math::Point3>& v)
+        {
+            std::vector<double> out;
+            for (size_t i = 1; i < v.size(); ++i)
+                out.push_back(Dist(v[i - 1], v[i]));
+            return out;
+        }
     };
 }

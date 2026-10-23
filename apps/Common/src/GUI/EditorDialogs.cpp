@@ -1850,9 +1850,11 @@ namespace MiniCAD
 
         Label* error = body->AddChild<Label>("", 12.0f, Theme::Danger);
 
-        // 表变化后：重画视口（已有多线用样式快照，不受影响；这里主要刷新状态）
+        // 表变化后：重画视口（已有多线用样式快照，不受影响；这里主要刷新状态）。
+        // 样式表随文档保存，标记文档已修改，关闭时才会提示保存
         auto changed = [this, doc]
         {
+            doc->MarkDirty();
             doc->GetScene().MarkDisplayDirty();
             m_viewport->RequestRender();
             StateChanged();

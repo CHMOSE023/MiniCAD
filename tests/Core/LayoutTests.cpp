@@ -34,6 +34,8 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Render/ImageDraw.hpp"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/BinarySerializer.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -765,6 +767,73 @@ int RunLayoutTests()
         Check(std::abs(plain.Max.x - plain.Min.x - 195.0) < 1e-9 &&
               std::abs(plain.Max.y - plain.Min.y - 122.5) < 1e-9,
               "视口旋转：Twist=0 时外接盒就是未旋转矩形（195 × 122.5，行为不变）");
+    }
+
+    // ══ 存成 .mcad / JSON 再读回：布局表与图纸空间归属不丢 ══════════════
+    //
+    // 曾经只有 DWG / DXF 写出这些信息；存成 .mcad 再打开，图纸空间的视口框、图框
+    // 全部掉进模型空间，与模型内容叠在一起。两种格式共用同一棵值树，这里各走一遍。
+    {
+        Scene scene;
+        std::vector<DrawingLayout> layouts(1);
+        DrawingLayout sheet;
+        sheet.Name = "布局1"; sheet.Model = false; sheet.Order = 1;
+        sheet.MinX = -10; sheet.MinY = -5; sheet.MaxX = 410; sheet.MaxY = 292;
+        sheet.OwnerKey = 0x1F;
+        layouts.push_back(sheet);
+        scene.SetLayouts(std::move(layouts));
+
+        const auto idModel = scene.NextObjectID();
+        scene.AddEntity(std::make_unique<LineEntity>(idModel, Math::Point3{ 0, 0, 0 }, Math::Point3{ 10, 0, 0 }));
+        const auto idVp = scene.NextObjectID();
+        auto vp = std::make_unique<ViewportEntity>(idVp, Math::Point3{ 200, 140, 0 }, 300.0, 200.0);
+        vp->SetViewCenter(Math::Point3{ 5, 0, 0 });
+        vp->SetViewHeight(20.0);
+        vp->GetAttr().InPaperSpace = true;
+        vp->GetAttr().LayoutKey    = 0x1F;
+        scene.AddEntity(std::move(vp));
+
+        auto check = [&](Scene& back, const char* fmt)
+        {
+            const auto& ls = back.Layouts();
+            const bool layoutsOk = ls.size() == 2 && ls[0].Model && !ls[1].Model && ls[1].Name == "布局1" &&
+                                   ls[1].OwnerKey == 0x1F && ls[1].MinX == -10 && ls[1].MaxY == 292 && ls[1].Order == 1;
+            Check(layoutsOk, (std::string("保存布局：") + fmt + " 读回后布局表一致").c_str());
+
+            const auto* bv = dynamic_cast<const ViewportEntity*>(back.GetEntity(idVp));
+            Check(bv && bv->GetAttr().InPaperSpace && bv->GetAttr().LayoutKey == 0x1F,
+                  (std::string("保存布局：") + fmt + " 读回后视口仍在图纸空间、归属不变").c_str());
+            const auto* bm = dynamic_cast<const Entity*>(back.GetEntity(idModel));
+            Check(bm && !bm->GetAttr().InPaperSpace && bm->GetAttr().LayoutKey == 0,
+                  (std::string("保存布局：") + fmt + " 模型空间实体仍在模型空间").c_str());
+        };
+
+        {
+            JsonSerializer w;
+            scene.Serialize(w);
+            JsonSerializer r;
+            Scene back;
+            if (r.Parse(w.Dump())) back.Deserialize(r);
+            check(back, "JSON");
+        }
+        {
+            BinarySerializer w;
+            scene.Serialize(w);
+            BinarySerializer r;
+            Scene back;
+            if (r.Parse(w.Dump())) back.Deserialize(r);
+            check(back, ".mcad");
+        }
+
+        // 只有模型页的文档不写布局表，读回仍只有模型页
+        Scene plain;
+        JsonSerializer w;
+        plain.Serialize(w);
+        Check(w.Dump().find("layouts") == std::string::npos, "保存布局：只有模型页时不写 layouts");
+        JsonSerializer r;
+        Scene back;
+        if (r.Parse(w.Dump())) back.Deserialize(r);
+        Check(back.Layouts().size() == 1 && back.Layouts()[0].Model, "保存布局：旧文件读回只有模型页");
     }
 
     std::printf("图纸布局用例失败：%d\n", g_failures);

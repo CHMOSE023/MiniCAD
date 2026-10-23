@@ -16,6 +16,9 @@
 #include "Scene/Scene.h"
 #include "Scene/MLineStyleTable.h"
 #include "Core/Entity/MLineEntity.hpp"
+#include "Serialization/EntityIO.h"
+#include "Serialization/JsonSerializer.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -276,6 +279,167 @@ int RunMLineEditTests()
         editor.RunCommand("MLSTYLE");
         Check(editor.GetMLineStyleRequest().Active, "多线样式命令：输入 MLSTYLE 能打开对话框");
         editor.CloseMLineStyle();
+    }
+
+    // ══ ⑤ MLEDIT 实际点选两条多线：五种方式的结果与撤销 ═══════════════════
+    //
+    // 横线 (-100,0)→(100,0)、竖线 (0,-100)→(0,100)，Standard 样式（偏移 ±0.5）× 比例 10 = 宽 10。
+    {
+        struct Fixture
+        {
+            Document doc;
+            Viewport viewport{ 1000.f, 1000.f };
+            Editor   editor;
+            Fixture()
+            {
+                editor.Bind(doc, viewport);
+                viewport.GetCamera().ZoomToBounds(-150, -150, 150, 150);
+            }
+            Object::ObjectID Add(std::vector<Math::Point3> path)
+            {
+                auto& scene = doc.GetScene();
+                const auto id = scene.NextObjectID();
+                scene.AddEntity(std::make_unique<MLineEntity>(id, std::move(path),
+                    scene.GetMLineStyleTable().Resolve(MLineStyleTable::StandardID), MLineJustify::Zero, 10.0, false));
+                return id;
+            }
+            void Key(KeyCode k)
+            {
+                InputEvent e = {};
+                e.Type = InputEventType::KeyDown;
+                e.Key  = k;
+                editor.OnInput(e);
+            }
+            void Click(double x, double y)
+            {
+                editor.Render();
+                const Math::Point2 sp = viewport.GetCamera().WorldToScreen(Math::Point3{ x, y, 0 });
+                InputEvent e = {};
+                e.MouseX = static_cast<int>(sp.x);
+                e.MouseY = static_cast<int>(sp.y);
+                e.Type = InputEventType::MouseMove;
+                editor.OnInput(e);
+                e.Type = InputEventType::MouseButtonDown;
+                e.Button = MouseButton::Left;
+                e.MouseButtons = static_cast<uint8_t>(MouseButtonState::Left);
+                editor.OnInput(e);
+                e.Type = InputEventType::MouseButtonUp;
+                e.MouseButtons = 0;
+                editor.OnInput(e);
+            }
+            std::vector<std::vector<Math::Point3>> Paths() const
+            {
+                std::vector<std::vector<Math::Point3>> out;
+                auto ids = doc.GetScene().GetAllIDs();
+                std::sort(ids.begin(), ids.end());
+                for (auto id : ids)
+                    if (const auto* ml = dynamic_cast<const MLineEntity*>(doc.GetScene().GetEntity(id)))
+                        out.push_back(ml->GetVertices());
+                return out;
+            }
+            bool HasPath(std::initializer_list<std::pair<double, double>> pts) const
+            {
+                const auto want = Path(pts);
+                for (const auto& p : Paths())
+                {
+                    if (p.size() != want.size()) continue;
+                    bool same = true;
+                    for (size_t i = 0; i < p.size() && same; ++i)
+                        same = std::abs(p[i].x - want[i].x) < 1e-6 && std::abs(p[i].y - want[i].y) < 1e-6;
+                    if (same) return true;
+                }
+                return false;
+            }
+        };
+
+        {
+            Fixture f;
+            f.Add(Path({ { -100, 0 }, { 100, 0 } }));
+            f.Add(Path({ { 0, -100 }, { 0, 100 } }));
+            f.editor.RunCommand("MLEDIT");
+            f.Key(KeyCode::C);
+            f.Click(-50, 5);      // 横线的上元素线
+            f.Click(5, 50);       // 竖线的右元素线
+            Check(f.Paths().size() == 3, "MLEDIT 十字交叉：第一条断成两条（共 3 条）");
+            Check(f.HasPath({ { -100, 0 }, { -5, 0 } }) && f.HasPath({ { 5, 0 }, { 100, 0 } }),
+                  "MLEDIT 十字交叉：缺口正好是竖线宽度（-5 ~ 5）");
+            Check(f.HasPath({ { 0, -100 }, { 0, 100 } }), "MLEDIT 十字交叉：第二条不动");
+            f.doc.GetCommandStack().Undo(f.doc.GetScene());
+            Check(f.Paths().size() == 2 && f.HasPath({ { -100, 0 }, { 100, 0 } }), "MLEDIT 十字交叉：能撤销");
+        }
+        {
+            Fixture f;
+            f.Add(Path({ { -100, 0 }, { 100, 0 } }));
+            f.Add(Path({ { 0, -100 }, { 0, 100 } }));
+            f.editor.RunCommand("MLEDIT");
+            f.Key(KeyCode::T);
+            f.Click(5, -50);      // 竖线下半段：保留下半段
+            f.Click(-50, 5);      // 横线
+            Check(f.Paths().size() == 2 && f.HasPath({ { 0, -100 }, { 0, -5 } }),
+                  "MLEDIT T形相交：竖线剪到横线近侧元素线（0,-5），保留点选的下半段");
+            Check(f.HasPath({ { -100, 0 }, { 100, 0 } }), "MLEDIT T形相交：横线不动");
+        }
+        {
+            Fixture f;
+            f.Add(Path({ { -100, 0 }, { 100, 0 } }));
+            f.Add(Path({ { 0, -100 }, { 0, 100 } }));
+            f.editor.RunCommand("MLEDIT");
+            f.Key(KeyCode::R);
+            f.Click(-50, 5);      // 横线左半段
+            f.Click(5, -50);      // 竖线下半段
+            Check(f.Paths().size() == 1 && f.HasPath({ { -100, 0 }, { 0, 0 }, { 0, -100 } }),
+                  "MLEDIT 拐角结合：两条接成一条 L 形，拐点在交点");
+        }
+        {
+            Fixture f;
+            f.Add(Path({ { -100, 0 }, { 0, 0 }, { 0, 100 } }));
+            f.editor.RunCommand("MLEDIT");
+            f.Key(KeyCode::O);
+            f.Click(-5, 5);       // 靠近中间顶点
+            Check(f.Paths().size() == 2 && f.HasPath({ { -100, 0 }, { 0, 0 } }) && f.HasPath({ { 0, 0 }, { 0, 100 } }),
+                  "MLEDIT 顶点断开：在中间顶点处拆成两条");
+        }
+        {
+            Fixture f;
+            f.Add(Path({ { -100, 0 }, { -20, 0 } }));
+            f.Add(Path({ { 20, 0 }, { 100, 0 } }));
+            f.editor.RunCommand("MLEDIT");
+            f.Key(KeyCode::M);
+            f.Click(-50, 5);
+            f.Click(50, 5);
+            Check(f.Paths().size() == 1 && f.HasPath({ { -100, 0 }, { -20, 0 }, { 20, 0 }, { 100, 0 } }),
+                  "MLEDIT 顶点结合：最近的两个端点接成一条");
+        }
+    }
+
+    // ══ ⑥ 文件里的顶点参数：段长变了即作废，存 .mcad 时不写作废的参数 ═══════
+    {
+        const MLineStyleRecord std0 = MLineStyleTable().Resolve(MLineStyleTable::StandardID);   // 按值：临时表随即销毁
+        MLineEntity ml(1, Path({ { 0, 0 }, { 100, 0 }, { 100, 50 } }), std0, MLineJustify::Zero, 1.0, false);
+        MLineEntity::VertexParams vp(3, std::vector<std::vector<double>>(2, { 0.5, 0.0, 10.0, 12.0 }));
+        ml.SetVertexParams(vp);
+        Check(ml.HasVertexParams(), "多线顶点参数：设置后有效");
+
+        ml.SetVertices(Path({ { 10, 10 }, { 110, 10 }, { 110, 60 } }));        // 平移：段长不变
+        Check(ml.HasVertexParams(), "多线顶点参数：平移后仍有效");
+
+        ml.SetVertices(Path({ { 0, 0 }, { 200, 0 }, { 200, 100 } }));          // 缩放：段长变了
+        Check(!ml.HasVertexParams(), "多线顶点参数：缩放后作废，按样式重算");
+        auto clone = ml.Clone(2);
+        Check(!static_cast<MLineEntity&>(*clone).HasVertexParams(), "多线顶点参数：作废的参数复制后仍作废");
+
+        JsonSerializer w;
+        EntityIO::Write(w, ml);
+        Check(w.Dump().find("vertexParams") == std::string::npos, "多线顶点参数：作废的参数不写进 .mcad");
+
+        MLineEntity fresh(3, Path({ { 0, 0 }, { 100, 0 }, { 100, 50 } }), std0, MLineJustify::Zero, 1.0, false);
+        fresh.SetVertexParams(vp);
+        JsonSerializer w2;
+        EntityIO::Write(w2, fresh);
+        JsonSerializer r2;
+        auto back = r2.Parse(w2.Dump()) ? EntityIO::Read(r2) : nullptr;
+        const auto* bm = dynamic_cast<const MLineEntity*>(back.get());
+        Check(bm && bm->HasVertexParams() && bm->GetVertexParams() == vp, "多线顶点参数：有效参数经 .mcad 往返不丢");
     }
 
     std::printf("多线编辑用例失败：%d\n", g_failures);

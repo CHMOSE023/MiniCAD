@@ -169,12 +169,13 @@ namespace MiniCAD::Ser
                                     a.Extrusion.y == kDef.Extrusion.y &&
                                     a.Extrusion.z == kDef.Extrusion.z;
         const bool defVisible     = a.Visible == kDef.Visible;
+        const bool defPaper       = a.InPaperSpace == kDef.InPaperSpace && a.LayoutKey == kDef.LayoutKey;
 
         if (!ld)
         {
             const bool allDefault = defColorMethod && defAci && defRgba && defLayer &&
                                     defLineType && defLtScale && defLw && defTrans &&
-                                    defExtrusion && defVisible && a.XData.Empty();
+                                    defExtrusion && defVisible && defPaper && a.XData.Empty();
             if (allDefault) return;
         }
 
@@ -208,6 +209,12 @@ namespace MiniCAD::Ser
 
         if (ld || !defExtrusion) Value(s, "extrusion", a.Extrusion);
         if (ld || !defVisible)   s.Value("visible", a.Visible);
+        // 图纸空间与所属布局（DXF 组码 67 / 330）：模型空间实体不写
+        if (ld || !defPaper)
+        {
+            s.Value("paperSpace", a.InPaperSpace);
+            s.Value("layoutKey", a.LayoutKey);
+        }
 
         // XDATA:仅在非空时写出,保证常见文档紧凑。
         if (!s.IsLoading() && a.XData.Empty()) { s.EndObject(); return; }

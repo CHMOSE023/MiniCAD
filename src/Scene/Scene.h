@@ -71,6 +71,8 @@ namespace MiniCAD
 		void SetLayouts(std::vector<DrawingLayout> layouts);
 		// 返回模型页的索引（通常为 0）
 		int  ModelLayoutIndex() const;
+		// 一张布局的读写（随 .mcad / JSON 保存，DWG / DXF 经 CadExchange 的 LAYOUT）
+		static void SerializeLayout(ISerializer& s, DrawingLayout& l);
 
 		// ── 线型表（LTYPE）──────────────────────────────────────
 		LineTypeTable&       GetLineTypeTable()       { return m_lineTypeTable; }
