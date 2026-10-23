@@ -250,6 +250,7 @@ namespace MiniCAD
 
         // 三维实体内核；关闭内核的构建里命令提示不可用
         m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
+        m_docManager.GetEditor().SetViewTransitionSeconds(0.3);   // 视图方块、标准视图切换时平缓过渡
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
@@ -947,6 +948,11 @@ namespace MiniCAD
             m_latencyMax  = (std::max)(m_latencyMax, m_latencyLast);
             m_pendingInputTicks = 0;
         }
+
+        // 4.5 视图切换的过渡动画：帧结束后再请求下一帧。不能在渲染中途请求——本帧结束时（UIContext::Render、
+        //     WM_PAINT 的 ValidateRect）会把请求清掉，动画要等鼠标动了才继续
+        if (m_docManager.GetActive() && m_docManager.GetEditor().IsViewTransitioning())
+            m_platform->Post([this] { m_viewport->RequestRender(); });
 
         // 5. 读完的图纸在"正在生成显示"画出来之后才加入（下一帧生成显示时界面会停顿）。
         //    不能在这里直接加入：绘制结束（WM_PAINT 的 ValidateRect）会清掉加入时提出的重绘请求，图纸要等鼠标动了才显示

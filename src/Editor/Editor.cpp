@@ -21,6 +21,7 @@
 #include "Core/Entity/MTextEntity.hpp"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include "Core/Log.h"
@@ -217,6 +218,7 @@ namespace MiniCAD
     void Editor::Bind(Document& doc, Viewport& viewport)
     {
         Unbind();
+        m_viewAnim.Active = false;
 
         m_doc      = &doc;
         m_viewport = &viewport;
@@ -1387,6 +1389,11 @@ namespace MiniCAD
     }
 
     // ── 三维视图（M6）──────────────────────────────────────────────
+    static double NowSeconds()
+    {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
     void Editor::SetVisualStyle(VisualStyle style)
     {
         if (style == m_visualStyle)
@@ -1421,6 +1428,78 @@ namespace MiniCAD
         const CameraState after = cam.GetState();
         cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
         m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+
+        // 过渡动画：撤销栈里记的仍是 before → after，这里只把相机放回 before，之后每帧（Render）向 after 插值
+        m_viewAnim.Active = false;
+        if (m_viewAnimSeconds > 0.0)
+        {
+            cam.SetState(before);
+            m_viewAnim = { true, before, after, cam.GetState(), -1.0 };   // 从第一帧开始计时：命令到首帧之间较慢时也不跳过动画
+        }
+    }
+
+    // CSS 的 cubic-bezier(x1, y1, x2, y2)：曲线过 (0, 0)、(1, 1)，按时间比例 t（即 x）求进度 y。
+    // x(u) 单调，先用牛顿法求 u，导数太小时改用二分
+    static double CubicBezierEase(double t, double x1, double y1, double x2, double y2)
+    {
+        auto bezier = [](double u, double p1, double p2) { const double v = 1.0 - u; return 3.0 * v * v * u * p1 + 3.0 * v * u * u * p2 + u * u * u; };
+        auto slope  = [](double u, double p1, double p2) { const double v = 1.0 - u; return 3.0 * v * v * p1 + 6.0 * v * u * (p2 - p1) + 3.0 * u * u * (1.0 - p2); };
+        double u = t;
+        for (int i = 0; i < 8; ++i)
+        {
+            const double dx = bezier(u, x1, x2) - t, d = slope(u, x1, x2);
+            if (std::abs(dx) < 1e-7)
+                return bezier(u, y1, y2);
+            if (std::abs(d) < 1e-6)
+                break;
+            u -= dx / d;
+        }
+        double lo = 0.0, hi = 1.0;
+        u = t;
+        for (int i = 0; i < 30 && hi - lo > 1e-7; ++i)
+        {
+            (bezier(u, x1, x2) < t ? lo : hi) = u;
+            u = 0.5 * (lo + hi);
+        }
+        return bezier(u, y1, y2);
+    }
+
+    void Editor::AdvanceViewTransition()
+    {
+        if (!m_viewAnim.Active)
+            return;
+        Camera& cam = m_viewport->GetCamera();
+        const CameraState cur = cam.GetState();
+        const CameraState& last = m_viewAnim.Last;
+        if (cur.Target.x != last.Target.x || cur.Target.y != last.Target.y || cur.Target.z != last.Target.z || cur.Zoom != last.Zoom || cur.Azimuth != last.Azimuth || cur.Elevation != last.Elevation)
+        {
+            m_viewAnim.Active = false;   // 被平移、缩放、撤销等打断：保留当前相机
+            return;
+        }
+        if (m_viewAnim.StartTime < 0.0)
+            m_viewAnim.StartTime = NowSeconds();
+        const double t = (NowSeconds() - m_viewAnim.StartTime) / m_viewAnimSeconds;
+        if (t >= 1.0)
+        {
+            cam.SetState(m_viewAnim.To);
+            m_viewAnim.Active = false;
+            return;
+        }
+        const double s = CubicBezierEase(t, 0.45, 0.0, 0.55, 1.0);   // 同 CSS cubic-bezier(0.45, 0, 0.55, 1)：起止柔和、中间加速
+        const CameraState& a = m_viewAnim.From;
+        const CameraState& b = m_viewAnim.To;
+        double dAz = std::fmod(b.Azimuth - a.Azimuth, 360.0);   // 方位角走近的一侧
+        if (dAz > 180.0)
+            dAz -= 360.0;
+        else if (dAz < -180.0)
+            dAz += 360.0;
+        CameraState m;
+        m.Target    = a.Target + (b.Target - a.Target) * s;
+        m.Zoom      = (a.Zoom > 0.0 && b.Zoom > 0.0) ? a.Zoom * std::pow(b.Zoom / a.Zoom, s) : a.Zoom + (b.Zoom - a.Zoom) * s;   // 缩放按比例插值
+        m.Azimuth   = a.Azimuth + dAz * s;
+        m.Elevation = a.Elevation + (b.Elevation - a.Elevation) * s;
+        cam.SetState(m);
+        m_viewAnim.Last = cam.GetState();
     }
 
     void Editor::SetPreviewGeometry(std::vector<std::shared_ptr<const Entity>> entities, std::vector<Math::Point3> points,
@@ -2758,6 +2837,8 @@ namespace MiniCAD
     void Editor::Render()
     {
         if (!m_doc || !m_viewport) return;
+
+        AdvanceViewTransition();
 
         // 命令行提示 = 当前工具的状态提示（无工具时为空）
         m_commandLine.SetPrompt(m_tool ? m_tool->GetPrompt()
