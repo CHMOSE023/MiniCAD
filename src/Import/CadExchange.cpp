@@ -38,7 +38,12 @@
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
+#include "Core/Entity/RayEntity.hpp"
+#include "Core/Entity/XLineEntity.hpp"
+#include "Core/Entity/LeaderEntity.hpp"
+#include "Core/Entity/ToleranceEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
+#include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
 #include "Core/Math/OCS.hpp"
@@ -103,7 +108,9 @@ namespace MiniCAD
         bool EqualsNoCase(const std::string& a, const char* b) { return Lower(a) == Lower(b); }
 
         Math::Point3 ToPoint(const Dwg::XYZ& p) { return { p.X, p.Y, p.Z }; }
+        Math::Vec3   ToVec3(const Dwg::XYZ& p)   { return { p.X, p.Y, p.Z }; }
         Dwg::XYZ     ToXYZ(const Math::Point3& p) { return { p.x, p.y, p.z }; }
+        Dwg::XYZ     ToXYZ(const Math::Vec3& v)   { return { v.x, v.y, v.z }; }
 
         bool IsDefaultNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z > 0.0; }
 
@@ -1732,6 +1739,63 @@ namespace MiniCAD
                 if (auto* e = dynamic_cast<const Dwg::TableEntity*>(&src))
                     return ConvertTable(*e);
 
+                // 射线（RAY）/ 构造线（XLINE）。
+                //
+                // 两者此前落到 Skip()（日志「不支持的实体 RAY / XLINE × N 已跳过」），
+                // 图上看不到任何参照线。组码只有两个：10 = 起点、11 = 方向，
+                // 与 Core 的 XLineEntity / RayEntity 完全一一对应，直接建实体即可。
+                //
+                // ⚠ 不做「起点 + 端点」式截断：RAY / XLINE 本身是无限长的，
+                //   实体内部按足够大的半长近似绘制，包围盒退化为起点（IsBoundless）。
+                if (auto* e = dynamic_cast<const Dwg::Ray*>(&src))
+                    return Make<RayEntity>(src, nullptr, ToPoint(e->StartPoint), ToVec3(e->Direction));
+
+                if (auto* e = dynamic_cast<const Dwg::XLine*>(&src))
+                    return Make<XLineEntity>(src, nullptr, ToPoint(e->FirstPoint), ToVec3(e->Direction));
+
+                // 形位公差（TOLERANCE，GB/T 1182 特征控制框）。
+                //
+                // 此前落到 Skip()（日志「不支持的实体 TOLERANCE × N 已跳过」）。
+                // 组码：10 = 插入点、11 = X 轴方向、1 = 框格文本（"%%v" 分列、"\n" 分行）、
+                // 3 = 引用的 DIMSTYLE。Core 的 ToleranceEntity 正好按同一套约定绘制。
+                if (auto* e = dynamic_cast<const Dwg::Tolerance*>(&src))
+                {
+                    DimStyle st;
+                    const DimStyleID sid = ResolveDimStyle(e->StyleHandle, st);
+                    auto ent = Make<ToleranceEntity>(src, &e->Normal, ToPoint(e->InsertionPoint),
+                                                    e->Text, st);
+                    static_cast<ToleranceEntity&>(*ent).SetStyleId(sid);
+                    static_cast<ToleranceEntity&>(*ent).SetDirection(ToVec3(e->Direction));
+                    return ent;
+                }
+
+                // 引线（LEADER）。
+                //
+                // 此前落到 Skip()。组码 10 是路径顶点序列（个数由 76 给出）、71 = 有无箭头、
+                // 72 = 路径类型（直线/样条）、73 = 随附注释类型、40/41 = 文字高 / 宽。
+                // 注释实体（TEXT / MTEXT / TOLERANCE / INSERT）在 DWG 里是独立对象，这里
+                // 只画引线本身，不把注释搬过来 —— 否则会和该对象自己的分支重复出图。
+                if (auto* e = dynamic_cast<const Dwg::Leader*>(&src))
+                {
+                    if (e->Vertices.empty())
+                        return Skip(src);
+                    std::vector<Math::Point3> pts;
+                    pts.reserve(e->Vertices.size());
+                    for (const auto& v : e->Vertices) pts.push_back(ToPoint(v));
+                    DimStyle st;
+                    const DimStyleID sid = ResolveDimStyle(e->StyleHandle, st);
+                    auto ent = Make<LeaderEntity>(src, &e->Normal, std::move(pts), st);
+                    auto& ld = static_cast<LeaderEntity&>(*ent);
+                    ld.SetStyleId(sid);
+                    ld.SetArrowEnabled(e->ArrowHeadEnabled);
+                    ld.SetPath(static_cast<LeaderPath>(e->PathType));
+                    // 组码 74 = 钩线（水平基线）方向：1 = 与尾段同向（即不画钩线）。
+                    ld.SetHookline(e->HookLineDirection != Dwg::HookLineDirection::Same);
+                    ld.SetAnnotationType(static_cast<LeaderAnnotation>(e->CreationType));
+                    if (e->TextHeight > 0) ld.SetTextHeight(e->TextHeight);
+                    return ent;
+                }
+
                 if (auto* e = dynamic_cast<const Dwg::Polyline*>(&src))
                     return ConvertOldPolyline(*e);
 
@@ -1748,6 +1812,9 @@ namespace MiniCAD
 
                 if (auto* e = dynamic_cast<const Dwg::Wipeout*>(&src))
                     return ConvertWipeout(*e);
+
+                if (auto* e = dynamic_cast<const Dwg::RasterImage*>(&src))
+                    return ConvertRasterImage(*e);
 
                 if (auto* e = dynamic_cast<const Dwg::Spline*>(&src))
                     return ConvertSpline(*e);
@@ -1975,6 +2042,28 @@ namespace MiniCAD
                     textStyle = LookupStyle(ds->StyleHandle);
                 }
                 return style;
+            }
+
+            // 引线（LEADER）与形位公差（TOLERANCE）引用的标注样式。
+            //
+            // Core 侧只需要外观那几个量（字高 / 箭头 / 界线间隙），MiniDWG 的
+            // `DimensionStyle` 字段全在这里；找不到样式（悬空句柄或样式表没建）时
+            // 返回 Core 默认值 + `DimStyle_StandardID`，与「引用标准样式」等效。
+            //
+            // 与 `DimStyleOf`（天正标注用）分开：那个填的是天正专用结构，不通用。
+            DimStyleID ResolveDimStyle(Dwg::Handle handle, DimStyle& style) const
+            {
+                if (const auto* ds = m_db.FindAs<Dwg::DimensionStyle>(handle))
+                {
+                    if (ds->TextHeight > 0)              style.TextHeight    = ds->TextHeight;
+                    if (ds->ArrowSize > 0)               style.ArrowSize     = ds->ArrowSize;
+                    if (ds->ExtensionLineExtension > 0)  style.ExtLineExtend = ds->ExtensionLineExtension;
+                    if (ds->ExtensionLineOffset > 0)     style.ExtLineOffset = ds->ExtensionLineOffset;
+                    if (ds->DimensionLineGap > 0)        style.TextGap       = std::abs(ds->DimensionLineGap);
+                    if (ds->DecimalPlaces > 0)           style.Precision     = ds->DecimalPlaces;
+                    if (ds->AngularDecimalPlaces > 0)    style.AnglePrecision = ds->AngularDecimalPlaces;
+                }
+                return DimStyle_StandardID;
             }
 
             // 宽度因子不同的同名派生样式（名字加 _W 与百分比），没有时按原样式复制一份
@@ -2604,6 +2693,31 @@ namespace MiniCAD
                 }
                 auto ent = Make<WipeoutEntity>(w, nullptr, std::move(pts));
                 static_cast<WipeoutEntity&>(*ent).SetShowFrame(m_wipeoutFrame);
+                return ent;
+            }
+
+            // 光栅图像（IMAGE）：与区域覆盖同样是「图像贴在平行四边形上」，
+            // 用插入点 + UVector·u + VVector·v 算出四个角；像素在 ImageDefinition 里
+            // （DWG 不内嵌位图，只有文件名），取不到文件时 ImageEntity 画占位框。
+            std::unique_ptr<Entity> ConvertRasterImage(const Dwg::RasterImage& img)
+            {
+                const double sx = img.Size.X > 0.0 ? img.Size.X : 1.0;
+                const double sy = img.Size.Y > 0.0 ? img.Size.Y : 1.0;
+                const Math::Point3 p1 = ToPoint(img.InsertPoint);
+                const Math::Point3 p2{ p1.x + img.UVector.X * sx, p1.y + img.UVector.Y * sx, p1.z + img.UVector.Z * sx };
+                const Math::Point3 p4{ p1.x + img.VVector.X * sy, p1.y + img.VVector.Y * sy, p1.z + img.VVector.Z * sy };
+                const Math::Point3 p3{ p4.x + img.UVector.X * sx, p4.y + img.UVector.Y * sx, p4.z + img.UVector.Z * sx };
+                for (const Math::Point3* q : { &p1, &p2, &p3, &p4 })
+                {
+                    if (!std::isfinite(q->x) || !std::isfinite(q->y) || !std::isfinite(q->z))
+                        return Skip(img);
+                }
+
+                std::string path;
+                if (auto* def = m_db.FindAs<Dwg::ImageDefinition>(img.DefinitionHandle))
+                    path = def->FileName;
+                auto ent = Make<ImageEntity>(img, nullptr, path, p1, p2, p3, p4);
+                static_cast<ImageEntity&>(*ent).SetShowFrame(true);
                 return ent;
             }
 
@@ -3851,6 +3965,15 @@ namespace MiniCAD
                 // 多重引线（MLEADER）。同样必须排在可能匹配到它的基类分支之前。
                 if (auto* s = dynamic_cast<const MLeaderEntity*>(&e))
                     return ConvertMLeader(*s);
+                // 射线 / 构造线 / 引线 / 形位公差。
+                if (auto* s = dynamic_cast<const RayEntity*>(&e))
+                    return Finish(e, ConvertRay(*s));
+                if (auto* s = dynamic_cast<const XLineEntity*>(&e))
+                    return Finish(e, ConvertXLine(*s));
+                if (auto* s = dynamic_cast<const LeaderEntity*>(&e))
+                    return Finish(e, ConvertLeader(*s));
+                if (auto* s = dynamic_cast<const ToleranceEntity*>(&e))
+                    return Finish(e, ConvertTolerance(*s));
                 if (auto* s = dynamic_cast<const Solid3DEntity*>(&e))
                     return ConvertSolid3D(e, *s);
                 if (auto* s = dynamic_cast<const LineEntity*>(&e))
@@ -3890,6 +4013,8 @@ namespace MiniCAD
                 }
                 if (auto* s = dynamic_cast<const WipeoutEntity*>(&e))   // 派生自 PolylineEntity，须先判断
                     return ConvertWipeout(e, *s);
+                if (auto* s = dynamic_cast<const ImageEntity*>(&e))     // 派生自 RectangleEntity，须先判断
+                    return ConvertRasterImage(e, *s);
                 if (auto* s = dynamic_cast<const PolylineEntity*>(&e))
                     // 锥形段（逐顶点起止宽度）一并写出，否则另存后宽度整批丢失
                     return ConvertPolyline(e, s->GetPolyline(), s->GetWidth(),
@@ -4225,6 +4350,55 @@ namespace MiniCAD
                 return Finish(s, std::move(d));
             }
 
+            // ── 射线 / 构造线 / 引线 / 形位公差的导出 ──────────────────────
+            //
+            // 这四个此前没有导出分支，落到 `ConvertDwgEntity` 末尾的 Skip()，
+            // 另存后引线和公差框格整块消失（射线/构造线同样丢失）。字段与
+            // 导入侧一一对应，往返不走样。
+
+            std::unique_ptr<Dwg::Entity> ConvertRay(const RayEntity& s) const
+            {
+                auto d = std::make_unique<Dwg::Ray>();
+                d->StartPoint = ToXYZ(s.GetOrigin());
+                d->Direction  = ToXYZ(s.GetDirection());
+                return d;
+            }
+
+            std::unique_ptr<Dwg::Entity> ConvertXLine(const XLineEntity& s) const
+            {
+                auto d = std::make_unique<Dwg::XLine>();
+                d->FirstPoint = ToXYZ(s.GetOrigin());
+                d->Direction  = ToXYZ(s.GetDirection());
+                return d;
+            }
+
+            std::unique_ptr<Dwg::Entity> ConvertTolerance(const ToleranceEntity& s) const
+            {
+                auto d = std::make_unique<Dwg::Tolerance>();
+                d->InsertionPoint = ToXYZ(s.GetInsertion());
+                d->Direction      = ToXYZ(s.GetDirection());
+                d->Normal         = { 0.0, 0.0, 1.0 };
+                d->Text           = s.GetText();
+                return d;
+            }
+
+            std::unique_ptr<Dwg::Entity> ConvertLeader(const LeaderEntity& s) const
+            {
+                auto d = std::make_unique<Dwg::Leader>();
+                const auto& vs = s.GetVertices();
+                d->Vertices.reserve(vs.size());
+                for (const auto& v : vs)
+                    d->Vertices.push_back(ToXYZ(v));
+                d->ArrowHeadEnabled = s.GetArrowEnabled();
+                d->PathType         = static_cast<Dwg::LeaderPathType>(s.GetPath());
+                // 组码 74：有钩线时写 Opposite（0），否则 Same（1）。与导入侧互逆。
+                d->HookLineDirection = s.GetHookline() ? Dwg::HookLineDirection::Opposite
+                                                       : Dwg::HookLineDirection::Same;
+                d->CreationType      = static_cast<Dwg::LeaderCreationType>(s.GetAnnotationType());
+                d->TextHeight        = s.GetTextHeight();
+                return d;
+            }
+
             std::unique_ptr<Dwg::Entity> ConvertEllipse(const Entity& e, const Ellipse& el)
             {
                 auto d = std::make_unique<Dwg::Ellipse>();
@@ -4484,6 +4658,79 @@ namespace MiniCAD
                 return Finish(e, std::move(d));
             }
 
+            // 光栅图像：四个顶点还原为插入点 + UVector + VVector（导入的逆过程，见 Importer::ConvertRasterImage）。
+            // DWG/DXF 只存文件名，像素在 ImageDefinition 里；路径为空时也照常写（AutoCAD 打开后显示找不到图像的占位）。
+            // ImageDefinition 必须挂到根字典的 ACAD_IMAGE_DICT 下才会被写出（否则写出器把它当孤儿丢掉），
+            // 读回来时也要能顺着 340 句柄找到它，所以路径去重后共用一份定义。
+            Dwg::Handle ImageDefinitionHandle(std::string_view path)
+            {
+                const std::string key(path);
+                auto cached = m_imageDefs.find(key);
+                if (cached != m_imageDefs.end())
+                    return cached->second;
+
+                Dwg::CadDictionary* root = m_db.RootDictionary();
+                if (root == nullptr)
+                    return Dwg::kNullHandle;
+
+                // ACAD_IMAGE_DICT 不存在时新建（与 ACAD_MLINESTYLE 的处理相同）
+                if (Dwg::CadDictionary* dict = m_db.FindNamedDictionary("ACAD_IMAGE_DICT"); dict != nullptr)
+                {
+                    for (size_t i = 0; i < dict->EntryNames.size() && i < dict->EntryHandles.size(); ++i)
+                        if (EqualsNoCase(dict->EntryNames[i], key.c_str()))
+                            return dict->EntryHandles[i];
+                }
+                else
+                {
+                    auto newDict = std::make_unique<Dwg::CadDictionary>();
+                    Dwg::CadDictionary* addedDict = m_db.Add(std::move(newDict));
+                    if (addedDict == nullptr)
+                        return Dwg::kNullHandle;
+                    root->EntryNames.push_back("ACAD_IMAGE_DICT");
+                    root->EntryHandles.push_back(addedDict->ObjectHandle);
+                }
+
+                auto def  = std::make_unique<Dwg::ImageDefinition>();
+                def->FileName      = key;
+                def->Size          = { 1.0, 1.0 };
+                def->DefaultSize   = { 1.0, 1.0 };
+                def->IsLoaded      = false;   // 像素不内嵌，只是引用文件
+                Dwg::Handle handle = Dwg::kNullHandle;
+                if (Dwg::ImageDefinition* added = m_db.Add(std::move(def)))
+                {
+                    handle = added->ObjectHandle;
+                    if (Dwg::CadDictionary* dict = m_db.FindNamedDictionary("ACAD_IMAGE_DICT"); dict != nullptr)
+                    {
+                        dict->EntryNames.push_back(key);
+                        dict->EntryHandles.push_back(handle);
+                    }
+                }
+                m_imageDefs.emplace(key, handle);
+                return handle;
+            }
+
+            std::unique_ptr<Dwg::Entity> ConvertRasterImage(const Entity& e, const ImageEntity& img)
+            {
+                const auto& r = img.GetRectangle();
+                const double width  = (r.P2 - r.P1).Length();
+                const double height = (r.P4 - r.P1).Length();
+                if (width < 1e-9 || height < 1e-9)
+                    return Skip(e);
+
+                // 只支持轴对齐的矩形（P1 左下、P2 右下、P4 左上）；斜着的退回为按长宽写
+                auto d = std::make_unique<Dwg::RasterImage>();
+                d->InsertPoint = ToXYZ(r.P1);
+                d->UVector     = { width, 0.0, 0.0 };
+                d->VVector     = { 0.0, height, 0.0 };
+                d->Size        = { 1.0, 1.0 };   // 像素数未知，写成 1×1（只影响坐标换算，不影响外观）
+                d->Flags       = Dwg::ImageDisplayFlags::ShowImage | Dwg::ImageDisplayFlags::ShowNotAlignedImage;
+
+                const std::string& path = img.GetPath();
+                if (!path.empty())
+                    d->DefinitionHandle = ImageDefinitionHandle(path);
+                return Finish(e, std::move(d));
+            }
+
             // 样条：有控制点时写控制点与节点（拟合点一并写出），否则只写拟合点（AutoCAD 打开时重算控制点）
             std::unique_ptr<Dwg::Entity> ConvertSpline(const Entity& e, const Spline& sp)
             {
@@ -4528,6 +4775,7 @@ namespace MiniCAD
             std::map<LayerID, Dwg::Handle>     m_layerHandles;
             std::map<LineTypeID, Dwg::Handle>  m_lineTypeHandles;
             std::map<TextStyleID, Dwg::Handle> m_styleHandles;
+            std::map<std::string, Dwg::Handle> m_imageDefs;      // 图像路径 → ImageDefinition 句柄（同一路径共用一份定义）
             int                                m_solidNoMesh   = 0;
             int                                m_solidTooLarge = 0;
             std::map<std::string, int>         m_skipped;

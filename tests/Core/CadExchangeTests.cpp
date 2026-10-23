@@ -4,6 +4,7 @@
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/ImageEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
@@ -282,6 +283,35 @@ namespace
         std::ifstream f(path, std::ios::binary);
         return { std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>() };
     }
+
+    // 光栅图像：四个顶点与路径在导出再导入后不变；图像文件不在磁盘上时只画占位框，
+    // 但实体本身必须存在（MiniDWG 只保存路径，不内嵌像素）
+    void CheckImage(CadFileKind kind, const char* label)
+    {
+        Scene src;
+        const Math::Point3 p1{ 10, 20, 0 }, p2{ 40, 20, 0 }, p3{ 40, 35, 0 }, p4{ 10, 35, 0 };
+        src.AddEntity(std::make_unique<ImageEntity>(src.NextObjectID(), "missing_image.png", p1, p2, p3, p4));
+
+        const auto data = ExportCad(src, kind);
+        Scene dst;
+        Check(!data.empty() && ImportCad(data, dst), (std::string(label) + "：图像导出再导入成功").c_str());
+
+        const auto* img = FindOne<ImageEntity>(dst);
+        if (!img)
+        {
+            Check(false, (std::string(label) + "：读回 ImageEntity").c_str());
+            return;
+        }
+        const auto& r = img->GetRectangle();
+        Check(img->GetPath() == "missing_image.png", (std::string(label) + "：图像路径保留").c_str());
+        Check(Near(r.P1.x, p1.x) && Near(r.P1.y, p1.y) && Near(r.P2.x, p2.x) && Near(r.P2.y, p2.y)
+              && Near(r.P3.x, p3.x) && Near(r.P3.y, p3.y) && Near(r.P4.x, p4.x) && Near(r.P4.y, p4.y),
+              (std::string(label) + "：图像四个顶点一致").c_str());
+
+        // 找不到图像文件：画四周边框 + 两条对角线作占位（6 条线）
+        const MeasureSink m = Measure(*img);
+        Check(m.lines == 6, (std::string(label) + "：图像不可用时画占位框与对角线").c_str());
+    }
 }
 
 int RunCadExchangeTests()
@@ -302,6 +332,8 @@ int RunCadExchangeTests()
     CheckRoundTrip(CadFileKind::Dwg, "DWG 2000", CadSaveVersion::R2000);
     CheckHatchWipeoutSpline(CadFileKind::Dwg, "DWG");
     CheckHatchWipeoutSpline(CadFileKind::Dxf, "DXF");
+    CheckImage(CadFileKind::Dwg, "DWG");
+    CheckImage(CadFileKind::Dxf, "DXF");
 
     for (const auto kind : { CadFileKind::Dwg, CadFileKind::Dxf })
     {
