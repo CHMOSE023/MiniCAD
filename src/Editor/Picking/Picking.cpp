@@ -251,12 +251,21 @@ namespace MiniCAD
     }
 
     // 实体是否可被拾取:实体本身可见,且所在图层未关闭（锁定的图层仍可拾取）。
+    //
+    // ⚠ 布局过滤必须放在这里：渲染侧靠 Editor::UpdateSceneVertices 的 isShown()
+    //   （Document::IsVisibleInActiveLayout）决定画什么，拾取侧若不过滤同一条件，
+    //   布局页上就会「渲染看不见、拾取仍命中」—— 图纸空间里属于别的布局的实体
+    //   （LayoutKey 不匹配）画不出来但点得中，用户看到的就是
+    //   「布局页视口外还能选中隐藏的图元」。
     bool Picking::IsPickable(const Object& obj) const
     {
         if (!obj.IsKindOf<Entity>()) return true;
 
         const auto& attr = static_cast<const Entity&>(obj).GetAttr();
         if (!attr.Visible) return false;
+
+        // 布局过滤：模型页放行一切；布局页只放行本布局的图纸空间实体
+        if (m_layoutFilter && !m_layoutFilter(attr)) return false;
 
         if (const Layer* layer = m_scene->GetLayerManager().GetLayer(attr.LayerId))
             if (!layer->IsVisible())

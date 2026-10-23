@@ -546,6 +546,92 @@ namespace MiniCAD
         m_docTabs->SetVisible(!docs.empty());
         m_viewport->SetVisible(hasDoc);
         m_noDocHint->SetVisible(!hasDoc);
+
+        SyncLayoutTabs();
+    }
+
+    // 把当前文档的布局表同步到布局标签条。
+    // 只有模型页时整行隐藏（新建文档的常态，不白占一行高度）。
+    void MainFrame::SyncLayoutTabs()
+    {
+        if (!m_layoutTabs)
+            return;
+
+        // 隐藏/显示整行：布局页签条是独立面板（文档区下方、命令行上方），
+        // 只隐藏里面的 TabView 会留下一行空白。
+        auto setRowVisible = [this](bool visible)
+        {
+            if (m_layoutTabsBar) m_layoutTabsBar->SetVisible(visible);
+            else                 m_layoutTabs->SetVisible(visible);
+        };
+
+        Document* doc = m_docManager.GetActive();
+        if (doc == nullptr)
+        {
+            m_syncingLayouts = true;
+            for (int i = m_layoutTabs->GetTabCount() - 1; i >= 0; --i)
+                m_layoutTabs->RemoveTab(i);
+            m_syncingLayouts = false;
+            setRowVisible(false);
+            return;
+        }
+
+        const auto& layouts = doc->GetScene().Layouts();
+        m_syncingLayouts = true;
+        // 数量或名称变化才重建（避免每帧抖掉用户的选中）
+        bool rebuild = m_layoutTabs->GetTabCount() != static_cast<int>(layouts.size());
+        if (!rebuild)
+            for (size_t i = 0; i < layouts.size(); ++i)
+                if (m_layoutTabs->GetTabTitle(static_cast<int>(i)) != layouts[i].Name)
+                { rebuild = true; break; }
+
+        if (rebuild)
+        {
+            for (int i = m_layoutTabs->GetTabCount() - 1; i >= 0; --i)
+                m_layoutTabs->RemoveTab(i);
+            for (const auto& l : layouts)
+                m_layoutTabs->AddTab(l.Name, nullptr, false);
+        }
+        m_layoutTabs->SetSelected(doc->ActiveLayout());
+        m_syncingLayouts = false;
+
+        // 只有一张布局（模型页）时整行隐藏
+        setRowVisible(layouts.size() > 1);
+    }
+
+    // 切换布局：换相机、清选择、整场景重建（可见实体集合变了）
+    void MainFrame::ActivateLayout(int index)
+    {
+        Document* doc = m_docManager.GetActive();
+        if (doc == nullptr)
+            return;
+
+        Camera& cam = m_docManager.GetViewport().GetCamera();
+        CameraState state = cam.GetState();
+
+        if (!doc->SetActiveLayout(index, state))
+            return;
+
+        cam.SetState(state);
+        // 图纸页第一次进入时框住纸张范围（Document 只给目标点，缩放要相机自己算）
+        if (doc->ActiveLayoutIsPaper())
+        {
+            const auto& layouts = doc->GetScene().Layouts();
+            if (index >= 0 && index < static_cast<int>(layouts.size()))
+            {
+                const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
+                if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+                    cam.ZoomToBounds(sheet.MinX, sheet.MinY, sheet.MaxX, sheet.MaxY);
+            }
+        }
+
+        // 切布局 = 换一批可见实体，清掉选择集避免操作到看不见的对象
+        m_docManager.GetEditor().GetGripEditor().CancelDrag();
+        m_docManager.GetEditor().SetSelection({});
+
+        SyncLayoutTabs();
+        m_viewport->RequestRender();
+        StateChanged();
     }
 
     void MainFrame::UpdateTitle()

@@ -49,6 +49,63 @@ TEST(Row_FixedWidths_PaddingAndGap)
     CHECK_BOUNDS(d, 135, 5, 70, 90);
 }
 
+// ── 布局页签栏紧贴容器底部 ────────────────────────────────────────────────
+//
+// 主窗口里「模型 / 布局」页签栏是**文档区内部的最后一行**，文档区下面是命令行，
+// 所以页签栏必须贴在文档区底边 —— 底边留白会正好变成页签栏与命令行之间的空隙。
+//
+// 这里复刻 CreateDocumentArea 的结构：文档标签(固定) + 视口(grow) + 页签栏(固定)。
+// 曾把它做成停靠区的独立面板，但 DockSpace 有 kMinPanel=80 的最小高度，
+// 34px 的条被强行拉到 80，多出的 46px 就是那块空隙。
+TEST(Column_LayoutTabsStickToBottom)
+{
+    TestUI t({ 800, 600 });
+    Node* area = t.Add();
+    {
+        LayoutStyle s;
+        s.direction = FlexDirection::Column;
+        area->SetLayoutStyle(s);
+    }
+
+    // 文档标签条
+    Node* docTabs = area->AddChild<Node>();
+    {
+        LayoutStyle s;
+        s.height = 34.0f;
+        s.shrink = 0.0f;
+        docTabs->SetLayoutStyle(s);
+    }
+
+    // 视口（占满剩余）
+    Node* viewport = area->AddChild<Node>();
+    {
+        LayoutStyle s;
+        s.grow = 1.0f;
+        viewport->SetLayoutStyle(s);
+    }
+
+    // 布局页签栏（固定一条的高度，不参与 grow/shrink）
+    Node* tabsBar = area->AddChild<Node>();
+    {
+        LayoutStyle s;
+        s.direction = FlexDirection::Row;
+        s.height    = 34.0f;
+        s.shrink    = 0.0f;
+        tabsBar->SetLayoutStyle(s);
+    }
+    t.Layout();
+    t.Layout();
+
+    CHECK_BOUNDS(area, 0, 0, 800, 600);
+    CHECK_BOUNDS(docTabs, 0, 0, 800, 34);
+    CHECK_BOUNDS(tabsBar, 0, 566, 800, 34);
+    // 页签栏底边必须与文档区底边重合（间隙 0）
+    CHECK_NEAR(tabsBar->GetBounds().max.y, area->GetBounds().max.y);
+    // 视口填满中间：从标签条下面到页签栏上面
+    CHECK_NEAR(viewport->GetBounds().min.y, docTabs->GetBounds().max.y);
+    CHECK_NEAR(viewport->GetBounds().max.y, tabsBar->GetBounds().min.y);
+}
+
 TEST(Column_JustifyCenter_AlignCenter)
 {
     TestUI t({ 100, 100 });

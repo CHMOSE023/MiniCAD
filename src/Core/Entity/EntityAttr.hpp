@@ -34,6 +34,20 @@ namespace MiniCAD
 
         bool         Visible       = true;
 
+        // ── 图纸空间（DXF 组码 67）───────────────────────────────────────
+        // true = 该实体属于图纸空间（布局页）；false = 模型空间。
+        // 布局页里只画 InPaperSpace 的实体，再由视口把模型空间内容合成进来。
+        bool         InPaperSpace  = false;
+
+        // 图纸空间实体**所属的布局**（DXF owner 组码 330）。
+        //
+        // 为什么需要：InPaperSpace 只能区分「模型 / 图纸空间」两桶，
+        // 而图纸空间里可能有几十张布局。没有归属信息时，切换布局只能改相机、
+        // **改不了画什么** —— 每张布局都会显示同一批视口内容。
+        // 取值与 `DrawingLayout::OwnerKey` 配对（LAYOUT 的组码 330）。
+        // 0 表示未归属（模型空间实体、或来源未提供 owner 的老数据）。
+        uint64_t     LayoutKey     = 0;
+
         // ── 扩展数据透传(XDATA/扩展字典/reactors),保证导入→导出无损 ────────
         ExtendedData XData;
     };

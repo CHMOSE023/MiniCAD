@@ -325,4 +325,91 @@ namespace MiniCAD
             s.EndObject();
         }
     }
+
+    // ── 图纸布局（LAYOUT / 图纸空间）─────────────────────────────────────
+
+    bool Document::ActiveLayoutIsPaper() const
+    {
+        const auto& layouts = m_scene.Layouts();
+        if (m_activeLayout < 0 || m_activeLayout >= static_cast<int>(layouts.size()))
+            return false;
+        return !layouts[static_cast<size_t>(m_activeLayout)].Model;
+    }
+
+    uint64_t Document::ActiveLayoutOwnerKey() const
+    {
+        const auto& layouts = m_scene.Layouts();
+        if (m_activeLayout < 0 || m_activeLayout >= static_cast<int>(layouts.size()))
+            return 0;
+        const DrawingLayout& sheet = layouts[static_cast<size_t>(m_activeLayout)];
+        if (sheet.Model)
+            return 0;              // 模型页：不过滤图纸空间归属
+        return sheet.OwnerKey;     // 0 = 该布局没给出 owner → 退化为不过滤
+    }
+
+    bool Document::SetActiveLayout(int index, CameraState& camera)
+    {
+        const auto& layouts = m_scene.Layouts();
+        if (index < 0 || index >= static_cast<int>(layouts.size()) || index == m_activeLayout)
+            return false;
+
+        if (static_cast<int>(m_layoutViews.size()) < static_cast<int>(layouts.size()))
+            m_layoutViews.resize(layouts.size());
+
+        // 保存当前布局的视图
+        m_layoutViews[static_cast<size_t>(m_activeLayout)].Valid  = true;
+        m_layoutViews[static_cast<size_t>(m_activeLayout)].Camera = camera;
+
+        m_activeLayout = index;
+
+        // 恢复新布局的视图；首次进入图纸页时把纸张范围交给调用方去框选
+        const LayoutView& saved = m_layoutViews[static_cast<size_t>(index)];
+        if (saved.Valid)
+        {
+            camera = saved.Camera;
+        }
+        else if (!layouts[static_cast<size_t>(index)].Model)
+        {
+            const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
+            if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+            {
+                // 只把目标点移到纸张中心；**缩放系数不在这里算** ——
+                // Camera::Zoom 的单位是「每像素多少世界单位」的倒数关系
+                // （GetWorldPerPixel = zoom / screenHeight），
+                // 而 Document 不持有 Viewport、拿不到屏幕高度。
+                // 调用方拿到 PaperBox 后调用 ZoomToBounds 统一处理。
+                camera.Target = { (sheet.MinX + sheet.MaxX) * 0.5,
+                                  (sheet.MinY + sheet.MaxY) * 0.5, 0.0 };
+            }
+            // 布局视图一旦进入就记为有效，后续切回来保留用户的平移缩放
+            m_layoutViews[static_cast<size_t>(index)].Valid  = true;
+            m_layoutViews[static_cast<size_t>(index)].Camera = camera;
+        }
+
+        // 切换布局必须让整个场景重建：布局归属是「按当前布局过滤图纸空间实体」，
+        // 过滤条件变了，增量路径并不知道哪些块该消失（它只看实体自身的脏标记）。
+        // 标记全量脏，下次渲染重建全部顶点。
+        MarkDirty();
+        m_scene.MarkDirty();
+        return true;
+    }
+
+    bool Document::IsVisibleInActiveLayout(const EntityAttr& attr) const
+    {
+        const bool paper = ActiveLayoutIsPaper();
+        // 模型空间实体只在模型页显示；图纸空间实体只在布局页显示
+        if (attr.InPaperSpace != paper)
+            return false;
+
+        // 布局页里进一步按归属键过滤：只显示属于**当前布局**的图纸空间实体。
+        // OwnerKey 为 0（未提供）时不过滤，退化为「显示全部图纸空间实体」，
+        // 这样老数据仍能显示，而不是整页空白。
+        if (paper)
+        {
+            const uint64_t key = ActiveLayoutOwnerKey();
+            if (key != 0 && attr.LayoutKey != 0 && attr.LayoutKey != key)
+                return false;
+        }
+        return true;
+    }
 }

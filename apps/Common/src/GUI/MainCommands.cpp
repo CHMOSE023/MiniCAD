@@ -171,6 +171,7 @@ namespace MiniCAD
             { "draw.text",     "Text",      "单行文字(&T)", "Text.png" },
             { "draw.mtext",    "MText",     "多行文字(&M)", "MText.png" },
             { "format.textStyle", "Style",    "文字样式(&S)…", "" },
+            { "format.mlineStyle", "MLStyle", "多线样式(&M)…", "" },
             { "format.pointStyle", "PointStyle", "点样式(&P)…", "" },
             { "format.lineTypeScale", "LineTypeScale", "线型比例(&L)…", "" },
             { "dim.linear",    "Dimension",   "线性(&L)",     "" },
@@ -185,6 +186,7 @@ namespace MiniCAD
             { "block.define",  "Block",     "创建块(&B)…",  "" },
             { "block.insert",  "Insert",    "插入块(&I)…",  "" },
             { "modify.move",   "Move",      "移动(&V)",     "Move.png" },
+            { "modify.mledit", "MLineEdit", "多线编辑(&D)", "" },
             { "modify.copy",   "Copy",      "复制(&Y)",     "Copy.png" },
             { "modify.mirror", "Mirror",    "镜像(&I)",     "Mirror.png" },
             { "modify.offset", "Offset",    "偏移(&S)",     "" },
@@ -306,6 +308,11 @@ namespace MiniCAD
                               .canExecute = hasDoc });
 
         // ── 格式 ─────────────────────────────────────────────────
+        m_commands.Register({ .id = "format.mlineStyle", .label = "多线样式(&M)…",
+                              .tooltip = "编辑多线样式：元素线偏移、封口与顶点连接线（MLSTYLE）",
+                              .execute = [this] { OpenMLineStyleDialog(); },
+                              .canExecute = hasDoc });
+
         m_commands.Register({ .id = "format.pointStyle", .label = "点样式(&P)…",
                               .tooltip = "设置 POINT 的显示图形与大小（HEADER 的 $PDMODE/$PDSIZE）",
                               .execute = [this] { OpenPointStyleDialog(); },

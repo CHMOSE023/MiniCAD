@@ -136,6 +136,44 @@ namespace MiniCAD
     }
 
     // =========================================================
+    // 布局页签条：模型 / 各张图纸空间布局
+    // =========================================================
+    // 由 CreateDocumentArea 在**视口之后**加进去，因此贴在文档区底部 ——
+    // 文档区下面是命令行，于是页签栏正好紧贴命令行，中间没有空隙。
+    //
+    // ⚠ 不要把它做成停靠区的独立面板：DockSpace 有 `kMinPanel = 80` 的最小高度，
+    //   一条 34px 的页签栏会被强行拉到 80px，多出的 46px 就成了页签栏与命令行
+    //   之间那块空白（实测间隙就来自这里）。
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayoutTabs()
+    {
+        using namespace MiniGUI;
+        auto bar = std::make_unique<Panel>(Theme::Background);
+        LayoutStyle bs;
+        bs.direction = FlexDirection::Row;
+        // 固定成一条标签栏的高度：它是文档区里的一个固定行，不参与 grow/shrink
+        bs.height = TabView::kStripHeight;
+        bs.shrink = 0.0f;
+        bar->SetLayoutStyle(bs);
+
+        m_layoutTabs = bar->AddChild<TabView>();
+        m_layoutTabs->EditLayoutStyle().grow = 1.0f;
+        m_layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
+        m_layoutTabs->SetShowNewTabButton(false);     // 布局由图纸导入，不在此新建
+        m_layoutTabs->SetOnSelectionChanged([this](int i)
+        {
+            if (m_syncingLayouts || i < 0)
+                return;
+            ActivateLayout(i);
+            m_viewport->Focus();
+        });
+
+        // 只有一张布局（模型页）时整条隐藏，不占一行
+        bar->SetVisible(false);
+        m_layoutTabsBar = bar.get();
+        return bar;
+    }
+
+    // =========================================================
     // 文档区：文档标签条 + 视口（所有文档共用一个视口，切换标签时换相机状态）
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea()
@@ -161,6 +199,13 @@ namespace MiniCAD
         });
         m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
         m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
+
+        // ── 布局标签条（图纸空间）──────────────────────────────────
+        // AutoCAD 把「模型 + 各张布局」放在绘图区下方的标签条里。
+        // 这里同样用 TabView：只显示标签、内容仍共用同一个视口。
+        // 它在视口**之后**加入文档区（见本函数末尾），因此贴在文档区底部，
+        // 正好紧邻下面的命令行 —— 中间不留空隙。见 CreateLayoutTabs。
+
         m_docTabs->SetTabContextMenuExtra([this](int i)
         {
             Document* doc = reinterpret_cast<Document*>(m_docTabs->GetTabData(i));
@@ -218,6 +263,17 @@ namespace MiniCAD
             return true;
         });
         m_viewCube = cube;
+
+        // ── 模型 / 布局页签条（贴在文档区底部）────────────────────
+        // 放在视口**之后** ⇒ 它占文档区的最下面一行。
+        // 文档区下面是命令行，于是页签栏紧贴命令行，中间没有空隙。
+        // （做成停靠区独立面板不行：DockSpace 最小高度 80，34px 的条会被拉到 80，
+        //   多出的空白正好出现在页签栏与命令行之间。）
+        {
+            std::unique_ptr<Node> tabsBar = CreateLayoutTabs();
+            tabsBar->EditLayoutStyle().shrink = 0.0f;
+            area->AddChild(std::move(tabsBar));
+        }
 
         // ── 没有文档时的提示 ─────────────────────────────────────
         auto* hint = area->AddChild<Node>();

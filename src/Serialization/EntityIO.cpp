@@ -9,6 +9,7 @@
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
+#include "Core/Entity/ViewportEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/Face3DEntity.hpp"
 #include "Core/Entity/Solid3DEntity.hpp"
@@ -255,8 +256,33 @@ namespace MiniCAD::EntityIO
             return std::make_unique<RectangleEntity>(id, r.P1, r.P2, r.P3, r.P4);
         }
 
-        void WriteSolid(ISerializer& s, const SolidEntity& e) { WriteRectangle(s, e); }
-        void WriteFace3D(ISerializer& s, const Face3DEntity& e)
+        // 图纸空间视口（VIEWPORT）：纸张上的框 + 看向的模型范围
+        void WriteViewport(ISerializer& s, const ViewportEntity& e)
+        {
+            Math::Point3 center = e.GetCenter();   Ser::Value(s, "center", center);
+            double w = e.GetWidth();               s.Value("width", w);
+            double h = e.GetHeight();              s.Value("height", h);
+            Math::Point3 vc = e.GetViewCenter();   Ser::Value(s, "viewCenter", vc);
+            double vh = e.GetViewHeight();         s.Value("viewHeight", vh);
+            double tw = e.GetTwist();              s.Value("twist", tw);
+            int32_t vid = e.GetViewportId();       s.Value("viewportId", vid);
+        }
+        std::unique_ptr<Entity> ReadViewport(ISerializer& s, Object::ObjectID id)
+        {
+            Math::Point3 center;                   Ser::Value(s, "center", center);
+            double w = 0.0, h = 0.0;               s.Value("width", w);  s.Value("height", h);
+            auto e = std::make_unique<ViewportEntity>(id, center, w, h);
+            Math::Point3 vc;                       Ser::Value(s, "viewCenter", vc);
+            double vh = 0.0, tw = 0.0;             s.Value("viewHeight", vh); s.Value("twist", tw);
+            int32_t vid = 0;                       s.Value("viewportId", vid);
+            e->SetViewCenter(vc);
+            e->SetViewHeight(vh);
+            e->SetTwist(tw);
+            e->SetViewportId(vid);
+            return e;
+        }
+
+        void WriteSolid(ISerializer& s, const SolidEntity& e) { WriteRectangle(s, e); }        void WriteFace3D(ISerializer& s, const Face3DEntity& e)
         {
             WriteRectangle(s, e);
             auto flags = e.GetInvisibleEdges(); s.Value("invisibleEdges", flags);
@@ -1101,6 +1127,7 @@ namespace MiniCAD::EntityIO
             { "ArcEntity",       &WriteThunk<ArcEntity, &WriteArc>,             &ReadArc       },
             { "EllipseEntity",   &WriteThunk<EllipseEntity, &WriteEllipse>,     &ReadEllipse   },
             { "RectangleEntity", &WriteThunk<RectangleEntity, &WriteRectangle>, &ReadRectangle },
+            { "ViewportEntity",  &WriteThunk<ViewportEntity, &WriteViewport>,   &ReadViewport  },
             { "TableEntity",     &WriteThunk<TableEntity, &WriteTable>,         &ReadTable     },
             { "MLineEntity",     &WriteThunk<MLineEntity, &WriteMLine>,         &ReadMLine     },
             { "ImageEntity",     &WriteThunk<ImageEntity, &WriteImage>,         &ReadImage     },
