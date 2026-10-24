@@ -1,12 +1,31 @@
-# MiniCAD
+<p align="center">
+  <img src="assets/icons/app.ico" width="96" height="96" alt="MiniCAD" />
+</p>
 
-2D/3D CAD，桌面版和网页版，一样外观与操作。
+<h1 align="center">MiniCAD</h1>
 
-- [在线预览网页版](https://minicad.bimhub.top)    
+<p align="center">
+  <strong>开源 2D/3D CAD 应用，使用C++20开发。</strong><br />
+  在windows和浏览器内运行CAD，内核使用SMLib, 支持三维Node节点建模，<strong>兼容dwg、天正</strong>。
+</p>
+
+<p align="center">
+  <a href="https://minicad.bimhub.top">网页版</a> ·
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases">下载桌面版</a>     
+</p>
  
-- [下载Windows版本](https://github.com/CHMOSE023/MiniCAD/releases)
+<p align="center">
+  <a href="https://github.com/CHMOSE023/MiniCAD/actions/workflows/build.yml">
+  <img src="https://github.com/CHMOSE023/MiniCAD/actions/workflows/build.yml/badge.svg" alt="CI" />
+  </a>
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases/latest"><img src="https://img.shields.io/github/v/release/CHMOSE023/MiniCAD?label=release" alt="Latest release" /></a>
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases"><img src="https://img.shields.io/github/downloads/CHMOSE023/MiniCAD/total?label=downloads" alt="Downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/CHMOSE023/MiniCAD" alt="Licence" /></a>
+  <a href="https://qm.qq.com/q/O08yWfRvmE"><img src="https://img.shields.io/badge/QQ群-加入-12B7F5?logo=tencentqq&logoColor=white" alt="QQ群" /></a>
+  <a href="https://github.com/CHMOSE023/MiniCAD/stargazers"><img src="https://img.shields.io/github/stars/CHMOSE023/MiniCAD?style=flat" alt="Stars" /></a>
+</p>
 
-![MiniCAD](docs/images/screenshot.png)
+![MiniCAD](docs/images/screenshot.jpg)
  
 
 ## Windows版编译
@@ -52,17 +71,9 @@ run_tests.bat
 - 图像加载使用 [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h)
 - 字体处理使用 [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h)
 - 网页界面字体 [Noto Sans SC](https://github.com/notofonts/noto-cjk)  
+- 测试字体  `GB2312.ttf` `simplex.shx`  `TSSDCHN.SHX` `tssdeng.shx`
 
-
-## 第三方字体
-
-以下字体文件用于 CAD 图纸的文字显示或字体兼容。
-- `GB2312.ttf`
-- `simplex.shx`
-- `TSSDCHN.SHX`
-- `tssdeng.shx`
-
-## 开发入门教程
+## 入门教程
 
 [LearnMiniCAD](https://github.com/CHMOSE023/LearnMiniCAD) 学习开发CAD。
 
@@ -73,6 +84,7 @@ run_tests.bat
 
 [@七只蜗牛](https://github.com/qizhiwoniu)   [@wkslgjx](https://github.com/wkslgjx)  
 
+  
 ## 许可证
 
 [MIT](LICENSE) © 2026 CHMOSE023
