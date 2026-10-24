@@ -426,14 +426,25 @@ namespace MiniCAD
         Editor& editor = dm.GetEditor();
         auto hasSelection = [&editor, doc] { return doc() && !editor.GetSelection().empty(); };
 
+        // 两行：上面图层，下面线型 + 线宽（放在功能区“图层”组里，高度与功能区按钮相同）
         auto bar = std::make_unique<Node>();
         LayoutStyle s;
-        s.direction  = FlexDirection::Row;
-        s.alignItems = Align::Center;
-        s.gap        = 4.0f;
+        s.direction  = FlexDirection::Column;
+        s.alignItems = Align::Stretch;
+        s.gap        = 6.0f;
         s.padding    = Edges::Symmetric(4.0f, 0.0f);
         s.shrink     = 0.0f;
         bar->SetLayoutStyle(s);
+        Node* rows[2];
+        for (Node*& row : rows)
+        {
+            row = bar->AddChild<Node>();
+            LayoutStyle rs;
+            rs.direction  = FlexDirection::Row;
+            rs.alignItems = Align::Center;
+            rs.gap        = 4.0f;
+            row->SetLayoutStyle(rs);
+        }
 
         auto styleCombo = [](ComboBox* c, float width, const char* tip)
         {
@@ -446,9 +457,9 @@ namespace MiniCAD
         };
 
         // ── 图层 ─────────────────────────────────────────────────
-        auto* layer = bar->AddChild<ComboBox>();
+        auto* layer = rows[0]->AddChild<ComboBox>();
         m_layerBarLayer = layer;
-        styleCombo(layer, 190.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
+        styleCombo(layer, 244.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
         layer->SetDropDownWidth(230.0f);
         layer->SetItemPainter([this, layer, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -497,8 +508,8 @@ namespace MiniCAD
             });
 
         // ── 线型 ─────────────────────────────────────────────────
-        auto* linetype = bar->AddChild<ComboBox>();
-        styleCombo(linetype, 160.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
+        auto* linetype = rows[1]->AddChild<ComboBox>();
+        styleCombo(linetype, 130.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
         linetype->SetDropDownWidth(220.0f);
         linetype->SetItemPainter([linetype, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -540,8 +551,8 @@ namespace MiniCAD
         std::vector<std::string> lwLabels;
         for (const auto& it : kLineweightItems)
             lwLabels.emplace_back(it.label);
-        auto* lineweight = bar->AddChild<ComboBox>(lwLabels);
-        styleCombo(lineweight, 140.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
+        auto* lineweight = rows[1]->AddChild<ComboBox>(lwLabels);
+        styleCombo(lineweight, 110.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
         lineweight->SetItemPainter([lineweight](DrawList& dl, const Rect& box, int index, bool)
         {
             if (index >= 0 && index < static_cast<int>(std::size(kLineweightItems)))

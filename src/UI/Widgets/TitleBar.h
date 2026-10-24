@@ -23,7 +23,7 @@ namespace MiniGUI
         static constexpr const char* kMaximizeCommand = "window.maximize";
         static constexpr const char* kCloseCommand    = "window.close";
 
-        static constexpr float kHeight       = 32.0f;
+        static constexpr float kHeight       = 34.0f;
         static constexpr float kButtonWidth  = 46.0f;
 
         explicit TitleBar(CommandRegistry& commands);
@@ -38,6 +38,8 @@ namespace MiniGUI
 
         // 内容区：一行，紧接在图标右边，宽度由内容决定（菜单栏等放在这里）
         Node* GetContent() const { return m_content; }
+        // 内容区占满按钮左边的全部宽度（里面有要拉伸的子项，例如文档标签条）；此时不显示标题文字
+        void  SetContentFill(bool fill);
 
         bool IsCaptionAt(Vec2 windowPos) const;
         Rect GetTitleRect() const;                      // 标题文字实际所在的区域（窗口坐标），测试用
@@ -58,6 +60,7 @@ namespace MiniGUI
         TextureId      m_icon    = InvalidTextureId;
         bool           m_active  = true;
         Node*          m_content = nullptr;
+        Node*          m_spacer  = nullptr;
         CaptionButton* m_buttons[3] = {};
     };
 }

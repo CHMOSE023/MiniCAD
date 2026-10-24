@@ -21,6 +21,8 @@ add_library(MiniCADApp STATIC
     src/GUI/MainFrame.cpp
     src/GUI/MainCommands.cpp
     src/GUI/MainPanels.cpp
+    src/GUI/StartPage.cpp
+    src/GUI/ViewNavBar.cpp
     src/GUI/LayerPanels.cpp
     src/GUI/CommandLine.cpp
     src/GUI/DynamicInput.cpp

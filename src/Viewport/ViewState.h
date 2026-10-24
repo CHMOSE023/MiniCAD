@@ -103,6 +103,7 @@ namespace MiniCAD
         bool ShowGizmo      = true;    //  
         bool ShowAxis       = true;    // 坐标轴
         bool ShowCurrorBox  = true;    // 鼠标中间方框
+        bool ShowCrosshair  = true;    // 十字光标（平移工具改用系统的手形光标）
 
         // ===== 最近点 ===== 
         SnapDraw Snap    = {};

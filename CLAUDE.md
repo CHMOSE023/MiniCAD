@@ -84,7 +84,8 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 `apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`：图形对象、重绘调度、窗口标题与按钮、文件选择（可能是异步的）、另存为路径与 DWG/DXF 版本、`OnDocumentSaved`（网页版据此下载）、资源目录与用户数据目录、三维实体内核（`GetSolidKernel`，桌面版与网页版都是 SMLib，网页版可 `-DMINICAD_WITH_SOLID=OFF` 去掉）、后台任务（`RunInBackground`：桌面版用线程读图纸、求值节点图，网页版先画一帧再同步执行；`HasBackgroundThread` 区分两者）与 `Post`（当前消息与绘制处理完后再执行）。打开图纸经 `MainFrame::OpenDrawings` 在后台读取（`DocumentManager::Load`，可在其他线程调用），读完后在界面线程 `DocumentManager::Add`，状态栏显示进度。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
-- `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）
+- `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。界面布局参照 SolidCraft（`docs/MiniGUI/UI-REFRESH-PLAN.md`）：绘图区（面板 `canvas`）铺满标题栏以下，功能区、停靠面板（浮动停靠区 `"floating": true`，文档区 `documents` 是透明的“洞”，里面放视图方块、竖排导航条和底部居中的命令行）、状态栏（左侧模型 / 布局标签）都是浮在上面的圆角卡片；“全部显示”按没被挡住的区域留边（`Camera::SetFitInsets`，`MainFrame::UpdateFitInsets`）。标题栏：MiniCAD、首页、“文件”菜单、保存 / 撤销 / 重做、文档标签（面板 `doctabs`）、右侧 AI / 设置 / 帮助 / 版本（面板 `appbar`）；其余命令在功能区（`MiniGUI::Ribbon`，描述文件顶层 `ribbons`；选项卡行右端是收起按钮和命令搜索框，Ctrl+K）；功能区图标由 `tools/make_icons.py` 生成
+- `GUI/StartPage.cpp`（起始页，面板 `start`，显示时隐藏标题栏以下的其余界面；首页键 `view.start`）、`GUI/ViewNavBar.cpp`（视图方块下面竖排的导航条、标题栏右侧的 AI / 设置 / 帮助 / 版本）
 - `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏、视图方块
 - `Host/Win32Window`（桌面）：无边框窗口（`MiniGUI::Win32Frame`）、D3D11 设备与交换链、消息循环、监视界面描述文件；另存为用系统对话框，"保存类型"里区分 2018 与 2013/2014
 - `Host/WebApp`（网页）：`WebHost` 负责画布、WebGL2、DPI（`ResizeObserver` + devicePixelRatio 监听）、`requestAnimationFrame` 按需刷新；打开文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本

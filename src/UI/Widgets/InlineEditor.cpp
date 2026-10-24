@@ -17,7 +17,7 @@ namespace MiniGUI
         auto box = std::make_unique<TextBox>(text);
         TextBoxStyle style;
         style.padding     = Edges::Symmetric(5.0f, 2.0f);
-        style.rounding    = 2.0f;
+        style.rounding    = Theme::RadiusXs;
         style.border      = Theme::Accent;
         style.borderHover = Theme::Accent;
         box->SetStyle(style);

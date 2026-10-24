@@ -72,7 +72,7 @@ namespace MiniGUI
         m_list->SetItems(m_items);
         {
             LayoutStyle s;
-            s.width  = std::max(anchor.Width() - 8.0f, 200.0f);
+            s.width  = std::max(anchor.Width() - 8.0f, m_minWidth);
             s.height = m_list->GetRowHeight() * rows;
             m_list->SetLayoutStyle(s);
         }
@@ -97,6 +97,14 @@ namespace MiniGUI
     {
         if (index < 0 || index >= static_cast<int>(m_items.size()))
             return;
+        if (m_onAcceptedItem)
+        {
+            const ListItem item = m_items[static_cast<size_t>(index)];
+            Close();
+            auto cb = m_onAcceptedItem;
+            cb(item);
+            return;
+        }
         const std::string text = m_items[static_cast<size_t>(index)].text;
         Close();
 

@@ -205,7 +205,23 @@ namespace MiniGUI
         Vec2 content;
         if (Node* c = GetTabContent(m_selected))
             content = c->Measure({ available.x, available.y - kStripHeight });
+        if (m_fitToTabs)
+            content.x = std::max(content.x, IdealStripWidth());
         return { content.x, content.y + kStripHeight };
+    }
+
+    float TabView::IdealStripWidth() const
+    {
+        UIContext* ctx = GetContext();
+        float w = 8.0f + (m_showNewButton ? kButtonW + 4.0f : 0.0f);
+        for (const Tab& t : m_tabs)
+        {
+            float tw = kTabPad * 2.0f + 4.0f + (t.closable ? kCloseW : 0.0f);
+            if (ctx)
+                tw += ctx->GetTextSystem().Measure(t.title, TabText(Theme::Text)).x;
+            w += std::clamp(tw, std::min(kTabMin, tw), kTabMax);
+        }
+        return std::ceil(w);
     }
 
     void TabView::LayoutTabs()
@@ -334,8 +350,11 @@ namespace MiniGUI
     void TabView::OnPaint(DrawList& dl, const Rect& r)
     {
         const Rect strip{ r.min.x, r.min.y, r.max.x, r.min.y + kStripHeight };
-        dl.AddRectFilled(strip, Theme::Panel);
-        dl.AddRectFilled(Rect{ strip.min.x, strip.max.y - 1.0f, strip.max.x, strip.max.y }, Theme::BorderSubtle);
+        if (!m_barStyle)
+        {
+            dl.AddRectFilled(strip, Theme::Panel);
+            dl.AddRectFilled(Rect{ strip.min.x, strip.max.y - 1.0f, strip.max.x, strip.max.y }, Theme::BorderSubtle);
+        }
 
         UIContext* ctx = GetContext();
         if (!ctx)
@@ -349,22 +368,30 @@ namespace MiniGUI
             const Tab& t   = m_tabs[static_cast<size_t>(i)];
             const bool sel = i == m_selected;
             const Rect lr  = TabRect(t);
-            const Rect tab{ lr.min + r.min, Vec2{ lr.max.x, lr.max.y - (sel ? 0.0f : 1.0f) } + r.min };
+            const Rect tab = m_barStyle ? Rect{ lr.min + r.min, Vec2{ lr.max.x, lr.max.y - 4.0f } + r.min }
+                                        : Rect{ lr.min + r.min, Vec2{ lr.max.x, lr.max.y - (sel ? 0.0f : 1.0f) } + r.min };
 
-            if (sel)
+            if (m_barStyle)
             {
-                dl.AddRectFilled(tab, Theme::Background, 5.0f);
+                if (sel)
+                    dl.AddRectFilled(tab, Theme::Control, Theme::RadiusMd);
+                else if (i == m_hover)
+                    dl.AddRectFilled(tab, ColorRef(ThemeColor::Outline, 18), Theme::RadiusMd);
+            }
+            else if (sel)
+            {
+                dl.AddRectFilled(tab, Theme::Background, Theme::RadiusMd);
                 dl.AddRectFilled(Rect{ tab.min.x, tab.max.y - 5.0f, tab.max.x, tab.max.y }, Theme::Background);
                 dl.AddRectFilled(Rect{ tab.min.x + 4.0f, tab.min.y, tab.max.x - 4.0f, tab.min.y + 2.0f }, Theme::Accent, 1.0f);
             }
             else if (i == m_hover)
             {
-                dl.AddRectFilled(tab, Theme::RowHover, 5.0f);
+                dl.AddRectFilled(tab, Theme::RowHover, Theme::RadiusMd);
             }
             if (m_dragging && i == m_pressTab)
-                dl.AddRect(tab, Theme::Accent, 5.0f, 1.0f);
+                dl.AddRect(tab, Theme::Accent, Theme::RadiusMd, 1.0f);
             if (focusRing && sel)
-                dl.AddRect(tab.Deflated(1.0f), Theme::Accent, 5.0f, 1.0f);
+                dl.AddRect(tab.Deflated(1.0f), Theme::Accent, Theme::RadiusMd, 1.0f);
 
             const float textRight = t.closable ? tab.max.x - kCloseW - 6.0f : tab.max.x - kTabPad;
             ctx->GetTextSystem().Draw(dl, Rect{ tab.min.x + kTabPad, tab.min.y, textRight, tab.max.y }, t.title,
@@ -377,7 +404,7 @@ namespace MiniGUI
                 const bool hoverTab   = i == m_hover;
                 const bool hoverClose = hoverTab && m_hoverHit == Hit::Close;
                 if (hoverClose)
-                    dl.AddRectFilled(cr, Theme::ControlHover, 4.0f);
+                    dl.AddRectFilled(cr, Theme::ControlHover, Theme::RadiusSm);
                 // 未保存：平时显示圆点，悬停到标签上时显示 ×（与 VS Code 一致）
                 if (t.modified && !hoverTab)
                     dl.AddCircleFilled(cr.Center(), 4.0f, sel ? Theme::Text : Theme::TextDim);
@@ -391,7 +418,7 @@ namespace MiniGUI
         {
             const Rect b{ lr.min + r.min, lr.max + r.min };
             if (m_hoverHit == hit)
-                dl.AddRectFilled(b, Theme::ControlHover, 4.0f);
+                dl.AddRectFilled(b, Theme::ControlHover, Theme::RadiusSm);
             const Vec2 c = b.Center();
             if (hit == Hit::NewButton)
             {

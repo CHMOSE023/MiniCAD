@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # 版本号的唯一来源：发布时只改这里（MiniCADVersion.h 由它生成，见 apps/Common：exe 版本信息、关于对话框、状态栏）
-set(MINICAD_VERSION 0.2.4)
+set(MINICAD_VERSION 0.3.0)
 
 project(MiniCAD VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 

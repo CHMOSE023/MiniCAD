@@ -19,6 +19,7 @@ namespace MiniCAD
         virtual void     OnFocusLost()     {}                 // 中键平移开始
         virtual void     OnFocusRestored() {}                 // 中键平移结束
         virtual bool     HasAnchor() const { return false; }  // 是否有"锚点"
+        virtual bool     HidesCrosshair() const { return false; } // 不画十字光标，宿主改用系统光标（平移时的手形）
 
         virtual Math::Point3 GetAnchor() const { return {}; }     // 获取锚点（仅在 HasAnchor() == true 时有效）
 

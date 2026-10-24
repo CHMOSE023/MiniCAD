@@ -4,182 +4,201 @@
 // - menus / toolbars 的项是命令 ID，"-" 或 "|" 为分隔线
 //   菜单项也可写成 { "title": "…", "items": [ … ] } 子菜单，或 { "title": "…", "dynamic": "recent" }
 //   由程序在打开菜单时生成内容（"recent" = 最近打开；列表为空时该项置灰）
-// - layout：titlebar / row / column / menubar / toolbar / panel / splitter / separator / spacer / label / dock
+// - layout：titlebar / row / column / menubar / toolbar / ribbon / panel / splitter / separator / spacer / label / dock
+// - ribbons：功能区定义（布局里 { "type": "ribbon", "id": … } 引用）；"search"：选项卡行右端的命令搜索框（字符串是占位提示，false 不显示）
 //   titlebar：无边框窗口的标题栏，children 放在图标右边（菜单栏），右侧按钮执行 window.minimize / window.maximize / window.close
-//   宿主提供的面板：documents（文档标签 + 视口）、commandline（命令行）、properties（特性）、layers（图层）、
-//   layerbar（图层 / 线型 / 线宽下拉框）、statusbar（状态栏）、nodes（节点编辑器，默认不在布局里，"视图 > 面板 > 节点编辑器"打开）
+//   宿主提供的面板：canvas（绘图区）、documents（停靠区里透明的文档区：视图方块、导航条、浮动命令行）、doctabs（文档标签）、
+//   appbar（标题栏右侧：AI、设置、帮助、版本）、properties（特性）、layers（图层）、layerbar（图层 / 线型 / 线宽下拉框）、
+//   statusbar（状态栏，左侧是模型 / 布局标签）、start（起始页）、nodes（节点编辑器，默认不在布局里，"视图 > 面板 > 节点编辑器"打开）
+//   通用属性还有 position（absolute）+ left / top / right / bottom，passThrough（空白处点击穿透到下面）
 // - dock：停靠区，root 为布局树（split: row / column，tabs: 面板列表，size: 尺寸）。
 //   用户拖动后的布局保存在 %LOCALAPPDATA%\MiniCAD\layout.json，启动时优先使用；"视图 > 面板 > 重置面板布局"恢复这里的默认布局
 {
   "commands": {
     "draw.line": { "tooltip": "指定两点绘制直线段，Esc 结束" },
     "draw.circle": { "tooltip": "指定圆心和半径" },
-    "solid.box": { "tooltip": "三维长方体：指定底面两个角点和高度" },
-    "solid.cylinder": { "tooltip": "三维圆柱体：指定底面中心、半径和高度" },
-    "solid.sphere": { "tooltip": "三维球体：指定中心和半径" },
-    "solid.extrude": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定高度，拉伸为三维实体" },
-    "view.top": { "tooltip": "俯视（平面视图）：二维绘图的默认视图；三维视图里按住 Shift 拖动中键环绕" },
-    "view.swiso": { "tooltip": "西南等轴测：从左前上方看；按住 Shift 拖动中键可继续环绕" },
-    "view.style.shaded": { "tooltip": "画出三维实体的面，三维视图里被挡住的边不显示" },
-    "view.style.wireframe": { "tooltip": "只画边（线框）" },
-    "view.viewcube": { "tooltip": "绘图区左上角的视图方块：点面、棱、角切换视图，拖动环绕" },
-    "solid.revolve": { "tooltip": "先选择闭合的圆、多段线或矩形，再指定旋转轴和角度，旋转为三维实体" },
-    "solid.sweep": { "tooltip": "先选择闭合的圆、多段线或矩形，再选择路径（直线、圆弧、圆、多段线），沿路径扫掠为三维实体" },
-    "solid.filletedge": { "tooltip": "点选三维实体的边倒圆角，键入数值改半径，回车完成（Tab 切换重叠的边）" },
-    "solid.chamferedge": { "tooltip": "点选三维实体的边倒角，键入数值改距离，回车完成（Tab 切换重叠的边）" },
-    "view.panel.nodes": { "tooltip": "节点式参数化建模：把几何运算连成节点图，改参数实时更新，点“烘焙”加入图纸（命令行 NODES）" },
-    "solid.section": { "tooltip": "先选择三维实体：键入高度得到水平截面，或点取两点得到铅垂剖面图" },
-    "solid.flatshot": { "tooltip": "先选择三维实体，按俯视、前视、右视等方向投影成二维图（含隐藏线）" },
-    "region.union": { "tooltip": "合并选中的面域或三维实体" },
-    "region.subtract": { "tooltip": "从最先创建的面域或三维实体中减去其余选中的对象" },
-    "region.intersect": { "tooltip": "求选中的面域或三维实体的公共部分" }
+    "solid.box": { "icon": "Box.png", "tooltip": "三维长方体：指定底面两个角点和高度" },
+    "solid.cylinder": { "icon": "Cylinder.png", "tooltip": "三维圆柱体：指定底面中心、半径和高度" },
+    "solid.sphere": { "icon": "Sphere.png", "tooltip": "三维球体：指定中心和半径" },
+    "solid.extrude": { "icon": "Extrude.png", "tooltip": "先选择闭合的圆、多段线或矩形，再指定高度，拉伸为三维实体" },
+    "view.top": { "icon": "ViewTop.png", "tooltip": "俯视（平面视图）：二维绘图的默认视图；三维视图里按住 Shift 拖动中键环绕" },
+    "view.swiso": { "icon": "ViewSWIso.png", "tooltip": "西南等轴测：从左前上方看；按住 Shift 拖动中键可继续环绕" },
+    "view.style.shaded": { "icon": "Shaded.png", "tooltip": "画出三维实体的面，三维视图里被挡住的边不显示" },
+    "view.style.wireframe": { "icon": "Wireframe.png", "tooltip": "只画边（线框）" },
+    "view.viewcube": { "icon": "ViewCube.png", "tooltip": "绘图区左上角的视图方块：点面、棱、角切换视图，拖动环绕" },
+    "solid.revolve": { "icon": "Revolve.png", "tooltip": "先选择闭合的圆、多段线或矩形，再指定旋转轴和角度，旋转为三维实体" },
+    "solid.sweep": { "icon": "Sweep.png", "tooltip": "先选择闭合的圆、多段线或矩形，再选择路径（直线、圆弧、圆、多段线），沿路径扫掠为三维实体" },
+    "solid.filletedge": { "icon": "FilletEdge.png", "tooltip": "点选三维实体的边倒圆角，键入数值改半径，回车完成（Tab 切换重叠的边）" },
+    "solid.chamferedge": { "icon": "ChamferEdge.png", "tooltip": "点选三维实体的边倒角，键入数值改距离，回车完成（Tab 切换重叠的边）" },
+    "view.panel.nodes": { "icon": "Nodes.png", "tooltip": "节点式参数化建模：把几何运算连成节点图，改参数实时更新，点“烘焙”加入图纸（命令行 NODES）" },
+    "solid.section": { "icon": "Section.png", "tooltip": "先选择三维实体：键入高度得到水平截面，或点取两点得到铅垂剖面图" },
+    "solid.flatshot": { "icon": "Flatshot.png", "tooltip": "先选择三维实体，按俯视、前视、右视等方向投影成二维图（含隐藏线）" },
+    "region.union": { "icon": "Union.png", "tooltip": "合并选中的面域或三维实体" },
+    "region.subtract": { "icon": "Subtract.png", "tooltip": "从最先创建的面域或三维实体中减去其余选中的对象" },
+    "region.intersect": { "icon": "Intersect.png", "tooltip": "求选中的面域或三维实体的公共部分" },
+    "draw.point": { "icon": "Point.png" },
+    "draw.ellipseArc": { "icon": "EllipseArc.png" },
+    "draw.solid": { "icon": "Solid2D.png" },
+    "draw.image": { "icon": "Image.png" },
+    "draw.xline": { "icon": "XLine.png" },
+    "draw.ray": { "icon": "Ray.png" },
+    "draw.table": { "icon": "Table.png" },
+    "draw.region": { "icon": "Region.png" },
+    "inquiry.area": { "icon": "Area.png" },
+    "draw.wipeout": { "icon": "Wipeout.png" },
+    "draw.hatch": { "icon": "Hatch.png" },
+    "format.textStyle": { "icon": "TextStyle.png" },
+    "format.mlineStyle": { "icon": "MLineStyle.png" },
+    "format.pointStyle": { "icon": "PointStyle.png" },
+    "format.lineTypeScale": { "icon": "LineTypeScale.png" },
+    "dim.linear": { "icon": "DimLinear.png" },
+    "dim.angular": { "icon": "DimAngular.png" },
+    "dim.radius": { "icon": "DimRadius.png" },
+    "dim.diameter": { "icon": "DimDiameter.png" },
+    "dim.jogged": { "icon": "DimJogged.png" },
+    "dim.arc": { "icon": "DimArc.png" },
+    "dim.ordinate": { "icon": "DimOrdinate.png" },
+    "dim.leader": { "icon": "Leader.png" },
+    "dim.mleader": { "icon": "MLeader.png" },
+    "block.define": { "icon": "BlockDefine.png" },
+    "block.insert": { "icon": "BlockInsert.png" },
+    "modify.mledit": { "icon": "MLineEdit.png" },
+    "modify.offset": { "icon": "Offset.png" },
+    "modify.scale": { "icon": "Scale.png" },
+    "modify.stretch": { "icon": "Stretch.png" },
+    "modify.trim": { "icon": "Trim.png" },
+    "modify.extend": { "icon": "Extend.png" },
+    "modify.break": { "icon": "Break.png" },
+    "modify.fillet": { "icon": "Fillet.png" },
+    "modify.chamfer": { "icon": "Chamfer.png" },
+    "modify.explode": { "icon": "Explode.png" },
+    "modify.array": { "icon": "Array.png" },
+    "edit.delete": { "icon": "Delete.png" },
+    "edit.cut": { "icon": "Cut.png" },
+    "edit.copy": { "icon": "ClipCopy.png" },
+    "edit.copyBase": { "icon": "CopyBase.png" },
+    "edit.paste": { "icon": "Paste.png" },
+    "edit.selectAll": { "icon": "SelectAll.png" },
+    "layer.new": { "icon": "LayerNew.png" },
+    "view.panel.layers": { "icon": "LayersPanel.png" },
+    "layout.new": { "icon": "LayoutNew.png" },
+    "layout.delete": { "icon": "LayoutDelete.png" },
+    "view.front": { "icon": "ViewFront.png" },
+    "view.right": { "icon": "ViewRight.png" },
+    "view.seiso": { "icon": "ViewSEIso.png" },
+    "view.grid": { "icon": "Grid.png" },
+    "view.axis": { "icon": "Axis.png" },
+    "view.gizmo": { "icon": "Gizmo.png" },
+    "view.thinLines": { "icon": "ThinLines.png" },
+    "view.zoomExtents": { "icon": "ZoomExtents.png" },
+    "view.panel.properties": { "icon": "PropertiesPanel.png" },
+    "view.panel.commandline": { "icon": "CommandLine.png" },
+    "view.resetLayout": { "icon": "ResetLayout.png" },
+    "nodes.bake": { "icon": "Bake.png" },
+    "aux.snap": { "icon": "Snap.png" },
+    "aux.ortho": { "icon": "Ortho.png" },
+    "aux.polar": { "icon": "Polar.png" },
+    "aux.hover": { "icon": "Hover.png" },
+    "ui.theme": { "icon": "Theme.png" },
+    "ui.reload": { "icon": "Reload.png" },
+    "help.about": { "icon": "Help.png" }
   },
 
+  // 标题栏只放“文件”菜单（SolidCraft 式），其余命令在功能区；Alt+F 打开。"icon"：标题只显示图标，文字作为提示
   "menus": [
     {
       "title": "文件(&F)",
-      "items": [ "file.new", "file.open", "-", { "title": "最近打开(&R)", "dynamic": "recent" }, "-", "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "-", "app.exit" ]
-    },
-    {
-      "title": "编辑(&E)",
-      "items": [ "edit.undo", "edit.redo", "-", "edit.cut", "edit.copy", "edit.copyBase", "edit.paste", "edit.delete", "-", "edit.selectAll" ]
-    },
-    {
-      "title": "视图(&V)",
-      "items": [
-        "view.zoomExtents",
-        "-",
-        "view.grid",
-        "view.axis",
-        "view.gizmo",
-        "view.viewcube",
-        "view.thinLines",
-        "-",
-        {
-          "title": "三维视图",
-          "items": [ "view.top", "view.bottom", "view.left", "view.right", "view.front", "view.back", "-",
-                     "view.swiso", "view.seiso", "view.neiso", "view.nwiso" ]
-        },
-        {
-          "title": "视觉样式",
-          "items": [ "view.style.wireframe", "view.style.shaded" ]
-        },
-        {
-          "title": "布局",
-          "items": [ "layout.new", "layout.delete" ]
-        },
-        "-",
-        {
-          "title": "绘图辅助",
-          "items": [ "aux.snap", "aux.ortho", "aux.polar", "aux.hover" ]
-        },
-        {
-          "title": "面板",
-          "items": [ "view.panel.properties", "view.panel.layers", "view.panel.commandline", "view.panel.nodes", "-", "view.resetLayout" ]
-        },
-        "-",
-        "ui.theme",
-        "ui.reload"
-      ]
-    },
-    {
-      "title": "格式(&O)",
-      "items": [ "layer.new", "-", "format.textStyle", "format.mlineStyle", "format.pointStyle", "format.lineTypeScale" ]
-    },
-    {
-      "title": "绘图(&D)",
-      "items": [
-        "draw.line",
-        "draw.point",
-        "draw.rect",
-        "draw.circle",
-        "draw.arc",
-        "draw.ellipse",
-        "draw.ellipseArc",
-        "-",
-        "draw.pline",
-        "draw.mline",
-        "draw.spline",
-        "-",
-        "draw.xline",
-        "draw.ray",
-        "-",
-        "draw.hatch",
-        "draw.solid",
-        "draw.wipeout",
-        "draw.image",
-        "-",
-        {
-          "title": "文字",
-          "items": [ "draw.text", "draw.mtext" ]
-        },
-        "draw.table",
-        "draw.region",
-        {
-          "title": "块",
-          "items": [ "block.define", "block.insert" ]
-        }
-      ]
-    },
-    {
-      "title": "查询(&Q)",
-      "items": [ "inquiry.area" ]
-    },
-    {
-      "title": "标注(&N)",
-      "items": [ "dim.linear", "dim.angular", "-", "dim.radius", "dim.diameter", "dim.jogged", "dim.arc", "-", "dim.ordinate", "-", "dim.leader", "dim.mleader" ]
-    },
-    {
-      "title": "修改(&M)",
-      "items": [
-        "modify.move",
-        "modify.copy",
-        "modify.mirror",
-        "modify.rotate",
-        "modify.scale",
-        "modify.stretch",
-        "modify.offset",
-        "modify.fillet",
-        "modify.chamfer",
-        "modify.explode",
-        "-",
-        "modify.trim",
-        "modify.extend",
-        "modify.break",
-        "-",
-        "modify.mledit",
-        "-",
-        "modify.array",
-        "-",
-        {
-          "title": "面域",
-          "items": [ "region.union", "region.subtract", "region.intersect" ]
-        }
-      ]
-    },
-    {
-      "title": "建模(&L)",
-      "items": [ "solid.box", "solid.cylinder", "solid.sphere", "-", "solid.extrude", "solid.revolve", "solid.sweep", "-", "region.union", "region.subtract", "region.intersect", "-", "solid.filletedge", "solid.chamferedge", "-", "solid.section", "solid.flatshot", "-", "view.panel.nodes", "nodes.bake" ]
-    },
-    {
-      "title": "窗口(&W)",
-      "items": [ "doc.next", "doc.prev", "-", "file.close" ]
-    },
-    {
-      "title": "帮助(&H)",
-      "items": [ "help.about" ]
+      "icon": "FileMenu.png",
+      "items": [ "view.start", "-", "file.new", "file.open", { "title": "最近打开(&R)", "dynamic": "recent" }, "-",
+                 "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "doc.next", "doc.prev", "-",
+                 "ui.theme", "ui.reload", "help.about", "-", "app.exit" ]
     }
   ],
 
-  "toolbars": {
-    "standard": [ "file.new", "file.open", "file.save", "|", "edit.undo", "edit.redo"],
-    "draw": {
-      "items": [ "draw.line", "draw.circle", "draw.rect", "draw.arc", "draw.ellipse", "draw.pline", "draw.mline", "draw.spline", "draw.text", "draw.mtext" ],
-      "iconSize": 20
-    },
-    "modify": [ "modify.move", "modify.copy", "modify.mirror", "modify.rotate" ]
+  // 功能区：选项卡 → 组 → 命令（或 { "panel": 宿主面板名 }）；点组名列出全组命令，宽度不够时整组折叠
+  "ribbons": {
+    "main": {
+      "search": "搜索命令  Ctrl+K",
+      "tabs": [
+        {
+          "title": "常用",
+          "panels": [
+            { "title": "绘图", "items": [ "draw.line", "draw.pline", "draw.circle", "draw.arc", "draw.rect", "draw.ellipse", "draw.spline", "draw.hatch" ] },
+            { "title": "修改", "items": [ "modify.move", "modify.copy", "modify.rotate", "modify.mirror", "modify.scale", "modify.offset", "modify.trim", "modify.fillet", "modify.array", "edit.delete" ] },
+            { "title": "注释", "items": [ "draw.text", "draw.mtext", "dim.linear", "dim.mleader" ] },
+            { "title": "图层", "items": [ { "panel": "layerbar" } ] },
+            { "title": "剪贴板", "items": [ "edit.paste", "edit.copy", "edit.cut" ] }
+          ]
+        },
+        {
+          "title": "绘图",
+          "panels": [
+            { "title": "直线", "items": [ "draw.line", "draw.xline", "draw.ray", "draw.pline", "draw.mline", "draw.spline" ] },
+            { "title": "曲线", "items": [ "draw.circle", "draw.arc", "draw.ellipse", "draw.ellipseArc" ] },
+            { "title": "图形", "items": [ "draw.rect", "draw.point", "draw.region", "draw.solid", "draw.wipeout" ] },
+            { "title": "填充", "items": [ "draw.hatch" ] },
+            { "title": "插入", "items": [ "block.define", "block.insert", "draw.image", "draw.table" ] }
+          ]
+        },
+        {
+          "title": "修改",
+          "panels": [
+            { "title": "变换", "items": [ "modify.move", "modify.copy", "modify.rotate", "modify.mirror", "modify.scale", "modify.stretch" ] },
+            { "title": "编辑", "items": [ "modify.offset", "modify.trim", "modify.extend", "modify.break", "modify.fillet", "modify.chamfer", "modify.explode" ] },
+            { "title": "阵列", "items": [ "modify.array" ] },
+            { "title": "多线", "items": [ "modify.mledit" ] },
+            { "title": "选择", "items": [ "edit.selectAll", "edit.delete", "edit.copyBase" ] }
+          ]
+        },
+        {
+          "title": "注释",
+          "panels": [
+            { "title": "文字", "items": [ "draw.text", "draw.mtext", "format.textStyle" ] },
+            { "title": "标注", "items": [ "dim.linear", "dim.angular", "dim.radius", "dim.diameter", "dim.jogged", "dim.arc", "dim.ordinate" ] },
+            { "title": "引线", "items": [ "dim.leader", "dim.mleader" ] },
+            { "title": "查询", "items": [ "inquiry.area" ] }
+          ]
+        },
+        {
+          "title": "三维",
+          "panels": [
+            { "title": "基本体", "items": [ "solid.box", "solid.cylinder", "solid.sphere" ] },
+            { "title": "创建", "items": [ "solid.extrude", "solid.revolve", "solid.sweep" ] },
+            { "title": "布尔", "items": [ "region.union", "region.subtract", "region.intersect" ] },
+            { "title": "修改", "items": [ "solid.filletedge", "solid.chamferedge" ] },
+            { "title": "出图", "items": [ "solid.section", "solid.flatshot" ] },
+            { "title": "节点", "items": [ "view.panel.nodes", "nodes.bake" ] }
+          ]
+        },
+        {
+          "title": "视图",
+          "panels": [
+            { "title": "导航", "items": [ "view.zoomExtents" ] },
+            { "title": "视图", "items": [ "view.top", "view.front", "view.right", "view.swiso", "view.seiso" ] },
+            { "title": "视觉样式", "items": [ "view.style.wireframe", "view.style.shaded" ] },
+            { "title": "显示", "items": [ "view.grid", "view.axis", "view.gizmo", "view.viewcube", "view.thinLines" ] },
+            { "title": "布局", "items": [ "layout.new", "layout.delete" ] },
+            { "title": "面板", "items": [ "view.panel.properties", "view.panel.layers", "view.panel.commandline", "view.resetLayout" ] }
+          ]
+        },
+        {
+          "title": "管理",
+          "panels": [
+            { "title": "格式", "items": [ "layer.new", "format.textStyle", "format.mlineStyle", "format.pointStyle", "format.lineTypeScale" ] },
+            { "title": "绘图辅助", "items": [ "aux.snap", "aux.ortho", "aux.polar", "aux.hover" ] },
+            { "title": "界面", "items": [ "ui.theme", "ui.reload" ] }
+          ]
+        }
+      ]
+    }
   },
 
+  "toolbars": {
+    "quick": [ "file.save", "edit.undo", "edit.redo" ],
+    "home": [ "view.start" ]
+  },
+
+  // 照 SolidCraft：标题栏下面整个是绘图区（canvas），功能区、停靠面板、状态栏都是浮在它上面的圆角卡片
   "layout": {
     "type": "column",
     "children": [
@@ -187,92 +206,68 @@
         "type": "titlebar",
         "icon": "app.png",
         "shrink": 0,
-        "children": [ { "type": "menubar" } ]
-      },
-      {
-        "type": "row",
-        "background": "Panel",
-        "shrink": 0,
-        "align": "center",
         "children": [
-          {
-            "type": "toolbar",
-            "id": "standard"
-          },
-          {
-            "type": "separator",
-            "height": 20
-          },
-          {
-            "type": "toolbar",
-            "id": "draw"
-          },
-          {
-            "type": "separator",
-            "height": 20
-          },
-          {
-            "type": "toolbar",
-            "id": "modify",
-            "shrink": 1
-          },
-          {
-            "type": "separator",
-            "height": 20
-          },
-          {
-            "type": "panel",
-            "name": "layerbar"
-          },
-          { "type": "spacer" }
+          // 标题、首页键、“文件”菜单不压缩：窗口变窄时只收起后面的快捷按钮和文档标签
+          { "type": "label", "text": "MiniCAD", "size": 14, "bold": true, "padding": [ 0, 0, 4, 0 ], "shrink": 0 },
+          { "type": "toolbar", "id": "home", "iconSize": 18, "padding": [ 2, 3, 0, 3 ], "shrink": 0 },
+          // "mnemonicSuffix": false：只显示“文件”，Alt+F 仍然打开它；"compact"：标题左右留白小、两端不留边
+          { "type": "menubar", "mnemonicSuffix": false, "compact": true, "shrink": 0 },
+          { "type": "toolbar", "id": "quick", "iconSize": 18, "padding": [ 0, 3, 4, 3 ] },
+          { "type": "separator", "height": 16 },
+          // 文档标签；标签之间、之后的空白可拖动窗口
+          { "type": "panel", "name": "doctabs", "grow": 1 },
+          // AI 助手、设置、帮助、版本号（靠右；没有文档时文档标签隐藏，由 spacer 撑开）
+          { "type": "spacer" },
+          { "type": "panel", "name": "appbar" }
         ]
       },
-      { "type": "separator", "shrink": 0 },
-      // 停靠区：文档区（没有标题栏）下面是命令行，右侧上下排列特性和图层；拖动面板标签可以停靠到其他位置或合并为标签
+      // 起始页（没有文档时、或点标题栏首页键时显示；显示时标题栏以下的其余部分隐藏）
+      { "type": "panel", "name": "start", "grow": 1, "visible": false },
       {
-        "type": "dock",
-        "id": "main",
-        "panels": [ "nodes" ],
+        "type": "column",
         "grow": 1,
-        "root": {
-          "split": "row",
-          "children": [
-            {
-              "split": "column",
-              "children": [
-                {
-                  "tabs": [
+        "children": [
+          // 绘图区铺满
+          { "type": "panel", "name": "canvas", "position": "absolute", "left": 0, "top": 0, "right": 0, "bottom": 0 },
+          // 浮在绘图区上的一层：空白处点击穿透到绘图区
+          {
+            "type": "column",
+            "position": "absolute", "left": 0, "top": 0, "right": 0, "bottom": 0,
+            "padding": 6,
+            "gap": 6,
+            "passThrough": true,
+            "children": [
+              // 功能区（选项卡行右端：收起按钮、命令搜索框）
+              { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1 } ] },
+              // 停靠区（"floating"：透明、卡片之间露出绘图区）。documents 是透明的“洞”，里面是视图方块、导航条和底部居中的命令行；
+              // 右侧上下排列特性和图层；拖动面板标签可以停靠到其他位置或合并为标签
+              {
+                "type": "dock",
+                "id": "main",
+                "panels": [ "nodes" ],
+                "grow": 1,
+                "gap": 6,
+                "floating": true,
+                "root": {
+                  "split": "row",
+                  "children": [
+                    { "tabs": [ { "panel": "documents", "header": false, "closable": false } ] },
                     {
-                      "panel": "documents",
-                      "header": false,
-                      "closable": false
+                      "split": "column",
+                      "size": 340,
+                      "children": [
+                        { "tabs": [ "properties" ] },
+                        { "tabs": [ "layers" ], "size": 280 }
+                      ]
                     }
                   ]
-                },
-                {
-                  "tabs": [ "commandline" ],
-                  "size": 140
                 }
-              ]
-            },
-            {
-              "split": "column",
-              "size": 350,
-              "children": [
-                { "tabs": [ "properties" ] },
-                {
-                  "tabs": [ "layers" ],
-                  "size": 280
-                }
-              ]
-            }
-          ]
-        }
-      },
-      {
-        "type": "panel",
-        "name": "statusbar",
-        "shrink": 0
+              },
+              // 状态栏：左侧是模型 / 布局标签
+              { "type": "panel", "name": "statusbar", "shrink": 0 }
+            ]
+          }
+        ]
       }
     ]
   }

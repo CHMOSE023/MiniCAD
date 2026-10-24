@@ -33,6 +33,7 @@
 // ── 绘制工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/LineTool.h"
 #include "Editor/Tools/ZoomWindowTool.h"
+#include "Editor/Tools/PanTool.h"
 #include "Document/Command/ZoomViewCommand.h"
 #include "Editor/Tools/PointTool.h"
 #include "Editor/Tools/SolidTool.h"
@@ -323,6 +324,7 @@ namespace MiniCAD
         // ── 绘制工具 ──────────────────────────────────────────
         RegisterTool("Line",      [] { return std::make_unique<LineTool>();      });
         RegisterTool("ZoomWindow", [] { return std::make_unique<ZoomWindowTool>(); });   // ZOOM E：窗口缩放
+        RegisterTool("Pan",       [] { return std::make_unique<PanTool>();       });   // PAN：左键拖动平移
         RegisterTool("Point",     [] { return std::make_unique<PointTool>();     });
         RegisterTool("Circle",    [] { return std::make_unique<CircleTool>();    });
         RegisterTool("Rectangle", [] { return std::make_unique<RectangleTool>(); });
@@ -562,6 +564,7 @@ namespace MiniCAD
         RegisterAlias("FILLETEDGE",  "FilletEdge");
         RegisterAlias("CHAMFEREDGE", "ChamferEdge");
         RegisterAlias("Z",      "Zoom");
+        RegisterAlias("PAN",    "Pan");
         RegisterAlias("ZOOMALL", "ZoomAll");
         RegisterAlias("PLAN",      "ViewTop");     // 视图与视觉样式是特例命令(非工具),全名也走别名表
         for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
@@ -3778,6 +3781,7 @@ namespace MiniCAD
         }
 
         vs.ShowCurrorBox = !IsActiveTool();
+        vs.ShowCrosshair = !HidesCrosshair();
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

@@ -52,10 +52,12 @@ namespace MiniCAD
                 float boxSize   = 5.0f;
                 float s         = 15.0f;
 
-                bool originVisible = origin.x >= 0 && origin.x <= screenWidth
-                    && origin.y >= 0 && origin.y <= screenHeight;
-                float ax = originVisible ? origin.x : 30.0f;
-                float ay = originVisible ? origin.y : screenHeight - 30.0f;
+                // 原点在没被浮动面板挡住的区域里时画在原点，否则画在该区域的左下角（Camera::SetFitInsets）
+                const double* in = camera.GetFitInsets();
+                bool originVisible = origin.x >= in[0] && origin.x <= screenWidth - in[2]
+                    && origin.y >= in[1] && origin.y <= screenHeight - in[3];
+                float ax = originVisible ? origin.x : static_cast<float>(in[0]) + 30.0f;
+                float ay = originVisible ? origin.y : screenHeight - static_cast<float>(in[3]) - 30.0f;
 
                 // 原点小方框
                 verts.push_back({ {ax - boxSize, ay - boxSize, 0}, color });
@@ -95,13 +97,14 @@ namespace MiniCAD
         }
 
     private:
-        // 三维视图（M6）：原点在屏幕内时画在原点，否则画在左下角；X / Y / Z 三根轴按视图方向投影，端部标字母
+        // 三维视图（M6）：原点在屏幕内（没被浮动面板挡住）时画在原点，否则画在左下角；X / Y / Z 三根轴按视图方向投影，端部标字母
         static void BuildTripod(const Camera& camera, float screenWidth, float screenHeight, std::vector<Vertex_P3_C4>& verts)
         {
             const auto o = camera.WorldToScreen({ 0, 0, 0 });
-            const bool originVisible = o.x >= 0 && o.x <= screenWidth && o.y >= 0 && o.y <= screenHeight;
-            const float ax = originVisible ? static_cast<float>(o.x) : 50.0f;
-            const float ay = originVisible ? static_cast<float>(o.y) : screenHeight - 50.0f;
+            const double* in = camera.GetFitInsets();       // 没被浮动面板挡住的区域
+            const bool originVisible = o.x >= in[0] && o.x <= screenWidth - in[2] && o.y >= in[1] && o.y <= screenHeight - in[3];
+            const float ax = originVisible ? static_cast<float>(o.x) : static_cast<float>(in[0]) + 50.0f;
+            const float ay = originVisible ? static_cast<float>(o.y) : screenHeight - static_cast<float>(in[3]) - 50.0f;
             const Math::Float4 colors[3] = { { 1.0f, 0.35f, 0.35f, 1.0f }, { 0.35f, 1.0f, 0.35f, 1.0f }, { 0.45f, 0.6f, 1.0f, 1.0f } };
             const Math::Vec3 r = camera.GetRight(), u = camera.GetUp();
             const float len = 45.0f, s = 6.0f;

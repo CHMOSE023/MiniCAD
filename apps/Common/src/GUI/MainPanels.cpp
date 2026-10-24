@@ -10,6 +10,7 @@
 #include "Document/Command/LayoutCommands.h"
 #include "Style/Theme.hpp"
 #include "Widgets/Button.h"
+#include "Widgets/CommandConsole.h"
 #include "Widgets/ComboBox.h"
 #include "Widgets/Controls.h"
 #include "Widgets/DockSpace.h"
@@ -21,6 +22,7 @@
 #include "Widgets/PropertyGrid.h"
 #include "Widgets/TextBox.h"
 #include "Widgets/TabView.h"
+#include "Widgets/Ribbon.h"
 #include "Widgets/TitleBar.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
@@ -59,9 +61,15 @@ namespace MiniCAD
         constexpr const char* kFallbackLayout = R"json({
             "layout": { "type": "column", "children": [
                 { "type": "titlebar" },
-                { "type": "panel", "name": "documents", "grow": 1 },
+                { "type": "panel", "name": "start", "grow": 1 },
+                { "type": "column", "grow": 1, "children": [
+                    { "type": "panel", "name": "canvas", "position": "absolute", "left": 0, "top": 0, "right": 0, "bottom": 0 },
+                    { "type": "panel", "name": "documents", "grow": 1, "passThrough": true } ] },
                 { "type": "panel", "name": "statusbar" } ] }
         })json";
+
+        // 用户布局文件的格式版本（见 LoadUserLayout）
+        constexpr int kUserLayoutVersion = 2;
 
         int LineweightIndex(Lineweight lw)
         {
@@ -139,25 +147,24 @@ namespace MiniCAD
     // =========================================================
     // 布局页签条：模型 / 各张图纸空间布局
     // =========================================================
-    // 由 CreateDocumentArea 在**视口之后**加进去，因此贴在文档区底部 ——
-    // 文档区下面是命令行，于是页签栏正好紧贴命令行，中间没有空隙。
-    //
-    // ⚠ 不要把它做成停靠区的独立面板：DockSpace 有 `kMinPanel = 80` 的最小高度，
-    //   一条 34px 的页签栏会被强行拉到 80px，多出的 46px 就成了页签栏与命令行
-    //   之间那块空白（实测间隙就来自这里）。
+    // 由 CreateStatusBar 放在浮动状态栏的左侧（照 SolidCraft：状态栏是一张圆角卡片）。
+    // 宽度取各标签的理想宽度之和，标签多了才缩窄
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayoutTabs()
     {
         using namespace MiniGUI;
-        auto bar = std::make_unique<Panel>(Theme::Background);
+        auto bar = std::make_unique<Node>();
         LayoutStyle bs;
         bs.direction = FlexDirection::Row;
-        // 固定成一条标签栏的高度：它是文档区里的一个固定行，不参与 grow/shrink
-        bs.height = TabView::kStripHeight;
-        bs.shrink = 0.0f;
+        bs.height    = TabView::kStripHeight;
+        bs.shrink    = 1.0f;
+        bs.minWidth  = 120.0f;
         bar->SetLayoutStyle(bs);
 
         m_layoutTabs = bar->AddChild<TabView>();
-        m_layoutTabs->EditLayoutStyle().grow = 1.0f;
+        m_layoutTabs->SetBarStyle(true);
+        m_layoutTabs->SetFitToTabs(true);
+        m_layoutTabs->EditLayoutStyle().shrink   = 1.0f;
+        m_layoutTabs->EditLayoutStyle().minWidth = 0.0f;
         m_layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
         m_layoutTabs->SetShowNewTabButton(true);      // + 新建布局
         m_layoutTabs->SetOnNewTabRequested([this] { m_commands.Execute("layout.new"); });
@@ -189,37 +196,34 @@ namespace MiniCAD
     }
 
     // =========================================================
-    // 文档区：文档标签条 + 视口（所有文档共用一个视口，切换标签时换相机状态）
+    // 文档标签条（面板 "doctabs"）：界面描述文件把它放在标题栏里（SolidCraft 式），
+    // 也可以放在别处；切换标签即切换文档，起始页显示时不选中任何标签
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocTabs()
     {
         using namespace MiniGUI;
-        auto area = std::make_unique<Panel>(Theme::Background);
-        LayoutStyle as;
-        as.direction = FlexDirection::Column;
-        area->SetLayoutStyle(as);
-
-        // ── 标签条 ───────────────────────────────────────────────
-        m_docTabs = area->AddChild<TabView>();
+        auto tabs = std::make_unique<TabView>();
+        m_docTabs = tabs.get();
         m_docTabs->EditLayoutStyle().height = TabView::kStripHeight;
-        m_docTabs->EditLayoutStyle().shrink = 0.0f;
+        // 宽度按全部标签需要的宽度测量：标题栏有空位时标签名完整显示（不与右边的空白平分），
+        // 实在放不下时再缩窄、出现溢出按钮
+        m_docTabs->SetFitToTabs(true);
+        m_docTabs->EditLayoutStyle().shrink   = 1.0f;
+        m_docTabs->EditLayoutStyle().minWidth = 120.0f;
         m_docTabs->SetFocusable(false);             // 点击标签后键盘仍在绘图区
         m_docTabs->SetShowNewTabButton(true);
+        m_docTabs->SetBarStyle(true);
         m_docTabs->SetOnSelectionChanged([this](int i)
         {
             if (m_syncing || i < 0)
                 return;
             ActivateDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i)));
+            if (m_startShown)
+                ShowStartPage(false);               // 起始页上点当前文档的标签也回到图纸
             m_viewport->Focus();
         });
         m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
         m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
-
-        // ── 布局标签条（图纸空间）──────────────────────────────────
-        // AutoCAD 把「模型 + 各张布局」放在绘图区下方的标签条里。
-        // 这里同样用 TabView：只显示标签、内容仍共用同一个视口。
-        // 它在视口**之后**加入文档区（见本函数末尾），因此贴在文档区底部，
-        // 正好紧邻下面的命令行 —— 中间不留空隙。见 CreateLayoutTabs。
 
         m_docTabs->SetTabContextMenuExtra([this](int i)
         {
@@ -230,16 +234,38 @@ namespace MiniCAD
             };
         });
 
-        // ── 视口 ─────────────────────────────────────────────────
-        auto* vp = area->AddChild<ViewportHost>();
-        vp->EditLayoutStyle().grow = 1.0f;
+        return tabs;
+    }
+
+    // =========================================================
+    // 绘图区（面板 "canvas"）：所有文档共用一个视口，切换标签时换相机状态。
+    // 界面描述文件把它铺满标题栏以下的整个窗口（照 SolidCraft），功能区、停靠面板、状态栏都浮在它上面
+    // =========================================================
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateCanvas()
+    {
+        using namespace MiniGUI;
+        auto vp = std::make_unique<ViewportHost>();
         vp->SetCursor(CursorShape::Hidden);       // 视口自己绘制十字光标
         vp->SetOnRender ([this](int w, int h) { RenderViewport(w, h); });
         vp->SetOnPointer([this](const ViewportPointerEvent& e) { OnViewportPointer(e); });
         vp->SetOnKey    ([this](const KeyEvent& e) { return OnViewportKey(e); });
-        m_viewport = vp;
+        m_viewport = vp.get();
+        return vp;
+    }
 
-        // 视图方块（M6）：叠在视口右上角
+    // =========================================================
+    // 文档区（面板 "documents"）：停靠区里没有标题栏的组。浮动停靠区里它是透明、点击穿透的“洞”，
+    // 范围就是没被功能区和面板挡住的绘图区：右上角视图方块、下面竖排的导航条、底部居中的命令行都放在这里，
+    // “全部显示”也按它留边（UpdateFitInsets）
+    // =========================================================
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea()
+    {
+        using namespace MiniGUI;
+        auto area = std::make_unique<Node>();
+        area->SetHitTestVisible(false);
+        m_docArea = area.get();
+
+        // 视图方块（M6）：右上角
         ViewCube::Callbacks cubeCallbacks;
         cubeCallbacks.camera  = [this]() -> const Camera* { return m_docManager.GetActive() ? &m_docManager.GetViewport().GetCamera() : nullptr; };
         cubeCallbacks.setView = [this](double az, double el)
@@ -253,7 +279,7 @@ namespace MiniCAD
             m_docManager.GetViewport().GetCamera().Orbit(dx, dy);
             m_viewport->RequestRender();
         };
-        auto* cube = vp->AddChild<ViewCube>(std::move(cubeCallbacks));
+        auto* cube = area->AddChild<ViewCube>(std::move(cubeCallbacks));
         LayoutStyle cs;
         cs.position = PositionType::Absolute;
         cs.right    = 6.0f;
@@ -279,37 +305,84 @@ namespace MiniCAD
         });
         m_viewCube = cube;
 
-        // ── 模型 / 布局页签条（贴在文档区底部）────────────────────
-        // 放在视口**之后** ⇒ 它占文档区的最下面一行。
-        // 文档区下面是命令行，于是页签栏紧贴命令行，中间没有空隙。
-        // （做成停靠区独立面板不行：DockSpace 最小高度 80，34px 的条会被拉到 80，
-        //   多出的空白正好出现在页签栏与命令行之间。）
-        {
-            std::unique_ptr<Node> tabsBar = CreateLayoutTabs();
-            tabsBar->EditLayoutStyle().shrink = 0.0f;
-            area->AddChild(std::move(tabsBar));
-        }
+        // 导航条：竖排在视图方块下面，与方块的中线对齐
+        area->AddChild(CreateViewNavBar());
 
-        // ── 没有文档时的提示 ─────────────────────────────────────
-        auto* hint = area->AddChild<Node>();
-        LayoutStyle hs;
-        hs.direction  = FlexDirection::Column;
-        hs.alignItems = Align::Center;
-        hs.justify    = Justify::Center;
-        hs.gap        = 12.0f;
-        hs.grow       = 1.0f;
-        hint->SetLayoutStyle(hs);
-        hint->AddChild<Label>("没有打开的文档", 18.0f, Theme::TextDim);
-        Node* buttons = hint->AddChild<Node>();
-        LayoutStyle bs;
-        bs.direction = FlexDirection::Row;
-        bs.gap       = 10.0f;
-        buttons->SetLayoutStyle(bs);
-        buttons->AddChild<Button>("新建 (Ctrl+N)", [this] { m_commands.Execute("file.new"); })->SetStyle(ButtonStyle::Primary());
-        buttons->AddChild<Button>("打开… (Ctrl+O)", [this] { m_commands.Execute("file.open"); });
-        hint->SetVisible(false);
-        m_noDocHint = hint;
+        // 命令行：底部居中的浮动卡片（窄窗口时缩窄）
+        {
+            auto* row = area->AddChild<Node>();
+            LayoutStyle rs;
+            rs.position  = PositionType::Absolute;
+            rs.left      = 0.0f;
+            rs.right     = 0.0f;
+            rs.bottom    = 0.0f;
+            rs.direction = FlexDirection::Row;
+            rs.justify   = Justify::Center;
+            rs.padding   = Edges::Make(8.0f, 0.0f, 8.0f, 0.0f);
+            row->SetLayoutStyle(rs);
+            row->SetHitTestVisible(false);
+
+            auto* card = row->AddChild<Panel>(Theme::Panel);
+            card->SetRounding(Theme::RadiusLg);
+            card->SetBorder(Theme::BorderSubtle);
+            LayoutStyle ks;
+            ks.direction = FlexDirection::Column;
+            ks.width     = 760.0f;
+            ks.shrink    = 1.0f;
+            ks.minWidth  = 260.0f;
+            ks.padding   = Edges::All(4.0f);
+            card->SetLayoutStyle(ks);
+            std::unique_ptr<Node> console = CreateCommandLine();
+            console->EditLayoutStyle().grow = 1.0f;
+            card->AddChild(std::move(console));
+            // 卡片高度随内容：平时只有一行输入，展开历史时回显区向上长出
+            m_console->GetLogView()->EditLayoutStyle().height = 96.0f;
+            m_console->SetLogExpanded(false);
+            card->SetVisible(m_commandLineVisible);
+            m_cmdCard = card;
+        }
         return area;
+    }
+
+    void MainFrame::SetCommandLineVisible(bool visible)
+    {
+        m_commandLineVisible = visible;
+        if (m_cmdCard)
+            m_cmdCard->SetVisible(visible);
+        SaveUserLayout();
+    }
+
+    bool MainFrame::IsCommandLineShown() const
+    {
+        if (!m_cmdCard || !m_cmdCard->GetContext())
+            return false;           // 不在界面树上（界面描述里没有文档区）
+        for (const MiniGUI::Node* n = m_cmdCard; n; n = n->GetParent())
+            if (!n->IsVisible())
+                return false;
+        return true;
+    }
+
+    // “全部显示”留边：绘图区里被功能区、面板、状态栏、命令行挡住的部分不算可见范围
+    void MainFrame::UpdateFitInsets()
+    {
+        Camera& cam = m_docManager.GetViewport().GetCamera();
+        if (!m_viewport || !m_docArea || !m_docArea->GetContext() || !m_docArea->IsVisible())
+        {
+            cam.SetFitInsets(0.0, 0.0, 0.0, 0.0);
+            return;
+        }
+        const MiniGUI::Rect vp   = m_viewport->GetScreenBounds();
+        MiniGUI::Rect       free = m_docArea->GetScreenBounds();
+        if (IsCommandLineShown())
+            free.max.y = std::min(free.max.y, m_cmdCard->GetScreenBounds().min.y);
+        if (free.Width() < 50.0f || free.Height() < 50.0f || vp.Width() < 1.0f)
+        {
+            cam.SetFitInsets(0.0, 0.0, 0.0, 0.0);
+            return;
+        }
+        const double s = m_dpiScale;
+        cam.SetFitInsets(std::max(0.0f, free.min.x - vp.min.x) * s, std::max(0.0f, free.min.y - vp.min.y) * s,
+                         std::max(0.0f, vp.max.x - free.max.x) * s, std::max(0.0f, vp.max.y - free.max.y) * s);
     }
 
     // =========================================================
@@ -618,26 +691,31 @@ namespace MiniCAD
     }
 
     // =========================================================
-    // 状态栏：MiniCAD 的状态栏（工具 | 坐标 | 捕捉 正交 悬停 | 文档）+ 界面描述文件的加载结果
+    // 状态栏：MiniCAD 的状态栏（靠右的捕捉 正交 悬停 细线）+ 界面描述文件的加载结果
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateStatusBar()
     {
         using namespace MiniGUI;
-        constexpr float kHeight = 26.0f;
+        // 照 SolidCraft 底部的 History 条：一张浮在绘图区上的圆角卡片；左侧是模型 / 布局标签
+        constexpr float kHeight = TabView::kStripHeight;
         auto status = std::make_unique<Panel>(Theme::Panel);
+        status->SetRounding(Theme::RadiusLg);
+        status->SetBorder(Theme::BorderSubtle);
         LayoutStyle s;
         s.direction  = FlexDirection::Row;
         s.alignItems = Align::Center;
         s.height     = kHeight;
         s.shrink     = 0.0f;
-        s.padding    = Edges::Make(0.0f, 0.0f, 10.0f, 0.0f);
+        s.padding    = Edges::Make(2.0f, 0.0f, 10.0f, 0.0f);
         status->SetLayoutStyle(s);
 
-        m_statusBar = status->AddChild<StatusBarView>(m_docManager, kHeight);
+        status->AddChild(CreateLayoutTabs());
+        m_statusBar = status->AddChild<StatusBarView>(m_docManager, kHeight - 2.0f);
         m_statusBar->EditLayoutStyle().grow     = 1.0f;
         m_statusBar->EditLayoutStyle().minWidth = 0.0f;
         m_statusBar->SetOnToggled([this] { StateChanged(); });
-        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：版本号左边，平时隐藏
+        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：开关左边，平时隐藏
+        m_statusBar->AddRightItem(CreateSaveProgress());     // 保存进度：同上
 
         m_uiStatus = status->AddChild<Label>("", 12.0f, Theme::TextDim);
         m_uiStatus->SetEllipsis(true);
@@ -659,7 +737,17 @@ namespace MiniCAD
         const std::string fileName(fileNameU8.begin(), fileNameU8.end());
 
         m_uiWriteTime = WriteTime(m_uiPath);
+        ApplyStartPage(false);      // 先恢复被起始页隐藏的部分（重建失败时保留的是旧界面）；重建后 StateChanged 重新应用
         const bool ok = m_layout->ApplyFile(m_uiHost, m_uiPath);
+        // 重建成功后旧界面随即销毁，指向它的指针都要丢掉：
+        // - 动态输入框挂在视口的父节点（界面描述生成的容器）上：下一帧 SyncDynamicInput 重新创建
+        // - 起始页隐藏的兄弟节点：应用命令覆盖时会通知状态变化，SyncDocuments 可能又在旧界面上记下了一批；
+        //   宿主面板的显示状态已由 UiLayout 恢复，下面的 StateChanged 在新界面上重新应用起始页
+        if (ok)
+        {
+            m_dynInput = nullptr;
+            m_startHidden.clear();
+        }
         if (!ok)
         {
             LOG_ERROR("界面描述：%s", m_layout->GetError().c_str());
@@ -689,6 +777,16 @@ namespace MiniCAD
             bar->SetTitle(m_title);
             bar->SetWindowActive(m_platform->IsWindowActive());
         }
+
+        // 功能区也是重新生成的：命令搜索框执行或关闭后把焦点还给绘图区
+        if (Ribbon* ribbon = m_layout->GetRibbon())
+            ribbon->SetOnSearchDone([this]
+            {
+                if (m_viewport && m_viewport->IsVisible())
+                    m_viewport->Focus();
+                else
+                    m_ui->SetFocus(nullptr);
+            });
 
         // 用户布局只在启动时恢复：之后修改界面描述文件里的 dock，重新加载后立即看到效果
         if (firstLoad)
@@ -735,6 +833,15 @@ namespace MiniCAD
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
         UpdateViewCubeVisibility();
+        m_commandLineVisible = saved["commandLine"].AsBool(true);
+        if (m_cmdCard)
+            m_cmdCard->SetVisible(m_commandLineVisible);
+        // 布局格式 2：绘图区铺满窗口、停靠区浮在上面、命令行不在停靠区里。更早保存的停靠布局不再适用
+        if (saved["version"].AsNumber(1) < kUserLayoutVersion)
+        {
+            LOG_INFO("用户布局是旧版界面保存的，使用默认布局");
+            return;
+        }
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
         const JsonValue& known = saved["panels"];
         for (const std::string& id : dock->GetPanelIds())
@@ -786,7 +893,9 @@ namespace MiniCAD
         JsonValue root = JsonValue::MakeObject();
         root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));
         root.Set("dock", dock->SaveLayout());
+        root.Set("version", JsonValue(static_cast<double>(kUserLayoutVersion)));
         root.Set("viewCube", JsonValue(m_viewCubeVisible));
+        root.Set("commandLine", JsonValue(m_commandLineVisible));
         JsonValue panels = JsonValue::MakeArray();      // 保存时已有的面板：之后新增的面板据此识别
         for (const std::string& id : dock->GetPanelIds())
             panels.Push(id);
@@ -846,18 +955,21 @@ namespace MiniCAD
             return;
         m_recentFiles.Add(path);
         SaveRecentFiles();
+        RefreshStartPage();
     }
 
     void MainFrame::ForgetRecentFile(const std::string& path)
     {
         m_recentFiles.Remove(path);
         SaveRecentFiles();
+        RefreshStartPage();
     }
 
     void MainFrame::ClearRecentFiles()
     {
         m_recentFiles.Clear();
         SaveRecentFiles();
+        RefreshStartPage();
     }
 
     std::vector<MiniGUI::MenuItem> MainFrame::BuildRecentMenuItems()
