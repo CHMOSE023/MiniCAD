@@ -631,8 +631,6 @@ namespace MiniCAD
             double dotLen = std::max(width, m_worldPerPixel * 1.5);
             if (dotLen <= 0.0) dotLen = len * 0.002;
 
-            size_t orderPos = 0;   // 已画到 order 的哪一项
-
             double t = 0.0;
             size_t idx = 0;
             while (t < len)
@@ -658,23 +656,15 @@ namespace MiniCAD
                     t = t1;
                 }
 
-                // 该段画完,铺设落在它之后的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)
-                while (orderPos < order.size() && order[orderPos].first <= pat)
+                // 该段画完,铺设落在它之后的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
+                // 每个周期都重新判定 —— 光标游走只会让第一个周期之后再也画不出符号,
+                // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
+                for (const auto& o : order)
                 {
-                    const LineTypeSymbol& sy = rec->Symbols[order[orderPos].second];
-                    ++orderPos;
-                    EmitLineTypeSymbol(P(t), ux, uy, uz, sy, scale, color);
+                    if (o.first == pat)
+                        EmitLineTypeSymbol(P(t), ux, uy, uz,
+                                           rec->Symbols[o.second], scale, color);
                 }
-            }
-
-            // 跨周期补铺:线段在周期中段就被截断时,本轮扫不到的符号排在末尾。
-            // 按一个周期的间距错开摆放 —— 堆在同一个点上会互相叠成一团。
-            while (orderPos < order.size())
-            {
-                const LineTypeSymbol& sy = rec->Symbols[order[orderPos].second];
-                ++orderPos;
-                const double k = static_cast<double>(orderPos - order.size());
-                EmitLineTypeSymbol(P(t + k * rec->PatternLength * scale), ux, uy, uz, sy, scale, color);
             }
         }
 

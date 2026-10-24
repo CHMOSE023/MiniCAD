@@ -225,11 +225,13 @@ namespace MiniCAD
             {
                 if (p + 1 >= end) return;
                 int radius = p[0]; if (radius == 0) radius = 256;
-                int8_t b   = (int8_t)p[1]; p += 2;
-                bool ccw   = b > 0;
-                int  ab    = std::abs((int)b);
-                int  start = (ab >> 4) & 0x07;
-                int  cnt   = ab & 0x07; if (cnt == 0) cnt = 8;
+                // 参数字节:bit7=方向(0=逆时针 CCW,1=顺时针 CW), bit6-4=起始八分区, bit3-0 里低 3 位=跨过的八分区数
+                // 注意不能先取 abs() 再移位 —— abs() 会把符号位抹掉,八分区就少 1,
+                // 0xC4(起始 4、跨 4、CW)会被解成起始 3,圆弧起点整个错开。
+                const uint8_t s = p[1]; p += 2;
+                const bool ccw  = (s & 0x80) == 0;
+                int        start = (s >> 4) & 0x07;
+                int        cnt   = s & 0x07; if (cnt == 0) cnt = 8;
                 EmitOctantArc(ctx, radius, start, cnt, ccw);
                 break;
             }
@@ -244,10 +246,11 @@ namespace MiniCAD
                 int8_t b    = (int8_t)p[4]; p += 5;
 
                 int radius = hi * 256 + lo; if (radius == 0) radius = 256;
-                bool ccw   = b > 0;
-                int  ab    = std::abs((int)b);
-                int  start = (ab >> 4) & 0x07;
-                int  cnt   = ab & 0x07; if (cnt == 0) cnt = 8;
+                // 与 0x0A 同一个约定:bit7=方向(0=逆时针 CCW,1=顺时针 CW),bit6-4=起始八分区,bit3-0 低 3 位=八分区数。
+                // 同样不能先取 abs() 再移位。
+                const bool ccw  = (b & 0x80) == 0;
+                int        start = (b >> 4) & 0x07;
+                int        cnt   = b & 0x07; if (cnt == 0) cnt = 8;
 
                 double r  = radius * ctx.scale;
                 double a0 = (start * 45.0 + (soff / 256.0) * 45.0) * Math::PI / 180.0;
