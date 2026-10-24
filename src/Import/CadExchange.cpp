@@ -492,12 +492,18 @@ namespace MiniCAD
                             const bool isShape = HasFlag(flags, Dwg::LineTypeShapeFlags::Shape);
                             if (!isText && !isShape)
                                 continue;                       // 纯 dash/gap 段
-                            if (isShape && seg.Text.empty())
-                                continue;                       // 形段:没有 SHX 字形数据,只能当空白推进
-
                             LineTypeSymbol sym;
                             sym.PatternIndex     = si;
-                            sym.Text             = seg.Text;     // 文字段(DXF 组码 9);形段为空
+                            // 文字段:组码 9;形段为空,靠组码 75 的形号取 SHX 字形。
+                            sym.Text             = seg.Text;
+                            // 形段:组码 75 的形号。0 = 不是形段(文字段)。
+                            // 形号来自 DWG 引用的 SHX 形文件(TRACKS/ZIGZAG/BATTING 指向
+                            // ltypeshp.shx,形号 130 TRACK1 / 131 ZIG / 134 BAT)。
+                            sym.Shape            = seg.ShapeNumber > 0
+                                                        ? static_cast<uint32_t>(seg.ShapeNumber)
+                                                        : 0u;
+                            if (sym.Shape != 0)
+                                sym.ShapeFont = StyleFontFile(seg.StyleHandle);
                             sym.Rotation         = seg.Rotation; // 弧度;0 = 沿线方向
                             sym.Scale            = seg.Scale > 0.0 ? seg.Scale : 1.0;
                             sym.OffsetX          = seg.Offset.X; // 沿线方向偏移(组码 44)
@@ -516,6 +522,24 @@ namespace MiniCAD
             {
                 auto it = m_lineTypes.find(h);
                 return it == m_lineTypes.end() ? LineTypeTable::ByLayerID : it->second;
+            }
+
+            // 组码 340 指向的 STYLE 的主字体文件名(组码 3)。
+            // 线型形段用:形号本身不带字体信息,必须从它引用的 STYLE 反查形文件
+            // (TRACKS/ZIGZAG/BATTING 全部指向 ltypeshp.shx)。
+            // 找不到或为空时返回空串 —— 调用方按「没有形文件」处理。
+            std::string StyleFontFile(Dwg::Handle h) const
+            {
+                if (h == Dwg::kNullHandle)
+                    return {};
+                const Dwg::TextStyle* st = m_db.FindAs<Dwg::TextStyle>(h);
+                if (st == nullptr)
+                    return {};
+                std::string f = st->Filename;
+                // DWG 里的 SHX 字体名常不带扩展名
+                if (!f.empty() && f.find('.') == std::string::npos)
+                    f += ".shx";
+                return f;
             }
 
             void ImportLayers()
@@ -3408,7 +3432,7 @@ namespace MiniCAD
                     lt->Segments.resize(records[i].Pattern.size());
                     for (size_t k = 0; k < records[i].Pattern.size(); ++k)
                         lt->Segments[k].Length = records[i].Pattern[k];
-                    // 回写复杂线型的文字段(组码 9/74/75/340/46/50/44/45)。
+                    // 回写复杂线型的文字段与形段(组码 9/74/75/340/46/50/44/45)。
                     // Pattern 下标 → 段索引是 1:1,所以直接按 PatternIndex 落位;
                     // 越界的下标(导入时被裁掉的)跳过,避免写坏表项。
                     for (const LineTypeSymbol& sy : records[i].Symbols)
@@ -3416,17 +3440,25 @@ namespace MiniCAD
                         if (sy.PatternIndex >= lt->Segments.size())
                             continue;
                         Dwg::LineTypeSegment& seg = lt->Segments[sy.PatternIndex];
-                        if (sy.Text.empty())
-                            continue;   // 形段没有字形数据可写,保持纯 dash
-                        seg.Flags     = Dwg::LineTypeShapeFlags::Text;
+                        const bool isShape = sy.Shape != 0;
+                        if (!isShape && sy.Text.empty())
+                            continue;   // 既不是形段也没有文字:纯 dash,保持原样
+                        seg.Flags     = isShape ? Dwg::LineTypeShapeFlags::Shape
+                                                : Dwg::LineTypeShapeFlags::Text;
                         if (sy.AbsoluteRotation)
                             seg.Flags |= Dwg::LineTypeShapeFlags::RotationIsAbsolute;
-                        seg.Text       = sy.Text;
+                        // 形段不写文字(组码 9 只属于文字段),形号走组码 75。
+                        if (!isShape)
+                            seg.Text = sy.Text;
+                        else
+                            seg.ShapeNumber = static_cast<std::int16_t>(sy.Shape);
                         seg.Scale      = sy.Scale;
                         seg.Rotation   = sy.Rotation;
                         seg.Offset.X   = sy.OffsetX;
                         seg.Offset.Y   = sy.OffsetY;
-                        seg.StyleHandle = StyleHandle(sy.StyleId);
+                        // 形段的 STYLE 必须指向形文件本身,不能用文字样式
+                        seg.StyleHandle = isShape ? ShapeStyleHandle(sy.ShapeFont)
+                                                  : StyleHandle(sy.StyleId);
                     }
                     if (auto* added = m_db.AddTableEntry(m_db.LineTypes(), std::move(lt)))
                         m_lineTypeHandles[static_cast<LineTypeID>(i)] = added->ObjectHandle;
@@ -3756,6 +3788,35 @@ namespace MiniCAD
                     if (Dwg::TextStyle* dst = m_db.AddTableEntry(m_db.TextStyles(), std::move(st)))
                         return m_styleHandles[id] = dst->ObjectHandle;
                 }
+                return HandleOf<Dwg::TextStyle>(m_db.TextStyles(), "Standard");
+            }
+
+            // 线型形段引用的形文件(DXF 组码 75 的形 + 组码 340 的 STYLE 组码 3)。
+            // 形号本身不指向任何字体,所以必须额外有一个 STYLE 指到该 SHX 形文件。
+            // 这里按「FontFile 指向该形文件」查或建一个匿名 STYLE 并缓存。
+            // 与 StyleHandle 分开:线型形段的 STYLE 常是无名字体项,复用文字样式
+            // 缓存会把形文件指到 Standard(tssdeng.shx),形就取不到了。
+            Dwg::Handle ShapeStyleHandle(const std::string& fontFile)
+            {
+                if (fontFile.empty())
+                    return HandleOf<Dwg::TextStyle>(m_db.TextStyles(), "Standard");
+                const std::string key = "ltshape:" + Lower(fontFile);
+                auto it = m_shapeStyleHandles.find(key);
+                if (it != m_shapeStyleHandles.end())
+                    return it->second;
+
+                const Dwg::CadTable* styles = m_db.TextStyles();
+                if (styles != nullptr)
+                    for (Dwg::Handle h : styles->Entries)
+                        if (const Dwg::TextStyle* e = m_db.FindAs<Dwg::TextStyle>(h))
+                            if (EqualsNoCase(e->Filename, fontFile.c_str()))
+                                return m_shapeStyleHandles[key] = e->ObjectHandle;
+
+                auto st = std::make_unique<Dwg::TextStyle>();
+                st->Name     = "";         // 形样式不需要名字;AutoCAD 也不依赖它
+                st->Filename = fontFile;
+                if (Dwg::TextStyle* dst = m_db.AddTableEntry(m_db.TextStyles(), std::move(st)))
+                    return m_shapeStyleHandles[key] = dst->ObjectHandle;
                 return HandleOf<Dwg::TextStyle>(m_db.TextStyles(), "Standard");
             }
 
@@ -4824,6 +4885,8 @@ namespace MiniCAD
             std::map<LayerID, Dwg::Handle>     m_layerHandles;
             std::map<LineTypeID, Dwg::Handle>  m_lineTypeHandles;
             std::map<TextStyleID, Dwg::Handle> m_styleHandles;
+            // 线型形段的形文件(如 "ltypeshp.shx") → 指向它的匿名 STYLE 句柄
+            std::map<std::string, Dwg::Handle> m_shapeStyleHandles;
             std::map<std::string, Dwg::Handle> m_imageDefs;      // 图像路径 → ImageDefinition 句柄（同一路径共用一份定义）
             int                                m_solidNoMesh   = 0;
             int                                m_solidTooLarge = 0;

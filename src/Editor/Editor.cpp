@@ -3093,6 +3093,12 @@ namespace MiniCAD
         return MakeTextStyleResolver(doc->GetFontSystem(), &doc->GetScene().GetTextStyleTable());
     }
 
+    // 形字体解析回调（复杂线型的形段，组码 75 → ltypeshp.shx 等形文件）
+    static ShapeFontResolver MakeShapeFontResolver(Document* doc)
+    {
+        return MakeShapeFontResolver(doc->GetFontSystem());
+    }
+
     // 细分一个实体到逐实体缓存（顶点、是否随视图变化、区域覆盖、图像）
     void Editor::TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c)
     {
@@ -3401,6 +3407,9 @@ namespace MiniCAD
         ctx.SetLineTypeScale(scene.GetLineTypeScale());
         // 复杂线型（带字母/符号）文字段的字高要查文字样式表（组码 340 → 样式）
         ctx.SetTextStyleTable(&scene.GetTextStyleTable());
+        // 复杂线型形段（组码 75）的字形来自 SHX 形文件（ltypeshp.shx），
+        // 与文字样式表无关，单独一条解析路径
+        ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
@@ -3652,6 +3661,8 @@ namespace MiniCAD
             // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
             ctx.SetLineTypeScale(scene.GetLineTypeScale());
             ctx.SetTextStyleTable(&scene.GetTextStyleTable());
+            // 形段同上：选中前后线型的符号必须完全一致
+            ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
             // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示
             ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
             ctx.SetViewportHeightPx(static_cast<double>(m_viewport->GetHeight()));

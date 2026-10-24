@@ -99,6 +99,9 @@ namespace MiniCAD
                     s.Value("offsetY", sy.OffsetY);
                     s.Value("style", sy.StyleId);
                     s.Value("absoluteRotation", sy.AbsoluteRotation);
+                    // 形号(组码 75):0 = 文字段。旧文件没有这个键 ⇒ 保持 0。
+                    s.Value("shape", sy.Shape);
+                    s.Value("shapeFont", sy.ShapeFont);
                     s.EndElement();
                 }
                 s.EndArray();

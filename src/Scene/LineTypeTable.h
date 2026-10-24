@@ -32,6 +32,14 @@ namespace MiniCAD
         // 组码 74 位 1(RotationIsAbsolute):旋转相对 X 轴而非沿线方向。
         // DWG 存 flags 位,这里只留一个 bool —— 渲染只需要「是否绝对旋转」。
         bool        AbsoluteRotation = false;
+        // 形符号(组码 75):0 = 文字段。非 0 时是 SHX 形号(TRACKS/ZIGZAG/BATTING
+        // 用的 130/131/134 等),字形取自 ShapeFont 指向的 SHX 形文件。
+        uint32_t    Shape = 0;
+        // 形段的字体文件(DXF 组码 340 指向的 STYLE 的组码 3)。
+        // 与 StyleId 分开存,是因为线型形段的 STYLE 名字常为空字符串,按名字
+        // 进不了文字样式表(Add 拒绝空名),退回 Standard 就丢了形文件路径。
+        // 例:TRACKS/ZIGZAG/BATTING 都是 "ltypeshp.shx"。文字段为空。
+        std::string ShapeFont;
     };
 
     struct LineTypeRecord

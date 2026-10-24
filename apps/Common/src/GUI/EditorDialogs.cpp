@@ -2,6 +2,7 @@
 // Editor 只置请求（GetTextInputRequest 等），这里在命令状态变化时检查请求，打开或关闭对应的界面，
 // 确认后回调 Editor 的 Submit*。对话框都是 MiniGUI 的弹层。
 #include "GUI/MainFrame.h"
+#include "GUI/LinetypePreview.h"
 #include "Core/UIContext.h"
 #include "MiniCADVersion.h"
 #include "Document/Document.h"
@@ -1148,7 +1149,9 @@ namespace MiniCAD
         // 预览的疏密就是图里的疏密。自己另写一套 dash 画法必然对不上。
         //
         // ⚠ DrawList 没有文字接口（文字走 TextSystem / Label 控件），
-        //   所以"周期过密""连续线"这类提示由对话框用 Label 显示，这里只画图形。
+        //   所以"周期过密""连续线"这类提示由对话框用 Label 显示。
+        //   符号段（文字 / 形）不画真实字形，只画 MiniGUI::DrawLinetypeSampleSymbol
+        //   的占位标记：文字段小方框、形段小菱形，位置与视口里一致。
         class LineTypeScalePreview : public MiniGUI::Node
         {
         public:
@@ -1191,13 +1194,17 @@ namespace MiniCAD
                     return;
                 }
 
-                // 与 EmitStyled 同一条循环：按 Pattern 走，正画负跳过零画点
+                // 与 EmitStyled 同一条循环：按 Pattern 走，正画负跳过零画点。
+                // 符号段（文字 / 形）画占位标记：形段用小菱形、文字段用小方框 ——
+                // 视口里画的是真实字形，这里画的是示意，位置一致。
+                const auto syms = LinetypePreviewSymbols(*rec);
                 double t   = 0.0;                       // 已走过的世界长度
                 size_t idx = 0;
                 const double totalWorld = (x1 - x0) * kWorldPerPixel;
                 while (t < totalWorld)
                 {
-                    const double seg = rec->Pattern[idx % rec->Pattern.size()] * scale;
+                    const size_t pat = idx % rec->Pattern.size();
+                    const double seg = rec->Pattern[pat] * scale;
                     ++idx;
                     if (seg > 0.0)
                     {
@@ -1219,6 +1226,12 @@ namespace MiniCAD
                                    Theme::Text, 1.4f);
                         t = t1;
                     }
+                    // 该段走完，铺落在它之后的符号（与 EmitStyled 的铺设位置同规则）
+                    for (const auto& sy : syms)
+                        if (sy.patternIndex == pat)
+                            MiniGUI::DrawLinetypeSampleSymbol(
+                                dl, sy, { x0 + static_cast<float>(t / kWorldPerPixel), y },
+                                Theme::Text, 1.4f);
                 }
             }
         };

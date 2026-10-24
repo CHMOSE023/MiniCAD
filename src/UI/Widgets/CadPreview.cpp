@@ -66,6 +66,92 @@ namespace MiniGUI
         }
     }
 
+    void DrawLinetypeSampleSymbol(DrawList& dl, const LinetypeSampleSymbol& sy, Vec2 at,
+                                  ColorRef color, float thickness)
+    {
+        const float k = std::max(thickness, 1.2f);
+        if (sy.isShape)
+        {
+            // 形段：小菱形。区别于「点」的圆，也区别于文字段的方框。
+            const float h = k * 1.6f;
+            dl.AddLine({ at.x - h, at.y }, { at.x, at.y - h }, color, thickness);
+            dl.AddLine({ at.x, at.y - h }, { at.x + h, at.y }, color, thickness);
+            dl.AddLine({ at.x + h, at.y }, { at.x, at.y + h }, color, thickness);
+            dl.AddLine({ at.x, at.y + h }, { at.x - h, at.y }, color, thickness);
+        }
+        else
+        {
+            // 文字段：小方框（示意这里有一段文字，如 GAS_LINE 的 "GAS"）
+            const float h = k * 1.4f;
+            dl.AddRect(Rect{ at.x - h, at.y - h, at.x + h, at.y + h }, color, 0.5f, thickness);
+        }
+    }
+
+    void DrawLinetypeSample(DrawList& dl, const Rect& r, const std::vector<float>& pattern,
+                            const std::vector<LinetypeSampleSymbol>& symbols,
+                            ColorRef color, float thickness)
+    {
+        const float y = std::floor(r.Center().y) + 0.5f;
+        if (symbols.empty())
+        {
+            DrawLinetypeSample(dl, r, pattern, color, thickness);
+            return;
+        }
+
+        // 一个周期里最多画两个符号标记：预览只有一行高度，铺满会糊成一团。
+        // 只画前两个不同的下标，够让用户认出「这条线带符号」。
+        std::vector<size_t> idx;
+        std::vector<bool>   shapes;   // 与 idx 一一对应：该下标上的符号是不是形段
+        for (const auto& s : symbols)
+        {
+            if (s.patternIndex >= pattern.size())
+                continue;
+            if (std::find(idx.begin(), idx.end(), s.patternIndex) != idx.end())
+                continue;
+            idx.push_back(s.patternIndex);
+            shapes.push_back(s.isShape);
+            if (idx.size() >= 2)
+                break;
+        }
+        if (idx.empty())
+        {
+            DrawLinetypeSample(dl, r, pattern, color, thickness);
+            return;
+        }
+
+        float x = r.min.x;
+        size_t i = 0;
+        while (x < r.max.x)
+        {
+            const size_t pi = i % pattern.size();
+            const float  seg = pattern[pi];
+            if (seg > 0.0f)
+            {
+                dl.AddLine({ x, y }, { std::min(x + seg, r.max.x), y }, color, thickness);
+                x += seg;
+            }
+            else if (seg == 0.0f)
+            {
+                dl.AddCircleFilled({ x + 0.75f, y }, std::max(thickness, 1.2f) * 0.6f, color, 6);
+                x += 1.5f;
+            }
+            else
+            {
+                x -= seg;
+            }
+
+            // 该段走完，铺落在它之后的符号标记
+            for (size_t j = 0; j < idx.size(); ++j)
+            {
+                if (idx[j] != pi)
+                    continue;
+                DrawLinetypeSampleSymbol(dl, LinetypeSampleSymbol{ pi, shapes[j] },
+                                         { std::min(x, r.max.x), y }, color, thickness);
+            }
+            ++i;
+        }
+    }
+
     void DrawColorSwatch(DrawList& dl, const Rect& r, Color32 color, float rounding)
     {
         dl.AddRectFilled(r, color, rounding);
