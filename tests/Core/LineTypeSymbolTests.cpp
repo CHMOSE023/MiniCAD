@@ -27,6 +27,7 @@
 #include "Core/GeomKernel/Line.hpp"
 #include "Text/Font/IFont.h"
 #include "Text/Font/SHXFont.h"
+#include "Text/Font/FontEngine.h"
 #include "Serialization/JsonSerializer.h"
 #include "Import/CadExchange.h"
 #include "Document/Document.h"
@@ -766,6 +767,58 @@ namespace
             Check(fills.empty(), (label + " 形段不产生填充三角形").c_str());
         }
     }
+
+    // ── 6. 字体目录：相对路径不能依赖工作目录 ───────────────────────
+    // 用户报「打开图纸后线型要切换一次图纸才正确显示」。根因：
+    // FontEngine::m_fontDir 默认是相对路径 "fonts/"，按**进程当前工作目录**
+    // 解析；而 MainFrame 从来没有 SetFontDir，于是工作目录不是 exe 目录时
+    // fonts/ltypeshp.shx 打不开 —— SHXFont 加载失败但仍是合法空字体，
+    // 形段符号全 MISS，只剩虚线。更要紧的是 FontEngine 把这份失败字体
+    // 缓存住了，不重试，所以「切一次图纸」才会碰巧重新解析恢复。
+    //
+    // 这里守两件事：
+    //   ① 字体目录设成正确的绝对路径时，形文件能读到、字形齐全；
+    //   ② 一次失败不会被永久缓存 —— 设置正确目录后同一个 FontStyle 立刻能解析出
+    //      可用字体（不需要清缓存、不需要换文档）。
+    void TestFontDirRecovery()
+    {
+        // ① 绝对路径能读到形文件
+        {
+            FontEngine engine;
+            engine.SetFontDir(std::string(MINICAD_ASSET_DIR) + "/fonts/");
+            FontStyle fs;
+            fs.name     = "ltypeshp.shx";
+            fs.fontFile = "ltypeshp.shx";
+            fs.isShx    = true;
+            IFont& font = engine.Resolve(fs);
+            Check(font.HasGlyph(kRawShapeFlag | 130), "字体目录正确时形文件读得到（TRACK1）");
+            Check(font.HasGlyph(kRawShapeFlag | 134), "字体目录正确时形文件读得到（BAT）");
+            Check(font.GetHeight() > 0.0, "形文件字高为正");
+        }
+
+        // ② 失败结果不被永久缓存：先指向一个不存在的目录，再换成正确目录
+        {
+            FontEngine engine;
+            engine.SetFontDir("__no_such_font_dir__/");     // 模拟工作目录不对
+            FontStyle fs;
+            fs.name     = "ltypeshp.shx";
+            fs.fontFile = "ltypeshp.shx";
+            fs.isShx    = true;
+            IFont& bad = engine.Resolve(fs);
+            // 读不到时拿不到形 130 的字形。
+            // 注意不能用 HasGlyph 判定：找不到主字体时 Resolve 会退化成
+            // SHXCompositeFont（simplex.shx + TSSDCHN.SHX），而它的 HasGlyph
+            // 恒为 true。这里直接看字形有没有实际内容。
+            const bool badHasShape = !bad.GetGlyph(kRawShapeFlag | 130).Lines.empty();
+
+            engine.SetFontDir(std::string(MINICAD_ASSET_DIR) + "/fonts/");
+            IFont& good = engine.Resolve(fs);      // 同一个 FontStyle，不清缓存
+            Check(good.HasGlyph(kRawShapeFlag | 130),
+                  "字体目录更正后立刻能解析出形文件（失败不被永久缓存）");
+            // 说明「坏字体」确实没读进来 —— 否则上面那条通过就没意义了
+            Check(!badHasShape, "对照组：字体目录错误时确实读不到形");
+        }
+    }
 }
 
 int RunLineTypeSymbolTests()
@@ -781,6 +834,7 @@ int RunLineTypeSymbolTests()
     TestGuardedSymbols();
     TestRealSampleConstants();
     TestRealSampleRender();
+    TestFontDirRecovery();
     const int n = g_failures - before;
     std::printf("复杂线型用例失败：%d\n", n);
     return n;

@@ -27,6 +27,10 @@ namespace MiniCAD
 
         virtual bool HasGlyph(uint32_t codepoint) override { return true; };   // 新增
 
+        // 主字体是否读进来了（大字体缺失可容忍，主字体没有就什么都画不出）。
+        // FontEngine 用它判断缓存是否值得保留，见 SHXFont::IsLoaded 的注释。
+        bool IsLoaded() const;
+
     private:
         // 决定一个 cp 最终该用哪个 IFont 渲染;两边都查不到返回 nullptr
         IFont* PickFontFor(uint32_t cp);

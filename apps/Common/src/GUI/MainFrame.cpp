@@ -191,6 +191,20 @@ namespace MiniCAD
         m_dpiScale = pixelScale;
 
         m_fontSystem.Initialize();
+
+        // 字体目录必须显式设置：FontEngine 的默认值是相对路径 "fonts/"，
+        // 而相对路径是按**进程当前工作目录**解析的 —— 从资源管理器双击、
+        // 拖文件到 exe、命令行在别的目录调用时，工作目录都不是 exe 目录，
+        // 于是 fonts/ltypeshp.shx 之类的形文件根本打不开（SHXFont::LoadFont
+        // 静默失败）。线型形段（TRACKS/ZIGZAG/BATTING）因此只画出虚线、
+        // 没有符号，等到切换一次图纸、字体被重新解析时才恢复正常。
+        // 这里改成以资源目录为基准，与工作目录彻底解耦。
+        {
+            const std::string resDir = platform.GetResourceDir();
+            if (!resDir.empty())
+                m_fontSystem.GetFontEngine().SetFontDir(resDir + "/fonts/");
+        }
+
         m_fontSystem.PreloadDefaultFonts();
 
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))

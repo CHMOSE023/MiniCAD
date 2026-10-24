@@ -26,8 +26,11 @@ namespace MiniCAD
 
     void SHXFont::LoadFont(const std::string& filePath)
     {
+        m_loaded = false;
         if (!m_parser->Load(filePath))
             return;
+
+        m_loaded = true;
 
         // 拿 parser 真实解出来的 height,而不是硬编码 1.0
         double h = m_parser->GetFontHeight();
