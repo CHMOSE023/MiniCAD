@@ -15,6 +15,7 @@
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/GeomKernel/PolylineOps.hpp"
@@ -129,6 +130,37 @@ namespace
         f.g.Connect({ line, 0, bad, 0 });
         f.Eval();
         Check(f.g.GetNode(bad)->State == NodeState::Error, "extrude: open curve fails");
+
+        // 椭圆节点输出空间曲线：10 × 5 的椭圆拉伸 10 → π·10·5·10
+        const NodeId ell = Add(f.g, "curve.ellipse"), extE = Add(f.g, "solid.extrude");
+        f.g.Connect({ ell, 0, extE, 0 });
+        f.Eval();
+        Check(f.Ok(extE) && Near(f.Volume(extE), kPi * 50 * 10), "extrude: ellipse (space curve)");
+        // 椭圆实体（引用图纸里的椭圆）
+        const NodeId extEE = Add(f.g, "solid.extrude");
+        f.g.SetInputValue(extEE, 0, Value(CurvePtr(std::make_shared<EllipseEntity>(Object::InvalidID, Math::Point3{ 0, 0, 0 }, 10.0, 5.0))));
+        f.Eval();
+        Check(f.Ok(extEE) && Near(f.Volume(extEE), kPi * 50 * 10), "extrude: ellipse entity");
+        // 闭合插值样条（圆上取 12 点）：体积接近圆柱
+        const NodeId circ = Add(f.g, "curve.circle"), div = Add(f.g, "curve.divide"), interp = Add(f.g, "nurbs.interpolate"), extS = Add(f.g, "solid.extrude");
+        f.g.SetInputValue(div, 1, int64_t(12));
+        f.g.SetInputValue(interp, 1, true);
+        f.g.Connect({ circ, 0, div, 0 });
+        f.g.Connect({ div, 0, interp, 0 });
+        f.g.Connect({ interp, 0, extS, 0 });
+        f.Eval();
+        Check(f.Ok(extS) && Near(f.Volume(extS), kPi * 25 * 10, 1e-2), "extrude: closed interpolated spline (space curve)");
+        // 闭合的拟合点样条实体
+        const NodeId extSE = Add(f.g, "solid.extrude");
+        f.g.SetInputValue(extSE, 0, Value(CurvePtr(std::make_shared<SplineEntity>(Object::InvalidID,
+            std::vector<Math::Point3>{ { 5, 0, 0 }, { 0, 5, 0 }, { -5, 0, 0 }, { 0, -5, 0 } }, SplineBoundary::Closed))));
+        f.Eval();
+        Check(f.Ok(extSE) && f.Volume(extSE) > 50 * 10 && f.Volume(extSE) < 100 * 10, "extrude: closed spline entity (between the diamond and its bounding square)");
+        // 不闭合的多段线按首尾相连：10 × 10 的正方形少画最后一段
+        const NodeId extP = Add(f.g, "solid.extrude");
+        f.g.SetInputValue(extP, 0, Value(Geo::MakePolyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 } }, {}, false)));
+        f.Eval();
+        Check(f.Ok(extP) && Near(f.Volume(extP), 1000.0), "extrude: open polyline is closed implicitly");
 
         // 旋转：x ∈ [5, 7]、y ∈ [0, 2] 的矩形绕 Y 轴一圈 → 圆环体积 = π(7² − 5²)·2
         const NodeId ring = Add(f.g, "curve.rectangle"), rev = Add(f.g, "solid.revolve");
@@ -342,8 +374,8 @@ namespace
         f.Eval();
         Check(f.Ok(ce) && Near(f.Number(ce, 2), 10 * kPi, 1e-4), "conversion: circle → NURBS keeps the length 10π");
         const NodeId line = Add(f.g, "curve.line");
-        const NodeId extrude = Add(f.g, "solid.extrude");
-        Check(f.g.CanConnect({ line, 0, ce, 0 }) && !f.g.CanConnect({ interp, 0, extrude, 0 }),
+        const NodeId revolve = Add(f.g, "solid.revolve");   // 拉伸的轮廓也收空间曲线，用旋转的轮廓端口
+        Check(f.g.CanConnect({ line, 0, ce, 0 }) && !f.g.CanConnect({ interp, 0, revolve, 0 }),
               "types: curve → space curve connects, space curve → planar curve port does not");
 
         // 没有内核：控制点曲线照常求值，放样报错

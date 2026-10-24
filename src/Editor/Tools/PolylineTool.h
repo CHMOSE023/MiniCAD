@@ -27,7 +27,7 @@ namespace MiniCAD
 
         PolylineTool()
         {
-            LOG_DEBUG("[PolylineTool] L=直线 A=圆弧 | 左键追加顶点 | 右键提交 | ESC取消");
+            LOG_DEBUG("[PolylineTool] L=直线 A=圆弧 C=闭合 | 左键追加顶点 | 右键 / 回车提交 | ESC取消");
         }
 
         ~PolylineTool()
@@ -53,6 +53,16 @@ namespace MiniCAD
                 SwitchToArc();
                 return true;
             }
+            if (e.IsKeyPressed(KeyCode::C))
+            {
+                if (Close())
+                {
+                    Commit();
+                    Reset();
+                    if (OnFinished) OnFinished();
+                }
+                return true;
+            }
 
             if (e.Type == InputEventType::MouseMove)
             {
@@ -67,7 +77,7 @@ namespace MiniCAD
                 return true;
             }
 
-            if (e.IsRightClick())
+            if (e.IsRightClick() || e.IsKeyPressed(KeyCode::Enter))
             {
                 Commit();
                 Reset();
@@ -101,7 +111,8 @@ namespace MiniCAD
                 return "指定起点 [L 直线/A 圆弧]:";
             if (m_mode == DrawMode::Arc)
                 return m_hasArcMid ? "指定圆弧终点:" : "指定圆弧上一点:";
-            return "指定下一点 [L 直线/A 圆弧/右键提交/ESC]:";
+            return CanClose() ? "指定下一点 [L 直线/A 圆弧/C 闭合/右键提交/ESC]:"
+                              : "指定下一点 [L 直线/A 圆弧/右键提交/ESC]:";
         }
 
         void OnSceneChanged() override
@@ -127,6 +138,36 @@ namespace MiniCAD
             m_arcMid    = {};
             LOG_INFO("[PolylineTool] 模式 = 圆弧（三点：弧上点 → 终点）");
             RefreshOverlay();
+        }
+
+        // 闭合（同 AutoCAD 的 C）：直线模式用直线段连回起点；圆弧模式已给出弧上点时用经过该点的圆弧连回起点，
+        // 否则也用直线段。至少要有 3 个顶点（已有圆弧段时 2 个也能围成区域）
+        bool CanClose() const
+        {
+            if (m_points.size() >= 3)
+                return true;
+            const bool hasArc = std::any_of(m_bulges.begin(), m_bulges.end(), [](double b) { return std::abs(b) > 1e-12; });
+            return m_points.size() == 2 && (hasArc || (m_mode == DrawMode::Arc && m_hasArcMid));
+        }
+
+        bool Close()
+        {
+            if (!CanClose())
+            {
+                LOG_INFO("[PolylineTool] 闭合至少需要 3 个顶点");
+                return false;
+            }
+            const Math::Point3 start = m_points.front();
+            double bulge = 0.0;
+            if (m_mode == DrawMode::Arc && m_hasArcMid)
+                bulge = ComputeBulgeFromThreePoints(m_points.back(), m_arcMid, start);
+            m_hasArcMid = false;
+            m_arcMid    = {};
+            if (m_points.back() == start)
+                return true;   // 最后一点已点在起点上：已经闭合
+            m_bulges.push_back(bulge);
+            m_points.push_back(start);   // MiniCAD 的闭合多段线：末点与起点重合
+            return true;
         }
 
         void OnLeftClick(const Math::Point3& pt)

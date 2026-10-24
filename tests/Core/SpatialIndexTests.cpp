@@ -51,6 +51,7 @@ int RunLayoutTests();                 // LayoutTests.cpp，返回失败项数
 int RunMLeaderImportTests();          // MLeaderImportTests.cpp，返回失败项数
 int RunMeshTests();                   // MeshTests.cpp，返回失败项数
 int RunMLineToolTests();              // MLineToolTests.cpp，返回失败项数
+int RunPolylineToolTests();           // PolylineToolTests.cpp，返回失败项数
 int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项数
 int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
 int RunTransformSinkTests();           // TransformSinkTests.cpp，返回失败项数
@@ -328,6 +329,7 @@ int main()
     g_failures += RunMLeaderImportTests();
     g_failures += RunMeshTests();
     g_failures += RunMLineToolTests();
+    g_failures += RunPolylineToolTests();
     g_failures += RunMLineImportTests();
     g_failures += RunMLineEditTests();
     g_failures += RunTransformSinkTests();

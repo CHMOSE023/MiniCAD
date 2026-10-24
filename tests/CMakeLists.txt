@@ -131,6 +131,7 @@ if(WIN32)
         "Core/MLeaderImportTests.cpp"
         "Core/MeshTests.cpp"
         "Core/MLineToolTests.cpp"
+        "Core/PolylineToolTests.cpp"
         "Core/MLineImportTests.cpp"
         "Core/MLineEditTests.cpp"
         "Core/TransformSinkTests.cpp"
