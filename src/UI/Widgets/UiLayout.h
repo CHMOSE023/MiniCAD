@@ -15,6 +15,7 @@ namespace MiniGUI
     class DockSpace;
     class MenuBar;
     class TitleBar;
+    class Ribbon;
     class ToolBar;
 
     // 界面描述文件（JSON）→ 界面。描述菜单、工具栏和面板布局，具体内容（视口、特性面板、状态栏…）
@@ -74,6 +75,7 @@ namespace MiniGUI
 
         MenuBar*   GetMenuBar()  const { return m_menuBar; }
         TitleBar*  GetTitleBar() const { return m_titleBar; }
+        Ribbon*    GetRibbon() const { return m_ribbon; }
         ToolBar*   GetToolBar(const std::string& id) const;
         DockSpace* GetDock(const std::string& id) const;
 
@@ -95,6 +97,7 @@ namespace MiniGUI
             std::unique_ptr<Node> owned;            // 不在树上时由这里持有
             LayoutStyle           originalStyle;    // 注册时的布局，重建前恢复（描述里删掉的属性不残留）
             bool                  originalVisible = true;
+            bool                  originalHitTest = true;
             std::string           title;
         };
         std::map<std::string, PanelSlot> m_panels;
@@ -104,6 +107,8 @@ namespace MiniGUI
 
         MenuBar*                        m_menuBar  = nullptr;
         TitleBar*                       m_titleBar = nullptr;
+        Ribbon*                         m_ribbon   = nullptr;
+        std::string                     m_ribbonTab;        // 重新加载前选中的功能区选项卡
         std::map<std::string, ToolBar*> m_toolBars;
         std::map<std::string, DockSpace*> m_docks;          // id 为空的停靠区用自动生成的键
         std::string                     m_error;

@@ -18,7 +18,7 @@ namespace MiniGUI
     {
         ColorRef background = Theme::Panel;
         ColorRef border     = Theme::PopupBorder;
-        float   rounding   = 6.0f;
+        float   rounding   = Theme::RadiusMd;
         bool    shadow     = true;
     };
 

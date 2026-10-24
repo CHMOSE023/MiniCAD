@@ -128,13 +128,13 @@ namespace MiniGUI
                     const Rect lr = CellRect(row, col);
                     const Rect cell{ lr.min + r.min, lr.max + r.min };
                     const Color32 color = m_rows[row][col];
-                    dl.AddRectFilled(cell, color, 3.0f);
+                    dl.AddRectFilled(cell, color, Theme::RadiusSm);
                     const bool hover   = m_hoverRow == static_cast<int>(row) && m_hoverCol == static_cast<int>(col);
                     const bool current = (color & 0x00FFFFFFu) == (m_current & 0x00FFFFFFu);
                     if (hover || current)
-                        dl.AddRect(cell.Deflated(-2.0f), hover ? Theme::Outline : Theme::Accent, 4.0f, 1.5f);
+                        dl.AddRect(cell.Deflated(-2.0f), hover ? Theme::Outline : Theme::Accent, Theme::RadiusSm, 1.5f);
                     else
-                        dl.AddRect(cell, ColorRef(ThemeColor::Outline, 30), 3.0f, 1.0f);
+                        dl.AddRect(cell, ColorRef(ThemeColor::Outline, 30), Theme::RadiusSm, 1.0f);
                 }
         }
 
@@ -194,8 +194,8 @@ namespace MiniGUI
         dl.AddRectFilled(r, IsHovered() ? Theme::ControlHover : Theme::Control, Theme::Rounding);
         dl.AddRect(r, (m_popup || focusRing) ? Theme::Accent : Theme::Border, Theme::Rounding, 1.0f);
         const Rect swatch = r.Deflated(5.0f);
-        dl.AddRectFilled(swatch, m_color | 0xFF000000u, 2.0f);
-        dl.AddRect(swatch, ColorRef(ThemeColor::Outline, 40), 2.0f, 1.0f);
+        dl.AddRectFilled(swatch, m_color | 0xFF000000u, Theme::RadiusXs);
+        dl.AddRect(swatch, ColorRef(ThemeColor::Outline, 40), Theme::RadiusXs, 1.0f);
     }
 
     void ColorButton::Choose(Color32 color)

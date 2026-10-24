@@ -35,10 +35,20 @@ namespace MiniGUI::Theme
     constexpr ColorRef ScrollThumbHover  { ThemeColor::ScrollThumbHover };
     constexpr ColorRef ModalScrim        { ThemeColor::ModalScrim };
     constexpr ColorRef Outline           { ThemeColor::Outline };
+    constexpr ColorRef Rail              { ThemeColor::Rail };
+    constexpr ColorRef RailHover         { ThemeColor::RailHover };
+    constexpr ColorRef RailInk           { ThemeColor::RailInk };
+    constexpr ColorRef CardPrimary       { ThemeColor::CardPrimary };
+    constexpr ColorRef CardPrimaryInk    { ThemeColor::CardPrimaryInk };
+    constexpr ColorRef CardPrimaryBorder { ThemeColor::CardPrimaryBorder };
 
     // 尺寸暂不随主题切换（切换尺寸需要重新布局，留到需要紧凑/宽松两种密度时再做）
     constexpr float FontSize     = 14.0f;
     constexpr float ControlH     = 28.0f;    // 按钮、输入框、下拉框的默认高度
     constexpr float RowH         = 26.0f;    // 列表、树、菜单行高
-    constexpr float Rounding     = 4.0f;
+    constexpr float RadiusXs     = 2.0f;    // 色块、小标记
+    constexpr float RadiusSm     = 4.0f;    // 控件：按钮、输入框、列表行、菜单项
+    constexpr float RadiusMd     = 6.0f;    // 弹层、标签页、面板卡片
+    constexpr float RadiusLg     = 10.0f;   // 对话框
+    constexpr float Rounding     = RadiusSm; // 旧名，等同 RadiusSm
 }

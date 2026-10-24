@@ -48,11 +48,15 @@ namespace MiniGUI
         int       FindTabData(uintptr_t data) const;      // 没有返回 -1
 
         void SetSelected(int index);
+        void ClearSelection() { if (m_selected >= 0) { m_selected = -1; Invalidate(); } }   // 不选中任何标签（不触发回调）
         int  GetSelected() const { return m_selected; }
 
         void RequestClose(int index);                   // 与点击 × 相同的流程
 
         void SetShowNewTabButton(bool show) { m_showNewButton = show; InvalidateLayout(); }
+        // 标题栏样式（放进无边框窗口的标题栏，SolidCraft 式）：不画标签条底色和底线，标签画成圆角块
+        void SetBarStyle(bool bar) { m_barStyle = bar; Invalidate(); }
+        bool IsEmptyStripAt(Vec2 local) const { int tab; return HitAt(local, tab) == Hit::None; }   // 标签条空白处（标题栏里可拖动窗口）
         void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged = std::move(cb); }
         void SetOnCloseRequested(std::function<void(int)> cb)   { m_onCloseRequested = std::move(cb); }
         void SetOnNewTabRequested(std::function<void()> cb)     { m_onNewTabRequested = std::move(cb); }
@@ -62,6 +66,10 @@ namespace MiniGUI
         void SetTabContextMenu(std::function<std::vector<MenuItem>(int)> cb) { m_contextMenu = std::move(cb); }
 
         static constexpr float kStripHeight = 34.0f;
+
+        // 自然宽度取各标签的理想宽度之和（只用标签条、放在一行里和别的控件并排时用，例如状态栏左侧的模型 / 布局标签）
+        void  SetFitToTabs(bool fit) { m_fitToTabs = fit; InvalidateLayout(); }
+        float IdealStripWidth() const;
 
     protected:
         Vec2 MeasureContent(Vec2 available) override;
@@ -110,6 +118,8 @@ namespace MiniGUI
         float m_pressX     = 0.0f;
         bool  m_dragging   = false;
 
+        bool                     m_barStyle = false;
+        bool                     m_fitToTabs = false;
         std::function<void(int)> m_onSelectionChanged;
         std::function<void(int)> m_onCloseRequested;
         std::function<void()>    m_onNewTabRequested;

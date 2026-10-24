@@ -241,6 +241,7 @@ namespace MiniCAD
                 renderer.Submit(snap.border, screenVP, PrimitiveType::Line, true, true);
             }
 
+            if (viewState.ShowCrosshair)
             {
                 auto cursor = m_cursor.BuildCursor(viewState, m_width, m_height);
                 renderer.Submit(cursor, screenVP, PrimitiveType::Line, true, true);
@@ -267,6 +268,7 @@ namespace MiniCAD
         k = HashCombine(k, &cam.Elevation, sizeof(cam.Elevation));
         k = HashCombine(k, &m_width,      sizeof(m_width));
         k = HashCombine(k, &m_height,     sizeof(m_height));
+        k = HashCombine(k, m_camera.GetFitInsets(), sizeof(double) * 4);   // 坐标轴图标放在没被浮动面板挡住的区域左下角
         const unsigned char flags = (grid ? 1 : 0) | (axis ? 2 : 0) | (gizmo ? 4 : 0);
         k = HashCombine(k, &flags, sizeof(flags));
 

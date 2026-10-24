@@ -56,6 +56,14 @@ namespace MiniGUI
         InvalidateLayout();
     }
 
+    void Label::SetBold(bool bold)
+    {
+        if (m_bold == bold)
+            return;
+        m_bold = bold;
+        InvalidateLayout();
+    }
+
     Vec2 Label::MeasureContent(Vec2 available)
     {
         const Edges& pad = GetLayoutStyle().padding;
@@ -65,7 +73,7 @@ namespace MiniGUI
 
         const float maxWidth = available.x - pad.Horizontal();
         const Vec2  size     = ctx->GetTextSystem().Measure(m_text, m_params, maxWidth);
-        return { size.x + pad.Horizontal(), size.y + pad.Vertical() };
+        return { size.x + pad.Horizontal() + (m_bold ? 1.0f : 0.0f), size.y + pad.Vertical() };
     }
 
     void Label::OnPaint(DrawList& dl, const Rect& screenRect)
@@ -83,5 +91,7 @@ namespace MiniGUI
             params.color = ColorScaleAlpha(params.color, 0.45f);
 
         ctx->GetTextSystem().Draw(dl, box, m_text, params);
+        if (m_bold)
+            ctx->GetTextSystem().Draw(dl, Rect{ box.min.x + 0.7f, box.min.y, box.max.x + 0.7f, box.max.y }, m_text, params);
     }
 }

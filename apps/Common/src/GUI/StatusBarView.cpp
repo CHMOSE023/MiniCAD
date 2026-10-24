@@ -1,7 +1,5 @@
-// ── 状态栏：当前工具 / 坐标 / 捕捉 / 正交 / 悬停 / 文档信息 ──────
+// ── 状态栏：捕捉 / 正交 / 悬停 / 细线开关 ──────
 #include "GUI/StatusBarView.h"
-#include "Document/Document.h"
-#include "MiniCADVersion.h"
 #include "Document/DocumentManager.h"
 #include "Editor/Editor.h"
 #include "Editor/Snap/SnapEngine.h"
@@ -20,8 +18,6 @@ namespace MiniCAD
         using MiniGUI::Label;
         namespace Theme = MiniGUI::Theme;
 
-        const MiniGUI::Color32 kDirtyColor = MiniGUI::ColorFromHex(0xFFCC33);   // 琥珀色：未保存
-
         MiniGUI::LayoutStyle RowStyle(float gap)
         {
             MiniGUI::LayoutStyle s;
@@ -31,16 +27,10 @@ namespace MiniCAD
             return s;
         }
 
-        MiniGUI::Separator* AddVSeparator(MiniGUI::Node* parent)
-        {
-            auto* sep = parent->AddChild<MiniGUI::Separator>(true);
-            sep->EditLayoutStyle().height = 14.0f;
-            return sep;
-        }
     }
 
     // =========================================================
-    // 状态开关："捕捉(F3): 开"，开时正常颜色、关时灰色；左键切换。
+    // 状态开关：只有文字（"捕捉"），开时正常颜色、关时灰色；左键切换。
     // 不参与焦点：点击后键盘仍留在绘图区（F3/F8 等功能键继续由 Editor 处理）
     // =========================================================
     class StatusToggle : public MiniGUI::Button
@@ -60,15 +50,14 @@ namespace MiniCAD
             SetStyle(st);
 
             EditLayoutStyle().padding = MiniGUI::Edges::Symmetric(6.0f, 2.0f);
-            m_label = SetText({});
+            m_label = SetText(m_title);
             m_label->SetFontSize(13.0f);
             m_label->SetHitTestVisible(false);
         }
 
         void SetOn(bool on)
         {
-            m_label->SetText(m_title + (on ? "开" : "关"));
-            m_label->SetColor(on ? Theme::Text : Theme::TextDim);
+            m_label->SetColor(on ? Theme::Text : Theme::Placeholder);
         }
 
     private:
@@ -82,58 +71,36 @@ namespace MiniCAD
     StatusBarView::StatusBarView(DocumentManager& dm, float height)
         : m_dm(dm)
     {
-        MiniGUI::LayoutStyle s = RowStyle(8.0f);
+        MiniGUI::LayoutStyle s = RowStyle(2.0f);
         s.height  = height;
         s.shrink  = 0.0f;
         s.padding = MiniGUI::Edges::Symmetric(8.0f, 0.0f);
         SetLayoutStyle(s);
 
-        // ── 当前工具 ─────────────────────────────────────────────
-        AddChild<Label>("工具:", 13.0f, Theme::TextDim);
-        m_tool = AddChild<Label>("", 13.0f);
-        m_tool->EditLayoutStyle().minWidth = 56.0f;
-        AddVSeparator(this);
+        // 左边留空，开关靠右
+        Node* spacer = AddChild<Node>();
+        spacer->EditLayoutStyle().grow = 1.0f;
+        spacer->SetHitTestVisible(false);
 
-        // ── 鼠标坐标：固定宽度，数字变化时后面的控件不跟着跳动 ─────
-        AddChild<Label>("坐标:", 13.0f, Theme::TextDim);
-        m_coords = AddChild<Label>("---", 13.0f);
-        m_coords->EditLayoutStyle().width = 170.0f;
-        AddVSeparator(this);
-
-        // ── 捕捉 / 正交 / 悬停 ────────────────────────────────────
-        m_snap = AddChild<StatusToggle>("捕捉(F3): ", [this] { m_dm.GetEditor().ToggleSnap(); if (m_onToggled) m_onToggled(); });
+        // ── 捕捉 / 正交 / 悬停 / 细线 ─────────────────────────────
+        m_snap = AddChild<StatusToggle>("捕捉", [this] { m_dm.GetEditor().ToggleSnap(); if (m_onToggled) m_onToggled(); });
         m_snap->SetTooltip("左键: 开/关 (F3)\n右键: 对象捕捉设置");
         m_snap->SetContextMenuHandler([this](MiniGUI::Vec2) { OpenSnapSettings(); return true; });
 
-        m_ortho = AddChild<StatusToggle>("正交(F8): ", [this] { m_dm.GetEditor().ToggleOrtho(); if (m_onToggled) m_onToggled(); });
+        m_ortho = AddChild<StatusToggle>("正交", [this] { m_dm.GetEditor().ToggleOrtho(); if (m_onToggled) m_onToggled(); });
         m_ortho->SetTooltip("左键: 开/关 (F8)");
 
-        m_hover = AddChild<StatusToggle>("悬停: ", [this] { m_dm.GetEditor().ToggleHover(); if (m_onToggled) m_onToggled(); });
+        m_hover = AddChild<StatusToggle>("悬停", [this] { m_dm.GetEditor().ToggleHover(); if (m_onToggled) m_onToggled(); });
         m_hover->SetTooltip("左键: 开/关 鼠标悬停高亮");
 
-        m_thin = AddChild<StatusToggle>("细线: ", [this] { m_dm.GetEditor().ToggleThinLines(); if (m_onToggled) m_onToggled(); });
+        m_thin = AddChild<StatusToggle>("细线", [this] { m_dm.GetEditor().ToggleThinLines(); if (m_onToggled) m_onToggled(); });
         m_thin->SetTooltip("左键: 开/关 全局细线（忽略线宽，只影响显示）");
-        AddVSeparator(this);
 
-        // ── 当前文档 ─────────────────────────────────────────────
-        AddChild<Label>("文档:", 13.0f, Theme::TextDim);
-        m_docName = AddChild<Label>("", 13.0f);
-        m_docName->SetEllipsis(true);
-        m_docName->EditLayoutStyle().shrink = 1.0f;
-        m_docDirty = AddChild<Label>("● 未保存", 13.0f, kDirtyColor);
-
-        // ── 右侧：文档数量 ───────────────────────────────────────
-        Node* spacer = AddChild<Node>();
-        spacer->EditLayoutStyle().grow = 1.0f;
-        spacer->SetHitTestVisible(false); 
-
-        // 窗口变窄时只压缩文档名（显示省略号），其余项保持自然宽度，避免文字互相重叠
+        // 窗口变窄时开关保持自然宽度，只压缩左边的空白
         for (const auto& child : GetChildren())
-        {
             child->EditLayoutStyle().shrink = 0.0f;
-        }
-
-        m_docName->EditLayoutStyle().shrink = 1.0f;
+        spacer->EditLayoutStyle().shrink   = 1.0f;
+        spacer->EditLayoutStyle().minWidth = 0.0f;
     }
 
     MiniGUI::Node* StatusBarView::AddRightItem(std::unique_ptr<MiniGUI::Node> item)
@@ -141,7 +108,7 @@ namespace MiniCAD
         const auto& children = GetChildren();
         size_t index = children.size();
         for (size_t i = 0; i < children.size(); ++i)
-            if (children[i].get() == m_version)
+            if (children[i].get() == m_snap)
                 index = i;
         item->EditLayoutStyle().shrink = 0.0f;
         return InsertChild(index, std::move(item));
@@ -150,38 +117,18 @@ namespace MiniCAD
     // =========================================================
     // 每帧同步
     // =========================================================
-    void StatusBarView::Refresh(const std::string& toolName, bool hovered, int mouseX, int mouseY)
+    void StatusBarView::Refresh()
     {
-        Document* doc = m_dm.GetActive();
-        SetVisible(doc != nullptr);
-        if (!doc)
+        const bool hasDoc = m_dm.GetActive() != nullptr;
+        SetVisible(hasDoc);
+        if (!hasDoc)
             return;
-
-        m_tool->SetText(toolName);
-
-        char buf[64];
-        if (hovered)
-        {
-            const auto pt = m_dm.GetViewport().GetCamera().ScreenToWorld(mouseX, mouseY);
-            std::snprintf(buf, sizeof(buf), "X: %.1f  Y: %.1f", pt.x, pt.y);
-            m_coords->SetText(buf);
-            m_coords->SetColor(Theme::Text);
-        }
-        else
-        {
-            m_coords->SetText("---");
-            m_coords->SetColor(Theme::TextDim);
-        }
 
         Editor& editor = m_dm.GetEditor();
         m_snap->SetOn(editor.IsSnapEnabled());
         m_ortho->SetOn(editor.IsOrthoEnabled());
         m_hover->SetOn(editor.IsHoverEnabled());
         m_thin->SetOn(editor.IsThinLines());
-
-        m_docName->SetText(doc->GetName());
-        m_docDirty->SetVisible(doc->IsDirty());
-
     }
 
     // =========================================================

@@ -31,6 +31,23 @@ namespace MiniCAD
 
     Camera::Camera(double width, double height) { Resize(width, height); }
 
+    // 去掉留边后的区域：scaleX / scaleY = 整个屏幕 / 区域（≥ 1），dx / dy = 区域中心相对屏幕中心的像素偏移（向右、向下为正）。
+    // 留边过大（区域不到屏幕的 20%）时按 20% 算，免得范围缩成一个点
+    Camera::FitArea Camera::GetFitArea() const
+    {
+        FitArea a;
+        const double W = m_screenWidth, H = m_screenHeight;
+        if (W <= 0.0 || H <= 0.0)
+            return a;
+        const double l = m_fitInsets[0], t = m_fitInsets[1], r = m_fitInsets[2], b = m_fitInsets[3];
+        const double iw = std::max(W - l - r, W * 0.2), ih = std::max(H - t - b, H * 0.2);
+        a.scaleX = W / iw;
+        a.scaleY = H / ih;
+        a.dx = std::clamp((l - r) * 0.5, -W * 0.4, W * 0.4);
+        a.dy = std::clamp((t - b) * 0.5, -H * 0.4, H * 0.4);
+        return a;
+    }
+
     void Camera::ZoomToBounds(double minX, double minY, double maxX, double maxY, double margin)
     {
         if (!IsPlanView())
@@ -39,12 +56,14 @@ namespace MiniCAD
             return;
         }
         const double w = maxX - minX, h = maxY - minY;
-        double zoom = std::max(h, w / m_aspect) * margin;   // 可视高度 = m_zoom，可视宽度 = m_zoom * 宽高比
+        const FitArea a = GetFitArea();
+        double zoom = std::max(h * a.scaleY, w / m_aspect * a.scaleX) * margin;   // 可视高度 = m_zoom，可视宽度 = m_zoom * 宽高比
         if (zoom < 1e-6)
             zoom = 10.0;                                      // 只有一个点：给个默认视野
         m_zoom = std::clamp(zoom, kMinZoom, kMaxZoom);
-        m_target.x = (minX + maxX) * 0.5;
-        m_target.y = (minY + maxY) * 0.5;
+        const double wpp = m_zoom / m_screenHeight;         // 留边不对称时，范围中心落在留边后区域的中心
+        m_target.x = (minX + maxX) * 0.5 - a.dx * wpp;
+        m_target.y = (minY + maxY) * 0.5 + a.dy * wpp;
         UpdateViewProj();
     }
 
@@ -65,11 +84,13 @@ namespace MiniCAD
             u0 = std::min(u0, u); u1 = std::max(u1, u);
             v0 = std::min(v0, v); v1 = std::max(v1, v);
         }
-        double zoom = std::max(v1 - v0, (u1 - u0) / m_aspect) * margin;
+        const FitArea a = GetFitArea();
+        double zoom = std::max((v1 - v0) * a.scaleY, (u1 - u0) / m_aspect * a.scaleX) * margin;
         if (zoom < 1e-6)
             zoom = 10.0;
         m_zoom = std::clamp(zoom, kMinZoom, kMaxZoom);
-        const Math::Vec3 t = c + m_right * ((u0 + u1) * 0.5) + m_up * ((v0 + v1) * 0.5);
+        const double wpp = m_zoom / m_screenHeight;
+        const Math::Vec3 t = c + m_right * ((u0 + u1) * 0.5 - a.dx * wpp) + m_up * ((v0 + v1) * 0.5 + a.dy * wpp);
         m_target = { t.x, t.y, t.z };
         UpdateViewProj();
     }

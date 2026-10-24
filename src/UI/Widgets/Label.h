@@ -21,6 +21,7 @@ namespace MiniGUI
         void SetAlign(TextAlign horizontal, TextAlign vertical = TextAlign::Start);
         void SetWrap(bool wrap);            // 超出宽度自动换行
         void SetEllipsis(bool ellipsis);    // 单行超出宽度时显示"…"
+        void SetBold(bool bold);            // 加粗（字体没有粗体：错开 0.7 像素再画一遍）
 
         const TextParams& GetParams() const { return m_params; }
 
@@ -31,5 +32,6 @@ namespace MiniGUI
     private:
         std::string m_text;
         TextParams  m_params;
+        bool        m_bold = false;
     };
 }

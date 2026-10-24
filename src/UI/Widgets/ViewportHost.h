@@ -67,7 +67,9 @@ namespace MiniGUI
         void        OnPointerEvent(PointerEvent& e) override;
         void        OnKeyEvent(KeyEvent& e) override;
         void        OnTextInput(TextInputEvent& e) override;
-        CursorShape GetCursor(Vec2 local) const override { (void)local; return m_cursor; }
+        // 只在指针直接落在视口上（或视口捕获了指针）时用视口的光标；叠在视口上的子节点（浮动工具条等）自己没指定光标时
+        // 不能继承视口的“隐藏”，否则指针移到工具条上会看不见
+        CursorShape GetCursor(Vec2 local) const override;
 
     private:
         bool IsEffectivelyVisible() const;

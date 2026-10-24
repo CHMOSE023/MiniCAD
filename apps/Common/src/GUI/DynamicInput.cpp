@@ -323,15 +323,8 @@ namespace MiniCAD
             return true;
         }
         // 还没有锚点（例如第一点）：数字进入命令行，按坐标输入（100,50）
-        if (m_console && m_console->GetParent())
+        if (m_console && IsCommandLineShown())
         {
-            MiniGUI::DockSpace* dock = m_layout->GetDock("main");
-            if (dock && dock->HasPanel("commandline"))
-            {
-                if (!dock->IsPanelVisible("commandline"))
-                    return false;
-                dock->ActivatePanel("commandline");
-            }
             m_console->FocusInput();
             return true;
         }

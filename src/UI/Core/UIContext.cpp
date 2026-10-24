@@ -58,9 +58,9 @@ namespace MiniGUI
 
             void OnPaint(DrawList& dl, const Rect& r) override
             {
-                dl.AddRectFilled(Rect{ r.min.x, r.min.y + 1.0f, r.max.x, r.max.y + 2.0f }, ColorRef(ThemeColor::Shadow, 50), 4.0f);
-                dl.AddRectFilled(r, Theme::TooltipBackground, 4.0f);
-                dl.AddRect(r, Theme::TooltipBorder, 4.0f, 1.0f);
+                dl.AddRectFilled(Rect{ r.min.x, r.min.y + 1.0f, r.max.x, r.max.y + 2.0f }, ColorRef(ThemeColor::Shadow, 50), Theme::RadiusSm);
+                dl.AddRectFilled(r, Theme::TooltipBackground, Theme::RadiusSm);
+                dl.AddRect(r, Theme::TooltipBorder, Theme::RadiusSm, 1.0f);
                 if (UIContext* ctx = GetContext())
                     ctx->GetTextSystem().Draw(dl, Rect{ r.min.x + 8.0f, r.min.y + 5.0f, r.max.x - 8.0f, r.max.y - 5.0f }, m_text, Params());
             }

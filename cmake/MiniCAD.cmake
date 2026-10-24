@@ -142,7 +142,7 @@ target_include_directories(MiniCAD
 target_link_libraries(MiniCAD PRIVATE MiniDWG)
 
 if(MSVC)
-    target_compile_options(MiniCAD PRIVATE /utf-8)
+    target_compile_options(MiniCAD PRIVATE /utf-8 /bigobj)   # /bigobj：Editor.cpp 在 debug 下节数超过默认上限
     target_compile_definitions(MiniCAD PRIVATE
         UNICODE
         NOMINMAX

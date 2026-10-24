@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/Node.h"
 #include "Data/Json.h"
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -73,6 +74,16 @@ namespace MiniGUI
         bool      IsDragging() const { return m_drag.active; }
         bool      GetDropPreview(Rect& out) const;            // 拖动中且有有效落点时返回预览矩形（窗口坐标）
 
+        // 卡片样式（照 SolidCraft 的浮动布局）：布局样式的 gap > 0 时，每个标签组画成圆角卡片（RadiusLg，细边框），
+        // 卡片之间留 gap 宽的缝（缝就是分隔条，悬停时显示强调色），外圈按 padding 留边，缝里露出 Background。
+        // gap 为 0（默认）时是紧贴的停靠面板，相邻面板之间一条分界线
+        bool  IsCardStyle() const { return GetLayoutStyle().gap > 0.0f || m_floating; }
+        // 浮动：停靠区叠在绘图区上面（照 SolidCraft，绘图区铺满窗口）。停靠区自己和缝都是透明的、点击穿透，
+        // 没有标题栏的标签组（文档区）是透明的“洞”，只画其余面板的卡片。隐含卡片样式
+        void  SetFloating(bool floating);
+        bool  IsFloating() const { return m_floating; }
+        float SplitterSize() const { return IsCardStyle() ? std::max(GetLayoutStyle().gap, 1.0f) : kSplitterSize; }
+
         static constexpr float kHeaderHeight = 28.0f;
         static constexpr float kSplitterSize = 1.0f;        // 分隔条在布局中占的宽度：只有一条分界线，面板之间没有缝隙
         static constexpr float kSplitterHit  = 6.0f;        // 可拖动的热区宽度：叠在两侧面板的边缘上，不额外占位
@@ -82,6 +93,7 @@ namespace MiniGUI
 
     protected:
         void OnLayout() override;
+        void OnPaint(DrawList& dl, const Rect& screenRect) override;
         void OnPaintOverlay(DrawList& dl, const Rect& screenRect) override;
 
     private:
@@ -152,6 +164,7 @@ namespace MiniGUI
         std::unique_ptr<Tree>          m_root;
         std::map<std::string, Panel>   m_panels;
         std::function<void()>          m_onLayoutChanged;
+        bool                           m_floating = false;
         bool                           m_rebuildPending = false;
 
         struct Drag

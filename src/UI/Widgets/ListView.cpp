@@ -31,9 +31,9 @@ namespace MiniGUI
         void PaintRowBackground(DrawList& dl, const Rect& row, bool selected, bool focused, bool hovered)
         {
             if (selected)
-                dl.AddRectFilled(row, focused ? Theme::Selection : Theme::SelectionDim, 3.0f);
+                dl.AddRectFilled(row, focused ? Theme::Selection : Theme::SelectionDim, Theme::RadiusSm);
             else if (hovered)
-                dl.AddRectFilled(row, Theme::RowHover, 3.0f);
+                dl.AddRectFilled(row, Theme::RowHover, Theme::RadiusSm);
         }
 
         // 可见行范围：与当前裁剪区相交的行
@@ -103,7 +103,7 @@ namespace MiniGUI
 
                 // 键盘焦点行（多选时与选中无关）画一个细框
                 if (focused && i == m_list->m_current && m_list->m_mode == SelectionMode::Multiple)
-                    dl.AddRect(row, Theme::Accent, 3.0f, 1.0f);
+                    dl.AddRect(row, Theme::Accent, Theme::RadiusSm, 1.0f);
 
                 if (m_list->m_itemPainter)
                 {

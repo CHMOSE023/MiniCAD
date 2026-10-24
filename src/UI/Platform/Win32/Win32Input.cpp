@@ -122,6 +122,136 @@ namespace MiniGUI
         EnableIme(true);
     }
 
+    namespace
+    {
+        // 系统没有张开的手形光标：按平移图标（tools/make_icons.py 的 "Pan"）同样的形状、一半大小画成彩色光标。
+        // 图标在 64 网格上：手掌、拇指、四根手指各自放大一圈涂实、再挖空，剩下轮廓线；手指逐个画，相邻手指之间留出分隔线。
+        // 光标里轮廓是白色、外面描一圈黑边，深浅背景上都看得清
+        HCURSOR GrabCursor()
+        {
+            static HCURSOR cursor = []
+            {
+                struct Box { float x0, y0, x1, y1, r; };
+                const Box   fingers[4] = { { 18, 14, 26, 38, 4 }, { 27, 8, 35, 34, 4 }, { 36, 10, 44, 34, 4 }, { 45, 17, 53, 38, 4 } };
+                const Box   palm       = { 18, 28, 53, 58, 10 };
+                const float thumb[5][2] = { { 7, 34 }, { 12, 29 }, { 24, 40 }, { 24, 52 }, { 18, 52 } };
+                const float line = 5.0f;        // 线宽（64 网格）：光标只有图标的一半大，线比图标略粗
+
+                auto inBox = [](const Box& b, float pad, float x, float y)
+                {
+                    const float r  = b.r + pad;
+                    const float cx = std::clamp(x, b.x0 - pad + r, b.x1 + pad - r);
+                    const float cy = std::clamp(y, b.y0 - pad + r, b.y1 + pad - r);
+                    return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r
+                        && x >= b.x0 - pad && x <= b.x1 + pad && y >= b.y0 - pad && y <= b.y1 + pad;
+                };
+                auto inThumb = [&thumb](float pad, float x, float y)
+                {
+                    bool inside = false;
+                    float best = 1e9f;
+                    for (int i = 0, j = 4; i < 5; j = i++)
+                    {
+                        const float xi = thumb[i][0], yi = thumb[i][1], xj = thumb[j][0], yj = thumb[j][1];
+                        if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+                            inside = !inside;
+                        const float dx = xj - xi, dy = yj - yi;
+                        const float t  = std::clamp(((x - xi) * dx + (y - yi) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f);
+                        const float ex = xi + t * dx - x, ey = yi + t * dy - y;
+                        best = std::min(best, ex * ex + ey * ey);
+                    }
+                    return inside || best <= pad * pad;
+                };
+                // 与图标相同的绘制顺序：后画的盖住先画的
+                auto outlineAt = [&](float x, float y)
+                {
+                    bool v = false;
+                    if (inBox(palm, line, x, y))  v = true;
+                    if (inThumb(line, x, y))      v = true;
+                    if (inThumb(0.0f, x, y))      v = false;
+                    for (const Box& f : fingers)
+                    {
+                        if (inBox(f, line, x, y)) v = true;
+                        if (inBox(f, 0.0f, x, y)) v = false;
+                    }
+                    if (inBox(palm, 0.0f, x, y))  v = false;
+                    if (inThumb(0.0f, x, y))      v = false;
+                    return v;
+                };
+
+                // 手画成 16 像素大（图标网格每单位 1/4 像素），居中放在 32×32 的光标里，热点在手掌中间。
+                // 每个光标像素 4×4 个采样；黑边是轮廓向外扩 3 个采样
+                constexpr int   kSize = 32, kSub = 4, kGrid = kSize * kSub;
+                constexpr float kScale = 0.25f;
+                std::vector<uint8_t> outline(kGrid * kGrid);
+                for (int sy = 0; sy < kGrid; ++sy)
+                    for (int sx = 0; sx < kGrid; ++sx)
+                    {
+                        const float ux = 32.0f + ((sx + 0.5f) / kSub - kSize * 0.5f) / kScale;
+                        const float uy = 33.0f + ((sy + 0.5f) / kSub - kSize * 0.5f) / kScale;
+                        outline[sy * kGrid + sx] = outlineAt(ux, uy) ? 1 : 0;
+                    }
+                auto halo = [&](int sx, int sy)
+                {
+                    constexpr int kHalo = 3;
+                    for (int dy = -kHalo; dy <= kHalo; ++dy)
+                        for (int dx = -kHalo; dx <= kHalo; ++dx)
+                        {
+                            const int x = sx + dx, y = sy + dy;
+                            if (x >= 0 && y >= 0 && x < kGrid && y < kGrid && outline[y * kGrid + x])
+                                return true;
+                        }
+                    return false;
+                };
+
+                BITMAPV5HEADER bi = {};
+                bi.bV5Size        = sizeof(bi);
+                bi.bV5Width       = kSize;
+                bi.bV5Height      = -kSize;         // 自上而下
+                bi.bV5Planes      = 1;
+                bi.bV5BitCount    = 32;
+                bi.bV5Compression = BI_BITFIELDS;
+                bi.bV5RedMask     = 0x00FF0000;
+                bi.bV5GreenMask   = 0x0000FF00;
+                bi.bV5BlueMask    = 0x000000FF;
+                bi.bV5AlphaMask   = 0xFF000000;
+                void* bits = nullptr;
+                HDC dc = GetDC(nullptr);
+                HBITMAP color = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, &bits, nullptr, 0);
+                ReleaseDC(nullptr, dc);
+                if (!color || !bits)
+                    return LoadCursorW(nullptr, IDC_HAND);
+                auto* px = static_cast<uint32_t*>(bits);
+                for (int y = 0; y < kSize; ++y)
+                    for (int x = 0; x < kSize; ++x)
+                    {
+                        int white = 0, black = 0;
+                        for (int sy = y * kSub; sy < (y + 1) * kSub; ++sy)
+                            for (int sx = x * kSub; sx < (x + 1) * kSub; ++sx)
+                            {
+                                if (outline[sy * kGrid + sx]) ++white;
+                                else if (halo(sx, sy))        ++black;
+                            }
+                        const int n = white + black;
+                        const uint32_t a = static_cast<uint32_t>(n * 255 / (kSub * kSub));
+                        const uint32_t v = n ? static_cast<uint32_t>(white * 255 / n) : 0;
+                        px[y * kSize + x] = (a << 24) | (v << 16) | (v << 8) | v;
+                    }
+                HBITMAP mask = CreateBitmap(kSize, kSize, 1, 1, nullptr);
+                ICONINFO ii = {};
+                ii.fIcon    = FALSE;
+                ii.xHotspot = kSize / 2;
+                ii.yHotspot = kSize / 2;
+                ii.hbmMask  = mask;
+                ii.hbmColor = color;
+                HCURSOR made = CreateIconIndirect(&ii);
+                DeleteObject(color);
+                DeleteObject(mask);
+                return made ? made : LoadCursorW(nullptr, IDC_HAND);
+            }();
+            return cursor;
+        }
+    }
+
     void Win32Input::ApplyCursor()
     {
         LPCWSTR id = IDC_ARROW;
@@ -136,6 +266,7 @@ namespace MiniGUI
         case CursorShape::SizeAll:    id = IDC_SIZEALL;  break;
         case CursorShape::NotAllowed: id = IDC_NO;       break;
         case CursorShape::Hidden:     SetCursor(nullptr); return;
+        case CursorShape::Grab:       SetCursor(GrabCursor()); return;
         default:                                         break;
         }
         SetCursor(LoadCursorW(nullptr, id));

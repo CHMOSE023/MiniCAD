@@ -37,6 +37,12 @@ namespace MiniGUI
         ModalScrim,         // 模态弹层下方的遮罩（含透明度）
         Shadow,             // 弹层阴影（含透明度，按层叠加）
         Outline,            // 与底色反差最大的细描边（深色为白、浅色为黑），常配合透明度使用
+        Rail,               // 起始页左侧导航列（两种主题都是灰底浅色字）
+        RailHover,          // 导航列悬停 / 当前行
+        RailInk,            // 导航列文字
+        CardPrimary,        // 主卡片（起始页“新建”）底色
+        CardPrimaryInk,     // 主卡片标题文字
+        CardPrimaryBorder,  // 主卡片边框
         Count
     };
 

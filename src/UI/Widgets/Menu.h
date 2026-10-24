@@ -114,8 +114,13 @@ namespace MiniGUI
         bool  OpenByMnemonic(char letter) override;
         bool  IsKeyboardMode() const { return m_keyboardMode; }
 
-        void AddMenu(std::string title, std::vector<MenuItem> items);
+        static constexpr float kIconSize = 18.0f;     // 菜单标题图标的尺寸
+        // icon：有图标时标题只显示图标（文字作为悬浮提示，助记符照常有效）
+        void AddMenu(std::string title, std::vector<MenuItem> items, TextureId icon = InvalidTextureId);
         void Clear();
+        // 不显示标题末尾的助记符括号："文件(&F)" 显示为 "文件"，Alt+F 仍然打开它（SolidCraft 式的简洁标题栏）
+        void SetHideMnemonicSuffix(bool hide);
+        void SetCompact(bool compact);      // 紧凑：标题左右各留 6 像素、两端不留边（标题栏里只有一两个菜单时）
 
         size_t                       GetMenuCount() const                { return m_menus.size(); }
         const std::string&           GetMenuTitle(size_t index) const    { return m_menus[index].title; }
@@ -145,14 +150,19 @@ namespace MiniGUI
             std::string           title;
             Mnemonic              mnemonic;
             std::vector<MenuItem> items;
+            TextureId             icon = InvalidTextureId;
             float                 x0 = 0.0f, x1 = 0.0f;   // 标题的横向范围（局部坐标）
         };
+        float TitleWidth(const Menu& m) const;
 
         std::vector<Menu> m_menus;
         int        m_open  = -1;
         int        m_hover = -1;
         MenuPopup* m_popup = nullptr;
         bool       m_keyboardMode = false;
+        bool       m_hideMnemonicSuffix = false;
+        float      m_itemPad = 10.0f;       // 标题文字左右的空白
+        float      m_inset   = 6.0f;        // 第一个标题左边的空白
         int        m_keyboardIndex = 0;
         UIContext* m_registered   = nullptr;     // 已注册为哪个上下文的菜单栏（析构时注销）
     };

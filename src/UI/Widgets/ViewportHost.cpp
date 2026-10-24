@@ -128,4 +128,16 @@ namespace MiniGUI
         if (m_onText(e.text))
             e.handled = true;
     }
+
+    CursorShape ViewportHost::GetCursor(Vec2 local) const
+    {
+        (void)local;
+        if (const UIContext* ctx = GetContext())
+        {
+            const Node* target = ctx->GetCapture() ? ctx->GetCapture() : ctx->GetHovered();
+            if (target && target != this)
+                return CursorShape::Arrow;
+        }
+        return m_cursor;
+    }
 }

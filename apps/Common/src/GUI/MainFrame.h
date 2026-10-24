@@ -110,13 +110,24 @@ namespace MiniCAD
         void RegisterCommands();
 
         // ── 宿主面板（MainPanels.cpp / LayerPanels.cpp）─────────────
-        std::unique_ptr<MiniGUI::Node> CreateDocumentArea();      // 文档标签 + 视口（没有文档时显示提示）
-        std::unique_ptr<MiniGUI::Node> CreateLayoutTabs();        // 布局页签条（模型 / 图纸空间布局）
+        std::unique_ptr<MiniGUI::Node> CreateCanvas();            // 绘图区（面板 "canvas"）：铺满标题栏以下，其余界面浮在上面
+        std::unique_ptr<MiniGUI::Node> CreateDocumentArea();      // 停靠区里透明的“洞”（面板 "documents"）：视图方块、导航条、命令行
+        std::unique_ptr<MiniGUI::Node> CreateDocTabs();           // 文档标签条（面板 "doctabs"，放在标题栏里）
+        std::unique_ptr<MiniGUI::Node> CreateViewNavBar();        // 视图方块下面竖排的导航条（ViewNavBar.cpp）
+        std::unique_ptr<MiniGUI::Node> CreateAppBar();            // 标题栏右侧：AI、设置、帮助、版本号（面板 "appbar"，ViewNavBar.cpp）
+        std::unique_ptr<MiniGUI::Node> CreateLayoutTabs();        // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel();
+        std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
+        void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
+        void ShowStartPage(bool show);                            // 有文档时切换起始页 / 图纸
+        void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
+        void RefreshStartNav();                                   // 起始页导航列的可用状态、“返回”行的文档名
+        void OpenNodeExample(const std::string& path, const std::string& name, const std::string& description);
         std::unique_ptr<MiniGUI::Node> CreateStatusBar();
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
         std::unique_ptr<MiniGUI::Node> CreateLayerBar();          // 工具栏里的图层 / 线型 / 线宽下拉框
         std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
+        std::unique_ptr<MiniGUI::Node> CreateSaveProgress();      // 状态栏里的保存进度（同读取进度的样式），只在保存时显示
         std::unique_ptr<MiniGUI::Node> CreateCommandLine();       // 命令行（CommandLine.cpp）
         void SyncCommandLine();                                   // 回显与提示同步到命令行
         void RunCommandLine(const std::string& text);             // 命令行提交
@@ -171,6 +182,9 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
+        void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
+        bool IsCommandLineShown() const;          // 浮动命令行在界面上可见
+        void UpdateFitInsets();                   // 按没被功能区、面板挡住的范围设置“全部显示”的留边
         void UpdateViewCubeVisibility();         // 按开关与当前布局显示视图方块（布局是二维图纸，不显示）
         void LoadUserLayout();
         void SaveUserLayout();
@@ -204,11 +218,15 @@ namespace MiniCAD
         // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）。onSaved：当前文档保存成功后调用
         // （平台没有系统另存为对话框时，另存为经 OpenSaveAsDialog 异步完成）
         void SaveDocuments(bool all, bool saveAs, std::function<void()> onSaved = {});
+        void SaveWithProgress(bool all);        // 保存 / 全部保存命令：先在状态栏显示"正在保存"并画出来，再保存
+        enum class SaveState { Saving, Saved, Failed, Hidden };
+        void ShowSaveStatus(SaveState state, const std::string& text = {});
         void OpenSaveAsDialog(Document* doc, std::function<void()> onSaved);      // 文件名 + 格式（EditorDialogs.cpp）
         void LayerChanged();                    // 图层特性改了：重建场景显示、刷新面板、重绘视口
 
         void RenderViewport(int pixelWidth, int pixelHeight);
         void UpdateStatus();
+        void UpdateAppBarVisibility();      // 窗口变窄、文档标签放不下时隐藏标题栏右侧的按钮，让给文档标签
 
         // ── 视口输入 → Editor ─────────────────────────────────────
         void OnViewportPointer(const MiniGUI::ViewportPointerEvent& e);
@@ -230,8 +248,21 @@ namespace MiniCAD
         MiniGUI::TabView*                      m_layoutTabs = nullptr;   // 布局标签条（模型 / 图纸空间布局）
         MiniGUI::Node*                         m_layoutTabsBar = nullptr; // 布局标签条的外层容器（隐藏整行用）
         bool                                   m_syncingLayouts = false; // 正在程序化同步标签，忽略回调
-        MiniGUI::Node*                         m_noDocHint  = nullptr;   // 没有文档时代替视口显示
-        MiniGUI::Node*                         m_viewCube   = nullptr;   // 视口右上角的视图方块（M6）
+        MiniGUI::Node*                         m_startPage   = nullptr;  // 起始页（StartPage.cpp，界面描述文件里的面板 "start"）
+        MiniGUI::Node*                         m_startRecent = nullptr;  // 起始页里放最近打开列表的容器
+        MiniGUI::Button*                       m_startBack   = nullptr;  // 起始页导航列的“返回 文档名”
+        std::vector<std::pair<MiniGUI::Button*, std::string>> m_startNav; // 起始页导航列里执行命令的行
+        std::vector<MiniGUI::Node*>            m_startHidden;            // 显示起始页时隐藏的界面部分（收起时恢复）
+        bool                                   m_startShown = false;     // 有文档时也显示起始页（标题栏首页键，Esc 返回）
+        const Document*                        m_startOver  = nullptr;   // 显示起始页时的当前文档；当前文档变了就回到视口
+        MiniGUI::Node*                         m_viewCube   = nullptr;
+        MiniGUI::Node*                         m_navBar     = nullptr;   // 视图方块下面的导航条
+        MiniGUI::Node*                         m_appBar     = nullptr;   // 标题栏右侧的 AI / 设置 / 帮助 / 版本（窗口窄时隐藏）
+        float                                  m_appBarWidth    = 0.0f;  // 显示时量到的宽度与它右边到标题栏右端的距离
+        float                                  m_appBarRightGap = 0.0f;
+        MiniGUI::Node*                         m_docArea    = nullptr;   // 停靠区里透明的“洞”：没被遮住的绘图区
+        MiniGUI::Node*                         m_cmdCard    = nullptr;   // 底部居中的浮动命令行卡片
+        bool                                   m_commandLineVisible = true; // 命令行的显示开关（保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（保存在用户布局文件里）
         double                                 m_cubeAzimuth   = 0.0;    // 视图方块上次绘制时的视线方向
         double                                 m_cubeElevation = 0.0;
@@ -316,6 +347,11 @@ namespace MiniCAD
         MiniGUI::Label*                        m_openLabel  = nullptr;
         MiniGUI::ProgressBar*                  m_openProgress = nullptr;
         int                                    m_openPercent = -1;       // 进度条当前显示的百分比
+        MiniGUI::Node*                         m_saveBar    = nullptr;   // 状态栏里的保存进度
+        MiniGUI::Label*                        m_saveLabel  = nullptr;
+        MiniGUI::ProgressBar*                  m_saveProgress = nullptr;
+        uint32_t                               m_saveHideTimer = 0;      // 保存完成后隐藏进度的定时器
+        bool                                   m_saveStatusShown = false;   // 本次保存前已显示"正在保存"（据此区分失败与取消另存为）
 
         // ── 视口指针状态（物理像素，视口内坐标）──────────────────
         int     m_mouseX   = 0;

@@ -255,17 +255,21 @@ namespace MiniCAD
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
-        m_layout->RegisterPanel("documents",  CreateDocumentArea());
+        m_layout->RegisterPanel("canvas",     CreateCanvas());
+        m_layout->RegisterPanel("documents",  CreateDocumentArea());    // 内含视图方块、导航条与浮动命令行
+        m_layout->RegisterPanel("doctabs",    CreateDocTabs());
+        m_layout->RegisterPanel("appbar",     CreateAppBar());
         m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
         m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
         m_layout->RegisterPanel("layerbar",   CreateLayerBar());
-        m_layout->RegisterPanel("commandline", CreateCommandLine(), "命令行");
         m_layout->RegisterPanel("statusbar",  CreateStatusBar());
         m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
+        m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
         LoadRecentFiles();
+        RefreshStartPage();
         m_layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
 
         m_uiHost = m_ui->GetRoot()->AddChild<MiniGUI::Panel>(Theme::Background);
@@ -508,6 +512,82 @@ namespace MiniCAD
         return bar;
     }
 
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateSaveProgress()
+    {
+        using namespace MiniGUI;
+        auto bar = std::make_unique<Node>();
+        LayoutStyle s;
+        s.direction  = FlexDirection::Row;
+        s.alignItems = Align::Center;
+        s.gap        = 6.0f;
+        s.padding    = Edges::Symmetric(12.0f, 0.0f);
+        s.shrink     = 0.0f;
+        bar->SetLayoutStyle(s);
+        m_saveLabel = bar->AddChild<Label>("", 13.0f, Theme::TextDim);
+        m_saveLabel->SetEllipsis(true);
+        m_saveLabel->EditLayoutStyle().maxWidth = 260.0f;
+        m_saveProgress = bar->AddChild<ProgressBar>();
+        m_saveProgress->EditLayoutStyle().width = 140.0f;
+        bar->SetVisible(false);
+        m_saveBar = bar.get();
+        return bar;
+    }
+
+    void MainFrame::ShowSaveStatus(SaveState state, const std::string& text)
+    {
+        if (!m_saveBar || !m_ui)
+            return;
+        if (m_saveHideTimer)
+        {
+            m_ui->StopTimer(m_saveHideTimer);
+            m_saveHideTimer = 0;
+        }
+        m_saveBar->SetVisible(state != SaveState::Hidden);
+        if (state == SaveState::Hidden)
+            return;
+        m_saveLabel->SetText(text);
+        m_saveLabel->SetColor(state == SaveState::Failed ? MiniGUI::Theme::Danger : MiniGUI::Theme::TextDim);
+        // 保存在界面线程上同步完成，没有中间进度：保存时进度条来回滚动，完成后满格
+        m_saveProgress->SetIndeterminate(state == SaveState::Saving);
+        m_saveProgress->SetValue(state == SaveState::Saving ? 0.0f : 1.0f);
+        m_saveProgress->SetVisible(state != SaveState::Failed);
+        if (state != SaveState::Saving)
+            m_saveHideTimer = m_ui->StartTimer(state == SaveState::Failed ? 5000u : 2000u, [this]
+            {
+                m_saveHideTimer = 0;
+                if (m_saveBar)
+                    m_saveBar->SetVisible(false);
+                m_platform->RequestRedraw();
+            });
+        m_platform->RequestRedraw();
+    }
+
+    void MainFrame::SaveWithProgress(bool all)
+    {
+        // 要先问路径（新文档、网页版的另存为对话框）时直接走原来的流程：结果在保存完成后显示
+        Document* active = m_docManager.GetActive();
+        if (!active)
+            return;
+        bool needsDialog = !all && !active->HasPath();
+        if (all)
+            for (const auto& d : m_docManager.GetAll())
+                needsDialog |= d->IsDirty() && !d->HasPath();
+        if (needsDialog)
+        {
+            SaveDocuments(all, false);
+            return;
+        }
+
+        ShowSaveStatus(SaveState::Saving, all ? std::string("正在保存全部文档") : "正在保存 " + active->GetName());
+        m_saveStatusShown = true;
+        // 先把"正在保存"画出来再保存（大图纸写 DWG 要一会儿）：
+        // 桌面版投递的消息先于 WM_PAINT 处理，所以在消息里自己画一帧；网页版 RunInBackground 先画一帧再执行
+        if (m_platform->HasBackgroundThread())
+            m_platform->Post([this, all] { RenderFrame(); SaveDocuments(all, false); });
+        else
+            m_platform->RunInBackground([] {}, [this, all] { SaveDocuments(all, false); });
+    }
+
     void MainFrame::SyncDocuments()
     {
         if (!m_docTabs)
@@ -543,11 +623,23 @@ namespace MiniCAD
             m_docTabs->SetSelected(sel);
         m_syncing = false;
 
-        // 没有文档时用提示代替视口和标签条
+        // 没有文档时用起始页代替视口；有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口
         const bool hasDoc = active != nullptr;
+        if (m_startShown && active != m_startOver)
+            m_startShown = false;
+        const bool start = !hasDoc || m_startShown;
         m_docTabs->SetVisible(!docs.empty());
-        m_viewport->SetVisible(hasDoc);
-        m_noDocHint->SetVisible(!hasDoc);
+        if (start)
+            m_docTabs->ClearSelection();            // 起始页显示时没有“当前”标签（与 SolidCraft 相同），点任何标签都回到图纸
+        else if (sel >= 0 && m_docTabs->GetSelected() != sel)
+        {
+            m_syncing = true;
+            m_docTabs->SetSelected(sel);
+            m_syncing = false;
+        }
+        m_viewport->SetVisible(!start);
+        ApplyStartPage(start);
+        RefreshStartNav();
 
         SyncLayoutTabs();
     }
@@ -806,12 +898,31 @@ namespace MiniCAD
         else
             m_docManager.Save();
 
+        size_t saved = 0, failed = 0;
         for (const auto& [doc, wasDirty] : targets)
+        {
             if (wasDirty && !doc->IsDirty() && doc->HasPath())
             {
                 RememberRecentFile(doc->GetPath());     // 另存为的新路径也进「最近打开」
                 m_platform->OnDocumentSaved(doc->GetPath());
             }
+            if (!wasDirty)
+                continue;
+            if (!doc->IsDirty() && doc->HasPath())
+                ++saved;
+            else
+                ++failed;
+        }
+
+        // 状态栏：保存结果。没有显示过"正在保存"（经过另存为对话框）时，没保存上的多半是取消了对话框，不提示失败
+        const bool shown = std::exchange(m_saveStatusShown, false);
+        if (failed > 0 && shown)
+            ShowSaveStatus(SaveState::Failed, "保存失败");
+        else if (saved > 0)
+            ShowSaveStatus(SaveState::Saved, saved == 1 && targets.size() == 1 ? "已保存 " + targets.front().first->GetName()
+                                                                               : "已保存 " + std::to_string(saved) + " 个文档");
+        else
+            ShowSaveStatus(SaveState::Hidden);
         if (onSaved && active && !active->IsDirty())
             onSaved();
     }
@@ -995,6 +1106,7 @@ namespace MiniCAD
         Viewport& vp = m_docManager.GetViewport();
         if (vp.GetWidth() != pixelWidth || vp.GetHeight() != pixelHeight)
             vp.Resize(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
+        UpdateFitInsets();
 
         if (m_docManager.GetActive())
         {
@@ -1031,15 +1143,36 @@ namespace MiniCAD
 
     void MainFrame::UpdateStatus()
     {
-        std::string tool = "选择";
-        const Editor& editor = m_docManager.GetEditor();
-        if (m_docManager.GetActive() && editor.IsActiveTool())
+        m_statusBar->Refresh();
+        // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标
+        if (m_viewport)
+            m_viewport->SetCursor(m_docManager.GetActive() && m_docManager.GetEditor().HidesCrosshair()
+                                  ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        UpdateAppBarVisibility();
+    }
+
+    void MainFrame::UpdateAppBarVisibility()
+    {
+        MiniGUI::TitleBar* bar = m_layout ? m_layout->GetTitleBar() : nullptr;
+        if (!m_appBar || !m_docTabs || !bar || !m_appBar->GetContext() || !m_docTabs->GetContext())
+            return;
+        const MiniGUI::Rect title = bar->GetScreenBounds();
+        if (m_appBar->IsVisible())
         {
-            const auto it = m_toolCommands.find(editor.GetLastCommand());
-            tool = it != m_toolCommands.end() ? MiniGUI::CommandRegistry::StripMnemonic(m_commands.GetLabel(it->second))
-                                              : editor.GetLastCommand();
+            const MiniGUI::Rect r = m_appBar->GetScreenBounds();
+            if (r.Width() <= 0.0f)
+                return;             // 还没有布局
+            m_appBarWidth    = r.Width();
+            m_appBarRightGap = title.max.x - r.max.x;
         }
-        m_statusBar->Refresh(tool, m_hovered || m_buttons != 0, m_mouseX, m_mouseY);
+        // 文档标签从左边固定的位置开始，全部标签需要的宽度 + 右侧按钮放得下时才显示按钮；留一点回差，免得在临界宽度来回切换
+        const bool  hasTabs = m_docTabs->IsVisible() && m_docTabs->GetTabCount() > 0;
+        const float need    = m_docTabs->GetScreenBounds().min.x + (hasTabs ? m_docTabs->IdealStripWidth() : 0.0f) + m_appBarWidth + 8.0f;
+        const float limit   = title.max.x - m_appBarRightGap;
+        if (m_appBar->IsVisible() && need > limit)
+            m_appBar->SetVisible(false);
+        else if (!m_appBar->IsVisible() && need + 24.0f <= limit)
+            m_appBar->SetVisible(true);
     }
 
     void MainFrame::RenderFrame()

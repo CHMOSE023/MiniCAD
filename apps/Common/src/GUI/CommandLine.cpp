@@ -162,17 +162,8 @@ namespace MiniCAD
             || m_docManager.GetEditor().IsActiveTool())
             return false;
 
-        MiniGUI::DockSpace* dock = m_layout->GetDock("main");
-        if (dock && dock->HasPanel("commandline"))
-        {
-            if (!dock->IsPanelVisible("commandline"))
-                return false;               // 命令行被关掉了：交给 Editor（它自己也能缓存字母命令）
-            dock->ActivatePanel("commandline");
-        }
-        else if (!m_console->GetParent())
-        {
-            return false;                   // 界面描述里没有命令行
-        }
+        if (!IsCommandLineShown())
+            return false;                   // 命令行被关掉了（或界面描述里没有文档区）：交给 Editor（它自己也能缓存字母命令）
         m_console->FocusInput();
         return true;
     }

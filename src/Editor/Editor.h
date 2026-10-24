@@ -93,6 +93,7 @@ namespace MiniCAD
         bool               IsConstraintActive() const { return m_constraintEngine.IsAnyActive(); }
         ConstraintEngine&  GetConstraintEngine() { return m_constraintEngine; }
         bool               IsActiveTool() const  { return m_tool != nullptr; }
+        bool               HidesCrosshair() const { return m_tool && m_tool->HidesCrosshair(); }   // 当前工具不画十字光标（平移）
         // 工具是否还在进行：工具刚结束（等下一次输入事件才释放）的收尾期不算
         bool               IsToolRunning() const { return m_tool != nullptr && !m_pendingToolReset; }
         // 最近启动的工具 ID（"Line"、"Move"…）；IsActiveTool 为 true 时即当前工具

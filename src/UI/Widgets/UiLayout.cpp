@@ -9,6 +9,7 @@
 #include "Widgets/Label.h"
 #include "Widgets/Menu.h"
 #include "Widgets/Panel.h"
+#include "Widgets/Ribbon.h"
 #include "Widgets/Splitter.h"
 #include "Widgets/TitleBar.h"
 #include <algorithm>
@@ -30,6 +31,7 @@ namespace MiniGUI
             {
                 "type", "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight",
                 "grow", "shrink", "gap", "padding", "align", "justify", "background", "visible", "comment",
+                "position", "left", "top", "right", "bottom", "passThrough",
             };
             return keys;
         }
@@ -40,15 +42,16 @@ namespace MiniGUI
             {
                 { "row",       { "children" } },
                 { "column",    { "children" } },
-                { "menubar",   {} },
+                { "menubar",   { "mnemonicSuffix", "compact" } },
                 { "titlebar",  { "children", "icon", "title" } },
                 { "toolbar",   { "id", "items", "vertical", "iconSize" } },
                 { "panel",     { "name" } },
                 { "splitter",  { "target", "min", "max" } },
                 { "separator", {} },
+                { "ribbon",    { "id" } },
                 { "spacer",    {} },
-                { "label",     { "text", "size", "color" } },
-                { "dock",      { "id", "root", "panels" } },
+                { "label",     { "text", "size", "color", "bold" } },
+                { "dock",      { "id", "root", "panels", "floating" } },
             };
             static const std::set<std::string> none;
             const auto it = keys.find(type);
@@ -106,6 +109,7 @@ namespace MiniGUI
         slot.node            = panel.get();
         slot.originalStyle   = panel->GetLayoutStyle();
         slot.originalVisible = panel->IsVisible();
+        slot.originalHitTest = panel->IsHitTestVisible();
         slot.owned           = std::move(panel);
     }
 
@@ -181,6 +185,7 @@ namespace MiniGUI
             {
                 slot.node->SetLayoutStyle(slot.originalStyle);
                 slot.node->SetVisible(slot.originalVisible);
+                slot.node->SetHitTestVisible(slot.originalHitTest);
             }
         }
     }
@@ -217,7 +222,7 @@ namespace MiniGUI
         for (const auto& [key, value] : doc.GetObject())
         {
             (void)value;
-            if (key != "commands" && key != "menus" && key != "toolbars" && key != "layout" && key != "comment")
+            if (key != "commands" && key != "menus" && key != "toolbars" && key != "ribbons" && key != "layout" && key != "comment")
                 m_warnings.push_back("顶层：未知的字段 \"" + key + "\"");
         }
 
@@ -228,9 +233,12 @@ namespace MiniGUI
             m_warnings.push_back("快捷键冲突 " + c);
 
         // ── 清空旧界面（推迟销毁）并重建 ──────────────────────────
+        if (m_ribbon && m_ribbon->GetSelectedTab() >= 0)
+            m_ribbonTab = m_ribbon->GetTabTitle(m_ribbon->GetSelectedTab());   // 重新加载后仍停在这个选项卡
         ReclaimPanels();
         m_menuBar  = nullptr;
         m_titleBar = nullptr;
+        m_ribbon   = nullptr;
         m_toolBars.clear();
         UIContext* ctx = parent->GetContext();
         while (!parent->GetChildren().empty())
@@ -286,6 +294,19 @@ namespace MiniGUI
         num("grow", s.grow);
         num("shrink", s.shrink);
         num("gap", s.gap);
+        num("left", s.left);
+        num("top", s.top);
+        num("right", s.right);
+        num("bottom", s.bottom);
+        if (const JsonValue* v = desc.Find("position"))
+        {
+            if (v->AsString() == "absolute")      s.position = PositionType::Absolute;
+            else if (v->AsString() == "relative") s.position = PositionType::Relative;
+            else m_warnings.push_back("position 应为 absolute / relative");
+        }
+        // passThrough：自己不接收指针事件（空白处点击落到下面的节点，例如叠在绘图区上的容器），子节点照常
+        if (const JsonValue* v = desc.Find("passThrough"))
+            node->SetHitTestVisible(!v->AsBool(false));
 
         if (const JsonValue* p = desc.Find("padding"))
         {
@@ -390,6 +411,8 @@ namespace MiniGUI
         else if (type == "menubar")
         {
             auto bar = std::make_unique<MenuBar>();
+            bar->SetHideMnemonicSuffix(!desc["mnemonicSuffix"].AsBool(true));     // false："文件(&F)" 只显示 "文件"
+            bar->SetCompact(desc["compact"].AsBool(false));
             std::function<std::vector<MenuItem>(const JsonValue&, const std::string&)> buildItems;
             buildItems = [&](const JsonValue& items, const std::string& menuPath)
             {
@@ -432,7 +455,14 @@ namespace MiniGUI
             for (const JsonValue& menu : doc["menus"].GetArray())
             {
                 const std::string title = menu["title"].AsString("?");
-                bar->AddMenu(title, buildItems(menu["items"], title));
+                TextureId icon = InvalidTextureId;
+                if (const JsonValue* path = menu.Find("icon"))      // 有图标时标题只显示图标
+                {
+                    icon = st.ctx ? st.ctx->LoadTexture(m_iconDir + "/" + path->AsString(), { MenuBar::kIconSize, MenuBar::kIconSize }) : InvalidTextureId;
+                    if (icon == InvalidTextureId)
+                        m_warnings.push_back("菜单 " + title + "：无法加载图标 \"" + path->AsString() + "\"");
+                }
+                bar->AddMenu(title, buildItems(menu["items"], title), icon);
             }
             if (doc["menus"].Size() == 0)
                 m_warnings.push_back(where + "：menus 为空");
@@ -458,7 +488,12 @@ namespace MiniGUI
             {
                 st.path = base + "." + std::to_string(i);
                 if (std::unique_ptr<Node> child = BuildNode(children[i], doc, true, st))
+                {
+                    // 有子项要占满剩余宽度（例如文档标签条）：内容区随之拉伸，标题文字不再显示
+                    if (child->GetLayoutStyle().grow > 0.0f)
+                        bar->SetContentFill(true);
                     bar->GetContent()->AddChild(std::move(child));
+                }
             }
             st.path = base;
             if (m_titleBar)
@@ -524,6 +559,7 @@ namespace MiniGUI
         else if (type == "dock")
         {
             auto dock = std::make_unique<DockSpace>();
+            dock->SetFloating(desc["floating"].AsBool(false));
             // 收集布局里引用的面板和 "panels" 里列出的面板，交给停靠区
             std::vector<std::string> names;
             std::function<void(const JsonValue&)> collect = [&](const JsonValue& v)
@@ -569,6 +605,60 @@ namespace MiniGUI
             else             sp->EditLayoutStyle().height = 5.0f;
             node = std::move(sp);
         }
+        else if (type == "ribbon")
+        {
+            // 功能区：定义在顶层 "ribbons" 里，{ "tabs": [ { "title": …, "panels": [ { "title": …, "items": [ 命令 ID 或 { "panel": 宿主面板名 } ] } ] } ] }
+            const std::string id = desc["id"].AsString();
+            const JsonValue* def = doc["ribbons"].Find(id);
+            if (!def)
+            {
+                m_warnings.push_back(where + "：ribbons 里没有 \"" + id + "\"");
+                return nullptr;
+            }
+            auto ribbon = std::make_unique<Ribbon>(m_commands);
+            ribbon->SetIconDir(m_iconDir);
+            for (const JsonValue& t : (*def)["tabs"].GetArray())
+            {
+                const int tab = ribbon->AddTab(t["title"].AsString());
+                for (const JsonValue& p : t["panels"].GetArray())
+                {
+                    const int panel = ribbon->AddPanel(tab, p["title"].AsString());
+                    for (const JsonValue& it : p["items"].GetArray())
+                    {
+                        if (it.IsString())
+                        {
+                            if (!m_commands.Find(it.AsString()))
+                                m_warnings.push_back("功能区 " + id + "：没有名为 \"" + it.AsString() + "\" 的命令");
+                            ribbon->AddCommand(tab, panel, it.AsString());
+                        }
+                        else if (const JsonValue* host = it.Find("panel"))
+                        {
+                            auto slot = m_panels.find(host->AsString());
+                            if (slot == m_panels.end() || !slot->second.owned)
+                            {
+                                m_warnings.push_back("功能区 " + id + "：宿主面板 \"" + host->AsString() + "\" 不存在或已被引用");
+                                continue;
+                            }
+                            st.usedPanels.insert(host->AsString());
+                            ribbon->AddHostNode(tab, panel, std::move(slot->second.owned));
+                        }
+                        else
+                            m_warnings.push_back("功能区 " + id + "：无法识别的项 " + it.Dump());
+                    }
+                }
+            }
+            // "search"：true（默认）显示命令搜索框，字符串作为占位提示，false 不显示
+            if (const JsonValue& search = (*def)["search"]; search.IsString())
+                ribbon->EnableSearch(search.AsString());
+            else if (search.AsBool(true))
+                ribbon->EnableSearch();
+            if (const int keep = ribbon->FindTab(m_ribbonTab); keep >= 0)
+                ribbon->SelectTab(keep);
+            if (m_ribbon)
+                m_warnings.push_back(where + "：出现了多个功能区，GetRibbon 只返回最后一个");
+            m_ribbon = ribbon.get();
+            node = std::move(ribbon);
+        }
         else if (type == "separator")
         {
             auto sep = std::make_unique<Separator>(parentIsRow);
@@ -585,7 +675,9 @@ namespace MiniGUI
             ColorRef color = Theme::Text;
             if (const JsonValue* c = desc.Find("color"); c && !ParseColor(c->AsString(), color))
                 m_warnings.push_back(where + "：无法识别的颜色 \"" + c->AsString() + "\"");
-            node = std::make_unique<Label>(desc["text"].AsString(), static_cast<float>(desc["size"].AsNumber(Theme::FontSize)), color);
+            auto label = std::make_unique<Label>(desc["text"].AsString(), static_cast<float>(desc["size"].AsNumber(Theme::FontSize)), color);
+            label->SetBold(desc["bold"].AsBool(false));
+            node = std::move(label);
         }
         else
         {

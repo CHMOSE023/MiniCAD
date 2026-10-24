@@ -147,6 +147,7 @@ namespace MiniGUI
         SizeNWSE,
         SizeNESW,
         SizeAll,    // 移动
+        Grab,       // 张开的手（平移视图）
         NotAllowed,
         Hidden,     // 隐藏系统光标（例如 CAD 视口自己绘制十字光标）
     };
