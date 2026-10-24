@@ -60,7 +60,9 @@ namespace MiniCAD
             const auto t = std::filesystem::last_write_time(std::filesystem::path(std::u8string(utf8.begin(), utf8.end())), ec);
             if (ec)
                 return {};
-            const auto sys = std::chrono::clock_cast<std::chrono::system_clock>(t);
+            // libc++（Emscripten）没有 clock_cast，用两个时钟的当前差值换算
+            const auto sys = std::chrono::system_clock::now()
+                + std::chrono::duration_cast<std::chrono::system_clock::duration>(t - std::filesystem::file_time_type::clock::now());
             const std::time_t tt = std::chrono::system_clock::to_time_t(sys);
             std::tm tm{};
 #ifdef _WIN32
