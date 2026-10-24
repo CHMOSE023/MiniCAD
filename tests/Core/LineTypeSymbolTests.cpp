@@ -87,8 +87,20 @@ namespace
                 // x 偏移随形号变化 ⇒ 仍能区分「取到了正确的形」。
                 // 注意调用方传进来的 key 是 kRawShapeFlag | 形号，必须屏蔽后再用。
                 const double x0 = static_cast<double>(cp & ~kRawShapeFlag) / 1000.0;
-                g.Lines.push_back(Line{ { x0, 0, 0 }, { x0, 1.0, 0 } });
-                g.Lines.push_back(Line{ { x0 + 1.0, 0, 0 }, { x0 + 1.0, 1.0, 0 } });
+                if (x0 >= 0.2)
+                {
+                    // 200+ 形号：闭合方框（BOX 132 / CIRC1 133 / BAT 134 的等价物）
+                    // —— 用来断言闭合轮廓会补出三角面，而不是只画空心边框。
+                    g.Lines.push_back(Line{ { x0, 0.0, 0 }, { x0 + 1.0, 0.0, 0 } });
+                    g.Lines.push_back(Line{ { x0 + 1.0, 0.0, 0 }, { x0 + 1.0, 1.0, 0 } });
+                    g.Lines.push_back(Line{ { x0 + 1.0, 1.0, 0 }, { x0, 1.0, 0 } });
+                    g.Lines.push_back(Line{ { x0, 1.0, 0 }, { x0, 0.0, 0 } });
+                }
+                else
+                {
+                    g.Lines.push_back(Line{ { x0, 0, 0 }, { x0, 1.0, 0 } });
+                    g.Lines.push_back(Line{ { x0 + 1.0, 0, 0 }, { x0 + 1.0, 1.0, 0 } });
+                }
                 g.Advance = 1.0;
                 it = cache.emplace(cp, std::move(g)).first;
             }
@@ -360,6 +372,38 @@ namespace
         Check(anyAtExpectX, "形符号按形号取到对应字形（x 偏移 = 形号/1000）");
         Check(fontCalls == 0, "形段不请求文字字体（FontResolver 未被调用）");
 
+        // 每周期重复：4 个周期 ⇒ 4 个符号。符号顶点都带 x0=0.13 的偏移，
+        // 4 个符号的中心分别在 0.15、0.45、0.75、1.05 ⇒ 偏移顶点 x = 中心+0.0325。
+        // 数一下 4 个中心位置是否都出现了顶点 —— 旧的「orderPos 光标」写法
+        // 只在第一个周期画符号，这里会直接抓到（只找到 1 个中心）。
+        int clusters = 0;
+        for (size_t c = 0; c < 4; ++c)
+        {
+            const double cx = 0.15 + static_cast<double>(c) * 0.30 + 0.13 * 0.25;
+            bool hit = false;
+            for (const auto& v : verts)
+                if (std::fabs(static_cast<double>(v.pos.x) - cx) < 1e-4)
+                    hit = true;
+            if (hit)
+                ++clusters;
+        }
+        Check(clusters == 4, "形符号每周期重复（1.2 长 / 0.30 周期 ⇒ 4 处）");
+
+        // 开放笔画不填实：TRACK1 是两段竖线，接不成闭合环 ⇒ 不该有符号的三角面。
+        // 这里不断「填充顶点总数」（实线段在 width=0 时也不出填充，数目随线宽变），
+        // 而是查「有没有填充顶点落在开放笔画的包围盒内部」：真填了就会有，
+        // 只描边（顶点全在两条竖线上）就一个都没有。
+        // 符号锚点 x=0.3，形号 130 ⇒ 局部 x ∈ [0.13, 1.13]、y ∈ [0, 1]，s=0.25
+        // ⇒ 世界 x ∈ [0.3325, 0.5825]、y ∈ [0, 0.25]。
+        int openInterior = 0;
+        for (const auto& v : fills)
+        {
+            const double x = v.pos.x, y = v.pos.y;
+            if (x > 0.3325 + 1e-4 && x < 0.5825 - 1e-4 && y > 1e-4 && y < 0.25 - 1e-4)
+                ++openInterior;
+        }
+        Check(openInterior == 0, "开放笔画（TRACK1）不产生填充三角形");
+
         // 形文件缺失（解析回调返回空）时不能崩，只退化成不画符号
         verts.clear();
         DrawContext ctx2(verts, fills, texts, overlay,
@@ -374,6 +418,117 @@ namespace
         const size_t before2 = verts.size();
         ctx2.DrawLine({ 0, 0, 0 }, { 1.2, 0, 0 }, Math::Color4::White(), false);
         Check(verts.size() > before2, "形文件缺失时虚线本体现在（只是没有符号）");
+    }
+
+    // ── 3d. 闭合轮廓的实心化 ────────────────────────────────────────
+    // SHX 形文件只产出折线（Glyph::Triangles 恒为空），而 AutoCAD 把闭合轮廓
+    // （BOX 方框、CIRC1 圆、BATTING 蝙蝠剪影）按实心画。这里断言：
+    //   · 闭合轮廓（形号 ≥ 200 的桩字形）真的补出三角面，且落在轮廓内部；
+    //   · 开放笔画（形号 130，两段竖线接不回去）一个三角面都不补；
+    //   · 补了填充之后描边仍然保留（轮廓线不会消失）。
+    void TestShapeFill()
+    {
+        Scene s;
+        LineTypeTable& t = s.GetLineTypeTable();
+        LineTypeRecord rec;
+        rec.Name          = "FENCELINE2_TEST";
+        rec.Pattern       = { 0.3, 0.3 };
+        rec.PatternLength = 0.6;
+        LineTypeSymbol sym;
+        sym.PatternIndex = 0;
+        sym.Shape        = 200;          // 桩字形的闭合方框（x0 = 0.2）
+        sym.ShapeFont    = "ltypeshp.shx";
+        sym.Scale        = 0.5;          // 形高 1.0 ⇒ 符号 0.5 高
+        rec.Symbols.push_back(sym);
+        const LineTypeID lt = t.Add(rec);
+
+        std::vector<Vertex_P3_C4>    verts;
+        std::vector<Vertex_P3_C4>    fills;
+        std::vector<Vertex_P3_C4_UV> texts;
+        Overlay                      overlay;
+
+        ShapeFontStub shapeFont;
+        ShapeFontResolver shapeResolver = [&](const std::string&) -> IFont*
+        {
+            return &shapeFont;
+        };
+
+        DrawContext ctx(verts, fills, texts, overlay,
+                        s.GetLayerManager(), t,
+                        0.001, nullptr, nullptr);
+        ctx.SetLineTypeScale(1.0);
+        ctx.SetTextStyleTable(&s.GetTextStyleTable());
+        ctx.SetShapeFontResolver(std::move(shapeResolver));
+
+        EntityAttr a;
+        a.LayerId  = 0;
+        a.LineType = lt;
+        ctx.BeginEntity(&a);
+
+        // 0.6 长 ⇒ 正好 1 个周期 ⇒ 1 个方框符号。
+        verts.clear();
+        fills.clear();
+        ctx.DrawLine({ 0, 0, 0 }, { 0.6, 0, 0 }, Math::Color4::White(), false);
+
+        Check(!fills.empty(), "闭合轮廓补出填充三角形");
+        Check(fills.size() % 3 == 0, "填充顶点数是 3 的倍数");
+
+        // 方框：锚点 x=0.3，x0=0.2 ⇒ 局部 x ∈ [0.2, 1.2]，s=0.5 ⇒ 世界 x ∈ [0.4, 0.9]。
+        // 旋转 0（线沿 +X），所以顶点 y 全部落在 [0, 0.5]，且方框内部有顶点
+        // （不能全挤在边框四条线上，否则等于没填）。
+        double fMinX = 1e30, fMaxX = -1e30, fMinY = 1e30, fMaxY = -1e30;
+        for (const auto& v : fills)
+        {
+            const double x = v.pos.x, y = v.pos.y;
+            fMinX = std::min(fMinX, x); fMaxX = std::max(fMaxX, x);
+            fMinY = std::min(fMinY, y); fMaxY = std::max(fMaxY, y);
+        }
+        Check(fMinX > 0.39 && fMaxX < 0.91, "填充范围 = 符号锚点 + 字形包围盒");
+        Check(fMaxY - fMinY > 0.49, "填充覆盖符号全高（0.5）");
+        // 方框被耳切分成 2 个三角形，顶点全落在边框上，「内部有顶点」查不出来；
+        // 改用面积：闭合方框 0.5 × 0.5 = 0.25。面积对上才说明真的填满了，
+        // 而不是只描了边框（描边面积是 0）。
+        double area2 = 0.0;
+        for (size_t i = 0; i + 2 < fills.size(); i += 3)
+        {
+            const double ax = fills[i].pos.x, ay = fills[i].pos.y;
+            const double bx = fills[i + 1].pos.x, by = fills[i + 1].pos.y;
+            const double cx = fills[i + 2].pos.x, cy = fills[i + 2].pos.y;
+            area2 += std::fabs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) * 0.5;
+        }
+        Check(std::fabs(area2 - 0.25) < 1e-6, "填充面积 = 闭合方框面积（0.25）");
+        Check(!verts.empty(), "补填充后描边仍然保留");
+
+        // 开放笔画：换成形号 130（两段竖线），同一套参数 ⇒ 只有实线段的挤出四边形。
+        LineTypeRecord rec2;
+        rec2.Name          = "OPEN_TEST";
+        rec2.Pattern       = { 0.3, 0.3 };
+        rec2.PatternLength = 0.6;
+        LineTypeSymbol sym2;
+        sym2.PatternIndex = 0;
+        sym2.Shape        = 130;
+        sym2.ShapeFont    = "ltypeshp.shx";
+        sym2.Scale        = 0.5;
+        rec2.Symbols.push_back(sym2);
+        const LineTypeID lt2 = t.Add(rec2);
+
+        fills.clear();
+        EntityAttr a2;
+        a2.LayerId  = 0;
+        a2.LineType = lt2;
+        ctx.BeginEntity(&a2);
+        ctx.DrawLine({ 0, 0, 0 }, { 0.6, 0, 0 }, Math::Color4::White(), false);
+        // 形号 130 ⇒ 桩字形两段竖线（x ∈ [0.13, 1.13]），s=0.5、锚点 x=0.3
+        // ⇒ 世界 x ∈ [0.365, 0.865]、y ∈ [0, 0.5]。两条竖线之间接不回去，
+        // 所以这个包围盒内部不该出现任何填充顶点。
+        int openInterior2 = 0;
+        for (const auto& v : fills)
+        {
+            const double x = v.pos.x, y = v.pos.y;
+            if (x > 0.365 + 1e-4 && x < 0.865 - 1e-4 && y > 1e-4 && y < 0.5 - 1e-4)
+                ++openInterior2;
+        }
+        Check(openInterior2 == 0, "开放笔画（TRACK1）不补填充三角形");
     }
 
     // ── 3c. 护栏退化：缩得过小也不能丢掉符号 ─────────────────────────
@@ -521,6 +676,7 @@ int RunLineTypeSymbolTests()
     TestSerialize();
     TestRender();
     TestShapeRender();
+    TestShapeFill();
     TestGuardedSymbols();
     TestRealSampleConstants();
     const int n = g_failures - before;

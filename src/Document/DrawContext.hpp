@@ -20,6 +20,7 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace MiniCAD
 {
@@ -38,6 +39,174 @@ namespace MiniCAD
     // 复杂线型的形段（组码 75）不引用文字样式，直接按 DWG 里组码 340 的 STYLE
     // 的组码 3 定位形文件；文字样式表里没有这一项，所以单独走一条解析路径。
     using ShapeFontResolver = std::function<IFont*(const std::string& fontFile)>;
+
+    // ------------------------------------------------------------------
+    // 复杂线型形段（组码 75）的实心化
+    //
+    // SHX 形文件里既有开放笔画（TRACK1 的短竖线、ZIG 的折线），也有闭合轮廓
+    // （BOX 方框、CIRC1 圆、BATTING 的蝙蝠剪影）。SHXParser::BuildGlyph 只
+    // 执行形指令得到折线（Glyph::Triangles 恒为空），而 AutoCAD 对闭合轮廓
+    // 是按实心图形画的 —— FENCELINE1 的圆点、FENCELINE2 的方框、BATTING 的
+    // 蝙蝠都是填实的，只有 ZIGZAG 的尖齿是空心折线。
+    //
+    // 这里在渲染时按轮廓补三角面：只填「首尾真正接上」的闭合环，开放笔画原样
+    // 留作描边，两者都画（先填后描边），与 AutoCAD 的观感一致。
+    // 放在 DrawContext 而不是 SHXParser：BuildGlyph 是 const 且结果被所有文字
+    // 使用者共用缓存，形段实心只是复杂线型的显示需求。
+    // ------------------------------------------------------------------
+
+    inline bool ShapeFillSamePoint(const Math::Point3& a, const Math::Point3& b)
+    {
+        const double dx = a.x - b.x;
+        const double dy = a.y - b.y;
+        return dx * dx + dy * dy <= 1e-14;      // 形指令坐标是整数，1e-7 的半径足够
+    }
+
+    // 把折线接成闭合环；返回每个闭合环的顶点序列（首尾重合的那个点只留一个）。
+    // 开放笔画（接不回去）直接丢弃 —— 它们保持描边，不参与填充。
+    inline std::vector<std::vector<Math::Point3>> ShapeFillLoops(const std::vector<Line>& lines)
+    {
+        std::vector<std::vector<Math::Point3>> loops;
+        if (lines.size() < 3)
+            return loops;
+
+        std::vector<size_t> used(lines.size(), 0);
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            if (used[i])
+                continue;
+            std::vector<Math::Point3> pts;
+            pts.push_back(lines[i].Start);
+            pts.push_back(lines[i].End);
+            used[i] = 1;
+            bool closed = false;
+            bool grew = true;
+            while (grew && !closed)
+            {
+                grew = false;
+                for (size_t j = 0; j < lines.size(); ++j)
+                {
+                    if (used[j])
+                        continue;
+                    const Math::Point3& head = pts.front();
+                    const Math::Point3& tail = pts.back();
+                    if (ShapeFillSamePoint(lines[j].Start, tail))
+                    {
+                        pts.push_back(lines[j].End);
+                        used[j] = 1;
+                        grew = true;
+                    }
+                    else if (ShapeFillSamePoint(lines[j].End, tail))
+                    {
+                        pts.push_back(lines[j].Start);
+                        used[j] = 1;
+                        grew = true;
+                    }
+                    else if (ShapeFillSamePoint(lines[j].End, head))
+                    {
+                        pts.insert(pts.begin(), lines[j].Start);
+                        used[j] = 1;
+                        grew = true;
+                    }
+                    else if (ShapeFillSamePoint(lines[j].Start, head))
+                    {
+                        pts.insert(pts.begin(), lines[j].End);
+                        used[j] = 1;
+                        grew = true;
+                    }
+                    if (grew)
+                    {
+                        if (ShapeFillSamePoint(pts.front(), pts.back()))
+                        {
+                            closed = true;
+                            break;
+                        }
+                        break;                  // 一次只接一段，回到外循环重扫
+                    }
+                }
+            }
+            if (closed)
+            {
+                pts.pop_back();                 // 去掉重复的闭合点，交给耳切
+                if (pts.size() >= 3)
+                    loops.push_back(std::move(pts));
+            }
+        }
+        return loops;
+    }
+
+    inline bool ShapeFillCross(const Math::Point3& o, const Math::Point3& a, const Math::Point3& b)
+    {
+        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) > 0.0;
+    }
+
+    inline bool ShapeFillInTriangle(const Math::Point3& p, const Math::Point3& a,
+                                    const Math::Point3& b, const Math::Point3& c)
+    {
+        const bool d0 = ShapeFillCross(a, b, p);
+        const bool d1 = ShapeFillCross(b, c, p);
+        const bool d2 = ShapeFillCross(c, a, p);
+        return (d0 == d1) && (d1 == d2);
+    }
+
+    // 耳切：把闭合轮廓三角化。轮廓方向不定（SHX 形指令可顺可逆），
+    // 所以同时尝试两个朝向，取能切开的那个；切不动的病态轮廓宁缺勿错。
+    inline void ShapeFillClip(const std::vector<Math::Point3>& poly, bool flip, std::vector<Triangle>& out)
+    {
+        const size_t n = poly.size();
+        if (n < 3)
+            return;
+        std::vector<size_t> idx(n);
+        for (size_t i = 0; i < n; ++i)
+            idx[i] = flip ? (n - 1 - i) : i;
+        size_t guard = 0;
+        while (idx.size() > 2 && guard++ <= n + 2)
+        {
+            const size_t m = idx.size();
+            bool clipped = false;
+            for (size_t i = 0; i < m && !clipped; ++i)
+            {
+                const size_t ia = idx[(i + m - 1) % m];
+                const size_t ib = idx[i];
+                const size_t ic = idx[(i + 1) % m];
+                const Math::Point3& a = poly[ia];
+                const Math::Point3& b = poly[ib];
+                const Math::Point3& c = poly[ic];
+                const double cr = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+                if (flip ? cr >= -1e-12 : cr <= 1e-12)
+                    continue;                       // 退化或反向耳
+                bool blocked = false;
+                for (size_t j = 0; j < m && !blocked; ++j)
+                {
+                    if (j == i || j == (i + m - 1) % m || j == (i + 1) % m)
+                        continue;
+                    if (ShapeFillInTriangle(poly[idx[j]], a, b, c))
+                        blocked = true;             // 耳里还含着别的顶点
+                }
+                if (blocked)
+                    continue;
+                out.push_back({ a, b, c });
+                idx.erase(idx.begin() + static_cast<std::ptrdiff_t>(i));
+                clipped = true;
+            }
+            if (!clipped)
+                break;
+        }
+    }
+
+    inline void ShapeFillTriangles(const std::vector<Line>& lines, std::vector<Triangle>& out)
+    {
+        out.clear();
+        if (lines.size() < 3)
+            return;
+        for (const auto& poly : ShapeFillLoops(lines))
+        {
+            const size_t before = out.size();
+            ShapeFillClip(poly, false, out);        // 逆时针
+            if (out.size() == before)
+                ShapeFillClip(poly, true, out);     // 顺时针
+        }
+    }
 
     // 图像解析回调：路径 → 解码后的位图（找不到返回空）
     using ImageProvider = std::function<std::shared_ptr<const ImageData>(const std::string& path)>;
@@ -732,6 +901,21 @@ namespace MiniCAD
 
             const Glyph& glyph = font->GetGlyph(key);
 
+            // 实心化：SHX 形文件只给折线（Glyph::Triangles 恒为空），闭合轮廓
+            // （BOX 方框、CIRC1 圆、BATTING 蝙蝠剪影）要在这里补三角面，
+            // 否则 AutoCAD 里实心的符号在我们这儿只剩空心边框。
+            // 副本按「原字形地址」缓存：GlyphMeshLibrary::Register 也按地址缓存，
+            // 每次调用都换一份新副本会让网格库无限增长。
+            const Glyph& shapeGlyph = [this, &glyph]() -> const Glyph&
+            {
+                if (auto it = m_shapeFillCache.find(&glyph); it != m_shapeFillCache.end())
+                    return it->second;
+                Glyph filled = glyph;
+                ShapeFillTriangles(filled.Lines, filled.Triangles);
+                filled.Filled = !filled.Triangles.empty();
+                return m_shapeFillCache.emplace(&glyph, std::move(filled)).first->second;
+            }();
+
             // 形文件的单位:字形坐标以字体高度为 1。按目标高度整体缩放,
             // 再按 rotation 旋转 —— 与 EmitLaidOutText 的 xform 等价(无倾斜、无宽度因子)。
             const double s = height / (font->GetHeight() > 0.0 ? font->GetHeight() : 1.0);
@@ -759,7 +943,7 @@ namespace MiniCAD
             if (m_glyphs)
             {
                 uint32_t mesh;
-                if (!m_glyphLib->Register(glyph, mesh)) return;
+                if (!m_glyphLib->Register(shapeGlyph, mesh)) return;
                 GlyphInstance g;
                 g.m00   = static_cast<float>(s * cosR);
                 g.m01   = static_cast<float>(s * sinR);
@@ -773,16 +957,18 @@ namespace MiniCAD
                 m_glyphs->push_back(g);
                 return;
             }
-            if (glyph.Filled && !glyph.Triangles.empty())
+            // 选中流等没有实例化输出的路径：先铺三角形，再描边。
+            // AutoCAD 也是「先填实、再压一圈轮廓」，细填充在小缩放下才不会断成一截截。
+            if (shapeGlyph.Filled && !shapeGlyph.Triangles.empty())
             {
-                for (const auto& tri : glyph.Triangles)
+                for (const auto& tri : shapeGlyph.Triangles)
                 {
                     m_fillVerts.push_back({ xform(tri.a), c4 });
                     m_fillVerts.push_back({ xform(tri.b), c4 });
                     m_fillVerts.push_back({ xform(tri.c), c4 });
                 }
             }
-            for (const auto& seg : glyph.Lines)
+            for (const auto& seg : shapeGlyph.Lines)
             {
                 m_verts.push_back({ xform(seg.Start), c4 });
                 m_verts.push_back({ xform(seg.End),   c4 });
@@ -878,5 +1064,8 @@ namespace MiniCAD
         const TextStyleTable*          m_textStyles = nullptr;   // 复杂线型文字段的字高解析
         // 复杂线型形段的形文件解析（组码 75 的形号 → SHX 形文件 → 字形）
         ShapeFontResolver              m_shapeFontResolver;
+        // 形段实心化的副本缓存：键是字体缓存里原字形的地址（字体存活期间地址不变）。
+        // GlyphMeshLibrary::Register 也按地址缓存网格，每次调用都换新副本会让网格库无限增长。
+        std::unordered_map<const Glyph*, Glyph> m_shapeFillCache;
     };
 }
