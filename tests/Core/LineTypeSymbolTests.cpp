@@ -26,6 +26,7 @@
 #include "Core/Entity/EntityAttr.hpp"
 #include "Core/GeomKernel/Line.hpp"
 #include "Text/Font/IFont.h"
+#include "Text/Font/SHXFont.h"
 #include "Serialization/JsonSerializer.h"
 #include <cmath>
 #include <cstdio>
@@ -389,20 +390,13 @@ namespace
         }
         Check(clusters == 4, "形符号每周期重复（1.2 长 / 0.30 周期 ⇒ 4 处）");
 
-        // 开放笔画不填实：TRACK1 是两段竖线，接不成闭合环 ⇒ 不该有符号的三角面。
-        // 这里不断「填充顶点总数」（实线段在 width=0 时也不出填充，数目随线宽变），
-        // 而是查「有没有填充顶点落在开放笔画的包围盒内部」：真填了就会有，
-        // 只描边（顶点全在两条竖线上）就一个都没有。
-        // 符号锚点 x=0.3，形号 130 ⇒ 局部 x ∈ [0.13, 1.13]、y ∈ [0, 1]，s=0.25
-        // ⇒ 世界 x ∈ [0.3325, 0.5825]、y ∈ [0, 0.25]。
-        int openInterior = 0;
-        for (const auto& v : fills)
-        {
-            const double x = v.pos.x, y = v.pos.y;
-            if (x > 0.3325 + 1e-4 && x < 0.5825 - 1e-4 && y > 1e-4 && y < 0.25 - 1e-4)
-                ++openInterior;
-        }
-        Check(openInterior == 0, "开放笔画（TRACK1）不产生填充三角形");
+        // 形段只描边、不填充。依据：ltypeshp.shx 里只有 BOX(132)、CIRC1(133) 首尾
+        // 闭合，而 BATTING 用的 BAT(134) 是开放轮廓（起点 (0,0)、终点 (2,0)），
+        // 靠 rot=0 / rot=180 两个 BAT 交替拼出连续的 SSSSS —— 说明 AutoCAD 对形段
+        // 从来不填充。FENCELINE1 的圆点、FENCELINE2 的方框都是空心轮廓。
+        // 这里断言符号没有产出任何填充三角形（填充只应来自有宽度的实线段，
+        // 本用例线宽为 0，所以 fills 必须整体为空）。
+        Check(fills.empty(), "形段只描边，不产生填充三角形");
 
         // 形文件缺失（解析回调返回空）时不能崩，只退化成不画符号
         verts.clear();
@@ -420,115 +414,135 @@ namespace
         Check(verts.size() > before2, "形文件缺失时虚线本体现在（只是没有符号）");
     }
 
-    // ── 3d. 闭合轮廓的实心化 ────────────────────────────────────────
-    // SHX 形文件只产出折线（Glyph::Triangles 恒为空），而 AutoCAD 把闭合轮廓
-    // （BOX 方框、CIRC1 圆、BATTING 蝙蝠剪影）按实心画。这里断言：
-    //   · 闭合轮廓（形号 ≥ 200 的桩字形）真的补出三角面，且落在轮廓内部；
-    //   · 开放笔画（形号 130，两段竖线接不回去）一个三角面都不补；
-    //   · 补了填充之后描边仍然保留（轮廓线不会消失）。
-    void TestShapeFill()
+    // ── 3d. SHX 形字的弧解码（对照 assets/fonts/ltypeshp.shx 实测端点）──
+    // 这段是 270d950 修掉的两个 bug 的回归闸门：
+    //   · 八分弧描述字节先取 abs() 再移位 ⇒ abs 抹掉 bit7，0xC4 的起始八分区
+    //     从 4 变成 3，圆弧起点整个错开；
+    //   · 方向位写反 ⇒ 本该顺时针的弧按逆时针走，轮廓不闭合。
+    // 判据全部是实测值（out/probe/ProbeShapeClose.cpp 打印），不依赖看图：
+    //   CIRC1(133) 27 段、首尾闭合、半径 1、圆心 (1,0)；
+    //   BOX(132) 5 段、方框 [0,2]×[-1,1]；
+    //   BAT(134) 17 段、顶点 (0,0)/(−1,2)/(3,2)/(2,0)，最高点 y≈3.989；
+    //   TRACK1(130) 2 段竖线；ZIG(131) 两段折线。
+    // 形文件找不到要判**失败**，不能跳过（跳过会让解码坏掉时测试照样通过）。
+    std::string ShapeFontPath()
     {
-        Scene s;
-        LineTypeTable& t = s.GetLineTypeTable();
-        LineTypeRecord rec;
-        rec.Name          = "FENCELINE2_TEST";
-        rec.Pattern       = { 0.3, 0.3 };
-        rec.PatternLength = 0.6;
-        LineTypeSymbol sym;
-        sym.PatternIndex = 0;
-        sym.Shape        = 200;          // 桩字形的闭合方框（x0 = 0.2）
-        sym.ShapeFont    = "ltypeshp.shx";
-        sym.Scale        = 0.5;          // 形高 1.0 ⇒ 符号 0.5 高
-        rec.Symbols.push_back(sym);
-        const LineTypeID lt = t.Add(rec);
+        std::string dir = MINICAD_ASSET_DIR;
+        dir += "/fonts/ltypeshp.shx";
+        return dir;
+    }
 
-        std::vector<Vertex_P3_C4>    verts;
-        std::vector<Vertex_P3_C4>    fills;
-        std::vector<Vertex_P3_C4_UV> texts;
-        Overlay                      overlay;
+    // 从字形里取包围盒与「首尾是否闭合」
+    struct ShapeGlyphInfo
+    {
+        size_t lines = 0;
+        bool   closed = false;
+        double minX = 0, minY = 0, maxX = 0, maxY = 0;
+    };
 
-        ShapeFontStub shapeFont;
-        ShapeFontResolver shapeResolver = [&](const std::string&) -> IFont*
+    bool SamePt(const Math::Point3& a, const Math::Point3& b)
+    {
+        const double dx = a.x - b.x, dy = a.y - b.y;
+        return dx * dx + dy * dy <= 1e-9;
+    }
+
+    bool LoadShapeGlyph(SHXFont& font, uint32_t code, ShapeGlyphInfo& out)
+    {
+        const uint32_t key = kRawShapeFlag | code;
+        if (!font.HasGlyph(key))
+            return false;
+        const Glyph& g = font.GetGlyph(key);
+        out.lines = g.Lines.size();
+        if (g.Lines.empty())
+            return false;
+        out.minX = out.minY = 1e30;
+        out.maxX = out.maxY = -1e30;
+        for (const auto& l : g.Lines)
+            for (const Math::Point3& p : { l.Start, l.End })
+            {
+                out.minX = std::min(out.minX, p.x); out.maxX = std::max(out.maxX, p.x);
+                out.minY = std::min(out.minY, p.y); out.maxY = std::max(out.maxY, p.y);
+            }
+        out.closed = SamePt(g.Lines.front().Start, g.Lines.back().End);
+        return true;
+    }
+
+    void TestShapeArcDecode()
+    {
+        const std::string path = ShapeFontPath();
+        SHXFont font("ltypeshp.shx", path, 1);
+
+        ShapeGlyphInfo info;
+        if (!LoadShapeGlyph(font, 133, info))
         {
-            return &shapeFont;
-        };
-
-        DrawContext ctx(verts, fills, texts, overlay,
-                        s.GetLayerManager(), t,
-                        0.001, nullptr, nullptr);
-        ctx.SetLineTypeScale(1.0);
-        ctx.SetTextStyleTable(&s.GetTextStyleTable());
-        ctx.SetShapeFontResolver(std::move(shapeResolver));
-
-        EntityAttr a;
-        a.LayerId  = 0;
-        a.LineType = lt;
-        ctx.BeginEntity(&a);
-
-        // 0.6 长 ⇒ 正好 1 个周期 ⇒ 1 个方框符号。
-        verts.clear();
-        fills.clear();
-        ctx.DrawLine({ 0, 0, 0 }, { 0.6, 0, 0 }, Math::Color4::White(), false);
-
-        Check(!fills.empty(), "闭合轮廓补出填充三角形");
-        Check(fills.size() % 3 == 0, "填充顶点数是 3 的倍数");
-
-        // 方框：锚点 x=0.3，x0=0.2 ⇒ 局部 x ∈ [0.2, 1.2]，s=0.5 ⇒ 世界 x ∈ [0.4, 0.9]。
-        // 旋转 0（线沿 +X），所以顶点 y 全部落在 [0, 0.5]，且方框内部有顶点
-        // （不能全挤在边框四条线上，否则等于没填）。
-        double fMinX = 1e30, fMaxX = -1e30, fMinY = 1e30, fMaxY = -1e30;
-        for (const auto& v : fills)
-        {
-            const double x = v.pos.x, y = v.pos.y;
-            fMinX = std::min(fMinX, x); fMaxX = std::max(fMaxX, x);
-            fMinY = std::min(fMinY, y); fMaxY = std::max(fMaxY, y);
+            Check(false, "ltypeshp.shx 的 CIRC1(133) 能解析出来");
+            return;
         }
-        Check(fMinX > 0.39 && fMaxX < 0.91, "填充范围 = 符号锚点 + 字形包围盒");
-        Check(fMaxY - fMinY > 0.49, "填充覆盖符号全高（0.5）");
-        // 方框被耳切分成 2 个三角形，顶点全落在边框上，「内部有顶点」查不出来；
-        // 改用面积：闭合方框 0.5 × 0.5 = 0.25。面积对上才说明真的填满了，
-        // 而不是只描了边框（描边面积是 0）。
-        double area2 = 0.0;
-        for (size_t i = 0; i + 2 < fills.size(); i += 3)
-        {
-            const double ax = fills[i].pos.x, ay = fills[i].pos.y;
-            const double bx = fills[i + 1].pos.x, by = fills[i + 1].pos.y;
-            const double cx = fills[i + 2].pos.x, cy = fills[i + 2].pos.y;
-            area2 += std::fabs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) * 0.5;
-        }
-        Check(std::fabs(area2 - 0.25) < 1e-6, "填充面积 = 闭合方框面积（0.25）");
-        Check(!verts.empty(), "补填充后描边仍然保留");
 
-        // 开放笔画：换成形号 130（两段竖线），同一套参数 ⇒ 只有实线段的挤出四边形。
-        LineTypeRecord rec2;
-        rec2.Name          = "OPEN_TEST";
-        rec2.Pattern       = { 0.3, 0.3 };
-        rec2.PatternLength = 0.6;
-        LineTypeSymbol sym2;
-        sym2.PatternIndex = 0;
-        sym2.Shape        = 130;
-        sym2.ShapeFont    = "ltypeshp.shx";
-        sym2.Scale        = 0.5;
-        rec2.Symbols.push_back(sym2);
-        const LineTypeID lt2 = t.Add(rec2);
+        // CIRC1 = 0A 01 C0 00：半径 1、描述字节 0xC0（起始八分区 4、8 个八分区）。
+        // 顺/逆时针只要方向位对，都是整圆，所以这里验「圆」而不是方向：
+        // 圆心 (1,0)、半径 1 ⇒ 包围盒 [-1,-1]..[3,1]（27 段折线略有内缩）。
+        // 旧的 abs() 写法起始八分区读成 3（135°），起点错开、圆心也偏，
+        // 包围盒会明显不同。
+        Check(info.closed, "CIRC1 是首尾闭合的整圆");
+        Check(info.lines >= 20, "CIRC1 用足够多的段拟合圆弧（27 段）");
+        // 注意 minX 是 0 而不是 -1：形指令从笔位 (0,0) 起笔，圆心在 (1,0)，
+        // 圆周最左点 (0,0) 正好落在起笔点上。maxX=2、minY=-1、maxY=1 才是
+        // 「圆心 (1,0)、半径 1」的判定证据；起始八分区读错时这几个值都会偏。
+        Check(info.minX >= -0.01 && info.minX <= 0.35, "CIRC1 最左点 ≈ 0（圆心 (1,0) 减半径）");
+        Check(info.maxX > 1.9 && info.maxX < 2.1, "CIRC1 右边界 ≈ 2");
+        Check(info.minY < -0.9 && info.minY > -1.1, "CIRC1 下边界 ≈ -1");
+        Check(info.maxY > 0.9 && info.maxY < 1.1, "CIRC1 上边界 ≈ 1");
 
-        fills.clear();
-        EntityAttr a2;
-        a2.LayerId  = 0;
-        a2.LineType = lt2;
-        ctx.BeginEntity(&a2);
-        ctx.DrawLine({ 0, 0, 0 }, { 0.6, 0, 0 }, Math::Color4::White(), false);
-        // 形号 130 ⇒ 桩字形两段竖线（x ∈ [0.13, 1.13]），s=0.5、锚点 x=0.3
-        // ⇒ 世界 x ∈ [0.365, 0.865]、y ∈ [0, 0.5]。两条竖线之间接不回去，
-        // 所以这个包围盒内部不该出现任何填充顶点。
-        int openInterior2 = 0;
-        for (const auto& v : fills)
+        // BOX = 14 20 2C 28 14 00：4 个矢量字节 + 收笔 ⇒ 方框 [0,2]×[-1,1]，5 段闭合。
+        ShapeGlyphInfo box;
+        if (!LoadShapeGlyph(font, 132, box))
+            Check(false, "ltypeshp.shx 的 BOX(132) 能解析出来");
+        else
         {
-            const double x = v.pos.x, y = v.pos.y;
-            if (x > 0.365 + 1e-4 && x < 0.865 - 1e-4 && y > 1e-4 && y < 0.5 - 1e-4)
-                ++openInterior2;
+            Check(box.lines == 5 && box.closed, "BOX 是 5 段闭合方框");
+            Check(std::fabs(box.maxX - 2.0) < 1e-6, "BOX 右边界 = 2");
+            Check(std::fabs(box.minY + 1.0) < 1e-6, "BOX 下边界 = -1");
+            Check(std::fabs(box.maxY - 1.0) < 1e-6, "BOX 上边界 = 1");
         }
-        Check(openInterior2 == 0, "开放笔画（TRACK1）不补填充三角形");
+
+        // BAT = 25 0A 02 C4 2B 00：这是方向位的判定样本。
+        // 描述字节 0xC4 ⇒ bit7=1（顺时针）、起始八分区 4（180°）、跨 4 个八分区（180°）。
+        // 顺时针读法：弧从 (-1,2) 起，经最高点 (1,4)，到 (3,2)，再接末段矢量到 (2,0)。
+        // 逆时针读法（方向位写反）弧会从 (-1,2) 绕下方走，最高点跑到下面去，
+        // 包围盒的 maxY 会明显偏小 —— 旧的 abs() + 反向位实测 bbox 是
+        // [-1,-2.828]..[2.411,2.583]，顶点乱飞、轮廓不闭合。
+        ShapeGlyphInfo bat;
+        if (!LoadShapeGlyph(font, 134, bat))
+            Check(false, "ltypeshp.shx 的 BAT(134) 能解析出来");
+        else
+        {
+            Check(bat.lines == 17, "BAT 17 段（1 条起笔 + 15 段弧 + 1 条末段）");
+            Check(bat.maxY > 3.9 && bat.maxY < 4.1, "BAT 最高点 ≈ 4（弧向上鼓起，方向位为顺时针）");
+            Check(bat.minY > -0.01, "BAT 不向下跑（逆时针读法会让 minY 变成 -2.828）");
+            Check(std::fabs(bat.minX + 1.0) < 1e-6, "BAT 左边界 = -1");
+            Check(std::fabs(bat.maxX - 3.0) < 1e-6, "BAT 右边界 = 3");
+            // 终点 (2,0) 与起点 (0,0) 之间有缺口 —— BATTING 靠 rot=0/180 两个
+            // BAT 交替拼成连续图案，所以 BAT 本身**不该**闭合。
+            Check(!bat.closed, "BAT 轮廓开放（缺口由相邻镜像符号拼补）");
+        }
+
+        // 开放笔画确认：TRACK1(130) 两段竖线、ZIG(131) 两段折线，都不闭合。
+        ShapeGlyphInfo track;
+        if (LoadShapeGlyph(font, 130, track))
+        {
+            Check(track.lines == 2 && !track.closed, "TRACK1 两段开放竖线");
+            Check(std::fabs(track.maxY - 1.0) < 1e-6, "TRACK1 上端 = 1");
+            Check(std::fabs(track.minY + 1.0) < 1e-6, "TRACK1 下端 = -1");
+        }
+        else
+            Check(false, "ltypeshp.shx 的 TRACK1(130) 能解析出来");
+
+        ShapeGlyphInfo zig;
+        if (LoadShapeGlyph(font, 131, zig))
+            Check(zig.lines == 2 && !zig.closed, "ZIG 两段开放折线");
+        else
+            Check(false, "ltypeshp.shx 的 ZIG(131) 能解析出来");
     }
 
     // ── 3c. 护栏退化：缩得过小也不能丢掉符号 ─────────────────────────
@@ -676,7 +690,7 @@ int RunLineTypeSymbolTests()
     TestSerialize();
     TestRender();
     TestShapeRender();
-    TestShapeFill();
+    TestShapeArcDecode();
     TestGuardedSymbols();
     TestRealSampleConstants();
     const int n = g_failures - before;
