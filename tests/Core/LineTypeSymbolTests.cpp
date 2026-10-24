@@ -28,6 +28,8 @@
 #include "Text/Font/IFont.h"
 #include "Text/Font/SHXFont.h"
 #include "Serialization/JsonSerializer.h"
+#include "Import/CadExchange.h"
+#include "Document/Document.h"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -679,6 +681,91 @@ namespace
         Check(zidx.size() == 2 && zidx[0] == 1 && zidx[1] == 2,
               "ZIGZAG 形段下标 = 1、2（按 Pattern 下标落位）");
     }
+
+    // ── 5. 端到端：真实样例 DWG 导入 + 渲染 ─────────────────────────
+    // 上面的 TestRealSampleConstants 只是按已知段数据重放 ImportLineTypes 的逻辑，
+    // 这条走真链路：读 sample_AC1032.dwg → ImportCad → 在 Scene 里找到 TRACKS /
+    // ZIGZAG / BATTING 线型 → 用真实 DrawContext + 真实 ltypeshp.shx 渲染 →
+    // 断言形符号真的落到顶点上。任何一环（读取组码 75/340/50/46/44-45、
+    // STYLE 反查字体、形文件解析、符号铺放）断了都会在这里失败。
+    void TestRealSampleRender()
+    {
+        const std::string path = std::string(MINIDWG_SAMPLE_DIR) + "/sample_AC1032.dwg";
+        // ⚠ 仓库路径含中文（E:\新建文件夹\...），MSVC 的窄字符 std::ifstream 打不开，
+        //   连 std::wstring 手转也不行（源码是 UTF-8，转宽字符会得到错的双字节）。
+        //   既有的样例测试全都因此静默走了 [跳过] 分支。这里交给 Document::LoadFromFile
+        //   （内部走 Utf8ToPath 转宽字符），读不到就判失败而不是跳过。
+        Document doc;
+        std::string err;
+        if (!doc.LoadFromFile(path, &err))
+        {
+            Check(false, "sample_AC1032.dwg 能导入（找不到样例判失败，不跳过）");
+            if (!err.empty())
+                std::printf("    样例路径: %s（%s）\n", path.c_str(), err.c_str());
+            return;
+        }
+        Scene& s = doc.GetScene();
+
+        // 形文件用真实的 ltypeshp.shx
+        SHXFont shapeFont("ltypeshp.shx", ShapeFontPath(), 1);
+
+        const LineTypeTable& t = s.GetLineTypeTable();
+        for (const char* want : { "TRACKS", "ZIGZAG", "BATTING" })
+        {
+            const LineTypeID id = t.FindByName(want);
+            if (id == LineTypeTable::ContinuousID)
+            {
+                Check(false, (std::string("样例里找到线型 ") + want).c_str());
+                continue;
+            }
+            const LineTypeRecord* rec = t.Find(id);
+            if (!rec)
+            {
+                Check(false, (std::string(want) + " 记录可取到").c_str());
+                continue;
+            }
+            const std::string label = want;
+            Check(!rec->Symbols.empty(), (label + " 带形段符号（组码 75 没被丢）").c_str());
+            // 每个形段都要有形号与形文件
+            bool allShapeOk = true;
+            for (const auto& sy : rec->Symbols)
+                if (sy.Shape == 0 || sy.ShapeFont.empty())
+                    allShapeOk = false;
+            Check(allShapeOk, (label + " 形段的形号与形文件都收下了").c_str());
+
+            // 用这条线型画一条长线，断言符号真的铺出顶点
+            std::vector<Vertex_P3_C4>    verts;
+            std::vector<Vertex_P3_C4>    fills;
+            std::vector<Vertex_P3_C4_UV> texts;
+            Overlay                      overlay;
+
+            ShapeFontResolver shapeResolver = [&shapeFont](const std::string&) -> IFont*
+            {
+                return &shapeFont;
+            };
+            DrawContext ctx(verts, fills, texts, overlay,
+                            s.GetLayerManager(), t,
+                            0.001, nullptr, nullptr);
+            ctx.SetLineTypeScale(1.0);
+            ctx.SetTextStyleTable(&s.GetTextStyleTable());
+            ctx.SetShapeFontResolver(std::move(shapeResolver));
+
+            EntityAttr a;
+            a.LayerId  = 0;
+            a.LineType = id;
+            ctx.BeginEntity(&a);
+            ctx.DrawLine({ 0, 0, 0 }, { 10.0, 0, 0 }, Math::Color4::White(), false);
+
+            // 符号顶点必然带非零 y（形段坐标 y 不为 0），虚线本体则在 y=0 上。
+            int offAxis = 0;
+            for (const auto& v : verts)
+                if (std::fabs(static_cast<double>(v.pos.y)) > 1e-3)
+                    ++offAxis;
+            Check(offAxis > 0, (label + " 铺出了形符号顶点（不只是虚线）").c_str());
+            // 形段不填充
+            Check(fills.empty(), (label + " 形段不产生填充三角形").c_str());
+        }
+    }
 }
 
 int RunLineTypeSymbolTests()
@@ -693,6 +780,7 @@ int RunLineTypeSymbolTests()
     TestShapeArcDecode();
     TestGuardedSymbols();
     TestRealSampleConstants();
+    TestRealSampleRender();
     const int n = g_failures - before;
     std::printf("复杂线型用例失败：%d\n", n);
     return n;

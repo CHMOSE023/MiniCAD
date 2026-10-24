@@ -14,6 +14,7 @@
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Import/CadExchange.h"
 #include "Scene/Scene.h"
+#include "Core/PathUtils.h"
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -280,7 +281,10 @@ namespace
 
     std::vector<std::uint8_t> ReadFile(const std::string& path)
     {
-        std::ifstream f(path, std::ios::binary);
+        // 仓库路径含中文（E:\新建文件夹\...）：MSVC 的窄字符 std::ifstream 打不开，
+        // 必须经 Utf8ToPath 转成宽字符路径。之前这里直接用 path，所有样例
+        // 都读不到内容，整组样例测试静默走了 [跳过] 分支 —— 等于没测。
+        std::ifstream f(Utf8ToPath(path), std::ios::binary);
         return { std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>() };
     }
 
