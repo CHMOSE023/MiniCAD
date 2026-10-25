@@ -632,25 +632,20 @@ namespace MiniCAD
 
             // ── 节流：区分「简单线型」与「复杂线型（带符号）」───────────────
             //
-            // 对照 OpenCADStudio 的做法（reference/OpenCADStudio-main）：
-            // 它把两类线型**彻底分开**处理 ——
-            //   · 简单线型（只有 dash/gap）交给 GPU shader，LOD 判据是
-            //     `min_elem >= world_per_pixel`（**最小非零元素**不足 1px 才
-            //     跳过 dash 测试画成实线）；这种线型本来就没有符号，
-            //     退化只影响虚实观感。
-            //   · 复杂线型（含文字/形）走另一条 CPU 预生成路径
-            //     （scene/text/complex_lt.rs::apply_along），把 dash 和符号
-            //     一起烘焙成世界坐标几何，**不参与任何 LOD / 节流**。
-            //
-            // 这里照同样的划分：
+            // 带符号的线型（文字/形）与纯 dash 线型必须分开对待：
             //   · 带符号的线型：不做节流、不退化，始终按真实周期铺。
-            //     符号是这类线型的识别特征，任何稀疏化都会让它「看起来没了」。
-            //     顶点过多的问题由下面的硬上限兜底（每实体最多 4000 段）。
-            //   · 简单线型：用最小元素判 LOD，与参考实现的 min_elem 语义一致。
+            //     符号是这类线型的识别特征，任何稀疏化都会让它「看起来没了」——
+            //     缩小时看着正常、放大反而只剩零星几个符号。
+            //     顶点过多的风险由下面的硬上限兜底（每实体最多 4000 段）。
+            //   · 简单线型：按最小元素判 LOD（见下），因为它没有符号，
+            //     疏密只影响虚实观感，不影响能否认出线型。
             const double cycle = rec->PatternLength * scale;
 
-            // 最小非零元素（世界长度）。0 长度段是「点」，由 dotLen 按像素展开，
-            // 不参与这个判定 —— 与参考实现「dots 保持 0.0 交给 shader 画成 1px」一致。
+            // 最小非零元素（世界长度）。LOD 用它而不是用周期：眼睛分辨不出的
+            // 是图案里最短的那一段，不是整个周期（周期 0.95 里 dash 只有 0.5 时，
+            // 先糊掉的是 0.5 那一段）。
+            // 0 长度段是「点」，它的可见尺寸由下面 dotLen 按像素单独展开，
+            // 不参与这个判定 —— 否则点会被算成最小元素，把 LOD 拉到最严。
             double minElem = cycle;
             for (double p : rec->Pattern)
             {
@@ -662,12 +657,13 @@ namespace MiniCAD
             double boost = 1.0;
             if (order.empty() && cycle > 1e-12)
             {
-                // 简单线型：最小元素不足 1px 时按比例放大周期（等价于参考实现的
-                // 「跳过 dash 测试」，但保留周期结构而不是压成实线）。
+                // 简单线型：最小元素不足 1px 时按比例放大周期。
+                // 注意是「放大周期」而不是「压成实线」—— 后者会让线型在某个
+                // 缩放档位上突然跳变成一条光杆实线，与 CAD 的差异更刺眼。
                 if (m_worldPerPixel > 0.0 && minElem < m_worldPerPixel)
                     boost = m_worldPerPixel / minElem;
                 // 硬上限：任何情况下每实体不超过 4000 个周期，避免超长线上
-                // 几十万段把顶点数撑爆（参考实现用 MAX_PATTERN_REPEATS 兜同样的事）。
+                // 几十万段把顶点数撑爆。
                 const double maxCycles = 4000.0;
                 if (cycle > 1e-12 && len / cycle > maxCycles)
                     boost = std::max(boost, (len / cycle) / maxCycles);
@@ -688,9 +684,9 @@ namespace MiniCAD
                 ++idx;
 
                 // 符号锚点取该 Pattern 段的**末尾**（画完这一段之后的位置）。
-                // 依据 OpenCADStudio 的 io/linetypes.rs 注释：笔先走完元素长度、
-                // 再落字形，所以文字落在元素**末尾**（在 gap 里）——与 .lin 的
-                // 记号顺序 `dash, -space, ["TEXT"]` 和 AutoCAD 的摆放一致。
+                // 笔先走完元素长度、再落字形，所以文字/形落在元素**末尾**
+                // （在随后的 gap 里）——与 .lin 的记号顺序
+                // `dash, -space, ["TEXT"]` 和 AutoCAD 的摆放一致。
                 // 取段首会让符号压在前面的 dash 上，dash 从字形中间穿过。
 
                 if (seg > 0.0)
