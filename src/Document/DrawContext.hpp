@@ -589,13 +589,15 @@ namespace MiniCAD
                 if (m_worldPerPixel > 0.0)
                     m_viewDependent = true;
 
-                double cycle = rec->PatternLength * scale;
+                // 只有「周期算不出来」这一种情况才退化成实线 —— 那是纯算术保护
+                // （PatternLength×scale = 0 会让下面的铺设循环死循环），不是显示策略。
+                //
+                // 刻意不做「一个周期不足 4px 就压成实线」「dash 太多就压成实线」
+                // 这类取舍：用户要求与 AutoCAD 一致地按周期铺，缩得极小时由显示
+                // 精度自然决定观感。原来的护栏会让线型在某个缩放档位上突然
+                // 变成一条光实线，与 CAD 的差异比"虚线看起来很密"更刺眼。
+                const double cycle = rec->PatternLength * scale;
                 if (cycle <= 1e-12)
-                    continuous = true;
-                // 缩放过小(一个周期不足 4px)或 dash 数量过大:退化为实线显示
-                else if (m_worldPerPixel > 0.0 && cycle / m_worldPerPixel < 4.0)
-                    continuous = true;
-                else if (len / cycle > 4000.0)
                     continuous = true;
             }
 
@@ -603,13 +605,8 @@ namespace MiniCAD
             {
                 EmitSolid(a, b, color, width);
 
-                // 护栏把虚线压成实线后，**符号不能跟着一起消失** ——
-                // 否则缩得太小时 GAS_LINE / TRACKS 看起来就是一条普通实线，
-                // 用户根本认不出这条线是什么线型。
-                //
-                // 做法：按符号在周期内的相对位置（该段起点累计长度）摆放，
-                // 之后整组按 pitch 重复。pitch 有下限（约 40px）和总量上限，
-                // 缩得再小也只是一行疏符号，不会糊成一团，顶点数也不会爆掉。
+                // 连续线型也有可能带符号（退化成实线时符号仍按周期铺），
+                // 否则 GAS_LINE 周期算不出来时会连文字一起消失。
                 if (!order.empty())
                 {
                     // 每个符号在周期内的偏移：段起点累计 |Pattern| 长度

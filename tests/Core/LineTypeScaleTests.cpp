@@ -10,6 +10,10 @@
 // 实测（真实 test0.dxf，ODA 转换的权威版本）：
 //   修复前 周期 0.35 → 只画 1 段（实线）
 //   修复后 周期 350.0 = 0.35 × 1000，虚线正常
+//
+// 注：那条「一个周期不足 4 像素就退化成实线」的护栏后来按用户要求去掉了
+// （与 AutoCAD 保持一致地按周期铺，缩得过密时由显示精度决定观感）。
+// 本文件第 5 节现在断言的是相反的行为：周期再密也铺出多段。
 #include "Scene/Scene.h"
 #include "Document/Document.h"
 #include "Document/Command/DrawingVarsCommand.h"
@@ -163,17 +167,20 @@ int RunLineTypeScaleTests()
         }
     }
 
-    // ── 5. 周期过密时退化为实线（视口护栏仍在）───────────────────
+    // ── 5. 周期过密时仍按周期铺（不再退化成实线）───────────────────
+    // 旧行为：一个周期不足 4px 就压成一条实线。用户要求与 AutoCAD 一致，
+    // 这个显示取舍已去掉（DrawContext::EmitStyled 里只剩 cycle<=1e-12
+    // 的纯算术保护）。这里断言：wpp = 1.0（周期 0.75 远小于 4px，旧护栏
+    // 必定触发）时仍然铺出多段，而不是 1 段实线。
     {
         Scene s;
         const LineTypeRecord* dash = s.GetLineTypeTable().Find(s.GetLineTypeTable().FindByName("DASHED"));
         if (dash && !dash->IsContinuous())
         {
-            // 全局=1 且 wpp 很大 ⇒ 一个周期不足 4px ⇒ 退化为 1 段实线
             double count = 0;
             MeasureDashCycle(s, 1.0, 1.0, 100.0, &count);
             std::printf("    周期过密：段数 %.0f\n", count);
-            Check(count <= 1.0, "周期不足 4px 时退化为实线（护栏仍在）");
+            Check(count > 1.0, "周期不足 4px 时仍按周期铺（不退化成实线）");
         }
     }
 

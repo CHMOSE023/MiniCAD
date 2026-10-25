@@ -552,8 +552,18 @@ namespace
 
     // ── 3c. 护栏退化：缩得过小也不能丢掉符号 ─────────────────────────
     // 旧行为：cycle/wpp < 4 ⇒ 整条线压成实线，符号一个都不画 ⇒ GAS_LINE
-    // 缩小时看起来就是一条普通实线，用户认不出线型。
-    // 新行为：实线照画，符号按 pitch 补铺一行（数量有上限）。
+    // ── 3c. 不再做「缩放过小退化成实线」的取舍 ─────────────────────
+    // 旧行为：cycle/wpp < 4 或 dash 数量过多 ⇒ 整条线压成实线，
+    // 线型在某个缩放档位上突然变成一条光杆线，与 AutoCAD 的差异比
+    // "虚线看起来很密"更刺眼。用户明确要求去掉这个取舍。
+    //
+    // 新行为：始终按周期铺。这里用 wpp = 1.0（cycle 0.95 远小于 4px）
+    // 这个旧护栏必定触发的取值，断言现在仍然铺出周期结构：
+    //   · 顶点数远超 2（不是一条实线段）；
+    //   · 虚线段之间出现空隙 —— 沿 x 扫，能找到一个"前一段终点 < 后一段起点"
+    //     的缺口，证明是 dash/gap 而不是连续实线；
+    //   · 符号仍然铺出。
+    // 唯一保留的实线退化是 cycle <= 1e-12（纯算术保护，防止死循环）。
     void TestGuardedSymbols()
     {
         Scene s;
@@ -582,7 +592,8 @@ namespace
             return ResolvedTextStyle{ &font, 1.0, 0.0 };
         };
 
-        // 关键：wpp 取 1.0 ⇒ cycle 0.95 ⇒ cycle/wpp ≈ 0.95 < 4.0 ⇒ 走实线护栏
+        // 关键：wpp 取 1.0 ⇒ cycle 0.95 ⇒ cycle/wpp ≈ 0.95 < 4.0。
+        // 旧代码这里必定退化成实线；新代码必须照常按周期铺。
         DrawContext ctx(verts, fills, texts, overlay,
                         s.GetLayerManager(), t,
                         1.0, nullptr, std::move(resolver));
@@ -596,11 +607,30 @@ namespace
 
         verts.clear();
         ctx.DrawLine({ 0, 0, 0 }, { 100.0, 0, 0 }, Math::Color4::White(), false);
-        // 实线本身只要 2 个顶点；护栏补铺后顶点数必然远超
-        Check(verts.size() > 2, "护栏退化成实线，但线还是连续实线");
-        // 文字符号走了排版路径 ⇒ 至少铺一次；且数量被 512 上限压住
-        Check(fontCalls > 0, "护栏退化后符号仍被铺出（不是一条光实线）");
-        Check(fontCalls <= 512, "补铺数量有上限，顶点数不会爆");
+
+        // 100 / 0.95 ≈ 105 个周期，每周期一个 0.5 的实线段 ⇒ 顶点数远超 2
+        Check(verts.size() > 2, "极小缩放下仍按周期铺（不压成一条实线）");
+
+        // 沿 x 找出所有实线段的 [起点, 终点]，看是否存在缺口（gap）。
+        // 一条连续实线只有一段且无缺口；周期铺设则每 0.95 出现一个 0.45 的空洞。
+        std::vector<std::pair<double, double>> spans;
+        for (size_t i = 0; i + 1 < verts.size(); i += 2)
+        {
+            const double x0 = static_cast<double>(verts[i].pos.x);
+            const double x1 = static_cast<double>(verts[i + 1].pos.x);
+            if (std::fabs(verts[i].pos.y) > 1e-6 || std::fabs(verts[i + 1].pos.y) > 1e-6)
+                continue;                       // 文字符号的顶点，跳过
+            spans.emplace_back(std::min(x0, x1), std::max(x0, x1));
+        }
+        bool hasGap = false;
+        for (size_t i = 0; i < spans.size() && !hasGap; ++i)
+            for (size_t j = 0; j < spans.size(); ++j)
+                if (spans[j].first - spans[i].second > 1e-6)
+                    hasGap = true;
+        Check(spans.size() > 1 && hasGap, "铺出的是 dash/gap 周期结构（存在缺口）");
+
+        // 文字符号照旧铺出
+        Check(fontCalls > 0, "极小缩放下符号仍被铺出");
     }
 
     // ── 4. 导入：真实样例的 GAS_LINE ─────────────────────────────────
