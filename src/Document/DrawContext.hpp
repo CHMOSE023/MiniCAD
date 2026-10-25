@@ -630,39 +630,49 @@ namespace MiniCAD
                 return;
             }
 
-            // ── 节流：不把线型压成实线，只按比例放大铺设周期 ──────────────
+            // ── 节流：区分「简单线型」与「复杂线型（带符号）」───────────────
             //
-            // 曾经的做法是「一个周期不足 4px，或段数超过 4000 ⇒ 整条压成实线」。
-            // 那会在某个缩放档位上让线型突然跳变成一条光杆实线，与 CAD 的差异
-            // 比「虚线看起来很密」刺眼得多，所以去掉了。
+            // 对照 OpenCADStudio 的做法（reference/OpenCADStudio-main）：
+            // 它把两类线型**彻底分开**处理 ——
+            //   · 简单线型（只有 dash/gap）交给 GPU shader，LOD 判据是
+            //     `min_elem >= world_per_pixel`（**最小非零元素**不足 1px 才
+            //     跳过 dash 测试画成实线）；这种线型本来就没有符号，
+            //     退化只影响虚实观感。
+            //   · 复杂线型（含文字/形）走另一条 CPU 预生成路径
+            //     （scene/text/complex_lt.rs::apply_along），把 dash 和符号
+            //     一起烘焙成世界坐标几何，**不参与任何 LOD / 节流**。
             //
-            // 但完全不节流有两个真实后果：缩得很小时每像素要铺几十个 dash（顶点
-            // 数暴涨、帧率掉），超长线上段数可以达到几十万。这里换成**只放大周期**
-            // 的节流：dash/gap 的比例、符号的相对位置全部不变，只是整体疏密
-            // 变粗放 —— 看上去仍然是这条线型，不会跳变成实线。
-            //
-            // 两条下限：
-            //   · 一个周期至少占 4 个屏幕像素（否则密到看不出结构，纯浪费顶点）
-            //   · 整条线最多 4000 个周期（超长线上避免几十万段）
-            // 取两者的较大值，保证放大到正常比例时 boost 自动回到 1（不改变外观）。
-            double boost = 1.0;
+            // 这里照同样的划分：
+            //   · 带符号的线型：不做节流、不退化，始终按真实周期铺。
+            //     符号是这类线型的识别特征，任何稀疏化都会让它「看起来没了」。
+            //     顶点过多的问题由下面的硬上限兜底（每实体最多 4000 段）。
+            //   · 简单线型：用最小元素判 LOD，与参考实现的 min_elem 语义一致。
+            const double cycle = rec->PatternLength * scale;
+
+            // 最小非零元素（世界长度）。0 长度段是「点」，由 dotLen 按像素展开，
+            // 不参与这个判定 —— 与参考实现「dots 保持 0.0 交给 shader 画成 1px」一致。
+            double minElem = cycle;
+            for (double p : rec->Pattern)
             {
-                const double cycle = rec->PatternLength * scale;
-                if (cycle > 1e-12)
-                {
-                    if (m_worldPerPixel > 0.0)
-                    {
-                        const double minCycle = m_worldPerPixel * 4.0;   // 4px
-                        if (cycle < minCycle)
-                            boost = minCycle / cycle;
-                    }
-                    const double maxCycles = 4000.0;
-                    const double cycles = len / cycle;
-                    if (cycles > maxCycles)
-                        boost = std::max(boost, cycles / maxCycles);
-                }
+                const double e = std::fabs(p) * scale;
+                if (e > 1e-12 && e < minElem)
+                    minElem = e;
             }
-            // boost 作用在「段的长度」上，符号的位置随之按同一比例铺开
+
+            double boost = 1.0;
+            if (order.empty() && cycle > 1e-12)
+            {
+                // 简单线型：最小元素不足 1px 时按比例放大周期（等价于参考实现的
+                // 「跳过 dash 测试」，但保留周期结构而不是压成实线）。
+                if (m_worldPerPixel > 0.0 && minElem < m_worldPerPixel)
+                    boost = m_worldPerPixel / minElem;
+                // 硬上限：任何情况下每实体不超过 4000 个周期，避免超长线上
+                // 几十万段把顶点数撑爆（参考实现用 MAX_PATTERN_REPEATS 兜同样的事）。
+                const double maxCycles = 4000.0;
+                if (cycle > 1e-12 && len / cycle > maxCycles)
+                    boost = std::max(boost, (len / cycle) / maxCycles);
+            }
+            // boost 只乘在「段的长度」上，符号尺寸始终用 scale（不受影响）
             const double segScale = scale * boost;
 
             // “点”(0 长度段)的可见长度:至少 ~1.5px
@@ -677,12 +687,11 @@ namespace MiniCAD
                 double seg = rec->Pattern[pat] * segScale;
                 ++idx;
 
-                // 符号锚点取该 Pattern 段的**起点**，而不是画完之后的位置。
-                // 官方定义：符号的插入点由 X/Y 偏移相对「本段起点」决定
-                // （acad.lin 的 `x=-.1` 等都是相对段首的小偏移）。取段尾会让
-                // 符号整体后移一个段长 —— TRACKS（.15,[TRACK1],.15）的竖线会
-                // 贴到虚线段末端，与 AutoCAD 差整整 0.15。
-                const double segStart = t;
+                // 符号锚点取该 Pattern 段的**末尾**（画完这一段之后的位置）。
+                // 依据 OpenCADStudio 的 io/linetypes.rs 注释：笔先走完元素长度、
+                // 再落字形，所以文字落在元素**末尾**（在 gap 里）——与 .lin 的
+                // 记号顺序 `dash, -space, ["TEXT"]` 和 AutoCAD 的摆放一致。
+                // 取段首会让符号压在前面的 dash 上，dash 从字形中间穿过。
 
                 if (seg > 0.0)
                 {
@@ -705,12 +714,11 @@ namespace MiniCAD
                 // 每个周期都重新判定 —— 光标游走只会让第一个周期之后再也画不出符号,
                 // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
                 //
-                // 符号自身尺寸仍用 scale（不受 boost 影响）：节流只让符号排得更疏，
-                // 不该把文字/形一起缩小 —— 否则缩小视图时符号会小到看不见。
+                // 锚点用**段末** t（不是 segStart）：见上面关于 .lin 记号顺序的说明。
                 for (const auto& o : order)
                 {
                     if (o.first == pat)
-                        EmitLineTypeSymbol(P(segStart), ux, uy, uz,
+                        EmitLineTypeSymbol(P(t), ux, uy, uz,
                                            rec->Symbols[o.second], scale, color);
                 }
             }
