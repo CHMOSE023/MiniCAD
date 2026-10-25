@@ -49,7 +49,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **文档与撤销**（`src/Document/`）
 - `Document`：包装场景，负责保存 / 打开、撤销 / 重做、名称与路径、DWG/DXF 写出版本
 - `CommandStack`：命令模式的撤销栈；所有编辑都必须经 `ICommand` 子类（`src/Document/Command/`）
-- `DocumentManager`：多文档、共用一个 `Viewport` + `Editor`（切换文档时换相机状态）、剪贴板
+- `DocumentManager`：多文档、共用一个 `Viewport`（切换文档时换相机状态），每个文档一个 `Editor`（按文档存在管理器的映射表里，显示数据、选择集、工具状态随文档保留，切换文档只请编辑器重新拼接显示流，不重新细分；没有文档时 `GetEditor()` 返回承载设置的空闲编辑器，新文档的编辑器从当前编辑器继承用户设置；渲染缓存的版本号由 `Editor::NextRenderVersion` 在进程内全局分配，多个编辑器共用一个渲染器也不会串缓冲）、剪贴板
 
 **编辑器**（`src/Editor/`）
 - 输入管线：`InputResolver` → `Editor` → 工具 / 约束
@@ -86,7 +86,7 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）、尺寸变化（`OnResize`），由宿主调用；`RunSelfTest` 只在桌面版里定义
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、工具栏、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。界面布局参照 SolidCraft（`docs/MiniGUI/UI-REFRESH-PLAN.md`）：绘图区（面板 `canvas`）铺满标题栏以下，功能区、停靠面板（浮动停靠区 `"floating": true`，文档区 `documents` 是透明的“洞”，里面放视图方块、竖排导航条和底部居中的命令行）、状态栏（左侧模型 / 布局标签）都是浮在上面的圆角卡片；“全部显示”按没被挡住的区域留边（`Camera::SetFitInsets`，`MainFrame::UpdateFitInsets`）。标题栏：MiniCAD、首页、“文件”菜单、保存 / 撤销 / 重做、文档标签（面板 `doctabs`）、右侧 AI / 设置 / 帮助 / 版本（面板 `appbar`）；其余命令在功能区（`MiniGUI::Ribbon`，描述文件顶层 `ribbons`；选项卡行右端是收起按钮和命令搜索框，Ctrl+K）；功能区图标由 `tools/make_icons.py` 生成
 - `GUI/StartPage.cpp`（起始页，面板 `start`，显示时隐藏标题栏以下的其余界面；首页键 `view.start`）、`GUI/ViewNavBar.cpp`（视图方块下面竖排的导航条、标题栏右侧的 AI / 设置 / 帮助 / 版本）
-- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏、视图方块
+- `GUI/MainPanels.cpp`、`LayerPanels.cpp`、`CommandLine.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、命令行、动态输入、各种对话框、状态栏、视图方块。图层在面板、特性面板和工具栏下拉框里都按名称的自然顺序排列（`MainFrame::SortedLayerIds`，0 层最前，按 "ID:名称" 键缓存，图层增删改名才重排）；图层面板有搜索框（不分大小写的子串，Esc 清空 / 交回焦点），点"名称"表头切换升降序。停靠卡片的标签上角是圆的，激活的标签与面板内容同色连成一片（`DockGroup::BodyColor` 读内容 `Panel` 的背景色，标题条比它深一级）
 - `Host/Win32Window`（桌面）：无边框窗口（`MiniGUI::Win32Frame`）、D3D11 设备与交换链、消息循环、监视界面描述文件；另存为用系统对话框，"保存类型"里区分 2018 与 2013/2014
 - `Host/WebApp`（网页）：`WebHost` 负责画布、WebGL2、DPI（`ResizeObserver` + devicePixelRatio 监听）、`requestAnimationFrame` 按需刷新；打开文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本
 
@@ -217,8 +217,9 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 
 - 拾取的空间索引按 `Scene::GeometryVersion()` 缓存与失效
 - 视口缓存层：场景版本、相机、尺寸、显示开关、背景深浅都没变时，每帧只复制缓存层再画动态内容
-- 场景顶点分两路：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充进动态流，其余进静态流；滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传。D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动
+- 场景顶点分两路：随视图变化的实体（按像素等宽的线宽、按像素画的点样式）的线与填充进动态流，其余进静态流；滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传。虚线的几何在世界坐标里（线型的“点”笔划走点流，恒定 1 像素），一段不超过 200 个周期的虚线不随缩放重建；更长的（`DrawContext::kStaticMaxDashes`）“延迟铺设”（`DeferredDash`：实体细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放把它们铺进动态流，一个周期不足 4px 时画成实线），滚轮缩放只重铺这几千段，不重新细分所在实体，顶点也不会像全部铺满那样多出 4 倍。D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动
 - 渲染器按 (slot, version) 缓存顶点缓冲，版本没变时不重新上传
 - 顶点颜色为 RGBA8（`VertexColor`，`Vertex_P3_C4` 16 字节）。拼接后的场景静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（追加实体、渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`）从缓存重新拼接，不重新细分。注意 NVIDIA 驱动会为上传的顶点缓冲在进程里留一份同样大小的系统内存，GPU 数据量直接计入私有内存
 - 矢量文字按字形实例化：`DrawContext` 把每个字输出为一条 `GlyphInstance`（36 字节，局部 → 世界的仿射变换 + 颜色），字形网格在 `GlyphMeshLibrary` 里每个字形只存一份；实例流按网格排序分批，用 `DrawInstanced` / `drawArraysInstanced` 绘制（字形三角形画在填充之后、线之前，轮廓线画在线之后）。被区域覆盖盖到的实例由 `WipeClip::Batch::ClipGlyphs` 展开成顶点再裁剪；选中流仍按顶点展开
+- 选择集：选中流优先从逐实体缓存复制并改成选中色（`Editor::UpdateSelectionVertices`，不重新细分；拖动中、带光栅图像、缓存里没有的实体仍实时绘制），分静态与随视图变化两路（`ViewState::SelScene` / `SelDyn`），缩放时只重建后者。夹点超过 `GripEditor::kGripObjectLimit`（100 个对象，同 AutoCAD 的 GRIPOBJLIMIT）不显示，夹点几何在 `Viewport` 里按内容缓存。框选先用包围盒粗筛（俯视时包围盒完全在框内直接选中），块、标注、填充的精确判定用 `Picking::GetPickGeometry` 的缓存。特性面板与工具栏下拉框的选择集统计按选择集版本（`Picking::SelectionVersion`）与场景版本缓存（`MainFrame::SelectionInfo`）。`--bench` 里有"框选全图"一段测这些
 - `SnapEngine` 每帧 O(n)，大图纸时可考虑接入空间索引

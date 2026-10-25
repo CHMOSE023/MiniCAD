@@ -63,14 +63,12 @@ namespace MiniCAD
         } 
         // 测试代码：创建一些示例实体展示字体样式和标注功能
         // DocumentDrawTest(doc.get());
+        const Editor& proto = GetEditor();   // 新文档的编辑器从当前编辑器继承用户设置
         m_active = doc.get();
         m_docs.push_back(std::move(doc));
 
-        if (m_viewport)
-        {
-            m_viewport->GetCamera().SetState(m_active->GetCameraState());
-            m_editor.Bind(*m_active, *m_viewport);
-        }
+        EnsureEditor(*m_active, proto);
+        ActivateEditor();
         m_active->MarkDirty();
         return *m_active;
     }
@@ -349,8 +347,12 @@ namespace MiniCAD
     {
         m_viewport = std::make_unique<Viewport>(w, h);
 
+        // 视口之前就建好的文档：现在才能把编辑器绑上去
+        for (auto& [doc, editor] : m_editors)
+            if (!editor->IsBound())
+                editor->Bind(const_cast<Document&>(*doc), *m_viewport);
         if (m_active)
-            m_editor.Bind(*m_active, *m_viewport);
+            ActivateEditor();
     }
 
     void DocumentManager::Close(Document* doc)
@@ -362,18 +364,20 @@ namespace MiniCAD
             return;
 
         if (m_active == doc)
-        {
-            m_editor.Unbind();
             m_active = nullptr;
-        }
 
+        // 文档的编辑器随文档销毁（先解绑：取消进行中的工具，释放显示数据）
+        if (auto e = m_editors.find(doc); e != m_editors.end())
+        {
+            e->second->Unbind();
+            m_editors.erase(e);
+        }
         m_docs.erase(it);
 
         if (!m_docs.empty() && m_active == nullptr)
         {
             m_active = m_docs.back().get();
-            if (m_viewport)
-                m_editor.Bind(*m_active, *m_viewport);
+            ActivateEditor();
         }
     }
 
@@ -391,14 +395,52 @@ namespace MiniCAD
             m_active->SetCameraState(m_viewport->GetCamera().GetState());
         }
 
-        m_editor.Unbind();
+        // 原活动文档的编辑器不解绑：显示数据、选择集、工具状态都留着，切回来时直接用
         m_active = doc;
 
 		if (m_active && m_viewport) // 切换后恢复新活动文档的视口状态，并绑定编辑器
+            ActivateEditor();
+    }
+
+    Editor& DocumentManager::GetEditor()
+    {
+        if (m_active)
+            if (auto it = m_editors.find(m_active); it != m_editors.end())
+                return *it->second;
+        return m_idleEditor;
+    }
+
+    const Editor& DocumentManager::GetEditor() const
+    {
+        if (m_active)
+            if (auto it = m_editors.find(m_active); it != m_editors.end())
+                return *it->second;
+        return m_idleEditor;
+    }
+
+    Editor& DocumentManager::EnsureEditor(Document& doc, const Editor& proto)
+    {
+        auto it = m_editors.find(&doc);
+        if (it == m_editors.end())
         {
-            m_viewport->GetCamera().SetState(m_active->GetCameraState());
-            m_editor.Bind(*m_active, *m_viewport);
+            auto editor = std::make_unique<Editor>();
+            editor->CopySettingsFrom(proto);
+            it = m_editors.emplace(&doc, std::move(editor)).first;
         }
+        if (m_viewport && !it->second->IsBound())
+            it->second->Bind(doc, *m_viewport);
+        return *it->second;
+    }
+
+    void DocumentManager::ActivateEditor()
+    {
+        if (!m_active || !m_viewport)
+            return;
+        m_viewport->GetCamera().SetState(m_active->GetCameraState());   // 恢复该文档的视图
+        Editor& editor = EnsureEditor(*m_active, m_idleEditor);
+        // 它的拼接流可能已交给渲染后端并释放，而后端的缓冲这期间被别的文档顶掉或被释放：
+        // 下一帧从逐实体缓存重新拼接（不重新细分），后端再上传
+        editor.RequestSceneRestitch();
     }
 
     void DocumentManager::SetFontSystem(FontSystem* fontSystem)
@@ -474,7 +516,7 @@ namespace MiniCAD
     void DocumentManager::ZoomAll(bool undoable)
     {
         if (m_active)
-            m_editor.ZoomAll(undoable);
+            GetEditor().ZoomAll(undoable);
     }
 
     Document* DocumentManager::FindOpen(const std::string& path) const
@@ -513,16 +555,14 @@ namespace MiniCAD
             m_active->SetCameraState(m_viewport->GetCamera().GetState());
         }
 
+        const Editor& proto = GetEditor();   // 新文档的编辑器从当前编辑器继承用户设置
         m_active = doc.get();
         m_docs.push_back(std::move(doc));
 
-        if (m_viewport)
-        {
-            m_viewport->GetCamera().SetState(m_active->GetCameraState());
-            m_editor.Bind(*m_active, *m_viewport);
-            if (CadKindFromPath(m_active->GetPath()) != CadFileKind::None)
-                ZoomAll(false);   // 外来图纸的坐标可能离原点很远；初始视图不进撤销栈
-        }
+        EnsureEditor(*m_active, proto);
+        ActivateEditor();
+        if (m_viewport && CadKindFromPath(m_active->GetPath()) != CadFileKind::None)
+            ZoomAll(false);   // 外来图纸的坐标可能离原点很远；初始视图不进撤销栈
 
         return m_active;
     }
@@ -603,7 +643,7 @@ namespace MiniCAD
             return;
 
         Scene& scene = m_active->GetScene();
-        for (auto id : m_editor.GetSelection())
+        for (auto id : GetEditor().GetSelection())
         {
             auto* obj = scene.GetEntity(id);
             if (!obj || !obj->IsKindOf<Entity>())
@@ -623,8 +663,9 @@ namespace MiniCAD
         if (m_clipboard.empty())
             return;
 
-        m_editor.GetCmdLine().Echo("命令: CopyBase");
-        m_editor.StartPickPointTool("指定基点:", [this](const Math::Point3& p)
+        Editor& editor = GetEditor();
+        editor.GetCmdLine().Echo("命令: CopyBase");
+        editor.StartPickPointTool("指定基点:", [this](const Math::Point3& p)
         {
             m_clipboardBase    = p;
             m_clipboardHasBase = true;
@@ -636,10 +677,10 @@ namespace MiniCAD
     {
         // 剪切 = 复制 + 删除：锁定图层上的对象不能删除，所以也不进剪贴板，选择集只留可修改的对象
         {
-            const auto editable = m_editor.EditableSelectionIds();
+            const auto editable = GetEditor().EditableSelectionIds();
             if (editable.empty())
                 return;
-            m_editor.SetSelection({ editable.begin(), editable.end() });
+            GetEditor().SetSelection({ editable.begin(), editable.end() });
         }
         CopySelected();
 
@@ -648,7 +689,7 @@ namespace MiniCAD
             return;
 
         // 删除经 BatchDeleteCommand 入撤销栈;撤销可恢复被剪切的实体
-        m_editor.DeleteSelected();
+        GetEditor().DeleteSelected();
     }
 
     void DocumentManager::Paste()
@@ -658,7 +699,7 @@ namespace MiniCAD
 
         // 启动交互式粘贴:剪贴板实体跟随光标预览,左键指定插入点(类 AutoCAD)
         // 标脏由 CommandStack 的 OnMutate 回调统一处理
-        m_editor.StartPasteTool(&m_clipboard, nullptr,
+        GetEditor().StartPasteTool(&m_clipboard, nullptr,
                                 m_clipboardHasBase ? &m_clipboardBase : nullptr);
     }
 

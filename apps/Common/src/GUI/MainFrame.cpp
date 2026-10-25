@@ -1204,10 +1204,13 @@ namespace MiniCAD
         SyncOpenProgress();
         // 视口背景跟随界面主题：浅色主题下白色实体、十字光标画成黑色
         m_docManager.GetViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
+        m_timing.status = ms(t);
 
         // 2. 布局 → 3. 按最新尺寸和相机渲染视口
+        const int64_t tLayout = NowTicks();
         m_ui->Update();
-        m_timing.layout = ms(t);
+        m_timing.layout1 = ms(tLayout);
+        m_timing.layout  = ms(t);
         t = NowTicks();
         m_timing.viewportRendered = m_viewport->IsVisible() && m_viewport->RenderContent();
         if (m_syncGpu)
@@ -1219,7 +1222,8 @@ namespace MiniCAD
         SyncCommandLine();
         SyncDynamicInput();
         m_ui->Update();
-        m_timing.layout += ms(t);
+        m_timing.layout2 = ms(t);
+        m_timing.layout += m_timing.layout2;
 
         // 4. 界面（含视口纹理）画到窗口
         t = NowTicks();

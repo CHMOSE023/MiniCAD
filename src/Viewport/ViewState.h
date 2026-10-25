@@ -69,7 +69,7 @@ namespace MiniCAD
         // 场景顶点版本号：每次重建自增。渲染后端据此判断 GPU 缓冲是否需要
         // 重新上传（版本未变直接复用，避免每帧全量上传）。
         uint64_t                         SceneVersion = 0;
-        // 动态场景流：随视图变化的线与填充（虚线、按像素等宽的线宽），缩放时只重建这一路，画在静态流之后
+        // 动态场景流：随视图变化的线与填充（按像素等宽的线宽、按像素画的点样式；虚线在世界坐标里，进静态流），缩放时只重建这一路，画在静态流之后
         std::span<const Vertex_P3_C4>    SceneDyn;
         std::span<const Vertex_P3_C4>    SceneDynFill;
         uint64_t                         SceneDynVersion = 0;
@@ -92,6 +92,12 @@ namespace MiniCAD
         std::span<const Vertex_P3_C4>    SelFill;      // 选中填充三角形
         std::span<const Vertex_P3_C4_UV> SelText;      // 选中文字四边形
         uint64_t                         SelVersion = 0;
+        // 选中流里随视图变化的部分（线宽 / 点样式实体、点图元的小十字、长虚线段、拖动中的实体）：
+        // 缩放时只重建这一路，静态部分（从逐实体缓存复制来的）不动、不重新上传
+        std::span<const Vertex_P3_C4>    SelDyn;
+        std::span<const Vertex_P3_C4>    SelDynFill;
+        std::span<const Vertex_P3_C4_UV> SelDynText;
+        uint64_t                         SelDynVersion = 0;
         void*                            FontTexture = nullptr; // 纹理字形用的字体图集（Web 端；桌面端文字走矢量，不设置）
         std::span<const GripDraw>        Grips;       // 夹点
 

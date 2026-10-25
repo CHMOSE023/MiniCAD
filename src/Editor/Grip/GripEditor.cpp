@@ -351,7 +351,7 @@ namespace MiniCAD
         m_grips.clear();
 
         auto& selection = m_picking->GetSelection();
-        if (selection.empty())
+        if (selection.empty() || selection.size() > kGripObjectLimit)
             return false;
 
         for (auto id : selection)

@@ -163,17 +163,105 @@ int RunLineTypeScaleTests()
         }
     }
 
-    // ── 5. 周期过密时退化为实线（视口护栏仍在）───────────────────
+    // ── 5. 虚线几何与缩放无关：周期过密（一个周期不足 1px）也照样铺出来 ─────
+    // 以前按「不足 4px 退化为实线」取舍，代价是每格滚轮都要把整张图的虚线实体重新细分；
+    // 现在虚线进静态流，缩放不重建，段数与 wpp 无关。dash 数量过大（> 4000 段）的护栏仍在
     {
         Scene s;
         const LineTypeRecord* dash = s.GetLineTypeTable().Find(s.GetLineTypeTable().FindByName("DASHED"));
         if (dash && !dash->IsContinuous())
         {
-            // 全局=1 且 wpp 很大 ⇒ 一个周期不足 4px ⇒ 退化为 1 段实线
-            double count = 0;
-            MeasureDashCycle(s, 1.0, 1.0, 100.0, &count);
-            std::printf("    周期过密：段数 %.0f\n", count);
-            Check(count <= 1.0, "周期不足 4px 时退化为实线（护栏仍在）");
+            double countFine = 0, countCoarse = 0;
+            MeasureDashCycle(s, 1.0, 0.001, 100.0, &countFine);
+            MeasureDashCycle(s, 1.0, 1.0, 100.0, &countCoarse);
+            std::printf("    wpp=0.001 段数 %.0f，wpp=1 段数 %.0f\n", countFine, countCoarse);
+            Check(countCoarse > 1.0 && countCoarse == countFine, "虚线段数不随 wpp 变化（缩放不重新细分）");
+
+            double countHuge = 0;
+            MeasureDashCycle(s, 1.0, 0.001, dash->PatternLength * 5000.0, &countHuge);
+            Check(countHuge <= 1.0, "dash 数量过大（> 4000 段）时退化为实线（护栏仍在）");
+
+            // 一段超过 200 个周期的长虚线仍按像素取舍：缩小（周期不足 4px）时退化为实线，放大时铺满
+            double countLongCoarse = 0, countLongFine = 0;
+            MeasureDashCycle(s, 1.0, 1.0, dash->PatternLength * 1000.0, &countLongCoarse);
+            MeasureDashCycle(s, 1.0, 0.001, dash->PatternLength * 1000.0, &countLongFine);
+            std::printf("    1000 个周期的长线：wpp=1 段数 %.0f，wpp=0.001 段数 %.0f\n", countLongCoarse, countLongFine);
+            Check(countLongCoarse <= 1.0 && countLongFine >= 999.0, "超过 200 个周期的长虚线仍按像素取舍（缩小为实线、放大铺满）");
+
+            // 场景流开启延迟：长虚线段只记录不铺设，实体不随视图变化；Editor 再按缩放铺进动态流
+            {
+                std::vector<Vertex_P3_C4> verts, fills;
+                std::vector<Vertex_P3_C4_UV> texts;
+                Overlay ov;
+                DrawContext ctx(verts, fills, texts, ov, s.GetLayerManager(), s.GetLineTypeTable(), 1.0, nullptr, nullptr);
+                ctx.SetDeferLongDashes(true);
+                EntityAttr a;
+                a.LayerId  = 0;
+                a.LineType = s.GetLineTypeTable().FindByName("DASHED");
+                ctx.BeginEntity(&a);
+                ctx.DrawLine({ 0, 0, 0 }, { dash->PatternLength * 1000.0, 0, 0 }, Math::Color4::White(), false);
+                ctx.DrawLine({ 0, 10, 0 }, { dash->PatternLength * 10.0, 10, 0 }, Math::Color4::White(), false);   // 短的照常铺
+                ctx.BeginEntity(nullptr);
+                const auto deferred = ctx.TakeDeferredDashes();
+                std::printf("    延迟：长段 %zu 条，直接铺出的线段 %zu\n", deferred.size(), verts.size() / 2);
+                Check(deferred.size() == 1 && verts.size() / 2 >= 10 && verts.size() / 2 <= 11 && !ctx.HasViewDependentGeometry(),
+                      "开启延迟：长虚线段只记录，短虚线照常铺，实体不随视图变化");
+
+                std::vector<Vertex_P3_C4> coarse, fine;
+                if (deferred.size() == 1)
+                {
+                    DrawContext::EmitDeferredDash(deferred[0], s.GetLineTypeTable(), 1.0, coarse);
+                    DrawContext::EmitDeferredDash(deferred[0], s.GetLineTypeTable(), 0.001, fine);
+                }
+                std::printf("    延迟段：wpp=1 段数 %zu，wpp=0.001 段数 %zu\n", coarse.size() / 2, fine.size() / 2);
+                Check(coarse.size() == 2 && fine.size() / 2 >= 999, "延迟段按缩放铺设：缩小为一段实线、放大铺满");
+            }
+
+            // 虚线不随视图变化：细分后 HasViewDependentGeometry 为 false
+            std::vector<Vertex_P3_C4> verts, fills;
+            std::vector<Vertex_P3_C4_UV> texts;
+            Overlay ov;
+            DrawContext ctx(verts, fills, texts, ov, s.GetLayerManager(), s.GetLineTypeTable(), 0.01, nullptr, nullptr);
+            EntityAttr a;
+            a.LayerId  = 0;
+            a.LineType = s.GetLineTypeTable().FindByName("DASHED");
+            ctx.BeginEntity(&a);
+            ctx.DrawLine({ 0, 0, 0 }, { 100, 0, 0 }, Math::Color4::White(), false);
+            ctx.BeginEntity(nullptr);
+            Check(verts.size() >= 4 && !ctx.HasViewDependentGeometry(), "虚线实体不标记为随视图变化（进静态流）");
+        }
+    }
+
+    // ── 6. 线型里的“点”笔划走点流（恒定 1 像素，与缩放无关）────────────────
+    {
+        Scene s;
+        auto& lt = s.GetLineTypeTable();
+        const auto dotId = lt.FindByName("DASHDOT");
+        const LineTypeRecord* rec = lt.Find(dotId);
+        if (rec && !rec->IsContinuous())
+        {
+            std::vector<Vertex_P3_C4> verts, fills;
+            std::vector<Vertex_P3_C4_UV> texts;
+            Overlay ov;
+            DrawContext ctx(verts, fills, texts, ov, s.GetLayerManager(), lt, 0.01, nullptr, nullptr);
+            EntityAttr a;
+            a.LayerId  = 0;
+            a.LineType = dotId;
+            ctx.BeginEntity(&a);
+            ctx.DrawLine({ 0, 0, 0 }, { rec->PatternLength * 10.0, 0, 0 }, Math::Color4::White(), false);
+            ctx.BeginEntity(nullptr);
+            const auto points = ctx.TakePoints();
+            std::printf("    DASHDOT 10 个周期：线段 %zu，点 %zu\n", verts.size() / 2, points.size());
+            Check(points.size() >= 9 && !ctx.HasViewDependentGeometry(), "点笔划进点流，且不随视图变化");
+
+            // 选中流：点笔划画成小段（没有点流），随缩放重建
+            verts.clear();
+            DrawContext sel(verts, fills, texts, ov, s.GetLayerManager(), lt, 0.01, nullptr, nullptr);
+            sel.SetLineTypeDotsAsSegments(true);
+            sel.BeginEntity(&a);
+            sel.DrawLine({ 0, 0, 0 }, { rec->PatternLength * 10.0, 0, 0 }, Math::Color4::White(), false);
+            sel.BeginEntity(nullptr);
+            Check(sel.TakePoints().empty() && sel.HasViewDependentGeometry(), "选中流：点笔划画成小段并标记随视图变化");
         }
     }
 

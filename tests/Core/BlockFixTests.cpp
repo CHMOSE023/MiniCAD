@@ -149,7 +149,7 @@ int RunBlockFixTests()
         std::vector<Vertex_P3_C4>     verts, fills;
         std::vector<Vertex_P3_C4_UV>  texts;
         Overlay                       ov;
-        // wpp=0：不触发"一个周期不足 4px 退化为实线"的像素护栏
+        // wpp=0：虚线几何与 wpp 无关（点笔划走点流）
         DrawContext ctx(verts, fills, texts, ov, s.GetLayerManager(), s.GetLineTypeTable(),
                         0.0, nullptr, nullptr);
         ctx.SetLineTypeScale(s.GetLineTypeScale());

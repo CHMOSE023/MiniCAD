@@ -176,9 +176,23 @@ namespace MiniCAD
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
         void RefreshLayerPanel();
-        static std::vector<uint32_t> SortedLayerIds(Document& doc);     // 按 ID（创建顺序）排列，下拉框和图层面板都用这个顺序
-        // 选中实体的公共属性下标：没有选中返回 -1，取值不同返回 nullopt（"*多种*"）。特性面板与工具栏下拉框共用
-        static std::optional<int> SelectionCommonIndex(Editor& editor, const std::function<int(const EntityAttr&)>& indexOf);
+        // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
+        // 结果缓存到图层增删改名为止，只在界面线程使用
+        static const std::vector<uint32_t>& SortedLayerIds(Document& doc);
+        // 选择集的统计（特性面板与工具栏下拉框共用）：公共图层 / 颜色 / 线型 / 线宽的下标（没有选中为 -1，
+        // 取值不同为 nullopt，显示"*多种*"）、线型比例、公共几何特性。按选择集版本与场景版本缓存：
+        // 各个绑定每次刷新都要扫一遍选择集，13 万个对象扫 6 遍要 40 ms，而每次点击、按键都会刷新
+        struct SelectionSummary
+        {
+            bool            valid = false;
+            const Document* doc   = nullptr;
+            uint64_t        selVersion = 0, sceneVersion = 0, displayVersion = 0;
+            size_t          count = 0;
+            std::optional<int>    layer, color, lineType, lineweight;
+            std::optional<double> lineTypeScale;
+            std::vector<CommonProperty> properties;
+        };
+        const SelectionSummary& SelectionInfo();
 
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         void ReloadUi();
@@ -287,6 +301,9 @@ namespace MiniCAD
         Document*                              m_lineTypeScaleDoc    = nullptr;  // 同上
         std::vector<uint32_t>                  m_layerIds;               // 图层面板每一行对应的图层 ID
         std::string                            m_layerSignature;         // 图层面板当前显示的内容，没变时不重建行
+        MiniGUI::TextBox*                      m_layerSearch = nullptr;  // 图层面板的搜索框
+        std::string                            m_layerFilter;            // 图层面板只显示名称含这段文字的图层（不分大小写）
+        bool                                   m_layerSortDesc = false;  // 图层面板按名称降序（点"名称"表头切换）
         void*                                  m_viewSRV    = nullptr;   // 当前登记的视口 SRV（尺寸变化后会重建）
         MiniGUI::TextureId                     m_viewTex    = MiniGUI::InvalidTextureId;
         uint64_t                               m_viewTexRebuilds = 0;    // 视口渲染目标重建（重新登记纹理）的次数，自测用
@@ -299,6 +316,7 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::UiLayout>     m_layout;
         MiniGUI::BindingSet                    m_bindings;
         std::function<void()>                  m_syncGeometryRows;     // 特性面板「几何」组：按选择集重新分配行
+        SelectionSummary                       m_selectionSummary;     // 见 SelectionInfo
         MiniGUI::Node*                         m_uiHost     = nullptr;   // 界面描述生成的内容放在这里
         std::string                            m_uiPath;                 // 界面描述文件（UTF-8）
         int64_t                                m_uiWriteTime = 0;
@@ -374,6 +392,9 @@ namespace MiniCAD
         struct FrameTiming
         {
             double layout   = 0.0;      // 状态同步 + 布局（含命令行 / 动态输入同步后的第二次布局）
+            double status   = 0.0;      //   其中：节点图 / 状态栏 / 读取进度同步
+            double layout1  = 0.0;      //   其中：第一次布局（UIContext::Update）
+            double layout2  = 0.0;      //   其中：命令行 / 动态输入同步 + 第二次布局
             double viewport = 0.0;      // CAD 视口渲染（Editor::Render + Viewport::Render）
             double ui       = 0.0;      // 界面绘制（生成 DrawList + 后端绘制）
             double present  = 0.0;      // Present（含垂直同步等待）

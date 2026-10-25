@@ -70,15 +70,17 @@ namespace MiniCAD
         bool         IsBoxSelecting() const;
 
         // Dirty
-        void MarkDirty()     { m_dirty = true; }
+        void MarkDirty()     { m_dirty = true; ++m_selectionVersion; }
         bool IsDirty() const { return m_dirty; }
         void ClearDirty()    { m_dirty = false; }
+        // 选择集每次变化加一：界面按它缓存选择集的统计（公共图层、颜色、特性……），不必每次刷新都扫一遍
+        uint64_t SelectionVersion() const { return m_selectionVersion; }
 
         // 清空选择
-        void ClearSelection() { m_selection.clear(); }
+        void ClearSelection() { m_selection.clear(); ++m_selectionVersion; }
 
         // 整体替换选择集（供命令 / 自测直接指定选择）
-        void SetSelection(std::unordered_set<ObjectID> ids) { m_selection = std::move(ids); m_dirty = true; }
+        void SetSelection(std::unordered_set<ObjectID> ids) { m_selection = std::move(ids); m_dirty = true; ++m_selectionVersion; }
 
         void RestoreLastSelection();
 
@@ -181,5 +183,6 @@ namespace MiniCAD
         };
         const PickGeometry& GetPickGeometry(const Object& obj);
         std::unordered_map<ObjectID, PickGeometry> m_pickGeometry;
+        uint64_t m_selectionVersion = 0;
     };
 }

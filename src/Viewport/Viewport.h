@@ -98,6 +98,11 @@ namespace MiniCAD
         uint64_t m_viewVersion = 0;   // 供 SubmitCached 判断 GPU 缓冲是否需重传
         uint64_t m_viewKey     = 0;   // 相机状态+尺寸+开关的指纹
 
+        // 夹点几何缓存：按夹点内容（位置、类型、悬停）的指纹缓存，没变时不重建、GPU 缓冲不重新上传
+        GripGeometry m_gripGeom;
+        uint64_t     m_gripKey   = 0;
+        bool         m_gripValid = false;
+
         // 离屏缓存层：网格、坐标轴、Gizmo、场景（填充 / 线 / 文字）。只有场景版本、相机、尺寸、
         // 显示开关变化时才重画；后端不支持时为空，退回每帧全量绘制
         std::unique_ptr<IRenderTarget> m_sceneLayer;

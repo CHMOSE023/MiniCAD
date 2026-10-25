@@ -50,6 +50,8 @@ namespace MiniGUI
         void Choose(int index);   // 用户选择：更新并触发 OnChanged
 
         std::vector<std::string> m_items;
+        float m_itemsWidth     = 80.0f;   // 最宽条目的宽度（见 MeasureContent）
+        float m_itemsWidthFont = -1.0f;   // 量它时的字号，-1 = 还没量 / 条目变了
         int         m_selected   = -1;
         int         m_maxVisible = 10;
         std::string m_placeholder;

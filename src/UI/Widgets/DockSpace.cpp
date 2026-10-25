@@ -1,4 +1,5 @@
 #include "Widgets/DockSpace.h"
+#include "Widgets/Panel.h"
 #include "Core/UIContext.h"
 #include "Paint/DrawList.h"
 #include "Style/Theme.hpp"
@@ -101,7 +102,7 @@ namespace MiniGUI
                 total += w;
             }
             const float scale = total > avail && total > 0.0f ? avail / total : 1.0f;     // 放不下时等比缩窄
-            float x = 2.0f;
+            float x = m_dock->IsFloating() ? 0.0f : 2.0f;      // 浮动卡片：第一个标签贴着卡片的圆角
             for (size_t i = 0; i < widths.size(); ++i)
             {
                 const float w  = std::floor(widths[i] * scale);
@@ -138,20 +139,38 @@ namespace MiniGUI
                 c->SetBounds(content);
         }
 
+        // 当前面板内容的底色：卡片和激活的标签都用它，标签与内容连成一片
+        ColorRef BodyColor() const
+        {
+            for (const auto& c : GetChildren())
+                if (const auto* p = dynamic_cast<const Panel*>(c.get()); p && p->GetBackground() != ColorRef(Colors::Transparent))
+                    return p->GetBackground();
+            return Theme::Panel;
+        }
+
         void OnPaint(DrawList& dl, const Rect& r) override
         {
             if (IsHole())
                 return;
-            const bool floating = m_dock->IsFloating();
-            dl.AddRectFilled(r, Theme::Panel, floating ? Theme::RadiusLg : 0.0f);
+            const bool     floating = m_dock->IsFloating();
+            const ColorRef body     = BodyColor();
+            dl.AddRectFilled(r, body, floating ? Theme::RadiusLg : 0.0f);
             if (!HasHeader())
                 return;
             UIContext* ctx = GetContext();
             const Rect header{ r.min.x, r.min.y, r.max.x, r.min.y + DockSpace::kHeaderHeight };
-            if (!floating)
-                dl.AddRectFilled(header, Theme::PanelAlt);
-            const float lineInset = floating ? kFloatInset : 0.0f;
-            dl.AddRectFilled(Rect{ header.min.x + lineInset, header.max.y - 1.0f, header.max.x - lineInset, header.max.y }, Theme::BorderSubtle);
+            // 标题条比内容深一级，激活的标签填内容色并盖住底边的分隔线，看上去与内容连成一片
+            const ColorRef strip = body == ColorRef(Theme::PanelAlt) ? Theme::Background : Theme::PanelAlt;
+            if (floating)
+            {
+                dl.AddRectFilled(header, strip, Theme::RadiusLg);
+                dl.AddRectFilled(Rect{ header.min.x, header.min.y + Theme::RadiusLg, header.max.x, header.max.y }, strip);
+            }
+            else
+            {
+                dl.AddRectFilled(header, strip);
+            }
+            dl.AddRectFilled(Rect{ header.min.x, header.max.y - 1.0f, header.max.x, header.max.y }, Theme::BorderSubtle);
 
             const auto tabs = Tabs();
             for (size_t i = 0; i < tabs.size(); ++i)
@@ -160,26 +179,26 @@ namespace MiniGUI
                 const bool     active = static_cast<int>(i) == m_leaf->active;
                 const bool     hover  = static_cast<int>(i) == m_hoverTab;
                 const Rect     tab{ r.min.x + t.x0, header.min.y, r.min.x + t.x1, header.max.y - (active ? 0.0f : 1.0f) };
-                // 浮动卡片四角是圆的：标签底色的上角跟着圆，不在卡片圆角外面留下方角的小点
+                // 标签上面两个角是圆的（与卡片、按钮的圆角风格一致），下边与内容连成一片；
+                // 浮动卡片的上角更圆：贴着卡片角的标签（第一个的左上、顶到右边的右上）用卡片的圆角
+                const float rl = floating && i == 0 ? Theme::RadiusLg : Theme::RadiusMd;
+                const float rr = floating && t.x1 >= GetSize().x - 0.5f ? Theme::RadiusLg : Theme::RadiusMd;
                 auto fillTab = [&](ColorRef color)
                 {
-                    if (!floating)
-                    {
-                        dl.AddRectFilled(tab, color);
-                        return;
-                    }
-                    dl.AddRectFilled(tab, color, Theme::RadiusLg);
-                    dl.AddRectFilled(Rect{ tab.min.x, tab.min.y + Theme::RadiusLg, tab.max.x, tab.max.y }, color);
+                    constexpr float kPi = 3.14159265f;
+                    dl.PathClear();
+                    dl.PathLineTo({ tab.min.x, tab.max.y });
+                    dl.PathArcTo({ tab.min.x + rl, tab.min.y + rl }, rl, kPi, kPi * 1.5f, 8);          // 左上：从左边到上边
+                    dl.PathArcTo({ tab.max.x - rr, tab.min.y + rr }, rr, kPi * 1.5f, kPi * 2.0f, 8);   // 右上：从上边到右边
+                    dl.PathLineTo({ tab.max.x, tab.max.y });
+                    dl.PathFillConvex(color);
                 };
                 if (active)
                 {
-                    fillTab(Theme::Panel);
-                    // 浮动卡片四角是圆的，指示线左右收进圆角以内，不画到卡片外面
-                    const float inset = floating ? Theme::RadiusLg : 0.0f;
-                    if (floating)
-                        dl.AddRectFilled(Rect{ tab.min.x + inset, tab.min.y + 1.0f, tab.max.x - inset, tab.min.y + 3.0f }, Theme::Accent, 1.0f);
-                    else
-                        dl.AddRectFilled(Rect{ tab.min.x, tab.min.y, tab.max.x, tab.min.y + 2.0f }, Theme::Accent);
+                    fillTab(body);
+                    // 顶上的指示线：两头收进圆角以内；浮动卡片的边框画在最上层，指示线下移 1px 不被它盖住
+                    const float top = floating ? 1.0f : 0.0f;
+                    dl.AddRectFilled(Rect{ tab.min.x + rl, tab.min.y + top, tab.max.x - rr, tab.min.y + top + 2.0f }, Theme::Accent, 1.0f);
                 }
                 else if (hover)
                 {
