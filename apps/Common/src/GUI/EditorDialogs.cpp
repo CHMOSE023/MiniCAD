@@ -1206,6 +1206,12 @@ namespace MiniCAD
                     const size_t pat = idx % rec->Pattern.size();
                     const double seg = rec->Pattern[pat] * scale;
                     ++idx;
+
+                    // 符号锚点取该段**起点**，与 EmitStyled 同规则（官方约定：
+                    // X/Y 偏移相对段首）。取段尾会让预览比视口里的真实线型
+                    // 整体后移一个段长。
+                    const double segStart = t;
+
                     if (seg > 0.0)
                     {
                         const double t1 = std::min(t + seg, totalWorld);
@@ -1226,11 +1232,11 @@ namespace MiniCAD
                                    Theme::Text, 1.4f);
                         t = t1;
                     }
-                    // 该段走完，铺落在它之后的符号（与 EmitStyled 的铺设位置同规则）
+                    // 该段走完，铺落在它之上的符号（锚点是段起点）
                     for (const auto& sy : syms)
                         if (sy.patternIndex == pat)
                             MiniGUI::DrawLinetypeSampleSymbol(
-                                dl, sy, { x0 + static_cast<float>(t / kWorldPerPixel), y },
+                                dl, sy, { x0 + static_cast<float>(segStart / kWorldPerPixel), y },
                                 Theme::Text, 1.4f);
                 }
             }

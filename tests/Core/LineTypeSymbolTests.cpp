@@ -366,9 +366,10 @@ namespace
               "形符号尺寸 = Scale × 形高（约 0.25）");
 
         // 形号 130 ⇒ 桩字形的 x 偏移 0.13，缩放 s=0.25 ⇒ 世界 x 偏移 0.0325。
-        // 符号锚点在第一个实线段的终点 x=0.15 处 ⇒ 期望出现 x≈0.1825 的顶点。
-        // 用来验证「真的按形号取了字形」，而不是随便画了个东西。
-        const double expectX = 0.15 + 0.13 * 0.25;
+        // 符号锚点 = 该 Pattern 段的**起点**（官方约定：X/Y 偏移相对段首）。
+        // TRACKS 的符号在段 0（周期第一段，长 0.15）⇒ 第一个符号锚点 x=0，
+        // 期望出现 x≈0.0325 的顶点。旧的「段尾锚点」写法会得到 0.1825。
+        const double expectX = 0.0 + 0.13 * 0.25;
         bool anyAtExpectX = false;
         for (const auto& v : verts)
             if (std::fabs(static_cast<double>(v.pos.x) - expectX) < 1e-4)
@@ -377,13 +378,14 @@ namespace
         Check(fontCalls == 0, "形段不请求文字字体（FontResolver 未被调用）");
 
         // 每周期重复：4 个周期 ⇒ 4 个符号。符号顶点都带 x0=0.13 的偏移，
-        // 4 个符号的中心分别在 0.15、0.45、0.75、1.05 ⇒ 偏移顶点 x = 中心+0.0325。
-        // 数一下 4 个中心位置是否都出现了顶点 —— 旧的「orderPos 光标」写法
-        // 只在第一个周期画符号，这里会直接抓到（只找到 1 个中心）。
+        // 4 个符号的锚点分别在 0、0.30、0.60、0.90（段起点，周期长 0.30）
+        // ⇒ 偏移顶点 x = 锚点 + 0.0325。
+        // 数一下 4 个锚点位置是否都出现了顶点 —— 旧的「orderPos 光标」写法
+        // 只在第一个周期画符号，这里会直接抓到（只找到 1 个锚点）。
         int clusters = 0;
         for (size_t c = 0; c < 4; ++c)
         {
-            const double cx = 0.15 + static_cast<double>(c) * 0.30 + 0.13 * 0.25;
+            const double cx = 0.0 + static_cast<double>(c) * 0.30 + 0.13 * 0.25;
             bool hit = false;
             for (const auto& v : verts)
                 if (std::fabs(static_cast<double>(v.pos.x) - cx) < 1e-4)
@@ -819,6 +821,76 @@ namespace
             Check(!badHasShape, "对照组：字体目录错误时确实读不到形");
         }
     }
+
+    // ── 7. 符号锚点 = Pattern 段起点（官方约定）──────────────────────
+    // 之前把符号画在「该段画完之后」的位置，等于整体后移一个段长。
+    // TRACKS（acad.lin：A,.15,[TRACK1,...],.15）的符号落在段 0（长 0.15 的正段）
+    // 之后：段尾锚点 ⇒ 符号在 x=0.15；段首锚点 ⇒ 符号在 x=0。
+    // 0.15 的偏移肉眼很明显，是「与 CAD 有差异」的直接来源之一。
+    void TestSymbolAnchorAtSegmentStart()
+    {
+        Scene s;
+        LineTypeTable& t = s.GetLineTypeTable();
+
+        // 与真实 TRACKS 一致：符号 PatternIndex = 0，段 0 是正段
+        LineTypeRecord rec;
+        rec.Name          = "ANCHOR_TEST";
+        rec.Pattern       = { 0.15, 0.15 };
+        rec.PatternLength = 0.30;
+        LineTypeSymbol sym;
+        sym.PatternIndex = 0;
+        sym.Shape        = 130;
+        sym.ShapeFont    = "ltypeshp.shx";
+        sym.Scale        = 0.25;
+        rec.Symbols.push_back(sym);
+        const LineTypeID lt = t.Add(rec);
+
+        std::vector<Vertex_P3_C4>    verts;
+        std::vector<Vertex_P3_C4>    fills;
+        std::vector<Vertex_P3_C4_UV> texts;
+        Overlay                      overlay;
+
+        SHXFont shapeFont("ltypeshp.shx", ShapeFontPath(), 1);
+        ShapeFontResolver shapeResolver = [&shapeFont](const std::string&) -> IFont*
+        {
+            return &shapeFont;
+        };
+        DrawContext ctx(verts, fills, texts, overlay,
+                        s.GetLayerManager(), t,
+                        0.001, nullptr, nullptr);
+        ctx.SetLineTypeScale(1.0);
+        ctx.SetTextStyleTable(&s.GetTextStyleTable());
+        ctx.SetShapeFontResolver(std::move(shapeResolver));
+
+        EntityAttr a;
+        a.LayerId  = 0;
+        a.LineType = lt;
+        ctx.BeginEntity(&a);
+        ctx.DrawLine({ 0, 0, 0 }, { 1.2, 0, 0 }, Math::Color4::White(), false);
+
+        // 真实 TRACK1（ltypeshp.shx）的两条竖线都在局部 x=0（y 分别到 ±1），
+        // s=0.25 ⇒ 世界 x 正好等于锚点本身。用「锚点处出现 y≠0 的顶点」判定。
+        // 段首锚点：4 个周期锚点 0 / 0.30 / 0.60 / 0.90。
+        // 段尾锚点（旧行为）会得到 0.15 / 0.45 / 0.75 / 1.05。
+        int atStart = 0, atEnd = 0;
+        for (size_t c = 0; c < 4; ++c)
+        {
+            const double base = static_cast<double>(c) * 0.30;
+            bool hitStart = false, hitEnd = false;
+            for (const auto& v : verts)
+            {
+                const double x = static_cast<double>(v.pos.x);
+                const bool offAxis = std::fabs(static_cast<double>(v.pos.y)) > 1e-3;
+                if (offAxis && std::fabs(x - base) < 1e-4) hitStart = true;
+                if (offAxis && std::fabs(x - (base + 0.15)) < 1e-4) hitEnd = true;
+            }
+            if (hitStart) ++atStart;
+            if (hitEnd)   ++atEnd;
+        }
+        Check(atStart == 4, "符号锚点在段起点（TRACKS：0 / 0.30 / 0.60 / 0.90）");
+        // 旧行为必须真的不存在，否则上面那条是假通过
+        Check(atEnd == 0, "符号不再画在段尾（旧行为：0.15 / 0.45 / 0.75 / 1.05）");
+    }
 }
 
 int RunLineTypeSymbolTests()
@@ -835,6 +907,7 @@ int RunLineTypeSymbolTests()
     TestRealSampleConstants();
     TestRealSampleRender();
     TestFontDirRecovery();
+    TestSymbolAnchorAtSegmentStart();
     const int n = g_failures - before;
     std::printf("复杂线型用例失败：%d\n", n);
     return n;

@@ -651,6 +651,13 @@ namespace MiniCAD
                 double seg = rec->Pattern[pat] * scale;
                 ++idx;
 
+                // 符号锚点取该 Pattern 段的**起点**，而不是画完之后的位置。
+                // 官方定义：符号的插入点由 X/Y 偏移相对「本段起点」决定
+                // （acad.lin 的 `x=-.1` 等都是相对段首的小偏移）。取段尾会让
+                // 符号整体后移一个段长 —— TRACKS（.15,[TRACK1],.15）的竖线会
+                // 贴到虚线段末端，与 AutoCAD 差整整 0.15。
+                const double segStart = t;
+
                 if (seg > 0.0)
                 {
                     double t1 = std::min(t + seg, len);
@@ -668,20 +675,21 @@ namespace MiniCAD
                     t = t1;
                 }
 
-                // 该段画完,铺设落在它之后的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
+                // 铺设落在这一段上的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
                 // 每个周期都重新判定 —— 光标游走只会让第一个周期之后再也画不出符号,
                 // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
                 for (const auto& o : order)
                 {
                     if (o.first == pat)
-                        EmitLineTypeSymbol(P(t), ux, uy, uz,
+                        EmitLineTypeSymbol(P(segStart), ux, uy, uz,
                                            rec->Symbols[o.second], scale, color);
                 }
             }
         }
 
         // 在沿线位置 p 铺一个复杂线型的文字/符号。
-        //   ux,uy,uz = 线段单位方向;p = 符号锚点(该 Pattern 段刚画完的位置)。
+        //   ux,uy,uz = 线段单位方向;p = 符号锚点 = 该 Pattern 段的**起点**
+        //   （官方约定：X/Y 偏移相对段首，见 EmitStyled 里的说明）。
         //   sy.OffsetX/Y 是组码 44/45 的偏移,在线的局部坐标系里:局部 x 沿线、局部 y 向上。
         //   sy.Rotation = 0 时符号随线转向(AutoCAD 默认);AbsoluteRotation 时相对世界 X 轴。
         void EmitLineTypeSymbol(const Math::Point3& p, double ux, double uy, double uz,
