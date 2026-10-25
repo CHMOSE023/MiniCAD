@@ -550,8 +550,7 @@ namespace MiniCAD
             bool continuous = (!rec || rec->IsContinuous());
 
             // 实体级比例(组码48) × 全局 $LTSCALE。
-            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍 —— 再叠加下面
-            // 「一个周期不足 4px 退化为实线」的护栏，虚线会整条消失。
+            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍，整条线看起来像实线。
             const double entityScale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
                                           ? m_curAttr->LinetypeScale : 1.0;
             const double scale = entityScale * m_lineTypeScale;
@@ -591,11 +590,6 @@ namespace MiniCAD
 
                 // 只有「周期算不出来」这一种情况才退化成实线 —— 那是纯算术保护
                 // （PatternLength×scale = 0 会让下面的铺设循环死循环），不是显示策略。
-                //
-                // 刻意不做「一个周期不足 4px 就压成实线」「dash 太多就压成实线」
-                // 这类取舍：用户要求与 AutoCAD 一致地按周期铺，缩得极小时由显示
-                // 精度自然决定观感。原来的护栏会让线型在某个缩放档位上突然
-                // 变成一条光实线，与 CAD 的差异比"虚线看起来很密"更刺眼。
                 const double cycle = rec->PatternLength * scale;
                 if (cycle <= 1e-12)
                     continuous = true;
@@ -605,8 +599,8 @@ namespace MiniCAD
             {
                 EmitSolid(a, b, color, width);
 
-                // 连续线型也有可能带符号（退化成实线时符号仍按周期铺），
-                // 否则 GAS_LINE 周期算不出来时会连文字一起消失。
+                // 连续线型也有可能带符号（周期算不出来时会退到这里），
+                // 符号必须照铺，否则 GAS_LINE 的 "GAS" 会一起消失。
                 if (!order.empty())
                 {
                     // 每个符号在周期内的偏移：段起点累计 |Pattern| 长度
@@ -636,6 +630,41 @@ namespace MiniCAD
                 return;
             }
 
+            // ── 节流：不把线型压成实线，只按比例放大铺设周期 ──────────────
+            //
+            // 曾经的做法是「一个周期不足 4px，或段数超过 4000 ⇒ 整条压成实线」。
+            // 那会在某个缩放档位上让线型突然跳变成一条光杆实线，与 CAD 的差异
+            // 比「虚线看起来很密」刺眼得多，所以去掉了。
+            //
+            // 但完全不节流有两个真实后果：缩得很小时每像素要铺几十个 dash（顶点
+            // 数暴涨、帧率掉），超长线上段数可以达到几十万。这里换成**只放大周期**
+            // 的节流：dash/gap 的比例、符号的相对位置全部不变，只是整体疏密
+            // 变粗放 —— 看上去仍然是这条线型，不会跳变成实线。
+            //
+            // 两条下限：
+            //   · 一个周期至少占 4 个屏幕像素（否则密到看不出结构，纯浪费顶点）
+            //   · 整条线最多 4000 个周期（超长线上避免几十万段）
+            // 取两者的较大值，保证放大到正常比例时 boost 自动回到 1（不改变外观）。
+            double boost = 1.0;
+            {
+                const double cycle = rec->PatternLength * scale;
+                if (cycle > 1e-12)
+                {
+                    if (m_worldPerPixel > 0.0)
+                    {
+                        const double minCycle = m_worldPerPixel * 4.0;   // 4px
+                        if (cycle < minCycle)
+                            boost = minCycle / cycle;
+                    }
+                    const double maxCycles = 4000.0;
+                    const double cycles = len / cycle;
+                    if (cycles > maxCycles)
+                        boost = std::max(boost, cycles / maxCycles);
+                }
+            }
+            // boost 作用在「段的长度」上，符号的位置随之按同一比例铺开
+            const double segScale = scale * boost;
+
             // “点”(0 长度段)的可见长度:至少 ~1.5px
             double dotLen = std::max(width, m_worldPerPixel * 1.5);
             if (dotLen <= 0.0) dotLen = len * 0.002;
@@ -645,7 +674,7 @@ namespace MiniCAD
             while (t < len)
             {
                 const size_t pat = idx % rec->Pattern.size();
-                double seg = rec->Pattern[pat] * scale;
+                double seg = rec->Pattern[pat] * segScale;
                 ++idx;
 
                 // 符号锚点取该 Pattern 段的**起点**，而不是画完之后的位置。
@@ -675,6 +704,9 @@ namespace MiniCAD
                 // 铺设落在这一段上的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
                 // 每个周期都重新判定 —— 光标游走只会让第一个周期之后再也画不出符号,
                 // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
+                //
+                // 符号自身尺寸仍用 scale（不受 boost 影响）：节流只让符号排得更疏，
+                // 不该把文字/形一起缩小 —— 否则缩小视图时符号会小到看不见。
                 for (const auto& o : order)
                 {
                     if (o.first == pat)

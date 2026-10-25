@@ -11,9 +11,9 @@
 //   修复前 周期 0.35 → 只画 1 段（实线）
 //   修复后 周期 350.0 = 0.35 × 1000，虚线正常
 //
-// 注：那条「一个周期不足 4 像素就退化成实线」的护栏后来按用户要求去掉了
-// （与 AutoCAD 保持一致地按周期铺，缩得过密时由显示精度决定观感）。
-// 本文件第 5 节现在断言的是相反的行为：周期再密也铺出多段。
+// 注：那条「一个周期不足 4 像素就退化成实线」的护栏后来去掉了，改为
+// 「周期过密时按比例放大周期」的节流（见第 5 节）—— 保持 dash/gap 结构，
+// 绝不跳变成一条实线。
 #include "Scene/Scene.h"
 #include "Document/Document.h"
 #include "Document/Command/DrawingVarsCommand.h"
@@ -167,11 +167,12 @@ int RunLineTypeScaleTests()
         }
     }
 
-    // ── 5. 周期过密时仍按周期铺（不再退化成实线）───────────────────
-    // 旧行为：一个周期不足 4px 就压成一条实线。用户要求与 AutoCAD 一致，
-    // 这个显示取舍已去掉（DrawContext::EmitStyled 里只剩 cycle<=1e-12
-    // 的纯算术保护）。这里断言：wpp = 1.0（周期 0.75 远小于 4px，旧护栏
-    // 必定触发）时仍然铺出多段，而不是 1 段实线。
+    // ── 5. 周期过密时节流但不退化 ──────────────────────────────────
+    // 旧行为：一个周期不足 4px 就压成一条实线（线型会突然跳变成光杆线）。
+    // 现在改为只按比例放大铺设周期：一个周期至少 4px、整条线最多 4000 个
+    // 周期，dash/gap 比例不变，绝不跳变成实线。
+    // 这里 wpp = 1.0（DASHED 周期 0.75 远小于 4）触发节流，断言仍然铺出
+    // 多段；同时断言段数被压到远小于「不节流时的 100/0.75 ≈ 133 段」。
     {
         Scene s;
         const LineTypeRecord* dash = s.GetLineTypeTable().Find(s.GetLineTypeTable().FindByName("DASHED"));
@@ -179,8 +180,9 @@ int RunLineTypeScaleTests()
         {
             double count = 0;
             MeasureDashCycle(s, 1.0, 1.0, 100.0, &count);
-            std::printf("    周期过密：段数 %.0f\n", count);
+            std::printf("    周期过密：段数 %.0f（不节流时约 133）\n", count);
             Check(count > 1.0, "周期不足 4px 时仍按周期铺（不退化成实线）");
+            Check(count < 60.0, "周期过密时按比例放大周期（节流生效）");
         }
     }
 
