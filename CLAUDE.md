@@ -140,9 +140,9 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `run_tests.bat [debug|release]`：编译并经 ctest 运行全部测试。测试程序输出到 `out/<preset>/`，定义在 `tests/CMakeLists.txt`
 - `MiniCADTests.exe`：核心库测试（`tests/Core/`：空间索引、实体、命令、DWG/DXF 往返等），退出码 = 失败项数
 - `MiniGUITests.exe`：MiniGUI 单元测试（`tests/UI/`）
-- `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。截至 2026-10-08 有 10 个场景（标题栏、停靠、文档标签）在原 MiniGUI 仓库里就已不一致
+- `MiniGUIGolden.exe`：MiniGUI 截图对比（软件光栅 vs `tests/UI/Golden/baseline`，D3D11 vs 软件光栅）。更新基准：`MiniGUIGolden.exe --update`，检查图片后再提交。2026-10-25 按 v0.3.0 的界面样式（圆角、标题栏高 34、命令行“命令: + 输入框 + 展开按钮”）更新过基准，47 个场景全部通过
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
-- `NodeGraphTests.exe`、`NodeSolidTests.exe`：节点图核心（调度、最长列表、读写、撤销、曲线 / 引用节点、预览与烘焙、后台求值、组节点）与三维实体节点（`tests/NodeGraph/`，后者只在 `MINICAD_WITH_SOLID` 时编译）
+- `NodeGraphTests.exe`、`NodeSolidTests.exe`：节点图核心（调度、最长列表、读写、撤销、曲线 / 引用节点、预览与烘焙、后台求值、组节点）与三维实体节点（`tests/NodeGraph/`，后者只在 `MINICAD_WITH_SOLID` 时编译）。按功能分文件，每个文件开头写明测哪些节点、实现文件与计划章节：入口 `NodeGraphTests.cpp` / `NodeSolidTests.cpp`，公共部分与各组测试的声明在 `NodeGraphTestCommon.h` / `NodeSolidCommon.h`（头文件里写了新测试该放进哪个文件），测试在 `NodeGraph{Core,Data,Document,Group}Tests.cpp` 与 `NodeSolid{Basic,Form,Curve,Surface,Mesh}Tests.cpp`；单个文件超过约 600 行时再拆。`NodeSolidTests` 只能是一个程序（SMLib 一个进程只能有一个内核对象），debug 版运行约 7 分钟
 - `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量；控制台打印每一项的名字与用时，最后列出最慢的 5 项。20 万条线的耗时测量（只打印、debug 版约 24 秒）默认跳过，加 `--full` 才跑。2026-10-23 起应全部通过（之前的失败是测试本身的问题：视口未显示、细线显示默认值已改）

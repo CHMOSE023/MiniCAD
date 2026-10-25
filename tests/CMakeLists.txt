@@ -259,7 +259,13 @@ minicad_test_output(MiniDWGTests)
 add_test(NAME MiniDWGTests COMMAND MiniDWGTests)
 
 # ── 节点图（docs/NodeGraph/PLAN.md）──────────────────────────────────
-add_executable(NodeGraphTests "NodeGraph/NodeGraphTests.cpp")
+# 按功能分文件（公共部分与分组见 NodeGraphTestCommon.h）
+add_executable(NodeGraphTests
+    "NodeGraph/NodeGraphTests.cpp"
+    "NodeGraph/NodeGraphCoreTests.cpp"
+    "NodeGraph/NodeGraphDataTests.cpp"
+    "NodeGraph/NodeGraphDocumentTests.cpp"
+    "NodeGraph/NodeGraphGroupTests.cpp")
 target_link_libraries(NodeGraphTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
     target_compile_options(NodeGraphTests PRIVATE /utf-8)
@@ -267,7 +273,14 @@ endif()
 add_test(NAME NodeGraphTests COMMAND NodeGraphTests)
 
 if(MINICAD_WITH_SOLID)
-    add_executable(NodeSolidTests "NodeGraph/NodeSolidTests.cpp")
+    # 按功能分文件（公共部分与分组见 NodeSolidCommon.h）；只能是一个程序：SMLib 整个进程只能有一个内核对象
+    add_executable(NodeSolidTests
+        "NodeGraph/NodeSolidTests.cpp"
+        "NodeGraph/NodeSolidBasicTests.cpp"
+        "NodeGraph/NodeSolidFormTests.cpp"
+        "NodeGraph/NodeSolidCurveTests.cpp"
+        "NodeGraph/NodeSolidSurfaceTests.cpp"
+        "NodeGraph/NodeSolidMeshTests.cpp")
     target_link_libraries(NodeSolidTests PRIVATE MiniCADSolid MiniDWG)
     if(MSVC)
         target_compile_options(NodeSolidTests PRIVATE /utf-8)

@@ -65,6 +65,26 @@ int RunPolylineToolTests()
 {
     g_failures = 0;
 
+    // 命令行输入 AutoCAD 全名 / 缩写都能启动多段线（及其他全名与工具名不同的命令）
+    {
+        Document doc;
+        Viewport viewport(1000.f, 800.f);
+        Editor   editor;
+        editor.Bind(doc, viewport);
+        Check(editor.ResolveCommandAlias("PLINE") == "Polyline" && editor.ResolveCommandAlias("pl") == "Polyline" &&
+              editor.ResolveCommandAlias("polyline") == "Polyline", "命令行：PLINE / PL / POLYLINE 都是多段线");
+        Check(editor.ResolveCommandAlias("RECTANG") == "Rectangle" && editor.ResolveCommandAlias("DTEXT") == "Text" &&
+              editor.ResolveCommandAlias("DIMLINEAR") == "Dimension" && editor.ResolveCommandAlias("DIMALIGNED") == "Dimension",
+              "命令行：RECTANG、DTEXT、DIMLINEAR、DIMALIGNED");
+        editor.RunCommand("PLINE");
+        editor.Render();
+        for (const Math::Point3& p : { Math::Point3{ 0, 0, 0 }, Math::Point3{ 100, 0, 0 } })
+            Click(editor, viewport, p);
+        Key(editor, KeyCode::Enter);
+        int count = 0;
+        Check(OnlyPolyline(doc.GetScene(), count) && count == 1, "命令行 PLINE：画出多段线");
+    }
+
     // ① 三点 + C：闭合三角形（4 个顶点，末点与起点重合，闭合段是直线）
     {
         Document doc;

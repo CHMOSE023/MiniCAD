@@ -526,6 +526,11 @@ namespace MiniCAD
         RegisterAlias("LI",     "Line");
         RegisterAlias("REC",    "Rectangle");
         RegisterAlias("PL",     "Polyline");
+        RegisterAlias("PLINE",  "Polyline");    // AutoCAD 命令全名与工具名不同的，全名也走别名表
+        RegisterAlias("RECTANG", "Rectangle");
+        RegisterAlias("DTEXT",  "Text");
+        RegisterAlias("DIMLINEAR",  "Dimension");
+        RegisterAlias("DIMALIGNED", "Dimension");
         RegisterAlias("MI",     "Mirror");
         RegisterAlias("RO",     "Rotate");
         RegisterAlias("SC",     "Scale");
