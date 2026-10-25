@@ -3318,7 +3318,13 @@ namespace MiniCAD
         auto& scene = m_doc->GetScene();
         m_sceneDynVertices.clear();
         m_sceneDynFillVertices.clear();
-        WipeClip::Batch wipes(2);
+        // 字形实例（矢量文字 + 复杂线型的文字/形符号）也必须一起重建。
+        // 它们在 AppendToSceneStreams 里走的是独立的一条路（m_glyphInstances），
+        // 不属于静态/动态顶点流；漏掉这里会让线型符号永远停在第一次缩放时的
+        // 位置上 —— 实线段每帧重铺、符号不重铺，表现为「缩小能看见符号、
+        // 放大就消失」。
+        m_glyphInstances.clear();
+        WipeClip::Batch wipes(7);
         for (Object::ObjectID id : m_dynOrder)
         {
             auto it = m_entityVertexCache.find(id);
@@ -3331,17 +3337,24 @@ namespace MiniCAD
                 it = m_entityVertexCache.emplace(id, std::move(c)).first;
             }
             const EntityVertexCache& c = it->second;
-            if (!m_sceneDynVertices.empty() || !m_sceneDynFillVertices.empty())
-                for (const auto& w : c.wipes)
-                    wipes.Add(w, { m_sceneDynVertices.size(), m_sceneDynFillVertices.size() });
+            // 槽位约定同 AppendToSceneStreams：[静态线, 静态填, 文字, 动态线, 动态填, 字形, 点]。
+            // 本函数只重建动态流与字形流，静态流的槽位填 0（不会被裁到）。
+            for (const auto& w : c.wipes)
+                wipes.Add(w, { 0, 0, m_textVertices.size(), m_sceneDynVertices.size(),
+                               m_sceneDynFillVertices.size(), m_glyphInstances.size(), 0 });
             if (c.viewDependent)
             {
                 m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
                 m_sceneDynFillVertices.insert(m_sceneDynFillVertices.end(), c.fills.begin(), c.fills.end());
             }
+            // 字形实例不分视图相关性，一律跟着动态流重铺
+            m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
         }
         wipes.ClipLines(m_sceneDynVertices, 0);
         wipes.ClipFills(m_sceneDynFillVertices, 1);
+        // 被遮罩盖到的字形实例展开成顶点裁剪（槽位 5 见 AppendToSceneStreams 的注释）
+        wipes.ClipGlyphs(m_glyphInstances, 5, 0, m_glyphLibrary, m_sceneDynVertices, m_sceneDynFillVertices);
+        SortGlyphInstances(m_glyphInstances, m_glyphBatches);
         ++m_sceneDynVersion;
     }
 
