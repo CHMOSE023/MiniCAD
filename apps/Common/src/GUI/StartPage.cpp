@@ -426,14 +426,16 @@ namespace MiniCAD
         m_startNav.clear();
         m_startBack = nav->AddChild<BackRow>([this] { ShowStartPage(false); });
         nav->AddChild<NavRow>("开始", "", true, std::function<void()>{});
-        auto navCommand = [&](const char* id, const char* text = nullptr)
+        // action 为空时执行命令本身；可用状态总是跟随命令
+        auto navCommand = [&](const char* id, const char* text = nullptr, std::function<void()> action = {})
         {
             const MiniGUI::Command* c = m_commands.Find(id);
             if (!c)
                 return;
             const std::string cmd = id;
-            Button* b = nav->AddChild<NavRow>(text ? std::string(text) : PlainLabel(c->label), c->shortcut, false,
-                                              [this, cmd] { m_commands.Execute(cmd); });
+            if (!action)
+                action = [this, cmd] { m_commands.Execute(cmd); };
+            Button* b = nav->AddChild<NavRow>(text ? std::string(text) : PlainLabel(c->label), c->shortcut, false, std::move(action));
             m_startNav.emplace_back(b, cmd);
         };
         navCommand("file.new");
@@ -444,7 +446,8 @@ namespace MiniCAD
         navCommand("file.saveAll");
         navCommand("file.close", "关闭图纸");
         AddNavSeparator(nav);
-        navCommand("view.panel.nodes");
+        // 命令本身是切换面板，而起始页显示时停靠区是隐藏的：先回到图纸（没有文档时新建）再显示
+        navCommand("view.panel.nodes", nullptr, [this] { OpenNodeEditorFromStart(false); });
         navCommand("help.about", "关于 MiniCAD");
 
         // ── 右侧内容（可滚动）────────────────────────────────────
@@ -473,11 +476,8 @@ namespace MiniCAD
         });
         tiles->AddChild<ActionTile>(icons + "Open.png", "打开…", "DWG、DXF 或 MCAD 图纸（Ctrl+O）", false,
                                     [this] { m_commands.Execute("file.open"); });
-        tiles->AddChild<ActionTile>(icons + "Nodes.png", "节点建模", "新建图纸并打开节点编辑器", false, [this]
-        {
-            m_commands.Execute("file.new");
-            ShowNodePanel(true);
-        });
+        tiles->AddChild<ActionTile>(icons + "Nodes.png", "节点建模", "新建图纸并打开节点编辑器", false,
+                                    [this] { OpenNodeEditorFromStart(true); });
 
         AddSectionTitle(col, "最近");
         m_startRecent = col->AddChild<Node>();
@@ -598,8 +598,7 @@ namespace MiniCAD
     void MainFrame::OpenNodeExample(const std::string& path, const std::string& name, const std::string& description)
     {
         const std::string text = Nodes::ReadTextFile(path);
-        m_commands.Execute("file.new");
-        ShowNodePanel(true);
+        OpenNodeEditorFromStart(true);
         if (!m_nodeEditor)
             return;
         m_ui->Update();                     // 节点面板刚显示：先布局，插入的示例才能按画布尺寸摆放
@@ -608,5 +607,15 @@ namespace MiniCAD
         m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + name + "——" + description : "示例：读不出 " + path);
         if (ok)
             m_nodeEditor->FrameAll();
+    }
+
+    void MainFrame::OpenNodeEditorFromStart(bool newDocument)
+    {
+        if (newDocument || !m_docManager.GetActive())
+            m_commands.Execute("file.new");     // 新文档激活后起始页自动收起（SyncDocuments）
+        if (m_startShown)
+            ShowStartPage(false);
+        m_ui->Update();                         // 停靠区刚恢复显示：先布局，第一次停靠才能按绘图区高度分配
+        ShowNodePanel(false);                   // 不切换：面板已显示时只激活
     }
 }

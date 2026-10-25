@@ -123,6 +123,7 @@ namespace MiniCAD
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
         void RefreshStartNav();                                   // 起始页导航列的可用状态、“返回”行的文档名
         void OpenNodeExample(const std::string& path, const std::string& name, const std::string& description);
+        void OpenNodeEditorFromStart(bool newDocument);           // 离开起始页并显示节点编辑器（没有文档时新建）
         std::unique_ptr<MiniGUI::Node> CreateStatusBar();
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
         std::unique_ptr<MiniGUI::Node> CreateLayerBar();          // 工具栏里的图层 / 线型 / 线宽下拉框

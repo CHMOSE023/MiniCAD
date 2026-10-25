@@ -385,6 +385,10 @@ namespace MiniCAD
         }
         m_openPercent      = 0;
         m_hideOpenProgress = false;
+        // 立即离开起始页进入绘图区：读取进度在状态栏里，起始页显示时状态栏是隐藏的，大图纸读完前会以为没打开
+        m_startShown = false;
+        SyncDocuments();
+        if (m_viewport && m_viewport->IsVisible()) m_viewport->Focus();
 
         // 后台线程只用到 DocumentManager::Load（不碰文档列表、视口和编辑器）和平台的 RequestRedraw
         const DocumentManager* dm = &m_docManager;
@@ -459,6 +463,7 @@ namespace MiniCAD
     void MainFrame::EndOpenBatch()
     {
         m_hideOpenProgress = true;      // 最后一张的首帧画完后隐藏
+        SyncDocuments();                // 全部打开失败、又没有其他文档时回到起始页
         if (m_platform) m_platform->RequestRedraw();
         if (m_openedAny)
         {
@@ -623,11 +628,13 @@ namespace MiniCAD
             m_docTabs->SetSelected(sel);
         m_syncing = false;
 
-        // 没有文档时用起始页代替视口；有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口
-        const bool hasDoc = active != nullptr;
+        // 没有文档时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
+        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口
+        const bool hasDoc  = active != nullptr;
+        const bool opening = m_openJob || m_openDone;
         if (m_startShown && active != m_startOver)
             m_startShown = false;
-        const bool start = !hasDoc || m_startShown;
+        const bool start = (!hasDoc && !opening) || m_startShown;
         m_docTabs->SetVisible(!docs.empty());
         if (start)
             m_docTabs->ClearSelection();            // 起始页显示时没有“当前”标签（与 SolidCraft 相同），点任何标签都回到图纸
@@ -1125,6 +1132,13 @@ namespace MiniCAD
             // 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）
             if (Viewport::SceneUploaded(renderer, vs))
                 editor.ReleaseUploadedSceneStreams();
+        }
+        else
+        {
+            // 没有文档（正在打开第一张图纸）：清空，不留上一张图纸的画面
+            IRenderer& renderer = m_platform->GetRenderer();
+            renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth), .height = static_cast<float>(pixelHeight) });
+            renderer.EndFrame();
         }
 
         // 渲染目标重建后着色器资源会变，重新登记

@@ -2558,8 +2558,10 @@ namespace MiniCAD
             const auto data = ExportCad(drawing, CadFileKind::Dwg);
             { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(data.data()), data.size()); }
             const auto before = m_docManager.GetAll().size();
+            ShowStartPage(true);            // 从起始页打开：读取期间就进入绘图区（没有文档时起始页本来就在显示）
             OpenDrawings({path, path});
             check(IsOpeningDrawings() && m_openBar && m_openBar->IsVisible(), "打开图纸时状态栏显示读取进度");
+            check(!m_startPage->IsVisible() && m_viewport->IsVisible(), "开始读取图纸时离开起始页、显示绘图区");
             waitOpen();
             check(!m_openBar->IsVisible(), "读完后隐藏读取进度");
             Document* opened = m_docManager.GetActive();
@@ -2803,11 +2805,59 @@ namespace MiniCAD
             RenderFrame();
             check(m_docManager.GetActive() == a && m_viewport->IsVisible(), "起始页上点另一个文档标签：回到视口");
 
+            // 导航列的“节点编辑器”：回到当前图纸并显示节点面板（已显示时不收起）
+            if (MiniGUI::DockSpace* dock = m_layout->GetDock("main"); dock && dock->HasPanel("nodes"))
+            {
+                const bool wasVisible = dock->IsPanelVisible("nodes");
+                for (int i = 0; i < 2; ++i)
+                {
+                    m_commands.Execute("view.start");
+                    RenderFrame();
+                    OpenNodeEditorFromStart(false);
+                    RenderFrame();
+                    check(m_docManager.GetActive() == a && !m_startPage->IsVisible() && m_viewport->IsVisible() &&
+                          dock->IsPanelVisible("nodes"), i == 0 ? "起始页上点节点编辑器：回到图纸并显示节点面板"
+                                                                : "节点面板已显示时再点：仍然显示");
+                }
+                if (!wasVisible)
+                    dock->ClosePanel("nodes");
+            }
+
             for (Document* d : { a, b })
                 if (d) { d->MarkSaved(); CloseDocument(d); }
             RenderFrame();
             if (!m_docManager.GetActive())
                 check(m_startPage->IsVisible() && !m_commands.IsEnabled("view.start"), "没有文档：显示起始页，首页键不可用");
+        }
+
+        section("25b. 没有文档时打开图纸：读取期间显示绘图区，状态栏里看得到读取进度");
+        {
+            while (Document* d = m_docManager.GetActive()) { d->MarkSaved(); CloseDocument(d); }
+            RenderFrame();
+            check(!m_docManager.GetActive() && m_startPage->IsVisible(), "关闭全部图纸后显示起始页");
+            {
+                const auto file = std::filesystem::temp_directory_path() / ("minicad-selftest-first-" + std::to_string(NowTicks()) + ".dxf");
+                Scene drawing;
+                drawing.AddEntity(std::make_unique<LineEntity>(drawing.NextObjectID(), Math::Point3{0, 0, 0}, Math::Point3{100, 60, 0}));
+                const auto data = ExportCad(drawing, CadFileKind::Dxf);
+                { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(data.data()), data.size()); }
+                const auto u8 = file.u8string();
+                const std::string path(u8.begin(), u8.end());
+                OpenDrawings({ path });
+                RenderFrame();
+                bool shown = m_openBar != nullptr;
+                for (MiniGUI::Node* n = m_openBar; shown && n; n = n->GetParent())
+                    shown = n->IsVisible();
+                check(!m_startPage->IsVisible() && m_viewport->IsVisible() && shown && m_openBar->GetScreenBounds().Width() > 0.0f,
+                      "没有文档时打开图纸：显示绘图区，状态栏里看得到读取进度");
+                waitOpen();
+                Document* first = m_docManager.GetActive();
+                check(first && first->GetPath() == path && m_statusBar->IsVisible(), "第一张图纸打开后状态栏正常显示");
+                if (first) { first->MarkSaved(); CloseDocument(first); }
+                RenderFrame();
+                std::error_code ec;
+                std::filesystem::remove(file, ec);
+            }
         }
 
         section("26. 功能区命令搜索：Ctrl+K、按名称 / 选项卡查找、Enter 执行、Esc 关闭");
