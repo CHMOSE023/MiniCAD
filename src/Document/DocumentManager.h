@@ -8,6 +8,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include "Text/FontSystem.h"
 #include "Core/Entity/Entity.hpp"
 
@@ -48,8 +49,11 @@ namespace MiniCAD
         // 缩放到全图：把活动文档所有可见实体放进视野；文档为空时不动
         void ZoomAll(bool undoable = true);
 
-        Editor&       GetEditor()       { return m_editor; }
-        const Editor& GetEditor() const { return m_editor; }
+        // 活动文档的编辑器。每个文档有自己的 Editor（显示数据、选择集、工具状态随文档保留，切换文档不重建），
+        // 没有活动文档时返回一个不绑定文档的空闲编辑器（承载启动时注入的设置，新文档的编辑器从它继承）。
+        // 返回的引用只在当前文档不变期间有效，不要跨文档切换保存
+        Editor&       GetEditor();
+        const Editor& GetEditor() const;
 
         // --- 字体样式管理（代理 FontSystem）---
 
@@ -93,7 +97,11 @@ namespace MiniCAD
         float          m_defaultHeight = 400.f;
 
         std::unique_ptr<Viewport> m_viewport;
-        Editor                    m_editor;
+        Editor                    m_idleEditor;                                   // 没有文档时的编辑器（只承载设置）
+        std::unordered_map<const Document*, std::unique_ptr<Editor>> m_editors;  // 每个文档一个编辑器
+        // 文档的编辑器（没有就新建：从 proto 继承设置，有视口时绑定）
+        Editor& EnsureEditor(Document& doc, const Editor& proto);
+        void    ActivateEditor();   // 切换活动文档后：恢复相机、确保编辑器存在并请它在下一帧重新拼接显示数据
 
         // 剪贴板持有实体克隆(与源文档解耦,源被删除/关闭后仍可粘贴)
         std::vector<std::unique_ptr<Entity>> m_clipboard;

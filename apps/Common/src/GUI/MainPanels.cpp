@@ -125,23 +125,61 @@ namespace MiniCAD
         }
     }
 
-    std::optional<int> MainFrame::SelectionCommonIndex(Editor& editor, const std::function<int(const EntityAttr&)>& indexOf)
+    const MainFrame::SelectionSummary& MainFrame::SelectionInfo()
     {
-        std::optional<int> result;
-        bool any = false;
+        Document* doc    = m_docManager.GetActive();
+        Editor&   editor = m_docManager.GetEditor();
+        const uint64_t sv = editor.GetSelectionVersion();
+        const uint64_t gv = doc ? doc->GetScene().GeometryVersion() : 0;
+        const uint64_t dv = doc ? doc->GetScene().DisplayVersion()  : 0;
+        SelectionSummary& s = m_selectionSummary;
+        if (s.valid && s.doc == doc && s.selVersion == sv && s.sceneVersion == gv && s.displayVersion == dv)
+            return s;
+
+        s = SelectionSummary{};
+        s.valid = true;
+        s.doc = doc;
+        s.selVersion = sv;
+        s.sceneVersion = gv;
+        s.displayVersion = dv;
+        s.layer = s.color = s.lineType = s.lineweight = -1;
+        s.lineTypeScale = 1.0;
+        if (!doc)
+            return s;
+
+        const auto& ids = SortedLayerIds(*doc);
+        auto layerIndex = [&ids](uint32_t id)
+        {
+            const auto it = std::find(ids.begin(), ids.end(), id);
+            return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
+        };
+        std::vector<const Entity*> entities;
+        bool first = true;
+        auto merge = [&first](std::optional<int>& slot, int v)
+        {
+            if (first) slot = v;
+            else if (slot && *slot != v) slot.reset();
+        };
         for (Object* obj : editor.GetSelectedObjects())
         {
             const auto* e = dynamic_cast<const Entity*>(obj);
             if (!e)
                 continue;
-            const int idx = indexOf(e->GetAttr());
-            if (!any)
-                result = idx;
-            else if (result && *result != idx)
-                return std::nullopt;
-            any = true;
+            entities.push_back(e);
+            const EntityAttr& a = e->GetAttr();
+            merge(s.layer,      layerIndex(a.LayerId));
+            merge(s.color,      ColorIndex(a.Color));
+            merge(s.lineType,   static_cast<int>(a.LineType));
+            merge(s.lineweight, LineweightIndex(a.Lineweight));
+            if (first)
+                s.lineTypeScale = a.LinetypeScale;
+            else if (s.lineTypeScale && *s.lineTypeScale != a.LinetypeScale)
+                s.lineTypeScale.reset();
+            first = false;
         }
-        return any ? result : std::optional<int>(-1);
+        s.count      = entities.size();
+        s.properties = CommonProperties(entities);
+        return s;
     }
 
     // =========================================================
@@ -419,7 +457,7 @@ namespace MiniCAD
             {
                 Document* d = doc();
                 if (!d) return -1;
-                const auto ids = SortedLayerIds(*d);
+                const auto& ids = SortedLayerIds(*d);
                 const auto it  = std::find(ids.begin(), ids.end(), d->GetLayerManager().GetActiveLayerID());
                 return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
             },
@@ -480,7 +518,8 @@ namespace MiniCAD
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? LineweightIndex(d->GetScene().GetCurrentLineweight()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
 
-        Editor& editor = dm.GetEditor();
+        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取当前文档的
+        auto editor = [&dm]() -> Editor& { return dm.GetEditor(); };
 
         // ── 绘图辅助（与工具栏、状态栏、F3 / F8 是同一份数据，任何一处修改都同步）────
         //Expander* aux = grid->AddGroup("绘图辅助");
@@ -489,72 +528,67 @@ namespace MiniCAD
         //    m_bindings.BindCheck(box, [get] { return std::optional<bool>(get()); },
         //                              [get, toggle](const bool& v) { if (v != get()) toggle(); });
         //};
-        //bindToggle(grid->AddProperty<CheckBox>(aux, "对象捕捉"), [&editor] { return editor.IsSnapEnabled(); },  [&editor] { editor.ToggleSnap(); });
-        //bindToggle(grid->AddProperty<CheckBox>(aux, "正交"),     [&editor] { return editor.IsOrthoEnabled(); }, [&editor] { editor.ToggleOrtho(); });
-        //bindToggle(grid->AddProperty<CheckBox>(aux, "悬停高亮"), [&editor] { return editor.IsHoverEnabled(); }, [&editor] { editor.ToggleHover(); });
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "对象捕捉"), [editor] { return editor().IsSnapEnabled(); },  [editor] { editor().ToggleSnap(); });
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "正交"),     [editor] { return editor().IsOrthoEnabled(); }, [editor] { editor().ToggleOrtho(); });
+        //bindToggle(grid->AddProperty<CheckBox>(aux, "悬停高亮"), [editor] { return editor().IsHoverEnabled(); }, [editor] { editor().ToggleHover(); });
         //auto* radius = grid->AddProperty<NumberBox>(aux, "捕捉孔径", 10.0, 1.0, 50.0, 1.0, 0);
         //m_bindings.BindNumber(radius,
-        //    [&editor] { return std::optional<double>(editor.GetSnapEngine().GetSnapRadiusPx()); },
-        //    [&editor](const double& v) { editor.GetSnapEngine().SetSnapRadiusPx(v); });
+        //    [editor] { return std::optional<double>(editor().GetSnapEngine().GetSnapRadiusPx()); },
+        //    [editor](const double& v) { editor().GetSnapEngine().SetSnapRadiusPx(v); });
 
         // ── 选择集（可编辑：多个对象取值不同时显示"*多种*"；修改走 ChangeAttrCommand，可撤销）────────────
         Expander* sel = grid->AddGroup("选择集");
         auto* count = grid->AddProperty<Label>(sel, "数量", std::string(), 13.0f);
-        m_bindings.BindLabel(count, [&editor, doc]
+        m_bindings.BindLabel(count, [this, doc]
         {
-            const size_t n = doc() ? editor.GetSelection().size() : 0;
+            const size_t n = doc() ? SelectionInfo().count : 0;
             return n == 0 ? std::string("未选择") : std::to_string(n) + " 个对象";
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, "图层");
         selLayer->SetPlaceholder("—");
         m_bindings.BindChoice(selLayer,
-            [&editor, doc]() -> std::optional<int>
+            [this, doc]() -> std::optional<int>
             {
-                Document* d = doc();
-                if (!d) return -1;
-                const auto ids = SortedLayerIds(*d);
-                return SelectionCommonIndex(editor, [&ids](const EntityAttr& a)
-                {
-                    return static_cast<int>(std::find(ids.begin(), ids.end(), a.LayerId) - ids.begin());
-                });
+                if (!doc()) return -1;
+                return SelectionInfo().layer;
             },
-            [&editor, doc](const int& i)
+            [editor, doc](const int& i)
             {
                 Document* d = doc();
                 if (!d) return;
-                const auto ids = SortedLayerIds(*d);
+                const auto& ids = SortedLayerIds(*d);
                 if (i >= 0 && static_cast<size_t>(i) < ids.size())
-                    editor.ChangeSelectionAttr(AttrChange{ .Layer = ids[static_cast<size_t>(i)] });
+                    editor().ChangeSelectionAttr(AttrChange{ .Layer = ids[static_cast<size_t>(i)] });
             },
             layerNames);
 
         auto* selColor = grid->AddProperty<ComboBox>(sel, "颜色", ColorLabels());
         selColor->SetPlaceholder("—");
         m_bindings.BindChoice(selColor,
-            [&editor, doc]() -> std::optional<int>
+            [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return ColorIndex(a.Color); });
+                return SelectionInfo().color;
             },
-            [&editor](const int& i)
+            [editor](const int& i)
             {
                 const auto& items = ColorItems();
                 if (i >= 0 && static_cast<size_t>(i) < items.size())      // "其他"不可设置
-                    editor.ChangeSelectionAttr(AttrChange{ .Color = items[static_cast<size_t>(i)].color });
+                    editor().ChangeSelectionAttr(AttrChange{ .Color = items[static_cast<size_t>(i)].color });
             });
 
         auto* selLinetype = grid->AddProperty<ComboBox>(sel, "线型");
         selLinetype->SetPlaceholder("—");
         m_bindings.BindChoice(selLinetype,
-            [&editor, doc]() -> std::optional<int>
+            [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return static_cast<int>(a.LineType); });
+                return SelectionInfo().lineType;
             },
-            [&editor](const int& i)
+            [editor](const int& i)
             {
                 if (i >= 0)
-                    editor.ChangeSelectionAttr(AttrChange{ .LineType = static_cast<LineTypeID>(i) });
+                    editor().ChangeSelectionAttr(AttrChange{ .LineType = static_cast<LineTypeID>(i) });
             },
             [doc]
             {
@@ -567,36 +601,25 @@ namespace MiniCAD
 
         auto* selScale = grid->AddProperty<NumberBox>(sel, "线型比例", 1.0, 0.001, 10000.0, 0.1, 3);
         m_bindings.BindNumber(selScale,
-            [&editor, doc]() -> std::optional<double>
+            [this, doc]() -> std::optional<double>
             {
                 if (!doc()) return std::nullopt;
-                std::optional<double> result;
-                bool any = false;
-                for (Object* obj : editor.GetSelectedObjects())
-                {
-                    const auto* e = dynamic_cast<const Entity*>(obj);
-                    if (!e) continue;
-                    const double s = e->GetAttr().LinetypeScale;
-                    if (!any) result = s;
-                    else if (result && *result != s) return std::nullopt;
-                    any = true;
-                }
-                return any ? result : std::optional<double>(1.0);
+                return SelectionInfo().lineTypeScale;
             },
-            [&editor](const double& v) { editor.ChangeSelectionAttr(AttrChange{ .LinetypeScale = v }); });
+            [editor](const double& v) { editor().ChangeSelectionAttr(AttrChange{ .LinetypeScale = v }); });
 
         auto* selWeight = grid->AddProperty<ComboBox>(sel, "线宽", LineweightLabels());
         selWeight->SetPlaceholder("—");
         m_bindings.BindChoice(selWeight,
-            [&editor, doc]() -> std::optional<int>
+            [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionCommonIndex(editor, [](const EntityAttr& a) { return LineweightIndex(a.Lineweight); });
+                return SelectionInfo().lineweight;
             },
-            [&editor](const int& i)
+            [editor](const int& i)
             {
                 if (i >= 0 && static_cast<size_t>(i) < std::size(kLineweightItems))
-                    editor.ChangeSelectionAttr(AttrChange{ .Lineweight = kLineweightItems[i].lw });
+                    editor().ChangeSelectionAttr(AttrChange{ .Lineweight = kLineweightItems[i].lw });
             });
 
         // ── 几何（属性描述表驱动）────────────────────────────────
@@ -616,11 +639,11 @@ namespace MiniCAD
                 if (!s.value) return std::nullopt;
                 return std::get<std::string>(*s.value);
             },
-            [slots, &editor](const std::string& v)
+            [slots, editor](const std::string& v)
             {
                 const Slot& s = (*slots)[0];
                 if (!s.name.empty() && s.editable)
-                    editor.SetSelectionProperty(s.name, PropValue(v));
+                    editor().SetSelectionProperty(s.name, PropValue(v));
             });
 
         std::vector<NumberBox*> numberBoxes;
@@ -635,22 +658,22 @@ namespace MiniCAD
                     if (s.name.empty() || !s.value) return s.name.empty() ? std::optional<double>(0.0) : std::nullopt;
                     return std::get<double>(*s.value);
                 },
-                [slots, i, &editor](const double& v)
+                [slots, i, editor](const double& v)
                 {
                     const Slot& s = (*slots)[i];
                     if (!s.name.empty() && s.editable)
-                        editor.SetSelectionProperty(s.name, PropValue(v));
+                        editor().SetSelectionProperty(s.name, PropValue(v));
                 });
         }
 
         // 选择集变化后：重新分配槽（在 BindingSet::Refresh 之前调用）
-        m_syncGeometryRows = [slots, geom, textSlot, numberBoxes, &editor, doc]
+        m_syncGeometryRows = [this, slots, geom, textSlot, numberBoxes, doc]
         {
             for (Slot& s : *slots) s = Slot{};
             if (doc())
             {
                 size_t nextNumber = 1;
-                for (const CommonProperty& p : editor.GetSelectionProperties())
+                for (const CommonProperty& p : SelectionInfo().properties)
                 {
                     Slot* target = nullptr;
                     if (p.kind == PropKind::String)

@@ -1186,10 +1186,8 @@ namespace MiniCAD
                 // 左框(crossing)任一段/点触碰框即命中。
                 if (obj.IsKindOf<Entity>() && !HasSpecializedPick(obj))
                 {
-                    const auto* ent = static_cast<const Entity*>(&obj);
-
-                    PickCollectSink sink(m_scene->GetLayerManager());
-                    ent->Draw(sink, false, false);
+                    // 与点选共用缓存的拾取几何（世界坐标）：以前每次框选都把块、标注、填充重画一遍收集线段
+                    const PickGeometry& sink = GetPickGeometry(obj);
 
                     std::vector<std::pair<Math::Point2, Math::Point2>> segs;
                     auto addSeg = [&](const Math::Point3& wa, const Math::Point3& wb)
@@ -1236,13 +1234,28 @@ namespace MiniCAD
 
             };
 
-        // 包围盒粗筛 + 空间索引：仅对与选择框相交的候选做精确测试
+        // 包围盒粗筛 + 空间索引：仅对与选择框相交的候选做精确测试。
+        // 俯视时包围盒完全落在框内的实体直接选中（窗选、交叉选都算命中），不做精确判定：
+        // 框选全图时几乎所有实体都走这一步，一次 Draw 都不用
         EnsureIndex();
         AABB q = ScreenRectToWorldAABB(a.x, a.y, b.x, b.y);
         m_index.Query(q, m_candidates);
+        const bool plan = camera.IsPlanView();
         for (ObjectID id : m_candidates)
             if (const Object* o = m_scene->GetEntity(id))
+            {
+                if (plan && o->IsKindOf<Entity>() && IsPickable(*o))
+                {
+                    const AABB bb = static_cast<const Entity&>(*o).GetBoundingBox();
+                    if (bb.Min.x <= bb.Max.x && bb.Min.y <= bb.Max.y &&
+                        bb.Min.x >= q.Min.x && bb.Max.x <= q.Max.x && bb.Min.y >= q.Min.y && bb.Max.y <= q.Max.y)
+                    {
+                        result.insert(id);
+                        continue;
+                    }
+                }
                 testOne(*o);
+            }
 
         return result;
     }

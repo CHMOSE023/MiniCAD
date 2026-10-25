@@ -39,6 +39,7 @@ namespace MiniGUI
     {
         Close();
         m_items = std::move(items);
+        m_itemsWidthFont = -1.0f;   // 条目变了：下次布局重新量最宽条目
         if (m_selected >= static_cast<int>(m_items.size()))
             m_selected = -1;
         InvalidateLayout();
@@ -134,15 +135,19 @@ namespace MiniGUI
     Vec2 ComboBox::MeasureContent(Vec2 available)
     {
         (void)available;
-        float w = 80.0f;
-        if (UIContext* ctx = GetContext())
+        // 最宽条目的宽度按条目缓存：条目或字号变了才重新量。每次布局都量一遍的话，
+        // 几千个图层的图纸（实测 3692 层）每次重新布局要几十毫秒，而选择集一变界面就重新布局
+        if (UIContext* ctx = GetContext(); ctx && m_itemsWidthFont != Theme::FontSize)
         {
             TextParams p;
             p.size = Theme::FontSize;
+            float w = 80.0f;
             for (const auto& item : m_items)
                 w = std::max(w, ctx->GetTextSystem().Measure(item, p).x);
+            m_itemsWidth     = w;
+            m_itemsWidthFont = Theme::FontSize;
         }
-        return { w + 16.0f + 24.0f, Theme::ControlH };
+        return { m_itemsWidth + 16.0f + 24.0f, Theme::ControlH };
     }
 
     void ComboBox::OnPaint(DrawList& dl, const Rect& r)

@@ -1,5 +1,6 @@
 #include "Editor.h"
 #include "Editor/EditorContext.h"
+#include <atomic>
 #include "Document/Document.h"
 #include "Document/DrawContext.hpp"
 #include "Document/CommandStack/CommandStack.h"
@@ -217,6 +218,37 @@ namespace MiniCAD
         RegisterBuiltinTools();
     }
 
+    uint64_t Editor::NextRenderVersion()
+    {
+        static std::atomic<uint64_t> counter{ 0 };
+        return ++counter;
+    }
+
+    void Editor::CopySettingsFrom(const Editor& o)
+    {
+        m_thinLines          = o.m_thinLines;
+        m_visualStyle        = o.m_visualStyle;
+        m_hatchDialogEnabled = o.m_hatchDialogEnabled;
+        m_solidKernel        = o.m_solidKernel;
+        m_viewAnimSeconds    = o.m_viewAnimSeconds;
+        m_fontTexture        = o.m_fontTexture;
+        m_glyphProvider      = o.m_glyphProvider;
+        m_textHeight         = o.m_textHeight;
+        m_hatchSettings      = o.m_hatchSettings;
+        m_mlineSettings      = o.m_mlineSettings;
+        m_filletRadius       = o.m_filletRadius;
+        m_chamferD1          = o.m_chamferD1;
+        m_chamferD2          = o.m_chamferD2;
+        m_solidFilletRadius    = o.m_solidFilletRadius;
+        m_solidChamferDistance = o.m_solidChamferDistance;
+        m_snap.SetEnableSnap(o.m_snap.IsEnabled());
+        m_snap.SetSnapModes(o.m_snap.GetSnapModes());
+        m_snap.SetSnapRadiusPx(o.m_snap.GetSnapRadiusPx());
+        m_constraintEngine.EnableOrtho(o.m_constraintEngine.IsOrthoEnabled());
+        m_constraintEngine.EnablePolar(o.m_constraintEngine.IsPolarEnabled());
+        m_picking.SetHoverEnabled(o.m_picking.IsHoverEnabled());
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  Bind / Unbind
     // ─────────────────────────────────────────────────────────────
@@ -291,6 +323,9 @@ namespace MiniCAD
         releaseStorage(m_selVertices);
         releaseStorage(m_selFillVertices);
         releaseStorage(m_selTextVertices);
+        releaseStorage(m_selDynVertices);
+        releaseStorage(m_selDynFillVertices);
+        releaseStorage(m_selDynTextVertices);
         releaseStorage(m_scratchLines);
         releaseStorage(m_scratchFills);
         releaseStorage(m_scratchTexts);
@@ -300,9 +335,9 @@ namespace MiniCAD
         releaseStorage(m_sceneExcluded);
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
-        ++m_sceneVersion;   // 渲染后端的缓存顶点缓冲随之失效
-        ++m_sceneDynVersion;
-        ++m_selVersion;
+        m_sceneVersion    = NextRenderVersion();   // 渲染后端的缓存顶点缓冲随之失效
+        m_sceneDynVersion = NextRenderVersion();
+        m_selVersion      = NextRenderVersion();
         m_picking.Unbind();
 
         m_doc      = nullptr;
@@ -526,6 +561,11 @@ namespace MiniCAD
         RegisterAlias("LI",     "Line");
         RegisterAlias("REC",    "Rectangle");
         RegisterAlias("PL",     "Polyline");
+        RegisterAlias("PLINE",  "Polyline");    // AutoCAD 命令全名与工具名不同的，全名也走别名表
+        RegisterAlias("RECTANG", "Rectangle");
+        RegisterAlias("DTEXT",  "Text");
+        RegisterAlias("DIMLINEAR",  "Dimension");
+        RegisterAlias("DIMALIGNED", "Dimension");
         RegisterAlias("MI",     "Mirror");
         RegisterAlias("RO",     "Rotate");
         RegisterAlias("SC",     "Scale");
@@ -1586,7 +1626,7 @@ namespace MiniCAD
         m_shadedViewDir      = f;
         m_shadedSceneVersion = m_sceneVersion;
         m_shadedValid        = true;
-        ++m_shadedVersion;
+        m_shadedVersion      = NextRenderVersion();
 
         const bool shaded = m_visualStyle == VisualStyle::Shaded;
         const Math::Vec3 r = cam.GetRight(), u = cam.GetUp();
@@ -2894,10 +2934,10 @@ namespace MiniCAD
 
         m_overlayVertices.clear();
 
-        // 1 屏幕像素对应的世界长度(线宽/虚线显示用)
+        // 1 屏幕像素对应的世界长度(线宽 / 点样式显示用)
         const double worldPerPixel = m_viewport->GetCamera().GetWorldPerPixel();
 
-        // 线宽/虚线按屏幕像素烘焙,缩放变化时依赖像素比例的实体需重建。
+        // 线宽 / 点样式按屏幕像素烘焙,缩放变化时依赖像素比例的实体需重建（虚线在世界坐标里，不重建）。
         // 按相对误差比较:平移不改变 worldPerPixel,不能因舍入误差触发整图重建
         bool zoomChanged = std::abs(worldPerPixel - m_lastWorldPerPixel) > 1e-9 * std::max(worldPerPixel, m_lastWorldPerPixel);
         m_lastWorldPerPixel = worldPerPixel;
@@ -2920,9 +2960,10 @@ namespace MiniCAD
         }
 
         // 选中流：选择集变化 / 场景重建 / 拖动中（几何逐帧变化）/ 缩放+线宽虚线 / 细线开关
-        UpdateSelectionVertices(worldPerPixel,
-                                sceneRebuilt || selectionDirty || dragging ||
-                                (zoomChanged && m_selViewDependent));
+        {
+            const bool selFull = sceneRebuilt || selectionDirty || dragging;
+            UpdateSelectionVertices(worldPerPixel, selFull || (zoomChanged && m_selViewDependent), !selFull);
+        }
 
         m_overlay.ToVertices(m_overlayVertices);
         // 节点图预览点在模型空间，布局页上不画（同 UpdateShadedVertices 里的预览实体）
@@ -3157,7 +3198,13 @@ namespace MiniCAD
         // 时就是 260 万次无用构建。包围盒判断是 O(1)，成本可忽略。
         if (const auto* vp = dynamic_cast<const ViewportEntity*>(&entity))
             if (vp->ShowsModel())
+            {
+                // 视口里的内容要按视口矩形裁剪，延迟出去的长虚线段裁不到：合成期间按像素取舍（视口实体随视图变化）
+                const bool defer = ctx.DeferLongDashes();
+                ctx.SetDeferLongDashes(false);
                 ComposeModelIntoViewport(*vp, ctx);
+                ctx.SetDeferLongDashes(defer);
+            }
 
         // 合成完成后才取缓冲（顺序见上）
         c.lines         = m_scratchLines;
@@ -3166,6 +3213,7 @@ namespace MiniCAD
         c.texts         = m_scratchTexts;
         c.glyphs        = m_scratchGlyphs;
         c.viewDependent = ctx.HasViewDependentGeometry();
+        c.longDashes    = ctx.TakeDeferredDashes();
         c.wipes         = ctx.TakeWipes();
         c.images        = ctx.TakeImages();
     }
@@ -3304,9 +3352,19 @@ namespace MiniCAD
         }
         // 点图元不随视图变化（点是恒定屏幕像素），总进静态流
         m_scenePointVertices.insert(m_scenePointVertices.end(), c.points.begin(), c.points.end());
-        if (c.viewDependent || !c.wipes.empty())
+        // 延迟的长虚线段按当前缩放铺进动态流（缩放时只重铺它们，实体不重新细分）
+        EmitDeferredDashes(c, m_sceneDynVertices);
+        if (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty())
             m_dynOrder.push_back(id);
-        m_sceneViewDependent |= c.viewDependent;
+        m_sceneViewDependent |= c.viewDependent || !c.longDashes.empty();
+    }
+
+    void Editor::EmitDeferredDashes(const EntityVertexCache& c, std::vector<Vertex_P3_C4>& out) const
+    {
+        if (c.longDashes.empty()) return;
+        const LineTypeTable& lineTypes = m_doc->GetScene().GetLineTypeTable();
+        for (const DeferredDash& d : c.longDashes)
+            DrawContext::EmitDeferredDash(d, lineTypes, m_lastWorldPerPixel, out);
     }
 
     // 只重建动态流：随视图变化的实体重新细分，按绘制序拼接，并用其后的区域覆盖裁剪（与静态流的规则相同）
@@ -3336,10 +3394,11 @@ namespace MiniCAD
                 m_sceneDynVertices.insert(m_sceneDynVertices.end(), c.lines.begin(), c.lines.end());
                 m_sceneDynFillVertices.insert(m_sceneDynFillVertices.end(), c.fills.begin(), c.fills.end());
             }
+            EmitDeferredDashes(c, m_sceneDynVertices);
         }
         wipes.ClipLines(m_sceneDynVertices, 0);
         wipes.ClipFills(m_sceneDynFillVertices, 1);
-        ++m_sceneDynVersion;
+        m_sceneDynVersion = NextRenderVersion();
     }
 
     bool Editor::UpdateSceneVertices(double worldPerPixel, bool zoomChanged)
@@ -3391,6 +3450,7 @@ namespace MiniCAD
         ctx.SetImageProvider(imageProvider);
         ctx.SetThinLines(m_thinLines);
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
+        ctx.SetDeferLongDashes(true);   // 长虚线段延迟铺设：进动态流，缩放时只重铺这些段
 
         // 图纸级点样式（HEADER 的 $PDMODE/$PDSIZE）+ 视口像素高度。
         // POINT 实体自身只有坐标，画成什么样完全由这两个变量决定；实体拿不到 Scene，
@@ -3404,7 +3464,7 @@ namespace MiniCAD
         ctx.SetLineTypeScale(scene.GetLineTypeScale());
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
-        // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
+        // 随视图变化的实体（按像素等宽的线宽、点样式；细线显示时几乎没有）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
         if (zoomChanged && !invalidateAll && !exclusionChanged && !m_sceneRestitch && scene.GetDirtyEntities().empty())
         {
@@ -3413,7 +3473,9 @@ namespace MiniCAD
                     m_entityVertexCache.erase(it);
             RebuildDynamicStream(ctx);
             scene.ClearDirty();
-            return true;
+            // 只重建了动态流，静态流与实体缓存都没变：不算"场景重建"——夹点、着色面不用跟着重建，
+            // 选中流也只需重建随视图变化的那一路（否则选中全图后每格滚轮都要把选中流整体复制上传一遍）
+            return false;
         }
 
         auto isShown = [&](const Entity& entity)
@@ -3482,8 +3544,8 @@ namespace MiniCAD
                 }
 
                 SortGlyphInstances(m_glyphInstances, m_glyphBatches);
-                ++m_sceneVersion;   // 顶点流已追加,渲染后端需重新上传
-                ++m_sceneDynVersion;
+                m_sceneVersion    = NextRenderVersion();   // 顶点流已追加,渲染后端需重新上传
+                m_sceneDynVersion = NextRenderVersion();
                 UpdateSceneStats();
                 scene.ClearDirty();
                 return true;
@@ -3575,8 +3637,8 @@ namespace MiniCAD
 
         m_sceneExcluded = std::move(dragIds);
 
-        ++m_sceneVersion;   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
-        ++m_sceneDynVersion;
+        m_sceneVersion    = NextRenderVersion();   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
+        m_sceneDynVersion = NextRenderVersion();
         m_sceneStreamsReleased = false;
         m_sceneRestitch        = false;
         UpdateSceneStats();
@@ -3629,15 +3691,23 @@ namespace MiniCAD
 
     // 选中流：选中实体 + 拖动跟随中的实体，按选中态绘制，叠加在场景之上。
     // 与悬停高亮同思路：覆盖绘制代替烘焙，选中变化不触发全场景重建。
-    void Editor::UpdateSelectionVertices(double worldPerPixel, bool force)
+    void Editor::UpdateSelectionVertices(double worldPerPixel, bool force, bool zoomOnly)
     {
         if (!force) return;
 
         auto& scene = m_doc->GetScene();
 
-        m_selVertices.clear();
-        m_selFillVertices.clear();
-        m_selTextVertices.clear();
+        // 静态部分：从逐实体缓存复制来的、不随视图变化的实体；只缩放时不动
+        if (!zoomOnly)
+        {
+            m_selVertices.clear();
+            m_selFillVertices.clear();
+            m_selTextVertices.clear();
+        }
+        // 随视图变化的部分每次都重建：线宽 / 点样式实体、点图元的小十字、长虚线段、实时绘制的实体
+        m_selDynVertices.clear();
+        m_selDynFillVertices.clear();
+        m_selDynTextVertices.clear();
 
         const auto& selection = m_picking.GetSelection();
         const auto  dragIds   = m_gripEditor.GetDraggingIDs();
@@ -3646,12 +3716,14 @@ namespace MiniCAD
         {
             const auto& layerMgr = scene.GetLayerManager();
 
-            DrawContext ctx(m_selVertices, m_selFillVertices, m_selTextVertices, m_overlay,
+            DrawContext ctx(m_selDynVertices, m_selDynFillVertices, m_selDynTextVertices, m_overlay,
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
             // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
             ctx.SetLineTypeScale(scene.GetLineTypeScale());
+            // 选中流没有点流一路：线型的点笔划画成 1.5px 小段（随缩放重建）
+            ctx.SetLineTypeDotsAsSegments(true);
             // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示
             ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
             ctx.SetViewportHeightPx(static_cast<double>(m_viewport->GetHeight()));
@@ -3698,18 +3770,99 @@ namespace MiniCAD
                 }
             };
 
+            // 选中流优先从逐实体缓存复制：场景已经把每个实体细分成线、填充、字形实例，改成选中色即可，
+            // 不再调用 Draw 重新细分（选中整张图从 400 ms 降到一次拷贝）。
+            // 拖动中的实体几何逐帧变化、缓存里没有的实体（隐藏、带光栅图像）仍实时绘制
+            const std::unordered_set<Object::ObjectID> dragSet(dragIds.begin(), dragIds.end());
+            const Math::Color4& sc = IDrawSink::kSelectionColor;
+            const VertexColor   selColor(static_cast<float>(sc.r), static_cast<float>(sc.g), static_cast<float>(sc.b), static_cast<float>(sc.a));
+            const Math::Float4  selColor4{ static_cast<float>(sc.r), static_cast<float>(sc.g), static_cast<float>(sc.b), static_cast<float>(sc.a) };
+            const GlyphMeshView  glyphView = m_glyphLibrary.View();
+            const LineTypeTable& lineTypes = scene.GetLineTypeTable();
+            bool copiedViewDependent = false;
+
+            auto cachedFor = [&](Object::ObjectID id) -> const EntityVertexCache*
+            {
+                if (dragSet.contains(id)) return nullptr;
+                auto it = m_entityVertexCache.find(id);
+                if (it == m_entityVertexCache.end() || !it->second.images.empty()) return nullptr;
+                return &it->second;
+            };
+            if (!zoomOnly)
+            {
+                size_t lines = 0, fills = 0;
+                for (auto id : selection)
+                    if (const EntityVertexCache* c = cachedFor(id); c && !c->viewDependent)
+                    {
+                        lines += c->lines.size();
+                        fills += c->fills.size();
+                    }
+                m_selVertices.reserve(lines);
+                m_selFillVertices.reserve(fills);
+            }
+            auto appendRecolored = [&](std::vector<Vertex_P3_C4>& out, const std::vector<Vertex_P3_C4>& in)
+            {
+                const size_t n = out.size();
+                out.resize(n + in.size());
+                for (size_t i = 0; i < in.size(); ++i)
+                {
+                    out[n + i].pos   = in[i].pos;
+                    out[n + i].color = selColor;
+                }
+            };
+            auto copyOne = [&](Object::ObjectID id) -> bool
+            {
+                const EntityVertexCache* c = cachedFor(id);
+                if (!c) return false;
+                // 随视图变化的实体（线宽、点样式）缩放后缓存已重新细分，复制进动态部分；其余进静态部分（只缩放时跳过）
+                if (c->viewDependent || !zoomOnly)
+                {
+                    auto& lines = c->viewDependent ? m_selDynVertices     : m_selVertices;
+                    auto& fills = c->viewDependent ? m_selDynFillVertices : m_selFillVertices;
+                    auto& texts = c->viewDependent ? m_selDynTextVertices : m_selTextVertices;
+                    appendRecolored(lines, c->lines);
+                    appendRecolored(fills, c->fills);
+                    for (const auto& t : c->texts)
+                    {
+                        texts.push_back(t);
+                        texts.back().color = selColor4;
+                    }
+                    for (const GlyphInstance& g : c->glyphs)
+                    {
+                        ExpandGlyph(g, glyphView, true,  [&](const Vertex_P3_C4& v) { fills.push_back({ v.pos, selColor }); });
+                        ExpandGlyph(g, glyphView, false, [&](const Vertex_P3_C4& v) { lines.push_back({ v.pos, selColor }); });
+                    }
+                }
+                for (const auto& p : c->points)   // 选中流没有点流：点图元画成小十字（随缩放重建）
+                {
+                    AppendPointMark(m_selDynVertices, p.pos, selColor, worldPerPixel);
+                    copiedViewDependent = true;
+                }
+                if (!c->longDashes.empty())
+                {
+                    std::vector<Vertex_P3_C4> dashes;
+                    for (const DeferredDash& d : c->longDashes)
+                        DrawContext::EmitDeferredDash(d, lineTypes, worldPerPixel, dashes);
+                    appendRecolored(m_selDynVertices, dashes);
+                    copiedViewDependent = true;
+                }
+                copiedViewDependent |= c->viewDependent;
+                return true;
+            };
+
             for (auto id : selection)
-                drawOne(id);
+                if (!copyOne(id))
+                    drawOne(id);
             for (auto id : dragIds)
                 if (!selection.contains(id))
                     drawOne(id);
 
-            m_selViewDependent = ctx.HasViewDependentGeometry();
+            m_selViewDependent = ctx.HasViewDependentGeometry() || copiedViewDependent;
 
             // 选中流只有线段：点图元（$PDMODE=0 的 POINT、点阵填充）画成小十字，随缩放重建
             const auto points = ctx.TakePoints();
             for (const auto& p : points)
-                AppendPointMark(m_selVertices, p.pos, p.color, worldPerPixel);
+                AppendPointMark(m_selDynVertices, p.pos, p.color, worldPerPixel);
             if (!points.empty())
                 m_selViewDependent = true;
         }
@@ -3718,7 +3871,9 @@ namespace MiniCAD
             m_selViewDependent = false;
         }
 
-        ++m_selVersion;
+        if (!zoomOnly)
+            m_selVersion = NextRenderVersion();
+        m_selDynVersion = NextRenderVersion();
         m_picking.ClearDirty();
     }
 
@@ -3762,6 +3917,10 @@ namespace MiniCAD
         vs.SelFill      = m_selFillVertices;
         vs.SelText      = m_selTextVertices;
         vs.SelVersion   = m_selVersion;
+        vs.SelDyn        = m_selDynVertices;
+        vs.SelDynFill    = m_selDynFillVertices;
+        vs.SelDynText    = m_selDynTextVertices;
+        vs.SelDynVersion = m_selDynVersion;
         vs.FontTexture  = m_fontTexture;
 
         vs.Selection.Active = m_picking.IsBoxSelecting();

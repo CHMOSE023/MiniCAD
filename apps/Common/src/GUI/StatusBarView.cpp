@@ -119,8 +119,10 @@ namespace MiniCAD
     // =========================================================
     void StatusBarView::Refresh()
     {
+        // 没有文档时只隐藏开关：宿主附加项（读取进度）在打开第一张图纸时也要显示
         const bool hasDoc = m_dm.GetActive() != nullptr;
-        SetVisible(hasDoc);
+        for (StatusToggle* t : { m_snap, m_ortho, m_hover, m_thin })
+            t->SetVisible(hasDoc);
         if (!hasDoc)
             return;
 

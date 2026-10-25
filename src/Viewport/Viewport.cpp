@@ -35,6 +35,11 @@ namespace MiniCAD
     constexpr uint32_t kSlotShaded    = 12;
     constexpr uint32_t kSlotSilhouette = 13;
     constexpr uint32_t kSlotScenePoint = 14;
+    constexpr uint32_t kSlotGripFill   = 15;
+    constexpr uint32_t kSlotGrip       = 16;
+    constexpr uint32_t kSlotSelDynFill = 17;
+    constexpr uint32_t kSlotSelDyn     = 18;
+    constexpr uint32_t kSlotSelDynText = 19;
 
     namespace
     {
@@ -220,13 +225,31 @@ namespace MiniCAD
             renderer.SubmitCached(kSlotSel,     viewState.SelVersion, viewState.SelScene, vp, PrimitiveType::Line,     true, true);
             if (viewState.FontTexture)
                 renderer.SubmitTexturedCached(kSlotSelText, viewState.SelVersion, viewState.SelText, vp, viewState.FontTexture, false, true);
+            renderer.SubmitCached(kSlotSelDynFill, viewState.SelDynVersion, viewState.SelDynFill, vp, PrimitiveType::Triangle, true, true);
+            renderer.SubmitCached(kSlotSelDyn,     viewState.SelDynVersion, viewState.SelDyn,     vp, PrimitiveType::Line,     true, true);
+            if (viewState.FontTexture)
+                renderer.SubmitTexturedCached(kSlotSelDynText, viewState.SelDynVersion, viewState.SelDynText, vp, viewState.FontTexture, false, true);
             renderer.Submit(viewState.Overlay, vp, PrimitiveType::Line, true, true);
 
             if (!viewState.Grips.empty())
             {
-                auto grips = BuildGripGeometry(viewState);
-                renderer.Submit(grips.fill,   screenVP, PrimitiveType::Triangle, true, true);
-                renderer.Submit(grips.border, screenVP, PrimitiveType::Line,     true, true);
+                // 夹点几何按内容缓存：夹点、悬停、相机都没变时不重建、不重新上传
+                uint64_t key = 1469598103934665603ull;
+                for (const GripDraw& g : viewState.Grips)
+                {
+                    key = HashCombine(key, &g.Pos.x, sizeof(g.Pos.x));
+                    key = HashCombine(key, &g.Pos.y, sizeof(g.Pos.y));
+                    const unsigned char t = static_cast<unsigned char>(static_cast<unsigned char>(g.GripType) | (g.Hovered ? 0x80 : 0));
+                    key = HashCombine(key, &t, sizeof(t));
+                }
+                if (!m_gripValid || key != m_gripKey)
+                {
+                    m_gripGeom  = BuildGripGeometry(viewState);
+                    m_gripKey   = key;
+                    m_gripValid = true;
+                }
+                renderer.SubmitCached(kSlotGripFill, m_gripKey, m_gripGeom.fill,   screenVP, PrimitiveType::Triangle, true, true);
+                renderer.SubmitCached(kSlotGrip,     m_gripKey, m_gripGeom.border, screenVP, PrimitiveType::Line,     true, true);
             }
 
             if (viewState.Selection.Active)

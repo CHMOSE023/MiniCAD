@@ -6,6 +6,7 @@
 #include "NodeGraph/CurveOps.h"
 #include "NodeGraph/GeometryOps.h"
 #include "Core/Entity/Entity.hpp"
+#include "Core/Entity/PolylineEntity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -43,7 +44,17 @@ namespace MiniCAD::Nodes
 
         const Plane& PlaneIn(SolveArgs& a, int port) { return a.In(port).AsPlane(); }
 
-        // 闭合曲线 → 空间曲线，方向统一为从 +Z 看逆时针（放样、扫掠要求各截面方向一致）
+        // 闭合曲线的方向统一为从 +Z 看逆时针（放样、扫掠要求各截面方向一致）
+        Solid::NurbsCurve CounterClockwise(const Solid::NurbsCurve& c)
+        {
+            const auto pts = c.Sample(16);
+            double area2 = 0.0;
+            for (size_t i = 0; i + 1 < pts.size(); ++i)
+                area2 += pts[i].x * pts[i + 1].y - pts[i + 1].x * pts[i].y;
+            return area2 < 0.0 ? c.Reversed() : c;
+        }
+
+        // 闭合曲线 → 空间曲线
         std::optional<Solid::NurbsCurve> LoopOf(const Entity& curve)
         {
             if (!Geo::IsClosed(curve))
@@ -51,13 +62,7 @@ namespace MiniCAD::Nodes
             auto c = Geo::NurbsOf(curve);
             if (!c)
                 return std::nullopt;
-            const auto pts = c->Sample(16);
-            double area2 = 0.0;
-            for (size_t i = 0; i + 1 < pts.size(); ++i)
-                area2 += pts[i].x * pts[i + 1].y - pts[i + 1].x * pts[i].y;
-            if (area2 < 0.0)
-                return c->Reversed();
-            return c;
+            return CounterClockwise(*c);
         }
 
         // 轮廓（XY 平面上）的包围盒中心
@@ -122,17 +127,62 @@ namespace MiniCAD::Nodes
 
         enum class Form { Extrude, Blend, Revolve, Sweep, SweptBlend };
 
+        // 不闭合的多段线（至少 3 个顶点）按首尾相连处理，同 Revit 的拉伸要求闭合轮廓、但不必手动补最后一段
+        CurvePtr ClosedProfile(const CurvePtr& curve)
+        {
+            if (!curve || !curve->IsKindOf<PolylineEntity>() || !curve->HasDefaultExtrusion() || Geo::IsClosed(*curve))
+                return curve;
+            const auto& pl = static_cast<const PolylineEntity&>(*curve).GetPolyline();
+            if (pl.Points.size() < 3)
+                return curve;
+            return Geo::MakePolyline(pl.Points, pl.Bulges, true);   // 末尾补上连回起点的直线段
+        }
+
+        // 精确轮廓之外的闭合曲线（椭圆、样条、带圆弧的不水平多段线等）：曲线与它沿 Z 平移后的副本直纹放样，
+        // 两端封口，结果与拉伸相同。曲线须在一个水平面上
+        Solid::BodyPtr ExtrudeLoop(Solid::ISolidKernel& k, const Solid::NurbsCurve& loop, double height)
+        {
+            Solid::NurbsCurve top = loop;
+            top.Transform(Math::Mat4::Translation({ 0, 0, height }));
+            const Solid::NurbsCurve sections[2] = { loop, top };
+            return k.LoftSolid(sections, true);
+        }
+
+        bool IsHorizontal(const Solid::NurbsCurve& c)
+        {
+            for (const auto& p : c.ControlPoints)   // 控制点都在平面上时曲线也在平面上
+                if (std::abs(p.z - c.ControlPoints.front().z) > 1e-9 * std::max(1.0, c.BoundsSize()))
+                    return false;
+            return true;
+        }
+
         void SolveExtrude(SolveArgs& a, bool isVoid)
         {
             auto* k = a.Kernel();
             if (!k) return;
-            const auto profile = Geo::ProfileOf(*a.Curve(0));
-            if (!profile)
-                return a.Error("轮廓不是闭合的水平曲线（圆、闭合多段线、矩形）");
             const double start = a.Number(2), end = a.Number(1);
             if (std::abs(end - start) < 1e-12)
                 return a.Error("起点与终点不能相同");
-            Solid::BodyPtr b = k->Extrude(*profile, end - start);
+            // 轮廓：曲线实体（圆、矩形、多段线走内核的精确拉伸，其余转成空间曲线）或闭合的空间曲线（椭圆、样条节点的输出）
+            const Value& in = a.In(0);
+            std::optional<Solid::NurbsCurve> loop;
+            Solid::BodyPtr b;
+            if (in.Type() == DataType::Curve && in.AsCurve())
+            {
+                const CurvePtr curve = ClosedProfile(in.AsCurve());
+                if (const auto profile = Geo::ProfileOf(*curve))
+                    b = k->Extrude(*profile, end - start);
+                else
+                    loop = LoopOf(*curve);
+            }
+            else if (in.Type() == DataType::Curve3D && in.AsCurve3D() && in.AsCurve3D()->IsValid() && in.AsCurve3D()->IsClosed(1e-6))
+                loop = CounterClockwise(*in.AsCurve3D());
+            if (!b)
+            {
+                if (!loop || !IsHorizontal(*loop))
+                    return a.Error("轮廓不是闭合的水平曲线（圆、椭圆、闭合样条、多段线、矩形）");
+                b = ExtrudeLoop(*k, *loop, end - start);
+            }
             if (b && std::abs(start) > 1e-12)
                 b = k->Transform(b, Math::Mat4::Translation({ 0, 0, start }));
             OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 3)), "拉伸", isVoid);
@@ -316,9 +366,9 @@ namespace MiniCAD::Nodes
             case Form::Extrude:
                 t.Id          = isVoid ? "void.extrude" : "solid.extrude";
                 t.Name        = prefix + "拉伸";
-                t.Description = "闭合轮廓（圆、闭合多段线、矩形）沿工作平面法向从起点拉伸到终点；终点小于起点时反向" + voidTip;
+                t.Description = "闭合轮廓（圆、椭圆、闭合样条、多段线、矩形；不闭合的多段线首尾相连）沿工作平面法向从起点拉伸到终点；终点小于起点时反向" + voidTip;
                 t.Keywords    = isVoid ? "void extrusion 空心拉伸 挤出" : "extrusion 拉伸体 挤出 高度";
-                t.Inputs      = { In("轮廓", DataType::Curve), In("终点", DataType::Number, 10.0, "拉伸终点（旧版的“高度”）"),
+                t.Inputs      = { In("轮廓", DataType::Geometry, {}, "曲线或空间曲线"), In("终点", DataType::Number, 10.0, "拉伸终点（旧版的“高度”）"),
                                   In("起点", DataType::Number, 0.0), plane };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveExtrude(a, isVoid); };
                 break;
