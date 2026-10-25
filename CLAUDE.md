@@ -146,7 +146,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
 - `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量；控制台打印每一项的名字与用时，最后列出最慢的 5 项。20 万条线的耗时测量（只打印、debug 版约 24 秒）默认跳过，加 `--full` 才跑。2026-10-23 起应全部通过（之前的失败是测试本身的问题：视口未显示、细线显示默认值已改）
-- CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest；只在推送 `v*` 标签时自动运行，推送分支、PR 不运行（可在 Actions 页面手动运行）
+- CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest；推送 `v*` 标签时运行并发布；到 main 的 PR 自动运行（只编译、测试、打包，main 的规则集要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项检查通过才能合并）；推送分支不运行（可在 Actions 页面手动运行）
 
 ## 发布
 
