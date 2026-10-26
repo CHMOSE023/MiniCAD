@@ -7,6 +7,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include "Core/Entity/OleFrameEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -54,6 +55,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <thread>
 #include <unordered_set>
@@ -3090,6 +3092,16 @@ namespace MiniCAD
             std::printf("首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB；顶点 线 %zu 填充 %zu 文字 %zu\n", msSince(t), m_timing.viewport,
                         m2, w2, st.lines, st.fills, st.texts);
         }
+        // MINICAD_BENCH_SHOT=目录：模型页「全部显示」的视口也存一张 model.bmp，核对模型空间的显示（如外部参照）
+        if (const char* shotDir = std::getenv("MINICAD_BENCH_SHOT"))
+        {
+            const std::filesystem::path dir(shotDir);
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            RenderFrame();
+            SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "model.bmp");
+            std::printf("截图：%s（模型页）\n", (dir / "model.bmp").string().c_str());
+        }
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
         POINT sp = { static_cast<LONG>(std::lround(vr.Center().x * m_dpiScale)), static_cast<LONG>(std::lround(vr.Center().y * m_dpiScale)) };
@@ -3204,6 +3216,75 @@ namespace MiniCAD
                         wheelSum / 4, wheelVp / 4, escKeyMs, escMs, escVp, escLayout, escUi, editor.GetSelection().size());
             std::printf("    Esc 帧的布局细分：状态同步 %.1f、第一次布局 %.1f、命令行同步 + 第二次布局 %.1f ms；图层 %zu 个\n",
                         m_timing.status, m_timing.layout1, m_timing.layout2, SortedLayerIds(*doc).size());
+        }
+
+        // 布局页：切到第一张图纸布局（进入时框住纸张），滚轮 24 帧、平移 24 帧。
+        // 布局页的视口把模型空间内容合成进自己的缓存，这里看每格滚轮是否都在重新合成
+        if (doc->GetScene().Layouts().size() > 1)
+        {
+            t = NowTicks();
+            ActivateLayout(1);
+            StateChanged();
+            RenderFrame();
+            std::printf("布局页「%s」首帧 %.0f ms（视口 %.0f ms）\n", doc->GetScene().Layouts()[1].Name.c_str(), msSince(t), m_timing.viewport);
+            double sum = 0, mx = 0;
+            int full = 0, dyn = 0;
+            for (int i = 0; i < 2 * steps; ++i)
+            {
+                const bool zoomIn = i < steps;
+                const uint64_t v = editor.BuildViewState().SceneVersion, dv = editor.BuildViewState().SceneDynVersion;
+                const int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, zoomIn ? WHEEL_DELTA : -WHEEL_DELTA), MAKELPARAM(sp.x, sp.y));
+                RenderFrame();
+                const double ms = msSince(f0);
+                sum += ms; mx = std::max(mx, ms);
+                full += editor.BuildViewState().SceneVersion != v;
+                dyn += editor.BuildViewState().SceneDynVersion != dv;
+            }
+            std::printf("布局页滚轮 %d 帧：平均 %.1f ms，最慢 %.1f ms，整体重建 %d 帧，动态流重建 %d 帧\n", 2 * steps, sum / (2 * steps), mx, full, dyn);
+            panPass("布局页");
+            // MINICAD_BENCH_SHOT=目录：把布局页（框住纸张）与第一个 OLE 对象（放大到它）的视口读回存成 BMP，核对显示效果
+            if (const char* shotDir = std::getenv("MINICAD_BENCH_SHOT"))
+            {
+                const std::filesystem::path dir(shotDir);
+                std::error_code ec;
+                std::filesystem::create_directories(dir, ec);
+                Camera& cam = m_docManager.GetViewport().GetCamera();
+                ZoomToLayout(doc->GetScene().Layouts()[1]);     // 与进布局时相同的视图
+                m_viewport->RequestRender();
+                RenderFrame();
+                RenderFrame();
+                SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "layout.bmp");
+                const OleFrameEntity* ole = nullptr;
+                doc->GetScene().ForEachObject([&](const Object& o) { if (!ole) ole = dynamic_cast<const OleFrameEntity*>(&o); });
+                if (ole)
+                {
+                    const AABB box = ole->GetBoundingBox();
+                    cam.ZoomToBounds(box.Min.x, box.Min.y, box.Max.x, box.Max.y, 1.2);
+                    m_viewport->RequestRender();
+                    RenderFrame();
+                    RenderFrame();
+                    SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "ole.bmp");
+                    std::printf("截图：%s（布局页）、ole.bmp（OLE 对象 %.1f x %.1f）\n", (dir / "layout.bmp").string().c_str(),
+                                box.Max.x - box.Min.x, box.Max.y - box.Min.y);
+                }
+            }
+            // MINICAD_BENCH_PAUSE=秒：在布局页停留（照常处理消息与绘制），便于截图核对视口里的内容
+            if (const char* pause = std::getenv("MINICAD_BENCH_PAUSE"))
+            {
+                const int64_t until = NowTicks() + static_cast<int64_t>(std::atof(pause) * static_cast<double>(kTicksPerSecond));
+                while (NowTicks() < until)
+                {
+                    MSG m;
+                    while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); }
+                    m_viewport->RequestRender();
+                    RenderFrame();
+                    Sleep(16);
+                }
+            }
+            ActivateLayout(0);
+            StateChanged();
+            RenderFrame();
         }
 
         // 切换文档：切到新建的空白文档再切回，切回后的首帧要重新生成全部显示数据

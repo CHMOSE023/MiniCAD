@@ -37,9 +37,26 @@ namespace MiniCAD
             if (!name.empty() && std::filesystem::is_regular_file(Utf8ToPath(path), ec))
                 return path;
         }
+        // 再到额外目录（系统字体目录）找：只按文件名，带路径的名字上面已经判过
+        if (!fontFile.empty() && fontFile.find('/') == std::string::npos && fontFile.find('\\') == std::string::npos)
+            for (const std::string& dir : m_extraDirs)
+                for (const std::string& name : {fontFile, lower, upper})
+                {
+                    const std::string path = dir + name;
+                    if (std::filesystem::is_regular_file(Utf8ToPath(path), ec))
+                        return path;
+                }
         if (found) *found = false;
         LOG_WARN("字体 %s 不存在，以 %s 代替", fontFile.c_str(), substitute);
         return ResolvePath(substitute);
+    }
+
+    void FontEngine::AddSearchDir(std::string dir)
+    {
+        if (dir.empty()) return;
+        if (dir.back() != '/' && dir.back() != '\\') dir += '/';
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_extraDirs.push_back(std::move(dir));
     }
 
     std::string FontEngine::BuildKey(const FontStyle& style) const

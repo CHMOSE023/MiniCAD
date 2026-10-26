@@ -237,7 +237,7 @@ namespace MiniCAD
                 return fail("无法完整读取图纸文件");
             }
             std::string err;
-            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource, progress))
+            if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource, progress, path))
             {
                 return fail(err.empty() ? "图纸已损坏或版本不受支持" : err);
             }
@@ -372,7 +372,9 @@ namespace MiniCAD
             // 布局是二维图纸：模型页可能在三维视图里，进布局时回到俯视
             camera.Azimuth   = CameraState{}.Azimuth;
             camera.Elevation = CameraState{}.Elevation;
-            if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+            if (sheet.ViewHeight > 0.0)
+                camera.Target = { sheet.ViewCenterX, sheet.ViewCenterY, 0.0 };   // 保存的图纸空间视图
+            else if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
             {
                 // 只把目标点移到纸张中心；**缩放系数不在这里算** ——
                 // Camera::Zoom 的单位是「每像素多少世界单位」的倒数关系

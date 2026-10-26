@@ -96,6 +96,7 @@ namespace MiniCAD
         double GetWorldPerPixel() const override    { return m_worldPerPixel; }
         double GetViewportHeightPx() const override { return m_viewportHeightPx; }
         void MarkViewDependent() override { if (m_worldPerPixel > 0.0) m_viewDependent = true; }
+        void SetTextWidthFactor(double widthFactor) override { m_textWidthFactor = widthFactor > 0.0 ? widthFactor : 0.0; }
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
@@ -354,9 +355,11 @@ namespace MiniCAD
             if (utf8Text.empty() || !m_fontResolver)
                 return 0.0;
 
-            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return 0.0;
+            if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureWidth(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth);
@@ -373,9 +376,11 @@ namespace MiniCAD
             if (utf8Text.empty() || !m_fontResolver)
                 return false;
 
-            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return false;
+            if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureInkBounds(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth,
@@ -415,6 +420,8 @@ namespace MiniCAD
             if (!rs.Font) return;
             if (widthFactor > 0.0)
                 rs.WidthFactor = widthFactor;
+            else if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;      // 多行文字实体自己的宽度因子（SetTextWidthFactor）
 
             TextLayoutEngine layout;
             auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth, align);
@@ -589,10 +596,12 @@ namespace MiniCAD
 
     public:
         // 沿 a→b 按线型图案铺设：实段交给 emitSeg(p, q)；点笔划（0 长度段）在 dotLen > 0 时作为
-        // dotLen 长的实段，否则交给 emitDot(p)。图案全为点（铺不动）时整段当实线
+        // dotLen 长的实段，否则交给 emitDot(p)。图案全为点（铺不动）时整段当实线。
+        // startOffset：a 点落在图案里的位置（世界单位，已含比例；对周期取模）——一段虚线被裁掉前半段后，
+        // 后半段从这个相位接着铺，裁剪处的 dash / gap 才不会错位
         template <class EmitSeg, class EmitDot>
         static void LayPattern(const Math::Point3& a, const Math::Point3& b, const LineTypeRecord& rec, double scale,
-                               double dotLen, EmitSeg&& emitSeg, EmitDot&& emitDot)
+                               double dotLen, EmitSeg&& emitSeg, EmitDot&& emitDot, double startOffset = 0.0)
         {
             const double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
             const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -609,11 +618,28 @@ namespace MiniCAD
             const double ux = dx / len, uy = dy / len, uz = dz / len;
             auto P = [&](double t) -> Math::Point3 { return { a.x + ux * t, a.y + uy * t, a.z + uz * t }; };
 
-            double t = 0.0;
+            // 先把起点相位走掉：跳过整段落在相位之前的元素，停在相位所在的元素中间（partial = 该元素剩余长度）
             size_t idx = 0;
+            double partial = -1.0;
+            if (startOffset > 0.0)
+            {
+                const double period = advance * scale;
+                double off = std::fmod(startOffset, period);
+                if (off < 0.0) off += period;
+                // 元素总长 = 周期 > off，所以最多走一圈就停下
+                for (size_t n = 0; off > 1e-12 && n < rec.Pattern.size(); ++n, ++idx)
+                {
+                    const double seg = std::abs(rec.Pattern[idx % rec.Pattern.size()]) * scale;
+                    if (seg > off + 1e-12) { partial = seg - off; break; }
+                    off -= seg;
+                }
+            }
+
+            double t = 0.0;
             while (t < len)
             {
-                const double seg = rec.Pattern[idx % rec.Pattern.size()] * scale;
+                double seg = rec.Pattern[idx % rec.Pattern.size()] * scale;
+                if (partial >= 0.0) { seg = seg < 0.0 ? -partial : partial; partial = -1.0; }
                 ++idx;
                 if (seg > 0.0)
                 {
@@ -657,7 +683,7 @@ namespace MiniCAD
                            out.push_back(ToVertex(p, d.color));
                            out.push_back(ToVertex(q, d.color));
                        },
-                       [](const Math::Point3&) {});
+                       [](const Math::Point3&) {}, d.phase);
         }
 
         // 延迟长虚线：开启后无线宽的长虚线段只记录不铺设（场景流用；选中流、对话框预览不开）
@@ -665,6 +691,9 @@ namespace MiniCAD
         bool DeferLongDashes() const     { return m_deferLongDashes; }
         // 本次细分延迟的长虚线段（调用方取走后清空）
         std::vector<DeferredDash> TakeDeferredDashes() { return std::move(m_deferred); }
+        // 尚未取走的延迟段（布局页的视口合成后按视口矩形裁剪其中新增的那些）
+        std::vector<DeferredDash>& DeferredDashes() { return m_deferred; }
+        double GetLineTypeScale() const { return m_lineTypeScale; }
 
     private:
 
@@ -740,6 +769,7 @@ namespace MiniCAD
         double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
+        double                         m_textWidthFactor = 0.0;   // 当前实体的多行文字宽度因子（0 = 按样式）
         bool                           m_dotsAsSegments = false;   // 线型的点笔划画成小段（选中流）
         bool                           m_deferLongDashes = false;  // 长虚线段延迟铺设（见 EmitStyled）
         std::vector<DeferredDash>      m_deferred;                 // 本次细分延迟的长虚线段

@@ -2,8 +2,10 @@
 #include "Entity.hpp"
 #include "Core/GeomKernel/AABB.hpp"
 #include "Core/Math/Point3.hpp"
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 namespace MiniCAD
 {
@@ -19,10 +21,13 @@ namespace MiniCAD
     // 坐标语义（DXF 组码）：
     //   · 10/20  视口中心（**图纸空间**坐标，即纸张上的位置）
     //   · 40/41  视口宽 / 高（图纸空间单位，纸张上的框大小）
-    //   · 12/22  视图中心（**模型空间**坐标，视口「看向」哪里）
+    //   · 12/22  视图中心（DCS 坐标：以 17/27/37 的视图目标点为原点、绕视线转过 Twist 的坐标系；
+    //            多数图纸目标点是原点，这时就是模型坐标。内部存的是换算后的 WCS，见 SetViewCenterDcs）
+    //   · 17/27/37 视图目标点（WCS）：DCS 的原点
     //   · 45     视图高度（模型空间单位，视口竖向能容纳多少模型长度）
     //   · 50     视图旋转角（弧度）
     //   · 68     视口 id
+    //   · 331    在本视口里冻结的图层（VPLAYER），这些图层的模型内容本视口不显示
     //
     // 由此得到模型 → 图纸的变换（挤出方向为 +Z 时）：
     //     scale   = 41 / 45
@@ -66,17 +71,24 @@ namespace MiniCAD
         void SetViewCenter(const Math::Point3& c) { m_viewCenter = c; }
 
         // 用 DWG 组码 12/22 的原始（DCS）值设置视图中心：内部转成 WCS 存。
-        // twist 用同一个视口的 TwistAngle（组码 51）。
-        void SetViewCenterDcs(const Math::Point3& dcsCenter, double twist)
+        // twist 用同一个视口的 TwistAngle（组码 51），target 是视图目标点（组码 17/27/37）。
+        //
+        // ⚠ DCS 的原点是**视图目标点**，不是世界原点（ObjectARX 对 DCS 的定义：
+        //    「原点为 TARGET，Z 轴为视线方向」）。多数视口目标点是 (0,0,0)，加不加都一样；
+        //    但经 DVIEW / 三维动态观察过的视口目标点落在模型上、12/22 只是相对目标点的
+        //    小偏移（实测 0525 总平面图的视口 effb9：目标 (64093,86195)、12/22 = (-80.7,-5.2)），
+        //    不加目标点就把视口对到世界原点附近 —— 表现为「这个视口里只有零星几笔」。
+        void SetViewCenterDcs(const Math::Point3& dcsCenter, double twist,
+                              const Math::Point3& target = Math::Point3{ 0.0, 0.0, 0.0 })
         {
             const double c  = std::cos(-twist);
             const double sn = std::sin(-twist);
             const double rx = dcsCenter.x * c - dcsCenter.y * sn;
             const double ry = dcsCenter.x * sn + dcsCenter.y * c;
-            m_viewCenter = Math::Point3{ rx, ry, dcsCenter.z };
+            m_viewCenter = Math::Point3{ target.x + rx, target.y + ry, dcsCenter.z };
         }
 
-        // 取回组码 12/22 应写入的（DCS）值 —— SetViewCenterDcs 的逆变换。
+        // 取回组码 12/22 应写入的（DCS）值 —— SetViewCenterDcs 的逆变换（目标点按 (0,0,0) 写出）。
         Math::Point3 GetViewCenterDcs(double twist) const
         {
             const double c  = std::cos(twist);
@@ -94,6 +106,24 @@ namespace MiniCAD
 
         int GetViewportId() const { return m_id; }
         void SetViewportId(int id) { m_id = id; }
+
+        // ── 本视口里冻结的图层（组码 331）──────────────────────────────
+        //
+        // AutoCAD 的 VPLAYER：同一个图层可以在这个视口里冻结、在别的视口里显示，
+        // 与图层表的开关 / 冻结无关。合成模型内容时这些图层的实体（含块里的子实体）跳过。
+        // 不处理时每个视口都显示全部图层（实测 0525 总平面图：各视口分别冻结了绿化、
+        // 消防环线、文字说明等图层，布局页与 AutoCAD 对不上）。
+        const std::vector<LayerID>& GetFrozenLayers() const { return m_frozenLayers; }
+        void SetFrozenLayers(std::vector<LayerID> layers)
+        {
+            std::sort(layers.begin(), layers.end());
+            layers.erase(std::unique(layers.begin(), layers.end()), layers.end());
+            m_frozenLayers = std::move(layers);
+        }
+        bool IsLayerFrozen(LayerID id) const
+        {
+            return std::binary_search(m_frozenLayers.begin(), m_frozenLayers.end(), id);
+        }
 
         // 是否应当把**模型内容**合成进来。
         //
@@ -219,6 +249,7 @@ namespace MiniCAD
             e->m_viewHeight = m_viewHeight;
             e->m_twist      = m_twist;
             e->m_id         = m_id;
+            e->m_frozenLayers = m_frozenLayers;
             return e;
         }
 
@@ -253,5 +284,6 @@ namespace MiniCAD
         double       m_viewHeight = 0.0;             // 视图高度（45，模型单位）
         double       m_twist      = 0.0;             // 视图旋转（50）
         int          m_id         = 0;               // 视口 id（68）
+        std::vector<LayerID> m_frozenLayers;         // 本视口冻结的图层（331），升序去重
     };
 }

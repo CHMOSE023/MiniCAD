@@ -233,6 +233,7 @@ namespace MiniCAD
         m_viewAnimSeconds    = o.m_viewAnimSeconds;
         m_fontTexture        = o.m_fontTexture;
         m_glyphProvider      = o.m_glyphProvider;
+        m_oleRasterizer      = o.m_oleRasterizer;
         m_textHeight         = o.m_textHeight;
         m_hatchSettings      = o.m_hatchSettings;
         m_mlineSettings      = o.m_mlineSettings;
@@ -3198,13 +3199,7 @@ namespace MiniCAD
         // 时就是 260 万次无用构建。包围盒判断是 O(1)，成本可忽略。
         if (const auto* vp = dynamic_cast<const ViewportEntity*>(&entity))
             if (vp->ShowsModel())
-            {
-                // 视口里的内容要按视口矩形裁剪，延迟出去的长虚线段裁不到：合成期间按像素取舍（视口实体随视图变化）
-                const bool defer = ctx.DeferLongDashes();
-                ctx.SetDeferLongDashes(false);
                 ComposeModelIntoViewport(*vp, ctx);
-                ctx.SetDeferLongDashes(defer);
-            }
 
         // 合成完成后才取缓冲（顺序见上）
         c.lines         = m_scratchLines;
@@ -3216,6 +3211,46 @@ namespace MiniCAD
         c.longDashes    = ctx.TakeDeferredDashes();
         c.wipes         = ctx.TakeWipes();
         c.images        = ctx.TakeImages();
+    }
+
+    namespace
+    {
+        // 视口合成用的变换汇：模型内容经视口变换落到纸面坐标，并让合成结果**不随视图变化**。
+        //
+        // 以前合成期间把长虚线按像素取舍（延迟出去的段裁不到视口矩形），只要视口里有一段长虚线或一个相对尺寸的点，
+        // 整个视口实体就被标成随视图变化 —— 布局页每格滚轮都要把视口看见的模型重新合成一遍
+        //（实测 0525 总平面图：模型页每格 16 ms，布局页 340 ms）。现在：
+        //   · 长虚线照常延迟（DeferredDash），合成后由调用方按视口矩形裁剪，缩放时只重铺这些段，不重新合成；
+        //   · 相对尺寸的点（$PDSIZE ≤ 0，按视口高度百分比）按**本视口**的纸面高度换算，大小随纸面固定；
+        //   · 像素比例按视口比例换算，实体里"N 像素"的量经变换后仍是 N 像素；
+        //   · MarkViewDependent 不转发。线宽（细线显示关闭时）走 DrawContext::EmitSolid 自己的标记，仍随视图变化。
+        //   · 在本视口里冻结的图层（VPLAYER）对块里的子实体也要生效，所以 IsLayerVisible 一并过滤。
+        class ViewportComposeSink final : public TransformDrawSink
+        {
+        public:
+            ViewportComposeSink(IDrawSink& target, const Math::Mat4& m, const ViewportEntity& vp)
+                : TransformDrawSink(target, m), m_target(target), m_vp(vp)
+                , m_scale(vp.ModelToPaperScale()), m_paperHeight(vp.GetHeight()) {}
+
+            bool IsLayerVisible(LayerID layerId) const override
+            {
+                return !m_vp.IsLayerFrozen(layerId) && m_target.IsLayerVisible(layerId);
+            }
+
+            double GetWorldPerPixel() const override { return m_scale > 0.0 ? m_target.GetWorldPerPixel() / m_scale : 0.0; }
+            double GetViewportHeightPx() const override
+            {
+                const double wpp = m_target.GetWorldPerPixel();
+                return wpp > 0.0 ? m_paperHeight / wpp : 0.0;     // 本视口框在屏幕上的高度（像素）
+            }
+            void MarkViewDependent() override {}
+
+        private:
+            IDrawSink&            m_target;
+            const ViewportEntity& m_vp;
+            double                m_scale;
+            double                m_paperHeight;
+        };
     }
 
     //
@@ -3230,6 +3265,13 @@ namespace MiniCAD
         const double s = vp.ModelToPaperScale();
         if (!(s > 0.0))
             return;
+
+        // $PSLTSCALE = 0：视口里的虚线跟着视口比例缩（模型里的 dash 长度 × s 才是纸面上的长度）；
+        // = 1（默认）：按图纸单位铺，与纸面上的虚线一样疏密。几何已经变换到纸面坐标，所以后者什么都不用做
+        const double lineTypeScale = ctx.GetLineTypeScale();
+        if (!m_doc->GetScene().GetPaperSpaceLineTypeScaling())
+            ctx.SetLineTypeScale(lineTypeScale * s);
+        const size_t clipDashFrom = ctx.DeferredDashes().size();
 
         // ── 视口裁剪：模型内容只画在视口矩形内 ──────────────────────────
         //
@@ -3269,7 +3311,7 @@ namespace MiniCAD
             m = m * Mat4::RotationZ(vp.GetTwist());
         m = m * Mat4::Translation(Vec3{ vp.GetCenter().x, vp.GetCenter().y, 0.0 });
 
-        TransformDrawSink vsink(ctx, m);
+        ViewportComposeSink vsink(ctx, m, vp);
 
         auto& scene = m_doc->GetScene();
         scene.ForEachObject([&](const Object& obj)
@@ -3288,6 +3330,9 @@ namespace MiniCAD
             if (const Layer* layer = scene.GetLayerManager().GetLayer(e.GetAttr().LayerId);
                 layer && !layer->IsVisible())
                 return;
+            // 在本视口里冻结的图层（VPLAYER）：只在这个视口不显示
+            if (vp.IsLayerFrozen(e.GetAttr().LayerId))
+                return;
 
             // 包围盒预剔除：完全落在视口可见模型矩形外的直接跳过（不做任何构建）
             const AABB box = e.GetBoundingBox();
@@ -3300,6 +3345,7 @@ namespace MiniCAD
             e.Draw(vsink, /*isSelected*/ false, /*isHovered*/ false);
             vsink.BeginEntity(nullptr);
         });
+        ctx.SetLineTypeScale(lineTypeScale);
 
         // 循环结束后裁掉本次合成落在视口矩形外的顶点（只裁 [from, end) 区间）
         const double hw = vp.GetWidth() * 0.5;
@@ -3326,6 +3372,37 @@ namespace MiniCAD
             // 光栅图像同样是单独提交的一路（Viewport 里逐个 SubmitImage），
             // 不裁就整张贴图溢出到视口外的纸面上
             WipeClip::ClipImages(ctx.Images(), clipRect, clipImageFrom, /*keepInside*/ true);
+
+            // 合成期间延迟出来的长虚线段（铺进动态流时才展开）同样只留视口矩形内的部分：
+            // 视口框是纸面上的轴对齐矩形，直接 Liang–Barsky；裁掉前半段时把相位往后推，裁剪处的 dash / gap 不错位
+            auto& dashes = ctx.DeferredDashes();
+            const double xmin = vc.x - hw, xmax = vc.x + hw, ymin = vc.y - hh, ymax = vc.y + hh;
+            size_t kept = clipDashFrom;
+            for (size_t i = clipDashFrom; i < dashes.size(); ++i)
+            {
+                DeferredDash d = dashes[i];
+                const double dx = d.b.x - d.a.x, dy = d.b.y - d.a.y, dz = d.b.z - d.a.z;
+                double t0 = 0.0, t1 = 1.0;
+                auto clip = [&](double p, double q)
+                {
+                    if (p == 0.0) return q >= 0.0;
+                    const double r = q / p;
+                    if (p < 0.0) { if (r > t1) return false; if (r > t0) t0 = r; }
+                    else         { if (r < t0) return false; if (r < t1) t1 = r; }
+                    return true;
+                };
+                if (!clip(-dx, d.a.x - xmin) || !clip(dx, xmax - d.a.x) || !clip(-dy, d.a.y - ymin) || !clip(dy, ymax - d.a.y))
+                    continue;
+                if (t0 > 0.0 || t1 < 1.0)
+                {
+                    const Math::Point3 a = d.a;
+                    d.a = { a.x + dx * t0, a.y + dy * t0, a.z + dz * t0 };
+                    d.b = { a.x + dx * t1, a.y + dy * t1, a.z + dz * t1 };
+                    d.phase += t0 * std::sqrt(dx * dx + dy * dy + dz * dz);
+                }
+                dashes[kept++] = d;
+            }
+            dashes.resize(kept);
         }
     }
 
@@ -3365,6 +3442,38 @@ namespace MiniCAD
         const LineTypeTable& lineTypes = m_doc->GetScene().GetLineTypeTable();
         for (const DeferredDash& d : c.longDashes)
             DrawContext::EmitDeferredDash(d, lineTypes, m_lastWorldPerPixel, out);
+    }
+
+    // OLE 对象的快照（OleFrameEntity 经 EmitImage 请求 "ole:<哈希>"）：数据从登记处取，展示流是位图就直接解码，
+    // 是图元文件就交给平台光栅化；长边 4096 像素（Word 表格里的小字也能看清），结果按数据哈希缓存
+    std::shared_ptr<const ImageData> Editor::OleImage(const std::string& path)
+    {
+        uint64_t key = 0;
+        if (!Ole::ParseImagePath(path, key)) return nullptr;
+        if (const auto it = m_oleImages.find(key); it != m_oleImages.end())
+            return it->second;
+
+        std::shared_ptr<const ImageData> image;
+        if (const auto data = Ole::DataStore::Instance().Get(key))
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            Ole::Presentation pres;
+            if (Ole::ExtractPresentation(*data, pres))
+            {
+                if (pres.Format == Ole::PictureFormat::Dib)
+                    image = Ole::DecodeDib(pres.Data, ImageLibrary::NextKey());
+                else if (m_oleRasterizer)
+                    image = m_oleRasterizer(pres, kOleImageMaxSide);
+            }
+            else
+                LOG_WARN("OLE 对象没有可显示的展示数据，只画边框");
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (image)
+                LOG_INFO("OLE 对象快照：%s %zu 字节 → %u×%u 像素，%.0f ms", pres.Format == Ole::PictureFormat::Emf ? "EMF" : pres.Format == Ole::PictureFormat::Wmf ? "WMF" : "DIB",
+                         pres.Data.size(), image->Width, image->Height, ms);
+        }
+        m_oleImages.emplace(key, image);
+        return image;
     }
 
     // 只重建动态流：随视图变化的实体重新细分，按绘制序拼接，并用其后的区域覆盖裁剪（与静态流的规则相同）
@@ -3436,7 +3545,10 @@ namespace MiniCAD
                           .parent_path().string();
             m_imageLibrary.SetBaseDir(dir);
         }
-        const ImageProvider imageProvider = [this](const std::string& p) { return m_imageLibrary.Get(p); };
+        const ImageProvider imageProvider = [this](const std::string& p)
+        {
+            return p.compare(0, 4, "ole:") == 0 ? OleImage(p) : m_imageLibrary.Get(p);
+        };
 
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
         // 缩放变化只让依赖像素比例的实体（线宽/虚线按屏幕像素烘焙进世界顶点）失效。

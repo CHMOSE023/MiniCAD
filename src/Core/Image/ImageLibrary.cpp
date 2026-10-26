@@ -101,6 +101,9 @@ namespace MiniCAD
         return {};
     }
 
+    uint64_t ImageLibrary::NextKey() { return g_nextKey++; }
+
+
     std::shared_ptr<const ImageData> ImageLibrary::Get(const std::string& path)
     {
         if (auto it = m_cache.find(path); it != m_cache.end())
@@ -138,7 +141,7 @@ namespace MiniCAD
             else
             {
                 auto img    = std::make_shared<ImageData>();
-                img->Key    = g_nextKey++;
+                img->Key    = NextKey();
                 img->Width  = static_cast<uint32_t>(w);
                 img->Height = static_cast<uint32_t>(h);
                 img->Rgba.assign(px, px + static_cast<size_t>(w) * h * 4);

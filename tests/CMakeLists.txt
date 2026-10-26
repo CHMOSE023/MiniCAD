@@ -128,6 +128,8 @@ if(WIN32)
         "Core/BlockFixTests.cpp"
         "Core/MiddleDoubleClickZoomTests.cpp"
         "Core/LayoutTests.cpp"
+        "Core/OleFrameTests.cpp"
+        "Core/CadXrefTests.cpp"
         "Core/MLeaderImportTests.cpp"
         "Core/MeshTests.cpp"
         "Core/MLineToolTests.cpp"

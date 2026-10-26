@@ -448,6 +448,13 @@ namespace MiniCAD
         m_fontSystem = fontSystem;
     }
 
+    void DocumentManager::SetOleRasterizer(Editor::OleRasterizer rasterizer)
+    {
+        m_idleEditor.SetOleRasterizer(rasterizer);      // 新建的编辑器从它继承设置
+        for (auto& [doc, editor] : m_editors)
+            editor->SetOleRasterizer(rasterizer);
+    }
+
     FontStyle::FontStyleId DocumentManager::RegisterFontStyle(FontStyle style)
     {
         if (!m_fontSystem) return 0;

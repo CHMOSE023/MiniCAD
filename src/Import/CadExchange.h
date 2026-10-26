@@ -51,10 +51,11 @@ namespace MiniCAD
     // version：文件版本对应的写出版本（2013 格式 → R2013，其余 → R2018），保存时据此沿用原版本
     // source：非空时返回原图，另存时传给 ExportCad
     // progress：读取进度（0～1），在调用线程上定期调用
+    // sourcePath：图纸文件的路径（UTF-8），外部参照（XREF）按它所在目录解析相对路径并读入；为空时外部参照只剩空块
     using ImportProgress = std::function<void(float)>;
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error = nullptr,
                    CadSaveVersion* version = nullptr, std::shared_ptr<const CadSource>* source = nullptr,
-                   const ImportProgress& progress = nullptr);
+                   const ImportProgress& progress = nullptr, const std::string& sourcePath = {});
 
     // 把场景写成 DWG 或 DXF（ASCII）。失败返回空数组
     // source：场景打开时的原图。格式与版本都与原图相同时以原图为底写出（见 CadSource），否则重新生成整张图纸，

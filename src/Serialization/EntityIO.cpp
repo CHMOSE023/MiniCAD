@@ -16,6 +16,7 @@
 #include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
+#include "Core/Entity/OleFrameEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
 #include "Core/Entity/TableEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
@@ -266,6 +267,22 @@ namespace MiniCAD::EntityIO
             double vh = e.GetViewHeight();         s.Value("viewHeight", vh);
             double tw = e.GetTwist();              s.Value("twist", tw);
             int32_t vid = e.GetViewportId();       s.Value("viewportId", vid);
+            // 本视口冻结的图层（VPLAYER）：只在非空时写，旧文件没有这项
+            if (!e.GetFrozenLayers().empty())
+            {
+                size_t n = e.GetFrozenLayers().size();
+                if (s.BeginArray("frozenLayers", n))
+                {
+                    for (size_t i = 0; i < n; ++i)
+                    {
+                        if (!s.BeginElement(i)) continue;
+                        uint32_t lid = e.GetFrozenLayers()[i];
+                        s.Value("layer", lid);
+                        s.EndElement();
+                    }
+                    s.EndArray();
+                }
+            }
         }
         std::unique_ptr<Entity> ReadViewport(ISerializer& s, Object::ObjectID id)
         {
@@ -279,6 +296,22 @@ namespace MiniCAD::EntityIO
             e->SetViewHeight(vh);
             e->SetTwist(tw);
             e->SetViewportId(vid);
+            size_t n = 0;
+            if (s.BeginArray("frozenLayers", n))
+            {
+                std::vector<LayerID> frozen;
+                frozen.reserve(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    if (!s.BeginElement(i)) continue;
+                    uint32_t lid = 0;
+                    s.Value("layer", lid);
+                    frozen.push_back(lid);
+                    s.EndElement();
+                }
+                s.EndArray();
+                e->SetFrozenLayers(std::move(frozen));
+            }
             return e;
         }
 
@@ -588,6 +621,7 @@ namespace MiniCAD::EntityIO
             double h = e.GetHeight();                 s.Value("height", h);
             double r = e.GetRotation();               s.Value("rotation", r);
             double w = e.GetBoxWidth();               s.Value("boxWidth", w);
+            double wf = e.GetWidthFactor();           s.Value("widthFactor", wf);
             auto attach = e.GetAttachment();          Ser::Enum(s, "attachment", attach);
             auto dir = e.GetDrawingDirection();       Ser::Enum(s, "drawDir", dir);
             auto lss = e.GetLineSpacingStyle();       Ser::Enum(s, "lineSpacingStyle", lss);
@@ -608,6 +642,7 @@ namespace MiniCAD::EntityIO
             double h = 1.0;                                s.Value("height", h);               e->SetHeight(h);
             double r = 0.0;                                s.Value("rotation", r);             e->SetRotation(r);
             double w = 0.0;                                s.Value("boxWidth", w);             e->SetBoxWidth(w);
+            double wf = 0.0;                               s.Value("widthFactor", wf);         e->SetWidthFactor(wf);
             auto attach = MTextAttachment::TopLeft;        Ser::Enum(s, "attachment", attach); e->SetAttachment(attach);
             auto dir = MTextDrawingDirection::ByStyle;     Ser::Enum(s, "drawDir", dir);       e->SetDrawingDirection(dir);
             auto lss = MTextLineSpacing::AtLeast;          Ser::Enum(s, "lineSpacingStyle", lss);
@@ -789,6 +824,32 @@ namespace MiniCAD::EntityIO
             s.Value("showFrame", frame);
             auto e = std::make_unique<ImageEntity>(id, std::move(path), r.P1, r.P2, r.P3, r.P4);
             e->SetShowFrame(frame);
+            return e;
+        }
+
+        // OLE 对象：四个顶点 + 类型 + 二进制数据（base64）
+        void WriteOleFrame(ISerializer& s, const OleFrameEntity& e)
+        {
+            WriteRectangle(s, e);
+            int32_t type = e.GetOleType();
+            s.Value("oleType", type);
+            std::vector<uint8_t> bytes = e.GetData() ? *e.GetData() : std::vector<uint8_t>{};
+            Ser::Bytes(s, "data", bytes);
+        }
+        std::unique_ptr<Entity> ReadOleFrame(ISerializer& s, Object::ObjectID id)
+        {
+            Rectangle r;
+            Ser::Value(s, "p1", r.P1);
+            Ser::Value(s, "p2", r.P2);
+            Ser::Value(s, "p3", r.P3);
+            Ser::Value(s, "p4", r.P4);
+            int32_t type = 2;
+            s.Value("oleType", type);
+            std::vector<uint8_t> bytes;
+            Ser::Bytes(s, "data", bytes);
+            auto e = std::make_unique<OleFrameEntity>(id, r.P1, r.P2, r.P3, r.P4);
+            e->SetOleType(type);
+            e->SetData(std::make_shared<const std::vector<uint8_t>>(std::move(bytes)));
             return e;
         }
 
@@ -1285,6 +1346,7 @@ namespace MiniCAD::EntityIO
             { "TableEntity",     &WriteThunk<TableEntity, &WriteTable>,         &ReadTable     },
             { "MLineEntity",     &WriteThunk<MLineEntity, &WriteMLine>,         &ReadMLine     },
             { "ImageEntity",     &WriteThunk<ImageEntity, &WriteImage>,         &ReadImage     },
+            { "OleFrameEntity",  &WriteThunk<OleFrameEntity, &WriteOleFrame>,   &ReadOleFrame  },
             { "WipeoutEntity",   &WriteThunk<WipeoutEntity, &WriteWipeout>,     &ReadWipeout   },
             { "SolidEntity",   &WriteThunk<SolidEntity, &WriteSolid>,         &ReadSolid     },
             { "Solid3DEntity",   &WriteThunk<Solid3DEntity, &WriteSolid3D>,     &ReadSolid3D   },

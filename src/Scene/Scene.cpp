@@ -87,6 +87,23 @@ namespace MiniCAD
 		s.Value("maxX", l.MaxX);
 		s.Value("maxY", l.MaxY);
 		s.Value("ownerKey", l.OwnerKey);
+		if (!s.IsLoading() || s.Has("viewHeight"))      // 旧文件没有：保持 0
+		{
+			s.Value("viewCenterX", l.ViewCenterX);
+			s.Value("viewCenterY", l.ViewCenterY);
+			s.Value("viewHeight", l.ViewHeight);
+		}
+	}
+
+	void Scene::SetLayoutView(uint64_t ownerKey, double centerX, double centerY, double height)
+	{
+		const int idx = FindLayout(ownerKey);
+		if (idx < 0 || !(height > 0.0)) return;
+		DrawingLayout& l = m_layouts[static_cast<size_t>(idx)];
+		if (l.ViewHeight > 0.0) return;
+		l.ViewCenterX = centerX;
+		l.ViewCenterY = centerY;
+		l.ViewHeight  = height;
 	}
 
 	int Scene::ModelLayoutIndex() const
@@ -284,6 +301,8 @@ namespace MiniCAD
 		s.Value("pointDisplaySize", pds);
 		double lts = m_lineTypeScale;
 		s.Value("lineTypeScale", lts);
+		bool psLts = m_psLineTypeScale;
+		s.Value("psLineTypeScale", psLts);
 
 		// 图纸布局：只有模型页时不写（新建文档的常态）
 		if (m_layouts.size() > 1)
@@ -375,6 +394,10 @@ namespace MiniCAD
 		double lts = 1.0;
 		s.Value("lineTypeScale", lts);
 		SetLineTypeScale(lts);
+		bool psLts = true;                        // 旧文件没有：按 AutoCAD 默认
+		if (s.Has("psLineTypeScale"))
+			s.Value("psLineTypeScale", psLts);
+		m_psLineTypeScale = psLts;
 
 		std::vector<DrawingLayout> layouts;      // 旧文件没有布局表：只有模型页
 		size_t nl = 0;

@@ -51,6 +51,7 @@ namespace MiniCAD
         void ReleaseFreeMemory() override;
         const char* GetGraphicsName() const override { return "D3D11"; }
         Solid::ISolidKernel* GetSolidKernel() override;
+        std::shared_ptr<const ImageData> RasterizeOle(const Ole::Presentation& presentation, uint32_t maxSide) override;
 
         void SetTitle(const std::string& utf8) override;
         bool HasWindowControls() const override { return true; }
@@ -68,6 +69,7 @@ namespace MiniCAD
         std::string GetResourceDir() const override;
         std::string GetAppDir() const override;
         std::string GetUserDataDir() const override;
+        std::vector<std::string> GetSystemFontDirs() const override;
         bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;
