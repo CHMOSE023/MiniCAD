@@ -58,6 +58,33 @@ build_wasm.bat serve
 
 输出目录 `out/build/wasm/MiniCADWeb/`，serve 参数，自动启动本地服务器， http://localhost:8080/MiniCADWeb。
 
+## Linux版编译
+
+需要 CMake 3.20+、Ninja、GCC 13+ 或 Clang（C++20）、OpenGL ES 3 / EGL 开发包、[SDL3](https://github.com/libsdl-org/SDL)。以 Ubuntu / Debian 为例：
+
+```bash
+sudo apt install build-essential cmake ninja-build pkg-config libegl-dev libgles-dev \
+    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
+    libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev libudev-dev
+```
+
+SDL3：Ubuntu 25.04 / Debian 13 起可以 `sudo apt install libsdl3-dev`；更早的发行版从源码编译安装（例如装到 `~/sdl3`）：
+
+```bash
+cmake -S SDL3-3.4.18 -B sdl3-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/sdl3 -DSDL_TESTS=OFF
+cmake --build sdl3-build && cmake --install sdl3-build
+```
+
+编译 MiniCAD（SDL3 装在系统目录时去掉 `CMAKE_PREFIX_PATH`）：
+
+```bash
+cmake -S . -B out/linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$HOME/sdl3
+cmake --build out/linux
+out/linux/MiniCADLinux/MiniCADLinux [图纸路径 ...]
+```
+
+找不到 SDL3 或 OpenGL ES 3 时只编译核心库与测试（`ctest --test-dir out/linux`）。打开、保存文件的对话框需要 xdg-desktop-portal 或 zenity，没有时可以把图纸拖进窗口或在命令行上给出。
+
 ## 测试
 
 ```bat
@@ -71,6 +98,7 @@ run_tests.bat
 - 图像加载使用 [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h)
 - 字体处理使用 [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h)
 - 网页界面字体 [Noto Sans SC](https://github.com/notofonts/noto-cjk)  
+- Linux 版窗口与输入使用 [SDL3](https://github.com/libsdl-org/SDL)（zlib 许可，动态链接）
 - 测试字体  `GB2312.ttf` `simplex.shx`  `TSSDCHN.SHX` `tssdeng.shx`
 
 ## 入门教程

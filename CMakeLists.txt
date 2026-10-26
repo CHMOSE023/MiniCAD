@@ -63,6 +63,10 @@ if(WIN32 AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Win32")
 endif()
 
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    add_subdirectory("apps/Linux")  # SDL3 宿主 + OpenGL ES 3（docs/Render/PLAN.md 阶段 2）
+endif()
+
 if(EMSCRIPTEN)
     if(MINICAD_BUILD_LEGACY_WASM)
         add_subdirectory(wasm)

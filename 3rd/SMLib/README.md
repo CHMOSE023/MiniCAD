@@ -25,6 +25,7 @@
 
 - 26 个成员 `operator==` 原本不是 const（`SmTree.h`、`SmLocalSolve1d.h`、`SmPointSet.h`/`.cpp`、`SmHealProbArray.h` 等 11 个头文件和 5 个源文件），全部补上 `const`
 - 派生类声明的是 `operator==(const 基类&)`，比较两个派生类对象时正反两种顺序转换相同：`SmEllipse.cpp`、`SmSurfOfExtrusion.cpp`、`SmSurfOfRevolution.cpp`、`SmVolume.cpp` 各一处改为显式调用 `p->operator==(*q)`（虚函数分派不变）
+- `SmHealProbArray.h`：类模板的析构函数原写作 `~SmProbArray<TYPE>()`，C++20 不允许这种写法（MSVC 放过，GCC 报错），改为 `~SmProbArray()`
 
 构建时不编译 `SMLib/src/SmDllMain.cpp`（只用于 DLL）和两个 `StdAfx.cpp`（改用 `target_precompile_headers`）。
 

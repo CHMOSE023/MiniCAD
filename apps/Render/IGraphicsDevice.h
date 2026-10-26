@@ -4,11 +4,13 @@
 #include "Render/IRenderBackend.h"
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace MiniCAD
 {
-    // 宿主要画的窗口：Win32 为 HWND；网页版不用（WebGL 上下文由 WebHost 创建并设为当前）
+    // 宿主要画的窗口：Win32 为 HWND；网页版不用（WebGL 上下文由 WebHost 创建并设为当前），
+    // Linux 不用（EGL / GLES3 上下文由宿主经 SDL3 创建并设为当前）
     struct NativeWindow
     {
         void* handle = nullptr;
@@ -45,6 +47,8 @@ namespace MiniCAD
         virtual const char* GetName() const = 0;            // 关于对话框显示，例如 "D3D11"
     };
 
-    // 按本平台编译进来的图形接口创建设备并初始化；失败返回 nullptr
-    std::unique_ptr<IGraphicsDevice> CreateGraphicsDevice(const NativeWindow& window, int width, int height);
+    // 按本平台编译进来的图形接口创建设备并初始化；失败返回 nullptr。
+    // preference：指定后端（小写，如 "gl"；来自 --gpu / MINICAD_GPU），空串 = 按本平台的默认顺序
+    std::unique_ptr<IGraphicsDevice> CreateGraphicsDevice(const NativeWindow& window, int width, int height,
+                                                          const std::string& preference = {});
 }

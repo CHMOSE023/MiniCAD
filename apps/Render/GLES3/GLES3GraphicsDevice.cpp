@@ -17,6 +17,13 @@ namespace MiniCAD
         m_height   = height;
         m_backend  = std::make_unique<MiniGUI::GLES3Backend>();
         m_renderer = std::make_unique<GLES3Renderer>();
+#ifdef __EMSCRIPTEN__
+        m_name = "WebGL2";
+#else
+        // 带上驱动报告的渲染器，例如 "OpenGL ES 3 (llvmpipe (LLVM 17.0.6, 256 bits))"：一眼看出是不是软件渲染
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        m_name = renderer && *renderer ? std::string("OpenGL ES 3 (") + renderer + ")" : std::string("OpenGL ES 3");
+#endif
         return true;
     }
 
@@ -58,10 +65,6 @@ namespace MiniCAD
 
     const char* GLES3GraphicsDevice::GetName() const
     {
-#ifdef __EMSCRIPTEN__
-        return "WebGL2";
-#else
-        return "OpenGL ES 3";
-#endif
+        return m_name.c_str();
     }
 }
