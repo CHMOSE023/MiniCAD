@@ -11,10 +11,10 @@ namespace MiniCAD
         m_deviceNotify(nullptr)
     {}
 
-    void Device::Initialize()
+    void Device::Initialize(bool warp)
     {
         CreateFactory();
-        CreateDevice();
+        CreateDevice(warp);
     }
 
     void Device::CreateFactory()
@@ -70,7 +70,7 @@ namespace MiniCAD
         }
     }
 
-    void Device::CreateDevice()
+    void Device::CreateDevice(bool warp)
     {
         UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
@@ -87,14 +87,15 @@ namespace MiniCAD
         };
 
         ComPtr<IDXGIAdapter1> adapter;
-        GetHardwareAdapter(adapter.GetAddressOf());
+        if (!warp)
+            GetHardwareAdapter(adapter.GetAddressOf());
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
 
         HRESULT hr = D3D11CreateDevice(
             adapter.Get(),
-            D3D_DRIVER_TYPE_UNKNOWN,
+            warp ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_UNKNOWN,
             nullptr,
             flags,
             levels,
@@ -129,6 +130,17 @@ namespace MiniCAD
         ThrowIfFailed(device.As(&m_d3dDevice));
         ThrowIfFailed(context.As(&m_d3dContext));
         context.As(&m_annotation);
+
+        // WARP 设备不是从 m_dxgiFactory 枚举出的适配器建的：交换链要用设备自己的工厂创建
+        if (warp)
+        {
+            ComPtr<IDXGIDevice>  dxgiDevice;
+            ComPtr<IDXGIAdapter> warpAdapter;
+            ComPtr<IDXGIFactory2> factory;
+            if (SUCCEEDED(device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(warpAdapter.GetAddressOf()))
+                && SUCCEEDED(warpAdapter->GetParent(IID_PPV_ARGS(factory.GetAddressOf()))))
+                m_dxgiFactory = factory;
+        }
     }
 
     void Device::HandleDeviceLost()
@@ -143,7 +155,7 @@ namespace MiniCAD
         m_d3dDevice.Reset();
         m_dxgiFactory.Reset();
 
-        Initialize();
+        Initialize(false);
 
         if (m_deviceNotify)
         {

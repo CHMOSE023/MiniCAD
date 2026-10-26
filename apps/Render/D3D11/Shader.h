@@ -4,6 +4,7 @@
 #include <d3d11.h>
 #include <d3dcommon.h>
 #include <Windows.h>
+#include "Hlsl/ViewportShaders.h"
 
 using  Microsoft::WRL::ComPtr;
 
@@ -38,46 +39,7 @@ namespace MiniCAD
     public:
         void Initialize(ID3D11Device* device)
         {
-            const char* lineShader = R"(
-                cbuffer VSConstants : register(b0)
-                {
-                    float4x4 vp;
-                    float4   options;
-                };
-
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
-                float4 MapColor(float4 c)
-                {
-                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                    if (max(d.x, max(d.y, d.z)) < 0.004f)
-                        c.rgb = 1.0f - c.rgb;
-                    return c;
-                }
-
-                struct VSInput
-                {
-                    float3 pos : POSITION;
-                    float4 color : COLOR;
-                };
-
-                struct PSInput
-                {
-                    float4 pos : SV_POSITION;
-                    float4 color : COLOR;
-                };
-
-                PSInput VSMain(VSInput input)
-                {
-                    PSInput o;
-                    o.pos = mul(float4(input.pos, 1.0f), vp);
-                    o.color = MapColor(input.color);
-                    return o;
-                }
-
-                float4 PSMain(PSInput input) : SV_TARGET
-                {
-                    return input.color;
-                }  )";
+            const char* lineShader = Hlsl::kLine;
 
             m_shader = CreateShader(device, lineShader);
 
@@ -113,50 +75,7 @@ namespace MiniCAD
     public:
         void Initialize(ID3D11Device* device)
         {
-            const char* glyphShader = R"(
-                cbuffer VSConstants : register(b0)
-                {
-                    float4x4 vp;
-                    float4   options;
-                };
-
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白（同线着色器）
-                float4 MapColor(float4 c)
-                {
-                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                    if (max(d.x, max(d.y, d.z)) < 0.004f)
-                        c.rgb = 1.0f - c.rgb;
-                    return c;
-                }
-
-                struct VSInput
-                {
-                    float2 pos    : POSITION;
-                    float4 m      : TEXCOORD0;   // m00 m01 m10 m11
-                    float3 t      : TEXCOORD1;   // tx ty z
-                    float4 color  : COLOR;
-                };
-
-                struct PSInput
-                {
-                    float4 pos : SV_POSITION;
-                    float4 color : COLOR;
-                };
-
-                PSInput VSMain(VSInput input)
-                {
-                    PSInput o;
-                    float2 w = float2(input.pos.x * input.m.x + input.pos.y * input.m.z + input.t.x,
-                                      input.pos.x * input.m.y + input.pos.y * input.m.w + input.t.y);
-                    o.pos = mul(float4(w, input.t.z, 1.0f), vp);
-                    o.color = MapColor(input.color);
-                    return o;
-                }
-
-                float4 PSMain(PSInput input) : SV_TARGET
-                {
-                    return input.color;
-                }  )";
+            const char* glyphShader = Hlsl::kGlyph;
 
             m_shader = CreateShader(device, glyphShader);
 
@@ -190,53 +109,7 @@ namespace MiniCAD
     public:
         void Initialize(ID3D11Device* device)
         {
-            const char* textShader = R"(
-              cbuffer VSConstants : register(b0)
-              {
-                  float4x4 vp;
-                  float4   options;
-              };
-
-              // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
-              float4 MapColor(float4 c)
-              {
-                  float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                  if (max(d.x, max(d.y, d.z)) < 0.004f)
-                      c.rgb = 1.0f - c.rgb;
-                  return c;
-              }
-              
-              Texture2D<float4> gFont : register(t0);
-              SamplerState      gSamp : register(s0);
-              
-              struct VSInput
-              {
-                  float3 pos   : POSITION;
-                  float4 color : COLOR;
-                  float2 uv    : TEXCOORD;
-              };
-              
-              struct PSInput
-              {
-                  float4 pos   : SV_POSITION;
-                  float4 color : COLOR;
-                  float2 uv    : TEXCOORD;
-              };
-              
-              PSInput VSMain(VSInput input)
-              {
-                  PSInput o;
-                  o.pos   = mul(float4(input.pos, 1.0f), vp);
-                  o.color = MapColor(input.color);
-                  o.uv    = input.uv;
-                  return o;
-              }
-              
-              float4 PSMain(PSInput input) : SV_TARGET
-              {
-                  float4 t = gFont.Sample(gSamp, input.uv);
-                  return float4(input.color.rgb, input.color.a * t.a);
-              })";
+            const char* textShader = Hlsl::kText;
 
 
             m_shader = CreateShader(device, textShader);
@@ -271,42 +144,7 @@ namespace MiniCAD
     public:
         void Initialize(ID3D11Device* device)
         {
-            const char* src = R"(
-              cbuffer VSConstants : register(b0)
-              {
-                  float4x4 vp;
-              };
-
-              Texture2D<float4> gImage : register(t0);
-              SamplerState      gSamp  : register(s0);
-
-              struct VSInput
-              {
-                  float3 pos   : POSITION;
-                  float4 color : COLOR;
-                  float2 uv    : TEXCOORD;
-              };
-
-              struct PSInput
-              {
-                  float4 pos   : SV_POSITION;
-                  float4 color : COLOR;
-                  float2 uv    : TEXCOORD;
-              };
-
-              PSInput VSMain(VSInput input)
-              {
-                  PSInput o;
-                  o.pos   = mul(float4(input.pos, 1.0f), vp);
-                  o.color = input.color;
-                  o.uv    = input.uv;
-                  return o;
-              }
-
-              float4 PSMain(PSInput input) : SV_TARGET
-              {
-                  return gImage.Sample(gSamp, input.uv) * input.color;
-              })";
+            const char* src = Hlsl::kImage;
 
             m_shader = CreateShader(device, src);
 
@@ -339,38 +177,7 @@ namespace MiniCAD
     public:
         void Initialize(ID3D11Device* device)
         {
-            const char* gripShader = R"(
-                cbuffer VSConstants : register(b0)
-                {
-                    float4x4 vp;
-                };
-
-                cbuffer ColorConstants : register(b1)
-                {
-                    float4 color;
-                };
-
-                struct VSInput
-                {
-                    float3 pos : POSITION;
-                };
-
-                struct PSInput
-                {
-                    float4 pos : SV_POSITION;
-                };
-
-                PSInput VSMain(VSInput input)
-                {
-                    PSInput o;
-                    o.pos = mul(float4(input.pos, 1.0f), vp);
-                    return o;
-                } 
-
-                float4 PSMain(PSInput input) : SV_TARGET
-                {
-                    return color;
-                })";
+            const char* gripShader = Hlsl::kGrip;
 
             m_shader = CreateShader(device, gripShader);
 

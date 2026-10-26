@@ -8,7 +8,7 @@
 
 namespace MiniCAD
 {
-    D3D11GraphicsDevice::D3D11GraphicsDevice() = default;
+    D3D11GraphicsDevice::D3D11GraphicsDevice(bool warp) : m_warp(warp) {}
     D3D11GraphicsDevice::~D3D11GraphicsDevice() = default;
 
     bool D3D11GraphicsDevice::Initialize(const NativeWindow& window, int width, int height)
@@ -16,7 +16,7 @@ namespace MiniCAD
         try
         {
             m_device = std::make_unique<Device>();
-            m_device->Initialize();
+            m_device->Initialize(m_warp);
 
             SwapChain::Options opt;
             opt.enableVSync  = true;    // 帧率钉在刷新率；输入在 Present 之前全部处理完，不会因此晚一帧

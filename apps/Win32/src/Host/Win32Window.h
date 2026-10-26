@@ -16,7 +16,7 @@ namespace MiniGUI
 
 namespace MiniCAD
 {
-    // MiniCAD 桌面版（MiniCADWin）的宿主：无边框窗口 + 图形设备（IGraphicsDevice，现为 D3D11）+ 消息循环，实现 AppPlatform。
+    // MiniCAD 桌面版（MiniCADWin）的宿主：无边框窗口 + 图形设备（IGraphicsDevice：D3D12 / D3D11 / WARP）+ 消息循环，实现 AppPlatform。
     //   - 无边框窗口（Win32Frame）：标题栏由界面自绘，保留系统的贴靠、阴影、缩放边框
     //   - 按需重绘：界面需要重绘时 InvalidateRect，消息队列清空后在 WM_PAINT 里调用 MainFrame::RenderFrame
     //   - 监视界面描述文件所在目录，文件变化后让 MainFrame 重新加载
@@ -33,7 +33,8 @@ namespace MiniCAD
         HWND       GetHwnd() const { return m_hwnd; }
         IGraphicsDevice& GetGraphics() { return *m_graphics; }      // 自测读回视口像素用
 
-        bool Initialize(const wchar_t* title, int width, int height);
+        // gpu：图形接口名称（d3d12、d3d11、warp），为空时按默认顺序
+        bool Initialize(const wchar_t* title, int width, int height, const std::string& gpu = {});
         int  Run();
 
         // ── AppPlatform ─────────────────────────────────────────

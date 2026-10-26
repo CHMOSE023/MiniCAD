@@ -15,7 +15,7 @@ namespace MiniCAD
     class D3D11GraphicsDevice : public IGraphicsDevice
     {
     public:
-        D3D11GraphicsDevice();
+        explicit D3D11GraphicsDevice(bool warp = false);
         ~D3D11GraphicsDevice() override;
 
         bool Initialize(const NativeWindow& window, int width, int height) override;
@@ -30,9 +30,10 @@ namespace MiniCAD
         std::unique_ptr<IRenderTarget> CreateRenderTarget() override;
         MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
         bool ReadPixels(IRenderTarget& target, int& width, int& height, std::vector<uint8_t>& rgba) override;
-        const char* GetName() const override { return "D3D11"; }
+        const char* GetName() const override { return m_warp ? "D3D11 (WARP)" : "D3D11"; }
 
     private:
+        bool m_warp = false;
         // 声明顺序即构造顺序，销毁时相反：界面后端、渲染器先于设备
         std::unique_ptr<Device>                m_device;
         std::unique_ptr<SwapChain>             m_swapChain;

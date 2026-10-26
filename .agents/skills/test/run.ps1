@@ -51,7 +51,8 @@ $rules = @(
     @('^src/UI/',                                         'MiniGUITests'),
     @('^src/(Core|Scene|Document|Editor|Serialization|Text|Viewport|Render|Import)/', 'MiniCADTests'),
     @('^apps/Web/',                                       'js'),
-    @('^apps/(Common|Win32)/|^assets/ui/',                'MiniCADWin')
+    @('^apps/(Common|Win32)/|^assets/ui/',                'MiniCADWin'),
+    @('^apps/Render/|^tests/UI/Golden/',                  'MiniCADWin','MiniGUIGolden')
 )
 
 function Get-ChangedFiles {

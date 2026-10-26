@@ -25,7 +25,7 @@ namespace MiniCAD
         Device(Device const&) = delete;
         Device& operator= (Device const&) = delete;
 
-        void Initialize();       // 初始化       
+        void Initialize(bool warp = false);   // warp：用 WARP（微软的软件实现），没有显卡的环境
         void HandleDeviceLost(); // Device Lost
         void RegisterDeviceNotify(IDeviceNotify* notify) noexcept { m_deviceNotify = notify; }
 
@@ -61,7 +61,7 @@ namespace MiniCAD
 
     private:
         void CreateFactory();
-        void CreateDevice();
+        void CreateDevice(bool warp);
         void GetHardwareAdapter(IDXGIAdapter1** adapter);
 
 
