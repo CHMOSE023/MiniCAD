@@ -1193,6 +1193,7 @@ namespace MiniCAD::EntityIO
             uint32_t flags = e.GetFlags();       s.Value("flags", flags);
             std::string desc = e.GetDescription(); s.Value("description", desc);
             std::string xref = e.GetXRefPath();  s.Value("xrefPath", xref);
+            if (e.IsXRefUnloaded()) { bool unloaded = true; s.Value("xrefUnloaded", unloaded); }
 
             size_t n = e.GetEntities().size();
             if (s.BeginArray("entities", n))
@@ -1218,6 +1219,7 @@ namespace MiniCAD::EntityIO
             uint32_t flags = 0;                  s.Value("flags", flags);          e->SetFlags(static_cast<uint16_t>(flags));
             std::string desc;                    s.Value("description", desc);     e->SetDescription(std::move(desc));
             std::string xref;                    s.Value("xrefPath", xref);        e->SetXRefPath(std::move(xref));
+            bool unloaded = false;               s.Value("xrefUnloaded", unloaded); e->SetXRefUnloaded(unloaded);
 
             size_t n = 0;
             if (s.BeginArray("entities", n))

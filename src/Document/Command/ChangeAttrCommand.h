@@ -17,8 +17,8 @@ namespace MiniCAD
         std::optional<EntityColor>   Color;
         std::optional<LineTypeID>    LineType;
         std::optional<double>        LinetypeScale;     // 必须 > 0
-        std::optional<Lineweight>    Lineweight;
-        std::optional<Transparency>  Transparency;
+        std::optional<MiniCAD::Lineweight>   Lineweight;
+        std::optional<MiniCAD::Transparency> Transparency;
         std::optional<bool>          Visible;
 
         bool Empty() const

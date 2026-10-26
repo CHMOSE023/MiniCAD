@@ -222,6 +222,9 @@ namespace MiniCAD
         void AddOpened();                       // 帧尾：把读完的图纸加入文档列表（下一帧生成显示），继续下一张
         void EndOpenBatch();                    // 队列读完：同步界面，显示失败汇总
         void SyncOpenProgress();                // 每帧：把后台读取进度同步到状态栏
+        // 外部参照（XREF）：本批打开的图纸有找不到的参照时提示，可选一个文件夹再找（网页版经浏览器授权读本地文件夹）
+        void PromptMissingXrefs();
+        void LocateXrefs(std::vector<Document*> docs);   // 选文件夹，在里面找这些图纸没读进来的参照并读入
         void UpdateTitle();
         void ActivateDocument(Document* doc);
         // 布局标签（模型 / 图纸空间布局）同步与切换
@@ -361,6 +364,7 @@ namespace MiniCAD
         bool                                   m_openAddPosted = false;  // 已投递"加入 m_openDone"（AppPlatform::Post）
         std::vector<std::string>               m_openQueue;              // 排队等待读取的路径
         std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
+        std::vector<Document*>                 m_xrefMissingDocs;        // 本批打开的、有找不到的外部参照的图纸
         bool                                   m_openedAny  = false;
         bool                                   m_hideOpenProgress = false;   // 最后一张已加入：画完它的首帧后隐藏进度
         MiniGUI::Node*                         m_openBar    = nullptr;   // 状态栏里的读取进度

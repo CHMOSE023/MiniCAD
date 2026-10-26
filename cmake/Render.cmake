@@ -1,0 +1,219 @@
+# ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
+# 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
+#   Windows → D3D12 + D3D11    网页（Emscripten）→ WebGPU（浏览器支持时）+ GLES3（WebGL2，回退）
+#   Linux → Vulkan（默认）+ GLES3（EGL，回退；两者的窗口与上下文都由宿主经 SDL3 创建）
+# 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
+# MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
+
+set(MINICAD_RENDER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/apps/Render")
+
+# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    find_path(MINICAD_GLES3_INCLUDE_DIR GLES3/gl3.h)
+    find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    if(MINICAD_GLES3_INCLUDE_DIR AND MINICAD_GLESV2_LIBRARY)
+        set(MINICAD_LINUX_GLES3 ON)
+    else()
+        message(STATUS "没有找到 OpenGL ES 3（GLES3/gl3.h、libGLESv2），不编译 GLES3 后端与 Linux 宿主")
+    endif()
+
+    # Vulkan：头文件与加载器（libvulkan-dev）+ 把 GLSL 编成 SPIR-V 的 glslangValidator（glslang-tools）；缺一个就只用 GLES3
+    find_package(Vulkan QUIET)
+    find_program(MINICAD_GLSLANG NAMES glslangValidator glslang)
+    if(Vulkan_FOUND AND MINICAD_GLSLANG)
+        set(MINICAD_LINUX_VULKAN ON)
+    else()
+        message(STATUS "没有找到 Vulkan 开发文件或 glslangValidator，Linux 版只用 OpenGL ES 3")
+    endif()
+endif()
+
+# Vulkan 的着色器：构建时把 apps/Render/Vulkan/Shaders 下的 GLSL 编成 SPIR-V 头文件（数组 kSpv_<文件名>，"." 换成 "_"），
+# 放在构建目录的 generated/Spirv 下，代码里 #include "Spirv/line.vert.h"
+if(MINICAD_LINUX_VULKAN)
+    set(MINICAD_SPIRV_ROOT "${CMAKE_BINARY_DIR}/generated")
+    set(MINICAD_SPIRV_HEADERS)
+    foreach(shader line.vert glyph.vert text.vert image.vert color.frag text.frag image.frag ui.vert ui.frag)
+        string(REPLACE "." "_" var "${shader}")
+        set(out "${MINICAD_SPIRV_ROOT}/Spirv/${shader}.h")
+        add_custom_command(
+            OUTPUT  "${out}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINICAD_SPIRV_ROOT}/Spirv"
+            COMMAND ${MINICAD_GLSLANG} -V --target-env vulkan1.3 --vn kSpv_${var} -o "${out}" "${MINICAD_RENDER_SRC}/Vulkan/Shaders/${shader}"
+            DEPENDS "${MINICAD_RENDER_SRC}/Vulkan/Shaders/${shader}"
+            COMMENT "SPIR-V：${shader}"
+            VERBATIM
+        )
+        list(APPEND MINICAD_SPIRV_HEADERS "${out}")
+    endforeach()
+    add_custom_target(MiniCADSpirv DEPENDS ${MINICAD_SPIRV_HEADERS})
+endif()
+
+# ── 界面后端 ─────────────────────────────────────────────────────────
+if(WIN32 AND NOT EMSCRIPTEN)
+    add_library(MiniGUI_D3D11 STATIC
+        "${MINICAD_RENDER_SRC}/D3D11/D3D11Backend.cpp"
+    )
+    target_include_directories(MiniGUI_D3D11 PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_D3D11
+        PUBLIC  MiniGUI
+        PRIVATE d3d11 D3DCompiler
+    )
+    if(MSVC)
+        target_compile_options(MiniGUI_D3D11 PRIVATE /utf-8 /W4)
+        target_compile_definitions(MiniGUI_D3D11 PRIVATE
+            UNICODE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+        )
+    endif()
+endif()
+
+# D3D12 界面后端；D3D12Context（设备、命令列表、上传缓冲、描述符）也在这里，CAD 视口渲染器共用它
+if(WIN32 AND NOT EMSCRIPTEN)
+    add_library(MiniGUI_D3D12 STATIC
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Backend.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Context.cpp"
+    )
+    target_include_directories(MiniGUI_D3D12 PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_D3D12
+        PUBLIC  MiniGUI d3d12 dxgi
+        PRIVATE D3DCompiler
+    )
+    if(MSVC)
+        target_compile_options(MiniGUI_D3D12 PRIVATE /utf-8 /W4)
+        target_compile_definitions(MiniGUI_D3D12 PRIVATE
+            UNICODE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+        )
+    endif()
+endif()
+
+if(EMSCRIPTEN OR MINICAD_LINUX_GLES3)
+    add_library(MiniGUI_GLES3 STATIC
+        "${MINICAD_RENDER_SRC}/GLES3/GLES3Backend.cpp"
+    )
+    target_include_directories(MiniGUI_GLES3 PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_GLES3 PUBLIC MiniGUI)
+    if(MINICAD_LINUX_GLES3)
+        target_include_directories(MiniGUI_GLES3 PRIVATE ${MINICAD_GLES3_INCLUDE_DIR})
+        target_link_libraries(MiniGUI_GLES3 PUBLIC ${MINICAD_GLESV2_LIBRARY})
+    endif()
+endif()
+
+if(EMSCRIPTEN)
+    # WebGPU：浏览器自带的接口，经 Emscripten 自带的 emdawnwebgpu 绑定（标准 webgpu.h，不引入 Dawn 库）。
+    # --use-port 编译和链接都要加：编译时提供头文件，链接时加入 JS 实现与 webgpu.cpp；
+    # 第一次使用时 Emscripten 从 GitHub 下载固定版本的端口包到 emsdk 的缓存目录
+    set(MINICAD_EMDAWNWEBGPU "--use-port=emdawnwebgpu:cpp_bindings=false")
+    add_library(MiniGUI_WebGPU STATIC
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPUBackend.cpp"
+    )
+    target_include_directories(MiniGUI_WebGPU PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_WebGPU PUBLIC MiniGUI)
+    target_compile_options(MiniGUI_WebGPU PUBLIC ${MINICAD_EMDAWNWEBGPU})
+    target_link_options(MiniGUI_WebGPU PUBLIC ${MINICAD_EMDAWNWEBGPU})
+endif()
+
+# Vulkan 界面后端；VulkanContext（设备、命令缓冲、上传缓冲、描述符、动态渲染）也在这里，CAD 视口渲染器共用它
+if(MINICAD_LINUX_VULKAN)
+    add_library(MiniGUI_Vulkan STATIC
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanBackend.cpp"
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanContext.cpp"
+    )
+    target_include_directories(MiniGUI_Vulkan
+        PUBLIC  ${MINICAD_RENDER_SRC}
+        PRIVATE ${MINICAD_SPIRV_ROOT}
+    )
+    target_link_libraries(MiniGUI_Vulkan PUBLIC MiniGUI Vulkan::Vulkan)
+    add_dependencies(MiniGUI_Vulkan MiniCADSpirv)
+endif()
+
+# 软件光栅后端（与平台无关，用于截图对比测试）
+if(NOT EMSCRIPTEN)
+    add_library(MiniGUI_Software STATIC
+        "${MINICAD_RENDER_SRC}/Software/SoftwareBackend.cpp"
+    )
+    target_include_directories(MiniGUI_Software PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_Software PUBLIC MiniGUI)
+    if(MSVC)
+        target_compile_options(MiniGUI_Software PRIVATE /utf-8 /W4)
+    endif()
+endif()
+
+# ── CAD 视口渲染器 + 图形设备 ─────────────────────────────────────────
+add_library(MiniCADRender STATIC
+    "${MINICAD_RENDER_SRC}/GraphicsDevice.cpp"
+)
+target_include_directories(MiniCADRender PUBLIC ${MINICAD_RENDER_SRC})
+target_link_libraries(MiniCADRender PUBLIC MiniCAD MiniGUI)
+
+if(WIN32 AND NOT EMSCRIPTEN)
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/D3D11/D3D11GraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/D3D11/D3D11Renderer.cpp"
+        "${MINICAD_RENDER_SRC}/D3D11/D3D11RenderTarget.cpp"
+        "${MINICAD_RENDER_SRC}/D3D11/Device.cpp"
+        "${MINICAD_RENDER_SRC}/D3D11/Shader.cpp"
+        "${MINICAD_RENDER_SRC}/D3D11/SwapChain.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_D3D11)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_D3D11 d3d11 dxgi D3DCompiler)
+
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12GraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Renderer.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12RenderTarget.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_D3D12)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_D3D12 d3d12)
+endif()
+
+if(EMSCRIPTEN OR MINICAD_LINUX_GLES3)
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/GLES3/GLES3GraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/GLES3/GLES3Renderer.cpp"
+        "${MINICAD_RENDER_SRC}/GLES3/GLRenderTarget.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_GLES3)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_GLES3)
+    if(MINICAD_LINUX_GLES3)
+        target_include_directories(MiniCADRender PRIVATE ${MINICAD_GLES3_INCLUDE_DIR})
+        target_link_libraries(MiniCADRender PRIVATE ${MINICAD_GLESV2_LIBRARY})
+    endif()
+endif()
+
+if(EMSCRIPTEN)
+    # 网页两个都编：先异步试 WebGPU，不支持或网址带 ?webgl 时用 WebGL2（宿主 WebApp 决定）
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPUGraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderer.cpp"
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderTarget.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_WEBGPU)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_WebGPU)
+endif()
+
+if(MINICAD_LINUX_VULKAN)
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanGraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderer.cpp"
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderTarget.cpp"
+    )
+    target_include_directories(MiniCADRender PRIVATE ${MINICAD_SPIRV_ROOT})
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_VULKAN)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_Vulkan)
+    add_dependencies(MiniCADRender MiniCADSpirv)
+endif()
+
+if(MSVC)
+    target_compile_options(MiniCADRender PRIVATE
+        /utf-8
+        /Z7                  # 调试信息嵌入 .obj，避免共享 PDB 锁定问题
+    )
+    target_compile_definitions(MiniCADRender PRIVATE
+        UNICODE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()

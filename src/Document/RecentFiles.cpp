@@ -63,11 +63,17 @@ namespace MiniCAD
         if (!duplicated)
             return name;
 
-        const std::filesystem::path parent = Utf8ToPath(m_items[index]).parent_path().filename();
-        if (parent.empty())
+        // 与 FileName 一样两种分隔符都认（Linux 的 std::filesystem 不把反斜杠当分隔符）
+        const std::string& path = m_items[index];
+        const size_t       end  = path.find_last_of("/\\");
+        if (end == std::string::npos || end == 0)
             return name;
-        const std::u8string u8 = parent.u8string();
-        return name + "  (" + std::string(u8.begin(), u8.end()) + ")";
+        const size_t      sep    = path.find_last_of("/\\", end - 1);
+        const size_t      begin  = sep == std::string::npos ? 0 : sep + 1;
+        const std::string parent = path.substr(begin, end - begin);
+        if (parent.empty() || parent.back() == ':')     // "C:\a.mcad" 的上一级是盘符，不算目录名
+            return name;
+        return name + "  (" + parent + ")";
     }
 
     bool RecentFiles::Load(const std::string& utf8Path)

@@ -5,7 +5,9 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/XLineEntity.hpp"
 #include "Scene/Scene.h"
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -160,7 +162,9 @@ namespace
 
 int main()
 {
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+#endif
     std::setvbuf(stdout, nullptr, _IONBF, 0);      // 不缓冲：中途崩溃时也能看到已输出的结果
     std::mt19937 rng(20261001);
     const double extent = 1000.0;

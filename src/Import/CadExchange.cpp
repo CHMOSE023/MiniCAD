@@ -264,12 +264,14 @@ namespace MiniCAD
             };
         }
 
-        // 外部参照（XREF）的解析环境：宿主图纸所在目录（相对路径按它解析）、嵌套深度、正在读取的文件（防循环引用）
+        // 外部参照（XREF）的解析环境：宿主图纸所在目录（相对路径按它解析）、另外查找的目录、
+        // 嵌套深度、正在读取的文件（防循环引用）
         struct XrefContext
         {
-            std::filesystem::path HostDir;
-            int                   Depth = 0;
-            std::set<std::string> Loading;
+            std::filesystem::path              HostDir;
+            std::vector<std::filesystem::path> SearchRoots;
+            int                                Depth = 0;
+            std::set<std::string>              Loading;
         };
 
         // UTF-8 字符串 → 路径
@@ -283,6 +285,134 @@ namespace MiniCAD
         {
             const std::u8string u8 = p.u8string();
             return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+        }
+
+        // 外部参照路径（已换成 /）拆成各段，去掉盘符、"." 与 ".."，用于按路径后缀查找
+        std::vector<std::string> XrefPathSegments(const std::string& normalized)
+        {
+            std::vector<std::string> segs;
+            size_t i = 0;
+            while (i <= normalized.size())
+            {
+                size_t j = normalized.find('/', i);
+                if (j == std::string::npos)
+                    j = normalized.size();
+                std::string seg = normalized.substr(i, j - i);
+                if (!seg.empty() && seg != "." && seg != ".." && !(segs.empty() && seg.back() == ':'))
+                    segs.push_back(std::move(seg));
+                i = j + 1;
+            }
+            return segs;
+        }
+
+        // 找外部参照的文件，依次：
+        //   1. 保存的路径：绝对路径直接用，相对路径（如 .\Xref-A.dwg、..\共用\A.dwg）按宿主所在目录解析；
+        //   2. 按路径后缀在宿主目录及其各级上级目录里找，后缀越长越优先：整个项目搬了位置、换了盘符时
+        //      D:\项目\共用\A.dwg 能找到 E:\备份\项目\共用\A.dwg。只剩文件名时只在宿主目录里找；
+        //   3. 在另外指定的目录（SearchRoots，如网页版用户选的本地文件夹）里先按后缀、再递归按文件名找，
+        //      有多个同名文件时取与保存路径末尾相同的段数最多的。
+        // 没有扩展名的路径补上 .dwg 再试。找不到返回空
+        std::filesystem::path ResolveXrefPath(const XrefContext& ctx, const std::string& xrefPath)
+        {
+            namespace fs = std::filesystem;
+            std::string normalized = xrefPath;
+            for (char& ch : normalized)
+                if (ch == '\\') ch = '/';
+            const std::vector<std::string> segs = XrefPathSegments(normalized);
+            if (segs.empty())
+                return {};
+
+            std::error_code ec;
+            auto probe = [&](const fs::path& c) -> fs::path
+            {
+                if (fs::is_regular_file(c, ec))
+                    return c.lexically_normal();
+                if (!c.has_extension())
+                    if (fs::path d = fs::path(c).concat(".dwg"); fs::is_regular_file(d, ec))
+                        return d.lexically_normal();
+                return {};
+            };
+
+            const fs::path saved = PathFromUtf8(normalized);
+            if (fs::path r = probe(saved.is_absolute() ? saved : ctx.HostDir / saved); !r.empty())
+                return r;
+
+            auto tail = [&](size_t k)
+            {
+                fs::path t;
+                for (size_t i = segs.size() - k; i < segs.size(); ++i)
+                    t /= PathFromUtf8(segs[i]);
+                return t;
+            };
+            for (size_t k = segs.size(); k >= 1; --k)
+            {
+                const fs::path t = tail(k);
+                for (fs::path dir = ctx.HostDir; !dir.empty(); )
+                {
+                    if (fs::path r = probe(dir / t); !r.empty())
+                        return r;
+                    const fs::path up = dir.parent_path();
+                    if (k == 1 || up == dir)
+                        break;
+                    dir = up;
+                }
+                for (const fs::path& root : ctx.SearchRoots)
+                    if (fs::path r = probe(root / t); !r.empty())
+                        return r;
+            }
+
+            const std::string wanted = Lower(segs.back());
+            fs::path best;
+            size_t   bestScore = 0;
+            for (const fs::path& root : ctx.SearchRoots)
+            {
+                std::error_code walk;
+                size_t visited = 0;
+                for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, walk), end;
+                     !walk && it != end && ++visited <= 100000; it.increment(walk))
+                {
+                    if (!it->is_regular_file(ec))
+                        continue;
+                    const fs::path& f = it->path();
+                    const std::string name = Lower(PathToUtf8(f.filename()));
+                    if (name != wanted && name != wanted + ".dwg")
+                        continue;
+                    size_t score = 1;
+                    fs::path dir = f.parent_path();
+                    for (size_t i = segs.size() - 1; i > 0; --i)
+                    {
+                        if (!dir.has_filename() || Lower(PathToUtf8(dir.filename())) != Lower(segs[i - 1]))
+                            break;
+                        ++score;
+                        dir = dir.parent_path();
+                    }
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = f.lexically_normal();
+                    }
+                }
+            }
+            return best;
+        }
+
+        // 宿主图纸的外部参照解析环境：按图纸所在目录解析，另外在 searchRoots 里找；
+        // 图纸自己记进「正在读取」里，防止它参照自己。hostPath 为空时只在 searchRoots 里找
+        std::shared_ptr<XrefContext> HostXrefContext(const std::string& hostPath, const std::vector<std::string>& searchRoots)
+        {
+            auto ctx = std::make_shared<XrefContext>();
+            for (const std::string& root : searchRoots)
+                ctx->SearchRoots.push_back(PathFromUtf8(root));
+            if (!hostPath.empty())
+            {
+                const std::filesystem::path self = PathFromUtf8(hostPath);
+                ctx->HostDir = self.parent_path();
+                std::error_code ec;
+                std::filesystem::path canonical = std::filesystem::weakly_canonical(self, ec);
+                if (ec) canonical = self;
+                ctx->Loading.insert(Lower(PathToUtf8(canonical)));
+            }
+            return ctx;
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -782,6 +912,7 @@ namespace MiniCAD
                             {
                                 blk->SetFlags(static_cast<uint16_t>(blk->GetFlags() | (flags & (BlockEntity::XRef | BlockEntity::XRefOverlay))));
                                 blk->SetXRefPath(b->XRefPath);
+                                blk->SetXRefUnloaded(b->IsUnloaded);
                             }
                         }
                 });
@@ -819,92 +950,72 @@ namespace MiniCAD
                     // 叠加型（Overlay）外部参照不随宿主再被别人参照时显示
                     if ((flags & BlockEntity::XRefOverlay) && m_xref->Depth > 0)
                         return;
-                    LoadXref(name, b->XRefPath, *blk);
+                    LoadXref(m_scene, *m_xref, name, b->XRefPath, *blk);
                 });
             }
 
-            void LoadXref(const std::string& name, const std::string& xrefPath, BlockEntity& target)
+        public:
+            // 读入一个外部参照的文件到宿主里的块 target（块名 name 也是依赖表项的前缀）。parent：宿主的解析环境。
+            // 读入了返回 true
+            static bool LoadXref(Scene& scene, const XrefContext& parent, const std::string& name,
+                                 const std::string& xrefPath, BlockEntity& target)
             {
                 namespace fs = std::filesystem;
-                const fs::path file = ResolveXrefPath(xrefPath);
+                const fs::path file = ResolveXrefPath(parent, xrefPath);
                 if (file.empty())
                 {
-                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), PathToUtf8(m_xref->HostDir).c_str());
-                    return;
+                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), PathToUtf8(parent.HostDir).c_str());
+                    return false;
                 }
                 std::error_code ec;
                 fs::path canonical = fs::weakly_canonical(file, ec);
                 if (ec) canonical = file;
                 const std::string key = Lower(PathToUtf8(canonical));
-                if (m_xref->Loading.count(key))
+                if (parent.Loading.count(key))
                 {
                     LOG_WARN("外部参照 %s：%s 正在被读取（循环引用），跳过", name.c_str(), PathToUtf8(file).c_str());
-                    return;
+                    return false;
                 }
-                if (m_xref->Depth >= 8)
+                if (parent.Depth >= 8)
                 {
                     LOG_WARN("外部参照 %s：嵌套层数过多，跳过", name.c_str());
-                    return;
+                    return false;
                 }
 
                 std::ifstream in(file, std::ios::binary);
                 if (!in)
                 {
                     LOG_WARN("外部参照 %s：无法读取 %s", name.c_str(), PathToUtf8(file).c_str());
-                    return;
+                    return false;
                 }
                 const std::vector<std::uint8_t> bytes{ std::istreambuf_iterator<char>(in), {} };
                 const Dwg::CadFileInfo info = Dwg::DetectFileFormat({ bytes.data(), std::min<size_t>(bytes.size(), 1024) });
                 if (info.format == Dwg::CadFileFormat::Unknown)
                 {
                     LOG_WARN("外部参照 %s：%s 不是 DWG / DXF 文件", name.c_str(), PathToUtf8(file).c_str());
-                    return;
+                    return false;
                 }
                 std::string firstError;
                 std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(bytes, info.format, MakeNotify(&firstError));
                 if (!db)
                 {
                     LOG_WARN("外部参照 %s：读取 %s 失败：%s", name.c_str(), PathToUtf8(file).c_str(), firstError.c_str());
-                    return;
+                    return false;
                 }
 
                 auto ctx = std::make_shared<XrefContext>();
-                ctx->HostDir = file.parent_path();
-                ctx->Depth   = m_xref->Depth + 1;
-                ctx->Loading = m_xref->Loading;
+                ctx->HostDir     = file.parent_path();
+                ctx->SearchRoots = parent.SearchRoots;
+                ctx->Depth       = parent.Depth + 1;
+                ctx->Loading     = parent.Loading;
                 ctx->Loading.insert(key);
-                Importer nested(*db, m_scene, nullptr);
+                Importer nested(*db, scene, nullptr);
                 nested.ImportAsXref(name + "|", target, std::move(ctx));
                 LOG_INFO("外部参照 %s：从 %s 读入 %zu 个实体", name.c_str(), PathToUtf8(file).c_str(), target.GetEntities().size());
+                return true;
             }
 
-            // 外部参照的文件：绝对路径直接用；相对路径（如 .\Xref-A.dwg）按宿主所在目录解析；
-            // 都找不到时再按文件名在宿主目录里找（图纸整体搬了目录的常见情形）
-            std::filesystem::path ResolveXrefPath(const std::string& xrefPath) const
-            {
-                namespace fs = std::filesystem;
-                if (xrefPath.empty())
-                    return {};
-                std::string normalized = xrefPath;
-                for (char& ch : normalized)
-                    if (ch == '\\') ch = '/';
-                const fs::path p = PathFromUtf8(normalized);
-                std::vector<fs::path> candidates;
-                if (p.is_absolute())
-                    candidates.push_back(p);
-                else
-                    candidates.push_back(m_xref->HostDir / p);
-                candidates.push_back(m_xref->HostDir / p.filename());
-                for (const fs::path& c : std::vector<fs::path>(candidates))
-                    if (!c.has_extension())
-                        candidates.push_back(fs::path(c).concat(".dwg"));
-                std::error_code ec;
-                for (const fs::path& c : candidates)
-                    if (fs::is_regular_file(c, ec))
-                        return c.lexically_normal();
-                return {};
-            }
-
+        private:
             bool IsXref() const { return m_targetBlock != nullptr; }
 
             // 外部参照里的表项名：「参照名|原名」；宿主图纸里原样
@@ -3737,7 +3848,8 @@ namespace MiniCAD
                         {
                             b->Flags    = static_cast<Dwg::BlockTypeFlags>(static_cast<int>(b->Flags) |
                                                                            (blk.GetFlags() & (BlockEntity::XRef | BlockEntity::XRefOverlay)));
-                            b->XRefPath = blk.GetXRefPath();
+                            b->XRefPath   = blk.GetXRefPath();
+                            b->IsUnloaded = blk.IsXRefUnloaded();
                         }
                     }
                 }
@@ -5050,17 +5162,7 @@ namespace MiniCAD
         if (progress) progress(0.4f);
         Importer importer(*db, scene, src.get(), stage(0.4f, 1.0f));
         if (!sourcePath.empty())
-        {
-            // 外部参照按图纸所在目录解析；图纸自己记进「正在读取」里，防止它参照自己
-            auto ctx = std::make_shared<XrefContext>();
-            const std::filesystem::path self = PathFromUtf8(sourcePath);
-            ctx->HostDir = self.parent_path();
-            std::error_code ec;
-            std::filesystem::path canonical = std::filesystem::weakly_canonical(self, ec);
-            if (ec) canonical = self;
-            ctx->Loading.insert(Lower(PathToUtf8(canonical)));
-            importer.SetXrefContext(std::move(ctx));
-        }
+            importer.SetXrefContext(HostXrefContext(sourcePath, {}));
         importer.Run();
         if (progress) progress(1.0f);
         auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
@@ -5068,6 +5170,45 @@ namespace MiniCAD
         if (source != nullptr)
             *source = std::move(src);
         return true;
+    }
+
+    std::vector<UnresolvedXref> FindUnresolvedXrefs(const Scene& scene)
+    {
+        std::vector<UnresolvedXref> list;
+        scene.GetBlockTable().ForEach([&](BlockID, const BlockEntity& blk)
+        {
+            if (blk.IsUnresolvedXRef())
+                list.push_back({ blk.GetName(), blk.GetXRefPath() });
+        });
+        return list;
+    }
+
+    int ReloadUnresolvedXrefs(Scene& scene, const std::string& hostPath, const std::vector<std::string>& searchRoots)
+    {
+        std::vector<BlockID> ids;
+        scene.GetBlockTable().ForEach([&](BlockID id, const BlockEntity& blk)
+        {
+            if (blk.IsUnresolvedXRef())
+                ids.push_back(id);
+        });
+        if (ids.empty())
+            return 0;
+        const std::shared_ptr<XrefContext> ctx = HostXrefContext(hostPath, searchRoots);
+        int loaded = 0;
+        for (BlockID id : ids)
+        {
+            // 前面读入的参照可能新建了块（块表扩容），每次重新查找
+            BlockEntity* blk = scene.GetBlockTable().Find(id);
+            if (blk == nullptr || !blk->IsUnresolvedXRef())
+                continue;
+            const std::string name = blk->GetName();
+            const std::string path = blk->GetXRefPath();
+            if (Importer::LoadXref(scene, *ctx, name, path, *blk))
+                ++loaded;
+        }
+        if (loaded > 0)
+            scene.MarkDirty();
+        return loaded;
     }
 
     int CadSourceTchCount(const CadSource* source)

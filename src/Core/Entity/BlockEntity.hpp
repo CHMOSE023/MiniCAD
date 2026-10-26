@@ -49,6 +49,12 @@ namespace MiniCAD
         const std::string& GetXRefPath() const { return m_xrefPath; }       // 组码 1
         void               SetXRefPath(std::string p) { m_xrefPath = std::move(p); }
 
+        bool IsXRef()         const { return (m_flags & (XRef | XRefOverlay)) != 0; }
+        bool IsXRefUnloaded() const { return m_xrefUnloaded; }               // 组码 71：外部参照已卸载（不显示）
+        void SetXRefUnloaded(bool u) { m_xrefUnloaded = u; }
+        // 外部参照的内容没有读进来（文件找不到、读取失败，卸载的除外）：块参照在插入点显示参照路径
+        bool IsUnresolvedXRef() const { return IsXRef() && !m_xrefUnloaded && m_entities.empty(); }
+
         // ── 子实体管理 ───────────────────────────────────────────────────────
         void AddEntity(std::unique_ptr<Entity> e)
         {
@@ -87,6 +93,7 @@ namespace MiniCAD
             blk->m_flags       = m_flags;
             blk->m_description  = m_description;
             blk->m_xrefPath     = m_xrefPath;
+            blk->m_xrefUnloaded = m_xrefUnloaded;
             blk->m_entities.reserve(m_entities.size());
             for (const auto& e : m_entities)
                 blk->m_entities.push_back(e->Clone(e->GetID()));
@@ -101,6 +108,7 @@ namespace MiniCAD
         uint16_t                             m_flags = None;          // 块标志(组码 70)
         std::string                          m_description;           // 块说明(组码 4)
         std::string                          m_xrefPath;              // 外部参照路径(组码 1)
+        bool                                 m_xrefUnloaded = false;  // 外部参照已卸载(组码 71)
         std::vector<std::unique_ptr<Entity>> m_entities;             // 块内子实体
     };
 }

@@ -1,4 +1,4 @@
-// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形 ─────────
+// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形、TrueType 单点轮廓 ─────────
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -11,6 +11,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <utility>
+#include <vector>
 
 using namespace MiniCAD;
 
@@ -49,6 +55,54 @@ namespace
     };
 
     bool Has(const std::vector<TextStyleID>& v, TextStyleID id) { return std::find(v.begin(), v.end(), id) != v.end(); }
+
+    // 最小的 TrueType 字体：'A' 对应 1 号字形，它只有一个轮廓、轮廓只有一个曲线外的点 (100, 200)（宋体的空格就是这样）。
+    // ascent 800、descent -200，没有 'H'，归一化比例为 1/1000
+    std::vector<uint8_t> MakeSinglePointFont()
+    {
+        auto u16 = [](std::vector<uint8_t>& v, uint32_t x) { v.push_back(uint8_t(x >> 8)); v.push_back(uint8_t(x)); };
+        auto u32 = [&](std::vector<uint8_t>& v, uint32_t x) { u16(v, x >> 16); u16(v, x & 0xFFFF); };
+
+        std::vector<uint8_t> head(54, 0);           // indexToLocFormat（偏移 50）为 0：短格式 loca
+        head[18] = 0x03; head[19] = 0xE8;           // unitsPerEm 1000
+        std::vector<uint8_t> hhea(36, 0);
+        hhea[4] = 0x03; hhea[5] = 0x20;             // ascent 800
+        hhea[6] = 0xFF; hhea[7] = 0x38;             // descent -200
+        hhea[35] = 2;                               // numberOfHMetrics
+        std::vector<uint8_t> maxp; u32(maxp, 0x00005000); u16(maxp, 2);
+        std::vector<uint8_t> hmtx; u16(hmtx, 500); u16(hmtx, 0); u16(hmtx, 500); u16(hmtx, 0);
+        std::vector<uint8_t> glyf;
+        u16(glyf, 1); u16(glyf, 100); u16(glyf, 200); u16(glyf, 100); u16(glyf, 200);  // 轮廓数、外包框
+        u16(glyf, 0);                               // 轮廓最后一个点的编号
+        u16(glyf, 0);                               // 指令长度
+        glyf.push_back(0x00);                       // 标志：曲线外的点，x / y 为 16 位增量
+        u16(glyf, 100); u16(glyf, 200);
+        glyf.push_back(0);                          // 补齐到偶数
+        std::vector<uint8_t> loca; u16(loca, 0); u16(loca, 0); u16(loca, static_cast<uint32_t>(glyf.size() / 2));   // 0 号字形为空
+        std::vector<uint8_t> cmap;
+        u16(cmap, 0); u16(cmap, 1);                 // 版本、编码表数
+        u16(cmap, 3); u16(cmap, 1); u32(cmap, 12);  // Windows Unicode BMP，子表在偏移 12
+        u16(cmap, 6); u16(cmap, 12); u16(cmap, 0);  // 格式 6、长度、语言
+        u16(cmap, 'A'); u16(cmap, 1); u16(cmap, 1); // 起始码位、个数、字形编号
+
+        const std::pair<const char*, const std::vector<uint8_t>*> tables[] =
+            { { "cmap", &cmap }, { "glyf", &glyf }, { "head", &head }, { "hhea", &hhea }, { "hmtx", &hmtx }, { "loca", &loca }, { "maxp", &maxp } };
+        std::vector<uint8_t> font;
+        u32(font, 0x00010000); u16(font, 7); u16(font, 0); u16(font, 0); u16(font, 0);
+        uint32_t offset = 12 + 16 * 7;
+        for (const auto& [tag, data] : tables)
+        {
+            font.insert(font.end(), tag, tag + 4);
+            u32(font, 0); u32(font, offset); u32(font, static_cast<uint32_t>(data->size()));
+            offset += (static_cast<uint32_t>(data->size()) + 3) & ~3u;
+        }
+        for (const auto& [tag, data] : tables)
+        {
+            font.insert(font.end(), data->begin(), data->end());
+            font.resize((font.size() + 3) & ~size_t(3), 0);
+        }
+        return font;
+    }
 }
 
 int RunTextStyleTests()
@@ -217,6 +271,42 @@ int RunTextStyleTests()
         Check(ok, "TTF 字形三角形面积与非零环绕规则采样面积一致，三角形数少于轮廓边数的 3 倍");
     }
 #endif
+
+    // ── 7. TrueType 只有一个曲线外的点的轮廓（宋体的空格）：stb_truetype 以前照样去读"下一个点"，
+    //       越界读到未初始化的堆内存，字形的起点随机——布局页上空格画成一串长斜线，每次运行都不同 ──
+    {
+        const std::vector<uint8_t> bytes = MakeSinglePointFont();
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "minicad_single_point.ttf";
+        {
+            std::ofstream out(path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        const std::u8string u8 = path.u8string();
+        bool ok = true;
+        size_t lines = 0;
+        for (int round = 0; round < 32 && ok; ++round)
+        {
+            TTFFont ttf("single-point", std::string(u8.begin(), u8.end()), 100 + round);
+            {
+                // 让堆里刚释放的小块（3 个 stbtt_vertex，42 字节）都是非零字节：修复前越界读到的就是它们
+                std::vector<std::unique_ptr<uint8_t[]>> blocks;
+                for (int i = 0; i < 64; ++i)
+                {
+                    blocks.emplace_back(new uint8_t[42]);
+                    std::memset(blocks.back().get(), 0x5A, 42);
+                }
+            }
+            const Glyph& g = ttf.GetGlyph('A');
+            lines = std::max(lines, g.Lines.size());
+            ok = ttf.IsLoaded() && g.Lines.size() <= 1;
+            for (const auto& l : g.Lines)
+                ok = ok && Near(l.Start.x, 0.1) && Near(l.Start.y, 0.2) && Near(l.End.x, 0.1) && Near(l.End.y, 0.2);
+        }
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::printf("    单点轮廓的字形：最多 %zu 条线段\n", lines);
+        Check(ok, "只有一个曲线外的点的轮廓：字形只剩这个点上的零长度线段，不再越界读出随机的起点");
+    }
 
     return g_failures;
 }

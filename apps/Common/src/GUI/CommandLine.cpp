@@ -107,6 +107,12 @@ namespace MiniCAD
                 StateChanged();
                 return;
             }
+            if (name == "XREF" || name == "XR")
+            {
+                editor.GetCmdLine().Echo(std::string("命令: ") + text);
+                m_commands.Execute("xref.locate");
+                return;
+            }
             if (name == "NAVVCUBE" || name == "VIEWCUBE")
             {
                 const bool show = option == "ON" ? true : option == "OFF" ? false : !m_viewCubeVisible;

@@ -57,6 +57,21 @@ namespace MiniCAD
                    CadSaveVersion* version = nullptr, std::shared_ptr<const CadSource>* source = nullptr,
                    const ImportProgress& progress = nullptr, const std::string& sourcePath = {});
 
+    // 没读进来的外部参照（文件找不到或读取失败；卸载的不算）：块名与图纸里保存的路径。
+    // 块参照在插入点显示这个路径（InsertEntity）
+    struct UnresolvedXref
+    {
+        std::string Name;
+        std::string Path;
+    };
+    std::vector<UnresolvedXref> FindUnresolvedXrefs(const Scene& scene);
+
+    // 重新查找并读入没读进来的外部参照，返回读入的个数。
+    // hostPath：宿主图纸路径（UTF-8），相对路径按它所在目录解析，可为空；
+    // searchRoots：另外查找的目录（先按保存路径的后缀，再递归按文件名），如网页版用户选的本地文件夹。
+    // 改的是块定义的内容，不进撤销栈；读入了就 Scene::MarkDirty
+    int ReloadUnresolvedXrefs(Scene& scene, const std::string& hostPath, const std::vector<std::string>& searchRoots);
+
     // 把场景写成 DWG 或 DXF（ASCII）。失败返回空数组
     // source：场景打开时的原图。格式与版本都与原图相同时以原图为底写出（见 CadSource），否则重新生成整张图纸，
     // 天正等自定义对象只剩恢复出的普通几何

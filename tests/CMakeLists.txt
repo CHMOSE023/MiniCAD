@@ -92,73 +92,73 @@ function(minicad_test_output target)
 endfunction()
 
 # ── MiniCAD 核心库测试 ────────────────────────────────────────────
+add_executable(MiniCADTests
+    "Core/SpatialIndexTests.cpp"
+    "Core/EllipseArcTests.cpp"
+    "Core/HatchPatternTests.cpp"
+    "Core/DimensionTests.cpp"
+    "Core/TextStyleTests.cpp"
+    "Core/SolidTests.cpp"
+    "Core/WipeoutTests.cpp"
+    "Core/ImageTests.cpp"
+    "Core/MLineTests.cpp"
+    "Core/TableTests.cpp"
+    "Core/RegionTests.cpp"
+    "Core/RegionBooleanTests.cpp"
+    "Core/ChangeAttrTests.cpp"
+    "Core/LayerCommandTests.cpp"
+    "Core/PropertyTableTests.cpp"
+    "Core/ScaleTests.cpp"
+    "Core/StretchTests.cpp"
+    "Core/FilletTests.cpp"
+    "Core/ChamferTests.cpp"
+    "Core/ExplodeTests.cpp"
+    "Core/PolylineOpsTests.cpp"
+    "Core/DimAssocTests.cpp"
+    "Core/CadExchangeTests.cpp"
+    "Core/AttribAxisTests.cpp"
+    "Core/PolylineWidthTests.cpp"
+    "Core/BulgeDirectionTests.cpp"
+    "Core/PointStyleTests.cpp"
+    "Core/LineTypeScaleTests.cpp"
+    "Core/HatchDotsTests.cpp"
+    "Core/MatrixInverseTests.cpp"
+    "Core/RecentFilesTests.cpp"
+    "Core/BlockFixTests.cpp"
+    "Core/MiddleDoubleClickZoomTests.cpp"
+    "Core/LayoutTests.cpp"
+    "Core/OleFrameTests.cpp"
+    "Core/CadXrefTests.cpp"
+    "Core/MLeaderImportTests.cpp"
+    "Core/MeshTests.cpp"
+    "Core/MLineToolTests.cpp"
+    "Core/PolylineToolTests.cpp"
+    "Core/MLineImportTests.cpp"
+    "Core/MLineEditTests.cpp"
+    "Core/TransformSinkTests.cpp"
+)
+target_link_libraries(MiniCADTests PRIVATE MiniCAD)
+target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")
+target_compile_definitions(MiniCADTests PRIVATE MINICAD_TCH_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Tch")
+target_compile_definitions(MiniCADTests PRIVATE MINICAD_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
+if(MSVC)
+    target_compile_options(MiniCADTests PRIVATE /utf-8)
+    target_compile_definitions(MiniCADTests PRIVATE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+minicad_test_output(MiniCADTests)
+add_test(NAME MiniCADTests COMMAND MiniCADTests)
+
+add_executable(MiniCADDrawingOpenTests "Core/DrawingOpenTests.cpp")
+target_link_libraries(MiniCADDrawingOpenTests PRIVATE MiniCAD)
+target_compile_definitions(MiniCADDrawingOpenTests PRIVATE MINICAD_DRAWING_OPEN_TEST_MAIN UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(MSVC)
+    target_compile_options(MiniCADDrawingOpenTests PRIVATE /utf-8)
+endif()
+minicad_test_output(MiniCADDrawingOpenTests)
+add_test(NAME MiniCADDrawingOpenTests COMMAND MiniCADDrawingOpenTests)
+
+# 本地诊断工具（wmain 入口，只在 Windows 上编译）：tools/ 下有源文件时才编译
 if(WIN32)
-    add_executable(MiniCADTests
-        "Core/SpatialIndexTests.cpp"
-        "Core/EllipseArcTests.cpp"
-        "Core/HatchPatternTests.cpp"
-        "Core/DimensionTests.cpp"
-        "Core/TextStyleTests.cpp"
-        "Core/SolidTests.cpp"
-        "Core/WipeoutTests.cpp"
-        "Core/ImageTests.cpp"
-        "Core/MLineTests.cpp"
-        "Core/TableTests.cpp"
-        "Core/RegionTests.cpp"
-        "Core/RegionBooleanTests.cpp"
-        "Core/ChangeAttrTests.cpp"
-        "Core/LayerCommandTests.cpp"
-        "Core/PropertyTableTests.cpp"
-        "Core/ScaleTests.cpp"
-        "Core/StretchTests.cpp"
-        "Core/FilletTests.cpp"
-        "Core/ChamferTests.cpp"
-        "Core/ExplodeTests.cpp"
-        "Core/PolylineOpsTests.cpp"
-        "Core/DimAssocTests.cpp"
-        "Core/CadExchangeTests.cpp"
-        "Core/AttribAxisTests.cpp"
-        "Core/PolylineWidthTests.cpp"
-        "Core/BulgeDirectionTests.cpp"
-        "Core/PointStyleTests.cpp"
-        "Core/LineTypeScaleTests.cpp"
-        "Core/HatchDotsTests.cpp"
-        "Core/MatrixInverseTests.cpp"
-        "Core/RecentFilesTests.cpp"
-        "Core/BlockFixTests.cpp"
-        "Core/MiddleDoubleClickZoomTests.cpp"
-        "Core/LayoutTests.cpp"
-        "Core/OleFrameTests.cpp"
-        "Core/CadXrefTests.cpp"
-        "Core/MLeaderImportTests.cpp"
-        "Core/MeshTests.cpp"
-        "Core/MLineToolTests.cpp"
-        "Core/PolylineToolTests.cpp"
-        "Core/MLineImportTests.cpp"
-        "Core/MLineEditTests.cpp"
-        "Core/TransformSinkTests.cpp"
-    )
-    target_link_libraries(MiniCADTests PRIVATE MiniCAD)
-    target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")
-    target_compile_definitions(MiniCADTests PRIVATE MINICAD_TCH_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Tch")
-    target_compile_definitions(MiniCADTests PRIVATE MINICAD_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
-    if(MSVC)
-        target_compile_options(MiniCADTests PRIVATE /utf-8)
-        target_compile_definitions(MiniCADTests PRIVATE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    endif()
-    minicad_test_output(MiniCADTests)
-    add_test(NAME MiniCADTests COMMAND MiniCADTests)
-
-    add_executable(MiniCADDrawingOpenTests "Core/DrawingOpenTests.cpp")
-    target_link_libraries(MiniCADDrawingOpenTests PRIVATE MiniCAD)
-    target_compile_definitions(MiniCADDrawingOpenTests PRIVATE MINICAD_DRAWING_OPEN_TEST_MAIN UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    if(MSVC)
-        target_compile_options(MiniCADDrawingOpenTests PRIVATE /utf-8)
-    endif()
-    minicad_test_output(MiniCADDrawingOpenTests)
-    add_test(NAME MiniCADDrawingOpenTests COMMAND MiniCADDrawingOpenTests)
-
-    # 本地诊断工具：tools/ 不进仓库（.gitignore），只在本机有源文件时编译
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
         add_executable(MiniCADDwgInspect "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
         target_link_libraries(MiniCADDwgInspect PRIVATE MiniCAD MiniDWG)
@@ -200,13 +200,14 @@ endif()
 minicad_test_output(MiniGUITests)
 add_test(NAME MiniGUITests COMMAND MiniGUITests)
 
-# ── MiniGUI 截图对比测试：软件光栅 vs 基准图片，D3D11 vs 软件光栅 ─────────
+# ── MiniGUI 截图对比测试：软件光栅 vs 基准图片，D3D11 / D3D12 vs 软件光栅 ─────────
 # 基准图片需要更新时：out\<preset>\MiniGUIGolden.exe --update，检查图片后再提交
 if(WIN32)
     add_executable(MiniGUIGolden
         "UI/Golden/GoldenMain.cpp"
         "UI/Golden/PngIO.cpp"
         "UI/Golden/D3D11Capture.cpp"
+        "UI/Golden/D3D12Capture.cpp"
         "UI/Golden/Demo/DemoNodes.cpp"
         "UI/Golden/Demo/Gallery.cpp"
     )
@@ -219,6 +220,7 @@ if(WIN32)
         MiniGUI
         MiniGUI_Software
         MiniGUI_D3D11
+        MiniGUI_D3D12
         MiniGUI_Win32
         d3d11
         dxgi

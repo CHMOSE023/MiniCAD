@@ -160,7 +160,7 @@ namespace MiniCAD
         std::optional<bool>          Visible;
         std::optional<bool>          Locked;
         std::optional<LineTypeID>    LineType;       // 图层线型只能是具名线型（不能 ByLayer / ByBlock）
-        std::optional<Lineweight>    Lineweight;
+        std::optional<MiniCAD::Lineweight> Lineweight;
 
         bool Empty() const { return !Name && !Color && !Visible && !Locked && !LineType && !Lineweight; }
     };

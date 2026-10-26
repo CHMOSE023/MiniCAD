@@ -299,7 +299,7 @@ template<class TYPE> class SmProbArray
   virtual SmProbArray * MakeCopy() const { return( new SmProbArray(*this) ) ; }
 
   // destructor
-  ~SmProbArray<TYPE>() { m_sProbArray.ReSet() ; m_plObjProbFlag = NULL ; m_lOrigProbCount = 0 ; m_eGetHealerOp = SM_HO_NONE ; } 
+  ~SmProbArray() { m_sProbArray.ReSet() ; m_plObjProbFlag = NULL ; m_lOrigProbCount = 0 ; m_eGetHealerOp = SM_HO_NONE ; } 
 
   // ReSet
   virtual void ReSet() { m_sProbArray.ReSet() ; }  // note: resetting the ProbArray does not reset the OrigProbCount

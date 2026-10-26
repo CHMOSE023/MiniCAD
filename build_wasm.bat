@@ -10,7 +10,8 @@ exit /b %errorlevel%
 :UTF8
 rem 上面的块必须只含 ASCII：先切到 UTF-8 代码页，再用新的 cmd 从头执行本脚本。
 rem 原因：在脚本中途 chcp 后，cmd 读后面的中文行会错位（起始代码页为 936 时会把"rem 用法"切开当命令执行）
-rem 构建 MiniCAD 网页版（界面与桌面版相同，MiniGUI + WebGL2）
+rem 构建 MiniCAD 网页版（界面与桌面版相同，MiniGUI + WebGPU，浏览器不支持时 WebGL2）
+rem 第一次构建时 Emscripten 从 GitHub 下载 emdawnwebgpu 端口包（WebGPU 绑定）到 emsdk 的缓存目录，需要联网
 rem 用法：build_wasm.bat [configure|serve]
 rem   不带参数  增量构建（首次自动配置）
 rem   configure 清空 out\build\wasm 后重新配置并构建

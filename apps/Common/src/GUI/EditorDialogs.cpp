@@ -1484,6 +1484,8 @@ namespace MiniCAD
         link->SetTooltip("使用默认浏览器打开"); 
 
         body->AddChild<Label>("版本 v" MINICAD_VERSION_STRING " ", 13.0f, Theme::TextDim);
+        // 实际使用的图形接口（D3D11、WebGPU、WebGL2 ……），排查显示问题时先看这里
+        body->AddChild<Label>(std::string("图形 ") + m_platform->GetGraphicsName(), 13.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
         raw->AddButton("确定", [raw] { raw->Close(); }, DialogButtonRole::Default);

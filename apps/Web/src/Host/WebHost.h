@@ -5,7 +5,9 @@
 
 namespace MiniCAD
 {
-    // 网页宿主：画布 + WebGL2 上下文 + 尺寸 / DPI 跟踪 + 按需刷新，与 Win32 的窗口 + D3D11 设备对应。
+    // 网页宿主：画布 + 尺寸 / DPI 跟踪 + 按需刷新（+ 用 WebGL2 时的上下文），与 Win32 的窗口对应。
+    //   - 同一个画布只能有一种上下文：Initialize 不建上下文；用 WebGL2 时再 CreateWebGLContext，
+    //     用 WebGPU 时由图形设备在画布上建表面（WebGPUGraphicsDevice）
     //   - 画布由页面用 CSS 撑满（100vw × 100vh），绘图缓冲 = CSS 尺寸 × devicePixelRatio
     //   - RequestFrame 用 requestAnimationFrame 安排下一帧，多次调用只渲染一次；空闲时不渲染
     class WebHost
@@ -20,7 +22,8 @@ namespace MiniCAD
         WebHost(const WebHost&) = delete;
         WebHost& operator=(const WebHost&) = delete;
 
-        bool Initialize();                  // 创建 WebGL2 上下文并设为当前
+        bool Initialize();                  // 开始跟踪画布尺寸与 DPI（不建上下文）
+        bool CreateWebGLContext();          // 创建 WebGL2 上下文并设为当前
         void SetOnResize(ResizeFunc f) { m_onResize = std::move(f); }
         void SetOnFrame (FrameFunc  f) { m_onFrame  = std::move(f); }
 

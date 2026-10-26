@@ -29,7 +29,7 @@ namespace MiniCAD
     class FontEngine
     {
     public:
-        // 设置字体文件搜索目录（相对于可执行文件）。默认 "fonts/"。
+        // 设置字体文件搜索目录（以 / 结尾）。默认 "fonts/"，相对当前目录；主窗口设为资源目录下的 fonts/（MainFrame::Initialize）
         void SetFontDir(std::string dir) { m_fontDir = std::move(dir); }
         const std::string& GetFontDir() const { return m_fontDir; }
         // 额外的搜索目录（如 Windows 的系统字体目录 C:\Windows\Fonts）：字体目录里没有的文件再到这些目录找，

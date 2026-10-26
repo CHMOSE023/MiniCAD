@@ -1,5 +1,5 @@
 # MiniCAD 持续集成与发布
-#   - 推送 v* 标签（例如 v0.2.1.1）时：编译桌面版与网页版、运行单元测试、打包 zip、
+#   - 推送 v* 标签（例如 v0.2.1.1）时：编译桌面版、网页版与 Linux 版、运行单元测试、打包 zip / tar.gz、
 #     创建 GitHub Release 并上传，网页版部署到 Cloudflare Pages；
 #     发布说明取自 docs/release-notes/<标签>.md（没有该文件时只写一行默认说明）
 #   - 到 main 的 PR（开启、推送新提交）时：只编译、测试、打包。main 的规则集要求
@@ -21,6 +21,9 @@ concurrency:
 
 env:
   EMSDK_VERSION: "5.0.7"      # 与本地 build_wasm.bat 验证过的版本一致
+  # Linux 版的窗口与输入库（Ubuntu 24.04 的 apt 里没有 SDL3，自己编译成静态库）；改版本时同时改校验和
+  SDL3_VERSION: "3.4.18"
+  SDL3_SHA256: "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3"
   # 打包文件名里的版本：标签构建用标签名，其余用 dev
   PACKAGE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
 
@@ -113,11 +116,73 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist/MiniCAD-${{ env.PACKAGE_VERSION }}-web --project-name=minicad --branch=main
 
+  # ── Linux 版：SDL3 + Vulkan / OpenGL ES 3 ──────────────────────────────────
+  # 不是 main 规则集要求的检查（要求的只有 Windows 与 Web 两项），但标签构建时发布要等它
+  linux:
+    name: Linux (Vulkan / GLES3)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 编译器、EGL / GLES、Vulkan 头文件与 glslangValidator，以及编译 SDL3 要的 X11 / Wayland 开发包
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libegl-dev libgles-dev libvulkan-dev glslang-tools \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev libudev-dev
+
+      # SDL3 编成静态库链进程序（发布包不用另带 .so）；装到工作区的 .sdl3，按版本缓存
+      - name: Cache SDL3
+        id: sdl3
+        uses: actions/cache@v4
+        with:
+          path: .sdl3
+          key: sdl3-${{ env.SDL3_VERSION }}-static-ubuntu-24.04
+
+      - name: Build SDL3
+        if: steps.sdl3.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sdl3.tar.gz" "https://github.com/libsdl-org/SDL/releases/download/release-${SDL3_VERSION}/SDL3-${SDL3_VERSION}.tar.gz"
+          echo "${SDL3_SHA256}  $RUNNER_TEMP/sdl3.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/sdl3.tar.gz" -C "$RUNNER_TEMP"
+          cmake -S "$RUNNER_TEMP/SDL3-${SDL3_VERSION}" -B "$RUNNER_TEMP/sdl3-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.sdl3" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl3-build"
+          cmake --install "$RUNNER_TEMP/sdl3-build"
+
+      - name: Configure
+        run: cmake -S . -B out/linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/.sdl3"
+
+      - name: Build
+        run: cmake --build out/linux
+
+      - name: Test
+        run: ctest --test-dir out/linux --output-on-failure
+
+      # 输出目录里已有 MiniCADLinux 与构建后复制的 assets；运行时要系统的 EGL / GLES（Mesa）与 Vulkan 加载器
+      - name: Package
+        run: |
+          name="MiniCAD-$PACKAGE_VERSION-linux-x64"
+          mkdir -p "dist/$name"
+          cp -r out/linux/MiniCADLinux/. "dist/$name/"
+          strip "dist/$name/MiniCADLinux"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniCAD-Linux
+          path: dist/*.tar.gz
+          retention-days: 7
+
   # ── 发布：推送 v* 标签时创建 GitHub Release ────────────────────────────────
   release:
     name: Release
     if: github.ref_type == 'tag'
-    needs: [windows, web]
+    needs: [windows, web, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -140,4 +205,6 @@ jobs:
         with:
           name: MiniCAD ${{ github.ref_name }}
           body_path: release-notes.md
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.tar.gz

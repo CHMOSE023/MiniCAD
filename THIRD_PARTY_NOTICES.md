@@ -40,3 +40,30 @@ SOFTWARE.
 - 来源：Google Noto Fonts（https://github.com/notofonts/noto-cjk）
 - 许可证：SIL Open Font License 1.1（https://openfontlicense.org），字体文件的 name 表里附有版权与许可声明
 
+
+## SDL3
+
+Linux 版（`MiniCADLinux`）的窗口、输入、剪贴板与文件对话框使用 SDL3，发布包里以静态库链入。
+
+- 来源：https://github.com/libsdl-org/SDL（版本见 `.github/workflows/build.yml` 的 `SDL3_VERSION`）
+- 许可证：zlib，原文如下
+
+```
+Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```
