@@ -78,3 +78,7 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 ## 核对显示效果
 
 - 不要截整个屏幕（会截到用户的其他窗口）：用 `MiniCADWin.exe --bench 图纸` 加 `MINICAD_BENCH_SHOT=目录` 离屏存成 BMP，再转 PNG 查看（见 skill `drawing-debug`）
+
+### 同一张图纸两次运行，画面不一样（间歇出现）
+- 原因：多半是读了未初始化的内存。实例：stb_truetype 处理"只有一个曲线外的点"的轮廓（宋体的空格）时越界读下一个点，空格画成一串长斜线，位置每次不同（已修，见 `3rd/stb/README.md`）
+- 做法：同一个 exe 用 `--bench` 加不同的 `MINICAD_BENCH_SHOT` 目录连跑多次，逐像素比较截图，先确认是不确定性而不是渲染器差异；再在截图处把场景存成 JSON（数据层）、把各路显示数据与字形网格（`GlyphMeshLibrary`）逐项打印出来比较，缩小到具体的实体或字形

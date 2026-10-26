@@ -36,7 +36,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 - `tests/`：`Core/`、`UI/` + `UI/Golden/`、`Serialization/`、`NodeGraph/`、`Solid/`、`Web/`（Node 运行的 JS 测试）、`Data/`（样例图纸）
 - `tools/`：`make_icons.py`（功能区图标）、`make_web_font.py`（网页版界面字体子集）、`inspect_dwg.cpp`（`MiniCADDwgInspect`，检查 DWG 内容）
 - `assets/`：字体、图标、填充图案、界面描述文件 `ui/minicad_ui.json`（菜单、工具栏、功能区、停靠布局）、示例节点图；桌面版构建后复制到可执行文件旁，网页版打包进虚拟文件系统根目录
-- `3rd/`：stb_image、stb_truetype；`3rd/SMLib`：NURBS BRep 实体内核（Apache-2.0），开关 `MINICAD_WITH_SOLID`（默认开），静态库不能并发使用（`SMLibKernel` 内部加锁），本地修改见 `3rd/SMLib/README.md`
+- `3rd/`：stb_image、stb_truetype（本地修改见 `3rd/stb/README.md`）；`3rd/SMLib`：NURBS BRep 实体内核（Apache-2.0），开关 `MINICAD_WITH_SOLID`（默认开），静态库不能并发使用（`SMLibKernel` 内部加锁），本地修改见 `3rd/SMLib/README.md`
 
 ### include 根目录（重要）
 
