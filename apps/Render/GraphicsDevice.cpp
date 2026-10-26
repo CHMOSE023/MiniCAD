@@ -38,9 +38,12 @@ namespace MiniCAD
             { "warp",  true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<D3D12GraphicsDevice>(true)); } },
             { "warp",  true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<D3D11GraphicsDevice>(true)); } },
 #endif
-#if defined(MINICAD_RENDER_GLES3)
+#if defined(MINICAD_RENDER_GLES3) && defined(__EMSCRIPTEN__)
             // 网页：同步创建的只有 WebGL2（使用 WebHost 创建的当前上下文）；WebGPU 见 CreateWebGPUGraphicsDeviceAsync
             { "webgl2", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
+#elif defined(MINICAD_RENDER_GLES3)
+            // Linux：目前只有 OpenGL（ES 3，使用宿主经 SDL3 创建的当前上下文）；Vulkan 是阶段 3
+            { "gl", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
 #endif
         };
     }

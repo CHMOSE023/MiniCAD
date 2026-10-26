@@ -1,6 +1,6 @@
 # 多平台渲染后端
 
-> 状态：阶段 0 完成（2026-10-26，分支 `render-backends`）；阶段 1 完成（2026-10-26），Windows 默认 D3D12 → D3D11 → WARP；阶段 5 网页 WebGPU 完成（2026-10-26）；阶段 2～4 进行中或未开始。
+> 状态：阶段 0 完成（2026-10-26，分支 `render-backends`）；阶段 1 完成（2026-10-26），Windows 默认 D3D12 → D3D11 → WARP；阶段 2 Linux 宿主 + OpenGL 完成（2026-10-26，只在 Xvfb 软件渲染下验证过）；阶段 5 网页 WebGPU 完成（2026-10-26）；阶段 3（Linux Vulkan）、阶段 4（macOS）未开始。三个阶段在各自的分支上做完后合并进 `render-backends`。
 > 定位：保留现有渲染接口，每个平台编译各自的原生后端；网页上用浏览器的 WebGPU，不支持时用 WebGL2。取代桌面上的 wgpu 路线（见 `docs/WebGPU/PLAN.md`：原型可行，但多一层依赖，D3D12 后端启动就多约 500 MB 内存，已放弃）。
 
 ---
@@ -123,10 +123,22 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - **接受的差距**：要大块上传的帧在 `big.dwg` 上比 D3D11 慢——框选全图首帧视口 194～227 → 233～237 ms（全选后的选中流约 168 MB），切回文档首帧视口 16～23 → 28～29 ms，首帧持平（836～849 → 835～849 ms）。`site.dwg` 上同类的帧反而更快（框选首帧 148～158 → 127～129 ms，布局页首帧 967～982 → 932～941 ms）。D3D12 的数据要经上传堆、再由 GPU 复制进显存，这一帧里等复制约 27 ms、建默认堆缓冲约 16 ms；D3D11 驱动带初始数据建缓冲的路径更快。可能的改进：复制放到 COPY 队列与渲染并行；支持 ReBAR / `D3D12_HEAP_TYPE_GPU_UPLOAD` 的显卡直接写显存
    - 上面这一项经确认接受（稳定帧持平或更快、内存达标，慢的只是换图纸、全选这类少见的帧），默认顺序已改成 D3D12 → D3D11 → WARP；改后不带 `--gpu` 的 `--selftest` 0 失败（用的是 D3D12），`--gpu warp` 用 D3D12 的 WARP 跑完 `--bench`
 
-### 阶段 2：Linux 宿主 + OpenGL
-1. 宿主：实现 `AppPlatform`（窗口、重绘、文件对话框、目录、后台线程、系统字体目录）与 MiniGUI 的平台层（`src/UI/Platform/Linux`：输入、剪贴板、字体、窗口框架）。窗口系统待定（见第 6 节）
-2. 图形：先上 `GLES3GraphicsDevice`（EGL），渲染器直接复用，最快看到画面
-3. CI 加 Linux 编译与测试（核心库、MiniGUI 的测试本来与平台无关）
+### 阶段 2：Linux 宿主 + OpenGL——已完成（2026-10-26），CI 未加
+1. 宿主 `apps/Linux`（目标 `MiniCADLinux`，`LinuxApp` 实现 `AppPlatform`）：SDL3 开窗口、收事件、建 EGL / GLES3 上下文（X11 上也强制 EGL），只做这些，渲染仍走 `GLES3GraphicsDevice`
+   - 窗口用系统标题栏（`HasWindowControls()` 为 false，与网页版一样不显示自绘的窗口按钮）；按需重绘：`RequestRedraw` 置标志并推一个 SDL 自定义事件，空闲时阻塞在 `SDL_WaitEvent`
+   - 后台线程 `std::thread`，完成回调与 `Post` 经 SDL 自定义事件交回界面线程；资源目录 = 可执行文件目录（构建后复制 `assets`），用户数据 `$XDG_DATA_HOME/MiniCAD`（默认 `~/.local/share/MiniCAD`），系统字体目录逐级列出 `/usr/share/fonts` 等（`FontEngine` 不进子目录），打开链接 `SDL_OpenURL`
+   - 文件对话框用 SDL3 的接口（xdg-desktop-portal，没有时 zenity）：打开、选文件夹是异步的；另存为、导出要当场返回路径，在界面线程上等对话框关闭（只取系统事件，不画界面），所选筛选器决定 DWG / DXF 版本。都打不开时弹提示，改用拖放或命令行给出图纸
+   - 没有监视界面描述文件的目录：切回窗口时调用 `MainFrame::CheckUiFileChanged`；没有自测 / `--bench`（`SelfTest.cpp` 仍只在 Win32）
+   - 命令行：`MiniCADLinux [--gpu gl] [--ui 文件] [图纸 ...]`，后端也可用 `MINICAD_GPU`；`CreateGraphicsDevice` 的偏好参数在 Linux 只认 `gl`（Vulkan 是阶段 3）
+2. MiniGUI 平台层 `src/UI/Platform/SDL`（目标 `MiniGUI_SDL`）：`SDLInput`（指针、键盘、文字与输入法、光标、定时器）、`SDLClipboard`、界面字体 `LoadSDLUIFonts`（主字体用随程序携带的 NotoSansSC-UI.ttf，与网页版相同；系统里的 Noto Sans CJK / 文泉驿作后备）。焦点不在文本框时关掉 SDL 的文字输入（相当于 Win32 关输入法），可打印的按键由按键事件换成文字
+3. CMake：`cmake/MiniGUI.cmake` 找 SDL3（`find_package(SDL3 CONFIG)`），`cmake/Render.cmake` 的 Linux 段找 `GLES3/gl3.h` 与 `libGLESv2`，编 GLES3 渲染器 + `MiniGUI_GLES3`、定义 `MINICAD_RENDER_GLES3`；缺任何一个时不编译宿主，核心库与测试照常
+4. GCC 13 的可移植性修改（Windows 行为不变）：成员与类型同名时类型写成 `MiniCAD::Lineweight` 等（`-Wchanges-meaning`）、补 `<cstring>`、SMLib 一处析构函数写法（见 `3rd/SMLib/README.md`）、`RecentFiles::DisplayName` 取父目录时两种分隔符都认、测试里的 Windows 调用加条件编译；`MiniCADTests`、`MiniCADDrawingOpenTests` 不再只在 Windows 上编译
+5. 验收结果（局域网 Ubuntu 24.04 服务器，GCC 13.3，SDL3 3.4.18 自己编译）：
+   - Linux 上 ctest 22 项全部通过（`MiniCADTests`、`MiniGUITests`、`MiniDWGTests`、节点图、实体等）；依赖微软雅黑的界面文字用例在 Linux 上跳过
+   - `MiniCADLinux` 在 Xvfb + Mesa llvmpipe（软件渲染）下启动，打开 `site.dwg`：模型页「全部显示」与 Windows 版画面一致（图纸本身有离群对象，主体很小），缩放窗口后、切到「总图」布局页显示正常；用 XTest 模拟的鼠标移动、滚轮、键入命令（`L`）、点击都生效
+   - Windows 桌面版、网页版照常编译，Windows 上 `MiniCADTests`、`MiniGUITests`、`MiniDWGTests` 通过
+   - **还没在真实显示器、Wayland、WSLg 上验证**；输入法（IBus / Fcitx）、文件对话框（portal / zenity）、高 DPI 缩放、拖放都没有实际试过
+6. 后续：CI 加 Linux 编译与测试（需要 SDL3：Ubuntu 25.04 起有 `libsdl3-dev`，24.04 要自己编译）；Linux 版打包
 
 ### 阶段 3：Linux Vulkan
 1. `VulkanGraphicsDevice` / `VulkanRenderer` / `VulkanRenderTarget` / `VulkanBackend`
@@ -163,7 +175,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
 
 ## 6. 待定
 
-- Linux 的窗口系统：直接写 X11 + Wayland 两套，还是用 SDL3 / GLFW 统一窗口与输入（只用它开窗口和收事件，渲染仍是自己的后端）。倾向 SDL3：一份代码覆盖 X11 / Wayland，macOS 也能用来先跑起来
+- ~~Linux 的窗口系统~~：已定（阶段 2）用 SDL3，只用它开窗口、收事件、建 EGL / GLES3 上下文，渲染仍是自己的后端；一份代码覆盖 X11 / Wayland，macOS 也能用来先跑起来。Vulkan（阶段 3）同样由 SDL3 建表面（`SDL_Vulkan_CreateSurface`）
 - 阶段 1、阶段 2、阶段 5 可以并行：阶段 0 完成后三者不碰同一批文件
 - ~~网页版同时编 WebGPU 和 WebGL2 两个后端，wasm 会变大~~：实测只多约 83 KB（阶段 5），不需要按需加载
-- 文件对话框在 Linux 上用 xdg-desktop-portal 还是 GTK
+- ~~文件对话框在 Linux 上用 xdg-desktop-portal 还是 GTK~~：已定（阶段 2）用 SDL3 的对话框接口，它走 xdg-desktop-portal，没有时用 zenity；不引入 GTK

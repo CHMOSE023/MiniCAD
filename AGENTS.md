@@ -20,19 +20,20 @@
 
 ## 项目概览
 
-C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一套界面（`apps/Common`）。
+C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用同一套界面（`apps/Common`）。
 
 ### 目录
 
 - `src/`：核心库（目标 `MiniCAD`，定义在 `cmake/MiniCAD.cmake`，命名空间 `MiniCAD`）
-- `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）与 `Platform/Web`（`MiniGUI_Web`）。开发计划：`docs/MiniGUI/PLAN.md`
+- `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）、`Platform/Web`（`MiniGUI_Web`）与 `Platform/SDL`（`MiniGUI_SDL`，Linux，需要 SDL3）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD，核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。`*.g.cpp` 由已归档的 MiniDWG 仓库里的脚本生成，不要手改。开发计划：`docs/MiniDWG/PLAN.md`
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
-- `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
-- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
+- `apps/Common/`：主窗口的界面与逻辑，各宿主共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
+- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；Linux 为 `GLES3GraphicsDevice`（OpenGL ES 3，上下文由宿主经 SDL3 创建）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`）；自测 `Host/SelfTest.cpp`
 - `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`）；`MiniGUIWebGallery` 是浏览器里的控件展示
+- `apps/Linux/`：Linux 宿主 `LinuxApp`（目标 `MiniCADLinux`）：SDL3 窗口与事件 + EGL / OpenGL ES 3；缺 SDL3 或 GLES3 开发文件时不编译，核心库与测试照常
 - `wasm/`：旧版 C 接口 WASM，只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译（此时核心库定义 `MINICAD_WEB`，不编译 `apps/Web`）
 - `tests/`：`Core/`、`UI/` + `UI/Golden/`、`Serialization/`、`NodeGraph/`、`Solid/`、`Web/`（Node 运行的 JS 测试）、`Data/`（样例图纸）
 - `tools/`：`make_icons.py`（功能区图标）、`make_web_font.py`（网页版界面字体子集）、`inspect_dwg.cpp`（`MiniCADDwgInspect`，检查 DWG 内容）
@@ -41,12 +42,12 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 
 ### include 根目录（重要）
 
-每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`。
+每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`，Linux 版 → `apps/Linux/src`。
 `src` 和 `src/UI` 下都有 `Core/`、`Render/`、`Text/`；不要让同一个相对路径（如 `Core/<文件>.h`）同时存在于两个根下——重名时编译器按搜索顺序悄悄选中其中一个，不会报错。
 
 ### 源文件登记
 
-源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
+源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt` / `apps/Linux/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
 
 ## 架构
 
@@ -62,13 +63,14 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 
 ### 主窗口与平台
 
-`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`（图形对象、重绘调度、文件选择（可能是异步的）、另存为路径、资源与用户数据目录、三维内核、后台任务 `RunInBackground` / `Post`）。不要在 `apps/Common` 里写 `#ifdef`：需要新的平台能力就在 `AppPlatform` 加虚函数，在 `Win32Window` 和 `WebApp` 里各实现一份。
+`apps/Common/src/GUI` 必须保持平台无关，平台相关的一律经 `AppPlatform`（图形对象、重绘调度、文件选择（可能是异步的）、另存为路径、资源与用户数据目录、三维内核、后台任务 `RunInBackground` / `Post`）。不要在 `apps/Common` 里写 `#ifdef`：需要新的平台能力就在 `AppPlatform` 加虚函数，在 `Win32Window`、`WebApp`、`LinuxApp` 里各实现一份。
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）；打开图纸经 `OpenDrawings` 在后台读取（`DocumentManager::Load` 可在其他线程调用），读完在界面线程 `DocumentManager::Add`
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。命令行输入经 `GUI/CommandLine.cpp`（界面层命令）再交给 `Editor::RunCommand`
 - 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`，保存后下载；图形设备异步就绪（先试 WebGPU，再退 WebGL2）之后才初始化界面
+- Linux 版：系统标题栏（没有窗口按钮）；文件对话框用 SDL3 的接口（xdg-desktop-portal，没有时 zenity），打不开时提示改用拖放或命令行；没有自测 / `--bench`（`RunSelfTest` 只在桌面版里）
 
-输入流程：Win32 消息 / DOM 事件 → `MiniGUI::Win32Input` / `WebInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
+输入流程：Win32 消息 / DOM 事件 / SDL 事件 → `MiniGUI::Win32Input` / `WebInput` / `SDLInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
 
 ## 验证改动
 

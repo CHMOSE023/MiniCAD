@@ -13,7 +13,8 @@
 namespace MiniCAD
 {
     // 宿主要画的窗口：Win32 为 HWND；网页版为画布的 CSS 选择器（const char*，如 "#canvas"），
-    // WebGPU 由它建画布表面，WebGL2 不用（上下文由 WebHost 创建并设为当前）
+    // WebGPU 由它建画布表面，WebGL2 不用（上下文由 WebHost 创建并设为当前）；
+    // Linux 不用（EGL / GLES3 上下文由宿主经 SDL3 创建并设为当前）
     struct NativeWindow
     {
         void* handle = nullptr;

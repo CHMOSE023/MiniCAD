@@ -24,10 +24,10 @@ namespace MiniCAD
         double       LinetypeScale = 1.0;                // DXF 组码 48
 
         // ── 线宽:DXF 标准枚举(含 ByLayer/ByBlock/Default)──────────────────
-        Lineweight   Lineweight    = Lineweight::ByLayer; // DXF 组码 370
+        MiniCAD::Lineweight   Lineweight   = MiniCAD::Lineweight::ByLayer; // DXF 组码 370
 
         // ── 透明度(DXF 组码 440),默认随图层 ───────────────────────────────
-        Transparency Transparency;
+        MiniCAD::Transparency Transparency;
 
         // ── 挤出方向 / OCS 法向(DXF 组码 210/220/230),默认 +Z(纯 2D)──────
         Math::Vec3   Extrusion     = { 0.0, 0.0, 1.0 };

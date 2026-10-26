@@ -32,10 +32,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/test/run.ps1 all   
 - 界面改动（`MiniCADWin` 只编译）：需要时 `out/debug/MiniCADWin/MiniCADWin.exe --selftest`，或实际运行看；核对显示效果用 `--bench 图纸` 加 `MINICAD_BENCH_SHOT=目录` 离屏截图，不要截整个屏幕
 - 改了控件外观或界面后端（`D3D11Backend` / `D3D12Backend`）：再跑 `MiniGUIGolden`（CI 不跑它；D3D11、D3D12 的结果都与软件光栅比较，`--warp` 用 WARP，`--no-d3d12` 跳过 D3D12；`--update` 更新基准，检查图片后再提交）
 - 网页版行为：`build_wasm.bat serve` 后在浏览器里看
+- Linux 宿主（`apps/Linux`）与 `src/UI/Platform/SDL` 在 Windows 上不编译，本脚本也不挑它们：改了要到 Linux 上编译运行（见 README 的 Linux 构建说明）
 
 ## 新增测试或测试程序
 
 - 测试源文件登记在 `tests/CMakeLists.txt`；核心库的各组测试在 `tests/Core/SpatialIndexTests.cpp` 的 `main` 里调用
+- 测试也要能在 Linux（GCC）上编译运行：Windows 专有的调用（`windows.h`、`_dupenv_s`、`SetConsoleOutputCP` 等）放进 `#ifdef _WIN32`；Windows 风格的路径别交给 `std::filesystem` 拆（Linux 不认反斜杠）
 - 新增测试程序时在 `run.ps1` 的 `$rules` 里加一条对照
 - 不依赖本机图纸：样例在临时目录里现做（`ExportCad` 写出再读回）；`tests/Data` 不在版本库里，本机图纸不存在时打印"跳过"并通过
 - 中文路径按 UTF-8 构造 `std::filesystem::path`（`std::u8string`）

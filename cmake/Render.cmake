@@ -1,10 +1,22 @@
 # ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
 # 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
 #   Windows → D3D12 + D3D11    网页（Emscripten）→ WebGPU（浏览器支持时）+ GLES3（WebGL2，回退）
+#   Linux → GLES3（EGL，上下文由宿主经 SDL3 创建）
 # 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
 # MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
 
 set(MINICAD_RENDER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/apps/Render")
+
+# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    find_path(MINICAD_GLES3_INCLUDE_DIR GLES3/gl3.h)
+    find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    if(MINICAD_GLES3_INCLUDE_DIR AND MINICAD_GLESV2_LIBRARY)
+        set(MINICAD_LINUX_GLES3 ON)
+    else()
+        message(STATUS "没有找到 OpenGL ES 3（GLES3/gl3.h、libGLESv2），不编译 GLES3 后端与 Linux 宿主")
+    endif()
+endif()
 
 # ── 界面后端 ─────────────────────────────────────────────────────────
 if(WIN32 AND NOT EMSCRIPTEN)
@@ -47,13 +59,19 @@ if(WIN32 AND NOT EMSCRIPTEN)
     endif()
 endif()
 
-if(EMSCRIPTEN)
+if(EMSCRIPTEN OR MINICAD_LINUX_GLES3)
     add_library(MiniGUI_GLES3 STATIC
         "${MINICAD_RENDER_SRC}/GLES3/GLES3Backend.cpp"
     )
     target_include_directories(MiniGUI_GLES3 PUBLIC ${MINICAD_RENDER_SRC})
     target_link_libraries(MiniGUI_GLES3 PUBLIC MiniGUI)
+    if(MINICAD_LINUX_GLES3)
+        target_include_directories(MiniGUI_GLES3 PRIVATE ${MINICAD_GLES3_INCLUDE_DIR})
+        target_link_libraries(MiniGUI_GLES3 PUBLIC ${MINICAD_GLESV2_LIBRARY})
+    endif()
+endif()
 
+if(EMSCRIPTEN)
     # WebGPU：浏览器自带的接口，经 Emscripten 自带的 emdawnwebgpu 绑定（标准 webgpu.h，不引入 Dawn 库）。
     # --use-port 编译和链接都要加：编译时提供头文件，链接时加入 JS 实现与 webgpu.cpp；
     # 第一次使用时 Emscripten 从 GitHub 下载固定版本的端口包到 emsdk 的缓存目录
@@ -107,18 +125,29 @@ if(WIN32 AND NOT EMSCRIPTEN)
     target_link_libraries(MiniCADRender PRIVATE MiniGUI_D3D12 d3d12)
 endif()
 
-if(EMSCRIPTEN)
-    # 两个都编：先异步试 WebGPU，不支持或网址带 ?webgl 时用 WebGL2（宿主 WebApp 决定）
+if(EMSCRIPTEN OR MINICAD_LINUX_GLES3)
     target_sources(MiniCADRender PRIVATE
         "${MINICAD_RENDER_SRC}/GLES3/GLES3GraphicsDevice.cpp"
         "${MINICAD_RENDER_SRC}/GLES3/GLES3Renderer.cpp"
         "${MINICAD_RENDER_SRC}/GLES3/GLRenderTarget.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_GLES3)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_GLES3)
+    if(MINICAD_LINUX_GLES3)
+        target_include_directories(MiniCADRender PRIVATE ${MINICAD_GLES3_INCLUDE_DIR})
+        target_link_libraries(MiniCADRender PRIVATE ${MINICAD_GLESV2_LIBRARY})
+    endif()
+endif()
+
+if(EMSCRIPTEN)
+    # 网页两个都编：先异步试 WebGPU，不支持或网址带 ?webgl 时用 WebGL2（宿主 WebApp 决定）
+    target_sources(MiniCADRender PRIVATE
         "${MINICAD_RENDER_SRC}/WebGPU/WebGPUGraphicsDevice.cpp"
         "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderer.cpp"
         "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderTarget.cpp"
     )
-    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_GLES3 MINICAD_RENDER_WEBGPU)
-    target_link_libraries(MiniCADRender PRIVATE MiniGUI_GLES3 MiniGUI_WebGPU)
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_WEBGPU)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_WebGPU)
 endif()
 
 if(MSVC)
