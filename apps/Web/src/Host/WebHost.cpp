@@ -42,6 +42,15 @@ namespace MiniCAD
 
     bool WebHost::Initialize()
     {
+        // 窗口尺寸变化、页面缩放（devicePixelRatio 变化）都会触发 resize
+        emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, false, &WebHost::OnResizeEvent);
+        MiniCADWebHost_Observe(m_selector.c_str(), this);
+        UpdateSize();
+        return true;
+    }
+
+    bool WebHost::CreateWebGLContext()
+    {
         EmscriptenWebGLContextAttributes attr;
         emscripten_webgl_init_context_attributes(&attr);
         attr.majorVersion = 2;
@@ -62,11 +71,6 @@ namespace MiniCAD
             return false;
         }
         emscripten_webgl_make_context_current(m_gl);
-
-        // 窗口尺寸变化、页面缩放（devicePixelRatio 变化）都会触发 resize
-        emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, this, false, &WebHost::OnResizeEvent);
-        MiniCADWebHost_Observe(m_selector.c_str(), this);
-        UpdateSize();
         return true;
     }
 

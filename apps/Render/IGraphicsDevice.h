@@ -6,10 +6,14 @@
 #include <memory>
 #include <string>
 #include <vector>
+#ifdef __EMSCRIPTEN__
+#include <functional>
+#endif
 
 namespace MiniCAD
 {
-    // 宿主要画的窗口：Win32 为 HWND；网页版不用（WebGL 上下文由 WebHost 创建并设为当前）
+    // 宿主要画的窗口：Win32 为 HWND；网页版为画布的 CSS 选择器（const char*，如 "#canvas"），
+    // WebGPU 由它建画布表面，WebGL2 不用（上下文由 WebHost 创建并设为当前）
     struct NativeWindow
     {
         void* handle = nullptr;
@@ -47,6 +51,15 @@ namespace MiniCAD
     };
 
     // 按本平台编译进来的图形接口创建设备并初始化：先试 preference（小写名称：d3d12、d3d11、warp、vulkan、gl、webgpu、webgl2），
-    // 为空或失败时按平台的默认顺序逐个尝试；全部失败返回 nullptr
+    // 为空或失败时按平台的默认顺序逐个尝试；全部失败返回 nullptr。
+    // 网页版这里只建 WebGL2（WebGPU 的设备要异步获取，见 CreateWebGPUGraphicsDeviceAsync）
     std::unique_ptr<IGraphicsDevice> CreateGraphicsDevice(const NativeWindow& window, int width, int height, const std::string& preference = {});
+
+#ifdef __EMSCRIPTEN__
+    // 网页：浏览器支持时异步取 WebGPU 的适配器与设备，建好图形设备后回调；不支持或任何一步失败都回调 nullptr，
+    // 这时画布上还没有上下文，宿主再建 WebGL2 上下文、用 CreateGraphicsDevice(..., "webgl2")。
+    // 同一个画布只能有一种上下文，所以要先试 WebGPU、确定不用它再建 WebGL2
+    void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int height,
+                                         std::function<void(std::unique_ptr<IGraphicsDevice>)> done);
+#endif
 }

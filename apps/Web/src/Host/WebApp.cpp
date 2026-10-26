@@ -12,6 +12,7 @@
 #include <emscripten.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <memory>
 
 namespace MiniCAD
@@ -180,6 +181,16 @@ namespace MiniCAD
         setTimeout(() => URL.revokeObjectURL(url), 10000);
     });
 
+    // 网址带 ?webgl（或 ?webgl=1）时强制用 WebGL2：排查问题、对比两个后端
+    EM_JS(int, MiniCADWeb_PreferWebGL, (), {
+        try { return new URLSearchParams(location.search).has("webgl") ? 1 : 0; } catch (e) { return 0; }
+    });
+
+    // 设备异步就绪时初始化失败：加载画面还在就显示原因（与 Module.onAbort 相同）
+    EM_JS(void, MiniCADWeb_ReportFailure, (const char* what), {
+        if (Module["onAbort"]) Module["onAbort"](UTF8ToString(what));
+    });
+
     EM_JS(void, MiniCADWeb_SetTitle, (const char* title), {
         document.title = UTF8ToString(title);
     });
@@ -235,10 +246,48 @@ namespace MiniCAD
     {
         if (!m_host.Initialize())
             return false;
+        if (MiniCADWeb_PreferWebGL())
+        {
+            LOG_INFO("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
+            return InitializeWebGL();
+        }
 
-        m_graphics = CreateGraphicsDevice(NativeWindow{}, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
-        if (!m_graphics)
+        // 先试 WebGPU：取适配器、设备都是异步的，回调前不建任何上下文、不画帧
+        const NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        CreateWebGPUGraphicsDeviceAsync(window, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight(),
+            [this](std::unique_ptr<IGraphicsDevice> device)
+            {
+                bool ok = false;
+                if (device)
+                {
+                    m_graphics = std::move(device);
+                    ok = OnGraphicsReady();
+                }
+                else
+                {
+                    LOG_INFO("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
+                    ok = InitializeWebGL();
+                }
+                if (!ok)
+                    ReportFailure("初始化失败（浏览器需要支持 WebGPU 或 WebGL2）");
+            });
+        return true;
+    }
+
+    bool WebApp::InitializeWebGL()
+    {
+        if (!m_host.CreateWebGLContext())
             return false;
+        const NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        m_graphics = CreateGraphicsDevice(window, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight(), "webgl2");
+        return m_graphics && OnGraphicsReady();
+    }
+
+    bool WebApp::OnGraphicsReady()
+    {
+        LOG_INFO("MiniCAD 网页版：图形接口 %s", m_graphics->GetName());
+        // 异步等待期间画布尺寸可能变了：按当前尺寸
+        m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
         m_viewportRT = m_graphics->CreateRenderTarget();
         m_viewportRT->Create(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
 
@@ -255,6 +304,12 @@ namespace MiniCAD
         MiniCADWeb_InstallUnloadGuard();
         m_host.RequestFrame();
         return true;
+    }
+
+    void WebApp::ReportFailure(const char* what)
+    {
+        std::printf("MiniCAD：%s\n", what);
+        MiniCADWeb_ReportFailure(what);
     }
 
     bool WebApp::HasUnsavedDocuments() const

@@ -1,6 +1,6 @@
 # ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
 # 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
-#   Windows → D3D12 + D3D11    网页（Emscripten）→ GLES3（WebGL2）
+#   Windows → D3D12 + D3D11    网页（Emscripten）→ WebGPU（浏览器支持时）+ GLES3（WebGL2，回退）
 # 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
 # MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
 
@@ -53,6 +53,18 @@ if(EMSCRIPTEN)
     )
     target_include_directories(MiniGUI_GLES3 PUBLIC ${MINICAD_RENDER_SRC})
     target_link_libraries(MiniGUI_GLES3 PUBLIC MiniGUI)
+
+    # WebGPU：浏览器自带的接口，经 Emscripten 自带的 emdawnwebgpu 绑定（标准 webgpu.h，不引入 Dawn 库）。
+    # --use-port 编译和链接都要加：编译时提供头文件，链接时加入 JS 实现与 webgpu.cpp；
+    # 第一次使用时 Emscripten 从 GitHub 下载固定版本的端口包到 emsdk 的缓存目录
+    set(MINICAD_EMDAWNWEBGPU "--use-port=emdawnwebgpu:cpp_bindings=false")
+    add_library(MiniGUI_WebGPU STATIC
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPUBackend.cpp"
+    )
+    target_include_directories(MiniGUI_WebGPU PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_WebGPU PUBLIC MiniGUI)
+    target_compile_options(MiniGUI_WebGPU PUBLIC ${MINICAD_EMDAWNWEBGPU})
+    target_link_options(MiniGUI_WebGPU PUBLIC ${MINICAD_EMDAWNWEBGPU})
 endif()
 
 # 软件光栅后端（与平台无关，用于截图对比测试）
@@ -96,13 +108,17 @@ if(WIN32 AND NOT EMSCRIPTEN)
 endif()
 
 if(EMSCRIPTEN)
+    # 两个都编：先异步试 WebGPU，不支持或网址带 ?webgl 时用 WebGL2（宿主 WebApp 决定）
     target_sources(MiniCADRender PRIVATE
         "${MINICAD_RENDER_SRC}/GLES3/GLES3GraphicsDevice.cpp"
         "${MINICAD_RENDER_SRC}/GLES3/GLES3Renderer.cpp"
         "${MINICAD_RENDER_SRC}/GLES3/GLRenderTarget.cpp"
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPUGraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderer.cpp"
+        "${MINICAD_RENDER_SRC}/WebGPU/WebGPURenderTarget.cpp"
     )
-    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_GLES3)
-    target_link_libraries(MiniCADRender PRIVATE MiniGUI_GLES3)
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_GLES3 MINICAD_RENDER_WEBGPU)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_GLES3 MiniGUI_WebGPU)
 endif()
 
 if(MSVC)

@@ -44,7 +44,7 @@ int main()
     {
         g_app = new App();      // 页面关闭前一直存在
         App& app = *g_app;
-        if (!app.host.Initialize())
+        if (!app.host.Initialize() || !app.host.CreateWebGLContext())
             return 1;
 
         app.backend = std::make_unique<GLES3Backend>();

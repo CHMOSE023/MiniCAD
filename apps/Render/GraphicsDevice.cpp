@@ -12,6 +12,9 @@
 #ifdef MINICAD_RENDER_GLES3
 #include "GLES3/GLES3GraphicsDevice.h"
 #endif
+#ifdef MINICAD_RENDER_WEBGPU
+#include "WebGPU/WebGPUGraphicsDevice.h"
+#endif
 
 namespace MiniCAD
 {
@@ -36,6 +39,7 @@ namespace MiniCAD
             { "warp",  true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<D3D11GraphicsDevice>(true)); } },
 #endif
 #if defined(MINICAD_RENDER_GLES3)
+            // 网页：同步创建的只有 WebGL2（使用 WebHost 创建的当前上下文）；WebGPU 见 CreateWebGPUGraphicsDeviceAsync
             { "webgl2", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
 #endif
         };
@@ -70,4 +74,17 @@ namespace MiniCAD
         }
         return nullptr;
     }
+
+#ifdef __EMSCRIPTEN__
+    void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int height,
+                                         std::function<void(std::unique_ptr<IGraphicsDevice>)> done)
+    {
+#ifdef MINICAD_RENDER_WEBGPU
+        WebGPUGraphicsDevice::CreateAsync(window, width, height, std::move(done));
+#else
+        (void)window; (void)width; (void)height;
+        done(nullptr);
+#endif
+    }
+#endif
 }

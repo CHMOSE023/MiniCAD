@@ -83,7 +83,7 @@ namespace MiniCAD
     }
 
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）
-    // 与网页版（画布 + WebGL2，apps/Web/src/Host/WebApp）各实现一份；MainFrame 本身不含平台代码。
+    // 与网页版（画布 + WebGPU / WebGL2，apps/Web/src/Host/WebApp）各实现一份；MainFrame 本身不含平台代码。
     class AppPlatform
     {
     public:
