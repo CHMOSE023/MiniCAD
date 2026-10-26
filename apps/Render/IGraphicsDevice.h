@@ -4,6 +4,7 @@
 #include "Render/IRenderBackend.h"
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace MiniCAD
@@ -45,6 +46,7 @@ namespace MiniCAD
         virtual const char* GetName() const = 0;            // 关于对话框显示，例如 "D3D11"
     };
 
-    // 按本平台编译进来的图形接口创建设备并初始化；失败返回 nullptr
-    std::unique_ptr<IGraphicsDevice> CreateGraphicsDevice(const NativeWindow& window, int width, int height);
+    // 按本平台编译进来的图形接口创建设备并初始化：先试 preference（小写名称：d3d12、d3d11、warp、vulkan、gl、webgpu、webgl2），
+    // 为空或失败时按平台的默认顺序逐个尝试；全部失败返回 nullptr
+    std::unique_ptr<IGraphicsDevice> CreateGraphicsDevice(const NativeWindow& window, int width, int height, const std::string& preference = {});
 }

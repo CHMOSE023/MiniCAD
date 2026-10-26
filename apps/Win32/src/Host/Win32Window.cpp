@@ -137,7 +137,7 @@ namespace MiniCAD
     // =========================================================
     // 初始化
     // =========================================================
-    bool Win32Window::Initialize(const wchar_t* title, int width, int height)
+    bool Win32Window::Initialize(const wchar_t* title, int width, int height, const std::string& gpu)
     {
         if (!InitWindow(title, width, height))
             return false;
@@ -146,7 +146,7 @@ namespace MiniCAD
         GetClientRect(m_hwnd, &rc);
         const int w = rc.right - rc.left;
         const int h = rc.bottom - rc.top;
-        m_graphics = CreateGraphicsDevice(NativeWindow{ m_hwnd }, w, h);
+        m_graphics = CreateGraphicsDevice(NativeWindow{ m_hwnd }, w, h, gpu);
         if (!m_graphics)
             return false;
         m_viewportRT = m_graphics->CreateRenderTarget();

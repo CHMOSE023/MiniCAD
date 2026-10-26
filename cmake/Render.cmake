@@ -1,6 +1,6 @@
 # ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
 # 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
-#   Windows → D3D11            网页（Emscripten）→ GLES3（WebGL2）
+#   Windows → D3D12 + D3D11    网页（Emscripten）→ GLES3（WebGL2）
 # 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
 # MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
 
@@ -19,6 +19,27 @@ if(WIN32 AND NOT EMSCRIPTEN)
     if(MSVC)
         target_compile_options(MiniGUI_D3D11 PRIVATE /utf-8 /W4)
         target_compile_definitions(MiniGUI_D3D11 PRIVATE
+            UNICODE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+        )
+    endif()
+endif()
+
+# D3D12 界面后端；D3D12Context（设备、命令列表、上传缓冲、描述符）也在这里，CAD 视口渲染器共用它
+if(WIN32 AND NOT EMSCRIPTEN)
+    add_library(MiniGUI_D3D12 STATIC
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Backend.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Context.cpp"
+    )
+    target_include_directories(MiniGUI_D3D12 PUBLIC ${MINICAD_RENDER_SRC})
+    target_link_libraries(MiniGUI_D3D12
+        PUBLIC  MiniGUI d3d12 dxgi
+        PRIVATE D3DCompiler
+    )
+    if(MSVC)
+        target_compile_options(MiniGUI_D3D12 PRIVATE /utf-8 /W4)
+        target_compile_definitions(MiniGUI_D3D12 PRIVATE
             UNICODE
             NOMINMAX
             WIN32_LEAN_AND_MEAN
@@ -64,6 +85,14 @@ if(WIN32 AND NOT EMSCRIPTEN)
     )
     target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_D3D11)
     target_link_libraries(MiniCADRender PRIVATE MiniGUI_D3D11 d3d11 dxgi D3DCompiler)
+
+    target_sources(MiniCADRender PRIVATE
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12GraphicsDevice.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12Renderer.cpp"
+        "${MINICAD_RENDER_SRC}/D3D12/D3D12RenderTarget.cpp"
+    )
+    target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_D3D12)
+    target_link_libraries(MiniCADRender PRIVATE MiniGUI_D3D12 d3d12)
 endif()
 
 if(EMSCRIPTEN)

@@ -19,7 +19,8 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - 滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传
 - 虚线的几何在世界坐标里（线型的"点"笔划走点流，恒定 1 像素）；不超过 200 个周期的虚线不随缩放重建。更长的（`DrawContext::kStaticMaxDashes`）"延迟铺设"（`DeferredDash`：细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放铺进动态流，一个周期不足 4px 时画成实线）
 - 拼接后的静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（追加实体、渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`）从缓存重新拼接，不重新细分
-- 顶点颜色为 RGBA8（`Vertex_P3_C4` 16 字节）；D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动。NVIDIA 驱动会为上传的顶点缓冲在进程里留一份同样大小的系统内存，GPU 数据量直接计入私有内存
+- 顶点颜色为 RGBA8（`Vertex_P3_C4` 16 字节）；D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动。NVIDIA 驱动会为上传的顶点缓冲在进程里留一份同样大小的系统内存，GPU 数据量直接计入私有内存（D3D11 与 D3D12 都是：默认堆的缓冲多少 MB，私有内存就涨多少 MB）
+- D3D12（`D3D12Renderer` / `D3D12Backend`，共用 `MiniGUI::D3D12Context`）：缓存提交放在默认堆的缓冲里，规则同 D3D11（小的按 1.5 倍预留，≥ 4 MB 按实际大小）；数据经上传页复制（`D3D12Context::AllocateUpload`：默认 1 MB 一页，GPU 用完（围栏）后整页复用，空闲 60 帧归还）。超过 4 MB 的上传单独建页，`D3D12Context::UploadBuffer` 录完复制就提交并等 GPU，暂存区与换下的旧缓冲当场释放——否则换图纸、切回文档的那一帧会同时留着新旧两份加暂存区，私有内存比 D3D11 多出几十 MB。换下的缓冲、纹理一律 `D3D12Context::Defer`，执行完已录制的命令再释放；常量用根常量，没有常量缓冲
 
 ## 文字
 

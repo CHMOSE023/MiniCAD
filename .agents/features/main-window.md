@@ -32,12 +32,14 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 ## 宿主
 
 - 图形：两个宿主都只经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，由 `CreateGraphicsDevice` 按平台创建）使用图形接口：渲染器、界面后端、视口渲染目标、开始界面通道、呈现、等 GPU、读回像素（自测截图）都从它来；`AppPlatform` 的图形函数直接转给它
-- 桌面版 `apps/Win32/src/Host/Win32Window`：无边框窗口（`MiniGUI::Win32Frame`）、图形设备（D3D11）、消息循环、监视界面描述文件；另存为用系统对话框（"保存类型"里区分 2018 与 2013/2014）
+- 桌面版 `apps/Win32/src/Host/Win32Window`：无边框窗口（`MiniGUI::Win32Frame`）、图形设备、消息循环、监视界面描述文件；另存为用系统对话框（"保存类型"里区分 2018 与 2013/2014）
+- 桌面版的图形设备：`D3D12GraphicsDevice` 或 `D3D11GraphicsDevice`（都可用 WARP）。默认按 `apps/Render/GraphicsDevice.cpp` 里的表的顺序（D3D12 → D3D11 → WARP）创建，失败就试下一个；命令行 `--gpu d3d12|d3d11|warp` 或环境变量 `MINICAD_GPU` 指定（命令行优先，指定的不可用时回退默认顺序）。关于对话框显示实际用的（`AppPlatform::GetGraphicsName`）
 - 网页版 `apps/Web/src/Host/WebApp`：`WebHost` 负责画布、创建 WebGL2 上下文（图形设备 `GLES3GraphicsDevice` 只使用当前上下文）、DPI（`ResizeObserver` + devicePixelRatio）、`requestAnimationFrame` 按需刷新；打开的文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本；浏览器交互（文件选择、目录授权、下载）写在 `EM_JS` 里
 - 网页版输入：键盘按 `KeyboardEvent.keyCode` 映射（与 Windows 虚拟键码相同）；文本框获得焦点时，文字与输入法从跟随光标的隐藏 textarea 送来；Ctrl+V 等 `paste` 事件带着文字到达后再交给界面
 
 ## 测试与排查
 
-- `MiniCADWin.exe --selftest`（注入窗口消息的端到端自测，应全部通过；`--full` 加跑 20 万条线的耗时测量）
-- MiniGUI 控件：`MiniGUITests`、`MiniGUIGolden`（截图对比，CI 不跑）
+- `MiniCADWin.exe --selftest`（注入窗口消息的端到端自测，应全部通过；`--full` 加跑 20 万条线的耗时测量）；改了渲染后端时 `--gpu d3d12`、`--gpu d3d11` 各跑一遍
+- D3D12 的调试版自动打开调试层（系统装有 Graphics Tools 时），警告与错误以 `[D3D12]` 开头打到 stderr：调试版跑一遍自测，stderr 里不应有这样的行
+- MiniGUI 控件：`MiniGUITests`、`MiniGUIGolden`（截图对比：软件光栅 vs 基准，D3D11 / D3D12 vs 软件光栅；CI 不跑）
 - 网页宿主的 JS：`tests/Web/*.cjs`；整体行为在浏览器里看（`build_wasm.bat serve`）。浏览器里没法操作系统的文件对话框，验证时可以在页面里替换 `HTMLInputElement.prototype.click` / `showDirectoryPicker`，从本地服务器取样例文件

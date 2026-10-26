@@ -200,13 +200,14 @@ endif()
 minicad_test_output(MiniGUITests)
 add_test(NAME MiniGUITests COMMAND MiniGUITests)
 
-# ── MiniGUI 截图对比测试：软件光栅 vs 基准图片，D3D11 vs 软件光栅 ─────────
+# ── MiniGUI 截图对比测试：软件光栅 vs 基准图片，D3D11 / D3D12 vs 软件光栅 ─────────
 # 基准图片需要更新时：out\<preset>\MiniGUIGolden.exe --update，检查图片后再提交
 if(WIN32)
     add_executable(MiniGUIGolden
         "UI/Golden/GoldenMain.cpp"
         "UI/Golden/PngIO.cpp"
         "UI/Golden/D3D11Capture.cpp"
+        "UI/Golden/D3D12Capture.cpp"
         "UI/Golden/Demo/DemoNodes.cpp"
         "UI/Golden/Demo/Gallery.cpp"
     )
@@ -219,6 +220,7 @@ if(WIN32)
         MiniGUI
         MiniGUI_Software
         MiniGUI_D3D11
+        MiniGUI_D3D12
         MiniGUI_Win32
         d3d11
         dxgi

@@ -1,12 +1,14 @@
 // 截图对比测试
-//   MiniGUIGolden               软件光栅结果与基准图片比较；D3D11 结果与软件光栅比较
+//   MiniGUIGolden               软件光栅结果与基准图片比较；D3D11、D3D12 结果与软件光栅比较
 //   MiniGUIGolden --update      重新生成基准图片（需要人工检查后再提交）
 //   MiniGUIGolden --no-d3d11    跳过 D3D11 比较（没有 D3D11 的环境）
+//   MiniGUIGolden --no-d3d12    跳过 D3D12 比较（没有 D3D12 的环境）
 //   MiniGUIGolden --save-all    所有场景都输出实际图片，不只是失败的
-//   MiniGUIGolden --warp        强制使用 WARP（微软软件实现的 D3D11），模拟没有显卡的环境
+//   MiniGUIGolden --warp        强制使用 WARP（微软的软件实现，D3D11 与 D3D12 都是），模拟没有显卡的环境
 //   MiniGUIGolden <名称片段>     只运行名称包含该片段的场景
 // 失败时在构建目录的 golden_out/ 下输出实际图片和差异图（差异像素标红）
 #include "D3D11Capture.h"
+#include "D3D12Capture.h"
 #include "PngIO.h"
 #include "DemoNodes.h"
 #include "Core/UIContext.h"
@@ -773,7 +775,7 @@ namespace
     constexpr int    kBaselineThreshold = 1;
     constexpr double kBaselineMaxBad    = 0.0;
 
-    // D3D11 vs 软件光栅：GPU 的插值、采样权重精度与软件实现有细微差别。
+    // D3D11 / D3D12 vs 软件光栅：GPU 的插值、采样权重精度与软件实现有细微差别。
     // 实测（GTX 1060 与 WARP）所有像素差值都不超过 1；阈值留一点余量给其他厂商的显卡，
     // 只允许极少数像素超过阈值
     constexpr int    kCrossThreshold = 3;
@@ -807,12 +809,13 @@ int main(int argc, char** argv)
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
-    bool update = false, useD3D11 = true, saveAll = false, forceWarp = false;
+    bool update = false, useD3D11 = true, useD3D12 = true, saveAll = false, forceWarp = false;
     std::string filter;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--update") == 0)        update = true;
         else if (std::strcmp(argv[i], "--no-d3d11") == 0) useD3D11 = false;
+        else if (std::strcmp(argv[i], "--no-d3d12") == 0) useD3D12 = false;
         else if (std::strcmp(argv[i], "--save-all") == 0) saveAll = true;
         else if (std::strcmp(argv[i], "--warp") == 0)     forceWarp = true;
         else                                              filter = argv[i];
@@ -857,6 +860,14 @@ int main(int argc, char** argv)
     }
     if (useD3D11)
         std::printf("D3D11 适配器：%s\n", d3d11.GetAdapterName().c_str());
+    D3D12Capture d3d12;
+    if (useD3D12 && !d3d12.Initialize(forceWarp))
+    {
+        std::printf("D3D12 设备创建失败，跳过 D3D12 比较\n");
+        useD3D12 = false;
+    }
+    if (useD3D12)
+        std::printf("D3D12 适配器：%s\n", d3d12.GetAdapterName().c_str());
     std::printf("基准目录：%s\n\n", baselineDir.string().c_str());
 
     int failures = 0;
@@ -934,6 +945,26 @@ int main(int argc, char** argv)
             {
                 WritePng(outPrefix + ".d3d11.png", gpu);
                 WritePng(outPrefix + ".d3d11_diff.png", diff);
+            }
+        }
+
+        // ── D3D12 vs 软件光栅（着色器与 D3D11 是同一份 HLSL）────────
+        if (useD3D12)
+        {
+            const SoftwareImage gpu = RenderScene(scene, d3d12.GetBackend(),
+                [&](int w, int h) { d3d12.BeginFrame(w, h, kClearColor); },
+                [&] { return d3d12.Readback(); });
+
+            SoftwareImage diff;
+            const CompareResult r = Compare(gpu, sw, kCrossThreshold, &diff);
+            const bool ok = Passed(r, kCrossMaxBad);
+            std::printf("  D3D12    %s  %s\n", ok ? "通过" : "失败", Describe(r).c_str());
+            if (!ok)
+                ++failures;
+            if (!ok || saveAll)
+            {
+                WritePng(outPrefix + ".d3d12.png", gpu);
+                WritePng(outPrefix + ".d3d12_diff.png", diff);
             }
         }
     }

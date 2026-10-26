@@ -1,9 +1,11 @@
 // MiniCADWin：MiniCAD 桌面版入口（界面由 MiniGUI 绘制）
-// 用法：MiniCADWin.exe [--selftest [--full]] [--bench 图纸] [--ui 界面描述文件.json] [--] [图纸路径 ...]
+// 用法：MiniCADWin.exe [--selftest [--full]] [--bench 图纸] [--ui 界面描述文件.json] [--gpu d3d12|d3d11|warp] [--] [图纸路径 ...]
+// 图形接口也可以用环境变量 MINICAD_GPU 指定（命令行优先）；指定的不可用时按默认顺序回退
 // 以 USE_WIN32 编译时为窗口程序（没有控制台，日志和自测输出不可见）
 #include "Host/Win32Window.h"
 #include <shellapi.h>
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -43,6 +45,7 @@ namespace
         bool        selfTest = false;
         bool        selfTestFull = false;   // --full：自测另跑 20 万条线的耗时测量（慢）
         std::string benchPath;
+        std::string gpu;
         std::vector<std::string> drawingPaths;
         bool positional = false;
 
@@ -62,10 +65,18 @@ namespace
                 benchPath = ToUtf8(argv[++i]);
             else if (!positional && a == "--ui" && i + 1 < argc)
                 frame.SetUiFile(ToUtf8(argv[++i]));
+            else if (!positional && a == "--gpu" && i + 1 < argc)
+                gpu = ToUtf8(argv[++i]);
             else
                 drawingPaths.push_back(a);
         }
         LocalFree(argv);
+        if (gpu.empty())
+        {
+            wchar_t env[64] = {};
+            if (GetEnvironmentVariableW(L"MINICAD_GPU", env, static_cast<DWORD>(std::size(env))) > 0)
+                gpu = ToUtf8(env);
+        }
 
         if (!benchPath.empty())
             selfTest = true;    // 基准与自测一样：不读写用户布局，输出不缓冲
@@ -74,7 +85,7 @@ namespace
         else
             WidenConsole();
         frame.SetUseUserLayout(!selfTest);      // 自测不受本机保存的面板布局影响，也不覆盖它
-        if (!window.Initialize(L"MiniCAD", 1280, 800))
+        if (!window.Initialize(L"MiniCAD", 1280, 800, gpu))
             return 2;
 
         if (!selfTest && !drawingPaths.empty())

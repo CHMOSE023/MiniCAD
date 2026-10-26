@@ -18,7 +18,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/test/run.ps1 all   
 
 脚本做的事：
 
-1. 用 `git diff` 与未跟踪文件找出改动，按 `run.ps1` 顶部的 `$rules` 对照出测试目标（改了 `apps/Common` / `apps/Win32` 只编译 `MiniCADWin`，改了 `apps/Web` 跑 `tests/Web/*.cjs`）
+1. 用 `git diff` 与未跟踪文件找出改动，按 `run.ps1` 顶部的 `$rules` 对照出测试目标（改了 `apps/Common` / `apps/Win32` 只编译 `MiniCADWin`，改了 `apps/Render` 再跑 `MiniGUIGolden`，改了 `apps/Web` 跑 `tests/Web/*.cjs`）
 2. 用 `vcvars64` 包好环境，只编译这些目标（VS 装在别处时设 `MINICAD_VCVARS`）；编译失败时列出错误行后退出
 3. 把 TEMP 指到 `out/tmp`（本机程序写不了系统 TEMP），逐个运行，完整输出写进 `out/tmp/test/<目标>.txt`
 4. 输出表格：每个程序的结果与用时，失败时附上 `[失败]` / `[FAIL]` 行（最多 15 行）；退出码 = 失败的程序个数
@@ -30,7 +30,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/test/run.ps1 all   
 - "崩溃"：程序异常退出，stdout 缓冲里的输出可能丢了，最后一行不一定是出错处；单独运行那个程序或在测试里加打印定位
 - "找不到程序"：目标名写错，或该测试没启用（如三维测试要 `MINICAD_WITH_SOLID`）
 - 界面改动（`MiniCADWin` 只编译）：需要时 `out/debug/MiniCADWin/MiniCADWin.exe --selftest`，或实际运行看；核对显示效果用 `--bench 图纸` 加 `MINICAD_BENCH_SHOT=目录` 离屏截图，不要截整个屏幕
-- 改了控件外观：再跑 `MiniGUIGolden`（CI 不跑它；`--update` 更新基准，检查图片后再提交）
+- 改了控件外观或界面后端（`D3D11Backend` / `D3D12Backend`）：再跑 `MiniGUIGolden`（CI 不跑它；D3D11、D3D12 的结果都与软件光栅比较，`--warp` 用 WARP，`--no-d3d12` 跳过 D3D12；`--update` 更新基准，检查图片后再提交）
 - 网页版行为：`build_wasm.bat serve` 后在浏览器里看
 
 ## 新增测试或测试程序
