@@ -90,6 +90,84 @@ namespace MiniCAD
         input.click();
     });
 
+    // 选一个本地文件夹找外部参照：只把文件名在 namesPtr（换行分隔，小写）里的文件按原来的子目录
+    // 读进 /xref/<请求号>/<文件夹名>/...，完成后回调目录（取消或出错时为空串）。
+    // 有 showDirectoryPicker（Chromium 系）时经目录授权逐级遍历，只读需要的文件；
+    // 没有时用 <input webkitdirectory>（浏览器会询问是否上传整个文件夹，但也只读需要的文件的内容）
+    EM_JS(void, MiniCADWeb_PickFolder, (int requestId, const char* namesPtr), {
+        const wanted = new Set(UTF8ToString(namesPtr).split("\n").filter(s => s.length > 0));
+        const matches = (name) => {
+            const n = name.toLowerCase();
+            return wanted.has(n) || (n.endsWith(".dwg") && wanted.has(n.slice(0, -4)));
+        };
+        const root = "/xref/" + requestId;
+        const finish = (dir, error) => {
+            const d = stringToNewUTF8(dir);
+            const e = stringToNewUTF8(error || "");
+            _MiniCADWeb_OnFolderPicked(requestId, d, e);
+            _free(d);
+            _free(e);
+        };
+        const save = async (relative, file) => {
+            const path = root + "/" + relative.split(/[\\/]/).map(s => (s === "." || s === ".." ? "_" : s)).join("/");
+            FS.mkdirTree(path.substring(0, path.lastIndexOf("/")));
+            FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
+        };
+        if (typeof window.showDirectoryPicker === "function") {
+            (async () => {
+                let handle;
+                try { handle = await window.showDirectoryPicker({ id: "minicad-xref", mode: "read" }); }
+                catch (err) { finish("", err && err.name === "AbortError" ? "" : String(err)); return; }
+                const errors = [];
+                let visited = 0;
+                const walk = async (dir, prefix, depth) => {
+                    for await (const entry of dir.values()) {
+                        if (++visited > 200000) return;
+                        const relative = prefix + "/" + entry.name;
+                        if (entry.kind === "directory") {
+                            if (depth < 16) await walk(entry, relative, depth + 1);
+                        } else if (matches(entry.name)) {
+                            try { await save(relative, await entry.getFile()); }
+                            catch (err) { errors.push(relative + ": " + String(err)); }
+                        }
+                    }
+                };
+                try { await walk(handle, handle.name, 0); }
+                catch (err) { errors.push(String(err)); }
+                finish(root, errors.join("\n"));
+            })();
+            return;
+        }
+        const input = document.createElement("input");
+        input.type = "file";
+        input.webkitdirectory = true;
+        input.multiple = true;
+        input.style.display = "none";
+        let settled = false;
+        input.addEventListener("cancel", () => {
+            if (settled) return;
+            settled = true;
+            input.remove();
+            finish("", "");
+        });
+        input.addEventListener("change", async () => {
+            if (settled) return;
+            settled = true;
+            const files = Array.from(input.files || []);
+            input.remove();
+            const errors = [];
+            for (const file of files) {
+                if (!matches(file.name)) continue;
+                const relative = file.webkitRelativePath || file.name;
+                try { await save(relative, file); }
+                catch (err) { errors.push(relative + ": " + String(err)); }
+            }
+            finish(root, errors.join("\n"));
+        });
+        document.body.appendChild(input);
+        input.click();
+    });
+
     // 把虚拟文件系统里的文件下载到本机
     EM_JS(void, MiniCADWeb_Download, (const char* pathPtr), {
         const path = UTF8ToString(pathPtr);
@@ -129,6 +207,12 @@ namespace MiniCAD
         {
             if (g_app)
                 g_app->OnFilePickCompleted(requestId, error);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnFolderPicked(int requestId, const char* dir, const char* error)
+        {
+            if (g_app)
+                g_app->OnFolderPicked(requestId, dir, error);
         }
 
         EMSCRIPTEN_KEEPALIVE int MiniCADWeb_HasUnsaved()
@@ -296,6 +380,35 @@ namespace MiniCAD
             request.done(request.paths);
         if (error && *error)
             MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件失败", error, { "确定" }, [](int) {});
+        m_host.RequestFrame();
+    }
+
+    bool WebApp::PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done)
+    {
+        std::string names;
+        for (const std::string& n : fileNames)
+        {
+            std::string lower = n;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            names += lower;
+            names += '\n';
+        }
+        const int id = m_nextPickId++;
+        m_folderRequests[id] = std::move(done);
+        MiniCADWeb_PickFolder(id, names.c_str());
+        return true;
+    }
+
+    void WebApp::OnFolderPicked(int requestId, const char* dir, const char* error)
+    {
+        auto it = m_folderRequests.find(requestId);
+        if (it == m_folderRequests.end()) return;
+        auto done = std::move(it->second);
+        m_folderRequests.erase(it);
+        if (error && *error)
+            MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件夹失败", error, { "确定" }, [](int) {});
+        if (done && dir && *dir)
+            done(dir);
         m_host.RequestFrame();
     }
 

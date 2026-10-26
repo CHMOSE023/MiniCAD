@@ -124,6 +124,15 @@ namespace MiniCAD
                 if (done && !path.empty()) done({ path });
             });
         }
+        // 选一个本地文件夹，在里面找文件（外部参照）。done 收到可以用 std::filesystem 遍历的目录（UTF-8，取消时不调用）。
+        // fileNames 不为空时只需要这些文件名的文件（不分大小写，没有扩展名的也匹配加 .dwg 的）：网页版拿不到本机路径，
+        // 经浏览器授权读取文件夹，只把这些文件按原来的子目录读进内存文件系统，done 收到那个目录。
+        // 平台不支持时返回 false
+        virtual bool PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done)
+        {
+            (void)fileNames; (void)done;
+            return false;
+        }
         // 另存为：返回保存路径（UTF-8，空串 = 取消）。
         // 有系统对话框时（HasSaveDialog）suggestedName 为文档名，由用户在对话框里选位置、格式和 DWG / DXF 版本
         // （version 传入当前版本作为默认值，返回所选版本）；

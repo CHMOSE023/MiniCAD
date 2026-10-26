@@ -13,6 +13,7 @@
 #include "Core/Entity/RegionEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Document/Command/LayoutCommands.h"
+#include "Import/CadExchange.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -448,6 +449,9 @@ namespace MiniCAD
                 opened = m_docManager.Add(std::move(job->doc));
             }
             m_openedAny = true;
+            if (opened && !FindUnresolvedXrefs(opened->GetScene()).empty()
+                && std::find(m_xrefMissingDocs.begin(), m_xrefMissingDocs.end(), opened) == m_xrefMissingDocs.end())
+                m_xrefMissingDocs.push_back(opened);
             // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
             RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
@@ -477,6 +481,110 @@ namespace MiniCAD
         if (!m_openFailures.empty() && m_ui)
             MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", m_openFailures, { "确定" }, [](int) {});
         m_openFailures.clear();
+        PromptMissingXrefs();
+    }
+
+    namespace
+    {
+        // 外部参照保存的路径里的文件名（D:\项目\轴网.dwg → 轴网.dwg）
+        std::string XrefFileName(const std::string& path)
+        {
+            const size_t slash = path.find_last_of("/\\");
+            return slash == std::string::npos ? path : path.substr(slash + 1);
+        }
+
+        bool IsOpenDocument(DocumentManager& dm, const Document* doc)
+        {
+            const auto& all = dm.GetAll();
+            return std::any_of(all.begin(), all.end(), [doc](const auto& p) { return p.get() == doc; });
+        }
+
+        // 提示框里列出的未找到的参照：「（图纸名：）参照名 — 保存的路径」，最多 limit 行
+        std::string ListMissingXrefs(const std::vector<Document*>& docs, size_t limit)
+        {
+            std::string text;
+            size_t lines = 0, total = 0;
+            for (Document* doc : docs)
+                for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                {
+                    if (++total > limit)
+                        continue;
+                    text += "\n" + (docs.size() > 1 ? doc->GetName() + "：" : std::string()) + x.Name + " — " + (x.Path.empty() ? "（没有路径）" : x.Path);
+                    ++lines;
+                }
+            if (total > lines)
+                text += "\n……另有 " + std::to_string(total - lines) + " 个";
+            return text;
+        }
+    }
+
+    void MainFrame::PromptMissingXrefs()
+    {
+        std::vector<Document*> docs;
+        docs.swap(m_xrefMissingDocs);
+        // 读完一批之前可能已经关掉了
+        std::erase_if(docs, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
+        if (docs.empty() || !m_ui)
+            return;
+        size_t count = 0;
+        for (Document* d : docs)
+            count += FindUnresolvedXrefs(d->GetScene()).size();
+        const std::string message = "有 " + std::to_string(count) + " 个外部参照没有找到，图中在插入点显示其路径：\n"
+                                  + ListMissingXrefs(docs, 8) + "\n\n可以选择参照文件所在的文件夹（或它的上级文件夹），在里面查找。";
+        MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到", message, { "选择文件夹…", "忽略" }, [this, docs](int button)
+        {
+            if (button == 0)
+                LocateXrefs(docs);
+        });
+    }
+
+    void MainFrame::LocateXrefs(std::vector<Document*> docs)
+    {
+        std::vector<std::string> names;
+        for (Document* doc : docs)
+            for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                if (std::string name = XrefFileName(x.Path); !name.empty())
+                    names.push_back(std::move(name));
+        if (names.empty())
+            return;
+        const bool supported = m_platform->PickFolder(names, [this, docs](const std::string& dir)
+        {
+            int loaded = 0;
+            std::vector<Document*> remaining;
+            for (Document* doc : docs)
+            {
+                if (!IsOpenDocument(m_docManager, doc))
+                    continue;   // 选文件夹期间关掉了
+                const int n = ReloadUnresolvedXrefs(doc->GetScene(), doc->GetPath(), { dir });
+                loaded += n;
+                if (n > 0)
+                    LOG_INFO("外部参照：%s 从 %s 读入 %d 个", doc->GetName().c_str(), dir.c_str(), n);
+                if (!FindUnresolvedXrefs(doc->GetScene()).empty())
+                    remaining.push_back(doc);
+            }
+            if (loaded > 0)
+            {
+                // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
+                if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
+                    m_docManager.ZoomAll(false);
+                if (m_docManager.GetActive())
+                    m_docManager.GetEditor().GetCmdLine().Echo("外部参照：读入 " + std::to_string(loaded) + " 个");
+                if (m_viewport) m_viewport->RequestRender();
+                StateChanged();
+            }
+            if (!remaining.empty() && m_ui)
+                MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到",
+                                        (loaded > 0 ? "已读入 " + std::to_string(loaded) + " 个，" : std::string("在所选文件夹里没有找到，")) +
+                                        "仍有以下外部参照没有找到：\n" + ListMissingXrefs(remaining, 8),
+                                        { "选择其他文件夹…", "关闭" }, [this, remaining](int button)
+                                        {
+                                            if (button == 0)
+                                                LocateXrefs(remaining);
+                                        });
+            m_platform->RequestRedraw();
+        });
+        if (!supported && m_ui)
+            MiniGUI::ShowMessageBox(*m_ui, "外部参照", "当前平台不支持选择文件夹。", { "确定" }, [](int) {});
     }
 
     void MainFrame::SyncOpenProgress()

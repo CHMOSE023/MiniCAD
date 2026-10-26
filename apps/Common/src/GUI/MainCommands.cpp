@@ -5,6 +5,7 @@
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
 #include "Document/Command/LayoutCommands.h"
+#include "Import/CadExchange.h"
 #include "Widgets/Ribbon.h"
 #include "Widgets/TabView.h"
 #include "Widgets/TitleBar.h"
@@ -70,6 +71,22 @@ namespace MiniCAD
         m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveWithProgress(true); },  .canExecute = hasDoc });
         m_commands.Register({ .id = "file.close",   .label = "关闭(&C)",     .shortcut = "Ctrl+W",
                               .execute = [this, &dm] { CloseDocument(dm.GetActive()); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "xref.locate", .label = "查找外部参照(&E)…",
+                              .tooltip = "为没有找到的外部参照选择所在的文件夹，在里面查找并读入（命令 XREF）",
+                              .execute = [this, &dm]
+                              {
+                                  Document* doc = dm.GetActive();
+                                  if (!doc) return;
+                                  const size_t missing = FindUnresolvedXrefs(doc->GetScene()).size();
+                                  if (missing == 0)
+                                  {
+                                      dm.GetEditor().GetCmdLine().Echo("没有找不到的外部参照");
+                                      return;
+                                  }
+                                  dm.GetEditor().GetCmdLine().Echo(std::to_string(missing) + " 个外部参照没有找到，请选择所在的文件夹");
+                                  LocateXrefs({ doc });
+                              },
+                              .canExecute = hasDoc });
         m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
         m_commands.Register({ .id = "view.start", .label = "起始页(&H)",
                               .tooltip = "显示起始页：新建、打开、最近的图纸（Esc 返回当前图纸）", .icon = "Home.png",

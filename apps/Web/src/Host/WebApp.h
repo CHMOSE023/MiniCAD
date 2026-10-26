@@ -20,6 +20,7 @@ namespace MiniCAD
 
     // MiniCAD 网页版的宿主：画布 + WebGL2（WebHost）+ 浏览器事件，实现 AppPlatform，界面与桌面版共用 MainFrame。
     //   - 打开文件：浏览器的文件选择框，选中的文件读进内存文件系统 /upload 后打开
+    //   - 外部参照：用户选的本地文件夹（浏览器授权）里需要的文件读进 /xref 后查找（PickFolder）
     //   - 保存：写到内存文件系统后由浏览器下载到本机（另存为默认 .mcad，打开的 .dwg / .dxf 按原格式保存）
     //   - 资源（字体、图标、填充图案、界面描述文件）打包在虚拟文件系统根目录下
     //   - 有未保存的文档时，关闭或刷新页面前浏览器会询问
@@ -38,6 +39,7 @@ namespace MiniCAD
         // 由 JavaScript 回调（内部使用）
         void OnFilePicked(int requestId, const char* path);
         void OnFilePickCompleted(int requestId, const char* error);
+        void OnFolderPicked(int requestId, const char* dir, const char* error);
         bool HasUnsavedDocuments() const;
 
         // ── AppPlatform ─────────────────────────────────────────
@@ -59,6 +61,7 @@ namespace MiniCAD
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
+        bool PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
         bool HasSaveDialog() const override { return false; }          // 文件名和格式由 MainFrame 的另存为对话框询问
@@ -85,6 +88,7 @@ namespace MiniCAD
             std::vector<std::string> paths;
         };
         std::unordered_map<int, PickRequest> m_pickRequests;
+        std::unordered_map<int, std::function<void(const std::string&)>> m_folderRequests;   // PickFolder
         int m_nextPickId = 1;
     };
 }
