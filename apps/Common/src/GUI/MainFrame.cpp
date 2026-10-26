@@ -192,6 +192,9 @@ namespace MiniCAD
         m_dpiScale = pixelScale;
 
         m_fontSystem.Initialize();
+        // CAD 字体在资源目录的 fonts/ 下：按它的完整路径找，不依赖启动时的当前目录（从别的目录、快捷方式、PATH 启动都找得到）
+        if (const std::string resourceDir = platform.GetResourceDir(); !resourceDir.empty())
+            m_fontSystem.GetFontEngine().SetFontDir(resourceDir + "/fonts/");
         m_fontSystem.PreloadDefaultFonts();
         for (const std::string& dir : platform.GetSystemFontDirs())      // 图纸引用的系统 TrueType 字体
             m_fontSystem.GetFontEngine().AddSearchDir(dir);

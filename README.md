@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://minicad.bimhub.top">网页版</a> ·
-  <a href="https://github.com/CHMOSE023/MiniCAD/releases">下载桌面版</a>     
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases">桌面版</a>     
 </p>
  
 <p align="center">
@@ -61,6 +61,8 @@ build_wasm.bat serve
 网页版默认用浏览器的 WebGPU，不支持时自动改用 WebGL2；网址加 `?webgl` 强制用 WebGL2。第一次构建时 Emscripten 会从 GitHub 下载 WebGPU 绑定（emdawnwebgpu 端口包），需要联网。
 
 ## Linux版编译
+
+发布页有编译好的 `MiniCAD-<版本>-linux-x64.tar.gz`（Ubuntu 24.04 上编译，SDL3 已链入）：解压后运行 `./MiniCADLinux`，需要系统装有 Mesa 的 EGL / OpenGL ES 与 Vulkan 加载器（Ubuntu 上是 `libegl1`、`libgles2`、`libvulkan1`）。自己编译：
 
 需要 CMake 3.20+、Ninja、GCC 13+ 或 Clang（C++20）、OpenGL ES 3 / EGL 开发包、[SDL3](https://github.com/libsdl-org/SDL)。以 Ubuntu / Debian 为例：
 

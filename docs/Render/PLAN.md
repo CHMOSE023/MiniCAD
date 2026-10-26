@@ -138,7 +138,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - `MiniCADLinux` 在 Xvfb + Mesa llvmpipe（软件渲染）下启动，打开 `site.dwg`：模型页「全部显示」与 Windows 版画面一致（图纸本身有离群对象，主体很小），缩放窗口后、切到「总图」布局页显示正常；用 XTest 模拟的鼠标移动、滚轮、键入命令（`L`）、点击都生效
    - Windows 桌面版、网页版照常编译，Windows 上 `MiniCADTests`、`MiniGUITests`、`MiniDWGTests` 通过
    - **还没在真实显示器、Wayland、WSLg 上验证**；输入法（IBus / Fcitx）、文件对话框（portal / zenity）、高 DPI 缩放、拖放都没有实际试过
-6. 后续：CI 加 Linux 编译与测试（需要 SDL3：Ubuntu 25.04 起有 `libsdl3-dev`，24.04 要自己编译）；Linux 版打包
+6. CI（2026-10-26 加）：任务 `Linux (Vulkan / GLES3)` 在 ubuntu-24.04 上从源码把 SDL3 编成静态库（按版本缓存、校验 SHA256），编译、跑 ctest，打包 `MiniCAD-<标签>-linux-x64.tar.gz`（程序 + assets + 说明文件，运行时只依赖系统的 glibc / libstdc++、EGL / GLES 与 Vulkan 加载器）；标签构建时随 Windows 版、网页版一起发布。不是 main 规则集要求的检查
 
 ### 阶段 3：Linux Vulkan——已完成（2026-10-26，分支 `render-vulkan`），只在 lavapipe 上验证过
 1. `apps/Render/Vulkan/`：`VulkanGraphicsDevice` / `VulkanRenderer` / `VulkanRenderTarget`，界面后端 `VulkanBackend` 与共用的上下文 `VulkanContext`（目标 `MiniGUI_Vulkan`），功能与 D3D12 版一一对应

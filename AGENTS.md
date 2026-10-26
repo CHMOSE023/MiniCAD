@@ -58,7 +58,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - **渲染**：`Viewport`（相机、分两层绘制：缓存层 + 每帧的动态内容）；渲染器实现 `IRenderer`。CAD 视口由 CAD 渲染器绘制，界面由 MiniGUI 后端绘制，两者不是一回事。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
 - **序列化**（`src/Serialization/`）：`ISerializer`，`JsonSerializer` / `BinarySerializer`（键值树，缺少的键取默认值，可以加字段而不破坏旧文件），`EntityIO` 负责实体映射。`.mcad`（不区分大小写）→ 二进制，其余 → JSON
 - **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；天正对象的适配在 `src/Import/Tch*.h`
-- **文字**（`src/Text/`）：`FontSystem` / `FontEngine`（SHX 与 TTF），`TextLayoutEngine`；字体先在 `fonts/` 找，再到 `AppPlatform::GetSystemFontDirs()`
+- **文字**（`src/Text/`）：`FontSystem` / `FontEngine`（SHX 与 TTF），`TextLayoutEngine`；字体先在资源目录（`AppPlatform::GetResourceDir`）的 `fonts/` 找（`MainFrame::Initialize` 设定，与启动时的当前目录无关），再到 `AppPlatform::GetSystemFontDirs()`
 - **几何内核**（`src/Core/GeomKernel/`）：`Point3`、`ICurve`、`CurveIntersect`、向量 / 矩阵。`Mat4` 为行向量约定（P' = P · M）
 
 ### 主窗口与平台
@@ -74,11 +74,11 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 ## 验证改动
 
-用 `.agents/skills/test` 只编译、运行与改动相关的测试，不要每次跑 `run_tests.bat` 全量；全量测试交给 CI（到 main 的 PR 自动跑，要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项通过才能合并，CI 不跑 `MiniGUIGolden`）。改了界面要实际运行桌面版看；涉及网页版时用 `build_wasm.bat serve` 在浏览器里看。
+用 `.agents/skills/test` 只编译、运行与改动相关的测试，不要每次跑 `run_tests.bat` 全量；全量测试交给 CI（到 main 的 PR 自动跑 Windows、网页、Linux 三个任务，要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项通过才能合并，`Linux (Vulkan / GLES3)` 不是必需的；CI 不跑 `MiniGUIGolden`）。改了界面要实际运行桌面版看；涉及网页版时用 `build_wasm.bat serve` 在浏览器里看。
 
 ## 发布
 
-推送 `v*` 标签后 CI 自动编译桌面版与网页版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip`、创建 GitHub Release，网页版部署到 Cloudflare Pages。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
+推送 `v*` 标签后 CI 自动编译桌面版、网页版与 Linux 版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip` / `MiniCAD-<标签>-linux-x64.tar.gz`、创建 GitHub Release，网页版部署到 Cloudflare Pages。Linux 版在 Ubuntu 24.04 上编译，SDL3 由 CI 从源码编成静态库链入（版本与校验和在 `.github/workflows/build.yml` 的 `SDL3_VERSION` / `SDL3_SHA256`）。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
 
 ## 约定
 
