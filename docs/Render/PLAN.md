@@ -1,6 +1,6 @@
 # 多平台渲染后端
 
-> 状态：阶段 0 完成（2026-10-26，分支 `render-backends`）；阶段 1 完成（2026-10-26），Windows 默认 D3D12 → D3D11 → WARP；阶段 2 Linux 宿主 + OpenGL 完成（2026-10-26，只在 Xvfb 软件渲染下验证过）；阶段 5 网页 WebGPU 完成（2026-10-26）；阶段 3（Linux Vulkan）、阶段 4（macOS）未开始。三个阶段在各自的分支上做完后合并进 `render-backends`。
+> 状态：阶段 0 完成（2026-10-26，分支 `render-backends`）；阶段 1 完成（2026-10-26），Windows 默认 D3D12 → D3D11 → WARP；阶段 2 Linux 宿主 + OpenGL 完成（2026-10-26，只在 Xvfb 软件渲染下验证过）；阶段 5 网页 WebGPU 完成（2026-10-26）；阶段 3 Linux Vulkan 完成（2026-10-26，分支 `render-vulkan`，只在 lavapipe 上验证过）；阶段 4（macOS）未开始。阶段 1、2、5 在各自的分支上做完后合并进 `render-backends`。
 > 定位：保留现有渲染接口，每个平台编译各自的原生后端；网页上用浏览器的 WebGPU，不支持时用 WebGL2。取代桌面上的 wgpu 路线（见 `docs/WebGPU/PLAN.md`：原型可行，但多一层依赖，D3D12 后端启动就多约 500 MB 内存，已放弃）。
 
 ---
@@ -86,7 +86,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
 |---|---|---|
 | D3D11 | HLSL 字符串，运行时 `D3DCompile`（`D3D11/Shader.h`、`D3D11Backend.cpp`） | 不变 |
 | D3D12 | — | 同一份 HLSL（SM 5.1，`D3DCompile` 可编；不需要 DXC） |
-| Vulkan | — | GLSL 450 → SPIR-V，构建时用 glslang 编好嵌进程序（Vulkan SDK 自带） |
+| Vulkan | GLSL 450（`apps/Render/Vulkan/Shaders/`） | 构建时用 glslangValidator 编成 SPIR-V 头文件嵌进程序（Ubuntu 的 glslang-tools，或 Vulkan SDK 自带） |
 | GLES3 | GLSL ES 300 字符串 | 不变 |
 | Metal | — | 手写 MSL 字符串，运行时 `newLibraryWithSource` |
 | WebGPU | WGSL 字符串（`WebGPURenderer.cpp`、`WebGPUBackend.cpp`） | 不变 |
@@ -129,7 +129,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - 后台线程 `std::thread`，完成回调与 `Post` 经 SDL 自定义事件交回界面线程；资源目录 = 可执行文件目录（构建后复制 `assets`），用户数据 `$XDG_DATA_HOME/MiniCAD`（默认 `~/.local/share/MiniCAD`），系统字体目录逐级列出 `/usr/share/fonts` 等（`FontEngine` 不进子目录），打开链接 `SDL_OpenURL`
    - 文件对话框用 SDL3 的接口（xdg-desktop-portal，没有时 zenity）：打开、选文件夹是异步的；另存为、导出要当场返回路径，在界面线程上等对话框关闭（只取系统事件，不画界面），所选筛选器决定 DWG / DXF 版本。都打不开时弹提示，改用拖放或命令行给出图纸
    - 没有监视界面描述文件的目录：切回窗口时调用 `MainFrame::CheckUiFileChanged`；没有自测 / `--bench`（`SelfTest.cpp` 仍只在 Win32）
-   - 命令行：`MiniCADLinux [--gpu gl] [--ui 文件] [图纸 ...]`，后端也可用 `MINICAD_GPU`；`CreateGraphicsDevice` 的偏好参数在 Linux 只认 `gl`（Vulkan 是阶段 3）
+   - 命令行：`MiniCADLinux [--gpu gl] [--ui 文件] [图纸 ...]`，后端也可用 `MINICAD_GPU`（阶段 3 起还认 `vulkan`，见下）
 2. MiniGUI 平台层 `src/UI/Platform/SDL`（目标 `MiniGUI_SDL`）：`SDLInput`（指针、键盘、文字与输入法、光标、定时器）、`SDLClipboard`、界面字体 `LoadSDLUIFonts`（主字体用随程序携带的 NotoSansSC-UI.ttf，与网页版相同；系统里的 Noto Sans CJK / 文泉驿作后备）。焦点不在文本框时关掉 SDL 的文字输入（相当于 Win32 关输入法），可打印的按键由按键事件换成文字
 3. CMake：`cmake/MiniGUI.cmake` 找 SDL3（`find_package(SDL3 CONFIG)`），`cmake/Render.cmake` 的 Linux 段找 `GLES3/gl3.h` 与 `libGLESv2`，编 GLES3 渲染器 + `MiniGUI_GLES3`、定义 `MINICAD_RENDER_GLES3`；缺任何一个时不编译宿主，核心库与测试照常
 4. GCC 13 的可移植性修改（Windows 行为不变）：成员与类型同名时类型写成 `MiniCAD::Lineweight` 等（`-Wchanges-meaning`）、补 `<cstring>`、SMLib 一处析构函数写法（见 `3rd/SMLib/README.md`）、`RecentFiles::DisplayName` 取父目录时两种分隔符都认、测试里的 Windows 调用加条件编译；`MiniCADTests`、`MiniCADDrawingOpenTests` 不再只在 Windows 上编译
@@ -140,10 +140,24 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - **还没在真实显示器、Wayland、WSLg 上验证**；输入法（IBus / Fcitx）、文件对话框（portal / zenity）、高 DPI 缩放、拖放都没有实际试过
 6. 后续：CI 加 Linux 编译与测试（需要 SDL3：Ubuntu 25.04 起有 `libsdl3-dev`，24.04 要自己编译）；Linux 版打包
 
-### 阶段 3：Linux Vulkan
-1. `VulkanGraphicsDevice` / `VulkanRenderer` / `VulkanRenderTarget` / `VulkanBackend`
-2. 枚举物理设备时独立显卡优先；创建实例或设备失败（SolidCraft 遇到过 Intel 的 Vulkan 驱动在初始化时崩溃）就回退 OpenGL
-3. 验收同阶段 1（与 GL 后端对比），另在没有显卡的环境里确认 lavapipe 能跑
+### 阶段 3：Linux Vulkan——已完成（2026-10-26，分支 `render-vulkan`），只在 lavapipe 上验证过
+1. `apps/Render/Vulkan/`：`VulkanGraphicsDevice` / `VulkanRenderer` / `VulkanRenderTarget`，界面后端 `VulkanBackend` 与共用的上下文 `VulkanContext`（目标 `MiniGUI_Vulkan`），功能与 D3D12 版一一对应
+   - 要求 Vulkan 1.3：用动态渲染（不建 RenderPass / Framebuffer）。复制、布局转换不能在渲染期间做，`VulkanContext` 先结束渲染，下一次绘制以 LOAD 重新开始（`VulkanContext::EnsureRendering`）
+   - 视口用负高度翻转 Y 轴（与 D3D 相同：第一行在顶部），同一套矩阵直接用；推送常量放 viewProj 与背景深浅，纹理一张一个描述符集（每帧的池，帧回收时重置）
+   - 每帧一条命令缓冲，2 帧轮流；上传页 1 MB，超过 1 MB 的单独建页，超过 4 MB 的上传与换下的大缓冲在帧末等 GPU 执行完就释放（同 D3D12 的做法，不让它们多留两帧）
+   - 设备支持 `VK_EXT_line_rasterization` 的 Bresenham 线时，线按 Bresenham 光栅化：Vulkan 默认的线规则与 GL / D3D 不同，斜线差几个像素
+   - 着色器写成 GLSL 450（`apps/Render/Vulkan/Shaders/`），构建时用 glslangValidator 编成 SPIR-V 头文件（`generated/Spirv/<文件>.h`）
+2. 选设备：要 Vulkan 1.3 + 动态渲染 + 能呈现到窗口表面；独立显卡 > 集成显卡 > 虚拟 > CPU（lavapipe）
+3. 窗口表面不在 `apps/Render` 里建：`NativeWindow` 带上实例扩展和建表面的回调（`NativeWindow::createVulkanSurface`），Linux 由 SDL3 提供；`NativeWindow::glContext` 说明宿主是否已建好 GL 上下文
+4. Linux 宿主：默认先建带 `SDL_WINDOW_VULKAN` 的窗口试 Vulkan；任何一步失败（没有驱动、没有 1.3、建表面失败）就销毁窗口，重建带 `SDL_WINDOW_OPENGL` 的窗口用 OpenGL ES 3。`--gpu vulkan|gl` 或 `MINICAD_GPU` 指定；`MINICAD_VULKAN_VALIDATION=1` 打开校验层（调试版默认开），警告与错误以 `[Vulkan]` 开头打到 stderr
+5. CMake：`cmake/Render.cmake` 的 Linux 段 `find_package(Vulkan)` + 找 `glslangValidator`，都有时定义 `MINICAD_RENDER_VULKAN`、编 `MiniGUI_Vulkan`；缺一个就只用 GLES3
+6. 验收结果（qmlinux：Ubuntu 24.04，Mesa 25.2 的 lavapipe / llvmpipe，都是 CPU 软件渲染；Xvfb）：
+   - 打开 `site.dwg`、窗口缩放到图纸主体、切到「总图」布局页，全程校验层 0 条消息
+   - 与 OpenGL ES 3 后端同样操作的截图对比：内容一致；模型页 0.86% 的像素不同、差值超过 32 的 0.08%，布局页 6.5% / 0.76%（细密的线和填充的光栅化差别；打开 Bresenham 线之前是 0.29% / 1.66%）
+   - 让加载器找不到驱动（`VK_ICD_FILENAMES` 指向不存在的文件）时自动改用 OpenGL ES 3
+   - 内存（常驻集，同样操作之后）：Vulkan 534 MB，OpenGL ES 3 578 MB
+   - ctest 22 项全部通过；Windows 桌面版自测 0 失败、网页版 WebGPU / WebGL2 照常
+   - **没在真实显卡上验证**（NVIDIA / AMD / Intel 的驱动、Wayland）；Linux 版没有 `--bench`，帧时间没有测
 
 ### 阶段 4：macOS 宿主 + Metal
 1. 宿主：Cocoa（`NSWindow` / `NSView` + `CAMetalLayer`），`AppPlatform` 与 MiniGUI 平台层（`src/UI/Platform/macOS`）

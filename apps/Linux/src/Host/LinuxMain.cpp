@@ -1,5 +1,5 @@
-// MiniCADLinux：MiniCAD Linux 版入口（界面由 MiniGUI 绘制，SDL3 窗口 + OpenGL ES 3）
-// 用法：MiniCADLinux [--gpu gl] [--ui 界面描述文件.json] [--] [图纸路径 ...]
+// MiniCADLinux：MiniCAD Linux 版入口（界面由 MiniGUI 绘制，SDL3 窗口 + Vulkan，不行时 OpenGL ES 3）
+// 用法：MiniCADLinux [--gpu vulkan|gl] [--ui 界面描述文件.json] [--] [图纸路径 ...]
 // 图形后端也可以用环境变量 MINICAD_GPU 指定（--gpu 优先）
 #include "Host/LinuxApp.h"
 #include <cstdlib>

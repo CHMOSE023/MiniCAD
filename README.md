@@ -70,6 +70,12 @@ sudo apt install build-essential cmake ninja-build pkg-config libegl-dev libgles
     libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev libudev-dev
 ```
 
+Vulkan 后端（可选，默认优先用它，不行时自动改用 OpenGL ES 3）还要头文件与着色器编译器：
+
+```bash
+sudo apt install libvulkan-dev glslang-tools mesa-vulkan-drivers
+```
+
 SDL3：Ubuntu 25.04 / Debian 13 起可以 `sudo apt install libsdl3-dev`；更早的发行版从源码编译安装（例如装到 `~/sdl3`）：
 
 ```bash
@@ -85,7 +91,7 @@ cmake --build out/linux
 out/linux/MiniCADLinux/MiniCADLinux [图纸路径 ...]
 ```
 
-找不到 SDL3 或 OpenGL ES 3 时只编译核心库与测试（`ctest --test-dir out/linux`）。打开、保存文件的对话框需要 xdg-desktop-portal 或 zenity，没有时可以把图纸拖进窗口或在命令行上给出。
+找不到 SDL3 或 OpenGL ES 3 时只编译核心库与测试（`ctest --test-dir out/linux`）；找不到 Vulkan 开发文件或 glslangValidator 时只用 OpenGL ES 3。运行时 `--gpu vulkan` / `--gpu gl`（或环境变量 `MINICAD_GPU`）指定图形后端。打开、保存文件的对话框需要 xdg-desktop-portal 或 zenity，没有时可以把图纸拖进窗口或在命令行上给出。
 
 ## 测试
 

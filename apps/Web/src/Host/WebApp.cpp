@@ -278,7 +278,8 @@ namespace MiniCAD
     {
         if (!m_host.CreateWebGLContext())
             return false;
-        const NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        window.glContext = true;        // WebHost 刚建好 WebGL2 上下文并设为当前
         m_graphics = CreateGraphicsDevice(window, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight(), "webgl2");
         return m_graphics && OnGraphicsReady();
     }

@@ -18,7 +18,7 @@ namespace MiniGUI
 
 namespace MiniCAD
 {
-    // MiniCAD Linux 版（MiniCADLinux）的宿主：SDL3 窗口 + EGL / OpenGL ES 3 上下文 + 图形设备（IGraphicsDevice，现为 GLES3）
+    // MiniCAD Linux 版（MiniCADLinux）的宿主：SDL3 窗口 + 图形设备（IGraphicsDevice：默认 Vulkan，不行时 EGL / OpenGL ES 3）
     // + 事件循环，实现 AppPlatform，界面与桌面版、网页版共用 MainFrame。
     //   - 窗口用系统的标题栏和边框（HasWindowControls 为 false），X11 与 Wayland 由 SDL3 统一处理
     //   - 按需重绘：RequestRedraw 记下标志并推一个唤醒事件，事件队列清空后调用 MainFrame::RenderFrame；空闲时阻塞在 SDL_WaitEvent
@@ -77,7 +77,7 @@ namespace MiniCAD
         bool HasBackgroundThread() const override { return true; }
 
     private:
-        // SDL 窗口与 GL 上下文：声明在最前，最后销毁（图形设备、渲染目标销毁时上下文还在）
+        // SDL 窗口与 GL 上下文（用 Vulkan 时没有）：声明在最前，最后销毁（图形设备、渲染目标销毁时窗口与上下文还在）
         struct SdlWindow
         {
             SDL_Window*   window  = nullptr;
@@ -85,6 +85,12 @@ namespace MiniCAD
             ~SdlWindow();
         };
 
+        // api 为 SDL_WINDOW_VULKAN 或 SDL_WINDOW_OPENGL；窗口先隐藏，初始化完再显示
+        bool  CreateSdlWindow(const char* title, int width, int height, SDL_WindowFlags api);
+        bool  CreateGlContext();
+        NativeWindow VulkanWindow() const;      // 实例扩展与建表面的回调都由 SDL3 提供
+        int   PixelWidth() const;
+        int   PixelHeight() const;
         void  HandleEvent(const SDL_Event& e);
         void  UpdateDisplaySize();
         float DisplayScale() const;     // 界面缩放：系统的显示缩放（SDL_GetWindowDisplayScale）
@@ -98,7 +104,7 @@ namespace MiniCAD
         bool        m_running = false;
         std::vector<std::string> m_drops;   // 拖进窗口的文件（SDL_EVENT_DROP_FILE 逐个到达，DROP_COMPLETE 时一起打开）
 
-        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → GL 上下文
+        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → 窗口与 GL 上下文
         std::unique_ptr<IGraphicsDevice>       m_graphics;
         std::unique_ptr<IRenderTarget>         m_viewportRT;
         std::unique_ptr<Solid::ISolidKernel>   m_solidKernel;   // MINICAD_WITH_SOLID 时为 SMLib，第一次请求时创建

@@ -12,7 +12,8 @@ namespace MiniCAD
 
     bool GLES3GraphicsDevice::Initialize(const NativeWindow& window, int width, int height)
     {
-        (void)window;
+        if (!window.glContext)
+            return false;           // 宿主没有建 GL 上下文（例如 Linux 版正在试 Vulkan 的窗口）
         m_width    = width;
         m_height   = height;
         m_backend  = std::make_unique<MiniGUI::GLES3Backend>();

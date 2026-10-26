@@ -12,6 +12,9 @@
 #ifdef MINICAD_RENDER_GLES3
 #include "GLES3/GLES3GraphicsDevice.h"
 #endif
+#ifdef MINICAD_RENDER_VULKAN
+#include "Vulkan/VulkanGraphicsDevice.h"
+#endif
 #ifdef MINICAD_RENDER_WEBGPU
 #include "WebGPU/WebGPUGraphicsDevice.h"
 #endif
@@ -41,9 +44,15 @@ namespace MiniCAD
 #if defined(MINICAD_RENDER_GLES3) && defined(__EMSCRIPTEN__)
             // 网页：同步创建的只有 WebGL2（使用 WebHost 创建的当前上下文）；WebGPU 见 CreateWebGPUGraphicsDeviceAsync
             { "webgl2", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
-#elif defined(MINICAD_RENDER_GLES3)
-            // Linux：目前只有 OpenGL（ES 3，使用宿主经 SDL3 创建的当前上下文）；Vulkan 是阶段 3
+#else
+#if defined(MINICAD_RENDER_VULKAN)
+            // Linux：Vulkan → OpenGL ES 3。两者要的窗口不同（宿主在 NativeWindow 里说明准备了哪种），宿主按顺序分别建窗口再调用
+            { "vulkan", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<VulkanGraphicsDevice>()); } },
+#endif
+#if defined(MINICAD_RENDER_GLES3)
+            // 使用宿主经 SDL3 创建的当前 GLES3 上下文
             { "gl", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
+#endif
 #endif
         };
     }

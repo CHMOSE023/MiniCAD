@@ -1,4 +1,4 @@
-// ── MiniCAD Linux 版宿主：SDL3 窗口、EGL / GLES3 上下文、事件循环与平台服务 ─────────
+// ── MiniCAD Linux 版宿主：SDL3 窗口、图形设备（Vulkan 或 EGL / GLES3）、事件循环与平台服务 ─────────
 #include "Host/LinuxApp.h"
 #ifdef MINICAD_WITH_SOLID
 #include "Solid/SMLib/SMLibKernel.h"
@@ -10,6 +10,8 @@
 #include "Platform/SDL/SDLInput.h"
 #include "Widgets/Dialog.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
@@ -196,39 +198,40 @@ namespace MiniCAD
         }
         m_uiEvent = SDL_RegisterEvents(1);
 
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);      // 窗口只画界面；CAD 视口画在自己的离屏目标里（带深度）
-        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-
         // 按系统缩放放大初始尺寸
         const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
         const float s     = scale > 0.0f ? scale : 1.0f;
-        m_sdl.window = SDL_CreateWindow(title, static_cast<int>(width * s), static_cast<int>(height * s),
-                                        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
-        if (!m_sdl.window)
-        {
-            LOG_ERROR("创建窗口失败：%s", SDL_GetError());
-            return false;
-        }
-        m_sdl.context = SDL_GL_CreateContext(m_sdl.window);
-        if (!m_sdl.context)
-        {
-            LOG_ERROR("创建 OpenGL ES 3 上下文失败：%s", SDL_GetError());
-            return false;
-        }
-        SDL_GL_MakeCurrent(m_sdl.window, m_sdl.context);
-        SDL_GL_SetSwapInterval(1);
-        SDL_SetWindowMinimumSize(m_sdl.window, static_cast<int>(640 * s), static_cast<int>(420 * s));
+        const int   ww    = static_cast<int>(width * s);
+        const int   wh    = static_cast<int>(height * s);
 
-        int pw = 0, ph = 0;
-        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
-        m_graphics = CreateGraphicsDevice(NativeWindow{}, pw, ph, gpu);
+        // 图形后端：默认先试 Vulkan，不行再用 OpenGL ES 3（--gpu gl 直接用它）。
+        // 窗口要按后端带 SDL_WINDOW_VULKAN 或 SDL_WINDOW_OPENGL，二者不能兼得：换后端就重建窗口（还没显示，看不出来）
+        if (gpu.empty() || gpu == "vulkan")
+        {
+            if (CreateSdlWindow(title, ww, wh, SDL_WINDOW_VULKAN))
+                m_graphics = CreateGraphicsDevice(VulkanWindow(), PixelWidth(), PixelHeight(), "vulkan");
+            if (!m_graphics)
+            {
+                LOG_WARN("Vulkan 不可用，改用 OpenGL ES 3");
+                SDL_DestroyWindow(m_sdl.window);
+                m_sdl.window = nullptr;
+            }
+        }
+        if (!m_graphics)
+        {
+            if (!CreateSdlWindow(title, ww, wh, SDL_WINDOW_OPENGL) || !CreateGlContext())
+                return false;
+            NativeWindow window;
+            window.glContext = true;
+            m_graphics = CreateGraphicsDevice(window, PixelWidth(), PixelHeight(), "gl");
+        }
         if (!m_graphics)
             return false;
+        SDL_SetWindowMinimumSize(m_sdl.window, static_cast<int>(640 * s), static_cast<int>(420 * s));
         LOG_INFO("图形后端：%s", m_graphics->GetName());
+
+        const int pw = PixelWidth();
+        const int ph = PixelHeight();
         m_viewportRT = m_graphics->CreateRenderTarget();
         m_viewportRT->Create(pw, ph);
 
@@ -249,6 +252,73 @@ namespace MiniCAD
         SDL_ShowWindow(m_sdl.window);
         m_running = true;
         return true;
+    }
+
+    bool LinuxApp::CreateSdlWindow(const char* title, int width, int height, SDL_WindowFlags api)
+    {
+        m_sdl.window = SDL_CreateWindow(title, width, height, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+        if (!m_sdl.window)
+        {
+            if (api == SDL_WINDOW_VULKAN)
+                LOG_WARN("创建 Vulkan 窗口失败：%s", SDL_GetError());      // 之后改用 OpenGL ES 3
+            else
+                LOG_ERROR("创建窗口失败：%s", SDL_GetError());
+        }
+        return m_sdl.window != nullptr;
+    }
+
+    bool LinuxApp::CreateGlContext()
+    {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);      // 窗口只画界面；CAD 视口画在自己的离屏目标里（带深度）
+        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+        m_sdl.context = SDL_GL_CreateContext(m_sdl.window);
+        if (!m_sdl.context)
+        {
+            LOG_ERROR("创建 OpenGL ES 3 上下文失败：%s", SDL_GetError());
+            return false;
+        }
+        SDL_GL_MakeCurrent(m_sdl.window, m_sdl.context);
+        SDL_GL_SetSwapInterval(1);
+        return true;
+    }
+
+    NativeWindow LinuxApp::VulkanWindow() const
+    {
+        // 实例扩展与建表面都交给 SDL3：图形设备（apps/Render）不依赖窗口库
+        NativeWindow window;
+        Uint32 count = 0;
+        if (const char* const* exts = SDL_Vulkan_GetInstanceExtensions(&count))
+            window.vulkanInstanceExtensions.assign(exts, exts + count);
+        window.createVulkanSurface = [w = m_sdl.window](void* instance, uint64_t* surface)
+        {
+            VkSurfaceKHR s{};   // SDL_vulkan.h 自带句柄类型的定义，没有 vulkan.h 的 VK_NULL_HANDLE
+            if (!SDL_Vulkan_CreateSurface(w, static_cast<VkInstance>(instance), nullptr, &s))
+            {
+                LOG_WARN("SDL_Vulkan_CreateSurface 失败：%s", SDL_GetError());
+                return false;
+            }
+            *surface = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(s));
+            return true;
+        };
+        return window;
+    }
+
+    int LinuxApp::PixelWidth() const
+    {
+        int pw = 0, ph = 0;
+        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
+        return pw;
+    }
+
+    int LinuxApp::PixelHeight() const
+    {
+        int pw = 0, ph = 0;
+        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
+        return ph;
     }
 
     float LinuxApp::DisplayScale() const
@@ -377,8 +447,9 @@ namespace MiniCAD
 
     void LinuxApp::EndUiPass()
     {
-        m_graphics->Present();
-        SDL_GL_SwapWindow(m_sdl.window);
+        m_graphics->Present();          // Vulkan 在这里呈现
+        if (m_sdl.context)
+            SDL_GL_SwapWindow(m_sdl.window);    // OpenGL ES 3 交换缓冲
         if (m_input)
             m_input->Sync();        // 按焦点开关文字输入，候选窗跟随光标
     }

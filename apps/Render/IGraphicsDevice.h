@@ -3,24 +3,30 @@
 #include "Render/IRenderTarget.h"
 #include "Render/IRenderBackend.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
-#ifdef __EMSCRIPTEN__
-#include <functional>
-#endif
 
 namespace MiniCAD
 {
     // 宿主要画的窗口：Win32 为 HWND；网页版为画布的 CSS 选择器（const char*，如 "#canvas"），
-    // WebGPU 由它建画布表面，WebGL2 不用（上下文由 WebHost 创建并设为当前）；
-    // Linux 不用（EGL / GLES3 上下文由宿主经 SDL3 创建并设为当前）
+    // WebGPU 由它建画布表面，WebGL2 不用（上下文由 WebHost 创建并设为当前）；Linux 不用。
+    // 宿主还要说明它为哪种图形接口准备好了窗口：GLES3 要当前的 GL 上下文，Vulkan 要建表面的办法
     struct NativeWindow
     {
         void* handle = nullptr;
+
+        // 宿主已建好 GL / GLES 上下文并设为当前（网页的 WebGL2、Linux 经 SDL3 的 EGL）；否则 GLES3 不可用
+        bool glContext = false;
+
+        // Vulkan：建实例要加的扩展，以及在实例（VkInstance）上建窗口表面、把 VkSurfaceKHR 写进 surface。
+        // 不依赖窗口库（Linux 由 SDL3 实现）；createVulkanSurface 为空时 Vulkan 不可用
+        std::vector<const char*> vulkanInstanceExtensions;
+        std::function<bool(void* instance, uint64_t* surface)> createVulkanSurface;
     };
 
-    // 宿主侧的图形设备：一种图形接口一份实现（D3D11GraphicsDevice、GLES3GraphicsDevice ……），见 docs/Render/PLAN.md。
+    // 宿主侧的图形设备：一种图形接口一份实现（D3D11GraphicsDevice、VulkanGraphicsDevice、GLES3GraphicsDevice ……），见 docs/Render/PLAN.md。
     // 持有设备、窗口的交换链 / 帧缓冲、CAD 视口渲染器与界面后端；宿主只通过本接口使用图形接口，
     // 核心库、MiniGUI、apps/Common 看不到它（它们只认 IRenderer / IRenderTarget / IRenderBackend）。
     class IGraphicsDevice
