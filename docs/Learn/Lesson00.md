@@ -191,7 +191,7 @@ WebAssembly（WASM）是一种二进制指令格式，可以在浏览器中以�
 
 ## 第 1 课：项目能跑起来
 
-阅读路径：`README.md`、`CMakeLists.txt`、`docs/BUILD_WASM.md`
+阅读路径：`README.md`、`CMakeLists.txt`、`build_wasm.bat`
 
 MiniCAD 的定位、Windows/D3D11 与 WebAssembly/WebGL 两种构建方式、顶层目录说明，以及基本运行验证。
 

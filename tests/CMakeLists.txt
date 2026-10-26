@@ -158,7 +158,7 @@ if(WIN32)
     minicad_test_output(MiniCADDrawingOpenTests)
     add_test(NAME MiniCADDrawingOpenTests COMMAND MiniCADDrawingOpenTests)
 
-    # 本地诊断工具：tools/ 不进仓库（.gitignore），只在本机有源文件时编译
+    # 本地诊断工具：tools/ 下有源文件时才编译
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
         add_executable(MiniCADDwgInspect "${CMAKE_SOURCE_DIR}/tools/inspect_dwg.cpp")
         target_link_libraries(MiniCADDwgInspect PRIVATE MiniCAD MiniDWG)
