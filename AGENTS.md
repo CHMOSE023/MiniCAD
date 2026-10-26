@@ -30,7 +30,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
-- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`）使用：Windows 为 `D3D11GraphicsDevice`（渲染器 `D3D11Renderer`、界面后端 `D3D11Backend`），网页为 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
+- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`）使用：Windows 为 `D3D11GraphicsDevice`（渲染器 `D3D11Renderer`、界面后端 `D3D11Backend`），网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`）；自测 `Host/SelfTest.cpp`
 - `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`）；`MiniGUIWebGallery` 是浏览器里的控件展示
 - `wasm/`：旧版 C 接口 WASM，只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译（此时核心库定义 `MINICAD_WEB`，不编译 `apps/Web`）
@@ -66,7 +66,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）；打开图纸经 `OpenDrawings` 在后台读取（`DocumentManager::Load` 可在其他线程调用），读完在界面线程 `DocumentManager::Add`
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。命令行输入经 `GUI/CommandLine.cpp`（界面层命令）再交给 `Editor::RunCommand`
-- 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`，保存后下载
+- 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`，保存后下载；图形设备异步就绪（先试 WebGPU，再退 WebGL2）之后才初始化界面
 
 输入流程：Win32 消息 / DOM 事件 → `MiniGUI::Win32Input` / `WebInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
 

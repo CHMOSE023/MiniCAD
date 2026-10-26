@@ -1,8 +1,8 @@
-# ── MiniCAD 网页版（Emscripten）：界面由 MiniGUI 绘制，经 WebGL2 渲染 ──
+# ── MiniCAD 网页版（Emscripten）：界面由 MiniGUI 绘制，经 WebGPU 渲染，浏览器不支持时用 WebGL2 ──
 
-# 渲染后端（MiniCADRender、界面后端 MiniGUI_GLES3）定义在 cmake/Render.cmake，源码在 apps/Render
+# 渲染后端（MiniCADRender、界面后端 MiniGUI_WebGPU / MiniGUI_GLES3）定义在 cmake/Render.cmake，源码在 apps/Render
 
-# ── 网页宿主：画布、WebGL2 上下文、尺寸与按需刷新 ─────────────────────
+# ── 网页宿主：画布、尺寸与按需刷新、WebGL2 上下文（用 WebGL2 时）──────────
 add_library(MiniCADWebHost STATIC
     src/Host/WebHost.cpp
 )

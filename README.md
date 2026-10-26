@@ -58,6 +58,8 @@ build_wasm.bat serve
 
 输出目录 `out/build/wasm/MiniCADWeb/`，serve 参数，自动启动本地服务器， http://localhost:8080/MiniCADWeb。
 
+网页版默认用浏览器的 WebGPU，不支持时自动改用 WebGL2；网址加 `?webgl` 强制用 WebGL2。第一次构建时 Emscripten 会从 GitHub 下载 WebGPU 绑定（emdawnwebgpu 端口包），需要联网。
+
 ## 测试
 
 ```bat

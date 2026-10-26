@@ -39,6 +39,10 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 - 原因：`emsdk_env.bat` 要在 emsdk 目录（`D:\dev\emsdk`）里写 `emsdk_set_env.bat`
 - 做法：用对该目录有写权限的身份运行
 
+### 网页版构建停在 / 失败于 `ports:INFO: retrieving port: emdawnwebgpu`
+- 原因：WebGPU 绑定是 Emscripten 的远程端口（`--use-port=emdawnwebgpu`，见 `cmake/Render.cmake`），第一次构建时从 GitHub 下载固定版本的端口包到 `<emsdk>/upstream/emscripten/cache/ports`
+- 做法：联网后重新构建；离线的机器从已经下载过的机器复制 `cache/ports/emdawnwebgpu*` 过来。升级 emsdk 后端口版本可能跟着变，会再下载一次
+
 ## 运行与测试
 
 ### 测试或自测往临时目录写文件失败，`--selftest` 在写大图纸那一项以 `0xC0000409` 崩溃，`MiniCADDrawingOpenTests` 无输出、退出码 3
@@ -60,6 +64,10 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 ### 网页版改了代码，浏览器里还是旧的
 - 原因：浏览器缓存了 `index.js` / `index.wasm`
 - 做法：确认 `build_wasm.bat` 输出了 `[完成]`，浏览器里 `Ctrl+F5` 强制刷新
+
+### 网页版显示不对，不知道是哪个图形后端的问题
+- 原因：网页版默认用 WebGPU，浏览器不支持时用 WebGL2，两套渲染器各写一份（`apps/Render/WebGPU`、`apps/Render/GLES3`）
+- 做法：关于对话框（F1）看"图形"一行；网址加 `?webgl` 强制 WebGL2 对比。WebGPU 的校验错误打在浏览器控制台（`WebGPU 错误`），`abort('wgpuSurfacePresent is unsupported')` 表示有人调用了 `wgpuSurfacePresent`——浏览器里呈现是自动的，不能调用它
 
 ## 改文件
 
