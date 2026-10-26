@@ -1,6 +1,6 @@
 // MiniGUI 网页原型：在浏览器里运行控件展示（Gallery），验证 WebGL2 后端、浏览器输入与字体
 #include "Host/WebHost.h"
-#include "WebGL2/WebGL2Backend.h"
+#include "GLES3/GLES3Backend.h"
 #include "Core/UIContext.h"
 #include "Platform/Web/WebFonts.h"
 #include "Platform/Web/WebInput.h"
@@ -17,7 +17,7 @@ namespace
     struct App
     {
         MiniCAD::WebHost               host;
-        std::unique_ptr<WebGL2Backend> backend;
+        std::unique_ptr<GLES3Backend> backend;
         std::unique_ptr<UIContext>     ui;
         std::unique_ptr<WebInput>      input;
         unsigned long long             frames = 0;
@@ -47,7 +47,7 @@ int main()
         if (!app.host.Initialize())
             return 1;
 
-        app.backend = std::make_unique<WebGL2Backend>();
+        app.backend = std::make_unique<GLES3Backend>();
         app.ui      = std::make_unique<UIContext>(app.backend.get());
         app.input   = std::make_unique<WebInput>(app.ui.get(), app.host.GetCanvasSelector().c_str());
         if (!LoadWebUIFonts(app.ui->GetTextSystem()))

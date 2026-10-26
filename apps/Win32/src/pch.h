@@ -1,4 +1,5 @@
 #pragma once
+// 桌面版宿主强制包含的头文件（/FIpch.h）。图形接口的头文件在 apps/Render 里各自包含，这里不放
 
 #include <vector>
 #include <memory>
@@ -11,28 +12,7 @@
 
 #ifndef NOMINMAX
 #define NOMINMAX
-#endif 
- 
+#endif
+
 #include <Windows.h>
 #include <windowsx.h>
-#include <wrl/client.h>
-#include <d3d11_1.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <dxgi1_3.h>
-#include <dxgi1_6.h>
-#include <d3dcommon.h>
-#include <d3dcompiler.h>
-#include <DirectXMath.h>
-
-#ifndef ThrowIfFailed
-inline void ThrowIfFailed(HRESULT hr)
-{
-    if (FAILED(hr))
-    {
-        char buffer[64] = {};
-        std::snprintf(buffer, sizeof(buffer), "HRESULT failed: 0x%08X", static_cast<unsigned int>(hr));
-        throw std::runtime_error(buffer);
-    }
-}
-#endif

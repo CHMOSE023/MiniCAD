@@ -90,7 +90,7 @@ namespace MiniCAD
         virtual ~AppPlatform() = default;
 
         // ── 图形 ─────────────────────────────────────────────────
-        virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / WebGL2Backend）
+        virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / GLES3Backend）
         virtual IRenderer&               GetRenderer()       = 0;   // CAD 视口渲染器
         virtual IRenderTarget&           GetViewportTarget() = 0;   // CAD 视口的离屏渲染目标
         // 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理

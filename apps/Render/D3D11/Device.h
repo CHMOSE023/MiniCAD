@@ -1,8 +1,6 @@
 ﻿#pragma once
 
-#include <d3d11_1.h>
-#include <dxgi1_2.h>
-#include <d3dcommon.h>
+#include "D3D11/D3D11Common.h"
 
 namespace MiniCAD
 {

@@ -2,6 +2,7 @@
 #include "GUI/AppPlatform.h"
 #include "GUI/MainFrame.h"
 #include "Host/WebHost.h"
+#include "IGraphicsDevice.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -9,16 +10,13 @@
 
 namespace MiniGUI
 {
-    class WebGL2Backend;
     class WebInput;
 }
 
 namespace MiniCAD
 {
-    class GLES3Renderer;
-    class GLRenderTarget;
-
-    // MiniCAD 网页版的宿主：画布 + WebGL2（WebHost）+ 浏览器事件，实现 AppPlatform，界面与桌面版共用 MainFrame。
+    // MiniCAD 网页版的宿主：画布 + WebGL2 上下文（WebHost）+ 图形设备（IGraphicsDevice，现为 GLES3）+ 浏览器事件，
+    // 实现 AppPlatform，界面与桌面版共用 MainFrame。
     //   - 打开文件：浏览器的文件选择框，选中的文件读进内存文件系统 /upload 后打开
     //   - 外部参照：用户选的本地文件夹（浏览器授权）里需要的文件读进 /xref 后查找（PickFolder）
     //   - 保存：写到内存文件系统后由浏览器下载到本机（另存为默认 .mcad，打开的 .dwg / .dxf 按原格式保存）
@@ -51,7 +49,7 @@ namespace MiniCAD
         void RequestRedraw() override { m_host.RequestFrame(); }
         void BeginUiPass() override;
         void EndUiPass() override;
-        const char* GetGraphicsName() const override { return "WebGL2"; }
+        const char* GetGraphicsName() const override { return m_graphics->GetName(); }
 
         void SetTitle(const std::string& utf8) override;
         bool HasWindowControls() const override { return false; }
@@ -73,11 +71,10 @@ namespace MiniCAD
         Solid::ISolidKernel* GetSolidKernel() override;   // MINICAD_WITH_SOLID 时为 SMLib，第一次请求时创建
 
     private:
-        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 渲染器 → 界面后端 → WebGL 上下文
+        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → WebGL 上下文
         WebHost                                 m_host;
-        std::unique_ptr<MiniGUI::WebGL2Backend> m_backend;
-        std::unique_ptr<GLES3Renderer>          m_renderer;
-        std::unique_ptr<GLRenderTarget>         m_viewportRT;
+        std::unique_ptr<IGraphicsDevice>        m_graphics;
+        std::unique_ptr<IRenderTarget>          m_viewportRT;
         std::unique_ptr<Solid::ISolidKernel>    m_solidKernel;   // 声明在 MainFrame 之前，销毁时晚于它
         MainFrame                               m_main;
         std::unique_ptr<MiniGUI::WebInput>      m_input;

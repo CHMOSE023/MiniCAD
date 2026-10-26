@@ -1,11 +1,6 @@
 # ── MiniCAD 网页版（Emscripten）：界面由 MiniGUI 绘制，经 WebGL2 渲染 ──
 
-# ── MiniGUI WebGL2 渲染后端（头文件以 src/Render 为根："WebGL2/WebGL2Backend.h"）──
-add_library(MiniGUI_WebGL2 STATIC
-    src/Render/WebGL2/WebGL2Backend.cpp
-)
-target_include_directories(MiniGUI_WebGL2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/Render)
-target_link_libraries(MiniGUI_WebGL2 PUBLIC MiniGUI)
+# 渲染后端（MiniCADRender、界面后端 MiniGUI_GLES3）定义在 cmake/Render.cmake，源码在 apps/Render
 
 # ── 网页宿主：画布、WebGL2 上下文、尺寸与按需刷新 ─────────────────────
 add_library(MiniCADWebHost STATIC
@@ -44,7 +39,7 @@ add_executable(MiniGUIWebGallery
     "${CMAKE_SOURCE_DIR}/tests/UI/Golden/Demo/Gallery.cpp"
 )
 target_include_directories(MiniGUIWebGallery PRIVATE "${CMAKE_SOURCE_DIR}/tests/UI/Golden/Demo")
-target_link_libraries(MiniGUIWebGallery PRIVATE MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
+target_link_libraries(MiniGUIWebGallery PRIVATE MiniGUI MiniGUI_Web MiniGUI_GLES3 MiniCADWebHost)
 minicad_web_executable(MiniGUIWebGallery)
 target_link_options(MiniGUIWebGallery PRIVATE
     # 同一个选项出现多次时 CMake 会去重，用 SHELL: 保持成对
@@ -56,14 +51,11 @@ target_link_options(MiniGUIWebGallery PRIVATE
 add_executable(MiniCADWeb
     src/Host/WebMain.cpp
     src/Host/WebApp.cpp
-    src/Render/GLES3/GLES3Renderer.cpp
-    src/Render/GLES3/GLRenderTarget.cpp
 )
 target_include_directories(MiniCADWeb PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
 )
-target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCAD MiniGUI MiniGUI_Web MiniGUI_WebGL2 MiniCADWebHost)
+target_link_libraries(MiniCADWeb PRIVATE MiniCADApp MiniCAD MiniGUI MiniGUI_Web MiniCADRender MiniCADWebHost)
 # 三维实体内核（SMLib，见 docs/Solid/PLAN.md）：默认编入网页版，
 # 配置 -DMINICAD_WITH_SOLID=OFF 可去掉（.wasm 小约 6 MB）
 if(MINICAD_WITH_SOLID)

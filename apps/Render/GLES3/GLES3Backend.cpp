@@ -1,4 +1,4 @@
-#include "WebGL2/WebGL2Backend.h"
+#include "GLES3/GLES3Backend.h"
 #include "Paint/DrawList.h"
 #include <algorithm>
 #include <cassert>
@@ -52,18 +52,18 @@ namespace MiniGUI
                 char log[1024] = {};
                 glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
                 glDeleteShader(shader);
-                throw std::runtime_error(std::string("MiniGUI WebGL2: 着色器编译失败\n") + log);
+                throw std::runtime_error(std::string("MiniGUI GLES3: 着色器编译失败\n") + log);
             }
             return shader;
         }
     }
 
-    WebGL2Backend::WebGL2Backend()
+    GLES3Backend::GLES3Backend()
     {
         CreatePipeline();
     }
 
-    WebGL2Backend::~WebGL2Backend()
+    GLES3Backend::~GLES3Backend()
     {
         for (auto& [id, e] : m_textures)
             if (!e.external)
@@ -74,7 +74,7 @@ namespace MiniGUI
         glDeleteProgram(m_program);
     }
 
-    void WebGL2Backend::CreatePipeline()
+    void GLES3Backend::CreatePipeline()
     {
         // ── 着色器 ──────────────────────────────────────────────
         const GLuint vs = CompileShader(GL_VERTEX_SHADER, kVertexShader);
@@ -92,7 +92,7 @@ namespace MiniGUI
         {
             char log[1024] = {};
             glGetProgramInfoLog(m_program, sizeof(log), nullptr, log);
-            throw std::runtime_error(std::string("MiniGUI WebGL2: 着色器链接失败\n") + log);
+            throw std::runtime_error(std::string("MiniGUI GLES3: 着色器链接失败\n") + log);
         }
 
         m_locScale = glGetUniformLocation(m_program, "uScale");
@@ -121,7 +121,7 @@ namespace MiniGUI
     // =========================================================
     // 纹理
     // =========================================================
-    TextureId WebGL2Backend::CreateTexture(int width, int height, TextureFormat format, const void* pixels)
+    TextureId GLES3Backend::CreateTexture(int width, int height, TextureFormat format, const void* pixels)
     {
         assert(format == TextureFormat::RGBA8);
         (void)format;
@@ -147,7 +147,7 @@ namespace MiniGUI
         return id;
     }
 
-    void WebGL2Backend::UpdateTexture(TextureId id, const RectI& region, const void* pixels, int pitch)
+    void GLES3Backend::UpdateTexture(TextureId id, const RectI& region, const void* pixels, int pitch)
     {
         auto it = m_textures.find(id);
         if (it == m_textures.end() || it->second.external || pixels == nullptr)
@@ -168,7 +168,7 @@ namespace MiniGUI
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     }
 
-    void WebGL2Backend::DestroyTexture(TextureId id)
+    void GLES3Backend::DestroyTexture(TextureId id)
     {
         auto it = m_textures.find(id);
         if (it == m_textures.end())
@@ -178,7 +178,7 @@ namespace MiniGUI
         m_textures.erase(it);
     }
 
-    TextureId WebGL2Backend::RegisterExternalTexture(GLuint texture, bool flipY)
+    TextureId GLES3Backend::RegisterExternalTexture(GLuint texture, bool flipY)
     {
         if (texture == 0)
             return InvalidTextureId;
@@ -193,7 +193,7 @@ namespace MiniGUI
         return id;
     }
 
-    void WebGL2Backend::UpdateExternalTexture(TextureId id, GLuint texture)
+    void GLES3Backend::UpdateExternalTexture(TextureId id, GLuint texture)
     {
         auto it = m_textures.find(id);
         if (it != m_textures.end() && it->second.external)
@@ -203,7 +203,7 @@ namespace MiniGUI
     // =========================================================
     // 渲染
     // =========================================================
-    void WebGL2Backend::Render(const DrawData& data)
+    void GLES3Backend::Render(const DrawData& data)
     {
         const float scale    = data.framebufferScale;
         const float fbWidth  = data.displaySize.x * scale;

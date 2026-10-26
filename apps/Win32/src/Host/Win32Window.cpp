@@ -1,12 +1,10 @@
-// ── MiniCAD 桌面版宿主：窗口、D3D11 设备、消息循环与平台服务 ─────────
+// ── MiniCAD 桌面版宿主：窗口、图形设备、消息循环与平台服务 ─────────
 #include "Host/Win32Window.h"
 #ifdef MINICAD_WITH_SOLID
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
-#include "Render/D3D11/D3D11Renderer.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
-#include "D3D11/D3D11Backend.h"
 #include "Platform/Win32/Win32Fonts.h"
 #include "Platform/Win32/Win32Frame.h"
 #include "Platform/Win32/Win32Input.h"
@@ -148,10 +146,12 @@ namespace MiniCAD
         GetClientRect(m_hwnd, &rc);
         const int w = rc.right - rc.left;
         const int h = rc.bottom - rc.top;
-        if (!InitD3D11(w, h))
+        m_graphics = CreateGraphicsDevice(NativeWindow{ m_hwnd }, w, h);
+        if (!m_graphics)
             return false;
+        m_viewportRT = m_graphics->CreateRenderTarget();
+        m_viewportRT->Create(w, h);
 
-        m_backend  = std::make_unique<MiniGUI::D3D11Backend>(m_device->GetDevice(), m_device->GetContext());
         m_dpiScale = static_cast<float>(GetDpiForWindow(m_hwnd)) / 96.0f;
         if (!m_main.Initialize(*this, static_cast<float>(w) / m_dpiScale, static_cast<float>(h) / m_dpiScale, m_dpiScale))
             return false;
@@ -206,23 +206,6 @@ namespace MiniCAD
             return false;
         m_frame = std::make_unique<MiniGUI::Win32Frame>(m_hwnd);
         m_frame->Apply();       // 先保存再应用：Apply 触发的 WM_NCCALCSIZE 要经过 m_frame
-        return true;
-    }
-
-    bool Win32Window::InitD3D11(int width, int height)
-    {
-        m_device = std::make_unique<Device>();
-        m_device->Initialize();
-
-        SwapChain::Options opt;
-        opt.enableVSync  = true;    // 帧率钉在刷新率；输入在 Present 之前全部处理完，不会因此晚一帧
-        opt.allowTearing = false;
-        m_swapChain = std::make_unique<SwapChain>();
-        m_swapChain->Initialize(m_device.get(), m_hwnd, width, height, opt);
-
-        m_renderer   = std::make_unique<D3D11Renderer>(m_device->GetDevice(), m_device->GetContext());
-        m_viewportRT = std::make_unique<D3D11RenderTarget>(m_device->GetDevice());
-        m_viewportRT->Create(width, height);
         return true;
     }
 
@@ -282,9 +265,9 @@ namespace MiniCAD
             return 1;
 
         case WM_SIZE:
-            if (m_swapChain && wParam != SIZE_MINIMIZED)
+            if (m_graphics && wParam != SIZE_MINIMIZED)
             {
-                m_swapChain->Resize(LOWORD(lParam), HIWORD(lParam));
+                m_graphics->Resize(LOWORD(lParam), HIWORD(lParam));
                 if (m_input)        // 界面初始化完成之后
                     UpdateDisplaySize();
             }
@@ -384,12 +367,12 @@ namespace MiniCAD
     // =========================================================
     MiniGUI::IRenderBackend& Win32Window::GetUiBackend()
     {
-        return *m_backend;
+        return m_graphics->GetUiBackend();
     }
 
     MiniGUI::TextureId Win32Window::RegisterViewportTexture(void* nativeShaderResource)
     {
-        return m_backend->RegisterExternalTexture(static_cast<ID3D11ShaderResourceView*>(nativeShaderResource));
+        return m_graphics->RegisterViewportTexture(nativeShaderResource);
     }
 
     bool Win32Window::LoadUiFonts(MiniGUI::TextSystem& text)
@@ -424,38 +407,24 @@ namespace MiniCAD
 
     void Win32Window::BeginUiPass()
     {
-        ID3D11DeviceContext*    ctx = m_device->GetContext();
-        ID3D11RenderTargetView* rtv = m_swapChain->GetRTV();
-        const float clear[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
-        ctx->OMSetRenderTargets(1, &rtv, nullptr);
-        ctx->ClearRenderTargetView(rtv, clear);
+        m_graphics->BeginUiPass();
     }
 
     void Win32Window::EndUiPass()
     {
-        m_swapChain->Present();
+        m_graphics->Present();
         if (m_input)
             m_input->Sync();        // 按焦点开关输入法，候选窗跟随光标
     }
 
     void Win32Window::WaitForGpu()
     {
-        // 事件查询：GPU 执行完之前提交的全部命令后才返回（只用于自测计时）
-        D3D11_QUERY_DESC desc = { D3D11_QUERY_EVENT, 0 };
-        Microsoft::WRL::ComPtr<ID3D11Query> query;
-        if (FAILED(m_device->GetDevice()->CreateQuery(&desc, &query)))
-            return;
-        ID3D11DeviceContext* ctx = m_device->GetContext();
-        ctx->End(query.Get());
-        BOOL done = FALSE;
-        while (ctx->GetData(query.Get(), &done, sizeof(done), 0) != S_OK || !done)
-            ;
+        m_graphics->WaitIdle();
     }
 
     void Win32Window::ReleaseFreeMemory()
     {
-        // 已释放的 D3D11 缓冲要等命令提交后驱动才真正销毁
-        m_device->GetContext()->Flush();
+        m_graphics->ReleaseFreeMemory();
         // CRT 堆（即进程堆）：合并空闲块，把整页空闲的内存归还系统
         _heapmin();
         HeapCompact(GetProcessHeap(), 0);

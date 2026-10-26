@@ -42,8 +42,6 @@
 #include "GUI/NodeEditor.h"
 #include "NodeGraph/Examples.h"
 #include "Widgets/DockSpace.h"
-#include "D3D11/D3D11RenderTarget.h"
-#include <wrl/client.h>
 #include "Widgets/UiLayout.h"
 #include <psapi.h>
 #include <shellapi.h>
@@ -74,34 +72,11 @@ namespace MiniCAD
             bool Inside(int x, int y) const { return x >= 0 && y >= 0 && x < W && y < H; }
         };
 
-        ViewportPixels ReadViewport(IRenderer& renderer, IRenderTarget& target)
+        ViewportPixels ReadViewport(AppPlatform& platform)
         {
             ViewportPixels out;
-            auto* device  = static_cast<ID3D11Device*>(renderer.GetNativeDevice());
-            auto* texture = static_cast<D3D11RenderTarget&>(target).GetTexture();
-            if (!device || !texture)
-                return out;
-            D3D11_TEXTURE2D_DESC desc;
-            texture->GetDesc(&desc);
-            desc.Usage          = D3D11_USAGE_STAGING;
-            desc.BindFlags      = 0;
-            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-            desc.MiscFlags      = 0;
-            Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
-            Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
-            if (FAILED(device->CreateTexture2D(&desc, nullptr, &staging)))
-                return out;
-            device->GetImmediateContext(&context);
-            context->CopyResource(staging.Get(), texture);
-            D3D11_MAPPED_SUBRESOURCE mapped;
-            if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
-                return out;
-            out.W = static_cast<int>(desc.Width);
-            out.H = static_cast<int>(desc.Height);
-            out.Rgba.resize(static_cast<size_t>(out.W) * out.H * 4);
-            for (int y = 0; y < out.H; ++y)
-                std::memcpy(&out.Rgba[static_cast<size_t>(y) * out.W * 4], static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch, out.W * 4);
-            context->Unmap(staging.Get(), 0);
+            if (!static_cast<Win32Window&>(platform).GetGraphics().ReadPixels(platform.GetViewportTarget(), out.W, out.H, out.Rgba))
+                out = {};
             return out;
         }
 
@@ -1004,7 +979,7 @@ namespace MiniCAD
                 view3D.ShowAxis(true);
                 RenderFrame();
                 RenderFrame();
-                const ViewportPixels px = ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget());
+                const ViewportPixels px = ReadViewport(*m_platform);
                 SaveBmp(px, std::filesystem::temp_directory_path() / "minicad_selftest_3d.bmp");
                 SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_window.bmp");
                 view3D.ShowGrid(gridWas);
@@ -1036,7 +1011,7 @@ namespace MiniCAD
                 check(px.W > 0 && !lineNear({ 4010.0, 4005.0, 0.0 }) && !lineNear({ 4005.0, 4010.0, 0.0 }), "着色：被实体挡住的底边看不见（深度测试）");
                 RunCommandLine("WIREFRAME");
                 RenderFrame();
-                const ViewportPixels wire = ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget());
+                const ViewportPixels wire = ReadViewport(*m_platform);
                 {
                     const auto sp = camera.WorldToScreen({ 4010.0, 4005.0, 0.0 });
                     bool found = false;
@@ -3099,7 +3074,7 @@ namespace MiniCAD
             std::error_code ec;
             std::filesystem::create_directories(dir, ec);
             RenderFrame();
-            SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "model.bmp");
+            SaveBmp(ReadViewport(*m_platform), dir / "model.bmp");
             std::printf("截图：%s（模型页）\n", (dir / "model.bmp").string().c_str());
         }
 
@@ -3254,7 +3229,7 @@ namespace MiniCAD
                 m_viewport->RequestRender();
                 RenderFrame();
                 RenderFrame();
-                SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "layout.bmp");
+                SaveBmp(ReadViewport(*m_platform), dir / "layout.bmp");
                 const OleFrameEntity* ole = nullptr;
                 doc->GetScene().ForEachObject([&](const Object& o) { if (!ole) ole = dynamic_cast<const OleFrameEntity*>(&o); });
                 if (ole)
@@ -3264,7 +3239,7 @@ namespace MiniCAD
                     m_viewport->RequestRender();
                     RenderFrame();
                     RenderFrame();
-                    SaveBmp(ReadViewport(m_platform->GetRenderer(), m_platform->GetViewportTarget()), dir / "ole.bmp");
+                    SaveBmp(ReadViewport(*m_platform), dir / "ole.bmp");
                     std::printf("截图：%s（布局页）、ole.bmp（OLE 对象 %.1f x %.1f）\n", (dir / "layout.bmp").string().c_str(),
                                 box.Max.x - box.Min.x, box.Max.y - box.Min.y);
                 }

@@ -30,8 +30,9 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，桌面版和网页版共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
-- `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`），渲染器 `D3D11Renderer` 与 MiniGUI 后端 `D3D11Backend` / `SoftwareBackend`；自测 `Host/SelfTest.cpp`
-- `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`），渲染器 `GLES3Renderer` 与 MiniGUI 后端 `WebGL2Backend`；`MiniGUIWebGallery` 是浏览器里的控件展示
+- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`）使用：Windows 为 `D3D11GraphicsDevice`（渲染器 `D3D11Renderer`、界面后端 `D3D11Backend`），网页为 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
+- `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`）；自测 `Host/SelfTest.cpp`
+- `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`）；`MiniGUIWebGallery` 是浏览器里的控件展示
 - `wasm/`：旧版 C 接口 WASM，只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译（此时核心库定义 `MINICAD_WEB`，不编译 `apps/Web`）
 - `tests/`：`Core/`、`UI/` + `UI/Golden/`、`Serialization/`、`NodeGraph/`、`Solid/`、`Web/`（Node 运行的 JS 测试）、`Data/`（样例图纸）
 - `tools/`：`make_icons.py`（功能区图标）、`make_web_font.py`（网页版界面字体子集）、`inspect_dwg.cpp`（`MiniCADDwgInspect`，检查 DWG 内容）
@@ -40,12 +41,12 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32 与 Web 用同一�
 
 ### include 根目录（重要）
 
-每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，桌面版 → `apps/Win32/src` 与 `apps/Win32/src/Render`，网页版 → `apps/Web/src` 与 `apps/Web/src/Render`。
+每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`。
 `src` 和 `src/UI` 下都有 `Core/`、`Render/`、`Text/`；不要让同一个相对路径（如 `Core/<文件>.h`）同时存在于两个根下——重名时编译器按搜索顺序悄悄选中其中一个，不会报错。
 
 ### 源文件登记
 
-源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
+源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
 
 ## 架构
 

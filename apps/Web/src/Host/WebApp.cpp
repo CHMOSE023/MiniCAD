@@ -1,8 +1,5 @@
-// ── MiniCAD 网页版宿主：WebGL2、浏览器文件选择与下载、页面关闭提示 ─────────
+// ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、页面关闭提示 ─────────
 #include "Host/WebApp.h"
-#include "GLES3/GLES3Renderer.h"
-#include "GLES3/GLRenderTarget.h"
-#include "WebGL2/WebGL2Backend.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "Document/Document.h"
@@ -13,7 +10,6 @@
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
 #include <emscripten.h>
-#include <GLES3/gl3.h>
 #include <algorithm>
 #include <cctype>
 #include <memory>
@@ -240,16 +236,21 @@ namespace MiniCAD
         if (!m_host.Initialize())
             return false;
 
-        m_backend    = std::make_unique<MiniGUI::WebGL2Backend>();
-        m_renderer   = std::make_unique<GLES3Renderer>();
-        m_viewportRT = std::make_unique<GLRenderTarget>();
+        m_graphics = CreateGraphicsDevice(NativeWindow{}, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
+        if (!m_graphics)
+            return false;
+        m_viewportRT = m_graphics->CreateRenderTarget();
         m_viewportRT->Create(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
 
         if (!m_main.Initialize(*this, m_host.GetLogicalWidth(), m_host.GetLogicalHeight(), m_host.GetPixelScale()))
             return false;
         m_input = std::make_unique<MiniGUI::WebInput>(&m_main.GetUI(), m_host.GetCanvasSelector().c_str());
 
-        m_host.SetOnResize([this](float w, float h, float scale) { m_main.OnResize(w, h, scale); });
+        m_host.SetOnResize([this](float w, float h, float scale)
+        {
+            m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
+            m_main.OnResize(w, h, scale);
+        });
         m_host.SetOnFrame ([this] { m_main.RenderFrame(); });
         MiniCADWeb_InstallUnloadGuard();
         m_host.RequestFrame();
@@ -264,15 +265,13 @@ namespace MiniCAD
     // =========================================================
     // AppPlatform：图形
     // =========================================================
-    MiniGUI::IRenderBackend& WebApp::GetUiBackend() { return *m_backend; }
-    IRenderer&               WebApp::GetRenderer()  { return *m_renderer; }
+    MiniGUI::IRenderBackend& WebApp::GetUiBackend() { return m_graphics->GetUiBackend(); }
+    IRenderer&               WebApp::GetRenderer()  { return m_graphics->GetRenderer(); }
     IRenderTarget&           WebApp::GetViewportTarget() { return *m_viewportRT; }
 
     MiniGUI::TextureId WebApp::RegisterViewportTexture(void* nativeShaderResource)
     {
-        // 视口画面来自帧缓冲：第一行在底部，显示时上下翻转
-        const auto texture = static_cast<GLuint>(reinterpret_cast<uintptr_t>(nativeShaderResource));
-        return m_backend->RegisterExternalTexture(texture, true);
+        return m_graphics->RegisterViewportTexture(nativeShaderResource);
     }
 
     // =========================================================
@@ -295,15 +294,12 @@ namespace MiniCAD
 
     void WebApp::BeginUiPass()
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        m_graphics->BeginUiPass();
     }
 
     void WebApp::EndUiPass()
     {
-        // 浏览器在本次回调返回后自动呈现画布
+        m_graphics->Present();      // 浏览器在本次回调返回后自动呈现画布，这里什么也不做
         if (m_input)
             m_input->Sync();        // 文字焦点变化时切换 textarea，候选窗跟随光标
     }

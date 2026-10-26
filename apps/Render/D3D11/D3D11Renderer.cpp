@@ -2,7 +2,7 @@
 #include "D3D11Renderer.h" 
 #include "D3D11RenderTarget.h"
 #include <d3d11.h>
-#include "Render/GpuTypes.hpp"
+#include "GpuTypes.hpp"
 #include "Render/IRenderer.h"
 #include <algorithm>
 #include <cstring>

@@ -1,5 +1,5 @@
 ---
-covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Win32/src/Render/*, apps/Web/src/Render/*
+covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*
 ---
 
 # 显示性能
