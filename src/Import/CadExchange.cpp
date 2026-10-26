@@ -278,6 +278,13 @@ namespace MiniCAD
             return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(s.c_str()), s.size()));
         }
 
+        // 路径 → UTF-8 字符串（path::string() 按系统代码页转换，英文系统遇到中文会抛异常）
+        std::string PathToUtf8(const std::filesystem::path& p)
+        {
+            const std::u8string u8 = p.u8string();
+            return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+        }
+
         // ════════════════════════════════════════════════════════════════
         //  导入：CadDatabase → Scene
         // ════════════════════════════════════════════════════════════════
@@ -822,16 +829,16 @@ namespace MiniCAD
                 const fs::path file = ResolveXrefPath(xrefPath);
                 if (file.empty())
                 {
-                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), m_xref->HostDir.string().c_str());
+                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), PathToUtf8(m_xref->HostDir).c_str());
                     return;
                 }
                 std::error_code ec;
                 fs::path canonical = fs::weakly_canonical(file, ec);
                 if (ec) canonical = file;
-                const std::string key = Lower(canonical.string());
+                const std::string key = Lower(PathToUtf8(canonical));
                 if (m_xref->Loading.count(key))
                 {
-                    LOG_WARN("外部参照 %s：%s 正在被读取（循环引用），跳过", name.c_str(), file.string().c_str());
+                    LOG_WARN("外部参照 %s：%s 正在被读取（循环引用），跳过", name.c_str(), PathToUtf8(file).c_str());
                     return;
                 }
                 if (m_xref->Depth >= 8)
@@ -843,21 +850,21 @@ namespace MiniCAD
                 std::ifstream in(file, std::ios::binary);
                 if (!in)
                 {
-                    LOG_WARN("外部参照 %s：无法读取 %s", name.c_str(), file.string().c_str());
+                    LOG_WARN("外部参照 %s：无法读取 %s", name.c_str(), PathToUtf8(file).c_str());
                     return;
                 }
                 const std::vector<std::uint8_t> bytes{ std::istreambuf_iterator<char>(in), {} };
                 const Dwg::CadFileInfo info = Dwg::DetectFileFormat({ bytes.data(), std::min<size_t>(bytes.size(), 1024) });
                 if (info.format == Dwg::CadFileFormat::Unknown)
                 {
-                    LOG_WARN("外部参照 %s：%s 不是 DWG / DXF 文件", name.c_str(), file.string().c_str());
+                    LOG_WARN("外部参照 %s：%s 不是 DWG / DXF 文件", name.c_str(), PathToUtf8(file).c_str());
                     return;
                 }
                 std::string firstError;
                 std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(bytes, info.format, MakeNotify(&firstError));
                 if (!db)
                 {
-                    LOG_WARN("外部参照 %s：读取 %s 失败：%s", name.c_str(), file.string().c_str(), firstError.c_str());
+                    LOG_WARN("外部参照 %s：读取 %s 失败：%s", name.c_str(), PathToUtf8(file).c_str(), firstError.c_str());
                     return;
                 }
 
@@ -868,7 +875,7 @@ namespace MiniCAD
                 ctx->Loading.insert(key);
                 Importer nested(*db, m_scene, nullptr);
                 nested.ImportAsXref(name + "|", target, std::move(ctx));
-                LOG_INFO("外部参照 %s：从 %s 读入 %zu 个实体", name.c_str(), file.string().c_str(), target.GetEntities().size());
+                LOG_INFO("外部参照 %s：从 %s 读入 %zu 个实体", name.c_str(), PathToUtf8(file).c_str(), target.GetEntities().size());
             }
 
             // 外部参照的文件：绝对路径直接用；相对路径（如 .\Xref-A.dwg）按宿主所在目录解析；
@@ -5051,7 +5058,7 @@ namespace MiniCAD
             std::error_code ec;
             std::filesystem::path canonical = std::filesystem::weakly_canonical(self, ec);
             if (ec) canonical = self;
-            ctx->Loading.insert(Lower(canonical.string()));
+            ctx->Loading.insert(Lower(PathToUtf8(canonical)));
             importer.SetXrefContext(std::move(ctx));
         }
         importer.Run();
