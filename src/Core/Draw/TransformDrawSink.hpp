@@ -127,6 +127,7 @@ namespace MiniCAD
         double GetWorldPerPixel() const override   { return m_target.GetWorldPerPixel(); }
         double GetViewportHeightPx() const override { return m_target.GetViewportHeightPx(); }
         void   MarkViewDependent() override        { m_target.MarkViewDependent(); }
+        void   SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
 
     private:
         IDrawSink&  m_target;

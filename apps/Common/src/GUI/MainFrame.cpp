@@ -192,6 +192,8 @@ namespace MiniCAD
 
         m_fontSystem.Initialize();
         m_fontSystem.PreloadDefaultFonts();
+        for (const std::string& dir : platform.GetSystemFontDirs())      // 图纸引用的系统 TrueType 字体
+            m_fontSystem.GetFontEngine().AddSearchDir(dir);
 
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))
             return false;
@@ -214,6 +216,7 @@ namespace MiniCAD
             return false;
         }
         m_docManager.SetFontSystem(&m_fontSystem);     // 文字样式由各文档的文字样式表定义
+        m_docManager.SetOleRasterizer([this](const Ole::Presentation& p, uint32_t maxSide) { return m_platform->RasterizeOle(p, maxSide); });
 
         //AddDemoEntities(m_docManager.Create());
         return true;
@@ -713,6 +716,20 @@ namespace MiniCAD
     }
 
     // 切换布局：换相机、清选择、整场景重建（可见实体集合变了）
+    // 布局保存了图纸空间视图（AutoCAD 的主视口：中心与高度）就框住它，与 AutoCAD 打开布局看到的一致；
+    // 没有时框住纸张范围。只按高度框（宽度随绘图区的宽高比）
+    void MainFrame::ZoomToLayout(const DrawingLayout& sheet)
+    {
+        Camera& cam = m_docManager.GetViewport().GetCamera();
+        if (sheet.ViewHeight > 0.0)
+        {
+            const double half = sheet.ViewHeight * 0.5;
+            cam.ZoomToBounds(sheet.ViewCenterX - half * 1e-3, sheet.ViewCenterY - half, sheet.ViewCenterX + half * 1e-3, sheet.ViewCenterY + half, 1.0);
+        }
+        else if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+            cam.ZoomToBounds(sheet.MinX, sheet.MinY, sheet.MaxX, sheet.MaxY);
+    }
+
     void MainFrame::ActivateLayout(int index)
     {
         Document* doc = m_docManager.GetActive();
@@ -726,16 +743,12 @@ namespace MiniCAD
             return;
 
         cam.SetState(state);
-        // 图纸页第一次进入时框住纸张范围（Document 只给目标点，缩放要相机自己算）
+        // 图纸页第一次进入时框住保存的视图 / 纸张范围（Document 只给目标点，缩放要相机自己算）
         if (doc->ActiveLayoutIsPaper())
         {
             const auto& layouts = doc->GetScene().Layouts();
             if (index >= 0 && index < static_cast<int>(layouts.size()))
-            {
-                const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
-                if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
-                    cam.ZoomToBounds(sheet.MinX, sheet.MinY, sheet.MaxX, sheet.MaxY);
-            }
+                ZoomToLayout(layouts[static_cast<size_t>(index)]);
         }
 
         // 切布局 = 换一批可见实体，清掉选择集避免操作到看不见的对象

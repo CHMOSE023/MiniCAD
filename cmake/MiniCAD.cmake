@@ -80,6 +80,7 @@ set(MINICAD_TEXT_SOURCES
     "${MINICAD_SRC}/Text/Font/SHXCompositeFont.cpp"
     "${MINICAD_SRC}/Text/Font/TTFFont.cpp"
     "${MINICAD_SRC}/Core/Image/ImageLibrary.cpp"
+    "${MINICAD_SRC}/Core/Ole/OleObject.cpp"
     "${MINICAD_SRC}/Text/Font/EncodingGBK.cpp"
     "${MINICAD_SRC}/Text/Layout/TextLayoutEngine.cpp"
     "${MINICAD_SRC}/Text/Parser/SHXParser.cpp"

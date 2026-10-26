@@ -28,6 +28,7 @@
 #include "Render/ImageDraw.hpp"
 #include "Document/DeferredDash.hpp"
 #include "Core/Image/ImageLibrary.h"
+#include "Core/Ole/OleObject.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -260,6 +261,12 @@ namespace MiniCAD
         const ImageRequest& GetImageRequest() const { return m_imageRequest; }
         bool SubmitImagePath(const std::string& path);       // 读取图像并启动放置工具；失败返回 false
         ImageLibrary&       GetImageLibrary()       { return m_imageLibrary; }
+        // OLE 对象（OleFrameEntity）的展示图是 WMF / EMF 图元文件时由平台光栅化（桌面版 GDI 回放；网页版没有，只画边框）。
+        // maxSide：长边像素数。DIB 位图不经它，核心库自己解码
+        using OleRasterizer = std::function<std::shared_ptr<const ImageData>(const Ole::Presentation& presentation, uint32_t maxSide)>;
+        void SetOleRasterizer(OleRasterizer rasterizer) { m_oleRasterizer = std::move(rasterizer); }
+        static constexpr uint32_t kOleImageMaxSide = 4096;   // 快照长边像素数：Word 表格里的小字也能看清
+        void ClearOleImages() { m_oleImages.clear(); }
 
         struct TextStyleRequest { bool Active = false; };
         TextStyleRequest&       GetTextStyleRequest()       { return m_textStyleRequest; }
@@ -525,6 +532,9 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4>    m_scenePointVertices;
         std::vector<ImageDraw>       m_sceneImages;
         ImageLibrary                 m_imageLibrary;
+        OleRasterizer                m_oleRasterizer;
+        std::unordered_map<uint64_t, std::shared_ptr<const ImageData>> m_oleImages;   // OLE 数据哈希 → 快照（失败也记，不每帧重试）
+        std::shared_ptr<const ImageData> OleImage(const std::string& path);
         std::vector<Vertex_P3_C4_UV> m_textVertices;
         uint64_t                     m_sceneVersion = 0;   // 场景顶点重建计数（GPU 缓存键）
         // 场景文字的字形实例（拼接时按绘制序，拼接完按网格排序分批）与字形网格库

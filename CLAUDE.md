@@ -70,7 +70,11 @@ Windows 桌面版（D3D11）与网页版（Emscripten + WebGL2）用同一份代
 **DWG/DXF 交换**（`src/Import/CadExchange.*`）
 - `ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转；`Document::LoadFromFile` / `SaveToFile` 按扩展名 `.dwg` / `.dxf` 分派，DXF 写 ASCII
 - 写出版本 `CadSaveVersion`：2018（AC1032）、2013（AC1027，AutoCAD 2013～2017 共用，界面上标为"2013/2014"）、2010、2007、2004、2000；新建文档默认 2004（`kDefaultCadSaveVersion`）。2007 只能写 DXF，DWG 2007 改写为 2010（MiniDWG 没有实现 AC1021 的写出）；2007 以前的版本按 `ANSI_936` 代码页写中文。打开文件时记住其版本（`Document::GetCadSaveVersion`），另存为时由用户选择，格式列表 `kSaveFormats`（`AppPlatform.h`）桌面版与网页版共用
-- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；多面网格（PolyfaceMesh）与 `MeshEntity` 互转；标注导入时用其匿名块还原为 Insert；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
+- 已映射：图层、线型、文字样式、块、Line / Circle / Arc / Ellipse / Point / Polyline / Text / MText / Insert / Solid / 3DFace；三维实体只导出（多面网格）；多面网格（PolyfaceMesh）与 `MeshEntity` 互转；标注导入时用其匿名块还原为 Insert；OLE2FRAME（嵌入的 Word / Excel 等）只导入显示：MiniDWG 原样保留它，`Dwg::DecodeOle2Frame` 解出数据，`src/Core/Ole/OleObject` 解析 AutoCAD 头与 OLE 复合文档里的展示图（WMF / EMF / DIB），显示为 `OleFrameEntity`，图元文件经 `AppPlatform::RasterizeOle` 光栅化（桌面版 GDI，网页版只画边框）；其余实体（Hatch、Spline、Leader 等）跳过并 `LOG_WARN`
+- 外部参照（XREF）：`ImportCad` 带图纸路径时，块记录里带 XRef 标志的块按组码 1 的路径读入外部文件（`Importer::LoadXrefs` / `ImportAsXref`：同一个 Importer 以「参照名|」为表项名前缀、以宿主里的那个块为目标再跑一遍，宿主已有的依赖图层 / 样式复用，外部图层 0 并入宿主图层 0，嵌套递归、循环引用跳过）。`BlockEntity` 的 XRef 标志与 `GetXRefPath` 随 `.mcad` 保存；重新生成导出时外部参照只写标志与路径，名字带 `|` 的依赖块不写。网页版上传的图纸没有目录，外部参照只剩空块
+- 天正符号标注（坐标、箭头、剖切、引出标注、标高等，`MakeTchSymbol`）的线按实线组装，不用对象自身的线型
+- 图纸空间视口（`ViewportEntity`）：视图中心（组码 12/22）是以视图目标点（17/27/37）为原点、转过 Twist 的 DCS 坐标，导入时换算成 WCS（`SetViewCenterDcs`），导出时目标点写 (0,0,0)；视口内冻结的图层（331）存在 `GetFrozenLayers`，`Editor::ComposeModelIntoViewport` 合成时跳过（含块里的子实体）。检查工具 `MiniCADDwgInspect` 加 `MINICAD_VIEWPORTS=1` 打印全部视口参数
+- 文字样式：TrueType 样式文件名为空时按扩展数据里的字体族名换算成文件名（SimSun → simsun.ttc 等）；与预置样式同名的按图纸参数更新，图纸没有的预置样式删掉；天正文字的显示宽度因子写在 `MTextEntity::SetWidthFactor`（导出写成 `\W0.7;`），不派生样式。含形 / 文字的复杂线型保留这些元素的长度（形不画）。`$PSLTSCALE` 读写（`Scene::GetPaperSpaceLineTypeScaling`，布局页视口合成时为 0 则线型比例乘视口比例）
 - 以原图为底另存：打开时 `Document` 留下原图 `CadSource`（原始字节、场景实体 ↔ 原图句柄、导入时的签名）。另存为同格式同版本时 `ExportCad` 重新读出原图，只改写变化的实体与表项，未修改的实体（包括天正 `TCH_*` 等自定义对象）、跳过的实体、图纸空间原样写回；格式或版本不同时重新生成整张图纸。天正对象的显示适配在 `src/Import/Tch*.h`
 
 **文字与字体**（`src/Text/`）
@@ -144,7 +148,7 @@ Release 构建 `MiniCADWeb` 与 `MiniGUIWebGallery`，输出 `out/build/wasm/Min
 - `MiniDWGTests.exe`：MiniDWG 测试（`tests/Serialization/`，样例在 `tests/Data/Dwg/`）
 - `NodeGraphTests.exe`、`NodeSolidTests.exe`：节点图核心（调度、最长列表、读写、撤销、曲线 / 引用节点、预览与烘焙、后台求值、组节点）与三维实体节点（`tests/NodeGraph/`，后者只在 `MINICAD_WITH_SOLID` 时编译）。按功能分文件，每个文件开头写明测哪些节点、实现文件与计划章节：入口 `NodeGraphTests.cpp` / `NodeSolidTests.cpp`，公共部分与各组测试的声明在 `NodeGraphTestCommon.h` / `NodeSolidCommon.h`（头文件里写了新测试该放进哪个文件），测试在 `NodeGraph{Core,Data,Document,Group}Tests.cpp` 与 `NodeSolid{Basic,Form,Curve,Surface,Mesh}Tests.cpp`；单个文件超过约 600 行时再拆。`NodeSolidTests` 只能是一个程序（SMLib 一个进程只能有一个内核对象），debug 版运行约 7 分钟
 - `SMLibSmokeTests.exe`、`SolidKernelTests.exe`、`Solid3DEntityTests.exe`、`SolidToolTests.exe`、`SolidDrawingTests.exe`、`SolidViewTests.exe`：SMLib 冒烟测试、`ISolidKernel` 接口测试、三维实体 `Solid3DEntity` 测试、建模命令测试（含旋转、扫掠、选边圆角 / 倒角）、截面 / 投影出图与网格导出测试、三维视图测试（`tests/Solid/`），只在 `MINICAD_WITH_SOLID` 时编译
-- `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）
+- `MiniCADWin.exe --bench 图纸`：打开图纸、全部显示后注入滚轮放大 / 缩小，打印每帧耗时、是否重建与内存（Release 版需重定向输出）；有图纸布局时再切到第一张布局测滚轮与平移（视口把模型内容合成进自己的缓存，合成结果不随缩放重建，见 `Editor::ComposeModelIntoViewport`）。`MINICAD_BENCH_SHOT=目录` 把模型页（全部显示）、布局页与第一个 OLE 对象的视口读回存成 BMP，`MINICAD_BENCH_PAUSE=秒` 在布局页停留
 - `MiniCADWin.exe --selftest`：桌面版端到端自测（注入窗口消息）以及帧耗时、大图纸测量；控制台打印每一项的名字与用时，最后列出最慢的 5 项。20 万条线的耗时测量（只打印、debug 版约 24 秒）默认跳过，加 `--full` 才跑。2026-10-23 起应全部通过（之前的失败是测试本身的问题：视口未显示、细线显示默认值已改）
 - CI（`.github/workflows/build.yml`）运行除 `MiniGUIGolden` 外的全部 ctest；推送 `v*` 标签时运行并发布；到 main 的 PR 自动运行（只编译、测试、打包，main 的规则集要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项检查通过才能合并）；推送分支不运行（可在 Actions 页面手动运行）
 
@@ -212,6 +216,7 @@ layers.SetCurrentLayer("NewLayer");     // 之后新建的实体在当前图层�
 - 源文件逐个列出（不用通配）：MiniCAD 在 `cmake/MiniCAD.cmake`，MiniGUI 在 `cmake/MiniGUI.cmake`，MiniDWG 在 `cmake/MiniDWG.cmake`，共用应用在 `apps/Common/CMakeLists.txt`，桌面 / 网页宿主在 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt`，测试在 `tests/CMakeLists.txt`；新增 `.cpp` 要加到对应位置。例外：第三方 `3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配收集。实体是纯头文件（`.hpp`），一般不用改 CMake
 - `src/Core/Object/Object.hpp`：所有场景对象的基类（类型信息、ID）
 - `src/Render/VertexTypes.hpp`：平台无关的顶点格式
+- 字体查找：`FontEngine` 先在 `fonts/` 找，再到 `AppPlatform::GetSystemFontDirs()` 给的系统字体目录找（桌面版 `%WINDIR%\Fonts`），都没有才用自带字体代替
 
 ## 性能
 

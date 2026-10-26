@@ -45,6 +45,7 @@ namespace MiniCAD
         double MeasureMTextWidth(const std::string& text, uint32_t styleId,
                                  double height, double boxWidth) override
         { return m_target.MeasureMTextWidth(text, styleId, height, boxWidth); }
+        void SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
 
         bool MeasureMTextInkBounds(const std::string& text, uint32_t styleId,
                                    double height, double boxWidth,

@@ -31,6 +31,8 @@ namespace MiniCAD
 
         void SetActive(Document* doc);
         void SetFontSystem(FontSystem* fontSystem);
+        // OLE 对象快照的光栅化回调（见 Editor::SetOleRasterizer）：给现有的与之后新建的每个编辑器
+        void SetOleRasterizer(Editor::OleRasterizer rasterizer);
 
         std::vector<std::unique_ptr<Document>>& GetAll();
 

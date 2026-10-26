@@ -14,5 +14,6 @@ namespace MiniCAD
         Math::Color4 color;
         LineTypeID   lineType;   // 已解析（ByLayer / ByBlock 已换成实际线型）
         double       scale;      // 实体线型比例 × 全局 $LTSCALE
+        double       phase = 0.0; // 起点落在线型图案里的位置（世界单位，已含比例）：被视口矩形裁掉前半段后，后半段仍按原相位铺
     };
 }

@@ -32,6 +32,7 @@
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
+#include "Core/Entity/OleFrameEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
@@ -64,6 +65,8 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -261,6 +264,20 @@ namespace MiniCAD
             };
         }
 
+        // 外部参照（XREF）的解析环境：宿主图纸所在目录（相对路径按它解析）、嵌套深度、正在读取的文件（防循环引用）
+        struct XrefContext
+        {
+            std::filesystem::path HostDir;
+            int                   Depth = 0;
+            std::set<std::string> Loading;
+        };
+
+        // UTF-8 字符串 → 路径
+        std::filesystem::path PathFromUtf8(const std::string& s)
+        {
+            return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(s.c_str()), s.size()));
+        }
+
         // ════════════════════════════════════════════════════════════════
         //  导入：CadDatabase → Scene
         // ════════════════════════════════════════════════════════════════
@@ -269,6 +286,37 @@ namespace MiniCAD
         public:
             Importer(const Dwg::CadDatabase& db, Scene& scene, CadSource* source, ImportProgress progress = nullptr)
                 : m_db(db), m_scene(scene), m_source(source), m_progress(std::move(progress)) {}
+
+            // 外部参照的解析环境（宿主图纸有路径时才有；没有就不读外部文件）
+            void SetXrefContext(std::shared_ptr<XrefContext> ctx) { m_xref = std::move(ctx); }
+
+            // ── 外部参照（XREF）────────────────────────────────────────────
+            //
+            // 宿主图纸里外部参照只是一个带 XRef 标志与文件路径的空块记录（组码 70 位 4、组码 1），
+            // 内容在另一个 DWG 里；AutoCAD 打开时读入那个文件的模型空间，并把它的图层 / 线型 / 文字样式 /
+            // 块按「参照名|原名」登记成依赖项（宿主里通常已经带着这些依赖图层，颜色与开关由宿主决定）。
+            //
+            // 这里用同一个 Importer 跑第二遍：目标不是场景而是宿主里的那个块，表项名字一律加前缀，
+            // 同名的直接复用（不改宿主的设置），外部图纸的图层 0 并入宿主的图层 0。
+            // 不读布局、图纸空间与图纸变量（$LTSCALE、$PDMODE 等都用宿主的）。嵌套的外部参照递归处理。
+            void ImportAsXref(std::string namePrefix, BlockEntity& target, std::shared_ptr<XrefContext> ctx)
+            {
+                m_namePrefix  = std::move(namePrefix);
+                m_targetBlock = &target;
+                m_xref        = std::move(ctx);
+                ImportLineTypes();
+                ImportMLineStyles();
+                ImportLayers();
+                ImportTextStyles();
+                ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
+                if (const Dwg::BlockRecord* model = m_db.ModelSpace())
+                    CollectOpenings(*model);
+                ScanObjects();
+                ImportBlocks();
+                ImportModelSpace();
+                for (const auto& [name, count] : m_skipped)
+                    LOG_WARN("外部参照 %s：不支持的实体 %s × %d 已跳过", m_namePrefix.c_str(), name.c_str(), count);
+            }
 
             // 块参照的 XCLIP 裁剪边界（扩展字典 ACAD_FILTER → SPATIAL 的 SPATIAL_FILTER），换算到块坐标系；
             // 未裁剪、裁剪未启用或无法解析时返回空。
@@ -360,6 +408,7 @@ namespace MiniCAD
                 ImportMLineStyles();     // 多线样式（MLINE 的组码 340 引用它）
                 ImportLayers();
                 ImportTextStyles();
+                ImportPaperSpaceLineTypeScaling();
                 ImportPointStyle();
                 ImportLineTypeScale();
                 // 门窗：先全部解码（模型空间与块内，天正图常把墙和门窗整体做成块），生成墙体时据此留出断口
@@ -443,6 +492,14 @@ namespace MiniCAD
                 m_scene.SetLineTypeScale(lts);
             }
 
+            // $PSLTSCALE：布局页视口里的虚线按图纸单位铺（1，默认）还是跟着视口比例缩（0）。
+            // 读前者的图纸不受影响；后者的图纸（本仓库 0525 总平面图 = 0）里 1:500 视口内的 DASH 应当细到接近实线，
+            // 而不是按图纸单位铺出与纸面虚线一样疏的段
+            void ImportPaperSpaceLineTypeScaling()
+            {
+                m_scene.SetPaperSpaceLineTypeScaling(m_db.Header.PaperSpaceLineTypeScaling == Dwg::SpaceLineTypeScaling::Normal);
+            }
+
             void ImportLineTypes()
             {
                 LineTypeTable& table = m_scene.GetLineTypeTable();
@@ -458,12 +515,13 @@ namespace MiniCAD
                     else
                     {
                         LineTypeRecord rec;
-                        rec.Name        = lt.Name;
+                        rec.Name        = Prefixed(lt.Name);   // 外部参照里的线型按「参照名|线型名」登记，同名复用
                         rec.Description = lt.Description;
+                        // 含文字 / 形的复杂线型：形与文字本身不画，但它们所在的元素仍占图案里的一段
+                        //（组码 49 的长度，正为 dash、负为 gap、0 为点）——必须保留，否则周期变短、
+                        // dash / gap 错位，只有形的线型（如 0 长度形 + 1.6 间隔）会整条消失
                         for (const auto& seg : lt.Segments)
                         {
-                            if (seg.Flags != Dwg::LineTypeShapeFlags::None)
-                                continue;   // 含文字 / 形的复杂线型：只保留纯线段部分
                             rec.Pattern.push_back(seg.Length);
                             rec.PatternLength += std::abs(seg.Length);
                         }
@@ -485,15 +543,25 @@ namespace MiniCAD
                 ForEachEntry<Dwg::Layer>(m_db.Layers(), [&](const Dwg::Layer& src)
                 {
                     LayerID id;
+                    bool fresh = true;     // 新建的图层才按图纸设置属性；复用宿主已有的依赖图层时以宿主为准
                     if (src.Name == "0")
                     {
+                        // 外部参照的图层 0 并入宿主的图层 0（AutoCAD 同样如此），不改它的属性
                         id = Layer::DefaultLayerID;
-                        layers.GetLayer(id)->SetName("0");
+                        if (IsXref())
+                            fresh = false;
+                        else
+                            layers.GetLayer(id)->SetName("0");
+                    }
+                    else if (const std::optional<LayerID> existing = IsXref() ? FindLayerByName(Prefixed(src.Name)) : std::nullopt)
+                    {
+                        id    = *existing;
+                        fresh = false;
                     }
                     else
-                        id = layers.AddLayer(src.Name);
+                        id = layers.AddLayer(Prefixed(src.Name));
 
-                    if (Layer* dst = layers.GetLayer(id))
+                    if (Layer* dst = fresh ? layers.GetLayer(id) : nullptr)
                     {
                         dst->SetColor(LayerColorToColor4(src.Color));
                         // True-color Index() is -1 as a sentinel, not a negative ACI (off layer).
@@ -510,31 +578,112 @@ namespace MiniCAD
                 });
             }
 
+            std::optional<LayerID> FindLayerByName(const std::string& name) const
+            {
+                const LayerManager& layers = m_scene.GetLayerManager();
+                for (LayerID id : layers.GetAllLayerIDs())
+                    if (const Layer* layer = layers.GetLayer(id); layer && layer->GetName() == name)
+                        return id;
+                return std::nullopt;
+            }
+
             void ImportTextStyles()
             {
                 TextStyleTable& table = m_scene.GetTextStyleTable();
+                auto withExt = [](std::string f)
+                {
+                    if (!f.empty() && f.find('.') == std::string::npos)
+                        f += ".shx";   // DWG 里的 SHX 字体名常不带扩展名
+                    return f;
+                };
+
+                // 预置的 Simplex / GB2312 只是新建文档的默认样式：图纸里没有同名样式时删掉，样式表与图纸一致
+                //（否则样式对话框里多出图纸没有的样式，另存时还会写进 DWG）。Standard 不能删，下面按图纸的参数更新
+                // 外部参照的样式表不影响宿主：不删、不改宿主的样式
+                std::set<std::string> defined;
+                ForEachEntry<Dwg::TextStyle>(m_db.TextStyles(), [&](const Dwg::TextStyle& st) { defined.insert(Lower(st.Name)); });
+                if (!IsXref())
+                    for (const TextStyleRecord& preset : std::vector<TextStyleRecord>(table.Records()))
+                        if (preset.Id != TextStyleTable::StandardID && defined.count(Lower(preset.Name)) == 0)
+                            table.Remove(preset.Id);
+
                 ForEachEntry<Dwg::TextStyle>(m_db.TextStyles(), [&](const Dwg::TextStyle& st)
                 {
-                    TextStyleID id = table.FindByName(st.Name);
-                    if (id == TextStyleTable::InvalidID)
+                    // 形文件的样式（复杂线型里的形引用它）没有名字，不是文字样式
+                    if (st.Name.empty())
                     {
-                        auto withExt = [](std::string f)
-                        {
-                            if (!f.empty() && f.find('.') == std::string::npos)
-                                f += ".shx";   // DWG 里的 SHX 字体名常不带扩展名
-                            return f;
-                        };
-                        TextStyleRecord rec;
-                        rec.Name        = st.Name;
-                        rec.FontFile    = withExt(st.Filename);
-                        rec.BigFontFile = st.BigFontFilename.empty() ? std::string() : withExt(st.BigFontFilename);
-                        rec.Height      = st.Height;
-                        rec.WidthFactor = st.Width > 0.0 ? st.Width : 1.0;
-                        rec.ObliqueDeg  = st.ObliqueAngle * 180.0 / kPi;
+                        m_styles[st.ObjectHandle] = TextStyleTable::StandardID;
+                        return;
+                    }
+                    TextStyleRecord rec;
+                    rec.Name        = Prefixed(st.Name);
+                    rec.FontFile    = withExt(st.Filename);
+                    rec.BigFontFile = st.BigFontFilename.empty() ? std::string() : withExt(st.BigFontFilename);
+                    rec.Height      = st.Height;
+                    rec.WidthFactor = st.Width > 0.0 ? st.Width : 1.0;
+                    rec.ObliqueDeg  = st.ObliqueAngle * 180.0 / kPi;
+                    if (rec.FontFile.empty())
+                        rec.FontFile = TrueTypeFontFile(TypefaceOf(st));
+
+                    TextStyleID id = table.FindByName(rec.Name);
+                    if (id == TextStyleTable::InvalidID)
                         id = table.Add(std::move(rec));
+                    else if (IsXref())
+                        ;   // 宿主里已有的依赖样式：按宿主的
+                    else if (const TextStyleRecord* cur = table.Find(id))
+                    {
+                        // 与预置样式同名（Standard）：字高、宽度因子、倾斜按图纸的；图纸没给字体时保留预置字体。
+                        // 以前整个记录都按预置的，图纸里 Standard 宽度因子 0.7 的文字会按 1.0 显示
+                        TextStyleRecord updated = *cur;
+                        if (!rec.FontFile.empty())
+                        {
+                            updated.FontFile    = rec.FontFile;
+                            updated.BigFontFile = rec.BigFontFile;
+                        }
+                        updated.Height      = rec.Height;
+                        updated.WidthFactor = rec.WidthFactor;
+                        updated.ObliqueDeg  = rec.ObliqueDeg;
+                        table.Update(id, updated);
                     }
                     m_styles[st.ObjectHandle] = (id == TextStyleTable::InvalidID) ? TextStyleTable::StandardID : id;
                 });
+            }
+
+            // STYLE 的 ACAD 扩展数据：1000 = TrueType 字体族名（AutoCAD 按族名选字体时文件名为空，靠它找字体），1071 = 字形标志
+            std::string TypefaceOf(const Dwg::TextStyle& st) const
+            {
+                for (const auto& x : st.ExtendedDataList)
+                {
+                    const auto* app = m_db.FindAs<Dwg::AppId>(x.AppIdHandle);
+                    if (!app || !EqualsNoCase(app->Name, "ACAD")) continue;
+                    for (const auto& r : x.Records)
+                        if (const auto* v = std::get_if<std::string>(&r.Value); v && r.Code == 1000) return *v;
+                }
+                return {};
+            }
+
+            // TrueType 字体族名 → Windows 字体目录里的文件名（SimSun → simsun.ttc 等）。样式对话框里能看出是什么字体，
+            // 桌面版也能从系统字体目录找到它（AppPlatform::GetSystemFontDirs）；不认识的族名按 "<族名>.ttf"
+            static std::string TrueTypeFontFile(const std::string& typeface)
+            {
+                static const std::pair<const char*, const char*> kFiles[] = {
+                    { "simsun", "simsun.ttc" }, { "宋体", "simsun.ttc" }, { "nsimsun", "simsun.ttc" }, { "新宋体", "simsun.ttc" },
+                    { "simhei", "simhei.ttf" }, { "黑体", "simhei.ttf" },
+                    { "kaiti", "simkai.ttf" }, { "kaiti_gb2312", "simkai.ttf" }, { "楷体", "simkai.ttf" }, { "楷体_gb2312", "simkai.ttf" },
+                    { "fangsong", "simfang.ttf" }, { "fangsong_gb2312", "simfang.ttf" }, { "仿宋", "simfang.ttf" }, { "仿宋_gb2312", "simfang.ttf" },
+                    { "microsoft yahei", "msyh.ttc" }, { "微软雅黑", "msyh.ttc" }, { "youyuan", "SIMYOU.TTF" }, { "幼圆", "SIMYOU.TTF" },
+                    { "lisu", "SIMLI.TTF" }, { "隶书", "SIMLI.TTF" },
+                    { "arial", "arial.ttf" }, { "times new roman", "times.ttf" }, { "courier new", "cour.ttf" },
+                    { "calibri", "calibri.ttf" }, { "tahoma", "tahoma.ttf" }, { "verdana", "verdana.ttf" },
+                    { "sthupo", "STHUPO.TTF" }, { "stkaiti", "STKAITI.TTF" }, { "stsong", "STSONG.TTF" }, { "stfangsong", "STFANGSO.TTF" },
+                    { "stxihei", "STXIHEI.TTF" }, { "stzhongsong", "STZHONGS.TTF" }, { "stxingkai", "STXINGKA.TTF" }, { "stliti", "STLITI.TTF" },
+                    { "fzshuti", "FZSTK.TTF" }, { "fzyaoti", "FZYTK.TTF" },
+                };
+                if (typeface.empty()) return {};
+                const std::string key = Lower(typeface);
+                for (const auto& [name, file] : kFiles)
+                    if (key == name) return file;
+                return typeface + ".ttf";
             }
 
             TextStyleID LookupStyle(Dwg::Handle h) const
@@ -559,7 +708,7 @@ namespace MiniCAD
                         continue;
 
                     MLineStyleRecord rec;
-                    rec.Name        = st->Name;
+                    rec.Name        = Prefixed(st->Name);
                     rec.Description = st->Description;
                     // 封口 / 连接：Flags 位（1 = 起点封口、2 = 终点封口、4 = 顶点连接线）
                     const int flags = static_cast<int>(st->Flags);
@@ -614,15 +763,145 @@ namespace MiniCAD
                     Math::Point3 base{ 0, 0, 0 };
                     if (const auto* b = m_db.FindAs<Dwg::Block>(rec.BlockEntityHandle))
                         base = ToPoint(b->BasePoint);
-                    const BlockID id = table.Create(rec.Name, base);
+                    const BlockID id = table.Create(Prefixed(rec.Name), base);
                     m_blocks[rec.ObjectHandle] = id;
                     if (BlockEntity* blk = table.Find(id))
                         if (const auto* b = m_db.FindAs<Dwg::Block>(rec.BlockEntityHandle))
+                        {
                             blk->SetDescription(b->Comments);
+                            // 外部参照：记下标志与文件路径（另存为其他版本时仍写成外部参照，不绑定）
+                            const int flags = static_cast<int>(b->Flags);
+                            if (flags & (BlockEntity::XRef | BlockEntity::XRefOverlay))
+                            {
+                                blk->SetFlags(static_cast<uint16_t>(blk->GetFlags() | (flags & (BlockEntity::XRef | BlockEntity::XRefOverlay))));
+                                blk->SetXRefPath(b->XRefPath);
+                            }
+                        }
                 });
 
                 ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { FillBlock(rec); });
+                LoadXrefs();
             }
+
+            // 读入全部外部参照的内容（见 ImportAsXref）。没有路径信息（内存数据、网页版上传）时只剩空块
+            void LoadXrefs()
+            {
+                ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec)
+                {
+                    const auto* b = m_db.FindAs<Dwg::Block>(rec.BlockEntityHandle);
+                    if (b == nullptr)
+                        return;
+                    const int flags = static_cast<int>(b->Flags);
+                    if (!(flags & BlockEntity::XRef))
+                        return;
+                    auto it = m_blocks.find(rec.ObjectHandle);
+                    BlockEntity* blk = it != m_blocks.end() ? m_scene.GetBlockTable().Find(it->second) : nullptr;
+                    if (blk == nullptr || !blk->IsEmpty())
+                        return;
+                    const std::string name = Prefixed(rec.Name);
+                    if (b->IsUnloaded)
+                    {
+                        LOG_INFO("外部参照 %s 已卸载，不显示", name.c_str());
+                        return;
+                    }
+                    if (!m_xref)
+                    {
+                        LOG_WARN("外部参照 %s（%s）：图纸没有路径，无法解析外部文件", name.c_str(), b->XRefPath.c_str());
+                        return;
+                    }
+                    // 叠加型（Overlay）外部参照不随宿主再被别人参照时显示
+                    if ((flags & BlockEntity::XRefOverlay) && m_xref->Depth > 0)
+                        return;
+                    LoadXref(name, b->XRefPath, *blk);
+                });
+            }
+
+            void LoadXref(const std::string& name, const std::string& xrefPath, BlockEntity& target)
+            {
+                namespace fs = std::filesystem;
+                const fs::path file = ResolveXrefPath(xrefPath);
+                if (file.empty())
+                {
+                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), m_xref->HostDir.string().c_str());
+                    return;
+                }
+                std::error_code ec;
+                fs::path canonical = fs::weakly_canonical(file, ec);
+                if (ec) canonical = file;
+                const std::string key = Lower(canonical.string());
+                if (m_xref->Loading.count(key))
+                {
+                    LOG_WARN("外部参照 %s：%s 正在被读取（循环引用），跳过", name.c_str(), file.string().c_str());
+                    return;
+                }
+                if (m_xref->Depth >= 8)
+                {
+                    LOG_WARN("外部参照 %s：嵌套层数过多，跳过", name.c_str());
+                    return;
+                }
+
+                std::ifstream in(file, std::ios::binary);
+                if (!in)
+                {
+                    LOG_WARN("外部参照 %s：无法读取 %s", name.c_str(), file.string().c_str());
+                    return;
+                }
+                const std::vector<std::uint8_t> bytes{ std::istreambuf_iterator<char>(in), {} };
+                const Dwg::CadFileInfo info = Dwg::DetectFileFormat({ bytes.data(), std::min<size_t>(bytes.size(), 1024) });
+                if (info.format == Dwg::CadFileFormat::Unknown)
+                {
+                    LOG_WARN("外部参照 %s：%s 不是 DWG / DXF 文件", name.c_str(), file.string().c_str());
+                    return;
+                }
+                std::string firstError;
+                std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(bytes, info.format, MakeNotify(&firstError));
+                if (!db)
+                {
+                    LOG_WARN("外部参照 %s：读取 %s 失败：%s", name.c_str(), file.string().c_str(), firstError.c_str());
+                    return;
+                }
+
+                auto ctx = std::make_shared<XrefContext>();
+                ctx->HostDir = file.parent_path();
+                ctx->Depth   = m_xref->Depth + 1;
+                ctx->Loading = m_xref->Loading;
+                ctx->Loading.insert(key);
+                Importer nested(*db, m_scene, nullptr);
+                nested.ImportAsXref(name + "|", target, std::move(ctx));
+                LOG_INFO("外部参照 %s：从 %s 读入 %zu 个实体", name.c_str(), file.string().c_str(), target.GetEntities().size());
+            }
+
+            // 外部参照的文件：绝对路径直接用；相对路径（如 .\Xref-A.dwg）按宿主所在目录解析；
+            // 都找不到时再按文件名在宿主目录里找（图纸整体搬了目录的常见情形）
+            std::filesystem::path ResolveXrefPath(const std::string& xrefPath) const
+            {
+                namespace fs = std::filesystem;
+                if (xrefPath.empty())
+                    return {};
+                std::string normalized = xrefPath;
+                for (char& ch : normalized)
+                    if (ch == '\\') ch = '/';
+                const fs::path p = PathFromUtf8(normalized);
+                std::vector<fs::path> candidates;
+                if (p.is_absolute())
+                    candidates.push_back(p);
+                else
+                    candidates.push_back(m_xref->HostDir / p);
+                candidates.push_back(m_xref->HostDir / p.filename());
+                for (const fs::path& c : std::vector<fs::path>(candidates))
+                    if (!c.has_extension())
+                        candidates.push_back(fs::path(c).concat(".dwg"));
+                std::error_code ec;
+                for (const fs::path& c : candidates)
+                    if (fs::is_regular_file(c, ec))
+                        return c.lexically_normal();
+                return {};
+            }
+
+            bool IsXref() const { return m_targetBlock != nullptr; }
+
+            // 外部参照里的表项名：「参照名|原名」；宿主图纸里原样
+            std::string Prefixed(const std::string& name) const { return m_namePrefix.empty() ? name : m_namePrefix + name; }
 
             // 转换块内实体。线图案等需要先知道所引用块的内容，会提前调用它，所以按句柄只填一次
             void FillBlock(const Dwg::BlockRecord& rec)
@@ -658,6 +937,14 @@ namespace MiniCAD
                         ++m_source->TchCount;
                     if (auto conv = Convert(*e))
                     {
+                        if (m_targetBlock != nullptr)
+                        {
+                            // 外部参照：内容进宿主里的那个块
+                            if (conv->IsKindOf<InsertEntity>())
+                                m_scene.ResolveInsert(static_cast<InsertEntity&>(*conv));
+                            m_targetBlock->AddEntity(std::move(conv));
+                            continue;
+                        }
                         const Object::ObjectID id = conv->GetID();
                         m_scene.AddEntity(std::move(conv));
                         if (m_source != nullptr)
@@ -803,10 +1090,11 @@ namespace MiniCAD
                         {
                             constexpr double kEps = 1.0e-6;
                             // 判据一：视图中心与框中心重合、视图高 = 框高（文件里的纸张主视口）
+                            // （12/22 是相对视图目标点 17/27 的 DCS 坐标，纸张主视口目标点为原点，加上不影响）
                             const bool paperSized =
                                 vp->Width > 0.0 && vp->Height > 0.0 && vp->ViewHeight > 0.0 &&
-                                std::abs(vp->ViewCenter.X - vp->Center.X) <= kEps &&
-                                std::abs(vp->ViewCenter.Y - vp->Center.Y) <= kEps &&
+                                std::abs(vp->ViewCenter.X + vp->ViewTarget.X - vp->Center.X) <= kEps &&
+                                std::abs(vp->ViewCenter.Y + vp->ViewTarget.Y - vp->Center.Y) <= kEps &&
                                 std::abs(vp->ViewHeight - vp->Height) <= kEps;
                             // 判据二：`CreateDefaults` 补的那个视口只设了 Width/Height/Center，
                             // 视图中心与视图高都是默认 0 —— 同样不是文件内容，必须跳过。
@@ -816,6 +1104,9 @@ namespace MiniCAD
                                 std::abs(vp->ViewCenter.X) <= kEps &&
                                 std::abs(vp->ViewCenter.Y) <= kEps &&
                                 std::abs(vp->ViewHeight) <= kEps;
+                            // 文件里的主视口就是这张布局保存的图纸空间视图（中心、高度），进布局时按它显示
+                            if (paperSized && !defaultStub)
+                                m_scene.SetLayoutView(static_cast<uint64_t>(record->ObjectHandle), vp->Center.X, vp->Center.Y, vp->Height);
                             if (paperSized || defaultStub)
                                 continue;
                         }
@@ -1047,10 +1338,28 @@ namespace MiniCAD
                 return e;
             }
 
+            // OLE 对象（嵌入的 Word / Excel 文档等）：MiniDWG 原样保留它（另存为原格式原版本时写回），
+            // 这里解出 AutoCAD 头里的四个角点与整份数据，显示为贴着展示图的矩形（OleFrameEntity）
+            std::unique_ptr<Entity> ConvertOleFrame(const Dwg::Entity& src, const Dwg::UnknownEntity& unknown)
+            {
+                Dwg::Ole2FrameData ole;
+                Ole::Frame frame;
+                if (!Dwg::DecodeOle2Frame(unknown, ole) || !Ole::ParseFrame(ole.Data, frame))
+                    return Skip(src);
+                // 头里是左上、右上、右下、左下；矩形实体按左下、右下、右上、左上
+                auto ent = Make<OleFrameEntity>(src, nullptr, frame.Corners[3], frame.Corners[2], frame.Corners[1], frame.Corners[0]);
+                auto& ole2 = static_cast<OleFrameEntity&>(*ent);
+                ole2.SetOleType(ole.Type);
+                ole2.SetData(std::make_shared<const std::vector<uint8_t>>(std::move(ole.Data)));
+                return ent;
+            }
+
             std::unique_ptr<Entity> Convert(const Dwg::Entity& src)
             {
                 if (const auto* unknown = dynamic_cast<const Dwg::UnknownEntity*>(&src))
                 {
+                    if (unknown->Raw.DxfName == "OLE2FRAME")
+                        return ConvertOleFrame(src, *unknown);
                     Tch::TchBlockInsert insert;
                     if (Tch::DecodeBlockInsert(*unknown, insert))
                     {
@@ -1096,25 +1405,25 @@ namespace MiniCAD
                     {
                         // 天正分解出的坐标文字宽度因子为 0.6 / 0.85
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildCoord(coord), WidthVariant(LookupStyle(coord.TextStyle), 0.6 / 0.85));
+                        return MakeTchSymbol(src, Tch::BuildCoord(coord), WidthVariant(LookupStyle(coord.TextStyle), 0.6 / 0.85));
                     }
                     Tch::TchArrow arrow;
                     if (Tch::DecodeArrow(*unknown, arrow, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildArrow(arrow), LookupStyle(arrow.TextStyle));
+                        return MakeTchSymbol(src, Tch::BuildArrow(arrow), LookupStyle(arrow.TextStyle));
                     }
                     Tch::TchSection section;
                     if (Tch::DecodeSection(*unknown, section, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildSection(section), WidthVariant(LookupStyle(section.TextStyle), 0.6 / 0.85));
+                        return MakeTchSymbol(src, Tch::BuildSection(section), WidthVariant(LookupStyle(section.TextStyle), 0.6 / 0.85));
                     }
                     Tch::TchIndexPointer indexPointer;
                     if (Tch::DecodeIndexPointer(*unknown, indexPointer, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildIndexPointer(indexPointer), LookupStyle(indexPointer.TextStyle),
+                        return MakeTchSymbol(src, Tch::BuildIndexPointer(indexPointer), LookupStyle(indexPointer.TextStyle),
                                                WidthVariant(LookupStyle(indexPointer.NoteStyle), 0.6 / 0.85));
                     }
                     Tch::TchDrawingName drawingName;
@@ -1132,7 +1441,7 @@ namespace MiniCAD
                         ++m_tchConverted[unknown->Raw.DxfName];
                         const bool nameTtf = !m_scene.GetTextStyleTable().Resolve(nameStyle).IsShx();
                         const bool scaleTtf = !m_scene.GetTextStyleTable().Resolve(scaleStyle).IsShx();
-                        return MakeTchGraphics(src, Tch::BuildDrawingName(drawingName, extent, nameTtf, scaleTtf), nameStyle, scaleStyle);
+                        return MakeTchSymbol(src, Tch::BuildDrawingName(drawingName, extent, nameTtf, scaleTtf), nameStyle, scaleStyle);
                     }
                     Tch::TchRectStair stair;
                     if (Tch::DecodeRectStair(*unknown, stair, &nativeReason))
@@ -1144,44 +1453,44 @@ namespace MiniCAD
                     if (Tch::DecodeElevation(*unknown, elevation, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildElevation(elevation), LookupStyle(elevation.Style));
+                        return MakeTchSymbol(src, Tch::BuildElevation(elevation), LookupStyle(elevation.Style));
                     }
                     Tch::TchMultiLeader leader;
                     if (Tch::DecodeMultiLeader(*unknown, leader, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
                         const TextStyleID style = LookupStyle(leader.Style);
-                        return MakeTchGraphics(src, Tch::BuildMultiLeader(leader, TchTextRules(leader.Style, style)), style);
+                        return MakeTchSymbol(src, Tch::BuildMultiLeader(leader, TchTextRules(leader.Style, style)), style);
                     }
                     Tch::TchComposing composing;
                     if (Tch::DecodeComposing(*unknown, composing, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildComposing(composing), LookupStyle(composing.Style));
+                        return MakeTchSymbol(src, Tch::BuildComposing(composing), LookupStyle(composing.Style));
                     }
                     Tch::TchDrawingIndex drawingIndex;
                     if (Tch::DecodeDrawingIndex(*unknown, drawingIndex, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildDrawingIndex(drawingIndex), LookupStyle(drawingIndex.Style), LookupStyle(drawingIndex.ScaleStyle));
+                        return MakeTchSymbol(src, Tch::BuildDrawingIndex(drawingIndex), LookupStyle(drawingIndex.Style), LookupStyle(drawingIndex.ScaleStyle));
                     }
                     Tch::TchNorthThumb north;
                     if (Tch::DecodeNorthThumb(*unknown, north, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildNorthThumb(north), LookupStyle(north.Style));
+                        return MakeTchSymbol(src, Tch::BuildNorthThumb(north), LookupStyle(north.Style));
                     }
                     Tch::TchCut cut;
                     if (Tch::DecodeCut(*unknown, cut, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildCut(cut), TextStyleTable::StandardID);
+                        return MakeTchSymbol(src, Tch::BuildCut(cut), TextStyleTable::StandardID);
                     }
                     Tch::TchSymmetry symmetry;
                     if (Tch::DecodeSymmetry(*unknown, symmetry, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildSymmetry(symmetry), TextStyleTable::StandardID);
+                        return MakeTchSymbol(src, Tch::BuildSymmetry(symmetry), TextStyleTable::StandardID);
                     }
                     Tch::TchRect tchRect;
                     if (Tch::DecodeRect(*unknown, tchRect, &nativeReason))
@@ -1443,7 +1752,7 @@ namespace MiniCAD
                     if (Tch::TchRupture rupture; Tch::DecodeRupture(*unknown, rupture, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildRupture(rupture), TextStyleTable::StandardID);
+                        return MakeTchSymbol(src, Tch::BuildRupture(rupture), TextStyleTable::StandardID);
                     }
                     Tch::TchPathArray pathArray;
                     if (Tch::DecodePathArray(*unknown, pathArray, &nativeReason))
@@ -1458,7 +1767,7 @@ namespace MiniCAD
                     if (Tch::DecodeAxisLabel(*unknown, axisLabel, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchGraphics(src, Tch::BuildAxisLabel(axisLabel), LookupStyle(axisLabel.TextStyle));
+                        return MakeTchSymbol(src, Tch::BuildAxisLabel(axisLabel), LookupStyle(axisLabel.TextStyle));
                     }
                     Tch::TchColumn column;
                     if (Tch::DecodeColumn(*unknown, column, &nativeReason))
@@ -1778,6 +2087,18 @@ namespace MiniCAD
                     const int att = static_cast<int>(e->AttachmentPoint);
                     if (att >= 1 && att <= 9)
                         mt.SetAttachment(static_cast<MTextAttachment>(att));
+                    // 开头的 \W<宽度因子>; 读回实体的宽度因子（MiniCAD 导出天正文字时这样写，见 Exporter）
+                    if (const std::string& v = e->Value; v.size() > 3 && v[0] == '\\' && v[1] == 'W')
+                        if (const size_t semi = v.find(';'); semi != std::string::npos)
+                        {
+                            char* end = nullptr;
+                            const double wf = std::strtod(v.c_str() + 2, &end);
+                            if (end == v.c_str() + semi && wf > 0.0)
+                            {
+                                mt.SetWidthFactor(wf);
+                                mt.SetText(v.substr(semi + 1));
+                            }
+                        }
                     return ent;
                 }
 
@@ -1858,11 +2179,30 @@ namespace MiniCAD
                     //    才是模型里的真实位置。直接当 WCS 用时，Twist≠0 的
                     //    视口内容会被画到几十万单位外 —— 视口是空框
                     //    （实测 `01-曲陵路.dwg` 5 个 Twist=95.7° 的浮动视口）。
+                    // ⚠ DCS 的原点是视图目标点（组码 17/27/37），要加回去。
+                    //    多数视口目标点是原点；经 DVIEW / 动态观察过的视口目标点在模型上、
+                    //    12/22 只是相对它的小偏移（实测 0525 总平面图的视口 effb9：
+                    //    目标 (64093,86195)、12/22=(-80.7,-5.2)，不加目标点就对到了世界原点附近，
+                    //    视口里只剩零星几笔）。
                     vp->SetTwist(e->TwistAngle);
                     vp->SetViewCenterDcs(Math::Point3{ e->ViewCenter.X, e->ViewCenter.Y, 0.0 },
-                                         e->TwistAngle);
+                                         e->TwistAngle,
+                                         Math::Point3{ e->ViewTarget.X, e->ViewTarget.Y, 0.0 });
                     vp->SetViewHeight(e->ViewHeight);
                     vp->SetViewportId(e->ActiveStatus);
+                    // 视线不是 +Z（三维视口）时只能按俯视合成，提示一下
+                    if (e->ViewDirection.Z <= 0.0 ||
+                        std::abs(e->ViewDirection.X) > 1.0e-9 * std::abs(e->ViewDirection.Z) ||
+                        std::abs(e->ViewDirection.Y) > 1.0e-9 * std::abs(e->ViewDirection.Z))
+                        LOG_WARN("VIEWPORT %llx：视线方向 (%g,%g,%g) 不是俯视，按俯视显示",
+                                 static_cast<unsigned long long>(src.ObjectHandle),
+                                 e->ViewDirection.X, e->ViewDirection.Y, e->ViewDirection.Z);
+                    // 本视口里冻结的图层（331，VPLAYER）
+                    std::vector<LayerID> frozen;
+                    for (Dwg::Handle lh : e->FrozenLayers)
+                        if (auto it = m_layers.find(lh); it != m_layers.end())
+                            frozen.push_back(it->second);
+                    vp->SetFrozenLayers(std::move(frozen));
                     return base;
                 }
 
@@ -1963,25 +2303,21 @@ namespace MiniCAD
                 return style;
             }
 
-            // 宽度因子不同的同名派生样式（名字加 _W 与百分比），没有时按原样式复制一份
-            TextStyleID WidthVariant(TextStyleID base, double width)
+            // 天正文字的样式 + 显示宽度因子（0 = 按样式）。以前按宽度派生 "黑体_W70" 之类的文字样式：样式表里多出
+            // 图纸没有的样式（对话框里能看到），另存时还会写进 DWG；现在宽度因子写在多行文字实体上（MTextEntity::SetWidthFactor）
+            struct TchTextStyle
             {
-                TextStyleTable& table = m_scene.GetTextStyleTable();
-                const TextStyleRecord* rec = table.Find(base);
-                if (rec == nullptr || std::abs(rec->WidthFactor - width) < 1e-9)
-                    return base;
-                TextStyleRecord copy = *rec;
-                copy.Name += "_W" + std::to_string(static_cast<int>(std::lround(width * 100)));
-                copy.WidthFactor = width;
-                if (const TextStyleID id = table.FindByName(copy.Name); id != TextStyleTable::InvalidID)
-                    return id;
-                return table.Add(std::move(copy));
-            }
+                TextStyleID Id;
+                double      Width = 0.0;
+                TchTextStyle(TextStyleID id) : Id(id) {}
+                TchTextStyle(TextStyleID id, double width) : Id(id), Width(width) {}
+            };
+            static TchTextStyle WidthVariant(TextStyleID base, double width) { return { base, width }; }
 
             // 天正标注、轴号的图元放进匿名块：线随对象的图层与颜色，文字为 7 号色（与天正 2014 分解结果一致）。
             // Layer = 1 的图元放到对象引用的符号图层 symbolLayer（如楼梯箭头的 DIM_SYMB），Layer = 2 的放到 secondLayer，颜色随层
-            std::unique_ptr<Entity> MakeTchGraphics(const Dwg::Entity& src, const Tch::TchGraphics& g, TextStyleID textStyle,
-                                                    std::optional<TextStyleID> secondStyle = std::nullopt,
+            std::unique_ptr<Entity> MakeTchGraphics(const Dwg::Entity& src, const Tch::TchGraphics& g, TchTextStyle textStyle,
+                                                    std::optional<TchTextStyle> secondStyle = std::nullopt,
                                                     Dwg::Handle symbolLayer = Dwg::kNullHandle, Dwg::Handle secondLayer = Dwg::kNullHandle)
             {
                 auto onLayer = [&](Entity& e, int layer) {
@@ -1995,7 +2331,15 @@ namespace MiniCAD
                 };
                 const double z = 0;
                 auto pt = [&](const Tch::TchGraphics::Point& p) { return Math::Point3{p.X, p.Y, z}; };
-                std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
+                // 符号标注（坐标、箭头、剖切符号、引出标注等）：天正画它们时不用对象自身的线型，线一律是实线
+                //（实测 0525 总平面图的 TCH_COORD F656B：对象线型 __DASH，AutoCAD 里引线是实线）
+                auto continuous = [&](Entity& e) {
+                    if (!m_tchContinuous) return;
+                    EntityAttr attr = e.GetAttr();
+                    attr.LineType = LineTypeTable::ContinuousID;
+                    e.SetAttr(attr);
+                };
+                std::string name = Prefixed("*U_TCH_" + std::to_string(src.ObjectHandle));
                 while (m_scene.GetBlockTable().Get(name)) name += "_";
                 const auto blockId = m_scene.GetBlockTable().Create(name);
                 auto* block = m_scene.GetBlockTable().Find(blockId);
@@ -2009,18 +2353,28 @@ namespace MiniCAD
                         attr.Color = EntityColor::FromAci(static_cast<std::uint16_t>(g.LineColor));
                         line->SetAttr(attr);
                     }
+                    continuous(*line);
                     block->AddEntity(std::move(line));
                 }
                 for (const auto& t : g.Ticks)
                 {
                     auto tick = Make<PolylineEntity>(src, nullptr, std::vector<Math::Point3>{pt(t.A), pt(t.B)});
                     static_cast<PolylineEntity&>(*tick).SetWidth(t.Width);
+                    continuous(*tick);
                     block->AddEntity(std::move(tick));
                 }
                 for (const auto& a : g.Arcs)
-                    block->AddEntity(Make<ArcEntity>(src, nullptr, pt(a.Center), a.Radius, a.Start, a.End));
+                {
+                    auto arc = Make<ArcEntity>(src, nullptr, pt(a.Center), a.Radius, a.Start, a.End);
+                    continuous(*arc);
+                    block->AddEntity(std::move(arc));
+                }
                 for (const auto& c : g.Circles)
-                    block->AddEntity(Make<CircleEntity>(src, nullptr, pt(c.Center), c.Radius));
+                {
+                    auto circle = Make<CircleEntity>(src, nullptr, pt(c.Center), c.Radius);
+                    continuous(*circle);
+                    block->AddEntity(std::move(circle));
+                }
                 for (const auto& t : g.Arrows)
                 {
                     auto solid = Make<SolidEntity>(src, nullptr, pt(t.A), pt(t.B), pt(t.C));
@@ -2035,14 +2389,16 @@ namespace MiniCAD
                     auto pl = Make<PolylineEntity>(src, nullptr, std::move(pts), std::move(bulges));
                     static_cast<PolylineEntity&>(*pl).SetWidth(path.Width);
                     onLayer(*pl, path.Layer);
+                    continuous(*pl);
                     block->AddEntity(std::move(pl));
                 }
                 for (const auto& t : g.Texts)
                 {
-                    TextStyleID style = t.Style == 1 ? secondStyle.value_or(textStyle) : textStyle;
-                    if (t.WidthFactor > 0) style = WidthVariant(style, t.WidthFactor);
-                    auto text = Make<MTextEntity>(src, nullptr, style, t.Value, pt(t.Center), t.Height, t.Rotation, 0.0);
+                    const TchTextStyle& style = (t.Style == 1 && secondStyle.has_value()) ? *secondStyle : textStyle;
+                    auto text = Make<MTextEntity>(src, nullptr, style.Id, t.Value, pt(t.Center), t.Height, t.Rotation, 0.0);
                     auto& mt = static_cast<MTextEntity&>(*text);
+                    // 宽度因子写在文字自己身上：图元给的优先，否则是这组样式的
+                    mt.SetWidthFactor(t.WidthFactor > 0 ? t.WidthFactor : style.Width);
                     mt.SetAttachment(static_cast<MTextAttachment>(t.Attachment));
                     onLayer(mt, t.Layer);
                     EntityAttr attr = mt.GetAttr();
@@ -2052,6 +2408,16 @@ namespace MiniCAD
                     block->AddEntity(std::move(text));
                 }
                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
+            }
+
+            // 符号标注（TchSymbol.h / TchAnnotation.h 的对象）：线按实线组装，见 MakeTchGraphics 里的说明
+            template <class... Args>
+            std::unique_ptr<Entity> MakeTchSymbol(Args&&... args)
+            {
+                m_tchContinuous = true;
+                auto e = MakeTchGraphics(std::forward<Args>(args)...);
+                m_tchContinuous = false;
+                return e;
             }
 
             // 天正暖通风管类的中心线、管端线图层：自身图层名（如 DUCT-排烟管）去掉末尾的“管”后加“中心线”“管端线”
@@ -2927,6 +3293,11 @@ namespace MiniCAD
             int m_tianzhengWalls = 0;
             std::map<std::string, int> m_tchConverted;
             std::map<std::string, std::map<std::string, std::set<Dwg::Handle>>> m_tchFailures;   // 类型 → 原因 → 句柄
+            bool m_tchContinuous = false;                  // MakeTchGraphics 组装符号标注时线按实线（MakeTchSymbol 设）
+            // 外部参照：表项名前缀（「参照名|」）、内容的目标块（空 = 宿主图纸本身）、解析环境
+            std::string                  m_namePrefix;
+            BlockEntity*                 m_targetBlock = nullptr;
+            std::shared_ptr<XrefContext> m_xref;
         };
 
         // ════════════════════════════════════════════════════════════════
@@ -2966,6 +3337,8 @@ namespace MiniCAD
                     // 不写就会被 AutoCAD 当成 1，大尺寸图纸的虚线周期会小几百上千倍，
                     // 密到看不出线型（与点样式同一类教训）。
                     h.LineTypeScale = m_scene.GetLineTypeScale();
+                    h.PaperSpaceLineTypeScaling = m_scene.GetPaperSpaceLineTypeScaling() ? Dwg::SpaceLineTypeScaling::Normal
+                                                                                         : Dwg::SpaceLineTypeScaling::Viewport;
                 }
 
                 ExportLineTypes();
@@ -3327,12 +3700,21 @@ namespace MiniCAD
                 {
                     if (id == BlockTable::ModelSpaceID || id == BlockTable::PaperSpaceID)
                         return;
+                    // 外部参照的依赖块（「参照名|块名」）是读入外部文件时登记的，AutoCAD 打开时自己重建，不写
+                    if (blk.GetName().find('|') != std::string::npos)
+                        return;
                     if (Dwg::BlockRecord* rec = CreateBlock(blk))
                         created.emplace_back(rec, &blk);
                 });
 
                 for (auto& [rec, blk] : created)
-                    FillBlock(rec, *blk);
+                    if (!IsXrefBlock(*blk))      // 外部参照只写标志与路径，内容在外部文件里，不绑定进来
+                        FillBlock(rec, *blk);
+            }
+
+            static bool IsXrefBlock(const BlockEntity& blk)
+            {
+                return (blk.GetFlags() & (BlockEntity::XRef | BlockEntity::XRefOverlay)) != 0;
             }
 
             Dwg::BlockRecord* CreateBlock(const BlockEntity& blk)
@@ -3344,6 +3726,12 @@ namespace MiniCAD
                     {
                         b->BasePoint = ToXYZ(blk.GetBasePoint());
                         b->Comments  = blk.GetDescription();
+                        if (IsXrefBlock(blk))
+                        {
+                            b->Flags    = static_cast<Dwg::BlockTypeFlags>(static_cast<int>(b->Flags) |
+                                                                           (blk.GetFlags() & (BlockEntity::XRef | BlockEntity::XRefOverlay)));
+                            b->XRefPath = blk.GetXRefPath();
+                        }
                     }
                 }
                 return rec;
@@ -3736,8 +4124,13 @@ namespace MiniCAD
                     d->TwistAngle = s->GetTwist();
                     d->ActiveStatus = static_cast<std::int16_t>(s->GetViewportId());
                     d->ViewDirection = Dwg::XYZ::AxisZ();
-                    // ViewTarget(17/27) 是 WCS 下的观察目标点，直接用 WCS 值
-                    d->ViewTarget = Dwg::XYZ{ s->GetViewCenter().x, s->GetViewCenter().y, 0.0 };
+                    // ViewTarget(17/27) 是 DCS 的原点：12/22 已经写成完整的 WCS 位置（转过 Twist），
+                    // 目标点就写 (0,0,0)。以前把视图中心同时写进目标点，按 DCS 的定义会被加两遍
+                    d->ViewTarget = Dwg::XYZ{ 0.0, 0.0, 0.0 };
+                    // 本视口冻结的图层（331）
+                    for (LayerID lid : s->GetFrozenLayers())
+                        if (auto it = m_layerHandles.find(lid); it != m_layerHandles.end())
+                            d->FrozenLayers.push_back(it->second);
                     return Finish(e, std::move(d));
                 }
                 // 多线（MLINE）：导出中心线路径 + 每顶点每元素线的参数。
@@ -3929,6 +4322,13 @@ namespace MiniCAD
                     auto d = std::make_unique<Dwg::MText>();
                     d->InsertPoint    = ToXYZ(s->GetPosition());
                     d->Value          = s->GetText();
+                    // 实体自己的宽度因子（天正文字）：MTEXT 没有这个属性，写成开头的内联格式码 \W0.7;（AutoCAD 按它显示）
+                    if (s->GetWidthFactor() > 0.0)
+                    {
+                        char code[32];
+                        std::snprintf(code, sizeof(code), "\\W%g;", s->GetWidthFactor());
+                        d->Value = code + d->Value;
+                    }
                     d->Height         = s->GetHeight();
                     d->RectangleWidth = s->GetBoxWidth();
                     d->AlignmentPoint = { std::cos(s->GetRotation()), std::sin(s->GetRotation()), 0.0 };
@@ -4601,7 +5001,7 @@ namespace MiniCAD
     }
 
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error, CadSaveVersion* version,
-                   std::shared_ptr<const CadSource>* source, const ImportProgress& progress)
+                   std::shared_ptr<const CadSource>* source, const ImportProgress& progress, const std::string& sourcePath)
     {
         auto fail = [&](const std::string& msg)
         {
@@ -4641,7 +5041,20 @@ namespace MiniCAD
             src->Version = db->GetVersion();
         }
         if (progress) progress(0.4f);
-        Importer(*db, scene, src.get(), stage(0.4f, 1.0f)).Run();
+        Importer importer(*db, scene, src.get(), stage(0.4f, 1.0f));
+        if (!sourcePath.empty())
+        {
+            // 外部参照按图纸所在目录解析；图纸自己记进「正在读取」里，防止它参照自己
+            auto ctx = std::make_shared<XrefContext>();
+            const std::filesystem::path self = PathFromUtf8(sourcePath);
+            ctx->HostDir = self.parent_path();
+            std::error_code ec;
+            std::filesystem::path canonical = std::filesystem::weakly_canonical(self, ec);
+            if (ec) canonical = self;
+            ctx->Loading.insert(Lower(canonical.string()));
+            importer.SetXrefContext(std::move(ctx));
+        }
+        importer.Run();
         if (progress) progress(1.0f);
         auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
         LOG_INFO("DWG/DXF 导入：读取 %.0f ms，转换 %.0f ms", ms(t1 - t0), ms(std::chrono::steady_clock::now() - t1));

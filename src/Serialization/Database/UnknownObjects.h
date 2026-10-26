@@ -106,6 +106,17 @@ namespace MiniDWG
     // 对象若是未建模对象，返回其原始数据；否则返回 nullptr
     const RawObjectData* RawDataOf(const CadObject& object);
 
+    // OLE2FRAME（未建模，原样保留）里解码出来的字段：类型（71：1 链接、2 嵌入、3 静态）、
+    // 平铺模式（70 / 72：0 模型空间、1 图纸空间）与二进制数据（DXF 组码 310 的全部字节 = AutoCAD 头 + OLE 复合文档）。
+    // DWG：Type BS、Mode BS、长度 BL、数据 RC[]（R2000 起末尾还有一个 RC）；DXF：71 / 70 / 310。失败返回 false
+    struct Ole2FrameData
+    {
+        std::int16_t              Type = 0;
+        std::int16_t              Mode = 0;
+        std::vector<std::uint8_t> Data;
+    };
+    bool DecodeOle2Frame(const UnknownEntity& entity, Ole2FrameData& out);
+
     // 标注关联的第 i 个点引用（0～3，对应关联标志的 1、2、4、8 位）
     inline DimensionAssociationOsnapPointRef& PointRefAt(DimensionAssociation& assoc, int i)
     {

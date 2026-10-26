@@ -227,6 +227,7 @@ namespace MiniCAD
         // 布局标签（模型 / 图纸空间布局）同步与切换
         void SyncLayoutTabs();
         void ActivateLayout(int index);
+        void ZoomToLayout(const DrawingLayout& sheet);   // 框住布局保存的图纸空间视图，没有时框住纸张范围
         void NewLayout();                       // 新建布局（标签条的 + 与右键菜单、命令 layout.new）
         void DeleteLayout(int index);           // 删除布局（右键菜单、命令 layout.delete 删当前布局）
         void CloseDocument(Document* doc);      // 未保存时先询问

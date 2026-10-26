@@ -1,6 +1,7 @@
 #pragma once
 #include "Render/IRenderBackend.h"
 #include "Import/CadExchange.h"
+#include "Core/Ole/OleObject.h"
 #include <cctype>
 #include <iterator>
 #include <functional>
@@ -139,6 +140,9 @@ namespace MiniCAD
         // 与 GetResourceDir 分开命名——那个是只读资源目录，两者目前指向同一处，但语义不同。
         // 没有本地文件系统的平台返回空串（不保存）
         virtual std::string GetAppDir() const { return ""; }
+        // 系统字体目录（UTF-8，可为空）：图纸引用而程序没有自带的 TrueType 字体（simhei.ttf、arial.ttf …）到这些目录找。
+        // 桌面版：%WINDIR%\Fonts 与当前用户安装字体的目录；网页版没有，仍用自带的 GB2312.ttf 代替
+        virtual std::vector<std::string> GetSystemFontDirs() const { return {}; }
 
         // ── 系统 ─────────────────────────────────────────────────
         // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
@@ -162,5 +166,13 @@ namespace MiniCAD
         // ── 三维实体内核 
         // 内核不能并发使用：实现内部加锁，界面线程与节点图的后台求值线程轮流调用
         virtual Solid::ISolidKernel* GetSolidKernel() { return nullptr; }
+
+        // OLE 对象（嵌入的 Word / Excel 等）的展示图是 WMF / EMF 图元文件时把它画成位图（RGBA，白底），长边 maxSide 像素。
+        // 桌面版用 GDI 回放；网页版没有图元文件回放，返回 nullptr，OLE 对象只画边框
+        virtual std::shared_ptr<const ImageData> RasterizeOle(const Ole::Presentation& presentation, uint32_t maxSide)
+        {
+            (void)presentation; (void)maxSide;
+            return nullptr;
+        }
     };
 }
