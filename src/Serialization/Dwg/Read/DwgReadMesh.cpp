@@ -1,7 +1,6 @@
 // DWG 读取：细分网格 MESH（AcDbSubDMesh）。
 //
-// 位流顺序与 ODA 规范一致（对照 WkViewer/tools/cadcodec 的
-// io/dwg/dwg_stream_readers/object_reader/entities.rs::read_mesh 逐项核实）：
+// 位流顺序（与经权威工具转出的样例逐项核实）：
 //
 //     BS   版本
 //     B    混合折痕

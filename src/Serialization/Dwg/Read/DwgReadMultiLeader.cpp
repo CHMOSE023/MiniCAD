@@ -1,4 +1,4 @@
-// DWG 读取：多重引线（MULTILEADER）与多重引线样式（MLEADERSTYLE），字段顺序与 ACadSharp（ODA 规范）一致
+// DWG 读取：多重引线（MULTILEADER）与多重引线样式（MLEADERSTYLE），字段顺序与 ACadSharp 一致
 #include "Dwg/Read/DwgReaderImpl.h"
 
 namespace MiniDWG::DwgRead

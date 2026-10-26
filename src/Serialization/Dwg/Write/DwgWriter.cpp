@@ -800,7 +800,7 @@ namespace MiniDWG::DwgWrite
 
     // ── 其他小段 ───────────────────────────────────────────────────
 
-    // AcDb:AuxHeader（字段含义见 ODA 规范，取值与 ACadSharp 一致）
+    // AcDb:AuxHeader（取值与 ACadSharp 一致，字段含义见 DWG 格式规范）
     std::vector<std::uint8_t> Writer::WriteAuxHeader()
     {
         static constexpr int kVersionCodes[] = { 0, 0, 0, 21, 23, 25, 27, 29, 31, 33 };   // 按 CadVersion 顺序

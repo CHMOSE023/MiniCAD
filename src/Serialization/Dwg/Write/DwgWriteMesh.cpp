@@ -1,4 +1,4 @@
-// DWG 写入：细分网格 MESH，字段顺序与 DwgReadMesh.cpp 逐项对应（即 ODA 规范的顺序）。
+// DWG 写入：细分网格 MESH，字段顺序与 DwgReadMesh.cpp 逐项对应（即读取时的位流顺序）。
 #include "Dwg/Write/DwgWriterImpl.h"
 #include "Database/Mesh.h"
 

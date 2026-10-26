@@ -309,7 +309,7 @@ R14 的 MTEXT、标注没有行距与对齐字段，读入后取 AutoCAD 打开 
 |---|---|---|---|
 | 多面网格、多边形网格（POLYLINE 及其 VERTEX） | ✓ | ✓ | `PolyfaceMesh` 的面记录在 `Faces` 中，顶点之后写出 |
 | 标注关联 DIMASSOC | ✓ | ✓ | DWG 格式由样例 DWG 与同一张图的 DXF 对照得出（ACadSharp 只读了一部分），样例中没出现过的结构原样保留 |
-| 多重引线 MULTILEADER、样式 MLEADERSTYLE | ✓ | ✓ | DXF 按 AutoCAD 写的样例实现（含嵌套的 CONTEXT_DATA / LEADER / LEADER_LINE、断点、块属性、版本差别）；DWG 按 ODA 规范，样式中 295/296 两位的顺序与 ACadSharp 相反（按 DXF 核对）；R2007 及以前带箭头列表的原样保留 |
+| 多重引线 MULTILEADER、样式 MLEADERSTYLE | ✓ | ✓ | DXF 按 AutoCAD 写的样例实现（含嵌套的 CONTEXT_DATA / LEADER / LEADER_LINE、断点、块属性、版本差别）；DWG 样式中 295/296 两位的顺序与 ACadSharp 相反（按 DXF 核对）；R2007 及以前带箭头列表的原样保留 |
 | 表格 ACAD_TABLE | 部分 | 部分 | `TableEntity`：单元格与样式原样保留，只解析块参照部分（匿名块 *T、插入点、比例、旋转、法向）供宿主显示；写成别的格式或版本时写为引用该匿名块的块参照（外观不变，失去表格编辑能力） |
 | 缩略图 | ✓ | ✓ | `CadDatabase::Preview`：DWG 的 AcDb:Preview（BMP / WMF / PNG，地址规则按样例：R2000 为文件中的位置，R2004 起为段内位置 + 0x1C0），DXF 的 THUMBNAILIMAGE（只有 BMP） |
 
