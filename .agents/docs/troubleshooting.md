@@ -63,10 +63,6 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 
 ## 改文件
 
-### 编辑工具拒绝修改 `apps/Win32/src/Host/Win32Window.cpp`（"File has NUL bytes"）
-- 原因：文件里有故意的 NUL 字节（文件对话框的过滤串），而且是 CRLF 换行
-- 做法：用脚本按字节读写，插入的行也用 `\r\n`
-
 ### 经 Bash 写进文件的代码里，`\n` 变成了真换行、`\\` 变成了单个反斜杠
 - 原因：Bash 工具里的 heredoc / 引号会处理反斜杠
 - 做法：往文件里写带转义的代码时用 Edit / Write 工具，或先把脚本写成文件再运行；PowerShell 的 `` `n `` 替换也出过事（整个文件的换行被换掉），改完核对行数
