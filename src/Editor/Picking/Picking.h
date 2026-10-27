@@ -88,6 +88,8 @@ namespace MiniCAD
         // 禁用后不再做悬停命中测试（省去每次鼠标移动的扫描），并清空当前悬停。
         bool IsHoverEnabled() const { return m_hoverEnabled; }
         void SetHoverEnabled(bool enabled);
+        // 换视口（文档拖出成独立窗口 / 拖回）：空间索引与选择集都在世界坐标里，不用重建
+        void SetViewport(Viewport& viewport) { m_viewport = &viewport; }
 
         // 每帧渲染前调用：在 Scene::ClearDirty 之前按脏实体集增量同步空间索引。
         // 增量更新依赖脏集,必须保证脏集被清掉前已被索引消费(查询路径也会按需同步)。

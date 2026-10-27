@@ -67,6 +67,7 @@ set(MINIGUI_WIDGETS_SOURCES
     "${MINIGUI_SRC}/Widgets/Binding.cpp"
     "${MINIGUI_SRC}/Widgets/UiLayout.cpp"
     "${MINIGUI_SRC}/Widgets/DockSpace.cpp"
+    "${MINIGUI_SRC}/Widgets/FloatingPanel.cpp"
     "${MINIGUI_SRC}/Widgets/TitleBar.cpp"
     "${MINIGUI_SRC}/Widgets/Ribbon.cpp"
     "${MINIGUI_SRC}/Widgets/CommandConsole.cpp"

@@ -1,4 +1,5 @@
 #include "Widgets/DockSpace.h"
+#include "Widgets/FloatingPanel.h"
 #include "Widgets/Panel.h"
 #include "Core/UIContext.h"
 #include "Paint/DrawList.h"
@@ -272,6 +273,18 @@ namespace MiniGUI
                 if (tab < 0)
                     return;
                 const auto tabs = Tabs();
+                if (e.clickCount == 2 && !(tabs[static_cast<size_t>(tab)].closable && tabs[static_cast<size_t>(tab)].close.Contains(e.localPosition)))
+                {
+                    // 双击标签：浮出成浮动窗口，放在原标签组的位置上（略向内缩）。会重建停靠区并销毁本节点，之后不再访问成员
+                    e.handled = true;
+                    m_pressTab = -1;
+                    const Rect  r    = GetScreenBounds();
+                    const Vec2  size{ std::clamp(r.Width(),  DockSpace::kFloatMinW, DockSpace::kFloatMaxW),
+                                      std::clamp(r.Height(), DockSpace::kFloatMinH, DockSpace::kFloatMaxH) };
+                    const std::string id = m_leaf->panels[static_cast<size_t>(tab)];     // 复制：浮出会释放 m_leaf
+                    m_dock->FloatPanel(id, Rect{ r.min + Vec2{ 24.0f, 24.0f }, r.min + Vec2{ 24.0f, 24.0f } + size });
+                    return;
+                }
                 m_pressTab     = tab;
                 m_pressPos     = e.position;
                 m_pressOnClose = tabs[static_cast<size_t>(tab)].closable && tabs[static_cast<size_t>(tab)].close.Contains(e.localPosition);
@@ -455,6 +468,108 @@ namespace MiniGUI
     };
 
     // =========================================================
+    // 默认的浮动宿主：在停靠区所在的窗口里开 FloatingPanel 弹层（非模态，叠在界面之上，只能在窗口内浮动）
+    // =========================================================
+    class InWindowFloatHost : public IDockFloatHost
+    {
+    public:
+        ~InWindowFloatHost() override
+        {
+            // 停靠区先于弹层销毁时（一般不会：UiLayout 重建前会 TakeAllPanels）：弹层的回调不能再指向停靠区
+            auto panels = std::move(m_panels);
+            for (auto& [id, fp] : panels)
+            {
+                Detach(fp);
+                fp->Close();
+            }
+        }
+
+        static void Detach(FloatingPanel* fp)
+        {
+            fp->SetOnClosed(nullptr);
+            fp->SetOnClose(nullptr);
+            fp->SetOnRedock(nullptr);
+            fp->SetOnMoved(nullptr);
+            fp->SetOnActivate(nullptr);
+            fp->SetOnDrag(nullptr);
+        }
+
+        bool Open(DockSpace& dock, const std::string& id, const std::string& title, std::unique_ptr<Node>& content, const Rect& rect) override
+        {
+            UIContext* ctx = dock.GetContext();
+            if (!ctx || m_panels.count(id))
+                return false;
+            auto panel = std::make_unique<FloatingPanel>(title);
+            FloatingPanel* fp = panel.get();
+            fp->SetContent(std::move(content));
+            fp->SetRect(rect);
+            DockSpace* d = &dock;
+            fp->SetOnClose   ([d, id] { d->ClosePanel(id); });
+            fp->SetOnRedock  ([d, id] { d->RedockPanel(id); });
+            fp->SetOnMoved   ([d]     { d->LayoutChanged(); });
+            fp->SetOnActivate([ctx, fp] { ctx->RaisePopup(fp); });
+            fp->SetOnDrag([d, id](FloatingPanel::DragPhase phase, Vec2 pos)
+            {
+                switch (phase)
+                {
+                case FloatingPanel::DragPhase::Begin:  d->BeginExternalDrag(id, pos); break;
+                case FloatingPanel::DragPhase::Update: d->UpdateExternalDrag(pos);    break;
+                case FloatingPanel::DragPhase::End:    d->EndExternalDrag(pos, false); break;   // 停靠成功时本弹层已被 Close
+                case FloatingPanel::DragPhase::Cancel: d->EndExternalDrag(pos, true);  break;
+                }
+            });
+            // 弹层被别处关闭（例如 UIContext 销毁时 CloseAllPopups）：忘掉它，内容随弹层销毁
+            fp->SetOnClosed([this, id] { m_panels.erase(id); });
+            m_panels[id] = fp;
+            ctx->OpenPopup(std::move(panel), /*takeFocus=*/false);
+            return true;
+        }
+
+        std::unique_ptr<Node> Close(const std::string& id) override
+        {
+            auto it = m_panels.find(id);
+            if (it == m_panels.end())
+                return nullptr;
+            FloatingPanel* fp = it->second;
+            m_panels.erase(it);
+            std::unique_ptr<Node> content = fp->TakeContent();
+            Detach(fp);
+            fp->Close();            // 推迟销毁：可能正在它自己的事件处理函数里
+            return content;
+        }
+
+        Rect GetRect(const std::string& id) const override
+        {
+            const auto it = m_panels.find(id);
+            return it == m_panels.end() ? Rect{} : it->second->GetRect();
+        }
+
+        void SetTitle(const std::string& id, const std::string& title) override
+        {
+            if (auto it = m_panels.find(id); it != m_panels.end())
+                it->second->SetTitle(title);
+        }
+
+        void SetRect(const std::string& id, const Rect& rect) override
+        {
+            if (auto it = m_panels.find(id); it != m_panels.end())
+                it->second->SetRect(rect);
+        }
+
+        void Activate(const std::string& id) override
+        {
+            const auto it = m_panels.find(id);
+            if (it == m_panels.end())
+                return;
+            if (UIContext* ctx = it->second->GetContext())
+                ctx->RaisePopup(it->second);
+        }
+
+    private:
+        std::map<std::string, FloatingPanel*> m_panels;
+    };
+
+    // =========================================================
     // DockSpace：面板
     // =========================================================
     DockSpace::DockSpace()
@@ -469,12 +584,16 @@ namespace MiniGUI
             if (UIContext* ctx = GetContext())
                 ctx->GetShortcuts().Unregister(m_drag.escShortcut);
         }
+        // 还浮着的面板：内容取回来随本对象一起销毁（宿主的浮动窗口关闭）
+        UnfloatAll();
     }
 
     void DockSpace::AddPanel(const std::string& id, std::string title, std::unique_ptr<Node> content, DockPanelOptions options)
     {
         if (m_panels.count(id))
         {
+            if (m_panels[id].floating)
+                Unfloat(id);
             const bool visible = IsPanelVisible(id);
             if (visible)
                 RemoveFromTree(id);
@@ -495,11 +614,13 @@ namespace MiniGUI
 
     bool DockSpace::IsPanelVisible(const std::string& id) const
     {
-        return FindLeaf(id) != nullptr;
+        return IsPanelFloating(id) || FindLeaf(id) != nullptr;
     }
 
     bool DockSpace::IsPanelActive(const std::string& id) const
     {
+        if (IsPanelFloating(id))
+            return true;
         const Tree* leaf = FindLeaf(id);
         return leaf && leaf->panels[static_cast<size_t>(leaf->active)] == id;
     }
@@ -511,6 +632,8 @@ namespace MiniGUI
             it->second.title = std::move(title);
             for (const auto& c : GetChildren())
                 c->Invalidate();
+            if (it->second.floating)
+                FloatHost().SetTitle(id, it->second.title);
         }
     }
 
@@ -526,6 +649,7 @@ namespace MiniGUI
     {
         if (m_drag.active)
             EndDrag(m_drag.pos, true);
+        UnfloatAll();
         m_root.reset();
         Rebuild();      // 内容摘回 Panel::owned
         std::map<std::string, std::unique_ptr<Node>> result;
@@ -768,8 +892,9 @@ namespace MiniGUI
     // =========================================================
     // 停靠操作
     // =========================================================
-    bool DockSpace::Dock(const std::string& id, const std::string& target, DockSide side, float size)
+    bool DockSpace::Dock(const std::string& panelId, const std::string& target, DockSide side, float size)
     {
+        const std::string id = panelId;     // 复制：浮动中的面板收回时会销毁浮动窗口的回调
         if (!m_panels.count(id) || id == target)
             return false;
         if (!target.empty())
@@ -779,6 +904,9 @@ namespace MiniGUI
                 return false;
         }
 
+        if (m_panels[id].floating)
+            Unfloat(id);
+        m_panels[id].wasFloating = false;
         RemoveFromTree(id);
         if (m_root)
             SetParents(m_root.get(), nullptr);
@@ -790,29 +918,44 @@ namespace MiniGUI
         return ok;
     }
 
-    void DockSpace::ClosePanel(const std::string& id)
+    void DockSpace::ClosePanel(const std::string& panelId)
     {
+        const std::string id = panelId;     // 复制：引用可能来自即将销毁的浮动窗口回调或标签组
         auto it = m_panels.find(id);
         if (it == m_panels.end() || !IsPanelVisible(id) || !it->second.options.closable)
             return;
+        if (it->second.floating)
+        {
+            Unfloat(id);            // wasFloating 保持为 true：ShowPanel 重新浮出到原处
+            LayoutChanged();
+            return;
+        }
         RememberPosition(id);
         RemoveFromTree(id);
         Rebuild();
         LayoutChanged();
     }
 
-    void DockSpace::ShowPanel(const std::string& id)
+    void DockSpace::DockToRemembered(const std::string& id)
     {
+        const Panel& p = m_panels.at(id);
+        if (!p.lastTarget.empty() && FindLeaf(p.lastTarget))
+            Dock(id, p.lastTarget, p.lastSide, p.lastSize);
+        else
+            Dock(id, {}, DockSide::Right, 260.0f);
+    }
+
+    void DockSpace::ShowPanel(const std::string& panelId)
+    {
+        const std::string id = panelId;
         auto it = m_panels.find(id);
         if (it == m_panels.end())
             return;
         if (!IsPanelVisible(id))
         {
-            const Panel& p = it->second;
-            if (!p.lastTarget.empty() && IsPanelVisible(p.lastTarget))
-                Dock(id, p.lastTarget, p.lastSide, p.lastSize);
-            else
-                Dock(id, {}, DockSide::Right, 260.0f);
+            if (it->second.wasFloating && FloatPanel(id, it->second.floatRect))
+                return;
+            DockToRemembered(id);
             LayoutChanged();
         }
         ActivatePanel(id);
@@ -820,6 +963,11 @@ namespace MiniGUI
 
     void DockSpace::ActivatePanel(const std::string& id)
     {
+        if (IsPanelFloating(id))
+        {
+            FloatHost().Activate(id);
+            return;
+        }
         Tree* leaf = FindLeaf(id);
         if (!leaf)
             return;
@@ -837,11 +985,198 @@ namespace MiniGUI
 
     void DockSpace::LayoutChanged()
     {
+        if (m_quietLayout)
+            return;
         if (m_onLayoutChanged)
         {
             auto cb = m_onLayoutChanged;
             cb();
         }
+    }
+
+    // =========================================================
+    // 浮动面板
+    // =========================================================
+    IDockFloatHost& DockSpace::FloatHost()
+    {
+        if (m_floatHost)
+            return *m_floatHost;
+        if (!m_defaultFloatHost)
+            m_defaultFloatHost = std::make_unique<InWindowFloatHost>();
+        return *m_defaultFloatHost;
+    }
+
+    void DockSpace::SetFloatHost(IDockFloatHost* host)
+    {
+        if (host == m_floatHost)
+            return;
+        // 已经浮着的面板先收回，再交给新宿主重新浮出
+        std::vector<std::string> floating;
+        for (auto& [id, p] : m_panels)
+            if (p.floating)
+                floating.push_back(id);
+        UnfloatAll();
+        m_floatHost = host;
+        for (const std::string& id : floating)
+            FloatPanel(id, m_panels.at(id).floatRect);
+    }
+
+    bool DockSpace::IsPanelFloating(const std::string& id) const
+    {
+        const auto it = m_panels.find(id);
+        return it != m_panels.end() && it->second.floating;
+    }
+
+    Rect DockSpace::GetFloatingRect(const std::string& id) const
+    {
+        const auto it = m_panels.find(id);
+        if (it == m_panels.end() || !it->second.floating)
+            return {};
+        if (it->second.floatPending)
+            return it->second.floatRect;
+        const Rect live = const_cast<DockSpace*>(this)->FloatHost().GetRect(id);
+        return live.IsEmpty() ? it->second.floatRect : live;
+    }
+
+    bool DockSpace::OpenFloat(const std::string& id)
+    {
+        Panel& p = m_panels.at(id);
+        if (!p.owned)
+            return false;
+        IDockFloatHost& host = FloatHost();
+        bool ok = host.Open(*this, id, p.title, p.owned, p.floatRect);
+        if (!ok && m_floatHost)
+        {
+            // 平台宿主建不了独立窗口：退回窗口内浮动
+            if (!m_defaultFloatHost)
+                m_defaultFloatHost = std::make_unique<InWindowFloatHost>();
+            ok = m_defaultFloatHost->Open(*this, id, p.title, p.owned, p.floatRect);
+        }
+        return ok;
+    }
+
+    bool DockSpace::FloatPanel(const std::string& panelId, const Rect& windowRect)
+    {
+        const std::string id = panelId;     // 复制：调用方的引用可能指向即将释放的标签组
+        auto it = m_panels.find(id);
+        if (it == m_panels.end() || !it->second.options.showHeader)
+            return false;
+        Panel& p = it->second;
+        if (p.floating)
+        {
+            if (!p.floatPending)
+                FloatHost().Activate(id);
+            return true;
+        }
+        if (m_drag.active)
+            EndDrag(m_drag.pos, true);
+
+        RememberPosition(id);
+        RemoveFromTree(id);
+        Rebuild();                      // 内容摘回 Panel::owned
+        if (!p.owned)
+            return false;
+        p.floatRect   = windowRect;
+        p.floating    = true;
+        p.wasFloating = true;
+        if (!GetContext())
+        {
+            p.floatPending = true;      // 还没挂到界面上：第一次布局时再开浮动窗口
+            return true;
+        }
+        if (!OpenFloat(id))
+        {
+            p.floating = false;
+            DockToRemembered(id);
+            return false;
+        }
+        LayoutChanged();
+        return true;
+    }
+
+    void DockSpace::OpenPendingFloats()
+    {
+        if (!GetContext())
+            return;
+        std::vector<std::string> pending;
+        for (auto& [id, p] : m_panels)
+            if (p.floating && p.floatPending)
+                pending.push_back(id);
+        for (const std::string& id : pending)
+        {
+            Panel& p = m_panels.at(id);
+            p.floatPending = false;
+            if (!OpenFloat(id))
+            {
+                p.floating = false;
+                DockToRemembered(id);
+            }
+        }
+    }
+
+    void DockSpace::Unfloat(const std::string& id)
+    {
+        Panel& p = m_panels.at(id);
+        if (!p.floating)
+            return;
+        if (!p.floatPending)
+        {
+            const Rect live = FloatHost().GetRect(id);
+            if (!live.IsEmpty())
+                p.floatRect = live;
+            // 平台宿主开不了时内容可能在默认宿主里：两边都问一下
+            std::unique_ptr<Node> content = FloatHost().Close(id);
+            if (!content && m_defaultFloatHost && m_floatHost)
+                content = m_defaultFloatHost->Close(id);
+            if (content)
+                p.owned = std::move(content);
+        }
+        p.floating     = false;
+        p.floatPending = false;
+    }
+
+    void DockSpace::UnfloatAll()
+    {
+        for (auto& [id, p] : m_panels)
+            if (p.floating)
+                Unfloat(id);
+    }
+
+    void DockSpace::RedockPanel(const std::string& panelId)
+    {
+        const std::string id = panelId;     // 复制：Unfloat 会销毁浮动窗口的回调，引用可能就来自那里
+        auto it = m_panels.find(id);
+        if (it == m_panels.end() || !it->second.floating)
+            return;
+        if (m_drag.active)
+            EndDrag(m_drag.pos, true);
+        Unfloat(id);
+        it->second.wasFloating = false;
+        DockToRemembered(id);
+        ActivatePanel(id);
+        LayoutChanged();
+    }
+
+    void DockSpace::BeginExternalDrag(const std::string& id, Vec2 windowPos)
+    {
+        if (!IsPanelFloating(id))
+            return;
+        if (m_drag.active)
+            EndDrag(m_drag.pos, true);
+        BeginDrag(id, windowPos, /*external=*/true);
+    }
+
+    void DockSpace::UpdateExternalDrag(Vec2 windowPos)
+    {
+        if (m_drag.active && m_drag.external)
+            UpdateDrag(windowPos);
+    }
+
+    bool DockSpace::EndExternalDrag(Vec2 windowPos, bool cancel)
+    {
+        if (!m_drag.active || !m_drag.external)
+            return false;
+        return EndDrag(windowPos, cancel);
     }
 
     // =========================================================
@@ -903,6 +1238,7 @@ namespace MiniGUI
 
     void DockSpace::OnLayout()
     {
+        OpenPendingFloats();
         if (m_root)
         {
             const Edges& pad  = GetLayoutStyle().padding;
@@ -977,7 +1313,7 @@ namespace MiniGUI
     Rect DockSpace::GetPanelRect(const std::string& id) const
     {
         const Tree* leaf = FindLeaf(id);
-        if (!leaf || !IsPanelActive(id))
+        if (!IsPanelFloating(id) && (!leaf || !IsPanelActive(id)))
             return {};
         const Node* content = m_panels.at(id).node;
         return content->GetParent() ? content->GetScreenBounds() : Rect{};
@@ -986,17 +1322,24 @@ namespace MiniGUI
     // =========================================================
     // 拖动
     // =========================================================
-    void DockSpace::BeginDrag(const std::string& panelId, Vec2 windowPos)
+    void DockSpace::BeginDrag(const std::string& panelId, Vec2 windowPos, bool external)
     {
-        m_drag        = {};
-        m_drag.active = true;
-        m_drag.panel  = panelId;
-        m_drag.pos    = windowPos;
+        m_drag          = {};
+        m_drag.active   = true;
+        m_drag.external = external;
+        m_drag.panel    = panelId;
+        m_drag.pos      = windowPos;
         if (UIContext* ctx = GetContext())
         {
             ShortcutTable::Options opt;
             opt.allowInTextInput = true;
-            m_drag.escShortcut = ctx->GetShortcuts().Register(Key::Escape, 0, [this] { EndDrag(m_drag.pos, true); }, opt);
+            m_drag.escShortcut = ctx->GetShortcuts().Register(Key::Escape, 0, [this]
+            {
+                const bool torn = m_drag.torn;      // 拖出后已经浮出：取消只是不再停靠，窗口留在原地
+                EndDrag(m_drag.pos, true);
+                if (torn)
+                    LayoutChanged();
+            }, opt);
         }
         UpdateDrag(windowPos);
     }
@@ -1005,26 +1348,119 @@ namespace MiniGUI
     {
         if (!m_drag.active)
             return;
+        // 拖动的标签离开停靠区：马上浮出，浮动窗口随后跟着光标走（不必等松开才看到窗口）
+        const Vec2 local = ToLocal(windowPos);
+        const Vec2 size  = GetSize();
+        if (!m_drag.external && (local.x < 0.0f || local.y < 0.0f || local.x >= size.x || local.y >= size.y) &&
+            m_panels.at(m_drag.panel).options.showHeader)
+        {
+            TearOff(windowPos);
+            return;
+        }
+        if (m_drag.torn)
+            MoveFloat(m_drag.panel, Rect{ windowPos - m_drag.grab, windowPos - m_drag.grab + m_drag.size });
         m_drag.pos    = windowPos;
-        m_drag.target = ComputeDrop(ToLocal(windowPos));
+        m_drag.target = ComputeDrop(local);
         Invalidate();
     }
 
-    void DockSpace::EndDrag(Vec2 windowPos, bool cancel)
+    void DockSpace::TearOff(Vec2 windowPos)
+    {
+        // 尺寸取自原标签组，标题栏落在光标下。浮出会重建停靠区，持有捕获的标签条随之摘下：停靠区自己接过捕获，
+        // 接着按"拖浮动窗口"处理（经过停靠区画落点，松开在上面停靠回去，松开在外面留在那里）
+        const std::string panel = m_drag.panel;
+        const Tree* src = FindLeaf(panel);
+        const Vec2  dim{ std::clamp(src ? src->rect.Width()  : 0.0f, kFloatMinW, kFloatMaxW),
+                         std::clamp(src ? src->rect.Height() : 0.0f, kFloatMinH, kFloatMaxH) };
+        const Vec2  grab{ 40.0f, kHeaderHeight * 0.5f };
+        // 里面先结束本次标签拖动。布局变化等松开时再通知一次（浮出时窗口位置还在变）
+        m_quietLayout = true;
+        const bool floated = FloatPanel(panel, Rect{ windowPos - grab, windowPos - grab + dim });
+        m_quietLayout = false;
+        if (!floated)
+            return;
+        UIContext* ctx = GetContext();
+        if (!ctx || !IsPanelFloating(panel))
+            return;
+        BeginDrag(panel, windowPos, /*external=*/true);
+        m_drag.torn = true;
+        m_drag.grab = grab;
+        m_drag.size = dim;
+        ctx->SetCapture(this);
+    }
+
+    void DockSpace::MoveFloat(const std::string& id, const Rect& rect)
+    {
+        FloatHost().SetRect(id, rect);
+        if (m_defaultFloatHost && m_floatHost)
+            m_defaultFloatHost->SetRect(id, rect);      // 平台宿主开不了时在默认宿主里（不在的那个什么也不做）
+    }
+
+    void DockSpace::OnPointerEvent(PointerEvent& e)
+    {
+        if (!m_drag.torn || e.phase != EventPhase::Target)
+            return;
+        switch (e.type)
+        {
+        case PointerEventType::Move:
+            UpdateDrag(e.position);
+            e.handled = true;
+            break;
+        case PointerEventType::Up:
+            if (e.button != MouseButton::Left)
+                break;
+            e.handled = true;
+            if (!EndDrag(e.position, false))        // 没停靠回去：留在松开的地方，算一次布局变化（保存位置）
+                LayoutChanged();
+            break;
+        case PointerEventType::Cancel:
+            EndDrag(e.position, true);
+            LayoutChanged();                        // 已经浮出了
+            break;
+        default:
+            break;
+        }
+    }
+
+    bool DockSpace::EndDrag(Vec2 windowPos, bool cancel)
     {
         if (!m_drag.active)
-            return;
+            return false;
         if (m_drag.escShortcut)
         {
             if (UIContext* ctx = GetContext())
                 ctx->GetShortcuts().Unregister(m_drag.escShortcut);
         }
-        const DropTarget  target = cancel ? DropTarget{} : ComputeDrop(ToLocal(windowPos));
-        const std::string panel  = m_drag.panel;
+        const DropTarget  target   = cancel ? DropTarget{} : ComputeDrop(ToLocal(windowPos));
+        const std::string panel    = m_drag.panel;
+        const bool        external = m_drag.external;
+        if (m_drag.torn && HasCapture())
+            GetContext()->ReleaseCapture();
         m_drag = {};
         Invalidate();
         if (!target.valid)
-            return;
+        {
+            // 标签松开在停靠区之外：浮出成浮动窗口（尺寸取自原标签组，标签落在光标下）
+            const Vec2 local = ToLocal(windowPos);
+            const Vec2 size  = GetSize();
+            const bool outside = local.x < 0.0f || local.y < 0.0f || local.x >= size.x || local.y >= size.y;
+            if (!cancel && !external && outside && m_panels.at(panel).options.showHeader)
+            {
+                const Tree* src = FindLeaf(panel);
+                const Vec2  dim{ std::clamp(src ? src->rect.Width()  : 0.0f, kFloatMinW, kFloatMaxW),
+                                 std::clamp(src ? src->rect.Height() : 0.0f, kFloatMinH, kFloatMaxH) };
+                const Vec2  origin = windowPos - Vec2{ 40.0f, kHeaderHeight * 0.5f };
+                FloatPanel(panel, Rect{ origin, origin + dim });
+            }
+            return false;
+        }
+
+        // 浮动窗口拖回来：先从宿主取回内容
+        if (m_panels.at(panel).floating)
+        {
+            Unfloat(panel);
+            m_panels.at(panel).wasFloating = false;
+        }
 
         // 合并到同一组：只调整标签顺序
         Tree* source = FindLeaf(panel);
@@ -1040,7 +1476,7 @@ namespace MiniGUI
             source->active = static_cast<int>(std::find(ps.begin(), ps.end(), panel) - ps.begin());
             Rebuild();
             LayoutChanged();
-            return;
+            return true;
         }
 
         // 目标组用其中一个面板标识（移除源面板后树结构会变，组指针可能失效）
@@ -1067,6 +1503,7 @@ namespace MiniGUI
             InsertPanel(panel, nullptr, DockSide::Right, 0.0f, -1);
         Rebuild();
         LayoutChanged();
+        return true;
     }
 
     DockSpace::DropTarget DockSpace::ComputeDrop(Vec2 local) const
@@ -1196,9 +1633,9 @@ namespace MiniGUI
             dl.AddRectFilled(preview.Deflated(2.0f), Theme::AccentSoft, Theme::RadiusSm);
             dl.AddRect(preview.Deflated(2.0f), Theme::Accent, Theme::RadiusSm, 2.0f);
         }
-        // 光标旁显示被拖动的面板名称
+        // 光标旁显示被拖动的面板名称（拖的是浮动窗口时窗口本身就跟着光标）
         UIContext* ctx = GetContext();
-        if (!ctx)
+        if (!ctx || m_drag.external)
             return;
         const std::string& title = m_panels.at(m_drag.panel).title;
         TextParams p = TabText(Theme::Text);
@@ -1252,7 +1689,26 @@ namespace MiniGUI
 
     JsonValue DockSpace::SaveLayout() const
     {
-        return m_root ? SaveTree(m_root.get()) : JsonValue::MakeObject();
+        JsonValue v = m_root ? SaveTree(m_root.get()) : JsonValue::MakeObject();
+        JsonValue floating = JsonValue::MakeArray();
+        for (const auto& [id, p] : m_panels)
+        {
+            if (!p.floating)
+                continue;
+            const Rect r = GetFloatingRect(id);
+            JsonValue f = JsonValue::MakeObject();
+            f.Set("panel", id);
+            JsonValue rect = JsonValue::MakeArray();
+            rect.Push(std::round(r.min.x));
+            rect.Push(std::round(r.min.y));
+            rect.Push(std::round(r.Width()));
+            rect.Push(std::round(r.Height()));
+            f.Set("rect", std::move(rect));
+            floating.Push(std::move(f));
+        }
+        if (floating.Size() > 0)
+            v.Set("floatingPanels", std::move(floating));
+        return v;
     }
 
     std::unique_ptr<DockSpace::Tree> DockSpace::LoadTree(const JsonValue& v, std::vector<std::string>& warnings,
@@ -1336,9 +1792,42 @@ namespace MiniGUI
         }
         if (m_drag.active)
             EndDrag(m_drag.pos, true);
+        UnfloatAll();
         std::vector<std::string> used;
-        m_root = layout.Size() == 0 ? nullptr : LoadTree(layout, w, used);
+        const JsonValue* floating = layout.Find("floatingPanels");
+        const bool hasTree = layout.Find("tabs") || layout.Find("split");
+        m_root = hasTree ? LoadTree(layout, w, used) : nullptr;
+        if (layout.Size() > 0 && !hasTree && !floating)
+            w.push_back("dock：节点缺少 tabs 或 split");
         Rebuild();
+
+        // 浮动的面板：没挂到界面上时先记下，第一次布局时再开浮动窗口
+        if (floating)
+        {
+            for (const JsonValue& f : floating->GetArray())
+            {
+                const std::string id = f["panel"].AsString();
+                if (!m_panels.count(id))
+                {
+                    w.push_back("dock：没有名为 \"" + id + "\" 的面板");
+                    continue;
+                }
+                if (std::find(used.begin(), used.end(), id) != used.end())
+                {
+                    w.push_back("dock：面板 \"" + id + "\" 被引用了多次");
+                    continue;
+                }
+                used.push_back(id);
+                const auto& r = f["rect"].GetArray();
+                Rect rect{ 0.0f, 0.0f, 320.0f, 240.0f };
+                if (r.size() == 4)
+                {
+                    rect.min = { static_cast<float>(r[0].AsNumber(0.0)), static_cast<float>(r[1].AsNumber(0.0)) };
+                    rect.max = rect.min + Vec2{ static_cast<float>(r[2].AsNumber(320.0)), static_cast<float>(r[3].AsNumber(240.0)) };
+                }
+                FloatPanel(id, rect);
+            }
+        }
         return true;
     }
 }

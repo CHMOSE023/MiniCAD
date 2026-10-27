@@ -24,6 +24,7 @@ namespace MiniCAD
         void Present() override;
         void WaitIdle() override;
         void ReleaseFreeMemory() override;
+        std::unique_ptr<IWindowSurface> CreateWindowSurface(const NativeWindow& window, int width, int height) override;
 
         IRenderer&               GetRenderer() override  { return *m_renderer; }
         MiniGUI::IRenderBackend& GetUiBackend() override;

@@ -159,6 +159,44 @@ TEST(Command_ShortcutsBindOverrideAndConflicts)
     CHECK(saves == 2);
 }
 
+TEST(Command_ShortcutsBindToSeveralWindows)
+{
+    // 每个窗口一张快捷键表：同一套命令在几个窗口里都能用快捷键触发，改快捷键时都跟着改，单独解绑一张不影响别的
+    TestUI a({ 200, 100 });
+    TestUI b({ 200, 100 });
+    CommandRegistry reg;
+    int saves = 0;
+    reg.Register({ .id = "file.save", .label = "保存(&S)", .shortcut = "Ctrl+S", .execute = [&] { ++saves; } });
+    reg.BindShortcuts(a.ui.GetShortcuts());
+    reg.BindShortcuts(b.ui.GetShortcuts());
+    reg.BindShortcuts(b.ui.GetShortcuts());    // 重复绑定同一张表：不会触发两次
+    a.Key(Key::S, Mods(ModifierKey::Ctrl));
+    b.Key(Key::S, Mods(ModifierKey::Ctrl));
+    CHECK(saves == 2);
+
+    reg.SetShortcut("file.save", "Ctrl+Shift+S");
+    b.Key(Key::S, Mods(ModifierKey::Ctrl));
+    CHECK(saves == 2);
+    b.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    a.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    CHECK(saves == 4);
+
+    reg.UnbindShortcuts(a.ui.GetShortcuts());
+    a.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    b.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    CHECK(saves == 5);
+
+    // 宿主的条件（另一个窗口开着对话框）：快捷键不生效
+    bool blocked = true;
+    b.ui.GetShortcuts().SetGate([&] { return !blocked; });
+    b.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    CHECK(saves == 5);
+    blocked = false;
+    b.Key(Key::S, Mods(ModifierKey::Ctrl, ModifierKey::Shift));
+    CHECK(saves == 6);
+    reg.UnbindShortcuts();
+}
+
 TEST(Command_MenuItemFromCommand)
 {
     CommandRegistry reg;
@@ -404,6 +442,42 @@ TEST(UiLayout_ReapplyKeepsPanelsAndRestoresDefaults)
     CHECK(s.layout.GetPanel("properties") == props && props->GetParent() != nullptr);
     CHECK_NEAR(props->GetSize().x, 200.0f);
     CHECK(s.t.ui.GetMenuBarHost() == nullptr);          // 菜单栏已销毁，不再作为键盘导航宿主
+}
+
+TEST(UiLayout_NamedLayoutSharesCommands)
+{
+    // 第二种窗口用 layouts 里的一段：菜单、工具栏照常生成，命令覆盖只由默认布局的那个 UiLayout 负责
+    LayoutScene s;
+    const char* doc = R"json({
+        "commands": { "file.new": { "label": "新文档(&N)" } },
+        "menus": [ { "title": "文件(&F)", "items": [ "file.new" ] } ],
+        "toolbars": { "quick": [ "file.save" ] },
+        "layout": { "type": "column", "children": [ { "type": "menubar" }, { "type": "panel", "name": "viewport" } ] },
+        "layouts": { "second": { "type": "row", "children": [ { "type": "toolbar", "id": "quick" }, { "type": "panel", "name": "own" } ] } }
+    })json";
+    CHECK(s.Apply(doc));
+    CHECK(s.reg.Find("file.new")->label == "新文档(&N)");
+
+    Node* host2 = s.t.Add();
+    UiLayout second{ s.reg, "icons" };
+    second.SetLayoutName("second");
+    auto own = std::make_unique<Node>();
+    Node* ownNode = own.get();
+    second.RegisterPanel("own", std::move(own));
+    CHECK(second.ApplyText(host2, doc));
+    CHECK(second.GetWarnings().empty());
+    CHECK(second.GetToolBar("quick") != nullptr && second.GetMenuBar() == nullptr);
+    CHECK(ownNode->GetParent() != nullptr);
+    CHECK(s.viewport->GetParent() != nullptr);       // 默认布局的面板不受影响
+
+    // 默认布局去掉覆盖：恢复代码里的名称；第二个再应用也不会把覆盖当成默认值写回去
+    CHECK(s.Apply(R"json({ "layout": { "type": "panel", "name": "viewport" }, "layouts": { "second": { "type": "row" } } })json"));
+    CHECK(second.ApplyText(host2, R"json({ "commands": { "file.new": { "label": "X" } }, "layouts": { "second": { "type": "row" } } })json"));
+    CHECK(s.reg.Find("file.new")->label == "新建(&N)");
+
+    // 没有这一段：警告，界面为空
+    CHECK(second.ApplyText(host2, R"json({ "layout": { "type": "row" } })json"));
+    CHECK(!second.GetWarnings().empty() && second.GetWarnings().front().find("layouts.second") != std::string::npos);
 }
 
 TEST(UiLayout_SplitterResizesNeighbour)

@@ -222,15 +222,18 @@ namespace MiniGUI
         for (const auto& [key, value] : doc.GetObject())
         {
             (void)value;
-            if (key != "commands" && key != "menus" && key != "toolbars" && key != "ribbons" && key != "layout" && key != "comment")
+            if (key != "commands" && key != "menus" && key != "toolbars" && key != "ribbons" && key != "layout" && key != "layouts" && key != "comment")
                 m_warnings.push_back("顶层：未知的字段 \"" + key + "\"");
         }
 
-        // ── 命令覆盖 ─────────────────────────────────────────────
-        RestoreCommandDefaults();
-        m_commands.ApplyOverrides(doc["commands"], m_warnings);
-        for (const std::string& c : m_commands.FindShortcutConflicts())
-            m_warnings.push_back("快捷键冲突 " + c);
+        // ── 命令覆盖（只由生成默认布局的那个负责）───────────────────
+        if (m_layoutName.empty())
+        {
+            RestoreCommandDefaults();
+            m_commands.ApplyOverrides(doc["commands"], m_warnings);
+            for (const std::string& c : m_commands.FindShortcutConflicts())
+                m_warnings.push_back("快捷键冲突 " + c);
+        }
 
         // ── 清空旧界面（推迟销毁）并重建 ──────────────────────────
         if (m_ribbon && m_ribbon->GetSelectedTab() >= 0)
@@ -249,12 +252,12 @@ namespace MiniGUI
         }
 
         BuildState st;
-        st.path = "layout";
+        st.path = m_layoutName.empty() ? std::string("layout") : "layouts." + m_layoutName;
         st.ctx  = ctx;
-        const JsonValue& layout = doc["layout"];
+        const JsonValue& layout = m_layoutName.empty() ? doc["layout"] : doc["layouts"][m_layoutName];
         if (!layout.IsObject())
         {
-            m_warnings.push_back("缺少 layout，界面为空");
+            m_warnings.push_back("缺少 " + st.path + "，界面为空");
             return true;
         }
         if (std::unique_ptr<Node> root = BuildNode(layout, doc, false, st))

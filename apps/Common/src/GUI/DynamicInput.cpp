@@ -294,19 +294,19 @@ namespace MiniCAD
         OnViewportKey(e);
     }
 
-    bool MainFrame::IsDynInputVisible() const
+    bool MainFrame::IsDynInputVisible(const ViewChrome& c) const
     {
-        return m_dynInput && m_dynInput->IsVisible();
+        return c.dynInput && c.dynInput->IsVisible();
     }
 
-    bool MainFrame::DynInputHasFocus() const
+    bool MainFrame::DynInputHasFocus(const ViewChrome& c) const
     {
-        return m_dynInput && m_dynInput->HasFieldFocus();
+        return c.dynInput && c.dynInput->HasFieldFocus();
     }
 
-    std::string MainFrame::GetDynInputText(int field) const
+    std::string MainFrame::GetDynInputText(const ViewChrome& c, int field) const
     {
-        return m_dynInput ? m_dynInput->GetField(field)->GetText() : std::string();
+        return c.dynInput ? c.dynInput->GetField(field)->GetText() : std::string();
     }
 
     bool MainFrame::RouteKeyToDynamicInput(const MiniGUI::KeyEvent& e)
@@ -317,23 +317,27 @@ namespace MiniCAD
             || !m_docManager.GetEditor().IsActiveTool())
             return false;
 
-        if (m_dynInput && m_dynInput->IsVisible())
+        // 当前文档所在窗口的输入框；还没有锚点（例如第一点）时数字进入那个窗口的命令行，按坐标输入（100,50）
+        ViewChrome& c = ChromeOf(m_docManager.GetActive());
+        if (c.dynInput && c.dynInput->IsVisible())
         {
-            m_dynInput->FocusLength();
+            c.dynInput->FocusLength();
             return true;
         }
-        // 还没有锚点（例如第一点）：数字进入命令行，按坐标输入（100,50）
-        if (m_console && IsCommandLineShown())
+        if (c.console && IsCommandLineShown(c))
         {
-            m_console->FocusInput();
+            c.console->FocusInput();
             return true;
         }
         return false;
     }
 
-    void MainFrame::SyncDynamicInput()
+    void MainFrame::SyncDynamicInput(ViewChrome& c)
     {
-        if (!m_dynInput)
+        if (!c.host || !c.host->GetParent())
+            return;
+        ViewChrome* pc = &c;
+        if (!c.dynInput)
         {
             DynamicInputBox::Callbacks cb;
             cb.apply = [this](bool hasLen, double len, bool hasAng, double ang)
@@ -352,43 +356,47 @@ namespace MiniCAD
                 return ok;
             };
             cb.forwardKey = [this](MiniGUI::Key key) { SendKeyToEditor(key); };
-            cb.done       = [this] { if (m_viewport->IsVisible()) m_viewport->Focus(); };
-            // 放在文档区里、视口之后：绝对定位，盖在视口上
-            m_dynInput = m_viewport->GetParent()->AddChild<DynamicInputBox>(std::move(cb));
+            cb.done       = [pc] { if (pc->host && pc->host->IsVisible()) pc->host->Focus(); };
+            // 放在视口的父节点（界面描述生成的容器）里、视口之后：绝对定位，盖在视口上
+            c.dynInput = c.host->GetParent()->AddChild<DynamicInputBox>(std::move(cb));
         }
 
-        const Document* doc = m_docManager.GetActive();
-        const auto      dyn = doc ? m_docManager.GetEditor().GetDynamicInput() : Editor::DynamicInputState{};
-        const bool focused  = m_dynInput->HasFieldFocus();
-        const bool show     = dyn.Active && m_viewport->IsVisible() && (m_hovered || m_buttons != 0 || focused);
+        // 只在当前文档所在的窗口里显示（输入框改的是当前文档的编辑器）
+        Document* doc = m_docManager.GetActive();
+        const bool mine     = doc && DocOf(c) == doc;
+        const auto dyn      = mine ? m_docManager.GetEditor().GetDynamicInput() : Editor::DynamicInputState{};
+        const ViewInput& in = c.main ? m_mainInput : InputOf(doc);
+        const bool focused  = c.dynInput->HasFieldFocus();
+        const bool show     = dyn.Active && c.host->IsVisible() && (c.hovered || in.buttons != 0 || focused);
         if (!show)
         {
-            if (m_dynInput->IsVisible())
+            if (c.dynInput->IsVisible())
             {
-                m_dynInput->SetVisible(false);
-                m_dynInput->Reset();
+                c.dynInput->SetVisible(false);
+                c.dynInput->Reset();
                 if (focused)
-                    m_viewport->Focus();
+                    c.host->Focus();
             }
             return;
         }
 
-        m_dynInput->Update(dyn);
-        m_dynInput->SetVisible(true);
+        c.dynInput->Update(dyn);
+        c.dynInput->SetVisible(true);
 
         // 跟随光标（偏右下）；放不下时翻到光标左侧 / 上方
-        const MiniGUI::Rect vb   = m_viewport->GetBounds();          // 文档区内的坐标
-        const MiniGUI::Vec2 size = m_dynInput->GetSize();
-        float x = vb.min.x + static_cast<float>(m_mouseX) / m_dpiScale + kOffset;
-        float y = vb.min.y + static_cast<float>(m_mouseY) / m_dpiScale + kOffset;
+        const float         scale = c.host->GetContext() ? c.host->GetContext()->GetPixelScale() : m_dpiScale;
+        const MiniGUI::Rect vb    = c.host->GetBounds();             // 视口父节点里的坐标
+        const MiniGUI::Vec2 size  = c.dynInput->GetSize();
+        float x = vb.min.x + static_cast<float>(in.mouseX) / scale + kOffset;
+        float y = vb.min.y + static_cast<float>(in.mouseY) / scale + kOffset;
         if (x + size.x > vb.max.x)
             x = std::max(vb.min.x, x - size.x - kOffset * 2.0f);
         if (y + size.y > vb.max.y)
             y = std::max(vb.min.y, y - size.y - kOffset * 2.0f);
-        const MiniGUI::LayoutStyle& s = m_dynInput->GetLayoutStyle();
+        const MiniGUI::LayoutStyle& s = c.dynInput->GetLayoutStyle();
         if (std::abs(s.left - x) > 0.25f || std::abs(s.top - y) > 0.25f)
         {
-            MiniGUI::LayoutStyle& e = m_dynInput->EditLayoutStyle();
+            MiniGUI::LayoutStyle& e = c.dynInput->EditLayoutStyle();
             e.left = std::round(x);
             e.top  = std::round(y);
         }

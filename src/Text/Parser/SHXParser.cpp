@@ -368,7 +368,7 @@ namespace MiniCAD
         uint16_t nshapes = RdU16LE(p);  p += 2;
         LOG_DEBUG("[SHX] unifont: nshapes=%u", nshapes);
 
-        if (nshapes == 0 || nshapes > 200000) {
+        if (nshapes == 0) {     // 形数是 16 位，不会过大；越界由下面逐个形检查剩余字节
             LOG_WARN("[SHX] unifont: implausible nshapes=%u", nshapes);
             return false;
         }

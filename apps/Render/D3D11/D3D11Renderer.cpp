@@ -423,6 +423,73 @@ namespace MiniCAD
         return &cb;
     }
 
+    // 把新增顶点接到 (slot, baseVersion) 缓冲的末尾（见 IRenderer::AppendCached）：放得下就 UpdateSubresource 写到末尾；
+    // 放不下（或原来是动态缓冲，不能 UpdateSubresource）就新建更大的 DEFAULT 缓冲，GPU 内复制旧内容再写新段，
+    // 几百 MB 的场景流不经过 CPU。新缓冲多留 1/8 容量，连续画几个图形不必每次重建
+    bool D3D11Renderer::AppendCached(uint32_t slot, uint64_t baseVersion, uint64_t version, std::span<const Vertex_P3_C4> verts)
+    {
+        const auto it = m_cachedVBs.find(slot);
+        if (it == m_cachedVBs.end() || !it->second.valid || !it->second.vb)
+            return false;
+        CachedVB& cb = it->second;
+        if (cb.version == version)
+            return true;
+        if (cb.version != baseVersion)
+            return false;
+
+        constexpr UINT stride = sizeof(Vertex_P3_C4);
+        const size_t need = cb.count + verts.size();
+        if ((need > cb.capacity || !cb.immutable) && !MakeDefaultVB(cb, need + std::max<size_t>(need / 8, 4096), stride))
+            return false;
+        if (!verts.empty())
+        {
+            const D3D11_BOX box = { cb.count * stride, 0, 0, static_cast<UINT>(need * stride), 1, 1 };
+            m_context->UpdateSubresource(cb.vb.Get(), 0, &box, verts.data(), 0, 0);
+        }
+        cb.count   = static_cast<UINT>(need);
+        cb.version = version;
+        return true;
+    }
+
+    bool D3D11Renderer::MakeDefaultVB(CachedVB& cb, size_t capacity, size_t vertSize)
+    {
+        D3D11_BUFFER_DESC desc = {};
+        desc.ByteWidth = static_cast<UINT>(capacity * vertSize);
+        desc.Usage     = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        ComPtr<ID3D11Buffer> vb;
+        if (FAILED(m_device->CreateBuffer(&desc, nullptr, vb.GetAddressOf())))
+            return false;
+        if (cb.count > 0 && cb.vb)
+        {
+            const D3D11_BOX box = { 0, 0, 0, static_cast<UINT>(cb.count * vertSize), 1, 1 };
+            m_context->CopySubresourceRegion(vb.Get(), 0, 0, 0, 0, cb.vb.Get(), 0, &box);
+        }
+        cb.vb        = std::move(vb);
+        cb.capacity  = capacity;
+        cb.immutable = true;
+        return true;
+    }
+
+    // 原地覆盖 (slot, baseVersion) 缓冲里的一段（见 IRenderer::WriteCached）。动态缓冲不能 UpdateSubresource，先换成 DEFAULT 缓冲
+    bool D3D11Renderer::WriteCached(uint32_t slot, uint64_t baseVersion, size_t offset, std::span<const Vertex_P3_C4> verts)
+    {
+        const auto it = m_cachedVBs.find(slot);
+        if (it == m_cachedVBs.end() || !it->second.valid || !it->second.vb)
+            return false;
+        CachedVB& cb = it->second;
+        if (cb.version != baseVersion || offset + verts.size() > cb.count)
+            return false;
+        if (verts.empty())
+            return true;
+        constexpr UINT stride = sizeof(Vertex_P3_C4);
+        if (!cb.immutable && !MakeDefaultVB(cb, std::max<size_t>(cb.capacity, cb.count), stride))
+            return false;
+        const D3D11_BOX box = { static_cast<UINT>(offset * stride), 0, 0, static_cast<UINT>((offset + verts.size()) * stride), 1, 1 };
+        m_context->UpdateSubresource(cb.vb.Get(), 0, &box, verts.data(), 0, 0);
+        return true;
+    }
+
     void D3D11Renderer::SubmitCached(uint32_t slot, uint64_t version,
                                      std::span<const Vertex_P3_C4> verts,
                                      const Math::Mat4& viewProj, PrimitiveType type,

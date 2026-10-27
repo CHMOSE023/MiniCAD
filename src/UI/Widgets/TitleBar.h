@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/Node.h"
 #include "Render/IRenderBackend.h"
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -11,7 +12,8 @@ namespace MiniGUI
 
     // 自绘标题栏（无边框窗口用）：左侧图标 + 内容区（通常放菜单栏）+ 居中标题 + 最小化 / 最大化 / 关闭。
     // - 三个按钮执行命令 window.minimize / window.maximize / window.close，宿主负责注册（命令不存在时不显示该按钮）；
-    //   window.maximize 的 isChecked 表示窗口已最大化，按钮显示"还原"图标。命令状态变化时自动刷新
+    //   window.maximize 的 isChecked 表示窗口已最大化，按钮显示"还原"图标。命令状态变化时自动刷新。
+    //   同一程序里有几个窗口时，其余窗口的标题栏用 SetWindowActions 指定作用于自己所在窗口的动作
     // - 标题画在整个标题栏的正中；与左侧内容或右侧按钮重叠时，改为在两者之间的空白处居中，仍放不下则截断加"…"
     // - 平台层用 IsCaptionAt 判断某点是否属于可拖动的标题区域（Win32：WM_NCHITTEST 返回 HTCAPTION，
     //   系统负责拖动、双击最大化、右键系统菜单、拖到屏幕边缘贴靠）
@@ -33,6 +35,18 @@ namespace MiniGUI
         const std::string& GetTitle() const { return m_title; }
 
         void SetIcon(TextureId icon);                   // InvalidTextureId 表示不显示图标
+        TextureId GetIcon() const { return m_icon; }
+
+        // 三个按钮的动作：设置后不再看 window.* 命令（没给的动作不显示按钮），窗口最大化 / 还原后宿主调 RefreshState 刷新图标
+        struct WindowActions
+        {
+            std::function<void()> minimize;
+            std::function<void()> toggleMaximize;
+            std::function<void()> close;
+            std::function<bool()> isMaximized;
+        };
+        void SetWindowActions(WindowActions actions);
+        const WindowActions* GetWindowActions() const { return m_hasActions ? &m_actions : nullptr; }
         void SetWindowActive(bool active);              // 窗口未激活时标题和按钮图标变暗
         bool IsWindowActive() const { return m_active; }
 
@@ -62,5 +76,7 @@ namespace MiniGUI
         Node*          m_content = nullptr;
         Node*          m_spacer  = nullptr;
         CaptionButton* m_buttons[3] = {};
+        WindowActions  m_actions;
+        bool           m_hasActions = false;
     };
 }

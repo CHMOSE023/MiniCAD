@@ -21,6 +21,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 
 - 表：图层、线型、文字样式、多线样式、块（含外部参照块）、布局（标注样式只在组装标注时查参数，不导入成表）
 - 实体：Line / Circle / Arc / Ellipse / Point / Polyline / LwPolyline / Spline / Text / MText / Insert（含属性 ATTRIB 与属性定义 ATTDEF）/ Solid / 3DFace / Hatch（直线、圆弧、椭圆弧、样条、多段线边界）/ MultiLeader / MLine / Wipeout / Viewport；PolyfaceMesh 与 Mesh 读成 `MeshEntity`
+- 填充边界（`Importer::ConvertHatchPath`）：相邻边之间的小缺口用直线接上（AutoCAD 的间隙容差 HPGAPTOL）；缺口超过该路径范围对角线的 10% 时整条路径丢弃——这是编辑后残留的"未闭合"路径（标志 32），各段散落在图纸各处，AutoCAD 不画，硬接会画出横跨图纸的大块实心。用 `MINICAD_HATCHPATHS` 看各段是否相接
 - 标注用其匿名块还原为 Insert；绘制次序按 SortEntitiesTable
 - 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型

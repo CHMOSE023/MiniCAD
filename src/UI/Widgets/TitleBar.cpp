@@ -60,11 +60,27 @@ namespace MiniGUI
             }
         }
 
+        // 窗口自己指定的动作（TitleBar::SetWindowActions）；没指定时为空，走命令
+        const std::function<void()>* Action() const
+        {
+            const TitleBar::WindowActions* a = m_bar.GetWindowActions();
+            if (!a)
+                return nullptr;
+            switch (m_kind)
+            {
+            case CaptionKind::Minimize: return &a->minimize;
+            case CaptionKind::Maximize: return &a->toggleMaximize;
+            default:                    return &a->close;
+            }
+        }
+
         void Refresh()
         {
-            const bool exists = m_commands.Find(CommandId()) != nullptr;
+            const TitleBar::WindowActions* actions = m_bar.GetWindowActions();
+            const bool exists = actions ? static_cast<bool>(*Action()) : m_commands.Find(CommandId()) != nullptr;
             SetVisible(exists);
-            const bool maximized = m_kind == CaptionKind::Maximize && m_commands.IsChecked(CommandId());
+            const bool maximized = m_kind == CaptionKind::Maximize &&
+                                   (actions ? actions->isMaximized && actions->isMaximized() : m_commands.IsChecked(CommandId()));
             if (maximized != m_maximized)
             {
                 m_maximized = maximized;
@@ -147,8 +163,17 @@ namespace MiniGUI
                     GetContext()->ReleaseCapture();
                     Invalidate();
                     e.handled = true;
+                    // 放在最后：关闭窗口时宿主可能销毁整个界面（动作先复制一份再调用）
                     if (inside)
-                        m_commands.Execute(CommandId());    // 放在最后：关闭窗口时宿主可能销毁整个界面
+                    {
+                        if (const std::function<void()>* action = Action())
+                        {
+                            if (std::function<void()> fn = *action)
+                                fn();
+                        }
+                        else
+                            m_commands.Execute(CommandId());
+                    }
                 }
                 break;
             case PointerEventType::Cancel:
@@ -241,6 +266,13 @@ namespace MiniGUI
         Invalidate();
         for (CaptionButton* b : m_buttons)
             b->Invalidate();
+    }
+
+    void TitleBar::SetWindowActions(WindowActions actions)
+    {
+        m_actions    = std::move(actions);
+        m_hasActions = true;
+        RefreshState();
     }
 
     void TitleBar::RefreshState()

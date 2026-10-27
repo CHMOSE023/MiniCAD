@@ -71,12 +71,11 @@ namespace MiniGUI
 
     void ViewportHost::OnPaint(DrawList& dl, const Rect& screenRect)
     {
-        if (m_texture == InvalidTextureId)
-        {
-            dl.AddRectFilled(screenRect, Theme::Background);
-            return;
-        }
-        dl.AddImage(m_texture, screenRect);
+        // 先铺窗口底色：CAD 渲染器把视口纹理清成透明，透明处露出的应是底色，而不是外层容器的颜色
+        //（例如独立的文档窗口里，外层是浮动面板的面板色）
+        dl.AddRectFilled(screenRect, Theme::Background);
+        if (m_texture != InvalidTextureId)
+            dl.AddImage(m_texture, screenRect);
     }
 
     // =========================================================

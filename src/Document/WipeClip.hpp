@@ -537,7 +537,11 @@ namespace MiniCAD::WipeClip
     class Batch
     {
     public:
-        explicit Batch(int streams) : m_streams(streams) {}
+        explicit Batch(int streams) : m_streams(streams), m_firstTouched(static_cast<size_t>(streams), SIZE_MAX) {}
+
+        // 某条流里被裁剪改动过的最小下标（没改动过为 SIZE_MAX）：这之前的顶点下标仍与裁剪前一致，
+        // 调用方据此判断记下的逐实体位置是否还有效
+        size_t FirstTouched(int stream) const { return m_firstTouched[static_cast<size_t>(stream)]; }
 
         // ends：各顶点流此刻的长度（个数与构造时的 streams 相同）
         void Add(const std::vector<Math::Point3>& polygon, std::initializer_list<size_t> ends)
@@ -556,6 +560,7 @@ namespace MiniCAD::WipeClip
             m_polys.clear();
             m_ends.clear();
             m_gridDirty = true;
+            std::fill(m_firstTouched.begin(), m_firstTouched.end(), SIZE_MAX);
         }
 
         // 线段流（每两个顶点一条），只处理下标 from 起的顶点
@@ -642,6 +647,7 @@ namespace MiniCAD::WipeClip
                 }
             }
             if (first == SIZE_MAX) return;
+            Touch(stream, first);
             v.resize(first);
             v.insert(v.end(), out.begin(), out.end());
         }
@@ -710,6 +716,7 @@ namespace MiniCAD::WipeClip
                         detail::ClipTriMulti(m_nonConvex, &cur[j], maxDepth, out);
             }
             if (first == SIZE_MAX) return;
+            Touch(stream, first);
             v.resize(first);
             v.insert(v.end(), out.begin(), out.end());
         }
@@ -727,7 +734,7 @@ namespace MiniCAD::WipeClip
                 cx /= 6.0; cy /= 6.0;
                 Candidates(cx, cy, cx, cy, k, stream);
                 const bool inside = std::any_of(m_cand.begin(), m_cand.end(), [&](uint32_t pi) { return m_polys[pi].Contains(cx, cy); });
-                if (inside) continue;
+                if (inside) { Touch(stream, k); continue; }
                 if (w != k) std::copy(v.begin() + k, v.begin() + k + 6, v.begin() + w);
                 w += 6;
             }
@@ -745,7 +752,10 @@ namespace MiniCAD::WipeClip
                 const double x = v[k].pos.x, y = v[k].pos.y;
                 Candidates(x, y, x, y, k, stream);
                 if (std::any_of(m_cand.begin(), m_cand.end(), [&](uint32_t pi) { return m_polys[pi].Contains(x, y); }))
+                {
+                    Touch(stream, k);
                     continue;
+                }
                 v[w++] = v[k];
             }
             v.resize(w);
@@ -772,6 +782,7 @@ namespace MiniCAD::WipeClip
                     ++w;
                     continue;
                 }
+                Touch(stream, k);
                 // 只用这些遮罩裁剪展开后的顶点
                 Batch sub(2);
                 for (uint32_t pi : m_cand)
@@ -849,9 +860,16 @@ namespace MiniCAD::WipeClip
             std::sort(m_cand.begin(), m_cand.end());
         }
 
+        void Touch(int stream, size_t index)
+        {
+            size_t& first = m_firstTouched[static_cast<size_t>(stream)];
+            first = std::min(first, index);
+        }
+
         int                             m_streams;
         std::vector<Poly>               m_polys;
         std::vector<size_t>             m_ends;     // [遮罩 × 顶点流]
+        std::vector<size_t>             m_firstTouched;   // 每条流被改动过的最小下标（见 FirstTouched）
         bool                            m_gridDirty = true;
         double                          m_gx0 = 0, m_gy0 = 0, m_gx1 = 0, m_gy1 = 0, m_cw = 1, m_ch = 1;
         int                             m_gn = 1;

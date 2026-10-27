@@ -8,6 +8,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include "Text/FontSystem.h"
 #include "Core/Entity/Entity.hpp"
@@ -43,10 +44,55 @@ namespace MiniCAD
         IRenderTarget* GetRenderTarget()                  { return m_renderTarget; }
 
         // ── Viewport / Editor ────────────────────────────────
+        // 窗格：一个窗口里的视口，窗格里的多个文档轮流用它（切换时保存 / 恢复各自的相机）。
+        // 0 号是主窗口的窗格（主视口）；其余由界面为独立的文档窗口建（CreatePane），里面的文档都移走后自动删掉
+        using PaneId = uint32_t;
+        static constexpr PaneId kMainPane = 0;
+        static constexpr PaneId kNoPane   = 0xFFFFFFFFu;
+
         void InitViewport(IRenderer& renderer, float w, float h);
 
-        Viewport&       GetViewport()       { return *m_viewport; }
-        const Viewport& GetViewport() const { return *m_viewport; }
+        // 当前文档的视口（它所在窗格的视口）；没有当前文档时是主视口
+        Viewport&       GetViewport();
+        const Viewport& GetViewport() const;
+        Viewport&       GetMainViewport()       { return *m_viewport; }
+        const Viewport& GetMainViewport() const { return *m_viewport; }
+        // 文档显示在哪个视口：它所在窗格的视口（窗格里不在前面的文档也返回这个视口，相机不是它的）；
+        // 文档不存在或视口还没建时 nullptr
+        Viewport*       ViewportOf(const Document* doc);
+
+        PaneId    CreatePane(float width, float height);     // 新的空窗格（像素尺寸；显示开关同主视口）；主视口还没建时 kNoPane
+        bool      HasPane(PaneId pane) const;
+        bool      Contains(const Document* doc) const;    // 文档还开着（界面里保存的指针可能已关闭）
+        Viewport* GetPaneViewport(PaneId pane);
+        PaneId    PaneOf(const Document* doc) const;         // 文档所在的窗格；文档不存在时 kNoPane
+        Document* GetShownDocument(PaneId pane) const;       // 窗格当前显示的文档（窗格空着或不存在时 nullptr）
+        std::vector<Document*> DocumentsIn(PaneId pane) const;   // 窗格里的文档（按打开顺序）
+        // 把文档移到窗格：它成为那个窗格显示的文档（换下去的文档保存相机）；原窗格改显示剩下的文档里最后打开的那个，
+        // 空了（不是主窗格）就删掉。当前文档不变；文档或窗格不存在时 false
+        bool      MoveDocument(Document* doc, PaneId pane);
+        // 新建 / 打开的文档放进哪个窗格：默认是当前文档所在的窗格（SetActive 时跟着改）；
+        // 界面在用户操作一个空着的窗口（没有文档可激活）时改设它。窗格不存在时放进主窗格
+        void      SetNewDocumentPane(PaneId pane) { m_newDocPane = pane; }
+        PaneId    GetNewDocumentPane() const;
+
+        // 当前文档（GetActive）与各窗格显示的文档分开：
+        // - 当前文档：面板、菜单命令操作的对象，随用户最后点击的窗口切换（SetActive）。命令行、状态栏、视图方块每个窗口一套，
+        //   显示那个窗口里的文档，在上面操作时它先成为当前文档
+        // - 窗格显示的文档：窗格里最后激活的那个；文档成为当前文档时也就成为它所在窗格显示的文档。
+        //   主视口显示的文档即 GetMainDocument
+        Document* GetMainDocument() const { return m_mainDoc; }
+        // 主视口改显示 doc（主窗格里的文档；保存原文档的相机、恢复它的），不改当前文档。nullptr = 主视口空着
+        void      SetMainDocument(Document* doc);
+        Editor&   GetMainEditor();              // 主视口文档的编辑器；没有时空闲编辑器
+        Editor&   GetEditor(Document& doc);     // 某个文档的编辑器（没有就建）
+
+        // 把文档从主窗格拖出到自己的新窗格（CreatePane + MoveDocument）：返回那个窗格的视口，
+        // 文档不存在、不在主窗格或视口还没建时 nullptr。当前文档不变
+        Viewport* DetachDocument(Document* doc, float width, float height);
+        // 移回主窗格：它成为主视口显示的文档，也成为当前文档；在主窗格里的文档不做什么
+        void      AttachDocument(Document* doc);
+        bool      IsDetached(const Document* doc) const { return m_docPane.count(doc) != 0; }   // 不在主窗格
 
         // 缩放到全图：把活动文档所有可见实体放进视野；文档为空时不动
         void ZoomAll(bool undoable = true);
@@ -98,12 +144,27 @@ namespace MiniCAD
         float          m_defaultWidth  = 600.f;
         float          m_defaultHeight = 400.f;
 
-        std::unique_ptr<Viewport> m_viewport;
+        std::unique_ptr<Viewport> m_viewport;                                     // 主视口（主窗格）
+        Document*                 m_mainDoc = nullptr;                            // 主视口显示的文档
+        struct Pane
+        {
+            std::unique_ptr<Viewport> viewport;
+            Document*                 shown = nullptr;                            // 窗格显示的文档
+        };
+        std::map<PaneId, Pane>                         m_panes;                   // 主窗格之外的窗格
+        std::unordered_map<const Document*, PaneId>    m_docPane;                 // 不在主窗格的文档在哪个窗格
+        PaneId                    m_nextPane   = 1;
+        PaneId                    m_newDocPane = kMainPane;
         Editor                    m_idleEditor;                                   // 没有文档时的编辑器（只承载设置）
         std::unordered_map<const Document*, std::unique_ptr<Editor>> m_editors;  // 每个文档一个编辑器
         // 文档的编辑器（没有就新建：从 proto 继承设置，有视口时绑定）
         Editor& EnsureEditor(Document& doc, const Editor& proto);
-        void    ActivateEditor();   // 切换活动文档后：恢复相机、确保编辑器存在并请它在下一帧重新拼接显示数据
+        void    SyncCamera(Document* doc);      // 把文档所在视口的相机回写到文档（存盘前；只对各窗格显示的文档有意义）
+        void    SyncLiveCameras();              // 各窗格显示的文档
+        void    ShowInPane(PaneId pane, Document* doc);   // 窗格改显示 doc（保存换下去的文档的相机，恢复 doc 的）
+        void    ClearShown(PaneId pane);                  // 窗格不显示任何文档（不保存相机：调用方已处理）
+        void    RefillPane(PaneId pane);                  // 窗格空着时显示剩下的文档里最后打开的；没有剩下的（不是主窗格）就删掉
+        void    PlaceNewDocument(Document& doc);          // 新文档放进 GetNewDocumentPane，在那里显示
 
         // 剪贴板持有实体克隆(与源文档解耦,源被删除/关闭后仍可粘贴)
         std::vector<std::unique_ptr<Entity>> m_clipboard;

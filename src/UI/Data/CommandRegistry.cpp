@@ -306,37 +306,47 @@ namespace MiniGUI
     // =========================================================
     void CommandRegistry::BindShortcuts(ShortcutTable& table)
     {
-        UnbindShortcuts();
-        m_table      = &table;
-        m_tableAlive = table.GetLifetimeToken();
-        Rebind();
+        UnbindShortcuts(table);
+        m_tables.push_back({ &table, table.GetLifetimeToken(), {} });
+        Rebind(m_tables.back());
+    }
+
+    void CommandRegistry::UnbindShortcuts(ShortcutTable& table)
+    {
+        for (auto it = m_tables.begin(); it != m_tables.end(); ++it)
+        {
+            if (it->table != &table)
+                continue;
+            if (!it->alive.expired())
+                for (ShortcutTable::Id id : it->ids)
+                    table.Unregister(id);
+            m_tables.erase(it);
+            return;
+        }
     }
 
     void CommandRegistry::UnbindShortcuts()
     {
-        if (m_table && !m_tableAlive.expired())
-        {
-            for (ShortcutTable::Id id : m_bound)
-                m_table->Unregister(id);
-        }
-        m_bound.clear();
-        m_table = nullptr;
-        m_tableAlive.reset();
+        for (BoundTable& b : m_tables)
+            if (!b.alive.expired())
+                for (ShortcutTable::Id id : b.ids)
+                    b.table->Unregister(id);
+        m_tables.clear();
     }
 
     void CommandRegistry::Rebind()
     {
-        if (!m_table)
-            return;
-        if (m_tableAlive.expired())
-        {
-            m_table = nullptr;      // 快捷键表已随 UIContext 销毁
-            m_bound.clear();
-            return;
-        }
-        for (ShortcutTable::Id id : m_bound)
-            m_table->Unregister(id);
-        m_bound.clear();
+        // 快捷键表已随 UIContext 销毁的丢掉（同一地址可能已是新的表，不能再按地址注销）
+        std::erase_if(m_tables, [](const BoundTable& b) { return b.alive.expired(); });
+        for (BoundTable& b : m_tables)
+            Rebind(b);
+    }
+
+    void CommandRegistry::Rebind(BoundTable& bound)
+    {
+        for (ShortcutTable::Id id : bound.ids)
+            bound.table->Unregister(id);
+        bound.ids.clear();
 
         for (const std::string& id : m_order)
         {
@@ -346,7 +356,7 @@ namespace MiniGUI
                 continue;
             ShortcutTable::Options opt;
             opt.allowInTextInput = c.allowInTextInput;
-            m_bound.push_back(m_table->Register(chord.key, chord.modifiers, [this, id] { Execute(id); }, opt));
+            bound.ids.push_back(bound.table->Register(chord.key, chord.modifiers, [this, id] { Execute(id); }, opt));
         }
     }
 

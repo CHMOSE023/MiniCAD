@@ -1,8 +1,11 @@
 #pragma once
 #include "Render/IRenderBackend.h"
+#include "Render/IRenderTarget.h"
 #include "Import/CadExchange.h"
 #include "Core/Ole/OleObject.h"
+#include "Core/Types/Rect.hpp"
 #include <cctype>
+#include <memory>
 #include <iterator>
 #include <functional>
 #include <string>
@@ -12,6 +15,7 @@
 namespace MiniGUI
 {
     class TextSystem;
+    class UIContext;
 }
 
 namespace MiniCAD
@@ -82,6 +86,37 @@ namespace MiniCAD
         return byDefault >= 0 ? byDefault : byExt;
     }
 
+    // 独立的浮动窗口：停靠面板拖出主窗口后放面板的系统窗口（见 GUI/FloatingPanelHost）。有自己的 MiniGUI::UIContext，
+    // 内容由 MainFrame 放进去；位置一律用主窗口客户区的逻辑坐标（与窗口内浮动的坐标一致，布局文件里通用）
+    class IFloatingWindow
+    {
+    public:
+        virtual ~IFloatingWindow() = default;
+        virtual MiniGUI::UIContext& GetUI() = 0;
+        virtual MiniGUI::Rect GetRect() const = 0;
+        virtual void SetRect(const MiniGUI::Rect& rect) = 0;
+        virtual void SetTitle(const std::string& utf8) = 0;
+        virtual void Activate() = 0;                                    // 置前并激活
+        virtual void SetVisible(bool visible) = 0;                      // 创建时不显示，由宿主决定何时显示（起始页期间藏起来）
+        virtual void SetOnClose(std::function<void()> cb) = 0;          // 用户关闭了窗口（Alt+F4 等）
+        virtual void SetOnMoved(std::function<void()> cb) = 0;          // 用户移动 / 改大小结束（宿主保存布局）
+        // 这个窗口的每一帧：布局之后、界面绘制之前回调（文档窗口在这里按最新尺寸渲染它的 CAD 视口，同 MainFrame::RenderFrame 的顺序）
+        virtual void SetOnBeforeRender(std::function<void()> cb) = 0;
+
+        // ── 文档窗口用（停靠面板的窗口没有标题栏按钮，由面板自己拖动）──
+        virtual void Minimize() {}
+        virtual void ToggleMaximize() {}
+        virtual bool IsWindowMaximized() const { return false; }
+        // 哪些点是标题区域（窗口逻辑坐标，一般转给 MiniGUI::TitleBar::IsCaptionAt）：交给系统拖动窗口、双击最大化、贴边分屏。
+        // 不设置（或传空）时整个窗口都由界面处理
+        virtual void SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test) { (void)test; }
+        virtual void SetOnActiveChanged(std::function<void(bool active)> cb) { (void)cb; }   // 窗口激活 / 失活（标题栏变暗）
+        virtual void SetOnSizeChanged(std::function<void()> cb) { (void)cb; }                // 最大化 / 还原 / 改大小之后（刷新标题栏按钮）
+        // 用户拖标题栏移动窗口（系统的移动循环）：移动中 done = false，松开时 done = true；cursor 为光标、windowRect 为窗口
+        //（都是主窗口客户区的逻辑坐标）。移动中宿主可以改 windowRect 的位置（例如让开下面的标签条），尺寸不变
+        virtual void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor, MiniGUI::Rect& windowRect)> cb) { (void)cb; }
+    };
+
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）
     // 与网页版（画布 + WebGPU / WebGL2，apps/Web/src/Host/WebApp）各实现一份；MainFrame 本身不含平台代码。
     class AppPlatform
@@ -89,11 +124,25 @@ namespace MiniCAD
     public:
         virtual ~AppPlatform() = default;
 
+        // 为浮出的停靠面板或拖出的文档建独立的系统窗口（Win32）；给不出时返回 nullptr（网页版、Linux 版），面板在主窗口里浮动。
+        // document = false：工具窗口（总在拥有它的窗口之上、随它最小化），owner 为空时归主窗口所有，否则归 owner（文档窗口的浮动面板）；
+        // true：文档窗口，与主窗口平级（可以在主窗口之下，主窗口弹出对话框时把主窗口置前就不会被挡住），在任务栏里有自己的按钮
+        virtual std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document = false,
+                                                                      IFloatingWindow* owner = nullptr)
+        {
+            (void)title; (void)rect; (void)document; (void)owner;
+            return nullptr;
+        }
+        // 把主窗口置前并激活（主窗口弹出对话框时不让文档窗口挡住）；没有独立窗口的平台什么都不做
+        virtual void ActivateMainWindow() {}
+
         // ── 图形 ─────────────────────────────────────────────────
         virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / GLES3Backend）
         virtual IRenderer&               GetRenderer()       = 0;   // CAD 视口渲染器
-        virtual IRenderTarget&           GetViewportTarget() = 0;   // CAD 视口的离屏渲染目标
-        // 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
+        virtual IRenderTarget&           GetViewportTarget() = 0;   // 主窗口 CAD 视口的离屏渲染目标
+        // 再建一个视口渲染目标（拖出成独立窗口的文档各用一个；与主视口共用渲染器）；给不出时 nullptr，文档就不能拖出
+        virtual std::unique_ptr<IRenderTarget> CreateViewportTarget() { return nullptr; }
+// 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
         virtual MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) = 0;
         virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;
         virtual void RequestRedraw() = 0;       // 安排一次重绘（Win32：InvalidateRect；网页：requestAnimationFrame）

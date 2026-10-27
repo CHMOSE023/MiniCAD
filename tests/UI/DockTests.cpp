@@ -3,6 +3,7 @@
 #include "Data/CommandRegistry.h"
 #include "Data/Json.h"
 #include "Widgets/DockSpace.h"
+#include "Widgets/FloatingPanel.h"
 #include "Widgets/UiLayout.h"
 #include <string>
 
@@ -65,8 +66,9 @@ namespace
 
         void Drag(Vec2 from, Vec2 to, bool release = true)
         {
+            t.tick += 5000;     // 每次拖动间隔足够长，不会被判定为双击（双击标签会浮出面板）
             t.ui.PointerMove(from, 0);
-            t.ui.PointerDown(from, MouseButton::Left, 0, 1);
+            t.ui.PointerDown(from, MouseButton::Left, 0, t.tick);
             t.ui.PointerMove(from + Vec2{ 10.0f, 0.0f }, 0);
             t.ui.PointerMove(to, 0);
             if (release)
@@ -333,4 +335,224 @@ TEST(Dock_NoGapBetweenPanels)
     CHECK(left && left->GetCursor({}) == CursorShape::SizeWE);
     CHECK(right && right->GetCursor({}) == CursorShape::SizeWE);
     CHECK(s.t.ui.HitTest({ b.max.x - 5.0f, 300.0f }) != left);    // 热区之外仍是面板
+}
+
+// =========================================================
+// 浮动面板（默认宿主：窗口内的 FloatingPanel 弹层）
+// =========================================================
+TEST(Dock_FloatOutByDraggingOutside)
+{
+    DockScene s;
+    // C 的标签拖到停靠区外面（窗口上方）松开：浮出成浮动面板，内容节点不重建
+    s.Drag(s.TabCenter("c"), { 500.0f, -10.0f });
+    s.t.ui.Render();
+    CHECK(s.dock->IsPanelFloating("c"));
+    CHECK(s.dock->IsPanelVisible("c") && s.dock->IsPanelActive("c"));
+    CHECK(s.dock->GetPanelContent("c") == s.c && s.c->GetParent() != nullptr && s.c->IsVisible());
+    CHECK(s.changes == 1);
+    // 浮动窗口的尺寸取自原标签组（250 宽，上限内），位置被弹层层平移进窗口
+    const Rect r = s.dock->GetFloatingRect("c");
+    CHECK_NEAR(r.Width(), 250.0f);
+    CHECK(r.min.y >= 0.0f && r.min.x > 0.0f);
+    // 文档区占满了右侧
+    CHECK(s.dock->GetPanelRect("docs").max.x >= 999.0f);
+    // 布局 JSON 记录浮动面板
+    const std::string layout = s.Layout();
+    CHECK(layout.find("\"floatingPanels\"") != std::string::npos);
+    CHECK(layout.find("\"panel\":\"c\"") != std::string::npos);
+
+    // 没有标题栏的文档区不能浮出；拖到停靠区里面松开（无落点）也不浮出
+    CHECK(!s.dock->FloatPanel("docs", Rect{ 0, 0, 300, 200 }));
+    s.dock->ActivatePanel("a");
+    s.Drag(s.TabCenter("a"), s.dock->GetPanelRect("a").Center());
+    CHECK(!s.dock->IsPanelFloating("a"));
+}
+
+TEST(Dock_TearOffFollowsCursorAndRedocks)
+{
+    DockScene s;
+    // C 的标签拖出停靠区、还没松开：已经浮出，停靠区接过拖动（浮动窗口跟着光标走）；布局变化等松开再通知
+    s.Drag(s.TabCenter("c"), { 500.0f, -10.0f }, false);
+    CHECK(s.dock->IsPanelFloating("c") && s.dock->IsTornDragging() && s.dock->IsDragging());
+    CHECK(s.t.ui.GetCapture() == s.dock);
+    CHECK(s.changes == 0);
+    CHECK(s.dock->GetPanelContent("c") == s.c);
+
+    // 窗口跟着光标（标题栏落在光标下；面板很高，竖直方向被弹层层推回窗口里）
+    s.t.ui.PointerMove({ 300.0f, 300.0f }, 0);
+    s.t.Layout();
+    const Rect moved = s.dock->GetFloatingRect("c");
+    CHECK_NEAR(moved.min.x, 260.0f);
+    CHECK_NEAR(moved.Width(), 250.0f);
+
+    // 经过左侧组的标题栏：画落点；松开：合并为标签，浮动窗口关闭，只通知一次
+    const Vec2 header{ 150.0f, DockSpace::kHeaderHeight * 0.5f };
+    s.t.ui.PointerMove(header, 0);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview));
+    s.t.ui.PointerUp(header, MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelFloating("c") && !s.dock->IsDragging() && !s.dock->IsTornDragging());
+    CHECK(s.dock->IsPanelActive("c") && s.dock->GetPanelContent("c") == s.c);
+    CHECK_NEAR(s.dock->GetPanelRect("c").Width(), 200.0f);
+    CHECK(s.changes == 1);
+    CHECK(s.t.ui.GetCapture() == nullptr);
+
+    // 拖出后按 Esc：取消拖动，面板留在浮出的地方（C 已和 A、B 在一组，换一个新的场景）
+    DockScene s2;
+    s2.Drag(s2.TabCenter("c"), { 500.0f, -10.0f }, false);
+    s2.t.ui.PointerMove({ 600.0f, 200.0f }, 0);
+    s2.t.Key(Key::Escape);
+    CHECK(s2.dock->IsPanelFloating("c") && !s2.dock->IsDragging() && s2.t.ui.GetCapture() == nullptr && s2.changes == 1);
+    s2.t.ui.PointerUp({ 600.0f, 200.0f }, MouseButton::Left, 0);
+    CHECK(s2.dock->IsPanelFloating("c") && s2.changes == 1);
+}
+
+TEST(Dock_FloatByDoubleClickAndRedock)
+{
+    DockScene s;
+    const Rect before = s.dock->GetPanelRect("c");
+    s.t.DoubleClick(s.TabCenter("c"));
+    s.t.ui.Render();
+    CHECK(s.dock->IsPanelFloating("c"));
+    CHECK(s.dock->GetFloatingRect("c").min.x > before.min.x - 60.0f);   // 放在原标签组的位置上（略向内缩，再被平移进窗口）
+
+    // 双击浮动面板的标题栏：回到浮出前的位置（文档区右侧，250 宽）
+    const Rect content = s.dock->GetPanelRect("c");
+    s.t.DoubleClick({ content.min.x + 20.0f, content.min.y - FloatingPanel::kTitleHeight * 0.5f });
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelFloating("c"));
+    CHECK(s.dock->IsPanelActive("c"));
+    CHECK_NEAR(s.dock->GetPanelRect("c").Width(), 250.0f);
+    CHECK(s.dock->GetPanelRect("c").max.x >= 999.0f);
+    CHECK(s.dock->GetPanelContent("c") == s.c);
+}
+
+TEST(Dock_DragFloatingBackIntoDock)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 400.0f, 200.0f, 700.0f, 440.0f }));
+    s.t.Layout();
+    const Rect content = s.dock->GetPanelRect("c");
+    const Vec2 title{ content.min.x + 20.0f, content.min.y - FloatingPanel::kTitleHeight * 0.5f };
+
+    // 拖动标题栏到左侧组的标题栏上：合并为标签，浮动窗口关闭
+    s.Drag(title, { 150.0f, DockSpace::kHeaderHeight * 0.5f }, false);
+    CHECK(s.dock->IsDragging());
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview));
+    s.t.ui.PointerUp({ 150.0f, DockSpace::kHeaderHeight * 0.5f }, MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelFloating("c") && !s.dock->IsDragging());
+    CHECK(s.dock->IsPanelActive("c"));
+    CHECK_NEAR(s.dock->GetPanelRect("c").Width(), 200.0f);
+    CHECK(s.dock->GetPanelContent("c") == s.c);
+    CHECK(s.Layout().find("floatingPanels") == std::string::npos);
+}
+
+TEST(Dock_MoveFloatingWithoutDocking)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 400.0f, 200.0f, 700.0f, 440.0f }));
+    s.t.Layout();
+    const int  changes = s.changes;
+    const Rect before  = s.dock->GetFloatingRect("c");
+    const Vec2 title{ before.min.x + 20.0f, before.min.y + FloatingPanel::kTitleHeight * 0.5f };
+
+    // 拖动中按 Esc：停靠区取消落点，面板照常移动到新位置
+    s.Drag(title, { 300.0f, 300.0f }, false);
+    CHECK(s.dock->IsDragging());
+    s.t.Key(Key::Escape);
+    CHECK(!s.dock->IsDragging());
+    s.t.ui.PointerUp({ 300.0f, 300.0f }, MouseButton::Left, 0);
+    s.t.Layout();
+    CHECK(s.dock->IsPanelFloating("c"));
+    const Rect after = s.dock->GetFloatingRect("c");
+    CHECK_NEAR(after.min.x, before.min.x + (300.0f - title.x));
+    CHECK_NEAR(after.Width(), before.Width());
+    CHECK(s.changes == changes + 1);
+
+    // 拖右下角改大小
+    const Vec2 corner{ after.max.x - 2.0f, after.max.y - 2.0f };
+    s.t.ui.PointerMove(corner, 0);
+    CHECK(s.t.ui.GetCursor() == CursorShape::SizeNWSE);
+    s.t.ui.PointerDown(corner, MouseButton::Left, 0, 1);
+    s.t.ui.PointerMove(corner + Vec2{ 50.0f, 30.0f }, 0);
+    s.t.ui.PointerUp(corner + Vec2{ 50.0f, 30.0f }, MouseButton::Left, 0);
+    s.t.Layout();
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Width(), after.Width() + 50.0f);
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Height(), after.Height() + 30.0f);
+}
+
+TEST(Dock_FloatingCloseShowAndLayoutRoundTrip)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 400.0f, 200.0f, 700.0f, 440.0f }));
+    s.t.Layout();
+    const std::string saved = s.Layout();
+
+    // 关闭浮动面板：不可见；再显示时重新浮出到原处
+    s.dock->ClosePanel("c");
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelVisible("c") && !s.dock->IsPanelFloating("c"));
+    CHECK(s.dock->GetPanelContent("c") == s.c && s.c->GetParent() == nullptr);
+    s.dock->ShowPanel("c");
+    s.t.Layout();
+    CHECK(s.dock->IsPanelFloating("c"));
+    CHECK_NEAR(s.dock->GetFloatingRect("c").min.x, 400.0f);
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Height(), 240.0f);
+
+    // 程序化停靠：收回浮动窗口
+    CHECK(s.dock->Dock("c", "a", DockSide::Center));
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelFloating("c") && s.dock->IsPanelActive("c"));
+
+    // 加载保存的布局：C 又浮起来，位置一样
+    std::vector<std::string> warnings;
+    CHECK(s.dock->LoadLayout(Parse(saved.c_str()), &warnings));
+    s.t.Layout();
+    CHECK(warnings.empty());
+    CHECK(s.dock->IsPanelFloating("c"));
+    CHECK_NEAR(s.dock->GetFloatingRect("c").min.y, 200.0f);
+    CHECK(s.Layout() == saved);
+
+    // 只有浮动面板、没有停靠树的布局也能加载
+    s.dock->LoadLayout(Parse(R"json({ "floatingPanels": [ { "panel": "a", "rect": [ 10, 10, 300, 200 ] } ] })json"), &warnings);
+    s.t.Layout();
+    CHECK(warnings.empty());
+    CHECK(s.dock->IsPanelFloating("a") && !s.dock->IsPanelVisible("docs"));
+}
+
+TEST(Dock_FloatingPanelsReclaimedOnReload)
+{
+    TestUI          t({ 900, 500 });
+    CommandRegistry reg;
+    UiLayout        layout(reg, {});
+    Node* host = t.Add();
+    auto props = std::make_unique<Node>(); Node* propsRaw = props.get();
+    auto view  = std::make_unique<Node>(); Node* viewRaw  = view.get();
+    layout.RegisterPanel("properties", std::move(props), "特性");
+    layout.RegisterPanel("viewport", std::move(view));
+    const char* json = R"json({ "layout": { "type": "dock", "id": "main", "root":
+        { "split": "row", "children": [
+            { "tabs": [ { "panel": "viewport", "header": false, "closable": false } ] },
+            { "tabs": [ "properties" ], "size": 240 } ] } } })json";
+    CHECK(layout.ApplyText(host, json));
+    t.Layout();
+    DockSpace* dock = layout.GetDock("main");
+    CHECK(dock->FloatPanel("properties", Rect{ 100, 100, 400, 300 }));
+    t.Layout();
+    CHECK(dock->IsPanelFloating("properties"));
+
+    // 重新加载界面：浮动窗口关闭，面板节点回到停靠区里（界面描述的默认布局）
+    CHECK(layout.ApplyText(host, json));
+    t.Layout();
+    t.ui.Render();
+    dock = layout.GetDock("main");
+    CHECK(dock->GetPanelContent("properties") == propsRaw);
+    CHECK(dock->GetPanelContent("viewport") == viewRaw);
+    CHECK(!dock->IsPanelFloating("properties") && dock->IsPanelActive("properties"));
+    CHECK(t.ui.GetTopPopup() == nullptr);
 }

@@ -5,6 +5,7 @@
 // 没有打开的文档时显示；有文档时经标题栏首页键（view.start）显示，Esc 或“返回”回到图纸。
 // 界面描述文件里以面板 "start" 放在标题栏下面；显示时隐藏同一列里除标题栏以外的其他部分（ApplyStartPage）。
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/NodeEditor.h"
 #include "Core/UIContext.h"
 #include "NodeGraph/Examples.h"
@@ -535,14 +536,14 @@ namespace MiniCAD
         m_startRecent->Invalidate();
     }
 
-    // 导航列的可用状态与“返回”行随当前文档变化（SyncDocuments 调用）
+    // 导航列的可用状态与“返回”行随主窗口里的文档变化（SyncDocuments 调用）
     void MainFrame::RefreshStartNav()
     {
         for (auto& [button, cmd] : m_startNav)
             button->SetEnabled(m_commands.IsEnabled(cmd));
         if (m_startBack)
         {
-            const Document* doc = m_docManager.GetActive();
+            const Document* doc = m_docManager.GetMainDocument();     // 回到主窗口里显示的文档（别的窗口里的不算）
             m_startBack->SetVisible(doc != nullptr);
             if (doc)
                 static_cast<BackRow*>(m_startBack)->SetDocument(doc->GetName());
@@ -579,12 +580,14 @@ namespace MiniCAD
             m_startHidden.clear();
         }
         m_startPage->SetVisible(show);
+        if (m_floatHost)
+            m_floatHost->SetHidden(show);   // 浮出的面板是独立窗口，不在上面的父节点里：一起藏起来
     }
 
     void MainFrame::ShowStartPage(bool show)
     {
-        if (show && !m_docManager.GetActive())
-            show = false;                   // 没有文档时起始页本来就在显示
+        if (show && !m_docManager.GetMainDocument())
+            show = false;                   // 主窗口里没有文档时起始页本来就在显示
         m_startShown = show;
         m_startOver  = show ? m_docManager.GetActive() : nullptr;
         SyncDocuments();
@@ -599,14 +602,14 @@ namespace MiniCAD
     {
         const std::string text = Nodes::ReadTextFile(path);
         OpenNodeEditorFromStart(true);
-        if (!m_nodeEditor)
+        if (!ActiveNodeEditor())
             return;
         m_ui->Update();                     // 节点面板刚显示：先布局，插入的示例才能按画布尺寸摆放
-        m_nodeEditor->Focus();
-        const bool ok = !text.empty() && m_nodeEditor->InsertGraph(text);
+        ActiveNodeEditor()->Focus();
+        const bool ok = !text.empty() && ActiveNodeEditor()->InsertGraph(text);
         m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + name + "——" + description : "示例：读不出 " + path);
         if (ok)
-            m_nodeEditor->FrameAll();
+            ActiveNodeEditor()->FrameAll();
     }
 
     void MainFrame::OpenNodeEditorFromStart(bool newDocument)
