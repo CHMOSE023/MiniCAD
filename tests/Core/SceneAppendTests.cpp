@@ -208,15 +208,25 @@ int RunSceneAppendTests()
     frameOf(editor2);
     Check(renderer.uploads[kSlotScene] == 1 && renderer.slots[kSlotScene].count == 6 && editor2.BuildViewState().Scene.empty(),
           "新文档首帧整体上传 3 条直线并释放拼接流");
+    // 全量拼接按场景容器的遍历序（各标准库不同）：按 y 找出每条直线在缓冲里的那一段
+    const auto& lineData = renderer.data[kSlotScene];
+    auto segmentAt = [&](float y)
+    {
+        for (size_t i = 0; i + 1 < lineData.size(); i += 2)
+            if (lineData[i].pos.y == y)
+                return i;
+        return size_t(0);
+    };
+    const size_t at0 = segmentAt(0.f), at1 = segmentAt(10.f), at2 = segmentAt(20.f);
+    Check(at0 != at1 && at1 != at2 && at0 != at2, "三条直线各占缓冲里的一段");
 
     // 移动第 2 条：先把旧段清成透明顶点，再把新顶点写回原位
     move2(ids2[1], 5.0);
     vs = frameOf(editor2);
-    const auto& lineData = renderer.data[kSlotScene];
     Check(vs.SceneAppendActive && vs.ScenePatches.size() == 2 && vs.SceneAppend.empty(), "移动一条直线：两条改写段（清旧段、写回原位），没有追加");
     Check(renderer.writes == 2 && renderer.uploads[kSlotScene] == 1 && renderer.slots[kSlotScene].count == 6,
           "只写了那一段，没有整体上传，缓冲长度不变");
-    Check(lineData.size() == 6 && lineData[2].pos.y == 15.f && lineData[3].pos.y == 15.f && lineData[0].pos.y == 0.f && lineData[4].pos.y == 20.f,
+    Check(lineData.size() == 6 && lineData[at1].pos.y == 15.f && lineData[at1 + 1].pos.y == 15.f && lineData[at0].pos.y == 0.f && lineData[at2].pos.y == 20.f,
           "缓冲里第 2 条直线的顶点已是新位置，其余不动");
     Check(!editor2.BuildViewState().SceneAppendActive, "写入之后改写段清空");
 
@@ -224,14 +234,14 @@ int RunSceneAppendTests()
     editor2.SetSelection({ ids2[2] });
     editor2.DeleteSelected();
     vs = frameOf(editor2);
-    Check(vs.ScenePatches.size() == 1 && renderer.slots[kSlotScene].count == 6 && lineData[4].color.a == 0 && lineData[5].color.a == 0,
+    Check(vs.ScenePatches.size() == 1 && renderer.slots[kSlotScene].count == 6 && lineData[at2].color.a == 0 && lineData[at2 + 1].color.a == 0,
           "删除：那段写成透明顶点，缓冲长度不变");
     Check(renderer.uploads[kSlotScene] == 1, "删除没有整体上传");
 
     // 撤销删除：直线回来，接到流尾（旧段仍是透明的）
     manager.Undo();
     vs = frameOf(editor2);
-    Check(renderer.slots[kSlotScene].count == 8 && lineData.size() == 8 && lineData[6].pos.y == 20.f && lineData[4].color.a == 0,
+    Check(renderer.slots[kSlotScene].count == 8 && lineData.size() == 8 && lineData[6].pos.y == 20.f && lineData[at2].color.a == 0,
           "撤销删除：直线接到流尾，旧段仍是透明的");
     Check(editor2.GetSceneStreamStats().lines == 8 && renderer.uploads[kSlotScene] == 1, "统计跟着累加，仍没有整体上传");
 
@@ -253,7 +263,7 @@ int RunSceneAppendTests()
         items.push_back({ ids2[0], cur->Clone(ids2[0]), std::make_unique<LineEntity>(ids2[0], Math::Point3{ 0, 0, 0 }, Math::Point3{ 60, 0, 0 }) });
         doc2.GetCommandStack().Execute(std::make_unique<GeometryEditCommand>("修剪", std::move(items)), scene2);
         vs = frameOf(editor2);
-        Check(vs.ScenePatches.size() == 2 && vs.SceneAppend.empty() && renderer.uploads[kSlotScene] == 1 && lineData[1].pos.x == 60.f,
+        Check(vs.ScenePatches.size() == 2 && vs.SceneAppend.empty() && renderer.uploads[kSlotScene] == 1 && lineData[at0 + 1].pos.x == 60.f,
               "修剪（同一 ID 换几何）：原地改写，没有整体上传");
     }
     // 复制：新实体接到流尾
