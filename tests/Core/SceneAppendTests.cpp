@@ -3,12 +3,18 @@
 // 的话，只把新实体的顶点经 AppendCached 接到场景缓冲末尾，不从逐实体缓存重新拼接、不整体重新上传
 //（几千万顶点的图纸每画一个图形要几百毫秒）；后端接不上时按旧版本画一帧，再全量重新拼接；
 // 新实体带区域覆盖（要裁剪此前的顶点）时直接全量拼接。
+// 修改 / 删除 / 撤销：实体在静态流里的那一段经 WriteCached 原地改写（删除写成透明顶点），放不下才追加；
+// 写不进时按旧版本画一帧再全量拼接；碰到区域覆盖的改动全量拼接（要重新裁剪）。
 #include "Document/DocumentManager.h"
 #include "Document/Command/AddEntityCommand.h"
+#include "Document/Command/MoveCommand.h"
+#include "Document/Command/CopyCommand.h"
+#include "Document/Command/GeometryEditCommand.h"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Editor/Editor.h"
 #include "Viewport/Viewport.h"
+#include <algorithm>
 #include <cstdio>
 #include <map>
 
@@ -39,8 +45,10 @@ namespace
         struct Slot { uint64_t version = 0; size_t count = 0; };
         std::map<uint32_t, Slot> slots;
         std::map<uint32_t, int>  uploads;   // 每个槽位整体上传的次数
+        std::map<uint32_t, std::vector<Vertex_P3_C4>> data;   // 每个槽位缓冲的内容（核对改写段写到了哪里）
         int  appends     = 0;
-        bool allowAppend = true;
+        int  writes      = 0;
+        bool allowAppend = true;   // 为假时模拟接不上 / 写不进
 
         void BeginFrame(IRenderTarget&, const ViewportDesc&) override {}
         void EndFrame() override {}
@@ -54,6 +62,7 @@ namespace
             auto it = slots.find(slot);
             if (it != slots.end() && it->second.version == version) return;
             slots[slot] = { version, verts.size() };
+            data[slot].assign(verts.begin(), verts.end());
             ++uploads[slot];
         }
         bool IsCached(uint32_t slot, uint64_t version, bool textured) const override
@@ -71,7 +80,17 @@ namespace
             if (it->second.version != baseVersion) return false;
             it->second.count += verts.size();
             it->second.version = version;
+            data[slot].insert(data[slot].end(), verts.begin(), verts.end());
             ++appends;
+            return true;
+        }
+        bool WriteCached(uint32_t slot, uint64_t baseVersion, size_t offset, std::span<const Vertex_P3_C4> verts) override
+        {
+            if (!allowAppend) return false;
+            auto it = slots.find(slot);
+            if (it == slots.end() || it->second.version != baseVersion || offset + verts.size() > it->second.count) return false;
+            std::copy(verts.begin(), verts.end(), data[slot].begin() + static_cast<std::ptrdiff_t>(offset));
+            ++writes;
             return true;
         }
     };
@@ -104,17 +123,18 @@ int RunSceneAppendTests()
             std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ 0, y, 0 }, Math::Point3{ 100, y, 0 })), scene);
     };
     // 与 MainFrame::RenderFrame 相同的一帧：编辑器 → 视口 → 上传成功就释放拼接流，追加段没接上就请求重新拼接
-    auto frame = [&]() -> ViewState
+    auto frameOf = [&](Editor& ed) -> ViewState
     {
-        editor.Render();
-        const ViewState vs = editor.BuildViewState();
+        ed.Render();
+        const ViewState vs = ed.BuildViewState();
         viewport.Render(renderer, target, vs);
         if (Viewport::SceneUploaded(renderer, vs))
-            editor.ReleaseUploadedSceneStreams();
+            ed.ReleaseUploadedSceneStreams();
         else if (vs.SceneAppendActive)
-            editor.RequestSceneRestitch();
+            ed.RequestSceneRestitch();
         return vs;
     };
+    auto frame = [&]() -> ViewState { return frameOf(editor); };
 
     for (int i = 0; i < 3; ++i) addLine(10.0 * i);
     viewport.GetCamera().ZoomToBounds(-10, -10, 110, 40);
@@ -163,6 +183,118 @@ int RunSceneAppendTests()
     addLine(60.0);
     vs = frame();
     Check(!vs.SceneAppendActive && renderer.uploads[kSlotScene] == 4 && renderer.appends == 6, "关闭追加能力后新画一条走全量拼接");
+
+    // ── 修改 / 删除 / 撤销：原地改写段 ────────────────────────────────────────
+    // 拼接流释放后改一个实体：它在静态流里的那一段经 WriteCached 原地改写（删除写成透明顶点），放不下才追加
+    Editor::SetSceneAppendOnGpu(true);
+    Document& doc2    = manager.Create();
+    Scene&    scene2  = doc2.GetScene();
+    Editor&   editor2 = manager.GetEditor();
+    std::vector<Object::ObjectID> ids2;
+    auto addLine2 = [&](double x0, double x1, double y)
+    {
+        ids2.push_back(scene2.NextObjectID());
+        doc2.GetCommandStack().Execute(std::make_unique<AddEntityCommand>(
+            std::make_unique<LineEntity>(ids2.back(), Math::Point3{ x0, y, 0 }, Math::Point3{ x1, y, 0 })), scene2);
+    };
+    auto move2 = [&](Object::ObjectID id, double dy)
+    {
+        doc2.GetCommandStack().Execute(std::make_unique<MoveCommand>(std::vector<Object::ObjectID>{ id }, Math::Vec3{ 0, dy, 0 }, scene2), scene2);
+    };
+    for (int i = 0; i < 3; ++i) addLine2(0, 100, 10.0 * i);
+    viewport.GetCamera().ZoomToBounds(-10, -10, 110, 40);
+    renderer.uploads[kSlotScene] = 0;
+    renderer.appends = renderer.writes = 0;
+    frameOf(editor2);
+    Check(renderer.uploads[kSlotScene] == 1 && renderer.slots[kSlotScene].count == 6 && editor2.BuildViewState().Scene.empty(),
+          "新文档首帧整体上传 3 条直线并释放拼接流");
+
+    // 移动第 2 条：先把旧段清成透明顶点，再把新顶点写回原位
+    move2(ids2[1], 5.0);
+    vs = frameOf(editor2);
+    const auto& lineData = renderer.data[kSlotScene];
+    Check(vs.SceneAppendActive && vs.ScenePatches.size() == 2 && vs.SceneAppend.empty(), "移动一条直线：两条改写段（清旧段、写回原位），没有追加");
+    Check(renderer.writes == 2 && renderer.uploads[kSlotScene] == 1 && renderer.slots[kSlotScene].count == 6,
+          "只写了那一段，没有整体上传，缓冲长度不变");
+    Check(lineData.size() == 6 && lineData[2].pos.y == 15.f && lineData[3].pos.y == 15.f && lineData[0].pos.y == 0.f && lineData[4].pos.y == 20.f,
+          "缓冲里第 2 条直线的顶点已是新位置，其余不动");
+    Check(!editor2.BuildViewState().SceneAppendActive, "写入之后改写段清空");
+
+    // 删除第 3 条：那段写成透明的退化顶点，缓冲长度不变
+    editor2.SetSelection({ ids2[2] });
+    editor2.DeleteSelected();
+    vs = frameOf(editor2);
+    Check(vs.ScenePatches.size() == 1 && renderer.slots[kSlotScene].count == 6 && lineData[4].color.a == 0 && lineData[5].color.a == 0,
+          "删除：那段写成透明顶点，缓冲长度不变");
+    Check(renderer.uploads[kSlotScene] == 1, "删除没有整体上传");
+
+    // 撤销删除：直线回来，接到流尾（旧段仍是透明的）
+    manager.Undo();
+    vs = frameOf(editor2);
+    Check(renderer.slots[kSlotScene].count == 8 && lineData.size() == 8 && lineData[6].pos.y == 20.f && lineData[4].color.a == 0,
+          "撤销删除：直线接到流尾，旧段仍是透明的");
+    Check(editor2.GetSceneStreamStats().lines == 8 && renderer.uploads[kSlotScene] == 1, "统计跟着累加，仍没有整体上传");
+
+    // 再移动它（现在在追加过的区域里）：仍原地改写
+    move2(ids2[2], 5.0);
+    vs = frameOf(editor2);
+    Check(renderer.slots[kSlotScene].count == 8 && lineData[6].pos.y == 25.f && lineData[7].pos.y == 25.f && renderer.uploads[kSlotScene] == 1,
+          "再移动追加过的直线：原地改写");
+
+    // 撤销移动：同一条路
+    manager.Undo();
+    vs = frameOf(editor2);
+    Check(lineData[6].pos.y == 20.f && renderer.uploads[kSlotScene] == 1, "撤销移动：原地改写回去");
+
+    // 修剪 / 延伸 / 偏移 / 圆角 / 拉伸用 GeometryEditCommand（同一 ID 换几何）：也是原地改写
+    {
+        auto* cur = static_cast<Entity*>(scene2.GetEntity(ids2[0]));
+        std::vector<GeometryEditCommand::Item> items;
+        items.push_back({ ids2[0], cur->Clone(ids2[0]), std::make_unique<LineEntity>(ids2[0], Math::Point3{ 0, 0, 0 }, Math::Point3{ 60, 0, 0 }) });
+        doc2.GetCommandStack().Execute(std::make_unique<GeometryEditCommand>("修剪", std::move(items)), scene2);
+        vs = frameOf(editor2);
+        Check(vs.ScenePatches.size() == 2 && vs.SceneAppend.empty() && renderer.uploads[kSlotScene] == 1 && lineData[1].pos.x == 60.f,
+              "修剪（同一 ID 换几何）：原地改写，没有整体上传");
+    }
+    // 复制：新实体接到流尾
+    doc2.GetCommandStack().Execute(std::make_unique<CopyCommand>(std::vector<Object::ObjectID>{ ids2[0] }, Math::Vec3{ 0, 30, 0 }), scene2);
+    vs = frameOf(editor2);
+    Check(vs.SceneAppend.size() == 2 && vs.ScenePatches.empty() && renderer.slots[kSlotScene].count == 10 && renderer.uploads[kSlotScene] == 1,
+          "复制：副本接到流尾，没有整体上传");
+    manager.Undo();
+    vs = frameOf(editor2);
+    Check(vs.ScenePatches.size() == 1 && renderer.slots[kSlotScene].count == 10 && lineData[8].color.a == 0 && renderer.uploads[kSlotScene] == 1,
+          "撤销复制：副本那段写成透明顶点");
+
+    // 后端写不进：这一帧按旧版本画，下一帧全量重新拼接（透明的洞随之清掉：3 条直线 6 个顶点）
+    renderer.allowAppend = false;
+    const uint64_t held2 = renderer.slots[kSlotScene].version;
+    move2(ids2[0], 5.0);
+    vs = frameOf(editor2);
+    Check(vs.SceneAppendActive && renderer.slots[kSlotScene].version == held2, "写不进时这一帧按旧版本画");
+    vs = frameOf(editor2);
+    // 全量拼接按场景容器的遍历序，直线 0 不一定在最前：只查有没有它移动后的顶点
+    const bool hasMoved0 = std::any_of(lineData.begin(), lineData.end(), [](const Vertex_P3_C4& v) { return v.pos.y == 5.f && v.pos.x == 60.f; });
+    Check(!vs.SceneAppendActive && renderer.uploads[kSlotScene] == 2 && renderer.slots[kSlotScene].count == 6 && hasMoved0,
+          "下一帧全量重新拼接（洞清掉，6 个顶点）并整体上传");
+    renderer.allowAppend = true;
+
+    // 区域覆盖：拼进场景后，碰到它的实体改动要重新裁剪（全量拼接），没碰到的仍原地改写
+    doc2.GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<WipeoutEntity>(scene2.NextObjectID(),
+        std::vector<Math::Point3>{ { 20, -5, 0 }, { 40, -5, 0 }, { 40, 55, 0 }, { 20, 55, 0 } })), scene2);
+    vs = frameOf(editor2);
+    Check(renderer.uploads[kSlotScene] == 3, "新增区域覆盖：全量拼接");
+    addLine2(50, 100, 40.0);   // 在区域覆盖右边，碰不到
+    vs = frameOf(editor2);
+    Check(vs.SceneAppendActive && vs.SceneAppend.size() == 2 && renderer.uploads[kSlotScene] == 3, "区域覆盖右边新画一条：追加");
+    const size_t nBefore = renderer.slots[kSlotScene].count;
+    move2(ids2.back(), 2.0);
+    vs = frameOf(editor2);
+    Check(vs.ScenePatches.size() == 2 && renderer.uploads[kSlotScene] == 3 && renderer.slots[kSlotScene].count == nBefore,
+          "移动它：原地改写（没碰到区域覆盖）");
+    move2(ids2[1], 2.0);   // 横穿区域覆盖的直线：要重新裁剪
+    vs = frameOf(editor2);
+    Check(!vs.SceneAppendActive && renderer.uploads[kSlotScene] == 4, "移动被区域覆盖裁过的直线：全量拼接");
 
     std::printf("场景流追加段测试：%d 项失败\n", g_failures);
     return g_failures;

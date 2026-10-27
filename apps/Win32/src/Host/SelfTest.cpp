@@ -17,6 +17,7 @@
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
+#include "Document/Command/MoveCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -3088,13 +3089,15 @@ namespace MiniCAD
         {
             Scene& scene = doc->GetScene();
             const Camera& cam = m_docManager.GetViewport().GetCamera();
+            std::vector<Object::ObjectID> added;
             for (int i = 0; i < 3; ++i)
             {
                 const Math::Point3 a = cam.ScreenToWorld(vr.Center().x - 100.0, vr.Center().y + 20.0 * i);
                 const Math::Point3 b = cam.ScreenToWorld(vr.Center().x + 100.0, vr.Center().y + 20.0 * i);
                 const auto st0 = editor.GetSceneStreamStats();
                 int64_t f0 = NowTicks();
-                doc->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(scene.NextObjectID(), a, b)), scene);
+                added.push_back(scene.NextObjectID());
+                doc->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(added.back(), a, b)), scene);
                 const double cmdMs = msSince(f0);
                 m_viewport->RequestRender();
                 f0 = NowTicks();
@@ -3127,6 +3130,62 @@ namespace MiniCAD
             SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
             RenderFrame();
             std::printf("画线工具里移动鼠标 %d 帧：平均 %.1f ms，最慢 %.1f ms\n", moves, moveSum / moves, moveMax);
+            SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
+            RenderFrame();
+
+            // 修改 / 删除 / 撤销：对刚加的 3 条直线做移动命令（夹点拖完提交、特性面板改值都是"已在缓存的实体标脏"这一条路）、
+            // 夹点拖动（拖起时实体离开场景流、放下时回来）、删除、撤销，各测命令本身与之后的首帧；大图纸里这些原本都要重新拼接整张图
+            auto frameAfter = [&](const char* what, auto&& act)
+            {
+                int64_t f0 = NowTicks();
+                act();
+                const double cmdMs = msSince(f0);
+                m_viewport->RequestRender();
+                f0 = NowTicks();
+                RenderFrame();
+                std::printf("%s：命令 %.1f ms，首帧 %.1f ms（视口 %.1f ms）\n", what, cmdMs, msSince(f0), m_timing.viewport);
+            };
+            const Math::Vec3 up5 = cam.ScreenToWorld(vr.Center().x, vr.Center().y - 5.0) - cam.ScreenToWorld(vr.Center().x, vr.Center().y);
+            frameAfter("选中 3 条直线", [&] { editor.SetSelection({ added.begin(), added.end() }); });
+            frameAfter("移动 3 条直线", [&] { doc->GetCommandStack().Execute(std::make_unique<MoveCommand>(added, up5, scene), scene); });
+            {
+                // 夹点拖动第 1 条直线的中点：点一下激活、抬起后跟随，移动两帧，再点一下放下
+                editor.SetSelection({ added[0] });
+                RenderFrame();
+                // 相机的屏幕坐标是相对视口左上角的物理像素；鼠标消息要窗口客户区坐标
+                const Math::Point2 mid = cam.WorldToScreen(cam.ScreenToWorld(vr.Center().x, vr.Center().y) + up5);
+                const POINT gp = { static_cast<LONG>(std::lround(vr.min.x * m_dpiScale + mid.x)), static_cast<LONG>(std::lround(vr.min.y * m_dpiScale + mid.y)) };
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(gp.x, gp.y));
+                RenderFrame();
+                int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gp.x, gp.y));
+                SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(gp.x, gp.y));
+                RenderFrame();
+                const double pickMs = msSince(f0);
+                const bool   dragged = editor.GetGripEditor().IsDragging();
+                double dragMs[2] = {};
+                for (int i = 0; i < 2; ++i)
+                {
+                    f0 = NowTicks();
+                    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(gp.x + 15 * (i + 1), gp.y + 15 * (i + 1)));
+                    RenderFrame();
+                    dragMs[i] = msSince(f0);
+                }
+                f0 = NowTicks();
+                SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gp.x + 30, gp.y + 30));
+                SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(gp.x + 30, gp.y + 30));
+                RenderFrame();
+                const double dropMs = msSince(f0);
+                std::printf("夹点拖动 1 条直线：拖起首帧 %.1f ms，拖动两帧 %.1f / %.1f ms，放下首帧 %.1f ms（%s）\n",
+                            pickMs, dragMs[0], dragMs[1], dropMs, dragged ? "已拖动" : "夹点没点中");
+            }
+            frameAfter("撤销夹点拖动", [&] { m_docManager.Undo(); });
+            editor.SetSelection({ added.begin(), added.end() });
+            RenderFrame();
+            frameAfter("删除 3 条直线", [&] { editor.DeleteSelected(); });
+            frameAfter("撤销删除", [&] { m_docManager.Undo(); });
+            frameAfter("撤销移动", [&] { m_docManager.Undo(); });
+            editor.SetSelection({});
             SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
             RenderFrame();
         }

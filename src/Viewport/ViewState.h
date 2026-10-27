@@ -77,6 +77,20 @@ namespace MiniCAD
         std::span<const Vertex_P3_C4>    SceneAppend;
         std::span<const Vertex_P3_C4>    SceneAppendFill;
         std::span<const Vertex_P3_C4>    SceneAppendPoints;
+        // 原地改写段（与追加段同一帧、同一基础版本）：修改 / 删除 / 拖动中的实体在静态流里的那一段改成新顶点或透明的
+        // 退化图元（IRenderer::WriteCached），按顺序先写再追加。Stream：0 线、1 填充、2 点；顶点在 ScenePatchLines /
+        // ScenePatchFills / ScenePatchPoints 的 [First, First + Count)，写到缓冲的 Offset 处
+        struct ScenePatch
+        {
+            uint32_t Stream = 0;
+            size_t   Offset = 0;
+            size_t   First  = 0;
+            size_t   Count  = 0;
+        };
+        std::span<const ScenePatch>      ScenePatches;
+        std::span<const Vertex_P3_C4>    ScenePatchLines;
+        std::span<const Vertex_P3_C4>    ScenePatchFills;
+        std::span<const Vertex_P3_C4>    ScenePatchPoints;
         // 动态场景流：随视图变化的线与填充（按像素等宽的线宽、按像素画的点样式；虚线在世界坐标里，进静态流），缩放时只重建这一路，画在静态流之后
         std::span<const Vertex_P3_C4>    SceneDyn;
         std::span<const Vertex_P3_C4>    SceneDynFill;

@@ -415,6 +415,20 @@ namespace MiniCAD
         return true;
     }
 
+    // 原地覆盖 (slot, baseVersion) 缓冲里的一段（见 IRenderer::WriteCached）：缓存都在默认堆，经上传页复制到位
+    bool D3D12Renderer::WriteCached(uint32_t slot, uint64_t baseVersion, size_t offset, std::span<const Vertex_P3_C4> verts)
+    {
+        const auto it = m_cachedVBs.find(slot);
+        if (it == m_cachedVBs.end() || !it->second.valid || !it->second.buffer.resource)
+            return false;
+        CachedVB& cb = it->second;
+        if (cb.version != baseVersion || offset + verts.size() > cb.count)
+            return false;
+        if (!verts.empty())
+            m_ctx.UploadBuffer(cb.buffer, static_cast<uint64_t>(offset) * sizeof(Vertex_P3_C4), verts.data(), verts.size_bytes());
+        return true;
+    }
+
     void D3D12Renderer::SubmitCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4> verts,
                                      const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {

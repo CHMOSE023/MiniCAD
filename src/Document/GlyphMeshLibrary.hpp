@@ -108,6 +108,29 @@ namespace MiniCAD
         uint64_t                                   m_version = 0;
     };
 
+    // 作废的字形实例：拼接流释放后修改 / 删除了带文字的实体，它的实例留在拼接序的流里当作洞（网格编号设成这个值），
+    // 排序分批时跳过，下次全量拼接时清掉
+    constexpr uint32_t kGlyphInstanceDead = ~0u;
+
+    // 拼接序的实例流 src → 按网格编号排序分批的副本 dst（计数排序，O(n)，几十万实例几毫秒）：
+    // 同一网格的实例连续，一批一次实例化绘制；网格编号不小于 meshCount 的（作废的）不进副本
+    inline void SortGlyphInstances(const std::vector<GlyphInstance>& src, std::vector<GlyphInstance>& dst,
+                                   std::vector<GlyphBatch>& batches, size_t meshCount)
+    {
+        std::vector<uint32_t> start(meshCount + 1, 0);
+        for (const GlyphInstance& g : src)
+            if (g.mesh < meshCount) ++start[g.mesh + 1];
+        for (size_t m = 0; m < meshCount; ++m)
+            start[m + 1] += start[m];
+        batches.clear();
+        for (uint32_t m = 0; m < meshCount; ++m)
+            if (start[m + 1] > start[m])
+                batches.push_back({ m, start[m], start[m + 1] - start[m] });
+        dst.resize(start[meshCount]);
+        for (const GlyphInstance& g : src)
+            if (g.mesh < meshCount) dst[start[g.mesh]++] = g;
+    }
+
     // 实例流按网格编号排序并分批（同一网格的实例连续，一批一次实例化绘制）
     inline void SortGlyphInstances(std::vector<GlyphInstance>& inst, std::vector<GlyphBatch>& batches)
     {

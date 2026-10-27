@@ -411,7 +411,7 @@ namespace MiniCAD
         static void SetSceneAppendOnGpu(bool enabled);
 
         // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
-        struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0; };
+        struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0, points = 0; };
         SceneStreamStats GetSceneStreamStats() const { return m_sceneStats; }
         // 逐实体缓存里的线与填充顶点（调试与自测用）
         void ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const;
@@ -541,8 +541,10 @@ namespace MiniCAD
         std::shared_ptr<const ImageData> OleImage(const std::string& path);
         std::vector<Vertex_P3_C4_UV> m_textVertices;
         uint64_t                     m_sceneVersion = 0;   // 场景顶点重建计数（GPU 缓存键）
-        // 场景文字的字形实例（拼接时按绘制序，拼接完按网格排序分批）与字形网格库
+        // 场景文字的字形实例：m_glyphInstances 按拼接序（每个实体一段连续区间，修改 / 删除后留下作废的洞），
+        // m_glyphSorted 是按网格排序分批的副本（交给渲染后端），与字形网格库
         std::vector<GlyphInstance>   m_glyphInstances;
+        std::vector<GlyphInstance>   m_glyphSorted;
         std::vector<GlyphBatch>      m_glyphBatches;
         GlyphMeshLibrary             m_glyphLibrary;
 
@@ -577,8 +579,22 @@ namespace MiniCAD
             std::vector<DeferredDash>    longDashes;
             std::vector<ImageDraw>       images;
             std::vector<std::vector<Math::Point3>> wipes;   // 区域覆盖多边形：拼接时裁剪此前的顶点
+            // 在拼接流里的位置：静态线 / 填充 / 点三路与字形实例流（拼接序）的起点，个数就是上面各数组的长度。
+            // 拼接流释放后修改 / 删除这个实体时据此原地改写它那一段（UpdateSceneIncremental）；placed 为假时位置未知
+            //（这一轮没拼进去），只能全量拼接
+            bool   placed   = false;
+            size_t lineOff  = 0;
+            size_t fillOff  = 0;
+            size_t pointOff = 0;
+            size_t glyphOff = 0;
         };
         std::unordered_map<Object::ObjectID, EntityVertexCache> m_entityVertexCache;
+        std::vector<AABB> m_sceneWipeBoxes;   // 拼接进场景的区域覆盖的包围盒：改写的实体碰到它们就全量拼接（要重新裁剪）
+        // 原地改写段（见 ViewState::ScenePatches）：与追加段一起交给后端，上传后清空
+        std::vector<ViewState::ScenePatch> m_scenePatches;
+        std::vector<Vertex_P3_C4>          m_scenePatchLines;
+        std::vector<Vertex_P3_C4>          m_scenePatchFills;
+        std::vector<Vertex_P3_C4>          m_scenePatchPoints;
         bool             m_sceneStreamsReleased = false;   // 静态拼接流已交给渲染后端并释放
         bool             m_sceneRestitch        = false;   // 下一帧从逐实体缓存重新拼接
         SceneStreamStats m_sceneStats;
@@ -603,11 +619,17 @@ namespace MiniCAD
         void ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx);
         // 把一个实体的缓存顶点拼到场景流：静态的线 / 填充 / 点进 lines / fills / points（拼接流或追加段），
         // 文字、字形、图像、动态流与长虚线进对应成员
-        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes,
+        void AppendToSceneStreams(Object::ObjectID id, EntityVertexCache& c, WipeClip::Batch& wipes,
                                   std::vector<Vertex_P3_C4>& lines, std::vector<Vertex_P3_C4>& fills, std::vector<Vertex_P3_C4>& points);
         void EmitDeferredDashes(const EntityVertexCache& c, std::vector<Vertex_P3_C4>& out) const;   // 长虚线段按当前缩放铺进 out
         void RebuildDynamicStream(DrawContext& ctx);
         void UpdateSceneStats();
+        // 增量更新场景流（新增追加、修改 / 删除 / 拖动原地改写），处理不了返回 false 由调用方全量拼接
+        bool UpdateSceneIncremental(DrawContext& ctx, const std::unordered_set<Object::ObjectID>& dragIds, bool appendOnGpu,
+                                    const std::function<bool(const Entity&)>& isShown);
+        // 记一段原地改写：把 verts 写到静态流 stream（0 线 1 填充 2 点）的 offset 处，不足 total 的部分补透明的退化顶点
+        void WriteScenePatch(uint32_t stream, size_t offset, std::span<const Vertex_P3_C4> verts, size_t total);
+        void SortSceneGlyphs();   // m_glyphInstances → m_glyphSorted / m_glyphBatches，并升级字形版本
 
         // 细分临时缓冲（复用容量，避免逐实体分配）
         std::vector<Vertex_P3_C4>    m_scratchLines;

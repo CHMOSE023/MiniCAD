@@ -321,6 +321,12 @@ namespace MiniCAD
         releaseStorage(m_sceneAppendLines);
         releaseStorage(m_sceneAppendFills);
         releaseStorage(m_sceneAppendPoints);
+        releaseStorage(m_scenePatches);
+        releaseStorage(m_scenePatchLines);
+        releaseStorage(m_scenePatchFills);
+        releaseStorage(m_scenePatchPoints);
+        releaseStorage(m_sceneWipeBoxes);
+        releaseStorage(m_glyphSorted);
         releaseStorage(m_sceneVertices);
         releaseStorage(m_sceneFillVertices);
         releaseStorage(m_sceneDynVertices);
@@ -1306,7 +1312,7 @@ namespace MiniCAD
             LOG_INFO("[Editor] DefineBlock %s: %zu entities", blockName.c_str(), ids.size());
             m_picking.MarkDirty();
             m_gripEditor.RebuildGrips();
-            scene.MarkDirty();
+            // 命令已按实体标脏（移除原实体、加入块参照），不整体标脏（那会让整张图重新细分）
         }
         else
         {
@@ -2468,12 +2474,13 @@ namespace MiniCAD
         auto& scene    = m_doc->GetScene();
         auto& cmdStack = m_doc->GetCommandStack();
 
+        // 撤销 / 重做：每条命令自己按实体标脏（AddEntity / RemoveEntity / MarkEntityDirty），这里不再整体标脏——
+        // 整体标脏会让所有实体重新细分，几十万实体的图纸要几十秒
         if (e.IsUndo())
         {
             if (m_tool) m_tool->OnSceneChanged();
             cmdStack.Undo(scene);
             m_gripEditor.MarkDirty();
-            scene.MarkDirty();
             return true;
         }
 
@@ -2482,7 +2489,6 @@ namespace MiniCAD
             if (m_tool) m_tool->OnSceneChanged();
             cmdStack.Redo(scene);
             m_gripEditor.MarkDirty();
-            scene.MarkDirty();
             return true;
         }
 
@@ -3420,15 +3426,21 @@ namespace MiniCAD
 
     // 把一个实体的缓存按绘制序接到场景流尾部：记下它的区域覆盖（裁剪此前的顶点，由 FlushSceneWipes 一次完成），
     // 再追加它自己的顶点。随视图变化的线 / 填充进动态流，其余进静态流；文字与图像总在静态流（不随缩放变化）
-    void Editor::AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes,
+    void Editor::AppendToSceneStreams(Object::ObjectID id, EntityVertexCache& c, WipeClip::Batch& wipes,
                                       std::vector<Vertex_P3_C4>& lines, std::vector<Vertex_P3_C4>& fills, std::vector<Vertex_P3_C4>& points)
     {
         for (const auto& w : c.wipes)
+        {
             wipes.Add(w, { lines.size(), fills.size(), m_textVertices.size(),
                            m_sceneDynVertices.size(), m_sceneDynFillVertices.size(), m_glyphInstances.size(),
                            points.size() });
+            AABB box = AABB::Empty();
+            for (const auto& p : w) box.Expand(p);
+            m_sceneWipeBoxes.push_back(box);
+        }
         m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
         m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
+        c.glyphOff = m_glyphInstances.size();
         m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
         if (c.viewDependent)
         {
@@ -3437,11 +3449,15 @@ namespace MiniCAD
         }
         else
         {
+            c.lineOff = lines.size();
+            c.fillOff = fills.size();
             lines.insert(lines.end(), c.lines.begin(), c.lines.end());
             fills.insert(fills.end(), c.fills.begin(), c.fills.end());
         }
         // 点图元不随视图变化（点是恒定屏幕像素），总进静态流
+        c.pointOff = points.size();
         points.insert(points.end(), c.points.begin(), c.points.end());
+        c.placed = true;
         // 延迟的长虚线段按当前缩放铺进动态流（缩放时只重铺它们，实体不重新细分）
         EmitDeferredDashes(c, m_sceneDynVertices);
         if (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty())
@@ -3628,100 +3644,26 @@ namespace MiniCAD
                 }
             }
 
-        // ── 纯新增快路径 ────────────────────────────────────
-        // 几万实体的场景里新画一个图形:旧实体缓存全部有效,既不该重新细分,
-        // 也不该把全场景顶点重新拼接一遍。脏集全部是"缓存中不存在的新实体"
-        // 时,只细分新实体并追加到现有顶点流尾部(新实体总在实体链表末尾,
-        // 与全量重建的绘制序一致)。修改/删除(脏 ID 已在缓存)仍走全量拼接。
-        // 拼接流已交给渲染后端释放时没有可追加的流：后端能接在 GPU 缓冲末尾（SetSceneAppendOnGpu）就把新顶点
-        // 放进追加段，否则走全量拼接（缓存命中，不重新细分；几千万顶点的图纸每画一个图形要几百毫秒）
+        // ── 增量路径 ────────────────────────────────────────
+        // 几万实体的场景里新画 / 改 / 删一个图形:旧实体缓存全部有效,既不该重新细分,也不该把全场景顶点重新拼接一遍
+        //（见 UpdateSceneIncremental）。拼接流已交给渲染后端释放时 CPU 端没有流可改：后端能接追加段、原地改写
+        //（SetSceneAppendOnGpu）就把改动交给它，否则全量拼接（缓存命中，不重新细分；几千万顶点的图纸要几百毫秒）
         const bool appendOnGpu = m_sceneStreamsReleased && s_sceneAppendOnGpu;
-        if (!invalidateAll && !zoomChanged && dragIds.empty() && m_sceneExcluded.empty() &&
-            (!m_sceneStreamsReleased || appendOnGpu) && !modelTouchedInPaper)
-        {
-            bool pureAppend = !scene.GetDirtyEntities().empty();
-            for (auto id : scene.GetDirtyEntities())
-            {
-                const Object* obj = scene.GetEntity(id);
-                if (!obj || !obj->IsKindOf<Entity>() || m_entityVertexCache.count(id))
-                {
-                    pureAppend = false;
-                    break;
-                }
-            }
+        if (!invalidateAll && !zoomChanged && !m_sceneRestitch && !modelTouchedInPaper &&
+            (!m_sceneStreamsReleased || appendOnGpu) &&
+            UpdateSceneIncremental(ctx, dragIds, appendOnGpu, isShown))
+            return true;
 
-            if (pureAppend)
-            {
-                // ID 单调分配 = 加入场景的先后序,按升序追加保持绘制序稳定
-                std::vector<Object::ObjectID> ids(scene.GetDirtyEntities().begin(),
-                                                  scene.GetDirtyEntities().end());
-                std::sort(ids.begin(), ids.end());
-
-                // 先细分（结果进逐实体缓存，之后不管走哪条路都不再细分）。追加段接不了区域覆盖：它要裁剪此前的顶点，
-                // 而拼接流已经不在 CPU 端，这种情况退回全量拼接
-                std::vector<std::pair<Object::ObjectID, const EntityVertexCache*>> fresh;
-                bool canAppend = true;
-                for (auto id : ids)
-                {
-                    const auto& entity = static_cast<const Entity&>(*scene.GetEntity(id));
-                    if (!isShown(entity)) continue;
-
-                    EntityVertexCache c;
-                    TessellateEntity(entity, ctx, c);
-                    const auto& stored = m_entityVertexCache.emplace(id, std::move(c)).first->second;
-                    if (appendOnGpu && !stored.wipes.empty())
-                        canAppend = false;
-                    fresh.emplace_back(id, &stored);
-                }
-
-                if (canAppend)
-                {
-                    const size_t lines0 = m_sceneAppendLines.size(), fills0 = m_sceneAppendFills.size();
-                    bool glyphsChanged = false;
-                    for (const auto& [id, c] : fresh)
-                    {
-                        glyphsChanged |= !c->glyphs.empty() || !c->texts.empty() || !c->wipes.empty();
-                        WipeClip::Batch wipes(7);
-                        if (appendOnGpu)
-                            AppendToSceneStreams(id, *c, wipes, m_sceneAppendLines, m_sceneAppendFills, m_sceneAppendPoints);
-                        else
-                            AppendToSceneStreams(id, *c, wipes, m_sceneVertices, m_sceneFillVertices, m_scenePointVertices);
-                        FlushSceneWipes(wipes);
-                    }
-
-                    if (glyphsChanged)
-                    {
-                        SortGlyphInstances(m_glyphInstances, m_glyphBatches);
-                        m_sceneGlyphVersion = NextRenderVersion();
-                    }
-                    if (appendOnGpu)
-                    {
-                        // 追加段接在后端当前持有的版本之后；上一段还没上传成功时继续累积在同一段里
-                        if (!m_sceneAppendActive)
-                        {
-                            m_sceneAppendActive = true;
-                            m_sceneAppendBase   = m_sceneVersion;
-                        }
-                        m_sceneStats.lines  += m_sceneAppendLines.size() - lines0;
-                        m_sceneStats.fills  += m_sceneAppendFills.size() - fills0;
-                        m_sceneStats.texts   = m_textVertices.size();
-                        m_sceneStats.glyphs  = m_glyphInstances.size();
-                    }
-                    else
-                        UpdateSceneStats();
-                    m_sceneVersion    = NextRenderVersion();   // 顶点流已追加,渲染后端需重新上传（或接上追加段）
-                    m_sceneDynVersion = NextRenderVersion();
-                    scene.ClearDirty();
-                    return true;
-                }
-            }
-        }
-
-        // 全量拼接：之前没接上的追加段作废（这些实体的顶点在逐实体缓存里，下面会拼进去）
+        // 全量拼接：之前没接上的追加段、改写段作废（这些实体的顶点在逐实体缓存里，下面会拼进去）
         m_sceneAppendActive = false;
         std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendLines);
         std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendFills);
         std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendPoints);
+        std::vector<ViewState::ScenePatch>{}.swap(m_scenePatches);
+        std::vector<Vertex_P3_C4>{}.swap(m_scenePatchLines);
+        std::vector<Vertex_P3_C4>{}.swap(m_scenePatchFills);
+        std::vector<Vertex_P3_C4>{}.swap(m_scenePatchPoints);
+        m_sceneWipeBoxes.clear();
 
         // ── 逐实体顶点缓存失效（全量拼接路径）────────────────
         // 全局失效时清空全部缓存;否则只丢弃脏实体的缓存,文字排版/标注
@@ -3741,6 +3683,9 @@ namespace MiniCAD
             if (zoomChanged && m_sceneViewDependent)
                 std::erase_if(m_entityVertexCache, [](const auto& kv) { return kv.second.viewDependent; });
         }
+        // 这一轮没拼进去的实体（拖动中被排除的）位置作废
+        for (auto& kv : m_entityVertexCache)
+            kv.second.placed = false;
 
         m_sceneVertices.clear();
         m_sceneFillVertices.clear();
@@ -3755,7 +3700,7 @@ namespace MiniCAD
 
         // 第一遍：按绘制序收集要拼接的实体缓存（缓存未命中的就地细分），并统计总顶点数；
         // 第二遍一次预留后再拼接，避免几百万顶点的顶点流反复扩容拷贝
-        std::vector<std::pair<Object::ObjectID, const EntityVertexCache*>> visible;
+        std::vector<std::pair<Object::ObjectID, EntityVertexCache*>> visible;
         visible.reserve(m_entityVertexCache.size());
         std::size_t lineCount = 0, fillCount = 0, textCount = 0, glyphCount = 0, imageCount = 0;
 
@@ -3780,7 +3725,7 @@ namespace MiniCAD
                it = m_entityVertexCache.emplace(obj.GetID(), std::move(c)).first;
            }
 
-           const auto& c = it->second;
+           auto& c = it->second;
            visible.emplace_back(obj.GetID(), &c);
            if (!c.viewDependent)
            {
@@ -3804,13 +3749,12 @@ namespace MiniCAD
                 AppendToSceneStreams(id, *c, wipes, m_sceneVertices, m_sceneFillVertices, m_scenePointVertices);
             FlushSceneWipes(wipes);
         }
-        SortGlyphInstances(m_glyphInstances, m_glyphBatches);
+        SortSceneGlyphs();
 
         m_sceneExcluded = std::move(dragIds);
 
         m_sceneVersion    = NextRenderVersion();   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
         m_sceneDynVersion = NextRenderVersion();
-        m_sceneGlyphVersion = NextRenderVersion();
         m_sceneStreamsReleased = false;
         m_sceneRestitch        = false;
         UpdateSceneStats();
@@ -3821,25 +3765,30 @@ namespace MiniCAD
 
     void Editor::ReleaseUploadedSceneStreams()
     {
-        // 追加段已接到后端的缓冲上
+        // 追加段、改写段已写进后端的缓冲
         if (m_sceneAppendActive)
         {
             m_sceneAppendActive = false;
             std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendLines);
             std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendFills);
             std::vector<Vertex_P3_C4>{}.swap(m_sceneAppendPoints);
+            std::vector<ViewState::ScenePatch>{}.swap(m_scenePatches);
+            std::vector<Vertex_P3_C4>{}.swap(m_scenePatchLines);
+            std::vector<Vertex_P3_C4>{}.swap(m_scenePatchFills);
+            std::vector<Vertex_P3_C4>{}.swap(m_scenePatchPoints);
         }
         if (m_sceneStreamsReleased) return;
         // 与空容器交换才归还存储（clear 保留容量）
         std::vector<Vertex_P3_C4>{}.swap(m_sceneVertices);
         std::vector<Vertex_P3_C4>{}.swap(m_sceneFillVertices);
         std::vector<Vertex_P3_C4>{}.swap(m_scenePointVertices);
-        // 后端能接追加段时文字与字形实例留在 CPU 端（每个字 36 字节，远小于线与填充）：新增文字时字形实例
-        // 整体重新排序、重新上传，不必重新拼接线与填充
+        // 后端能接追加段时文字与字形实例留在 CPU 端（每个字 36 字节，远小于线与填充）：改了带文字的实体只重排、
+        // 重传字形实例，不必重新拼接线与填充
         if (!s_sceneAppendOnGpu)
         {
             std::vector<Vertex_P3_C4_UV>{}.swap(m_textVertices);
             std::vector<GlyphInstance>{}.swap(m_glyphInstances);
+            std::vector<GlyphInstance>{}.swap(m_glyphSorted);
             std::vector<GlyphBatch>{}.swap(m_glyphBatches);
         }
         m_sceneStreamsReleased = true;
@@ -3847,8 +3796,203 @@ namespace MiniCAD
 
     void Editor::UpdateSceneStats()
     {
-        m_sceneStats = { m_sceneVertices.size(), m_sceneFillVertices.size(), m_textVertices.size(),
-                         m_glyphInstances.size(), m_glyphLibrary.View().Meshes.size() };
+        m_sceneStats = { .lines = m_sceneVertices.size(), .fills = m_sceneFillVertices.size(), .texts = m_textVertices.size(),
+                         .glyphs = m_glyphSorted.size(), .glyphMeshes = m_glyphLibrary.View().Meshes.size(),
+                         .points = m_scenePointVertices.size() };
+    }
+
+    void Editor::SortSceneGlyphs()
+    {
+        SortGlyphInstances(m_glyphInstances, m_glyphSorted, m_glyphBatches, m_glyphLibrary.View().Meshes.size());
+        m_sceneGlyphVersion = NextRenderVersion();
+    }
+
+    void Editor::WriteScenePatch(uint32_t stream, size_t offset, std::span<const Vertex_P3_C4> verts, size_t total)
+    {
+        if (total == 0) return;
+        auto& data = stream == 0 ? m_scenePatchLines : stream == 1 ? m_scenePatchFills : m_scenePatchPoints;
+        m_scenePatches.push_back({ stream, offset, data.size(), total });
+        data.insert(data.end(), verts.begin(), verts.end());
+        // 删掉的部分写成透明的退化图元（零长线、零面积三角形、透明的点），混合后不留痕迹
+        data.resize(data.size() + (total - verts.size()), Vertex_P3_C4{ { 0.f, 0.f, 0.f }, VertexColor{} });
+    }
+
+    // ── 增量更新 ───────────────────────────────────────────────────
+    // 脏实体只有几个、其余实体缓存全部有效时不重新拼接整张图（几千万顶点的图纸每次要几百毫秒）：
+    //  · 新实体（缓存里没有）：细分后接到流尾——CPU 端还有拼接流就直接追加；拼接流已释放时放进追加段，后端接到 GPU 缓冲末尾
+    //  · 修改 / 删除 / 开始或结束拖动的实体（缓存里有、位置已知）：只在后端能原地改写时处理——旧的那一段改写成透明的退化图元，
+    //    新顶点放得下就写回原位，放不下就接到流尾；字形实例在拼接序的流里作废、追加，再按网格重新分批；随视图变化的部分重建动态流
+    // 处理不了的（区域覆盖相关、纹理文字、图像、被裁剪挪动过的段、CPU 端拼接流上的修改）返回 false，一个顶点都不动，由调用方全量拼接
+    bool Editor::UpdateSceneIncremental(DrawContext& ctx, const std::unordered_set<Object::ObjectID>& dragIds, bool appendOnGpu,
+                                        const std::function<bool(const Entity&)>& isShown)
+    {
+        auto& scene = m_doc->GetScene();
+        const auto& dirty = scene.GetDirtyEntities();
+
+        // 要处理的实体：脏的、开始拖动的（离开场景流）、拖完的（回到场景流）。ID 单调分配 = 加入场景的先后序，
+        // 按升序接到流尾保持绘制序稳定
+        std::vector<Object::ObjectID> ids(dirty.begin(), dirty.end());
+        for (auto id : dragIds)
+            if (!dirty.count(id)) ids.push_back(id);
+        for (auto id : m_sceneExcluded)
+            if (!dirty.count(id) && !dragIds.count(id)) ids.push_back(id);
+        if (ids.empty()) return false;
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+
+        struct Work
+        {
+            Object::ObjectID  id;
+            const Entity*     entity = nullptr;   // 要（重新）拼进去的实体；空表示只移除
+            EntityVertexCache fresh;              // 它的新细分结果
+        };
+        std::vector<Work> work;
+        work.reserve(ids.size());
+        for (auto id : ids)
+        {
+            const Object* obj    = scene.GetEntity(id);
+            const Entity* entity = obj && obj->IsKindOf<Entity>() ? static_cast<const Entity*>(obj) : nullptr;
+            const bool    show   = entity && !dragIds.count(id) && isShown(*entity);
+            if (const auto it = m_entityVertexCache.find(id); it != m_entityVertexCache.end())
+            {
+                // 已在流里的实体：只有后端能原地改写、它那段位置可信、既没裁剪过别人（区域覆盖）也没被裁剪挪动过时才增量
+                const EntityVertexCache& old = it->second;
+                if (!appendOnGpu || !old.placed || !old.wipes.empty() || !old.texts.empty() || !old.images.empty())
+                    return false;
+            }
+            else if (!show)
+                continue;   // 从没拼进去、现在也不显示（如删了一个隐藏的实体）：没什么可改
+
+            Work w{ id, show ? entity : nullptr };
+            if (show)
+            {
+                TessellateEntity(*entity, ctx, w.fresh);
+                // 追加段接不了区域覆盖：它要裁剪此前的顶点，而拼接流已不在 CPU 端。新几何碰到已拼进去的区域覆盖也得重新裁剪
+                if (appendOnGpu && !w.fresh.wipes.empty())
+                    return false;
+                if (!m_sceneWipeBoxes.empty())
+                {
+                    AABB box = AABB::Empty();
+                    auto expand = [&](const std::vector<Vertex_P3_C4>& vs)
+                    {
+                        for (const auto& v : vs) box.Expand({ v.pos.x, v.pos.y, v.pos.z });
+                    };
+                    expand(w.fresh.lines);
+                    expand(w.fresh.fills);
+                    expand(w.fresh.points);
+                    for (const auto& v : w.fresh.texts) box.Expand({ v.pos.x, v.pos.y, v.pos.z });
+                    for (const GlyphInstance& g : w.fresh.glyphs)
+                    {
+                        double x0, y0, x1, y1;
+                        m_glyphLibrary.Bounds(g, x0, y0, x1, y1);
+                        box.Expand({ x0, y0, g.z });
+                        box.Expand({ x1, y1, g.z });
+                    }
+                    for (const AABB& wb : m_sceneWipeBoxes)
+                        if (box.Intersects(wb)) return false;
+                }
+            }
+            work.push_back(std::move(w));
+        }
+
+        // 从这里起改流
+        bool glyphsChanged = false, dynChanged = false;
+        WipeClip::Batch wipes(7);
+        for (Work& w : work)
+        {
+            // 旧段改写成透明的退化图元；新顶点放得下时下面再覆盖回原位
+            size_t oldLineOff = 0, oldLines = 0, oldFillOff = 0, oldFills = 0, oldPointOff = 0, oldPoints = 0;
+            if (auto it = m_entityVertexCache.find(w.id); it != m_entityVertexCache.end())
+            {
+                EntityVertexCache& old = it->second;
+                if (!old.viewDependent)
+                {
+                    oldLineOff = old.lineOff; oldLines = old.lines.size();
+                    oldFillOff = old.fillOff; oldFills = old.fills.size();
+                }
+                oldPointOff = old.pointOff;
+                oldPoints   = old.points.size();
+                WriteScenePatch(0, oldLineOff, {}, oldLines);
+                WriteScenePatch(1, oldFillOff, {}, oldFills);
+                WriteScenePatch(2, oldPointOff, {}, oldPoints);
+                for (size_t k = 0; k < old.glyphs.size(); ++k)
+                    m_glyphInstances[old.glyphOff + k].mesh = kGlyphInstanceDead;
+                glyphsChanged |= !old.glyphs.empty();
+                if (old.viewDependent || !old.longDashes.empty())
+                {
+                    std::erase(m_dynOrder, w.id);
+                    dynChanged = true;
+                }
+                m_entityVertexCache.erase(it);
+            }
+            if (!w.entity) continue;
+
+            EntityVertexCache& c = m_entityVertexCache.emplace(w.id, std::move(w.fresh)).first->second;
+            if (!appendOnGpu)
+            {
+                // CPU 端还有拼接流：直接接到流尾（新实体的区域覆盖在下面裁剪此前的顶点）
+                glyphsChanged |= !c.glyphs.empty() || !c.texts.empty() || !c.wipes.empty();
+                AppendToSceneStreams(w.id, c, wipes, m_sceneVertices, m_sceneFillVertices, m_scenePointVertices);
+                continue;
+            }
+            // 静态线 / 填充 / 点：放得下就写回原位，否则接到流尾（追加段）
+            auto place = [&](uint32_t stream, const std::vector<Vertex_P3_C4>& verts, size_t oldOff, size_t oldCount,
+                             std::vector<Vertex_P3_C4>& out, size_t& total)
+            {
+                if (oldCount && verts.size() <= oldCount)
+                {
+                    WriteScenePatch(stream, oldOff, verts, oldCount);
+                    return oldOff;
+                }
+                const size_t off = total;
+                out.insert(out.end(), verts.begin(), verts.end());
+                total += verts.size();
+                return off;
+            };
+            if (!c.viewDependent)
+            {
+                c.lineOff = place(0, c.lines, oldLineOff, oldLines, m_sceneAppendLines, m_sceneStats.lines);
+                c.fillOff = place(1, c.fills, oldFillOff, oldFills, m_sceneAppendFills, m_sceneStats.fills);
+            }
+            c.pointOff = place(2, c.points, oldPointOff, oldPoints, m_sceneAppendPoints, m_sceneStats.points);
+            c.glyphOff = m_glyphInstances.size();
+            m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
+            m_textVertices.insert(m_textVertices.end(), c.texts.begin(), c.texts.end());
+            m_sceneImages.insert(m_sceneImages.end(), c.images.begin(), c.images.end());
+            glyphsChanged |= !c.glyphs.empty() || !c.texts.empty();
+            if (c.viewDependent || !c.longDashes.empty())
+            {
+                m_dynOrder.push_back(w.id);
+                dynChanged = true;
+                m_sceneViewDependent = true;
+            }
+            c.placed = true;
+        }
+
+        if (!appendOnGpu)
+            FlushSceneWipes(wipes);
+        if (dynChanged)
+            RebuildDynamicStream(ctx);
+        if (glyphsChanged)
+            SortSceneGlyphs();
+        if (appendOnGpu)
+        {
+            // 追加段 / 改写段接在后端当前持有的版本之后；上一段还没上传成功时继续累积在同一段里
+            if (!m_sceneAppendActive)
+            {
+                m_sceneAppendActive = true;
+                m_sceneAppendBase   = m_sceneVersion;
+            }
+            m_sceneStats.texts  = m_textVertices.size();
+            m_sceneStats.glyphs = m_glyphSorted.size();
+        }
+        else
+            UpdateSceneStats();
+        m_sceneVersion    = NextRenderVersion();   // 顶点流已变，渲染后端需重新上传（或接上追加段、写入改写段）
+        m_sceneDynVersion = NextRenderVersion();
+        m_sceneExcluded   = dragIds;
+        scene.ClearDirty();
+        return true;
     }
 
     void Editor::ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const
@@ -3872,6 +4016,17 @@ namespace MiniCAD
         wipes.ClipPoints(m_scenePointVertices, 6);
         // 被遮罩盖到的字形实例展开成顶点裁剪，追加到静态流（在静态流自身的裁剪之后）
         wipes.ClipGlyphs(m_glyphInstances, 5, 0, m_glyphLibrary, m_sceneVertices, m_sceneFillVertices);
+        // 裁剪挪动过的段起，之后各实体记下的位置不再可信：作废，UpdateSceneIncremental 对这些实体只能全量拼接
+        //（之后再拼进去的实体位置按裁剪后的流记，不受影响）
+        const size_t tLines = wipes.FirstTouched(0), tFills = wipes.FirstTouched(1), tPoints = wipes.FirstTouched(6), tGlyphs = wipes.FirstTouched(5);
+        if (tLines == SIZE_MAX && tFills == SIZE_MAX && tPoints == SIZE_MAX && tGlyphs == SIZE_MAX) return;
+        for (auto& [id, c] : m_entityVertexCache)
+        {
+            if (!c.placed) continue;
+            if ((!c.viewDependent && (c.lineOff + c.lines.size() > tLines || c.fillOff + c.fills.size() > tFills)) ||
+                c.pointOff + c.points.size() > tPoints || (!c.glyphs.empty() && c.glyphOff + c.glyphs.size() > tGlyphs))
+                c.placed = false;
+        }
     }
 
     // 选中流：选中实体 + 拖动跟随中的实体，按选中态绘制，叠加在场景之上。
@@ -4080,6 +4235,10 @@ namespace MiniCAD
         vs.SceneAppend       = m_sceneAppendLines;
         vs.SceneAppendFill   = m_sceneAppendFills;
         vs.SceneAppendPoints = m_sceneAppendPoints;
+        vs.ScenePatches      = m_scenePatches;
+        vs.ScenePatchLines   = m_scenePatchLines;
+        vs.ScenePatchFills   = m_scenePatchFills;
+        vs.ScenePatchPoints  = m_scenePatchPoints;
         vs.SceneDyn        = m_sceneDynVertices;
         vs.SceneDynFill    = m_sceneDynFillVertices;
         vs.SceneDynVersion = m_sceneDynVersion;
@@ -4100,7 +4259,7 @@ namespace MiniCAD
             if (m_previewBounds.Min.x <= m_previewBounds.Max.x)
                 vs.SceneBounds.Expand(m_previewBounds);   // 节点图预览也不能被深度范围裁掉
         }
-        vs.Glyphs          = m_glyphInstances;
+        vs.Glyphs          = m_glyphSorted;
         vs.GlyphBatches    = m_glyphBatches;
         vs.GlyphMeshes     = m_glyphLibrary.View();
         vs.SceneGlyphVersion = m_sceneGlyphVersion;

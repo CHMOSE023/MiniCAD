@@ -34,6 +34,7 @@ namespace MiniCAD
         virtual bool IsCached(uint32_t slot, uint64_t version, bool textured) const override;
         virtual bool SupportsCachedAppend() const override { return true; }
         virtual bool AppendCached(uint32_t slot, uint64_t baseVersion, uint64_t version, std::span<const Vertex_P3_C4> verts) override;
+        virtual bool WriteCached(uint32_t slot, uint64_t baseVersion, size_t offset, std::span<const Vertex_P3_C4> verts) override;
         virtual void SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
                                         std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
                                         const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) override;
@@ -73,6 +74,8 @@ namespace MiniCAD
         CachedVB* EnsureCachedVB(std::unordered_map<uint32_t, CachedVB>& cache,
                                  uint32_t slot, uint64_t version,
                                  const void* data, size_t vertCount, size_t vertSize);
+        // 把缓存换成容量 capacity 的 DEFAULT 缓冲（能 UpdateSubresource），GPU 内复制旧内容；失败返回 false、缓存不变
+        bool MakeDefaultVB(CachedVB& cb, size_t capacity, size_t vertSize);
 
     private:
         ID3D11Device*        m_device  = nullptr;

@@ -144,9 +144,22 @@ namespace MiniCAD
         // 接不上（后端没有那个版本、显存不够）这一帧按基础版本画旧内容；SceneUploaded 随之为假，
         // 应用层请编辑器下一帧全量重新拼接
         uint64_t sceneVersion = viewState.SceneVersion;
-        if (viewState.SceneAppendActive)
+        if (viewState.SceneAppendActive && !renderer.IsCached(kSlotScene, viewState.SceneVersion, false))
         {
-            const bool appended =
+            // 先原地改写（修改 / 删除的实体那一段），再追加、升级版本
+            bool ok = true;
+            for (const ViewState::ScenePatch& p : viewState.ScenePatches)
+            {
+                const uint32_t slot = p.Stream == 0 ? kSlotScene : p.Stream == 1 ? kSlotSceneFill : kSlotScenePoint;
+                const auto&    src  = p.Stream == 0 ? viewState.ScenePatchLines : p.Stream == 1 ? viewState.ScenePatchFills : viewState.ScenePatchPoints;
+                if (p.First + p.Count > src.size() ||
+                    !renderer.WriteCached(slot, viewState.SceneAppendBase, p.Offset, src.subspan(p.First, p.Count)))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            const bool appended = ok &&
                 renderer.AppendCached(kSlotScene,      viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppend) &&
                 renderer.AppendCached(kSlotSceneFill,  viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppendFill) &&
                 renderer.AppendCached(kSlotScenePoint, viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppendPoints);

@@ -109,6 +109,14 @@ namespace MiniCAD
             (void)slot; (void)baseVersion; (void)version; (void)verts;
             return false;
         }
+        // 原地覆盖 (slot, baseVersion) 缓冲里从 offset 起的 verts.size() 个顶点，版本不变：修改 / 删除一个实体时调用方
+        // 只重写它那一段（删除写成透明的退化图元），再经 AppendCached 升级版本。越界或没有 baseVersion 的缓冲返回 false。
+        // 与 AppendCached 一起支持（SupportsCachedAppend 为真时两者都可用）
+        virtual bool WriteCached(uint32_t slot, uint64_t baseVersion, size_t offset, std::span<const Vertex_P3_C4> verts)
+        {
+            (void)slot; (void)baseVersion; (void)offset; (void)verts;
+            return false;
+        }
 
         // ── 离屏缓存层（可选能力）────────────────────────────────────────
         // Viewport 把不常变化的内容（网格、坐标轴、场景）画进缓存层，之后每帧
