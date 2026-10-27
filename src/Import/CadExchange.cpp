@@ -33,6 +33,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Entity/ShapeEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -1777,6 +1778,29 @@ namespace MiniCAD
 
                 if (auto* e = dynamic_cast<const Dwg::Point*>(&src))
                     return Make<PointEntity>(src, &e->Normal, ToPoint(e->Location));
+
+                // SHAPE（AutoCAD 的形）。
+                //
+                // 此前落到 Skip()（日志「不支持的实体 SHAPE × N 已跳过」），
+                // 图上一个形都看不到。
+                //
+                // 形的几何来自 SHX 形文件里的字形，而形名（DXF 组码 2）是字符串、
+                // 形号在 DWG 里是独立位流字段。MiniDWG 的 Shape 类只建模了插入点、
+                // 尺寸、旋转、缩放、倾斜、厚度，没有形号/形名字段（Model.g.h 由
+                // 已归档的生成器产出，不能手改），所以这里拿不到"具体是哪个形"。
+                //
+                // 实测 sample_AC1032.dwg 里那个 SHAPE 的形名是 MY-SHAPE，
+                // 本地所有 SHX 字体里都没有它 —— 即便拿到形名也画不出图形。
+                // 因此按占位标记还原：画出尺寸范围内的方框 + 对角线，让用户知道
+                // 这里有个形，而不是让它凭空消失（与 IMAGE 找不到文件时的做法一致）。
+                if (auto* e = dynamic_cast<const Dwg::Shape*>(&src))
+                {
+                    // 形名/形号拿不到（MiniDWG 的 Shape 类没建模这两个字段），
+                    // 名字留空 ⇒ 渲染时画占位标记。
+                    return Make<ShapeEntity>(src, &e->Normal,
+                        ToPoint(e->InsertionPoint), std::string{}, e->Size,
+                        e->Rotation, e->RelativeXScale, e->ObliqueAngle, e->Thickness);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::LwPolyline*>(&src))
                     return ConvertLwPolyline(*e);
@@ -4119,6 +4143,21 @@ namespace MiniCAD
                     auto d = std::make_unique<Dwg::Point>();
                     d->Location = ToXYZ(s->GetPoint().Position);
                     d->Normal   = NormalOf(e);
+                    return Finish(e, std::move(d));
+                }
+                // SHAPE：几何字段全部写回（形名/形号在 MiniDWG 的 Shape 类里没有
+                // 建模位置，导入时也不携带，这里写空 ⇒ 另存后是一个"无形名"的形，
+                // 外观与导入时一致，不会多出/少掉实体）。
+                if (auto* s = dynamic_cast<const ShapeEntity*>(&e))
+                {
+                    auto d = std::make_unique<Dwg::Shape>();
+                    d->InsertionPoint  = ToXYZ(s->GetInsertion());
+                    d->Size            = s->GetSize();
+                    d->Rotation        = s->GetRotation();
+                    d->RelativeXScale  = s->GetRelativeXScale();
+                    d->ObliqueAngle    = s->GetObliqueAngle();
+                    d->Thickness       = s->GetThickness();
+                    d->Normal          = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
                 if (auto* s = dynamic_cast<const WipeoutEntity*>(&e))   // 派生自 PolylineEntity，须先判断

@@ -5,6 +5,7 @@
 
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/PointEntity.hpp"
+#include "Core/Entity/ShapeEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/EllipseEntity.hpp"
@@ -176,6 +177,48 @@ namespace MiniCAD::EntityIO
             Point3 p;
             Ser::Value(s, "position", p);
             return std::make_unique<PointEntity>(id, p);
+        }
+
+        void WriteShape(ISerializer& s, const ShapeEntity& e)
+        {
+            Point3 ins = e.GetInsertion();
+            std::string name = e.GetName();
+            double size = e.GetSize();
+            double rot = e.GetRotation();
+            double xs = e.GetRelativeXScale();
+            double ob = e.GetObliqueAngle();
+            double th = e.GetThickness();
+            std::string font = e.GetShapeFont();
+            Ser::Value(s, "insertion", ins);
+            s.Value("name", name);
+            s.Value("size", size);
+            s.Value("rotation", rot);
+            s.Value("xScale", xs);
+            s.Value("oblique", ob);
+            s.Value("thickness", th);
+            s.Value("shapeFont", font);
+        }
+        std::unique_ptr<Entity> ReadShape(ISerializer& s, Object::ObjectID id)
+        {
+            Point3 ins;
+            std::string name;
+            double size = 1.0, rot = 0.0, xs = 1.0, ob = 0.0, th = 0.0;
+            std::string font;
+            Ser::Value(s, "insertion", ins);
+            s.Value("name", name);
+            s.Value("size", size);
+            s.Value("rotation", rot);
+            s.Value("xScale", xs);
+            s.Value("oblique", ob);
+            s.Value("thickness", th);
+            s.Value("shapeFont", font);
+            auto e = std::make_unique<ShapeEntity>(id, ins, name, size);
+            e->SetRotation(rot);
+            e->SetRelativeXScale(xs);
+            e->SetObliqueAngle(ob);
+            e->SetThickness(th);
+            e->SetShapeFont(font);
+            return e;
         }
 
         void WriteCircle(ISerializer& s, const CircleEntity& e)
@@ -1260,6 +1303,7 @@ namespace MiniCAD::EntityIO
             { "Face3DEntity", &WriteThunk<Face3DEntity, &WriteFace3D>, &ReadFace3D },
             { "LineEntity",      &WriteThunk<LineEntity, &WriteLine>,           &ReadLine      },
             { "PointEntity",     &WriteThunk<PointEntity, &WritePoint>,         &ReadPoint     },
+            { "ShapeEntity",     &WriteThunk<ShapeEntity, &WriteShape>,         &ReadShape     },
             { "CircleEntity",    &WriteThunk<CircleEntity, &WriteCircle>,       &ReadCircle    },
             { "ArcEntity",       &WriteThunk<ArcEntity, &WriteArc>,             &ReadArc       },
             { "EllipseEntity",   &WriteThunk<EllipseEntity, &WriteEllipse>,     &ReadEllipse   },

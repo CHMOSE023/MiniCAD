@@ -313,6 +313,21 @@ namespace MiniDWG::DwgWrite
             m.WriteBitExtrusion(point->Normal);
             m.WriteBitDouble(point->Rotation);
         }
+        else if (const auto* shape = dynamic_cast<const Shape*>(&entity))
+        {
+            // 字段顺序必须与 DwgReadEntities 的 T::SHAPE 分支逐项一致：
+            // 插入点 / 尺寸 / 旋转 / X 缩放 / 倾斜 / 厚度 / 形号(BitShort) / 法向。
+            // 形号在模型里没有对应字段（MiniDWG 的 Shape 类未建模），写 0 ——
+            // 读端会把这个 BitShort 读掉丢弃，位流不会错位。
+            m.Write3BitDouble(shape->InsertionPoint);
+            m.WriteBitDouble(shape->Size);
+            m.WriteBitDouble(shape->Rotation);
+            m.WriteBitDouble(shape->RelativeXScale);
+            m.WriteBitDouble(shape->ObliqueAngle);
+            m.WriteBitDouble(shape->Thickness);
+            m.WriteBitShort(0);                     // 形号
+            m.WriteBitExtrusion(shape->Normal);
+        }
         else if (const auto* face = dynamic_cast<const Face3D*>(&entity))
         {
             const bool noFlags = static_cast<int>(face->Flags) == 0;

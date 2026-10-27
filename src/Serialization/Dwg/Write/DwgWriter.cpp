@@ -379,12 +379,11 @@ namespace MiniDWG::DwgWrite
         }
         if (!CanWriteRaw(entity))
             return false;
-        if (dynamic_cast<const Shape*>(&entity) != nullptr)
-        {
-            // 形号没有建模（与 DXF 写出一致）
-            NotifyOnce("entity:SHAPE", NotificationType::Info, "SHAPE 实体未写出");
-            return false;
-        }
+        // SHAPE：几何字段（插入点/尺寸/旋转/缩放/倾斜/厚度/法向）都已建模，
+        // 走通用元数据驱动写出即可。形号（DWG 位流里的一个 BitShort）没有建模，
+        // 写出时为 0 —— 与读入时不保留形号一致，往返不会丢实体。
+        // 注意**不要**再把 SHAPE 整体拒写：那样「导出后再读回」会少一个实体
+        // （实测 162 → 161）。
         if (const auto* insert = dynamic_cast<const Insert*>(&entity);
             insert != nullptr && m_db.FindAs<BlockRecord>(insert->BlockHandle) == nullptr)
         {
