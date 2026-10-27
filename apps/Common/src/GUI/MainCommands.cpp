@@ -96,11 +96,13 @@ namespace MiniCAD
                               .isChecked  = [this] { return m_startShown || !m_docManager.GetActive(); } });
         m_commands.Register({ .id = "ui.search", .label = "搜索命令(&K)",
                               .tooltip = "在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行", .shortcut = "Ctrl+K",
-                              .execute    = [this] { if (MiniGUI::Ribbon* r = m_layout->GetRibbon()) r->FocusSearch(); },
+                              .execute    = [this] { if (MiniGUI::Ribbon* r = CurrentRibbon()) r->FocusSearch(); },
                               .canExecute = [this]
                               {
-                                  const MiniGUI::Ribbon* r = m_layout->GetRibbon();
-                                  return r && r->GetSearchBox() && m_docManager.GetActive() && !m_startShown;    // 起始页显示时功能区是隐藏的
+                                  // 用户正在用的那个窗口的功能区；主窗口显示起始页时它的功能区是隐藏的
+                                  const MiniGUI::Ribbon* r = CurrentRibbon();
+                                  const bool inMain = r == m_layout->GetRibbon();
+                                  return r && r->GetSearchBox() && m_docManager.GetActive() && !(inMain && m_startShown);
                               } });
         // 「最近打开」的内容由 BuildRecentMenuItems() 在打开菜单时生成，这两条供命令行 / 快捷键直接调用
         m_commands.Register({ .id = "file.recent.clear", .label = "清除最近打开记录(&C)",

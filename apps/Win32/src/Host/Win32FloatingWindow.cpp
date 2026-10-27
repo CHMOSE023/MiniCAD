@@ -28,7 +28,7 @@ namespace MiniCAD
     }
 
     Win32FloatingWindow::Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document)
-        : m_owner(owner)
+        : m_owner(owner), m_document(document)
     {
         HINSTANCE hInstance = GetModuleHandleW(nullptr);
         static bool s_registered = false;
@@ -280,9 +280,9 @@ m_ui->Render();
         case WM_ERASEBKGND:
             return 1;
 
-        // 这个窗口里没处理的按键：交给主窗口（全局快捷键、绘图区的按键）
+        // 停靠面板里没处理的按键：交给主窗口（全局快捷键、绘图区的按键）；文档窗口有自己的快捷键，交给系统（Alt+F4 等）
         case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP: case WM_CHAR: case WM_SYSCHAR:
-            if (m_owner.ForwardKeyMessage(msg, wParam, lParam, result))
+            if (!m_document && m_owner.ForwardKeyMessage(msg, wParam, lParam, result))
                 return result;
             return DefWindowProcW(hwnd, msg, wParam, lParam);
 

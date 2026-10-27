@@ -3176,6 +3176,59 @@ namespace MiniCAD
                 sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx, fcy);
                 sendF(WM_LBUTTONUP, 0, fcx, fcy);
                 check(edB.GetSelection().size() == 1 && m_docManager.GetEditor(*docA).GetSelection().empty(), "在文档窗口里点选：选中 B 里的线");
+
+                // 文档窗口有自己的标题栏工具、功能区与图层下拉框（界面描述的 layouts.document），快捷键登记在它自己的界面上
+                {
+                    MiniGUI::UIContext* fui = &dw->window->GetUI();
+                    const MiniGUI::Ribbon* rb = dw->layout->GetRibbon();
+                    check(rb && rb->GetContext() == fui && rb->IsVisible() && dw->layout->GetMenuBar() && dw->layout->GetMenuBar()->GetContext() == fui &&
+                          dw->layout->GetToolBar("quick") && dw->titleBar == dw->layout->GetTitleBar() && dw->tabs->GetParent() &&
+                          dw->layerBar && dw->layerBar->GetContext() == fui && rb != m_layout->GetRibbon(),
+                          "文档窗口有自己的“文件”菜单、快速访问、功能区与图层下拉框");
+                    docB->GetLayerManager().AddLayer("多窗口阶段3");
+                    m_commands.NotifyStateChanged();
+                    check(dw->layerBar->GetItems().size() == SortedLayerIds(*docB).size() &&
+                          m_layerBarLayer->GetItems().size() == SortedLayerIds(*docA).size() &&
+                          dw->layerBar->GetItems().size() != m_layerBarLayer->GetItems().size(),
+                          "各窗口的图层下拉框显示自己窗口里文档的图层（B 多一个，主窗口的显示 A 的）");
+
+                    const auto keepSel = edB.GetSelection();
+                    fui->KeyDown(MiniGUI::Key::A, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                    fui->KeyUp(MiniGUI::Key::A, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                    check(edB.GetSelection().size() == docB->GetScene().EntityCount() && m_docManager.GetEditor(*docA).GetSelection().empty(),
+                          "文档窗口的快捷键（Ctrl+A）在它自己的界面上触发，作用于 B");
+                    edB.SetSelection({ keepSel.begin(), keepSel.end() });
+
+                    // 点主窗口的功能区：主窗口的 A 成为当前文档；再点文档窗口的功能区：B
+                    const MiniGUI::Rect mr = m_layout->GetRibbon()->GetScreenBounds();
+                    const int rx = static_cast<int>(std::lround((mr.max.x - 3.0f) * m_dpiScale)), ry = static_cast<int>(std::lround((mr.max.y - 3.0f) * m_dpiScale));
+                    send(WM_MOUSEMOVE, 0, rx, ry);
+                    send(WM_LBUTTONDOWN, MK_LBUTTON, rx, ry);
+                    send(WM_LBUTTONUP, 0, rx, ry);
+                    const bool mainActive = m_docManager.GetActive() == docA;
+                    const MiniGUI::Rect fr = rb->GetScreenBounds();
+                    const int frx = static_cast<int>(std::lround((fr.max.x - 3.0f) * fs)), fry = static_cast<int>(std::lround((fr.max.y - 3.0f) * fs));
+                    sendF(WM_MOUSEMOVE, 0, frx, fry);
+                    sendF(WM_LBUTTONDOWN, MK_LBUTTON, frx, fry);
+                    sendF(WM_LBUTTONUP, 0, frx, fry);
+                    check(mainActive && m_docManager.GetActive() == docB, "点哪个窗口的功能区，哪个窗口的文档成为当前文档（命令随后作用于它）");
+
+                    // 重新加载界面描述、切换主题：文档窗口一起
+                    const MiniGUI::TitleBar* oldBar = dw->titleBar;
+                    ReloadUi();
+                    RenderFrame();
+                    paintF();
+                    check(dw->titleBar && dw->titleBar != oldBar && dw->titleBar->GetContext() == fui && dw->tabs->GetContext() == fui &&
+                          dw->layout->GetRibbon() && dw->layerBar->GetContext() == fui && dw->host->GetContext() == fui,
+                          "重新加载界面描述：文档窗口按 layouts.document 一起重建，标签条、视口、图层下拉框还是原来的");
+                    const bool dark = m_ui->GetTheme().IsDark();
+                    m_commands.Execute("ui.theme");
+                    const bool themed = fui->GetTheme().IsDark() == m_ui->GetTheme().IsDark() && m_ui->GetTheme().IsDark() != dark;
+                    m_commands.Execute("ui.theme");
+                    check(themed && fui->GetTheme().IsDark() == dark, "切换主题：文档窗口跟着换");
+                    RenderFrame();
+                    paintF();
+                }
                 paintF();
                 RenderFrame();
                 {
@@ -3191,8 +3244,9 @@ namespace MiniCAD
                         SaveBmp(px, std::filesystem::temp_directory_path() / "minicad_selftest_docwindow.bmp");
                     const ViewportPixels ui = CaptureWindow(fw);
                     SaveBmp(ui, std::filesystem::temp_directory_path() / "minicad_selftest_docwindow_ui.bmp");
-                    // 视口的空白处（左上角）是窗口底色，与主窗口的绘图区相同，而不是浮动面板的面板色
-                    const int bx = static_cast<int>((hb.min.x + 20.0f) * fs), by = static_cast<int>((hb.min.y + 20.0f) * fs);
+                    // 视口的空白处（功能区下面、文档区的左上角）是窗口底色，与主窗口的绘图区相同，而不是浮动面板的面板色
+                    const MiniGUI::Rect ab = dw->chrome.area->GetScreenBounds();
+                    const int bx = static_cast<int>((ab.min.x + 20.0f) * fs), by = static_cast<int>((ab.min.y + 20.0f) * fs);
                     const MiniGUI::Color32 bg = m_ui->GetTheme().Get(MiniGUI::ThemeColor::Background);
                     bool bgOk = ui.Inside(bx, by);
                     for (int c = 0; bgOk && c < 3; ++c)     // Color32 低字节为 R

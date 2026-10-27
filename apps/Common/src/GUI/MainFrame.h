@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -45,6 +46,7 @@ namespace MiniGUI
     class Button;
     class Dialog;
     class Popup;
+    class Ribbon;
     class ThemeColors;
 }
 
@@ -133,7 +135,9 @@ namespace MiniCAD
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
-        std::unique_ptr<MiniGUI::Node> CreateLayerBar();          // 工具栏里的图层 / 线型 / 线宽下拉框
+        // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 bindings
+        std::unique_ptr<MiniGUI::Node> CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> doc,
+                                                      MiniGUI::ComboBox** layerOut = nullptr);
         std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
         std::unique_ptr<MiniGUI::Node> CreateSaveProgress();      // 状态栏里的保存进度（同读取进度的样式），只在保存时显示
         std::unique_ptr<MiniGUI::Node> CreateCommandLine(ViewChrome& c);  // 命令行（CommandLine.cpp）
@@ -199,9 +203,11 @@ namespace MiniCAD
             std::optional<double> lineTypeScale;
             std::vector<CommonProperty> properties;
         };
-        const SelectionSummary& SelectionInfo();
+        const SelectionSummary& SelectionInfo() { return SelectionInfo(m_docManager.GetActive()); }
+        const SelectionSummary& SelectionInfo(Document* doc);     // 某个文档的（各窗口的图层下拉框显示各自文档的选择）
 
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
+        std::unique_ptr<MiniGUI::Node> CreateUiHost();            // 主窗口里界面描述生成的内容放在这里
         void ReloadUi();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
@@ -277,6 +283,8 @@ namespace MiniCAD
             MiniGUI::TabView*        layoutTabs    = nullptr;   // 布局标签条（模型 / 图纸空间布局）
             MiniGUI::Node*           layoutTabsBar = nullptr;   // 布局标签条的外层容器（隐藏整行用）
             bool                     syncingLayouts = false;    // 正在程序化同步标签，忽略回调
+            bool                     navFits       = true;      // 绘图区够高、放得下导航条（不压住命令行），见 SyncViewCube
+            float                    navHeight     = 0.0f;      // 导航条上次布局的高度
             double                   cubeAzimuth   = 0.0;       // 视图方块上次绘制时的视线方向
             double                   cubeElevation = 0.0;
         };
@@ -304,14 +312,19 @@ namespace MiniCAD
         {
             PaneId                           pane   = DocumentManager::kNoPane;   // 它的窗格（销毁后为 kNoPane）
             std::unique_ptr<IFloatingWindow> window;
-            MiniGUI::TitleBar*               titleBar = nullptr;   // 文档标签 + 最小化 / 最大化 / 关闭；空白处拖动交给系统
+            std::unique_ptr<MiniGUI::UiLayout> layout;             // 按界面描述的 layouts.document 生成它的界面（命令表与主窗口共用）
+            std::unique_ptr<MiniGUI::BindingSet> bindings;         // 它的图层 / 线型 / 线宽下拉框
+            MiniGUI::Node*                   uiHost = nullptr;     // 界面描述生成的内容放在这里
+            MiniGUI::TitleBar*               titleBar = nullptr;   // 界面描述生成的标题栏（重新加载后换新的）；空白处拖动交给系统
             MiniGUI::TabView*                tabs   = nullptr;     // 标题栏里的文档标签条
+            MiniGUI::ComboBox*               layerBar = nullptr;   // 功能区里的图层下拉框（自测用）
             MiniGUI::ViewportHost*           host   = nullptr;     // 显示它的视口纹理
             ViewChrome                       chrome;               // 它自己的视图方块、导航条、命令行、状态栏
             std::unique_ptr<IRenderTarget>   target;               // 它的视口渲染目标
             void*                            srv    = nullptr;     // 登记过的着色器资源
             MiniGUI::TextureId               tex    = MiniGUI::InvalidTextureId;
             ViewInput                        input;
+            bool                             active = false;       // 窗口是激活的（标题栏按活动样式画）
             MiniGUI::Vec2                    grab, size;           // 拖标题栏：按下点相对窗口左上角的位置、窗口尺寸（主窗口坐标）
         };
         // 文档移到新的独立窗口（标题栏落在 windowPos 下，主窗口坐标）：从哪个窗口来都行，它所在窗口只有它一个时不做什么；
@@ -350,6 +363,8 @@ namespace MiniCAD
         void       RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host);
         void       RequestRenderAll();                                       // 主视口与所有文档窗口都重绘
         void       SetDocWindowsTheme(const MiniGUI::ThemeColors& theme);
+        void       ApplyDocWindowUi(DocWindow& w);                           // 按界面描述文件（重新）生成文档窗口的界面
+        MiniGUI::Ribbon* CurrentRibbon() const;                              // 用户正在用的窗口（新文档会放进的那个）的功能区
         void       SyncViewCube();                                           // 主窗口的视图方块跟着主视口里文档的视线方向
     public:
         size_t     DocWindowCount() const { return m_docWindows.size(); }    // 自测用
@@ -414,7 +429,8 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::UiLayout>     m_layout;
         MiniGUI::BindingSet                    m_bindings;
         std::function<void()>                  m_syncGeometryRows;     // 特性面板「几何」组：按选择集重新分配行
-        SelectionSummary                       m_selectionSummary;     // 见 SelectionInfo
+        std::array<SelectionSummary, 4>        m_selectionCache;       // 见 SelectionInfo：每个窗口的文档各缓存一份
+        size_t                                 m_selectionNext = 0;
         MiniGUI::Node*                         m_uiHost     = nullptr;   // 界面描述生成的内容放在这里
         std::string                            m_uiPath;                 // 界面描述文件（UTF-8）
         int64_t                                m_uiWriteTime = 0;

@@ -63,6 +63,7 @@ namespace MiniCAD
 
         PaneId    CreatePane(float width, float height);     // 新的空窗格（像素尺寸；显示开关同主视口）；主视口还没建时 kNoPane
         bool      HasPane(PaneId pane) const;
+        bool      Contains(const Document* doc) const;    // 文档还开着（界面里保存的指针可能已关闭）
         Viewport* GetPaneViewport(PaneId pane);
         PaneId    PaneOf(const Document* doc) const;         // 文档所在的窗格；文档不存在时 kNoPane
         Document* GetShownDocument(PaneId pane) const;       // 窗格当前显示的文档（窗格空着或不存在时 nullptr）
@@ -160,7 +161,6 @@ namespace MiniCAD
         Editor& EnsureEditor(Document& doc, const Editor& proto);
         void    SyncCamera(Document* doc);      // 把文档所在视口的相机回写到文档（存盘前；只对各窗格显示的文档有意义）
         void    SyncLiveCameras();              // 各窗格显示的文档
-        bool    Contains(const Document* doc) const;
         void    ShowInPane(PaneId pane, Document* doc);   // 窗格改显示 doc（保存换下去的文档的相机，恢复 doc 的）
         void    ClearShown(PaneId pane);                  // 窗格不显示任何文档（不保存相机：调用方已处理）
         void    RefillPane(PaneId pane);                  // 窗格空着时显示剩下的文档里最后打开的；没有剩下的（不是主窗格）就删掉

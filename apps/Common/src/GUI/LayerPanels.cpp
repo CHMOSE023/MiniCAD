@@ -541,15 +541,18 @@ namespace MiniCAD
 
     // =========================================================
     // 工具栏里的 图层 / 线型 / 线宽 下拉框（仿 AutoCAD 特性工具栏）：
-    // 没有选择时显示并设置当前值（作用于新建对象）；有选择时显示选中对象的值（不同时为"*多种*"），选择即修改选中对象
+    // 没有选择时显示并设置当前值（作用于新建对象）；有选择时显示选中对象的值（不同时为"*多种*"），选择即修改选中对象。
+    // 每个窗口的功能区各有一份，显示、修改的是那个窗口里显示的文档
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerBar()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> windowDoc,
+                                                             MiniGUI::ComboBox** layerOut)
     {
         using namespace MiniGUI;
         DocumentManager& dm = m_docManager;
-        auto doc = [&dm]() -> Document* { return dm.GetActive(); };
-        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取当前文档的
-        auto editor = [&dm]() -> Editor& { return dm.GetEditor(); };
+        // 这个窗口显示的文档（已关闭的当作没有）
+        auto doc = [&dm, windowDoc]() -> Document* { Document* d = windowDoc(); return d && dm.Contains(d) ? d : nullptr; };
+        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取这个窗口的文档的（调用前已确认有文档）
+        auto editor = [&dm, doc]() -> Editor& { return dm.GetEditor(*doc()); };
         auto hasSelection = [editor, doc] { return doc() && !editor().GetSelection().empty(); };
 
         // 两行：上面图层，下面线型 + 线宽（放在功能区“图层”组里，高度与功能区按钮相同）
@@ -584,7 +587,8 @@ namespace MiniCAD
 
         // ── 图层 ─────────────────────────────────────────────────
         auto* layer = rows[0]->AddChild<ComboBox>();
-        m_layerBarLayer = layer;
+        if (layerOut)
+            *layerOut = layer;
         styleCombo(layer, 244.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
         layer->SetDropDownWidth(230.0f);
         layer->SetItemPainter([this, layer, doc](DrawList& dl, const Rect& box, int index, bool)
@@ -597,7 +601,7 @@ namespace MiniCAD
                 if (const Layer* l = d->GetLayerManager().GetLayer(ids[static_cast<size_t>(index)]))
                     DrawLayerRow(layer->GetContext(), dl, box, *l);
         });
-        m_bindings.BindChoice(layer,
+        bindings.BindChoice(layer,
             [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
@@ -609,7 +613,7 @@ namespace MiniCAD
                     return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
                 };
                 if (hasSelection())
-                    return SelectionInfo().layer;
+                    return SelectionInfo(d).layer;
                 return indexOf(d->GetLayerManager().GetActiveLayerID());
             },
             [doc, editor, hasSelection](const int& i)
@@ -646,13 +650,13 @@ namespace MiniCAD
             if (index >= 0 && index < static_cast<int>(recs.size()))
                 DrawLinetype(linetype->GetContext(), dl, box, recs[static_cast<size_t>(index)]);
         });
-        m_bindings.BindChoice(linetype,
+        bindings.BindChoice(linetype,
             [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
                 if (hasSelection())
-                    return SelectionInfo().lineType;
+                    return SelectionInfo(d).lineType;
                 return static_cast<int>(d->GetScene().GetCurrentLineType());
             },
             [doc, editor, hasSelection](const int& i)
@@ -684,7 +688,7 @@ namespace MiniCAD
             if (index >= 0 && index < static_cast<int>(std::size(kLineweightItems)))
                 DrawLineweight(lineweight->GetContext(), dl, box, kLineweightItems[index].lw);
         });
-        m_bindings.BindChoice(lineweight,
+        bindings.BindChoice(lineweight,
             [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
@@ -697,7 +701,7 @@ namespace MiniCAD
                     return -1;
                 };
                 if (hasSelection())
-                    return SelectionInfo().lineweight;
+                    return SelectionInfo(d).lineweight;
                 return indexOf(d->GetScene().GetCurrentLineweight());
             },
             [doc, editor, hasSelection](const int& i)

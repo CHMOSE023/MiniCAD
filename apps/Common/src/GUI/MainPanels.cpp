@@ -40,7 +40,7 @@ namespace MiniCAD
         namespace Theme = MiniGUI::Theme;
 
         // 在自己或任何子节点上按下时先回调（捕获阶段，早于按钮的点击）：主窗口的视图方块、导航条、命令行、状态栏
-        // 据此让主视口里的文档成为当前文档，按钮的命令随后就作用于它（文档窗口由 FloatingPanel::SetOnActivate 做同样的事）
+        // 据此让主视口里的文档成为当前文档，按钮的命令随后就作用于它（文档窗口由它的根节点 DocWindowRoot 做同样的事）
         template <class Base>
         class PressHook : public Base
         {
@@ -61,6 +61,24 @@ namespace MiniCAD
 
         private:
             std::function<void()> m_onPress;
+        };
+
+        // 主窗口里界面描述生成的内容放在这里：按下时先回调按下的位置（捕获阶段，早于按钮的点击）
+        class MainUiHost : public MiniGUI::Panel
+        {
+        public:
+            explicit MainUiHost(std::function<void(MiniGUI::Vec2)> onPress) : Panel(Theme::Background), m_onPress(std::move(onPress)) {}
+
+        protected:
+            void OnPointerEvent(MiniGUI::PointerEvent& e) override
+            {
+                if (e.phase == MiniGUI::EventPhase::Capture && e.type == MiniGUI::PointerEventType::Down && m_onPress)
+                    m_onPress(e.position);
+                Panel::OnPointerEvent(e);
+            }
+
+        private:
+            std::function<void(MiniGUI::Vec2)> m_onPress;
         };
 
         std::filesystem::path ToPath(const std::string& utf8)
@@ -150,16 +168,29 @@ namespace MiniCAD
         }
     }
 
-    const MainFrame::SelectionSummary& MainFrame::SelectionInfo()
+    const MainFrame::SelectionSummary& MainFrame::SelectionInfo(Document* doc)
     {
-        Document* doc    = m_docManager.GetActive();
-        Editor&   editor = m_docManager.GetEditor();
+        // 文档已关闭（SyncDocuments 之前）：当作没有文档
+        if (doc && !m_docManager.Contains(doc))
+            doc = nullptr;
+        Editor&   editor = doc ? m_docManager.GetEditor(*doc) : m_docManager.GetEditor();
         const uint64_t sv = editor.GetSelectionVersion();
         const uint64_t gv = doc ? doc->GetScene().GeometryVersion() : 0;
         const uint64_t dv = doc ? doc->GetScene().DisplayVersion()  : 0;
-        SelectionSummary& s = m_selectionSummary;
-        if (s.valid && s.doc == doc && s.selVersion == sv && s.sceneVersion == gv && s.displayVersion == dv)
-            return s;
+        // 每个窗口的下拉框各看各的文档：按文档各缓存一份，轮流替换最早的
+        for (SelectionSummary& c : m_selectionCache)
+            if (c.valid && c.doc == doc && c.selVersion == sv && c.sceneVersion == gv && c.displayVersion == dv)
+                return c;
+        SelectionSummary* slot = nullptr;
+        for (SelectionSummary& c : m_selectionCache)
+            if (c.valid && c.doc == doc)
+                slot = &c;              // 同一文档的旧版本：就地更新
+        if (!slot)
+        {
+            slot = &m_selectionCache[m_selectionNext];
+            m_selectionNext = (m_selectionNext + 1) % m_selectionCache.size();
+        }
+        SelectionSummary& s = *slot;
 
         s = SelectionSummary{};
         s.valid = true;
@@ -802,6 +833,22 @@ namespace MiniCAD
     // =========================================================
     // 界面描述文件：加载、监视
     // =========================================================
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateUiHost()
+    {
+        // 在主窗口的标题栏、功能区上按下：主窗口里的文档成为当前文档，功能区、快速访问的命令随后作用于它
+        //（每个窗口有自己的功能区，作用于自己的文档）。停靠面板（特性、图层、节点）跟着当前文档，按在上面不切换
+        return std::make_unique<MainUiHost>([this](MiniGUI::Vec2 p)
+        {
+            if (m_docWindows.empty())
+                return;
+            const MiniGUI::TitleBar* bar    = m_layout->GetTitleBar();
+            const MiniGUI::Ribbon*   ribbon = m_layout->GetRibbon();
+            if ((bar && bar->IsVisible() && bar->GetScreenBounds().Contains(p)) ||
+                (ribbon && ribbon->IsVisible() && ribbon->GetScreenBounds().Contains(p)))
+                UseChrome(m_main);
+        });
+    }
+
     void MainFrame::ReloadUi()
     {
         using namespace MiniGUI;
@@ -870,6 +917,10 @@ namespace MiniCAD
             LoadUserLayout();
         if (DockSpace* dock = m_layout->GetDock("main"))
             dock->SetOnLayoutChanged([this] { SaveUserLayout(); });
+
+        // 文档窗口按同一个文件里的 layouts.document 一起重建（文件写错时各自保留当前界面）
+        for (auto& w : m_docWindows)
+            ApplyDocWindowUi(*w);
 
         m_ui->Update();
         if (hadFocus && m_viewport->GetParent() && m_viewport->IsVisible())
@@ -961,7 +1012,7 @@ namespace MiniCAD
         if (c.cube)
             c.cube->SetVisible(m_viewCubeVisible && doc && !doc->ActiveLayoutIsPaper());
         if (c.navBar)
-            c.navBar->SetVisible(doc != nullptr);
+            c.navBar->SetVisible(doc != nullptr && c.navFits);
         if (c.cmdCard)
             c.cmdCard->SetVisible(m_commandLineVisible && doc);
     }

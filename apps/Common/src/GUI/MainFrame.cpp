@@ -254,6 +254,8 @@ m_floatHost.reset();
             if (m_syncGeometryRows)
                 m_syncGeometryRows();
             m_bindings.Refresh();
+            for (auto& w : m_docWindows)
+                w->bindings->Refresh();
             RequestRenderAll();
         });
 
@@ -273,7 +275,7 @@ m_floatHost.reset();
         m_layout->RegisterPanel("appbar",     CreateAppBar());
         m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
         m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
-        m_layout->RegisterPanel("layerbar",   CreateLayerBar());
+        m_layout->RegisterPanel("layerbar",   CreateLayerBar(m_bindings, [this] { return DocOf(m_main); }, &m_layerBarLayer));
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
         m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
         m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
@@ -284,7 +286,7 @@ m_floatHost.reset();
         RefreshStartPage();
         m_layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
 
-        m_uiHost = m_ui->GetRoot()->AddChild<MiniGUI::Panel>(Theme::Background);
+        m_uiHost = m_ui->GetRoot()->AddChild(CreateUiHost());
         if (m_uiPath.empty())
         {
 #ifdef MINICAD_UI_SOURCE
@@ -1355,6 +1357,21 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
 
     void MainFrame::SyncViewCube(ViewChrome& c)
     {
+        // 导航条在视图方块下面的固定位置：窗口太矮（文档窗口上面还有功能区）放不下时藏起来，免得压住底部的命令行
+        if (c.navBar && c.area)
+        {
+            const MiniGUI::Node* bar = c.navBar->GetChildren().empty() ? nullptr : c.navBar->GetChildren().front().get();
+            if (c.navBar->IsVisible() && bar && bar->GetSize().y > 0.0f)
+                c.navHeight = bar->GetSize().y;
+            const float areaH  = c.area->GetSize().y;
+            const float bottom = c.cmdCard && c.cmdCard->IsVisible() ? c.cmdCard->GetSize().y + 12.0f : 6.0f;
+            const bool  fits   = areaH <= 0.0f || c.navHeight <= 0.0f || c.navBar->GetLayoutStyle().top + c.navHeight + bottom <= areaH;
+            if (fits != c.navFits)
+            {
+                c.navFits = fits;
+                UpdateChromeVisibility(c);
+            }
+        }
         // 视图方块跟着这个窗口里文档的视线方向（环绕、标准视图、切换文档）
         Viewport* vp = m_docManager.ViewportOf(DocOf(c));
         if (!c.cube || !vp)

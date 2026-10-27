@@ -23,6 +23,8 @@ namespace MiniGUI
 
     bool ShortcutTable::Process(Key key, uint8_t modifiers, bool repeat, bool textInputActive)
     {
+        if (m_gate && !m_gate())
+            return false;
         for (const Entry& e : m_entries)
         {
             if (e.key != key || e.modifiers != modifiers)

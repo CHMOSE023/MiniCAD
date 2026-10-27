@@ -44,6 +44,7 @@ namespace MiniGUI
     //   titlebar（无边框窗口的标题栏：最小化 / 最大化 / 关闭按钮执行 window.minimize / window.maximize / window.close；
     //   "children" 放在图标右侧，通常是 menubar；"icon" 为图标文件，"title" 为初始标题，宿主可用 GetTitleBar 修改）、
     //   dock（停靠区："root" 为 DockSpace 的布局格式，"panels" 列出布局里没有、但可以由宿主随时显示的面板；"id" 用于 GetDock）
+    // - layouts：另外几段命名的布局（例如程序的第二种窗口），格式同 layout；宿主用 SetLayoutName 选用其中一段
     // - 通用布局属性：width、height、minWidth、maxWidth、minHeight、maxHeight、grow、shrink、gap、
     //   padding（数字、[水平, 竖直] 或 [左, 上, 右, 下]）、align（start/center/end/stretch）、
     //   justify（start/center/end/space-between）、background（主题颜色名如 "Panel"，或 "#RRGGBB"）、visible
@@ -63,6 +64,10 @@ namespace MiniGUI
         // 每次打开菜单都调用 build 取当前内容（列表可能已经变了）。build 返回空列表则该项灰显。
         // 界面重建（Apply）不会清掉已注册的源——宿主只注册一次
         void SetDynamicMenuItems(const std::string& name, std::function<std::vector<MenuItem>()> build);
+
+        // 生成哪一段布局：空（默认）为顶层的 "layout"，否则为 "layouts" 里的同名一段（例如第二种窗口用的布局）。
+        // 选了命名布局时不应用 "commands"：命令表是共用的，由生成默认布局的那个 UiLayout 负责（免得互相把对方的覆盖当成默认值）
+        void SetLayoutName(std::string name) { m_layoutName = std::move(name); }
 
         // 解析并应用：清空 parent 原有内容（推迟销毁，在事件回调里调用也安全）后按描述重建。
         // JSON 语法错误时返回 false，界面保持不变
@@ -90,6 +95,7 @@ namespace MiniGUI
 
         CommandRegistry& m_commands;
         std::string      m_iconDir;
+        std::string      m_layoutName;
 
         struct PanelSlot
         {

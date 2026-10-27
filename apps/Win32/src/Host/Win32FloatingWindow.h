@@ -23,7 +23,8 @@ namespace MiniCAD
     //   - 无边框（Win32Frame：保留系统的缩放边框与阴影）。停靠面板：标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口；
     //     文档：标题区域交给系统（SetCaptionTest → Win32Frame，拖动、双击最大化、贴边），系统移动窗口时经 SetOnMoving 上报光标位置
     //   - 自己的 UIContext、Win32Input 与窗口表面（IGraphicsDevice::CreateWindowSurface），与主窗口共用设备和界面后端；
-    //     WM_PAINT 里布局、绘制、呈现；没处理的按键转给主窗口（Ctrl+S 等全局快捷键仍有效）
+    //     WM_PAINT 里布局、绘制、呈现。停靠面板里没处理的按键转给主窗口（Ctrl+S 等全局快捷键仍有效）；
+    //     文档窗口有自己的快捷键与功能区（宿主在它的 UIContext 上登记），不转
     //   - 位置用主窗口客户区的逻辑坐标（按主窗口的 DPI 换算）；创建时不在任何显示器上就挪到主窗口旁边
     class Win32FloatingWindow : public IFloatingWindow
     {
@@ -77,6 +78,7 @@ namespace MiniCAD
         std::function<void(bool, MiniGUI::Vec2, MiniGUI::Rect&)> m_onMoving;
         POINT m_moveGrab{};             // 系统移动循环开始时光标相对窗口左上角的位置（屏幕像素）
         POINT m_moveCursor{};           // 移动循环里最近一次的光标位置（系统给的窗口位置 + m_moveGrab；宿主改过窗口位置也不受影响）
+        bool  m_document = false;       // 文档窗口（见类说明）
         bool  m_moving = false;         // 这次移动循环里窗口确实移动过（只改大小时不上报）
     };
 }
