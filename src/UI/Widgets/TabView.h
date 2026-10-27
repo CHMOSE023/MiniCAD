@@ -59,7 +59,8 @@ namespace MiniGUI
         // 标题栏样式（放进无边框窗口的标题栏，SolidCraft 式）：不画标签条底色和底线，标签画成圆角块
         void SetBarStyle(bool bar) { m_barStyle = bar; Invalidate(); }
         bool IsEmptyStripAt(Vec2 local) const { int tab; return HitAt(local, tab) == Hit::None; }   // 标签条空白处（标题栏里可拖动窗口）
-        void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged = std::move(cb); }
+        Rect GetTabRect(int index) const;          // 标签的位置（局部坐标，布局之后有效；越界为空矩形）。自测用
+void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged = std::move(cb); }
         void SetOnCloseRequested(std::function<void(int)> cb)   { m_onCloseRequested = std::move(cb); }
         void SetOnNewTabRequested(std::function<void()> cb)     { m_onNewTabRequested = std::move(cb); }
         void SetOnTabMoved(std::function<void(int from, int to)> cb) { m_onTabMoved = std::move(cb); }

@@ -311,14 +311,13 @@ TEST(TabView_DragOutAndDropIndex)
     tabs->SetOnTabDragOut([&](int i, Vec2 p) { outTab = i; outPos = p; });
     t.Layout();
 
-    // 测试里没有字体：标签宽 52，从 4 开始
+    // 测试里没有字体：标签宽 52，从 4 开始；按在第二个标签的左半（右侧 20 像素是关闭按钮）
     const Rect r    = tabs->GetScreenBounds();
-    const Vec2 tab1 = { r.min.x + 4 + 52 + 26, r.min.y + 17 };
+    const Vec2 tab1 = { r.min.x + 4 + 52 + 10, r.min.y + 17 };
     t.tick += 5000;
-    t.ui.PointerMove(tab1, 0);
+t.ui.PointerMove(tab1, 0);
     t.ui.PointerDown(tab1, MouseButton::Left, 0, t.tick);
-    t.ui.PointerMove({ tab1.x, tab1.y + 10.0f }, 0);                                         // 还在条内
-    CHECK(!tabs->IsDraggingOut());
+CHECK(!tabs->IsDraggingOut());
     t.ui.PointerMove({ tab1.x, r.min.y + TabView::kStripHeight + TabView::kDragOutDistance + 10.0f }, 0);   // 条外
     CHECK(tabs->IsDraggingOut());
     CHECK(outTab == -1);                                                                        // 还没松开

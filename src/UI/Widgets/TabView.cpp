@@ -300,8 +300,15 @@ namespace MiniGUI
         return Rect{ tab.x0 - m_stripScroll, 4.0f, tab.x1 - m_stripScroll - 2.0f, kStripHeight };
     }
 
-    int TabView::DropIndexAt(Vec2 windowPos) const
+    Rect TabView::GetTabRect(int index) const
     {
+        if (index < 0 || index >= GetTabCount())
+            return {};
+        return TabRect(m_tabs[static_cast<size_t>(index)]);
+    }
+
+    int TabView::DropIndexAt(Vec2 windowPos) const
+{
         const Vec2 local = ToLocal(windowPos);
         const Vec2 size  = GetSize();
         if (local.y < -kDragOutDistance || local.y > kStripHeight + kDragOutDistance ||
