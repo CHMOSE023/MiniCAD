@@ -13,6 +13,7 @@
 #include "Core/Entity/RegionEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Document/Command/LayoutCommands.h"
+#include "Import/CadExchange.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -191,21 +192,15 @@ namespace MiniCAD
         m_dpiScale = pixelScale;
 
         m_fontSystem.Initialize();
-
-        // 字体目录必须显式设置：FontEngine 的默认值是相对路径 "fonts/"，
-        // 而相对路径是按**进程当前工作目录**解析的 —— 从资源管理器双击、
-        // 拖文件到 exe、命令行在别的目录调用时，工作目录都不是 exe 目录，
-        // 于是 fonts/ltypeshp.shx 之类的形文件根本打不开（SHXFont::LoadFont
-        // 静默失败）。线型形段（TRACKS/ZIGZAG/BATTING）因此只画出虚线、
-        // 没有符号，等到切换一次图纸、字体被重新解析时才恢复正常。
-        // 这里改成以资源目录为基准，与工作目录彻底解耦。
-        {
-            const std::string resDir = platform.GetResourceDir();
-            if (!resDir.empty())
-                m_fontSystem.GetFontEngine().SetFontDir(resDir + "/fonts/");
-        }
-
+        // CAD 字体在资源目录的 fonts/ 下：按它的完整路径找，不依赖启动时的当前目录（从别的目录、快捷方式、PATH 启动都找得到）。
+        // FontEngine 的默认值是相对路径 "fonts/"，而相对路径按**进程当前工作目录**解析 ——
+        // 从资源管理器双击、拖文件到 exe、命令行在别的目录调用时，fonts/ltypeshp.shx 之类的形文件
+        // 根本打不开（SHXFont::LoadFont 静默失败），线型形段（TRACKS/ZIGZAG/BATTING）只画出虚线没有符号。
+        if (const std::string resourceDir = platform.GetResourceDir(); !resourceDir.empty())
+            m_fontSystem.GetFontEngine().SetFontDir(resourceDir + "/fonts/");
         m_fontSystem.PreloadDefaultFonts();
+        for (const std::string& dir : platform.GetSystemFontDirs())      // 图纸引用的系统 TrueType 字体
+            m_fontSystem.GetFontEngine().AddSearchDir(dir);
 
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))
             return false;
@@ -228,6 +223,7 @@ namespace MiniCAD
             return false;
         }
         m_docManager.SetFontSystem(&m_fontSystem);     // 文字样式由各文档的文字样式表定义
+        m_docManager.SetOleRasterizer([this](const Ole::Presentation& p, uint32_t maxSide) { return m_platform->RasterizeOle(p, maxSide); });
 
         //AddDemoEntities(m_docManager.Create());
         return true;
@@ -269,17 +265,21 @@ namespace MiniCAD
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
-        m_layout->RegisterPanel("documents",  CreateDocumentArea());
+        m_layout->RegisterPanel("canvas",     CreateCanvas());
+        m_layout->RegisterPanel("documents",  CreateDocumentArea());    // 内含视图方块、导航条与浮动命令行
+        m_layout->RegisterPanel("doctabs",    CreateDocTabs());
+        m_layout->RegisterPanel("appbar",     CreateAppBar());
         m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
         m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
         m_layout->RegisterPanel("layerbar",   CreateLayerBar());
-        m_layout->RegisterPanel("commandline", CreateCommandLine(), "命令行");
         m_layout->RegisterPanel("statusbar",  CreateStatusBar());
         m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
+        m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
         LoadRecentFiles();
+        RefreshStartPage();
         m_layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
 
         m_uiHost = m_ui->GetRoot()->AddChild<MiniGUI::Panel>(Theme::Background);
@@ -395,6 +395,10 @@ namespace MiniCAD
         }
         m_openPercent      = 0;
         m_hideOpenProgress = false;
+        // 立即离开起始页进入绘图区：读取进度在状态栏里，起始页显示时状态栏是隐藏的，大图纸读完前会以为没打开
+        m_startShown = false;
+        SyncDocuments();
+        if (m_viewport && m_viewport->IsVisible()) m_viewport->Focus();
 
         // 后台线程只用到 DocumentManager::Load（不碰文档列表、视口和编辑器）和平台的 RequestRedraw
         const DocumentManager* dm = &m_docManager;
@@ -451,6 +455,9 @@ namespace MiniCAD
                 opened = m_docManager.Add(std::move(job->doc));
             }
             m_openedAny = true;
+            if (opened && !FindUnresolvedXrefs(opened->GetScene()).empty()
+                && std::find(m_xrefMissingDocs.begin(), m_xrefMissingDocs.end(), opened) == m_xrefMissingDocs.end())
+                m_xrefMissingDocs.push_back(opened);
             // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
             RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
@@ -469,6 +476,7 @@ namespace MiniCAD
     void MainFrame::EndOpenBatch()
     {
         m_hideOpenProgress = true;      // 最后一张的首帧画完后隐藏
+        SyncDocuments();                // 全部打开失败、又没有其他文档时回到起始页
         if (m_platform) m_platform->RequestRedraw();
         if (m_openedAny)
         {
@@ -479,6 +487,110 @@ namespace MiniCAD
         if (!m_openFailures.empty() && m_ui)
             MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", m_openFailures, { "确定" }, [](int) {});
         m_openFailures.clear();
+        PromptMissingXrefs();
+    }
+
+    namespace
+    {
+        // 外部参照保存的路径里的文件名（D:\项目\轴网.dwg → 轴网.dwg）
+        std::string XrefFileName(const std::string& path)
+        {
+            const size_t slash = path.find_last_of("/\\");
+            return slash == std::string::npos ? path : path.substr(slash + 1);
+        }
+
+        bool IsOpenDocument(DocumentManager& dm, const Document* doc)
+        {
+            const auto& all = dm.GetAll();
+            return std::any_of(all.begin(), all.end(), [doc](const auto& p) { return p.get() == doc; });
+        }
+
+        // 提示框里列出的未找到的参照：「（图纸名：）参照名 — 保存的路径」，最多 limit 行
+        std::string ListMissingXrefs(const std::vector<Document*>& docs, size_t limit)
+        {
+            std::string text;
+            size_t lines = 0, total = 0;
+            for (Document* doc : docs)
+                for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                {
+                    if (++total > limit)
+                        continue;
+                    text += "\n" + (docs.size() > 1 ? doc->GetName() + "：" : std::string()) + x.Name + " — " + (x.Path.empty() ? "（没有路径）" : x.Path);
+                    ++lines;
+                }
+            if (total > lines)
+                text += "\n……另有 " + std::to_string(total - lines) + " 个";
+            return text;
+        }
+    }
+
+    void MainFrame::PromptMissingXrefs()
+    {
+        std::vector<Document*> docs;
+        docs.swap(m_xrefMissingDocs);
+        // 读完一批之前可能已经关掉了
+        std::erase_if(docs, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
+        if (docs.empty() || !m_ui)
+            return;
+        size_t count = 0;
+        for (Document* d : docs)
+            count += FindUnresolvedXrefs(d->GetScene()).size();
+        const std::string message = "有 " + std::to_string(count) + " 个外部参照没有找到，图中在插入点显示其路径：\n"
+                                  + ListMissingXrefs(docs, 8) + "\n\n可以选择参照文件所在的文件夹（或它的上级文件夹），在里面查找。";
+        MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到", message, { "选择文件夹…", "忽略" }, [this, docs](int button)
+        {
+            if (button == 0)
+                LocateXrefs(docs);
+        });
+    }
+
+    void MainFrame::LocateXrefs(std::vector<Document*> docs)
+    {
+        std::vector<std::string> names;
+        for (Document* doc : docs)
+            for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                if (std::string name = XrefFileName(x.Path); !name.empty())
+                    names.push_back(std::move(name));
+        if (names.empty())
+            return;
+        const bool supported = m_platform->PickFolder(names, [this, docs](const std::string& dir)
+        {
+            int loaded = 0;
+            std::vector<Document*> remaining;
+            for (Document* doc : docs)
+            {
+                if (!IsOpenDocument(m_docManager, doc))
+                    continue;   // 选文件夹期间关掉了
+                const int n = ReloadUnresolvedXrefs(doc->GetScene(), doc->GetPath(), { dir });
+                loaded += n;
+                if (n > 0)
+                    LOG_INFO("外部参照：%s 从 %s 读入 %d 个", doc->GetName().c_str(), dir.c_str(), n);
+                if (!FindUnresolvedXrefs(doc->GetScene()).empty())
+                    remaining.push_back(doc);
+            }
+            if (loaded > 0)
+            {
+                // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
+                if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
+                    m_docManager.ZoomAll(false);
+                if (m_docManager.GetActive())
+                    m_docManager.GetEditor().GetCmdLine().Echo("外部参照：读入 " + std::to_string(loaded) + " 个");
+                if (m_viewport) m_viewport->RequestRender();
+                StateChanged();
+            }
+            if (!remaining.empty() && m_ui)
+                MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到",
+                                        (loaded > 0 ? "已读入 " + std::to_string(loaded) + " 个，" : std::string("在所选文件夹里没有找到，")) +
+                                        "仍有以下外部参照没有找到：\n" + ListMissingXrefs(remaining, 8),
+                                        { "选择其他文件夹…", "关闭" }, [this, remaining](int button)
+                                        {
+                                            if (button == 0)
+                                                LocateXrefs(remaining);
+                                        });
+            m_platform->RequestRedraw();
+        });
+        if (!supported && m_ui)
+            MiniGUI::ShowMessageBox(*m_ui, "外部参照", "当前平台不支持选择文件夹。", { "确定" }, [](int) {});
     }
 
     void MainFrame::SyncOpenProgress()
@@ -522,6 +634,82 @@ namespace MiniCAD
         return bar;
     }
 
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateSaveProgress()
+    {
+        using namespace MiniGUI;
+        auto bar = std::make_unique<Node>();
+        LayoutStyle s;
+        s.direction  = FlexDirection::Row;
+        s.alignItems = Align::Center;
+        s.gap        = 6.0f;
+        s.padding    = Edges::Symmetric(12.0f, 0.0f);
+        s.shrink     = 0.0f;
+        bar->SetLayoutStyle(s);
+        m_saveLabel = bar->AddChild<Label>("", 13.0f, Theme::TextDim);
+        m_saveLabel->SetEllipsis(true);
+        m_saveLabel->EditLayoutStyle().maxWidth = 260.0f;
+        m_saveProgress = bar->AddChild<ProgressBar>();
+        m_saveProgress->EditLayoutStyle().width = 140.0f;
+        bar->SetVisible(false);
+        m_saveBar = bar.get();
+        return bar;
+    }
+
+    void MainFrame::ShowSaveStatus(SaveState state, const std::string& text)
+    {
+        if (!m_saveBar || !m_ui)
+            return;
+        if (m_saveHideTimer)
+        {
+            m_ui->StopTimer(m_saveHideTimer);
+            m_saveHideTimer = 0;
+        }
+        m_saveBar->SetVisible(state != SaveState::Hidden);
+        if (state == SaveState::Hidden)
+            return;
+        m_saveLabel->SetText(text);
+        m_saveLabel->SetColor(state == SaveState::Failed ? MiniGUI::Theme::Danger : MiniGUI::Theme::TextDim);
+        // 保存在界面线程上同步完成，没有中间进度：保存时进度条来回滚动，完成后满格
+        m_saveProgress->SetIndeterminate(state == SaveState::Saving);
+        m_saveProgress->SetValue(state == SaveState::Saving ? 0.0f : 1.0f);
+        m_saveProgress->SetVisible(state != SaveState::Failed);
+        if (state != SaveState::Saving)
+            m_saveHideTimer = m_ui->StartTimer(state == SaveState::Failed ? 5000u : 2000u, [this]
+            {
+                m_saveHideTimer = 0;
+                if (m_saveBar)
+                    m_saveBar->SetVisible(false);
+                m_platform->RequestRedraw();
+            });
+        m_platform->RequestRedraw();
+    }
+
+    void MainFrame::SaveWithProgress(bool all)
+    {
+        // 要先问路径（新文档、网页版的另存为对话框）时直接走原来的流程：结果在保存完成后显示
+        Document* active = m_docManager.GetActive();
+        if (!active)
+            return;
+        bool needsDialog = !all && !active->HasPath();
+        if (all)
+            for (const auto& d : m_docManager.GetAll())
+                needsDialog |= d->IsDirty() && !d->HasPath();
+        if (needsDialog)
+        {
+            SaveDocuments(all, false);
+            return;
+        }
+
+        ShowSaveStatus(SaveState::Saving, all ? std::string("正在保存全部文档") : "正在保存 " + active->GetName());
+        m_saveStatusShown = true;
+        // 先把"正在保存"画出来再保存（大图纸写 DWG 要一会儿）：
+        // 桌面版投递的消息先于 WM_PAINT 处理，所以在消息里自己画一帧；网页版 RunInBackground 先画一帧再执行
+        if (m_platform->HasBackgroundThread())
+            m_platform->Post([this, all] { RenderFrame(); SaveDocuments(all, false); });
+        else
+            m_platform->RunInBackground([] {}, [this, all] { SaveDocuments(all, false); });
+    }
+
     void MainFrame::SyncDocuments()
     {
         if (!m_docTabs)
@@ -557,11 +745,25 @@ namespace MiniCAD
             m_docTabs->SetSelected(sel);
         m_syncing = false;
 
-        // 没有文档时用提示代替视口和标签条
-        const bool hasDoc = active != nullptr;
+        // 没有文档时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
+        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口
+        const bool hasDoc  = active != nullptr;
+        const bool opening = m_openJob || m_openDone;
+        if (m_startShown && active != m_startOver)
+            m_startShown = false;
+        const bool start = (!hasDoc && !opening) || m_startShown;
         m_docTabs->SetVisible(!docs.empty());
-        m_viewport->SetVisible(hasDoc);
-        m_noDocHint->SetVisible(!hasDoc);
+        if (start)
+            m_docTabs->ClearSelection();            // 起始页显示时没有“当前”标签（与 SolidCraft 相同），点任何标签都回到图纸
+        else if (sel >= 0 && m_docTabs->GetSelected() != sel)
+        {
+            m_syncing = true;
+            m_docTabs->SetSelected(sel);
+            m_syncing = false;
+        }
+        m_viewport->SetVisible(!start);
+        ApplyStartPage(start);
+        RefreshStartNav();
 
         SyncLayoutTabs();
     }
@@ -628,6 +830,20 @@ namespace MiniCAD
     }
 
     // 切换布局：换相机、清选择、整场景重建（可见实体集合变了）
+    // 布局保存了图纸空间视图（AutoCAD 的主视口：中心与高度）就框住它，与 AutoCAD 打开布局看到的一致；
+    // 没有时框住纸张范围。只按高度框（宽度随绘图区的宽高比）
+    void MainFrame::ZoomToLayout(const DrawingLayout& sheet)
+    {
+        Camera& cam = m_docManager.GetViewport().GetCamera();
+        if (sheet.ViewHeight > 0.0)
+        {
+            const double half = sheet.ViewHeight * 0.5;
+            cam.ZoomToBounds(sheet.ViewCenterX - half * 1e-3, sheet.ViewCenterY - half, sheet.ViewCenterX + half * 1e-3, sheet.ViewCenterY + half, 1.0);
+        }
+        else if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
+            cam.ZoomToBounds(sheet.MinX, sheet.MinY, sheet.MaxX, sheet.MaxY);
+    }
+
     void MainFrame::ActivateLayout(int index)
     {
         Document* doc = m_docManager.GetActive();
@@ -641,16 +857,12 @@ namespace MiniCAD
             return;
 
         cam.SetState(state);
-        // 图纸页第一次进入时框住纸张范围（Document 只给目标点，缩放要相机自己算）
+        // 图纸页第一次进入时框住保存的视图 / 纸张范围（Document 只给目标点，缩放要相机自己算）
         if (doc->ActiveLayoutIsPaper())
         {
             const auto& layouts = doc->GetScene().Layouts();
             if (index >= 0 && index < static_cast<int>(layouts.size()))
-            {
-                const DrawingLayout& sheet = layouts[static_cast<size_t>(index)];
-                if (sheet.MaxX > sheet.MinX && sheet.MaxY > sheet.MinY)
-                    cam.ZoomToBounds(sheet.MinX, sheet.MinY, sheet.MaxX, sheet.MaxY);
-            }
+                ZoomToLayout(layouts[static_cast<size_t>(index)]);
         }
 
         // 切布局 = 换一批可见实体，清掉选择集避免操作到看不见的对象
@@ -820,12 +1032,31 @@ namespace MiniCAD
         else
             m_docManager.Save();
 
+        size_t saved = 0, failed = 0;
         for (const auto& [doc, wasDirty] : targets)
+        {
             if (wasDirty && !doc->IsDirty() && doc->HasPath())
             {
                 RememberRecentFile(doc->GetPath());     // 另存为的新路径也进「最近打开」
                 m_platform->OnDocumentSaved(doc->GetPath());
             }
+            if (!wasDirty)
+                continue;
+            if (!doc->IsDirty() && doc->HasPath())
+                ++saved;
+            else
+                ++failed;
+        }
+
+        // 状态栏：保存结果。没有显示过"正在保存"（经过另存为对话框）时，没保存上的多半是取消了对话框，不提示失败
+        const bool shown = std::exchange(m_saveStatusShown, false);
+        if (failed > 0 && shown)
+            ShowSaveStatus(SaveState::Failed, "保存失败");
+        else if (saved > 0)
+            ShowSaveStatus(SaveState::Saved, saved == 1 && targets.size() == 1 ? "已保存 " + targets.front().first->GetName()
+                                                                               : "已保存 " + std::to_string(saved) + " 个文档");
+        else
+            ShowSaveStatus(SaveState::Hidden);
         if (onSaved && active && !active->IsDirty())
             onSaved();
     }
@@ -1009,6 +1240,7 @@ namespace MiniCAD
         Viewport& vp = m_docManager.GetViewport();
         if (vp.GetWidth() != pixelWidth || vp.GetHeight() != pixelHeight)
             vp.Resize(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
+        UpdateFitInsets();
 
         if (m_docManager.GetActive())
         {
@@ -1028,6 +1260,13 @@ namespace MiniCAD
             if (Viewport::SceneUploaded(renderer, vs))
                 editor.ReleaseUploadedSceneStreams();
         }
+        else
+        {
+            // 没有文档（正在打开第一张图纸）：清空，不留上一张图纸的画面
+            IRenderer& renderer = m_platform->GetRenderer();
+            renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth), .height = static_cast<float>(pixelHeight) });
+            renderer.EndFrame();
+        }
 
         // 渲染目标重建后着色器资源会变，重新登记
         void* srv = target.GetNativeShaderResource();
@@ -1045,15 +1284,36 @@ namespace MiniCAD
 
     void MainFrame::UpdateStatus()
     {
-        std::string tool = "选择";
-        const Editor& editor = m_docManager.GetEditor();
-        if (m_docManager.GetActive() && editor.IsActiveTool())
+        m_statusBar->Refresh();
+        // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标
+        if (m_viewport)
+            m_viewport->SetCursor(m_docManager.GetActive() && m_docManager.GetEditor().HidesCrosshair()
+                                  ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        UpdateAppBarVisibility();
+    }
+
+    void MainFrame::UpdateAppBarVisibility()
+    {
+        MiniGUI::TitleBar* bar = m_layout ? m_layout->GetTitleBar() : nullptr;
+        if (!m_appBar || !m_docTabs || !bar || !m_appBar->GetContext() || !m_docTabs->GetContext())
+            return;
+        const MiniGUI::Rect title = bar->GetScreenBounds();
+        if (m_appBar->IsVisible())
         {
-            const auto it = m_toolCommands.find(editor.GetLastCommand());
-            tool = it != m_toolCommands.end() ? MiniGUI::CommandRegistry::StripMnemonic(m_commands.GetLabel(it->second))
-                                              : editor.GetLastCommand();
+            const MiniGUI::Rect r = m_appBar->GetScreenBounds();
+            if (r.Width() <= 0.0f)
+                return;             // 还没有布局
+            m_appBarWidth    = r.Width();
+            m_appBarRightGap = title.max.x - r.max.x;
         }
-        m_statusBar->Refresh(tool, m_hovered || m_buttons != 0, m_mouseX, m_mouseY);
+        // 文档标签从左边固定的位置开始，全部标签需要的宽度 + 右侧按钮放得下时才显示按钮；留一点回差，免得在临界宽度来回切换
+        const bool  hasTabs = m_docTabs->IsVisible() && m_docTabs->GetTabCount() > 0;
+        const float need    = m_docTabs->GetScreenBounds().min.x + (hasTabs ? m_docTabs->IdealStripWidth() : 0.0f) + m_appBarWidth + 8.0f;
+        const float limit   = title.max.x - m_appBarRightGap;
+        if (m_appBar->IsVisible() && need > limit)
+            m_appBar->SetVisible(false);
+        else if (!m_appBar->IsVisible() && need + 24.0f <= limit)
+            m_appBar->SetVisible(true);
     }
 
     void MainFrame::RenderFrame()
@@ -1071,10 +1331,13 @@ namespace MiniCAD
         SyncOpenProgress();
         // 视口背景跟随界面主题：浅色主题下白色实体、十字光标画成黑色
         m_docManager.GetViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
+        m_timing.status = ms(t);
 
         // 2. 布局 → 3. 按最新尺寸和相机渲染视口
+        const int64_t tLayout = NowTicks();
         m_ui->Update();
-        m_timing.layout = ms(t);
+        m_timing.layout1 = ms(tLayout);
+        m_timing.layout  = ms(t);
         t = NowTicks();
         m_timing.viewportRendered = m_viewport->IsVisible() && m_viewport->RenderContent();
         if (m_syncGpu)
@@ -1086,7 +1349,8 @@ namespace MiniCAD
         SyncCommandLine();
         SyncDynamicInput();
         m_ui->Update();
-        m_timing.layout += ms(t);
+        m_timing.layout2 = ms(t);
+        m_timing.layout += m_timing.layout2;
 
         // 4. 界面（含视口纹理）画到窗口
         t = NowTicks();

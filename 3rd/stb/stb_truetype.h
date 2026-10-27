@@ -1774,7 +1774,12 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
                // where we can start, and we need to save some state for when we wraparound.
                scx = x;
                scy = y;
-               if (!(vertices[off+i+1].type & 1)) {
+               // MiniCAD 修改：轮廓只有这一个点时没有"下一个点"——原来照样读 vertices[off+i+1]，读到下一个轮廓的点，
+               // 最后一个轮廓则越过数组末尾读到未初始化的内存（宋体的空格），起点随机。此时就从这个点开始
+               if (i + 1 >= 1 + ttUSHORT(endPtsOfContours+j*2)) {
+                  sx = x;
+                  sy = y;
+               } else if (!(vertices[off+i+1].type & 1)) {
                   // next point is also a curve point, so interpolate an on-point curve
                   sx = (x + (stbtt_int32) vertices[off+i+1].x) >> 1;
                   sy = (y + (stbtt_int32) vertices[off+i+1].y) >> 1;

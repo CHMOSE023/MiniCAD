@@ -152,7 +152,7 @@ namespace MiniGUI
             const Rect up{ r.min.x, r.min.y + 1.0f, r.max.x - 1.0f, midY };
             const Rect dn{ r.min.x, midY, r.max.x - 1.0f, r.max.y - 1.0f };
             if (m_hover != 0)
-                dl.AddRectFilled(m_hover > 0 ? up : dn, m_pressed ? Theme::ControlPressed : Theme::ControlHover, 3.0f);
+                dl.AddRectFilled(m_hover > 0 ? up : dn, m_pressed ? Theme::ControlPressed : Theme::ControlHover, Theme::RadiusSm);
 
             const ColorRef c = IsEnabled() ? Theme::TextDim : Theme::TextDisabled;
             const Vec2 cu = up.Center(), cd = dn.Center();

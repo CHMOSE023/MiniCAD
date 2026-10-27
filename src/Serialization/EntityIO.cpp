@@ -17,6 +17,7 @@
 #include "Core/Entity/MeshEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
+#include "Core/Entity/OleFrameEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
 #include "Core/Entity/TableEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
@@ -309,6 +310,22 @@ namespace MiniCAD::EntityIO
             double vh = e.GetViewHeight();         s.Value("viewHeight", vh);
             double tw = e.GetTwist();              s.Value("twist", tw);
             int32_t vid = e.GetViewportId();       s.Value("viewportId", vid);
+            // 本视口冻结的图层（VPLAYER）：只在非空时写，旧文件没有这项
+            if (!e.GetFrozenLayers().empty())
+            {
+                size_t n = e.GetFrozenLayers().size();
+                if (s.BeginArray("frozenLayers", n))
+                {
+                    for (size_t i = 0; i < n; ++i)
+                    {
+                        if (!s.BeginElement(i)) continue;
+                        uint32_t lid = e.GetFrozenLayers()[i];
+                        s.Value("layer", lid);
+                        s.EndElement();
+                    }
+                    s.EndArray();
+                }
+            }
         }
         std::unique_ptr<Entity> ReadViewport(ISerializer& s, Object::ObjectID id)
         {
@@ -322,6 +339,22 @@ namespace MiniCAD::EntityIO
             e->SetViewHeight(vh);
             e->SetTwist(tw);
             e->SetViewportId(vid);
+            size_t n = 0;
+            if (s.BeginArray("frozenLayers", n))
+            {
+                std::vector<LayerID> frozen;
+                frozen.reserve(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    if (!s.BeginElement(i)) continue;
+                    uint32_t lid = 0;
+                    s.Value("layer", lid);
+                    frozen.push_back(lid);
+                    s.EndElement();
+                }
+                s.EndArray();
+                e->SetFrozenLayers(std::move(frozen));
+            }
             return e;
         }
 
@@ -462,7 +495,8 @@ namespace MiniCAD::EntityIO
 
             // SubD 元数据：只在“真的是 SubD 来源”时写，避免给普通网格平添体积
             if (e.GetSubdivisionLevel() != 0 || e.GetBlendCrease() || e.GetSubDVersion() != 2 ||
-                e.GetOverrideOption() != 0 || !e.GetExplicitEdges().empty() || !e.GetCreaseValues().empty())
+                e.GetOverrideOption() != 0 || !e.GetExplicitEdges().empty() || !e.GetCreaseValues().empty() ||
+                !e.GetFaceSizes().empty())
             {
                 int32_t version = e.GetSubDVersion();
                 s.Value("subDVersion", version);
@@ -492,6 +526,12 @@ namespace MiniCAD::EntityIO
                     std::vector<double> flat(creases.begin(), creases.end());
                     s.Value("creaseValues", flat);
                 }
+                const auto& sizes = e.GetFaceSizes();
+                if (!sizes.empty())
+                {
+                    std::vector<double> flat(sizes.begin(), sizes.end());
+                    s.Value("faceSizes", flat);
+                }
             }
         }
 
@@ -520,14 +560,10 @@ namespace MiniCAD::EntityIO
             s.Value("overrideOption", overrideOption);
             e->SetOverrideOption(overrideOption);
 
+            // 边表为空时不调用 SetExplicitEdges（它会重建线框）
             std::vector<double> flatEdges;
-            for (const auto& [a, b] : e->GetExplicitEdges())
-            {
-                flatEdges.push_back(static_cast<double>(a));
-                flatEdges.push_back(static_cast<double>(b));
-            }
             s.Value("explicitEdges", flatEdges);
-            if (flatEdges.size() % 2 == 0)
+            if (!flatEdges.empty() && flatEdges.size() % 2 == 0)
             {
                 std::vector<std::pair<int, int>> edges;
                 edges.reserve(flatEdges.size() / 2);
@@ -540,6 +576,14 @@ namespace MiniCAD::EntityIO
             std::vector<double> creases(e->GetCreaseValues().begin(), e->GetCreaseValues().end());
             s.Value("creaseValues", creases);
             e->SetCreaseValues(std::move(creases));
+
+            std::vector<double> flatSizes;
+            s.Value("faceSizes", flatSizes);
+            std::vector<int> sizes;
+            sizes.reserve(flatSizes.size());
+            for (double v : flatSizes)
+                sizes.push_back(static_cast<int>(v));
+            e->SetFaceSizes(std::move(sizes));
             return e;
         }
 
@@ -620,6 +664,7 @@ namespace MiniCAD::EntityIO
             double h = e.GetHeight();                 s.Value("height", h);
             double r = e.GetRotation();               s.Value("rotation", r);
             double w = e.GetBoxWidth();               s.Value("boxWidth", w);
+            double wf = e.GetWidthFactor();           s.Value("widthFactor", wf);
             auto attach = e.GetAttachment();          Ser::Enum(s, "attachment", attach);
             auto dir = e.GetDrawingDirection();       Ser::Enum(s, "drawDir", dir);
             auto lss = e.GetLineSpacingStyle();       Ser::Enum(s, "lineSpacingStyle", lss);
@@ -640,6 +685,7 @@ namespace MiniCAD::EntityIO
             double h = 1.0;                                s.Value("height", h);               e->SetHeight(h);
             double r = 0.0;                                s.Value("rotation", r);             e->SetRotation(r);
             double w = 0.0;                                s.Value("boxWidth", w);             e->SetBoxWidth(w);
+            double wf = 0.0;                               s.Value("widthFactor", wf);         e->SetWidthFactor(wf);
             auto attach = MTextAttachment::TopLeft;        Ser::Enum(s, "attachment", attach); e->SetAttachment(attach);
             auto dir = MTextDrawingDirection::ByStyle;     Ser::Enum(s, "drawDir", dir);       e->SetDrawingDirection(dir);
             auto lss = MTextLineSpacing::AtLeast;          Ser::Enum(s, "lineSpacingStyle", lss);
@@ -821,6 +867,32 @@ namespace MiniCAD::EntityIO
             s.Value("showFrame", frame);
             auto e = std::make_unique<ImageEntity>(id, std::move(path), r.P1, r.P2, r.P3, r.P4);
             e->SetShowFrame(frame);
+            return e;
+        }
+
+        // OLE 对象：四个顶点 + 类型 + 二进制数据（base64）
+        void WriteOleFrame(ISerializer& s, const OleFrameEntity& e)
+        {
+            WriteRectangle(s, e);
+            int32_t type = e.GetOleType();
+            s.Value("oleType", type);
+            std::vector<uint8_t> bytes = e.GetData() ? *e.GetData() : std::vector<uint8_t>{};
+            Ser::Bytes(s, "data", bytes);
+        }
+        std::unique_ptr<Entity> ReadOleFrame(ISerializer& s, Object::ObjectID id)
+        {
+            Rectangle r;
+            Ser::Value(s, "p1", r.P1);
+            Ser::Value(s, "p2", r.P2);
+            Ser::Value(s, "p3", r.P3);
+            Ser::Value(s, "p4", r.P4);
+            int32_t type = 2;
+            s.Value("oleType", type);
+            std::vector<uint8_t> bytes;
+            Ser::Bytes(s, "data", bytes);
+            auto e = std::make_unique<OleFrameEntity>(id, r.P1, r.P2, r.P3, r.P4);
+            e->SetOleType(type);
+            e->SetData(std::make_shared<const std::vector<uint8_t>>(std::move(bytes)));
             return e;
         }
 
@@ -1053,7 +1125,11 @@ namespace MiniCAD::EntityIO
             // 文字块左下角 / 附着点 / 附着方式 / 阅读方向 —— 右附着（171=3）的
             // 文字回来会整体漂移一个文字宽，下划线族的横线会缩回文字内侧。
             // 读侧对缺失键有兼容默认值（见 ReadMLeader），旧档案不受影响。
-            Point3 textOrigin = e.GetTextOrigin();   Ser::Value(s, "textOrigin", textOrigin);
+            // 文字原点只在设置过时写（新建的由 landing 推出，见 MLeaderEntity::ResolveTextOrigin）
+            if (e.HasTextOrigin())
+            {
+                Point3 textOrigin = e.GetTextOrigin(); Ser::Value(s, "textOrigin", textOrigin);
+            }
             auto anchor = e.GetTextAnchor();         Ser::Enum(s, "textAnchor", anchor);
             int32_t leftAtt = e.GetTextLeftAttachment();   s.Value("textLeftAttachment", leftAtt);
             int32_t rightAtt = e.GetTextRightAttachment(); s.Value("textRightAttachment", rightAtt);
@@ -1089,11 +1165,13 @@ namespace MiniCAD::EntityIO
 
             // 文字位置与附着元数据。缺失时的默认值要与 MLeaderEntity 的成员默认值一致，
             // 这样旧档案读出来与当年存进去的观感相同：
-            //   textOrigin      (0,0)      → "未设置"，绘制退回 landing
+            //   textOrigin      没有这个键 → "未设置"，绘制时由 landing 推出
             //   anchor          Left       → 普通左附着
             //   左右附着方式     -1         → "未设置"，按普通族画基线（保持旧行为）
             //   textDirection   (1,0)      → 实测本图恒值
-            Point3 textOrigin;                    Ser::Value(s, "textOrigin", textOrigin); e->SetTextOrigin(textOrigin);
+            constexpr double kUnset = 1e300;      // 读不到键时 Value 保留原值：用哨兵判断键是否存在
+            Point3 textOrigin{ kUnset, kUnset, 0 }; Ser::Value(s, "textOrigin", textOrigin);
+            if (textOrigin.x != kUnset)           e->SetTextOrigin(textOrigin);
             auto anchor = MLeaderTextAnchor::Left; Ser::Enum(s, "textAnchor", anchor);      e->SetTextAnchor(anchor);
             int32_t leftAtt = -1;                 s.Value("textLeftAttachment", leftAtt);   e->SetTextLeftAttachment(leftAtt);
             int32_t rightAtt = -1;                s.Value("textRightAttachment", rightAtt); e->SetTextRightAttachment(rightAtt);
@@ -1158,6 +1236,7 @@ namespace MiniCAD::EntityIO
             uint32_t flags = e.GetFlags();       s.Value("flags", flags);
             std::string desc = e.GetDescription(); s.Value("description", desc);
             std::string xref = e.GetXRefPath();  s.Value("xrefPath", xref);
+            if (e.IsXRefUnloaded()) { bool unloaded = true; s.Value("xrefUnloaded", unloaded); }
 
             size_t n = e.GetEntities().size();
             if (s.BeginArray("entities", n))
@@ -1183,6 +1262,7 @@ namespace MiniCAD::EntityIO
             uint32_t flags = 0;                  s.Value("flags", flags);          e->SetFlags(static_cast<uint16_t>(flags));
             std::string desc;                    s.Value("description", desc);     e->SetDescription(std::move(desc));
             std::string xref;                    s.Value("xrefPath", xref);        e->SetXRefPath(std::move(xref));
+            bool unloaded = false;               s.Value("xrefUnloaded", unloaded); e->SetXRefUnloaded(unloaded);
 
             size_t n = 0;
             if (s.BeginArray("entities", n))
@@ -1312,6 +1392,7 @@ namespace MiniCAD::EntityIO
             { "TableEntity",     &WriteThunk<TableEntity, &WriteTable>,         &ReadTable     },
             { "MLineEntity",     &WriteThunk<MLineEntity, &WriteMLine>,         &ReadMLine     },
             { "ImageEntity",     &WriteThunk<ImageEntity, &WriteImage>,         &ReadImage     },
+            { "OleFrameEntity",  &WriteThunk<OleFrameEntity, &WriteOleFrame>,   &ReadOleFrame  },
             { "WipeoutEntity",   &WriteThunk<WipeoutEntity, &WriteWipeout>,     &ReadWipeout   },
             { "SolidEntity",   &WriteThunk<SolidEntity, &WriteSolid>,         &ReadSolid     },
             { "Solid3DEntity",   &WriteThunk<Solid3DEntity, &WriteSolid3D>,     &ReadSolid3D   },

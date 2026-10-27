@@ -345,8 +345,7 @@ int main()
             if (const auto* t = dynamic_cast<const MiniCAD::MTextEntity*>(e.get()))
             {
                 ++texts;
-                const auto* rec = scene.GetTextStyleTable().Find(t->GetStyleId());
-                narrowTexts += rec != nullptr && Near(rec->WidthFactor, 0.7, 1e-9);
+                narrowTexts += Near(t->GetWidthFactor(), 0.7, 1e-9);
             }
         }
     });
@@ -354,7 +353,7 @@ int main()
     // 半径：1 条引线、1 个箭头、1 个文字；轴号：6 条线、6 个圆、6 个文字
     Check(lines == 12 && ticks == 2 && arcs == 1 && solids == 3 && circles == 6 && texts == 9,
           "display blocks contain the expected lines, ticks, arc, arrows, circles and texts");
-    Check(narrowTexts == 3, "dimension texts use a 0.7 width-factor variant of the dimension text style");
+    Check(narrowTexts == 3, "dimension texts carry a 0.7 width factor on the mtext");
 
     for (auto kind : {MiniCAD::CadFileKind::Dwg, MiniCAD::CadFileKind::Dxf})
     {

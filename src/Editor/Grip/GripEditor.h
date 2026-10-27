@@ -32,6 +32,9 @@ namespace MiniCAD
     {
     public:
         GripEditor();
+        // 同 AutoCAD 的 GRIPOBJLIMIT：选中的对象超过这个数就不显示夹点。
+        // 十几万个对象的夹点每帧要投影、生成几百万顶点并上传，选中全图后每帧 87 ms
+        static constexpr size_t kGripObjectLimit = 100;
         void Bind(Viewport& viewport, Scene& scene, CommandStack& cmdStack, Picking& picking, Overlay& overlay);
 
     public:

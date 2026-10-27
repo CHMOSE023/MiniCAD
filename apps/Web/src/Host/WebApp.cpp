@@ -1,8 +1,5 @@
-// ── MiniCAD 网页版宿主：WebGL2、浏览器文件选择与下载、页面关闭提示 ─────────
+// ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、页面关闭提示 ─────────
 #include "Host/WebApp.h"
-#include "GLES3/GLES3Renderer.h"
-#include "GLES3/GLRenderTarget.h"
-#include "WebGL2/WebGL2Backend.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "Document/Document.h"
@@ -13,9 +10,9 @@
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
 #include <emscripten.h>
-#include <GLES3/gl3.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <memory>
 
 namespace MiniCAD
@@ -90,6 +87,84 @@ namespace MiniCAD
         input.click();
     });
 
+    // 选一个本地文件夹找外部参照：只把文件名在 namesPtr（换行分隔，小写）里的文件按原来的子目录
+    // 读进 /xref/<请求号>/<文件夹名>/...，完成后回调目录（取消或出错时为空串）。
+    // 有 showDirectoryPicker（Chromium 系）时经目录授权逐级遍历，只读需要的文件；
+    // 没有时用 <input webkitdirectory>（浏览器会询问是否上传整个文件夹，但也只读需要的文件的内容）
+    EM_JS(void, MiniCADWeb_PickFolder, (int requestId, const char* namesPtr), {
+        const wanted = new Set(UTF8ToString(namesPtr).split("\n").filter(s => s.length > 0));
+        const matches = (name) => {
+            const n = name.toLowerCase();
+            return wanted.has(n) || (n.endsWith(".dwg") && wanted.has(n.slice(0, -4)));
+        };
+        const root = "/xref/" + requestId;
+        const finish = (dir, error) => {
+            const d = stringToNewUTF8(dir);
+            const e = stringToNewUTF8(error || "");
+            _MiniCADWeb_OnFolderPicked(requestId, d, e);
+            _free(d);
+            _free(e);
+        };
+        const save = async (relative, file) => {
+            const path = root + "/" + relative.split(/[\\/]/).map(s => (s === "." || s === ".." ? "_" : s)).join("/");
+            FS.mkdirTree(path.substring(0, path.lastIndexOf("/")));
+            FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
+        };
+        if (typeof window.showDirectoryPicker === "function") {
+            (async () => {
+                let handle;
+                try { handle = await window.showDirectoryPicker({ id: "minicad-xref", mode: "read" }); }
+                catch (err) { finish("", err && err.name === "AbortError" ? "" : String(err)); return; }
+                const errors = [];
+                let visited = 0;
+                const walk = async (dir, prefix, depth) => {
+                    for await (const entry of dir.values()) {
+                        if (++visited > 200000) return;
+                        const relative = prefix + "/" + entry.name;
+                        if (entry.kind === "directory") {
+                            if (depth < 16) await walk(entry, relative, depth + 1);
+                        } else if (matches(entry.name)) {
+                            try { await save(relative, await entry.getFile()); }
+                            catch (err) { errors.push(relative + ": " + String(err)); }
+                        }
+                    }
+                };
+                try { await walk(handle, handle.name, 0); }
+                catch (err) { errors.push(String(err)); }
+                finish(root, errors.join("\n"));
+            })();
+            return;
+        }
+        const input = document.createElement("input");
+        input.type = "file";
+        input.webkitdirectory = true;
+        input.multiple = true;
+        input.style.display = "none";
+        let settled = false;
+        input.addEventListener("cancel", () => {
+            if (settled) return;
+            settled = true;
+            input.remove();
+            finish("", "");
+        });
+        input.addEventListener("change", async () => {
+            if (settled) return;
+            settled = true;
+            const files = Array.from(input.files || []);
+            input.remove();
+            const errors = [];
+            for (const file of files) {
+                if (!matches(file.name)) continue;
+                const relative = file.webkitRelativePath || file.name;
+                try { await save(relative, file); }
+                catch (err) { errors.push(relative + ": " + String(err)); }
+            }
+            finish(root, errors.join("\n"));
+        });
+        document.body.appendChild(input);
+        input.click();
+    });
+
     // 把虚拟文件系统里的文件下载到本机
     EM_JS(void, MiniCADWeb_Download, (const char* pathPtr), {
         const path = UTF8ToString(pathPtr);
@@ -104,6 +179,16 @@ namespace MiniCAD
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+
+    // 网址带 ?webgl（或 ?webgl=1）时强制用 WebGL2：排查问题、对比两个后端
+    EM_JS(int, MiniCADWeb_PreferWebGL, (), {
+        try { return new URLSearchParams(location.search).has("webgl") ? 1 : 0; } catch (e) { return 0; }
+    });
+
+    // 设备异步就绪时初始化失败：加载画面还在就显示原因（与 Module.onAbort 相同）
+    EM_JS(void, MiniCADWeb_ReportFailure, (const char* what), {
+        if (Module["onAbort"]) Module["onAbort"](UTF8ToString(what));
     });
 
     EM_JS(void, MiniCADWeb_SetTitle, (const char* title), {
@@ -131,6 +216,12 @@ namespace MiniCAD
                 g_app->OnFilePickCompleted(requestId, error);
         }
 
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnFolderPicked(int requestId, const char* dir, const char* error)
+        {
+            if (g_app)
+                g_app->OnFolderPicked(requestId, dir, error);
+        }
+
         EMSCRIPTEN_KEEPALIVE int MiniCADWeb_HasUnsaved()
         {
             return g_app && g_app->HasUnsavedDocuments() ? 1 : 0;
@@ -155,21 +246,71 @@ namespace MiniCAD
     {
         if (!m_host.Initialize())
             return false;
+        if (MiniCADWeb_PreferWebGL())
+        {
+            LOG_INFO("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
+            return InitializeWebGL();
+        }
 
-        m_backend    = std::make_unique<MiniGUI::WebGL2Backend>();
-        m_renderer   = std::make_unique<GLES3Renderer>();
-        m_viewportRT = std::make_unique<GLRenderTarget>();
+        // 先试 WebGPU：取适配器、设备都是异步的，回调前不建任何上下文、不画帧
+        const NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        CreateWebGPUGraphicsDeviceAsync(window, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight(),
+            [this](std::unique_ptr<IGraphicsDevice> device)
+            {
+                bool ok = false;
+                if (device)
+                {
+                    m_graphics = std::move(device);
+                    ok = OnGraphicsReady();
+                }
+                else
+                {
+                    LOG_INFO("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
+                    ok = InitializeWebGL();
+                }
+                if (!ok)
+                    ReportFailure("初始化失败（浏览器需要支持 WebGPU 或 WebGL2）");
+            });
+        return true;
+    }
+
+    bool WebApp::InitializeWebGL()
+    {
+        if (!m_host.CreateWebGLContext())
+            return false;
+        NativeWindow window{ const_cast<char*>(m_host.GetCanvasSelector().c_str()) };
+        window.glContext = true;        // WebHost 刚建好 WebGL2 上下文并设为当前
+        m_graphics = CreateGraphicsDevice(window, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight(), "webgl2");
+        return m_graphics && OnGraphicsReady();
+    }
+
+    bool WebApp::OnGraphicsReady()
+    {
+        LOG_INFO("MiniCAD 网页版：图形接口 %s", m_graphics->GetName());
+        // 异步等待期间画布尺寸可能变了：按当前尺寸
+        m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
+        m_viewportRT = m_graphics->CreateRenderTarget();
         m_viewportRT->Create(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
 
         if (!m_main.Initialize(*this, m_host.GetLogicalWidth(), m_host.GetLogicalHeight(), m_host.GetPixelScale()))
             return false;
         m_input = std::make_unique<MiniGUI::WebInput>(&m_main.GetUI(), m_host.GetCanvasSelector().c_str());
 
-        m_host.SetOnResize([this](float w, float h, float scale) { m_main.OnResize(w, h, scale); });
+        m_host.SetOnResize([this](float w, float h, float scale)
+        {
+            m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
+            m_main.OnResize(w, h, scale);
+        });
         m_host.SetOnFrame ([this] { m_main.RenderFrame(); });
         MiniCADWeb_InstallUnloadGuard();
         m_host.RequestFrame();
         return true;
+    }
+
+    void WebApp::ReportFailure(const char* what)
+    {
+        std::printf("MiniCAD：%s\n", what);
+        MiniCADWeb_ReportFailure(what);
     }
 
     bool WebApp::HasUnsavedDocuments() const
@@ -180,15 +321,13 @@ namespace MiniCAD
     // =========================================================
     // AppPlatform：图形
     // =========================================================
-    MiniGUI::IRenderBackend& WebApp::GetUiBackend() { return *m_backend; }
-    IRenderer&               WebApp::GetRenderer()  { return *m_renderer; }
+    MiniGUI::IRenderBackend& WebApp::GetUiBackend() { return m_graphics->GetUiBackend(); }
+    IRenderer&               WebApp::GetRenderer()  { return m_graphics->GetRenderer(); }
     IRenderTarget&           WebApp::GetViewportTarget() { return *m_viewportRT; }
 
     MiniGUI::TextureId WebApp::RegisterViewportTexture(void* nativeShaderResource)
     {
-        // 视口画面来自帧缓冲：第一行在底部，显示时上下翻转
-        const auto texture = static_cast<GLuint>(reinterpret_cast<uintptr_t>(nativeShaderResource));
-        return m_backend->RegisterExternalTexture(texture, true);
+        return m_graphics->RegisterViewportTexture(nativeShaderResource);
     }
 
     // =========================================================
@@ -211,15 +350,12 @@ namespace MiniCAD
 
     void WebApp::BeginUiPass()
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        m_graphics->BeginUiPass();
     }
 
     void WebApp::EndUiPass()
     {
-        // 浏览器在本次回调返回后自动呈现画布
+        m_graphics->Present();      // 浏览器在本次回调返回后自动呈现画布，这里什么也不做
         if (m_input)
             m_input->Sync();        // 文字焦点变化时切换 textarea，候选窗跟随光标
     }
@@ -296,6 +432,35 @@ namespace MiniCAD
             request.done(request.paths);
         if (error && *error)
             MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件失败", error, { "确定" }, [](int) {});
+        m_host.RequestFrame();
+    }
+
+    bool WebApp::PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done)
+    {
+        std::string names;
+        for (const std::string& n : fileNames)
+        {
+            std::string lower = n;
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            names += lower;
+            names += '\n';
+        }
+        const int id = m_nextPickId++;
+        m_folderRequests[id] = std::move(done);
+        MiniCADWeb_PickFolder(id, names.c_str());
+        return true;
+    }
+
+    void WebApp::OnFolderPicked(int requestId, const char* dir, const char* error)
+    {
+        auto it = m_folderRequests.find(requestId);
+        if (it == m_folderRequests.end()) return;
+        auto done = std::move(it->second);
+        m_folderRequests.erase(it);
+        if (error && *error)
+            MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件夹失败", error, { "确定" }, [](int) {});
+        if (done && dir && *dir)
+            done(dir);
         m_host.RequestFrame();
     }
 

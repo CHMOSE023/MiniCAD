@@ -1,5 +1,6 @@
 #include "Editor.h"
 #include "Editor/EditorContext.h"
+#include <atomic>
 #include "Document/Document.h"
 #include "Document/DrawContext.hpp"
 #include "Document/CommandStack/CommandStack.h"
@@ -33,6 +34,7 @@
 // ── 绘制工具 ──────────────────────────────────────────────────
 #include "Editor/Tools/LineTool.h"
 #include "Editor/Tools/ZoomWindowTool.h"
+#include "Editor/Tools/PanTool.h"
 #include "Document/Command/ZoomViewCommand.h"
 #include "Editor/Tools/PointTool.h"
 #include "Editor/Tools/SolidTool.h"
@@ -216,6 +218,38 @@ namespace MiniCAD
         RegisterBuiltinTools();
     }
 
+    uint64_t Editor::NextRenderVersion()
+    {
+        static std::atomic<uint64_t> counter{ 0 };
+        return ++counter;
+    }
+
+    void Editor::CopySettingsFrom(const Editor& o)
+    {
+        m_thinLines          = o.m_thinLines;
+        m_visualStyle        = o.m_visualStyle;
+        m_hatchDialogEnabled = o.m_hatchDialogEnabled;
+        m_solidKernel        = o.m_solidKernel;
+        m_viewAnimSeconds    = o.m_viewAnimSeconds;
+        m_fontTexture        = o.m_fontTexture;
+        m_glyphProvider      = o.m_glyphProvider;
+        m_oleRasterizer      = o.m_oleRasterizer;
+        m_textHeight         = o.m_textHeight;
+        m_hatchSettings      = o.m_hatchSettings;
+        m_mlineSettings      = o.m_mlineSettings;
+        m_filletRadius       = o.m_filletRadius;
+        m_chamferD1          = o.m_chamferD1;
+        m_chamferD2          = o.m_chamferD2;
+        m_solidFilletRadius    = o.m_solidFilletRadius;
+        m_solidChamferDistance = o.m_solidChamferDistance;
+        m_snap.SetEnableSnap(o.m_snap.IsEnabled());
+        m_snap.SetSnapModes(o.m_snap.GetSnapModes());
+        m_snap.SetSnapRadiusPx(o.m_snap.GetSnapRadiusPx());
+        m_constraintEngine.EnableOrtho(o.m_constraintEngine.IsOrthoEnabled());
+        m_constraintEngine.EnablePolar(o.m_constraintEngine.IsPolarEnabled());
+        m_picking.SetHoverEnabled(o.m_picking.IsHoverEnabled());
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  Bind / Unbind
     // ─────────────────────────────────────────────────────────────
@@ -290,6 +324,9 @@ namespace MiniCAD
         releaseStorage(m_selVertices);
         releaseStorage(m_selFillVertices);
         releaseStorage(m_selTextVertices);
+        releaseStorage(m_selDynVertices);
+        releaseStorage(m_selDynFillVertices);
+        releaseStorage(m_selDynTextVertices);
         releaseStorage(m_scratchLines);
         releaseStorage(m_scratchFills);
         releaseStorage(m_scratchTexts);
@@ -299,9 +336,9 @@ namespace MiniCAD
         releaseStorage(m_sceneExcluded);
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
-        ++m_sceneVersion;   // 渲染后端的缓存顶点缓冲随之失效
-        ++m_sceneDynVersion;
-        ++m_selVersion;
+        m_sceneVersion    = NextRenderVersion();   // 渲染后端的缓存顶点缓冲随之失效
+        m_sceneDynVersion = NextRenderVersion();
+        m_selVersion      = NextRenderVersion();
         m_picking.Unbind();
 
         m_doc      = nullptr;
@@ -323,6 +360,7 @@ namespace MiniCAD
         // ── 绘制工具 ──────────────────────────────────────────
         RegisterTool("Line",      [] { return std::make_unique<LineTool>();      });
         RegisterTool("ZoomWindow", [] { return std::make_unique<ZoomWindowTool>(); });   // ZOOM E：窗口缩放
+        RegisterTool("Pan",       [] { return std::make_unique<PanTool>();       });   // PAN：左键拖动平移
         RegisterTool("Point",     [] { return std::make_unique<PointTool>();     });
         RegisterTool("Circle",    [] { return std::make_unique<CircleTool>();    });
         RegisterTool("Rectangle", [] { return std::make_unique<RectangleTool>(); });
@@ -524,6 +562,11 @@ namespace MiniCAD
         RegisterAlias("LI",     "Line");
         RegisterAlias("REC",    "Rectangle");
         RegisterAlias("PL",     "Polyline");
+        RegisterAlias("PLINE",  "Polyline");    // AutoCAD 命令全名与工具名不同的，全名也走别名表
+        RegisterAlias("RECTANG", "Rectangle");
+        RegisterAlias("DTEXT",  "Text");
+        RegisterAlias("DIMLINEAR",  "Dimension");
+        RegisterAlias("DIMALIGNED", "Dimension");
         RegisterAlias("MI",     "Mirror");
         RegisterAlias("RO",     "Rotate");
         RegisterAlias("SC",     "Scale");
@@ -562,6 +605,7 @@ namespace MiniCAD
         RegisterAlias("FILLETEDGE",  "FilletEdge");
         RegisterAlias("CHAMFEREDGE", "ChamferEdge");
         RegisterAlias("Z",      "Zoom");
+        RegisterAlias("PAN",    "Pan");
         RegisterAlias("ZOOMALL", "ZoomAll");
         RegisterAlias("PLAN",      "ViewTop");     // 视图与视觉样式是特例命令(非工具),全名也走别名表
         for (const char* view : { "ViewTop", "ViewBottom", "ViewFront", "ViewBack", "ViewLeft", "ViewRight",
@@ -1583,7 +1627,7 @@ namespace MiniCAD
         m_shadedViewDir      = f;
         m_shadedSceneVersion = m_sceneVersion;
         m_shadedValid        = true;
-        ++m_shadedVersion;
+        m_shadedVersion      = NextRenderVersion();
 
         const bool shaded = m_visualStyle == VisualStyle::Shaded;
         const Math::Vec3 r = cam.GetRight(), u = cam.GetUp();
@@ -2891,10 +2935,10 @@ namespace MiniCAD
 
         m_overlayVertices.clear();
 
-        // 1 屏幕像素对应的世界长度(线宽/虚线显示用)
+        // 1 屏幕像素对应的世界长度(线宽 / 点样式显示用)
         const double worldPerPixel = m_viewport->GetCamera().GetWorldPerPixel();
 
-        // 线宽/虚线按屏幕像素烘焙,缩放变化时依赖像素比例的实体需重建。
+        // 线宽 / 点样式按屏幕像素烘焙,缩放变化时依赖像素比例的实体需重建（虚线在世界坐标里，不重建）。
         // 按相对误差比较:平移不改变 worldPerPixel,不能因舍入误差触发整图重建
         bool zoomChanged = std::abs(worldPerPixel - m_lastWorldPerPixel) > 1e-9 * std::max(worldPerPixel, m_lastWorldPerPixel);
         m_lastWorldPerPixel = worldPerPixel;
@@ -2917,9 +2961,10 @@ namespace MiniCAD
         }
 
         // 选中流：选择集变化 / 场景重建 / 拖动中（几何逐帧变化）/ 缩放+线宽虚线 / 细线开关
-        UpdateSelectionVertices(worldPerPixel,
-                                sceneRebuilt || selectionDirty || dragging ||
-                                (zoomChanged && m_selViewDependent));
+        {
+            const bool selFull = sceneRebuilt || selectionDirty || dragging;
+            UpdateSelectionVertices(worldPerPixel, selFull || (zoomChanged && m_selViewDependent), !selFull);
+        }
 
         m_overlay.ToVertices(m_overlayVertices);
         // 节点图预览点在模型空间，布局页上不画（同 UpdateShadedVertices 里的预览实体）
@@ -3169,8 +3214,49 @@ namespace MiniCAD
         c.texts         = m_scratchTexts;
         c.glyphs        = m_scratchGlyphs;
         c.viewDependent = ctx.HasViewDependentGeometry();
+        c.longDashes    = ctx.TakeDeferredDashes();
         c.wipes         = ctx.TakeWipes();
         c.images        = ctx.TakeImages();
+    }
+
+    namespace
+    {
+        // 视口合成用的变换汇：模型内容经视口变换落到纸面坐标，并让合成结果**不随视图变化**。
+        //
+        // 以前合成期间把长虚线按像素取舍（延迟出去的段裁不到视口矩形），只要视口里有一段长虚线或一个相对尺寸的点，
+        // 整个视口实体就被标成随视图变化 —— 布局页每格滚轮都要把视口看见的模型重新合成一遍
+        //（实测 0525 总平面图：模型页每格 16 ms，布局页 340 ms）。现在：
+        //   · 长虚线照常延迟（DeferredDash），合成后由调用方按视口矩形裁剪，缩放时只重铺这些段，不重新合成；
+        //   · 相对尺寸的点（$PDSIZE ≤ 0，按视口高度百分比）按**本视口**的纸面高度换算，大小随纸面固定；
+        //   · 像素比例按视口比例换算，实体里"N 像素"的量经变换后仍是 N 像素；
+        //   · MarkViewDependent 不转发。线宽（细线显示关闭时）走 DrawContext::EmitSolid 自己的标记，仍随视图变化。
+        //   · 在本视口里冻结的图层（VPLAYER）对块里的子实体也要生效，所以 IsLayerVisible 一并过滤。
+        class ViewportComposeSink final : public TransformDrawSink
+        {
+        public:
+            ViewportComposeSink(IDrawSink& target, const Math::Mat4& m, const ViewportEntity& vp)
+                : TransformDrawSink(target, m), m_target(target), m_vp(vp)
+                , m_scale(vp.ModelToPaperScale()), m_paperHeight(vp.GetHeight()) {}
+
+            bool IsLayerVisible(LayerID layerId) const override
+            {
+                return !m_vp.IsLayerFrozen(layerId) && m_target.IsLayerVisible(layerId);
+            }
+
+            double GetWorldPerPixel() const override { return m_scale > 0.0 ? m_target.GetWorldPerPixel() / m_scale : 0.0; }
+            double GetViewportHeightPx() const override
+            {
+                const double wpp = m_target.GetWorldPerPixel();
+                return wpp > 0.0 ? m_paperHeight / wpp : 0.0;     // 本视口框在屏幕上的高度（像素）
+            }
+            void MarkViewDependent() override {}
+
+        private:
+            IDrawSink&            m_target;
+            const ViewportEntity& m_vp;
+            double                m_scale;
+            double                m_paperHeight;
+        };
     }
 
     //
@@ -3185,6 +3271,13 @@ namespace MiniCAD
         const double s = vp.ModelToPaperScale();
         if (!(s > 0.0))
             return;
+
+        // $PSLTSCALE = 0：视口里的虚线跟着视口比例缩（模型里的 dash 长度 × s 才是纸面上的长度）；
+        // = 1（默认）：按图纸单位铺，与纸面上的虚线一样疏密。几何已经变换到纸面坐标，所以后者什么都不用做
+        const double lineTypeScale = ctx.GetLineTypeScale();
+        if (!m_doc->GetScene().GetPaperSpaceLineTypeScaling())
+            ctx.SetLineTypeScale(lineTypeScale * s);
+        const size_t clipDashFrom = ctx.DeferredDashes().size();
 
         // ── 视口裁剪：模型内容只画在视口矩形内 ──────────────────────────
         //
@@ -3224,7 +3317,7 @@ namespace MiniCAD
             m = m * Mat4::RotationZ(vp.GetTwist());
         m = m * Mat4::Translation(Vec3{ vp.GetCenter().x, vp.GetCenter().y, 0.0 });
 
-        TransformDrawSink vsink(ctx, m);
+        ViewportComposeSink vsink(ctx, m, vp);
 
         auto& scene = m_doc->GetScene();
         scene.ForEachObject([&](const Object& obj)
@@ -3243,6 +3336,9 @@ namespace MiniCAD
             if (const Layer* layer = scene.GetLayerManager().GetLayer(e.GetAttr().LayerId);
                 layer && !layer->IsVisible())
                 return;
+            // 在本视口里冻结的图层（VPLAYER）：只在这个视口不显示
+            if (vp.IsLayerFrozen(e.GetAttr().LayerId))
+                return;
 
             // 包围盒预剔除：完全落在视口可见模型矩形外的直接跳过（不做任何构建）
             const AABB box = e.GetBoundingBox();
@@ -3255,6 +3351,7 @@ namespace MiniCAD
             e.Draw(vsink, /*isSelected*/ false, /*isHovered*/ false);
             vsink.BeginEntity(nullptr);
         });
+        ctx.SetLineTypeScale(lineTypeScale);
 
         // 循环结束后裁掉本次合成落在视口矩形外的顶点（只裁 [from, end) 区间）
         const double hw = vp.GetWidth() * 0.5;
@@ -3281,6 +3378,37 @@ namespace MiniCAD
             // 光栅图像同样是单独提交的一路（Viewport 里逐个 SubmitImage），
             // 不裁就整张贴图溢出到视口外的纸面上
             WipeClip::ClipImages(ctx.Images(), clipRect, clipImageFrom, /*keepInside*/ true);
+
+            // 合成期间延迟出来的长虚线段（铺进动态流时才展开）同样只留视口矩形内的部分：
+            // 视口框是纸面上的轴对齐矩形，直接 Liang–Barsky；裁掉前半段时把相位往后推，裁剪处的 dash / gap 不错位
+            auto& dashes = ctx.DeferredDashes();
+            const double xmin = vc.x - hw, xmax = vc.x + hw, ymin = vc.y - hh, ymax = vc.y + hh;
+            size_t kept = clipDashFrom;
+            for (size_t i = clipDashFrom; i < dashes.size(); ++i)
+            {
+                DeferredDash d = dashes[i];
+                const double dx = d.b.x - d.a.x, dy = d.b.y - d.a.y, dz = d.b.z - d.a.z;
+                double t0 = 0.0, t1 = 1.0;
+                auto clip = [&](double p, double q)
+                {
+                    if (p == 0.0) return q >= 0.0;
+                    const double r = q / p;
+                    if (p < 0.0) { if (r > t1) return false; if (r > t0) t0 = r; }
+                    else         { if (r < t0) return false; if (r < t1) t1 = r; }
+                    return true;
+                };
+                if (!clip(-dx, d.a.x - xmin) || !clip(dx, xmax - d.a.x) || !clip(-dy, d.a.y - ymin) || !clip(dy, ymax - d.a.y))
+                    continue;
+                if (t0 > 0.0 || t1 < 1.0)
+                {
+                    const Math::Point3 a = d.a;
+                    d.a = { a.x + dx * t0, a.y + dy * t0, a.z + dz * t0 };
+                    d.b = { a.x + dx * t1, a.y + dy * t1, a.z + dz * t1 };
+                    d.phase += t0 * std::sqrt(dx * dx + dy * dy + dz * dz);
+                }
+                dashes[kept++] = d;
+            }
+            dashes.resize(kept);
         }
     }
 
@@ -3307,9 +3435,51 @@ namespace MiniCAD
         }
         // 点图元不随视图变化（点是恒定屏幕像素），总进静态流
         m_scenePointVertices.insert(m_scenePointVertices.end(), c.points.begin(), c.points.end());
-        if (c.viewDependent || !c.wipes.empty())
+        // 延迟的长虚线段按当前缩放铺进动态流（缩放时只重铺它们，实体不重新细分）
+        EmitDeferredDashes(c, m_sceneDynVertices);
+        if (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty())
             m_dynOrder.push_back(id);
-        m_sceneViewDependent |= c.viewDependent;
+        m_sceneViewDependent |= c.viewDependent || !c.longDashes.empty();
+    }
+
+    void Editor::EmitDeferredDashes(const EntityVertexCache& c, std::vector<Vertex_P3_C4>& out) const
+    {
+        if (c.longDashes.empty()) return;
+        const LineTypeTable& lineTypes = m_doc->GetScene().GetLineTypeTable();
+        for (const DeferredDash& d : c.longDashes)
+            DrawContext::EmitDeferredDash(d, lineTypes, m_lastWorldPerPixel, out);
+    }
+
+    // OLE 对象的快照（OleFrameEntity 经 EmitImage 请求 "ole:<哈希>"）：数据从登记处取，展示流是位图就直接解码，
+    // 是图元文件就交给平台光栅化；长边 4096 像素（Word 表格里的小字也能看清），结果按数据哈希缓存
+    std::shared_ptr<const ImageData> Editor::OleImage(const std::string& path)
+    {
+        uint64_t key = 0;
+        if (!Ole::ParseImagePath(path, key)) return nullptr;
+        if (const auto it = m_oleImages.find(key); it != m_oleImages.end())
+            return it->second;
+
+        std::shared_ptr<const ImageData> image;
+        if (const auto data = Ole::DataStore::Instance().Get(key))
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            Ole::Presentation pres;
+            if (Ole::ExtractPresentation(*data, pres))
+            {
+                if (pres.Format == Ole::PictureFormat::Dib)
+                    image = Ole::DecodeDib(pres.Data, ImageLibrary::NextKey());
+                else if (m_oleRasterizer)
+                    image = m_oleRasterizer(pres, kOleImageMaxSide);
+            }
+            else
+                LOG_WARN("OLE 对象没有可显示的展示数据，只画边框");
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (image)
+                LOG_INFO("OLE 对象快照：%s %zu 字节 → %u×%u 像素，%.0f ms", pres.Format == Ole::PictureFormat::Emf ? "EMF" : pres.Format == Ole::PictureFormat::Wmf ? "WMF" : "DIB",
+                         pres.Data.size(), image->Width, image->Height, ms);
+        }
+        m_oleImages.emplace(key, image);
+        return image;
     }
 
     // 只重建动态流：随视图变化的实体重新细分，按绘制序拼接，并用其后的区域覆盖裁剪（与静态流的规则相同）
@@ -3349,13 +3519,15 @@ namespace MiniCAD
             }
             // 字形实例不分视图相关性，一律跟着动态流重铺
             m_glyphInstances.insert(m_glyphInstances.end(), c.glyphs.begin(), c.glyphs.end());
+            // 长虚线段按当前缩放铺进动态流
+            EmitDeferredDashes(c, m_sceneDynVertices);
         }
         wipes.ClipLines(m_sceneDynVertices, 0);
         wipes.ClipFills(m_sceneDynFillVertices, 1);
         // 被遮罩盖到的字形实例展开成顶点裁剪（槽位 5 见 AppendToSceneStreams 的注释）
         wipes.ClipGlyphs(m_glyphInstances, 5, 0, m_glyphLibrary, m_sceneDynVertices, m_sceneDynFillVertices);
         SortGlyphInstances(m_glyphInstances, m_glyphBatches);
-        ++m_sceneDynVersion;
+        m_sceneDynVersion = NextRenderVersion();
     }
 
     bool Editor::UpdateSceneVertices(double worldPerPixel, bool zoomChanged)
@@ -3393,7 +3565,10 @@ namespace MiniCAD
                           .parent_path().string();
             m_imageLibrary.SetBaseDir(dir);
         }
-        const ImageProvider imageProvider = [this](const std::string& p) { return m_imageLibrary.Get(p); };
+        const ImageProvider imageProvider = [this](const std::string& p)
+        {
+            return p.compare(0, 4, "ole:") == 0 ? OleImage(p) : m_imageLibrary.Get(p);
+        };
 
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
         // 缩放变化只让依赖像素比例的实体（线宽/虚线按屏幕像素烘焙进世界顶点）失效。
@@ -3407,6 +3582,7 @@ namespace MiniCAD
         ctx.SetImageProvider(imageProvider);
         ctx.SetThinLines(m_thinLines);
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
+        ctx.SetDeferLongDashes(true);   // 长虚线段延迟铺设：进动态流，缩放时只重铺这些段
 
         // 图纸级点样式（HEADER 的 $PDMODE/$PDSIZE）+ 视口像素高度。
         // POINT 实体自身只有坐标，画成什么样完全由这两个变量决定；实体拿不到 Scene，
@@ -3425,7 +3601,7 @@ namespace MiniCAD
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
-        // 随视图变化的实体（虚线、按像素等宽的线宽）通常只占很少一部分；静态流不重新拼接、
+        // 随视图变化的实体（按像素等宽的线宽、点样式；细线显示时几乎没有）通常只占很少一部分；静态流不重新拼接、
         // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
         if (zoomChanged && !invalidateAll && !exclusionChanged && !m_sceneRestitch && scene.GetDirtyEntities().empty())
         {
@@ -3434,7 +3610,9 @@ namespace MiniCAD
                     m_entityVertexCache.erase(it);
             RebuildDynamicStream(ctx);
             scene.ClearDirty();
-            return true;
+            // 只重建了动态流，静态流与实体缓存都没变：不算"场景重建"——夹点、着色面不用跟着重建，
+            // 选中流也只需重建随视图变化的那一路（否则选中全图后每格滚轮都要把选中流整体复制上传一遍）
+            return false;
         }
 
         auto isShown = [&](const Entity& entity)
@@ -3503,8 +3681,8 @@ namespace MiniCAD
                 }
 
                 SortGlyphInstances(m_glyphInstances, m_glyphBatches);
-                ++m_sceneVersion;   // 顶点流已追加,渲染后端需重新上传
-                ++m_sceneDynVersion;
+                m_sceneVersion    = NextRenderVersion();   // 顶点流已追加,渲染后端需重新上传
+                m_sceneDynVersion = NextRenderVersion();
                 UpdateSceneStats();
                 scene.ClearDirty();
                 return true;
@@ -3596,8 +3774,8 @@ namespace MiniCAD
 
         m_sceneExcluded = std::move(dragIds);
 
-        ++m_sceneVersion;   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
-        ++m_sceneDynVersion;
+        m_sceneVersion    = NextRenderVersion();   // 通知渲染后端：场景顶点已变化，需重新上传 GPU 缓冲
+        m_sceneDynVersion = NextRenderVersion();
         m_sceneStreamsReleased = false;
         m_sceneRestitch        = false;
         UpdateSceneStats();
@@ -3650,15 +3828,23 @@ namespace MiniCAD
 
     // 选中流：选中实体 + 拖动跟随中的实体，按选中态绘制，叠加在场景之上。
     // 与悬停高亮同思路：覆盖绘制代替烘焙，选中变化不触发全场景重建。
-    void Editor::UpdateSelectionVertices(double worldPerPixel, bool force)
+    void Editor::UpdateSelectionVertices(double worldPerPixel, bool force, bool zoomOnly)
     {
         if (!force) return;
 
         auto& scene = m_doc->GetScene();
 
-        m_selVertices.clear();
-        m_selFillVertices.clear();
-        m_selTextVertices.clear();
+        // 静态部分：从逐实体缓存复制来的、不随视图变化的实体；只缩放时不动
+        if (!zoomOnly)
+        {
+            m_selVertices.clear();
+            m_selFillVertices.clear();
+            m_selTextVertices.clear();
+        }
+        // 随视图变化的部分每次都重建：线宽 / 点样式实体、点图元的小十字、长虚线段、实时绘制的实体
+        m_selDynVertices.clear();
+        m_selDynFillVertices.clear();
+        m_selDynTextVertices.clear();
 
         const auto& selection = m_picking.GetSelection();
         const auto  dragIds   = m_gripEditor.GetDraggingIDs();
@@ -3667,7 +3853,7 @@ namespace MiniCAD
         {
             const auto& layerMgr = scene.GetLayerManager();
 
-            DrawContext ctx(m_selVertices, m_selFillVertices, m_selTextVertices, m_overlay,
+            DrawContext ctx(m_selDynVertices, m_selDynFillVertices, m_selDynTextVertices, m_overlay,
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
@@ -3676,6 +3862,8 @@ namespace MiniCAD
             ctx.SetTextStyleTable(&scene.GetTextStyleTable());
             // 形段同上：选中前后线型的符号必须完全一致
             ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
+            // 选中流没有点流一路：线型的点笔划画成 1.5px 小段（随缩放重建）
+            ctx.SetLineTypeDotsAsSegments(true);
             // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示
             ctx.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize());
             ctx.SetViewportHeightPx(static_cast<double>(m_viewport->GetHeight()));
@@ -3722,18 +3910,99 @@ namespace MiniCAD
                 }
             };
 
+            // 选中流优先从逐实体缓存复制：场景已经把每个实体细分成线、填充、字形实例，改成选中色即可，
+            // 不再调用 Draw 重新细分（选中整张图从 400 ms 降到一次拷贝）。
+            // 拖动中的实体几何逐帧变化、缓存里没有的实体（隐藏、带光栅图像）仍实时绘制
+            const std::unordered_set<Object::ObjectID> dragSet(dragIds.begin(), dragIds.end());
+            const Math::Color4& sc = IDrawSink::kSelectionColor;
+            const VertexColor   selColor(static_cast<float>(sc.r), static_cast<float>(sc.g), static_cast<float>(sc.b), static_cast<float>(sc.a));
+            const Math::Float4  selColor4{ static_cast<float>(sc.r), static_cast<float>(sc.g), static_cast<float>(sc.b), static_cast<float>(sc.a) };
+            const GlyphMeshView  glyphView = m_glyphLibrary.View();
+            const LineTypeTable& lineTypes = scene.GetLineTypeTable();
+            bool copiedViewDependent = false;
+
+            auto cachedFor = [&](Object::ObjectID id) -> const EntityVertexCache*
+            {
+                if (dragSet.contains(id)) return nullptr;
+                auto it = m_entityVertexCache.find(id);
+                if (it == m_entityVertexCache.end() || !it->second.images.empty()) return nullptr;
+                return &it->second;
+            };
+            if (!zoomOnly)
+            {
+                size_t lines = 0, fills = 0;
+                for (auto id : selection)
+                    if (const EntityVertexCache* c = cachedFor(id); c && !c->viewDependent)
+                    {
+                        lines += c->lines.size();
+                        fills += c->fills.size();
+                    }
+                m_selVertices.reserve(lines);
+                m_selFillVertices.reserve(fills);
+            }
+            auto appendRecolored = [&](std::vector<Vertex_P3_C4>& out, const std::vector<Vertex_P3_C4>& in)
+            {
+                const size_t n = out.size();
+                out.resize(n + in.size());
+                for (size_t i = 0; i < in.size(); ++i)
+                {
+                    out[n + i].pos   = in[i].pos;
+                    out[n + i].color = selColor;
+                }
+            };
+            auto copyOne = [&](Object::ObjectID id) -> bool
+            {
+                const EntityVertexCache* c = cachedFor(id);
+                if (!c) return false;
+                // 随视图变化的实体（线宽、点样式）缩放后缓存已重新细分，复制进动态部分；其余进静态部分（只缩放时跳过）
+                if (c->viewDependent || !zoomOnly)
+                {
+                    auto& lines = c->viewDependent ? m_selDynVertices     : m_selVertices;
+                    auto& fills = c->viewDependent ? m_selDynFillVertices : m_selFillVertices;
+                    auto& texts = c->viewDependent ? m_selDynTextVertices : m_selTextVertices;
+                    appendRecolored(lines, c->lines);
+                    appendRecolored(fills, c->fills);
+                    for (const auto& t : c->texts)
+                    {
+                        texts.push_back(t);
+                        texts.back().color = selColor4;
+                    }
+                    for (const GlyphInstance& g : c->glyphs)
+                    {
+                        ExpandGlyph(g, glyphView, true,  [&](const Vertex_P3_C4& v) { fills.push_back({ v.pos, selColor }); });
+                        ExpandGlyph(g, glyphView, false, [&](const Vertex_P3_C4& v) { lines.push_back({ v.pos, selColor }); });
+                    }
+                }
+                for (const auto& p : c->points)   // 选中流没有点流：点图元画成小十字（随缩放重建）
+                {
+                    AppendPointMark(m_selDynVertices, p.pos, selColor, worldPerPixel);
+                    copiedViewDependent = true;
+                }
+                if (!c->longDashes.empty())
+                {
+                    std::vector<Vertex_P3_C4> dashes;
+                    for (const DeferredDash& d : c->longDashes)
+                        DrawContext::EmitDeferredDash(d, lineTypes, worldPerPixel, dashes);
+                    appendRecolored(m_selDynVertices, dashes);
+                    copiedViewDependent = true;
+                }
+                copiedViewDependent |= c->viewDependent;
+                return true;
+            };
+
             for (auto id : selection)
-                drawOne(id);
+                if (!copyOne(id))
+                    drawOne(id);
             for (auto id : dragIds)
                 if (!selection.contains(id))
                     drawOne(id);
 
-            m_selViewDependent = ctx.HasViewDependentGeometry();
+            m_selViewDependent = ctx.HasViewDependentGeometry() || copiedViewDependent;
 
             // 选中流只有线段：点图元（$PDMODE=0 的 POINT、点阵填充）画成小十字，随缩放重建
             const auto points = ctx.TakePoints();
             for (const auto& p : points)
-                AppendPointMark(m_selVertices, p.pos, p.color, worldPerPixel);
+                AppendPointMark(m_selDynVertices, p.pos, p.color, worldPerPixel);
             if (!points.empty())
                 m_selViewDependent = true;
         }
@@ -3742,7 +4011,9 @@ namespace MiniCAD
             m_selViewDependent = false;
         }
 
-        ++m_selVersion;
+        if (!zoomOnly)
+            m_selVersion = NextRenderVersion();
+        m_selDynVersion = NextRenderVersion();
         m_picking.ClearDirty();
     }
 
@@ -3786,6 +4057,10 @@ namespace MiniCAD
         vs.SelFill      = m_selFillVertices;
         vs.SelText      = m_selTextVertices;
         vs.SelVersion   = m_selVersion;
+        vs.SelDyn        = m_selDynVertices;
+        vs.SelDynFill    = m_selDynFillVertices;
+        vs.SelDynText    = m_selDynTextVertices;
+        vs.SelDynVersion = m_selDynVersion;
         vs.FontTexture  = m_fontTexture;
 
         vs.Selection.Active = m_picking.IsBoxSelecting();
@@ -3805,6 +4080,7 @@ namespace MiniCAD
         }
 
         vs.ShowCurrorBox = !IsActiveTool();
+        vs.ShowCrosshair = !HidesCrosshair();
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

@@ -26,7 +26,9 @@
 #include "Render/VertexTypes.hpp"
 #include "Document/GlyphMeshLibrary.hpp"
 #include "Render/ImageDraw.hpp"
+#include "Document/DeferredDash.hpp"
 #include "Core/Image/ImageLibrary.h"
+#include "Core/Ole/OleObject.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -49,9 +51,17 @@ namespace MiniCAD
         Editor();
 
         // ── 绑定 / 解绑文档与视口 ────────────────────────────
+        // 每个文档有自己的 Editor（DocumentManager 按文档持有），显示数据、选择集、工具状态都随文档保留，
+        // 切换文档不再解绑、不再重新生成显示数据
         void Bind(Document& doc, Viewport& viewport);
         void Unbind();
         bool IsBound() const { return m_doc != nullptr; }
+        // 新建文档的编辑器从当前编辑器继承用户设置（细线、捕捉、正交、极轴、悬停、视觉样式、字高、
+        // 填充 / 多线设置、内核、过渡时长、字形提供者……），不复制文档相关的状态
+        void CopySettingsFrom(const Editor& other);
+        // 渲染后端按 (槽位, 版本) 缓存顶点缓冲，而多个文档的编辑器共用一个后端：版本号在进程内全局唯一，
+        // 两个文档的场景流才不会因为版本号相同被当成同一份缓冲
+        static uint64_t NextRenderVersion();
 
         // ── 输入 ─────────────────────────────────────────────
         bool OnInput(const InputEvent& e);
@@ -82,6 +92,7 @@ namespace MiniCAD
 
         Object*              GetPrimarySelectedObject();
         std::vector<Object*> GetSelectedObjects();
+        uint64_t GetSelectionVersion() const { return m_picking.SelectionVersion(); }   // 选择集每次变化加一
         // 选择集里可以修改的对象（排除锁定图层上的）；announce 为真时在命令行说明跳过了几个。
         // 所有修改 / 删除已有对象的操作都从这里取对象；复制 / 偏移这类只读原对象的操作用 GetSelectedObjects
         std::vector<Object::ObjectID> EditableSelectionIds(bool announce = true);
@@ -93,6 +104,7 @@ namespace MiniCAD
         bool               IsConstraintActive() const { return m_constraintEngine.IsAnyActive(); }
         ConstraintEngine&  GetConstraintEngine() { return m_constraintEngine; }
         bool               IsActiveTool() const  { return m_tool != nullptr; }
+        bool               HidesCrosshair() const { return m_tool && m_tool->HidesCrosshair(); }   // 当前工具不画十字光标（平移）
         // 工具是否还在进行：工具刚结束（等下一次输入事件才释放）的收尾期不算
         bool               IsToolRunning() const { return m_tool != nullptr && !m_pendingToolReset; }
         // 最近启动的工具 ID（"Line"、"Move"…）；IsActiveTool 为 true 时即当前工具
@@ -249,6 +261,12 @@ namespace MiniCAD
         const ImageRequest& GetImageRequest() const { return m_imageRequest; }
         bool SubmitImagePath(const std::string& path);       // 读取图像并启动放置工具；失败返回 false
         ImageLibrary&       GetImageLibrary()       { return m_imageLibrary; }
+        // OLE 对象（OleFrameEntity）的展示图是 WMF / EMF 图元文件时由平台光栅化（桌面版 GDI 回放；网页版没有，只画边框）。
+        // maxSide：长边像素数。DIB 位图不经它，核心库自己解码
+        using OleRasterizer = std::function<std::shared_ptr<const ImageData>(const Ole::Presentation& presentation, uint32_t maxSide)>;
+        void SetOleRasterizer(OleRasterizer rasterizer) { m_oleRasterizer = std::move(rasterizer); }
+        static constexpr uint32_t kOleImageMaxSide = 4096;   // 快照长边像素数：Word 表格里的小字也能看清
+        void ClearOleImages() { m_oleImages.clear(); }
 
         struct TextStyleRequest { bool Active = false; };
         TextStyleRequest&       GetTextStyleRequest()       { return m_textStyleRequest; }
@@ -418,7 +436,8 @@ namespace MiniCAD
 
         // 选中流：选中 + 拖动中的实体，叠加绘制在场景之上。
         // 仅在选择集变化/场景重建/拖动中重建，避免选中触发全场景重建。
-        void UpdateSelectionVertices(double worldPerPixel, bool force);
+        // zoomOnly：只有缩放变了（选择集、场景、拖动都没变）：静态部分不动，只重建随视图变化的部分
+        void UpdateSelectionVertices(double worldPerPixel, bool force, bool zoomOnly);
 
         // 悬停高亮（追加到 overlay），与场景顶点解耦。按实体缓存高亮顶点（大块参照每次绘制要几毫秒），
         // invalidate 为真（场景重建、选择集变化）时清空缓存
@@ -513,6 +532,9 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4>    m_scenePointVertices;
         std::vector<ImageDraw>       m_sceneImages;
         ImageLibrary                 m_imageLibrary;
+        OleRasterizer                m_oleRasterizer;
+        std::unordered_map<uint64_t, std::shared_ptr<const ImageData>> m_oleImages;   // OLE 数据哈希 → 快照（失败也记，不每帧重试）
+        std::shared_ptr<const ImageData> OleImage(const std::string& path);
         std::vector<Vertex_P3_C4_UV> m_textVertices;
         uint64_t                     m_sceneVersion = 0;   // 场景顶点重建计数（GPU 缓存键）
         // 场景文字的字形实例（拼接时按绘制序，拼接完按网格排序分批）与字形网格库
@@ -524,6 +546,11 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4>    m_selVertices;
         std::vector<Vertex_P3_C4>    m_selFillVertices;
         std::vector<Vertex_P3_C4_UV> m_selTextVertices;
+        // 选中流随视图变化的部分（见 ViewState::SelDyn）：缩放时只重建这一路
+        std::vector<Vertex_P3_C4>    m_selDynVertices;
+        std::vector<Vertex_P3_C4>    m_selDynFillVertices;
+        std::vector<Vertex_P3_C4_UV> m_selDynTextVertices;
+        uint64_t                     m_selDynVersion = 0;
         uint64_t                     m_selVersion = 0;
         bool                         m_selViewDependent = false;
 
@@ -541,7 +568,9 @@ namespace MiniCAD
             std::vector<Vertex_P3_C4>    points;         // 点图元（POINTLIST，恒定 1 屏幕像素）
             std::vector<Vertex_P3_C4_UV> texts;
             std::vector<GlyphInstance>   glyphs;          // 矢量文字的字形实例
-            bool                         viewDependent = false;   // 线宽/虚线按像素烘焙：缩放后需重新细分
+            bool                         viewDependent = false;   // 线宽 / 点样式按像素烘焙：缩放后需重新细分（虚线在世界坐标里，不算）
+            // 延迟铺设的长虚线段：实体本身进静态流，这些段由 Editor 按当前缩放铺进动态流，缩放时只重铺它们
+            std::vector<DeferredDash>    longDashes;
             std::vector<ImageDraw>       images;
             std::vector<std::vector<Math::Point3>> wipes;   // 区域覆盖多边形：拼接时裁剪此前的顶点
         };
@@ -550,7 +579,7 @@ namespace MiniCAD
         bool             m_sceneRestitch        = false;   // 下一帧从逐实体缓存重新拼接
         SceneStreamStats m_sceneStats;
 
-        // 动态流：随视图变化的实体（虚线、按像素等宽的线宽）的线与填充，缩放时只重建这一路，静态流不动
+        // 动态流：随视图变化的实体（按像素等宽的线宽、按像素画的点样式）的线与填充，缩放时只重建这一路，静态流不动
         std::vector<Vertex_P3_C4>     m_sceneDynVertices;
         std::vector<Vertex_P3_C4>     m_sceneDynFillVertices;
         uint64_t                      m_sceneDynVersion = 0;
@@ -561,6 +590,7 @@ namespace MiniCAD
         // 布局页：把一个视口「看见」的模型空间内容按视口变换画进 ctx（带包围盒预剔除）
         void ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx);
         void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
+        void EmitDeferredDashes(const EntityVertexCache& c, std::vector<Vertex_P3_C4>& out) const;   // 长虚线段按当前缩放铺进 out
         void RebuildDynamicStream(DrawContext& ctx);
         void UpdateSceneStats();
 
@@ -586,7 +616,7 @@ namespace MiniCAD
         void*                        m_fontTexture    = nullptr;
         GlyphProvider                m_glyphProvider;           // 由应用层注入
 
-        // 线宽/虚线几何按屏幕像素烘焙到世界顶点,缩放改变像素比例时需重建
+        // 线宽 / 点样式几何按屏幕像素烘焙到世界顶点,缩放改变像素比例时需重建（虚线不随缩放重建）
         double                       m_lastWorldPerPixel  = 0.0;
         bool                         m_sceneViewDependent = false;
 

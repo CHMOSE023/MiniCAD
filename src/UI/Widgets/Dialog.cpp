@@ -42,7 +42,7 @@ namespace MiniGUI
 
             const Rect cr{ CloseRect().min + r.min, CloseRect().max + r.min };
             if (m_closeHover)
-                dl.AddRectFilled(cr, m_closePressed ? Theme::ControlPressed : Theme::ControlHover, 4.0f);
+                dl.AddRectFilled(cr, m_closePressed ? Theme::ControlPressed : Theme::ControlHover, Theme::RadiusSm);
             const Vec2 c = cr.Center();
             dl.AddLine({ c.x - 5.0f, c.y - 5.0f }, { c.x + 5.0f, c.y + 5.0f }, Theme::TextDim, 1.5f);
             dl.AddLine({ c.x - 5.0f, c.y + 5.0f }, { c.x + 5.0f, c.y - 5.0f }, Theme::TextDim, 1.5f);
@@ -134,7 +134,7 @@ namespace MiniGUI
         SetLayoutStyle(s);
 
         PopupStyle ps;
-        ps.rounding = 8.0f;
+        ps.rounding = Theme::RadiusLg;
         SetStyle(ps);
 
         m_titleBar = AddChild<DialogTitleBar>(this);

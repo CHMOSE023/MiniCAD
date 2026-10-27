@@ -11,6 +11,7 @@ namespace MiniGUI
         explicit Panel(ColorRef background = Colors::Transparent);
 
         void SetBackground(ColorRef color);
+        ColorRef GetBackground() const { return m_background; }
         void SetBorder(ColorRef color, float thickness = 1.0f);
         void SetRounding(float rounding);
 

@@ -5,7 +5,9 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/XLineEntity.hpp"
 #include "Scene/Scene.h"
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -49,9 +51,12 @@ int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
 int RunBlockFixTests();      // BlockFixTests.cpp，返回失败项数
 int RunMiddleDoubleClickZoomTests();  // MiddleDoubleClickZoomTests.cpp，返回失败项数
 int RunLayoutTests();                 // LayoutTests.cpp，返回失败项数
+int RunOleFrameTests();               // OleFrameTests.cpp，返回失败项数
+int RunCadXrefTests();                // CadXrefTests.cpp，外部参照导入，返回失败项数
 int RunMLeaderImportTests();          // MLeaderImportTests.cpp，返回失败项数
 int RunMeshTests();                   // MeshTests.cpp，返回失败项数
 int RunMLineToolTests();              // MLineToolTests.cpp，返回失败项数
+int RunPolylineToolTests();           // PolylineToolTests.cpp，返回失败项数
 int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项数
 int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
 int RunTransformSinkTests();           // TransformSinkTests.cpp，返回失败项数
@@ -159,7 +164,9 @@ namespace
 
 int main()
 {
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+#endif
     std::setvbuf(stdout, nullptr, _IONBF, 0);      // 不缓冲：中途崩溃时也能看到已输出的结果
     std::mt19937 rng(20261001);
     const double extent = 1000.0;
@@ -328,9 +335,12 @@ int main()
     g_failures += RunBlockFixTests();
     g_failures += RunMiddleDoubleClickZoomTests();
     g_failures += RunLayoutTests();
+    g_failures += RunOleFrameTests();
+    g_failures += RunCadXrefTests();
     g_failures += RunMLeaderImportTests();
     g_failures += RunMeshTests();
     g_failures += RunMLineToolTests();
+    g_failures += RunPolylineToolTests();
     g_failures += RunMLineImportTests();
     g_failures += RunMLineEditTests();
     g_failures += RunTransformSinkTests();

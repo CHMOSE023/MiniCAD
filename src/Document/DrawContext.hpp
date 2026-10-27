@@ -13,6 +13,7 @@
 #include "Scene/LayerManager.h"
 #include "Scene/LineTypeTable.h"
 #include "Scene/TextStyleTable.h"
+#include "Document/DeferredDash.hpp"
 #include "Core/Entity/EntityAttr.hpp"
 #include <memory>
 #include <vector>
@@ -20,9 +21,11 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 namespace MiniCAD
 {
+
     // 文字样式解析结果：字体 + 宽度因子 + 倾斜角（弧度，向右倾为正）
     struct ResolvedTextStyle
     {
@@ -112,6 +115,7 @@ namespace MiniCAD
         double GetWorldPerPixel() const override    { return m_worldPerPixel; }
         double GetViewportHeightPx() const override { return m_viewportHeightPx; }
         void MarkViewDependent() override { if (m_worldPerPixel > 0.0) m_viewDependent = true; }
+        void SetTextWidthFactor(double widthFactor) override { m_textWidthFactor = widthFactor > 0.0 ? widthFactor : 0.0; }
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
@@ -234,27 +238,31 @@ namespace MiniCAD
         }
         ~DrawContext() override { FlushWipes(); }
 
-        // 本次细分是否产出了依赖像素比例的几何(线宽四边形、按像素取舍的虚线),
-        // 供 Editor 决定缩放时哪些实体需要重新细分
+        // 本次细分是否产出了依赖像素比例的几何(线宽四边形、按像素画的点样式),
+        // 供 Editor 决定缩放时哪些实体需要重新细分。虚线不算：它的几何在世界坐标里，与缩放无关
         bool HasViewDependentGeometry() const { return m_viewDependent; }
         // 复位该标志：逐实体细分时在每个实体前调用，按实体统计
         void ResetViewDependentFlag()         { m_viewDependent = false; }
+
+        // 线型里的“点”笔划画成 1.5px 的小段而不是点图元（选中流用：它没有点流一路）
+        void SetLineTypeDotsAsSegments(bool on) { m_dotsAsSegments = on; }
 
         // 全局细线：忽略线宽，全部按 1px 细线显示（同 AutoCAD 关闭"显示线宽"）
         void SetThinLines(bool thin) { m_thinLines = thin; }
 
         // 当前实体的线型记录（ByLayer → 图层线型、ByBlock → Continuous）。
         // DrawLine 与 DrawStyledLine 共用，保证「铺线型」与「单独判定虚线」取到同一个线型。
-        const LineTypeRecord* CurrentLineType() const
+        const LineTypeRecord* CurrentLineType() const { return m_lineTypes.Find(CurrentLineTypeId()); }
+        LineTypeID CurrentLineTypeId() const
         {
-            if (!m_curAttr) return m_lineTypes.Find(LineTypeTable::ContinuousID);
+            if (!m_curAttr) return LineTypeTable::ContinuousID;
             const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
             LineTypeID lt = m_curAttr->LineType;
             if (lt == LineTypeTable::ByLayerID)
                 lt = layer ? layer->GetLineType() : LineTypeTable::ContinuousID;
             if (lt == LineTypeTable::ByBlockID)
                 lt = LineTypeTable::ContinuousID;
-            return m_lineTypes.Find(lt);
+            return lt;
         }
 
         // --- 几何线段 ---
@@ -375,9 +383,11 @@ namespace MiniCAD
             if (utf8Text.empty() || !m_fontResolver)
                 return 0.0;
 
-            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return 0.0;
+            if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureWidth(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth);
@@ -394,9 +404,11 @@ namespace MiniCAD
             if (utf8Text.empty() || !m_fontResolver)
                 return false;
 
-            const ResolvedTextStyle rs = m_fontResolver(styleId);
+            ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return false;
+            if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureInkBounds(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth,
@@ -436,6 +448,8 @@ namespace MiniCAD
             if (!rs.Font) return;
             if (widthFactor > 0.0)
                 rs.WidthFactor = widthFactor;
+            else if (m_textWidthFactor > 0.0)
+                rs.WidthFactor = m_textWidthFactor;      // 多行文字实体自己的宽度因子（SetTextWidthFactor）
 
             TextLayoutEngine layout;
             auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth, align);
@@ -550,7 +564,7 @@ namespace MiniCAD
             bool continuous = (!rec || rec->IsContinuous());
 
             // 实体级比例(组码48) × 全局 $LTSCALE。
-            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍，整条线看起来像实线。
+            // 少了全局那一乘，大尺寸图纸的虚线周期会小上千倍，虚线会整条消失。
             const double entityScale = (m_curAttr && m_curAttr->LinetypeScale > 0.0)
                                           ? m_curAttr->LinetypeScale : 1.0;
             const double scale = entityScale * m_lineTypeScale;
@@ -559,8 +573,8 @@ namespace MiniCAD
             double len = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (len < 1e-12) return;
 
-            // 方向单位向量与沿线取点：护栏（缩得过小、dash 过多）判定和
-            // 符号铺设都要用，提到判定之前
+            // 方向单位向量与沿线取点：护栏（dash 过多、长虚线延迟）判定和符号铺设都要用，
+            // 提到判定之前
             double ux = dx / len, uy = dy / len, uz = dz / len;
             auto P = [&](double t) -> Math::Point3 {
                 return { a.x + ux * t, a.y + uy * t, a.z + uz * t };
@@ -582,17 +596,36 @@ namespace MiniCAD
                 std::sort(order.begin(), order.end());
             }
 
+            // 虚线几何完全在世界坐标里（周期 = 图案周期 × 比例），与缩放无关：**不**标记随视图变化，进静态流，
+            // 滚轮缩放时不重新细分。以前所有虚线按「一个周期不足 4px 就退化为实线」取舍，每格滚轮都要把
+            // 整张图的虚线实体重新细分（13 万实体的管综图每格 56 ms）。
+            // 一段几百上千个周期的长线（线型比例很小的管线、轴线）仍按像素取舍——全部铺出来顶点会多出几倍
+            //（管综图 490 万 → 2080 万），而缩小时它们本来就该是实线。但不能因此把所在实体整个标成随视图变化
+            //（含一段长虚线的大块每格滚轮要重铺几十毫秒）：无线宽时只把这一段「延迟」出来（DeferredDash），
+            // 由 Editor 放进动态流，缩放时从这个小列表直接重铺，不再调用实体的 Draw。
+            // 有线宽时实体本来就随视图变化（线宽按像素烘焙），按像素取舍即可。
+            //
+            // 例外：带符号的复杂线型（文字/形）不参与这套取舍 —— 符号是这类线型的识别特征，
+            // 任何稀疏化都会让它「看起来没了」（缩小时看着正常、放大反而只剩零星几个符号）。
+            // 它们的 Pattern 段数有限（一个周期至多几段），顶点风险由 kMaxDashes 兜底。
             if (!continuous)
             {
-                // 虚线的取舍与"点"的长度都按像素算,缩放后要重新细分
-                if (m_worldPerPixel > 0.0)
-                    m_viewDependent = true;
-
-                // 只有「周期算不出来」这一种情况才退化成实线 —— 那是纯算术保护
-                // （PatternLength×scale = 0 会让下面的铺设循环死循环），不是显示策略。
                 const double cycle = rec->PatternLength * scale;
-                if (cycle <= 1e-12)
+                if (cycle <= 1e-12)                                     // 周期算不出来：纯算术保护，否则下面的循环死循环
                     continuous = true;
+                else if (order.empty() && len / cycle > kMaxDashes)      // dash 数量过大：退化为实线显示
+                    continuous = true;
+                else if (order.empty() && len / cycle > kStaticMaxDashes)
+                {
+                    if (width <= 0.0 && m_deferLongDashes)
+                    {
+                        m_deferred.push_back({ a, b, color, CurrentLineTypeId(), scale });
+                        return;
+                    }
+                    MarkViewDependent();
+                    if (m_worldPerPixel > 0.0 && cycle / m_worldPerPixel < 4.0)   // 一个周期不足 4px：实线
+                        continuous = true;
+                }
             }
 
             if (continuous)
@@ -630,57 +663,81 @@ namespace MiniCAD
                 return;
             }
 
-            // ── 节流：区分「简单线型」与「复杂线型（带符号）」───────────────
-            //
-            // 带符号的线型（文字/形）与纯 dash 线型必须分开对待：
-            //   · 带符号的线型：不做节流、不退化，始终按真实周期铺。
-            //     符号是这类线型的识别特征，任何稀疏化都会让它「看起来没了」——
-            //     缩小时看着正常、放大反而只剩零星几个符号。
-            //     顶点过多的风险由下面的硬上限兜底（每实体最多 4000 段）。
-            //   · 简单线型：按最小元素判 LOD（见下），因为它没有符号，
-            //     疏密只影响虚实观感，不影响能否认出线型。
-            const double cycle = rec->PatternLength * scale;
-
-            // 最小非零元素（世界长度）。LOD 用它而不是用周期：眼睛分辨不出的
-            // 是图案里最短的那一段，不是整个周期（周期 0.95 里 dash 只有 0.5 时，
-            // 先糊掉的是 0.5 那一段）。
-            // 0 长度段是「点」，它的可见尺寸由下面 dotLen 按像素单独展开，
-            // 不参与这个判定 —— 否则点会被算成最小元素，把 LOD 拉到最严。
-            double minElem = cycle;
-            for (double p : rec->Pattern)
+            // “点”（0 长度段）：无线宽时走点流（恒定 1 屏幕像素，同图案填充的 dash = 0），
+            // 不依赖缩放；有线宽时画成一个线宽长的加宽段（线宽本身就按像素烘焙、随视图变化）。
+            // 选中流没有点图元一路，按 1.5px 的小段画（随缩放重建，由 UpdateSelectionVertices 设置）
+            const bool dotAsSegment = width > 0.0 || m_dotsAsSegments;
+            double dotLen = width;
+            if (dotAsSegment && width <= 0.0)
             {
-                const double e = std::fabs(p) * scale;
-                if (e > 1e-12 && e < minElem)
-                    minElem = e;
+                dotLen = m_worldPerPixel * 1.5;
+                if (dotLen <= 0.0) dotLen = len * 0.002;
+                MarkViewDependent();
             }
 
-            double boost = 1.0;
-            if (order.empty() && cycle > 1e-12)
-            {
-                // 简单线型：最小元素不足 1px 时按比例放大周期。
-                // 注意是「放大周期」而不是「压成实线」—— 后者会让线型在某个
-                // 缩放档位上突然跳变成一条光杆实线，与 CAD 的差异更刺眼。
-                if (m_worldPerPixel > 0.0 && minElem < m_worldPerPixel)
-                    boost = m_worldPerPixel / minElem;
-                // 硬上限：任何情况下每实体不超过 4000 个周期，避免超长线上
-                // 几十万段把顶点数撑爆。
-                const double maxCycles = 4000.0;
-                if (cycle > 1e-12 && len / cycle > maxCycles)
-                    boost = std::max(boost, (len / cycle) / maxCycles);
-            }
-            // boost 只乘在「段的长度」上，符号尺寸始终用 scale（不受影响）
-            const double segScale = scale * boost;
+            LayPattern(a, b, *rec, scale, dotAsSegment ? dotLen : 0.0,
+                       [&](const Math::Point3& p, const Math::Point3& q) { EmitSolid(p, q, color, width); },
+                       [&](const Math::Point3& p) { m_points.push_back(ToVertex(p, color)); },
+                       0.0,
+                       [&](size_t pat, double at)
+                       {
+                           // 符号锚点落在该 Pattern 段的**末尾**（见 LayPattern 的说明）
+                           for (const auto& o : order)
+                               if (o.first == pat)
+                                   EmitLineTypeSymbol(P(at), ux, uy, uz,
+                                                      rec->Symbols[o.second], scale, color);
+                       });
+        }
 
-            // “点”(0 长度段)的可见长度:至少 ~1.5px
-            double dotLen = std::max(width, m_worldPerPixel * 1.5);
-            if (dotLen <= 0.0) dotLen = len * 0.002;
+    public:
+        // 沿 a→b 按线型图案铺设：实段交给 emitSeg(p, q)；点笔划（0 长度段）在 dotLen > 0 时作为
+        // dotLen 长的实段，否则交给 emitDot(p)。图案全为点（铺不动）时整段当实线。
+        // emitSym(patternIndex, 段末位置 t)：复杂线型一个 Pattern 段画完之后的落符号点（可选，默认不铺符号）
+        // startOffset：a 点落在图案里的位置（世界单位，已含比例；对周期取模）——一段虚线被裁掉前半段后，
+        // 后半段从这个相位接着铺，裁剪处的 dash / gap 才不会错位
+        template <class EmitSeg, class EmitDot, class EmitSym = std::nullptr_t>
+        static void LayPattern(const Math::Point3& a, const Math::Point3& b, const LineTypeRecord& rec, double scale,
+                               double dotLen, EmitSeg&& emitSeg, EmitDot&& emitDot, double startOffset = 0.0,
+                               EmitSym&& emitSym = nullptr)
+        {
+            const double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+            const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len < 1e-12) return;
+            double advance = 0.0;
+            for (double v : rec.Pattern)
+                advance += std::abs(v);
+            if (rec.Pattern.empty() || advance * scale <= 1e-12)
+            {
+                emitSeg(a, b);
+                return;
+            }
+
+            const double ux = dx / len, uy = dy / len, uz = dz / len;
+            auto P = [&](double t) -> Math::Point3 { return { a.x + ux * t, a.y + uy * t, a.z + uz * t }; };
+
+            // 先把起点相位走掉：跳过整段落在相位之前的元素，停在相位所在的元素中间（partial = 该元素剩余长度）
+            size_t idx = 0;
+            double partial = -1.0;
+            if (startOffset > 0.0)
+            {
+                const double period = advance * scale;
+                double off = std::fmod(startOffset, period);
+                if (off < 0.0) off += period;
+                // 元素总长 = 周期 > off，所以最多走一圈就停下
+                for (size_t n = 0; off > 1e-12 && n < rec.Pattern.size(); ++n, ++idx)
+                {
+                    const double seg = std::abs(rec.Pattern[idx % rec.Pattern.size()]) * scale;
+                    if (seg > off + 1e-12) { partial = seg - off; break; }
+                    off -= seg;
+                }
+            }
 
             double t = 0.0;
-            size_t idx = 0;
             while (t < len)
             {
-                const size_t pat = idx % rec->Pattern.size();
-                double seg = rec->Pattern[pat] * segScale;
+                const size_t pat = idx % rec.Pattern.size();
+                double seg = rec.Pattern[pat] * scale;
+                if (partial >= 0.0) { seg = seg < 0.0 ? -partial : partial; partial = -1.0; }
                 ++idx;
 
                 // 符号锚点取该 Pattern 段的**末尾**（画完这一段之后的位置）。
@@ -691,19 +748,23 @@ namespace MiniCAD
 
                 if (seg > 0.0)
                 {
-                    double t1 = std::min(t + seg, len);
-                    EmitSolid(P(t), P(t1), color, width);
+                    const double t1 = std::min(t + seg, len);
+                    emitSeg(P(t), P(t1));
                     t = t1;
                 }
                 else if (seg < 0.0)
                 {
                     t += -seg;
                 }
+                else if (dotLen > 0.0)
+                {
+                    const double t1 = std::min(t + dotLen, len);
+                    emitSeg(P(t), P(t1));
+                    t = t1;
+                }
                 else
                 {
-                    double t1 = std::min(t + dotLen, len);
-                    EmitSolid(P(t), P(t1), color, width);
-                    t = t1;
+                    emitDot(P(t));
                 }
 
                 // 铺设落在这一段上的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
@@ -711,12 +772,8 @@ namespace MiniCAD
                 // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
                 //
                 // 锚点用**段末** t（不是 segStart）：见上面关于 .lin 记号顺序的说明。
-                for (const auto& o : order)
-                {
-                    if (o.first == pat)
-                        EmitLineTypeSymbol(P(t), ux, uy, uz,
-                                           rec->Symbols[o.second], scale, color);
-                }
+                if constexpr (!std::is_same_v<std::decay_t<EmitSym>, std::nullptr_t>)
+                    emitSym(pat, t);
             }
         }
 
@@ -834,6 +891,39 @@ namespace MiniCAD
             }
         }
 
+        // 延迟的长虚线段按当前缩放铺成线段：一个周期不足 4px（或缩放未知）时画成一段实线；
+        // 点笔划画成 1.5px 的小段（动态流随缩放重建，不需要点流）
+        static void EmitDeferredDash(const DeferredDash& d, const LineTypeTable& lineTypes, double worldPerPixel,
+                                     std::vector<Vertex_P3_C4>& out)
+        {
+            const LineTypeRecord* rec = lineTypes.Find(d.lineType);
+            const double cycle = (rec && !rec->IsContinuous()) ? rec->PatternLength * d.scale : 0.0;
+            if (cycle <= 1e-12 || worldPerPixel <= 0.0 || cycle / worldPerPixel < 4.0)
+            {
+                out.push_back(ToVertex(d.a, d.color));
+                out.push_back(ToVertex(d.b, d.color));
+                return;
+            }
+            LayPattern(d.a, d.b, *rec, d.scale, worldPerPixel * 1.5,
+                       [&](const Math::Point3& p, const Math::Point3& q)
+                       {
+                           out.push_back(ToVertex(p, d.color));
+                           out.push_back(ToVertex(q, d.color));
+                       },
+                       [](const Math::Point3&) {}, d.phase);
+        }
+
+        // 延迟长虚线：开启后无线宽的长虚线段只记录不铺设（场景流用；选中流、对话框预览不开）
+        void SetDeferLongDashes(bool on) { m_deferLongDashes = on; }
+        bool DeferLongDashes() const     { return m_deferLongDashes; }
+        // 本次细分延迟的长虚线段（调用方取走后清空）
+        std::vector<DeferredDash> TakeDeferredDashes() { return std::move(m_deferred); }
+        // 尚未取走的延迟段（布局页的视口合成后按视口矩形裁剪其中新增的那些）
+        std::vector<DeferredDash>& DeferredDashes() { return m_deferred; }
+        double GetLineTypeScale() const { return m_lineTypeScale; }
+
+    private:
+
         void EmitSolid(const Math::Point3& a, const Math::Point3& b,
                        const Math::Color4& color, double width)
         {
@@ -883,7 +973,7 @@ namespace MiniCAD
             cp = 0xFFFD; return p + 1;
         }
 
-        Vertex_P3_C4 ToVertex(const Math::Point3& pt, const Math::Color4& col) const
+        static Vertex_P3_C4 ToVertex(const Math::Point3& pt, const Math::Color4& col)
         {
             return {
                 { static_cast<float>(pt.x), static_cast<float>(pt.y), static_cast<float>(pt.z) },
@@ -906,6 +996,13 @@ namespace MiniCAD
         double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
+        double                         m_textWidthFactor = 0.0;   // 当前实体的多行文字宽度因子（0 = 按样式）
+        bool                           m_dotsAsSegments = false;   // 线型的点笔划画成小段（选中流）
+        bool                           m_deferLongDashes = false;  // 长虚线段延迟铺设（见 EmitStyled）
+        std::vector<DeferredDash>      m_deferred;                 // 本次细分延迟的长虚线段
+        // 一段虚线最多多少个周期还进静态流（不随缩放重建）；超过的延迟铺设 / 按像素取舍
+        static constexpr double        kStaticMaxDashes = 200.0;
+        static constexpr double        kMaxDashes       = 4000.0;  // 再多就当实线
         bool                           m_thinLines     = false;
         std::vector<std::vector<Math::Point3>> m_wipes;
         WipeClip::Batch                m_pendingWipes{ 5 };   // 本实体内尚未裁剪的遮罩（线、填充、文字、字形实例、点五条流）

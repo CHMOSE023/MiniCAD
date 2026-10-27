@@ -1,4 +1,5 @@
 #include "Widgets/DockSpace.h"
+#include "Widgets/Panel.h"
 #include "Core/UIContext.h"
 #include "Paint/DrawList.h"
 #include "Style/Theme.hpp"
@@ -28,6 +29,27 @@ namespace MiniGUI
 
         bool IsHorizontalSide(DockSide side) { return side == DockSide::Left || side == DockSide::Right; }
         bool IsLeadingSide(DockSide side)    { return side == DockSide::Left || side == DockSide::Top; }
+
+        // 卡片样式：用背景色盖住矩形的四个角，留下圆角（内容节点各自画的直角背景也一并修成圆角）
+        void MaskCorners(DrawList& dl, const Rect& r, float rad, ColorRef bg)
+        {
+            constexpr float kPi = 3.14159265f;
+            struct Corner { Vec2 corner, center; float a0; };
+            const Corner corners[4] =
+            {
+                { r.min,                  { r.min.x + rad, r.min.y + rad }, kPi },          // 左上：从左边到上边
+                { { r.max.x, r.min.y },   { r.max.x - rad, r.min.y + rad }, kPi * 1.5f },   // 右上
+                { r.max,                  { r.max.x - rad, r.max.y - rad }, 0.0f },         // 右下
+                { { r.min.x, r.max.y },   { r.min.x + rad, r.max.y - rad }, kPi * 0.5f },   // 左下
+            };
+            for (const Corner& c : corners)
+            {
+                dl.PathClear();
+                dl.PathLineTo(c.corner);
+                dl.PathArcTo(c.center, rad, c.a0, c.a0 + kPi * 0.5f, 8);
+                dl.PathFillConvex(bg);
+            }
+        }
     }
 
     // =========================================================
@@ -52,6 +74,12 @@ namespace MiniGUI
 
         float HeaderHeight() const { return HasHeader() ? DockSpace::kHeaderHeight : 0.0f; }
 
+        // 浮动停靠区里没有标题栏的组（文档区）：透明、点击穿透，露出下面的绘图区
+        bool IsHole() const { return m_dock->IsFloating() && !HasHeader(); }
+
+        // 浮动时卡片四角不能用背景色盖（下面是绘图区），内容向内缩一点，露出卡片自己画的圆角
+        static constexpr float kFloatInset = 3.0f;
+
         // 标签的横向范围（本地坐标）
         struct TabGeom { float x0, x1; Rect close; bool closable; };
         std::vector<TabGeom> Tabs() const
@@ -74,7 +102,7 @@ namespace MiniGUI
                 total += w;
             }
             const float scale = total > avail && total > 0.0f ? avail / total : 1.0f;     // 放不下时等比缩窄
-            float x = 2.0f;
+            float x = m_dock->IsFloating() ? 0.0f : 2.0f;      // 浮动卡片：第一个标签贴着卡片的圆角
             for (size_t i = 0; i < widths.size(); ++i)
             {
                 const float w  = std::floor(widths[i] * scale);
@@ -103,19 +131,45 @@ namespace MiniGUI
         void OnLayout() override
         {
             const Vec2 size = GetSize();
-            const Rect content{ 0.0f, HeaderHeight(), size.x, std::max(size.y, HeaderHeight()) };
+            SetHitTestVisible(!IsHole());
+            Rect content{ 0.0f, HeaderHeight(), size.x, std::max(size.y, HeaderHeight()) };
+            if (m_dock->IsFloating() && !IsHole())
+                content = Rect{ kFloatInset, content.min.y, std::max(kFloatInset, size.x - kFloatInset), std::max(content.min.y, size.y - kFloatInset) };
             for (const auto& c : GetChildren())
                 c->SetBounds(content);
         }
 
+        // 当前面板内容的底色：卡片和激活的标签都用它，标签与内容连成一片
+        ColorRef BodyColor() const
+        {
+            for (const auto& c : GetChildren())
+                if (const auto* p = dynamic_cast<const Panel*>(c.get()); p && p->GetBackground() != ColorRef(Colors::Transparent))
+                    return p->GetBackground();
+            return Theme::Panel;
+        }
+
         void OnPaint(DrawList& dl, const Rect& r) override
         {
-            dl.AddRectFilled(r, Theme::Panel);
+            if (IsHole())
+                return;
+            const bool     floating = m_dock->IsFloating();
+            const ColorRef body     = BodyColor();
+            dl.AddRectFilled(r, body, floating ? Theme::RadiusLg : 0.0f);
             if (!HasHeader())
                 return;
             UIContext* ctx = GetContext();
             const Rect header{ r.min.x, r.min.y, r.max.x, r.min.y + DockSpace::kHeaderHeight };
-            dl.AddRectFilled(header, Theme::PanelAlt);
+            // 标题条比内容深一级，激活的标签填内容色并盖住底边的分隔线，看上去与内容连成一片
+            const ColorRef strip = body == ColorRef(Theme::PanelAlt) ? Theme::Background : Theme::PanelAlt;
+            if (floating)
+            {
+                dl.AddRectFilled(header, strip, Theme::RadiusLg);
+                dl.AddRectFilled(Rect{ header.min.x, header.min.y + Theme::RadiusLg, header.max.x, header.max.y }, strip);
+            }
+            else
+            {
+                dl.AddRectFilled(header, strip);
+            }
             dl.AddRectFilled(Rect{ header.min.x, header.max.y - 1.0f, header.max.x, header.max.y }, Theme::BorderSubtle);
 
             const auto tabs = Tabs();
@@ -125,14 +179,30 @@ namespace MiniGUI
                 const bool     active = static_cast<int>(i) == m_leaf->active;
                 const bool     hover  = static_cast<int>(i) == m_hoverTab;
                 const Rect     tab{ r.min.x + t.x0, header.min.y, r.min.x + t.x1, header.max.y - (active ? 0.0f : 1.0f) };
+                // 标签上面两个角是圆的（与卡片、按钮的圆角风格一致），下边与内容连成一片；
+                // 浮动卡片的上角更圆：贴着卡片角的标签（第一个的左上、顶到右边的右上）用卡片的圆角
+                const float rl = floating && i == 0 ? Theme::RadiusLg : Theme::RadiusMd;
+                const float rr = floating && t.x1 >= GetSize().x - 0.5f ? Theme::RadiusLg : Theme::RadiusMd;
+                auto fillTab = [&](ColorRef color)
+                {
+                    constexpr float kPi = 3.14159265f;
+                    dl.PathClear();
+                    dl.PathLineTo({ tab.min.x, tab.max.y });
+                    dl.PathArcTo({ tab.min.x + rl, tab.min.y + rl }, rl, kPi, kPi * 1.5f, 8);          // 左上：从左边到上边
+                    dl.PathArcTo({ tab.max.x - rr, tab.min.y + rr }, rr, kPi * 1.5f, kPi * 2.0f, 8);   // 右上：从上边到右边
+                    dl.PathLineTo({ tab.max.x, tab.max.y });
+                    dl.PathFillConvex(color);
+                };
                 if (active)
                 {
-                    dl.AddRectFilled(tab, Theme::Panel);
-                    dl.AddRectFilled(Rect{ tab.min.x, tab.min.y, tab.max.x, tab.min.y + 2.0f }, Theme::Accent);
+                    fillTab(body);
+                    // 顶上的指示线：两头收进圆角以内；浮动卡片的边框画在最上层，指示线下移 1px 不被它盖住
+                    const float top = floating ? 1.0f : 0.0f;
+                    dl.AddRectFilled(Rect{ tab.min.x + rl, tab.min.y + top, tab.max.x - rr, tab.min.y + top + 2.0f }, Theme::Accent, 1.0f);
                 }
                 else if (hover)
                 {
-                    dl.AddRectFilled(tab, Theme::RowHover);
+                    fillTab(Theme::RowHover);
                 }
                 const std::string& title = m_dock->m_panels.at(m_leaf->panels[i]).title;
                 const float textRight = t.closable ? tab.max.x - kCloseW - 4.0f : tab.max.x - kTabPad;
@@ -143,10 +213,19 @@ namespace MiniGUI
                 {
                     const Rect cr{ t.close.min + r.min, t.close.max + r.min };
                     if (hover && m_hoverClose)
-                        dl.AddRectFilled(cr, Theme::ControlHover, 3.0f);
+                        dl.AddRectFilled(cr, Theme::ControlHover, Theme::RadiusSm);
                     dl.AddCross(cr.Center(), 3.5f, Theme::TextDim, 1.3f);
                 }
             }
+        }
+
+        void OnPaintOverlay(DrawList& dl, const Rect& r) override
+        {
+            if (!m_dock->IsCardStyle() || IsHole())
+                return;
+            if (!m_dock->IsFloating())
+                MaskCorners(dl, r, Theme::RadiusLg, Theme::Background);
+            dl.AddRect(r, Theme::BorderSubtle, Theme::RadiusLg, 1.0f);
         }
 
         void OnPointerEvent(PointerEvent& e) override
@@ -286,6 +365,8 @@ namespace MiniGUI
         {
             // 节点比分界线宽（热区叠在两侧面板上），平时只画中间的分界线，悬停 / 拖动时画一条稍宽的强调色
             const bool  hot = m_dragging || IsHovered();
+            if (m_dock->IsCardStyle() && !hot)
+                return;                         // 卡片样式：平时缝里什么也不画
             const float w   = hot ? 3.0f : DockSpace::kSplitterSize;
             const Vec2  c   = r.Center();
             const Rect line = m_split->horizontal ? Rect{ c.x - w * 0.5f, r.min.y, c.x + w * 0.5f, r.max.y }
@@ -777,7 +858,8 @@ namespace MiniGUI
 
         const size_t n     = node->children.size();
         const bool   horiz = node->horizontal;
-        const float  total = (horiz ? rect.Width() : rect.Height()) - kSplitterSize * static_cast<float>(n - 1);
+        const float  gap   = SplitterSize();
+        const float  total = (horiz ? rect.Width() : rect.Height()) - gap * static_cast<float>(n - 1);
 
         // 固定尺寸的子节点按 size，其余平分剩余空间；没有占剩余空间的子节点时最后一个占剩余空间
         std::vector<float> sizes(n, 0.0f);
@@ -815,14 +897,18 @@ namespace MiniGUI
             const float b    = i + 1 == n ? (horiz ? rect.max.x : rect.max.y) : snap(pos + len);
             const Rect  r    = horiz ? Rect{ a, rect.min.y, b, rect.max.y } : Rect{ rect.min.x, a, rect.max.x, b };
             LayoutTree(node->children[i].get(), r);
-            pos = b + kSplitterSize;
+            pos = b + gap;
         }
     }
 
     void DockSpace::OnLayout()
     {
         if (m_root)
-            LayoutTree(m_root.get(), Rect{ { 0.0f, 0.0f }, GetSize() });
+        {
+            const Edges& pad  = GetLayoutStyle().padding;
+            const Vec2   size = GetSize();
+            LayoutTree(m_root.get(), Rect{ pad.left, pad.top, std::max(pad.left, size.x - pad.right), std::max(pad.top, size.y - pad.bottom) });
+        }
 
         for (const auto& c : GetChildren())
         {
@@ -836,7 +922,7 @@ namespace MiniGUI
                 const Rect& a = split->children[sp->GetIndex()]->rect;
                 const Rect& b = split->children[sp->GetIndex() + 1]->rect;
                 // 热区以分界线为中心向两侧扩展（分隔条节点在标签组之后添加，命中测试优先）
-                const float pad = (kSplitterHit - kSplitterSize) * 0.5f;
+                const float pad = std::max(1.0f, (kSplitterHit - SplitterSize()) * 0.5f);
                 sp->SetBounds(split->horizontal ? Rect{ a.max.x - pad, split->rect.min.y, b.min.x + pad, split->rect.max.y }
                                                 : Rect{ split->rect.min.x, a.max.y - pad, split->rect.max.x, b.min.y + pad });
             }
@@ -1086,6 +1172,20 @@ namespace MiniGUI
         return true;
     }
 
+    void DockSpace::SetFloating(bool floating)
+    {
+        m_floating = floating;
+        SetHitTestVisible(!floating);       // 缝里点击穿透到绘图区；卡片、分隔条是子节点，照常命中
+        InvalidateLayout();
+        Invalidate();
+    }
+
+    void DockSpace::OnPaint(DrawList& dl, const Rect& screenRect)
+    {
+        if (IsCardStyle() && !m_floating)
+            dl.AddRectFilled(screenRect, Theme::Background);       // 卡片之间的缝（浮动时透明，露出绘图区）
+    }
+
     void DockSpace::OnPaintOverlay(DrawList& dl, const Rect& screenRect)
     {
         if (!m_drag.active)
@@ -1093,8 +1193,8 @@ namespace MiniGUI
         Rect preview;
         if (GetDropPreview(preview))
         {
-            dl.AddRectFilled(preview.Deflated(2.0f), Theme::AccentSoft, 4.0f);
-            dl.AddRect(preview.Deflated(2.0f), Theme::Accent, 4.0f, 2.0f);
+            dl.AddRectFilled(preview.Deflated(2.0f), Theme::AccentSoft, Theme::RadiusSm);
+            dl.AddRect(preview.Deflated(2.0f), Theme::Accent, Theme::RadiusSm, 2.0f);
         }
         // 光标旁显示被拖动的面板名称
         UIContext* ctx = GetContext();
@@ -1105,8 +1205,8 @@ namespace MiniGUI
         const float w = ctx->GetTextSystem().Measure(title, p).x + kTabPad * 2.0f;
         const Rect ghost{ m_drag.pos.x + 12.0f, m_drag.pos.y + 8.0f, m_drag.pos.x + 12.0f + w, m_drag.pos.y + 8.0f + 24.0f };
         (void)screenRect;
-        dl.AddRectFilled(ghost, Theme::Panel, 4.0f);
-        dl.AddRect(ghost, Theme::Accent, 4.0f, 1.0f);
+        dl.AddRectFilled(ghost, Theme::Panel, Theme::RadiusSm);
+        dl.AddRect(ghost, Theme::Accent, Theme::RadiusSm, 1.0f);
         ctx->GetTextSystem().Draw(dl, Rect{ ghost.min.x + kTabPad, ghost.min.y, ghost.max.x, ghost.max.y }, title, p);
     }
 

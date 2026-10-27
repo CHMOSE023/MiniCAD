@@ -4,43 +4,9 @@ project(MiniCADWin VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ── MiniGUI 渲染后端（源码在 src/Render，头文件以 src/Render 为根："D3D11/D3D11Backend.h"）──
-# D3D11Backend 画界面（MiniGUI::IRenderBackend），与画 CAD 视口的 D3D11Renderer 是两回事
-add_library(MiniGUI_D3D11 STATIC
-    src/Render/D3D11/D3D11Backend.cpp
-)
+# 渲染后端（MiniCADRender、MiniGUI_D3D11、MiniGUI_Software）定义在 cmake/Render.cmake，源码在 apps/Render
 
-target_include_directories(MiniGUI_D3D11 PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
-)
-
-target_link_libraries(MiniGUI_D3D11
-    PUBLIC  MiniGUI
-    PRIVATE d3d11 D3DCompiler
-)
-
-# 软件光栅后端（与平台无关，用于截图对比测试）
-add_library(MiniGUI_Software STATIC
-    src/Render/Software/SoftwareBackend.cpp
-)
-
-target_include_directories(MiniGUI_Software PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Render
-)
-
-target_link_libraries(MiniGUI_Software PUBLIC MiniGUI)
-
-if(MSVC)
-    target_compile_options(MiniGUI_D3D11 PRIVATE /utf-8 /W4)
-    target_compile_definitions(MiniGUI_D3D11 PRIVATE
-        UNICODE
-        NOMINMAX
-        WIN32_LEAN_AND_MEAN
-    ) 
-    target_compile_options(MiniGUI_Software PRIVATE /utf-8 /W4)
-endif()
-
-# ── MiniCAD 桌面版：Win32 宿主（窗口 + D3D11）+ 共用的主窗口界面（MiniCADApp）──
+# ── MiniCAD 桌面版：Win32 宿主（窗口 + 图形设备）+ 共用的主窗口界面（MiniCADApp）──
 
 # 版本号头文件 MiniCADVersion.h 由 apps/Common 生成（目标 MiniCADVersionHeader），MiniCAD.rc 用它填写 exe 版本信息
 
@@ -50,11 +16,6 @@ add_executable(MiniCADWin
     src/Host/Win32Shell.cpp
     src/Host/SelfTest.cpp
     src/MiniCAD.rc
-    src/Render/D3D11/D3D11Renderer.cpp
-    src/Render/D3D11/D3D11RenderTarget.cpp
-    src/Render/D3D11/Device.cpp
-    src/Render/D3D11/Shader.cpp
-    src/Render/D3D11/SwapChain.cpp
 )
 
 target_include_directories(MiniCADWin PRIVATE
@@ -69,10 +30,7 @@ target_link_libraries(MiniCADWin PRIVATE
     MiniCADApp
     MiniCAD
     MiniGUI_Win32
-    MiniGUI_D3D11
-    d3d11
-    dxgi
-    D3DCompiler
+    MiniCADRender
 )
 
 # 三维实体内核（SMLib，见 docs/Solid/PLAN.md）
@@ -85,7 +43,7 @@ if(MSVC)
     target_compile_options(MiniCADWin PRIVATE
         /utf-8
         /Z7                  # 调试信息嵌入 .obj，避免共享 PDB 锁定问题
-        /FIpch.h             # 强制包含，解决 D3D11 头文件顺序依赖
+        /FIpch.h             # 强制包含 Windows 头文件
     )
     target_compile_definitions(MiniCADWin PRIVATE
         UNICODE

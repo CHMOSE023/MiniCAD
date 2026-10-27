@@ -14,6 +14,7 @@ namespace MiniGUI
             "Text", "TextDim", "TextDisabled", "Placeholder", "Danger",
             "PopupBorder", "TooltipBackground", "TooltipBorder",
             "ScrollThumb", "ScrollThumbHover", "ModalScrim", "Shadow", "Outline",
+            "Rail", "RailHover", "RailInk", "CardPrimary", "CardPrimaryInk", "CardPrimaryBorder",
         };
         static_assert(std::size(kSlotNames) == ThemeColors::kCount, "槽位名称与 ThemeColor 不一致");
     }
@@ -57,6 +58,12 @@ namespace MiniGUI
         t.Set(C::ModalScrim,        RGBA(0, 0, 0, 90));
         t.Set(C::Shadow,            RGBA(0, 0, 0, 255));
         t.Set(C::Outline,           RGBA(255, 255, 255, 255));
+        t.Set(C::Rail,              ColorFromHex(0x2B2D30));
+        t.Set(C::RailHover,         ColorFromHex(0x3C3F43));
+        t.Set(C::RailInk,           ColorFromHex(0xDFE1E5));
+        t.Set(C::CardPrimary,       ColorFromHex(0x1B3048));
+        t.Set(C::CardPrimaryInk,    ColorFromHex(0x9CC7F5));
+        t.Set(C::CardPrimaryBorder, ColorFromHex(0x3A88EE));
         return t;
     }
 
@@ -99,6 +106,12 @@ namespace MiniGUI
         t.Set(C::ModalScrim,        RGBA(0, 0, 0, 50));
         t.Set(C::Shadow,            RGBA(0, 0, 0, 150));
         t.Set(C::Outline,           RGBA(0, 0, 0, 255));
+        t.Set(C::Rail,              ColorFromHex(0x5F6368));
+        t.Set(C::RailHover,         ColorFromHex(0x6E7277));
+        t.Set(C::RailInk,           ColorFromHex(0xFFFFFF));
+        t.Set(C::CardPrimary,       ColorFromHex(0xE3F0FB));
+        t.Set(C::CardPrimaryInk,    ColorFromHex(0x1A507F));
+        t.Set(C::CardPrimaryBorder, ColorFromHex(0x328BD3));
         return t;
     }
 

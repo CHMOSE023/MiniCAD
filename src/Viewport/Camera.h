@@ -33,6 +33,13 @@ namespace MiniCAD
         void Resize (double width, double height);
         void ZoomToBounds(double minX, double minY, double maxX, double maxY, double margin = 1.1);   // 居中并缩放到刚好容纳该范围（留边）
         void ZoomToBounds(const AABB& box, double margin = 1.1);    // 三维范围：按当前视图方向投影后容纳
+        // 适配范围时的留边（屏幕像素）：绘图区上叠着的功能区、面板等挡住的部分。ZoomToBounds 把范围放进去掉留边后的
+        // 区域并以它为中心；平移、缩放、投影都不受影响。不属于相机状态（不随文档切换、不进撤销）
+        void SetFitInsets(double left, double top, double right, double bottom) { m_fitInsets[0] = left; m_fitInsets[1] = top; m_fitInsets[2] = right; m_fitInsets[3] = bottom; }
+        // 去掉留边后的区域：scaleX / scaleY = 整个屏幕 / 区域（≥ 1），dx / dy = 区域中心相对屏幕中心的像素偏移（向右、向下为正）
+        const double* GetFitInsets() const { return m_fitInsets; }          // 左、上、右、下
+        struct FitArea { double scaleX = 1.0, scaleY = 1.0, dx = 0.0, dy = 0.0; };
+        FitArea GetFitArea() const;
 
         // ── 视图方向（M6）─────────────────────────────────────────
         void   SetView(double azimuthDeg, double elevationDeg);     // 仰角限制在 [−90°, 90°]
@@ -71,6 +78,7 @@ namespace MiniCAD
     private:
         double        m_screenWidth  = 1.0;
         double        m_screenHeight = 1.0;
+        double        m_fitInsets[4] = { 0.0, 0.0, 0.0, 0.0 };   // 左、上、右、下
         double        m_height       = 10.0;         // 相机高度（仅用于 view）
         double        m_zoom         = 10.0;         // 正交缩放（核心）
         double        m_aspect       = 1.0;          // 宽高比（仅用于 proj）

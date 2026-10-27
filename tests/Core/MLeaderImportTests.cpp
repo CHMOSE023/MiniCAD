@@ -20,6 +20,7 @@
 // 本文件用**合成数据**守住这些不变量（不依赖外部图纸）。
 #include "Core/Entity/MLeaderEntity.hpp"
 #include "Core/Draw/IDrawSink.hpp"
+#include "Core/Draw/TransformDrawSink.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Vec3.hpp"
 #include <algorithm>
@@ -510,6 +511,65 @@ int RunMLeaderImportTests()
         std::printf("    引线在左时下划线另一端=%.2f  期望（右缘）=%.2f\n", under2, wantInner);
         Check(std::abs(under2 - wantInner) < 1.0,
               "引线在左时下划线画到**右**缘（左右对称，不是写死一个方向）");
+    }
+
+    // ── 16. 编辑：landing 移动时文字跟着走，换边时翻到另一侧，翻两次复原 ──
+    {
+        MLeaderStyle st;
+        st.TextHeight = 10.0;
+        MLeaderEntity e(20, st);
+        e.SetText("AB");                                 // 估算宽 = 2 × 0.6 × 10 = 12
+        e.SetLanding({ 100, 0, 0 });
+        e.SetDoglegDir({ -1, 0, 0 });                   // 引线在左、文字在右
+        e.SetTextOrigin({ 100, 0, 0 });
+
+        e.MoveLanding({ 150, 20, 0 });
+        Check(Near(e.GetTextOrigin().x, 150) && Near(e.GetTextOrigin().y, 20),
+              "MoveLanding：文字原点随 landing 平移（移动 / 拉伸 / 夹点 / 撤销快照都走它）");
+
+        e.TurnDogleg({ 1, 0, 0 });                       // 镜像后引线换到右侧
+        Check(Near(e.GetTextOrigin().x, 150 - 12),
+              "TurnDogleg：内容换到 landing 左侧时文字右缘贴着 landing");
+        e.TurnDogleg({ -1, 0, 0 });
+        Check(Near(e.GetTextOrigin().x, 150), "TurnDogleg 翻两次回到原处（撤销按反向变换复原）");
+        e.TurnDogleg({ -0.8, 0.6, 0 });
+        Check(Near(e.GetTextOrigin().x, 150), "没有换边时文字原点不动");
+    }
+
+    // ── 17. 没有文字原点（新建）：按 landing 与 dogleg 方向推出 ─────────
+    {
+        MLeaderStyle st;
+        st.TextHeight = 10.0;
+        st.LandingGap = 2.0;
+        MLeaderEntity e(21, st);
+        e.SetText("AB");
+        e.SetLanding({ 100, 5, 0 });
+        e.SetDoglegDir({ 1, 0, 0 });                     // 引线在右：文字在 landing 左侧
+        Check(!e.HasTextOrigin(), "新建的多重引线没有文字原点");
+        Check(Near(e.ResolveTextOrigin(30).x, 100 - 2 - 30) && Near(e.ResolveTextOrigin(30).y, 5),
+              "引线在右：文字右缘在 landing − LandingGap（不是压到引线上）");
+        e.SetDoglegDir({ -1, 0, 0 });
+        Check(Near(e.ResolveTextOrigin(30).x, 102), "引线在左：文字左缘在 landing + LandingGap");
+        e.SetTextOrigin({ 0, 0, 0 });
+        Check(e.HasTextOrigin() && Near(e.ResolveTextOrigin(30).x, 0),
+              "文字原点设在 (0,0) 也算设置过（不再用 (0,0) 当“未设置”）");
+    }
+
+    // ── 18. 块内（带缩放的变换）量出的宽度换回块的局部单位 ──────────────
+    {
+        struct ScaleSink : IDrawSink
+        {
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            double MeasureMTextWidth(const std::string&, uint32_t, double height, double) override { return height * 3.0; }
+            bool MeasureMTextInkBounds(const std::string&, uint32_t, double height, double,
+                                       double& lo, double& hi) override { lo = height; hi = height * 3.0; return true; }
+        } target;
+        TransformDrawSink xs(target, Math::Mat4::Scale({ 2.0, 2.0, 2.0 }));
+        double lo = 0, hi = 0;
+        Check(Near(xs.MeasureMTextWidth("A", 0, 10.0, 0.0), 30.0),
+              "块缩放 2 倍：局部字高 10 量出局部宽 30（不是 120）");
+        Check(xs.MeasureMTextInkBounds("A", 0, 10.0, 0.0, lo, hi) && Near(lo, 10.0) && Near(hi, 30.0),
+              "块缩放 2 倍：墨迹边界也换回局部单位");
     }
 
     std::printf("多重引线导入用例失败：%d\n", g_failures);

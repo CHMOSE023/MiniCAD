@@ -25,7 +25,7 @@ namespace MiniGUI
         ColorRef selectionInactive = ColorRef(ThemeColor::TextDim, 70);
         ColorRef caret             = Theme::Text;
         float   fontSize          = 14.0f;
-        float   rounding          = 4.0f;
+        float   rounding          = Theme::RadiusSm;
         Edges   padding           = Edges::Symmetric(8.0f, 5.0f);
     };
 

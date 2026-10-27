@@ -5,6 +5,8 @@
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
 #include "Document/Command/LayoutCommands.h"
+#include "Import/CadExchange.h"
+#include "Widgets/Ribbon.h"
 #include "Widgets/TabView.h"
 #include "Widgets/TitleBar.h"
 #include "Core/UIContext.h"
@@ -63,13 +65,42 @@ namespace MiniCAD
                                       OpenDrawings(paths);
                                   });
                               } });
-        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",   .icon = "Save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveDocuments(false, false); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",   .icon = "Save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveWithProgress(false); }, .canExecute = hasDoc });
        
         m_commands.Register({ .id = "file.saveAs",  .label = "另存为(&A)…",  .shortcut = "Ctrl+Shift+S", .execute = [this] { SaveDocuments(false, true); },  .canExecute = hasDoc });
-        m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveDocuments(true, false); },  .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveWithProgress(true); },  .canExecute = hasDoc });
         m_commands.Register({ .id = "file.close",   .label = "关闭(&C)",     .shortcut = "Ctrl+W",
                               .execute = [this, &dm] { CloseDocument(dm.GetActive()); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "xref.locate", .label = "查找外部参照(&E)…",
+                              .tooltip = "为没有找到的外部参照选择所在的文件夹，在里面查找并读入（命令 XREF）",
+                              .execute = [this, &dm]
+                              {
+                                  Document* doc = dm.GetActive();
+                                  if (!doc) return;
+                                  const size_t missing = FindUnresolvedXrefs(doc->GetScene()).size();
+                                  if (missing == 0)
+                                  {
+                                      dm.GetEditor().GetCmdLine().Echo("没有找不到的外部参照");
+                                      return;
+                                  }
+                                  dm.GetEditor().GetCmdLine().Echo(std::to_string(missing) + " 个外部参照没有找到，请选择所在的文件夹");
+                                  LocateXrefs({ doc });
+                              },
+                              .canExecute = hasDoc });
         m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
+        m_commands.Register({ .id = "view.start", .label = "起始页(&H)",
+                              .tooltip = "显示起始页：新建、打开、最近的图纸（Esc 返回当前图纸）", .icon = "Home.png",
+                              .execute    = [this] { ShowStartPage(!m_startShown); },
+                              .canExecute = hasDoc,
+                              .isChecked  = [this] { return m_startShown || !m_docManager.GetActive(); } });
+        m_commands.Register({ .id = "ui.search", .label = "搜索命令(&K)",
+                              .tooltip = "在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行", .shortcut = "Ctrl+K",
+                              .execute    = [this] { if (MiniGUI::Ribbon* r = m_layout->GetRibbon()) r->FocusSearch(); },
+                              .canExecute = [this]
+                              {
+                                  const MiniGUI::Ribbon* r = m_layout->GetRibbon();
+                                  return r && r->GetSearchBox() && m_docManager.GetActive() && !m_startShown;    // 起始页显示时功能区是隐藏的
+                              } });
         // 「最近打开」的内容由 BuildRecentMenuItems() 在打开菜单时生成，这两条供命令行 / 快捷键直接调用
         m_commands.Register({ .id = "file.recent.clear", .label = "清除最近打开记录(&C)",
                               .tooltip = "清空「文件 > 最近打开」列表",
@@ -228,8 +259,25 @@ namespace MiniCAD
                                   .execute   = [this, &dm, toggle] { (dm.GetViewport().*toggle)(); m_viewport->RequestRender(); },
                                   .isChecked = [&dm, shown] { return (dm.GetViewport().*shown)(); } });
         };
-        m_commands.Register({ .id = "view.zoomExtents", .label = "缩放到全图(&A)", .shortcut = "Ctrl+Shift+E",
+        m_commands.Register({ .id = "view.zoomExtents", .label = "缩放到全图(&A)", .icon = "ZoomExtents.png", .shortcut = "Ctrl+Shift+E",
                               .execute = [this, &dm] { dm.ZoomAll(); m_viewport->RequestRender(); }, .canExecute = hasDoc });
+        // 视口导航条（ViewNavBar.cpp）上的放大 / 缩小（以绘图区中心为基点，相当于滚轮两格）与窗口缩放
+        auto zoomStep = [this, &dm](float steps)
+        {
+            const MiniGUI::Vec2 size = m_viewport->GetSize();
+            dm.GetViewport().Zoom(steps, size.x * m_dpiScale * 0.5f, size.y * m_dpiScale * 0.5f);
+            m_viewport->RequestRender();
+        };
+        m_commands.Register({ .id = "view.zoomIn",  .label = "放大(&I)", .icon = "ZoomIn.png",
+                              .execute = [zoomStep] { zoomStep(2.0f); },  .canExecute = hasDoc });
+        m_commands.Register({ .id = "view.zoomOut", .label = "缩小(&O)", .icon = "ZoomOut.png",
+                              .execute = [zoomStep] { zoomStep(-2.0f); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "view.zoomWindow", .label = "窗口缩放(&W)", .tooltip = "指定两个角点，缩放到该矩形范围",
+                              .icon = "ZoomWindow.png",
+                              .execute = [this, &dm] { dm.GetEditor().RunZoomOption("W"); m_viewport->Focus(); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "view.pan", .label = "平移(&P)", .tooltip = "按住左键拖动平移视图，右键 / ESC 退出（也可以拖动中键）",
+                              .icon = "Pan.png",
+                              .execute = [this, &dm] { dm.GetEditor().ActivateToolById("Pan"); m_viewport->Focus(); }, .canExecute = hasDoc });
         viewToggle("view.grid",  "显示栅格(&G)", &Viewport::ShowGridToggle,  &Viewport::IsGridShown);
         viewToggle("view.axis",  "显示极轴(&A)", &Viewport::ShowAxisToggle,  &Viewport::IsAxisShown);
         viewToggle("view.gizmo", "显示坐标(&Z)", &Viewport::ShowGizmoToggle, &Viewport::IsGizmoShown);
@@ -281,8 +329,14 @@ namespace MiniCAD
         };
         panelToggle("view.panel.properties", "properties", "特性(&P)");
         panelToggle("view.panel.layers",     "layers",     "图层(&L)");
-        panelToggle("view.panel.commandline", "commandline", "命令行(&C)");
-        m_commands.Find("view.panel.commandline")->shortcut = "Ctrl+9";     // 同 AutoCAD
+        // 命令行是浮在绘图区底部的卡片（不在停靠区里），开关保存在用户布局文件里
+        m_commands.Register({ .id = "view.panel.commandline", .label = "命令行(&C)", .shortcut = "Ctrl+9",     // 同 AutoCAD
+                              .execute   = [this] { SetCommandLineVisible(!m_commandLineVisible); },
+                              .canExecute = [this] { return m_cmdCard != nullptr; },
+                              .isChecked = [this] { return m_commandLineVisible; } });
+        // 视口导航条在加载界面描述文件之前创建，它用到的图标在这里给出
+        m_commands.Find("view.grid")->icon     = "Grid.png";
+        m_commands.Find("view.viewcube")->icon = "ViewCube.png";
         m_commands.Register({ .id = "view.panel.nodes", .label = "节点编辑器(&N)",
                               .tooltip = "节点式参数化建模：把几何运算连成节点图，改参数实时更新（docs/NodeGraph/PLAN.md）",
                               .shortcut = "Ctrl+Shift+N",
@@ -294,7 +348,8 @@ namespace MiniCAD
                               .execute = [this] { BakeNodeGraph(); }, .canExecute = hasDoc });
         m_commands.Register({ .id = "view.resetLayout", .label = "重置面板布局(&R)",
                               .tooltip = "删除保存的面板布局，恢复界面描述文件里的默认布局",
-                              .execute = [this] { ResetLayout(); } });
+                              // 重建界面会销毁功能区等节点（可能正是触发命令的按钮），等当前事件处理完再执行
+                              .execute = [this] { m_platform->Post([this] { ResetLayout(); }); } });
 
         // ── 图层 ─────────────────────────────────────────────────
         m_commands.Register({ .id = "layer.new", .label = "新建图层(&N)",
@@ -342,7 +397,7 @@ namespace MiniCAD
         m_commands.Register({ .id = "ui.reload", .label = "重新加载界面(&R)",
                               .tooltip = "重新读取界面描述文件（保存文件时也会自动重新加载）",
                               .shortcut = "F5", .allowInTextInput = true,
-                              .execute = [this] { ReloadUi(); } });
+                              .execute = [this] { m_platform->Post([this] { ReloadUi(); }); } });
         m_commands.Register({ .id = "ui.theme", .label = "浅色主题(&T)", .shortcut = "Ctrl+T",
                               .execute   = [this]
                               {

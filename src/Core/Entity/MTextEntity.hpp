@@ -70,6 +70,9 @@ namespace MiniCAD
         void SetHeight(double h)                   { m_height = h; }
         void SetRotation(double r)                 { m_rotation = r; }
         void SetBoxWidth(double w)                 { m_boxWidth = w; }   // 参考矩形宽度(组码 41)
+        // 宽度因子：0 = 按文字样式；> 0 时代替样式的（天正文字按 0.7 宽显示等）。DXF 的 MTEXT 没有这个属性，
+        // 导出时写成开头的内联格式码 \W0.7;
+        void SetWidthFactor(double f)              { m_widthFactor = f > 0.0 ? f : 0.0; }
 
         // 附着点 / 方向 / 行距
         void SetAttachment(MTextAttachment a)              { m_attach = a; }
@@ -95,6 +98,7 @@ namespace MiniCAD
         double              GetHeight()   const { return m_height; }
         double              GetRotation() const { return m_rotation; }
         double              GetBoxWidth() const { return m_boxWidth; }
+        double              GetWidthFactor() const { return m_widthFactor; }
 
         MTextAttachment       GetAttachment()        const { return m_attach; }
         MTextDrawingDirection GetDrawingDirection()  const { return m_drawDir; }
@@ -225,7 +229,9 @@ namespace MiniCAD
             // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等)。
             const Math::Point3 tl = AnchorTopLeft(w, h);
             const Math::Point3 drawPos{ tl.x, tl.y - m_height, tl.z };
+            if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
             sink.EmitMText(drawPos, GetPlainText(), m_styleId, m_height, m_rotation, m_boxWidth, color);
+            if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
@@ -238,6 +244,7 @@ namespace MiniCAD
             e->m_height            = m_height;
             e->m_rotation          = m_rotation;
             e->m_boxWidth          = m_boxWidth;
+            e->m_widthFactor       = m_widthFactor;
             e->m_attach            = m_attach;
             e->m_drawDir           = m_drawDir;
             e->m_lineSpacingStyle  = m_lineSpacingStyle;
@@ -365,6 +372,7 @@ namespace MiniCAD
         double       m_height   = 1.0;
         double       m_rotation = 0.0;
         double       m_boxWidth = 0.0;    // 参考矩形宽度(组码 41);0 = 不限宽
+        double       m_widthFactor = 0.0;   // 宽度因子，0 = 按样式
 
         // ── 附着 / 方向 / 行距 ─────────────────────────────────────────────────
         MTextAttachment       m_attach            = MTextAttachment::TopLeft;          // 组码 71

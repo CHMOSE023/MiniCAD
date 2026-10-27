@@ -155,7 +155,7 @@ namespace MiniCAD
         if (entity.IsKindOf<MLeaderEntity>())
         {
             auto& ml = static_cast<MLeaderEntity&>(entity);
-            ml.SetLanding(ml.GetLanding() + d);
+            ml.MoveLanding(ml.GetLanding() + d);
             // doglegDir 不变（方向向量）
             for (auto& ln : ml.GetLeaderLines())
                 for (auto& p : ln.points) p = p + d;

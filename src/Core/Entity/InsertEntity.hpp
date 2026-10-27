@@ -149,6 +149,12 @@ namespace MiniCAD
         {
             AABB box = AABB::Empty();
             if (!m_block) return box;
+            // 没读进来的外部参照只在插入点显示路径：范围取插入点，「全部显示」时不会把它漏掉
+            if (m_block->IsUnresolvedXRef())
+            {
+                box.Expand(XRefLabelPosition());
+                return box;
+            }
 
             AABB local = m_block->GetBoundingBox();
             if (local.Min.x > local.Max.x) return box;   // 空块：变换 ±∞ 角点会得到 NaN
@@ -185,6 +191,11 @@ namespace MiniCAD
         void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
         {
             if (!m_block) return;
+            if (m_block->IsUnresolvedXRef())
+            {
+                DrawXRefLabel(sink);
+                return;
+            }
             EnsureResolved();
 
             for (int r = 0; r < m_rowCount; ++r)
@@ -293,6 +304,27 @@ namespace MiniCAD
                 }
             }
             m_resolvedDirty = false;
+        }
+
+        // 没读进来的外部参照：在插入点写出参照路径（同 AutoCAD），让人知道这里有一个没加载的参照。
+        // 字高按屏幕像素固定，图纸单位多大都看得清；按当前缩放烘焙，缩放后要重新细分
+        static constexpr double kXRefLabelPx = 14.0;
+
+        Math::Point3 XRefLabelPosition() const
+        {
+            const Math::Point3 base = m_block ? m_block->GetBasePoint() : Math::Point3{ 0, 0, 0 };
+            return CellMatrix(0, 0) * base;
+        }
+
+        void DrawXRefLabel(IDrawSink& sink) const
+        {
+            const double wpp = sink.GetWorldPerPixel();
+            if (!(wpp > 0.0))
+                return;     // 不知道缩放的 sink（选中流、探针等）不画
+            sink.MarkViewDependent();
+            const std::string& path = m_block->GetXRefPath();
+            const std::string  text = path.empty() ? m_block->GetName() : path;
+            sink.EmitMText(XRefLabelPosition(), text, 0, kXRefLabelPx * wpp, 0.0, 0.0, ResolveDrawColor(sink));
         }
 
         // 与 LineTypeTable::ByBlockID 约定一致(1 = ByBlock),避免在头文件引入块表依赖。

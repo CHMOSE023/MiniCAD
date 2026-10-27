@@ -31,6 +31,11 @@ namespace MiniCAD
 		double      MaxX = 420.0;      // A3 横向，与 AutoCAD 默认图纸相近
 		double      MaxY = 297.0;
 		uint64_t    OwnerKey = 0;      // LAYOUT 组码 330
+		// 保存的图纸空间视图（AutoCAD 布局的主视口：中心与高度，纸面单位）。打开布局时 AutoCAD 显示的是它，
+		// 不是纸张范围 —— 内容画在纸张外的图纸（实测 0525 总平面图）按纸张范围框住是一页空白。0 = 没有，按纸张范围
+		double      ViewCenterX = 0.0;
+		double      ViewCenterY = 0.0;
+		double      ViewHeight  = 0.0;
 	};
 
 	class ISerializer;
@@ -75,6 +80,8 @@ namespace MiniCAD
 		int  ModelLayoutIndex() const;
 		// 按 OwnerKey 找图纸布局，没有返回 -1
 		int  FindLayout(uint64_t ownerKey) const;
+		// 记下一张布局保存的图纸空间视图（导入时取自图纸空间主视口）；已有的不覆盖
+		void SetLayoutView(uint64_t ownerKey, double centerX, double centerY, double height);
 		// 新建布局用的归属键：取在不会与 DWG 句柄冲突的高位区间，导出后读回会换成真正的块记录句柄
 		uint64_t NewLayoutKey() const;
 
@@ -120,6 +127,12 @@ namespace MiniCAD
 		double GetLineTypeScale() const      { return m_lineTypeScale; }
 		// <= 0 视为无效，按 1 处理（AutoCAD 也不接受非正值）
 		void   SetLineTypeScale(double s)    { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
+
+		// ── 图纸空间线型比例（$PSLTSCALE）──────────────────────────────
+		// true（AutoCAD 默认 1）：布局页视口里的虚线按**图纸单位**铺，周期 = 图案 × 比例，与视口缩放无关；
+		// false（0）：视口里的虚线跟着视口的模型→图纸比例一起缩小（模型里 10 个单位的 dash 在 1:500 的视口里是 0.02）
+		bool   GetPaperSpaceLineTypeScaling() const  { return m_psLineTypeScale; }
+		void   SetPaperSpaceLineTypeScaling(bool on) { m_psLineTypeScale = on; }
 
 		// ── 点样式（DXF HEADER 的 $PDMODE / $PDSIZE）──────────────────
 		//
@@ -219,6 +232,7 @@ namespace MiniCAD
 		Lineweight    m_currentLineweight = Lineweight::ByLayer;       // 当前线宽(CELWEIGHT)
 		int           m_pointDisplayMode   = 0;      // $PDMODE：0 = 一个像素小点（AutoCAD 默认）
 		double        m_lineTypeScale      = 1.0;    // $LTSCALE：全局线型比例
+		bool          m_psLineTypeScale    = true;   // $PSLTSCALE：布局页视口里的虚线按图纸单位铺
 		double        m_pointDisplaySize   = 0.0;    // $PDSIZE：0 = 按视口高度百分比
 		bool          m_dirty    = false;
 		bool          m_allDirty = false;                  // 全局脏：所有实体顶点缓存失效

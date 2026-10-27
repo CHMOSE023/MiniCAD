@@ -19,7 +19,7 @@ namespace MiniGUI
         ColorRef border    = Theme::BorderSubtle;
         ColorRef focusRing = Theme::Accent;
         ColorRef text      = Theme::Text;           // SetText 创建的文字；SetStyle 时同步到已有文字
-        float    rounding  = 4.0f;
+        float    rounding  = Theme::RadiusSm;
         float    borderThickness = 1.0f;
 
         static ButtonStyle Primary()

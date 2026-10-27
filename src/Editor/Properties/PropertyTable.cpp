@@ -14,6 +14,7 @@
 #include "Core/Entity/HatchEntity.hpp"
 #include "Core/Entity/RegionEntity.hpp"
 #include "Core/Entity/ImageEntity.hpp"
+#include "Core/Entity/OleFrameEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/TableEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
@@ -394,7 +395,7 @@ namespace MiniCAD
         // 派生类要先于基类判断：面域是填充的子类；图像 / 实心填充是矩形的子类；表格是多行文字的子类；
         // 擦除是多段线的子类。后四者的几何语义与基类不同，暂无描述表，不能套用基类的表
         if (e.IsKindOf<RegionEntity>())  return kRegion;
-        if (e.IsKindOf<ImageEntity>() || e.IsKindOf<SolidEntity>() || e.IsKindOf<TableEntity>() || e.IsKindOf<WipeoutEntity>())
+        if (e.IsKindOf<ImageEntity>() || e.IsKindOf<OleFrameEntity>() || e.IsKindOf<SolidEntity>() || e.IsKindOf<TableEntity>() || e.IsKindOf<WipeoutEntity>())
             return kNone;
 
         if (e.IsKindOf<LineEntity>())   return kLine;

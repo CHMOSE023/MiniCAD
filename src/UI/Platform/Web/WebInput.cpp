@@ -304,6 +304,7 @@ namespace MiniGUI
         case CursorShape::SizeNWSE:   css = "nwse-resize"; break;
         case CursorShape::SizeNESW:   css = "nesw-resize"; break;
         case CursorShape::SizeAll:    css = "move";        break;
+        case CursorShape::Grab:       css = "grab";        break;
         case CursorShape::NotAllowed: css = "not-allowed"; break;
         case CursorShape::Hidden:     css = "none";        break;
         default:                                           break;

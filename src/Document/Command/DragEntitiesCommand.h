@@ -152,7 +152,7 @@ namespace MiniCAD
                     auto* ml = static_cast<MLeaderEntity*>(obj);
                     const auto& s = useAfter ? e.AfterMLeader : e.BeforeMLeader;
                     ml->GetLeaderLines() = s.Lines;
-                    ml->SetLanding(s.Landing);
+                    ml->MoveLanding(s.Landing);
                     ml->SetDoglegDir(s.DoglegDir);
                 }
 

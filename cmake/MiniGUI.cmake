@@ -1,6 +1,6 @@
 # ── MiniGUI（保留模式界面库，源码在 src/UI）─────────────────────────────
 # 头文件以 src/UI 为根（"Core/UIContext.h"、"Widgets/Button.h"），命名空间 MiniGUI。
-# 渲染后端放在各应用的 src/Render 下：D3D11 / Software → apps/Win32，WebGL2 → apps/Web。
+# 平台层在 src/UI/Platform：Win32、Web（Emscripten）、SDL（Linux）。渲染后端在 apps/Render（cmake/Render.cmake）。
 
 set(MINIGUI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/UI")
 
@@ -68,6 +68,7 @@ set(MINIGUI_WIDGETS_SOURCES
     "${MINIGUI_SRC}/Widgets/UiLayout.cpp"
     "${MINIGUI_SRC}/Widgets/DockSpace.cpp"
     "${MINIGUI_SRC}/Widgets/TitleBar.cpp"
+    "${MINIGUI_SRC}/Widgets/Ribbon.cpp"
     "${MINIGUI_SRC}/Widgets/CommandConsole.cpp"
 )
 
@@ -120,4 +121,19 @@ if(EMSCRIPTEN)
     )
 
     target_link_libraries(MiniGUI_Web PUBLIC MiniGUI)
+endif()
+
+# ── SDL3 平台层（Linux）：输入、剪贴板、界面字体 ─────────────────────
+# SDL3 用发行版的 libsdl3-dev，或自己编译安装后用 CMAKE_PREFIX_PATH 指定；找不到时不编译 Linux 宿主
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    find_package(SDL3 CONFIG QUIET)
+    if(SDL3_FOUND)
+        add_library(MiniGUI_SDL STATIC
+            "${MINIGUI_SRC}/Platform/SDL/SDLInput.cpp"
+            "${MINIGUI_SRC}/Platform/SDL/SDLFonts.cpp"
+        )
+        target_link_libraries(MiniGUI_SDL PUBLIC MiniGUI SDL3::SDL3)
+    else()
+        message(STATUS "没有找到 SDL3，不编译 MiniGUI_SDL 与 Linux 宿主（MiniCADLinux）")
+    endif()
 endif()

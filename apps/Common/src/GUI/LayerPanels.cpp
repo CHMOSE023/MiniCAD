@@ -19,6 +19,7 @@
 #include "Widgets/ViewportHost.h"
 #include "Widgets/Menu.h"
 #include "Widgets/Panel.h"
+#include "Widgets/TextBox.h"
 #include <algorithm>
 #include <optional>
 
@@ -130,13 +131,85 @@ namespace MiniCAD
         {
             return RunLayerCommand(doc, std::make_unique<ChangeLayerCommand>(id, std::move(change)));
         }
+
+        unsigned char FoldAscii(char c) { return c >= 'A' && c <= 'Z' ? static_cast<unsigned char>(c + 32) : static_cast<unsigned char>(c); }
+
+        // 图层名的自然顺序：ASCII 字母不分大小写，连续的数字按数值比较（"楼层2" 在 "楼层10" 前面），其余按字节（UTF-8 即码点顺序）
+        bool NaturalLess(const std::string& a, const std::string& b)
+        {
+            auto digit = [](char c) { return c >= '0' && c <= '9'; };
+            size_t i = 0, j = 0;
+            while (i < a.size() && j < b.size())
+            {
+                if (digit(a[i]) && digit(b[j]))
+                {
+                    while (i < a.size() && a[i] == '0') ++i;
+                    while (j < b.size() && b[j] == '0') ++j;
+                    size_t ie = i, je = j;
+                    while (ie < a.size() && digit(a[ie])) ++ie;
+                    while (je < b.size() && digit(b[je])) ++je;
+                    if (ie - i != je - j)
+                        return ie - i < je - j;
+                    if (const int c = a.compare(i, ie - i, b, j, je - j); c != 0)
+                        return c < 0;
+                    i = ie;
+                    j = je;
+                    continue;
+                }
+                const unsigned char ca = FoldAscii(a[i]), cb = FoldAscii(b[j]);
+                if (ca != cb)
+                    return ca < cb;
+                ++i;
+                ++j;
+            }
+            return a.size() - i < b.size() - j;
+        }
+
+        // 不分大小写（ASCII）的子串查找：图层搜索框用
+        bool ContainsNoCase(const std::string& text, const std::string& needle)
+        {
+            if (needle.empty())
+                return true;
+            return std::search(text.begin(), text.end(), needle.begin(), needle.end(),
+                               [](char x, char y) { return FoldAscii(x) == FoldAscii(y); }) != text.end();
+        }
     }
 
-    std::vector<uint32_t> MainFrame::SortedLayerIds(Document& doc)
+    const std::vector<uint32_t>& MainFrame::SortedLayerIds(Document& doc)
     {
-        std::vector<uint32_t> ids = doc.GetLayerManager().GetAllLayerIDs();     // unordered_map 的顺序不稳定
+        // 图层表没有版本号：用 "ID:名称" 串做键，只在图层增删改名后重新排序
+        // （几千个图层按名称排序约 2 ms，下拉框每画一行都要查一次，不能每次都排）
+        struct Cache { const Document* doc = nullptr; std::string key; std::vector<uint32_t> ids; };
+        static Cache cache;
+
+        LayerManager& lm = doc.GetLayerManager();
+        std::vector<uint32_t> ids = lm.GetAllLayerIDs();     // unordered_map 的顺序不稳定
         std::sort(ids.begin(), ids.end());
-        return ids;
+        std::string key;
+        key.reserve(ids.size() * 24);
+        for (uint32_t id : ids)
+            key += std::to_string(id) + ':' + lm.GetLayer(id)->GetName() + '\n';
+        if (cache.doc == &doc && cache.key == key)
+            return cache.ids;
+
+        std::vector<std::pair<const std::string*, uint32_t>> named;
+        named.reserve(ids.size());
+        for (uint32_t id : ids)
+            named.emplace_back(&lm.GetLayer(id)->GetName(), id);
+        std::sort(named.begin(), named.end(), [](const auto& x, const auto& y)
+        {
+            if ((x.second == Layer::DefaultLayerID) != (y.second == Layer::DefaultLayerID))
+                return x.second == Layer::DefaultLayerID;       // 0 层固定在最前
+            if (NaturalLess(*x.first, *y.first)) return true;
+            if (NaturalLess(*y.first, *x.first)) return false;
+            return x.second < y.second;                         // 只有大小写不同的名字按 ID
+        });
+        cache.doc = &doc;
+        cache.key = std::move(key);
+        cache.ids.clear();
+        for (const auto& n : named)
+            cache.ids.push_back(n.second);
+        return cache.ids;
     }
 
     void MainFrame::LayerChanged()
@@ -208,6 +281,38 @@ namespace MiniCAD
         addTool("新建", "新建图层并置为当前", [this] { m_commands.Execute("layer.new"); });
         addTool("删除", "删除选中的图层（其上的对象移到 0 层）", [deleteLayer, selectedLayer] { deleteLayer(selectedLayer()); });
         addTool("置为当前", "把选中的图层设为当前图层（也可双击行）", [setCurrent, selectedLayer] { setCurrent(selectedLayer()); });
+
+        // 搜索框：只显示名称含这段文字的图层；Esc 清空，再按一次把焦点交回绘图区
+        auto* search = tools->AddChild<TextBox>();
+        m_layerSearch = search;
+        search->SetPlaceholder("搜索图层");
+        TextBoxStyle ss;
+        ss.fontSize = 13.0f;
+        ss.padding  = Edges::Symmetric(8.0f, 4.0f);
+        search->SetStyle(ss);
+        search->EditLayoutStyle().width = 60.0f;
+        search->EditLayoutStyle().grow  = 1.0f;
+        search->SetOnChanged([this](const std::string& text)
+        {
+            m_layerFilter = text;
+            RefreshLayerPanel();
+        });
+        search->SetKeyPreview([this, search](KeyEvent& e)
+        {
+            if (e.key != Key::Escape || e.modifiers != 0)
+                return false;
+            if (!search->GetText().empty())
+            {
+                search->SetText({});
+                m_layerFilter.clear();
+                RefreshLayerPanel();
+            }
+            else if (UIContext* ctx = search->GetContext())
+            {
+                ctx->SetFocus(nullptr);
+            }
+            return true;
+        });
 
         // ── 图层表 ───────────────────────────────────────────────
         m_layerList = panel->AddChild<ListView>();
@@ -346,6 +451,17 @@ namespace MiniCAD
             }
         });
 
+        // 点"名称"表头在升序 / 降序之间切换
+        list->SetSortIndicator(ColName, true);
+        list->SetOnHeaderClicked([this, list](int col)
+        {
+            if (col != ColName)
+                return;
+            m_layerSortDesc = !m_layerSortDesc;
+            list->SetSortIndicator(ColName, !m_layerSortDesc);
+            RefreshLayerPanel();
+        });
+
         list->SetOnItemActivated([this, setCurrent](int row)
         {
             if (row < static_cast<int>(m_layerIds.size()))
@@ -392,14 +508,21 @@ namespace MiniCAD
             return;
         Document* doc = m_docManager.GetActive();
 
-        // 行数或名称变了才重建行（图标、颜色等由绘制回调实时读取，只需重绘）
+        // 行数、名称、顺序或过滤条件变了才重建行（图标、颜色等由绘制回调实时读取，只需重绘）
         std::vector<uint32_t> ids;
-        std::string signature = std::to_string(reinterpret_cast<uintptr_t>(doc));
+        std::string signature = std::to_string(reinterpret_cast<uintptr_t>(doc)) + (m_layerSortDesc ? "|desc|" : "|asc|") + m_layerFilter;
         if (doc)
         {
-            ids = SortedLayerIds(*doc);
-            for (uint32_t id : ids)
-                signature += "|" + std::to_string(id) + ":" + doc->GetLayerManager().GetLayer(id)->GetName();
+            for (uint32_t id : SortedLayerIds(*doc))
+            {
+                const std::string& name = doc->GetLayerManager().GetLayer(id)->GetName();
+                if (!ContainsNoCase(name, m_layerFilter))
+                    continue;
+                ids.push_back(id);
+                signature += "|" + std::to_string(id) + ":" + name;
+            }
+            if (m_layerSortDesc)
+                std::reverse(ids.begin(), ids.end());
         }
         if (signature == m_layerSignature)
         {
@@ -434,17 +557,29 @@ namespace MiniCAD
         using namespace MiniGUI;
         DocumentManager& dm = m_docManager;
         auto doc = [&dm]() -> Document* { return dm.GetActive(); };
-        Editor& editor = dm.GetEditor();
-        auto hasSelection = [&editor, doc] { return doc() && !editor.GetSelection().empty(); };
+        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取当前文档的
+        auto editor = [&dm]() -> Editor& { return dm.GetEditor(); };
+        auto hasSelection = [editor, doc] { return doc() && !editor().GetSelection().empty(); };
 
+        // 两行：上面图层，下面线型 + 线宽（放在功能区“图层”组里，高度与功能区按钮相同）
         auto bar = std::make_unique<Node>();
         LayoutStyle s;
-        s.direction  = FlexDirection::Row;
-        s.alignItems = Align::Center;
-        s.gap        = 4.0f;
+        s.direction  = FlexDirection::Column;
+        s.alignItems = Align::Stretch;
+        s.gap        = 6.0f;
         s.padding    = Edges::Symmetric(4.0f, 0.0f);
         s.shrink     = 0.0f;
         bar->SetLayoutStyle(s);
+        Node* rows[2];
+        for (Node*& row : rows)
+        {
+            row = bar->AddChild<Node>();
+            LayoutStyle rs;
+            rs.direction  = FlexDirection::Row;
+            rs.alignItems = Align::Center;
+            rs.gap        = 4.0f;
+            row->SetLayoutStyle(rs);
+        }
 
         auto styleCombo = [](ComboBox* c, float width, const char* tip)
         {
@@ -457,44 +592,44 @@ namespace MiniCAD
         };
 
         // ── 图层 ─────────────────────────────────────────────────
-        auto* layer = bar->AddChild<ComboBox>();
+        auto* layer = rows[0]->AddChild<ComboBox>();
         m_layerBarLayer = layer;
-        styleCombo(layer, 190.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
+        styleCombo(layer, 244.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
         layer->SetDropDownWidth(230.0f);
         layer->SetItemPainter([this, layer, doc](DrawList& dl, const Rect& box, int index, bool)
         {
             Document* d = doc();
             if (!d)
                 return;
-            const auto ids = SortedLayerIds(*d);
+            const auto& ids = SortedLayerIds(*d);
             if (index >= 0 && index < static_cast<int>(ids.size()))
                 if (const Layer* l = d->GetLayerManager().GetLayer(ids[static_cast<size_t>(index)]))
                     DrawLayerRow(layer->GetContext(), dl, box, *l);
         });
         m_bindings.BindChoice(layer,
-            [doc, &editor, hasSelection]() -> std::optional<int>
+            [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
-                const auto ids = SortedLayerIds(*d);
+                const auto& ids = SortedLayerIds(*d);
                 auto indexOf = [&ids](LayerID id)
                 {
                     const auto it = std::find(ids.begin(), ids.end(), id);
                     return it == ids.end() ? -1 : static_cast<int>(it - ids.begin());
                 };
                 if (hasSelection())
-                    return SelectionCommonIndex(editor, [&indexOf](const EntityAttr& a) { return indexOf(a.LayerId); });
+                    return SelectionInfo().layer;
                 return indexOf(d->GetLayerManager().GetActiveLayerID());
             },
-            [doc, &editor, hasSelection](const int& i)
+            [doc, editor, hasSelection](const int& i)
             {
                 Document* d = doc();
                 if (!d) return;
-                const auto ids = SortedLayerIds(*d);
+                const auto& ids = SortedLayerIds(*d);
                 if (i < 0 || static_cast<size_t>(i) >= ids.size())
                     return;
                 if (hasSelection())
-                    editor.ChangeSelectionAttr(AttrChange{ .Layer = ids[static_cast<size_t>(i)] });
+                    editor().ChangeSelectionAttr(AttrChange{ .Layer = ids[static_cast<size_t>(i)] });
                 else
                     d->GetLayerManager().SetActiveLayerID(ids[static_cast<size_t>(i)]);
             },
@@ -508,8 +643,8 @@ namespace MiniCAD
             });
 
         // ── 线型 ─────────────────────────────────────────────────
-        auto* linetype = bar->AddChild<ComboBox>();
-        styleCombo(linetype, 160.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
+        auto* linetype = rows[1]->AddChild<ComboBox>();
+        styleCombo(linetype, 130.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
         linetype->SetDropDownWidth(220.0f);
         linetype->SetItemPainter([linetype, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -521,20 +656,20 @@ namespace MiniCAD
                 DrawLinetype(linetype->GetContext(), dl, box, recs[static_cast<size_t>(index)]);
         });
         m_bindings.BindChoice(linetype,
-            [doc, &editor, hasSelection]() -> std::optional<int>
+            [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
                 if (hasSelection())
-                    return SelectionCommonIndex(editor, [](const EntityAttr& a) { return static_cast<int>(a.LineType); });
+                    return SelectionInfo().lineType;
                 return static_cast<int>(d->GetScene().GetCurrentLineType());
             },
-            [doc, &editor, hasSelection](const int& i)
+            [doc, editor, hasSelection](const int& i)
             {
                 Document* d = doc();
                 if (!d || i < 0) return;
                 if (hasSelection())
-                    editor.ChangeSelectionAttr(AttrChange{ .LineType = static_cast<LineTypeID>(i) });
+                    editor().ChangeSelectionAttr(AttrChange{ .LineType = static_cast<LineTypeID>(i) });
                 else
                     d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i));
             },
@@ -551,15 +686,15 @@ namespace MiniCAD
         std::vector<std::string> lwLabels;
         for (const auto& it : kLineweightItems)
             lwLabels.emplace_back(it.label);
-        auto* lineweight = bar->AddChild<ComboBox>(lwLabels);
-        styleCombo(lineweight, 140.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
+        auto* lineweight = rows[1]->AddChild<ComboBox>(lwLabels);
+        styleCombo(lineweight, 110.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
         lineweight->SetItemPainter([lineweight](DrawList& dl, const Rect& box, int index, bool)
         {
             if (index >= 0 && index < static_cast<int>(std::size(kLineweightItems)))
                 DrawLineweight(lineweight->GetContext(), dl, box, kLineweightItems[index].lw);
         });
         m_bindings.BindChoice(lineweight,
-            [doc, &editor, hasSelection]() -> std::optional<int>
+            [this, doc, editor, hasSelection]() -> std::optional<int>
             {
                 Document* d = doc();
                 if (!d) return -1;
@@ -571,15 +706,15 @@ namespace MiniCAD
                     return -1;
                 };
                 if (hasSelection())
-                    return SelectionCommonIndex(editor, [&indexOf](const EntityAttr& a) { return indexOf(a.Lineweight); });
+                    return SelectionInfo().lineweight;
                 return indexOf(d->GetScene().GetCurrentLineweight());
             },
-            [doc, &editor, hasSelection](const int& i)
+            [doc, editor, hasSelection](const int& i)
             {
                 Document* d = doc();
                 if (!d || i < 0 || static_cast<size_t>(i) >= std::size(kLineweightItems)) return;
                 if (hasSelection())
-                    editor.ChangeSelectionAttr(AttrChange{ .Lineweight = kLineweightItems[i].lw });
+                    editor().ChangeSelectionAttr(AttrChange{ .Lineweight = kLineweightItems[i].lw });
                 else
                     d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw);
             });

@@ -19,6 +19,7 @@ namespace
     {
         static std::shared_ptr<Font> font = []() -> std::shared_ptr<Font>
         {
+#ifdef _WIN32
             char* windir = nullptr;
             size_t len = 0;
             if (_dupenv_s(&windir, &len, "WINDIR") != 0 || !windir)
@@ -26,6 +27,9 @@ namespace
             std::string path = std::string(windir) + "\\Fonts\\msyh.ttc";
             std::free(windir);
             return Font::LoadFromFile(path, 1);
+#else
+            return nullptr;     // 微软雅黑只在 Windows 上有：其他平台跳过依赖字体的用例
+#endif
         }();
         return font;
     }

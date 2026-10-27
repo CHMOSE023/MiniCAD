@@ -121,8 +121,10 @@ namespace MiniCAD
             auto mainFont = std::make_shared<SHXFont>("tssdeng", "/fonts/tssdeng.shx", /*fontId*/ 100); // 英文
             auto bigFont  = std::make_shared<SHXFont>("tssdchn", "/fonts/TSSDCHN.SHX", /*fontId*/ 101); // 中文
 #else
-            auto mainFont = std::make_shared<SHXFont>("tssdeng", "fonts/tssdeng.shx", /*fontId*/ 100); // 英文
-            auto bigFont  = std::make_shared<SHXFont>("tssdchn", "fonts/TSSDCHN.SHX", /*fontId*/ 101); // 中文
+            // 在字体目录里找（宿主设为资源目录下的 fonts/，见 MainFrame::Initialize；默认 fonts/ 相对当前目录）
+            const std::string& dir = m_fontEngine->GetFontDir();
+            auto mainFont = std::make_shared<SHXFont>("tssdeng", dir + "tssdeng.shx", /*fontId*/ 100); // 英文
+            auto bigFont  = std::make_shared<SHXFont>("tssdchn", dir + "TSSDCHN.SHX", /*fontId*/ 101); // 中文
 #endif
             m_shxCompositeFont = std::make_unique<SHXCompositeFont>("tssdeng+tssdchn", mainFont, bigFont, /*fontId*/ 200); // 英文 + 中文
         }

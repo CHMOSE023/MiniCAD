@@ -83,7 +83,7 @@ namespace MiniGUI
     void ToggleBase::DrawLabelAndFocus(DrawList& dl, const Rect& r, float boxSize)
     {
         if (FocusRingVisible(*this))
-            dl.AddRect(BoxRect(r, boxSize).Deflated(-3.0f), Theme::Accent, 5.0f, 1.5f);
+            dl.AddRect(BoxRect(r, boxSize).Deflated(-3.0f), Theme::Accent, Theme::RadiusMd, 1.5f);
 
         UIContext* ctx = GetContext();
         if (!ctx || m_text.empty())
@@ -177,9 +177,9 @@ namespace MiniGUI
                           : (m_pressed ? Theme::ControlPressed : IsHovered() ? Theme::ControlHover : Theme::Control);
         if (!enabled)
             fill = ColorScaleAlpha(fill, 0.45f);
-        dl.AddRectFilled(box, fill, 3.0f);
+        dl.AddRectFilled(box, fill, Theme::RadiusSm);
         if (!on)
-            dl.AddRect(box, enabled ? Theme::Border : Theme::BorderSubtle, 3.0f, 1.0f);
+            dl.AddRect(box, enabled ? Theme::Border : Theme::BorderSubtle, Theme::RadiusSm, 1.0f);
 
         const ColorRef mark = enabled ? Theme::TextOnAccent : ColorScaleAlpha(Theme::TextOnAccent, 0.5f);
         if (m_state == State::Checked)

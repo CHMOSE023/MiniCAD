@@ -196,7 +196,7 @@ namespace MiniGUI
 
             const bool hot = (i == m_hover || i == m_submenuIndex) && item.enabled;
             if (hot)
-                dl.AddRectFilled(row, Theme::Accent, 4.0f);
+                dl.AddRectFilled(row, Theme::Accent, Theme::RadiusSm);
 
             const ColorRef color = !item.enabled ? Theme::TextDisabled : Theme::Text;
             if (item.checked)
@@ -439,14 +439,65 @@ namespace MiniGUI
             m_registered->SetMenuBarHost(nullptr);
     }
 
-    void MenuBar::AddMenu(std::string title, std::vector<MenuItem> items)
+    namespace
+    {
+        // "文件(F)" → "文件"（括号里正是助记字母时）；去掉后不画下划线
+        void StripMnemonicSuffix(Mnemonic& m)
+        {
+            const std::string suffix = std::string("(") + m.letter + ")";
+            if (m.letter && m.display.size() > suffix.size() &&
+                m.display.compare(m.display.size() - suffix.size(), suffix.size(), suffix) == 0)
+            {
+                m.display.resize(m.display.size() - suffix.size());
+                m.underlineAt = std::string::npos;
+            }
+        }
+    }
+
+    void MenuBar::SetCompact(bool compact)
+    {
+        m_itemPad = compact ? 6.0f : 10.0f;
+        m_inset   = compact ? 0.0f : 6.0f;
+        InvalidateLayout();
+    }
+
+    void MenuBar::SetHideMnemonicSuffix(bool hide)
+    {
+        m_hideMnemonicSuffix = hide;
+        for (Menu& m : m_menus)
+        {
+            m.mnemonic = ParseMnemonic(m.title);
+            if (hide)
+                StripMnemonicSuffix(m.mnemonic);
+        }
+        InvalidateLayout();
+    }
+
+    void MenuBar::AddMenu(std::string title, std::vector<MenuItem> items, TextureId icon)
     {
         Menu m;
+        m.icon     = icon;
         m.mnemonic = ParseMnemonic(title);
+        if (m_hideMnemonicSuffix)
+            StripMnemonicSuffix(m.mnemonic);
         m.title    = std::move(title);
         m.items    = std::move(items);
         m_menus.push_back(std::move(m));
+        // 只显示图标的菜单：文字放进悬浮提示（菜单栏是一个节点，提示列出所有图标菜单）
+        std::string tip;
+        for (const Menu& menu : m_menus)
+            if (menu.icon != InvalidTextureId)
+                tip += (tip.empty() ? "" : " / ") + menu.mnemonic.display;
+        SetTooltip(tip);
         InvalidateLayout();
+    }
+
+    float MenuBar::TitleWidth(const Menu& m) const
+    {
+        if (m.icon != InvalidTextureId)
+            return kIconSize + m_itemPad * 2.0f;
+        UIContext* ctx = GetContext();
+        return (ctx ? ctx->GetTextSystem().Measure(m.mnemonic.display, ItemText(Theme::Text)).x : 0.0f) + m_itemPad * 2.0f;
     }
 
     // =========================================================
@@ -550,10 +601,9 @@ namespace MiniGUI
     Vec2 MenuBar::MeasureContent(Vec2 available)
     {
         (void)available;
-        float w = 8.0f;
-        if (UIContext* ctx = GetContext())
-            for (const Menu& m : m_menus)
-                w += ctx->GetTextSystem().Measure(m.mnemonic.display, ItemText(Theme::Text)).x + 20.0f;
+        float w = m_inset + 2.0f;
+        for (const Menu& m : m_menus)
+            w += TitleWidth(m);
         return { w, 30.0f };
     }
 
@@ -566,10 +616,10 @@ namespace MiniGUI
             ctx->SetMenuBarHost(this);
             m_registered = ctx;
         }
-        float x = 6.0f;
+        float x = m_inset;
         for (Menu& m : m_menus)
         {
-            const float w = ctx ? ctx->GetTextSystem().Measure(m.mnemonic.display, ItemText(Theme::Text)).x + 20.0f : 20.0f;
+            const float w = TitleWidth(m);
             m.x0 = x;
             m.x1 = x + w;
             x += w;
@@ -595,12 +645,19 @@ namespace MiniGUI
             const Menu& m = m_menus[static_cast<size_t>(i)];
             const Rect title{ r.min.x + m.x0, r.min.y + 3.0f, r.min.x + m.x1, r.max.y - 3.0f };
             if (i == m_open)
-                dl.AddRectFilled(title, Theme::ControlPressed, 4.0f);
+                dl.AddRectFilled(title, Theme::ControlPressed, Theme::RadiusSm);
             else if (i == m_hover || (m_keyboardMode && i == m_keyboardIndex))
-                dl.AddRectFilled(title, Theme::ControlHover, 4.0f);
+                dl.AddRectFilled(title, Theme::ControlHover, Theme::RadiusSm);
             if (m_keyboardMode && !m_popup && i == m_keyboardIndex)
-                dl.AddRect(title, Theme::Accent, 4.0f, 1.0f);
-            DrawMnemonicText(*ctx, dl, Rect{ title.min.x + 10.0f, title.min.y, title.max.x, title.max.y }, m.mnemonic, ItemText(Theme::Text));
+                dl.AddRect(title, Theme::Accent, Theme::RadiusSm, 1.0f);
+            if (m.icon != InvalidTextureId)
+            {
+                const Vec2 c = title.Center();
+                const float h = kIconSize * 0.5f;
+                dl.AddImage(m.icon, Rect{ c.x - h, c.y - h, c.x + h, c.y + h }, { 0, 0 }, { 1, 1 }, Colors::White);
+            }
+            else
+                DrawMnemonicText(*ctx, dl, Rect{ title.min.x + m_itemPad, title.min.y, title.max.x, title.max.y }, m.mnemonic, ItemText(Theme::Text));
         }
     }
 

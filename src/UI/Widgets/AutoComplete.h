@@ -25,6 +25,9 @@ namespace MiniGUI
         // 列表弹出或更新时默认选中第一项（命令行：输入 L 后直接回车执行排在最前的 LINE）
         void SetSelectFirst(bool selectFirst) { m_selectFirst = selectFirst; }
         void SetOnAccepted(std::function<void(const std::string&)> cb) { m_onAccepted = std::move(cb); }
+        // 接受时交出整个候选项（可用 userData 区分），不再把文字写回输入框（命令搜索框用它）
+        void SetOnAcceptedItem(std::function<void(const ListItem&)> cb) { m_onAcceptedItem = std::move(cb); }
+        void SetMinWidth(float w) { m_minWidth = w; }       // 列表最小宽度（默认 200）
 
         bool IsOpen() const { return m_popup != nullptr; }
         void Close();
@@ -49,6 +52,8 @@ namespace MiniGUI
         int                   m_maxVisible = 8;
         bool                  m_suppress   = false;
         bool                  m_selectFirst = false;
+        float                 m_minWidth   = 200.0f;
         std::function<void(const std::string&)> m_onAccepted;
+        std::function<void(const ListItem&)>    m_onAcceptedItem;
     };
 }

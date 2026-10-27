@@ -1,4 +1,5 @@
 #include "Widgets/TitleBar.h"
+#include "Widgets/TabView.h"
 #include "Core/UIContext.h"
 #include "Data/CommandRegistry.h"
 #include "Paint/DrawList.h"
@@ -191,9 +192,9 @@ namespace MiniGUI
         m_content->SetHitTestVisible(false);        // 内容之间的空白算作标题区域
         m_content->SetClipChildren(true);
 
-        Node* spacer = AddChild<Node>();
-        spacer->EditLayoutStyle().grow = 1.0f;
-        spacer->SetHitTestVisible(false);
+        m_spacer = AddChild<Node>();
+        m_spacer->EditLayoutStyle().grow = 1.0f;
+        m_spacer->SetHitTestVisible(false);
 
         m_buttons[0] = AddChild<CaptionButton>(m_commands, CaptionKind::Minimize, *this);
         m_buttons[1] = AddChild<CaptionButton>(m_commands, CaptionKind::Maximize, *this);
@@ -208,6 +209,13 @@ namespace MiniGUI
     {
         if (!m_registryAlive.expired())
             m_commands.RemoveListener(m_listener);
+    }
+
+    void TitleBar::SetContentFill(bool fill)
+    {
+        m_content->EditLayoutStyle().grow = fill ? 1.0f : 0.0f;
+        m_spacer->EditLayoutStyle().grow  = fill ? 0.0f : 1.0f;
+        Invalidate();
     }
 
     void TitleBar::SetTitle(std::string title)
@@ -254,6 +262,14 @@ namespace MiniGUI
         {
             if (n == this)
                 return true;
+            // 标题栏里的文档标签条：标签之间、之后的空白也可以拖动窗口
+            if (const auto* tabs = dynamic_cast<const TabView*>(n))
+            {
+                const Rect b = tabs->GetScreenBounds();
+                if (tabs->IsEmptyStripAt(windowPos - b.min))
+                    continue;
+                return false;
+            }
             if (!IsStaticNode(n))
                 return false;
         }

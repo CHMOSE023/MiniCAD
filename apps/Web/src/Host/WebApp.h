@@ -2,6 +2,7 @@
 #include "GUI/AppPlatform.h"
 #include "GUI/MainFrame.h"
 #include "Host/WebHost.h"
+#include "IGraphicsDevice.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -9,17 +10,17 @@
 
 namespace MiniGUI
 {
-    class WebGL2Backend;
     class WebInput;
 }
 
 namespace MiniCAD
 {
-    class GLES3Renderer;
-    class GLRenderTarget;
-
-    // MiniCAD 网页版的宿主：画布 + WebGL2（WebHost）+ 浏览器事件，实现 AppPlatform，界面与桌面版共用 MainFrame。
+    // MiniCAD 网页版的宿主：画布（WebHost）+ 图形设备（IGraphicsDevice：WebGPU，不支持时 WebGL2）+ 浏览器事件，
+    // 实现 AppPlatform，界面与桌面版共用 MainFrame。
+    //   - 图形接口：先异步试 WebGPU（浏览器有 navigator.gpu 且取到适配器和设备），否则或网址带 ?webgl 时用 WebGL2；
+    //     同一个画布只能有一种上下文，所以确定不用 WebGPU 后才建 WebGL2 上下文。设备就绪之前不建界面、不画帧
     //   - 打开文件：浏览器的文件选择框，选中的文件读进内存文件系统 /upload 后打开
+    //   - 外部参照：用户选的本地文件夹（浏览器授权）里需要的文件读进 /xref 后查找（PickFolder）
     //   - 保存：写到内存文件系统后由浏览器下载到本机（另存为默认 .mcad，打开的 .dwg / .dxf 按原格式保存）
     //   - 资源（字体、图标、填充图案、界面描述文件）打包在虚拟文件系统根目录下
     //   - 有未保存的文档时，关闭或刷新页面前浏览器会询问
@@ -32,12 +33,13 @@ namespace MiniCAD
         WebApp(const WebApp&) = delete;
         WebApp& operator=(const WebApp&) = delete;
 
-        bool Initialize();
+        bool Initialize();          // 开始创建图形设备（可能是异步的），设备就绪后才初始化界面
         MainFrame& GetFrame() { return m_main; }
 
         // 由 JavaScript 回调（内部使用）
         void OnFilePicked(int requestId, const char* path);
         void OnFilePickCompleted(int requestId, const char* error);
+        void OnFolderPicked(int requestId, const char* dir, const char* error);
         bool HasUnsavedDocuments() const;
 
         // ── AppPlatform ─────────────────────────────────────────
@@ -49,7 +51,7 @@ namespace MiniCAD
         void RequestRedraw() override { m_host.RequestFrame(); }
         void BeginUiPass() override;
         void EndUiPass() override;
-        const char* GetGraphicsName() const override { return "WebGL2"; }
+        const char* GetGraphicsName() const override { return m_graphics ? m_graphics->GetName() : ""; }
 
         void SetTitle(const std::string& utf8) override;
         bool HasWindowControls() const override { return false; }
@@ -59,6 +61,7 @@ namespace MiniCAD
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
+        bool PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
         bool HasSaveDialog() const override { return false; }          // 文件名和格式由 MainFrame 的另存为对话框询问
@@ -70,11 +73,15 @@ namespace MiniCAD
         Solid::ISolidKernel* GetSolidKernel() override;   // MINICAD_WITH_SOLID 时为 SMLib，第一次请求时创建
 
     private:
-        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 渲染器 → 界面后端 → WebGL 上下文
+        bool InitializeWebGL();     // 建 WebGL2 上下文与 GLES3 图形设备
+        bool OnGraphicsReady();     // 图形设备就绪：建视口渲染目标、界面、输入，开始画帧
+        void ReportFailure(const char* what);
+
+    private:
+        // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → 画布（WebGL 上下文）
         WebHost                                 m_host;
-        std::unique_ptr<MiniGUI::WebGL2Backend> m_backend;
-        std::unique_ptr<GLES3Renderer>          m_renderer;
-        std::unique_ptr<GLRenderTarget>         m_viewportRT;
+        std::unique_ptr<IGraphicsDevice>        m_graphics;
+        std::unique_ptr<IRenderTarget>          m_viewportRT;
         std::unique_ptr<Solid::ISolidKernel>    m_solidKernel;   // 声明在 MainFrame 之前，销毁时晚于它
         MainFrame                               m_main;
         std::unique_ptr<MiniGUI::WebInput>      m_input;
@@ -85,6 +92,7 @@ namespace MiniCAD
             std::vector<std::string> paths;
         };
         std::unordered_map<int, PickRequest> m_pickRequests;
+        std::unordered_map<int, std::function<void(const std::string&)>> m_folderRequests;   // PickFolder
         int m_nextPickId = 1;
     };
 }

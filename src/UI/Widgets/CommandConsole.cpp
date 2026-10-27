@@ -2,6 +2,7 @@
 #include "Core/UIContext.h"
 #include "Style/Theme.hpp"
 #include "Widgets/AutoComplete.h"
+#include "Widgets/Button.h"
 #include "Widgets/Label.h"
 #include "Widgets/Panel.h"
 #include "Widgets/TextBox.h"
@@ -58,6 +59,104 @@ namespace MiniGUI
         CommandConsole& m_owner;
     };
 
+    namespace
+    {
+        constexpr const char* kIdlePrompt = "命令:";
+
+        // 展开 / 收起回显：收起时尖朝上（回显在上方展开）
+        class HistoryToggle : public Button
+        {
+        public:
+            HistoryToggle(std::function<void()> onClick, const bool& expanded)
+                : Button(std::move(onClick)), m_expanded(expanded)
+            {
+                SetFocusable(false);
+            }
+
+        protected:
+            void OnPaint(DrawList& dl, const Rect& r) override
+            {
+                if (IsPressedVisual())
+                    dl.AddRectFilled(r, ColorRef(ThemeColor::Outline, 34), Theme::RadiusSm);
+                else if (IsHovered())
+                    dl.AddRectFilled(r, ColorRef(ThemeColor::Outline, 20), Theme::RadiusSm);
+                const Vec2  c  = r.Center();
+                const float dy = m_expanded ? 2.5f : -2.5f;
+                dl.PathLineTo({ c.x - 5.0f, c.y - dy });
+                dl.PathLineTo({ c.x,        c.y + dy });
+                dl.PathLineTo({ c.x + 5.0f, c.y - dy });
+                dl.PathStroke(IsHovered() ? Theme::Text : Theme::TextDim, false, 1.5f);
+            }
+
+        private:
+            const bool& m_expanded;
+        };
+
+        // 输入框左边的"命令:"：点击也展开 / 收起回显
+        class IdleLabel : public Label
+        {
+        public:
+            IdleLabel(std::string text, std::function<void()> onClick)
+                : Label(std::move(text), 13.0f, Theme::TextDim), m_onClick(std::move(onClick))
+            {
+                SetHitTestVisible(true);
+            }
+
+        protected:
+            void OnPointerEvent(PointerEvent& e) override
+            {
+                if (e.phase != EventPhase::Target)
+                    return;
+                if (e.type == PointerEventType::Down && e.button == MouseButton::Left)
+                {
+                    e.handled = true;
+                    if (m_onClick)
+                        m_onClick();
+                }
+                else if (e.type == PointerEventType::Enter || e.type == PointerEventType::Leave)
+                {
+                    SetColor(e.type == PointerEventType::Enter ? Theme::Text : Theme::TextDim);
+                }
+            }
+
+            CursorShape GetCursor(Vec2) const override { return CursorShape::Hand; }
+
+        private:
+            std::function<void()> m_onClick;
+        };
+
+        // 输入区：外观同输入框（底色、边框、获得焦点时强调色），里面是工具提示 + 无边框的输入框。
+        // 点到提示文字上也把焦点交给输入框
+        class CommandField : public Node
+        {
+        public:
+            void SetInput(TextBox* input) { m_input = input; }
+
+        protected:
+            void OnPaint(DrawList& dl, const Rect& r) override
+            {
+                const bool focused = m_input && m_input->HasFocus();
+                const bool hovered = IsHovered() || (m_input && m_input->IsHovered());
+                dl.AddRectFilled(r, Theme::Background, Theme::RadiusSm);
+                dl.AddRect(r, focused ? Theme::Accent : hovered ? Theme::BorderHover : Theme::Border, Theme::RadiusSm, 1.0f);
+            }
+
+            void OnPointerEvent(PointerEvent& e) override
+            {
+                if (e.type == PointerEventType::Down && e.button == MouseButton::Left && !e.handled && m_input && !m_input->HasFocus())
+                {
+                    m_input->Focus();
+                    e.handled = true;
+                }
+                if (e.type == PointerEventType::Enter || e.type == PointerEventType::Leave)
+                    Invalidate();
+            }
+
+        private:
+            TextBox* m_input = nullptr;
+        };
+    }
+
     // =========================================================
     // 命令行
     // =========================================================
@@ -81,16 +180,55 @@ namespace MiniGUI
         rs.shrink     = 0.0f;
         row->SetLayoutStyle(rs);
 
-        m_prompt = row->AddChild<Label>("命令:", 13.0f, Theme::TextDim);
+        m_idle = row->AddChild<IdleLabel>(kIdlePrompt, [this] { SetLogExpanded(!m_logExpanded); });
+        m_idle->EditLayoutStyle().shrink = 0.0f;
+        m_idle->SetTooltip("展开 / 收起命令历史");
+
+        auto* field = row->AddChild<CommandField>();
+        LayoutStyle fs;
+        fs.direction  = FlexDirection::Row;
+        fs.alignItems = Align::Center;
+        fs.grow       = 1.0f;
+        fs.minWidth   = 120.0f;
+        fs.padding    = Edges::Make(8.0f, 0.0f, 0.0f, 0.0f);
+        field->SetLayoutStyle(fs);
+
+        m_prompt = field->AddChild<Label>("", 13.0f, Theme::Accent);
         m_prompt->SetEllipsis(true);
         m_prompt->EditLayoutStyle().shrink   = 1.0f;
         m_prompt->EditLayoutStyle().minWidth = 0.0f;
         m_prompt->EditLayoutStyle().maxWidth = 520.0f;
+        m_prompt->SetVisible(false);
 
-        m_input = row->AddChild<CommandInput>(*this);
+        m_input = field->AddChild<CommandInput>(*this);
         m_input->EditLayoutStyle().grow     = 1.0f;
-        m_input->EditLayoutStyle().minWidth = 120.0f;
-        m_input->SetPlaceholder("输入命令（例如 L 直线、C 圆），空格或回车执行");
+        m_input->EditLayoutStyle().minWidth = 60.0f;
+        TextBoxStyle ts;                    // 边框和底色由输入区画
+        ts.background = ts.border = ts.borderHover = ts.borderFocus = ColorRef();
+        ts.padding    = Edges::Make(4.0f, 5.0f, 8.0f, 5.0f);
+        m_input->SetStyle(ts);
+        m_placeholder = "输入命令（例如 L 直线、C 圆），空格或回车执行";
+        m_input->SetPlaceholder(m_placeholder);
+        field->SetInput(m_input);
+
+        // 最右边：展开 / 收起回显
+        m_toggle = row->AddChild<HistoryToggle>([this] { SetLogExpanded(!m_logExpanded); }, m_logExpanded);
+        m_toggle->EditLayoutStyle().width  = 22.0f;
+        m_toggle->EditLayoutStyle().height = 22.0f;
+        m_toggle->EditLayoutStyle().shrink = 0.0f;
+        m_toggle->SetTooltip("展开 / 收起命令历史");
+
+        m_promptText = kIdlePrompt;
+    }
+
+    void CommandConsole::SetLogExpanded(bool expanded)
+    {
+        m_logExpanded = expanded;
+        m_log->SetVisible(expanded);
+        if (expanded && !m_lines.empty())
+            m_log->EnsureVisible(static_cast<int>(m_lines.size()) - 1);
+        m_toggle->Invalidate();
+        InvalidateLayout();
     }
 
     TextBox* CommandConsole::GetInput() const
@@ -100,12 +238,17 @@ namespace MiniGUI
 
     void CommandConsole::SetPrompt(std::string prompt)
     {
-        m_prompt->SetText(std::move(prompt));
+        // 空闲提示（"命令:"）只显示在输入框外面；工具提示放进输入框里，输入时也一直看得到
+        const bool idle = prompt.empty() || prompt == kIdlePrompt;
+        m_prompt->SetText(idle ? std::string() : prompt);
+        m_prompt->SetVisible(!idle);
+        m_input->SetPlaceholder(idle ? m_placeholder : std::string());
+        m_promptText = std::move(prompt);
     }
 
     const std::string& CommandConsole::GetPrompt() const
     {
-        return m_prompt->GetText();
+        return m_promptText;
     }
 
     void CommandConsole::SetLog(const std::vector<std::string>& lines)

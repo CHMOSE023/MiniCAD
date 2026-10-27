@@ -254,7 +254,7 @@ namespace MiniCAD
         {
             auto& ml = static_cast<MLeaderEntity&>(entity);
             auto landing = ml.GetLanding();
-            if (mv(landing)) ml.SetLanding(landing);
+            if (mv(landing)) ml.MoveLanding(landing);
             for (auto& ln : ml.GetLeaderLines())
                 for (auto& p : ln.points) mv(p);
             return mv.moved;

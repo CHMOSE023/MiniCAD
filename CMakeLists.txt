@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # 版本号的唯一来源：发布时只改这里（MiniCADVersion.h 由它生成，见 apps/Common：exe 版本信息、关于对话框、状态栏）
-set(MINICAD_VERSION 0.2.4)
+set(MINICAD_VERSION 0.4.0)
 
 project(MiniCAD VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 
@@ -36,7 +36,7 @@ if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
     endif()
 endif()
 
-# 三个库的头文件各有自己的 include 根：MiniCAD → src，MiniGUI → src/UI，MiniDWG → src/Serialization。
+# 三个库的头文件各有自己的 include 根：MiniCAD → src，MiniGUI → src/UI，MiniDWG → src/Serialization；渲染后端 → apps/Render。
 # 各根之下的 "目录/文件.h" 相对路径不能重复，否则会按搜索顺序互相遮挡（编译器不报错）。
 
 # ── MiniDWG（DWG/DXF 读写库）────────────────────────────────────────
@@ -51,11 +51,20 @@ include(cmake/SMLib.cmake)
 # ── MiniCAD（平台无关的 CAD 核心库）──────────────────────────────────
 include(cmake/MiniCAD.cmake)
 
+# ── 渲染后端（apps/Render，按平台编译各自的图形接口）──────────────────
+if(NOT MINICAD_BUILD_LEGACY_WASM)
+    include(cmake/Render.cmake)
+endif()
+
 # ── 平台应用 ────────────────────────────────────────────────────────
 add_subdirectory("apps/Common")     # 主窗口界面与逻辑（桌面版、网页版共用）
 
 if(WIN32 AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Win32")
+endif()
+
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    add_subdirectory("apps/Linux")  # SDL3 宿主 + OpenGL ES 3（docs/Render/PLAN.md 阶段 2）
 endif()
 
 if(EMSCRIPTEN)

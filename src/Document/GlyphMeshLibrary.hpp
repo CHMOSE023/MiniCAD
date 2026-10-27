@@ -2,6 +2,7 @@
 #include "Render/GlyphInstancing.hpp"
 #include "Text/Glyph/Glyph.h"
 #include <algorithm>
+#include <atomic>
 #include <unordered_map>
 #include <vector>
 
@@ -53,11 +54,17 @@ namespace MiniCAD
             id = static_cast<uint32_t>(m_meshes.size());
             m_meshes.push_back(m);
             m_ids.emplace(&glyph, id);
-            ++m_version;
+            m_version = NextVersion();
             return true;
         }
 
         GlyphMeshView View() const { return { m_fillVerts, m_lineVerts, m_meshes, m_version }; }
+        // 版本号进程内全局唯一：渲染后端只按版本号缓存字形网格，而每个文档的编辑器各有一个字形库
+        static uint64_t NextVersion()
+        {
+            static std::atomic<uint64_t> counter{ 0 };
+            return ++counter;
+        }
 
         // 实例的世界坐标外包框
         void Bounds(const GlyphInstance& g, double& x0, double& y0, double& x1, double& y1) const
@@ -88,7 +95,7 @@ namespace MiniCAD
             std::vector<Math::Float2>{}.swap(m_fillVerts);
             std::vector<Math::Float2>{}.swap(m_lineVerts);
             std::vector<GlyphMeshRange>{}.swap(m_meshes);
-            ++m_version;
+            m_version = NextVersion();
         }
 
     private:
