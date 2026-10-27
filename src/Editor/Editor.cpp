@@ -297,6 +297,38 @@ namespace MiniCAD
 
     }
 
+    void Editor::SetViewport(Viewport& viewport)
+    {
+        if (m_viewport == &viewport)
+            return;
+        if (m_tool)
+        {
+            m_tool->Cancel();
+            m_tool.reset();
+        }
+        m_toolSuspended    = false;
+        m_pendingToolReset = false;
+        m_viewAnim.Active  = false;
+        m_currentSnap      = {};
+        m_overlay.Clear();
+        m_viewport = &viewport;
+        m_overlay.Bind(viewport);
+        m_previewOverlay.Bind(viewport);
+        ClearPreviewGeometry();
+        m_picking.SetViewport(viewport);
+        m_gripEditor.SetViewport(viewport);
+        // 新视口的缩放与原来的不同：Render 比较 worldPerPixel 时会重建动态流与随视图变化的选中流
+    }
+
+    void Editor::EnsureSceneCached(const IRenderer& renderer)
+    {
+        if (!m_sceneStreamsReleased || m_sceneRestitch)
+            return;
+        if (!Viewport::SceneUploaded(renderer, m_sceneVersion, m_sceneGlyphVersion, m_fontTexture != nullptr,
+                                     !m_glyphSorted.empty(), m_glyphLibrary.View().Version))
+            m_sceneRestitch = true;
+    }
+
     void Editor::Unbind()
     {
         if (m_tool)

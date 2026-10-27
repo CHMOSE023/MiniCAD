@@ -300,6 +300,38 @@ namespace MiniGUI
         return Rect{ tab.x0 - m_stripScroll, 4.0f, tab.x1 - m_stripScroll - 2.0f, kStripHeight };
     }
 
+    Rect TabView::GetTabRect(int index) const
+    {
+        if (index < 0 || index >= GetTabCount())
+            return {};
+        return TabRect(m_tabs[static_cast<size_t>(index)]);
+    }
+
+    int TabView::DropIndexAt(Vec2 windowPos) const
+{
+        const Vec2 local = ToLocal(windowPos);
+        const Vec2 size  = GetSize();
+        if (local.y < -kDragOutDistance || local.y > kStripHeight + kDragOutDistance ||
+            local.x < -kDragOutDistance || local.x > size.x + kDragOutDistance)
+            return -1;
+        const float x = local.x + m_stripScroll;
+        for (int i = 0; i < GetTabCount(); ++i)
+        {
+            const Tab& t = m_tabs[static_cast<size_t>(i)];
+            if (x < (t.x0 + t.x1) * 0.5f)
+                return i;
+        }
+        return GetTabCount();
+    }
+
+    void TabView::SetDropIndicator(int index)
+    {
+        if (index == m_dropIndicator)
+            return;
+        m_dropIndicator = index;
+        Invalidate();
+    }
+
     Rect TabView::CloseRect(const Tab& tab) const
     {
         const Rect r = TabRect(tab);
@@ -389,8 +421,8 @@ namespace MiniGUI
                 dl.AddRectFilled(tab, Theme::RowHover, Theme::RadiusMd);
             }
             if (m_dragging && i == m_pressTab)
-                dl.AddRect(tab, Theme::Accent, Theme::RadiusMd, 1.0f);
-            if (focusRing && sel)
+                dl.AddRect(tab, m_dragOut ? Theme::TextDim : Theme::Accent, Theme::RadiusMd, 1.0f);   // 拖到条外：灰框，松开即拖出
+if (focusRing && sel)
                 dl.AddRect(tab.Deflated(1.0f), Theme::Accent, Theme::RadiusMd, 1.0f);
 
             const float textRight = t.closable ? tab.max.x - kCloseW - 6.0f : tab.max.x - kTabPad;
@@ -412,10 +444,19 @@ namespace MiniGUI
                     dl.AddCross(cr.Center(), 4.0f, Theme::TextDim, 1.4f);
             }
         }
+        // 外部拖回时的落点：标签之间（或末尾）的一条竖线
+        if (m_dropIndicator >= 0)
+        {
+            const int   n = GetTabCount();
+            const float x = m_dropIndicator < n ? m_tabs[static_cast<size_t>(m_dropIndicator)].x0
+                                                : (n > 0 ? m_tabs.back().x1 : 4.0f);
+            const float sx = r.min.x + x - m_stripScroll - 1.0f;
+            dl.AddRectFilled(Rect{ sx, r.min.y + 6.0f, sx + 2.0f, r.min.y + kStripHeight - 4.0f }, Theme::Accent, 1.0f);
+        }
         dl.PopClipRect();
 
         auto drawButton = [&](const Rect& lr, Hit hit)
-        {
+{
             const Rect b{ lr.min + r.min, lr.max + r.min };
             if (m_hoverHit == hit)
                 dl.AddRectFilled(b, Theme::ControlHover, Theme::RadiusSm);
@@ -503,11 +544,18 @@ namespace MiniGUI
         case PointerEventType::Move:
             if (m_pressTab >= 0 && HasCapture())
             {
+                // 拖到标签条之外：不再排序，松开时交给宿主（例如把文档拖出成独立窗口）
+                const bool out = m_onTabDragOut && (e.localPosition.y < -kDragOutDistance || e.localPosition.y > kStripHeight + kDragOutDistance);
+                if (out != m_dragOut)
+                {
+                    m_dragOut = out;
+                    Invalidate();
+                }
                 if (!m_dragging && std::abs(e.localPosition.x - m_pressX) > kDragStart)
                     m_dragging = true;
-                if (m_dragging)
+                if (m_dragging && !m_dragOut)
                 {
-                    // 越过相邻标签的中线就交换位置
+// 越过相邻标签的中线就交换位置
                     const float x = e.localPosition.x + m_stripScroll;
                     const Tab& cur = m_tabs[static_cast<size_t>(m_pressTab)];
                     if (m_pressTab > 0)
@@ -587,11 +635,19 @@ namespace MiniGUI
         case PointerEventType::Up:
             if (m_pressTab >= 0)
             {
-                m_pressTab = -1;
+                const int  pressed = m_pressTab;
+                const bool out     = m_dragOut;
+m_pressTab = -1;
                 m_dragging = false;
+                m_dragOut  = false;
                 GetContext()->ReleaseCapture();
                 e.handled = true;
                 Invalidate();
+                if (out && m_onTabDragOut)
+                {
+                    auto cb = m_onTabDragOut;
+                    cb(pressed, e.position);
+                }
             }
             break;
 
@@ -609,6 +665,7 @@ namespace MiniGUI
         case PointerEventType::Cancel:
             m_pressTab = -1;
             m_dragging = false;
+            m_dragOut  = false;
             break;
 
         default:

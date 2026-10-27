@@ -175,8 +175,14 @@ namespace MiniCAD
         if (!m_ui || !m_surface)
             return;
         m_ui->Update();
+        if (m_onBeforeRender)
+        {
+            auto cb = m_onBeforeRender;
+            cb();               // 文档窗口：按布局后的尺寸渲染视口（命令提示等有变化时再补一次布局）
+            m_ui->Update();
+        }
         m_surface->BeginPass();
-        m_ui->Render();
+m_ui->Render();
         m_surface->Present();
         m_input->Sync();        // 按焦点开关输入法，候选窗跟随光标
     }

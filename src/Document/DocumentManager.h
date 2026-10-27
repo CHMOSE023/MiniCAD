@@ -43,10 +43,34 @@ namespace MiniCAD
         IRenderTarget* GetRenderTarget()                  { return m_renderTarget; }
 
         // ── Viewport / Editor ────────────────────────────────
+        // 主视口：停靠在主窗口里的文档共用它，切换文档换相机状态；拖出成独立窗口的文档各有一个自己的视口（DetachDocument）
         void InitViewport(IRenderer& renderer, float w, float h);
 
-        Viewport&       GetViewport()       { return *m_viewport; }
-        const Viewport& GetViewport() const { return *m_viewport; }
+        // 当前文档的视口（它自己的独立视口，或主视口）；没有当前文档时是主视口
+        Viewport&       GetViewport();
+        const Viewport& GetViewport() const;
+        Viewport&       GetMainViewport()       { return *m_viewport; }
+        const Viewport& GetMainViewport() const { return *m_viewport; }
+        // 文档显示在哪个视口：拖出的文档是它自己的视口，其余是主视口（停靠但不在前面的文档也返回主视口，相机不是它的）；
+        // 文档不存在或视口还没建时 nullptr
+        Viewport*       ViewportOf(const Document* doc);
+
+        // 当前文档（GetActive）与主视口里的文档分开：
+        // - 当前文档：命令行、状态栏、面板、菜单命令操作的对象，随用户最后点击的窗口切换（SetActive）
+        // - 主视口显示的文档（GetMainDocument）：停靠文档里最后激活的那个；当前文档是拖出去的文档时它不变。
+        //   停靠的文档成为当前文档时也就成为主视口的文档
+        Document* GetMainDocument() const { return m_mainDoc; }
+        // 主视口改显示 doc（停靠的文档；保存原文档的相机、恢复它的），不改当前文档。nullptr = 主视口空着
+        void      SetMainDocument(Document* doc);
+        Editor&   GetMainEditor();              // 主视口文档的编辑器；没有时空闲编辑器
+        Editor&   GetEditor(Document& doc);     // 某个文档的编辑器（没有就建）
+
+        // 把文档从主视口拖出到自己的视口（像素尺寸；相机从文档保存的视图恢复，显示开关同主视口）：返回那个视口，
+        // 文档不存在、已拖出或视口还没建时 nullptr。它原本是主视口的文档时主视口换成别的停靠文档（没有就空着）；当前文档不变
+        Viewport* DetachDocument(Document* doc, float width, float height);
+        // 拖回主视口：它成为主视口显示的文档，也成为当前文档；没拖出的文档不做什么
+        void      AttachDocument(Document* doc);
+        bool      IsDetached(const Document* doc) const { return m_floatViewports.count(doc) != 0; }
 
         // 缩放到全图：把活动文档所有可见实体放进视野；文档为空时不动
         void ZoomAll(bool undoable = true);
@@ -98,12 +122,16 @@ namespace MiniCAD
         float          m_defaultWidth  = 600.f;
         float          m_defaultHeight = 400.f;
 
-        std::unique_ptr<Viewport> m_viewport;
+        std::unique_ptr<Viewport> m_viewport;                                     // 主视口
+        Document*                 m_mainDoc = nullptr;                            // 主视口显示的文档
+        std::unordered_map<const Document*, std::unique_ptr<Viewport>> m_floatViewports;   // 拖出的文档各自的视口
         Editor                    m_idleEditor;                                   // 没有文档时的编辑器（只承载设置）
         std::unordered_map<const Document*, std::unique_ptr<Editor>> m_editors;  // 每个文档一个编辑器
         // 文档的编辑器（没有就新建：从 proto 继承设置，有视口时绑定）
         Editor& EnsureEditor(Document& doc, const Editor& proto);
-        void    ActivateEditor();   // 切换活动文档后：恢复相机、确保编辑器存在并请它在下一帧重新拼接显示数据
+        void    SyncCamera(Document* doc);      // 把文档所在视口的相机回写到文档（存盘前；只对主视口里的文档与拖出的文档有意义）
+        void    SyncLiveCameras();              // 主视口文档与所有拖出的文档
+        bool    Contains(const Document* doc) const;
 
         // 剪贴板持有实体克隆(与源文档解耦,源被删除/关闭后仍可粘贴)
         std::vector<std::unique_ptr<Entity>> m_clipboard;

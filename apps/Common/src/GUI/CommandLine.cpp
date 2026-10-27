@@ -154,7 +154,7 @@ namespace MiniCAD
             m_viewport->Focus();
         NoteInput();
         StateChanged();
-        m_viewport->RequestRender();   // ZOOM 等命令只改相机，不经过工具的重绘
+        RequestRenderAll();   // ZOOM 等命令只改相机，不经过工具的重绘
 
     }
 

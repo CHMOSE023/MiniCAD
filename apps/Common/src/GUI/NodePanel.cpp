@@ -220,7 +220,7 @@ namespace MiniCAD
         const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
         Nodes::PreviewSet set = m_nodePreview.Build(g, sel, m_platform->GetSolidKernel());
         editor.SetPreviewGeometry(std::move(set.Entities), std::move(set.Points), std::move(set.HighlightPoints));
-        m_viewport->RequestRender();
+        RequestRenderAll();
     }
 
     void MainFrame::UpdateNodeStatus(const Nodes::Graph& g)
@@ -632,7 +632,7 @@ namespace MiniCAD
         const std::string skipped = voids > 0 ? "，跳过 " + std::to_string(voids) + " 个空心（空心只用来切除实心）" : std::string();
         editor.GetCmdLine().Echo(n > 0 ? "烘焙节点图：已加入 " + std::to_string(n) + " 个对象（可撤销）" + skipped
                                        : "烘焙节点图：没有可烘焙的几何" + (skipped.empty() ? std::string("（先在节点编辑器里搭建并预览）") : skipped));
-        m_viewport->RequestRender();
+        RequestRenderAll();
         StateChanged();
     }
 

@@ -326,7 +326,7 @@ namespace MiniCAD
             Editor& ed = m_docManager.GetEditor();
             if (multiline) ed.SubmitMTextInput(box->GetText());
             else           ed.SubmitTextInput(box->GetText());
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
         auto cancel = [this, multiline, finished]
@@ -337,7 +337,7 @@ namespace MiniCAD
             Editor& ed = m_docManager.GetEditor();
             if (multiline) { auto& r = ed.GetMTextInputRequest(); r.Active = false; r.EditTargetId = Object::InvalidID; }
             else           { auto& r = ed.GetTextInputRequest();  r.Active = false; r.EditTargetId = Object::InvalidID; }
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
 
@@ -407,7 +407,7 @@ namespace MiniCAD
                 return;
             m_docManager.GetEditor().SubmitBlockDefine(Trimmed(name->GetText()));
             raw->Close();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         }, DialogButtonRole::Default);
         raw->AddButton("取消", [this, raw]
@@ -558,7 +558,7 @@ namespace MiniCAD
             const auto id = static_cast<BlockID>(list->GetItems()[static_cast<size_t>(i)].userData);
             raw->Close();
             m_docManager.GetEditor().SubmitBlockInsert(id);      // 关闭请求并启动放置工具
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
         list->SetOnItemActivated([insert](int) { insert(); });
@@ -677,7 +677,7 @@ namespace MiniCAD
             const int n = q.type == ArrayType::Rectangular ? q.rows * q.cols : q.count;
             summary->SetText("共 " + std::to_string(n) + " 个项目（含源对象）");
             m_docManager.GetEditor().BuildArrayPreview(q);
-            m_viewport->RequestRender();
+            RequestRenderAll();
         };
 
         auto bindInt = [this, changed](NumberBox* box, int ArrayParams::*field)
@@ -715,14 +715,14 @@ namespace MiniCAD
                 return;
             ed.SubmitArray();               // 先提交再关闭：关闭回调会把仍在的请求当作取消
             raw->Close();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         }, DialogButtonRole::Default);
         raw->AddButton("取消", [this, raw]
         {
             m_docManager.GetEditor().CancelArray();
             raw->Close();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         }, DialogButtonRole::Cancel);
 
@@ -735,7 +735,7 @@ namespace MiniCAD
             if (!m_arrayPicking && ed.GetArrayRequest().Active && !ed.GetArrayRequest().PickingCenter)
             {
                 ed.CancelArray();
-                m_viewport->RequestRender();
+                RequestRenderAll();
             }
             if (m_viewport->IsVisible())
                 m_viewport->Focus();
@@ -1295,7 +1295,7 @@ namespace MiniCAD
         auto changed = [this, doc]
         {
             doc->GetScene().MarkDisplayDirty();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
 
@@ -1590,7 +1590,7 @@ namespace MiniCAD
             // POINT 的显示属性变了但几何没变 ⇒ 用 MarkDisplayDirty
             // （不重建拾取索引；大图纸整表重建要上百毫秒，与图层配色同一档）。
             scene.MarkDisplayDirty();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
 
@@ -1747,7 +1747,7 @@ namespace MiniCAD
             // 虚线疏密变了但几何（实体位置）没变 ⇒ MarkDisplayDirty，
             // 不重建拾取索引（大图纸整表重建要上百毫秒）
             scene.MarkDisplayDirty();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
 
@@ -1858,7 +1858,7 @@ namespace MiniCAD
         {
             doc->MarkDirty();
             doc->GetScene().MarkDisplayDirty();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
 

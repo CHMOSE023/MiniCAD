@@ -168,8 +168,9 @@ namespace MiniCAD
         m_bindings.Clear();
         if (m_ui)
             m_commands.UnbindShortcuts();
+        CloseAllDocWindows();       // 文档窗口各有自己的 UIContext 与纹理，先于主界面销毁
         m_ui.reset();
-        m_floatHost.reset();
+m_floatHost.reset();
         m_layout.reset();
         m_fontSystem.Shutdown();
     }
@@ -253,8 +254,7 @@ namespace MiniCAD
             if (m_syncGeometryRows)
                 m_syncGeometryRows();
             m_bindings.Refresh();
-            if (m_viewport)
-                m_viewport->RequestRender();
+            RequestRenderAll();
         });
 
         // 填充：HATCH 先弹图案对话框；图案库在内置图案之外加载 patterns/ 下的 .pat
@@ -720,20 +720,30 @@ namespace MiniCAD
         m_syncing = true;
 
         // 标签与文档一一对应（按文档在标签上的顺序，用户可拖动标签排序）：先删掉已关闭的，再追加新文档
+        // 拖出成独立窗口的文档不在标签条上（它的窗口标题栏就是它的标签）
         for (int i = m_docTabs->GetTabCount() - 1; i >= 0; --i)
         {
             const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
             const bool alive = std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; });
-            if (!alive)
+            if (!alive || m_docManager.IsDetached(doc))
                 m_docTabs->RemoveTab(i);
         }
         for (const auto& d : docs)
         {
             const auto key = reinterpret_cast<uintptr_t>(d.get());
-            if (m_docTabs->FindTabData(key) < 0)
+            if (!m_docManager.IsDetached(d.get()) && m_docTabs->FindTabData(key) < 0)
                 m_docTabs->SetTabData(m_docTabs->AddTab(d->GetName(), nullptr, true), key);
         }
-        for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
+        for (auto& w : m_docWindows)
+        {
+            const std::string title = w->doc->GetName() + (w->doc->IsDirty() ? " *" : "");
+            if (w->panel->GetTitle() != title)
+            {
+                w->panel->SetTitle(title);
+                w->window->SetTitle(title);
+            }
+        }
+for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
         {
             const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
             if (m_docTabs->GetTabTitle(i) != doc->GetName())
@@ -742,7 +752,8 @@ namespace MiniCAD
         }
 
         Document* active = m_docManager.GetActive();
-        const int sel = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(active));
+        // 选中的标签是主视口里的文档（当前文档在独立窗口里时它不变）
+        const int sel = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(m_docManager.GetMainDocument()));
         if (sel >= 0)
             m_docTabs->SetSelected(sel);
         m_syncing = false;
@@ -943,7 +954,9 @@ namespace MiniCAD
     {
         if (!doc || doc == m_docManager.GetActive())
             return;
-        m_docManager.SetActive(doc);           // Editor 解绑旧文档时结束进行中的工具
+        m_docManager.SetActive(doc);           // 停靠的文档：主视口换成它；拖出的文档：只换当前文档
+        if (DocWindow* w = FindDocWindow(doc))
+            w->window->Activate();
         m_viewport->RequestRender();
         StateChanged();
     }
@@ -959,24 +972,30 @@ namespace MiniCAD
         {
             if (!alive())
                 return;
-            // 关闭当前文档：先切到标签上相邻的文档（同时恢复它的相机），再关闭
+            // 关闭当前文档：先切到标签上相邻的文档（同时恢复它的相机），再关闭；关闭的是独立窗口里的文档时切回主视口里的文档
             if (doc == m_docManager.GetActive())
             {
                 Document* next = nullptr;
-                const int i = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(doc));
-                const int n = m_docTabs->GetTabCount();
-                if (i >= 0 && n > 1)
-                    next = reinterpret_cast<Document*>(m_docTabs->GetTabData(i + 1 < n ? i + 1 : i - 1));
+                if (m_docManager.IsDetached(doc))
+                    next = m_docManager.GetMainDocument();
+                else
+                {
+                    const int i = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(doc));
+                    const int n = m_docTabs->GetTabCount();
+                    if (i >= 0 && n > 1)
+                        next = reinterpret_cast<Document*>(m_docTabs->GetTabData(i + 1 < n ? i + 1 : i - 1));
+                }
                 m_docManager.SetActive(next);
             }
-            m_docManager.Close(doc);
-            // 归还关闭的文档占用的显示资源：图像缓存、渲染器的顶点缓冲与纹理（剩下的文档下一帧按需重建），
+            m_docManager.Close(doc);            // 拖出的文档连同它的视口
+            DestroyDocWindow(doc);              // 它的窗口推迟到下一帧销毁（可能正在那个窗口的事件里）
+// 归还关闭的文档占用的显示资源：图像缓存、渲染器的顶点缓冲与纹理（剩下的文档下一帧按需重建），
             // 再请平台把空闲的堆内存还给系统
             m_docManager.GetEditor().ClearImageCache();
             m_platform->GetRenderer().ReleaseCachedResources();
             m_docManager.GetEditor().RequestSceneRestitch();
             m_platform->ReleaseFreeMemory();
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
             if (m_viewport->IsVisible())
                 m_viewport->Focus();
@@ -1105,11 +1124,16 @@ namespace MiniCAD
     // =========================================================
     // 视口输入 → Editor
     // =========================================================
-    void MainFrame::NoteInput()
+    void MainFrame::NoteInput(MiniGUI::ViewportHost& host)
     {
         if (m_pendingInputTicks == 0)
             m_pendingInputTicks = NowTicks();
-        m_viewport->RequestRender();
+        host.RequestRender();
+    }
+
+    void MainFrame::NoteInput()
+    {
+        NoteInput(HostOf(m_docManager.GetActive()));
     }
 
     void MainFrame::OnViewportPointer(const MiniGUI::ViewportPointerEvent& e)
@@ -1121,8 +1145,17 @@ namespace MiniCAD
             m_viewport->Invalidate();       // 更新状态栏坐标
             return;
         }
-        if (!m_docManager.GetActive())
+        if (Document* doc = m_docManager.GetMainDocument())
+            RouteViewportPointer(e, doc, m_mainInput, *m_viewport);
+    }
+
+    // 一个视口（主窗口的，或某个文档窗口的）里的指针事件交给那个文档的编辑器；按下 / 滚轮即成为当前文档
+    void MainFrame::RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host)
+    {
+        using T = MiniGUI::PointerEventType;
+        if (!doc)
             return;
+        Editor& editor = m_docManager.GetEditor(*doc);
 
         const int x = static_cast<int>(std::floor(e.pixel.x));
         const int y = static_cast<int>(std::floor(e.pixel.y));
@@ -1133,14 +1166,14 @@ namespace MiniCAD
         ie.ClickCount   = e.clickCount;         // 连击计数（双击中键 = 缩放全图）
         ie.MouseX       = x;
         ie.MouseY       = y;
-        ie.LastMouseX   = m_mouseX;
-        ie.LastMouseY   = m_mouseY;
+        ie.LastMouseX   = in.mouseX;
+        ie.LastMouseY   = in.mouseY;
 
         switch (e.type)
         {
         case T::Down:
-            m_pressX   = x;
-            m_pressY   = y;
+            in.pressX  = x;
+            in.pressY  = y;
             ie.Type    = InputEventType::MouseButtonDown;
             ie.Button  = ToMouseButton(e.button);
             break;
@@ -1149,7 +1182,7 @@ namespace MiniCAD
             ie.Button  = ToMouseButton(e.button);
             break;
         case T::Move:
-            if (x == m_mouseX && y == m_mouseY)
+            if (x == in.mouseX && y == in.mouseY)
                 return;
             ie.Type    = InputEventType::MouseMove;
             break;
@@ -1168,30 +1201,34 @@ namespace MiniCAD
                 };
                 for (const auto& [button, state] : held)
                 {
-                    if (!(m_buttons & static_cast<uint8_t>(state)))
+                    if (!(in.buttons & static_cast<uint8_t>(state)))
                         continue;
                     InputEvent up   = ie;
                     up.Type         = InputEventType::MouseButtonUp;
                     up.Button       = button;
                     up.MouseButtons = 0;
-                    m_docManager.GetEditor().OnInput(up);
+                    editor.OnInput(up);
                 }
             }
-            m_buttons = 0;
-            NoteInput();
+            in.buttons = 0;
+            NoteInput(host);
             return;
         default:
             return;
         }
 
-        ie.PressMouseX = m_pressX;
-        ie.PressMouseY = m_pressY;
-        m_mouseX  = x;
-        m_mouseY  = y;
-        m_buttons = ie.MouseButtons;
+        // 在哪个窗口里按下 / 滚动，哪个文档就是当前文档（命令行、状态栏、面板随之切换）
+        if ((e.type == T::Down || e.type == T::Wheel) && m_docManager.GetActive() != doc)
+            m_docManager.SetActive(doc);
 
-        m_docManager.GetEditor().OnInput(ie);
-        NoteInput();
+        ie.PressMouseX = in.pressX;
+        ie.PressMouseY = in.pressY;
+        in.mouseX  = x;
+        in.mouseY  = y;
+        in.buttons = ie.MouseButtons;
+
+        editor.OnInput(ie);
+        NoteInput(host);
         // 按下 / 抬起 / 滚轮可能改变选择集、结束当前工具、修改文档：刷新界面（移动太频繁，不刷新）
         if (e.type != T::Move)
             StateChanged();
@@ -1199,7 +1236,7 @@ namespace MiniCAD
 
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
-        const KeyCode code = ToKeyCode(e.key);
+const KeyCode code = ToKeyCode(e.key);
         if (code == KeyCode::Unknown || !m_docManager.GetActive())
             return false;
         // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
@@ -1212,17 +1249,18 @@ namespace MiniCAD
         if (RouteKeyToDynamicInput(e) || RouteKeyToCommandLine(e))
             return true;
 
+        const ViewInput& in = InputOf(m_docManager.GetActive());    // 当前文档所在视口里的鼠标位置
         InputEvent ie   = {};
         ie.Type         = e.type == MiniGUI::KeyEventType::Down ? InputEventType::KeyDown : InputEventType::KeyUp;
         ie.Key          = code;
         ie.Modifiers    = e.modifiers;
-        ie.MouseButtons = m_buttons;
-        ie.MouseX       = m_mouseX;
-        ie.MouseY       = m_mouseY;
-        ie.LastMouseX   = m_mouseX;
-        ie.LastMouseY   = m_mouseY;
-        ie.PressMouseX  = m_pressX;
-        ie.PressMouseY  = m_pressY;
+        ie.MouseButtons = in.buttons;
+        ie.MouseX       = in.mouseX;
+        ie.MouseY       = in.mouseY;
+        ie.LastMouseX   = in.mouseX;
+        ie.LastMouseY   = in.mouseY;
+        ie.PressMouseX  = in.pressX;
+        ie.PressMouseY  = in.pressY;
 
         const bool handled = m_docManager.GetEditor().OnInput(ie);
         NoteInput();
@@ -1239,26 +1277,20 @@ namespace MiniCAD
         if (target.GetWidth() != pixelWidth || target.GetHeight() != pixelHeight)
             target.Resize(pixelWidth, pixelHeight);
 
-        Viewport& vp = m_docManager.GetViewport();
+        Viewport& vp = m_docManager.GetMainViewport();
         if (vp.GetWidth() != pixelWidth || vp.GetHeight() != pixelHeight)
             vp.Resize(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
         UpdateFitInsets();
 
-        if (m_docManager.GetActive())
+        if (m_docManager.GetMainDocument())
         {
-            Editor& editor = m_docManager.GetEditor();
+            Editor&    editor   = m_docManager.GetMainEditor();
+            IRenderer& renderer = m_platform->GetRenderer();
+            editor.EnsureSceneCached(renderer);     // 场景缓冲被文档窗口顶掉了就重新拼接
             editor.Render();
-            // 视图方块跟着视线方向（环绕、标准视图、切换文档）
-            if (const CameraState cam = vp.GetCamera().GetState(); m_viewCube && (cam.Azimuth != m_cubeAzimuth || cam.Elevation != m_cubeElevation))
-            {
-                m_cubeAzimuth   = cam.Azimuth;
-                m_cubeElevation = cam.Elevation;
-                m_viewCube->Invalidate();
-            }
-            IRenderer&      renderer = m_platform->GetRenderer();
-            const ViewState vs       = editor.BuildViewState();
+            const ViewState vs = editor.BuildViewState();
             vp.Render(renderer, target, vs);
-            // 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）。
+// 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）。
             // 追加段没接上后端的缓冲（这一帧画的是旧内容）：下一帧从逐实体缓存全量重新拼接
             if (Viewport::SceneUploaded(renderer, vs))
                 editor.ReleaseUploadedSceneStreams();
@@ -1270,9 +1302,9 @@ namespace MiniCAD
         }
         else
         {
-            // 没有文档（正在打开第一张图纸）：清空，不留上一张图纸的画面
+            // 没有文档（正在打开第一张图纸，或文档都拖出去了）：清空，不留上一张图纸的画面
             IRenderer& renderer = m_platform->GetRenderer();
-            renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth), .height = static_cast<float>(pixelHeight) });
+renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth), .height = static_cast<float>(pixelHeight) });
             renderer.EndFrame();
         }
 
@@ -1290,13 +1322,29 @@ namespace MiniCAD
         ++m_viewportFrames;
     }
 
+    void MainFrame::SyncViewCube()
+    {
+        // 视图方块跟着当前文档的视线方向（环绕、标准视图、切换文档）
+        if (!m_viewCube || !m_docManager.GetActive())
+            return;
+        const CameraState cam = m_docManager.GetViewport().GetCamera().GetState();
+        if (cam.Azimuth != m_cubeAzimuth || cam.Elevation != m_cubeElevation)
+        {
+            m_cubeAzimuth   = cam.Azimuth;
+            m_cubeElevation = cam.Elevation;
+            m_viewCube->Invalidate();
+        }
+    }
+
     void MainFrame::UpdateStatus()
     {
         m_statusBar->Refresh();
         // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标
         if (m_viewport)
-            m_viewport->SetCursor(m_docManager.GetActive() && m_docManager.GetEditor().HidesCrosshair()
+            m_viewport->SetCursor(m_docManager.GetMainDocument() && m_docManager.GetMainEditor().HidesCrosshair()
                                   ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        for (auto& w : m_docWindows)
+            w->host->SetCursor(m_docManager.GetEditor(*w->doc).HidesCrosshair() ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
         UpdateAppBarVisibility();
     }
 
@@ -1330,7 +1378,8 @@ namespace MiniCAD
             return;
         if (m_floatHost)
             m_floatHost->Purge();       // 上一帧关闭的浮动窗口此时才销毁
-        auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
+        PurgeDocWindows();
+auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
         int64_t t = NowTicks();
 
         // 0. 节点图：参数或引用的图纸变了就求值，刷新绘图区预览（在视口渲染之前）
@@ -1340,7 +1389,8 @@ namespace MiniCAD
         UpdateStatus();
         SyncOpenProgress();
         // 视口背景跟随界面主题：浅色主题下白色实体、十字光标画成黑色
-        m_docManager.GetViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
+        m_docManager.GetMainViewport().SetLightBackground(!m_ui->GetTheme().IsDark());
+        SyncViewCube();
         m_timing.status = ms(t);
 
         // 2. 布局 → 3. 按最新尺寸和相机渲染视口
@@ -1388,7 +1438,7 @@ namespace MiniCAD
 
         // 4.5 视图切换的过渡动画：帧结束后再请求下一帧。不能在渲染中途请求——本帧结束时（UIContext::Render、
         //     WM_PAINT 的 ValidateRect）会把请求清掉，动画要等鼠标动了才继续
-        if (m_docManager.GetActive() && m_docManager.GetEditor().IsViewTransitioning())
+        if (m_docManager.GetMainDocument() && m_docManager.GetMainEditor().IsViewTransitioning())
             m_platform->Post([this] { m_viewport->RequestRender(); });
 
         // 5. 读完的图纸在"正在生成显示"画出来之后才加入（下一帧生成显示时界面会停顿）。

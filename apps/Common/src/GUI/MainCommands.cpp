@@ -122,10 +122,10 @@ namespace MiniCAD
         // ── 编辑 ─────────────────────────────────────────────────
         // 节点编辑器有焦点时，撤销 / 重做 / 全选作用于节点图（节点图有自己的撤销历史，见 docs/NodeGraph/PLAN.md 第 3.6 节）
         m_commands.Register({ .id = "edit.undo", .label = "撤销(&U)", .icon = "Undo.png", .shortcut = "Ctrl+Z",
-                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(false); return; } dm.Undo(); m_viewport->RequestRender(); },
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(false); return; } dm.Undo(); RequestRenderAll(); },
                               .canExecute = [this, &dm] { return dm.GetActive() && (NodeEditorHasFocus() ? NodeHistory(*dm.GetActive()).CanUndo() : dm.GetActive()->CanUndo()); } });
         m_commands.Register({ .id = "edit.redo", .label = "重做(&R)", .icon = "Redo.png", .shortcut = "Ctrl+Y",
-                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(true); return; } dm.Redo(); m_viewport->RequestRender(); },
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { NodeGraphUndo(true); return; } dm.Redo(); RequestRenderAll(); },
                               .canExecute = [this, &dm] { return dm.GetActive() && (NodeEditorHasFocus() ? NodeHistory(*dm.GetActive()).CanRedo() : dm.GetActive()->CanRedo()); } });
         // 删除：与视口里按 Delete 键是同一个操作（Delete 键由 Editor 处理，这里不再注册快捷键，避免文本框里按 Delete 被抢走）
         m_commands.Register({ .id = "edit.delete", .label = "删除(&D)",
@@ -245,8 +245,8 @@ namespace MiniCAD
                 .execute    = [this, &dm, tool]
                 {
                     dm.GetEditor().ActivateToolById(tool);
-                    m_viewport->Focus();            // 回到视口，继续用键盘输入坐标、Esc 取消
-                    m_viewport->RequestRender();
+                    HostOf(m_docManager.GetActive()).Focus();            // 回到视口，继续用键盘输入坐标、Esc 取消
+                    RequestRenderAll();
                 },
                 .canExecute = hasDoc,
                 .isChecked  = [&dm, tool] { return dm.GetActive() && dm.GetEditor().IsActiveTool() && dm.GetEditor().GetLastCommand() == tool; },
@@ -257,17 +257,17 @@ namespace MiniCAD
         auto viewToggle = [this, &dm](const char* id, const char* label, void (Viewport::*toggle)(), bool (Viewport::*shown)() const)
         {
             m_commands.Register({ .id = id, .label = label,
-                                  .execute   = [this, &dm, toggle] { (dm.GetViewport().*toggle)(); m_viewport->RequestRender(); },
+                                  .execute   = [this, &dm, toggle] { (dm.GetViewport().*toggle)(); RequestRenderAll(); },
                                   .isChecked = [&dm, shown] { return (dm.GetViewport().*shown)(); } });
         };
         m_commands.Register({ .id = "view.zoomExtents", .label = "缩放到全图(&A)", .icon = "ZoomExtents.png", .shortcut = "Ctrl+Shift+E",
-                              .execute = [this, &dm] { dm.ZoomAll(); m_viewport->RequestRender(); }, .canExecute = hasDoc });
+                              .execute = [this, &dm] { dm.ZoomAll(); RequestRenderAll(); }, .canExecute = hasDoc });
         // 视口导航条（ViewNavBar.cpp）上的放大 / 缩小（以绘图区中心为基点，相当于滚轮两格）与窗口缩放
         auto zoomStep = [this, &dm](float steps)
         {
             const MiniGUI::Vec2 size = m_viewport->GetSize();
             dm.GetViewport().Zoom(steps, size.x * m_dpiScale * 0.5f, size.y * m_dpiScale * 0.5f);
-            m_viewport->RequestRender();
+            RequestRenderAll();
         };
         m_commands.Register({ .id = "view.zoomIn",  .label = "放大(&I)", .icon = "ZoomIn.png",
                               .execute = [zoomStep] { zoomStep(2.0f); },  .canExecute = hasDoc });
@@ -275,16 +275,16 @@ namespace MiniCAD
                               .execute = [zoomStep] { zoomStep(-2.0f); }, .canExecute = hasDoc });
         m_commands.Register({ .id = "view.zoomWindow", .label = "窗口缩放(&W)", .tooltip = "指定两个角点，缩放到该矩形范围",
                               .icon = "ZoomWindow.png",
-                              .execute = [this, &dm] { dm.GetEditor().RunZoomOption("W"); m_viewport->Focus(); }, .canExecute = hasDoc });
+                              .execute = [this, &dm] { dm.GetEditor().RunZoomOption("W"); HostOf(m_docManager.GetActive()).Focus(); }, .canExecute = hasDoc });
         m_commands.Register({ .id = "view.pan", .label = "平移(&P)", .tooltip = "按住左键拖动平移视图，右键 / ESC 退出（也可以拖动中键）",
                               .icon = "Pan.png",
-                              .execute = [this, &dm] { dm.GetEditor().ActivateToolById("Pan"); m_viewport->Focus(); }, .canExecute = hasDoc });
+                              .execute = [this, &dm] { dm.GetEditor().ActivateToolById("Pan"); HostOf(m_docManager.GetActive()).Focus(); }, .canExecute = hasDoc });
         viewToggle("view.grid",  "显示栅格(&G)", &Viewport::ShowGridToggle,  &Viewport::IsGridShown);
         viewToggle("view.axis",  "显示极轴(&A)", &Viewport::ShowAxisToggle,  &Viewport::IsAxisShown);
         viewToggle("view.gizmo", "显示坐标(&Z)", &Viewport::ShowGizmoToggle, &Viewport::IsGizmoShown);
         m_commands.Register({ .id = "view.thinLines", .label = "细线显示(&T)",
                               .tooltip = "忽略线宽，所有线按 1 像素细线显示（只影响显示，不修改图纸）",
-                              .execute   = [this, &dm] { dm.GetEditor().ToggleThinLines(); m_viewport->RequestRender(); },
+                              .execute   = [this, &dm] { dm.GetEditor().ToggleThinLines(); RequestRenderAll(); },
                               .isChecked = [&dm] { return dm.GetEditor().IsThinLines(); } });
 
         // ── 三维视图（M6）：标准视图（可撤销，同缩放）与视觉样式 ──────────
@@ -296,12 +296,12 @@ namespace MiniCAD
             { "view.neiso",  "东北等轴测(&N)", StandardView::NEIso }, { "view.nwiso",  "西北等轴测(&W)", StandardView::NWIso } };
         for (const auto& v : kViews)
             m_commands.Register({ .id = v.id, .label = v.label,
-                                  .execute    = [this, &dm, view = v.view] { dm.GetEditor().SetStandardView(view); m_viewport->RequestRender(); },
+                                  .execute    = [this, &dm, view = v.view] { dm.GetEditor().SetStandardView(view); RequestRenderAll(); },
                                   .canExecute = hasDoc });
         auto visualStyle = [this, &dm](const char* id, const char* label, Editor::VisualStyle style)
         {
             m_commands.Register({ .id = id, .label = label,
-                                  .execute   = [this, &dm, style] { dm.GetEditor().SetVisualStyle(style); m_viewport->RequestRender(); },
+                                  .execute   = [this, &dm, style] { dm.GetEditor().SetVisualStyle(style); RequestRenderAll(); },
                                   .isChecked = [&dm, style] { return dm.GetEditor().GetVisualStyle() == style; } });
         };
         visualStyle("view.style.wireframe", "线框(&W)", Editor::VisualStyle::Wireframe);
@@ -406,7 +406,8 @@ namespace MiniCAD
                                   m_ui->SetTheme(toLight ? MiniGUI::ThemeColors::Light() : MiniGUI::ThemeColors::Dark());
                                   if (m_floatHost)
                                       m_floatHost->SetTheme(m_ui->GetTheme());     // 浮动窗口跟着换
-                                  m_viewport->RequestRender();      // 视口背景随主题反转白色内容（RenderFrame 同步）
+                                  SetDocWindowsTheme(m_ui->GetTheme());
+RequestRenderAll();      // 视口背景随主题反转白色内容（RenderFrame 同步）
                               },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
         m_commands.Register({ .id = "help.about", .label = "关于(&A)…", .shortcut = "F1", .execute = [this] { ShowAbout(); } });

@@ -208,7 +208,7 @@ namespace MiniCAD
             doc->GetScene().MarkDisplayDirty(); // 可见性、颜色、线型随层：重建场景显示（几何不变，拾取索引不动）
             doc->MarkDirty();
         }
-        m_viewport->RequestRender();
+        RequestRenderAll();
         StateChanged();
     }
 

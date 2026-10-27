@@ -1,4 +1,5 @@
 #include "Viewport.h"
+#include <atomic>
 #include "Render/VertexTypes.hpp"
 #include "Camera.h"
 #include <algorithm>
@@ -94,11 +95,24 @@ namespace MiniCAD
     bool Viewport::SceneUploaded(const IRenderer& renderer, const ViewState& viewState)
     {
         // 没有字体纹理时文字流不提交，也就不需要保留
-        return renderer.IsCached(kSlotSceneFill, viewState.SceneVersion, false)
-            && renderer.IsCached(kSlotScene, viewState.SceneVersion, false)
-            && renderer.IsCached(kSlotScenePoint, viewState.SceneVersion, false)
-            && (!viewState.FontTexture || renderer.IsCached(kSlotSceneText, viewState.SceneGlyphVersion, true))
-            && (viewState.Glyphs.empty() || renderer.IsGlyphCached(kSlotGlyph, viewState.SceneGlyphVersion, viewState.GlyphMeshes.Version));
+        return SceneUploaded(renderer, viewState.SceneVersion, viewState.SceneGlyphVersion,
+                             viewState.FontTexture != nullptr, !viewState.Glyphs.empty(), viewState.GlyphMeshes.Version);
+    }
+
+    bool Viewport::SceneUploaded(const IRenderer& renderer, uint64_t sceneVersion, uint64_t glyphVersion,
+                                 bool textured, bool glyphs, uint64_t meshVersion)
+    {
+        return renderer.IsCached(kSlotSceneFill, sceneVersion, false)
+            && renderer.IsCached(kSlotScene, sceneVersion, false)
+            && renderer.IsCached(kSlotScenePoint, sceneVersion, false)
+            && (!textured || renderer.IsCached(kSlotSceneText, glyphVersion, true))
+            && (!glyphs || renderer.IsGlyphCached(kSlotGlyph, glyphVersion, meshVersion));
+    }
+
+    uint64_t Viewport::NextViewVersion()
+    {
+        static std::atomic<uint64_t> counter{ 0 };
+        return ++counter;
     }
 
     // 应用层每帧调用：提供自己创建的 renderer 和 renderTarget。
@@ -327,7 +341,7 @@ namespace MiniCAD
             return;
 
         m_viewKey = k;
-        ++m_viewVersion;
+        m_viewVersion = NextViewVersion();
 
         m_gridVerts.clear();
         m_axisVerts.clear();
