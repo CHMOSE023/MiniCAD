@@ -21,18 +21,22 @@ function(minicad_smlib_options target)
     if(MSVC)
         # 第三方代码只保留最严重的警告；/bigobj：SmBrep.cpp 等单个文件很大
         target_compile_options(${target} PRIVATE /utf-8 /W1 /bigobj /EHsc)
+    else()
+        # Clang（网页版的 Emscripten 也是）：关掉上游代码里大量出现、不影响正确性的两类警告（GCC 没有这两类）
+        target_compile_options(${target} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-inconsistent-missing-override -Wno-parentheses-equality>)
     endif()
 endfunction()
 
 if(MINICAD_WITH_SOLID)
     add_library(SMLib STATIC ${SMLIB_SOURCES})
-    target_include_directories(SMLib PUBLIC "${SMLIB_ROOT}/SMLib/inc")
+    # SYSTEM：引用它的适配层（src/Solid/SMLib）不报 SMLib 头文件里的警告
+    target_include_directories(SMLib SYSTEM PUBLIC "${SMLIB_ROOT}/SMLib/inc")
     target_precompile_headers(SMLib PRIVATE "${SMLIB_ROOT}/SMLib/inc/StdAfx.h")
     minicad_smlib_options(SMLib)
 
     add_library(SM_API STATIC ${SMAPI_SOURCES})
     # SM_API/inc 必须排在 SMLib/inc 前面：两边都有 StdAfx.h
-    target_include_directories(SM_API PUBLIC "${SMLIB_ROOT}/SM_API/inc")
+    target_include_directories(SM_API SYSTEM PUBLIC "${SMLIB_ROOT}/SM_API/inc")
     target_link_libraries(SM_API PUBLIC SMLib)
     target_precompile_headers(SM_API PRIVATE "${SMLIB_ROOT}/SM_API/inc/StdAfx.h")
     minicad_smlib_options(SM_API)

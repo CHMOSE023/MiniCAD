@@ -2925,12 +2925,18 @@ namespace MiniCAD
                 return f;
             }
 
-            // 一条边界路径 → 一个边界环：相接的直线、圆弧、椭圆弧合成一条多段线边，样条单独成边
+            // 一条边界路径 → 一个边界环：相接的直线、圆弧、椭圆弧合成一条多段线边，样条单独成边。
+            // 相邻边不相接时用直线接上（AutoCAD 允许的间隙容差 HPGAPTOL 就是这样闭合的）；但边与边、
+            // 首尾之间的缺口大到与整条路径同一量级时，这条路径已经不是一个区域（常见于编辑后残留的
+            // "未闭合"路径，各段散落在图纸各处），AutoCAD 不画它，这里也整条丢弃——硬接起来会画出
+            // 横跨图纸的大块实心
             static HatchLoop ConvertHatchPath(const Dwg::HatchBoundaryPath& path, const OcsMap& map)
             {
                 HatchLoop loop;
                 std::vector<Math::Point3> pts;
                 std::vector<double>       bulges;
+                double maxGap = 0.0;
+                AABB   box    = AABB::Empty();
                 auto flush = [&]
                 {
                     if (pts.size() >= 2)
@@ -2939,15 +2945,20 @@ namespace MiniCAD
                     bulges.clear();
                 };
                 auto finite = [](const Math::Point3& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); };
-                // 追加一段（世界坐标、MiniCAD 凸度）；起点与上一段终点不重合时用直线接上
+                // 追加一段（世界坐标、MiniCAD 凸度）；起点与上一段终点不重合时用直线接上，并记下缺口
                 auto add = [&](const Math::Point3& a, const Math::Point3& b, double bulge)
                 {
                     if (!finite(a) || !finite(b) || !std::isfinite(bulge))
                         return;
+                    box.Expand(a);
+                    box.Expand(b);
                     if (pts.empty() || std::abs(pts.back().x - a.x) > 1e-9 || std::abs(pts.back().y - a.y) > 1e-9)
                     {
                         if (!pts.empty())
+                        {
+                            maxGap = std::max(maxGap, std::hypot(a.x - pts.back().x, a.y - pts.back().y));
                             bulges.push_back(0.0);
+                        }
                         pts.push_back(a);
                     }
                     bulges.push_back(bulge);
@@ -3042,7 +3053,12 @@ namespace MiniCAD
                         loop.Edges.push_back(HatchEdge::MakeSpline(std::move(spline)));
                     }
                 }
+                // 只由直线 / 圆弧 / 椭圆弧组成时，首尾的缺口也算（有样条边时首尾由样条接上，不检查）
+                if (loop.Edges.empty() && pts.size() >= 2)
+                    maxGap = std::max(maxGap, std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y));
                 flush();
+                if (box.Min.x <= box.Max.x && maxGap > 0.1 * std::hypot(box.Max.x - box.Min.x, box.Max.y - box.Min.y))
+                    return HatchLoop{};
                 return loop;
             }
 

@@ -7,9 +7,10 @@
 #include <algorithm>
 
 // stb_truetype 仅在桌面端使用；Web 端走 WebFontAtlas，不需要本文件解析 TTF。
-// 用 STBTT_DEF static 编译一个本文件私有副本，避免与宿主（例如 MiniGUI）里的 stb_truetype 符号冲突。
+// 用 STBTT_STATIC 编译一个本文件私有副本（函数都是 static），避免与宿主（例如 MiniGUI）里的 stb_truetype 符号冲突。
+// 不能直接定义 STBTT_DEF：stb_truetype.h 会按 STBTT_STATIC 重新定义它（以前就这样被改回 extern，还报宏重复定义）
 #ifndef MINICAD_WEB
-#define STBTT_DEF    static
+#define STBTT_STATIC
 #define STBTT_assert(x) assert(x)
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb/stb_truetype.h"

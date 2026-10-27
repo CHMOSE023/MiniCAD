@@ -25,6 +25,7 @@
 | `MINICAD_TABLES=1` | DWG 的 STYLE / LTYPE 表、布局与图纸空间块记录，导入后再打印场景里的两张表 |
 | `MINICAD_LAYERS=子串` | 名称含该子串的图层的标志（1 冻结、4 锁定）、开关与颜色 |
 | `MINICAD_HATCH` | 按所有者块 / 图层 / 图案统计 HATCH |
+| `MINICAD_HATCHPATHS` | 模型空间里每个 HATCH 的全部边界路径（标志、逐条边；多段线边逐顶点）——填充画成大块实心、范围不对时看各段是否相接 |
 | `MINICAD_BULGE` | 统计多段线弧段与前一直线段相切时符合哪种凸度约定 |
 
 ## 天正对象
