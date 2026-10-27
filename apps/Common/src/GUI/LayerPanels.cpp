@@ -379,12 +379,14 @@ namespace MiniCAD
             if (!l)
                 return;
             const Rect cell = cellScreenRect(row, col);
+            // 弹层开在列表所在的窗口里：面板浮出成独立窗口后，它有自己的 UIContext
+            UIContext& popupUi = m_layerList->GetContext() ? *m_layerList->GetContext() : *m_ui;
             switch (col)
             {
             case ColOn:   { LayerChange c; c.Visible = !l->IsVisible(); ChangeLayer(*doc, id, c); LayerChanged(); break; }
             case ColLock: { LayerChange c; c.Locked  = !l->IsLocked();  ChangeLayer(*doc, id, c); LayerChanged(); break; }
             case ColColor:
-                ShowColorPalette(*m_ui, cell, ToColor32(l->GetColor()), [this, &dm, id](Color32 c)
+                ShowColorPalette(popupUi, cell, ToColor32(l->GetColor()), [this, &dm, id](Color32 c)
                 {
                     if (Document* d = dm.GetActive())
                     {
@@ -411,7 +413,7 @@ namespace MiniCAD
                         }
                     }).Checked(l->GetLineType() == i));
                 }
-                ShowContextMenu(*m_ui, std::move(items), { cell.min.x, cell.max.y });
+                ShowContextMenu(popupUi, std::move(items), { cell.min.x, cell.max.y });
                 break;
             }
             case ColLineweight:
@@ -432,7 +434,7 @@ namespace MiniCAD
                         }
                     }).Checked(l->GetLineweight() == lw));
                 }
-                ShowContextMenu(*m_ui, std::move(items), { cell.min.x, cell.max.y });
+                ShowContextMenu(popupUi, std::move(items), { cell.min.x, cell.max.y });
                 break;
             }
             default:

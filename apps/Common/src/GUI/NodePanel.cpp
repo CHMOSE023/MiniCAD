@@ -84,7 +84,8 @@ namespace MiniCAD
             items.emplace_back("保存节点图…", [this] { SaveNodeGraphFile(false); });
             items.push_back(std::move(MenuItem("保存选中的节点…", [this] { SaveNodeGraphFile(true); }).Enabled(selected)));
             const Rect r = (*fileButton)->GetScreenBounds();
-            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+            // 菜单开在按钮所在的窗口里（节点面板可能浮出成独立窗口）
+            ShowContextMenu((*fileButton)->GetContext() ? *(*fileButton)->GetContext() : *m_ui, std::move(items), { r.min.x, r.max.y });
         });
         auto exampleButton = std::make_shared<Button*>(nullptr);
         *exampleButton = addTool("示例", "插入示例节点图（随程序发布的 .mcnode 文件，在 nodes/examples 目录）；与已有参数重名的参数会自动改名", [this, exampleButton]
@@ -116,7 +117,7 @@ namespace MiniCAD
             if (items.empty())
                 items.push_back(std::move(MenuItem("（没有找到示例文件）").Enabled(false)));
             const Rect r = (*exampleButton)->GetScreenBounds();
-            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+            ShowContextMenu((*exampleButton)->GetContext() ? *(*exampleButton)->GetContext() : *m_ui, std::move(items), { r.min.x, r.max.y });
         });
         addTool("添加节点", "按分类添加节点（也可在画布上按 Tab 或双击空白处搜索，空白处右键按分类添加）", [this]
         {
