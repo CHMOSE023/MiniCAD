@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(MiniCADWin
     src/Host/GuiMain.cpp
     src/Host/Win32Window.cpp
+    src/Host/Win32FloatingWindow.cpp
     src/Host/Win32Shell.cpp
     src/Host/SelfTest.cpp
     src/MiniCAD.rc

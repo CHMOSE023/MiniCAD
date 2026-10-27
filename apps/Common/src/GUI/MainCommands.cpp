@@ -1,6 +1,7 @@
 // ── MiniCAD 命令注册：菜单栏、工具栏、快捷键都引用这里的命令 ID ─────────
 // 名称、图标、快捷键是默认值，界面描述文件（ui/minicad_ui.json）的 "commands" 可以覆盖
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/NodeEditor.h"
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
@@ -403,6 +404,8 @@ namespace MiniCAD
                               {
                                   const bool toLight = m_ui->GetTheme().IsDark();
                                   m_ui->SetTheme(toLight ? MiniGUI::ThemeColors::Light() : MiniGUI::ThemeColors::Dark());
+                                  if (m_floatHost)
+                                      m_floatHost->SetTheme(m_ui->GetTheme());     // 浮动窗口跟着换
                                   m_viewport->RequestRender();      // 视口背景随主题反转白色内容（RenderFrame 同步）
                               },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });

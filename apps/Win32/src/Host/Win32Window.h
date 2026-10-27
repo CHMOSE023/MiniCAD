@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <memory>
 #include <string>
+#include <vector>
 #include "GUI/AppPlatform.h"
 #include "GUI/MainFrame.h"
 #include "IGraphicsDevice.h"
@@ -16,6 +17,8 @@ namespace MiniGUI
 
 namespace MiniCAD
 {
+    class Win32FloatingWindow;
+
     // MiniCAD 桌面版（MiniCADWin）的宿主：无边框窗口 + 图形设备（IGraphicsDevice：D3D12 / D3D11 / WARP）+ 消息循环，实现 AppPlatform。
     //   - 无边框窗口（Win32Frame）：标题栏由界面自绘，保留系统的贴靠、阴影、缩放边框
     //   - 按需重绘：界面需要重绘时 InvalidateRect，消息队列清空后在 WM_PAINT 里调用 MainFrame::RenderFrame
@@ -31,7 +34,15 @@ namespace MiniCAD
 
         MainFrame& GetFrame() { return m_main; }    // Initialize 之前可以设置界面描述文件等选项
         HWND       GetHwnd() const { return m_hwnd; }
-        IGraphicsDevice& GetGraphics() { return *m_graphics; }      // 自测读回视口像素用
+        float      GetDpiScale() const { return m_dpiScale; }
+        IGraphicsDevice& GetGraphics() { return *m_graphics; }      // 自测读回视口像素用；浮动窗口建窗口表面
+
+        // ── 浮动窗口（Win32FloatingWindow）调用 ─────────────────
+        void RegisterFloatingWindow(Win32FloatingWindow* w);
+        void UnregisterFloatingWindow(Win32FloatingWindow* w);
+        bool IsOurWindow(HWND hwnd) const;                          // 主窗口或某个浮动窗口
+        void OnFloatingWindowActive(bool active);                   // 浮动窗口激活状态变化：主标题栏不变灰
+        bool ForwardKeyMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result);   // 浮动窗口里没处理的按键
 
         // gpu：图形接口名称（d3d12、d3d11、warp），为空时按默认顺序
         bool Initialize(const wchar_t* title, int width, int height, const std::string& gpu = {});
@@ -61,6 +72,7 @@ namespace MiniCAD
         void CloseWindow() override;
         void Quit() override;
 
+        std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect) override;
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
@@ -87,6 +99,7 @@ namespace MiniCAD
         HWND   m_hwnd     = nullptr;
         float  m_dpiScale = 1.0f;
         HANDLE m_uiWatch  = nullptr;    // 界面描述文件所在目录的变化通知
+        std::vector<Win32FloatingWindow*> m_floating;   // 开着的浮动窗口（由 MainFrame 的 FloatingPanelHost 持有）
 
         // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 窗口框架 → 视口渲染目标 → 图形设备
         std::unique_ptr<IGraphicsDevice>       m_graphics;

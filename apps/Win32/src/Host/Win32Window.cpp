@@ -1,5 +1,6 @@
 // ── MiniCAD 桌面版宿主：窗口、图形设备、消息循环与平台服务 ─────────
 #include "Host/Win32Window.h"
+#include "Host/Win32FloatingWindow.h"
 #ifdef MINICAD_WITH_SOLID
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
@@ -165,8 +166,9 @@ namespace MiniCAD
         });
         m_frame->SetOnActiveChanged([this](bool active)
         {
+            // 焦点去了某个浮动窗口时主标题栏不变灰（浮动窗口激活后再通知一次，见 OnFloatingWindowActive）
             if (MiniGUI::TitleBar* bar = m_main.GetTitleBar())
-                bar->SetWindowActive(active);
+                bar->SetWindowActive(active || IsOurWindow(GetActiveWindow()));
         });
 
         WatchUiFile();
@@ -438,12 +440,56 @@ namespace MiniCAD
         SetWindowTextW(m_hwnd, ToWide(utf8).c_str());
     }
 
-    bool Win32Window::IsWindowActive() const    { return GetActiveWindow() == m_hwnd; }
+    bool Win32Window::IsWindowActive() const    { return IsOurWindow(GetActiveWindow()); }
     bool Win32Window::IsWindowMaximized() const { return m_frame && m_frame->IsWindowMaximized(); }
     void Win32Window::MinimizeWindow()          { m_frame->Minimize(); }
     void Win32Window::ToggleMaximizeWindow()    { m_frame->ToggleMaximize(); }
     void Win32Window::CloseWindow()             { PostMessageW(m_hwnd, WM_CLOSE, 0, 0); }
     void Win32Window::Quit()                    { DestroyWindow(m_hwnd); }
+
+    // =========================================================
+    // 浮动窗口
+    // =========================================================
+    std::unique_ptr<IFloatingWindow> Win32Window::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect)
+    {
+        auto window = std::make_unique<Win32FloatingWindow>(*this, title, rect);
+        if (!window->IsValid())
+            return nullptr;
+        return window;
+    }
+
+    void Win32Window::RegisterFloatingWindow(Win32FloatingWindow* w)
+    {
+        m_floating.push_back(w);
+    }
+
+    void Win32Window::UnregisterFloatingWindow(Win32FloatingWindow* w)
+    {
+        m_floating.erase(std::remove(m_floating.begin(), m_floating.end(), w), m_floating.end());
+    }
+
+    bool Win32Window::IsOurWindow(HWND hwnd) const
+    {
+        if (!hwnd)
+            return false;
+        if (hwnd == m_hwnd)
+            return true;
+        return std::any_of(m_floating.begin(), m_floating.end(), [hwnd](const Win32FloatingWindow* w) { return w->GetHwnd() == hwnd; });
+    }
+
+    void Win32Window::OnFloatingWindowActive(bool active)
+    {
+        MiniGUI::TitleBar* bar = m_main.GetTitleBar();
+        if (!bar)
+            return;
+        // 浮动窗口激活：主标题栏按活动样式；失活：看焦点是否还在自己的窗口里（去了主窗口时主窗口自己也会通知）
+        bar->SetWindowActive(active || IsOurWindow(GetActiveWindow()));
+    }
+
+    bool Win32Window::ForwardKeyMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result)
+    {
+        return m_input && m_input->HandleMessage(m_hwnd, msg, wParam, lParam, result);
+    }
 
     // =========================================================
     // AppPlatform：文件

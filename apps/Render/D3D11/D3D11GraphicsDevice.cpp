@@ -3,12 +3,67 @@
 #include "D3D11/D3D11Renderer.h"
 #include "D3D11/D3D11RenderTarget.h"
 #include "Core/Log.h"
+#include <algorithm>
 #include <cstring>
 #include <exception>
 
 namespace MiniCAD
 {
+    namespace
+    {
+        // 另一个窗口的表面：自己的交换链，与主窗口共用设备
+        class D3D11WindowSurface : public IWindowSurface
+        {
+        public:
+            D3D11WindowSurface(Device* device, HWND hwnd, int width, int height)
+                : m_device(device)
+            {
+                SwapChain::Options opt;
+                opt.enableVSync  = true;
+                opt.allowTearing = false;
+                m_swapChain.Initialize(device, hwnd, static_cast<UINT>(std::max(width, 1)), static_cast<UINT>(std::max(height, 1)), opt);
+            }
+
+            void Resize(int width, int height) override
+            {
+                if (width > 0 && height > 0)
+                    m_swapChain.Resize(static_cast<UINT>(width), static_cast<UINT>(height));
+            }
+
+            void BeginPass() override
+            {
+                ID3D11DeviceContext*    ctx = m_device->GetContext();
+                ID3D11RenderTargetView* rtv = m_swapChain.GetRTV();
+                const float clear[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+                ctx->OMSetRenderTargets(1, &rtv, nullptr);
+                ctx->ClearRenderTargetView(rtv, clear);
+            }
+
+            void Present() override
+            {
+                m_swapChain.Present();
+            }
+
+        private:
+            Device*   m_device;
+            SwapChain m_swapChain;
+        };
+    }
+
     D3D11GraphicsDevice::D3D11GraphicsDevice(bool warp) : m_warp(warp) {}
+
+    std::unique_ptr<IWindowSurface> D3D11GraphicsDevice::CreateWindowSurface(const NativeWindow& window, int width, int height)
+    {
+        try
+        {
+            return std::make_unique<D3D11WindowSurface>(m_device.get(), static_cast<HWND>(window.handle), width, height);
+        }
+        catch (const std::exception& e)
+        {
+            LOG_ERROR("D3D11 窗口表面创建失败：%s", e.what());
+            return nullptr;
+        }
+    }
     D3D11GraphicsDevice::~D3D11GraphicsDevice() = default;
 
     bool D3D11GraphicsDevice::Initialize(const NativeWindow& window, int width, int height)

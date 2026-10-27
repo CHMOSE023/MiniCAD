@@ -26,6 +26,17 @@ namespace MiniCAD
         std::function<bool(void* instance, uint64_t* surface)> createVulkanSurface;
     };
 
+    // 主窗口之外的系统窗口（停靠面板拖出主窗口后的独立窗口）各有一个窗口表面：自己的交换链，与主窗口共用设备、渲染器与界面后端。
+    // 一帧：BeginPass 绑定该窗口的后备缓冲并清屏 → 界面后端 Render → Present
+    class IWindowSurface
+    {
+    public:
+        virtual ~IWindowSurface() = default;
+        virtual void Resize(int width, int height) = 0;     // 像素尺寸
+        virtual void BeginPass() = 0;
+        virtual void Present() = 0;
+    };
+
     // 宿主侧的图形设备：一种图形接口一份实现（D3D11GraphicsDevice、VulkanGraphicsDevice、GLES3GraphicsDevice ……），见 docs/Render/PLAN.md。
     // 持有设备、窗口的交换链 / 帧缓冲、CAD 视口渲染器与界面后端；宿主只通过本接口使用图形接口，
     // 核心库、MiniGUI、apps/Common 看不到它（它们只认 IRenderer / IRenderTarget / IRenderBackend）。
@@ -40,6 +51,13 @@ namespace MiniCAD
         virtual void Present() = 0;
         virtual void WaitIdle() {}                          // 等 GPU 执行完已提交的命令（自测计时用）
         virtual void ReleaseFreeMemory() {}                 // 让驱动真正销毁已释放的缓冲（关闭文档后）
+
+        // 为另一个系统窗口建窗口表面（D3D11 / D3D12 支持）；不支持的后端返回 nullptr，宿主就不提供独立的浮动窗口
+        virtual std::unique_ptr<IWindowSurface> CreateWindowSurface(const NativeWindow& window, int width, int height)
+        {
+            (void)window; (void)width; (void)height;
+            return nullptr;
+        }
 
         virtual IRenderer&               GetRenderer()  = 0;
         virtual MiniGUI::IRenderBackend& GetUiBackend() = 0;

@@ -5,6 +5,7 @@
 // 没有打开的文档时显示；有文档时经标题栏首页键（view.start）显示，Esc 或“返回”回到图纸。
 // 界面描述文件里以面板 "start" 放在标题栏下面；显示时隐藏同一列里除标题栏以外的其他部分（ApplyStartPage）。
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/NodeEditor.h"
 #include "Core/UIContext.h"
 #include "NodeGraph/Examples.h"
@@ -579,6 +580,8 @@ namespace MiniCAD
             m_startHidden.clear();
         }
         m_startPage->SetVisible(show);
+        if (m_floatHost)
+            m_floatHost->SetHidden(show);   // 浮出的面板是独立窗口，不在上面的父节点里：一起藏起来
     }
 
     void MainFrame::ShowStartPage(bool show)

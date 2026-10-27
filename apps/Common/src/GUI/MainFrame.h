@@ -50,6 +50,7 @@ namespace MiniCAD
 {
     class StatusBarView;
     class NodeEditorView;
+    class FloatingPanelHost;
     struct EntityAttr;
     class DynamicInputBox;
 
@@ -261,6 +262,7 @@ namespace MiniCAD
         DocumentManager                    m_docManager;
 
         // ── MiniGUI ─────────────────────────────────────────────
+        std::unique_ptr<FloatingPanelHost>     m_floatHost;              // 浮出的停靠面板的独立窗口；先于 m_ui 声明：停靠区销毁时还要经它取回内容
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;

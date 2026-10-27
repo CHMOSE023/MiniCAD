@@ -2,7 +2,9 @@
 #include "Render/IRenderBackend.h"
 #include "Import/CadExchange.h"
 #include "Core/Ole/OleObject.h"
+#include "Core/Types/Rect.hpp"
 #include <cctype>
+#include <memory>
 #include <iterator>
 #include <functional>
 #include <string>
@@ -12,6 +14,7 @@
 namespace MiniGUI
 {
     class TextSystem;
+    class UIContext;
 }
 
 namespace MiniCAD
@@ -82,12 +85,35 @@ namespace MiniCAD
         return byDefault >= 0 ? byDefault : byExt;
     }
 
+    // 独立的浮动窗口：停靠面板拖出主窗口后放面板的系统窗口（见 GUI/FloatingPanelHost）。有自己的 MiniGUI::UIContext，
+    // 内容由 MainFrame 放进去；位置一律用主窗口客户区的逻辑坐标（与窗口内浮动的坐标一致，布局文件里通用）
+    class IFloatingWindow
+    {
+    public:
+        virtual ~IFloatingWindow() = default;
+        virtual MiniGUI::UIContext& GetUI() = 0;
+        virtual MiniGUI::Rect GetRect() const = 0;
+        virtual void SetRect(const MiniGUI::Rect& rect) = 0;
+        virtual void SetTitle(const std::string& utf8) = 0;
+        virtual void Activate() = 0;                                    // 置前并激活
+        virtual void SetVisible(bool visible) = 0;                      // 创建时不显示，由宿主决定何时显示（起始页期间藏起来）
+        virtual void SetOnClose(std::function<void()> cb) = 0;          // 用户关闭了窗口（Alt+F4 等）
+        virtual void SetOnMoved(std::function<void()> cb) = 0;          // 用户移动 / 改大小结束（宿主保存布局）
+    };
+
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）
     // 与网页版（画布 + WebGPU / WebGL2，apps/Web/src/Host/WebApp）各实现一份；MainFrame 本身不含平台代码。
     class AppPlatform
     {
     public:
         virtual ~AppPlatform() = default;
+
+        // 为浮出的停靠面板建独立的系统窗口（Win32）；给不出时返回 nullptr（网页版、Linux 版），面板在主窗口里浮动
+        virtual std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect)
+        {
+            (void)title; (void)rect;
+            return nullptr;
+        }
 
         // ── 图形 ─────────────────────────────────────────────────
         virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / GLES3Backend）

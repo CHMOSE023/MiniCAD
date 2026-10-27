@@ -14,7 +14,8 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 
 - 绘图区（面板 `canvas`）铺满标题栏以下；功能区、停靠面板、状态栏都是浮在上面的圆角卡片
 - 停靠：浮动停靠区 `"floating": true`；文档区 `documents` 是透明的"洞"，里面放视图方块、竖排导航条（`GUI/ViewNavBar.cpp`）和底部居中的命令行
-- 浮动面板：特性 / 图层 / 节点等面板的标签拖到停靠区外松开或双击标签即浮出（`MiniGUI::DockSpace::FloatPanel`），拖标题栏回停靠区停靠、双击标题栏回原处；位置随用户布局保存（`layout.json` 里 `dock.floatingPanels`）。没有平台宿主时是窗口内的浮动面板（`MiniGUI::FloatingPanel` 弹层，网页版即如此）
+- 浮动面板：特性 / 图层 / 节点等面板的标签拖到停靠区外松开或双击标签即浮出（`MiniGUI::DockSpace::FloatPanel`），拖标题栏回停靠区停靠（落点预览画在主窗口里）、双击标题栏回原处、× 关闭后"视图"菜单再显示时回到原处；位置随用户布局保存（`layout.json` 里 `dock.floatingPanels`，主窗口客户区的逻辑坐标）。
+  浮动窗口由 `GUI/FloatingPanelHost.cpp`（`MiniGUI::IDockFloatHost`）向平台要：`AppPlatform::CreateFloatingWindow` 返回带自己 `UIContext` 的 `IFloatingWindow`，里面放无边框的 `MiniGUI::FloatingPanel`；主题切换、字体加载对每个浮动窗口各做一次；关闭的窗口推迟到下一帧开头销毁（`FloatingPanelHost::Purge`，关闭常常发生在它自己的事件里）。平台给不出窗口时（网页版、Linux 版）是窗口内的浮动面板（`MiniGUI::FloatingPanel` 弹层）
 - "全部显示"按没被挡住的区域留边（`Camera::SetFitInsets`，`MainFrame::UpdateFitInsets`）
 - 标题栏：MiniCAD、首页、"文件"菜单、保存 / 撤销 / 重做、文档标签（面板 `doctabs`）、右侧 AI / 设置 / 帮助 / 版本（面板 `appbar`）
 - 功能区（`MiniGUI::Ribbon`，描述文件顶层 `ribbons`）：选项卡行右端是收起按钮和命令搜索框（Ctrl+K）；图标由 `tools/make_icons.py` 生成
@@ -34,6 +35,7 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 
 - 图形：各宿主都只经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，由 `CreateGraphicsDevice` 按平台创建）使用图形接口：渲染器、界面后端、视口渲染目标、开始界面通道、呈现、等 GPU、读回像素（自测截图）都从它来；`AppPlatform` 的图形函数直接转给它
 - 桌面版 `apps/Win32/src/Host/Win32Window`：无边框窗口（`MiniGUI::Win32Frame`）、图形设备、消息循环、监视界面描述文件；另存为用系统对话框（"保存类型"里区分 2018 与 2013/2014）
+- 桌面版的浮动窗口 `apps/Win32/src/Host/Win32FloatingWindow`：主窗口拥有的无边框工具窗口（总在主窗口之上、随它最小化、不占任务栏，保留系统的缩放边框），每个有自己的 `UIContext`、`Win32Input` 和窗口表面（`IGraphicsDevice::CreateWindowSurface`，D3D11 / D3D12 各自再建一个交换链，共用设备与界面后端），`WM_PAINT` 里自己布局、绘制、呈现；里面没处理的按键转给主窗口（`Win32Window::ForwardKeyMessage`，Ctrl+S 等全局快捷键仍有效）；焦点在浮动窗口里时主标题栏不变灰（`Win32Window::IsOurWindow`）；创建时位置不在任何显示器上就挪到主窗口旁边
 - 桌面版的图形设备：`D3D12GraphicsDevice` 或 `D3D11GraphicsDevice`（都可用 WARP）。默认按 `apps/Render/GraphicsDevice.cpp` 里的表的顺序（D3D12 → D3D11 → WARP）创建，失败就试下一个；命令行 `--gpu d3d12|d3d11|warp` 或环境变量 `MINICAD_GPU` 指定（命令行优先，指定的不可用时回退默认顺序）。关于对话框显示实际用的（`AppPlatform::GetGraphicsName`）
 - 网页版 `apps/Web/src/Host/WebApp`：图形接口先异步试 WebGPU（`CreateWebGPUGraphicsDeviceAsync`），取不到适配器 / 设备或网址带 `?webgl` 时用 WebGL2（`WebHost::CreateWebGLContext` 建上下文，`GLES3GraphicsDevice` 只使用当前上下文）；同一个画布只能有一种上下文，所以 WebGPU 取到设备后才建画布表面，失败时画布还是干净的；设备就绪（`WebApp::OnGraphicsReady`）之前不建界面、不画帧。`WebHost` 负责画布、DPI（`ResizeObserver` + devicePixelRatio）、`requestAnimationFrame` 按需刷新；打开的文件写进 `/upload`，保存后下载；`beforeunload` 提示未保存；没有窗口按钮（不注册 `window.*` 命令，标题栏就不显示）；`HasSaveDialog()` 为 false，另存为由 `MainFrame::OpenSaveAsDialog` 询问文件名、格式与版本；浏览器交互（文件选择、目录授权、下载）写在 `EM_JS` 里
 - Linux 版 `apps/Linux/src/Host/LinuxApp`：SDL3 窗口（系统标题栏，`HasWindowControls()` 为 false）+ 图形设备：默认先建带 `SDL_WINDOW_VULKAN` 的窗口试 `VulkanGraphicsDevice`（表面经 `LinuxApp::VulkanWindow` 给出的回调由 SDL3 建），失败就重建带 `SDL_WINDOW_OPENGL` 的窗口和 EGL / GLES3 上下文用 `GLES3GraphicsDevice`（`EndUiPass` 里 `SDL_GL_SwapWindow`）；`--gpu vulkan|gl` / `MINICAD_GPU` 指定；`SDL_WaitEvent` 事件循环，重绘请求、后台任务完成、`Post` 都经 SDL 自定义事件唤醒；输入 / 剪贴板 / 界面字体在 `src/UI/Platform/SDL`（`SDLInput`、`SDLClipboard`、`LoadSDLUIFonts`）；文件对话框用 SDL3（portal / zenity），另存为在界面线程上等结果；切回窗口时检查界面描述文件是否改过

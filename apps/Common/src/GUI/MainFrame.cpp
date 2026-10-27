@@ -1,5 +1,6 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
 #include "Core/Entity/LineEntity.hpp"
@@ -168,6 +169,7 @@ namespace MiniCAD
         if (m_ui)
             m_commands.UnbindShortcuts();
         m_ui.reset();
+        m_floatHost.reset();
         m_layout.reset();
         m_fontSystem.Shutdown();
     }
@@ -236,6 +238,7 @@ namespace MiniCAD
 
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });
+        m_floatHost = std::make_unique<FloatingPanelHost>(*m_platform, *m_ui);
 
         // ── 命令 → 快捷键。执行任何命令后、宿主数据变化时（StateChanged）都会通知：
         //    同步文档标签、图层面板、标题，刷新数据绑定（特性面板、图层下拉框），重绘视口（撤销、粘贴等改了图形）
@@ -1325,6 +1328,8 @@ namespace MiniCAD
     {
         if (!m_ui)
             return;
+        if (m_floatHost)
+            m_floatHost->Purge();       // 上一帧关闭的浮动窗口此时才销毁
         auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
         int64_t t = NowTicks();
 

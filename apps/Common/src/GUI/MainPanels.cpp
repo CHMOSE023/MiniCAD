@@ -1,5 +1,6 @@
 // ── 宿主面板（文档区、特性、状态栏）与界面描述文件、用户布局的加载 ─────────
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/StatusBarView.h"
 #include "GUI/Lineweights.h"
 #include "Core/Entity/Entity.hpp"
@@ -811,6 +812,9 @@ namespace MiniCAD
                     m_ui->SetFocus(nullptr);
             });
 
+        // 浮出的面板放进独立的系统窗口（平台给不出时停靠区退回窗口内浮动）；要在恢复用户布局之前设置
+        if (DockSpace* dock = m_layout->GetDock("main"))
+            dock->SetFloatHost(m_floatHost.get());
         // 用户布局只在启动时恢复：之后修改界面描述文件里的 dock，重新加载后立即看到效果
         if (firstLoad)
             LoadUserLayout();
