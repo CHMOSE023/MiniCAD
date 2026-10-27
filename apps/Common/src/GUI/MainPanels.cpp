@@ -267,60 +267,9 @@ namespace MiniCAD
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocTabs()
     {
-        using namespace MiniGUI;
-        auto tabs = std::make_unique<TabView>();
+        auto tabs = std::make_unique<MiniGUI::TabView>();
         m_docTabs = tabs.get();
-        m_docTabs->EditLayoutStyle().height = TabView::kStripHeight;
-        // 宽度按全部标签需要的宽度测量：标题栏有空位时标签名完整显示（不与右边的空白平分），
-        // 实在放不下时再缩窄、出现溢出按钮
-        m_docTabs->SetFitToTabs(true);
-        m_docTabs->EditLayoutStyle().shrink   = 1.0f;
-        m_docTabs->EditLayoutStyle().minWidth = 120.0f;
-        m_docTabs->SetFocusable(false);             // 点击标签后键盘仍在绘图区
-        m_docTabs->SetShowNewTabButton(true);
-        m_docTabs->SetBarStyle(true);
-        m_docTabs->SetOnSelectionChanged([this](int i)
-        {
-            if (m_syncing || i < 0)
-                return;
-            ActivateDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i)));
-            if (m_startShown)
-                ShowStartPage(false);               // 起始页上点当前文档的标签也回到图纸
-            m_viewport->Focus();
-        });
-        m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
-        m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
-        // 标签一拖到标签条之外：文档立即移到独立的系统窗口，继续拖时窗口跟着光标走，松开在标签条上则合并回来
-        //（平台给不出窗口时标签留在条里）
-        m_docTabs->SetOnTabDragOut([this](int i, Vec2 windowPos)
-        {
-            Document* doc = reinterpret_cast<Document*>(m_docTabs->GetTabData(i));
-            if (!FloatDocument(doc, windowPos, false))
-                return false;
-            m_tornDoc = doc;
-            return true;
-        });
-        m_docTabs->SetOnTornTabDrag([this](TabView::TornDragPhase phase, Vec2 windowPos)
-        {
-            using Phase = FloatingPanel::DragPhase;
-            OnDocTabTornDrag(phase == TabView::TornDragPhase::Move ? Phase::Update
-                           : phase == TabView::TornDragPhase::End  ? Phase::End : Phase::Cancel, windowPos);
-        });
-
-        m_docTabs->SetTabContextMenuExtra([this](int i)
-        {
-            Document* doc = reinterpret_cast<Document*>(m_docTabs->GetTabData(i));
-            return std::vector<MenuItem>{
-                MenuItem("保存(&S)",    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
-                MenuItem("另存为(&A)…", [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
-                MenuItem("在独立窗口中打开(&W)", [this, doc]
-                {
-                    const Rect r = m_docTabs->GetScreenBounds();
-                    FloatDocument(doc, Vec2{ r.min.x + 120.0f, r.max.y + 80.0f });
-                }),
-            };
-        });
-
+        SetupDocTabs(*m_docTabs, DocumentManager::kMainPane);     // 与文档窗口的标签条相同（DocumentWindows.cpp）
         return tabs;
     }
 
@@ -442,17 +391,49 @@ namespace MiniCAD
             card->SetVisible(m_commandLineVisible);
             c.cmdCard = card;
         }
+
+        // 主窗口：图纸都拖到别的窗口里时，绘图区中间显示的提示卡片（不用起始页：它会盖住面板，面板还要给别的窗口用）
+        if (c.main)
+        {
+            auto* holder = area->AddChild<Node>();
+            LayoutStyle hs;
+            hs.position   = PositionType::Absolute;
+            hs.left = hs.top = hs.right = hs.bottom = 0.0f;
+            hs.direction  = FlexDirection::Column;
+            hs.justify    = Justify::Center;
+            hs.alignItems = Align::Center;
+            holder->SetLayoutStyle(hs);
+            holder->SetHitTestVisible(false);
+
+            auto* card = holder->AddChild<Panel>(Theme::Panel);
+            card->SetRounding(Theme::RadiusLg);
+            card->SetBorder(Theme::BorderSubtle);
+            LayoutStyle ks;
+            ks.direction  = FlexDirection::Column;
+            ks.alignItems = Align::Center;
+            ks.padding    = Edges::Symmetric(24.0f, 18.0f);
+            ks.gap        = 10.0f;
+            card->SetLayoutStyle(ks);
+            card->AddChild<Label>("这个窗口里没有打开的图纸", 15.0f);
+            card->AddChild<Label>("图纸都在其他窗口里；把它们的标签拖到上面的标签条上即可移回这里", 12.0f, Theme::TextDim);
+            auto* buttons = card->AddChild<Node>();
+            LayoutStyle bs;
+            bs.direction = FlexDirection::Row;
+            bs.gap       = 8.0f;
+            buttons->SetLayoutStyle(bs);
+            // 新建 / 打开的图纸放进主窗口（在卡片上按下时 PressHook 已把新文档的窗格设成主窗格）
+            buttons->AddChild<Button>("新建", [this] { m_commands.Execute("file.new"); });
+            buttons->AddChild<Button>("打开…", [this] { m_commands.Execute("file.open"); });
+            holder->SetVisible(false);
+            m_mainEmptyCard = holder;
+        }
         return area;
     }
 
     void MainFrame::SetCommandLineVisible(bool visible)
     {
         m_commandLineVisible = visible;
-        ForEachChrome([visible](ViewChrome& c)
-        {
-            if (c.cmdCard)
-                c.cmdCard->SetVisible(visible);
-        });
+        UpdateChromeVisibility();
         SaveUserLayout();
     }
 
@@ -928,13 +909,8 @@ namespace MiniCAD
             return;
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
-        UpdateViewCubeVisibility();
         m_commandLineVisible = saved["commandLine"].AsBool(true);
-        ForEachChrome([this](ViewChrome& c)
-        {
-            if (c.cmdCard)
-                c.cmdCard->SetVisible(m_commandLineVisible);
-        });
+        UpdateChromeVisibility();
         // 布局格式 2：绘图区铺满窗口、停靠区浮在上面、命令行不在停靠区里。更早保存的停靠布局不再适用
         if (saved["version"].AsNumber(1) < kUserLayoutVersion)
         {
@@ -969,21 +945,25 @@ namespace MiniCAD
     void MainFrame::SetViewCubeVisible(bool visible)
     {
         m_viewCubeVisible = visible;
-        UpdateViewCubeVisibility();
+        UpdateChromeVisibility();
         SaveUserLayout();
     }
 
-    void MainFrame::UpdateViewCubeVisibility()
+    void MainFrame::UpdateChromeVisibility()
     {
-        ForEachChrome([this](ViewChrome& c) { UpdateViewCubeVisibility(c); });
+        ForEachChrome([this](ViewChrome& c) { UpdateChromeVisibility(c); });
     }
 
-    void MainFrame::UpdateViewCubeVisibility(ViewChrome& c)
+    void MainFrame::UpdateChromeVisibility(ViewChrome& c)
     {
-        if (!c.cube)
-            return;
+        // 窗口里没有文档（主窗口的文档都拖到别的窗口了）：视图方块、导航条、命令行都不显示（中间是提示卡片）
         const Document* doc = DocOf(c);
-        c.cube->SetVisible(m_viewCubeVisible && !(doc && doc->ActiveLayoutIsPaper()));
+        if (c.cube)
+            c.cube->SetVisible(m_viewCubeVisible && doc && !doc->ActiveLayoutIsPaper());
+        if (c.navBar)
+            c.navBar->SetVisible(doc != nullptr);
+        if (c.cmdCard)
+            c.cmdCard->SetVisible(m_commandLineVisible && doc);
     }
 
     void MainFrame::SaveUserLayout()

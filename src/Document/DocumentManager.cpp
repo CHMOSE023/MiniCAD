@@ -50,17 +50,17 @@ namespace MiniCAD
     {
         if (!doc)
             return;
-        if (doc == m_mainDoc && m_viewport)
-            doc->SetCameraState(m_viewport->GetCamera().GetState());
-        else if (auto it = m_floatViewports.find(doc); it != m_floatViewports.end())
-            doc->SetCameraState(it->second->GetCamera().GetState());
+        const PaneId pane = PaneOf(doc);
+        Viewport* vp = GetPaneViewport(pane);
+        if (vp && GetShownDocument(pane) == doc)
+            doc->SetCameraState(vp->GetCamera().GetState());
     }
 
     void DocumentManager::SyncLiveCameras()
     {
         SyncCamera(m_mainDoc);
-        for (auto& [doc, vp] : m_floatViewports)
-            const_cast<Document*>(doc)->SetCameraState(vp->GetCamera().GetState());
+        for (auto& [id, pane] : m_panes)
+            SyncCamera(pane.shown);
     }
 
     bool DocumentManager::Contains(const Document* doc) const
@@ -81,7 +81,7 @@ namespace MiniCAD
         m_docs.push_back(std::move(doc));
 
         EnsureEditor(*d, proto);
-        SetMainDocument(d);     // 主视口换成新文档（保存原文档的相机）
+        PlaceNewDocument(*d);   // 放进新文档的窗格并在那里显示（保存原显示文档的相机）
         m_active = d;
         d->MarkDirty();
         return *d;
@@ -377,25 +377,160 @@ namespace MiniCAD
     {
         if (!doc || !Contains(doc))
             return nullptr;
-        if (auto it = m_floatViewports.find(doc); it != m_floatViewports.end())
-            return it->second.get();
-        return m_viewport.get();
+        return GetPaneViewport(PaneOf(doc));
     }
 
     Viewport& DocumentManager::GetViewport()
     {
-        if (m_active)
-            if (auto it = m_floatViewports.find(m_active); it != m_floatViewports.end())
-                return *it->second;
+        if (Viewport* vp = ViewportOf(m_active))
+            return *vp;
         return *m_viewport;
     }
 
     const Viewport& DocumentManager::GetViewport() const
     {
         if (m_active)
-            if (auto it = m_floatViewports.find(m_active); it != m_floatViewports.end())
-                return *it->second;
+            if (auto it = m_docPane.find(m_active); it != m_docPane.end())
+                if (auto p = m_panes.find(it->second); p != m_panes.end())
+                    return *p->second.viewport;
         return *m_viewport;
+    }
+
+    // =========================================================
+    // 窗格
+    // =========================================================
+    DocumentManager::PaneId DocumentManager::CreatePane(float width, float height)
+    {
+        if (!m_viewport)
+            return kNoPane;
+        auto vp = std::make_unique<Viewport>(width, height);
+        vp->SetLightBackground(m_viewport->IsLightBackground());
+        vp->ShowGrid(m_viewport->IsGridShown());
+        vp->ShowAxis(m_viewport->IsAxisShown());
+        vp->ShowGizmo(m_viewport->IsGizmoShown());
+        const PaneId id = m_nextPane++;
+        m_panes[id].viewport = std::move(vp);
+        return id;
+    }
+
+    bool DocumentManager::HasPane(PaneId pane) const
+    {
+        return pane == kMainPane ? m_viewport != nullptr : m_panes.count(pane) != 0;
+    }
+
+    Viewport* DocumentManager::GetPaneViewport(PaneId pane)
+    {
+        if (pane == kMainPane)
+            return m_viewport.get();
+        const auto it = m_panes.find(pane);
+        return it != m_panes.end() ? it->second.viewport.get() : nullptr;
+    }
+
+    DocumentManager::PaneId DocumentManager::PaneOf(const Document* doc) const
+    {
+        if (!doc || !Contains(doc))
+            return kNoPane;
+        const auto it = m_docPane.find(doc);
+        return it != m_docPane.end() ? it->second : kMainPane;
+    }
+
+    Document* DocumentManager::GetShownDocument(PaneId pane) const
+    {
+        if (pane == kMainPane)
+            return m_mainDoc;
+        const auto it = m_panes.find(pane);
+        return it != m_panes.end() ? it->second.shown : nullptr;
+    }
+
+    std::vector<Document*> DocumentManager::DocumentsIn(PaneId pane) const
+    {
+        std::vector<Document*> out;
+        for (const auto& d : m_docs)
+            if (PaneOf(d.get()) == pane)
+                out.push_back(d.get());
+        return out;
+    }
+
+    DocumentManager::PaneId DocumentManager::GetNewDocumentPane() const
+    {
+        return HasPane(m_newDocPane) ? m_newDocPane : kMainPane;
+    }
+
+    void DocumentManager::ShowInPane(PaneId pane, Document* doc)
+    {
+        if (pane == kMainPane)
+        {
+            SetMainDocument(doc);
+            return;
+        }
+        auto it = m_panes.find(pane);
+        if (it == m_panes.end() || it->second.shown == doc)
+            return;
+        Pane& p = it->second;
+        if (p.shown)            // 切换前保存原文档的视口状态，以便切换回来时恢复
+            p.shown->SetCameraState(p.viewport->GetCamera().GetState());
+        p.shown = doc;
+        if (!doc)
+            return;
+        p.viewport->GetCamera().SetState(doc->GetCameraState());
+        // 同 SetMainDocument：后端的缓冲可能被别的文档顶掉了，下一帧从逐实体缓存重新拼接
+        EnsureEditor(*doc, m_idleEditor).RequestSceneRestitch();
+    }
+
+    void DocumentManager::ClearShown(PaneId pane)
+    {
+        if (pane == kMainPane)
+            m_mainDoc = nullptr;
+        else if (auto it = m_panes.find(pane); it != m_panes.end())
+            it->second.shown = nullptr;
+    }
+
+    void DocumentManager::RefillPane(PaneId pane)
+    {
+        if (!HasPane(pane) || GetShownDocument(pane))
+            return;
+        const std::vector<Document*> rest = DocumentsIn(pane);
+        if (!rest.empty())
+            ShowInPane(pane, rest.back());
+        else if (pane != kMainPane)
+            m_panes.erase(pane);
+    }
+
+    bool DocumentManager::MoveDocument(Document* doc, PaneId pane)
+    {
+        if (!doc || !Contains(doc) || !HasPane(pane))
+            return false;
+        const PaneId from = PaneOf(doc);
+        if (from == pane)
+        {
+            ShowInPane(pane, doc);
+            return true;
+        }
+        // 从原窗格取下：它正显示时把相机存回文档
+        if (GetShownDocument(from) == doc)
+        {
+            doc->SetCameraState(GetPaneViewport(from)->GetCamera().GetState());
+            ClearShown(from);
+        }
+        if (pane == kMainPane)
+            m_docPane.erase(doc);
+        else
+            m_docPane[doc] = pane;
+        EnsureEditor(*doc, m_idleEditor).SetViewport(*GetPaneViewport(pane));
+        ShowInPane(pane, doc);
+        RefillPane(from);
+        return true;
+    }
+
+    void DocumentManager::PlaceNewDocument(Document& doc)
+    {
+        const PaneId pane = GetNewDocumentPane();
+        if (pane != kMainPane)
+        {
+            m_docPane[&doc] = pane;
+            EnsureEditor(doc, m_idleEditor).SetViewport(*GetPaneViewport(pane));
+        }
+        ShowInPane(pane, &doc);
     }
 
     void DocumentManager::SetMainDocument(Document* doc)
@@ -422,37 +557,18 @@ namespace MiniCAD
     {
         if (!doc || !m_viewport || !Contains(doc) || IsDetached(doc))
             return nullptr;
-        if (m_mainDoc == doc)
-        {
-            // 主视口换成别的停靠文档（列表里最后一个没拖出的），没有就空着；SetMainDocument 顺便保存了它的相机
-            Document* next = nullptr;
-            for (auto it = m_docs.rbegin(); it != m_docs.rend(); ++it)
-                if (it->get() != doc && !IsDetached(it->get())) { next = it->get(); break; }
-            SetMainDocument(next);
-        }
-
-        auto vp = std::make_unique<Viewport>(width, height);
-        vp->GetCamera().SetState(doc->GetCameraState());
-        vp->SetLightBackground(m_viewport->IsLightBackground());
-        vp->ShowGrid(m_viewport->IsGridShown());
-        vp->ShowAxis(m_viewport->IsAxisShown());
-        vp->ShowGizmo(m_viewport->IsGizmoShown());
-        Viewport* raw = vp.get();
-        m_floatViewports[doc] = std::move(vp);
-        EnsureEditor(*doc, m_idleEditor).SetViewport(*raw);
-        return raw;
+        const PaneId pane = CreatePane(width, height);
+        if (!MoveDocument(doc, pane))
+            return nullptr;
+        return GetPaneViewport(pane);
     }
 
     void DocumentManager::AttachDocument(Document* doc)
     {
-        auto it = m_floatViewports.find(doc);
-        if (it == m_floatViewports.end() || !m_viewport)
+        if (!IsDetached(doc) || !m_viewport)
             return;
-        doc->SetCameraState(it->second->GetCamera().GetState());
-        EnsureEditor(*doc, m_idleEditor).SetViewport(*m_viewport);
-        m_floatViewports.erase(it);
-        SetMainDocument(doc);
-        m_active = doc;
+        MoveDocument(doc, kMainPane);
+        SetActive(doc);
     }
 
     void DocumentManager::Close(Document* doc)
@@ -463,26 +579,28 @@ namespace MiniCAD
         if (it == m_docs.end())
             return;
 
+        const PaneId pane = PaneOf(doc);
         if (m_active == doc)
             m_active = nullptr;
-        if (m_mainDoc == doc)
-            m_mainDoc = nullptr;
+        if (GetShownDocument(pane) == doc)
+            ClearShown(pane);
 
-        // 文档的编辑器随文档销毁（先解绑：取消进行中的工具，释放显示数据），拖出的文档连同它的视口
+        // 文档的编辑器随文档销毁（先解绑：取消进行中的工具，释放显示数据）
         if (auto e = m_editors.find(doc); e != m_editors.end())
         {
             e->second->Unbind();
             m_editors.erase(e);
         }
-        m_floatViewports.erase(doc);
+        m_docPane.erase(doc);
         m_docs.erase(it);
 
-        // 主视口空了而还有停靠的文档：显示列表里最后一个
-        if (!m_mainDoc)
-            for (auto d = m_docs.rbegin(); d != m_docs.rend(); ++d)
-                if (!IsDetached(d->get())) { SetMainDocument(d->get()); break; }
+        // 它的窗格空了而还有别的文档：显示剩下的最后一个；窗格里没有文档了（不是主窗格）就删掉
+        RefillPane(pane);
         if (!m_docs.empty() && m_active == nullptr)
-            SetActive(m_mainDoc ? m_mainDoc : m_docs.back().get());
+        {
+            Document* next = GetShownDocument(pane);
+            SetActive(next ? next : m_mainDoc ? m_mainDoc : m_docs.back().get());
+        }
     }
 
     Document* DocumentManager::GetActive() const
@@ -492,11 +610,17 @@ namespace MiniCAD
 
     void DocumentManager::SetActive(Document* doc)
     {
-        if (m_active == doc) return;
+        // 已是当前文档但窗格换显示了别的（别的文档移进了它的窗格）：照样让它显示出来
+        if (m_active == doc && (!doc || GetShownDocument(PaneOf(doc)) == doc))
+            return;
         m_active = doc;
-        // 停靠的文档成为当前文档也就成为主视口的文档；拖出的文档有自己的视口，主视口不动
-        if (m_active && !IsDetached(m_active))
-            SetMainDocument(m_active);
+        // 成为当前文档也就成为它所在窗格显示的文档（别的窗格不动）；之后新建 / 打开的文档也放进这个窗格
+        if (m_active)
+        {
+            const PaneId pane = PaneOf(m_active);
+            ShowInPane(pane, m_active);
+            m_newDocPane = pane;
+        }
     }
 
     Editor& DocumentManager::GetEditor()
@@ -661,7 +785,7 @@ namespace MiniCAD
         m_docs.push_back(std::move(doc));
 
         EnsureEditor(*d, proto);
-        SetMainDocument(d);     // 主视口换成新文档（保存原文档的相机）
+        PlaceNewDocument(*d);   // 放进新文档的窗格并在那里显示（保存原显示文档的相机）
         m_active = d;
         if (m_viewport && CadKindFromPath(m_active->GetPath()) != CadFileKind::None)
             ZoomAll(false);   // 外来图纸的坐标可能离原点很远；初始视图不进撤销栈

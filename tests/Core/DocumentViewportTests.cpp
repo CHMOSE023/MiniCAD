@@ -1,5 +1,5 @@
 // ── 多视口测试 ─────────────────────────────────────────────────────────────
-// 文档拖出成独立窗口时有自己的视口（DocumentManager::DetachDocument），主视口继续显示其余文档：
+// 文档拖出成独立窗口时进它自己的窗格（DocumentManager::DetachDocument / CreatePane + MoveDocument），主视口继续显示其余文档：
 // - 当前文档（GetActive）与主视口里的文档（GetMainDocument）分开：拖出的文档成为当前文档时主视口不动
 // - 两个视口各自的相机、尺寸互不影响；拖回（AttachDocument）时相机回写到文档并恢复到主视口
 // - 渲染器按槽位只留一份顶点缓冲，两个视口轮流渲染时互相顶掉：下一次渲染前 Editor::EnsureSceneCached 重新拼接，
@@ -11,6 +11,7 @@
 #include "Viewport/Viewport.h"
 #include <cstdio>
 #include <map>
+#include <vector>
 
 using namespace MiniCAD;
 
@@ -168,6 +169,51 @@ int RunDocumentViewportTests()
     Check(manager.GetMainDocument() == nullptr && manager.GetActive() == &c && manager.IsDetached(&c), "主视口的文档关掉后主视口空着，当前文档是拖出的那个");
     manager.AttachDocument(&c);
     Check(manager.GetMainDocument() == &c && !manager.IsDetached(&c), "拖回空着的主视口");
+
+    // ── 窗格：一个窗口里放几个文档，轮流用窗格的视口 ─────────────────────────
+    using PaneId = DocumentManager::PaneId;
+    Document& d = manager.Create();
+    Document& e = manager.Create();
+    addLine(d, 40.0);
+    addLine(e, 50.0);
+    const PaneId pane = manager.CreatePane(500, 400);
+    Viewport* vpP = manager.GetPaneViewport(pane);
+    Check(pane != DocumentManager::kMainPane && manager.HasPane(pane) && vpP && vpP != &mainVp && manager.GetShownDocument(pane) == nullptr,
+          "新窗格：自己的视口，空着");
+    manager.SetActive(&d);
+    mainVp.GetCamera().ZoomToBounds(0, 30, 100, 45);
+    const CameraState dCam = mainVp.GetCamera().GetState();
+    Check(manager.MoveDocument(&d, pane) && manager.PaneOf(&d) == pane && manager.GetShownDocument(pane) == &d, "文档移进窗格：成为它显示的文档");
+    Check(vpP->GetCamera().GetState().Zoom == dCam.Zoom && manager.GetEditor(d).GetViewport() == vpP, "相机跟着文档走，编辑器绑到窗格的视口");
+    Check(manager.GetMainDocument() != &d && manager.GetActive() == &d, "主视口换成别的文档，当前文档不变");
+    manager.MoveDocument(&e, pane);
+    Check(manager.GetShownDocument(pane) == &e && manager.DocumentsIn(pane) == std::vector<Document*>{ &d, &e } && manager.ViewportOf(&d) == vpP,
+          "第二个文档移进同一窗格：窗格改显示它，两个文档都在窗格里");
+    Check(d.GetCameraState().Zoom == dCam.Zoom, "换下去的文档保存了它在窗格里的相机");
+
+    // 窗格里切换显示：当前文档成为窗格显示的文档，相机各自保存 / 恢复；主视口不动
+    Document* mainShown = manager.GetMainDocument();
+    vpP->Zoom(2.0f, 100.0f, 100.0f);
+    const double eZoom = vpP->GetCamera().GetState().Zoom;
+    manager.SetActive(&d);
+    Check(manager.GetShownDocument(pane) == &d && vpP->GetCamera().GetState().Zoom == dCam.Zoom && e.GetCameraState().Zoom == eZoom &&
+          manager.GetMainDocument() == mainShown, "切到窗格里的另一个文档：恢复它的相机，保存原来的；主视口不动");
+    Check(manager.GetNewDocumentPane() == pane, "当前文档在窗格里：之后新建的文档放进这个窗格");
+    Document& f = manager.Create();
+    Check(manager.PaneOf(&f) == pane && manager.GetShownDocument(pane) == &f && manager.GetEditor(f).GetViewport() == vpP && manager.GetActive() == &f,
+          "新建的文档进当前文档所在的窗格并显示");
+
+    // 关闭窗格显示的文档：窗格改显示剩下的最后一个；移走最后一个文档后窗格删掉
+    manager.Close(&f);
+    Check(manager.GetShownDocument(pane) == &e && manager.GetActive() == &e, "关掉窗格显示的文档：显示剩下的最后打开的那个，它成为当前文档");
+    manager.MoveDocument(&e, DocumentManager::kMainPane);
+    Check(manager.GetShownDocument(pane) == &d && manager.GetMainDocument() == &e && manager.GetEditor(e).GetViewport() == &mainVp,
+          "移回主窗格：主视口显示它，原窗格显示剩下的文档");
+    manager.MoveDocument(&d, DocumentManager::kMainPane);
+    Check(!manager.HasPane(pane) && manager.GetPaneViewport(pane) == nullptr && manager.PaneOf(&d) == DocumentManager::kMainPane,
+          "窗格里的文档都移走后窗格删掉");
+    Check(!manager.MoveDocument(&d, pane) && manager.GetNewDocumentPane() == DocumentManager::kMainPane,
+          "移进不存在的窗格不做什么；新文档的窗格不存在时放进主窗格");
 
     return g_failures;
 }

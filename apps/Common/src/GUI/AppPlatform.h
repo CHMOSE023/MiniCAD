@@ -112,8 +112,9 @@ namespace MiniCAD
         virtual void SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test) { (void)test; }
         virtual void SetOnActiveChanged(std::function<void(bool active)> cb) { (void)cb; }   // 窗口激活 / 失活（标题栏变暗）
         virtual void SetOnSizeChanged(std::function<void()> cb) { (void)cb; }                // 最大化 / 还原 / 改大小之后（刷新标题栏按钮）
-        // 用户拖标题栏移动窗口（系统的移动循环）：移动中 done = false，松开时 done = true；cursor 为光标在主窗口客户区的逻辑坐标
-        virtual void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor)> cb) { (void)cb; }
+        // 用户拖标题栏移动窗口（系统的移动循环）：移动中 done = false，松开时 done = true；cursor 为光标、windowRect 为窗口
+        //（都是主窗口客户区的逻辑坐标）。移动中宿主可以改 windowRect 的位置（例如让开下面的标签条），尺寸不变
+        virtual void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor, MiniGUI::Rect& windowRect)> cb) { (void)cb; }
     };
 
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）

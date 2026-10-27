@@ -717,54 +717,61 @@ m_floatHost.reset();
         if (!m_docTabs)
             return;
         auto& docs = m_docManager.GetAll();
+        PruneDocWindows();      // 窗格没了（文档都移走 / 关掉）的文档窗口先关掉
         m_syncing = true;
 
-        // 标签与文档一一对应（按文档在标签上的顺序，用户可拖动标签排序）：先删掉已关闭的，再追加新文档
-        // 拖出成独立窗口的文档不在标签条上（它的窗口标题栏就是它的标签）
-        for (int i = m_docTabs->GetTabCount() - 1; i >= 0; --i)
+        // 每个窗口的标签条与它窗格里的文档一一对应（按标签上的顺序，用户可拖动标签排序）：
+        // 先删掉已关闭的和移到别的窗口的，再追加新来的；选中的是窗格显示的文档（当前文档在别的窗口里时它不变）
+        auto syncStrip = [&](MiniGUI::TabView& tabs, PaneId pane)
         {
-            const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
-            const bool alive = std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; });
-            if (!alive || m_docManager.IsDetached(doc))
-                m_docTabs->RemoveTab(i);
-        }
-        for (const auto& d : docs)
-        {
-            const auto key = reinterpret_cast<uintptr_t>(d.get());
-            if (!m_docManager.IsDetached(d.get()) && m_docTabs->FindTabData(key) < 0)
-                m_docTabs->SetTabData(m_docTabs->AddTab(d->GetName(), nullptr, true), key);
-        }
+            for (int i = tabs.GetTabCount() - 1; i >= 0; --i)
+                if (m_docManager.PaneOf(reinterpret_cast<const Document*>(tabs.GetTabData(i))) != pane)
+                    tabs.RemoveTab(i);
+            for (const auto& d : docs)
+            {
+                const auto key = reinterpret_cast<uintptr_t>(d.get());
+                if (m_docManager.PaneOf(d.get()) == pane && tabs.FindTabData(key) < 0)
+                    tabs.SetTabData(tabs.AddTab(d->GetName(), nullptr, true), key);
+            }
+            for (int i = 0; i < tabs.GetTabCount(); ++i)
+            {
+                const auto* doc = reinterpret_cast<const Document*>(tabs.GetTabData(i));
+                if (tabs.GetTabTitle(i) != doc->GetName())
+                    tabs.SetTabTitle(i, doc->GetName());
+                tabs.SetTabModified(i, doc->IsDirty());
+            }
+            const int selected = tabs.FindTabData(reinterpret_cast<uintptr_t>(m_docManager.GetShownDocument(pane)));
+            if (selected >= 0)
+                tabs.SetSelected(selected);
+            return selected;
+        };
+        const int sel = syncStrip(*m_docTabs, DocumentManager::kMainPane);
         for (auto& w : m_docWindows)
         {
-            const std::string title = w->doc->GetName() + (w->doc->IsDirty() ? " *" : "");
-            if (w->titleBar->GetTitle() != title)
+            syncStrip(*w->tabs, w->pane);
+            // 系统标题（任务栏）是窗口显示的文档；标题栏里放的是标签条，不画标题（只用来比较）
+            if (const Document* shown = m_docManager.GetShownDocument(w->pane))
             {
-                w->titleBar->SetTitle(title);
-                w->window->SetTitle(title);
+                const std::string title = shown->GetName() + (shown->IsDirty() ? " *" : "");
+                if (w->titleBar->GetTitle() != title)
+                {
+                    w->titleBar->SetTitle(title);
+                    w->window->SetTitle(title);
+                }
             }
         }
-for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
-        {
-            const auto* doc = reinterpret_cast<const Document*>(m_docTabs->GetTabData(i));
-            if (m_docTabs->GetTabTitle(i) != doc->GetName())
-                m_docTabs->SetTabTitle(i, doc->GetName());
-            m_docTabs->SetTabModified(i, doc->IsDirty());
-        }
-
-        Document* active = m_docManager.GetActive();
-        // 选中的标签是主视口里的文档（当前文档在独立窗口里时它不变）
-        const int sel = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(m_docManager.GetMainDocument()));
-        if (sel >= 0)
-            m_docTabs->SetSelected(sel);
         m_syncing = false;
 
-        // 没有文档时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
-        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口
-        const bool hasDoc  = active != nullptr;
+        // 一个文档都没有时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
+        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口。
+        // 主窗口没有文档而别的窗口有：不显示起始页（它会盖住面板，面板还要给别的窗口用），绘图区中间显示提示卡片
+        Document* active = m_docManager.GetActive();
         const bool opening = m_openJob || m_openDone;
         if (m_startShown && active != m_startOver)
             m_startShown = false;
-        const bool start = (!hasDoc && !opening) || m_startShown;
+        const bool start = (docs.empty() && !opening) || m_startShown;
+        if (m_mainEmptyCard)
+            m_mainEmptyCard->SetVisible(!start && !opening && !docs.empty() && !m_docManager.GetMainDocument());
         m_docTabs->SetVisible(!docs.empty());
         if (start)
             m_docTabs->ClearSelection();            // 起始页显示时没有“当前”标签（与 SolidCraft 相同），点任何标签都回到图纸
@@ -785,7 +792,7 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
     void MainFrame::SyncLayoutTabs()
     {
         ForEachChrome([this](ViewChrome& c) { SyncLayoutTabs(c); });
-        UpdateViewCubeVisibility();      // 切布局 / 切文档后：布局页不显示视图方块
+        UpdateChromeVisibility();        // 切布局 / 切文档后：布局页不显示视图方块，没有文档的窗口不显示命令行等
     }
 
     void MainFrame::SyncLayoutTabs(ViewChrome& c)
@@ -960,44 +967,43 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
 
     void MainFrame::ActivateDocument(Document* doc)
     {
-        if (!doc || doc == m_docManager.GetActive())
+        // 已是当前文档、窗口里也正显示着它：不用动
+        if (!doc || (doc == m_docManager.GetActive() && m_docManager.GetShownDocument(m_docManager.PaneOf(doc)) == doc))
             return;
-        m_docManager.SetActive(doc);           // 停靠的文档：主视口换成它；拖出的文档：只换当前文档
+        m_docManager.SetActive(doc);           // 它成为所在窗口显示的文档（别的窗口不动）
         if (DocWindow* w = FindDocWindow(doc))
             w->window->Activate();
-        m_viewport->RequestRender();
+        RequestRenderAll();
         StateChanged();
     }
 
-    void MainFrame::CloseDocument(Document* doc)
+    void MainFrame::CloseDocument(Document* doc, std::function<void()> afterClose)
     {
         auto& docs = m_docManager.GetAll();
         auto alive = [&docs, doc] { return std::any_of(docs.begin(), docs.end(), [doc](const auto& d) { return d.get() == doc; }); };
         if (!doc || !alive())
+        {
+            if (afterClose)         // 已经关掉了：接着关下一个
+                afterClose();
             return;
+        }
 
-        auto close = [this, doc, alive]
+        auto close = [this, doc, alive, afterClose]
         {
             if (!alive())
                 return;
-            // 关闭当前文档：先切到标签上相邻的文档（同时恢复它的相机），再关闭；关闭的是独立窗口里的文档时切回主视口里的文档
+            // 关闭当前文档：先切到同一窗口标签条上相邻的文档（同时恢复它的相机），再关闭；
+            // 窗口里没有别的文档时由 DocumentManager::Close 挑（主视口里的文档）
             if (doc == m_docManager.GetActive())
-            {
-                Document* next = nullptr;
-                if (m_docManager.IsDetached(doc))
-                    next = m_docManager.GetMainDocument();
-                else
+                if (MiniGUI::TabView* tabs = TabsOfPane(m_docManager.PaneOf(doc)))
                 {
-                    const int i = m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(doc));
-                    const int n = m_docTabs->GetTabCount();
+                    const int i = tabs->FindTabData(reinterpret_cast<uintptr_t>(doc));
+                    const int n = tabs->GetTabCount();
                     if (i >= 0 && n > 1)
-                        next = reinterpret_cast<Document*>(m_docTabs->GetTabData(i + 1 < n ? i + 1 : i - 1));
+                        m_docManager.SetActive(reinterpret_cast<Document*>(tabs->GetTabData(i + 1 < n ? i + 1 : i - 1)));
                 }
-                m_docManager.SetActive(next);
-            }
-            m_docManager.Close(doc);            // 拖出的文档连同它的视口
-            DestroyDocWindow(doc);              // 它的窗口推迟到下一帧销毁（可能正在那个窗口的事件里）
-// 归还关闭的文档占用的显示资源：图像缓存、渲染器的顶点缓冲与纹理（剩下的文档下一帧按需重建），
+            m_docManager.Close(doc);            // 文档窗口的窗格空了就删掉，窗口在 SyncDocuments 里关掉（推迟到下一帧销毁）
+            // 归还关闭的文档占用的显示资源：图像缓存、渲染器的顶点缓冲与纹理（剩下的文档下一帧按需重建），
             // 再请平台把空闲的堆内存还给系统
             m_docManager.GetEditor().ClearImageCache();
             m_platform->GetRenderer().ReleaseCachedResources();
@@ -1005,8 +1011,11 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
             m_platform->ReleaseFreeMemory();
             RequestRenderAll();
             StateChanged();
-            if (m_viewport->IsVisible())
-                m_viewport->Focus();
+            MiniGUI::ViewportHost& host = HostOf(m_docManager.GetActive());
+            if (host.IsVisible())
+                host.Focus();
+            if (afterClose)
+                afterClose();
         };
 
         if (!doc->IsDirty())
@@ -1030,6 +1039,15 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
                     close();
                 }
             });
+    }
+
+    void MainFrame::CloseDocuments(std::vector<Document*> docs)
+    {
+        if (docs.empty())
+            return;
+        Document* first = docs.front();
+        docs.erase(docs.begin());
+        CloseDocument(first, [this, rest = std::move(docs)] { CloseDocuments(rest); });
     }
 
     void MainFrame::SaveDocuments(bool all, bool saveAs, std::function<void()> onSaved)
@@ -1355,7 +1373,7 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
     // =========================================================
     Document* MainFrame::DocOf(const ViewChrome& c) const
     {
-        return c.main ? m_docManager.GetMainDocument() : c.doc;
+        return c.pane == DocumentManager::kNoPane ? nullptr : m_docManager.GetShownDocument(c.pane);
     }
 
     MainFrame::ViewChrome& MainFrame::ChromeOf(const Document* doc)
@@ -1367,12 +1385,16 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
 
     void MainFrame::UseChrome(const ViewChrome& c)
     {
-        ActivateDocumentOf(DocOf(c));
+        // 窗口里有文档：它成为当前文档（之后新建的文档也进这个窗口）；窗口空着（主窗口的文档都拖走了）：之后新建的文档进它
+        if (Document* doc = DocOf(c))
+            ActivateDocumentOf(doc);
+        else if (m_docManager.HasPane(c.pane))
+            m_docManager.SetNewDocumentPane(c.pane);
     }
 
     void MainFrame::ActivateDocumentOf(Document* doc)
     {
-        if (!doc || m_docManager.GetActive() == doc)
+        if (!doc || (m_docManager.GetActive() == doc && m_docManager.GetShownDocument(m_docManager.PaneOf(doc)) == doc))
             return;
         m_docManager.SetActive(doc);
         StateChanged();         // 面板、菜单勾选随当前文档切换
@@ -1386,7 +1408,10 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
             m_viewport->SetCursor(m_docManager.GetMainDocument() && m_docManager.GetMainEditor().HidesCrosshair()
                                   ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
         for (auto& w : m_docWindows)
-            w->host->SetCursor(m_docManager.GetEditor(*w->doc).HidesCrosshair() ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        {
+            Document* shown = m_docManager.GetShownDocument(w->pane);
+            w->host->SetCursor(shown && m_docManager.GetEditor(*shown).HidesCrosshair() ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        }
         UpdateAppBarVisibility();
     }
 

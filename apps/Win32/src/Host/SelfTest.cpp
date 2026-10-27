@@ -3340,6 +3340,201 @@ namespace MiniCAD
             RenderFrame();
         }
 
+        // ── 30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并 ──────────
+        section("30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并");
+        {
+            using PaneId = DocumentManager::PaneId;
+            constexpr PaneId kMain = DocumentManager::kMainPane;
+            m_commands.Execute("file.new");
+            Document* docA = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* docB = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* docC = m_docManager.GetActive();
+            RenderFrame();
+            auto key = [](const Document* d) { return reinterpret_cast<uintptr_t>(d); };
+            // 某个窗口里某个标签的中心偏左（避开关闭按钮），那个窗口的逻辑坐标
+            auto tabPoint = [&](PaneId pane, Document* d)
+            {
+                MiniGUI::TabView* tabs = TabsOfPane(pane);
+                const MiniGUI::Rect r = tabs->GetTabRect(tabs->FindTabData(key(d)));
+                return tabs->GetScreenBounds().min + MiniGUI::Vec2{ r.min.x + 12.0f, r.Center().y };
+            };
+            auto stripPoint = [&](PaneId pane, float fromLeft)      // 某个窗口的标签条上（主窗口坐标）
+            {
+                const MiniGUI::Rect r = TabsOfPane(pane)->GetScreenBounds();
+                return PaneToMain(pane, MiniGUI::Vec2{ r.min.x + fromLeft, r.Center().y });
+            };
+            auto px = [&](float v) { return static_cast<int>(std::lround(v * m_dpiScale)); };
+            // 在主窗口的标签条上按住某个标签拖到 mainTo（主窗口坐标），途中经过标签条下方，松开
+            auto dragMainTab = [&](Document* d, MiniGUI::Vec2 mainTo)
+            {
+                const MiniGUI::Vec2 p = tabPoint(kMain, d);
+                send(WM_MOUSEMOVE, 0, px(p.x), px(p.y));
+                send(WM_LBUTTONDOWN, MK_LBUTTON, px(p.x), px(p.y));
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(p.x + 8.0f), px(p.y));
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(p.x + 8.0f), px(p.y + 200.0f));
+                RenderFrame();
+                pump();
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(mainTo.x), px(mainTo.y));
+                send(WM_LBUTTONUP, 0, px(mainTo.x), px(mainTo.y));
+                RenderFrame();
+                pump();
+            };
+            // 在文档窗口的标签条上按住某个标签（那个窗口自己的界面），拖出标签条，再拖到 mainTo（主窗口坐标），松开。
+            // 被拖的窗口跟着光标走：每一步都按它当时的位置换算
+            auto dragWindowTab = [&](PaneId pane, Document* d, MiniGUI::Vec2 mainTo, bool release = true)
+            {
+                DocWindow* w = FindPaneWindow(pane);
+                MiniGUI::UIContext& fui = w->window->GetUI();
+                const MiniGUI::Vec2 p = tabPoint(pane, d);
+                fui.PointerMove(p, 0);
+                fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 100);
+                fui.PointerMove(p + MiniGUI::Vec2{ 8.0f, 0.0f }, 0);
+                fui.PointerMove(p + MiniGUI::Vec2{ 8.0f, 200.0f }, 0);
+                RenderFrame();
+                pump();
+                fui.PointerMove(MainToPane(pane, mainTo), 0);
+                if (release)
+                {
+                    fui.PointerUp(MainToPane(pane, mainTo), MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                    pump();
+                }
+            };
+
+            // B 拖出成窗口 W1
+            const MiniGUI::Rect mainStrip = m_docTabs->GetScreenBounds();
+            dragMainTab(docB, MiniGUI::Vec2{ mainStrip.min.x + 200.0f, mainStrip.max.y + 300.0f });
+            const PaneId w1 = m_docManager.PaneOf(docB);
+            DocWindow* win1 = FindPaneWindow(w1);
+            check(win1 && w1 != kMain && DocWindowCount() == 1 && win1->tabs && win1->tabs->GetTabCount() == 1,
+                  "B 拖出成文档窗口 W1，W1 的标题栏里有它的标签条");
+
+            // C 从主窗口的标签条拖到 W1 的标签条上：途中建的临时窗口在松开后关掉，C 进 W1
+            dragMainTab(docC, stripPoint(w1, 200.0f));       // 标签右边的标题栏空白处：接到最后
+            check(m_docManager.PaneOf(docC) == w1 && DocWindowCount() == 1 && TabOrder(w1) == std::vector<Document*>{ docB, docC } &&
+                  m_docTabs->GetTabCount() == 1, "C 从主窗口拖到 W1 的标签条上：进 W1（排在 B 后面），途中的临时窗口关掉");
+            check(m_docManager.GetShownDocument(w1) == docC && m_docManager.GetActive() == docC && m_docManager.GetMainDocument() == docA &&
+                  win1->tabs->GetSelected() == win1->tabs->FindTabData(key(docC)), "W1 显示 C 并选中它的标签，C 是当前文档，主窗口仍是 A");
+
+            // W1 里点 B 的标签：B 显示出来，相机各自保留；主窗口不动
+            {
+                MiniGUI::UIContext& fui = win1->window->GetUI();
+                const MiniGUI::Vec2 p = tabPoint(w1, docB);
+                fui.PointerMove(p, 0);
+                fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 5000);
+                fui.PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                check(m_docManager.GetShownDocument(w1) == docB && m_docManager.GetActive() == docB && m_docManager.GetMainDocument() == docA &&
+                      win1->chrome.console && DocOf(win1->chrome) == docB, "点 W1 里 B 的标签：W1 改显示 B，它的命令行等跟着换，主窗口不动");
+            }
+
+            // 当前文档在 W1 里：新建的文档进 W1；关掉它回到两个标签
+            m_commands.Execute("file.new");
+            Document* docD = m_docManager.GetActive();
+            RenderFrame();
+            check(m_docManager.PaneOf(docD) == w1 && win1->tabs->GetTabCount() == 3 && m_docTabs->GetTabCount() == 1,
+                  "当前文档在 W1 里时新建：新文档进 W1");
+            docD->MarkSaved();
+            CloseDocument(docD);
+            RenderFrame();
+            check(win1->tabs->GetTabCount() == 2 && DocWindowCount() == 1, "关掉它：W1 剩两个标签");
+
+            // C 从 W1 拖回主窗口的标签条（插到 A 前面）：W1 有两个文档，拖出时先建临时窗口，松开后关掉
+            dragWindowTab(w1, docC, stripPoint(kMain, 6.0f));
+            check(m_docManager.PaneOf(docC) == kMain && m_docTabs->GetTabData(0) == key(docC) && m_docTabs->GetTabCount() == 2 &&
+                  DocWindowCount() == 1 && TabOrder(w1) == std::vector<Document*>{ docB },
+                  "C 从 W1 拖到主窗口标签条的最前面：进主窗口，W1 只剩 B，临时窗口关掉");
+            check(m_docManager.GetMainDocument() == docC && m_docManager.GetActive() == docC, "主窗口显示 C，它是当前文档");
+
+            // W1 只有 B：拖它的标签就是拖整个窗口（不建新窗口）；经过主窗口的标签条时窗口让到标签条下面，松开即合并
+            {
+                const MiniGUI::Rect before = win1->window->GetRect();
+                const MiniGUI::Vec2 away{ before.min.x + 300.0f, before.min.y + 420.0f };
+                dragWindowTab(w1, docB, away, false);
+                const MiniGUI::Rect moved = win1->window->GetRect();
+                check(DocWindowCount() == 1 && m_torn.window == w1 && std::abs(moved.min.y - before.min.y) > 50.0f,
+                      "只有一个标签的窗口：拖标签就是拖窗口，不建新窗口");
+                MiniGUI::UIContext& fui = win1->window->GetUI();
+                const MiniGUI::Vec2 onStrip = stripPoint(kMain, 300.0f);
+                fui.PointerMove(MainToPane(w1, onStrip), 0);
+                const float stripBottom = m_docTabs->GetScreenBounds().max.y;
+                check(m_docTabs->GetDropIndicator() >= 0 && win1->window->GetRect().min.y >= stripBottom,
+                      "拖到主窗口的标签条上：画出落点，被拖的窗口让到标签条下面");
+                fui.PointerUp(MainToPane(w1, onStrip), MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 && m_docManager.PaneOf(docB) == kMain && !m_docManager.HasPane(w1) && m_docTabs->GetTabCount() == 3 &&
+                      m_docTabs->GetDropIndicator() < 0, "松开：B 回主窗口，W1 空了随之关掉");
+            }
+
+            // 两个文档的窗口拖标题栏（系统的移动循环）到主窗口的标签条上：两个文档都移回去，窗口关掉；移动中窗口让开标签条
+            check(FloatDocument(docB, MiniGUI::Vec2{ 300.0f, 300.0f }), "B 再拖出成窗口");
+            RenderFrame();
+            pump();
+            const PaneId w2 = m_docManager.PaneOf(docB);
+            MoveDocumentsTo({ docC }, docC, w2, -1);
+            RenderFrame();
+            pump();
+            if (DocWindow* win2 = FindPaneWindow(w2))
+            {
+                check(TabOrder(w2) == std::vector<Document*>{ docB, docC } && m_docTabs->GetTabCount() == 1, "C 也移进这个窗口：它有两个标签");
+                const HWND fw = static_cast<Win32FloatingWindow*>(win2->window.get())->GetHwnd();
+                POINT cursor{};
+                RECT  wr{};
+                GetCursorPos(&cursor);
+                GetWindowRect(fw, &wr);
+                const POINT grab{ cursor.x - wr.left, cursor.y - wr.top };
+                const MiniGUI::Vec2 dropMain = stripPoint(kMain, 300.0f);
+                POINT target{ px(dropMain.x), px(dropMain.y) };
+                ClientToScreen(hwnd, &target);
+                RECT moved{ target.x - grab.x, target.y - grab.y, target.x - grab.x + (wr.right - wr.left), target.y - grab.y + (wr.bottom - wr.top) };
+                SendMessageW(fw, WM_ENTERSIZEMOVE, 0, 0);
+                SendMessageW(fw, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&moved));
+                POINT stripBottom{ 0, px(m_docTabs->GetScreenBounds().max.y) };
+                ClientToScreen(hwnd, &stripBottom);
+                check(m_docTabs->GetDropIndicator() >= 0 && moved.top >= stripBottom.y,
+                      "拖标题栏到主窗口的标签条上：画出落点，窗口让到标签条下面（系统给的位置被改）");
+                SetWindowPos(fw, nullptr, moved.left, moved.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(fw, WM_EXITSIZEMOVE, 0, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 && m_docManager.PaneOf(docB) == kMain && m_docManager.PaneOf(docC) == kMain && m_docTabs->GetTabCount() == 3,
+                      "松开（光标还在标签条上，窗口位置已让开）：两个文档都回主窗口，窗口关掉");
+            }
+
+            // 主窗口的文档都移走：中间显示提示卡片，命令行、视图方块、导航条不显示；面板还在
+            check(FloatDocument(docA, MiniGUI::Vec2{ 300.0f, 300.0f }), "A 拖出成窗口");
+            RenderFrame();
+            pump();
+            const PaneId w3 = m_docManager.PaneOf(docA);
+            MoveDocumentsTo({ docB, docC }, docC, w3, -1);
+            RenderFrame();
+            check(!m_docManager.GetMainDocument() && m_docTabs->GetTabCount() == 0 && m_docTabs->IsVisible() && m_mainEmptyCard && m_mainEmptyCard->IsVisible() &&
+                  !m_startShown && m_viewport->IsVisible(), "主窗口的文档都移走：不显示起始页，中间是提示卡片，标签条还在（可以拖回来）");
+            check(!IsCommandLineShown() && !m_main.cube->IsVisible() && !m_main.navBar->IsVisible(), "主窗口的命令行、视图方块、导航条不显示");
+            // 在主窗口里操作（卡片上点“新建”）：新文档进主窗口
+            UseChrome(m_main);
+            m_commands.Execute("file.new");
+            Document* docE = m_docManager.GetActive();
+            RenderFrame();
+            check(m_docManager.PaneOf(docE) == kMain && m_docManager.GetMainDocument() == docE && !m_mainEmptyCard->IsVisible() && IsCommandLineShown(),
+                  "在空着的主窗口里新建：新文档进主窗口，提示卡片收起");
+
+            // 关闭有三个文档的窗口（都已保存）：文档都关掉，窗口随之关掉
+            for (Document* d : { docA, docB, docC })
+                d->MarkSaved();
+            CloseDocWindow(w3);
+            RenderFrame();
+            pump();
+            check(DocWindowCount() == 0 && m_docManager.GetAll().size() == 1 && m_docManager.GetActive() == docE,
+                  "关闭文档窗口：里面的三个文档都关掉，窗口随之关掉，当前文档回到主窗口");
+            docE->MarkSaved();
+            CloseDocument(docE);
+            RenderFrame();
+        }
+
         endSection();
         std::sort(sectionTimes.begin(), sectionTimes.end(),[](const auto& a, const auto& b) { return a.second > b.second; });
         std::printf("\n最耗时的测试项：\n");

@@ -206,7 +206,7 @@ namespace MiniCAD
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
         bool IsCommandLineShown() const { return IsCommandLineShown(m_main); }   // 主窗口的浮动命令行在界面上可见
-        void UpdateViewCubeVisibility();         // 按开关与各窗口文档的当前布局显示视图方块（布局是二维图纸，不显示）
+        void UpdateChromeVisibility();           // 各窗口的视图方块、命令行、导航条按开关、文档与布局显示或隐藏（UpdateChromeVisibility(ViewChrome&)）
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
@@ -239,7 +239,8 @@ namespace MiniCAD
         void ZoomToLayout(const DrawingLayout& sheet);   // 框住布局保存的图纸空间视图，没有时框住纸张范围
         void NewLayout();                       // 新建布局（标签条的 + 与右键菜单、命令 layout.new）
         void DeleteLayout(int index);           // 删除布局（右键菜单、命令 layout.delete 删当前布局）
-        void CloseDocument(Document* doc);      // 未保存时先询问
+        void CloseDocument(Document* doc, std::function<void()> afterClose = {});   // 未保存时先询问；关掉了才调 afterClose
+        void CloseDocuments(std::vector<Document*> docs);                         // 逐个关闭（未保存的逐个询问），取消就停下
         // 保存当前 / 全部文档，保存成功后通知平台（网页版下载）。onSaved：当前文档保存成功后调用
         // （平台没有系统另存为对话框时，另存为经 OpenSaveAsDialog 异步完成）
         void SaveDocuments(bool all, bool saveAs, std::function<void()> onSaved = {});
@@ -264,8 +265,8 @@ namespace MiniCAD
         // 在哪套上按下 / 提交，它的文档就成为当前文档（UseChrome），菜单命令与面板随之作用于它
         struct ViewChrome
         {
-            bool                     main    = false;       // 主窗口的一套（文档 = 主视口里的文档）
-            Document*                doc     = nullptr;     // 文档窗口的文档（主窗口的不用）
+            bool                     main    = false;       // 主窗口的一套（多出读写进度等，在上面按下经 PressHook 激活）
+            DocumentManager::PaneId  pane    = DocumentManager::kNoPane;   // 这个窗口的窗格：显示的是它当前显示的文档
             MiniGUI::ViewportHost*   host    = nullptr;     // 这个窗口的视口控件
             MiniGUI::Node*           area    = nullptr;     // 透明的“洞”：没被遮住的绘图区，视图方块、导航条、命令行在里面
             MiniGUI::Node*           cube    = nullptr;     // 视图方块
@@ -292,17 +293,19 @@ namespace MiniCAD
         void SyncCommandLine(ViewChrome& c);
         void SyncLayoutTabs(ViewChrome& c);
         void SyncViewCube(ViewChrome& c);
-        void UpdateViewCubeVisibility(ViewChrome& c);
+        void UpdateChromeVisibility(ViewChrome& c);      // 视图方块（开关、布局页不显示）、命令行（开关）、导航条：窗口里没有文档时都不显示
         bool IsCommandLineShown(const ViewChrome& c) const;
         void UpdateFitInsets(const ViewChrome& c, Camera& cam, float pixelScale);   // 按没被遮住的范围设置“全部显示”的留边
 
-        // ── 拖出主窗口的文档窗口（DocumentWindows.cpp）──────────────────
+        // ── 文档窗口（DocumentWindows.cpp）：一个窗格一个窗口，可以放几个文档，标签在任意窗口之间拖动 ─────
+        using PaneId = DocumentManager::PaneId;
         struct ViewInput { int mouseX = 0, mouseY = 0, pressX = 0, pressY = 0; uint8_t buttons = 0; };   // 一个视口里的鼠标状态（像素；buttons 为 MiniCAD 的 MouseButtonState 掩码）
         struct DocWindow
         {
-            Document*                        doc    = nullptr;
+            PaneId                           pane   = DocumentManager::kNoPane;   // 它的窗格（销毁后为 kNoPane）
             std::unique_ptr<IFloatingWindow> window;
-            MiniGUI::TitleBar*               titleBar = nullptr;   // 文档名 + 最小化 / 最大化 / 关闭；拖动交给系统
+            MiniGUI::TitleBar*               titleBar = nullptr;   // 文档标签 + 最小化 / 最大化 / 关闭；空白处拖动交给系统
+            MiniGUI::TabView*                tabs   = nullptr;     // 标题栏里的文档标签条
             MiniGUI::ViewportHost*           host   = nullptr;     // 显示它的视口纹理
             ViewChrome                       chrome;               // 它自己的视图方块、导航条、命令行、状态栏
             std::unique_ptr<IRenderTarget>   target;               // 它的视口渲染目标
@@ -311,19 +314,33 @@ namespace MiniCAD
             ViewInput                        input;
             MiniGUI::Vec2                    grab, size;           // 拖标题栏：按下点相对窗口左上角的位置、窗口尺寸（主窗口坐标）
         };
-        // 文档移到独立窗口（标题栏落在 windowPos 下）；平台不支持时 false。activate = false：不激活窗口
-        //（标签拖出过程中主窗口持有鼠标捕获，松开后再激活）
+        // 文档移到新的独立窗口（标题栏落在 windowPos 下，主窗口坐标）：从哪个窗口来都行，它所在窗口只有它一个时不做什么；
+        // 平台不支持时 false。activate = false：不激活窗口（标签拖出过程中原窗口持有鼠标捕获，松开后再激活）
         bool       FloatDocument(Document* doc, MiniGUI::Vec2 windowPos, bool activate = true);
-        void       MergeDocument(Document* doc, int index);                  // 拖回 / 双击标题栏：合并回标签条的 index 处（-1 = 末尾）
-        DocWindow* FindDocWindow(const Document* doc) const;
-        void       DestroyDocWindow(const Document* doc);                    // 关闭文档窗口（推迟到下一帧销毁）
+        // 把文档移进窗格（标签插在那个窗口标签条的 index 处，-1 = 末尾）：show 成为当前文档；原窗口空了就关掉
+        void       MoveDocumentsTo(const std::vector<Document*>& docs, Document* show, PaneId pane, int index);
+        std::vector<Document*> TabOrder(PaneId pane) const;                 // 窗格里的文档，按它的标签条上的顺序
+        DocWindow* FindDocWindow(const Document* doc) const;                // 文档所在的文档窗口（在主窗口里时 nullptr）
+        DocWindow* FindPaneWindow(PaneId pane) const;
+        MiniGUI::TabView* TabsOfPane(PaneId pane) const;                     // 窗口的文档标签条：主窗格是主窗口的
+        MiniGUI::Vec2 PaneToMain(PaneId pane, MiniGUI::Vec2 windowPos) const;   // 某个窗口的坐标 → 主窗口坐标
+        MiniGUI::Vec2 MainToPane(PaneId pane, MiniGUI::Vec2 mainPos) const;
+        void       SetupDocTabs(MiniGUI::TabView& tabs, PaneId pane);        // 文档标签条的行为（主窗口与文档窗口共用）
+        void       DestroyDocWindow(PaneId pane);                            // 关闭文档窗口（推迟到下一帧销毁）
+        void       PruneDocWindows();                                        // 窗格已经没了（文档都移走 / 关掉）的窗口关掉
         void       PurgeDocWindows();                                        // 每帧开头销毁已关闭的文档窗口
         void       CloseAllDocWindows();
+        void       CloseDocWindow(PaneId pane);                              // 窗口的 × / Alt+F4：关闭它里面的文档（未保存的逐个询问）
         void       RenderDocWindow(DocWindow& w, int pixelWidth, int pixelHeight);
-        void       OnDocWindowMoving(DocWindow& w, bool done, MiniGUI::Vec2 cursor);                          // 系统在移动窗口（拖标题栏）：画落点，松开在标签条上合并
-        void       OnDocTabTornDrag(MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);         // 标签拖出后继续拖：窗口跟着光标走
+        // 拖动中的落点：光标落在哪个窗口的文档标签条上、插在第几个（exclude：被拖的窗口自己）
+        struct DropTarget { PaneId pane = DocumentManager::kNoPane; int index = -1; bool Valid() const { return index >= 0; } };
+        DropTarget FindDropTarget(MiniGUI::Vec2 mainPos, PaneId exclude) const;
+        void       ShowDropTarget(const DropTarget& target);                 // 落点的标签条画插入标记，其余清掉
+        // 系统在移动窗口（拖标题栏）：画落点；在标签条上时窗口让到标签条下面（windowRect 主窗口坐标，可改）；松开在标签条上就合并过去
+        void       OnDocWindowMoving(DocWindow& w, bool done, MiniGUI::Vec2 cursor, MiniGUI::Rect& windowRect);
+        bool       OnDocTabDragOut(PaneId source, int index, MiniGUI::Vec2 windowPos);   // 标签拖出标签条：新窗口，或拖动只有它的窗口
+        void       OnDocTabTornDrag(PaneId source, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 windowPos);   // 继续拖：窗口跟着光标走
         void       DragDocWindow(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);   // 标签拖出后：移动窗口、画落点、松开在标签条上合并
-        int        DocDropIndex(MiniGUI::Vec2 mainPos) const;                // 主窗口坐标落在文档标签条上时的插入位置，否则 -1
         bool       OnDocWindowKey(const MiniGUI::KeyEvent& e);
         bool       BlockedByModal();                                         // 主窗口开着对话框：把主窗口置前并返回 true（文档窗口的操作不执行）
         void       RaiseMainForModal();                                      // 每帧：主窗口刚弹出对话框时置前，不被文档窗口挡住
@@ -351,7 +368,7 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;
-        ViewChrome                             m_main{ .main = true };   // 主窗口的视图方块、导航条、命令行、状态栏
+        ViewChrome                             m_main{ .main = true, .pane = DocumentManager::kMainPane };   // 主窗口的视图方块、导航条、命令行、状态栏
         MiniGUI::Node*                         m_startPage   = nullptr;  // 起始页（StartPage.cpp，界面描述文件里的面板 "start"）
         MiniGUI::Node*                         m_startRecent = nullptr;  // 起始页里放最近打开列表的容器
         MiniGUI::Button*                       m_startBack   = nullptr;  // 起始页导航列的“返回 文档名”
@@ -459,7 +476,10 @@ namespace MiniCAD
         bool      m_hovered = false;
         std::vector<std::unique_ptr<DocWindow>> m_docWindows;
         std::vector<std::unique_ptr<DocWindow>> m_docWindowGraveyard;    // 已关闭、等下一帧销毁
-        Document*                               m_tornDoc = nullptr;     // 正从标签条拖出、鼠标还没松开的文档
+        // 正从标签条拖出、鼠标还没松开：哪个文档、被拖的窗口（新建的，或只有它的原窗口）、按住的是哪个窗口的标签条
+        struct TornDrag { Document* doc = nullptr; PaneId window = DocumentManager::kNoPane; PaneId source = DocumentManager::kNoPane; };
+        TornDrag                                m_torn;
+        MiniGUI::Node*                          m_mainEmptyCard = nullptr; // 主窗口没有文档（都在别的窗口里）时绘图区中间的提示卡片
         bool                                    m_modalRaised = false;   // 上一帧主窗口已开着对话框（RaiseMainForModal）
 
         // ── 统计 ────────────────────────────────────────────────

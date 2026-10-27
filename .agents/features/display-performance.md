@@ -12,7 +12,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - 渲染器按 (slot, version) 缓存顶点缓冲，版本没变时不重新上传；渲染缓存的版本号由 `Editor::NextRenderVersion` 在进程内全局分配，多个编辑器共用一个渲染器也不会串缓冲
 - 视口缓存层：场景版本、相机、尺寸、显示开关、背景深浅都没变时，每帧只复制缓存层再画动态内容
 - 每个文档一个 `Editor`，显示数据、选择集、工具状态随文档保留；切换文档只请编辑器重新拼接显示流，不重新细分
-- 多视口（文档拖出成独立窗口，见 [main-window](main-window.md)）：主视口由停靠的文档共用，拖出的文档各有一个 `Viewport`（相机、尺寸、缓存层各自独立；`DocumentManager::DetachDocument` / `DocumentManager::AttachDocument`，编辑器经 `Editor::SetViewport` 换视口，显示数据、选择集保留，缩放不同时下一帧重建动态流）。渲染器只有一个，按槽位各留一份缓冲：两个视口轮流重画场景时会互相顶掉，所以每个视口渲染前调用 `Editor::EnsureSceneCached`——拼接流已释放而后端里没有自己的场景缓冲就重新拼接（不重新细分）再上传，否则会按空流上传、图纸消失。缓存层有效时（只动鼠标、选择）不碰场景槽位，轮流平移 / 缩放两个窗口才各付一次"切换文档"的代价。网格 / 坐标轴 / Gizmo 的版本号也进程内全局分配（`Viewport::NextViewVersion`），两个视口不会被当成同一份缓冲
+- 多视口（文档拖出成独立窗口，见 [main-window](main-window.md)）：每个窗口一个窗格（`DocumentManager::CreatePane`），窗格里的文档共用它的 `Viewport`（相机、尺寸、缓存层各窗格独立；文档在窗格之间移动用 `DocumentManager::MoveDocument`，编辑器经 `Editor::SetViewport` 换视口，显示数据、选择集保留，缩放不同时下一帧重建动态流）。渲染器只有一个，按槽位各留一份缓冲：几个视口轮流重画场景时会互相顶掉，所以每个视口渲染前调用 `Editor::EnsureSceneCached`——拼接流已释放而后端里没有自己的场景缓冲就重新拼接（不重新细分）再上传，否则会按空流上传、图纸消失。缓存层有效时（只动鼠标、选择）不碰场景槽位，轮流平移 / 缩放两个窗口才各付一次"切换文档"的代价。网格 / 坐标轴 / Gizmo 的版本号也进程内全局分配（`Viewport::NextViewVersion`），两个视口不会被当成同一份缓冲
 
 ## 静态流与动态流
 

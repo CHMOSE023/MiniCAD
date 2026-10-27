@@ -50,7 +50,7 @@ namespace MiniCAD
         void SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test) override;
         void SetOnActiveChanged(std::function<void(bool active)> cb) override { m_onActiveChanged = std::move(cb); }
         void SetOnSizeChanged(std::function<void()> cb) override { m_onSizeChanged = std::move(cb); }
-        void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor)> cb) override { m_onMoving = std::move(cb); }
+        void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor, MiniGUI::Rect& windowRect)> cb) override { m_onMoving = std::move(cb); }
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -59,7 +59,7 @@ namespace MiniCAD
         void    UpdateDisplaySize();
         RECT    ToScreen(const MiniGUI::Rect& rect) const;      // 主窗口逻辑坐标 → 屏幕像素
         MiniGUI::Vec2 ToOwner(POINT screen) const;              // 屏幕像素 → 主窗口逻辑坐标
-        void    NotifyMoving(bool done, POINT windowTopLeft);   // 系统移动循环里：按下点相对窗口左上角不变，换算出光标位置上报
+        MiniGUI::Rect ToOwner(const RECT& screen) const;
 
         Win32Window& m_owner;
         HWND         m_hwnd     = nullptr;
@@ -74,8 +74,9 @@ namespace MiniCAD
         std::function<void()> m_onBeforeRender;
         std::function<void(bool)> m_onActiveChanged;
         std::function<void()>     m_onSizeChanged;
-        std::function<void(bool, MiniGUI::Vec2)> m_onMoving;
+        std::function<void(bool, MiniGUI::Vec2, MiniGUI::Rect&)> m_onMoving;
         POINT m_moveGrab{};             // 系统移动循环开始时光标相对窗口左上角的位置（屏幕像素）
+        POINT m_moveCursor{};           // 移动循环里最近一次的光标位置（系统给的窗口位置 + m_moveGrab；宿主改过窗口位置也不受影响）
         bool  m_moving = false;         // 这次移动循环里窗口确实移动过（只改大小时不上报）
     };
 }

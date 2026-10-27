@@ -216,12 +216,9 @@ namespace MiniCAD
         return { static_cast<float>(screen.x) / s, static_cast<float>(screen.y) / s };
     }
 
-    void Win32FloatingWindow::NotifyMoving(bool done, POINT windowTopLeft)
+    MiniGUI::Rect Win32FloatingWindow::ToOwner(const RECT& screen) const
     {
-        if (!m_onMoving)
-            return;
-        auto cb = m_onMoving;       // 松开时宿主可能把窗口合并回去（窗口推迟到下一帧销毁）
-        cb(done, ToOwner(POINT{ windowTopLeft.x + m_moveGrab.x, windowTopLeft.y + m_moveGrab.y }));
+        return { ToOwner(POINT{ screen.left, screen.top }), ToOwner(POINT{ screen.right, screen.bottom }) };
     }
 
     void Win32FloatingWindow::UpdateDisplaySize()
@@ -319,23 +316,34 @@ m_ui->Render();
             return 0;
         }
 
-        // 系统的移动循环（拖标题栏）：记下按下点相对窗口左上角的位置，移动中、松开时上报光标位置（宿主据此找合并的落点）
+        // 系统的移动循环（拖标题栏）：记下按下点相对窗口左上角的位置，移动中、松开时上报光标位置（宿主据此找合并的落点）；
+        // 移动中宿主可以挪窗口（让开标签条），之后系统给的位置仍按光标算，光标也就不受影响
         case WM_ENTERSIZEMOVE:
         {
             POINT cursor{};
             RECT  wr{};
             GetCursorPos(&cursor);
             GetWindowRect(hwnd, &wr);
-            m_moveGrab = { cursor.x - wr.left, cursor.y - wr.top };
-            m_moving   = false;
+            m_moveGrab   = { cursor.x - wr.left, cursor.y - wr.top };
+            m_moveCursor = cursor;
+            m_moving     = false;
             return 0;
         }
 
         case WM_MOVING:
         {
-            const RECT* r = reinterpret_cast<const RECT*>(lParam);
-            m_moving = true;
-            NotifyMoving(false, POINT{ r->left, r->top });
+            RECT* r = reinterpret_cast<RECT*>(lParam);
+            m_moving     = true;
+            m_moveCursor = { r->left + m_moveGrab.x, r->top + m_moveGrab.y };
+            if (m_onMoving)
+            {
+                MiniGUI::Rect rect = ToOwner(*r);
+                const MiniGUI::Vec2 before = rect.min;
+                auto cb = m_onMoving;
+                cb(false, ToOwner(m_moveCursor), rect);
+                const float s = m_owner.GetDpiScale();
+                OffsetRect(r, static_cast<int>(std::lround((rect.min.x - before.x) * s)), static_cast<int>(std::lround((rect.min.y - before.y) * s)));
+            }
             return TRUE;
         }
 
@@ -343,9 +351,14 @@ m_ui->Render();
             if (m_moving)
             {
                 m_moving = false;
-                RECT wr{};
-                GetWindowRect(hwnd, &wr);
-                NotifyMoving(true, POINT{ wr.left, wr.top });
+                if (m_onMoving)
+                {
+                    RECT wr{};
+                    GetWindowRect(hwnd, &wr);
+                    MiniGUI::Rect rect = ToOwner(wr);
+                    auto cb = m_onMoving;       // 宿主可能把窗口合并过去（窗口推迟到下一帧销毁）
+                    cb(true, ToOwner(m_moveCursor), rect);
+                }
             }
             // 系统的缩放边框拖完：请宿主保存布局
             if (m_onMoved)
