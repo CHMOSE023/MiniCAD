@@ -780,6 +780,17 @@ namespace MiniGUI
             ClosePopup(top);
     }
 
+    void UIContext::RaisePopup(Popup* popup)
+    {
+        // 只调整顺序，不摘下再挂上（那会打断正在分发的事件、清掉焦点）
+        auto& children = m_popupLayer->m_children;
+        auto  it = std::find_if(children.begin(), children.end(), [popup](const auto& c) { return c.get() == popup; });
+        if (it == children.end() || it + 1 == children.end())
+            return;
+        std::rotate(it, it + 1, children.end());
+        RequestRedraw();
+    }
+
     Popup* UIContext::GetTopPopup() const
     {
         const auto& children = m_popupLayer->m_children;

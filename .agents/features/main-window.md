@@ -14,6 +14,7 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 
 - 绘图区（面板 `canvas`）铺满标题栏以下；功能区、停靠面板、状态栏都是浮在上面的圆角卡片
 - 停靠：浮动停靠区 `"floating": true`；文档区 `documents` 是透明的"洞"，里面放视图方块、竖排导航条（`GUI/ViewNavBar.cpp`）和底部居中的命令行
+- 浮动面板：特性 / 图层 / 节点等面板的标签拖到停靠区外松开或双击标签即浮出（`MiniGUI::DockSpace::FloatPanel`），拖标题栏回停靠区停靠、双击标题栏回原处；位置随用户布局保存（`layout.json` 里 `dock.floatingPanels`）。没有平台宿主时是窗口内的浮动面板（`MiniGUI::FloatingPanel` 弹层，网页版即如此）
 - "全部显示"按没被挡住的区域留边（`Camera::SetFitInsets`，`MainFrame::UpdateFitInsets`）
 - 标题栏：MiniCAD、首页、"文件"菜单、保存 / 撤销 / 重做、文档标签（面板 `doctabs`）、右侧 AI / 设置 / 帮助 / 版本（面板 `appbar`）
 - 功能区（`MiniGUI::Ribbon`，描述文件顶层 `ribbons`）：选项卡行右端是收起按钮和命令搜索框（Ctrl+K）；图标由 `tools/make_icons.py` 生成

@@ -78,6 +78,7 @@ namespace MiniGUI
         void   CloseAllPopups();
         Popup* GetTopPopup() const;
         bool   HasModal() const;
+        void   RaisePopup(Popup* popup);    // 放到其他弹层之上（窗口内浮动的面板被点到时置前）
 
         // ── 定时器（悬浮提示延迟、光标闪烁等）───────────────────
         // 时间由平台层提供（SetClock），需要唤醒时通过 SetTimerScheduler 通知平台层设置系统定时器
