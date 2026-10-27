@@ -1169,7 +1169,7 @@ m_floatHost.reset();
         using T = MiniGUI::PointerEventType;
         if (e.type == T::Enter || e.type == T::Leave)
         {
-            m_hovered = e.type == T::Enter;
+            m_main.hovered = e.type == T::Enter;
             m_viewport->Invalidate();       // 更新状态栏坐标
             return;
         }

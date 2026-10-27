@@ -866,7 +866,7 @@ namespace MiniCAD
         //   宿主面板的显示状态已由 UiLayout 恢复，下面的 StateChanged 在新界面上重新应用起始页
         if (ok)
         {
-            m_dynInput = nullptr;
+            m_main.dynInput = nullptr;
             m_startHidden.clear();
         }
         if (!ok)

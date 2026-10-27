@@ -2921,15 +2921,15 @@ namespace MiniCAD
             // 浮动导航条上：显示箭头指针，绘图区不画十字光标；移回绘图区后恢复
             m_ui->PointerMove(holeCenter, 0);
             RenderFrame();
-            const bool crossOnCanvas = m_hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden;
+            const bool crossOnCanvas = m_main.hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden;
             const MiniGUI::Rect nav = m_main.navBar->GetChildren().front()->GetScreenBounds();
             m_ui->PointerMove(MiniGUI::Vec2{ nav.Center().x, nav.min.y + 16.0f }, 0);
             RenderFrame();
-            check(crossOnCanvas && !m_hovered && m_ui->GetCursor() != MiniGUI::CursorShape::Hidden,
+            check(crossOnCanvas && !m_main.hovered && m_ui->GetCursor() != MiniGUI::CursorShape::Hidden,
                   "导航条上显示鼠标指针，绘图区不画十字光标");
             m_ui->PointerMove(holeCenter, 0);
             RenderFrame();
-            check(m_hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden, "移回绘图区：十字光标");
+            check(m_main.hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden, "移回绘图区：十字光标");
 
             // 导航条竖排在视图方块下面，靠右与方块的右边对齐
             const MiniGUI::Rect cube = m_main.cube->GetScreenBounds();
@@ -3019,7 +3019,7 @@ namespace MiniCAD
         }
 
         // ── 29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭 ──────────
-        section("29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭");
+        section("29. 文档窗口：拖出、它自己的界面（标题栏、功能区、快捷键、动态输入）、平移 / 缩放 / 画线 / 选择、最大化 / 最小化、拖回、关闭");
         {
             // 两个文档：A 在主窗口里，B 拖出去
             m_commands.Execute("file.new");
@@ -3163,6 +3163,19 @@ namespace MiniCAD
                 sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx - 40, fcy - 30);
                 sendF(WM_LBUTTONUP, 0, fcx - 40, fcy - 30);
                 sendF(WM_MOUSEMOVE, 0, fcx + 40, fcy + 30);
+                paintF();
+                RenderFrame();
+                check(IsDynInputVisible(dw->chrome) && !IsDynInputVisible(m_main),
+                      "有锚点时动态输入框显示在文档窗口里（光标旁），主窗口的不显示");
+                sendF(WM_KEYDOWN, '5', 0, 0);
+                SendMessageW(fw, WM_CHAR, '5', 0);
+                sendF(WM_KEYUP, '5', 0, 0);
+                paintF();
+                check(DynInputHasFocus(dw->chrome) && GetDynInputText(dw->chrome, 0) == "5" && !m_main.console->HasInputFocus(),
+                      "在文档窗口里按数字：进它自己的长度框");
+                sendF(WM_KEYDOWN, VK_ESCAPE, 0, 0);     // 第一次 Esc 只清掉键入
+                sendF(WM_KEYUP, VK_ESCAPE, 0, 0);
+                dw->host->Focus();
                 sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx + 40, fcy + 30);
                 sendF(WM_LBUTTONUP, 0, fcx + 40, fcy + 30);
                 sendF(WM_KEYDOWN, VK_ESCAPE, 0, 0);

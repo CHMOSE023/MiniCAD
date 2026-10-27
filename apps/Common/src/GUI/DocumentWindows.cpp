@@ -20,7 +20,7 @@
 //     渲染器按槽位只留一份顶点缓冲，几个视口轮流重画场景时互相顶掉，渲染前经 Editor::EnsureSceneCached 重新拼接（不重新细分）
 //   - 界面：与主窗口一样，视口上浮着视图方块、导航条、底部居中的命令行和状态栏（含模型 / 布局标签），都绑定这个窗口显示的文档
 //     （MainFrame::ViewChrome）；窗口被激活、或在窗口里任何地方按下（DocWindowRoot），它显示的文档就成为当前文档，
-//     功能区、菜单的命令与特性 / 图层面板随之作用于它，之后新建 / 打开的文档也放进这个窗口。动态输入框只在主视口里显示
+//     功能区、菜单的命令与特性 / 图层面板随之作用于它，之后新建 / 打开的文档也放进这个窗口。光标旁的动态输入框每个窗口一个
 //   - 输入：视口的指针事件交给显示的文档的 Editor（RouteViewportPointer）；按键先让它成为当前文档，再走 OnViewportKey，
 //     在绘图区敲字母进入这个窗口的命令行。快捷键登记在这个窗口自己的 UIContext 上（CommandRegistry::BindShortcuts），
 //     主窗口开着对话框时不生效（ShortcutTable::SetGate）；按键不再转给主窗口
@@ -191,6 +191,8 @@ namespace MiniCAD
             LOG_WARN("文档窗口：界面描述里没有可用的 layouts.document，使用最小布局");
             w.layout->ApplyText(w.uiHost, kFallbackDocumentLayout);
         }
+        if (ok || first)
+            w.chrome.dynInput = nullptr;    // 挂在旧界面的容器上，随它销毁：下一帧重新建
         TitleBar* bar = w.layout->GetTitleBar();
         w.titleBar = bar;
         if (bar)
@@ -366,7 +368,10 @@ namespace MiniCAD
         host->SetOnPointer([this, w](const ViewportPointerEvent& e)
         {
             if (e.type == PointerEventType::Enter || e.type == PointerEventType::Leave)
+            {
+                w->chrome.hovered = e.type == PointerEventType::Enter;     // 动态输入框只在光标在视口里时显示
                 return;
+            }
             // 主窗口开着对话框：文档窗口不接受编辑，按下时把主窗口（连同对话框）置前
             if (m_ui->HasModal())
             {
@@ -749,6 +754,7 @@ namespace MiniCAD
             c.statusBar->Refresh();
         SyncViewCube(c);
         SyncCommandLine(c);
+        SyncDynamicInput(c);
     }
 
     void MainFrame::RenderDocWindow(DocWindow& w, int pixelWidth, int pixelHeight)

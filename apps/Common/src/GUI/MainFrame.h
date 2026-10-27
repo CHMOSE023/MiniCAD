@@ -168,12 +168,17 @@ namespace MiniCAD
         Nodes::GraphHistory& NodeHistory(const Document& doc);
 
         // ── 动态输入（DynamicInput.cpp）与 Editor 请求的对话框（EditorDialogs.cpp）──
-        void SyncDynamicInput();                                  // 光标旁的长度 / 角度输入框跟随 Editor 状态
+        // 光标旁的长度 / 角度输入框跟随 Editor 状态：每个窗口一个（ViewChrome::dynInput），只在当前文档所在的那个窗口里显示
+        void SyncDynamicInput() { SyncDynamicInput(m_main); }
+        void SyncDynamicInput(ViewChrome& c);
         bool RouteKeyToDynamicInput(const MiniGUI::KeyEvent& e);  // 工具进行中按数字：交给动态输入或命令行
         void SendKeyToEditor(MiniGUI::Key key);                   // 合成一次按下 + 抬起交给当前工具（选项字母、Enter、Esc）
-        bool        IsDynInputVisible() const;                    // 自测用
-        bool        DynInputHasFocus() const;
-        std::string GetDynInputText(int field) const;             // 0 长度，1 角度
+        bool        IsDynInputVisible() const { return IsDynInputVisible(m_main); }   // 自测用
+        bool        DynInputHasFocus() const  { return DynInputHasFocus(m_main); }
+        std::string GetDynInputText(int field) const { return GetDynInputText(m_main, field); }  // 0 长度，1 角度
+        bool        IsDynInputVisible(const ViewChrome& c) const;
+        bool        DynInputHasFocus(const ViewChrome& c) const;
+        std::string GetDynInputText(const ViewChrome& c, int field) const;
         void SyncEditorRequests();                                // Editor 发出的请求（文字输入、块名、插入块、阵列、填充、文字样式）→ 打开 / 关闭对应界面
         void OpenTextEditor(bool multiline);
         void OpenBlockNameDialog();
@@ -283,6 +288,8 @@ namespace MiniCAD
             MiniGUI::TabView*        layoutTabs    = nullptr;   // 布局标签条（模型 / 图纸空间布局）
             MiniGUI::Node*           layoutTabsBar = nullptr;   // 布局标签条的外层容器（隐藏整行用）
             bool                     syncingLayouts = false;    // 正在程序化同步标签，忽略回调
+            DynamicInputBox*         dynInput      = nullptr;   // 光标旁的长度 / 角度输入框（第一次要显示时建，界面重建后重新建）
+            bool                     hovered       = false;     // 光标在这个窗口的视口里
             bool                     navFits       = true;      // 绘图区够高、放得下导航条（不压住命令行），见 SyncViewCube
             float                    navHeight     = 0.0f;      // 导航条上次布局的高度
             double                   cubeAzimuth   = 0.0;       // 视图方块上次绘制时的视线方向
@@ -399,7 +406,6 @@ namespace MiniCAD
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
         MiniGUI::ListView*                     m_layerList  = nullptr;
         MiniGUI::ComboBox*                     m_layerBarLayer = nullptr;  // 工具栏的图层下拉框（自测用）
-        DynamicInputBox*                       m_dynInput   = nullptr;
         MiniGUI::Popup*                        m_textPopup  = nullptr;   // 文字 / 多行文字原位编辑
         MiniGUI::Dialog*                       m_blockNameDialog = nullptr;
         MiniGUI::Dialog*                       m_insertDialog    = nullptr;
@@ -488,8 +494,7 @@ namespace MiniCAD
         bool                                   m_saveStatusShown = false;   // 本次保存前已显示"正在保存"（据此区分失败与取消另存为）
 
         // ── 视口指针状态（物理像素，视口内坐标）──────────────────
-        ViewInput m_mainInput;      // 主视口的鼠标状态
-        bool      m_hovered = false;
+        ViewInput m_mainInput;      // 主视口的鼠标状态（光标是否在视口里：m_main.hovered）
         std::vector<std::unique_ptr<DocWindow>> m_docWindows;
         std::vector<std::unique_ptr<DocWindow>> m_docWindowGraveyard;    // 已关闭、等下一帧销毁
         // 正从标签条拖出、鼠标还没松开：哪个文档、被拖的窗口（新建的，或只有它的原窗口）、按住的是哪个窗口的标签条
