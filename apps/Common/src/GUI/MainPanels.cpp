@@ -39,6 +39,30 @@ namespace MiniCAD
     {
         namespace Theme = MiniGUI::Theme;
 
+        // 在自己或任何子节点上按下时先回调（捕获阶段，早于按钮的点击）：主窗口的视图方块、导航条、命令行、状态栏
+        // 据此让主视口里的文档成为当前文档，按钮的命令随后就作用于它（文档窗口由 FloatingPanel::SetOnActivate 做同样的事）
+        template <class Base>
+        class PressHook : public Base
+        {
+        public:
+            template <class... Args>
+            explicit PressHook(std::function<void()> onPress, Args&&... args)
+                : Base(std::forward<Args>(args)...), m_onPress(std::move(onPress))
+            {
+            }
+
+        protected:
+            void OnPointerEvent(MiniGUI::PointerEvent& e) override
+            {
+                if (e.phase == MiniGUI::EventPhase::Capture && e.type == MiniGUI::PointerEventType::Down && m_onPress)
+                    m_onPress();
+                Base::OnPointerEvent(e);
+            }
+
+        private:
+            std::function<void()> m_onPress;
+        };
+
         std::filesystem::path ToPath(const std::string& utf8)
         {
             return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
@@ -188,7 +212,7 @@ namespace MiniCAD
     // =========================================================
     // 由 CreateStatusBar 放在浮动状态栏的左侧（照 SolidCraft：状态栏是一张圆角卡片）。
     // 宽度取各标签的理想宽度之和，标签多了才缩窄
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayoutTabs()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayoutTabs(ViewChrome& c)
     {
         using namespace MiniGUI;
         auto bar = std::make_unique<Node>();
@@ -199,38 +223,41 @@ namespace MiniCAD
         bs.minWidth  = 120.0f;
         bar->SetLayoutStyle(bs);
 
-        m_layoutTabs = bar->AddChild<TabView>();
-        m_layoutTabs->SetBarStyle(true);
-        m_layoutTabs->SetFitToTabs(true);
-        m_layoutTabs->EditLayoutStyle().shrink   = 1.0f;
-        m_layoutTabs->EditLayoutStyle().minWidth = 0.0f;
-        m_layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
-        m_layoutTabs->SetShowNewTabButton(true);      // + 新建布局
-        m_layoutTabs->SetOnNewTabRequested([this] { m_commands.Execute("layout.new"); });
-        m_layoutTabs->SetOnSelectionChanged([this](int i)
+        ViewChrome* pc = &c;
+        c.layoutTabs = bar->AddChild<TabView>();
+        c.layoutTabs->SetBarStyle(true);
+        c.layoutTabs->SetFitToTabs(true);
+        c.layoutTabs->EditLayoutStyle().shrink   = 1.0f;
+        c.layoutTabs->EditLayoutStyle().minWidth = 0.0f;
+        c.layoutTabs->SetFocusable(false);            // 点完标签键盘仍回绘图区
+        c.layoutTabs->SetShowNewTabButton(true);      // + 新建布局
+        c.layoutTabs->SetOnNewTabRequested([this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); });
+        c.layoutTabs->SetOnSelectionChanged([this, pc](int i)
         {
-            if (m_syncingLayouts || i < 0)
+            if (pc->syncingLayouts || i < 0)
                 return;
+            UseChrome(*pc);
             ActivateLayout(i);
-            m_viewport->Focus();
+            if (pc->host && pc->host->IsVisible())
+                pc->host->Focus();
         });
         // 右键：新建 / 删除布局（布局标签不能关闭，不要默认的「关闭…」几项）
-        m_layoutTabs->SetTabContextMenu([this](int i)
+        c.layoutTabs->SetTabContextMenu([this, pc](int i)
         {
-            const Document* doc = m_docManager.GetActive();
+            const Document* doc = DocOf(*pc);
             bool canDelete = false;
             if (doc && i >= 0 && i < static_cast<int>(doc->GetScene().Layouts().size()))
                 canDelete = !doc->GetScene().Layouts()[static_cast<size_t>(i)].Model &&
                             RemoveLayoutCommand::PaperCount(doc->GetScene()) > 1;
             return std::vector<MenuItem>{
-                MenuItem("新建布局(&N)", [this] { m_commands.Execute("layout.new"); }),
-                MenuItem("删除布局(&D)", [this, i] { DeleteLayout(i); }).Enabled(canDelete),
+                MenuItem("新建布局(&N)", [this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); }),
+                MenuItem("删除布局(&D)", [this, pc, i] { UseChrome(*pc); DeleteLayout(i); }).Enabled(canDelete),
             };
         });
 
         // 没有文档时整条隐藏，打开 / 新建文档后由 SyncLayoutTabs 显示
         bar->SetVisible(false);
-        m_layoutTabsBar = bar.get();
+        c.layoutTabsBar = bar.get();
         return bar;
     }
 
@@ -263,8 +290,22 @@ namespace MiniCAD
         });
         m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
         m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
-        // 标签拖到标签条之外松开：文档移到独立的系统窗口（平台给不出窗口时什么都不发生）
-        m_docTabs->SetOnTabDragOut([this](int i, Vec2 windowPos) { FloatDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i)), windowPos); });
+        // 标签一拖到标签条之外：文档立即移到独立的系统窗口，继续拖时窗口跟着光标走，松开在标签条上则合并回来
+        //（平台给不出窗口时标签留在条里）
+        m_docTabs->SetOnTabDragOut([this](int i, Vec2 windowPos)
+        {
+            Document* doc = reinterpret_cast<Document*>(m_docTabs->GetTabData(i));
+            if (!FloatDocument(doc, windowPos, false))
+                return false;
+            m_tornDoc = doc;
+            return true;
+        });
+        m_docTabs->SetOnTornTabDrag([this](TabView::TornDragPhase phase, Vec2 windowPos)
+        {
+            using Phase = FloatingPanel::DragPhase;
+            OnDocTabTornDrag(phase == TabView::TornDragPhase::Move ? Phase::Update
+                           : phase == TabView::TornDragPhase::End  ? Phase::End : Phase::Cancel, windowPos);
+        });
 
         m_docTabs->SetTabContextMenuExtra([this](int i)
         {
@@ -294,35 +335,49 @@ namespace MiniCAD
         vp->SetCursor(CursorShape::Hidden);       // 视口自己绘制十字光标
         vp->SetOnRender ([this](int w, int h) { RenderViewport(w, h); });
         vp->SetOnPointer([this](const ViewportPointerEvent& e) { OnViewportPointer(e); });
-        vp->SetOnKey    ([this](const KeyEvent& e) { return OnViewportKey(e); });
+        // 在主视口里敲键：主视口里的文档成为当前文档（字母进的是主窗口的命令行）
+        vp->SetOnKey    ([this](const KeyEvent& e) { ActivateDocumentOf(m_docManager.GetMainDocument()); return OnViewportKey(e); });
         m_viewport = vp.get();
+        m_main.host = m_viewport;
         return vp;
     }
 
     // =========================================================
-    // 文档区（面板 "documents"）：停靠区里没有标题栏的组。浮动停靠区里它是透明、点击穿透的“洞”，
+    // 文档区（主窗口的面板 "documents"）：停靠区里没有标题栏的组。浮动停靠区里它是透明、点击穿透的“洞”，
     // 范围就是没被功能区和面板挡住的绘图区：右上角视图方块、下面竖排的导航条、底部居中的命令行都放在这里，
-    // “全部显示”也按它留边（UpdateFitInsets）
+    // “全部显示”也按它留边（UpdateFitInsets）。文档窗口里同样建一个，铺满它的视口
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateDocumentArea(ViewChrome& c)
     {
         using namespace MiniGUI;
-        auto area = std::make_unique<Node>();
+        ViewChrome* pc = &c;
+        // 主窗口：在这里按下（视图方块、导航条、命令行）先让主视口里的文档成为当前文档
+        std::unique_ptr<Node> area = c.main ? std::make_unique<PressHook<Node>>([this, pc] { UseChrome(*pc); })
+                                            : std::make_unique<Node>();
         area->SetHitTestVisible(false);
-        m_docArea = area.get();
+        c.area = area.get();
 
-        // 视图方块（M6）：右上角
+        // 视图方块（M6）：右上角，跟着这个窗口里的文档
         ViewCube::Callbacks cubeCallbacks;
-        cubeCallbacks.camera  = [this]() -> const Camera* { return m_docManager.GetActive() ? &m_docManager.GetViewport().GetCamera() : nullptr; };
-        cubeCallbacks.setView = [this](double az, double el)
+        cubeCallbacks.camera = [this, pc]() -> const Camera*
         {
-            m_docManager.GetEditor().SetViewDirection(az, el);
+            Viewport* vp = m_docManager.ViewportOf(DocOf(*pc));
+            return vp ? &vp->GetCamera() : nullptr;
+        };
+        cubeCallbacks.setView = [this, pc](double az, double el)
+        {
+            Document* doc = DocOf(*pc);
+            if (!doc)
+                return;
+            UseChrome(*pc);
+            m_docManager.GetEditor(*doc).SetViewDirection(az, el);
             RequestRenderAll();
             StateChanged();
         };
-        cubeCallbacks.orbit = [this](double dx, double dy)
+        cubeCallbacks.orbit = [this, pc](double dx, double dy)
         {
-            m_docManager.GetViewport().GetCamera().Orbit(dx, dy);
+            if (Viewport* vp = m_docManager.ViewportOf(DocOf(*pc)))
+                vp->GetCamera().Orbit(dx, dy);
             RequestRenderAll();
         };
         auto* cube = area->AddChild<ViewCube>(std::move(cubeCallbacks));
@@ -346,13 +401,13 @@ namespace MiniCAD
             auto popup = std::make_unique<MenuPopup>(std::move(items));
             popup->SetAnchor(Rect{ pos.x, pos.y, pos.x, pos.y }, PopupPlacement::Below);
             popup->SetOwner(cube);
-            m_ui->OpenPopup(std::move(popup));
+            (cube->GetContext() ? *cube->GetContext() : *m_ui).OpenPopup(std::move(popup));     // 开在方块所在的窗口里
             return true;
         });
-        m_viewCube = cube;
+        c.cube = cube;
 
         // 导航条：竖排在视图方块下面，与方块的中线对齐
-        area->AddChild(CreateViewNavBar());
+        area->AddChild(CreateViewNavBar(c));
 
         // 命令行：底部居中的浮动卡片（窄窗口时缩窄）
         {
@@ -378,14 +433,14 @@ namespace MiniCAD
             ks.minWidth  = 260.0f;
             ks.padding   = Edges::All(4.0f);
             card->SetLayoutStyle(ks);
-            std::unique_ptr<Node> console = CreateCommandLine();
+            std::unique_ptr<Node> console = CreateCommandLine(c);
             console->EditLayoutStyle().grow = 1.0f;
             card->AddChild(std::move(console));
             // 卡片高度随内容：平时只有一行输入，展开历史时回显区向上长出
-            m_console->GetLogView()->EditLayoutStyle().height = 96.0f;
-            m_console->SetLogExpanded(false);
+            c.console->GetLogView()->EditLayoutStyle().height = 96.0f;
+            c.console->SetLogExpanded(false);
             card->SetVisible(m_commandLineVisible);
-            m_cmdCard = card;
+            c.cmdCard = card;
         }
         return area;
     }
@@ -393,40 +448,42 @@ namespace MiniCAD
     void MainFrame::SetCommandLineVisible(bool visible)
     {
         m_commandLineVisible = visible;
-        if (m_cmdCard)
-            m_cmdCard->SetVisible(visible);
+        ForEachChrome([visible](ViewChrome& c)
+        {
+            if (c.cmdCard)
+                c.cmdCard->SetVisible(visible);
+        });
         SaveUserLayout();
     }
 
-    bool MainFrame::IsCommandLineShown() const
+    bool MainFrame::IsCommandLineShown(const ViewChrome& c) const
     {
-        if (!m_cmdCard || !m_cmdCard->GetContext())
+        if (!c.cmdCard || !c.cmdCard->GetContext())
             return false;           // 不在界面树上（界面描述里没有文档区）
-        for (const MiniGUI::Node* n = m_cmdCard; n; n = n->GetParent())
+        for (const MiniGUI::Node* n = c.cmdCard; n; n = n->GetParent())
             if (!n->IsVisible())
                 return false;
         return true;
     }
 
-    // “全部显示”留边：绘图区里被功能区、面板、状态栏、命令行挡住的部分不算可见范围
-    void MainFrame::UpdateFitInsets()
+    // “全部显示”留边：绘图区里被功能区、面板、状态栏、命令行挡住的部分不算可见范围。pixelScale 为那个窗口的物理像素 / 逻辑像素
+    void MainFrame::UpdateFitInsets(const ViewChrome& c, Camera& cam, float pixelScale)
     {
-        Camera& cam = m_docManager.GetViewport().GetCamera();
-        if (!m_viewport || !m_docArea || !m_docArea->GetContext() || !m_docArea->IsVisible())
+        if (!c.host || !c.area || !c.area->GetContext() || !c.area->IsVisible())
         {
             cam.SetFitInsets(0.0, 0.0, 0.0, 0.0);
             return;
         }
-        const MiniGUI::Rect vp   = m_viewport->GetScreenBounds();
-        MiniGUI::Rect       free = m_docArea->GetScreenBounds();
-        if (IsCommandLineShown())
-            free.max.y = std::min(free.max.y, m_cmdCard->GetScreenBounds().min.y);
+        const MiniGUI::Rect vp   = c.host->GetScreenBounds();
+        MiniGUI::Rect       free = c.area->GetScreenBounds();
+        if (IsCommandLineShown(c))
+            free.max.y = std::min(free.max.y, c.cmdCard->GetScreenBounds().min.y);
         if (free.Width() < 50.0f || free.Height() < 50.0f || vp.Width() < 1.0f)
         {
             cam.SetFitInsets(0.0, 0.0, 0.0, 0.0);
             return;
         }
-        const double s = m_dpiScale;
+        const double s = pixelScale;
         cam.SetFitInsets(std::max(0.0f, free.min.x - vp.min.x) * s, std::max(0.0f, free.min.y - vp.min.y) * s,
                          std::max(0.0f, vp.max.x - free.max.x) * s, std::max(0.0f, vp.max.y - free.max.y) * s);
     }
@@ -722,14 +779,17 @@ namespace MiniCAD
     }
 
     // =========================================================
-    // 状态栏：MiniCAD 的状态栏（靠右的捕捉 正交 悬停 细线）+ 界面描述文件的加载结果
+    // 状态栏：MiniCAD 的状态栏（靠右的捕捉 正交 悬停 细线）+ 界面描述文件的加载结果（主窗口的）
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateStatusBar()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateStatusBar(ViewChrome& c)
     {
         using namespace MiniGUI;
         // 照 SolidCraft 底部的 History 条：一张浮在绘图区上的圆角卡片；左侧是模型 / 布局标签
         constexpr float kHeight = TabView::kStripHeight;
-        auto status = std::make_unique<Panel>(Theme::Panel);
+        ViewChrome* pc = &c;
+        // 主窗口：在状态栏上按下（布局标签、捕捉等开关）先让主视口里的文档成为当前文档
+        std::unique_ptr<Panel> status = c.main ? std::make_unique<PressHook<Panel>>([this, pc] { UseChrome(*pc); }, Theme::Panel)
+                                               : std::make_unique<Panel>(Theme::Panel);
         status->SetRounding(Theme::RadiusLg);
         status->SetBorder(Theme::BorderSubtle);
         LayoutStyle s;
@@ -740,13 +800,15 @@ namespace MiniCAD
         s.padding    = Edges::Make(2.0f, 0.0f, 10.0f, 0.0f);
         status->SetLayoutStyle(s);
 
-        status->AddChild(CreateLayoutTabs());
-        m_statusBar = status->AddChild<StatusBarView>(m_docManager, kHeight - 2.0f);
-        m_statusBar->EditLayoutStyle().grow     = 1.0f;
-        m_statusBar->EditLayoutStyle().minWidth = 0.0f;
-        m_statusBar->SetOnToggled([this] { StateChanged(); });
-        m_statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：开关左边，平时隐藏
-        m_statusBar->AddRightItem(CreateSaveProgress());     // 保存进度：同上
+        status->AddChild(CreateLayoutTabs(c));
+        c.statusBar = status->AddChild<StatusBarView>(m_docManager, [this, pc] { return DocOf(*pc); }, kHeight - 2.0f);
+        c.statusBar->EditLayoutStyle().grow     = 1.0f;
+        c.statusBar->EditLayoutStyle().minWidth = 0.0f;
+        c.statusBar->SetOnToggled([this] { StateChanged(); });
+        if (!c.main)
+            return status;
+        c.statusBar->AddRightItem(CreateOpenProgress());     // 读取进度：开关左边，平时隐藏
+        c.statusBar->AddRightItem(CreateSaveProgress());     // 保存进度：同上
 
         m_uiStatus = status->AddChild<Label>("", 12.0f, Theme::TextDim);
         m_uiStatus->SetEllipsis(true);
@@ -868,8 +930,11 @@ namespace MiniCAD
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
         UpdateViewCubeVisibility();
         m_commandLineVisible = saved["commandLine"].AsBool(true);
-        if (m_cmdCard)
-            m_cmdCard->SetVisible(m_commandLineVisible);
+        ForEachChrome([this](ViewChrome& c)
+        {
+            if (c.cmdCard)
+                c.cmdCard->SetVisible(m_commandLineVisible);
+        });
         // 布局格式 2：绘图区铺满窗口、停靠区浮在上面、命令行不在停靠区里。更早保存的停靠布局不再适用
         if (saved["version"].AsNumber(1) < kUserLayoutVersion)
         {
@@ -910,10 +975,15 @@ namespace MiniCAD
 
     void MainFrame::UpdateViewCubeVisibility()
     {
-        if (!m_viewCube)
+        ForEachChrome([this](ViewChrome& c) { UpdateViewCubeVisibility(c); });
+    }
+
+    void MainFrame::UpdateViewCubeVisibility(ViewChrome& c)
+    {
+        if (!c.cube)
             return;
-        const Document* doc = m_docManager.GetActive();
-        m_viewCube->SetVisible(m_viewCubeVisible && !(doc && doc->ActiveLayoutIsPaper()));
+        const Document* doc = DocOf(c);
+        c.cube->SetVisible(m_viewCubeVisible && !(doc && doc->ActiveLayoutIsPaper()));
     }
 
     void MainFrame::SaveUserLayout()

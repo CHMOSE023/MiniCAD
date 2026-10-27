@@ -1,6 +1,7 @@
 // 浮在绘图区上的小工具（docs/MiniGUI/UI-REFRESH-PLAN.md，参照 SolidCraft）：
 // - 导航条：竖排在视图方块下面、贴着绘图区右边的圆角浮条——平移、放大、缩小、窗口缩放、全部显示 | 标准视图、视觉样式（菜单）。
 //   按钮的可用 / 勾选状态取自命令（ToolBar 自动刷新）；环绕仍用鼠标（Shift + 中键），写在提示里。
+//   每个窗口一条（主窗口、各文档窗口）：命令作用于当前文档，按下时所在窗口的文档已成为当前文档（MainFrame::UseChrome）
 // - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号。
 #include "GUI/MainFrame.h"
 #include "MiniCADVersion.h"
@@ -47,7 +48,7 @@ namespace MiniCAD
         }
     }
 
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateViewNavBar()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateViewNavBar(ViewChrome& c)
     {
         using namespace MiniGUI;
         const std::string icons = ResourceDir() + "/icons";
@@ -98,7 +99,7 @@ namespace MiniCAD
                         "view.swiso", "view.seiso", "view.neiso", "view.nwiso" }, PopupPlacement::Right, 18.0f);
         AddMenuButton(bar, m_commands, icons + "/Shaded.png", "视觉样式",
                       { "view.style.wireframe", "view.style.shaded" }, PopupPlacement::Right, 18.0f);
-        m_navBar = column.get();
+        c.navBar = column.get();
         return column;
     }
 

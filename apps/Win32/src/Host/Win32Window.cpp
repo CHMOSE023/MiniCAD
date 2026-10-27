@@ -450,12 +450,19 @@ namespace MiniCAD
     // =========================================================
     // 浮动窗口
     // =========================================================
-    std::unique_ptr<IFloatingWindow> Win32Window::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect)
+    std::unique_ptr<IFloatingWindow> Win32Window::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document)
     {
-        auto window = std::make_unique<Win32FloatingWindow>(*this, title, rect);
+        auto window = std::make_unique<Win32FloatingWindow>(*this, title, rect, document);
         if (!window->IsValid())
             return nullptr;
         return window;
+    }
+
+    void Win32Window::ActivateMainWindow()
+    {
+        if (IsIconic(m_hwnd))
+            ShowWindow(m_hwnd, SW_RESTORE);
+        SetForegroundWindow(m_hwnd);
     }
 
     void Win32Window::RegisterFloatingWindow(Win32FloatingWindow* w)

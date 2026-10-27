@@ -73,7 +73,8 @@ MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
         void CloseWindow() override;
         void Quit() override;
 
-        std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect) override;
+        std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document) override;
+        void ActivateMainWindow() override;
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;

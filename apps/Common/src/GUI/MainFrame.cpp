@@ -268,13 +268,13 @@ m_floatHost.reset();
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
         m_layout->RegisterPanel("canvas",     CreateCanvas());
-        m_layout->RegisterPanel("documents",  CreateDocumentArea());    // 内含视图方块、导航条与浮动命令行
+        m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());
         m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
         m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
         m_layout->RegisterPanel("layerbar",   CreateLayerBar());
-        m_layout->RegisterPanel("statusbar",  CreateStatusBar());
+        m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
         m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
         m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
 
@@ -781,65 +781,73 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
         SyncLayoutTabs();
     }
 
-    // 把当前文档的布局表同步到布局标签条。没有文档时整行隐藏。
+    // 各窗口的布局标签条同步它的文档的布局表。没有文档时整行隐藏。
     void MainFrame::SyncLayoutTabs()
     {
-        if (!m_layoutTabs)
+        ForEachChrome([this](ViewChrome& c) { SyncLayoutTabs(c); });
+        UpdateViewCubeVisibility();      // 切布局 / 切文档后：布局页不显示视图方块
+    }
+
+    void MainFrame::SyncLayoutTabs(ViewChrome& c)
+    {
+        if (!c.layoutTabs)
             return;
 
         // 隐藏/显示整行：布局页签条是独立面板（文档区下方、命令行上方），
         // 只隐藏里面的 TabView 会留下一行空白。
-        auto setRowVisible = [this](bool visible)
+        auto setRowVisible = [&c](bool visible)
         {
-            if (m_layoutTabsBar) m_layoutTabsBar->SetVisible(visible);
-            else                 m_layoutTabs->SetVisible(visible);
+            if (c.layoutTabsBar) c.layoutTabsBar->SetVisible(visible);
+            else                 c.layoutTabs->SetVisible(visible);
         };
 
-        Document* doc = m_docManager.GetActive();
+        Document* doc = DocOf(c);
         if (doc != nullptr)
         {
             // 当前布局被删掉了（删除布局、撤销新建布局）：回到模型页并恢复模型页的视图
-            Camera& cam = m_docManager.GetViewport().GetCamera();
-            CameraState state = cam.GetState();
-            if (doc->ValidateActiveLayout(state))
+            if (Viewport* vp = m_docManager.ViewportOf(doc))
             {
-                cam.SetState(state);
-                m_docManager.GetEditor().SetSelection({});
-                m_viewport->RequestRender();
+                Camera& cam = vp->GetCamera();
+                CameraState state = cam.GetState();
+                if (doc->ValidateActiveLayout(state))
+                {
+                    cam.SetState(state);
+                    m_docManager.GetEditor(*doc).SetSelection({});
+                    HostOf(doc).RequestRender();
+                }
             }
         }
         if (doc == nullptr)
         {
-            m_syncingLayouts = true;
-            for (int i = m_layoutTabs->GetTabCount() - 1; i >= 0; --i)
-                m_layoutTabs->RemoveTab(i);
-            m_syncingLayouts = false;
+            c.syncingLayouts = true;
+            for (int i = c.layoutTabs->GetTabCount() - 1; i >= 0; --i)
+                c.layoutTabs->RemoveTab(i);
+            c.syncingLayouts = false;
             setRowVisible(false);
             return;
         }
 
         const auto& layouts = doc->GetScene().Layouts();
-        m_syncingLayouts = true;
+        c.syncingLayouts = true;
         // 数量或名称变化才重建（避免每帧抖掉用户的选中）
-        bool rebuild = m_layoutTabs->GetTabCount() != static_cast<int>(layouts.size());
+        bool rebuild = c.layoutTabs->GetTabCount() != static_cast<int>(layouts.size());
         if (!rebuild)
             for (size_t i = 0; i < layouts.size(); ++i)
-                if (m_layoutTabs->GetTabTitle(static_cast<int>(i)) != layouts[i].Name)
+                if (c.layoutTabs->GetTabTitle(static_cast<int>(i)) != layouts[i].Name)
                 { rebuild = true; break; }
 
         if (rebuild)
         {
-            for (int i = m_layoutTabs->GetTabCount() - 1; i >= 0; --i)
-                m_layoutTabs->RemoveTab(i);
+            for (int i = c.layoutTabs->GetTabCount() - 1; i >= 0; --i)
+                c.layoutTabs->RemoveTab(i);
             for (const auto& l : layouts)
-                m_layoutTabs->AddTab(l.Name, nullptr, false);
+                c.layoutTabs->AddTab(l.Name, nullptr, false);
         }
-        m_layoutTabs->SetSelected(doc->ActiveLayout());
-        m_syncingLayouts = false;
+        c.layoutTabs->SetSelected(doc->ActiveLayout());
+        c.syncingLayouts = false;
 
         // 有文档就显示（与 AutoCAD 一致，只有模型页时也显示「模型」）
         setRowVisible(true);
-        UpdateViewCubeVisibility();      // 切布局 / 切文档后：布局页不显示视图方块
     }
 
     // 切换布局：换相机、清选择、整场景重建（可见实体集合变了）
@@ -883,7 +891,7 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
         m_docManager.GetEditor().SetSelection({});
 
         SyncLayoutTabs();
-        m_viewport->RequestRender();
+        HostOf(doc).RequestRender();
         StateChanged();
     }
 
@@ -933,7 +941,7 @@ for (int i = 0; i < m_docTabs->GetTabCount(); ++i)
         if (doc->GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(layouts[static_cast<size_t>(index)].OwnerKey),
                                            doc->GetScene()))
             cmd.Echo("删除布局：" + name);
-        m_viewport->RequestRender();
+        HostOf(doc).RequestRender();
         StateChanged();
     }
 
@@ -1280,7 +1288,7 @@ const KeyCode code = ToKeyCode(e.key);
         Viewport& vp = m_docManager.GetMainViewport();
         if (vp.GetWidth() != pixelWidth || vp.GetHeight() != pixelHeight)
             vp.Resize(static_cast<float>(pixelWidth), static_cast<float>(pixelHeight));
-        UpdateFitInsets();
+        UpdateFitInsets(m_main, vp.GetCamera(), m_dpiScale);
 
         if (m_docManager.GetMainDocument())
         {
@@ -1324,21 +1332,55 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
 
     void MainFrame::SyncViewCube()
     {
-        // 视图方块跟着当前文档的视线方向（环绕、标准视图、切换文档）
-        if (!m_viewCube || !m_docManager.GetActive())
+        SyncViewCube(m_main);
+    }
+
+    void MainFrame::SyncViewCube(ViewChrome& c)
+    {
+        // 视图方块跟着这个窗口里文档的视线方向（环绕、标准视图、切换文档）
+        Viewport* vp = m_docManager.ViewportOf(DocOf(c));
+        if (!c.cube || !vp)
             return;
-        const CameraState cam = m_docManager.GetViewport().GetCamera().GetState();
-        if (cam.Azimuth != m_cubeAzimuth || cam.Elevation != m_cubeElevation)
+        const CameraState cam = vp->GetCamera().GetState();
+        if (cam.Azimuth != c.cubeAzimuth || cam.Elevation != c.cubeElevation)
         {
-            m_cubeAzimuth   = cam.Azimuth;
-            m_cubeElevation = cam.Elevation;
-            m_viewCube->Invalidate();
+            c.cubeAzimuth   = cam.Azimuth;
+            c.cubeElevation = cam.Elevation;
+            c.cube->Invalidate();
         }
+    }
+
+    // =========================================================
+    // 每个窗口一套的绘图区界面（视图方块、导航条、命令行、状态栏）
+    // =========================================================
+    Document* MainFrame::DocOf(const ViewChrome& c) const
+    {
+        return c.main ? m_docManager.GetMainDocument() : c.doc;
+    }
+
+    MainFrame::ViewChrome& MainFrame::ChromeOf(const Document* doc)
+    {
+        if (DocWindow* w = FindDocWindow(doc))
+            return w->chrome;
+        return m_main;
+    }
+
+    void MainFrame::UseChrome(const ViewChrome& c)
+    {
+        ActivateDocumentOf(DocOf(c));
+    }
+
+    void MainFrame::ActivateDocumentOf(Document* doc)
+    {
+        if (!doc || m_docManager.GetActive() == doc)
+            return;
+        m_docManager.SetActive(doc);
+        StateChanged();         // 面板、菜单勾选随当前文档切换
     }
 
     void MainFrame::UpdateStatus()
     {
-        m_statusBar->Refresh();
+        m_main.statusBar->Refresh();
         // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标
         if (m_viewport)
             m_viewport->SetCursor(m_docManager.GetMainDocument() && m_docManager.GetMainEditor().HidesCrosshair()
@@ -1379,7 +1421,8 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
         if (m_floatHost)
             m_floatHost->Purge();       // 上一帧关闭的浮动窗口此时才销毁
         PurgeDocWindows();
-auto ms = [](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
+        RaiseMainForModal();
+        auto ms =[](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
         int64_t t = NowTicks();
 
         // 0. 节点图：参数或引用的图纸变了就求值，刷新绘图区预览（在视口渲染之前）

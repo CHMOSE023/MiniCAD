@@ -111,12 +111,16 @@ namespace MiniCAD
     public:
         virtual ~AppPlatform() = default;
 
-        // 为浮出的停靠面板建独立的系统窗口（Win32）；给不出时返回 nullptr（网页版、Linux 版），面板在主窗口里浮动
-        virtual std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect)
+        // 为浮出的停靠面板或拖出的文档建独立的系统窗口（Win32）；给不出时返回 nullptr（网页版、Linux 版），面板在主窗口里浮动。
+        // document = false：主窗口拥有的工具窗口（总在主窗口之上、随它最小化）；true：文档窗口，与主窗口平级
+        //（可以在主窗口之下，主窗口弹出对话框时把主窗口置前就不会被挡住），在任务栏里有自己的按钮
+        virtual std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document = false)
         {
-            (void)title; (void)rect;
+            (void)title; (void)rect; (void)document;
             return nullptr;
         }
+        // 把主窗口置前并激活（主窗口弹出对话框时不让文档窗口挡住）；没有独立窗口的平台什么都不做
+        virtual void ActivateMainWindow() {}
 
         // ── 图形 ─────────────────────────────────────────────────
         virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / GLES3Backend）

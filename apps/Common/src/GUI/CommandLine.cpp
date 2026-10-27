@@ -24,19 +24,22 @@ namespace MiniCAD
         }
     }
 
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateCommandLine()
+    // 每个窗口一个命令行（主窗口、各文档窗口）：显示并执行这个窗口里文档的命令；提交、Esc 前先让它成为当前文档
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateCommandLine(ViewChrome& c)
     {
         using namespace MiniGUI;
         auto console = std::make_unique<CommandConsole>();
-        m_console = console.get();
+        c.console = console.get();
+        ViewChrome* pc = &c;
 
         // 补全：工具全名按前缀匹配；输入恰好是别名（L → Line）时把别名指向的命令排在最前，回车 / 空格直接执行它
-        m_console->SetCompletion([this](const std::string& text)
+        c.console->SetCompletion([this, pc](const std::string& text)
         {
             std::vector<ListItem> items;
-            if (!m_docManager.GetActive())
+            Document* doc = DocOf(*pc);
+            if (!doc)
                 return items;
-            const Editor& editor = m_docManager.GetEditor();
+            const Editor& editor = m_docManager.GetEditor(*doc);
             if (editor.IsZoomPending())
                 return items;   // 正在输入 ZOOM 的选项：E / A 不是命令前缀，不补全
             for (const std::string& name : editor.GetCommandNames())
@@ -64,19 +67,25 @@ namespace MiniCAD
             return items;
         });
         // ZOOM 等待选项时，敲下 E / A 立即执行，不必再按空格 / 回车（Z 空格 E 两步完成）
-        m_console->GetInput()->SetOnChanged([this](const std::string& text)
+        c.console->GetInput()->SetOnChanged([this, pc](const std::string& text)
         {
-            if (text.size() == 1 && m_docManager.GetActive() && m_docManager.GetEditor().IsZoomPending()
+            Document* doc = DocOf(*pc);
+            if (text.size() == 1 && doc && m_docManager.GetEditor(*doc).IsZoomPending()
                 && (text[0] == 'e' || text[0] == 'E' || text[0] == 'a' || text[0] == 'A'))
-                m_console->Submit();
+                pc->console->Submit();
         });
-        m_console->SetOnSubmit([this](const std::string& text) { RunCommandLine(text); });
-        m_console->SetOnEscape([this]
+        c.console->SetOnSubmit([this, pc](const std::string& text)
         {
-            // Esc：与在绘图区按 Esc 相同（取消当前工具、清除选择），焦点回到绘图区
-            if (m_viewport->IsVisible())
+            UseChrome(*pc);
+            RunCommandLine(text);
+        });
+        c.console->SetOnEscape([this, pc]
+        {
+            // Esc：与在绘图区按 Esc 相同（取消当前工具、清除选择），焦点回到这个窗口的绘图区
+            if (pc->host && pc->host->IsVisible())
             {
-                m_viewport->Focus();
+                UseChrome(*pc);
+                pc->host->Focus();
                 SendKeyToEditor(MiniGUI::Key::Escape);
             }
         });
@@ -149,9 +158,10 @@ namespace MiniCAD
                 editor.RunCommand(text);
         }
 
-        // 执行后焦点回到绘图区：继续用鼠标取点、键盘输入选项、Esc 取消
-        if (m_viewport->IsVisible())
-            m_viewport->Focus();
+        // 执行后焦点回到当前文档所在窗口的绘图区：继续用鼠标取点、键盘输入选项、Esc 取消
+        MiniGUI::ViewportHost& host = HostOf(m_docManager.GetActive());
+        if (host.IsVisible())
+            host.Focus();
         NoteInput();
         StateChanged();
         RequestRenderAll();   // ZOOM 等命令只改相机，不经过工具的重绘
@@ -162,29 +172,37 @@ namespace MiniCAD
     {
         // AutoCAD 习惯：没有进行中的工具时，在绘图区敲字母就是在输入命令。
         // 只把焦点交给命令行，随后到达的字符消息（WM_CHAR）自然落入输入框，大小写、输入法都按输入框处理
+        // 进的是当前文档所在窗口的命令行（文档窗口里敲字母进它自己的命令行）
         using MiniGUI::Key;
         const bool letter = e.key >= Key::A && e.key <= Key::Z;
-        if (e.type != MiniGUI::KeyEventType::Down || !letter || e.Ctrl() || e.Alt() || !m_console
+        ViewChrome& c = ChromeOf(m_docManager.GetActive());
+        if (e.type != MiniGUI::KeyEventType::Down || !letter || e.Ctrl() || e.Alt() || !c.console
             || m_docManager.GetEditor().IsActiveTool())
             return false;
 
-        if (!IsCommandLineShown())
+        if (!IsCommandLineShown(c))
             return false;                   // 命令行被关掉了（或界面描述里没有文档区）：交给 Editor（它自己也能缓存字母命令）
-        m_console->FocusInput();
+        c.console->FocusInput();
         return true;
     }
 
     void MainFrame::SyncCommandLine()
     {
-        if (!m_console)
+        SyncCommandLine(m_main);
+    }
+
+    void MainFrame::SyncCommandLine(ViewChrome& c)
+    {
+        if (!c.console)
             return;
-        if (!m_docManager.GetActive())
+        Document* doc = DocOf(c);
+        if (!doc)
         {
-            m_console->SetPrompt("命令:");
+            c.console->SetPrompt("命令:");
             return;
         }
-        const CommandLine& cl = m_docManager.GetEditor().GetCmdLine();
-        m_console->SetPrompt(cl.Prompt().empty() ? std::string("命令:") : cl.Prompt());
-        m_console->SetLog(cl.Lines());
+        const CommandLine& cl = m_docManager.GetEditor(*doc).GetCmdLine();
+        c.console->SetPrompt(cl.Prompt().empty() ? std::string("命令:") : cl.Prompt());
+        c.console->SetLog(cl.Lines());
     }
 }

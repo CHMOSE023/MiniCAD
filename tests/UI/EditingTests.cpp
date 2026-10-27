@@ -299,7 +299,7 @@ TEST(TreeView_RenameAndReject)
 
 // ── 多文档标签 ───────────────────────────────────────────────────
 
-// 标签拖到标签条之外松开：回调宿主（主窗口把文档拖出成独立窗口）；拖回时 DropIndexAt 找落点
+// 标签一拖到标签条之外就回调宿主（主窗口把文档拖出成独立窗口）；宿主接手后移动 / 松开转给宿主；拖回时 DropIndexAt 找落点
 TEST(TabView_DragOutAndDropIndex)
 {
     TestUI t({ 600, 300 });
@@ -308,7 +308,10 @@ TEST(TabView_DragOutAndDropIndex)
         tabs->AddTab<Node>("图纸" + std::to_string(i + 1), true);
     int  outTab = -1;
     Vec2 outPos;
-    tabs->SetOnTabDragOut([&](int i, Vec2 p) { outTab = i; outPos = p; });
+    bool accept = false;
+    tabs->SetOnTabDragOut([&](int i, Vec2 p) { outTab = i; outPos = p; return accept; });
+    std::vector<std::pair<TabView::TornDragPhase, Vec2>> torn;
+    tabs->SetOnTornTabDrag([&](TabView::TornDragPhase ph, Vec2 p) { torn.emplace_back(ph, p); });
     t.Layout();
 
     // 测试里没有字体：标签宽 52，从 4 开始；按在第二个标签的左半（右侧 20 像素是关闭按钮）
@@ -317,22 +320,32 @@ TEST(TabView_DragOutAndDropIndex)
     t.tick += 5000;
 t.ui.PointerMove(tab1, 0);
     t.ui.PointerDown(tab1, MouseButton::Left, 0, t.tick);
-CHECK(!tabs->IsDraggingOut());
-    t.ui.PointerMove({ tab1.x, r.min.y + TabView::kStripHeight + TabView::kDragOutDistance + 10.0f }, 0);   // 条外
-    CHECK(tabs->IsDraggingOut());
-    CHECK(outTab == -1);                                                                        // 还没松开
+    CHECK(!tabs->IsDraggingOut());
+    // 宿主不接手（平台给不出窗口）：标签留在条里，灰框；拖回条内照常
+    const Vec2 below{ tab1.x, r.min.y + TabView::kStripHeight + TabView::kDragOutDistance + 10.0f };
+    t.ui.PointerMove(below, 0);                                                                 // 条外
+    CHECK(outTab == 1 && tabs->IsDraggingOut() && !tabs->IsTornDragging());                    // 一拖出就问宿主，没等松开
+    outTab = -1;
+    t.ui.PointerMove({ tab1.x + 20.0f, below.y }, 0);
+    CHECK(outTab == -1);                                                                        // 一次拖出只问一次
     t.ui.PointerMove(tab1, 0);                                                                  // 拖回条内
     CHECK(!tabs->IsDraggingOut());
     t.ui.PointerUp(tab1, MouseButton::Left, 0);
-    CHECK(outTab == -1 && tabs->GetTabCount() == 3);                                            // 条内松开：没有拖出
+    CHECK(outTab == -1 && torn.empty() && tabs->GetTabCount() == 3);                            // 条内松开：没有拖出
 
+    // 宿主接手：之后的移动、松开转给宿主
+    accept = true;
     t.tick += 5000;
     t.ui.PointerDown(tab1, MouseButton::Left, 0, t.tick);
     t.ui.PointerMove({ tab1.x, r.min.y + 100.0f }, 0);
-    t.ui.PointerUp({ tab1.x, r.min.y + 100.0f }, MouseButton::Left, 0);
-    CHECK(outTab == 1);
+    CHECK(outTab == 1 && tabs->IsTornDragging() && !tabs->IsDraggingOut());
     CHECK_NEAR(outPos.y, r.min.y + 100.0f);
-    CHECK(!tabs->IsDraggingOut() && tabs->GetTabCount() == 3);                                   // 回调里没移除，标签还在
+    t.ui.PointerMove({ tab1.x + 50.0f, r.min.y + 150.0f }, 0);
+    t.ui.PointerUp({ tab1.x + 50.0f, r.min.y + 150.0f }, MouseButton::Left, 0);
+    CHECK(torn.size() == 2 && torn[0].first == TabView::TornDragPhase::Move && torn[1].first == TabView::TornDragPhase::End);
+    if (torn.size() == 2)
+        CHECK_NEAR(torn[1].second.y, r.min.y + 150.0f);
+    CHECK(!tabs->IsTornDragging() && tabs->GetTabCount() == 3);                                  // 回调里没移除，标签还在
 
     // 落点：标签中线之前插在它前面，之后插在它后面；末尾之后为 GetTabCount()；离标签条太远为 -1
     CHECK(tabs->DropIndexAt({ r.min.x + 4 + 10.0f, r.min.y + 17.0f }) == 0);

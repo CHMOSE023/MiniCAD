@@ -114,12 +114,14 @@ namespace MiniCAD
         void RegisterCommands();
 
         // ── 宿主面板（MainPanels.cpp / LayerPanels.cpp）─────────────
+        struct ViewChrome;      // 一个窗口里的视图方块、导航条、命令行、状态栏（见下文“每个窗口一套的绘图区界面”）
         std::unique_ptr<MiniGUI::Node> CreateCanvas();            // 绘图区（面板 "canvas"）：铺满标题栏以下，其余界面浮在上面
-        std::unique_ptr<MiniGUI::Node> CreateDocumentArea();      // 停靠区里透明的“洞”（面板 "documents"）：视图方块、导航条、命令行
+        // 透明的“洞”（主窗口的面板 "documents"，文档窗口里铺满视口）：视图方块、导航条、命令行
+        std::unique_ptr<MiniGUI::Node> CreateDocumentArea(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateDocTabs();           // 文档标签条（面板 "doctabs"，放在标题栏里）
-        std::unique_ptr<MiniGUI::Node> CreateViewNavBar();        // 视图方块下面竖排的导航条（ViewNavBar.cpp）
+        std::unique_ptr<MiniGUI::Node> CreateViewNavBar(ViewChrome& c);   // 视图方块下面竖排的导航条（ViewNavBar.cpp）
         std::unique_ptr<MiniGUI::Node> CreateAppBar();            // 标题栏右侧：AI、设置、帮助、版本号（面板 "appbar"，ViewNavBar.cpp）
-        std::unique_ptr<MiniGUI::Node> CreateLayoutTabs();        // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
+        std::unique_ptr<MiniGUI::Node> CreateLayoutTabs(ViewChrome& c);   // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel();
         std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
         void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
@@ -128,13 +130,14 @@ namespace MiniCAD
         void RefreshStartNav();                                   // 起始页导航列的可用状态、“返回”行的文档名
         void OpenNodeExample(const std::string& path, const std::string& name, const std::string& description);
         void OpenNodeEditorFromStart(bool newDocument);           // 离开起始页并显示节点编辑器（没有文档时新建）
-        std::unique_ptr<MiniGUI::Node> CreateStatusBar();
+        // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
+        std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
         std::unique_ptr<MiniGUI::Node> CreateLayerBar();          // 工具栏里的图层 / 线型 / 线宽下拉框
         std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
         std::unique_ptr<MiniGUI::Node> CreateSaveProgress();      // 状态栏里的保存进度（同读取进度的样式），只在保存时显示
-        std::unique_ptr<MiniGUI::Node> CreateCommandLine();       // 命令行（CommandLine.cpp）
-        void SyncCommandLine();                                   // 回显与提示同步到命令行
+        std::unique_ptr<MiniGUI::Node> CreateCommandLine(ViewChrome& c);  // 命令行（CommandLine.cpp）
+        void SyncCommandLine();                                   // 主窗口：回显与提示同步到命令行（文档窗口在它自己的帧里同步）
         void RunCommandLine(const std::string& text);             // 命令行提交
         bool RouteKeyToCommandLine(const MiniGUI::KeyEvent& e);   // 绘图区直接打字进入命令行
 
@@ -202,9 +205,8 @@ namespace MiniCAD
         void ReloadUi();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
-        bool IsCommandLineShown() const;          // 浮动命令行在界面上可见
-        void UpdateFitInsets();                   // 按没被功能区、面板挡住的范围设置“全部显示”的留边
-        void UpdateViewCubeVisibility();         // 按开关与当前布局显示视图方块（布局是二维图纸，不显示）
+        bool IsCommandLineShown() const { return IsCommandLineShown(m_main); }   // 主窗口的浮动命令行在界面上可见
+        void UpdateViewCubeVisibility();         // 按开关与各窗口文档的当前布局显示视图方块（布局是二维图纸，不显示）
         void LoadUserLayout();
         void SaveUserLayout();
         void ResetLayout();
@@ -232,7 +234,7 @@ namespace MiniCAD
         void UpdateTitle();
         void ActivateDocument(Document* doc);
         // 布局标签（模型 / 图纸空间布局）同步与切换
-        void SyncLayoutTabs();
+        void SyncLayoutTabs();                  // 各窗口的布局标签条同步它的文档
         void ActivateLayout(int index);
         void ZoomToLayout(const DrawingLayout& sheet);   // 框住布局保存的图纸空间视图，没有时框住纸张范围
         void NewLayout();                       // 新建布局（标签条的 + 与右键菜单、命令 layout.new）
@@ -257,6 +259,43 @@ namespace MiniCAD
         void NoteInput();       // 记录输入时间，用于统计输入到呈现的延迟；请当前文档的视口重绘
         void NoteInput(MiniGUI::ViewportHost& host);
 
+        // ── 每个窗口一套的绘图区界面：视图方块、导航条、命令行、状态栏（含模型 / 布局标签）──────────
+        // 主窗口一套（m_main，绑定主视口里的文档 GetMainDocument），每个文档窗口一套（绑定它的文档）。
+        // 在哪套上按下 / 提交，它的文档就成为当前文档（UseChrome），菜单命令与面板随之作用于它
+        struct ViewChrome
+        {
+            bool                     main    = false;       // 主窗口的一套（文档 = 主视口里的文档）
+            Document*                doc     = nullptr;     // 文档窗口的文档（主窗口的不用）
+            MiniGUI::ViewportHost*   host    = nullptr;     // 这个窗口的视口控件
+            MiniGUI::Node*           area    = nullptr;     // 透明的“洞”：没被遮住的绘图区，视图方块、导航条、命令行在里面
+            MiniGUI::Node*           cube    = nullptr;     // 视图方块
+            MiniGUI::Node*           navBar  = nullptr;     // 视图方块下面的导航条
+            MiniGUI::Node*           cmdCard = nullptr;     // 底部居中的浮动命令行卡片
+            MiniGUI::CommandConsole* console = nullptr;
+            StatusBarView*           statusBar     = nullptr;
+            MiniGUI::TabView*        layoutTabs    = nullptr;   // 布局标签条（模型 / 图纸空间布局）
+            MiniGUI::Node*           layoutTabsBar = nullptr;   // 布局标签条的外层容器（隐藏整行用）
+            bool                     syncingLayouts = false;    // 正在程序化同步标签，忽略回调
+            double                   cubeAzimuth   = 0.0;       // 视图方块上次绘制时的视线方向
+            double                   cubeElevation = 0.0;
+        };
+        Document*   DocOf(const ViewChrome& c) const;            // 这套界面绑定的文档（可能为空）
+        ViewChrome& ChromeOf(const Document* doc);               // 文档所在窗口的一套：它的文档窗口的，否则主窗口的
+        void        UseChrome(const ViewChrome& c);              // 它的文档成为当前文档
+        void        ActivateDocumentOf(Document* doc);           // 同上，按文档（没变时什么都不做）
+        template <class F> void ForEachChrome(F&& f)
+        {
+            f(m_main);
+            for (auto& w : m_docWindows)
+                f(w->chrome);
+        }
+        void SyncCommandLine(ViewChrome& c);
+        void SyncLayoutTabs(ViewChrome& c);
+        void SyncViewCube(ViewChrome& c);
+        void UpdateViewCubeVisibility(ViewChrome& c);
+        bool IsCommandLineShown(const ViewChrome& c) const;
+        void UpdateFitInsets(const ViewChrome& c, Camera& cam, float pixelScale);   // 按没被遮住的范围设置“全部显示”的留边
+
         // ── 拖出主窗口的文档窗口（DocumentWindows.cpp）──────────────────
         struct ViewInput { int mouseX = 0, mouseY = 0, pressX = 0, pressY = 0; uint8_t buttons = 0; };   // 一个视口里的鼠标状态（像素；buttons 为 MiniCAD 的 MouseButtonState 掩码）
         struct DocWindow
@@ -265,29 +304,36 @@ namespace MiniCAD
             std::unique_ptr<IFloatingWindow> window;
             MiniGUI::FloatingPanel*          panel  = nullptr;     // 标题栏 + 内容，铺满窗口
             MiniGUI::ViewportHost*           host   = nullptr;     // 显示它的视口纹理
+            ViewChrome                       chrome;               // 它自己的视图方块、导航条、命令行、状态栏
             std::unique_ptr<IRenderTarget>   target;               // 它的视口渲染目标
             void*                            srv    = nullptr;     // 登记过的着色器资源
             MiniGUI::TextureId               tex    = MiniGUI::InvalidTextureId;
             ViewInput                        input;
             MiniGUI::Vec2                    grab, size;           // 拖标题栏：按下点相对窗口左上角的位置、窗口尺寸（主窗口坐标）
         };
-        bool       FloatDocument(Document* doc, MiniGUI::Vec2 windowPos);   // 标签拖出：文档移到独立窗口（标题栏落在 windowPos 下）；平台不支持时 false
+        // 文档移到独立窗口（标题栏落在 windowPos 下）；平台不支持时 false。activate = false：不激活窗口
+        //（标签拖出过程中主窗口持有鼠标捕获，松开后再激活）
+        bool       FloatDocument(Document* doc, MiniGUI::Vec2 windowPos, bool activate = true);
         void       MergeDocument(Document* doc, int index);                  // 拖回 / 双击标题栏：合并回标签条的 index 处（-1 = 末尾）
         DocWindow* FindDocWindow(const Document* doc) const;
         void       DestroyDocWindow(const Document* doc);                    // 关闭文档窗口（推迟到下一帧销毁）
         void       PurgeDocWindows();                                        // 每帧开头销毁已关闭的文档窗口
         void       CloseAllDocWindows();
         void       RenderDocWindow(DocWindow& w, int pixelWidth, int pixelHeight);
-        void       OnDocWindowDrag(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 pos);
+        void       OnDocWindowDrag(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 pos);   // 拖文档窗口的标题栏（pos 为文档窗口坐标）
+        void       OnDocTabTornDrag(MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);         // 标签拖出后继续拖：窗口跟着光标走
+        void       DragDocWindow(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);   // 上面两者共用：移动窗口、画落点、松开在标签条上合并
         bool       OnDocWindowKey(const MiniGUI::KeyEvent& e);
-        bool       MainTextTargetFocused() const;                            // 主窗口的命令行 / 动态输入框有焦点
+        bool       BlockedByModal();                                         // 主窗口开着对话框：把主窗口置前并返回 true（文档窗口的操作不执行）
+        void       RaiseMainForModal();                                      // 每帧：主窗口刚弹出对话框时置前，不被文档窗口挡住
+        void       SyncDocWindowChrome(DocWindow& w);                        // 文档窗口的每一帧：命令行、状态栏、视图方块跟随它的文档
         MiniGUI::Vec2          DocWindowToMain(const DocWindow& w, MiniGUI::Vec2 windowPos) const;   // 文档窗口坐标 → 主窗口坐标
         MiniGUI::ViewportHost& HostOf(const Document* doc) const;            // 文档所在的视口控件：它的窗口的，否则主窗口的
         ViewInput& InputOf(const Document* doc);
         void       RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host);
         void       RequestRenderAll();                                       // 主视口与所有文档窗口都重绘
         void       SetDocWindowsTheme(const MiniGUI::ThemeColors& theme);
-        void       SyncViewCube();                                           // 视图方块跟着当前文档的视线方向
+        void       SyncViewCube();                                           // 主窗口的视图方块跟着主视口里文档的视线方向
     public:
         size_t     DocWindowCount() const { return m_docWindows.size(); }    // 自测用
     private:
@@ -305,9 +351,7 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
         MiniGUI::TabView*                      m_docTabs    = nullptr;
-        MiniGUI::TabView*                      m_layoutTabs = nullptr;   // 布局标签条（模型 / 图纸空间布局）
-        MiniGUI::Node*                         m_layoutTabsBar = nullptr; // 布局标签条的外层容器（隐藏整行用）
-        bool                                   m_syncingLayouts = false; // 正在程序化同步标签，忽略回调
+        ViewChrome                             m_main{ .main = true };   // 主窗口的视图方块、导航条、命令行、状态栏
         MiniGUI::Node*                         m_startPage   = nullptr;  // 起始页（StartPage.cpp，界面描述文件里的面板 "start"）
         MiniGUI::Node*                         m_startRecent = nullptr;  // 起始页里放最近打开列表的容器
         MiniGUI::Button*                       m_startBack   = nullptr;  // 起始页导航列的“返回 文档名”
@@ -315,22 +359,14 @@ namespace MiniCAD
         std::vector<MiniGUI::Node*>            m_startHidden;            // 显示起始页时隐藏的界面部分（收起时恢复）
         bool                                   m_startShown = false;     // 有文档时也显示起始页（标题栏首页键，Esc 返回）
         const Document*                        m_startOver  = nullptr;   // 显示起始页时的当前文档；当前文档变了就回到视口
-        MiniGUI::Node*                         m_viewCube   = nullptr;
-        MiniGUI::Node*                         m_navBar     = nullptr;   // 视图方块下面的导航条
         MiniGUI::Node*                         m_appBar     = nullptr;   // 标题栏右侧的 AI / 设置 / 帮助 / 版本（窗口窄时隐藏）
         float                                  m_appBarWidth    = 0.0f;  // 显示时量到的宽度与它右边到标题栏右端的距离
         float                                  m_appBarRightGap = 0.0f;
-        MiniGUI::Node*                         m_docArea    = nullptr;   // 停靠区里透明的“洞”：没被遮住的绘图区
-        MiniGUI::Node*                         m_cmdCard    = nullptr;   // 底部居中的浮动命令行卡片
-        bool                                   m_commandLineVisible = true; // 命令行的显示开关（保存在用户布局文件里）
-        bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（保存在用户布局文件里）
-        double                                 m_cubeAzimuth   = 0.0;    // 视图方块上次绘制时的视线方向
-        double                                 m_cubeElevation = 0.0;
-        StatusBarView*                         m_statusBar  = nullptr;
+        bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
+        bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
         MiniGUI::ListView*                     m_layerList  = nullptr;
         MiniGUI::ComboBox*                     m_layerBarLayer = nullptr;  // 工具栏的图层下拉框（自测用）
-        MiniGUI::CommandConsole*               m_console    = nullptr;
         DynamicInputBox*                       m_dynInput   = nullptr;
         MiniGUI::Popup*                        m_textPopup  = nullptr;   // 文字 / 多行文字原位编辑
         MiniGUI::Dialog*                       m_blockNameDialog = nullptr;
@@ -423,6 +459,8 @@ namespace MiniCAD
         bool      m_hovered = false;
         std::vector<std::unique_ptr<DocWindow>> m_docWindows;
         std::vector<std::unique_ptr<DocWindow>> m_docWindowGraveyard;    // 已关闭、等下一帧销毁
+        Document*                               m_tornDoc = nullptr;     // 正从标签条拖出、鼠标还没松开的文档
+        bool                                    m_modalRaised = false;   // 上一帧主窗口已开着对话框（RaiseMainForModal）
 
         // ── 统计 ────────────────────────────────────────────────
         uint64_t m_frames          = 0;

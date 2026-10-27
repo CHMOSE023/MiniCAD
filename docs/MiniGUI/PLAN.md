@@ -369,7 +369,7 @@ public:
       - `Platform/Win32/Win32Frame.*`：无边框窗口（`WS_OVERLAPPEDWINDOW` + `WM_NCCALCSIZE` 返回 0 + DWM 扩展 1 像素边框保留阴影），保留贴靠、Win11 圆角、最大化 / 最小化动画、双击标题最大化、右键系统菜单；`WM_NCHITTEST` 处理四边四角缩放（按窗口 DPI）和标题区域（回调给 `TitleBar::IsCaptionAt`）；最大化时收回伸出屏幕的边框；`WM_NCACTIVATE` 不重画系统标题栏。构造后由宿主保存好再调用 `Apply`（它立即触发 `WM_NCCALCSIZE`，必须能交给 `HandleMessage`——实测发现过构造函数里直接刷新边框时系统标题栏没有去掉）。成员函数不叫 `IsMaximized`（windowsx.h 同名宏）。
       - `UiLayout` 的 `"titlebar"` 节点（`children` 放在图标右侧，`icon`、`title`），`GetTitleBar()`。
       - `TabView` 的内容节点可以为空（只用标签条，多个文档共用一个视口），`SetTabData / GetTabData / FindTabData` 让宿主数据随标签移动。
-      - ✅ 标签拖出（2026-10-27）：`TabView::SetOnTabDragOut`——标签拖到标签条上下 `kDragOutDistance` 之外（拖动中灰框提示、不再排序）松开即回调宿主（MiniCAD 把文档拖出成独立的系统窗口，见 `main-window.md`）；外部拖回时 `DropIndexAt` 按标签中线算落点、`SetDropIndicator` 画插入标记；`GetTabRect` 给自测取标签位置。`IFloatingWindow::SetOnBeforeRender` 让独立窗口在布局之后、绘制之前渲染自己的内容。单元测试新增 1 个（拖出回调与落点）。
+      - ✅ 标签拖出（2026-10-27）：`TabView::SetOnTabDragOut`——标签一拖到标签条上下 `kDragOutDistance` 之外就回调宿主（MiniCAD 把文档拖出成独立的系统窗口，见 `main-window.md`）；宿主接手（回调返回 true）后控件保持捕获、不再排序，之后的移动 / 松开 / 取消经 `TabView::SetOnTornTabDrag` 上报，窗口在拖动中就跟着光标走；宿主不接手时灰框提示；外部拖回时 `DropIndexAt` 按标签中线算落点、`SetDropIndicator` 画插入标记；`GetTabRect` 给自测取标签位置。`IFloatingWindow::SetOnBeforeRender` 让独立窗口在布局之后、绘制之前渲染自己的内容。单元测试新增 1 个（拖出回调与落点）。
 - `ShowColorPalette`：调色板弹层独立成函数（`ColorButton` 改用它），表格里的颜色单元格也能弹出。
     - MiniCAD（MiniCADLib 仓库）：`MiniCADViewportDemo` 改为 **`MiniCADGUI`**（`apps/Win32/src/GUI/`，类 `MainFrame`），迁移期间与 ImGui 版 `MiniCADWin` 并存：
       - 标题栏里的菜单栏（文件 / 编辑 / 视图 / 格式 / 绘图 / 修改 / 窗口 / 帮助），标题为"文档名 * - MiniCAD"（同时设为窗口标题，任务栏可见）。

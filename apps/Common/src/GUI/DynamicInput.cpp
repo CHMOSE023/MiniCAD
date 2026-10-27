@@ -322,10 +322,12 @@ namespace MiniCAD
             m_dynInput->FocusLength();
             return true;
         }
-        // 还没有锚点（例如第一点）：数字进入命令行，按坐标输入（100,50）
-        if (m_console && IsCommandLineShown())
+        // 还没有锚点（例如第一点），或当前文档在文档窗口里（动态输入框只在主视口里显示）：
+        // 数字进入当前文档所在窗口的命令行，按坐标输入（100,50）
+        ViewChrome& c = ChromeOf(m_docManager.GetActive());
+        if (c.console && IsCommandLineShown(c))
         {
-            m_console->FocusInput();
+            c.console->FocusInput();
             return true;
         }
         return false;

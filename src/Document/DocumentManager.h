@@ -56,7 +56,8 @@ namespace MiniCAD
         Viewport*       ViewportOf(const Document* doc);
 
         // 当前文档（GetActive）与主视口里的文档分开：
-        // - 当前文档：命令行、状态栏、面板、菜单命令操作的对象，随用户最后点击的窗口切换（SetActive）
+        // - 当前文档：面板、菜单命令操作的对象，随用户最后点击的窗口切换（SetActive）。命令行、状态栏、视图方块每个窗口一套，
+        //   显示那个窗口里的文档（主窗口的是主视口里的文档），在上面操作时它先成为当前文档
         // - 主视口显示的文档（GetMainDocument）：停靠文档里最后激活的那个；当前文档是拖出去的文档时它不变。
         //   停靠的文档成为当前文档时也就成为主视口的文档
         Document* GetMainDocument() const { return m_mainDoc; }

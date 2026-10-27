@@ -27,7 +27,7 @@ namespace MiniCAD
         }
     }
 
-    Win32FloatingWindow::Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect)
+    Win32FloatingWindow::Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document)
         : m_owner(owner)
     {
         HINSTANCE hInstance = GetModuleHandleW(nullptr);
@@ -57,13 +57,22 @@ namespace MiniCAD
             r = { origin.x + pad, origin.y + pad, origin.x + pad + w, origin.y + pad + h };
         }
 
-        // 主窗口拥有的工具窗口：总在主窗口之上、随它最小化、不占任务栏。先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏
+        // 停靠面板：主窗口拥有的工具窗口，总在主窗口之上、随它最小化、不占任务栏。
+        // 文档：与主窗口平级的普通窗口（主窗口能盖在它上面，弹出的对话框不被它挡住），任务栏里有按钮，图标取主窗口的。
+        // 先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏
         const DWORD style = (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
-        m_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, kClassName, ToWide(title).c_str(), style,
+        m_hwnd = CreateWindowExW(document ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW, kClassName, ToWide(title).c_str(), style,
                                  r.left, r.top, r.right - r.left, r.bottom - r.top,
-                                 owner.GetHwnd(), nullptr, hInstance, this);
+                                 document ? nullptr : owner.GetHwnd(), nullptr, hInstance, this);
         if (!m_hwnd)
             return;
+        if (document)
+        {
+            if (const auto big = reinterpret_cast<HICON>(GetClassLongPtrW(owner.GetHwnd(), GCLP_HICON)))
+                SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+            if (const auto small = reinterpret_cast<HICON>(GetClassLongPtrW(owner.GetHwnd(), GCLP_HICONSM)))
+                SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
+        }
         m_frame = std::make_unique<MiniGUI::Win32Frame>(m_hwnd);
         m_frame->Apply();
         m_frame->SetOnActiveChanged([this](bool active) { m_owner.OnFloatingWindowActive(active); });

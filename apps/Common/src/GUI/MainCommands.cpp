@@ -333,7 +333,7 @@ namespace MiniCAD
         // 命令行是浮在绘图区底部的卡片（不在停靠区里），开关保存在用户布局文件里
         m_commands.Register({ .id = "view.panel.commandline", .label = "命令行(&C)", .shortcut = "Ctrl+9",     // 同 AutoCAD
                               .execute   = [this] { SetCommandLineVisible(!m_commandLineVisible); },
-                              .canExecute = [this] { return m_cmdCard != nullptr; },
+                              .canExecute = [this] { return m_main.cmdCard != nullptr; },
                               .isChecked = [this] { return m_commandLineVisible; } });
         // 视口导航条在加载界面描述文件之前创建，它用到的图标在这里给出
         m_commands.Find("view.grid")->icon     = "Grid.png";

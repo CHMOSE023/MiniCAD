@@ -17,16 +17,17 @@ namespace MiniCAD
 {
     class Win32Window;
 
-    // 停靠面板拖出主窗口后的独立窗口（AppPlatform::CreateFloatingWindow 的 Win32 实现）：
-    //   - 主窗口拥有的工具窗口（总在主窗口之上、随它最小化、不占任务栏），无边框（Win32Frame：保留系统的缩放边框与阴影），
-    //     标题栏由里面的 FloatingPanel 自绘，拖动标题栏时 FloatingPanelHost 按鼠标 SetRect 移动窗口
+    // 停靠面板或文档拖出主窗口后的独立窗口（AppPlatform::CreateFloatingWindow 的 Win32 实现）：
+    //   - 停靠面板：主窗口拥有的工具窗口（总在主窗口之上、随它最小化、不占任务栏）；
+    //     文档（document）：不归主窗口所有的普通窗口（可以在主窗口之下，主窗口弹出对话框时置前不被挡住），任务栏里有按钮
+    //   - 无边框（Win32Frame：保留系统的缩放边框与阴影），标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口
     //   - 自己的 UIContext、Win32Input 与窗口表面（IGraphicsDevice::CreateWindowSurface），与主窗口共用设备和界面后端；
     //     WM_PAINT 里布局、绘制、呈现；没处理的按键转给主窗口（Ctrl+S 等全局快捷键仍有效）
     //   - 位置用主窗口客户区的逻辑坐标（按主窗口的 DPI 换算）；创建时不在任何显示器上就挪到主窗口旁边
     class Win32FloatingWindow : public IFloatingWindow
     {
     public:
-        Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect);
+        Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document = false);
         ~Win32FloatingWindow() override;
 
         bool IsValid() const { return m_hwnd != nullptr && m_surface && m_ui; }

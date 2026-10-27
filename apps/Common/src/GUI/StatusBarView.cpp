@@ -68,8 +68,8 @@ namespace MiniCAD
     // =========================================================
     // 构建
     // =========================================================
-    StatusBarView::StatusBarView(DocumentManager& dm, float height)
-        : m_dm(dm)
+    StatusBarView::StatusBarView(DocumentManager& dm, std::function<Document*()> doc, float height)
+        : m_dm(dm), m_doc(std::move(doc))
     {
         MiniGUI::LayoutStyle s = RowStyle(2.0f);
         s.height  = height;
@@ -83,17 +83,17 @@ namespace MiniCAD
         spacer->SetHitTestVisible(false);
 
         // ── 捕捉 / 正交 / 悬停 / 细线 ─────────────────────────────
-        m_snap = AddChild<StatusToggle>("捕捉", [this] { m_dm.GetEditor().ToggleSnap(); if (m_onToggled) m_onToggled(); });
+        m_snap = AddChild<StatusToggle>("捕捉", [this] { Toggle(&Editor::ToggleSnap); });
         m_snap->SetTooltip("左键: 开/关 (F3)\n右键: 对象捕捉设置");
         m_snap->SetContextMenuHandler([this](MiniGUI::Vec2) { OpenSnapSettings(); return true; });
 
-        m_ortho = AddChild<StatusToggle>("正交", [this] { m_dm.GetEditor().ToggleOrtho(); if (m_onToggled) m_onToggled(); });
+        m_ortho = AddChild<StatusToggle>("正交", [this] { Toggle(&Editor::ToggleOrtho); });
         m_ortho->SetTooltip("左键: 开/关 (F8)");
 
-        m_hover = AddChild<StatusToggle>("悬停", [this] { m_dm.GetEditor().ToggleHover(); if (m_onToggled) m_onToggled(); });
+        m_hover = AddChild<StatusToggle>("悬停", [this] { Toggle(&Editor::ToggleHover); });
         m_hover->SetTooltip("左键: 开/关 鼠标悬停高亮");
 
-        m_thin = AddChild<StatusToggle>("细线", [this] { m_dm.GetEditor().ToggleThinLines(); if (m_onToggled) m_onToggled(); });
+        m_thin = AddChild<StatusToggle>("细线", [this] { Toggle(&Editor::ToggleThinLines); });
         m_thin->SetTooltip("左键: 开/关 全局细线（忽略线宽，只影响显示）");
 
         // 窗口变窄时开关保持自然宽度，只压缩左边的空白
@@ -117,20 +117,33 @@ namespace MiniCAD
     // =========================================================
     // 每帧同步
     // =========================================================
+    Editor* StatusBarView::CurrentEditor()
+    {
+        Document* doc = m_doc ? m_doc() : nullptr;
+        return doc ? &m_dm.GetEditor(*doc) : nullptr;
+    }
+
+    void StatusBarView::Toggle(void (Editor::*toggle)())
+    {
+        if (Editor* editor = CurrentEditor())
+            (editor->*toggle)();
+        if (m_onToggled)
+            m_onToggled();
+    }
+
     void StatusBarView::Refresh()
     {
         // 没有文档时只隐藏开关：宿主附加项（读取进度）在打开第一张图纸时也要显示
-        const bool hasDoc = m_dm.GetActive() != nullptr;
+        Editor* editor = CurrentEditor();
         for (StatusToggle* t : { m_snap, m_ortho, m_hover, m_thin })
-            t->SetVisible(hasDoc);
-        if (!hasDoc)
+            t->SetVisible(editor != nullptr);
+        if (!editor)
             return;
 
-        Editor& editor = m_dm.GetEditor();
-        m_snap->SetOn(editor.IsSnapEnabled());
-        m_ortho->SetOn(editor.IsOrthoEnabled());
-        m_hover->SetOn(editor.IsHoverEnabled());
-        m_thin->SetOn(editor.IsThinLines());
+        m_snap->SetOn(editor->IsSnapEnabled());
+        m_ortho->SetOn(editor->IsOrthoEnabled());
+        m_hover->SetOn(editor->IsHoverEnabled());
+        m_thin->SetOn(editor->IsThinLines());
     }
 
     // =========================================================
@@ -142,7 +155,10 @@ namespace MiniCAD
         if (!ctx)
             return;
 
-        SnapEngine& snap = m_dm.GetEditor().GetSnapEngine();
+        Editor* editor = CurrentEditor();
+        if (!editor)
+            return;
+        SnapEngine& snap = editor->GetSnapEngine();
 
         auto popup = std::make_unique<MiniGUI::Popup>();
         {

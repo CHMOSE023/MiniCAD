@@ -421,7 +421,7 @@ namespace MiniGUI
                 dl.AddRectFilled(tab, Theme::RowHover, Theme::RadiusMd);
             }
             if (m_dragging && i == m_pressTab)
-                dl.AddRect(tab, m_dragOut ? Theme::TextDim : Theme::Accent, Theme::RadiusMd, 1.0f);   // 拖到条外：灰框，松开即拖出
+                dl.AddRect(tab, m_dragOut ? Theme::TextDim : Theme::Accent, Theme::RadiusMd, 1.0f);   // 拖到条外（宿主没接手）：灰框
 if (focusRing && sel)
                 dl.AddRect(tab.Deflated(1.0f), Theme::Accent, Theme::RadiusMd, 1.0f);
 
@@ -542,10 +542,37 @@ if (focusRing && sel)
         switch (e.type)
         {
         case PointerEventType::Move:
+            if (m_torn && HasCapture())
+            {
+                // 宿主接手了拖出的标签（例如文档窗口）：移动转给宿主，窗口跟着光标走
+                if (m_onTornTabDrag)
+                {
+                    auto cb = m_onTornTabDrag;
+                    cb(TornDragPhase::Move, e.position);
+                }
+                e.handled = true;
+                break;
+            }
             if (m_pressTab >= 0 && HasCapture())
             {
-                // 拖到标签条之外：不再排序，松开时交给宿主（例如把文档拖出成独立窗口）
+                // 拖到标签条之外：立即交给宿主（例如把文档拖出成独立窗口）；宿主接手后不再排序
                 const bool out = m_onTabDragOut && (e.localPosition.y < -kDragOutDistance || e.localPosition.y > kStripHeight + kDragOutDistance);
+                if (out && !m_dragOut)
+                {
+                    const int pressed = m_pressTab;
+                    auto cb = m_onTabDragOut;
+                    if (cb(pressed, e.position))
+                    {
+                        // 回调里可能已经移除了这个标签：之后不再按序号访问它
+                        m_torn     = true;
+                        m_pressTab = -1;
+                        m_dragging = false;
+                        m_dragOut  = false;
+                        e.handled  = true;
+                        Invalidate();
+                        break;
+                    }
+                }
                 if (out != m_dragOut)
                 {
                     m_dragOut = out;
@@ -633,21 +660,27 @@ if (focusRing && sel)
             break;
 
         case PointerEventType::Up:
-            if (m_pressTab >= 0)
+            if (m_torn)
             {
-                const int  pressed = m_pressTab;
-                const bool out     = m_dragOut;
-m_pressTab = -1;
+                // 先结束拖动、释放捕获，再交给宿主（宿主可能把文档合并回来、改动标签）
+                m_torn = false;
+                GetContext()->ReleaseCapture();
+                e.handled = true;
+                Invalidate();
+                if (m_onTornTabDrag)
+                {
+                    auto cb = m_onTornTabDrag;
+                    cb(TornDragPhase::End, e.position);
+                }
+            }
+            else if (m_pressTab >= 0)
+            {
+                m_pressTab = -1;
                 m_dragging = false;
                 m_dragOut  = false;
                 GetContext()->ReleaseCapture();
                 e.handled = true;
                 Invalidate();
-                if (out && m_onTabDragOut)
-                {
-                    auto cb = m_onTabDragOut;
-                    cb(pressed, e.position);
-                }
             }
             break;
 
@@ -666,6 +699,15 @@ m_pressTab = -1;
             m_pressTab = -1;
             m_dragging = false;
             m_dragOut  = false;
+            if (m_torn)
+            {
+                m_torn = false;
+                if (m_onTornTabDrag)
+                {
+                    auto cb = m_onTornTabDrag;
+                    cb(TornDragPhase::Cancel, e.position);
+                }
+            }
             break;
 
         default:
