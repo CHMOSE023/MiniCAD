@@ -360,8 +360,10 @@ namespace MiniCAD
         const Document* doc = m_docManager.GetActive();
         const auto      dyn = doc ? m_docManager.GetEditor().GetDynamicInput() : Editor::DynamicInputState{};
         const bool focused  = m_dynInput->HasFieldFocus();
-        const bool show     = dyn.Active && m_viewport->IsVisible() && (m_hovered || m_buttons != 0 || focused);
-        if (!show)
+        // 只在主视口里显示（当前文档在独立窗口里时不显示，数字仍可键入命令行）
+        const bool show     = dyn.Active && m_viewport->IsVisible() && !FindDocWindow(m_docManager.GetActive())
+                           && (m_hovered || m_mainInput.buttons != 0 || focused);
+if (!show)
         {
             if (m_dynInput->IsVisible())
             {
@@ -379,9 +381,9 @@ namespace MiniCAD
         // 跟随光标（偏右下）；放不下时翻到光标左侧 / 上方
         const MiniGUI::Rect vb   = m_viewport->GetBounds();          // 文档区内的坐标
         const MiniGUI::Vec2 size = m_dynInput->GetSize();
-        float x = vb.min.x + static_cast<float>(m_mouseX) / m_dpiScale + kOffset;
-        float y = vb.min.y + static_cast<float>(m_mouseY) / m_dpiScale + kOffset;
-        if (x + size.x > vb.max.x)
+        float x = vb.min.x + static_cast<float>(m_mainInput.mouseX) / m_dpiScale + kOffset;
+        float y = vb.min.y + static_cast<float>(m_mainInput.mouseY) / m_dpiScale + kOffset;
+if (x + size.x > vb.max.x)
             x = std::max(vb.min.x, x - size.x - kOffset * 2.0f);
         if (y + size.y > vb.max.y)
             y = std::max(vb.min.y, y - size.y - kOffset * 2.0f);

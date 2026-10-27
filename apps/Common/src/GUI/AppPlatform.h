@@ -1,5 +1,6 @@
 #pragma once
 #include "Render/IRenderBackend.h"
+#include "Render/IRenderTarget.h"
 #include "Import/CadExchange.h"
 #include "Core/Ole/OleObject.h"
 #include "Core/Types/Rect.hpp"
@@ -99,6 +100,8 @@ namespace MiniCAD
         virtual void SetVisible(bool visible) = 0;                      // 创建时不显示，由宿主决定何时显示（起始页期间藏起来）
         virtual void SetOnClose(std::function<void()> cb) = 0;          // 用户关闭了窗口（Alt+F4 等）
         virtual void SetOnMoved(std::function<void()> cb) = 0;          // 用户移动 / 改大小结束（宿主保存布局）
+        // 这个窗口的每一帧：布局之后、界面绘制之前回调（文档窗口在这里按最新尺寸渲染它的 CAD 视口，同 MainFrame::RenderFrame 的顺序）
+        virtual void SetOnBeforeRender(std::function<void()> cb) = 0;
     };
 
     // 主窗口（MainFrame）依赖的平台服务。Win32 版（窗口 + D3D11，apps/Win32/src/Host/Win32Window）
@@ -118,8 +121,10 @@ namespace MiniCAD
         // ── 图形 ─────────────────────────────────────────────────
         virtual MiniGUI::IRenderBackend& GetUiBackend()      = 0;   // 界面渲染后端（D3D11Backend / GLES3Backend）
         virtual IRenderer&               GetRenderer()       = 0;   // CAD 视口渲染器
-        virtual IRenderTarget&           GetViewportTarget() = 0;   // CAD 视口的离屏渲染目标
-        // 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
+        virtual IRenderTarget&           GetViewportTarget() = 0;   // 主窗口 CAD 视口的离屏渲染目标
+        // 再建一个视口渲染目标（拖出成独立窗口的文档各用一个；与主视口共用渲染器）；给不出时 nullptr，文档就不能拖出
+        virtual std::unique_ptr<IRenderTarget> CreateViewportTarget() { return nullptr; }
+// 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
         virtual MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) = 0;
         virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;
         virtual void RequestRedraw() = 0;       // 安排一次重绘（Win32：InvalidateRect；网页：requestAnimationFrame）

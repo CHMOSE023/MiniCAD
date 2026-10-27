@@ -56,6 +56,10 @@ namespace MiniCAD
         void Bind(Document& doc, Viewport& viewport);
         void Unbind();
         bool IsBound() const { return m_doc != nullptr; }
+        // 换视口（文档拖出到独立窗口或拖回主窗口，见 DocumentManager::DetachDocument）：显示数据、选择集都保留，
+        // 进行中的工具取消；随视图变化的缓存（动态流按缩放、夹点、捕捉标记、视图过渡）下一帧按新视口的相机重建
+        void      SetViewport(Viewport& viewport);
+        Viewport* GetViewport() const { return m_viewport; }
         // 新建文档的编辑器从当前编辑器继承用户设置（细线、捕捉、正交、极轴、悬停、视觉样式、字高、
         // 填充 / 多线设置、内核、过渡时长、字形提供者……），不复制文档相关的状态
         void CopySettingsFrom(const Editor& other);
@@ -405,6 +409,9 @@ namespace MiniCAD
         void ReleaseUploadedSceneStreams();
         // 渲染后端丢弃了缓存的顶点缓冲（ReleaseCachedResources）或没接上追加段后调用：拼接流已释放的话下一帧重新拼接
         void RequestSceneRestitch() { m_sceneRestitch = m_sceneStreamsReleased; }
+        // 每帧 Render 之前调用：拼接流已释放而后端里已经没有本编辑器的场景缓冲（渲染器按槽位只留一份，几个视口轮流渲染
+        // 不同的文档时会被顶掉）就重新拼接，否则这一帧会按空流上传、图纸消失
+        void EnsureSceneCached(const IRenderer& renderer);
         // 渲染后端能把新增实体的顶点接到已上传的场景缓冲末尾（IRenderer::SupportsCachedAppend）：拼接流释放后
         // 新画一个图形只细分它、把顶点放进追加段（ViewState::SceneAppendActive），不再从逐实体缓存重新拼接、
         // 整体重新上传。进程内全局，宿主在渲染器就绪后设置

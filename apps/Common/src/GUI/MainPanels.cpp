@@ -263,6 +263,8 @@ namespace MiniCAD
         });
         m_docTabs->SetOnCloseRequested([this](int i) { CloseDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i))); });
         m_docTabs->SetOnNewTabRequested([this] { m_commands.Execute("file.new"); });
+        // 标签拖到标签条之外松开：文档移到独立的系统窗口（平台给不出窗口时什么都不发生）
+        m_docTabs->SetOnTabDragOut([this](int i, Vec2 windowPos) { FloatDocument(reinterpret_cast<Document*>(m_docTabs->GetTabData(i)), windowPos); });
 
         m_docTabs->SetTabContextMenuExtra([this](int i)
         {
@@ -270,6 +272,11 @@ namespace MiniCAD
             return std::vector<MenuItem>{
                 MenuItem("保存(&S)",    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
                 MenuItem("另存为(&A)…", [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
+                MenuItem("在独立窗口中打开(&W)", [this, doc]
+                {
+                    const Rect r = m_docTabs->GetScreenBounds();
+                    FloatDocument(doc, Vec2{ r.min.x + 120.0f, r.max.y + 80.0f });
+                }),
             };
         });
 
@@ -310,13 +317,13 @@ namespace MiniCAD
         cubeCallbacks.setView = [this](double az, double el)
         {
             m_docManager.GetEditor().SetViewDirection(az, el);
-            m_viewport->RequestRender();
+            RequestRenderAll();
             StateChanged();
         };
         cubeCallbacks.orbit = [this](double dx, double dy)
         {
             m_docManager.GetViewport().GetCamera().Orbit(dx, dy);
-            m_viewport->RequestRender();
+            RequestRenderAll();
         };
         auto* cube = area->AddChild<ViewCube>(std::move(cubeCallbacks));
         LayoutStyle cs;
@@ -709,7 +716,7 @@ namespace MiniCAD
         m_bindings.SetOnChanged([this]
         {
             m_commands.NotifyStateChanged();
-            m_viewport->RequestRender();
+            RequestRenderAll();
         });
         return panel;
     }

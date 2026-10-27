@@ -41,6 +41,7 @@ namespace MiniCAD
         void SetVisible(bool visible) override;
         void SetOnClose(std::function<void()> cb) override { m_onClose = std::move(cb); }
         void SetOnMoved(std::function<void()> cb) override { m_onMoved = std::move(cb); }
+        void SetOnBeforeRender(std::function<void()> cb) override { m_onBeforeRender = std::move(cb); }
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -59,5 +60,6 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Win32Input>  m_input;
         std::function<void()> m_onClose;
         std::function<void()> m_onMoved;
+        std::function<void()> m_onBeforeRender;
     };
 }

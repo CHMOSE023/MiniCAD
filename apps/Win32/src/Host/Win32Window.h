@@ -52,7 +52,8 @@ namespace MiniCAD
         MiniGUI::IRenderBackend& GetUiBackend() override;
         IRenderer&               GetRenderer() override       { return m_graphics->GetRenderer(); }
         IRenderTarget&           GetViewportTarget() override { return *m_viewportRT; }
-        MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
+        std::unique_ptr<IRenderTarget> CreateViewportTarget() override { return m_graphics->CreateRenderTarget(); }
+MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
         bool LoadUiFonts(MiniGUI::TextSystem& text) override;
         void RequestRedraw() override;
         void BeginUiPass() override;

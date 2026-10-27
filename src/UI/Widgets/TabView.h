@@ -16,7 +16,9 @@ namespace MiniGUI
     // - "+" 按钮新建（OnNewTabRequested）；Ctrl+W / Ctrl+F4 关闭当前页；Ctrl+Tab / Ctrl+Shift+Tab 切换
     // - 右键标签：关闭、关闭其他、关闭右侧、关闭全部（可追加自定义项）
     // - 拖动标签调整顺序；标签太多时先等比缩窄，再放不下就滚动标签条，并用"⌄"按钮列出全部标签
-    // - 内容节点可以为空：只用标签条（例如多个文档共用一个 CAD 视口），此时把高度设为 kStripHeight 即可
+    // - 设置了 OnTabDragOut 时，标签拖离标签条（上下超过 kDragOutDistance）松开即回调宿主（主窗口把文档拖出成独立窗口）；
+    //   拖回时宿主用 DropIndexAt 找落点、SetDropIndicator 画插入标记
+// - 内容节点可以为空：只用标签条（例如多个文档共用一个 CAD 视口），此时把高度设为 kStripHeight 即可
     class TabView : public Node
     {
     public:
@@ -65,7 +67,18 @@ namespace MiniGUI
         // 整个替换标签右键菜单（不要默认的「关闭…」几项，例如标签本身不能关闭时）；设置后忽略 Extra
         void SetTabContextMenu(std::function<std::vector<MenuItem>(int)> cb) { m_contextMenu = std::move(cb); }
 
-        static constexpr float kStripHeight = 34.0f;
+        // 标签拖到标签条之外（上下超过 kDragOutDistance）松开：本控件先结束拖动、释放捕获，再回调；
+        // windowPos 是松开时的指针位置（窗口坐标），回调里可以移除该标签。没设置时标签只能在条内拖动排序
+        void SetOnTabDragOut(std::function<void(int index, Vec2 windowPos)> cb) { m_onTabDragOut = std::move(cb); }
+        bool IsDraggingOut() const { return m_dragOut; }    // 正拖着标签在标签条之外（测试用）
+// 外部拖回：窗口坐标落在标签条（上下各放宽 kDragOutDistance）上时返回放下后的标签序号（0..GetTabCount()），否则 -1
+        int  DropIndexAt(Vec2 windowPos) const;
+        // 画落点的插入标记（DropIndexAt 的结果；-1 清除）
+        void SetDropIndicator(int index);
+        int  GetDropIndicator() const { return m_dropIndicator; }
+
+        static constexpr float kStripHeight     = 34.0f;
+        static constexpr float kDragOutDistance = 24.0f;
 
         // 自然宽度取各标签的理想宽度之和（只用标签条、放在一行里和别的控件并排时用，例如状态栏左侧的模型 / 布局标签）
         void  SetFitToTabs(bool fit) { m_fitToTabs = fit; InvalidateLayout(); }
@@ -117,11 +130,14 @@ namespace MiniGUI
         int   m_pressTab   = -1;
         float m_pressX     = 0.0f;
         bool  m_dragging   = false;
+        bool  m_dragOut    = false;     // 指针已拖到标签条之外（松开时回调 OnTabDragOut）
 
         bool                     m_barStyle = false;
         bool                     m_fitToTabs = false;
+        int                      m_dropIndicator = -1;
         std::function<void(int)> m_onSelectionChanged;
-        std::function<void(int)> m_onCloseRequested;
+        std::function<void(int, Vec2)> m_onTabDragOut;
+std::function<void(int)> m_onCloseRequested;
         std::function<void()>    m_onNewTabRequested;
         std::function<void(int, int)> m_onTabMoved;
         std::function<std::vector<MenuItem>(int)> m_contextExtra;

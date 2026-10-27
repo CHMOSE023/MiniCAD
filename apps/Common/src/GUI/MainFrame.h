@@ -17,6 +17,7 @@
 #include "Render/IRenderBackend.h"
 #include "Data/CommandRegistry.h"
 #include "Widgets/Binding.h"
+#include "Widgets/FloatingPanel.h"
 #include "Widgets/Menu.h"
 #include "NodeGraph/Graph.h"
 #include "NodeGraph/GraphHistory.h"
@@ -44,6 +45,7 @@ namespace MiniGUI
     class Button;
     class Dialog;
     class Popup;
+    class ThemeColors;
 }
 
 namespace MiniCAD
@@ -57,8 +59,9 @@ namespace MiniCAD
     // MiniCAD 主窗口的界面与逻辑（桌面版和网页版共用）。整个界面由 MiniGUI 绘制，平台相关的部分
     // （窗口、图形设备、消息循环、文件对话框）由 AppPlatform 提供：Win32 版见 apps/Win32/src/Host，网页版见 apps/Web/src/Host。
     //   - 标题栏自绘，菜单栏在标题栏里；桌面版右侧有最小化 / 最大化 / 关闭（无边框窗口，Win32Frame）
-    //   - 多文档标签：所有文档共用一个视口（MiniCAD 的 DocumentManager 只有一个 Viewport + Editor，切换文档时换相机状态）
-    //   - 工具栏里的图层 / 线型 / 线宽下拉框，停靠的特性与图层面板、命令行，状态栏
+    //   - 多文档标签：停靠在主窗口里的文档共用主视口（DocumentManager 的主 Viewport，切换文档时换相机状态；每个文档一个 Editor）；
+    //     标签拖出标签条松开即成独立的系统窗口（桌面版，DocumentWindows.cpp：自己的视口与渲染目标），拖回标签条合并回去
+//   - 工具栏里的图层 / 线型 / 线宽下拉框，停靠的特性与图层面板、命令行，状态栏
     //   - 菜单、工具栏、布局由界面描述文件 ui/minicad_ui.json 描述（UiLayout），保存后自动重新加载（也可按 F5）；
     //     用户拖动后的面板布局保存到 AppPlatform::GetUserDataDir() 下的 layout.json（Win32：%LOCALAPPDATA%\MiniCAD），下次启动恢复
     //
@@ -249,9 +252,45 @@ namespace MiniCAD
         void UpdateAppBarVisibility();      // 窗口变窄、文档标签放不下时隐藏标题栏右侧的按钮，让给文档标签
 
         // ── 视口输入 → Editor ─────────────────────────────────────
-        void OnViewportPointer(const MiniGUI::ViewportPointerEvent& e);
-        bool OnViewportKey(const MiniGUI::KeyEvent& e);
-        void NoteInput();       // 记录输入时间，用于统计输入到呈现的延迟
+        void OnViewportPointer(const MiniGUI::ViewportPointerEvent& e);   // 主窗口的视口：交给主视口里文档的编辑器
+        bool OnViewportKey(const MiniGUI::KeyEvent& e);                   // 主窗口与文档窗口的视口：交给当前文档的编辑器
+        void NoteInput();       // 记录输入时间，用于统计输入到呈现的延迟；请当前文档的视口重绘
+        void NoteInput(MiniGUI::ViewportHost& host);
+
+        // ── 拖出主窗口的文档窗口（DocumentWindows.cpp）──────────────────
+        struct ViewInput { int mouseX = 0, mouseY = 0, pressX = 0, pressY = 0; uint8_t buttons = 0; };   // 一个视口里的鼠标状态（像素；buttons 为 MiniCAD 的 MouseButtonState 掩码）
+        struct DocWindow
+        {
+            Document*                        doc    = nullptr;
+            std::unique_ptr<IFloatingWindow> window;
+            MiniGUI::FloatingPanel*          panel  = nullptr;     // 标题栏 + 内容，铺满窗口
+            MiniGUI::ViewportHost*           host   = nullptr;     // 显示它的视口纹理
+            std::unique_ptr<IRenderTarget>   target;               // 它的视口渲染目标
+            void*                            srv    = nullptr;     // 登记过的着色器资源
+            MiniGUI::TextureId               tex    = MiniGUI::InvalidTextureId;
+            ViewInput                        input;
+            MiniGUI::Vec2                    grab, size;           // 拖标题栏：按下点相对窗口左上角的位置、窗口尺寸（主窗口坐标）
+        };
+        bool       FloatDocument(Document* doc, MiniGUI::Vec2 windowPos);   // 标签拖出：文档移到独立窗口（标题栏落在 windowPos 下）；平台不支持时 false
+        void       MergeDocument(Document* doc, int index);                  // 拖回 / 双击标题栏：合并回标签条的 index 处（-1 = 末尾）
+        DocWindow* FindDocWindow(const Document* doc) const;
+        void       DestroyDocWindow(const Document* doc);                    // 关闭文档窗口（推迟到下一帧销毁）
+        void       PurgeDocWindows();                                        // 每帧开头销毁已关闭的文档窗口
+        void       CloseAllDocWindows();
+        void       RenderDocWindow(DocWindow& w, int pixelWidth, int pixelHeight);
+        void       OnDocWindowDrag(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 pos);
+        bool       OnDocWindowKey(const MiniGUI::KeyEvent& e);
+        bool       MainTextTargetFocused() const;                            // 主窗口的命令行 / 动态输入框有焦点
+        MiniGUI::Vec2          DocWindowToMain(const DocWindow& w, MiniGUI::Vec2 windowPos) const;   // 文档窗口坐标 → 主窗口坐标
+        MiniGUI::ViewportHost& HostOf(const Document* doc) const;            // 文档所在的视口控件：它的窗口的，否则主窗口的
+        ViewInput& InputOf(const Document* doc);
+        void       RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host);
+        void       RequestRenderAll();                                       // 主视口与所有文档窗口都重绘
+        void       SetDocWindowsTheme(const MiniGUI::ThemeColors& theme);
+        void       SyncViewCube();                                           // 视图方块跟着当前文档的视线方向
+    public:
+        size_t     DocWindowCount() const { return m_docWindows.size(); }    // 自测用
+    private:
 
     private:
         AppPlatform* m_platform = nullptr;
@@ -380,12 +419,10 @@ namespace MiniCAD
         bool                                   m_saveStatusShown = false;   // 本次保存前已显示"正在保存"（据此区分失败与取消另存为）
 
         // ── 视口指针状态（物理像素，视口内坐标）──────────────────
-        int     m_mouseX   = 0;
-        int     m_mouseY   = 0;
-        int     m_pressX   = 0;
-        int     m_pressY   = 0;
-        uint8_t m_buttons  = 0;     // MiniCAD 的 MouseButtonState 掩码
-        bool    m_hovered  = false;
+        ViewInput m_mainInput;      // 主视口的鼠标状态
+        bool      m_hovered = false;
+        std::vector<std::unique_ptr<DocWindow>> m_docWindows;
+        std::vector<std::unique_ptr<DocWindow>> m_docWindowGraveyard;    // 已关闭、等下一帧销毁
 
         // ── 统计 ────────────────────────────────────────────────
         uint64_t m_frames          = 0;

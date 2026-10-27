@@ -299,6 +299,56 @@ TEST(TreeView_RenameAndReject)
 
 // ── 多文档标签 ───────────────────────────────────────────────────
 
+// 标签拖到标签条之外松开：回调宿主（主窗口把文档拖出成独立窗口）；拖回时 DropIndexAt 找落点
+TEST(TabView_DragOutAndDropIndex)
+{
+    TestUI t({ 600, 300 });
+    TabView* tabs = t.Add<TabView>();
+    for (int i = 0; i < 3; ++i)
+        tabs->AddTab<Node>("图纸" + std::to_string(i + 1), true);
+    int  outTab = -1;
+    Vec2 outPos;
+    tabs->SetOnTabDragOut([&](int i, Vec2 p) { outTab = i; outPos = p; });
+    t.Layout();
+
+    // 测试里没有字体：标签宽 52，从 4 开始
+    const Rect r    = tabs->GetScreenBounds();
+    const Vec2 tab1 = { r.min.x + 4 + 52 + 26, r.min.y + 17 };
+    t.tick += 5000;
+    t.ui.PointerMove(tab1, 0);
+    t.ui.PointerDown(tab1, MouseButton::Left, 0, t.tick);
+    t.ui.PointerMove({ tab1.x, tab1.y + 10.0f }, 0);                                         // 还在条内
+    CHECK(!tabs->IsDraggingOut());
+    t.ui.PointerMove({ tab1.x, r.min.y + TabView::kStripHeight + TabView::kDragOutDistance + 10.0f }, 0);   // 条外
+    CHECK(tabs->IsDraggingOut());
+    CHECK(outTab == -1);                                                                        // 还没松开
+    t.ui.PointerMove(tab1, 0);                                                                  // 拖回条内
+    CHECK(!tabs->IsDraggingOut());
+    t.ui.PointerUp(tab1, MouseButton::Left, 0);
+    CHECK(outTab == -1 && tabs->GetTabCount() == 3);                                            // 条内松开：没有拖出
+
+    t.tick += 5000;
+    t.ui.PointerDown(tab1, MouseButton::Left, 0, t.tick);
+    t.ui.PointerMove({ tab1.x, r.min.y + 100.0f }, 0);
+    t.ui.PointerUp({ tab1.x, r.min.y + 100.0f }, MouseButton::Left, 0);
+    CHECK(outTab == 1);
+    CHECK_NEAR(outPos.y, r.min.y + 100.0f);
+    CHECK(!tabs->IsDraggingOut() && tabs->GetTabCount() == 3);                                   // 回调里没移除，标签还在
+
+    // 落点：标签中线之前插在它前面，之后插在它后面；末尾之后为 GetTabCount()；离标签条太远为 -1
+    CHECK(tabs->DropIndexAt({ r.min.x + 4 + 10.0f, r.min.y + 17.0f }) == 0);
+    CHECK(tabs->DropIndexAt({ r.min.x + 4 + 52 + 40.0f, r.min.y + 17.0f }) == 2);
+    CHECK(tabs->DropIndexAt({ r.min.x + 4 + 52 * 3 + 20.0f, r.min.y + 17.0f }) == 3);
+    CHECK(tabs->DropIndexAt({ r.min.x + 4 + 10.0f, r.min.y + TabView::kStripHeight + TabView::kDragOutDistance + 5.0f }) == -1);
+    CHECK(tabs->DropIndexAt({ r.min.x + 4 + 10.0f, r.min.y - 5.0f }) == 0);                   // 上方一点点仍算在条上
+    tabs->SetDropIndicator(2);
+    CHECK(tabs->GetDropIndicator() == 2);
+    t.ui.Update();
+    t.ui.Render();
+    tabs->SetDropIndicator(-1);
+    CHECK(tabs->GetDropIndicator() == -1);
+}
+
 TEST(TabView_NewModifiedMoveAndContextMenu)
 {
     TestUI t({ 600, 300 });
