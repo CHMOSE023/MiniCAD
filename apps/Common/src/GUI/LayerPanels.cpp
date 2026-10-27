@@ -215,10 +215,12 @@ namespace MiniCAD
     // =========================================================
     // 图层面板（同 AutoCAD 图层特性管理器，可停靠）
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerPanel()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerPanel(ViewChrome& c)
     {
         using namespace MiniGUI;
-        DocumentManager& dm = m_docManager;
+        // 这个窗口的面板：显示、修改它显示的文档（在窗口里按下时它已成为当前文档，命令随后也作用于它）
+        ViewChrome* pc = &c;
+        PanelSet*   pp = c.panels.get();
 
         auto panel = std::make_unique<Panel>(Theme::PanelAlt);
         LayoutStyle ps;
@@ -235,23 +237,23 @@ namespace MiniCAD
         ts.gap        = 6.0f;
         tools->SetLayoutStyle(ts);
 
-        auto selectedLayer = [this]() -> LayerID
+        auto selectedLayer = [this, pc, pp]() -> LayerID
         {
-            const int row = m_layerList->GetCurrent();
-            return row >= 0 && row < static_cast<int>(m_layerIds.size()) ? m_layerIds[static_cast<size_t>(row)] : Layer::DefaultLayerID;
+            const int row = pp->layerList->GetCurrent();
+            return row >= 0 && row < static_cast<int>(pp->layerIds.size()) ? pp->layerIds[static_cast<size_t>(row)] : Layer::DefaultLayerID;
         };
-        auto setCurrent = [this, &dm](LayerID id)
+        auto setCurrent = [this, pc, pp](LayerID id)
         {
-            if (Document* doc = dm.GetActive())
+            if (Document* doc = DocOf(*pc))
             {
                 doc->GetLayerManager().SetActiveLayerID(id);
                 StateChanged();
             }
         };
         // 删除：引用该图层的实体改到 0 层，避免悬空引用；0 层不能删除
-        auto deleteLayer = [this, &dm](LayerID id)
+        auto deleteLayer = [this, pc, pp](LayerID id)
         {
-            Document* doc = dm.GetActive();
+            Document* doc = DocOf(*pc);
             if (!doc || id == Layer::DefaultLayerID)
                 return;
             RunLayerCommand(*doc, std::make_unique<DeleteLayerCommand>(id));
@@ -273,7 +275,7 @@ namespace MiniCAD
 
         // 搜索框：只显示名称含这段文字的图层；Esc 清空，再按一次把焦点交回绘图区
         auto* search = tools->AddChild<TextBox>();
-        m_layerSearch = search;
+        pp->layerSearch = search;
         search->SetPlaceholder("搜索图层");
         TextBoxStyle ss;
         ss.fontSize = 13.0f;
@@ -281,20 +283,20 @@ namespace MiniCAD
         search->SetStyle(ss);
         search->EditLayoutStyle().width = 60.0f;
         search->EditLayoutStyle().grow  = 1.0f;
-        search->SetOnChanged([this](const std::string& text)
+        search->SetOnChanged([this, pc, pp](const std::string& text)
         {
-            m_layerFilter = text;
-            RefreshLayerPanel();
+            pp->layerFilter = text;
+            RefreshLayerPanel(*pc);
         });
-        search->SetKeyPreview([this, search](KeyEvent& e)
+        search->SetKeyPreview([this, pc, pp, search](KeyEvent& e)
         {
             if (e.key != Key::Escape || e.modifiers != 0)
                 return false;
             if (!search->GetText().empty())
             {
                 search->SetText({});
-                m_layerFilter.clear();
-                RefreshLayerPanel();
+                pp->layerFilter.clear();
+                RefreshLayerPanel(*pc);
             }
             else if (UIContext* ctx = search->GetContext())
             {
@@ -304,8 +306,8 @@ namespace MiniCAD
         });
 
         // ── 图层表 ───────────────────────────────────────────────
-        m_layerList = panel->AddChild<ListView>();
-        ListView* list = m_layerList;
+        pp->layerList = panel->AddChild<ListView>();
+        ListView* list = pp->layerList;
         list->EditLayoutStyle().grow = 1.0f;
         list->SetColumns({
             { "",     24.0f,  TextAlign::Center },
@@ -317,13 +319,13 @@ namespace MiniCAD
             { "线宽", 110.0f },
         });
 
-        list->SetCellPainter([this, list, &dm](DrawList& dl, const Rect& cell, int row, int col, bool) -> bool
+        list->SetCellPainter([this, pc, pp, list](DrawList& dl, const Rect& cell, int row, int col, bool) -> bool
         {
-            Document* doc = dm.GetActive();
-            if (!doc || row >= static_cast<int>(m_layerIds.size()))
+            Document* doc = DocOf(*pc);
+            if (!doc || row >= static_cast<int>(pp->layerIds.size()))
                 return true;
             LayerManager& lm = doc->GetLayerManager();
-            const Layer* l = lm.GetLayer(m_layerIds[static_cast<size_t>(row)]);
+            const Layer* l = lm.GetLayer(pp->layerIds[static_cast<size_t>(row)]);
             if (!l)
                 return true;
             UIContext* ctx = list->GetContext();
@@ -343,7 +345,7 @@ namespace MiniCAD
             case ColColor:
             {
                 const float cy = cell.Center().y;
-                DrawColorSwatch(dl, Rect{ box.min.x, cy - 6.0f, box.min.x + 22.0f, cy + 6.0f }, SwatchColor(l->GetColor(), m_ui.get()));
+                DrawColorSwatch(dl, Rect{ box.min.x, cy - 6.0f, box.min.x + 22.0f, cy + 6.0f }, SwatchColor(l->GetColor(), ctx));
                 return true;
             }
             case ColLinetype:
@@ -369,32 +371,32 @@ namespace MiniCAD
             return Rect{ cell.min + o, cell.max + o };
         };
 
-        list->SetOnCellClicked([this, &dm, cellScreenRect](int row, int col)
+        list->SetOnCellClicked([this, pc, pp, cellScreenRect](int row, int col)
         {
-            Document* doc = dm.GetActive();
-            if (!doc || row >= static_cast<int>(m_layerIds.size()))
+            Document* doc = DocOf(*pc);
+            if (!doc || row >= static_cast<int>(pp->layerIds.size()))
                 return;
-            const LayerID id = m_layerIds[static_cast<size_t>(row)];
+            const LayerID id = pp->layerIds[static_cast<size_t>(row)];
             Layer* l = doc->GetLayerManager().GetLayer(id);
             if (!l)
                 return;
             const Rect cell = cellScreenRect(row, col);
             // 弹层开在列表所在的窗口里：面板浮出成独立窗口后，它有自己的 UIContext
-            UIContext& popupUi = m_layerList->GetContext() ? *m_layerList->GetContext() : *m_ui;
+            UIContext& popupUi = pp->layerList->GetContext() ? *pp->layerList->GetContext() : *m_ui;
             switch (col)
             {
             case ColOn:   { LayerChange c; c.Visible = !l->IsVisible(); ChangeLayer(*doc, id, c); LayerChanged(); break; }
             case ColLock: { LayerChange c; c.Locked  = !l->IsLocked();  ChangeLayer(*doc, id, c); LayerChanged(); break; }
             case ColColor:
-                ShowColorPalette(popupUi, cell, ToColor32(l->GetColor()), [this, &dm, id](Color32 c)
+                ShowColorPalette(popupUi, cell, ToColor32(l->GetColor()), [this, pc, pp, id](Color32 c)
                 {
-                    if (Document* d = dm.GetActive())
+                    if (Document* d = DocOf(*pc))
                     {
                         LayerChange ch; ch.Color = ToColor4(c);
                         ChangeLayer(*d, id, ch);
                         LayerChanged();
                     }
-                }, m_layerList);
+                }, pp->layerList);
                 break;
             case ColLinetype:
             {
@@ -403,9 +405,9 @@ namespace MiniCAD
                 const auto& recs = doc->GetScene().GetLineTypeTable().Records();
                 for (size_t i = LineTypeTable::ContinuousID; i < recs.size(); ++i)
                 {
-                    items.push_back(MenuItem(recs[i].Name, [this, &dm, id, i]
+                    items.push_back(MenuItem(recs[i].Name, [this, pc, pp, id, i]
                     {
-                        if (Document* d = dm.GetActive())
+                        if (Document* d = DocOf(*pc))
                         {
                             LayerChange ch; ch.LineType = static_cast<LineTypeID>(i);
                             ChangeLayer(*d, id, ch);
@@ -424,9 +426,9 @@ namespace MiniCAD
                     if (it.lw == Lineweight::ByLayer || it.lw == Lineweight::ByBlock)
                         continue;
                     const Lineweight lw = it.lw;
-                    items.push_back(MenuItem(it.label, [this, &dm, id, lw]
+                    items.push_back(MenuItem(it.label, [this, pc, pp, id, lw]
                     {
-                        if (Document* d = dm.GetActive())
+                        if (Document* d = DocOf(*pc))
                         {
                             LayerChange ch; ch.Lineweight = lw;
                             ChangeLayer(*d, id, ch);
@@ -444,27 +446,27 @@ namespace MiniCAD
 
         // 点"名称"表头在升序 / 降序之间切换
         list->SetSortIndicator(ColName, true);
-        list->SetOnHeaderClicked([this, list](int col)
+        list->SetOnHeaderClicked([this, pc, pp, list](int col)
         {
             if (col != ColName)
                 return;
-            m_layerSortDesc = !m_layerSortDesc;
-            list->SetSortIndicator(ColName, !m_layerSortDesc);
-            RefreshLayerPanel();
+            pp->layerSortDesc = !pp->layerSortDesc;
+            list->SetSortIndicator(ColName, !pp->layerSortDesc);
+            RefreshLayerPanel(*pc);
         });
 
-        list->SetOnItemActivated([this, setCurrent](int row)
+        list->SetOnItemActivated([this, pc, pp, setCurrent](int row)
         {
-            if (row < static_cast<int>(m_layerIds.size()))
-                setCurrent(m_layerIds[static_cast<size_t>(row)]);
+            if (row < static_cast<int>(pp->layerIds.size()))
+                setCurrent(pp->layerIds[static_cast<size_t>(row)]);
         });
 
-        list->SetOnItemEdited([this, &dm](int row, int, const std::string& text)
+        list->SetOnItemEdited([this, pc, pp](int row, int, const std::string& text)
         {
-            Document* doc = dm.GetActive();
-            if (!doc || row >= static_cast<int>(m_layerIds.size()) || text.empty())
+            Document* doc = DocOf(*pc);
+            if (!doc || row >= static_cast<int>(pp->layerIds.size()) || text.empty())
                 return false;
-            const LayerID id = m_layerIds[static_cast<size_t>(row)];
+            const LayerID id = pp->layerIds[static_cast<size_t>(row)];
             LayerManager& lm = doc->GetLayerManager();
             if (id == Layer::DefaultLayerID || LayerOps::NameTaken(lm, text, id))
                 return false;           // 0 层不能改名，不能重名
@@ -474,12 +476,12 @@ namespace MiniCAD
             return changed || lm.GetLayer(id)->GetName() == text;
         });
 
-        list->SetRowContextMenu([this, list, setCurrent, deleteLayer](int row) -> std::vector<MenuItem>
+        list->SetRowContextMenu([this, pc, pp, list, setCurrent, deleteLayer](int row) -> std::vector<MenuItem>
         {
             std::vector<MenuItem> items{ MenuItem("新建图层(&N)", [this] { m_commands.Execute("layer.new"); }) };
-            if (row >= 0 && row < static_cast<int>(m_layerIds.size()))
+            if (row >= 0 && row < static_cast<int>(pp->layerIds.size()))
             {
-                const LayerID id = m_layerIds[static_cast<size_t>(row)];
+                const LayerID id = pp->layerIds[static_cast<size_t>(row)];
                 const bool    def = id == Layer::DefaultLayerID;
                 items.push_back(MenuItem("置为当前(&C)", [setCurrent, id] { setCurrent(id); }));
                 items.push_back(MenuItem("重命名(&M)", [list, row] { list->BeginEdit(row, ColName); }, "F2").Enabled(!def));
@@ -489,41 +491,47 @@ namespace MiniCAD
             return items;
         });
 
-        RefreshLayerPanel();
+        RefreshLayerPanel(*pc);
         return panel;
     }
 
     void MainFrame::RefreshLayerPanel()
     {
-        if (!m_layerList)
+        ForEachChrome([this](ViewChrome& c) { RefreshLayerPanel(c); });
+    }
+
+    void MainFrame::RefreshLayerPanel(ViewChrome& c)
+    {
+        PanelSet& P = *c.panels;
+        if (!P.layerList)
             return;
-        Document* doc = m_docManager.GetActive();
+        Document* doc = DocOf(c);
 
         // 行数、名称、顺序或过滤条件变了才重建行（图标、颜色等由绘制回调实时读取，只需重绘）
         std::vector<uint32_t> ids;
-        std::string signature = std::to_string(reinterpret_cast<uintptr_t>(doc)) + (m_layerSortDesc ? "|desc|" : "|asc|") + m_layerFilter;
+        std::string signature = std::to_string(reinterpret_cast<uintptr_t>(doc)) + (P.layerSortDesc ? "|desc|" : "|asc|") + P.layerFilter;
         if (doc)
         {
             for (uint32_t id : SortedLayerIds(*doc))
             {
                 const std::string& name = doc->GetLayerManager().GetLayer(id)->GetName();
-                if (!ContainsNoCase(name, m_layerFilter))
+                if (!ContainsNoCase(name, P.layerFilter))
                     continue;
                 ids.push_back(id);
                 signature += "|" + std::to_string(id) + ":" + name;
             }
-            if (m_layerSortDesc)
+            if (P.layerSortDesc)
                 std::reverse(ids.begin(), ids.end());
         }
-        if (signature == m_layerSignature)
+        if (signature == P.layerSignature)
         {
-            m_layerList->Invalidate();
+            P.layerList->Invalidate();
             return;
         }
-        m_layerSignature = signature;
+        P.layerSignature = signature;
 
-        const LayerID selected = m_layerList->GetCurrent() >= 0 && m_layerList->GetCurrent() < static_cast<int>(m_layerIds.size())
-                               ? m_layerIds[static_cast<size_t>(m_layerList->GetCurrent())] : static_cast<LayerID>(-1);
+        const LayerID selected = P.layerList->GetCurrent() >= 0 && P.layerList->GetCurrent() < static_cast<int>(P.layerIds.size())
+                               ? P.layerIds[static_cast<size_t>(P.layerList->GetCurrent())] : static_cast<LayerID>(-1);
         std::vector<MiniGUI::ListItem> items;
         for (uint32_t id : ids)
         {
@@ -532,11 +540,11 @@ namespace MiniCAD
             item.userData = id;
             items.push_back(std::move(item));
         }
-        m_layerIds = ids;
-        m_layerList->SetItems(std::move(items));
-        const auto it = std::find(m_layerIds.begin(), m_layerIds.end(), selected);
-        if (it != m_layerIds.end())
-            m_layerList->SetCurrent(static_cast<int>(it - m_layerIds.begin()));
+        P.layerIds = ids;
+        P.layerList->SetItems(std::move(items));
+        const auto it = std::find(P.layerIds.begin(), P.layerIds.end(), selected);
+        if (it != P.layerIds.end())
+            P.layerList->SetCurrent(static_cast<int>(it - P.layerIds.begin()));
     }
 
     // =========================================================

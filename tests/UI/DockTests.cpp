@@ -368,6 +368,47 @@ TEST(Dock_FloatOutByDraggingOutside)
     CHECK(!s.dock->IsPanelFloating("a"));
 }
 
+TEST(Dock_TearOffFollowsCursorAndRedocks)
+{
+    DockScene s;
+    // C 的标签拖出停靠区、还没松开：已经浮出，停靠区接过拖动（浮动窗口跟着光标走）；布局变化等松开再通知
+    s.Drag(s.TabCenter("c"), { 500.0f, -10.0f }, false);
+    CHECK(s.dock->IsPanelFloating("c") && s.dock->IsTornDragging() && s.dock->IsDragging());
+    CHECK(s.t.ui.GetCapture() == s.dock);
+    CHECK(s.changes == 0);
+    CHECK(s.dock->GetPanelContent("c") == s.c);
+
+    // 窗口跟着光标（标题栏落在光标下；面板很高，竖直方向被弹层层推回窗口里）
+    s.t.ui.PointerMove({ 300.0f, 300.0f }, 0);
+    s.t.Layout();
+    const Rect moved = s.dock->GetFloatingRect("c");
+    CHECK_NEAR(moved.min.x, 260.0f);
+    CHECK_NEAR(moved.Width(), 250.0f);
+
+    // 经过左侧组的标题栏：画落点；松开：合并为标签，浮动窗口关闭，只通知一次
+    const Vec2 header{ 150.0f, DockSpace::kHeaderHeight * 0.5f };
+    s.t.ui.PointerMove(header, 0);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview));
+    s.t.ui.PointerUp(header, MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelFloating("c") && !s.dock->IsDragging() && !s.dock->IsTornDragging());
+    CHECK(s.dock->IsPanelActive("c") && s.dock->GetPanelContent("c") == s.c);
+    CHECK_NEAR(s.dock->GetPanelRect("c").Width(), 200.0f);
+    CHECK(s.changes == 1);
+    CHECK(s.t.ui.GetCapture() == nullptr);
+
+    // 拖出后按 Esc：取消拖动，面板留在浮出的地方（C 已和 A、B 在一组，换一个新的场景）
+    DockScene s2;
+    s2.Drag(s2.TabCenter("c"), { 500.0f, -10.0f }, false);
+    s2.t.ui.PointerMove({ 600.0f, 200.0f }, 0);
+    s2.t.Key(Key::Escape);
+    CHECK(s2.dock->IsPanelFloating("c") && !s2.dock->IsDragging() && s2.t.ui.GetCapture() == nullptr && s2.changes == 1);
+    s2.t.ui.PointerUp({ 600.0f, 200.0f }, MouseButton::Left, 0);
+    CHECK(s2.dock->IsPanelFloating("c") && s2.changes == 1);
+}
+
 TEST(Dock_FloatByDoubleClickAndRedock)
 {
     DockScene s;

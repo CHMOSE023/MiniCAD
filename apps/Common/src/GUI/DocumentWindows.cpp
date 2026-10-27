@@ -12,7 +12,8 @@
 //   - 窗口：AppPlatform::CreateFloatingWindow（Win32FloatingWindow，带自己的 UIContext，能最小化 / 最大化）。界面由它自己的
 //     MiniGUI::UiLayout 按界面描述文件的 layouts.document 生成（ApplyDocWindowUi，命令表与主窗口共用，文件改了随主窗口一起重新加载）：
 //     标题栏（"文件"菜单、快速访问、文档标签条、最小化 / 最大化 / 关闭，按钮经 TitleBar::SetWindowActions 作用于这个窗口）、
-//     功能区（图层 / 线型 / 线宽下拉框每个窗口一份）、铺满其余部分的 ViewportHost、状态栏；没有停靠面板。
+//     功能区（图层 / 线型 / 线宽下拉框每个窗口一份）、铺满其余部分的 ViewportHost、停靠区（特性、图层、节点编辑器，每个窗口一套，
+//     显示它的文档，MainFrame::PanelSet；浮出成归这个窗口所有的独立窗口 FloatingPanelHost，不保存到用户布局）、状态栏。
 //     标题区域（含标签条的空白处）交给系统（IFloatingWindow::SetCaptionTest）：拖动、双击最大化、贴边分屏。
 //     × / 系统关闭 → 关闭它里面的文档，未保存的逐个询问（CloseDocWindow）
 //   - 视口：窗格的 Viewport（相机、缓存层），渲染目标另建一个（AppPlatform::CreateViewportTarget），渲染器与主窗口共用；
@@ -26,10 +27,12 @@
 //     主窗口开着对话框时不生效（ShortcutTable::SetGate）；按键不再转给主窗口
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/StatusBarView.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "Widgets/CommandConsole.h"
+#include "Widgets/DockSpace.h"
 #include "Widgets/FloatingPanel.h"
 #include "Widgets/Menu.h"
 #include "Widgets/Ribbon.h"
@@ -169,15 +172,30 @@ namespace MiniCAD
     void MainFrame::SetDocWindowsTheme(const ThemeColors& theme)
     {
         for (auto& w : m_docWindows)
+        {
             w->window->GetUI().SetTheme(theme);
+            w->floatHost->SetTheme(theme);
+        }
+    }
+
+    UiLayout* MainFrame::CurrentLayout() const
+    {
+        // 用户最后操作的窗口：新建的文档会放进它（激活文档、在窗口里按下都会设置）
+        if (const DocWindow* w = FindPaneWindow(m_docManager.GetNewDocumentPane()))
+            return w->layout.get();
+        return m_layout.get();
     }
 
     Ribbon* MainFrame::CurrentRibbon() const
     {
-        // 用户最后操作的窗口：新建的文档会放进它（激活文档、在空窗口里按下都会设置）
-        if (const DocWindow* w = FindPaneWindow(m_docManager.GetNewDocumentPane()))
-            return w->layout->GetRibbon();
-        return m_layout ? m_layout->GetRibbon() : nullptr;
+        const UiLayout* layout = CurrentLayout();
+        return layout ? layout->GetRibbon() : nullptr;
+    }
+
+    DockSpace* MainFrame::CurrentDock() const
+    {
+        const UiLayout* layout = CurrentLayout();
+        return layout ? layout->GetDock("main") : nullptr;
     }
 
     void MainFrame::ApplyDocWindowUi(DocWindow& w)
@@ -206,6 +224,9 @@ namespace MiniCAD
                 .isMaximized    = [pw] { return pw->window->IsWindowMaximized(); },
             });
         }
+        // 停靠面板浮出成独立窗口（要在任何面板浮出之前设置）
+        if (DockSpace* dock = w.layout->GetDock("main"))
+            dock->SetFloatHost(w.floatHost.get());
         // 命令搜索框执行或关闭后，焦点回到这个窗口的绘图区
         if (Ribbon* ribbon = w.layout->GetRibbon())
             ribbon->SetOnSearchDone([pw = &w]
@@ -292,9 +313,9 @@ namespace MiniCAD
         const PaneId from = m_docManager.PaneOf(doc);
         if (from == kNoPane || (from != kMainPane && m_docManager.DocumentsIn(from).size() <= 1))
             return false;       // 已经独占一个窗口
-        // 尺寸取主视口的六成（至少 480 × 320），标题栏落在光标下
+        // 尺寸取主视口的七成（至少 760 × 480：右侧还有特性 / 图层面板），标题栏落在光标下
         const Rect vb = m_viewport->GetScreenBounds();
-        const Vec2 size{ std::max(480.0f, std::floor(vb.Width() * 0.6f)), std::max(320.0f, std::floor(vb.Height() * 0.6f)) };
+        const Vec2 size{ std::max(760.0f, std::floor(vb.Width() * 0.7f)), std::max(480.0f, std::floor(vb.Height() * 0.7f)) };
         const Vec2 origin = windowPos - Vec2{ 60.0f, TitleBar::kHeight * 0.5f };
 
         std::unique_ptr<IRenderTarget> target = m_platform->CreateViewportTarget();
@@ -344,16 +365,14 @@ namespace MiniCAD
         w->uiHost = root.get();
         ui.GetRoot()->AddChild(std::move(root));
 
+        // 停靠面板浮出时的独立窗口：归这个窗口所有，位置按这个窗口的坐标换算；在里面按下，它的文档成为当前文档
+        w->floatHost = std::make_unique<FloatingPanelHost>(*m_platform, *m_ui, &ui, [w] { return w->window ? w->window->GetRect().min : Vec2{}; }, w->window.get());
+        w->floatHost->SetOnActivate([this, w] { if (!m_ui->HasModal()) UseChrome(w->chrome); });
+
         // 界面描述里引用的宿主面板：文档标签、视口、文档区（视图方块、导航条、命令行）、状态栏、功能区里的图层下拉框
         w->layout = std::make_unique<UiLayout>(m_commands, ResourceDir() + "/icons");
         w->layout->SetLayoutName("document");
         w->layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
-        w->bindings = std::make_unique<BindingSet>();
-        w->bindings->SetOnChanged([this]
-        {
-            m_commands.NotifyStateChanged();
-            RequestRenderAll();
-        });
 
         auto tabs = std::make_unique<TabView>();
         w->tabs = tabs.get();
@@ -394,8 +413,11 @@ namespace MiniCAD
         w->layout->RegisterPanel("canvas", std::move(host));
         w->layout->RegisterPanel("documents", CreateDocumentArea(c));
         w->layout->RegisterPanel("statusbar", CreateStatusBar(c));
-        w->layout->RegisterPanel("layerbar", CreateLayerBar(*w->bindings, [this, w] { return m_docManager.GetShownDocument(w->pane); },
+        w->layout->RegisterPanel("layerbar", CreateLayerBar(c.panels->bindings, [this, w] { return m_docManager.GetShownDocument(w->pane); },
                                                             &w->layerBar));
+        w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), "特性");     // 它的绑定集合的 OnChanged 在这里设好
+        w->layout->RegisterPanel("layers",     CreateLayerPanel(c), "图层");
+        w->layout->RegisterPanel("nodes",      CreateNodePanel(c), "节点");
         ApplyDocWindowUi(*w);
 
         // 快捷键登记在这个窗口自己的界面上；主窗口开着对话框时不生效（同主窗口）
@@ -503,6 +525,8 @@ namespace MiniCAD
         // 可能正在这个窗口自己的事件处理里：窗口（连同它的 UIContext）、纹理与渲染目标推迟到下一帧销毁（PurgeDocWindows）；
         // 先藏起来，回调都断开，之后它不再作用于任何文档
         w->window->SetVisible(false);
+        w->floatHost->SetHidden(true);      // 它浮出的面板窗口一起藏起来
+        w->floatHost->SetOnActivate(nullptr);
         m_commands.UnbindShortcuts(w->window->GetUI().GetShortcuts());
         w->host->SetOnRender(nullptr);
         w->host->SetOnPointer(nullptr);
@@ -544,8 +568,13 @@ namespace MiniCAD
         {
             if (w->window)
                 m_commands.UnbindShortcuts(w->window->GetUI().GetShortcuts());
-            w->bindings.reset();    // 绑定引用着窗口里的下拉框
-            w->window.reset();      // 再销毁窗口与它的界面（界面里引用着视口纹理）
+            w->chrome.panels->syncGeometryRows = nullptr;
+            w->chrome.panels->bindings.Clear();    // 绑定引用着窗口里的下拉框
+            // 浮出的面板趁窗口还在先收回来（停靠区销毁时才收的话，换算坐标要用的窗口已经没了）
+            if (DockSpace* dock = w->layout ? w->layout->GetDock("main") : nullptr)
+                dock->TakeAllPanels();
+            w->window.reset();      // 再销毁窗口与它的界面（界面里引用着视口纹理；停靠区销毁时从浮动宿主取回面板）
+            w->floatHost.reset();   // 然后才是它浮出的面板窗口
             if (w->tex != InvalidTextureId)
                 m_platform->GetUiBackend().DestroyTexture(w->tex);
             w->tex = InvalidTextureId;

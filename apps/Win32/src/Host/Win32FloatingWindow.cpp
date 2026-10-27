@@ -27,7 +27,7 @@ namespace MiniCAD
         }
     }
 
-    Win32FloatingWindow::Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document)
+    Win32FloatingWindow::Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document, HWND ownerHwnd)
         : m_owner(owner), m_document(document)
     {
         HINSTANCE hInstance = GetModuleHandleW(nullptr);
@@ -63,7 +63,7 @@ namespace MiniCAD
         const DWORD style = document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
         m_hwnd = CreateWindowExW(document ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW, kClassName, ToWide(title).c_str(), style,
                                  r.left, r.top, r.right - r.left, r.bottom - r.top,
-                                 document ? nullptr : owner.GetHwnd(), nullptr, hInstance, this);
+                                 document ? nullptr : (ownerHwnd ? ownerHwnd : owner.GetHwnd()), nullptr, hInstance, this);
         if (!m_hwnd)
             return;
         if (document)

@@ -550,6 +550,12 @@ namespace MiniGUI
                 it->second->SetTitle(title);
         }
 
+        void SetRect(const std::string& id, const Rect& rect) override
+        {
+            if (auto it = m_panels.find(id); it != m_panels.end())
+                it->second->SetRect(rect);
+        }
+
         void Activate(const std::string& id) override
         {
             const auto it = m_panels.find(id);
@@ -979,6 +985,8 @@ namespace MiniGUI
 
     void DockSpace::LayoutChanged()
     {
+        if (m_quietLayout)
+            return;
         if (m_onLayoutChanged)
         {
             auto cb = m_onLayoutChanged;
@@ -1325,7 +1333,13 @@ namespace MiniGUI
         {
             ShortcutTable::Options opt;
             opt.allowInTextInput = true;
-            m_drag.escShortcut = ctx->GetShortcuts().Register(Key::Escape, 0, [this] { EndDrag(m_drag.pos, true); }, opt);
+            m_drag.escShortcut = ctx->GetShortcuts().Register(Key::Escape, 0, [this]
+            {
+                const bool torn = m_drag.torn;      // 拖出后已经浮出：取消只是不再停靠，窗口留在原地
+                EndDrag(m_drag.pos, true);
+                if (torn)
+                    LayoutChanged();
+            }, opt);
         }
         UpdateDrag(windowPos);
     }
@@ -1334,9 +1348,78 @@ namespace MiniGUI
     {
         if (!m_drag.active)
             return;
+        // 拖动的标签离开停靠区：马上浮出，浮动窗口随后跟着光标走（不必等松开才看到窗口）
+        const Vec2 local = ToLocal(windowPos);
+        const Vec2 size  = GetSize();
+        if (!m_drag.external && (local.x < 0.0f || local.y < 0.0f || local.x >= size.x || local.y >= size.y) &&
+            m_panels.at(m_drag.panel).options.showHeader)
+        {
+            TearOff(windowPos);
+            return;
+        }
+        if (m_drag.torn)
+            MoveFloat(m_drag.panel, Rect{ windowPos - m_drag.grab, windowPos - m_drag.grab + m_drag.size });
         m_drag.pos    = windowPos;
-        m_drag.target = ComputeDrop(ToLocal(windowPos));
+        m_drag.target = ComputeDrop(local);
         Invalidate();
+    }
+
+    void DockSpace::TearOff(Vec2 windowPos)
+    {
+        // 尺寸取自原标签组，标题栏落在光标下。浮出会重建停靠区，持有捕获的标签条随之摘下：停靠区自己接过捕获，
+        // 接着按"拖浮动窗口"处理（经过停靠区画落点，松开在上面停靠回去，松开在外面留在那里）
+        const std::string panel = m_drag.panel;
+        const Tree* src = FindLeaf(panel);
+        const Vec2  dim{ std::clamp(src ? src->rect.Width()  : 0.0f, kFloatMinW, kFloatMaxW),
+                         std::clamp(src ? src->rect.Height() : 0.0f, kFloatMinH, kFloatMaxH) };
+        const Vec2  grab{ 40.0f, kHeaderHeight * 0.5f };
+        // 里面先结束本次标签拖动。布局变化等松开时再通知一次（浮出时窗口位置还在变）
+        m_quietLayout = true;
+        const bool floated = FloatPanel(panel, Rect{ windowPos - grab, windowPos - grab + dim });
+        m_quietLayout = false;
+        if (!floated)
+            return;
+        UIContext* ctx = GetContext();
+        if (!ctx || !IsPanelFloating(panel))
+            return;
+        BeginDrag(panel, windowPos, /*external=*/true);
+        m_drag.torn = true;
+        m_drag.grab = grab;
+        m_drag.size = dim;
+        ctx->SetCapture(this);
+    }
+
+    void DockSpace::MoveFloat(const std::string& id, const Rect& rect)
+    {
+        FloatHost().SetRect(id, rect);
+        if (m_defaultFloatHost && m_floatHost)
+            m_defaultFloatHost->SetRect(id, rect);      // 平台宿主开不了时在默认宿主里（不在的那个什么也不做）
+    }
+
+    void DockSpace::OnPointerEvent(PointerEvent& e)
+    {
+        if (!m_drag.torn || e.phase != EventPhase::Target)
+            return;
+        switch (e.type)
+        {
+        case PointerEventType::Move:
+            UpdateDrag(e.position);
+            e.handled = true;
+            break;
+        case PointerEventType::Up:
+            if (e.button != MouseButton::Left)
+                break;
+            e.handled = true;
+            if (!EndDrag(e.position, false))        // 没停靠回去：留在松开的地方，算一次布局变化（保存位置）
+                LayoutChanged();
+            break;
+        case PointerEventType::Cancel:
+            EndDrag(e.position, true);
+            LayoutChanged();                        // 已经浮出了
+            break;
+        default:
+            break;
+        }
     }
 
     bool DockSpace::EndDrag(Vec2 windowPos, bool cancel)
@@ -1351,6 +1434,8 @@ namespace MiniGUI
         const DropTarget  target   = cancel ? DropTarget{} : ComputeDrop(ToLocal(windowPos));
         const std::string panel    = m_drag.panel;
         const bool        external = m_drag.external;
+        if (m_drag.torn && HasCapture())
+            GetContext()->ReleaseCapture();
         m_drag = {};
         Invalidate();
         if (!target.valid)

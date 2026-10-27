@@ -41,6 +41,7 @@ namespace MiniCAD
         void RegisterFloatingWindow(Win32FloatingWindow* w);
         void UnregisterFloatingWindow(Win32FloatingWindow* w);
         bool IsOurWindow(HWND hwnd) const;                          // 主窗口或某个浮动窗口
+        HWND DialogOwner() const;                                   // 系统对话框的所属窗口：用户正在用的那个（文档窗口或主窗口）
         void OnFloatingWindowActive(bool active);                   // 浮动窗口激活状态变化：主标题栏不变灰
         bool ForwardKeyMessage(UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result);   // 浮动窗口里没处理的按键
 
@@ -73,7 +74,8 @@ MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
         void CloseWindow() override;
         void Quit() override;
 
-        std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document) override;
+        std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document,
+                                                              IFloatingWindow* owner) override;
         void ActivateMainWindow() override;
         void PickFile(FileKind kind, std::function<void(const std::string& path)> done) override;
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;

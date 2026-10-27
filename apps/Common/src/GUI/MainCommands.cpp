@@ -93,7 +93,7 @@ namespace MiniCAD
                               .tooltip = "显示起始页：新建、打开、最近的图纸（Esc 返回当前图纸）", .icon = "Home.png",
                               .execute    = [this] { ShowStartPage(!m_startShown); },
                               .canExecute = hasDoc,
-                              .isChecked  = [this] { return m_startShown || !m_docManager.GetActive(); } });
+                              .isChecked  = [this] { return m_startShown || !m_docManager.GetMainDocument(); } });
         m_commands.Register({ .id = "ui.search", .label = "搜索命令(&K)",
                               .tooltip = "在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行", .shortcut = "Ctrl+K",
                               .execute    = [this] { if (MiniGUI::Ribbon* r = CurrentRibbon()) r->FocusSearch(); },
@@ -102,7 +102,7 @@ namespace MiniCAD
                                   // 用户正在用的那个窗口的功能区；主窗口显示起始页时它的功能区是隐藏的
                                   const MiniGUI::Ribbon* r = CurrentRibbon();
                                   const bool inMain = r == m_layout->GetRibbon();
-                                  return r && r->GetSearchBox() && m_docManager.GetActive() && !(inMain && m_startShown);
+                                  return r && r->GetSearchBox() && m_docManager.GetActive() && !(inMain && (m_startShown || !m_docManager.GetMainDocument()));
                               } });
         // 「最近打开」的内容由 BuildRecentMenuItems() 在打开菜单时生成，这两条供命令行 / 快捷键直接调用
         m_commands.Register({ .id = "file.recent.clear", .label = "清除最近打开记录(&C)",
@@ -144,7 +144,7 @@ namespace MiniCAD
                                       std::set<Nodes::NodeId> all;
                                       for (const auto& n : dm.GetActive()->GetNodeGraph().GetNodes())
                                           all.insert(n->Id);
-                                      m_nodeEditor->SetSelection(std::move(all));
+                                      ActiveNodeEditor()->SetSelection(std::move(all));
                                       return;
                                   }
                                   dm.GetEditor().SelectAll();
@@ -153,17 +153,17 @@ namespace MiniCAD
         // 剪切 / 复制 / 粘贴：节点编辑器有焦点时作用于节点（子图经剪贴板，见 docs/NodeGraph/PLAN.md 第 9 节）
         auto hasNodeOrEntitySelection = [this, hasSelection]
         {
-            return NodeEditorHasFocus() ? !m_nodeEditor->GetSelection().empty() : hasSelection();
+            return NodeEditorHasFocus() ? !ActiveNodeEditor()->GetSelection().empty() : hasSelection();
         };
         m_commands.Register({ .id = "edit.cut",      .label = "剪切(&T)",       .shortcut = "Ctrl+X",
-                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->CutSelection(); return; } dm.CutSelected(); },
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { ActiveNodeEditor()->CutSelection(); return; } dm.CutSelected(); },
                               .canExecute = hasNodeOrEntitySelection });
         m_commands.Register({ .id = "edit.copy",     .label = "复制(&C)",       .shortcut = "Ctrl+C",
-                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->CopySelection(); return; } dm.CopySelected(); },
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { ActiveNodeEditor()->CopySelection(); return; } dm.CopySelected(); },
                               .canExecute = hasNodeOrEntitySelection });
         m_commands.Register({ .id = "edit.copyBase", .label = "带基点复制(&B)", .shortcut = "Ctrl+Shift+C", .execute = [&dm] { dm.CopySelectedWithBase(); }, .canExecute = hasSelection });
         m_commands.Register({ .id = "edit.paste",    .label = "粘贴(&P)",       .shortcut = "Ctrl+V",
-                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { m_nodeEditor->PasteFromClipboard(); return; } dm.Paste(); },
+                              .execute = [this, &dm] { if (NodeEditorHasFocus()) { ActiveNodeEditor()->PasteFromClipboard(); return; } dm.Paste(); },
                               .canExecute = hasDoc });
 
         // ── 绘图 / 修改：启动 Editor 的工具，工具进行中时按钮显示为选中 ─────
@@ -322,13 +322,13 @@ namespace MiniCAD
         m_commands.Register({ .id = "aux.hover", .label = "悬停高亮(&H)",
                               .execute = [&dm] { dm.GetEditor().ToggleHover(); }, .isChecked = [&dm] { return dm.GetEditor().IsHoverEnabled(); } });
 
-        // ── 停靠面板的显示 / 隐藏（面板在界面描述文件的 dock 里）────
+        // ── 停靠面板的显示 / 隐藏（面板在界面描述文件的 dock 里；每个窗口一套，作用于用户正在用的窗口）────
         auto panelToggle = [this](const char* id, const char* panel, const char* label)
         {
             m_commands.Register({ .id = id, .label = label,
-                                  .execute   = [this, panel] { if (auto* d = m_layout->GetDock("main")) d->TogglePanel(panel); },
-                                  .canExecute = [this, panel] { auto* d = m_layout->GetDock("main"); return d && d->HasPanel(panel); },
-                                  .isChecked = [this, panel] { auto* d = m_layout->GetDock("main"); return d && d->IsPanelVisible(panel); } });
+                                  .execute   = [this, panel] { if (auto* d = CurrentDock()) d->TogglePanel(panel); },
+                                  .canExecute = [this, panel] { auto* d = CurrentDock(); return d && d->HasPanel(panel); },
+                                  .isChecked = [this, panel] { auto* d = CurrentDock(); return d && d->IsPanelVisible(panel); } });
         };
         panelToggle("view.panel.properties", "properties", "特性(&P)");
         panelToggle("view.panel.layers",     "layers",     "图层(&L)");
@@ -344,8 +344,8 @@ namespace MiniCAD
                               .tooltip = "节点式参数化建模：把几何运算连成节点图，改参数实时更新（docs/NodeGraph/PLAN.md）",
                               .shortcut = "Ctrl+Shift+N",
                               .execute   = [this] { ShowNodePanel(true); },
-                              .canExecute = [this] { auto* d = m_layout->GetDock("main"); return d && d->HasPanel("nodes"); },
-                              .isChecked = [this] { auto* d = m_layout->GetDock("main"); return d && d->IsPanelVisible("nodes"); } });
+                              .canExecute = [this] { auto* d = CurrentDock(); return d && d->HasPanel("nodes"); },
+                              .isChecked = [this] { auto* d = CurrentDock(); return d && d->IsPanelVisible("nodes"); } });
         m_commands.Register({ .id = "nodes.bake", .label = "烘焙节点图(&B)",
                               .tooltip = "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销",
                               .execute = [this] { BakeNodeGraph(); }, .canExecute = hasDoc });

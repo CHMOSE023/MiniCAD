@@ -36,6 +36,7 @@ namespace MiniGUI
         virtual bool Open(DockSpace& dock, const std::string& id, const std::string& title, std::unique_ptr<Node>& content, const Rect& rect) = 0;
         virtual std::unique_ptr<Node> Close(const std::string& id) = 0;     // 取回内容并销毁浮动窗口
         virtual Rect GetRect(const std::string& id) const = 0;              // 当前位置（保存布局用）
+        virtual void SetRect(const std::string& id, const Rect& rect) = 0;  // 移动（标签拖出后窗口跟着光标走）
         virtual void SetTitle(const std::string& id, const std::string& title) = 0;
         virtual void Activate(const std::string& id) = 0;                   // 置前
     };
@@ -44,7 +45,8 @@ namespace MiniGUI
     // - 布局是一棵树：分割节点（横排 / 竖排，子节点固定尺寸或占剩余空间）+ 标签组（若干面板，显示其中一个）
     // - 拖动标签：放到另一个标签组的上 / 下 / 左 / 右拆分，放到中间或标题栏合并为标签；贴近停靠区边缘时停靠到整体的一侧。
     //   拖动时显示落点预览，Esc 取消
-    // - 浮动面板：标签拖到停靠区之外松开、或双击标签，面板浮出成浮动窗口（IDockFloatHost；默认是窗口内的 FloatingPanel 弹层）。
+    // - 浮动面板：标签拖出停靠区、或双击标签，面板浮出成浮动窗口（IDockFloatHost；默认是窗口内的 FloatingPanel 弹层）。
+    //   拖出时鼠标还没松开就浮出，之后停靠区接过鼠标捕获，浮动窗口跟着光标走（同拖浮动窗口的标题栏：经过停靠区画落点，松开在上面停靠回去）。
     //   拖动浮动窗口的标题栏到停靠区里停靠回去，双击标题栏回到浮出前的位置；关闭浮动面板后 ShowPanel 重新浮出到原处。
     //   浮动中的面板仍算"可见"（IsPanelVisible），一个浮动窗口里只有一个面板
     // - 分隔条拖动调整尺寸；面板最小 kMinPanel
@@ -108,6 +110,7 @@ namespace MiniGUI
         // ── 查询（测试与宿主使用）─────────────────────────────
         Rect      GetPanelRect(const std::string& id) const;  // 面板内容区（窗口坐标）；不可见时为空矩形
         bool      IsDragging() const { return m_drag.active; }
+        bool      IsTornDragging() const { return m_drag.torn; }   // 标签拖出后浮出、浮动窗口正跟着光标走
         bool      GetDropPreview(Rect& out) const;            // 拖动中且有有效落点时返回预览矩形（窗口坐标）
 
         // 卡片样式（照 SolidCraft 的浮动布局）：布局样式的 gap > 0 时，每个标签组画成圆角卡片（RadiusLg，细边框），
@@ -133,6 +136,7 @@ namespace MiniGUI
 
     protected:
         void OnLayout() override;
+        void OnPointerEvent(PointerEvent& e) override;      // 标签拖出后：停靠区持有捕获，移动浮动窗口、找落点
         void OnPaint(DrawList& dl, const Rect& screenRect) override;
         void OnPaintOverlay(DrawList& dl, const Rect& screenRect) override;
 
@@ -198,6 +202,8 @@ namespace MiniGUI
         void   Unfloat(const std::string& id);                  // 从宿主取回内容到 Panel::owned
         void   UnfloatAll();
         void   OpenPendingFloats();
+        void   TearOff(Vec2 windowPos);                         // 拖动中的标签离开停靠区：浮出，接着拖浮动窗口
+        void   MoveFloat(const std::string& id, const Rect& rect);
 
         // 布局与重建
         void   LayoutTree(Tree* node, const Rect& rect);
@@ -220,6 +226,7 @@ namespace MiniGUI
         std::function<void()>          m_onLayoutChanged;
         bool                           m_floating = false;
         bool                           m_rebuildPending = false;
+        bool                           m_quietLayout = false;      // 暂不通知布局变化（标签拖出浮出时，等松开再通知）
         IDockFloatHost*                m_floatHost = nullptr;
         std::unique_ptr<InWindowFloatHost> m_defaultFloatHost;
 
@@ -227,6 +234,8 @@ namespace MiniGUI
         {
             bool        active   = false;
             bool        external = false;   // 拖的是浮动窗口（不画光标旁的名称，松开在外面不再浮出）
+            bool        torn     = false;   // 标签拖出后浮出的：停靠区持有捕获，按 grab / size 移动浮动窗口
+            Vec2        grab, size;         // 光标相对浮动窗口左上角的位置、窗口尺寸（窗口坐标）
             std::string panel;
             Vec2        pos;                // 窗口坐标
             DropTarget  target;

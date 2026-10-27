@@ -33,6 +33,8 @@ namespace MiniGUI
     class CommandConsole;
     class Label;
     class ListView;
+    class TextBox;
+    class DockSpace;
     class Node;
     class ProgressBar;
     class TabView;
@@ -124,7 +126,8 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Node> CreateViewNavBar(ViewChrome& c);   // 视图方块下面竖排的导航条（ViewNavBar.cpp）
         std::unique_ptr<MiniGUI::Node> CreateAppBar();            // 标题栏右侧：AI、设置、帮助、版本号（面板 "appbar"，ViewNavBar.cpp）
         std::unique_ptr<MiniGUI::Node> CreateLayoutTabs(ViewChrome& c);   // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
-        std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel();
+        // 特性、图层、节点编辑器面板（面板 "properties" / "layers" / "nodes"）：每个窗口的停靠区里一套，显示、修改那个窗口里的文档
+        std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
         void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
         void ShowStartPage(bool show);                            // 有文档时切换起始页 / 图纸
@@ -134,7 +137,7 @@ namespace MiniCAD
         void OpenNodeEditorFromStart(bool newDocument);           // 离开起始页并显示节点编辑器（没有文档时新建）
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
-        std::unique_ptr<MiniGUI::Node> CreateLayerPanel();
+        std::unique_ptr<MiniGUI::Node> CreateLayerPanel(ViewChrome& c);
         // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 bindings
         std::unique_ptr<MiniGUI::Node> CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> doc,
                                                       MiniGUI::ComboBox** layerOut = nullptr);
@@ -146,7 +149,7 @@ namespace MiniCAD
         bool RouteKeyToCommandLine(const MiniGUI::KeyEvent& e);   // 绘图区直接打字进入命令行
 
         // ── 节点图（NodePanel.cpp，docs/NodeGraph/PLAN.md）──────────
-        std::unique_ptr<MiniGUI::Node> CreateNodePanel();         // 节点编辑器面板：工具行 + 画布
+        std::unique_ptr<MiniGUI::Node> CreateNodePanel(ViewChrome& c);    // 节点编辑器面板：工具行 + 画布
         void SyncNodeGraph();                                     // 每帧：求值当前文档的节点图（引用的图纸变了也重算），需要时刷新绘图区预览
         void RefreshNodePreview(Document& doc);
         Nodes::Graph& ShownNodeGraph(Document& doc);              // 节点编辑器正在显示的图（主图或进入的组内图）
@@ -155,7 +158,8 @@ namespace MiniCAD
         void OpenNodeGraphFile();                                 // 打开 .mcnode：插入当前节点图，或替换整张图
         bool LoadNodeGraphText(const std::string& text, bool replace);
         void OpenNodeParamsDialog();                              // 参数表：全部命名参数的名称、类别、值、公式，以及类型（族类型）
-        void ShowNodePanel(bool toggle);                          // 第一次显示时停靠在绘图区下方
+        void ShowNodePanel(bool toggle);                          // 当前窗口的节点面板；第一次显示时停靠在绘图区下方
+        NodeEditorView* ActiveNodeEditor() const;                 // 当前文档所在窗口的节点编辑器（求值、预览、烘焙都对当前文档）
         bool NodeEditorHasFocus() const;                          // 节点编辑器有焦点时 Ctrl+Z / Y / A / C / X / V 作用于节点图
         bool NodeGraphUndo(bool redo);
         Nodes::SolveContext  NodeSolveContext(Document& doc) const;
@@ -191,7 +195,8 @@ namespace MiniCAD
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
-        void RefreshLayerPanel();
+        void RefreshLayerPanel();                                 // 各窗口的图层面板（RefreshLayerPanel(ViewChrome&)）
+        void RefreshLayerPanel(ViewChrome& c);
         // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
         // 结果缓存到图层增删改名为止，只在界面线程使用
         static const std::vector<uint32_t>& SortedLayerIds(Document& doc);
@@ -271,6 +276,24 @@ namespace MiniCAD
         void NoteInput();       // 记录输入时间，用于统计输入到呈现的延迟；请当前文档的视口重绘
         void NoteInput(MiniGUI::ViewportHost& host);
 
+        // ── 每个窗口一套的面板状态：特性、图层、节点编辑器（放在停靠区里）与功能区的图层下拉框 ──────────
+        struct PanelSet
+        {
+            MiniGUI::BindingSet      bindings;                  // 特性面板与功能区图层下拉框的绑定
+            std::function<void()>    syncGeometryRows;          // 特性面板「几何」组：按选择集重新分配行
+            MiniGUI::ListView*       layerList   = nullptr;
+            MiniGUI::TextBox*        layerSearch = nullptr;     // 图层面板的搜索框
+            std::vector<uint32_t>    layerIds;                  // 图层面板每一行对应的图层 ID
+            std::string              layerSignature;            // 图层面板当前显示的内容，没变时不重建行
+            std::string              layerFilter;               // 图层面板只显示名称含这段文字的图层（不分大小写）
+            bool                     layerSortDesc = false;     // 图层面板按名称降序（点"名称"表头切换）
+            NodeEditorView*          nodeEditor  = nullptr;
+            MiniGUI::Label*          nodeStatus  = nullptr;
+            MiniGUI::Button*         nodeStop    = nullptr;     // 工具行的“停止”按钮，只在后台求值时显示
+            bool                     nodePanelPlaced = false;   // 节点面板已经放进过停靠区
+            const Document*          nodeDoc     = nullptr;     // 节点编辑器上次显示的文档：换了就复位视图
+        };
+
         // ── 每个窗口一套的绘图区界面：视图方块、导航条、命令行、状态栏（含模型 / 布局标签）──────────
         // 主窗口一套（m_main，绑定主视口里的文档 GetMainDocument），每个文档窗口一套（绑定它的文档）。
         // 在哪套上按下 / 提交，它的文档就成为当前文档（UseChrome），菜单命令与面板随之作用于它
@@ -288,6 +311,7 @@ namespace MiniCAD
             MiniGUI::TabView*        layoutTabs    = nullptr;   // 布局标签条（模型 / 图纸空间布局）
             MiniGUI::Node*           layoutTabsBar = nullptr;   // 布局标签条的外层容器（隐藏整行用）
             bool                     syncingLayouts = false;    // 正在程序化同步标签，忽略回调
+            std::unique_ptr<PanelSet> panels       = std::make_unique<PanelSet>();   // 这个窗口的特性 / 图层 / 节点面板
             DynamicInputBox*         dynInput      = nullptr;   // 光标旁的长度 / 角度输入框（第一次要显示时建，界面重建后重新建）
             bool                     hovered       = false;     // 光标在这个窗口的视口里
             bool                     navFits       = true;      // 绘图区够高、放得下导航条（不压住命令行），见 SyncViewCube
@@ -319,8 +343,8 @@ namespace MiniCAD
         {
             PaneId                           pane   = DocumentManager::kNoPane;   // 它的窗格（销毁后为 kNoPane）
             std::unique_ptr<IFloatingWindow> window;
+            std::unique_ptr<FloatingPanelHost> floatHost;          // 它的停靠面板浮出时的独立窗口（归它所有）；比界面先建、后销毁
             std::unique_ptr<MiniGUI::UiLayout> layout;             // 按界面描述的 layouts.document 生成它的界面（命令表与主窗口共用）
-            std::unique_ptr<MiniGUI::BindingSet> bindings;         // 它的图层 / 线型 / 线宽下拉框
             MiniGUI::Node*                   uiHost = nullptr;     // 界面描述生成的内容放在这里
             MiniGUI::TitleBar*               titleBar = nullptr;   // 界面描述生成的标题栏（重新加载后换新的）；空白处拖动交给系统
             MiniGUI::TabView*                tabs   = nullptr;     // 标题栏里的文档标签条
@@ -371,7 +395,9 @@ namespace MiniCAD
         void       RequestRenderAll();                                       // 主视口与所有文档窗口都重绘
         void       SetDocWindowsTheme(const MiniGUI::ThemeColors& theme);
         void       ApplyDocWindowUi(DocWindow& w);                           // 按界面描述文件（重新）生成文档窗口的界面
-        MiniGUI::Ribbon* CurrentRibbon() const;                              // 用户正在用的窗口（新文档会放进的那个）的功能区
+        MiniGUI::UiLayout* CurrentLayout() const;                            // 用户正在用的窗口（新文档会放进的那个）的界面
+        MiniGUI::Ribbon*    CurrentRibbon() const;                           // 它的功能区
+        MiniGUI::DockSpace* CurrentDock() const;                             // 它的停靠区（特性、图层、节点面板）
         void       SyncViewCube();                                           // 主窗口的视图方块跟着主视口里文档的视线方向
     public:
         size_t     DocWindowCount() const { return m_docWindows.size(); }    // 自测用
@@ -404,7 +430,6 @@ namespace MiniCAD
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
-        MiniGUI::ListView*                     m_layerList  = nullptr;
         MiniGUI::ComboBox*                     m_layerBarLayer = nullptr;  // 工具栏的图层下拉框（自测用）
         MiniGUI::Popup*                        m_textPopup  = nullptr;   // 文字 / 多行文字原位编辑
         MiniGUI::Dialog*                       m_blockNameDialog = nullptr;
@@ -418,11 +443,6 @@ namespace MiniCAD
         Document*                              m_pointStyleDoc    = nullptr;  // 它对应的文档；文档换了就关掉
         MiniGUI::Dialog*                       m_lineTypeScaleDialog = nullptr;  // 线型比例对话框（$LTSCALE）
         Document*                              m_lineTypeScaleDoc    = nullptr;  // 同上
-        std::vector<uint32_t>                  m_layerIds;               // 图层面板每一行对应的图层 ID
-        std::string                            m_layerSignature;         // 图层面板当前显示的内容，没变时不重建行
-        MiniGUI::TextBox*                      m_layerSearch = nullptr;  // 图层面板的搜索框
-        std::string                            m_layerFilter;            // 图层面板只显示名称含这段文字的图层（不分大小写）
-        bool                                   m_layerSortDesc = false;  // 图层面板按名称降序（点"名称"表头切换）
         void*                                  m_viewSRV    = nullptr;   // 当前登记的视口 SRV（尺寸变化后会重建）
         MiniGUI::TextureId                     m_viewTex    = MiniGUI::InvalidTextureId;
         uint64_t                               m_viewTexRebuilds = 0;    // 视口渲染目标重建（重新登记纹理）的次数，自测用
@@ -433,8 +453,6 @@ namespace MiniCAD
         // ── 命令与界面描述（注册表要比工具栏活得久：先声明、后销毁）──
         MiniGUI::CommandRegistry               m_commands;
         std::unique_ptr<MiniGUI::UiLayout>     m_layout;
-        MiniGUI::BindingSet                    m_bindings;
-        std::function<void()>                  m_syncGeometryRows;     // 特性面板「几何」组：按选择集重新分配行
         std::array<SelectionSummary, 4>        m_selectionCache;       // 见 SelectionInfo：每个窗口的文档各缓存一份
         size_t                                 m_selectionNext = 0;
         MiniGUI::Node*                         m_uiHost     = nullptr;   // 界面描述生成的内容放在这里
@@ -446,13 +464,10 @@ namespace MiniCAD
         RecentFiles                            m_recentFiles;            // 「文件 > 最近打开」，存到 exe 目录下的 recent.txt
 
         // ── 节点图 ──────────────────────────────────────────────
-        NodeEditorView*                        m_nodeEditor = nullptr;
-        MiniGUI::Label*                        m_nodeStatus = nullptr;
         Nodes::PreviewBuilder                  m_nodePreview;            // 预览几何（缓存内核实体的离散结果）
         std::map<const Document*, std::unique_ptr<Nodes::GraphHistory>> m_nodeHistory;   // 每个文档一份节点图撤销历史
         const Document*                        m_nodePreviewDoc = nullptr;   // 预览对应的文档
         uint64_t                               m_nodePreviewSig = 0;         // 预览对应的求值版本、预览开关、连线、选择
-        bool                                   m_nodePanelPlaced = false;    // 节点面板已经放进过停靠区
         // 一次后台求值，与工作线程共享：工作线程只碰 copy（节点图的副本）与几个原子量，界面线程在 finished 之后才读 copy
         struct NodeEvalJob
         {
@@ -471,7 +486,6 @@ namespace MiniCAD
         bool                                   m_nodeEvalSync = false;       // 不用后台线程（自测里检查同步结果）
         // 脏节点上次耗时之和不超过它（毫秒）时在界面线程上同步求值，当帧出结果，与 N11 之前一样；更重的交给后台
         double                                 m_nodeSyncBudget = 40.0;
-        MiniGUI::Button*                       m_nodeStop   = nullptr;       // 工具行的“停止”按钮，只在后台求值时显示
 
         // ── 后台打开图纸（OpenDrawings）───────────────────────────
         struct OpenJob;                                                  // 一张图纸的读取任务，与后台线程共享（MainFrame.cpp）
@@ -479,6 +493,7 @@ namespace MiniCAD
         std::shared_ptr<OpenJob>               m_openDone;               // 已读完、等本帧画完后加入的图纸
         bool                                   m_openAddPosted = false;  // 已投递"加入 m_openDone"（AppPlatform::Post）
         std::vector<std::string>               m_openQueue;              // 排队等待读取的路径
+        DocumentManager::PaneId                m_openPane = DocumentManager::kMainPane;   // 读完的图纸加进哪个窗口（发起打开时的）
         std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
         std::vector<Document*>                 m_xrefMissingDocs;        // 本批打开的、有找不到的外部参照的图纸
         bool                                   m_openedAny  = false;
@@ -500,7 +515,6 @@ namespace MiniCAD
         // 正从标签条拖出、鼠标还没松开：哪个文档、被拖的窗口（新建的，或只有它的原窗口）、按住的是哪个窗口的标签条
         struct TornDrag { Document* doc = nullptr; PaneId window = DocumentManager::kNoPane; PaneId source = DocumentManager::kNoPane; };
         TornDrag                                m_torn;
-        MiniGUI::Node*                          m_mainEmptyCard = nullptr; // 主窗口没有文档（都在别的窗口里）时绘图区中间的提示卡片
         bool                                    m_modalRaised = false;   // 上一帧主窗口已开着对话框（RaiseMainForModal）
 
         // ── 统计 ────────────────────────────────────────────────

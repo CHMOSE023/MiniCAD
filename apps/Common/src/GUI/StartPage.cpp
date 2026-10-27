@@ -536,14 +536,14 @@ namespace MiniCAD
         m_startRecent->Invalidate();
     }
 
-    // 导航列的可用状态与“返回”行随当前文档变化（SyncDocuments 调用）
+    // 导航列的可用状态与“返回”行随主窗口里的文档变化（SyncDocuments 调用）
     void MainFrame::RefreshStartNav()
     {
         for (auto& [button, cmd] : m_startNav)
             button->SetEnabled(m_commands.IsEnabled(cmd));
         if (m_startBack)
         {
-            const Document* doc = m_docManager.GetActive();
+            const Document* doc = m_docManager.GetMainDocument();     // 回到主窗口里显示的文档（别的窗口里的不算）
             m_startBack->SetVisible(doc != nullptr);
             if (doc)
                 static_cast<BackRow*>(m_startBack)->SetDocument(doc->GetName());
@@ -586,8 +586,8 @@ namespace MiniCAD
 
     void MainFrame::ShowStartPage(bool show)
     {
-        if (show && !m_docManager.GetActive())
-            show = false;                   // 没有文档时起始页本来就在显示
+        if (show && !m_docManager.GetMainDocument())
+            show = false;                   // 主窗口里没有文档时起始页本来就在显示
         m_startShown = show;
         m_startOver  = show ? m_docManager.GetActive() : nullptr;
         SyncDocuments();
@@ -602,14 +602,14 @@ namespace MiniCAD
     {
         const std::string text = Nodes::ReadTextFile(path);
         OpenNodeEditorFromStart(true);
-        if (!m_nodeEditor)
+        if (!ActiveNodeEditor())
             return;
         m_ui->Update();                     // 节点面板刚显示：先布局，插入的示例才能按画布尺寸摆放
-        m_nodeEditor->Focus();
-        const bool ok = !text.empty() && m_nodeEditor->InsertGraph(text);
+        ActiveNodeEditor()->Focus();
+        const bool ok = !text.empty() && ActiveNodeEditor()->InsertGraph(text);
         m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + name + "——" + description : "示例：读不出 " + path);
         if (ok)
-            m_nodeEditor->FrameAll();
+            ActiveNodeEditor()->FrameAll();
     }
 
     void MainFrame::OpenNodeEditorFromStart(bool newDocument)

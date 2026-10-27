@@ -423,41 +423,6 @@ namespace MiniCAD
             c.cmdCard = card;
         }
 
-        // 主窗口：图纸都拖到别的窗口里时，绘图区中间显示的提示卡片（不用起始页：它会盖住面板，面板还要给别的窗口用）
-        if (c.main)
-        {
-            auto* holder = area->AddChild<Node>();
-            LayoutStyle hs;
-            hs.position   = PositionType::Absolute;
-            hs.left = hs.top = hs.right = hs.bottom = 0.0f;
-            hs.direction  = FlexDirection::Column;
-            hs.justify    = Justify::Center;
-            hs.alignItems = Align::Center;
-            holder->SetLayoutStyle(hs);
-            holder->SetHitTestVisible(false);
-
-            auto* card = holder->AddChild<Panel>(Theme::Panel);
-            card->SetRounding(Theme::RadiusLg);
-            card->SetBorder(Theme::BorderSubtle);
-            LayoutStyle ks;
-            ks.direction  = FlexDirection::Column;
-            ks.alignItems = Align::Center;
-            ks.padding    = Edges::Symmetric(24.0f, 18.0f);
-            ks.gap        = 10.0f;
-            card->SetLayoutStyle(ks);
-            card->AddChild<Label>("这个窗口里没有打开的图纸", 15.0f);
-            card->AddChild<Label>("图纸都在其他窗口里；把它们的标签拖到上面的标签条上即可移回这里", 12.0f, Theme::TextDim);
-            auto* buttons = card->AddChild<Node>();
-            LayoutStyle bs;
-            bs.direction = FlexDirection::Row;
-            bs.gap       = 8.0f;
-            buttons->SetLayoutStyle(bs);
-            // 新建 / 打开的图纸放进主窗口（在卡片上按下时 PressHook 已把新文档的窗格设成主窗格）
-            buttons->AddChild<Button>("新建", [this] { m_commands.Execute("file.new"); });
-            buttons->AddChild<Button>("打开…", [this] { m_commands.Execute("file.open"); });
-            holder->SetVisible(false);
-            m_mainEmptyCard = holder;
-        }
         return area;
     }
 
@@ -503,10 +468,12 @@ namespace MiniCAD
     // =========================================================
     // 特性面板：控件通过 BindingSet 绑定到 MiniCAD 的数据
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreatePropertiesPanel()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreatePropertiesPanel(ViewChrome& c)
     {
         using namespace MiniGUI;
-        DocumentManager& dm = m_docManager;
+        // 这个窗口的面板：显示、修改它显示的文档（在窗口里按下时它已成为当前文档）
+        ViewChrome* pc = &c;
+        PanelSet&   P  = *c.panels;
 
         auto panel = std::make_unique<Panel>(Theme::PanelAlt);
         LayoutStyle ps;
@@ -516,7 +483,9 @@ namespace MiniCAD
         grid->EditLayoutStyle().grow = 1.0f;
         grid->SetNameWidth(90.0f);
 
-        auto doc = [&dm]() -> Document* { return dm.GetActive(); };
+        auto doc = [this, pc]() -> Document* { return DocOf(*pc); };
+        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取这个窗口的文档的（没有文档时是空闲的编辑器）
+        auto editor = [this, doc]() -> Editor& { Document* d = doc(); return d ? m_docManager.GetEditor(*d) : m_docManager.GetEditor(); };
         auto layerNames = [doc]
         {
             std::vector<std::string> names;
@@ -529,7 +498,7 @@ namespace MiniCAD
         // ── 当前设置（新建对象使用）─────────────────────────────
         Expander* current = grid->AddGroup("当前（新建对象）");
         auto* layer = grid->AddProperty<ComboBox>(current, "图层");
-        m_bindings.BindChoice(layer,
+        P.bindings.BindChoice(layer,
             [doc]() -> std::optional<int>
             {
                 Document* d = doc();
@@ -546,7 +515,7 @@ namespace MiniCAD
             layerNames);
 
         auto* linetype = grid->AddProperty<ComboBox>(current, "线型");
-        m_bindings.BindChoice(linetype,
+        P.bindings.BindChoice(linetype,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? static_cast<int>(d->GetScene().GetCurrentLineType()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i)); },
             [doc]
@@ -559,7 +528,7 @@ namespace MiniCAD
             });
 
         auto* textStyle = grid->AddProperty<ComboBox>(current, "文字样式");
-        m_bindings.BindChoice(textStyle,
+        P.bindings.BindChoice(textStyle,
             [doc]() -> std::optional<int>
             {
                 Document* d = doc();
@@ -586,48 +555,46 @@ namespace MiniCAD
 
         auto* textHeight = grid->AddProperty<NumberBox>(current, "文字高度", 2.5, 0.001, 10000.0, 0.5, 3);
         textHeight->SetTooltip("新建文字的字高；当前文字样式设了固定字高时以样式为准");
-        m_bindings.BindNumber(textHeight,
-            [&dm] { return std::optional<double>(dm.GetEditor().GetTextHeight()); },
-            [&dm](const double& v) { dm.GetEditor().SetTextHeight(v); });
+        P.bindings.BindNumber(textHeight,
+            [editor] { return std::optional<double>(editor().GetTextHeight()); },
+            [editor](const double& v) { editor().SetTextHeight(v); });
 
         auto* lineweight = grid->AddProperty<ComboBox>(current, "线宽", LineweightLabels());
-        m_bindings.BindChoice(lineweight,
+        P.bindings.BindChoice(lineweight,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? LineweightIndex(d->GetScene().GetCurrentLineweight()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
 
-        // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取当前文档的
-        auto editor = [&dm]() -> Editor& { return dm.GetEditor(); };
 
         // ── 绘图辅助（与工具栏、状态栏、F3 / F8 是同一份数据，任何一处修改都同步）────
         //Expander* aux = grid->AddGroup("绘图辅助");
         //auto bindToggle = [this](CheckBox* box, std::function<bool()> get, std::function<void()> toggle)
         //{
-        //    m_bindings.BindCheck(box, [get] { return std::optional<bool>(get()); },
+        //    P.bindings.BindCheck(box, [get] { return std::optional<bool>(get()); },
         //                              [get, toggle](const bool& v) { if (v != get()) toggle(); });
         //};
         //bindToggle(grid->AddProperty<CheckBox>(aux, "对象捕捉"), [editor] { return editor().IsSnapEnabled(); },  [editor] { editor().ToggleSnap(); });
         //bindToggle(grid->AddProperty<CheckBox>(aux, "正交"),     [editor] { return editor().IsOrthoEnabled(); }, [editor] { editor().ToggleOrtho(); });
         //bindToggle(grid->AddProperty<CheckBox>(aux, "悬停高亮"), [editor] { return editor().IsHoverEnabled(); }, [editor] { editor().ToggleHover(); });
         //auto* radius = grid->AddProperty<NumberBox>(aux, "捕捉孔径", 10.0, 1.0, 50.0, 1.0, 0);
-        //m_bindings.BindNumber(radius,
+        //P.bindings.BindNumber(radius,
         //    [editor] { return std::optional<double>(editor().GetSnapEngine().GetSnapRadiusPx()); },
         //    [editor](const double& v) { editor().GetSnapEngine().SetSnapRadiusPx(v); });
 
         // ── 选择集（可编辑：多个对象取值不同时显示"*多种*"；修改走 ChangeAttrCommand，可撤销）────────────
         Expander* sel = grid->AddGroup("选择集");
         auto* count = grid->AddProperty<Label>(sel, "数量", std::string(), 13.0f);
-        m_bindings.BindLabel(count, [this, doc]
+        P.bindings.BindLabel(count, [this, doc]
         {
-            const size_t n = doc() ? SelectionInfo().count : 0;
+            const size_t n = doc() ? SelectionInfo(doc()).count : 0;
             return n == 0 ? std::string("未选择") : std::to_string(n) + " 个对象";
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, "图层");
         selLayer->SetPlaceholder("—");
-        m_bindings.BindChoice(selLayer,
+        P.bindings.BindChoice(selLayer,
             [this, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionInfo().layer;
+                return SelectionInfo(doc()).layer;
             },
             [editor, doc](const int& i)
             {
@@ -641,11 +608,11 @@ namespace MiniCAD
 
         auto* selColor = grid->AddProperty<ComboBox>(sel, "颜色", ColorLabels());
         selColor->SetPlaceholder("—");
-        m_bindings.BindChoice(selColor,
+        P.bindings.BindChoice(selColor,
             [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionInfo().color;
+                return SelectionInfo(doc()).color;
             },
             [editor](const int& i)
             {
@@ -656,11 +623,11 @@ namespace MiniCAD
 
         auto* selLinetype = grid->AddProperty<ComboBox>(sel, "线型");
         selLinetype->SetPlaceholder("—");
-        m_bindings.BindChoice(selLinetype,
+        P.bindings.BindChoice(selLinetype,
             [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionInfo().lineType;
+                return SelectionInfo(doc()).lineType;
             },
             [editor](const int& i)
             {
@@ -677,21 +644,21 @@ namespace MiniCAD
             });
 
         auto* selScale = grid->AddProperty<NumberBox>(sel, "线型比例", 1.0, 0.001, 10000.0, 0.1, 3);
-        m_bindings.BindNumber(selScale,
+        P.bindings.BindNumber(selScale,
             [this, doc]() -> std::optional<double>
             {
                 if (!doc()) return std::nullopt;
-                return SelectionInfo().lineTypeScale;
+                return SelectionInfo(doc()).lineTypeScale;
             },
             [editor](const double& v) { editor().ChangeSelectionAttr(AttrChange{ .LinetypeScale = v }); });
 
         auto* selWeight = grid->AddProperty<ComboBox>(sel, "线宽", LineweightLabels());
         selWeight->SetPlaceholder("—");
-        m_bindings.BindChoice(selWeight,
+        P.bindings.BindChoice(selWeight,
             [this, editor, doc]() -> std::optional<int>
             {
                 if (!doc()) return -1;
-                return SelectionInfo().lineweight;
+                return SelectionInfo(doc()).lineweight;
             },
             [editor](const int& i)
             {
@@ -708,7 +675,7 @@ namespace MiniCAD
         auto slots = std::make_shared<std::vector<Slot>>(kNumberSlots + 1);     // 下标 0 是文字槽，其余是数值槽
 
         auto* textSlot = grid->AddProperty<TextBox>(geom, "内容");
-        m_bindings.BindText(textSlot,
+        P.bindings.BindText(textSlot,
             [slots]() -> std::optional<std::string>
             {
                 const Slot& s = (*slots)[0];
@@ -728,7 +695,7 @@ namespace MiniCAD
         {
             auto* box = grid->AddProperty<NumberBox>(geom, "", 0.0, -1.0e12, 1.0e12, 1.0, 3);
             numberBoxes.push_back(box);
-            m_bindings.BindNumber(box,
+            P.bindings.BindNumber(box,
                 [slots, i]() -> std::optional<double>
                 {
                     const Slot& s = (*slots)[i];
@@ -744,13 +711,13 @@ namespace MiniCAD
         }
 
         // 选择集变化后：重新分配槽（在 BindingSet::Refresh 之前调用）
-        m_syncGeometryRows = [this, slots, geom, textSlot, numberBoxes, doc]
+        P.syncGeometryRows = [this, slots, geom, textSlot, numberBoxes, doc]
         {
             for (Slot& s : *slots) s = Slot{};
             if (doc())
             {
                 size_t nextNumber = 1;
-                for (const CommonProperty& p : SelectionInfo().properties)
+                for (const CommonProperty& p : SelectionInfo(doc()).properties)
                 {
                     Slot* target = nullptr;
                     if (p.kind == PropKind::String)
@@ -779,10 +746,10 @@ namespace MiniCAD
                 apply(numberBoxes[i], (*slots)[i + 1]);
             geom->SetVisible(any);
         };
-        m_syncGeometryRows();
+        P.syncGeometryRows();
 
         // 用户在特性面板（或工具栏下拉框）上修改后：刷新命令状态（工具栏、菜单勾选）并重绘视口
-        m_bindings.SetOnChanged([this]
+        P.bindings.SetOnChanged([this]
         {
             m_commands.NotifyStateChanged();
             RequestRenderAll();
@@ -835,16 +802,12 @@ namespace MiniCAD
     // =========================================================
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateUiHost()
     {
-        // 在主窗口的标题栏、功能区上按下：主窗口里的文档成为当前文档，功能区、快速访问的命令随后作用于它
-        //（每个窗口有自己的功能区，作用于自己的文档）。停靠面板（特性、图层、节点）跟着当前文档，按在上面不切换
-        return std::make_unique<MainUiHost>([this](MiniGUI::Vec2 p)
+        // 在主窗口里任何地方按下（标题栏、功能区、面板、起始页…）：主窗口里的文档成为当前文档，按钮的命令随后作用于它
+        //（每个窗口有自己的功能区和面板，作用于自己的文档）；主窗口空着时之后新建的文档进它。
+        // 对话框开着时不切换（对话框可能正在处理别的窗口里的文档）
+        return std::make_unique<MainUiHost>([this](MiniGUI::Vec2)
         {
-            if (m_docWindows.empty())
-                return;
-            const MiniGUI::TitleBar* bar    = m_layout->GetTitleBar();
-            const MiniGUI::Ribbon*   ribbon = m_layout->GetRibbon();
-            if ((bar && bar->IsVisible() && bar->GetScreenBounds().Contains(p)) ||
-                (ribbon && ribbon->IsVisible() && ribbon->GetScreenBounds().Contains(p)))
+            if (!m_docWindows.empty() && !m_ui->HasModal())
                 UseChrome(m_main);
         });
     }

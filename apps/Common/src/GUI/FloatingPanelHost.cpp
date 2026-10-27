@@ -8,9 +8,37 @@ namespace MiniCAD
 {
     using namespace MiniGUI;
 
-    FloatingPanelHost::FloatingPanelHost(AppPlatform& platform, UIContext& mainUi)
-        : m_platform(platform), m_mainUi(mainUi)
+    FloatingPanelHost::FloatingPanelHost(AppPlatform& platform, UIContext& mainUi, UIContext* dockUi,
+                                         std::function<Vec2()> dockOrigin, IFloatingWindow* owner)
+        : m_platform(platform), m_mainUi(mainUi), m_dockUi(dockUi), m_dockOrigin(std::move(dockOrigin)), m_owner(owner)
     {
+    }
+
+    float FloatingPanelHost::DockRatio() const
+    {
+        return m_dockUi && m_dockOrigin ? m_dockUi->GetPixelScale() / std::max(0.01f, m_mainUi.GetPixelScale()) : 1.0f;
+    }
+
+    Vec2 FloatingPanelHost::DockToMain(Vec2 p) const
+    {
+        return m_dockOrigin ? m_dockOrigin() + p * DockRatio() : p;
+    }
+
+    Vec2 FloatingPanelHost::MainToDock(Vec2 p) const
+    {
+        return m_dockOrigin ? (p - m_dockOrigin()) * (1.0f / std::max(0.01f, DockRatio())) : p;
+    }
+
+    Rect FloatingPanelHost::DockToMain(const Rect& r) const
+    {
+        const Vec2 o = DockToMain(r.min);
+        return Rect{ o, o + r.Size() * DockRatio() };
+    }
+
+    Rect FloatingPanelHost::MainToDock(const Rect& r) const
+    {
+        const Vec2 o = MainToDock(r.min);
+        return Rect{ o, o + r.Size() * (1.0f / std::max(0.01f, DockRatio())) };
     }
 
     FloatingPanelHost::~FloatingPanelHost()
@@ -32,7 +60,7 @@ namespace MiniCAD
     {
         if (m_windows.count(id) || !content)
             return false;
-        std::unique_ptr<IFloatingWindow> window = m_platform.CreateFloatingWindow(title, rect);
+        std::unique_ptr<IFloatingWindow> window = m_platform.CreateFloatingWindow(title, DockToMain(rect), false, m_owner);
         if (!window)
             return false;
 
@@ -52,6 +80,7 @@ namespace MiniCAD
         DockSpace* d = &dock;
         e->panel->SetOnClose ([d, id] { d->ClosePanel(id); });
         e->panel->SetOnRedock([d, id] { d->RedockPanel(id); });
+        e->panel->SetOnActivate([this] { if (m_onActivate) m_onActivate(); });
         e->panel->SetOnDrag([this, e, d, id](FloatingPanel::DragPhase phase, Vec2 pos)
         {
             switch (phase)
@@ -61,7 +90,7 @@ namespace MiniCAD
                 const Rect r = e->window->GetRect();
                 e->grab = pos;
                 e->size = r.Size();
-                d->BeginExternalDrag(id, ToMain(*e, pos));
+                d->BeginExternalDrag(id, MainToDock(ToMain(*e, pos)));
                 break;
             }
             case FloatingPanel::DragPhase::Update:
@@ -71,16 +100,16 @@ namespace MiniCAD
                 const float ratio  = e->window->GetUI().GetPixelScale() / std::max(0.01f, m_mainUi.GetPixelScale());
                 const Vec2 origin  = mainPos - e->grab * ratio;
                 e->window->SetRect(Rect{ origin, origin + e->size });
-                d->UpdateExternalDrag(mainPos);
+                d->UpdateExternalDrag(MainToDock(mainPos));
                 break;
             }
             case FloatingPanel::DragPhase::End:
                 // 停靠成功时停靠区已经 Close 了本窗口（e 随之失效），之后不再访问 e
-                if (!d->EndExternalDrag(ToMain(*e, pos), false))
+                if (!d->EndExternalDrag(MainToDock(ToMain(*e, pos)), false))
                     d->NotifyLayoutChanged();
                 break;
             case FloatingPanel::DragPhase::Cancel:
-                d->EndExternalDrag(ToMain(*e, pos), true);
+                d->EndExternalDrag(MainToDock(ToMain(*e, pos)), true);
                 break;
             }
         });
@@ -129,7 +158,13 @@ namespace MiniCAD
     Rect FloatingPanelHost::GetRect(const std::string& id) const
     {
         const auto it = m_windows.find(id);
-        return it == m_windows.end() ? Rect{} : it->second->window->GetRect();
+        return it == m_windows.end() ? Rect{} : MainToDock(it->second->window->GetRect());
+    }
+
+    void FloatingPanelHost::SetRect(const std::string& id, const Rect& rect)
+    {
+        if (auto it = m_windows.find(id); it != m_windows.end())
+            it->second->window->SetRect(DockToMain(rect));
     }
 
     void FloatingPanelHost::SetTitle(const std::string& id, const std::string& title)

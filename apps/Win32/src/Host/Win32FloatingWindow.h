@@ -29,7 +29,8 @@ namespace MiniCAD
     class Win32FloatingWindow : public IFloatingWindow
     {
     public:
-        Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document = false);
+        // ownerHwnd：工具窗口归它所有（为空时归主窗口）；文档窗口忽略
+        Win32FloatingWindow(Win32Window& owner, const std::string& title, const MiniGUI::Rect& rect, bool document = false, HWND ownerHwnd = nullptr);
         ~Win32FloatingWindow() override;
 
         bool IsValid() const { return m_hwnd != nullptr && m_surface && m_ui; }

@@ -450,9 +450,12 @@ namespace MiniCAD
     // =========================================================
     // 浮动窗口
     // =========================================================
-    std::unique_ptr<IFloatingWindow> Win32Window::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document)
+    std::unique_ptr<IFloatingWindow> Win32Window::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document,
+                                                                       IFloatingWindow* owner)
     {
-        auto window = std::make_unique<Win32FloatingWindow>(*this, title, rect, document);
+        // 拥有者只能是本程序的浮动窗口（文档窗口）
+        const HWND ownerHwnd = owner ? static_cast<Win32FloatingWindow*>(owner)->GetHwnd() : nullptr;
+        auto window = std::make_unique<Win32FloatingWindow>(*this, title, rect, document, ownerHwnd);
         if (!window->IsValid())
             return nullptr;
         return window;
@@ -484,6 +487,15 @@ namespace MiniCAD
         return std::any_of(m_floating.begin(), m_floating.end(), [hwnd](const Win32FloatingWindow* w) { return w->GetHwnd() == hwnd; });
     }
 
+    HWND Win32Window::DialogOwner() const
+    {
+        // 系统对话框（打开 / 另存为、出错提示）开在用户正在用的窗口上：文档窗口里点的"打开"不跑到主窗口那边。
+        // 激活的是浮出的面板（工具窗口）时取拥有它的文档窗口 / 主窗口；不是本程序的窗口时用主窗口
+        const HWND active = GetActiveWindow();
+        const HWND root   = active ? GetAncestor(active, GA_ROOTOWNER) : nullptr;
+        return IsOurWindow(root) ? root : m_hwnd;
+    }
+
     void Win32Window::OnFloatingWindowActive(bool active)
     {
         MiniGUI::TitleBar* bar = m_main.GetTitleBar();
@@ -503,7 +515,7 @@ namespace MiniCAD
     // =========================================================
     void Win32Window::PickFile(FileKind kind, std::function<void(const std::string& path)> done)
     {
-        const std::string path = ShowFileDialog(m_hwnd, false, kind, {});
+        const std::string path = ShowFileDialog(DialogOwner(), false, kind, {});
         if (!path.empty() && done)
             done(path);
     }
@@ -514,7 +526,8 @@ namespace MiniCAD
         std::vector<wchar_t> buffer(65536, L'\0');
         OPENFILENAMEW ofn = {};
         ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = m_hwnd;
+        const HWND owner = DialogOwner();
+        ofn.hwndOwner = owner;
         ofn.lpstrFilter = kDrawingFilter;
         ofn.lpstrFile = buffer.data();
         ofn.nMaxFile = static_cast<DWORD>(buffer.size());
@@ -522,7 +535,7 @@ namespace MiniCAD
         if (!GetOpenFileNameW(&ofn))
         {
             if (CommDlgExtendedError())
-                MessageBoxW(m_hwnd, L"无法读取文件选择结果，请减少所选文件数量后重试。", L"打开图纸失败", MB_OK | MB_ICONERROR);
+                MessageBoxW(owner, L"无法读取文件选择结果，请减少所选文件数量后重试。", L"打开图纸失败", MB_OK | MB_ICONERROR);
             return;
         }
         std::vector<std::string> paths;
@@ -551,7 +564,7 @@ namespace MiniCAD
             dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
             dialog->SetTitle(L"选择外部参照所在的文件夹");
             IShellItem* item = nullptr;
-            if (SUCCEEDED(dialog->Show(m_hwnd)) && SUCCEEDED(dialog->GetResult(&item)))
+            if (SUCCEEDED(dialog->Show(DialogOwner())) && SUCCEEDED(dialog->GetResult(&item)))
             {
                 PWSTR path = nullptr;
                 if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
@@ -572,12 +585,12 @@ namespace MiniCAD
 
     std::string Win32Window::ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version)
     {
-        return ShowFileDialog(m_hwnd, true, FileKind::Drawing, suggestedName, &version);
+        return ShowFileDialog(DialogOwner(), true, FileKind::Drawing, suggestedName, &version);
     }
 
     std::string Win32Window::ChooseExportPath(FileKind kind, const std::string& suggestedName)
     {
-        return ShowFileDialog(m_hwnd, true, kind, suggestedName);
+        return ShowFileDialog(DialogOwner(), true, kind, suggestedName);
     }
 
     std::string Win32Window::GetResourceDir() const

@@ -164,13 +164,16 @@ namespace MiniCAD
         }
 
         // 界面先于平台对象释放（纹理属于平台的界面后端）；绑定引用特性面板里的控件，先清掉
-        m_syncGeometryRows = nullptr;
-        m_bindings.Clear();
+        ForEachChrome([](ViewChrome& c)
+        {
+            c.panels->syncGeometryRows = nullptr;
+            c.panels->bindings.Clear();
+        });
         if (m_ui)
             m_commands.UnbindShortcuts();
         CloseAllDocWindows();       // 文档窗口各有自己的 UIContext 与纹理，先于主界面销毁
         m_ui.reset();
-m_floatHost.reset();
+        m_floatHost.reset();
         m_layout.reset();
         m_fontSystem.Shutdown();
     }
@@ -240,6 +243,8 @@ m_floatHost.reset();
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });
         m_floatHost = std::make_unique<FloatingPanelHost>(*m_platform, *m_ui);
+        // 在浮出的面板里按下：主窗口的文档成为当前文档（面板显示的是它）
+        m_floatHost->SetOnActivate([this] { if (!m_docWindows.empty() && !m_ui->HasModal()) UseChrome(m_main); });
 
         // ── 命令 → 快捷键。执行任何命令后、宿主数据变化时（StateChanged）都会通知：
         //    同步文档标签、图层面板、标题，刷新数据绑定（特性面板、图层下拉框），重绘视口（撤销、粘贴等改了图形）
@@ -251,11 +256,12 @@ m_floatHost.reset();
             RefreshLayerPanel();
             UpdateTitle();
             SyncEditorRequests();           // 文字输入、块名、插入块、阵列：打开 / 关闭对应界面
-            if (m_syncGeometryRows)
-                m_syncGeometryRows();
-            m_bindings.Refresh();
-            for (auto& w : m_docWindows)
-                w->bindings->Refresh();
+            ForEachChrome([](ViewChrome& c)
+            {
+                if (c.panels->syncGeometryRows)
+                    c.panels->syncGeometryRows();
+                c.panels->bindings.Refresh();
+            });
             RequestRenderAll();
         });
 
@@ -273,11 +279,11 @@ m_floatHost.reset();
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());
-        m_layout->RegisterPanel("properties", CreatePropertiesPanel(), "特性");
-        m_layout->RegisterPanel("layers",     CreateLayerPanel(), "图层");
-        m_layout->RegisterPanel("layerbar",   CreateLayerBar(m_bindings, [this] { return DocOf(m_main); }, &m_layerBarLayer));
+        m_layout->RegisterPanel("properties", CreatePropertiesPanel(m_main), "特性");
+        m_layout->RegisterPanel("layers",     CreateLayerPanel(m_main), "图层");
+        m_layout->RegisterPanel("layerbar",   CreateLayerBar(m_main.panels->bindings, [this] { return DocOf(m_main); }, &m_layerBarLayer));
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
-        m_layout->RegisterPanel("nodes",      CreateNodePanel(), "节点");
+        m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), "节点");
         m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
@@ -357,6 +363,8 @@ m_floatHost.reset();
 
     void MainFrame::OpenDrawings(const std::vector<std::string>& paths)
     {
+        // 读完加进发起打开的窗口（后台读取期间用户可能点了别的窗口）
+        m_openPane = m_docManager.GetNewDocumentPane();
         for (const auto& path : paths)
         {
             if (path.empty()) continue;
@@ -456,6 +464,8 @@ m_floatHost.reset();
             }
             else
             {
+                if (m_docManager.HasPane(m_openPane))
+                    m_docManager.SetNewDocumentPane(m_openPane);
                 opened = m_docManager.Add(std::move(job->doc));
             }
             m_openedAny = true;
@@ -465,7 +475,8 @@ m_floatHost.reset();
             // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
             RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
-            if (m_viewport) m_viewport->Focus();
+            if (opened && HostOf(opened).IsVisible())
+                HostOf(opened).Focus();         // 它所在窗口的绘图区（可能是次窗口）
         }
         else
         {
@@ -764,16 +775,14 @@ m_floatHost.reset();
         }
         m_syncing = false;
 
-        // 一个文档都没有时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
-        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口。
-        // 主窗口没有文档而别的窗口有：不显示起始页（它会盖住面板，面板还要给别的窗口用），绘图区中间显示提示卡片
+        // 主窗口里没有文档（一个都没有，或都在别的窗口里）时用起始页代替视口（正在打开图纸时除外，显示空的绘图区和状态栏里的读取进度）；
+        // 有文档时可经首页键显示，切换 / 新建 / 打开文档后回到视口。面板跟着窗口：起始页盖住的是主窗口自己的面板。
+        // 标签条在别的窗口有文档时仍显示（空的）：标签可以拖回来
         Document* active = m_docManager.GetActive();
         const bool opening = m_openJob || m_openDone;
         if (m_startShown && active != m_startOver)
             m_startShown = false;
-        const bool start = (docs.empty() && !opening) || m_startShown;
-        if (m_mainEmptyCard)
-            m_mainEmptyCard->SetVisible(!start && !opening && !docs.empty() && !m_docManager.GetMainDocument());
+        const bool start = (!m_docManager.GetMainDocument() && !opening) || m_startShown;
         m_docTabs->SetVisible(!docs.empty());
         if (start)
             m_docTabs->ClearSelection();            // 起始页显示时没有“当前”标签（与 SolidCraft 相同），点任何标签都回到图纸
@@ -1402,10 +1411,11 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
 
     void MainFrame::UseChrome(const ViewChrome& c)
     {
-        // 窗口里有文档：它成为当前文档（之后新建的文档也进这个窗口）；窗口空着（主窗口的文档都拖走了）：之后新建的文档进它
+        // 窗口里有文档：它成为当前文档；之后新建 / 打开的文档都进这个窗口。
+        // 当前文档没变时激活什么也不做，目标窗口要另外设（主窗口空着时点过它，再点回原来的窗口）
         if (Document* doc = DocOf(c))
             ActivateDocumentOf(doc);
-        else if (m_docManager.HasPane(c.pane))
+        if (m_docManager.HasPane(c.pane))
             m_docManager.SetNewDocumentPane(c.pane);
     }
 
@@ -1462,6 +1472,8 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
             return;
         if (m_floatHost)
             m_floatHost->Purge();       // 上一帧关闭的浮动窗口此时才销毁
+        for (auto& w : m_docWindows)
+            w->floatHost->Purge();
         PurgeDocWindows();
         RaiseMainForModal();
         auto ms =[](int64_t from) { return static_cast<double>(NowTicks() - from) * 1000.0 / static_cast<double>(kTicksPerSecond); };
