@@ -302,7 +302,7 @@ namespace MiniCAD
         {
             Document*                        doc    = nullptr;
             std::unique_ptr<IFloatingWindow> window;
-            MiniGUI::FloatingPanel*          panel  = nullptr;     // 标题栏 + 内容，铺满窗口
+            MiniGUI::TitleBar*               titleBar = nullptr;   // 文档名 + 最小化 / 最大化 / 关闭；拖动交给系统
             MiniGUI::ViewportHost*           host   = nullptr;     // 显示它的视口纹理
             ViewChrome                       chrome;               // 它自己的视图方块、导航条、命令行、状态栏
             std::unique_ptr<IRenderTarget>   target;               // 它的视口渲染目标
@@ -320,14 +320,14 @@ namespace MiniCAD
         void       PurgeDocWindows();                                        // 每帧开头销毁已关闭的文档窗口
         void       CloseAllDocWindows();
         void       RenderDocWindow(DocWindow& w, int pixelWidth, int pixelHeight);
-        void       OnDocWindowDrag(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 pos);   // 拖文档窗口的标题栏（pos 为文档窗口坐标）
+        void       OnDocWindowMoving(DocWindow& w, bool done, MiniGUI::Vec2 cursor);                          // 系统在移动窗口（拖标题栏）：画落点，松开在标签条上合并
         void       OnDocTabTornDrag(MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);         // 标签拖出后继续拖：窗口跟着光标走
-        void       DragDocWindow(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);   // 上面两者共用：移动窗口、画落点、松开在标签条上合并
+        void       DragDocWindow(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);   // 标签拖出后：移动窗口、画落点、松开在标签条上合并
+        int        DocDropIndex(MiniGUI::Vec2 mainPos) const;                // 主窗口坐标落在文档标签条上时的插入位置，否则 -1
         bool       OnDocWindowKey(const MiniGUI::KeyEvent& e);
         bool       BlockedByModal();                                         // 主窗口开着对话框：把主窗口置前并返回 true（文档窗口的操作不执行）
         void       RaiseMainForModal();                                      // 每帧：主窗口刚弹出对话框时置前，不被文档窗口挡住
         void       SyncDocWindowChrome(DocWindow& w);                        // 文档窗口的每一帧：命令行、状态栏、视图方块跟随它的文档
-        MiniGUI::Vec2          DocWindowToMain(const DocWindow& w, MiniGUI::Vec2 windowPos) const;   // 文档窗口坐标 → 主窗口坐标
         MiniGUI::ViewportHost& HostOf(const Document* doc) const;            // 文档所在的视口控件：它的窗口的，否则主窗口的
         ViewInput& InputOf(const Document* doc);
         void       RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host);

@@ -59,8 +59,8 @@ namespace MiniCAD
 
         // 停靠面板：主窗口拥有的工具窗口，总在主窗口之上、随它最小化、不占任务栏。
         // 文档：与主窗口平级的普通窗口（主窗口能盖在它上面，弹出的对话框不被它挡住），任务栏里有按钮，图标取主窗口的。
-        // 先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏
-        const DWORD style = (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+        // 先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏；文档窗口能最小化 / 最大化
+        const DWORD style = document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
         m_hwnd = CreateWindowExW(document ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW, kClassName, ToWide(title).c_str(), style,
                                  r.left, r.top, r.right - r.left, r.bottom - r.top,
                                  document ? nullptr : owner.GetHwnd(), nullptr, hInstance, this);
@@ -75,7 +75,15 @@ namespace MiniCAD
         }
         m_frame = std::make_unique<MiniGUI::Win32Frame>(m_hwnd);
         m_frame->Apply();
-        m_frame->SetOnActiveChanged([this](bool active) { m_owner.OnFloatingWindowActive(active); });
+        m_frame->SetOnActiveChanged([this](bool active)
+        {
+            m_owner.OnFloatingWindowActive(active);
+            if (m_onActiveChanged)
+            {
+                auto cb = m_onActiveChanged;
+                cb(active);
+            }
+        });
 
         RECT rc{};
         GetClientRect(m_hwnd, &rc);
@@ -168,6 +176,54 @@ namespace MiniCAD
             ShowWindow(m_hwnd, visible ? SW_SHOWNA : SW_HIDE);
     }
 
+    void Win32FloatingWindow::Minimize()
+    {
+        if (m_frame)
+            m_frame->Minimize();
+    }
+
+    void Win32FloatingWindow::ToggleMaximize()
+    {
+        if (m_frame)
+            m_frame->ToggleMaximize();
+    }
+
+    bool Win32FloatingWindow::IsWindowMaximized() const
+    {
+        return m_frame && m_frame->IsWindowMaximized();
+    }
+
+    void Win32FloatingWindow::SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test)
+    {
+        if (!m_frame)
+            return;
+        if (!test)
+        {
+            m_frame->SetCaptionTest(nullptr);
+            return;
+        }
+        // Win32Frame 给的是客户区物理像素
+        m_frame->SetCaptionTest([this, test = std::move(test)](int x, int y)
+        {
+            return test({ static_cast<float>(x) / m_dpiScale, static_cast<float>(y) / m_dpiScale });
+        });
+    }
+
+    MiniGUI::Vec2 Win32FloatingWindow::ToOwner(POINT screen) const
+    {
+        ScreenToClient(m_owner.GetHwnd(), &screen);
+        const float s = m_owner.GetDpiScale();
+        return { static_cast<float>(screen.x) / s, static_cast<float>(screen.y) / s };
+    }
+
+    void Win32FloatingWindow::NotifyMoving(bool done, POINT windowTopLeft)
+    {
+        if (!m_onMoving)
+            return;
+        auto cb = m_onMoving;       // 松开时宿主可能把窗口合并回去（窗口推迟到下一帧销毁）
+        cb(done, ToOwner(POINT{ windowTopLeft.x + m_moveGrab.x, windowTopLeft.y + m_moveGrab.y }));
+    }
+
     void Win32FloatingWindow::UpdateDisplaySize()
     {
         RECT rc{};
@@ -239,6 +295,11 @@ m_ui->Render();
                 m_surface->Resize(LOWORD(lParam), HIWORD(lParam));
                 UpdateDisplaySize();
             }
+            if (m_onSizeChanged)
+            {
+                auto cb = m_onSizeChanged;
+                cb();
+            }
             return 0;
 
         case WM_GETMINMAXINFO:
@@ -258,7 +319,34 @@ m_ui->Render();
             return 0;
         }
 
+        // 系统的移动循环（拖标题栏）：记下按下点相对窗口左上角的位置，移动中、松开时上报光标位置（宿主据此找合并的落点）
+        case WM_ENTERSIZEMOVE:
+        {
+            POINT cursor{};
+            RECT  wr{};
+            GetCursorPos(&cursor);
+            GetWindowRect(hwnd, &wr);
+            m_moveGrab = { cursor.x - wr.left, cursor.y - wr.top };
+            m_moving   = false;
+            return 0;
+        }
+
+        case WM_MOVING:
+        {
+            const RECT* r = reinterpret_cast<const RECT*>(lParam);
+            m_moving = true;
+            NotifyMoving(false, POINT{ r->left, r->top });
+            return TRUE;
+        }
+
         case WM_EXITSIZEMOVE:
+            if (m_moving)
+            {
+                m_moving = false;
+                RECT wr{};
+                GetWindowRect(hwnd, &wr);
+                NotifyMoving(true, POINT{ wr.left, wr.top });
+            }
             // 系统的缩放边框拖完：请宿主保存布局
             if (m_onMoved)
             {

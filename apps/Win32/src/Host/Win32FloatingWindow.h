@@ -20,7 +20,8 @@ namespace MiniCAD
     // 停靠面板或文档拖出主窗口后的独立窗口（AppPlatform::CreateFloatingWindow 的 Win32 实现）：
     //   - 停靠面板：主窗口拥有的工具窗口（总在主窗口之上、随它最小化、不占任务栏）；
     //     文档（document）：不归主窗口所有的普通窗口（可以在主窗口之下，主窗口弹出对话框时置前不被挡住），任务栏里有按钮
-    //   - 无边框（Win32Frame：保留系统的缩放边框与阴影），标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口
+    //   - 无边框（Win32Frame：保留系统的缩放边框与阴影）。停靠面板：标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口；
+    //     文档：标题区域交给系统（SetCaptionTest → Win32Frame，拖动、双击最大化、贴边），系统移动窗口时经 SetOnMoving 上报光标位置
     //   - 自己的 UIContext、Win32Input 与窗口表面（IGraphicsDevice::CreateWindowSurface），与主窗口共用设备和界面后端；
     //     WM_PAINT 里布局、绘制、呈现；没处理的按键转给主窗口（Ctrl+S 等全局快捷键仍有效）
     //   - 位置用主窗口客户区的逻辑坐标（按主窗口的 DPI 换算）；创建时不在任何显示器上就挪到主窗口旁边
@@ -43,6 +44,13 @@ namespace MiniCAD
         void SetOnClose(std::function<void()> cb) override { m_onClose = std::move(cb); }
         void SetOnMoved(std::function<void()> cb) override { m_onMoved = std::move(cb); }
         void SetOnBeforeRender(std::function<void()> cb) override { m_onBeforeRender = std::move(cb); }
+        void Minimize() override;
+        void ToggleMaximize() override;
+        bool IsWindowMaximized() const override;
+        void SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test) override;
+        void SetOnActiveChanged(std::function<void(bool active)> cb) override { m_onActiveChanged = std::move(cb); }
+        void SetOnSizeChanged(std::function<void()> cb) override { m_onSizeChanged = std::move(cb); }
+        void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor)> cb) override { m_onMoving = std::move(cb); }
 
     private:
         static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -50,6 +58,8 @@ namespace MiniCAD
         void    Render();
         void    UpdateDisplaySize();
         RECT    ToScreen(const MiniGUI::Rect& rect) const;      // 主窗口逻辑坐标 → 屏幕像素
+        MiniGUI::Vec2 ToOwner(POINT screen) const;              // 屏幕像素 → 主窗口逻辑坐标
+        void    NotifyMoving(bool done, POINT windowTopLeft);   // 系统移动循环里：按下点相对窗口左上角不变，换算出光标位置上报
 
         Win32Window& m_owner;
         HWND         m_hwnd     = nullptr;
@@ -62,5 +72,10 @@ namespace MiniCAD
         std::function<void()> m_onClose;
         std::function<void()> m_onMoved;
         std::function<void()> m_onBeforeRender;
+        std::function<void(bool)> m_onActiveChanged;
+        std::function<void()>     m_onSizeChanged;
+        std::function<void(bool, MiniGUI::Vec2)> m_onMoving;
+        POINT m_moveGrab{};             // 系统移动循环开始时光标相对窗口左上角的位置（屏幕像素）
+        bool  m_moving = false;         // 这次移动循环里窗口确实移动过（只改大小时不上报）
     };
 }

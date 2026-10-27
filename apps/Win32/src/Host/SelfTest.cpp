@@ -3218,31 +3218,75 @@ namespace MiniCAD
                     edB.SetSelection(selB);
                 }
 
+                // 标题栏：文档名、主窗口的图标；空白处是系统标题区域（拖动、双击最大化、贴边），按钮不是
+                {
+                    MiniGUI::TitleBar* tb = dw->titleBar;
+                    MiniGUI::UIContext& fui = dw->window->GetUI();
+                    check(tb && tb->GetTitle().rfind(docB->GetName(), 0) == 0 && tb->GetIcon() != MiniGUI::InvalidTextureId,
+                          "文档窗口的标题栏显示文档名与程序图标");
+                    auto screenOf = [&](MiniGUI::Vec2 p)
+                    {
+                        POINT s{ static_cast<LONG>(std::lround(p.x * fui.GetPixelScale())), static_cast<LONG>(std::lround(p.y * fui.GetPixelScale())) };
+                        ClientToScreen(fw, &s);
+                        return s;
+                    };
+                    auto buttonAt = [&](int fromRight)      // 0 = 关闭，1 = 最大化，2 = 最小化
+                    {
+                        const MiniGUI::Rect r = tb->GetScreenBounds();
+                        return MiniGUI::Vec2{ r.max.x - MiniGUI::TitleBar::kButtonWidth * (static_cast<float>(fromRight) + 0.5f), r.Center().y };
+                    };
+                    auto clickButton = [&](int fromRight)
+                    {
+                        const MiniGUI::Vec2 p = buttonAt(fromRight);
+                        fui.PointerMove(p, 0);
+                        fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 1);
+                        fui.PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                        paintF();
+                    };
+                    const POINT blank = screenOf(MiniGUI::Vec2{ tb->GetScreenBounds().Center().x, tb->GetScreenBounds().Center().y });
+                    const POINT maxButton = screenOf(buttonAt(1));
+                    check(SendMessageW(fw, WM_NCHITTEST, 0, MAKELPARAM(blank.x, blank.y)) == HTCAPTION &&
+                          SendMessageW(fw, WM_NCHITTEST, 0, MAKELPARAM(maxButton.x, maxButton.y)) == HTCLIENT,
+                          "标题栏空白处交给系统拖动（HTCAPTION），按钮不是");
+                    clickButton(1);
+                    check(IsZoomed(fw) && dw->window->IsWindowMaximized(), "最大化按钮：文档窗口最大化");
+                    clickButton(1);
+                    check(!IsZoomed(fw), "再点：还原");
+                    clickButton(2);
+                    check(IsIconic(fw) != FALSE, "最小化按钮：文档窗口最小化");
+                    ShowWindow(fw, SW_RESTORE);
+                    paintF();
+                    check(!IsIconic(fw) && m_docManager.IsDetached(docB) && DocWindowCount() == 1, "还原后文档仍在它的窗口里");
+                }
+
                 // 主窗口的视口：点一下 A 就成为当前文档
                 send(WM_MOUSEMOVE, 0, cx, cy);
                 send(WM_LBUTTONDOWN, MK_LBUTTON, cx, cy);
                 send(WM_LBUTTONUP, 0, cx, cy);
                 RenderFrame();
                 check(m_docManager.GetActive() == docA && m_docManager.IsDetached(docB), "点主窗口的视口：A 成为当前文档，B 仍在它的窗口里");
+                // 文档窗口被激活（点它、Alt+Tab）：B 成为当前文档
+                SendMessageW(fw, WM_NCACTIVATE, TRUE, 0);
+                check(m_docManager.GetActive() == docB && dw->titleBar->IsWindowActive(), "激活文档窗口：B 成为当前文档，标题栏按活动样式");
 
-                // 拖回：拖文档窗口的标题栏到主窗口的标签条上松开
+                // 拖回：系统的移动循环拖文档窗口的标题栏到主窗口的标签条上松开（光标相对窗口左上角不变）
                 const CameraState bCam = vpB->GetCamera().GetState();
-                MiniGUI::UIContext& fui = dw->window->GetUI();
-                const MiniGUI::Vec2 title{ hb.Center().x, MiniGUI::FloatingPanel::kTitleHeight * 0.5f };
                 const MiniGUI::Rect stripMain = m_docTabs->GetScreenBounds();
                 const MiniGUI::Vec2 dropMain{ stripMain.min.x + 10.0f, stripMain.Center().y };     // 第一个标签的左半：插到最前
-                const float ratio = fui.GetPixelScale() / m_dpiScale;
-                const MiniGUI::Vec2 dropF = (dropMain - dw->window->GetRect().min) * (1.0f / ratio);
-                fui.PointerMove(title, 0);
-                fui.PointerDown(title, MiniGUI::MouseButton::Left, 0, 1);
-                fui.PointerMove(title + MiniGUI::Vec2{ 12.0f, 0.0f }, 0);
-                fui.PointerMove(dropF, 0);
-                check(m_docTabs->GetDropIndicator() == 0, "标题栏拖到标签条上：标签条画出落点");
-                // 窗口已经跟着移动：松开点按新的窗口位置换算（实际运行时系统报的就是新位置下的坐标）
-                const MiniGUI::Vec2 dropF2 = (dropMain - dw->window->GetRect().min) * (1.0f / ratio);
-                fui.PointerMove(dropF2, 0);
-                fui.PointerUp(dropF2, MiniGUI::MouseButton::Left, 0);
-RenderFrame();
+                POINT cursor{};
+                RECT  wr{};
+                GetCursorPos(&cursor);
+                GetWindowRect(fw, &wr);
+                const POINT grab{ cursor.x - wr.left, cursor.y - wr.top };
+                POINT target{ static_cast<LONG>(std::lround(dropMain.x * m_dpiScale)), static_cast<LONG>(std::lround(dropMain.y * m_dpiScale)) };
+                ClientToScreen(hwnd, &target);
+                RECT moved{ target.x - grab.x, target.y - grab.y, target.x - grab.x + (wr.right - wr.left), target.y - grab.y + (wr.bottom - wr.top) };
+                SendMessageW(fw, WM_ENTERSIZEMOVE, 0, 0);
+                SendMessageW(fw, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&moved));
+                check(m_docTabs->GetDropIndicator() == 0 && DocWindowCount() == 1, "标题栏拖到标签条上：标签条画出落点");
+                SetWindowPos(fw, nullptr, moved.left, moved.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(fw, WM_EXITSIZEMOVE, 0, 0);
+                RenderFrame();
                 pump();
                 check(DocWindowCount() == 0 && !m_docManager.IsDetached(docB) && m_docTabs->GetTabCount() == 2 && m_docTabs->GetDropIndicator() < 0,
                       "松开：文档窗口关闭，B 回到标签条");

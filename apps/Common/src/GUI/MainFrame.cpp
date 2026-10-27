@@ -737,9 +737,9 @@ m_floatHost.reset();
         for (auto& w : m_docWindows)
         {
             const std::string title = w->doc->GetName() + (w->doc->IsDirty() ? " *" : "");
-            if (w->panel->GetTitle() != title)
+            if (w->titleBar->GetTitle() != title)
             {
-                w->panel->SetTitle(title);
+                w->titleBar->SetTitle(title);
                 w->window->SetTitle(title);
             }
         }

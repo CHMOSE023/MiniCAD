@@ -4,19 +4,21 @@
 //     （OnDocTabTornDrag），窗口跟着光标走；同一次拖动里松开在标签条上就合并回去，松开在别处才激活窗口
 //   - 对话框：界面的对话框都画在主窗口里。文档窗口与主窗口平级（CreateFloatingWindow 的 document），主窗口弹出对话框时
 //     置前（RaiseMainForModal）；对话框开着时文档窗口不接受编辑，按键转给主窗口（Esc / 回车给对话框），点它只把主窗口置前
-//   - 窗口：AppPlatform::CreateFloatingWindow（Win32FloatingWindow，带自己的 UIContext），里面放无边框的 FloatingPanel
-//     （标题栏显示文档名：拖动 → 窗口跟着光标走，经过主窗口的文档标签条时画插入标记、松开即合并回去；双击 → 合并到末尾；
-//     × / 系统关闭 → 关闭文档，未保存时照常询问）+ 铺满内容区的 ViewportHost
+//   - 窗口：AppPlatform::CreateFloatingWindow（Win32FloatingWindow，带自己的 UIContext，能最小化 / 最大化），里面是
+//     MiniGUI::TitleBar（主窗口的图标、文档名、最小化 / 最大化 / 关闭，按钮经 TitleBar::SetWindowActions 作用于这个窗口）
+//     + 铺满其余部分的 ViewportHost。标题区域交给系统（IFloatingWindow::SetCaptionTest）：拖动、双击最大化、贴边分屏；
+//     系统移动窗口时经过主窗口的文档标签条画插入标记，松开在上面即合并回去（OnDocWindowMoving）；
+//     × / 系统关闭 → 关闭文档，未保存时照常询问
 //   - 视口：DocumentManager::DetachDocument 给文档一个独立的 Viewport（相机、缓存层），渲染目标另建一个
 //     （AppPlatform::CreateViewportTarget），渲染器与主窗口共用；窗口每帧（IFloatingWindow::SetOnBeforeRender）按最新尺寸渲染，
 //     与主窗口的 RenderViewport 相同。渲染器按槽位只留一份顶点缓冲，两个视口轮流重画场景时互相顶掉，渲染前经
 //     Editor::EnsureSceneCached 重新拼接（不重新细分）
 //   - 界面：与主窗口一样，视口上浮着视图方块、导航条、底部居中的命令行和状态栏（含模型 / 布局标签），都绑定这个窗口的文档
-//     （MainFrame::ViewChrome）；在窗口里任何地方按下（FloatingPanel::SetOnActivate）它的文档就成为当前文档，
+//     （MainFrame::ViewChrome）；窗口被激活、或在窗口里任何地方按下（DocWindowRoot），它的文档就成为当前文档，
 //     菜单命令与特性 / 图层面板随之作用于它。动态输入框只在主视口里显示（数字进这个窗口的命令行）
 //   - 输入：视口的指针事件交给该文档的 Editor（RouteViewportPointer）；按键先让它成为当前文档，再走 OnViewportKey，
 //     在绘图区敲字母进入这个窗口的命令行；主窗口的快捷键（Ctrl+S、Ctrl+Z …）在文档窗口里一样触发；
-//     控件都不处理的按键在内容节点上收尾（DocWindowContent），不转给主窗口（免得落进主窗口里有焦点的命令行）
+//     控件都不处理的按键在根节点上收尾（DocWindowRoot），不转给主窗口（免得落进主窗口里有焦点的命令行）
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
 #include "GUI/StatusBarView.h"
@@ -25,6 +27,8 @@
 #include "Widgets/CommandConsole.h"
 #include "Widgets/FloatingPanel.h"
 #include "Widgets/TabView.h"
+#include "Widgets/TitleBar.h"
+#include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
 #include <algorithm>
 #include <cmath>
@@ -35,15 +39,23 @@ namespace MiniCAD
 
     namespace
     {
-        // 文档窗口的内容（视口 + 浮在上面的界面）：里面的控件都不处理的按键在这里收尾。主窗口的快捷键照常触发；
-        // 其余吞掉，不让窗口把它转给主窗口（Win32FloatingWindow 会把没处理的按键交给主窗口里有焦点的控件）。
-        // Tab（切换焦点）、Alt 组合键（Alt+F4 等系统键）、菜单键留给窗口自己的默认处理
-        class DocWindowContent : public Node
+        // 文档窗口的根节点（标题栏 + 视口 + 浮在上面的界面）：
+        // - 在里面任何地方按下先回调（捕获阶段，早于按钮的点击）：宿主让这个窗口的文档成为当前文档
+        // - 里面的控件都不处理的按键在这里收尾。主窗口的快捷键照常触发；其余吞掉，不让窗口把它转给主窗口
+        //   （Win32FloatingWindow 会把没处理的按键交给主窗口里有焦点的控件）。
+        //   Tab（切换焦点）、Alt 组合键（Alt+F4 等系统键）、菜单键留给窗口自己的默认处理
+        class DocWindowRoot : public Node
         {
         public:
-            explicit DocWindowContent(UIContext& mainUi) : m_mainUi(mainUi) {}
+            DocWindowRoot(UIContext& mainUi, std::function<void()> onPress) : m_mainUi(mainUi), m_onPress(std::move(onPress)) {}
 
         protected:
+            void OnPointerEvent(PointerEvent& e) override
+            {
+                if (e.phase == EventPhase::Capture && e.type == PointerEventType::Down && m_onPress)
+                    m_onPress();
+            }
+
             void OnKeyEvent(KeyEvent& e) override
             {
                 if (e.phase != EventPhase::Bubble || e.handled || e.Alt() || e.key == Key::Tab || e.key == Key::Menu)
@@ -57,7 +69,8 @@ namespace MiniCAD
             }
 
         private:
-            UIContext& m_mainUi;
+            UIContext&            m_mainUi;
+            std::function<void()> m_onPress;
         };
     }
 
@@ -97,13 +110,6 @@ namespace MiniCAD
             w->window->GetUI().SetTheme(theme);
     }
 
-    Vec2 MainFrame::DocWindowToMain(const DocWindow& w, Vec2 windowPos) const
-    {
-        // 两个窗口可能在不同 DPI 的显示器上：按各自的缩放系数换算
-        const float ratio = w.window->GetUI().GetPixelScale() / std::max(0.01f, m_ui->GetPixelScale());
-        return w.window->GetRect().min + windowPos * ratio;
-    }
-
     // =========================================================
     // 拖出 / 合并 / 关闭
     // =========================================================
@@ -114,7 +120,7 @@ namespace MiniCAD
         // 尺寸取主视口的六成（至少 480 × 320），标题栏落在光标下
         const Rect vb = m_viewport->GetScreenBounds();
         const Vec2 size{ std::max(480.0f, std::floor(vb.Width() * 0.6f)), std::max(320.0f, std::floor(vb.Height() * 0.6f)) };
-        const Vec2 origin = windowPos - Vec2{ 60.0f, FloatingPanel::kTitleHeight * 0.5f };
+        const Vec2 origin = windowPos - Vec2{ 60.0f, TitleBar::kHeight * 0.5f };
 
         std::unique_ptr<IRenderTarget> target = m_platform->CreateViewportTarget();
         if (!target)
@@ -135,14 +141,38 @@ namespace MiniCAD
             LOG_WARN("文档窗口：没有找到界面字体");
         ui.SetTheme(m_ui->GetTheme());
 
-        auto panel = std::make_unique<FloatingPanel>(doc->GetName());
-        w->panel   = panel.get();
-        panel->SetFrameless(true);
+        // 根节点：标题栏 + 内容。在窗口里任何地方按下（视口、视图方块、导航条、命令行、状态栏、标题栏上的按钮），
+        // 它的文档成为当前文档
+        auto root = std::make_unique<DocWindowRoot>(*m_ui, [this, w]
+        {
+            if (!m_ui->HasModal())
+                ActivateDocumentOf(w->doc);
+        });
+        {
+            LayoutStyle& s = root->EditLayoutStyle();
+            s.position  = PositionType::Absolute;
+            s.left = s.top = s.right = s.bottom = 0.0f;
+            s.direction = FlexDirection::Column;
+        }
+
+        // 标题栏：主窗口的图标、文档名、最小化 / 最大化 / 关闭（作用于这个窗口）；标题区域交给系统拖动
+        auto* bar = root->AddChild<TitleBar>(m_commands);
+        w->titleBar = bar;
+        bar->SetTitle(doc->GetName());
+        if (TitleBar* mainBar = m_layout ? m_layout->GetTitleBar() : nullptr)
+            bar->SetIcon(mainBar->GetIcon());       // 界面后端的纹理各窗口共用
+        bar->SetWindowActive(activate);
+        bar->SetWindowActions({
+            .minimize       = [w] { w->window->Minimize(); },
+            .toggleMaximize = [w] { w->window->ToggleMaximize(); },
+            .close          = [this, doc] { if (!BlockedByModal()) CloseDocument(doc); },
+            .isMaximized    = [w] { return w->window->IsWindowMaximized(); },
+        });
 
         // 内容：视口铺满，上面浮着与主窗口相同的一层——透明的“洞”（视图方块、导航条、命令行）+ 底部的状态栏
         ViewChrome& c = w->chrome;
         c.doc = doc;
-        auto content = std::make_unique<DocWindowContent>(*m_ui);
+        auto* content = root->AddChild<Node>();
         content->EditLayoutStyle().grow = 1.0f;
         auto* host = content->AddChild<ViewportHost>();
         {
@@ -191,24 +221,17 @@ namespace MiniCAD
         area->EditLayoutStyle().grow = 1.0f;
         overlay->AddChild(std::move(area));
         overlay->AddChild(CreateStatusBar(c));
-        panel->SetContent(std::move(content));
+        ui.GetRoot()->AddChild(std::move(root));
 
-        panel->SetOnClose   ([this, doc] { if (!BlockedByModal()) CloseDocument(doc); });
-        panel->SetOnRedock  ([this, doc] { if (!BlockedByModal()) MergeDocument(doc, -1); });
-        // 在窗口里任何地方按下（视口、视图方块、导航条、命令行、状态栏、标题栏）：它的文档成为当前文档
-        panel->SetOnActivate([this, doc]
-        {
-            if (!m_ui->HasModal())
-                ActivateDocumentOf(doc);
-        });
-        panel->SetOnDrag([this, w](FloatingPanel::DragPhase phase, Vec2 pos) { OnDocWindowDrag(*w, phase, pos); });
-        ui.GetRoot()->AddChild(std::move(panel));
         w->window->SetOnClose([this, doc] { if (!BlockedByModal()) CloseDocument(doc); });
         w->window->SetOnBeforeRender([this, w]
         {
             w->host->RenderContent();
             SyncDocWindowChrome(*w);        // Editor 在渲染时更新命令提示：之后同步到这个窗口的命令行（窗口随后补一次布局）
         });
+        w->window->SetCaptionTest([w](Vec2 p) { return w->titleBar && w->titleBar->IsCaptionAt(p); });
+        w->window->SetOnSizeChanged([w] { if (w->titleBar) w->titleBar->RefreshState(); });   // 最大化 / 还原按钮的图标
+        w->window->SetOnMoving([this, w](bool done, Vec2 cursor) { OnDocWindowMoving(*w, done, cursor); });
 
         // 视口：先按窗口的像素尺寸建，渲染时再按视口控件的实际尺寸调整
         const Vec2 ds = ui.GetDisplaySize();
@@ -226,6 +249,19 @@ namespace MiniCAD
             w->host->Focus();
         }
         m_docManager.SetActive(doc);
+        // 窗口激活（点它、Alt+Tab 切过来）：它的文档成为当前文档；主窗口开着对话框时把主窗口置前。
+        // 放在最后：上面的 Activate 不必经它（当前文档刚设好）
+        w->window->SetOnActiveChanged([this, w](bool active)
+        {
+            if (w->titleBar)
+                w->titleBar->SetWindowActive(active);
+            if (!active || !w->doc)
+                return;
+            if (m_ui->HasModal())
+                m_platform->Post([this] { m_platform->ActivateMainWindow(); });     // 不在激活消息里再切窗口
+            else
+                ActivateDocumentOf(w->doc);
+        });
         if (m_startShown)
             ShowStartPage(false);
         SyncDocuments();
@@ -262,11 +298,9 @@ namespace MiniCAD
             return;
         std::unique_ptr<DocWindow> w = std::move(*it);
         m_docWindows.erase(it);
-        // 可能正在这个窗口自己的事件处理里：窗口（连同它的 UIContext）、纹理与渲染目标推迟到下一帧销毁（PurgeDocWindows）
-        w->panel->SetOnClose(nullptr);
-        w->panel->SetOnRedock(nullptr);
-        w->panel->SetOnActivate(nullptr);
-        w->panel->SetOnDrag(nullptr);
+        // 可能正在这个窗口自己的事件处理里：窗口（连同它的 UIContext）、纹理与渲染目标推迟到下一帧销毁（PurgeDocWindows）；
+        // 先藏起来，回调都断开，之后它不再作用于任何文档
+        w->window->SetVisible(false);
         w->host->SetOnRender(nullptr);
         w->host->SetOnPointer(nullptr);
         w->host->SetOnKey(nullptr);
@@ -274,6 +308,11 @@ namespace MiniCAD
         w->window->SetOnClose(nullptr);
         w->window->SetOnMoved(nullptr);
         w->window->SetOnBeforeRender(nullptr);
+        w->window->SetCaptionTest(nullptr);
+        w->window->SetOnActiveChanged(nullptr);
+        w->window->SetOnSizeChanged(nullptr);
+        w->window->SetOnMoving(nullptr);
+        w->titleBar->SetWindowActions({ .minimize = [] {}, .toggleMaximize = [] {}, .close = [] {} });
         w->doc        = nullptr;
         w->chrome.doc = nullptr;    // 它的命令行、状态栏等随窗口销毁之前不再作用于任何文档
         m_docWindowGraveyard.push_back(std::move(w));
@@ -302,17 +341,21 @@ namespace MiniCAD
     }
 
     // =========================================================
-    // 标题栏拖动：窗口跟着光标走，经过主窗口的标签条时画落点，松开在上面就合并回去
+    // 拖动：经过主窗口的标签条时画落点，松开在上面就合并回去
     // =========================================================
-    void MainFrame::OnDocWindowDrag(DocWindow& w, FloatingPanel::DragPhase phase, Vec2 pos)
+    int MainFrame::DocDropIndex(Vec2 mainPos) const
     {
-        if (phase == FloatingPanel::DragPhase::Begin)
-        {
-            w.grab = pos;
-            w.size = w.window->GetRect().Size();
-            return;
-        }
-        DragDocWindow(w, phase, DocWindowToMain(w, pos));
+        return m_docTabs && m_docTabs->IsVisible() && m_docTabs->GetContext() ? m_docTabs->DropIndexAt(mainPos) : -1;
+    }
+
+    void MainFrame::OnDocWindowMoving(DocWindow& w, bool done, Vec2 cursor)
+    {
+        // 系统在移动窗口（拖标题栏），窗口由系统挪：这里只画落点；松开在标签条上就合并回去（w 随之失效）
+        const int index = DocDropIndex(cursor);
+        if (m_docTabs)
+            m_docTabs->SetDropIndicator(done ? -1 : index);
+        if (done && index >= 0 && !BlockedByModal())
+            MergeDocument(w.doc, index);
     }
 
     void MainFrame::OnDocTabTornDrag(FloatingPanel::DragPhase phase, Vec2 mainPos)
@@ -344,10 +387,6 @@ namespace MiniCAD
     void MainFrame::DragDocWindow(DocWindow& w, FloatingPanel::DragPhase phase, Vec2 mainPos)
     {
         using Phase = FloatingPanel::DragPhase;
-        auto dropIndex = [this](Vec2 p)
-        {
-            return m_docTabs && m_docTabs->IsVisible() && m_docTabs->GetContext() ? m_docTabs->DropIndexAt(p) : -1;
-        };
         switch (phase)
         {
         case Phase::Begin:
@@ -359,12 +398,12 @@ namespace MiniCAD
             const Vec2  origin = mainPos - w.grab * ratio;
             w.window->SetRect(Rect{ origin, origin + w.size });
             if (m_docTabs)
-                m_docTabs->SetDropIndicator(dropIndex(mainPos));
+                m_docTabs->SetDropIndicator(DocDropIndex(mainPos));
             break;
         }
         case Phase::End:
         {
-            const int index = dropIndex(mainPos);
+            const int index = DocDropIndex(mainPos);
             if (m_docTabs)
                 m_docTabs->SetDropIndicator(-1);
             if (index >= 0)

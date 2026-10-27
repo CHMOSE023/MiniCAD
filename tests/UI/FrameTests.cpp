@@ -122,6 +122,38 @@ TEST(TitleBar_MissingCommandHidesButton)
     CHECK(!bar->IsCaptionAt(ButtonCenter(bar, 1)));
 }
 
+// 同一程序的其余窗口：标题栏按钮执行窗口自己的动作，不执行 window.* 命令；没给的动作不显示按钮
+TEST(TitleBar_WindowActionsOverrideCommands)
+{
+    WindowCommands w;
+    TestUI t{ { 800, 400 } };
+    auto* bar = Column(t)->AddChild<TitleBar>(w.commands);
+    int  minimized = 0, closed = 0;
+    bool maximized = false;
+    bar->SetWindowActions({
+        .minimize       = [&] { ++minimized; },
+        .toggleMaximize = [&] { maximized = !maximized; },
+        .close          = [&] { ++closed; },
+        .isMaximized    = [&] { return maximized; },
+    });
+    t.Layout();
+
+    t.Click(ButtonCenter(bar, 2));
+    t.Click(ButtonCenter(bar, 1));
+    t.Click(ButtonCenter(bar, 0));
+    CHECK(minimized == 1 && maximized && closed == 1);
+    CHECK(w.minimized == 0 && !w.maximized && w.closed == 0);      // 主窗口的命令没有执行
+    CHECK(bar->GetWindowActions() != nullptr);
+
+    // 只给关闭：最小化、最大化按钮不显示，它们的位置成为标题区域
+    bar->SetWindowActions({ .close = [&] { ++closed; } });
+    t.Layout();
+    CHECK(!bar->IsCaptionAt(ButtonCenter(bar, 0)));
+    CHECK(bar->IsCaptionAt(ButtonCenter(bar, 1)));
+    t.Click(ButtonCenter(bar, 0));
+    CHECK(closed == 2);
+}
+
 TEST(TabView_StripOnlyTabsCarryData)
 {
     TestUI t{ { 600, 300 } };
