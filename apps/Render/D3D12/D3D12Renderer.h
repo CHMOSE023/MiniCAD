@@ -33,6 +33,8 @@ namespace MiniCAD
         void SubmitTexturedCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4_UV> verts,
                                   const Math::Mat4& viewProj, void* nativeSRV, bool depth = false, bool blend = true) override;
         bool IsCached(uint32_t slot, uint64_t version, bool textured) const override;
+        bool SupportsCachedAppend() const override { return true; }
+        bool AppendCached(uint32_t slot, uint64_t baseVersion, uint64_t version, std::span<const Vertex_P3_C4> verts) override;
         void SubmitGlyphsCached(uint32_t slot, uint64_t version, const GlyphMeshView& meshes,
                                 std::span<const GlyphInstance> instances, std::span<const GlyphBatch> batches,
                                 const Math::Mat4& viewProj, PrimitiveType type, bool depth = true, bool blend = false) override;

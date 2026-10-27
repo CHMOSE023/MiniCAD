@@ -212,6 +212,8 @@ namespace MiniCAD
         IRenderer& renderer = m_platform->GetRenderer();
         m_docManager.SetRenderer(&renderer);
         m_docManager.SetRenderTarget(&m_platform->GetViewportTarget());
+        // 后端能把新增实体的顶点接到已上传的场景缓冲末尾：大图纸画一个图形不再整体重新拼接、上传
+        Editor::SetSceneAppendOnGpu(renderer.SupportsCachedAppend());
         m_docManager.InitViewport(renderer, static_cast<float>(width), static_cast<float>(height));
 
         if (!m_fontSystem.IsReady())
@@ -1253,9 +1255,15 @@ namespace MiniCAD
             IRenderer&      renderer = m_platform->GetRenderer();
             const ViewState vs       = editor.BuildViewState();
             vp.Render(renderer, target, vs);
-            // 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）
+            // 场景顶点已在 GPU 缓冲里：CPU 端的拼接流不再需要（几百万顶点的图纸约 200 MB）。
+            // 追加段没接上后端的缓冲（这一帧画的是旧内容）：下一帧从逐实体缓存全量重新拼接
             if (Viewport::SceneUploaded(renderer, vs))
                 editor.ReleaseUploadedSceneStreams();
+            else if (vs.SceneAppendActive)
+            {
+                editor.RequestSceneRestitch();
+                m_viewport->RequestRender();
+            }
         }
         else
         {

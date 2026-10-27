@@ -3082,6 +3082,54 @@ namespace MiniCAD
         POINT sp = { static_cast<LONG>(std::lround(vr.Center().x * m_dpiScale)), static_cast<LONG>(std::lround(vr.Center().y * m_dpiScale)) };
         SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
         RenderFrame();
+
+        // 新增实体：全图显示后在视口中心逐条加直线（走命令栈，与画线工具提交时相同），分别测命令本身、
+        // 之后的首帧（场景流追加 / 重新拼接 + 上传）与再一次鼠标移动帧（拾取索引、悬停）；大图纸里这就是"画完卡一下"的那一下
+        {
+            Scene& scene = doc->GetScene();
+            const Camera& cam = m_docManager.GetViewport().GetCamera();
+            for (int i = 0; i < 3; ++i)
+            {
+                const Math::Point3 a = cam.ScreenToWorld(vr.Center().x - 100.0, vr.Center().y + 20.0 * i);
+                const Math::Point3 b = cam.ScreenToWorld(vr.Center().x + 100.0, vr.Center().y + 20.0 * i);
+                const auto st0 = editor.GetSceneStreamStats();
+                int64_t f0 = NowTicks();
+                doc->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(scene.NextObjectID(), a, b)), scene);
+                const double cmdMs = msSince(f0);
+                m_viewport->RequestRender();
+                f0 = NowTicks();
+                RenderFrame();
+                const double frameMs = msSince(f0), frameVp = m_timing.viewport;
+                f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x + 3 + i, sp.y + 2));
+                RenderFrame();
+                const double moveMs = msSince(f0);
+                auto [pm, wm] = memMb();
+                std::printf("新增直线 %d：命令 %.1f ms，首帧 %.1f ms（视口 %.1f ms），再移动鼠标一帧 %.1f ms；线顶点 %zu → %zu，私有 %.0f MB\n",
+                            i + 1, cmdMs, frameMs, frameVp, moveMs, st0.lines, editor.GetSceneStreamStats().lines, pm);
+            }
+            // 画线工具里移动鼠标（有捕捉与橡皮筋）：每帧耗时
+            editor.ActivateToolById("Line");
+            SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(sp.x - 80, sp.y - 60));
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(sp.x - 80, sp.y - 60));
+            RenderFrame();
+            double moveSum = 0, moveMax = 0;
+            const int moves = 12;
+            for (int i = 0; i < moves; ++i)
+            {
+                const int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x - 60 + 11 * i, sp.y - 40 + 7 * i));
+                RenderFrame();
+                const double ms = msSince(f0);
+                moveSum += ms; moveMax = std::max(moveMax, ms);
+            }
+            SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+            SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
+            RenderFrame();
+            std::printf("画线工具里移动鼠标 %d 帧：平均 %.1f ms，最慢 %.1f ms\n", moves, moveSum / moves, moveMax);
+            SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
+            RenderFrame();
+        }
         ClientToScreen(hwnd, &sp);
         const int steps = 12;
         double peak = 0, low = 1e30, total = 0, worst = 0;

@@ -97,6 +97,19 @@ namespace MiniCAD
             return false;
         }
 
+        // ── 接到已缓存的几何末尾（可选能力）────────────────────────────────
+        // 调用方只持有新增部分的顶点时（大图纸的拼接流上传后已释放，之后又画了一个图形），把 verts 接到
+        // (slot, baseVersion) 缓冲的末尾并把它升级为 version；之后同一 version 的 SubmitCached 直接画这块缓冲，
+        // 几百 MB 的场景流不再经过 CPU 重新拼接、整体重新上传。已经是 version 时返回 true（同一帧里可能调两次）；
+        // 后端没有 baseVersion 的缓冲或失败返回 false，调用方按 baseVersion 画旧内容并改走全量提交。
+        // 默认不支持：调用方先看 SupportsCachedAppend() 再准备追加段
+        virtual bool SupportsCachedAppend() const { return false; }
+        virtual bool AppendCached(uint32_t slot, uint64_t baseVersion, uint64_t version, std::span<const Vertex_P3_C4> verts)
+        {
+            (void)slot; (void)baseVersion; (void)version; (void)verts;
+            return false;
+        }
+
         // ── 离屏缓存层（可选能力）────────────────────────────────────────
         // Viewport 把不常变化的内容（网格、坐标轴、场景）画进缓存层，之后每帧
         // 只复制缓存层、再画光标 / 夹点 / 选中等动态内容，鼠标移动不再重画整张图。

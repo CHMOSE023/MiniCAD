@@ -374,6 +374,47 @@ namespace MiniCAD
         return &cb;
     }
 
+    // 把新增顶点接到 (slot, baseVersion) 缓冲的末尾（见 IRenderer::AppendCached）：放得下就经上传页写到末尾；
+    // 放不下就新建更大的缓冲，GPU 内复制旧内容再写新段（旧缓冲延迟释放），几百 MB 的场景流不经过 CPU。
+    // 新缓冲多留 1/8 容量，连续画几个图形不必每次重建
+    bool D3D12Renderer::AppendCached(uint32_t slot, uint64_t baseVersion, uint64_t version, std::span<const Vertex_P3_C4> verts)
+    {
+        const auto it = m_cachedVBs.find(slot);
+        if (it == m_cachedVBs.end() || !it->second.valid || !it->second.buffer.resource)
+            return false;
+        CachedVB& cb = it->second;
+        if (cb.version == version)
+            return true;
+        if (cb.version != baseVersion)
+            return false;
+
+        constexpr UINT stride = sizeof(Vertex_P3_C4);
+        const size_t need = cb.count + verts.size();
+        if (need > cb.capacity)
+        {
+            const size_t newCap = need + std::max<size_t>(need / 8, 4096);
+            D3D12Buffer buffer = m_ctx.CreateBuffer(newCap * stride);
+            if (!buffer.resource)
+                return false;
+            if (cb.count > 0)
+            {
+                cb.buffer.Transition(m_ctx, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                buffer.Transition(m_ctx, D3D12_RESOURCE_STATE_COPY_DEST);
+                m_ctx.GetList()->CopyBufferRegion(buffer.resource.Get(), 0, cb.buffer.resource.Get(), 0, cb.count * stride);
+            }
+            ReleaseBuffer(cb.buffer);   // 复制命令执行完再释放
+            cb.buffer    = std::move(buffer);
+            cb.capacity  = newCap;
+            cb.immutable = true;
+        }
+        if (!verts.empty())
+            m_ctx.UploadBuffer(cb.buffer, static_cast<uint64_t>(cb.count) * stride, verts.data(), verts.size_bytes());
+        cb.count   = static_cast<UINT>(need);
+        cb.stride  = stride;
+        cb.version = version;
+        return true;
+    }
+
     void D3D12Renderer::SubmitCached(uint32_t slot, uint64_t version, std::span<const Vertex_P3_C4> verts,
                                      const Math::Mat4& viewProj, PrimitiveType type, bool depth, bool blend)
     {

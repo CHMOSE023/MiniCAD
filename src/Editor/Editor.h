@@ -403,8 +403,12 @@ namespace MiniCAD
         // 渲染后端已持有场景静态流的当前版本后调用（Viewport::SceneUploaded）：释放 CPU 端的拼接流，
         // 只留逐实体缓存。之后要用拼接流时（后端丢弃了缓冲、追加新实体）从逐实体缓存重新拼接，不重新细分
         void ReleaseUploadedSceneStreams();
-        // 渲染后端丢弃了缓存的顶点缓冲（ReleaseCachedResources）后调用：拼接流已释放的话下一帧重新拼接
+        // 渲染后端丢弃了缓存的顶点缓冲（ReleaseCachedResources）或没接上追加段后调用：拼接流已释放的话下一帧重新拼接
         void RequestSceneRestitch() { m_sceneRestitch = m_sceneStreamsReleased; }
+        // 渲染后端能把新增实体的顶点接到已上传的场景缓冲末尾（IRenderer::SupportsCachedAppend）：拼接流释放后
+        // 新画一个图形只细分它、把顶点放进追加段（ViewState::SceneAppendActive），不再从逐实体缓存重新拼接、
+        // 整体重新上传。进程内全局，宿主在渲染器就绪后设置
+        static void SetSceneAppendOnGpu(bool enabled);
 
         // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
         struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0; };
@@ -578,6 +582,14 @@ namespace MiniCAD
         bool             m_sceneStreamsReleased = false;   // 静态拼接流已交给渲染后端并释放
         bool             m_sceneRestitch        = false;   // 下一帧从逐实体缓存重新拼接
         SceneStreamStats m_sceneStats;
+        // 追加段：拼接流释放后新增实体的静态顶点（见 ViewState::SceneAppendActive）。后端接上并上传
+        //（Viewport::SceneUploaded）后清空；没接上则下一帧全量重新拼接时丢弃
+        uint64_t                  m_sceneGlyphVersion = 0;   // 字形实例 / 文字顶点的版本（见 ViewState::SceneGlyphVersion）
+        bool                      m_sceneAppendActive = false;
+        uint64_t                  m_sceneAppendBase   = 0;   // 后端持有的、要在其末尾追加的版本
+        std::vector<Vertex_P3_C4> m_sceneAppendLines;
+        std::vector<Vertex_P3_C4> m_sceneAppendFills;
+        std::vector<Vertex_P3_C4> m_sceneAppendPoints;
 
         // 动态流：随视图变化的实体（按像素等宽的线宽、按像素画的点样式）的线与填充，缩放时只重建这一路，静态流不动
         std::vector<Vertex_P3_C4>     m_sceneDynVertices;
@@ -589,7 +601,10 @@ namespace MiniCAD
         void TessellateEntity(const Entity& entity, DrawContext& ctx, EntityVertexCache& c);
         // 布局页：把一个视口「看见」的模型空间内容按视口变换画进 ctx（带包围盒预剔除）
         void ComposeModelIntoViewport(const ViewportEntity& vp, DrawContext& ctx);
-        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes);
+        // 把一个实体的缓存顶点拼到场景流：静态的线 / 填充 / 点进 lines / fills / points（拼接流或追加段），
+        // 文字、字形、图像、动态流与长虚线进对应成员
+        void AppendToSceneStreams(Object::ObjectID id, const EntityVertexCache& c, WipeClip::Batch& wipes,
+                                  std::vector<Vertex_P3_C4>& lines, std::vector<Vertex_P3_C4>& fills, std::vector<Vertex_P3_C4>& points);
         void EmitDeferredDashes(const EntityVertexCache& c, std::vector<Vertex_P3_C4>& out) const;   // 长虚线段按当前缩放铺进 out
         void RebuildDynamicStream(DrawContext& ctx);
         void UpdateSceneStats();

@@ -127,6 +127,7 @@ add_executable(MiniCADTests
     "Core/BlockFixTests.cpp"
     "Core/MiddleDoubleClickZoomTests.cpp"
     "Core/LayoutTests.cpp"
+    "Core/SceneAppendTests.cpp"
     "Core/OleFrameTests.cpp"
     "Core/CadXrefTests.cpp"
     "Core/MLeaderImportTests.cpp"
