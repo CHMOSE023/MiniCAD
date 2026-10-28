@@ -3684,6 +3684,73 @@ namespace MiniCAD
                 pump();
                 check(!dock->IsPanelFloating("layers") && dock->IsPanelVisible("layers") && m_floatHost->Count() == floats,
                       "双击标题栏（RedockPanel）回到原处，浮动窗口关掉");
+
+                // 两个面板先后浮出：先浮出的内容仍在自己的窗口里；拖一个窗口的标题栏到另一个的标题栏上合并成标签；最大化按钮
+                const MiniGUI::JsonValue before = dock->SaveLayout();
+                check(dock->FloatPanel("layers", MiniGUI::Rect{ 200.0f, 150.0f, 520.0f, 450.0f }), "图层面板浮出");
+                RenderFrame();
+                pump();
+                IFloatingWindow* lw = m_floatHost->WindowOf(dock->GetPanelContent("layers"));
+                check(dock->FloatPanel("properties", MiniGUI::Rect{ 600.0f, 150.0f, 920.0f, 450.0f }), "特性面板也浮出");
+                RenderFrame();
+                pump();
+                IFloatingWindow* pw = m_floatHost->WindowOf(dock->GetPanelContent("properties"));
+                check(lw && pw && lw != pw && m_floatHost->WindowOf(dock->GetPanelContent("layers")) == lw && m_floatHost->Count() == floats + 2,
+                      "另一个面板浮出后，先浮出的图层面板的内容仍在自己的窗口里（以前会被摘走，窗口变空）");
+                if (lw && pw)
+                {
+                    // 在特性窗口的标题栏上按下，拖到图层窗口的标题栏上松开（光标的屏幕位置按特性窗口当时的位置换算成它的客户区坐标）
+                    const HWND ph = static_cast<Win32FloatingWindow*>(pw)->GetHwnd();
+                    const HWND lh = static_cast<Win32FloatingWindow*>(lw)->GetHwnd();
+                    auto sendP = [&](UINT m, WPARAM wp, POINT screen)
+                    {
+                        ScreenToClient(ph, &screen);
+                        SendMessageW(ph, m, wp, MAKELPARAM(screen.x, screen.y));
+                    };
+                    const float ps = pw->GetUI().GetPixelScale(), ls = lw->GetUI().GetPixelScale();
+                    POINT press{ static_cast<LONG>(std::lround(30.0f * ps)), static_cast<LONG>(std::lround(14.0f * ps)) };
+                    ClientToScreen(ph, &press);
+                    RECT lr{};
+                    GetWindowRect(lh, &lr);
+                    const POINT over{ lr.left + static_cast<LONG>(std::lround(60.0f * ls)), lr.top + static_cast<LONG>(std::lround(14.0f * ls)) };
+                    sendP(WM_MOUSEMOVE, 0, press);
+                    sendP(WM_LBUTTONDOWN, MK_LBUTTON, press);
+                    sendP(WM_MOUSEMOVE, MK_LBUTTON, POINT{ press.x + 12, press.y });
+                    sendP(WM_MOUSEMOVE, MK_LBUTTON, over);
+                    MiniGUI::Rect preview;
+                    const bool previewing = dock->GetDropPreview(preview);
+                    sendP(WM_LBUTTONUP, 0, over);
+                    RenderFrame();
+                    pump();
+                    check(previewing && dock->GetFloatPanels("layers").size() == 2 && m_floatHost->Count() == floats + 1 &&
+                          m_floatHost->WindowOf(dock->GetPanelContent("properties")) == lw,
+                          "拖特性窗口的标题栏到图层窗口的标题栏上：合并成同一个窗口里的两个标签");
+
+                    // 标题栏上 × 左边的最大化按钮：窗口最大化到所在的显示器，布局记下；再点还原
+                    auto clickL = [&](MiniGUI::Vec2 p)
+                    {
+                        const float s = lw->GetUI().GetPixelScale();
+                        const int   x = static_cast<int>(std::lround(p.x * s)), y = static_cast<int>(std::lround(p.y * s));
+                        SendMessageW(lh, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+                        SendMessageW(lh, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+                        SendMessageW(lh, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+                    };
+                    clickL({ lw->GetUI().GetDisplaySize().x - 38.0f, 14.0f });
+                    RenderFrame();
+                    pump();
+                    check(lw->IsWindowMaximized() && dock->SaveLayout().Dump().find("\"maximized\":true") != std::string::npos,
+                          "浮动窗口的最大化按钮：窗口最大化，布局记下");
+                    clickL({ lw->GetUI().GetDisplaySize().x - 38.0f, 14.0f });
+                    RenderFrame();
+                    pump();
+                    check(!lw->IsWindowMaximized(), "再点一次还原");
+                }
+                dock->LoadLayout(before);
+                RenderFrame();
+                pump();
+                RenderFrame();
+                check(!dock->IsPanelFloating("layers") && !dock->IsPanelFloating("properties") && m_floatHost->Count() == floats,
+                      "恢复原来的布局：浮动窗口都关掉");
             }
 
             // 文档窗口：它的面板也能拖出窗口（浮动窗口归它所有，位置按它的坐标换算）

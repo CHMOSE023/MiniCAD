@@ -366,6 +366,13 @@ public:
       - 拖出时就浮出（2026-10-27）：拖动中的标签一离开停靠区就浮出（`DockSpace::TearOff`，不等松开），持有捕获的标签条随停靠区重建被摘下，
         停靠区自己接过捕获（`DockSpace::OnPointerEvent`），按"拖浮动窗口"继续：窗口跟着光标走（`IDockFloatHost::SetRect`，新增）、经过停靠区画落点、
         松开在上面停靠回去，松开在外面留在原地，Esc 只取消停靠；布局变化在松开时通知一次。`DockSpace::IsTornDragging`。单元测试 `Dock_TearOffFollowsCursorAndRedocks`
+      - 浮动窗口自带停靠布局（2026-10-28）：每个浮动窗口一棵自己的布局树（`DockSpace` 的 `Float`，内容节点 `DockFloatView` 交给宿主），与停靠区同一套落点逻辑：
+        面板标签或整个浮动窗口拖到另一个浮动窗口上合并为标签 / 拆分，浮动窗口里的标签可以拖出（拖出窗口即浮出，原窗口的 `DockFloatView` 接过捕获）；只有一个面板时不画标签条。
+        宿主接口改为按浮动窗口 ID：`DockSpace::CloseFloat` / `RedockFloat` / `RaiseFloat` / `BeginFloatDrag` …，`IDockFloatHost` 新增 `ToDock` / `FromDock`（浮动窗口自己的坐标）、
+        `IsFloatMaximized` / `SetFloatMaximized` / `GetRestoreRect`（不叫 `IsMaximized`：windowsx.h 有同名宏）。`FloatingPanel` 标题栏加最大化 / 还原按钮（`SetOnMaximize`，窗口内浮动时铺满窗口，最大化时拖标题栏先还原）。
+        布局 JSON 的 `floatingPanels` 一项可以是 `{ "panel", "rect" }` 或带 `"tabs"` / `"split"` 的布局树，另有 `"maximized"`。
+        同时修正：停靠区重建时会把所有浮动面板的内容从它们的窗口里摘走（别的面板浮出后，已浮出的节点编辑器窗口变空），现在结构没变的浮动窗口不重建（`DockSpace::Signature` 含节点序号）。
+        单元测试新增 7 个（内容不丢 / 窗口合并为标签与 JSON 往返 / 标签拖出浮动窗口 / 停靠区标签拖进浮动窗口与双击标题栏各回原处 / 最大化与还原 / 关闭窗口后重新显示 / 每个窗口一个 `UIContext` 的假宿主）
   - **M10.2 新主窗口**：在 `MiniCADViewportDemo` 基础上做 MiniGUI 版主窗口：无边框标题栏（菜单栏在标题栏内 + 最小化/最大化/关闭）、多文档标签（每个文档一个视口）、工具栏里的图层/线型/线宽下拉框、状态栏、停靠的特性与图层面板。
     - ✅ 已完成（2026-10-01）。MiniGUI 新增：
       - `Widgets/TitleBar.*`：自绘标题栏 = 图标 + 内容区（放菜单栏）+ 居中标题 + 最小化 / 最大化（还原）/ 关闭。按钮执行命令 `window.minimize / window.maximize / window.close`（命令不存在则不显示；`window.maximize` 的 isChecked 表示已最大化，显示还原图标）；同一程序的其余窗口用 `SetWindowActions` 指定作用于自己所在窗口的动作（2026-10-27，MiniCAD 的文档窗口），设置后不再看这三个命令，没给的动作不显示按钮，关闭按钮悬停红底白叉；标题优先在整条标题栏居中，与菜单或按钮重叠时改在中间空白处居中，再放不下截断；窗口未激活时变暗。`IsCaptionAt`：标题栏本身和 Label / Panel / Separator 等静态子节点算标题区域，按钮、菜单栏不算；有弹层打开或正在捕获时整条都不算（点击要用来关闭菜单）。
