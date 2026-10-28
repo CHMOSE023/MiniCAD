@@ -92,6 +92,19 @@ namespace MiniCAD
         // 填充三角形（线宽 > 1 的实体由三角形拼接而成，走 TRIANGLELIST 场景缓冲）
         virtual void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) {}
 
+        // 逐顶点着色的填充三角形（渐变填充用）：三个角各自一个颜色，由 GPU 在三角形内插值。
+        //
+        // 为什么单独一条：FillTriangle 三顶点同色，表达不了渐变。顶点格式 Vertex_P3_C4
+        // 本来就有逐顶点颜色，TRIANGLELIST 缓冲天然按顶点插值，所以后端不需要新管线，
+        // 只是这条路径不再预先决定「整片一个色」。
+        // 默认实现退化为按三顶点平均色实心填充 —— 不会画错的图元，只是没有渐变。
+        virtual void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                         const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc)
+        {
+            (void)cb; (void)cc;
+            FillTriangle(a, b, c, ca);
+        }
+
         // 区域覆盖（WIPEOUT）：声明一个闭合多边形，之前绘制的内容在其内部不可见。
         // 只有生成场景顶点流的 sink 需要处理，默认忽略。
         virtual void Wipe(const std::vector<Math::Point3>& polygon) {}

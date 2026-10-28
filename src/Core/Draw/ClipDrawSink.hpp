@@ -13,6 +13,9 @@ namespace MiniCAD
     class ClipDrawSink : public IDrawSink
     {
     public:
+        // 带颜色的顶点（渐变填充的裁剪用）：裁剪产生的新顶点颜色按同一参数插值
+        struct ColoredVertex { Math::Point3 p; Math::Color4 c; };
+
         ClipDrawSink(IDrawSink& target, const std::vector<Math::Point3>& polygon)
             : m_target(target)
             , m_poly(polygon)
@@ -116,6 +119,29 @@ namespace MiniCAD
                 return;
             }
             FillSubdivided(a, b, c, color, 5);
+        }
+
+        // 渐变填充的三角形：位置裁剪与 FillTriangle 相同，颜色**随裁剪顶点一起插值**。
+        // 不转发的话，块里的渐变会被压成平均色的实心块。
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            if (std::max({a.x, b.x, c.x}) < m_minX || std::min({a.x, b.x, c.x}) > m_maxX ||
+                std::max({a.y, b.y, c.y}) < m_minY || std::min({a.y, b.y, c.y}) > m_maxY) return;
+
+            if (m_convex)
+            {
+                const auto out = ClipConvexColored({ { a, ca }, { b, cb }, { c, cc } }, m_poly);
+                for (size_t i = 1; i + 1 < out.size(); ++i)
+                    m_target.FillTriangleColored(out[0].p, out[i].p, out[i + 1].p,
+                                                 out[0].c, out[i].c, out[i + 1].c);
+                return;
+            }
+            // 凹多边形：按重心取舍，颜色取三顶点平均（细分到这一级已足够小，
+            // 渐变在那块小三角里本就接近单一颜色）
+            const Math::Color4 avg{ (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
+                                    (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 };
+            FillSubdivided(a, b, c, avg, 5);
         }
 
         // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
@@ -242,6 +268,42 @@ namespace MiniCAD
                     {
                         const double t = sp / (sp - sc);
                         subject.push_back({ prev.x + (cur.x - prev.x) * t, prev.y + (cur.y - prev.y) * t, prev.z + (cur.z - prev.z) * t });
+                    }
+                    if (sc >= 0) subject.push_back(cur);
+                }
+            }
+            return subject;
+        }
+
+        // 同上，但顶点带颜色：裁剪产生的新顶点颜色按同一参数 t 线性插值（渐变裁剪后仍然连续）
+        static std::vector<ColoredVertex> ClipConvexColored(std::vector<ColoredVertex> subject, const std::vector<Math::Point3>& clipper)
+        {
+            const size_t m = clipper.size();
+            std::vector<ColoredVertex> input;
+            for (size_t i = 0; i < m && !subject.empty(); ++i)
+            {
+                const auto& p = clipper[i];
+                const auto& q = clipper[(i + 1) % m];
+                auto side = [&](const Math::Point3& v) { return (q.x - p.x) * (v.y - p.y) - (q.y - p.y) * (v.x - p.x); };
+                input.swap(subject);
+                subject.clear();
+                for (size_t k = 0, n = input.size(); k < n; ++k)
+                {
+                    const ColoredVertex& cur = input[k];
+                    const ColoredVertex& prev = input[(k + n - 1) % n];
+                    const double sc = side(cur.p), sp = side(prev.p);
+                    if ((sc >= 0) != (sp >= 0))
+                    {
+                        const double t = sp / (sp - sc);
+                        ColoredVertex nv;
+                        nv.p = { prev.p.x + (cur.p.x - prev.p.x) * t,
+                                 prev.p.y + (cur.p.y - prev.p.y) * t,
+                                 prev.p.z + (cur.p.z - prev.p.z) * t };
+                        nv.c = { prev.c.r + (cur.c.r - prev.c.r) * t,
+                                 prev.c.g + (cur.c.g - prev.c.g) * t,
+                                 prev.c.b + (cur.c.b - prev.c.b) * t,
+                                 prev.c.a + (cur.c.a - prev.c.a) * t };
+                        subject.push_back(nv);
                     }
                     if (sc >= 0) subject.push_back(cur);
                 }

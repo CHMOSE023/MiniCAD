@@ -31,8 +31,18 @@ namespace
     public:
         std::vector<Seg>          segs;
         std::vector<Math::Point3> points;   // 点图元（.pat 的 dash = 0）
+        // 逐顶点着色的三角形（渐变填充）：存位置 + 颜色，用于核对颜色确实随位置变化
+        struct ColoredTri { Math::Color4 c[3]; double x[3]; double y[3]; };
+        std::vector<ColoredTri>   tris;
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4&, bool) override { segs.push_back({ a, b }); }
         void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override { points.push_back(p); }
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            tris.push_back({ { ca, cb, cc }, { a.x, b.x, c.x }, { a.y, b.y, c.y } });
+        }
+        // 渐变测试里要遍历三角形的每个角：给出「第 i 个角的 x / y / 颜色」
+        //（测试代码里直接写 tri.x[k] / tri.c[k]）
     };
 
     double Len(const Seg& s) { return std::hypot(s.b.x - s.a.x, s.b.y - s.a.y); }
@@ -219,6 +229,136 @@ int RunHatchPatternTests()
         const std::string text = w2.Dump();
         Check(text.find("\"dx\"") == std::string::npos && text.find("dashes") == std::string::npos,
               "连续线、无错位的线族不写 dx / dashes（与旧格式一致）");
+    }
+
+    // ── 8. 渐变填充（ACAD 的 GRADIENT）────────────────────────────
+    //
+    // 回归点：sample_AC1032.dwg 里的两处渐变（LINEAR / SPHERICAL，蓝 → 黄）以前整条
+    // 降级成「单色实心」，图上只看见一块纯色。这里守住：停靠点颜色、逐顶点着色、
+    // 非线性渐变的细分、序列化往返。
+    {
+        // 单色渐变的提亮 / 压暗
+        const Math::Color4 base{ 0.2, 0.4, 0.6, 1.0 };
+        const Math::Color4 lighter = HatchGradient::TintedColor(base, 0.5);
+        const Math::Color4 darker  = HatchGradient::TintedColor(base, -0.5);
+        Check(lighter.r > base.r && lighter.g > base.g && lighter.b > base.b, "单色渐变：正的色调值提亮");
+        Check(darker.r < base.r && darker.g < base.g && darker.b < base.b, "单色渐变：负的色调值压暗");
+        const Math::Color4 white = HatchGradient::TintedColor(base, 1.0);
+        Check(std::abs(white.r - 1.0) < 1e-9 && std::abs(white.g - 1.0) < 1e-9, "色调 +1 到达纯白");
+
+        // 停靠点求值：双色渐变在 0.5 处应当是两个端点色之间
+        HatchGradient two;
+        two.Enabled = true;
+        two.Name    = "LINEAR";
+        two.Type    = HatchGradient::ParseType(two.Name);
+        two.Stops   = { { 0.0, Math::Color4{ 0, 0, 1, 1 } }, { 1.0, Math::Color4{ 1, 1, 0, 1 } } };
+        Math::Color4 a, b;
+        double t = 0.0;
+        two.Sample(0.0, a, b, t);
+        Check(std::abs(a.r) < 1e-9 && std::abs(a.b - 1.0) < 1e-9, "渐变 0 端是第一个停靠点（蓝）");
+        two.Sample(1.0, a, b, t);
+        Check(std::abs(b.r - 1.0) < 1e-9 && std::abs(b.b) < 1e-9, "渐变 1 端是最后一个停靠点（黄）");
+        two.Sample(0.5, a, b, t);
+        Check(std::abs(t - 0.5) < 1e-9, "中点落在两停靠点正中间");
+
+        // 渐变类型名的解析（大小写不敏感）
+        Check(HatchGradient::ParseType("SPHERICAL") == GradientType::Spherical, "类型名 SPHERICAL 解析");
+        Check(HatchGradient::ParseType("invcylinder") == GradientType::InvCylinder, "类型名大小写不敏感");
+        Check(HatchGradient::ParseType("no-such-type") == GradientType::Linear, "未知类型名退回线性");
+        Check(std::string(HatchGradient::TypeName(GradientType::Hemispherical)) == "HEMISPHERICAL", "类型名回写");
+
+        // 逐顶点着色：矩形上的线性渐变必须产出**不同颜色**的顶点
+        //（三顶点同色 = 退化成实心，正是修之前的表现）
+        {
+            HatchEntity h(20, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 0, 5, 0 }, { 0, 0, 0 } }),
+                          HatchPattern::MakeSolid());
+            h.SetGradient(two);
+            RecordingSink sink;
+            h.Draw(sink, false, false);
+            Check(sink.tris.size() == 2, "线性渐变：矩形就够（2 个三角形，不需要细分）");
+            bool varied = false;
+            for (const auto& tri : sink.tris)
+                if (tri.c[0].r != tri.c[1].r || tri.c[1].r != tri.c[2].r)
+                    varied = true;
+            Check(varied, "线性渐变：三角形三个角颜色不同（逐顶点着色，不是单色）");
+            // 左边界蓝色、右边界黄色
+            bool leftBlue = false, rightYellow = false;
+            for (const auto& tri : sink.tris)
+                for (int k = 0; k < 3; ++k)
+                {
+                    if (tri.x[k] < 1e-6 && tri.c[k].b > 0.99 && tri.c[k].r < 0.01) leftBlue = true;
+                    if (tri.x[k] > 9.999 && tri.c[k].r > 0.99 && tri.c[k].b < 0.01) rightYellow = true;
+                }
+            Check(leftBlue && rightYellow, "线性渐变：0 端是蓝、1 端是黄（方向正确）");
+        }
+
+        // 非线性（球面）必须细分：只有 2 个三角形时中心点不存在，球的明暗出不来
+        {
+            HatchGradient sph = two;
+            sph.Name = "SPHERICAL";
+            sph.Type = HatchGradient::ParseType(sph.Name);
+            HatchEntity h(21, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 0, 5, 0 }, { 0, 0, 0 } }),
+                          HatchPattern::MakeSolid());
+            h.SetGradient(sph);
+            RecordingSink sink;
+            h.Draw(sink, false, false);
+            Check(sink.tris.size() > 100, "球面渐变：矩形被细分（三角形数远多于 2）");
+            // 中心附近应当是 0 端（蓝），四角是 1 端（黄）
+            bool centerBlue = false, cornerYellow = false;
+            for (const auto& tri : sink.tris)
+                for (int k = 0; k < 3; ++k)
+                {
+                    const double dx = std::abs(tri.x[k] - 5.0), dy = std::abs(tri.y[k] - 2.5);
+                    if (dx < 0.5 && dy < 0.3 && tri.c[k].b > 0.99 && tri.c[k].r < 0.01) centerBlue = true;
+                    if (dx > 4.0 && dy > 2.0 && tri.c[k].r > 0.99 && tri.c[k].b < 0.01) cornerYellow = true;
+                }
+            Check(centerBlue, "球面渐变：中心是 0 端（蓝）");
+            Check(cornerYellow, "球面渐变：四角是 1 端（黄）");
+        }
+
+        // 设为渐变后，图案本身按实心处理（渐变铺满边界，与 .pat 图案无关）
+        {
+            HatchEntity h(22, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 0, 0, 0 } }), *lib.Find("ANSI31"));
+            h.SetGradient(two);
+            Check(h.GetPattern().Solid && h.GetPattern().Families.empty(), "设为渐变后图案变为实心、线族清空");
+            Check(h.IsGradient(), "IsGradient() 为真");
+            h.ClearGradient();
+            Check(!h.IsGradient(), "ClearGradient() 后不再是渐变");
+        }
+
+        // 序列化往返
+        {
+            HatchEntity h(23, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 0, 5, 0 }, { 0, 0, 0 } }),
+                          HatchPattern::MakeSolid());
+            HatchGradient g = two;
+            g.Type  = HatchGradient::ParseType("SPHERICAL");
+            g.Name  = "SPHERICAL";
+            g.Angle = 45.0;
+            g.Shift = 0.25;
+            h.SetGradient(g);
+            JsonSerializer w;
+            EntityIO::Write(w, h);
+            JsonSerializer r;
+            auto back = r.Parse(w.Dump()) ? EntityIO::Read(r) : nullptr;
+            const auto* hb = back && back->IsKindOf<HatchEntity>() ? static_cast<HatchEntity*>(back.get()) : nullptr;
+            const bool same = hb && hb->IsGradient() && hb->GetGradient().Type == GradientType::Spherical &&
+                              std::abs(hb->GetGradient().Angle - 45.0) < 1e-9 &&
+                              std::abs(hb->GetGradient().Shift - 0.25) < 1e-9 &&
+                              hb->GetGradient().Stops.size() == 2 &&
+                              std::abs(hb->GetGradient().Stops[0].Color.b - 1.0) < 1e-9 &&
+                              std::abs(hb->GetGradient().Stops[1].Color.r - 1.0) < 1e-9;
+            Check(same, "渐变填充 JSON 往返：类型、角度、位移、停靠点颜色保持");
+
+            // 旧文件（没有 gradient 键）读回仍是普通填充
+            JsonSerializer w2;
+            EntityIO::Write(w2, HatchEntity(24, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 5, 0 }, { 0, 0, 0 } }),
+                                            HatchPattern::MakeSolid()));
+            Check(w2.Dump().find("\"gradient\"") != std::string::npos, "实心填充也写 gradient 对象（enabled=false）");
+            JsonSerializer r2;
+            auto plain = r2.Parse(w2.Dump()) ? EntityIO::Read(r2) : nullptr;
+            const auto* pb = plain && plain->IsKindOf<HatchEntity>() ? static_cast<HatchEntity*>(plain.get()) : nullptr;
+            Check(pb && !pb->IsGradient(), "非渐变填充读回后 IsGradient() 为假");
+        }
     }
 
     return g_failures;
