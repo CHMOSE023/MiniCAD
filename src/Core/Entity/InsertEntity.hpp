@@ -201,13 +201,18 @@ namespace MiniCAD
             for (int r = 0; r < m_rowCount; ++r)
                 for (int c = 0; c < m_colCount; ++c)
                 {
-                    TransformDrawSink tsink(sink, CellMatrix(c, r));
+                    const Math::Mat4 cell = CellMatrix(c, r);
+                    TransformDrawSink tsink(sink, cell);
                     // 有裁剪边界时子实体先在块坐标系中裁剪，再施加插入变换。
                     // 例外：正在拖**基点**期间按完整图块绘制（临时忽略裁剪）——
                     // 只画框内那一小块会让人以为图块缺了图元，也看不清要放到哪儿。
                     ClipDrawSink csink(tsink, m_clip);
                     const bool clipped = csink.Valid() && !m_showWhole;
                     IDrawSink& xsink = clipped ? static_cast<IDrawSink&>(csink) : tsink;
+                    // 块定义级细分缓存（IDrawSink::BeginBlockInstance）：同一块定义此前细分过时由 sink 直接接上。
+                    // 有裁剪边界的不走缓存（子实体先在块坐标系里裁剪）
+                    if (!clipped && sink.BeginBlockInstance(m_block, GetAttr(), cell, nullptr))
+                        continue;
                     // 块内设置了不可见标志（DWG 的 invisible，如被隐藏的嵌套块参照）或在关闭 / 冻结图层上的子实体不画；
                     // 0 层上的子实体已解析为插入所在的图层
                     for (const auto& e : m_resolved)
@@ -237,6 +242,8 @@ namespace MiniCAD
                         xsink.SetEntityContext(nullptr);
                         xsink.EndBlockChild(nested);
                     }
+                    if (!clipped)
+                        sink.EndBlockInstance();
                 }
 
             // ⚠ ATTRIB 的坐标**已经是世界坐标**（AutoCAD 在 INSERT 里就把属性定位算好了），
