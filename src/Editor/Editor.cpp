@@ -216,6 +216,7 @@ namespace MiniCAD
     Editor::Editor()
     {
         RegisterBuiltinTools();
+        m_blockTessCache.SetUseCounter([this](std::unordered_map<const void*, int>& uses) { CountBlockUses(uses); });
     }
 
     uint64_t Editor::NextRenderVersion()
@@ -229,6 +230,13 @@ namespace MiniCAD
     void Editor::SetSceneAppendOnGpu(bool enabled)
     {
         s_sceneAppendOnGpu = enabled;
+    }
+
+    static std::atomic<bool> s_blockCacheEnabled{ true };
+
+    void Editor::SetBlockCacheEnabled(bool enabled)
+    {
+        s_blockCacheEnabled = enabled;
     }
 
     void Editor::CopySettingsFrom(const Editor& o)
@@ -386,6 +394,7 @@ namespace MiniCAD
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
         m_build = {};
+        m_blockTessCache.Clear();   // 记下的字形实例引用字形网格库的编号
         m_sceneVersion    = NextRenderVersion();   // 渲染后端的缓存顶点缓冲随之失效
         m_sceneDynVersion = NextRenderVersion();
         m_sceneGlyphVersion = NextRenderVersion();
@@ -3302,6 +3311,9 @@ namespace MiniCAD
                 return wpp > 0.0 ? m_paperHeight / wpp : 0.0;     // 本视口框在屏幕上的高度（像素）
             }
             void MarkViewDependent() override {}
+            // 块定义级缓存不用于视口合成：本视口冻结的图层、像素比例与模型页不同，模型页记下的结果不能直接接上
+            bool BeginBlockInstance(const void*, const EntityAttr&, const Math::Mat4&, const BlockClipChain*) override { return false; }
+            void EndBlockInstance() override {}
 
         private:
             IDrawSink&            m_target;
@@ -3654,6 +3666,16 @@ namespace MiniCAD
         const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid;
         m_displayInvalid = false;
 
+        // 块定义级细分缓存（BlockTessCache）只在成批细分时留着：不在分帧细分时本次更新结束就清空，不长期占内存。
+        // 图纸有改动时先清空（块定义可能也改了）；显示设置变了（invalidateAll）记下的结果也作废
+        struct ReleaseBlockCache
+        {
+            Editor& editor;
+            ~ReleaseBlockCache() { if (!editor.m_build.active) editor.m_blockTessCache.Clear(); }
+        } releaseBlockCache{ *this };
+        if (invalidateAll || scene.IsDirty())
+            m_blockTessCache.Clear();
+
         const auto& layerMgr = scene.GetLayerManager();
         DrawContext ctx(m_scratchLines, m_scratchFills, m_scratchTexts, m_overlay,
                         layerMgr, scene.GetLineTypeTable(), worldPerPixel,
@@ -3678,6 +3700,8 @@ namespace MiniCAD
         // 复杂线型形段（组码 75）的字形来自 SHX 形文件（ltypeshp.shx），
         // 与文字样式表无关，单独一条解析路径
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
+        if (s_blockCacheEnabled)
+            ctx.SetBlockCache(&m_blockTessCache);
 
         auto isShown = [&](const Entity& entity)
         {
@@ -3935,6 +3959,29 @@ namespace MiniCAD
         own.ClipPoints(p.points, 4);
         own.ClipGlyphs(p.glyphs, 3, 0, m_glyphLibrary, p.lines, p.fills);
         m_build.partWipes.clear();
+    }
+
+    // 块定义被展开几次（到 2 为止；块定义级细分缓存只记展开不止一次的块）：从图纸里的块参照往下数嵌套的块参照与阵列。
+    // 一个块定义的子块参照最多往下数两遍（展开到 1 次、到 2 次时），与图纸里展开出多少个块参照无关
+    void Editor::CountBlockUses(std::unordered_map<const void*, int>& uses) const
+    {
+        if (!m_doc) return;
+        std::function<void(const BlockEntity&, int)> visit = [&](const BlockEntity& block, int n)
+        {
+            int& u = uses[&block];   // 重新散列不会让元素的引用失效
+            const int before = u;
+            u = std::min(2, u + n);
+            if (u == before) return;   // 已经到 2：里面的块也都到了
+            const int added = u - before;
+            for (const auto& e : block.GetEntities())
+                if (const auto* sub = dynamic_cast<const InsertEntity*>(e.get()); sub && sub->GetBlock())
+                    visit(*sub->GetBlock(), std::min(2, added * sub->GetColumnCount() * sub->GetRowCount()));
+        };
+        m_doc->GetScene().ForEachObject([&](const Object& obj)
+        {
+            if (const auto* ins = dynamic_cast<const InsertEntity*>(&obj); ins && ins->GetBlock())
+                visit(*ins->GetBlock(), std::min(2, ins->GetColumnCount() * ins->GetRowCount()));
+        });
     }
 
     // 进度的权重：普通实体 1，块参照按块内要画的子实体个数（嵌套的块参照展开计，同 DrawContext 的分段计数），按块定义缓存

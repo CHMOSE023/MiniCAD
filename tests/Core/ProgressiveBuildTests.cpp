@@ -6,6 +6,7 @@
 //     裁剪块的边框只画一次、阵列插入）
 //   · 后端能接追加段时新细分的接到缓冲末尾，不每帧整体上传；接不了时每帧全量拼接也能画全
 //   · 细分到一半时删掉正在分段细分的块参照、隐藏图层：画全后与同样改动后同步细分的结果相同
+//   · 同步细分时用了块定义级缓存（BlockTessCache），参照与不缓存时相同
 #include "Document/DocumentManager.h"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
@@ -215,6 +216,13 @@ int RunProgressiveBuildTests()
     // ── 后端能接追加段 ────────────────────────────────────────────────────
     const auto [refLines, refFills] = reference(nullptr);
     Check(refLines.size() > 1000, "同步细分出参照顶点");
+    {
+        // 同步细分时块定义级缓存（块 C 插入了 10 次）：与不缓存时相同
+        Editor::SetBlockCacheEnabled(false);
+        const auto [plainLines, plainFills] = reference(nullptr);
+        Editor::SetBlockCacheEnabled(true);
+        Check(SameVertices(plainLines, refLines) && SameVertices(plainFills, refFills), "同步细分：块定义级缓存与不缓存的结果相同");
+    }
     {
         Document& doc = manager.Create();
         BuildScene(doc);

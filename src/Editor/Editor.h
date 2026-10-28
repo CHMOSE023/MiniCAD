@@ -27,6 +27,7 @@
 #include "Document/GlyphMeshLibrary.hpp"
 #include "Render/ImageDraw.hpp"
 #include "Document/DeferredDash.hpp"
+#include "Document/BlockTessCache.hpp"
 #include "Core/Image/ImageLibrary.h"
 #include "Core/Ole/OleObject.h"
 #include <array>
@@ -418,6 +419,8 @@ namespace MiniCAD
         // 新画一个图形只细分它、把顶点放进追加段（ViewState::SceneAppendActive），不再从逐实体缓存重新拼接、
         // 整体重新上传。进程内全局，宿主在渲染器就绪后设置
         static void SetSceneAppendOnGpu(bool enabled);
+        // 块定义级细分缓存（BlockTessCache，默认开）：同一块定义插入多次时只细分一次。进程内全局，测试拿来与不缓存的结果对比
+        static void SetBlockCacheEnabled(bool enabled);
 
         // 分帧细分（打开图纸后的首次显示，宿主在加入刚读完的图纸后调用）：全量拼接不再当帧细分缓存里没有的实体，
         // 而是每帧按绘制序细分一批、用时不超过 budgetMs（大块参照按块内子实体分段），接到场景流尾部，画全为止；
@@ -639,6 +642,9 @@ namespace MiniCAD
         double BuildWeight(const Entity& entity);
         void   DropBuildPart();
         void   ClipBuildPart();
+        // 块定义级细分缓存：成批细分时用（分帧细分期间、一次全量拼接里），之后清空；图纸一有改动也清空（块定义可能变了）
+        BlockTessCache m_blockTessCache;
+        void   CountBlockUses(std::unordered_map<const void*, int>& uses) const;
         std::vector<AABB> m_sceneWipeBoxes;   // 拼接进场景的区域覆盖的包围盒：改写的实体碰到它们就全量拼接（要重新裁剪）
         // 原地改写段（见 ViewState::ScenePatches）：与追加段一起交给后端，上传后清空
         std::vector<ViewState::ScenePatch> m_scenePatches;

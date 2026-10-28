@@ -9,6 +9,18 @@ namespace MiniCAD
 {
     using LayerID = uint32_t;
     struct EntityAttr;
+    namespace Math { struct Mat4; }
+    class ClipDrawSink;
+
+    // 块参照所在的各层裁剪框（IDrawSink::BeginBlockInstance 经过 ClipDrawSink 时逐层加上）：块定义级缓存命中时据此判断
+    // 记下的内容整个在框内（原样接上）、整个在框外（什么都不画）还是跨在边上（逐个画）
+    struct BlockClipChain
+    {
+        const ClipDrawSink*   clip  = nullptr;
+        const Math::Mat4*     xform = nullptr;   // 块坐标 → 这层裁剪框的坐标
+        const BlockClipChain* inner = nullptr;   // 离块参照更近的一层
+        int                   count = 0;         // 从块参照往下数，到这层为止有几层裁剪框
+    };
 
     class IDrawSink
     {
@@ -36,6 +48,20 @@ namespace MiniCAD
         //（DrawContext::BeginChunk：从上次停下的子实体接着画，到时限就停），默认都画
         virtual bool BeginBlockChild(bool nested) { (void)nested; return true; }
         virtual void EndBlockChild(bool nested) { (void)nested; }
+
+        // 块参照的一个阵列单元画之前先调用 BeginBlockInstance（block：块定义；host：块参照的属性，块内 ByBlock 与 0 层随它；
+        // xform：块坐标 → 本 sink 坐标；clips：它所在的裁剪框，调用方传 nullptr）。sink 能直接给出这个单元的内容（同一块定义、
+        // 同样的随块属性与缩放此前细分过）时画好并返回 true，调用方不再画块内子实体；返回 false 时照常逐个画，画完调用
+        // EndBlockInstance。DrawContext 据此按块定义缓存细分结果（BlockTessCache），默认不缓存
+        virtual bool BeginBlockInstance(const void* block, const EntityAttr& host, const Math::Mat4& xform, const BlockClipChain* clips)
+        {
+            (void)block; (void)host; (void)xform; (void)clips;
+            return false;
+        }
+        virtual void EndBlockInstance() {}
+        // ClipDrawSink 改动了经过它的内容（截断、丢掉，或吞掉了它不转发的查询）：depth 是它往下（往 DrawContext）数第几层
+        // 裁剪框。DrawContext 据此不记在它里面的块——记下的要与不裁剪时相同
+        virtual void NoteClipped(int depth) { (void)depth; }
 
         virtual Math::Color4 GetLayerColor(LayerID layerId) const { return Math::Color4::White(); }
         // 图层是否显示（关闭或冻结为 false）：块参照展开时据此跳过块内隐藏图层上的子实体。默认都显示

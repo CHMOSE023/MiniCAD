@@ -30,6 +30,13 @@ namespace MiniCAD
         // 嵌套块参照的子实体也一起分段（见 IDrawSink::BeginBlockChild）
         bool BeginBlockChild(bool nested) override                 { return m_target.BeginBlockChild(nested); }
         void EndBlockChild(bool nested) override                   { m_target.EndBlockChild(nested); }
+        // 嵌套块参照按块定义缓存（见 IDrawSink::BeginBlockInstance）：变换接上本 sink 的（行向量约定，先作用的在左）
+        bool BeginBlockInstance(const void* block, const EntityAttr& host, const Math::Mat4& xform, const BlockClipChain* clips) override
+        {
+            return m_target.BeginBlockInstance(block, host, xform * m_xform, clips);
+        }
+        void EndBlockInstance() override        { m_target.EndBlockInstance(); }
+        void NoteClipped(int depth) override    { m_target.NoteClipped(depth); }
 
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) override
         {

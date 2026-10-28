@@ -130,6 +130,7 @@ add_executable(MiniCADTests
     "Core/LayoutTests.cpp"
     "Core/SceneAppendTests.cpp"
     "Core/ProgressiveBuildTests.cpp"
+    "Core/BlockTessCacheTests.cpp"
     "Core/DocumentViewportTests.cpp"
 "Core/OleFrameTests.cpp"
     "Core/CadXrefTests.cpp"

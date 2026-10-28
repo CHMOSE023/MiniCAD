@@ -145,4 +145,5 @@ scene.GetLayerManager().SetActiveLayerID(id);   // 之后新建的实体在当�
 - 视口缓存层：场景版本、相机、尺寸、显示开关都没变时，每帧只复制缓存层再画动态内容
 - 场景顶点分静态流与动态流：几何按当前缩放烘焙的实体（按像素的线宽、点样式、文字大小）绘制时要调用 `IDrawSink::MarkViewDependent()`，进动态流，滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`）；其余进静态流，不随缩放重建
 - 逐实体缓存细分结果，切换文档、追加实体、选中高亮都从缓存拼接，不重新细分；矢量文字按字形实例化（每个字形的网格只存一份）
+- 成批细分时同一块定义只细分一次（`BlockTessCache`），之后的插入经平移、旋转接上；块参照绘制时经 `IDrawSink::BeginBlockInstance` 询问，新写的转发型 sink 要么转发它、要么保持默认的不缓存
 - 大图纸注意 O(n) 的每帧操作（如 `SnapEngine`）；有性能改动时用 `--bench` 前后对比
