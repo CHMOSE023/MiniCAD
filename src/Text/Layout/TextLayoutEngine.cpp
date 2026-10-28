@@ -1,4 +1,5 @@
 #include "TextLayoutEngine.h"
+#include "Core/TextCodes.h"
 #include <cmath>
 
 namespace MiniCAD
@@ -55,13 +56,25 @@ namespace MiniCAD
 
         double cursorY = 0.0;
 
+        // 下划线 / 上划线 / 删除线：开关跨行保持，每行在行尾收口、下一行从行首续上。
+        // 纵向位置相对基线（× 字高），与 AutoCAD 一致；横向从开处的步进位置画到关处
+        static constexpr double kDecorationY[3] = { -0.2, 1.2, 0.5 };
+        bool   decorOn[3]     = { false, false, false };
+        double decorStartX[3] = { 0.0, 0.0, 0.0 };
+        auto closeDecoration = [&](int k, double x)
+        {
+            if (x > decorStartX[k])
+                result.m_decorations.push_back({ decorStartX[k], x, cursorY + kDecorationY[k] * height });
+        };
+
         for (const auto& line : lines)
         {
             auto codepoints = DecodeLine(line);
 
             double lineWidth = 0.0;
             for (auto cp : codepoints)
-                lineWidth += font->GetAdvance(cp) * scale * widthFactor;
+                if (!IsDecorationToggle(cp))
+                    lineWidth += font->GetAdvance(cp) * scale * widthFactor;
 
             double cursorX = 0.0;
 
@@ -70,8 +83,18 @@ namespace MiniCAD
             else if (align == HAlign::Right)
                 cursorX = -lineWidth;
 
+            for (double& x : decorStartX) x = cursorX;
             for (auto cp : codepoints)
             {
+                if (IsDecorationToggle(cp))
+                {
+                    const int k = static_cast<int>(cp) - 1;
+                    if (decorOn[k]) closeDecoration(k, cursorX);
+                    else decorStartX[k] = cursorX;
+                    decorOn[k] = !decorOn[k];
+                    continue;
+                }
+
                 GlyphInstance instance;
                 instance.m_glyph = &font->GetGlyph(cp);
                 instance.m_scale = scale;
@@ -82,6 +105,8 @@ namespace MiniCAD
 
                 cursorX += font->GetAdvance(cp) * scale * widthFactor;
             }
+            for (int k = 0; k < 3; ++k)
+                if (decorOn[k]) closeDecoration(k, cursorX);
 
             cursorY -= lineHeight;
         }
@@ -110,9 +135,9 @@ namespace MiniCAD
         for (const auto& line : lines)
         {
             double w = 0.0;
-            size_t i = 0;
-            while (i < line.size())
-                w += font->GetAdvance(DecodeOneUtf8(line, i)) * scale * widthFactor;
+            for (auto cp : DecodeLine(line))   // 与 Layout() 同样解析 %% 控制码与 \U+XXXX
+                if (!IsDecorationToggle(cp))
+                    w += font->GetAdvance(cp) * scale * widthFactor;
             maxW = std::max(maxW, w);
         }
         return maxW;
@@ -156,6 +181,8 @@ namespace MiniCAD
 
             for (auto cp : codepoints)
             {
+                if (IsDecorationToggle(cp))
+                    continue;
                 const Glyph& glyph = font->GetGlyph(cp);
 
                 // 无轮廓（空格等）：不贡献墨迹，但仍要推进
@@ -274,12 +301,24 @@ namespace MiniCAD
                     case 'p': case 'P': cps.push_back(kRawShapeFlag | 0x00B1u); i = j + 1; continue; // ±
                     case 'c': case 'C': cps.push_back(kRawShapeFlag | 0x2205u); i = j + 1; continue; // ∅
                     case '%':           cps.push_back((uint32_t)'%');          i = j + 1; continue;
+                    // %%u 下划线 / %%o 上划线：开关（与多行文字的 \L \O 共用，见 Core/TextCodes.h）
+                    case 'u': case 'U': cps.push_back((uint32_t)kUnderlineToggle); i = j + 1; continue;
+                    case 'o': case 'O': cps.push_back((uint32_t)kOverlineToggle);  i = j + 1; continue;
                     default: break;
                     }
                 }
                 // 未知转义:原样输出一个 '%'
                 cps.push_back((uint32_t)'%');
                 i += 1;
+                continue;
+            }
+
+            // \U+XXXX：代码页外的字符（单行文字、属性；多行文字已在 StripInlineCodes 里还原）
+            if (char32_t ucp = 0; line[i] == '\\' && ParseUnicodeEscape(line, i, ucp))
+            {
+                if (ucp != 0)
+                    cps.push_back(static_cast<uint32_t>(ucp));
+                i += 7;
                 continue;
             }
 
@@ -377,7 +416,7 @@ namespace MiniCAD
 
             const size_t start = i;
             uint32_t codepoint = DecodeOneUtf8(text, i);
-            double advance = font->GetAdvance(codepoint) * scale * widthFactor;
+            double advance = IsDecorationToggle(codepoint) ? 0.0 : font->GetAdvance(codepoint) * scale * widthFactor;
 
             // 放不下：先尝试**词边界**折行；找不到可折点就整体溢出（不拆 token）
             if (boxWidth > 0.0 && !current.empty() && currentWidth + advance > boxWidth)
@@ -419,7 +458,8 @@ namespace MiniCAD
         while (i < line.size())
         {
             uint32_t codepoint = DecodeOneUtf8(line, i);
-            width += font->GetAdvance(codepoint) * widthFactor;
+            if (!IsDecorationToggle(codepoint))
+                width += font->GetAdvance(codepoint) * widthFactor;
         }
 
         return width;

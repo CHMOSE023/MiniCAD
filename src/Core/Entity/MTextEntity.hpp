@@ -4,6 +4,7 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/GeomKernel/AABB.hpp"
 #include "Core/Object/Object.hpp"
+#include "Core/TextCodes.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -117,26 +118,49 @@ namespace MiniCAD
         //   \P 段落换行 → '\n';\~ 不换行空格 → ' ';\\ \{ \} 转义字符;{ } 分组;
         //   带参数(以 ';' 结束)的码:\f \F(字体) \H(字高) \C \c(颜色) \W(宽度因子)
         //                          \Q(倾斜) \T(字间距) \A(对齐) \p(段落) \S(堆叠);
-        //   开关码(无参数):\L \l \O \o \K \k \N。
-        static std::string StripInlineCodes(const std::string& s)
+        //   开关码(无参数):\L \l \O \o \K \k \N;\U+XXXX 还原为对应字符。
+        // keepDecorations:下划线 \L、上划线 \O、删除线 \K 换成排版流里的开关字符(Core/TextCodes.h),
+        //   按 { } 分组恢复,只在状态变化处写;绘制时用,度量/纯文本不用。
+        static std::string StripInlineCodes(const std::string& s, bool keepDecorations = false)
         {
             std::string out;
             out.reserve(s.size());
+
+            struct Decor { bool under = false, over = false, strike = false; };
+            Decor cur, shown;
+            std::vector<Decor> groups;
+            auto put = [&](char ch)
+            {
+                if (keepDecorations)
+                {
+                    if (cur.under  != shown.under)  out.push_back(kUnderlineToggle);
+                    if (cur.over   != shown.over)   out.push_back(kOverlineToggle);
+                    if (cur.strike != shown.strike) out.push_back(kStrikeToggle);
+                    shown = cur;
+                }
+                out.push_back(ch);
+            };
+
             for (size_t i = 0; i < s.size(); )
             {
                 const char ch = s[i];
-                if (ch == '{' || ch == '}') { ++i; continue; }   // 分组括号
+                if (ch == '{') { groups.push_back(cur); ++i; continue; }   // 分组:格式只在组内有效
+                if (ch == '}')
+                {
+                    if (!groups.empty()) { cur = groups.back(); groups.pop_back(); }
+                    ++i; continue;
+                }
 
                 if (ch == '\\' && i + 1 < s.size())
                 {
                     const char c = s[i + 1];
                     switch (c)
                     {
-                    case 'P': case 'X': out.push_back('\n'); i += 2; continue;  // 段落 / 换行
-                    case '~':           out.push_back(' ');  i += 2; continue;  // 不换行空格
-                    case '\\':          out.push_back('\\'); i += 2; continue;
-                    case '{':           out.push_back('{');  i += 2; continue;
-                    case '}':           out.push_back('}');  i += 2; continue;
+                    case 'P': case 'X': put('\n'); i += 2; continue;  // 段落 / 换行
+                    case '~':           put(' ');  i += 2; continue;  // 不换行空格
+                    case '\\':          put('\\'); i += 2; continue;
+                    case '{':           put('{');  i += 2; continue;
+                    case '}':           put('}');  i += 2; continue;
 
                     // 带参数:跳到分号(含)为止
                     case 'f': case 'F': case 'H': case 'C': case 'c':
@@ -148,9 +172,24 @@ namespace MiniCAD
                         continue;
                     }
 
-                    // 开关码(无参数)
-                    case 'L': case 'l': case 'O': case 'o':
-                    case 'K': case 'k': case 'N':
+                    // 开关码(无参数):下划线 / 上划线 / 删除线的开与关
+                    case 'L': cur.under  = true;  i += 2; continue;
+                    case 'l': cur.under  = false; i += 2; continue;
+                    case 'O': cur.over   = true;  i += 2; continue;
+                    case 'o': cur.over   = false; i += 2; continue;
+                    case 'K': cur.strike = true;  i += 2; continue;
+                    case 'k': cur.strike = false; i += 2; continue;
+                    case 'N': i += 2; continue;
+
+                    // \U+XXXX:代码页外的字符(见 Core/TextCodes.h),还原为 UTF-8
+                    case 'U': case 'u':
+                        if (char32_t cp = 0; ParseUnicodeEscape(s, i, cp))
+                        {
+                            std::string utf8;
+                            AppendUtf8(utf8, cp);
+                            for (char b : utf8) put(b);
+                            i += 7; continue;
+                        }
                         i += 2; continue;
 
                     default:
@@ -158,7 +197,7 @@ namespace MiniCAD
                     }
                 }
 
-                out.push_back(ch);
+                put(ch);
                 ++i;
             }
             return out;
@@ -226,11 +265,11 @@ namespace MiniCAD
             if (h <= 0.0) h = m_height;
 
             // 按附着点求文字块左上角;EmitMText 原点在首行底部,故下移一个字高。
-            // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等)。
+            // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等),只留下划线等装饰的开关。
             const Math::Point3 tl = AnchorTopLeft(w, h);
             const Math::Point3 drawPos{ tl.x, tl.y - m_height, tl.z };
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
-            sink.EmitMText(drawPos, GetPlainText(), m_styleId, m_height, m_rotation, m_boxWidth, color);
+            sink.EmitMText(drawPos, StripInlineCodes(m_text, true), m_styleId, m_height, m_rotation, m_boxWidth, color);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
         }
 

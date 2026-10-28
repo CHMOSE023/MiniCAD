@@ -1,4 +1,4 @@
-// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形、TrueType 单点轮廓 ─────────
+// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形、TrueType 单点轮廓、\U+XXXX 转义、下划线 ─────────
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -8,6 +8,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Text/Font/FontEngine.h"
 #include "Text/Font/TTFFont.h"
+#include "Text/Layout/TextLayoutEngine.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -306,6 +307,56 @@ int RunTextStyleTests()
         std::filesystem::remove(path, ec);
         std::printf("    单点轮廓的字形：最多 %zu 条线段\n", lines);
         Check(ok, "只有一个曲线外的点的轮廓：字形只剩这个点上的零长度线段，不再越界读出随机的起点");
+    }
+
+    // ── 8. \U+XXXX（代码页外字符）：管综.dwg 的 MTEXT 存成 "\L\U+8D1F\U+4E00..."，
+    //       以前去格式码时把 "\U" 当未知转义丢掉，画出 "+8D1F+4E00..." ───────────
+    {
+        Check(MTextEntity::StripInlineCodes("\\L\\U+8D1F\\u+4e00层\\P\\U+00B0") == "负一层\n°",
+              "多行文字：\\U+XXXX（大小写均可）还原为字符，与其他格式码混用");
+        Check(MTextEntity::StripInlineCodes("\\U+12G4") == "+12G4", "多行文字：不足 4 位十六进制的 \\U 按未知转义处理");
+
+        TextLayoutEngine engine;
+        const std::vector<uint32_t> cps = engine.DecodeLine("A\\U+8D1FB%%d\\U+12");
+        Check(cps == std::vector<uint32_t>{ 'A', 0x8D1F, 'B', kRawShapeFlag | 0x00B0u, '\\', 'U', '+', '1', '2' },
+              "单行文字：\\U+XXXX 还原为码点，%% 控制码照旧，不完整的转义原样显示");
+    }
+
+    // ── 9. 下划线 / 上划线 / 删除线：管综.dwg 的图名是 "\L\U+8D1F..."，以前 \L 直接丢掉。
+    //       位置按 AutoCAD 2020 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高 ─────────
+    {
+        const std::string U(1, kUnderlineToggle), O(1, kOverlineToggle), K(1, kStrikeToggle);
+        Check(MTextEntity::StripInlineCodes("{\\LAB}C", true) == U + "AB" + U + "C" && MTextEntity::StripInlineCodes("{\\LAB}C") == "ABC",
+              "多行文字：\\L 在绘制用的文本里换成开关，分组结束时关掉；纯文本不含开关");
+        Check(MTextEntity::StripInlineCodes("\\L{\\lA}B\\OC\\o\\KD", true) == "A" + U + "B" + O + "C" + O + K + "D",
+              "多行文字：组内关掉的下划线出组后恢复；上划线、删除线各自开关");
+
+        // 每个字符步进 1 个字体单位、字高 10 ⇒ 每字宽 10
+        struct FixedFont : IFont
+        {
+            Glyph empty;
+            const Glyph& GetGlyph(uint32_t) override { return empty; }
+            double GetAdvance(uint32_t) override { return 1.0; }
+            double GetHeight() const override { return 1.0; }
+            uint64_t GetFontId() const override { return 1; }
+            const char* GetName() const override { return "fixed"; }
+            bool HasGlyph(uint32_t) override { return true; }
+        } font;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+        auto seg = [&](const TextLayoutEngine::DecorationLine& d, double x0, double x1, double y) { return near(d.m_x0, x0) && near(d.m_x1, x1) && near(d.m_y, y); };
+
+        TextLayoutEngine engine;
+        auto r = engine.Layout(U + "AB" + U + "C", &font, 10.0, 1.0, 0.0, 0.0);
+        Check(r.m_glyphs.size() == 3 && r.m_decorations.size() == 1 && seg(r.m_decorations[0], 0.0, 20.0, -2.0),
+              "排版：下划线从开处画到关处，在基线下 0.2 倍字高，开关不占宽度");
+
+        r = engine.Layout(U + "A\nBC", &font, 10.0, 1.0, 0.0, 0.0);
+        Check(r.m_decorations.size() == 2 && seg(r.m_decorations[0], 0.0, 10.0, -2.0) && seg(r.m_decorations[1], 0.0, 20.0, -12.0),
+              "排版：没关的下划线在行尾收口、下一行续上");
+
+        r = engine.Layout("%%oAB%%o" + K + "C", &font, 10.0, 1.0, 0.0, 0.0, TextLayoutEngine::HAlign::Right);
+        Check(r.m_glyphs.size() == 3 && r.m_decorations.size() == 2 && seg(r.m_decorations[0], -30.0, -10.0, 12.0) && seg(r.m_decorations[1], -10.0, 0.0, 5.0),
+              "排版：单行文字的 %%o 上划线在基线上 1.2 倍字高，删除线 0.5 倍；右对齐时开关不计入行宽");
     }
 
     return g_failures;

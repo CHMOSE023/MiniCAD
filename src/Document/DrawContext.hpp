@@ -759,6 +759,14 @@ namespace MiniCAD
                     PutLine(xform(seg.End),   c4);
                 }
             }
+
+            // 下划线 / 上划线 / 删除线：水平线段，随文字旋转，不随倾斜错切
+            for (const auto& d : result.m_decorations)
+            {
+                const double y = d.m_y + baseline;
+                PutLine({ pos.x + d.m_x0 * cosR - y * sinR, pos.y + d.m_x0 * sinR + y * cosR, pos.z }, c4);
+                PutLine({ pos.x + d.m_x1 * cosR - y * sinR, pos.y + d.m_x1 * sinR + y * cosR, pos.z }, c4);
+            }
         }
 
     private:

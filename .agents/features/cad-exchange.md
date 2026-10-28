@@ -37,6 +37,8 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - TrueType 样式的文件名为空时，按扩展数据里的字体族名换算成文件名（SimSun → simsun.ttc 等）
 - 与预置样式（Standard、GB2312）同名的按图纸参数更新字高、宽度因子、倾斜；图纸没有的预置样式删掉（不再写进 DWG）
 - 天正文字的显示宽度因子写在 `MTextEntity::SetWidthFactor`（导出写成开头的 `\W0.7;`），不派生文字样式
+- 文字内容里的 `\U+XXXX`（代码页外的字符，旧版 DXF 或其他软件转出的图纸里整段中文都可能这样存）读入时保留原文、另存原样写回，显示时还原（`src/Core/TextCodes.h`）：多行文字在 `MTextEntity::StripInlineCodes`，单行文字与属性在 `TextLayoutEngine::DecodeLine`。漏掉会画出 `+8D1F+4E00…`（`\U` 被当作未知格式码丢掉）
+- 下划线 / 上划线 / 删除线：多行文字的 `\L` `\O` `\K`（按 `{}` 分组恢复）由 `StripInlineCodes(text, true)` 换成排版流里的开关字符，单行文字的 `%%u` `%%o` 由 `DecodeLine` 解析成同样的开关；`TextLayoutEngine::Layout` 输出 `DecorationLine`，`DrawContext` 画成直线。位置按 AutoCAD 2020 用 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高（TrueType 与 SHX、单行与多行相同），横向从开处的步进位置到关处。`GetPlainText` 与度量不含开关
 - 含形 / 文字的复杂线型：每个元素的长度进 `LineTypeRecord::Pattern`，文字 / 形段另记在 `LineTypeRecord::Symbols`（组码 9 / 75 / 340 / 46 / 50 / 44 / 45，导出写回）。绘制时 `DrawContext::LayPattern` 在该段**末尾**落符号，文字走排版，形段按 `LineTypeSymbol::ShapeFont`（组码 340 所指 STYLE 的字体文件，如 `ltypeshp.shx`）经 `ShapeFontResolver` 取 SHX 字形，只描边不填充；符号是世界坐标的字形实例，不随缩放重铺；一段超过 `DrawContext::kMaxDashes` 个周期时与普通虚线一样画成实线、不画符号。界面里的线型预览只画占位标记（`apps/Common/src/GUI/LinetypePreview.h`）
 - `$PSLTSCALE` 读写（`Scene::GetPaperSpaceLineTypeScaling`），用法见 [layout-viewport](layout-viewport.md)
 - 字体查找：先 `fonts/`，再 `AppPlatform::GetSystemFontDirs()`（桌面版 `%WINDIR%\Fonts` 与当前用户安装的字体），都没有才用自带字体代替
