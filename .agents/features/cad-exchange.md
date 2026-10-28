@@ -42,6 +42,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 含形 / 文字的复杂线型：每个元素的长度进 `LineTypeRecord::Pattern`，文字 / 形段另记在 `LineTypeRecord::Symbols`（组码 9 / 75 / 340 / 46 / 50 / 44 / 45，导出写回）。绘制时 `DrawContext::LayPattern` 在该段**末尾**落符号，文字走排版，形段按 `LineTypeSymbol::ShapeFont`（组码 340 所指 STYLE 的字体文件，如 `ltypeshp.shx`）经 `ShapeFontResolver` 取 SHX 字形，只描边不填充；符号是世界坐标的字形实例，不随缩放重铺；一段超过 `DrawContext::kMaxDashes` 个周期时与普通虚线一样画成实线、不画符号。界面里的线型预览只画占位标记（`apps/Common/src/GUI/LinetypePreview.h`）
 - `$PSLTSCALE` 读写（`Scene::GetPaperSpaceLineTypeScaling`），用法见 [layout-viewport](layout-viewport.md)
 - 字体查找：先 `fonts/`，再 `AppPlatform::GetSystemFontDirs()`（桌面版 `%WINDIR%\Fonts` 与当前用户安装的字体），都没有才用自带字体代替
+- TrueType 字体里缺的字（`arial.ttf` 等西文字体写的汉字）改用自带 `GB2312.ttf` 的字形与步进（`FontEngine` 经 `TTFFont::SetFallback` 设好，各字体共用一份），相当于 Windows 的字体链接，AutoCAD 里也照样显示；以前画成 .notdef 方块。`%%d` 等控制码在 TrueType 里按 Unicode 码点查。`MINICAD_GLYPHS` 报的缺字已算上这份替代字体
 
 ## 测试与排查
 

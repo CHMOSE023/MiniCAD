@@ -49,6 +49,7 @@ namespace MiniCAD
 
     private:
         std::unordered_map<std::string, std::shared_ptr<IFont>> m_cache;
+        std::shared_ptr<TTFFont> m_ttfFallback;   // TrueType 缺字时的替代字体（自带 GB2312.ttf），各 TrueType 字体共用
         uint64_t    m_nextRuntimeFontId = 1;
         std::string m_fontDir           = "fonts/";
         std::vector<std::string> m_extraDirs;   // 额外的搜索目录，都以分隔符结尾

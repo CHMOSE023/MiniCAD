@@ -359,5 +359,36 @@ int RunTextStyleTests()
               "排版：单行文字的 %%o 上划线在基线上 1.2 倍字高，删除线 0.5 倍；右对齐时开关不计入行宽");
     }
 
+#ifdef MINICAD_ASSET_DIR
+    // ── 10. TrueType 缺字：管综.dwg 的 Arial_5（arial.ttf）样式写中文，以前画成 .notdef 方块；
+    //        AutoCAD 经 Windows 字体链接照样显示汉字。现在缺的字用自带的 GB2312.ttf 补上 ─────────
+    {
+        const std::string dir = std::string(MINICAD_ASSET_DIR) + "/fonts/";
+        const std::vector<uint8_t> bytes = MakeSinglePointFont();   // 只有 'A'
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "minicad_latin_only.ttf";
+        {
+            std::ofstream out(path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        const std::u8string u8 = path.u8string();
+        const std::string file(u8.begin(), u8.end());
+
+        TTFFont alone("latin", file, 200);
+        FontEngine engine;
+        engine.SetFontDir(dir);
+        FontStyle latin;
+        latin.name = "Arial"; latin.fontFile = file; latin.isShx = false;
+        IFont& font = engine.Resolve(latin);
+        TTFFont gb("gb", dir + "GB2312.ttf", 201);
+        const Glyph& fallback = font.GetGlyph(0x8D1F);
+        const bool ok = alone.HasGlyph('A') && !alone.HasGlyph(0x8D1F) && font.HasGlyph('A') && font.HasGlyph(0x8D1F)
+                     && !fallback.Lines.empty() && fallback.Lines.size() == gb.GetGlyph(0x8D1F).Lines.size()
+                     && Near(font.GetAdvance(0x8D1F), gb.GetAdvance(0x8D1F)) && Near(font.GetAdvance('A'), alone.GetAdvance('A'));
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        Check(ok, "TrueType 缺字（西文字体里的汉字）用自带 GB2312.ttf 的字形与步进，本字体有的字照旧");
+    }
+#endif
+
     return g_failures;
 }

@@ -104,7 +104,18 @@ namespace MiniCAD
         else if (style.isShx)
             font = std::make_shared<SHXFont>(style.name, path, m_nextRuntimeFontId++);
         else
-            font = std::make_shared<TTFFont>(style.name, path, m_nextRuntimeFontId++);
+        {
+            auto ttf = std::make_shared<TTFFont>(style.name, path, m_nextRuntimeFontId++);
+            // 缺字（Arial 等西文字体里的汉字）用自带的 GB2312.ttf 补上，不画成方块；字体本身就换成了它时不用
+            if (found)
+            {
+                if (!m_ttfFallback)
+                    m_ttfFallback = std::make_shared<TTFFont>("GB2312", ResolvePath("GB2312.ttf"), m_nextRuntimeFontId++);
+                if (m_ttfFallback->IsLoaded())
+                    ttf->SetFallback(m_ttfFallback);
+            }
+            font = std::move(ttf);
+        }
 
         auto [iter, _] = m_cache.emplace(key, std::move(font));
         return *(iter->second);
@@ -114,5 +125,6 @@ namespace MiniCAD
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_cache.clear();
+        m_ttfFallback.reset();
     }
 }
