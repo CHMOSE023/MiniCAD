@@ -23,6 +23,10 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 - 原因：中文版 cl 的 `/showIncludes` 前缀随控制台代码页变化，Ninja 曾因此记不下头文件依赖，新旧对象文件混用。现在 cl 经启动器 `cmake/ClShowIncludes.cpp` 运行，把前缀改写成 ASCII
 - 做法：检查 `ninja -C out/debug -t deps`，除 SMLib（预编译头）和 `.rc.res` 外不应有 `#deps 0`；有的话重新配置 `out/debug`
 
+### 用备份把文件还原后，编出的程序还是改过的那一版（例如临时跳过的自测节仍被跳过）
+- 原因：`Copy-Item`、`cp -p`、解压都保留备份文件的修改时间，还原后的源文件比对象文件旧，Ninja 认为不用重编（编译"通过"只用几秒）
+- 做法：还原后更新时间戳 `(Get-Item <文件>).LastWriteTime = Get-Date` 再编；`git checkout` / `git stash pop` 写出的文件是当前时间，没有这个问题
+
 ### 编译到一半 exe 或 `rules.ninja` 不见了
 - 原因：用户在 Visual Studio 里打开了项目，VS 正在重新配置 `out/debug`
 - 做法：等它配置完再编，不要同时编译

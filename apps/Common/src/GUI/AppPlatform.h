@@ -94,6 +94,7 @@ namespace MiniCAD
         virtual ~IFloatingWindow() = default;
         virtual MiniGUI::UIContext& GetUI() = 0;
         virtual MiniGUI::Rect GetRect() const = 0;
+        virtual MiniGUI::Rect GetRestoreRect() const { return GetRect(); }   // 最大化时为还原后的位置（保存布局用）
         virtual void SetRect(const MiniGUI::Rect& rect) = 0;
         virtual void SetTitle(const std::string& utf8) = 0;
         virtual void Activate() = 0;                                    // 置前并激活
@@ -103,15 +104,16 @@ namespace MiniCAD
         // 这个窗口的每一帧：布局之后、界面绘制之前回调（文档窗口在这里按最新尺寸渲染它的 CAD 视口，同 MainFrame::RenderFrame 的顺序）
         virtual void SetOnBeforeRender(std::function<void()> cb) = 0;
 
-        // ── 文档窗口用（停靠面板的窗口没有标题栏按钮，由面板自己拖动）──
+        // ── 最小化 / 最大化：文档窗口的标题栏按钮；停靠面板的窗口只用最大化（面板标题栏上的按钮）──
         virtual void Minimize() {}
         virtual void ToggleMaximize() {}
         virtual bool IsWindowMaximized() const { return false; }
+        virtual void SetOnSizeChanged(std::function<void()> cb) { (void)cb; }                // 最大化 / 还原 / 改大小之后（刷新标题栏按钮）
+        // ── 文档窗口用（停靠面板的窗口由面板自己拖动）──
         // 哪些点是标题区域（窗口逻辑坐标，一般转给 MiniGUI::TitleBar::IsCaptionAt）：交给系统拖动窗口、双击最大化、贴边分屏。
         // 不设置（或传空）时整个窗口都由界面处理
         virtual void SetCaptionTest(std::function<bool(MiniGUI::Vec2 windowPos)> test) { (void)test; }
         virtual void SetOnActiveChanged(std::function<void(bool active)> cb) { (void)cb; }   // 窗口激活 / 失活（标题栏变暗）
-        virtual void SetOnSizeChanged(std::function<void()> cb) { (void)cb; }                // 最大化 / 还原 / 改大小之后（刷新标题栏按钮）
         // 用户拖标题栏移动窗口（系统的移动循环）：移动中 done = false，松开时 done = true；cursor 为光标、windowRect 为窗口
         //（都是主窗口客户区的逻辑坐标）。移动中宿主可以改 windowRect 的位置（例如让开下面的标签条），尺寸不变
         virtual void SetOnMoving(std::function<void(bool done, MiniGUI::Vec2 cursor, MiniGUI::Rect& windowRect)> cb) { (void)cb; }

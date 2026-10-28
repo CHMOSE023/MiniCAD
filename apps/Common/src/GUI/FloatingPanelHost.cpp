@@ -3,6 +3,7 @@
 #include "Core/UIContext.h"
 #include "Widgets/FloatingPanel.h"
 #include <algorithm>
+#include <cmath>
 
 namespace MiniCAD
 {
@@ -48,11 +49,36 @@ namespace MiniCAD
         m_graveyard.clear();
     }
 
-    Vec2 FloatingPanelHost::ToMain(const Entry& e, Vec2 windowPos) const
+    float FloatingPanelHost::WindowRatio(const Entry& e) const
     {
         // 两个窗口可能在不同 DPI 的显示器上：按各自的缩放系数换算
-        const float ratio = e.window->GetUI().GetPixelScale() / std::max(0.01f, m_mainUi.GetPixelScale());
-        return e.window->GetRect().min + windowPos * ratio;
+        return e.window->GetUI().GetPixelScale() / std::max(0.01f, m_mainUi.GetPixelScale());
+    }
+
+    Vec2 FloatingPanelHost::ToMain(const Entry& e, Vec2 windowPos) const
+    {
+        return e.window->GetRect().min + windowPos * WindowRatio(e);
+    }
+
+    void FloatingPanelHost::BeginDrag(Entry& e, const std::string& id, Vec2 pos)
+    {
+        const Vec2 mainPos = ToMain(e, pos);
+        e.grab = pos;
+        if (e.window->IsWindowMaximized())
+        {
+            // 最大化时拖标题栏：先还原，按下点按比例落在还原后的标题栏上，窗口挪到光标下（同系统窗口）
+            const float ratio = WindowRatio(e);
+            const float fx    = pos.x * ratio / std::max(1.0f, e.window->GetRect().Width());
+            e.window->ToggleMaximize();
+            e.panel->SetMaximized(false);
+            const Rect normal = e.window->GetRect();
+            e.grab = { std::floor(fx * normal.Width() / ratio), pos.y };
+            const Vec2 origin = mainPos - e.grab * ratio;
+            e.window->SetRect(Rect{ origin, origin + normal.Size() });
+            e.skipUpdate = true;        // 同一次移动里紧接着的 Update 还是按最大化时的窗口算的坐标
+        }
+        e.size = e.window->GetRect().Size();
+        e.dock->BeginFloatDrag(id, MainToDock(mainPos));
     }
 
     bool FloatingPanelHost::Open(DockSpace& dock, const std::string& id, const std::string& title,
@@ -72,51 +98,66 @@ namespace MiniCAD
         if (!m_platform.LoadUiFonts(ui.GetTextSystem()))
             LOG_WARN("浮动窗口：没有找到界面字体");
         ui.SetTheme(m_mainUi.GetTheme());
+        // 主窗口开着对话框时不接受指针（按下只把主窗口置前），按键与文字转给对话框
+        ui.SetModalOwner(&m_mainUi, [this] { m_platform.ActivateMainWindow(); });
 
         auto panel = std::make_unique<FloatingPanel>(title);
         e->panel   = panel.get();
         e->panel->SetFrameless(true);
         e->panel->SetContent(std::move(content));
         DockSpace* d = &dock;
-        e->panel->SetOnClose ([d, id] { d->ClosePanel(id); });
-        e->panel->SetOnRedock([d, id] { d->RedockPanel(id); });
-        e->panel->SetOnActivate([this] { if (m_onActivate) m_onActivate(); });
+        e->panel->SetOnClose ([d, id] { d->CloseFloat(id); });
+        e->panel->SetOnRedock([d, id] { d->RedockFloat(id); });
+        e->panel->SetOnActivate([this, d, id]
+        {
+            d->RaiseFloat(id);
+            if (m_onActivate)
+                m_onActivate();
+        });
+        e->panel->SetOnMaximize([e, d]
+        {
+            e->window->ToggleMaximize();        // 最大化到窗口所在的显示器
+            e->panel->SetMaximized(e->window->IsWindowMaximized());
+            d->NotifyLayoutChanged();
+        });
         e->panel->SetOnDrag([this, e, d, id](FloatingPanel::DragPhase phase, Vec2 pos)
         {
             switch (phase)
             {
             case FloatingPanel::DragPhase::Begin:
-            {
-                const Rect r = e->window->GetRect();
-                e->grab = pos;
-                e->size = r.Size();
-                d->BeginExternalDrag(id, MainToDock(ToMain(*e, pos)));
+                BeginDrag(*e, id, pos);
                 break;
-            }
             case FloatingPanel::DragPhase::Update:
             {
+                if (e->skipUpdate)
+                {
+                    e->skipUpdate = false;
+                    break;
+                }
                 // 窗口跟着光标走：按下点相对窗口左上角的位置保持不变
                 const Vec2 mainPos = ToMain(*e, pos);
-                const float ratio  = e->window->GetUI().GetPixelScale() / std::max(0.01f, m_mainUi.GetPixelScale());
-                const Vec2 origin  = mainPos - e->grab * ratio;
+                const Vec2 origin  = mainPos - e->grab * WindowRatio(*e);
                 e->window->SetRect(Rect{ origin, origin + e->size });
-                d->UpdateExternalDrag(MainToDock(mainPos));
+                d->UpdateFloatDrag(MainToDock(mainPos));
                 break;
             }
             case FloatingPanel::DragPhase::End:
                 // 停靠成功时停靠区已经 Close 了本窗口（e 随之失效），之后不再访问 e
-                if (!d->EndExternalDrag(MainToDock(ToMain(*e, pos)), false))
+                e->skipUpdate = false;
+                if (!d->EndFloatDrag(MainToDock(ToMain(*e, pos)), false))
                     d->NotifyLayoutChanged();
                 break;
             case FloatingPanel::DragPhase::Cancel:
-                d->EndExternalDrag(MainToDock(ToMain(*e, pos)), true);
+                e->skipUpdate = false;
+                d->EndFloatDrag(MainToDock(ToMain(*e, pos)), true);
                 break;
             }
         });
         ui.GetRoot()->AddChild(std::move(panel));
 
-        e->window->SetOnClose([d, id] { d->ClosePanel(id); });
+        e->window->SetOnClose([d, id] { d->CloseFloat(id); });
         e->window->SetOnMoved([d] { d->NotifyLayoutChanged(); });
+        e->window->SetOnSizeChanged([e] { e->panel->SetMaximized(e->window->IsWindowMaximized()); });   // 系统最大化 / 还原（Win+↑ 等）
         e->window->SetVisible(!m_hidden);
         m_windows[id] = std::move(entry);
         return true;
@@ -128,7 +169,15 @@ namespace MiniCAD
             return;
         m_hidden = hidden;
         for (auto& [id, e] : m_windows)
+        {
             e->window->SetVisible(!hidden);
+            if (!hidden && e->pendingMaximize)
+            {
+                e->pendingMaximize = false;
+                if (!e->window->IsWindowMaximized())
+                    e->window->ToggleMaximize();
+            }
+        }
     }
 
     std::unique_ptr<Node> FloatingPanelHost::Close(const std::string& id)
@@ -141,9 +190,12 @@ namespace MiniCAD
         std::unique_ptr<Node> content = e->panel->TakeContent();
         e->panel->SetOnClose(nullptr);
         e->panel->SetOnRedock(nullptr);
+        e->panel->SetOnActivate(nullptr);
+        e->panel->SetOnMaximize(nullptr);
         e->panel->SetOnDrag(nullptr);
         e->window->SetOnClose(nullptr);
         e->window->SetOnMoved(nullptr);
+        e->window->SetOnSizeChanged(nullptr);
         // 可能正在这个窗口自己的事件处理里：窗口（连同它的 UIContext）推迟到下一帧销毁
         m_graveyard.push_back(std::move(e->window));
         m_platform.RequestRedraw();
@@ -153,6 +205,14 @@ namespace MiniCAD
     void FloatingPanelHost::Purge()
     {
         m_graveyard.clear();
+    }
+
+    IFloatingWindow* FloatingPanelHost::WindowOf(const Node* content) const
+    {
+        for (const auto& [id, e] : m_windows)
+            if (content && content->GetContext() == &e->window->GetUI())
+                return e->window.get();
+        return nullptr;
     }
 
     Rect FloatingPanelHost::GetRect(const std::string& id) const
@@ -180,6 +240,50 @@ namespace MiniCAD
     {
         if (auto it = m_windows.find(id); it != m_windows.end())
             it->second->window->Activate();
+    }
+
+    bool FloatingPanelHost::IsFloatMaximized(const std::string& id) const
+    {
+        const auto it = m_windows.find(id);
+        return it != m_windows.end() && (it->second->window->IsWindowMaximized() || it->second->pendingMaximize);
+    }
+
+    void FloatingPanelHost::SetFloatMaximized(const std::string& id, bool maximized)
+    {
+        auto it = m_windows.find(id);
+        if (it == m_windows.end())
+            return;
+        Entry& e = *it->second;
+        if (m_hidden)
+        {
+            e.pendingMaximize = maximized;      // 最大化会把窗口显示出来：等不藏了再做
+            e.panel->SetMaximized(maximized);
+            return;
+        }
+        if (e.window->IsWindowMaximized() != maximized)
+            e.window->ToggleMaximize();
+        e.panel->SetMaximized(e.window->IsWindowMaximized());
+    }
+
+    Rect FloatingPanelHost::GetRestoreRect(const std::string& id) const
+    {
+        const auto it = m_windows.find(id);
+        return it == m_windows.end() ? Rect{} : MainToDock(it->second->window->GetRestoreRect());
+    }
+
+    Vec2 FloatingPanelHost::ToDock(const std::string& id, Vec2 floatPos) const
+    {
+        const auto it = m_windows.find(id);
+        return it == m_windows.end() ? floatPos : MainToDock(ToMain(*it->second, floatPos));
+    }
+
+    Vec2 FloatingPanelHost::FromDock(const std::string& id, Vec2 dockPos) const
+    {
+        const auto it = m_windows.find(id);
+        if (it == m_windows.end())
+            return dockPos;
+        const Entry& e = *it->second;
+        return (DockToMain(dockPos) - e.window->GetRect().min) * (1.0f / std::max(0.01f, WindowRatio(e)));
     }
 
     void FloatingPanelHost::SetTheme(const ThemeColors& theme)

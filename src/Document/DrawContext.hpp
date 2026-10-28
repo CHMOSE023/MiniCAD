@@ -12,6 +12,7 @@
 #include "Document/GlyphTypes.h"
 #include "Scene/LayerManager.h"
 #include "Scene/LineTypeTable.h"
+#include "Scene/TextStyleTable.h"
 #include "Document/DeferredDash.hpp"
 #include "Core/Entity/EntityAttr.hpp"
 #include <memory>
@@ -20,6 +21,7 @@
 #include <functional>
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 namespace MiniCAD
 {
@@ -34,6 +36,23 @@ namespace MiniCAD
 
     // 矢量字体解析回调：styleId（文字样式表 ID）→ 字体与字形变换（由 Editor 注入，Font 为空则不绘制）
     using FontResolver = std::function<ResolvedTextStyle(uint32_t styleId)>;
+
+    // 形字体解析回调：SHX 形文件路径（如 "ltypeshp.shx"）→ 字体（找不到返回空）。
+    // 复杂线型的形段（组码 75）不引用文字样式，直接按 DWG 里组码 340 的 STYLE
+    // 的组码 3 定位形文件；文字样式表里没有这一项，所以单独走一条解析路径。
+    using ShapeFontResolver = std::function<IFont*(const std::string& fontFile)>;
+
+    // 形段（组码 75）只用折线描边，不补实心三角形。
+    //
+    // 曾经按「AutoCAD 把闭合形画成实心」的假设给闭合轮廓补过三角面，实测推翻：
+    // ltypeshp.shx 里只有 BOX(132)、CIRC1(133) 首尾闭合，而 BATTING 用的 BAT(134)
+    // 是开放轮廓 —— 起点 (0,0)、终点 (2,0)，差一条底边；两个 BAT 以 rot=0 / rot=180
+    // 交替出现（acad.lin 的 BATTING），各自的缺口由相邻符号拼上，才连续成 SSSSS。
+    // 也就是说 AutoCAD 对形段从来不填充，FENCELINE1 的圆点、FENCELINE2 的方框
+    // 都是空心轮廓；补实心反而与 CAD 不一致。SHXParser::BuildGlyph 只产出折线
+    // （Glyph::Triangles 恒为空）正好是这个语义，不需要额外处理。
+    //
+    // 复现证据：out/probe/ProbeShapeClose.cpp 逐个打印 ltypeshp.shx 的形端点与闭合性。
 
     // 图像解析回调：路径 → 解码后的位图（找不到返回空）
     using ImageProvider = std::function<std::shared_ptr<const ImageData>(const std::string& path)>;
@@ -100,6 +119,15 @@ namespace MiniCAD
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
+
+        // 文字样式表：解析复杂线型里文字段的字高用（DXF 组码 340 → 样式 ID）。
+        // 不随构造函数传，是因为线型表本身就在构造函数里，样式表在 Scene 里更晚可取；
+        // 不设置也能画（退回默认字高）。
+        void SetTextStyleTable(const TextStyleTable* table) { m_textStyles = table; }
+
+        // 形字体解析回调（复杂线型的形段用）。不设置则形段不画——
+        // 总比拿文字样式的字体乱找形号要好。
+        void SetShapeFontResolver(ShapeFontResolver r) { m_shapeFontResolver = std::move(r); }
 
         // 全局线型比例（Scene 的 $LTSCALE）。与实体级组码 48 相乘得到虚线实际周期。
         void SetLineTypeScale(double s) { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
@@ -545,6 +573,29 @@ namespace MiniCAD
             double len = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (len < 1e-12) return;
 
+            // 方向单位向量与沿线取点：护栏（dash 过多、长虚线延迟）判定和符号铺设都要用，
+            // 提到判定之前
+            double ux = dx / len, uy = dy / len, uz = dz / len;
+            auto P = [&](double t) -> Math::Point3 {
+                return { a.x + ux * t, a.y + uy * t, a.z + uz * t };
+            };
+
+            // 复杂线型:文字/符号段铺在 Pattern 的某个下标上。按 (cycle 序号, 下标)
+            // 归组,一遍扫完就把同一个周期里的所有符号按 AutoCAD 的次序画出去 ——
+            // 次序很重要:ZIGZAG 靠「正偏移符号 → 负偏移符号」的交替才形成锯齿。
+            std::vector<std::pair<size_t, size_t>> order;   // (patternIndex, symbolIndex)
+            if (rec->HasSymbols())
+            {
+                order.reserve(rec->Symbols.size());
+                for (size_t k = 0; k < rec->Symbols.size(); ++k)
+                {
+                    const size_t pi = rec->Symbols[k].PatternIndex;
+                    if (pi < rec->Pattern.size())
+                        order.emplace_back(pi, k);
+                }
+                std::sort(order.begin(), order.end());
+            }
+
             // 虚线几何完全在世界坐标里（周期 = 图案周期 × 比例），与缩放无关：**不**标记随视图变化，进静态流，
             // 滚轮缩放时不重新细分。以前所有虚线按「一个周期不足 4px 就退化为实线」取舍，每格滚轮都要把
             // 整张图的虚线实体重新细分（13 万实体的管综图每格 56 ms）。
@@ -552,13 +603,17 @@ namespace MiniCAD
             //（管综图 490 万 → 2080 万），而缩小时它们本来就该是实线。但不能因此把所在实体整个标成随视图变化
             //（含一段长虚线的大块每格滚轮要重铺几十毫秒）：无线宽时只把这一段「延迟」出来（DeferredDash），
             // 由 Editor 放进动态流，缩放时从这个小列表直接重铺，不再调用实体的 Draw。
-            // 有线宽时实体本来就随视图变化（线宽按像素烘焙），按像素取舍即可
+            // 有线宽时实体本来就随视图变化（线宽按像素烘焙），按像素取舍即可。
+            //
+            // 例外：带符号的复杂线型（文字/形）不按像素取舍，也不延迟 —— 符号是字形实例，在世界坐标里、
+            // 不随缩放变化，延迟的长虚线又带不了符号；它们照常进静态流，数量由 kMaxDashes 限住：
+            // 超过时与普通虚线一样退化为实线、不画符号（每个周期一组字形，几万个周期会卡住）。
             if (!continuous)
             {
                 const double cycle = rec->PatternLength * scale;
-                if (cycle <= 1e-12 || len / cycle > kMaxDashes)   // dash 数量过大：退化为实线显示
+                if (cycle <= 1e-12 || len / cycle > kMaxDashes)          // dash 数量过大：退化为实线显示
                     continuous = true;
-                else if (len / cycle > kStaticMaxDashes)
+                else if (order.empty() && len / cycle > kStaticMaxDashes)
                 {
                     if (width <= 0.0 && m_deferLongDashes)
                     {
@@ -591,17 +646,28 @@ namespace MiniCAD
 
             LayPattern(a, b, *rec, scale, dotAsSegment ? dotLen : 0.0,
                        [&](const Math::Point3& p, const Math::Point3& q) { EmitSolid(p, q, color, width); },
-                       [&](const Math::Point3& p) { m_points.push_back(ToVertex(p, color)); });
+                       [&](const Math::Point3& p) { m_points.push_back(ToVertex(p, color)); },
+                       0.0,
+                       [&](size_t pat, double at)
+                       {
+                           // 符号锚点落在该 Pattern 段的**末尾**（见 LayPattern 的说明）
+                           for (const auto& o : order)
+                               if (o.first == pat)
+                                   EmitLineTypeSymbol(P(at), ux, uy, uz,
+                                                      rec->Symbols[o.second], scale, color);
+                       });
         }
 
     public:
         // 沿 a→b 按线型图案铺设：实段交给 emitSeg(p, q)；点笔划（0 长度段）在 dotLen > 0 时作为
         // dotLen 长的实段，否则交给 emitDot(p)。图案全为点（铺不动）时整段当实线。
+        // emitSym(patternIndex, 段末位置 t)：复杂线型一个 Pattern 段画完之后的落符号点（可选，默认不铺符号）
         // startOffset：a 点落在图案里的位置（世界单位，已含比例；对周期取模）——一段虚线被裁掉前半段后，
         // 后半段从这个相位接着铺，裁剪处的 dash / gap 才不会错位
-        template <class EmitSeg, class EmitDot>
+        template <class EmitSeg, class EmitDot, class EmitSym = std::nullptr_t>
         static void LayPattern(const Math::Point3& a, const Math::Point3& b, const LineTypeRecord& rec, double scale,
-                               double dotLen, EmitSeg&& emitSeg, EmitDot&& emitDot, double startOffset = 0.0)
+                               double dotLen, EmitSeg&& emitSeg, EmitDot&& emitDot, double startOffset = 0.0,
+                               EmitSym&& emitSym = nullptr)
         {
             const double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
             const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -638,9 +704,17 @@ namespace MiniCAD
             double t = 0.0;
             while (t < len)
             {
-                double seg = rec.Pattern[idx % rec.Pattern.size()] * scale;
+                const size_t pat = idx % rec.Pattern.size();
+                double seg = rec.Pattern[pat] * scale;
                 if (partial >= 0.0) { seg = seg < 0.0 ? -partial : partial; partial = -1.0; }
                 ++idx;
+
+                // 符号锚点取该 Pattern 段的**末尾**（画完这一段之后的位置）。
+                // 笔先走完元素长度、再落字形，所以文字/形落在元素**末尾**
+                // （在随后的 gap 里）——与 .lin 的记号顺序
+                // `dash, -space, ["TEXT"]` 和 AutoCAD 的摆放一致。
+                // 取段首会让符号压在前面的 dash 上，dash 从字形中间穿过。
+
                 if (seg > 0.0)
                 {
                     const double t1 = std::min(t + seg, len);
@@ -661,6 +735,128 @@ namespace MiniCAD
                 {
                     emitDot(P(t));
                 }
+
+                // 铺设落在这一段上的符号(符号沿线段中线对齐,见 EmitLineTypeSymbol)。
+                // 每个周期都重新判定 —— 光标游走只会让第一个周期之后再也画不出符号,
+                // GAS_LINE / FENCELINE1 就只剩一个文字/一个叉号,后面全是光杆虚线。
+                //
+                // 锚点用**段末** t（不是 segStart）：见上面关于 .lin 记号顺序的说明。
+                if constexpr (!std::is_same_v<std::decay_t<EmitSym>, std::nullptr_t>)
+                    emitSym(pat, t);
+            }
+        }
+
+        // 在沿线位置 p 铺一个复杂线型的文字/符号。
+        //   ux,uy,uz = 线段单位方向;p = 符号锚点 = 该 Pattern 段的**末尾**
+        //   （X/Y 偏移相对这一点，见 LayPattern 里的说明）。
+        //   sy.OffsetX/Y 是组码 44/45 的偏移,在线的局部坐标系里:局部 x 沿线、局部 y 向上。
+        //   sy.Rotation = 0 时符号随线转向(AutoCAD 默认);AbsoluteRotation 时相对世界 X 轴。
+        void EmitLineTypeSymbol(const Math::Point3& p, double ux, double uy, double uz,
+                                const LineTypeSymbol& sy, double scale, const Math::Color4& color)
+        {
+            // 符号高度 = 组码 46 × 线型比例;再乘所引文字样式的固定字高(组码 40)。
+            // 样式字高为 0(不固定)时用 1.0 —— 与 AutoCAD 一样:绝对旋转的文字
+            // 靠这个值拿到可读的尺寸,不会退化成 0。
+            double styleHeight = 1.0;
+            if (m_textStyles != nullptr)
+                if (const TextStyleRecord* st = m_textStyles->Find(sy.StyleId); st != nullptr && st->Height > 0.0)
+                    styleHeight = st->Height;
+            const double height = sy.Scale * scale * styleHeight;
+            if (!(height > 1e-9) || !(height < 1e12)) return;
+
+            // 锚点:局部 (OffsetX, OffsetY) → 世界
+            const double ox = ux * sy.OffsetX * scale - uy * sy.OffsetY * scale;
+            const double oy = uy * sy.OffsetX * scale + ux * sy.OffsetY * scale;
+            Math::Point3 at { p.x + ox, p.y + oy, p.z };
+
+            // 旋转:文字基线沿 x,所以「随线转向」= 线段方向角;绝对旋转直接用 sy.Rotation。
+            const double rotation = sy.AbsoluteRotation
+                                      ? sy.Rotation
+                                      : sy.Rotation + std::atan2(uy, ux);
+            (void)uz;
+
+            // 形段(组码 75):字形来自 SHX 形文件,不是文字,不走排版。
+            if (sy.Shape != 0)
+            {
+                EmitLineTypeShape(at, sy, height, rotation, color);
+                return;
+            }
+
+            if (sy.Text.empty() || !m_fontResolver) return;
+
+            EmitLaidOutText(at, sy.Text, sy.StyleId, height, rotation, 0.0,
+                            TextLayoutEngine::HAlign::Left, 0.0, 0.0, color);
+        }
+
+        // 在 at 处画一个线型形段(组码 75 的 SHX 形号,字形取自 sy.ShapeFont)。
+        //   height = sy.Scale × scale × 样式字高(与文字段同一套尺寸约定);
+        //   rotation = 已算好的朝向(随线或绝对)。
+        // 字形直接用字体的原始坐标(不排版、不居中),与 AutoCAD 的形段一致。
+        void EmitLineTypeShape(const Math::Point3& at, const LineTypeSymbol& sy,
+                               double height, double rotation, const Math::Color4& color)
+        {
+            if (sy.Shape == 0 || !m_shapeFontResolver)
+                return;
+
+            IFont* font = m_shapeFontResolver(sy.ShapeFont);
+            if (font == nullptr)
+                return;
+
+            // SHXFont::ResolveShxKey 对 < 0x80 的码点直接当形号查表,
+            // 与文字 %%nnn 控制码走同一条路。加 kRawShapeFlag 明确语义
+            // (低 32 位就是形号),也防止以后换成 Unicode 映射的字体时被转错。
+            const uint32_t key = kRawShapeFlag | sy.Shape;
+            if (!font->HasGlyph(key))
+                return;
+
+            const Glyph& glyph = font->GetGlyph(key);
+
+            // 形文件的单位:字形坐标以字体高度为 1。按目标高度整体缩放,
+            // 再按 rotation 旋转 —— 与 EmitLaidOutText 的 xform 等价(无倾斜、无宽度因子)。
+            const double s = height / (font->GetHeight() > 0.0 ? font->GetHeight() : 1.0);
+            if (!(s > 0.0) || !(s < 1e12)) return;
+
+            const double cosR = std::cos(rotation);
+            const double sinR = std::sin(rotation);
+            const Math::Float4 c4
+            {
+                static_cast<float>(color.r), static_cast<float>(color.g),
+                static_cast<float>(color.b), static_cast<float>(color.a)
+            };
+
+            auto xform = [&](const Math::Point3& lp) -> Math::Float3
+            {
+                const double x = lp.x * s;
+                const double y = lp.y * s;
+                return {
+                    static_cast<float>(at.x + x * cosR - y * sinR),
+                    static_cast<float>(at.y + x * sinR + y * cosR),
+                    static_cast<float>(at.z)
+                };
+            };
+
+            if (m_glyphs)
+            {
+                uint32_t mesh;
+                if (!m_glyphLib->Register(glyph, mesh)) return;
+                GlyphInstance g;
+                g.m00   = static_cast<float>(s * cosR);
+                g.m01   = static_cast<float>(s * sinR);
+                g.m10   = static_cast<float>(-s * sinR);
+                g.m11   = static_cast<float>(s * cosR);
+                g.tx    = static_cast<float>(at.x);
+                g.ty    = static_cast<float>(at.y);
+                g.z     = static_cast<float>(at.z);
+                g.color = c4;
+                g.mesh  = mesh;
+                m_glyphs->push_back(g);
+                return;
+            }
+            // 选中流等没有实例化输出的路径：只描边（形段本来就不填充）。
+            for (const auto& seg : glyph.Lines)
+            {
+                m_verts.push_back({ xform(seg.Start), c4 });
+                m_verts.push_back({ xform(seg.End),   c4 });
             }
         }
 
@@ -790,5 +986,8 @@ namespace MiniCAD
         ImageProvider                  m_imageProvider;
         GlyphProvider                 m_glyphProvider;
         FontResolver                   m_fontResolver;
+        const TextStyleTable*          m_textStyles = nullptr;   // 复杂线型文字段的字高解析
+        // 复杂线型形段的形文件解析（组码 75 的形号 → SHX 形文件 → 字形）
+        ShapeFontResolver              m_shapeFontResolver;
     };
 }

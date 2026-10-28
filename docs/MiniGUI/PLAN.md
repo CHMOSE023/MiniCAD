@@ -366,12 +366,20 @@ public:
       - 拖出时就浮出（2026-10-27）：拖动中的标签一离开停靠区就浮出（`DockSpace::TearOff`，不等松开），持有捕获的标签条随停靠区重建被摘下，
         停靠区自己接过捕获（`DockSpace::OnPointerEvent`），按"拖浮动窗口"继续：窗口跟着光标走（`IDockFloatHost::SetRect`，新增）、经过停靠区画落点、
         松开在上面停靠回去，松开在外面留在原地，Esc 只取消停靠；布局变化在松开时通知一次。`DockSpace::IsTornDragging`。单元测试 `Dock_TearOffFollowsCursorAndRedocks`
+      - 浮动窗口自带停靠布局（2026-10-28）：每个浮动窗口一棵自己的布局树（`DockSpace` 的 `Float`，内容节点 `DockFloatView` 交给宿主），与停靠区同一套落点逻辑：
+        面板标签或整个浮动窗口拖到另一个浮动窗口上合并为标签 / 拆分，浮动窗口里的标签可以拖出（拖出窗口即浮出，原窗口的 `DockFloatView` 接过捕获）；只有一个面板时不画标签条。
+        宿主接口改为按浮动窗口 ID：`DockSpace::CloseFloat` / `RedockFloat` / `RaiseFloat` / `BeginFloatDrag` …，`IDockFloatHost` 新增 `ToDock` / `FromDock`（浮动窗口自己的坐标）、
+        `IsFloatMaximized` / `SetFloatMaximized` / `GetRestoreRect`（不叫 `IsMaximized`：windowsx.h 有同名宏）。`FloatingPanel` 标题栏加最大化 / 还原按钮（`SetOnMaximize`，窗口内浮动时铺满窗口，最大化时拖标题栏先还原）。
+        布局 JSON 的 `floatingPanels` 一项可以是 `{ "panel", "rect" }` 或带 `"tabs"` / `"split"` 的布局树，另有 `"maximized"`。
+        同时修正：停靠区重建时会把所有浮动面板的内容从它们的窗口里摘走（别的面板浮出后，已浮出的节点编辑器窗口变空），现在结构没变的浮动窗口不重建（`DockSpace::Signature` 含节点序号）。
+        单元测试新增 7 个（内容不丢 / 窗口合并为标签与 JSON 往返 / 标签拖出浮动窗口 / 停靠区标签拖进浮动窗口与双击标题栏各回原处 / 最大化与还原 / 关闭窗口后重新显示 / 每个窗口一个 `UIContext` 的假宿主）
   - **M10.2 新主窗口**：在 `MiniCADViewportDemo` 基础上做 MiniGUI 版主窗口：无边框标题栏（菜单栏在标题栏内 + 最小化/最大化/关闭）、多文档标签（每个文档一个视口）、工具栏里的图层/线型/线宽下拉框、状态栏、停靠的特性与图层面板。
     - ✅ 已完成（2026-10-01）。MiniGUI 新增：
       - `Widgets/TitleBar.*`：自绘标题栏 = 图标 + 内容区（放菜单栏）+ 居中标题 + 最小化 / 最大化（还原）/ 关闭。按钮执行命令 `window.minimize / window.maximize / window.close`（命令不存在则不显示；`window.maximize` 的 isChecked 表示已最大化，显示还原图标）；同一程序的其余窗口用 `SetWindowActions` 指定作用于自己所在窗口的动作（2026-10-27，MiniCAD 的文档窗口），设置后不再看这三个命令，没给的动作不显示按钮，关闭按钮悬停红底白叉；标题优先在整条标题栏居中，与菜单或按钮重叠时改在中间空白处居中，再放不下截断；窗口未激活时变暗。`IsCaptionAt`：标题栏本身和 Label / Panel / Separator 等静态子节点算标题区域，按钮、菜单栏不算；有弹层打开或正在捕获时整条都不算（点击要用来关闭菜单）。
       - `Platform/Win32/Win32Frame.*`：无边框窗口（`WS_OVERLAPPEDWINDOW` + `WM_NCCALCSIZE` 返回 0 + DWM 扩展 1 像素边框保留阴影），保留贴靠、Win11 圆角、最大化 / 最小化动画、双击标题最大化、右键系统菜单；`WM_NCHITTEST` 处理四边四角缩放（按窗口 DPI）和标题区域（回调给 `TitleBar::IsCaptionAt`）；最大化时收回伸出屏幕的边框；`WM_NCACTIVATE` 不重画系统标题栏。构造后由宿主保存好再调用 `Apply`（它立即触发 `WM_NCCALCSIZE`，必须能交给 `HandleMessage`——实测发现过构造函数里直接刷新边框时系统标题栏没有去掉）。成员函数不叫 `IsMaximized`（windowsx.h 同名宏）。
       - `UiLayout` 的 `"titlebar"` 节点（`children` 放在图标右侧，`icon`、`title`），`GetTitleBar()`。
       - 同一程序的几种窗口（2026-10-27，MiniCAD 的文档窗口）：界面描述顶层的 `layouts` 放另外几段命名布局，`UiLayout::SetLayoutName` 选用其中一段（不应用 `commands`，命令覆盖只由生成默认布局的那个负责）；`CommandRegistry::BindShortcuts` 可以绑定几张快捷键表（每个窗口一张，`UnbindShortcuts(表)` 单独解绑）；`ShortcutTable::SetGate` 让宿主加额外条件（另一个窗口开着模态对话框时不生效）。
+        - 随所有者的模态对话框阻塞（2026-10-28）：`UIContext::SetModalOwner(所有者, 按下回调)`——所有者开着模态对话框时，这个上下文整个不接受指针（进行中的拖动取消、悬停清掉，按下时调用回调，例如把所有者窗口置前），按键、文字与输入法组合串转给所有者（Esc / 回车给对话框）；`IsBlockedByOwner` 查询。比只挡快捷键（`SetGate`）完整：原来点次窗口里的面板仍能拿到焦点，随后的 Esc 进了面板而不是对话框。单元测试新增 1 个（`Popup_OwnerModalBlocksOtherWindow`）。
       - `TabView` 的内容节点可以为空（只用标签条，多个文档共用一个视口），`SetTabData / GetTabData / FindTabData` 让宿主数据随标签移动。
       - ✅ 标签拖出（2026-10-27）：`TabView::SetOnTabDragOut`——标签一拖到标签条上下 `kDragOutDistance` 之外就回调宿主（MiniCAD 把文档拖出成独立的系统窗口，见 `main-window.md`）；宿主接手（回调返回 true）后控件保持捕获、不再排序，之后的移动 / 松开 / 取消经 `TabView::SetOnTornTabDrag` 上报，窗口在拖动中就跟着光标走；宿主不接手时灰框提示；外部拖回时 `DropIndexAt` 按标签中线算落点、`SetDropIndicator` 画插入标记；`GetTabRect` 给自测取标签位置。`IFloatingWindow::SetOnBeforeRender` 让独立窗口在布局之后、绘制之前渲染自己的内容。单元测试新增 1 个（拖出回调与落点）。
 - `ShowColorPalette`：调色板弹层独立成函数（`ColorButton` 改用它），表格里的颜色单元格也能弹出。

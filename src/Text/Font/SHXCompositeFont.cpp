@@ -1,4 +1,5 @@
 #include "SHXCompositeFont.h"
+#include "SHXFont.h"        // IsLoaded() 要对内层 SHXFont 做 dynamic_cast，需要完整类型
 #include "Core/Log.h"
 
 namespace MiniCAD
@@ -91,4 +92,19 @@ namespace MiniCAD
 
     uint64_t SHXCompositeFont::GetFontId()  const { return m_fontId; }
     const char* SHXCompositeFont::GetName() const { return m_name.c_str(); }
+
+    bool SHXCompositeFont::IsLoaded() const
+    {
+        // 大字体缺失可以容忍（AutoCAD 也会退化成单字体），主字体读不到就没救了。
+        // 两个都没有时也算没加载成功，让 FontEngine 有机会重试。
+        auto Loaded = [](const std::shared_ptr<IFont>& f) -> bool
+        {
+            if (!f) return false;
+            if (const auto* shx = dynamic_cast<const SHXFont*>(f.get()))
+                return shx->IsLoaded();
+            return true;    // TTF 等其它字体不参与这个判断
+        };
+        if (m_mainFont) return Loaded(m_mainFont);
+        return Loaded(m_bigFont);
+    }
 }

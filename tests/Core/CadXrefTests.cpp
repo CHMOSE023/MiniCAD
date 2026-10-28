@@ -205,7 +205,9 @@ int RunCadXrefTests()
     g_failures = 0;
     std::printf("\n=== 外部参照（XREF）导入 ===\n");
     RunXrefResolveTests();
-    const std::filesystem::path path = std::filesystem::path(MINIDWG_SAMPLE_DIR).parent_path() / "Xref.dwg";
+    // 样例目录是 UTF-8 常量：直接构造 path 会按系统代码页解释（中文路径在英文系统上会抛异常），
+    // 见 AGENTS.md「路径与编码」
+    const std::filesystem::path path = P(MINIDWG_SAMPLE_DIR).parent_path() / "Xref.dwg";
     std::error_code ec;
     if (!std::filesystem::exists(path, ec))
     {

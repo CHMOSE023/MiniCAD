@@ -59,8 +59,8 @@ namespace MiniCAD
 
         // 停靠面板：主窗口拥有的工具窗口，总在主窗口之上、随它最小化、不占任务栏。
         // 文档：与主窗口平级的普通窗口（主窗口能盖在它上面，弹出的对话框不被它挡住），任务栏里有按钮，图标取主窗口的。
-        // 先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏；文档窗口能最小化 / 最大化
-        const DWORD style = document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+        // 先按带系统边框的风格创建，再由 Win32Frame 去掉标题栏；文档窗口能最小化 / 最大化，停靠面板只能最大化
+        const DWORD style = document ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~static_cast<DWORD>(WS_MINIMIZEBOX));
         m_hwnd = CreateWindowExW(document ? WS_EX_APPWINDOW : WS_EX_TOOLWINDOW, kClassName, ToWide(title).c_str(), style,
                                  r.left, r.top, r.right - r.left, r.bottom - r.top,
                                  document ? nullptr : (ownerHwnd ? ownerHwnd : owner.GetHwnd()), nullptr, hInstance, this);
@@ -145,6 +145,26 @@ namespace MiniCAD
         const float s = m_owner.GetDpiScale();
         return MiniGUI::Rect{ static_cast<float>(wr.left - origin.x) / s,  static_cast<float>(wr.top - origin.y) / s,
                               static_cast<float>(wr.right - origin.x) / s, static_cast<float>(wr.bottom - origin.y) / s };
+    }
+
+    MiniGUI::Rect Win32FloatingWindow::GetRestoreRect() const
+    {
+        if (!m_hwnd || !IsZoomed(m_hwnd))
+            return GetRect();
+        WINDOWPLACEMENT wp{};
+        wp.length = sizeof(wp);
+        if (!GetWindowPlacement(m_hwnd, &wp))
+            return GetRect();
+        // 不带 WS_EX_TOOLWINDOW 的顶层窗口（文档窗口）：rcNormalPosition 是相对显示器工作区的坐标，换成屏幕坐标
+        RECT r = wp.rcNormalPosition;
+        if (!(GetWindowLongW(m_hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW))
+        {
+            MONITORINFO mi{};
+            mi.cbSize = sizeof(mi);
+            if (GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+                OffsetRect(&r, mi.rcWork.left - mi.rcMonitor.left, mi.rcWork.top - mi.rcMonitor.top);
+        }
+        return ToOwner(r);
     }
 
     void Win32FloatingWindow::SetRect(const MiniGUI::Rect& rect)

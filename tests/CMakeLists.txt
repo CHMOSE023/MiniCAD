@@ -121,6 +121,7 @@ add_executable(MiniCADTests
     "Core/BulgeDirectionTests.cpp"
     "Core/PointStyleTests.cpp"
     "Core/LineTypeScaleTests.cpp"
+    "Core/LineTypeSymbolTests.cpp"
     "Core/HatchDotsTests.cpp"
     "Core/MatrixInverseTests.cpp"
     "Core/RecentFilesTests.cpp"
@@ -138,6 +139,7 @@ add_executable(MiniCADTests
     "Core/MLineImportTests.cpp"
     "Core/MLineEditTests.cpp"
     "Core/TransformSinkTests.cpp"
+    "Core/ReferenceEntityTests.cpp"
 )
 target_link_libraries(MiniCADTests PRIVATE MiniCAD)
 target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")

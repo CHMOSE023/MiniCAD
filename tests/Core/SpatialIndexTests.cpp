@@ -44,6 +44,7 @@ int RunPolylineWidthTests(); // PolylineWidthTests.cpp，返回失败项数
 int RunBulgeDirectionTests(); // BulgeDirectionTests.cpp，返回失败项数
 int RunPointStyleTests();     // PointStyleTests.cpp，返回失败项数
 int RunLineTypeScaleTests();  // LineTypeScaleTests.cpp，返回失败项数
+int RunLineTypeSymbolTests(); // LineTypeSymbolTests.cpp，返回失败项数
 int RunHatchDotsTests();      // HatchDotsTests.cpp，返回失败项数
 int RunMatrixInverseTests(); // MatrixInverseTests.cpp，返回失败项数
 int RunRecentFilesTests();   // RecentFilesTests.cpp，返回失败项数
@@ -61,7 +62,8 @@ int RunPolylineToolTests();           // PolylineToolTests.cpp，返回失败项
 int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项数
 int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
 int RunTransformSinkTests();           // TransformSinkTests.cpp，返回失败项数
-int RunSplineKnotTests();              // TransformSinkTests.cpp，返回失败项数
+int RunSplineKnotTests();   // SplineKnotTests.cpp，返回失败项数
+int RunReferenceEntityTests(); // ReferenceEntityTests.cpp，返回失败项数              // TransformSinkTests.cpp，返回失败项数
 
 namespace
 {
@@ -328,6 +330,7 @@ int main()
     g_failures += RunBulgeDirectionTests();
     g_failures += RunPointStyleTests();
     g_failures += RunLineTypeScaleTests();
+    g_failures += RunLineTypeSymbolTests();
     g_failures += RunHatchDotsTests();
     g_failures += RunMatrixInverseTests();
     g_failures += RunRecentFilesTests();
@@ -346,6 +349,7 @@ g_failures += RunOleFrameTests();
     g_failures += RunMLineEditTests();
     g_failures += RunTransformSinkTests();
     g_failures += RunSplineKnotTests();
+    g_failures += RunReferenceEntityTests();
 
     std::printf("%s：%d 项失败\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures;

@@ -20,7 +20,8 @@ namespace MiniCAD
     // 停靠面板或文档拖出主窗口后的独立窗口（AppPlatform::CreateFloatingWindow 的 Win32 实现）：
     //   - 停靠面板：主窗口拥有的工具窗口（总在主窗口之上、随它最小化、不占任务栏）；
     //     文档（document）：不归主窗口所有的普通窗口（可以在主窗口之下，主窗口弹出对话框时置前不被挡住），任务栏里有按钮
-    //   - 无边框（Win32Frame：保留系统的缩放边框与阴影）。停靠面板：标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口；
+    //   - 无边框（Win32Frame：保留系统的缩放边框与阴影）。停靠面板：标题栏由里面的 FloatingPanel 自绘，拖动标题栏时宿主按鼠标 SetRect 移动窗口，
+    //     标题栏上的最大化按钮经 ToggleMaximize 最大化到所在的显示器；
     //     文档：标题区域交给系统（SetCaptionTest → Win32Frame，拖动、双击最大化、贴边），系统移动窗口时经 SetOnMoving 上报光标位置
     //   - 自己的 UIContext、Win32Input 与窗口表面（IGraphicsDevice::CreateWindowSurface），与主窗口共用设备和界面后端；
     //     WM_PAINT 里布局、绘制、呈现。停靠面板里没处理的按键转给主窗口（Ctrl+S 等全局快捷键仍有效）；
@@ -39,6 +40,7 @@ namespace MiniCAD
         // ── IFloatingWindow ─────────────────────────────────────
         MiniGUI::UIContext& GetUI() override { return *m_ui; }
         MiniGUI::Rect GetRect() const override;
+        MiniGUI::Rect GetRestoreRect() const override;
         void SetRect(const MiniGUI::Rect& rect) override;
         void SetTitle(const std::string& utf8) override;
         void Activate() override;

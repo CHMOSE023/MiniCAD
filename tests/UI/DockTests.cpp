@@ -5,6 +5,8 @@
 #include "Widgets/DockSpace.h"
 #include "Widgets/FloatingPanel.h"
 #include "Widgets/UiLayout.h"
+#include <map>
+#include <memory>
 #include <string>
 
 using namespace MiniGUI;
@@ -555,4 +557,392 @@ TEST(Dock_FloatingPanelsReclaimedOnReload)
     CHECK(dock->GetPanelContent("viewport") == viewRaw);
     CHECK(!dock->IsPanelFloating("properties") && dock->IsPanelActive("properties"));
     CHECK(t.ui.GetTopPopup() == nullptr);
+}
+
+TEST(Dock_FloatingContentStaysWhenOthersChange)
+{
+    // 一个面板浮着时，别的面板浮出 / 关闭（停靠区重建）：浮着的面板内容留在它的浮动窗口里（以前会被摘走，窗口变空）
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 600.0f, 100.0f, 900.0f, 400.0f }));
+    s.t.Layout();
+    Node* parent = s.c->GetParent();
+    CHECK(parent != nullptr);
+    s.t.DoubleClick(s.TabCenter("b"));      // 左侧组的第一个标签（A）浮出
+    s.t.ui.Render();
+    CHECK(s.dock->IsPanelFloating("a") && s.dock->GetFloatCount() == 2);
+    CHECK(s.c->GetParent() == parent && s.c->IsVisible());     // 原样留着，没有重建
+    CHECK(!s.dock->GetPanelRect("c").IsEmpty());
+    s.dock->ClosePanel("b");
+    s.t.ui.Render();
+    CHECK(s.c->GetParent() == parent && !s.dock->GetPanelRect("c").IsEmpty());
+}
+
+TEST(Dock_FloatWindowsMergeIntoTabs)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("a", Rect{ 500.0f, 100.0f, 800.0f, 400.0f }));
+    CHECK(s.dock->FloatPanel("c", Rect{ 100.0f, 300.0f, 400.0f, 500.0f }));
+    s.t.Layout();
+    CHECK(s.dock->GetFloatCount() == 2);
+
+    // 拖 C 的标题栏到 A 的标题栏上：C 成为 A 那个窗口的标签（当前标签），C 的窗口关掉
+    const Rect ra = s.dock->GetFloatingRect("a");
+    const Rect rc = s.dock->GetFloatingRect("c");
+    const Vec2 target{ ra.min.x + 60.0f, ra.min.y + FloatingPanel::kTitleHeight * 0.5f };
+    s.Drag({ rc.min.x + 20.0f, rc.min.y + 10.0f }, target, false);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview) && preview.min.y >= ra.min.y + FloatingPanel::kTitleHeight - 0.5f);
+    s.t.ui.PointerUp(target, MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(s.dock->GetFloatCount() == 1);
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a", "c" }));
+    CHECK(s.dock->IsPanelActive("c") && !s.dock->IsPanelActive("a"));
+    CHECK(s.dock->GetPanelContent("c") == s.c && s.c->IsVisible() && !s.a->IsVisible());
+    // 有两个面板：画标签条（内容在窗口标题栏、标签条之下）
+    CHECK_NEAR(s.dock->GetPanelRect("c").min.y, ra.min.y + FloatingPanel::kTitleHeight + DockSpace::kHeaderHeight);
+    CHECK(s.changes > 0);
+
+    // 布局：浮动窗口写成标签组，保存再加载还原
+    const std::string saved = s.Layout();
+    CHECK(saved.find("\"tabs\":[\"a\",\"c\"]") != std::string::npos);
+    CHECK(s.dock->Dock("c", "b", DockSide::Center));
+    s.t.Layout();
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a" }));
+    std::vector<std::string> warnings;
+    CHECK(s.dock->LoadLayout(Parse(saved.c_str()), &warnings));
+    s.t.Layout();
+    CHECK(warnings.empty());
+    CHECK(s.Layout() == saved);
+    CHECK(s.dock->GetFloatPanels("c") == (std::vector<std::string>{ "a", "c" }));
+}
+
+TEST(Dock_TabDraggedOutOfFloatWindow)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("a", Rect{ 500.0f, 100.0f, 800.0f, 400.0f }));
+    s.t.Layout();
+    CHECK(s.dock->Dock("c", "a", DockSide::Center));    // 浮动窗口里两个标签：A、C（C 当前）
+    s.t.Layout();
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a", "c" }));
+
+    // 拖 A 的标签（第一个）出浮动窗口，还没松开：A 浮出成自己的窗口，原窗口的内容持有捕获
+    const Rect content = s.dock->GetPanelRect("c");
+    const Vec2 tabA{ content.min.x + 8.0f, content.min.y - DockSpace::kHeaderHeight * 0.5f };
+    s.Drag(tabA, { 300.0f, 300.0f }, false);
+    CHECK(s.dock->IsTornDragging() && s.dock->GetFloatCount() == 2);
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a" }));
+    CHECK(s.dock->GetFloatPanels("c") == (std::vector<std::string>{ "c" }));
+    const Node* capture = s.t.ui.GetCapture();
+    CHECK(capture != nullptr && capture != s.dock);
+    // 只剩一个面板的窗口不再画标签条
+    CHECK_NEAR(s.dock->GetPanelRect("c").min.y, s.dock->GetFloatingRect("c").min.y + FloatingPanel::kTitleHeight);
+
+    // 接着拖到左侧组的标题栏上松开：A 停靠回去，跟着光标的窗口关掉
+    const Vec2 header{ 100.0f, DockSpace::kHeaderHeight * 0.5f };
+    s.t.ui.PointerMove(header, 0);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview));
+    s.t.ui.PointerUp(header, MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(!s.dock->IsDragging() && s.t.ui.GetCapture() == nullptr);
+    CHECK(!s.dock->IsPanelFloating("a") && s.dock->IsPanelActive("a") && s.dock->GetFloatCount() == 1);
+    CHECK_NEAR(s.dock->GetPanelRect("a").Width(), 200.0f);
+    CHECK(s.dock->GetPanelContent("a") == s.a);
+}
+
+TEST(Dock_MainTabDroppedIntoFloatWindow)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 500.0f, 100.0f, 800.0f, 400.0f }));
+    s.t.Layout();
+    // 停靠区里 A 的标签拖到浮动窗口的内容中间：合并为那个窗口的标签（没有拖出停靠区，不另开窗口）
+    const Rect fc = s.dock->GetFloatingRect("c");
+    s.Drag(s.TabCenter("b"), fc.Center(), false);
+    CHECK(s.dock->IsDragging() && !s.dock->IsTornDragging() && s.dock->GetFloatCount() == 1);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview) && fc.Contains(preview.Center()));
+    s.t.ui.PointerUp(fc.Center(), MouseButton::Left, 0);
+    s.t.Layout();
+    s.t.ui.Render();
+    CHECK(s.dock->GetFloatPanels("c") == (std::vector<std::string>{ "c", "a" }));
+    CHECK(s.dock->IsPanelActive("a") && s.dock->GetPanelContent("a") == s.a);
+
+    // 双击浮动窗口的标题栏：里面的面板各回各处（A 回左侧组，C 回文档区右侧），窗口关掉
+    s.t.DoubleClick({ fc.min.x + 20.0f, fc.min.y + FloatingPanel::kTitleHeight * 0.5f });
+    s.t.ui.Render();
+    CHECK(s.dock->GetFloatCount() == 0);
+    CHECK(!s.dock->IsPanelFloating("a") && !s.dock->IsPanelFloating("c"));
+    CHECK_NEAR(s.dock->GetPanelRect("a").Width(), 200.0f);
+    CHECK(s.dock->GetPanelRect("c").max.x >= 999.0f);
+}
+
+TEST(Dock_FloatingMaximizeAndRestore)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 400.0f, 200.0f, 700.0f, 440.0f }));
+    s.t.Layout();
+    const Rect normal = s.dock->GetFloatingRect("c");
+    // 标题栏上 × 左边是最大化按钮：窗口内浮动时铺满窗口（弹层层四周留几像素）；布局记下还原后的位置和最大化
+    const int changes = s.changes;
+    s.t.Click({ normal.max.x - 38.0f, normal.min.y + FloatingPanel::kTitleHeight * 0.5f });
+    s.t.Layout();
+    const Rect full = s.dock->GetFloatingRect("c");
+    CHECK(full.min.x < 8.0f && full.min.y < 8.0f && full.Width() > 980.0f && full.Height() > 580.0f);
+    CHECK(s.changes == changes + 1);
+    const std::string layout = s.Layout();
+    CHECK(layout.find("\"maximized\":true") != std::string::npos);
+    CHECK(layout.find("\"rect\":[400,200,300,240]") != std::string::npos);
+
+    // 加载：重新最大化，还原后的位置不变
+    std::vector<std::string> warnings;
+    CHECK(s.dock->LoadLayout(Parse(layout.c_str()), &warnings));
+    s.t.Layout();
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Width(), full.Width());
+    CHECK(s.Layout() == layout);
+
+    // 再点一次：还原
+    s.t.Click({ full.max.x - 38.0f, full.min.y + FloatingPanel::kTitleHeight * 0.5f });
+    s.t.Layout();
+    CHECK_NEAR(s.dock->GetFloatingRect("c").min.x, 400.0f);
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Width(), 300.0f);
+    CHECK(s.Layout().find("maximized") == std::string::npos);
+
+    // 最大化时拖标题栏：先还原成原来的尺寸，跟着光标走
+    s.t.Click({ normal.max.x - 38.0f, normal.min.y + FloatingPanel::kTitleHeight * 0.5f });
+    s.t.Layout();
+    CHECK_NEAR(s.dock->GetFloatingRect("c").Width(), full.Width());
+    s.Drag({ 500.0f, full.min.y + 14.0f }, { 520.0f, 300.0f }, false);
+    const Rect dragged = s.dock->GetFloatingRect("c");
+    CHECK_NEAR(dragged.Width(), 300.0f);
+    CHECK(dragged.Contains({ 520.0f, 300.0f }));
+    s.t.Key(Key::Escape);       // 不停靠
+    s.t.ui.PointerUp({ 520.0f, 300.0f }, MouseButton::Left, 0);
+    s.t.Layout();
+    CHECK(s.dock->IsPanelFloating("c") && s.Layout().find("maximized") == std::string::npos);
+}
+
+TEST(Dock_CloseFloatWindowAndShowAgain)
+{
+    DockScene s;
+    CHECK(s.dock->FloatPanel("c", Rect{ 500.0f, 100.0f, 800.0f, 400.0f }));
+    s.t.Layout();
+    CHECK(s.dock->Dock("a", "c", DockSide::Center));
+    s.t.Layout();
+    const Rect r = s.dock->GetFloatingRect("c");
+    // 窗口的 ×：里面的面板都关掉
+    s.t.Click({ r.max.x - 16.0f, r.min.y + FloatingPanel::kTitleHeight * 0.5f });
+    s.t.ui.Render();
+    CHECK(!s.dock->IsPanelVisible("a") && !s.dock->IsPanelVisible("c") && s.dock->GetFloatCount() == 0);
+    // 先显示的在原处重新浮出，后显示的合并进去
+    s.dock->ShowPanel("c");
+    s.t.Layout();
+    CHECK(s.dock->IsPanelFloating("c"));
+    CHECK_NEAR(s.dock->GetFloatingRect("c").min.x, 500.0f);
+    s.dock->ShowPanel("a");
+    s.t.Layout();
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "c", "a" }));
+    CHECK(s.dock->IsPanelActive("a"));
+
+    // 只关其中一个：再显示回到同一个窗口
+    s.dock->ClosePanel("c");
+    s.t.Layout();
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a" }));
+    s.dock->ShowPanel("c");
+    s.t.Layout();
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a", "c" }));
+}
+
+// =========================================================
+// 浮动窗口各有自己的 UIContext（同桌面版的独立系统窗口）
+// =========================================================
+namespace
+{
+    // 窗口位置用停靠区窗口的坐标，窗口里的坐标从窗口左上角算；拖标题栏时窗口跟着光标走
+    struct WindowFloatHost : IDockFloatHost
+    {
+        struct Window
+        {
+            std::unique_ptr<TestUI> t;
+            FloatingPanel*          panel = nullptr;
+            Rect                    rect;
+            Vec2                    grab;
+
+            Vec2 Local(Vec2 dockPos) const { return dockPos - rect.min; }
+        };
+        std::map<std::string, std::unique_ptr<Window>> windows;
+        std::vector<std::unique_ptr<Window>>           closed;      // 关掉的窗口留到最后（同桌面版推迟销毁）
+
+        Window* Of(const Node* content)
+        {
+            for (auto& [id, w] : windows)
+                if (content->GetContext() == &w->t->ui)
+                    return w.get();
+            return nullptr;
+        }
+
+        void LayoutAll()
+        {
+            for (auto& [id, w] : windows)
+                w->t->Layout();
+        }
+
+        bool Open(DockSpace& dock, const std::string& id, const std::string& title, std::unique_ptr<Node>& content, const Rect& rect) override
+        {
+            auto w = std::make_unique<Window>();
+            Window* raw = w.get();
+            raw->t    = std::make_unique<TestUI>(rect.Size());
+            raw->rect = rect;
+            auto panel = std::make_unique<FloatingPanel>(title);
+            raw->panel = panel.get();
+            panel->SetFrameless(true);
+            panel->SetContent(std::move(content));
+            DockSpace* d = &dock;
+            panel->SetOnClose ([d, id] { d->CloseFloat(id); });
+            panel->SetOnRedock([d, id] { d->RedockFloat(id); });
+            panel->SetOnDrag([d, id, raw](FloatingPanel::DragPhase phase, Vec2 pos)
+            {
+                const Vec2 dockPos = raw->rect.min + pos;
+                switch (phase)
+                {
+                case FloatingPanel::DragPhase::Begin:
+                    raw->grab = pos;
+                    d->BeginFloatDrag(id, dockPos);
+                    break;
+                case FloatingPanel::DragPhase::Update:
+                {
+                    const Vec2 size = raw->rect.Size();
+                    raw->rect = Rect{ dockPos - raw->grab, dockPos - raw->grab + size };
+                    d->UpdateFloatDrag(dockPos);
+                    break;
+                }
+                case FloatingPanel::DragPhase::End:    d->EndFloatDrag(dockPos, false); break;
+                case FloatingPanel::DragPhase::Cancel: d->EndFloatDrag(dockPos, true);  break;
+                }
+            });
+            raw->t->ui.GetRoot()->AddChild(std::move(panel));
+            raw->t->Layout();
+            windows[id] = std::move(w);
+            return true;
+        }
+
+        std::unique_ptr<Node> Close(const std::string& id) override
+        {
+            auto it = windows.find(id);
+            if (it == windows.end())
+                return nullptr;
+            std::unique_ptr<Window> w = std::move(it->second);
+            windows.erase(it);
+            std::unique_ptr<Node> content = w->panel->TakeContent();
+            w->panel->SetOnClose(nullptr);
+            w->panel->SetOnRedock(nullptr);
+            w->panel->SetOnDrag(nullptr);
+            closed.push_back(std::move(w));
+            return content;
+        }
+
+        Rect GetRect(const std::string& id) const override
+        {
+            const auto it = windows.find(id);
+            return it == windows.end() ? Rect{} : it->second->rect;
+        }
+
+        void SetRect(const std::string& id, const Rect& rect) override
+        {
+            if (auto it = windows.find(id); it != windows.end())
+            {
+                it->second->rect = rect;
+                it->second->t->ui.SetDisplaySize(rect.Size(), 1.0f);
+            }
+        }
+
+        void SetTitle(const std::string& id, const std::string& title) override
+        {
+            if (auto it = windows.find(id); it != windows.end())
+                it->second->panel->SetTitle(title);
+        }
+
+        void Activate(const std::string&) override {}
+
+        Vec2 ToDock(const std::string& id, Vec2 floatPos) const override
+        {
+            const auto it = windows.find(id);
+            return it == windows.end() ? floatPos : it->second->rect.min + floatPos;
+        }
+
+        Vec2 FromDock(const std::string& id, Vec2 dockPos) const override
+        {
+            const auto it = windows.find(id);
+            return it == windows.end() ? dockPos : dockPos - it->second->rect.min;
+        }
+    };
+}
+
+TEST(Dock_FloatWindowsInSeparateContexts)
+{
+    WindowFloatHost host;           // 比停靠区后销毁：停靠区销毁时还要经它取回内容
+    DockScene s;
+    s.dock->SetFloatHost(&host);
+    CHECK(s.dock->FloatPanel("c", Rect{ 600.0f, 100.0f, 900.0f, 400.0f }));
+    WindowFloatHost::Window* wc = host.Of(s.c);
+    CHECK(wc != nullptr);
+    // A 也浮出：C 的内容留在自己的窗口里（不会被停靠区重建摘走）
+    CHECK(s.dock->FloatPanel("a", Rect{ 100.0f, 300.0f, 400.0f, 500.0f }));
+    WindowFloatHost::Window* wa = host.Of(s.a);
+    CHECK(wa != nullptr && wa != wc && host.Of(s.c) == wc);
+    if (!wc || !wa)
+        return;
+    s.t.Layout();
+    host.LayoutAll();
+
+    // 停靠区里的 B 拖到 C 窗口的中间：成为它的标签，内容搬进那个窗口
+    const Vec2 mid = wc->rect.Center();
+    s.Drag(s.TabCenter("b"), mid, false);
+    Rect preview;
+    CHECK(s.dock->GetDropPreview(preview) && wc->rect.Contains(preview.Center()));
+    s.t.ui.PointerUp(mid, MouseButton::Left, 0);
+    s.t.Layout();
+    host.LayoutAll();
+    CHECK(s.dock->GetFloatPanels("c") == (std::vector<std::string>{ "c", "b" }));
+    CHECK(host.Of(s.b) == wc);
+
+    // 在 C 的窗口里拖 C 的标签（第一个）出窗口：C 浮出成新窗口，原窗口持有捕获
+    const Rect content = s.dock->GetPanelRect("b");      // C 窗口里的坐标
+    const Vec2 tabC{ content.min.x + 8.0f, content.min.y - DockSpace::kHeaderHeight * 0.5f };
+    UIContext& ui = wc->t->ui;
+    ui.PointerMove(tabC, 0);
+    ui.PointerDown(tabC, MouseButton::Left, 0, 1);
+    ui.PointerMove(tabC + Vec2{ 10.0f, 0.0f }, 0);
+    ui.PointerMove(wc->Local({ 450.0f, 150.0f }), 0);
+    CHECK(s.dock->IsTornDragging() && s.dock->GetFloatCount() == 3 && ui.GetCapture() != nullptr);
+    WindowFloatHost::Window* wn = host.Of(s.c);
+    CHECK(wn != nullptr && wn != wc);
+    // 拖到 A 窗口的标题栏上松开：C 成为 A 窗口的标签
+    const Vec2 overA{ wa->rect.min.x + 60.0f, wa->rect.min.y + FloatingPanel::kTitleHeight * 0.5f };
+    ui.PointerMove(wc->Local(overA), 0);
+    CHECK(s.dock->GetDropPreview(preview));
+    ui.PointerUp(wc->Local(overA), MouseButton::Left, 0);
+    s.t.Layout();
+    host.LayoutAll();
+    CHECK(!s.dock->IsDragging() && ui.GetCapture() == nullptr);
+    CHECK(s.dock->GetFloatCount() == 2);
+    CHECK(s.dock->GetFloatPanels("a") == (std::vector<std::string>{ "a", "c" }));
+    CHECK(host.Of(s.c) == wa);
+
+    // 拖 A 窗口的标题栏到停靠区左边缘：A、C 一起停靠到左侧（同一组）
+    UIContext& ua = wa->t->ui;
+    const Vec2 title{ 20.0f, FloatingPanel::kTitleHeight * 0.5f };
+    ua.PointerMove(title, 0);
+    ua.PointerDown(title, MouseButton::Left, 0, 1);
+    ua.PointerMove(title + Vec2{ 10.0f, 0.0f }, 0);
+    const Vec2 edge{ 5.0f, 300.0f };
+    ua.PointerMove(wa->Local(edge), 0);
+    CHECK(s.dock->IsDragging() && s.dock->GetDropPreview(preview) && preview.min.x < 1.0f);
+    ua.PointerUp(wa->Local(edge), MouseButton::Left, 0);
+    s.t.Layout();
+    CHECK(s.dock->GetFloatCount() == 1);
+    CHECK(!s.dock->IsPanelFloating("a") && !s.dock->IsPanelFloating("c"));
+    CHECK(s.a->GetContext() == &s.t.ui && s.c->GetContext() == &s.t.ui);
+    CHECK(s.dock->IsPanelActive("c") && s.dock->GetPanelRect("c").min.x < 1.0f);
 }

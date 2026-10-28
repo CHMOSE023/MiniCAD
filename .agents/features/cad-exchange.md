@@ -20,7 +20,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 读入（`Importer::Convert` 一带，按 MiniDWG 的类型分派）：
 
 - 表：图层、线型、文字样式、多线样式、块（含外部参照块）、布局（标注样式只在组装标注时查参数，不导入成表）
-- 实体：Line / Circle / Arc / Ellipse / Point / Polyline / LwPolyline / Spline / Text / MText / Insert（含属性 ATTRIB 与属性定义 ATTDEF）/ Solid / 3DFace / Hatch（直线、圆弧、椭圆弧、样条、多段线边界）/ MultiLeader / MLine / Wipeout / Viewport；PolyfaceMesh 与 Mesh 读成 `MeshEntity`
+- 实体：Line / Circle / Arc / Ellipse / Point / Polyline / LwPolyline / Spline / Text / MText / Insert（含属性 ATTRIB 与属性定义 ATTDEF）/ Solid / 3DFace / Hatch（直线、圆弧、椭圆弧、样条、多段线边界）/ MultiLeader / MLine / Wipeout / Viewport / Ray / XLine / Leader / Tolerance / RasterImage（`ImageEntity`，读写）；PolyfaceMesh 与 Mesh 读成 `MeshEntity`；ACAD_TABLE 按其匿名块还原为 Insert（`Importer::ConvertTable`）；SHAPE 读成 `ShapeEntity`，形号未建模，只画占位框，导出时 DWG / DXF 写出器都不写
 - 填充边界（`Importer::ConvertHatchPath`）：相邻边之间的小缺口用直线接上（AutoCAD 的间隙容差 HPGAPTOL）；缺口超过该路径范围对角线的 10% 时整条路径丢弃——这是编辑后残留的"未闭合"路径（标志 32），各段散落在图纸各处，AutoCAD 不画，硬接会画出横跨图纸的大块实心。用 `MINICAD_HATCHPATHS` 看各段是否相接
 - 标注用其匿名块还原为 Insert；绘制次序按 SortEntitiesTable
 - 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
@@ -37,7 +37,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - TrueType 样式的文件名为空时，按扩展数据里的字体族名换算成文件名（SimSun → simsun.ttc 等）
 - 与预置样式（Standard、GB2312）同名的按图纸参数更新字高、宽度因子、倾斜；图纸没有的预置样式删掉（不再写进 DWG）
 - 天正文字的显示宽度因子写在 `MTextEntity::SetWidthFactor`（导出写成开头的 `\W0.7;`），不派生文字样式
-- 含形 / 文字的复杂线型保留这些元素的长度（形本身不画，0 长度的形显示为点）
+- 含形 / 文字的复杂线型：每个元素的长度进 `LineTypeRecord::Pattern`，文字 / 形段另记在 `LineTypeRecord::Symbols`（组码 9 / 75 / 340 / 46 / 50 / 44 / 45，导出写回）。绘制时 `DrawContext::LayPattern` 在该段**末尾**落符号，文字走排版，形段按 `LineTypeSymbol::ShapeFont`（组码 340 所指 STYLE 的字体文件，如 `ltypeshp.shx`）经 `ShapeFontResolver` 取 SHX 字形，只描边不填充；符号是世界坐标的字形实例，不随缩放重铺；一段超过 `DrawContext::kMaxDashes` 个周期时与普通虚线一样画成实线、不画符号。界面里的线型预览只画占位标记（`apps/Common/src/GUI/LinetypePreview.h`）
 - `$PSLTSCALE` 读写（`Scene::GetPaperSpaceLineTypeScaling`），用法见 [layout-viewport](layout-viewport.md)
 - 字体查找：先 `fonts/`，再 `AppPlatform::GetSystemFontDirs()`（桌面版 `%WINDIR%\Fonts` 与当前用户安装的字体），都没有才用自带字体代替
 

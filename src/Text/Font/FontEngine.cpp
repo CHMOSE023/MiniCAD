@@ -75,7 +75,19 @@ namespace MiniCAD
         const std::string key = BuildKey(style);
         auto it = m_cache.find(key);
         if (it != m_cache.end())
-            return *(it->second);
+        {
+            // 缓存里的 SHX 字体如果当时没读进来（字体目录还没就绪、文件被占用等），
+            // 不能一直用这份空字体 —— 否则字体文件后来可用了也不会重试，
+            // 表现为「第一次打开的图纸线型没有符号，切换图纸后才正常」。
+            bool stale = false;
+            if (const auto* shx = dynamic_cast<SHXFont*>(it->second.get()))
+                stale = !shx->IsLoaded();
+            else if (const auto* comp = dynamic_cast<SHXCompositeFont*>(it->second.get()))
+                stale = !comp->IsLoaded();
+            if (!stale)
+                return *(it->second);
+            m_cache.erase(it);      // 读失败的缓存作废，下面重新解析
+        }
 
         bool found = true;
         const std::string path = FindPath(style.fontFile, style.isShx ? "simplex.shx" : "GB2312.ttf", &found);

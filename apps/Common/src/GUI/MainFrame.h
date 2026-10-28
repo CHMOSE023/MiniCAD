@@ -385,7 +385,6 @@ namespace MiniCAD
         bool       OnDocTabDragOut(PaneId source, int index, MiniGUI::Vec2 windowPos);   // 标签拖出标签条：新窗口，或拖动只有它的窗口
         void       OnDocTabTornDrag(PaneId source, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 windowPos);   // 继续拖：窗口跟着光标走
         void       DragDocWindow(DocWindow& w, MiniGUI::FloatingPanel::DragPhase phase, MiniGUI::Vec2 mainPos);   // 标签拖出后：移动窗口、画落点、松开在标签条上合并
-        bool       OnDocWindowKey(const MiniGUI::KeyEvent& e);
         bool       BlockedByModal();                                         // 主窗口开着对话框：把主窗口置前并返回 true（文档窗口的操作不执行）
         void       RaiseMainForModal();                                      // 每帧：主窗口刚弹出对话框时置前，不被文档窗口挡住
         void       SyncDocWindowChrome(DocWindow& w);                        // 文档窗口的每一帧：命令行、状态栏、视图方块跟随它的文档

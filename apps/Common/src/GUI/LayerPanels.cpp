@@ -1,6 +1,7 @@
 // ── 图层：停靠的图层面板（图层特性管理器）与工具栏里的图层 / 线型 / 线宽下拉框 ─────────
 #include "GUI/MainFrame.h"
 #include "GUI/Lineweights.h"
+#include "GUI/LinetypePreview.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Entity/Lineweight.hpp"
 #include "Core/UIContext.h"
@@ -66,10 +67,15 @@ namespace MiniCAD
         // MiniCAD 线型的 dash 序列（绘图单位）→ 预览用的逻辑像素（按 6 倍放大）
         std::vector<float> PreviewPattern(const LineTypeRecord& rec)
         {
-            std::vector<float> p;
-            for (double v : rec.Pattern)
-                p.push_back(static_cast<float>(v * 6.0));
-            return p;
+            return LinetypePreviewPattern(rec);
+        }
+
+        // 复杂线型的符号段 → 预览占位标记（文字段画方框、形段画菱形）。
+        // 真实 SHX 形字体在界面层拿不到，用占位标记至少能让用户看出
+        // 「这条线带符号」（GAS_LINE / TRACKS / ZIGZAG 这类）。
+        std::vector<MiniGUI::LinetypeSampleSymbol> PreviewSymbols(const LineTypeRecord& rec)
+        {
+            return LinetypePreviewSymbols(rec);
         }
 
         // 线宽预览：ByLayer / ByBlock 没有具体粗细，不画样例
@@ -91,7 +97,12 @@ namespace MiniCAD
             float x = box.min.x;
             if (rec.Name != "ByLayer" && rec.Name != "ByBlock")
             {
-                MiniGUI::DrawLinetypeSample(dl, Rect{ x, box.min.y, x + 44.0f, box.max.y }, PreviewPattern(rec), Theme::Text);
+                const auto pat = PreviewPattern(rec);
+                const auto sym = PreviewSymbols(rec);
+                if (sym.empty())
+                    MiniGUI::DrawLinetypeSample(dl, Rect{ x, box.min.y, x + 44.0f, box.max.y }, pat, Theme::Text);
+                else
+                    MiniGUI::DrawLinetypeSample(dl, Rect{ x, box.min.y, x + 44.0f, box.max.y }, pat, sym, Theme::Text);
                 x += 52.0f;
             }
             if (ctx)
