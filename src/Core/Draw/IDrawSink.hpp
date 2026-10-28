@@ -105,6 +105,9 @@ namespace MiniCAD
         // 之后的 EmitMText / MeasureMText* 用这个宽度因子代替样式的（> 0 时；0 = 按样式）。
         // 多行文字实体自己的宽度因子（天正文字按 0.7 宽显示等）经这里传下去，不必为每种宽度派生一个文字样式
         virtual void SetTextWidthFactor(double widthFactor) { (void)widthFactor; }
+        // 之后的文字沿基线上下翻转 / 翻回：镜像的块参照（插入变换行列式为负）里的文字与 AutoCAD 一样画成镜像。
+        // TransformDrawSink 在转发文字前后各调用一次；转发型 sink 原样转发，两层镜像相互抵消
+        virtual void ToggleTextMirror() {}
 
         // 按线型铺设有宽度的线段（width 为模型单位）。粗多段线无法整体填充成一条带宽度、
         // 又带线型的路径：填充几何不经过线型解析，虚线会被画成实线。所以虚线粗线逐段走这里，

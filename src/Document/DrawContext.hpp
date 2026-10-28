@@ -127,6 +127,7 @@ namespace MiniCAD
             DropBlockRecords();   // 按当前缩放烘焙的几何不能记进块定义级缓存
         }
         void SetTextWidthFactor(double widthFactor) override { m_textWidthFactor = widthFactor > 0.0 ? widthFactor : 0.0; }
+        void ToggleTextMirror() override { m_textMirror = !m_textMirror; }
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
         void SetViewportHeightPx(double px) { m_viewportHeightPx = px; }
@@ -714,8 +715,10 @@ namespace MiniCAD
             auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth, align);
             const double shear = std::tan(rs.Oblique);     // 倾斜：字形 x 随高度错切
 
-            const double cosR = std::cos(rotation);
-            const double sinR = std::sin(rotation);
+            // 排版坐标的 x 沿基线方向 u，y 沿 v：v 是 u 逆时针转 90°；镜像的块参照里（ToggleTextMirror）取反，字沿基线上下翻转
+            const double ux = std::cos(rotation), uy = std::sin(rotation);
+            const double up = m_textMirror ? -1.0 : 1.0;
+            const double vx = -uy * up, vy = ux * up;
 
             const VertexColor c4 = ToColor(color);
 
@@ -725,7 +728,7 @@ namespace MiniCAD
                 {
                     double x = (lp.x * rs.WidthFactor + lp.y * shear) * inst.m_scale + inst.m_position.x;
                     double y = lp.y * inst.m_scale + inst.m_position.y + baseline;
-                    return { pos.x + x * cosR - y * sinR, pos.y + x * sinR + y * cosR, pos.z };
+                    return { pos.x + x * ux + y * vx, pos.y + x * uy + y * vy, pos.z };
                 };
 
                 const Glyph& glyph = *inst.m_glyph;
@@ -736,9 +739,9 @@ namespace MiniCAD
                     if (!m_glyphLib->Register(glyph, mesh)) continue;
                     const double s  = inst.m_scale;
                     const double ox = inst.m_position.x, oy = inst.m_position.y + baseline;
-                    PutGlyph({ rs.WidthFactor * s * cosR, rs.WidthFactor * s * sinR,
-                               shear * s * cosR - s * sinR, shear * s * sinR + s * cosR,
-                               pos.x + ox * cosR - oy * sinR, pos.y + ox * sinR + oy * cosR, pos.z, c4, mesh });
+                    PutGlyph({ rs.WidthFactor * s * ux, rs.WidthFactor * s * uy,
+                               shear * s * ux + s * vx, shear * s * uy + s * vy,
+                               pos.x + ox * ux + oy * vx, pos.y + ox * uy + oy * vy, pos.z, c4, mesh });
                     continue;
                 }
                 if (glyph.Filled && !glyph.Triangles.empty())
@@ -760,12 +763,12 @@ namespace MiniCAD
                 }
             }
 
-            // 下划线 / 上划线 / 删除线：水平线段，随文字旋转，不随倾斜错切
+            // 下划线 / 上划线 / 删除线：水平线段，随文字旋转、镜像，不随倾斜错切
             for (const auto& d : result.m_decorations)
             {
                 const double y = d.m_y + baseline;
-                PutLine({ pos.x + d.m_x0 * cosR - y * sinR, pos.y + d.m_x0 * sinR + y * cosR, pos.z }, c4);
-                PutLine({ pos.x + d.m_x1 * cosR - y * sinR, pos.y + d.m_x1 * sinR + y * cosR, pos.z }, c4);
+                PutLine({ pos.x + d.m_x0 * ux + y * vx, pos.y + d.m_x0 * uy + y * vy, pos.z }, c4);
+                PutLine({ pos.x + d.m_x1 * ux + y * vx, pos.y + d.m_x1 * uy + y * vy, pos.z }, c4);
             }
         }
 
@@ -1424,6 +1427,7 @@ namespace MiniCAD
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_viewDependent = false;
         double                         m_textWidthFactor = 0.0;   // 当前实体的多行文字宽度因子（0 = 按样式）
+        bool                           m_textMirror      = false; // 文字沿基线上下翻转（镜像的块参照里，见 ToggleTextMirror）
         bool                           m_dotsAsSegments = false;   // 线型的点笔划画成小段（选中流）
         bool                           m_deferLongDashes = false;  // 长虚线段延迟铺设（见 EmitStyled）
         std::vector<DeferredDash>      m_deferred;                 // 本次细分延迟的长虚线段

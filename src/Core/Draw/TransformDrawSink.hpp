@@ -15,10 +15,10 @@ namespace MiniCAD
             : m_target(target)
             , m_xform(xform)
         {
-            // 预算缩放与旋转,供文字近似变换使用(取 X 轴向量)。
+            // 预算缩放与镜像,供文字近似变换使用(取 X 轴向量;行向量约定,第 0、1 行是 X、Y 轴的像)。
             const double* m = m_xform.Data();
             m_scale    = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
-            m_rotation = std::atan2(m[1], m[0]);
+            m_mirrored = m[0] * m[5] - m[1] * m[4] < 0.0;
         }
 
         // 属性查询/实体上下文直接转发,保证块内子实体的 ByLayer 颜色与线型解析正确
@@ -69,18 +69,23 @@ namespace MiniCAD
 
         void EmitText(const Math::Point3& pos, const std::string& utf8Text, float height, float rotation, const Math::Color4& color) override
         {
-            m_target.EmitText(m_xform * pos, utf8Text, height * static_cast<float>(m_scale), rotation + static_cast<float>(m_rotation), color);
+            m_target.EmitText(m_xform * pos, utf8Text, height * static_cast<float>(m_scale), static_cast<float>(TextRotation(rotation)), color);
         }
 
+        // 镜像的插入：基线方向照样经变换，字形沿基线上下翻转（见 IDrawSink::ToggleTextMirror）
         void EmitMText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation, double boxWidth, const Math::Color4& color) override
         {
-            m_target.EmitMText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, boxWidth * m_scale, color);
+            if (m_mirrored) m_target.ToggleTextMirror();
+            m_target.EmitMText(m_xform * pos, utf8Text, styleId, height * m_scale, TextRotation(rotation), boxWidth * m_scale, color);
+            if (m_mirrored) m_target.ToggleTextMirror();
         }
 
         void EmitAlignedText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
                              int hAlign, int vAlign, double widthFactor, const Math::Color4& color) override
         {
-            m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, rotation + m_rotation, hAlign, vAlign, widthFactor, color);
+            if (m_mirrored) m_target.ToggleTextMirror();
+            m_target.EmitAlignedText(m_xform * pos, utf8Text, styleId, height * m_scale, TextRotation(rotation), hAlign, vAlign, widthFactor, color);
+            if (m_mirrored) m_target.ToggleTextMirror();
         }
 
         // 块内文字：按 EmitMText 同样放大后的字高去量（世界单位），再换回块的局部单位——
@@ -138,11 +143,21 @@ namespace MiniCAD
         double GetViewportHeightPx() const override { return m_target.GetViewportHeightPx(); }
         void   MarkViewDependent() override        { m_target.MarkViewDependent(); }
         void   SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
+        void   ToggleTextMirror() override           { m_target.ToggleTextMirror(); }
 
     private:
+        // 文字基线方向 (cos r, sin r) 经变换后的角度。镜像时不是"文字角度 + 块的转角"：
+        // 沿 X 轴镜像的块里 30° 的文字画出来是 -30°
+        double TextRotation(double rotation) const
+        {
+            const double* m = m_xform.Data();
+            const double c = std::cos(rotation), s = std::sin(rotation);
+            return std::atan2(c * m[1] + s * m[5], c * m[0] + s * m[4]);
+        }
+
         IDrawSink&  m_target;
         Math::Mat4  m_xform;
-        double      m_scale    = 1.0;   // 由矩阵 X 轴长度估算的统一缩放
-        double      m_rotation = 0.0;   // 由矩阵 X 轴方向估算的旋转(弧度)
+        double      m_scale    = 1.0;     // 由矩阵 X 轴长度估算的统一缩放
+        bool        m_mirrored = false;   // XY 平面内行列式为负（负比例、法向朝 -Z 的插入）
     };
 }

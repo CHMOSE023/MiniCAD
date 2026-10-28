@@ -52,7 +52,16 @@ namespace
         void FillTriangle(const Math::Point3&, const Math::Point3&, const Math::Point3&, const Math::Color4&) override { ++fills; }
         void Wipe(const std::vector<Math::Point3>&) override { ++wipes; }
         void EmitText(const Math::Point3&, const std::string&, float, float, const Math::Color4&) override { ++texts; }
-        void EmitMText(const Math::Point3&, const std::string&, uint32_t, double, double, double, const Math::Color4&) override { ++mtexts; }
+        bool   textMirror = false, mirrorAtText = false;
+        int    mirrorToggles = 0;
+        double lastRotation = 0.0;
+        void ToggleTextMirror() override { textMirror = !textMirror; ++mirrorToggles; }
+        void EmitMText(const Math::Point3&, const std::string&, uint32_t, double, double rotation, double, const Math::Color4&) override
+        {
+            ++mtexts;
+            lastRotation = rotation;
+            mirrorAtText = textMirror;
+        }
         void EmitAlignedText(const Math::Point3&, const std::string&, uint32_t, double, double, int, int, double, const Math::Color4&) override { ++alignedTexts; }
         bool EmitImage(const std::string&, const std::array<Math::Point3, 4>& c) override
         {
@@ -142,6 +151,32 @@ int RunTransformSinkTests()
     sink.MarkViewDependent();
     Check(target.markViewDependent == 1,
           "变换 sink：MarkViewDependent 转发（缩放时需要重建视口内实体）");
+
+    // ══ ④ 镜像的块参照：文字基线方向经变换，转发前后各翻转一次 ══════════════
+    // 管综.dwg 右侧车位的"A""2600X6000"在镜像块里，AutoCAD 画成倒的；以前只取块的缩放与转角，画成正的
+    {
+        const double pi = 3.14159265358979323846;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+
+        RecSink t1;
+        TransformDrawSink mirrored(t1, Math::Mat4::Scale(Math::Vec3{ 1.0, -1.0, 1.0 }));   // 沿 X 轴镜像
+        mirrored.EmitMText({ 0, 0, 0 }, "M", 0, 10.0, pi / 6, 0.0, white);
+        Check(t1.mirrorAtText && !t1.textMirror && t1.mirrorToggles == 2 && near(t1.lastRotation, -pi / 6),
+              "变换 sink：镜像块里的文字翻转、画完翻回，30° 的基线画成 -30°");
+
+        RecSink t2;
+        TransformDrawSink outer(t2, Math::Mat4::Scale(Math::Vec3{ -1.0, 1.0, 1.0 }));
+        TransformDrawSink inner(outer, Math::Mat4::Scale(Math::Vec3{ 1.0, -1.0, 1.0 }));
+        inner.EmitMText({ 0, 0, 0 }, "M", 0, 10.0, 0.0, 0.0, white);
+        Check(!t2.mirrorAtText && t2.mirrorToggles == 4 && near(std::abs(t2.lastRotation), pi),
+              "变换 sink：两层镜像相互抵消（等于转 180°）");
+
+        RecSink t3;
+        TransformDrawSink rotated(t3, Math::Mat4::RotationZ(pi / 2));
+        rotated.EmitMText({ 0, 0, 0 }, "M", 0, 10.0, pi / 6, 0.0, white);
+        Check(!t3.mirrorAtText && t3.mirrorToggles == 0 && near(t3.lastRotation, 2 * pi / 3),
+              "变换 sink：不镜像时文字角度照旧加上块的转角");
+    }
 
     std::printf("变换 sink 用例失败：%d\n", g_failures);
     return g_failures;

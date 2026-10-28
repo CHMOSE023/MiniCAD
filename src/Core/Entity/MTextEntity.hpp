@@ -207,7 +207,7 @@ namespace MiniCAD
 
         // 近似包围盒:按附着点放置文字块。宽高由去码后的纯文本估算。
         // 宽度估算:按 UTF-8 码点计数,ASCII 0.6 字高、多字节(CJK)1.0 字高。
-        // 有旋转时绕绘制原点(首行底部,与 EmitMText 一致)旋转四角后取轴对齐盒。
+        // 有旋转时从绘制原点(首行底部,与 EmitMText 一致)按文字方向排开四角后取轴对齐盒。
         AABB GetBoundingBox() const override
         {
             double w = 0.0, h = 0.0;
@@ -217,16 +217,17 @@ namespace MiniCAD
             if (w <= 0.0) w = m_height;
             if (h <= 0.0) h = m_height;
 
-            const Math::Point3 tl = AnchorTopLeft(w, h);
-
             if (std::abs(m_rotation) < 1e-12)
+            {
+                const Math::Point3 tl = AnchorTopLeft(w, h);
                 return AABB(
                     { tl.x,     tl.y - h, tl.z },
                     { tl.x + w, tl.y,     tl.z }
                 );
+            }
 
-            // 旋转基准 = Draw 传给 EmitMText 的原点(左上角下移一个字高)
-            const Math::Point3 pivot{ tl.x, tl.y - m_height, tl.z };
+            // 基准 = Draw 传给 EmitMText 的原点
+            const Math::Point3 pivot = DrawOrigin(w, h);
             const double c = std::cos(m_rotation);
             const double s = std::sin(m_rotation);
 
@@ -264,10 +265,8 @@ namespace MiniCAD
             if (w <= 0.0) w = m_height;
             if (h <= 0.0) h = m_height;
 
-            // 按附着点求文字块左上角;EmitMText 原点在首行底部,故下移一个字高。
             // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等),只留下划线等装饰的开关。
-            const Math::Point3 tl = AnchorTopLeft(w, h);
-            const Math::Point3 drawPos{ tl.x, tl.y - m_height, tl.z };
+            const Math::Point3 drawPos = DrawOrigin(w, h);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
             sink.EmitMText(drawPos, StripInlineCodes(m_text, true), m_styleId, m_height, m_rotation, m_boxWidth, color);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
@@ -377,6 +376,17 @@ namespace MiniCAD
         }
 
         // 由附着点求文字块左上角(WCS,旋转前)。
+        // EmitMText 的原点(首行基线起点):按附着点求文字块左上角、下移一个字高,
+        // 这段偏移在文字自身的坐标系里,随文字绕插入点旋转(以前没转,旋转 180° 的文字差出两个字高)
+        Math::Point3 DrawOrigin(double w, double h) const
+        {
+            const Math::Point3 tl = AnchorTopLeft(w, h);
+            const double dx = tl.x - m_position.x, dy = tl.y - m_height - m_position.y;
+            const double c = std::cos(m_rotation), s = std::sin(m_rotation);
+            return { m_position.x + dx * c - dy * s, m_position.y + dx * s + dy * c, m_position.z };
+        }
+
+        // 未旋转时文字块的左上角
         Math::Point3 AnchorTopLeft(double w, double h) const
         {
             double tlx = m_position.x;

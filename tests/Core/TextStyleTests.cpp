@@ -210,6 +210,52 @@ int RunTextStyleTests()
         Check(ok, "宽度因子 2：字距加倍；倾斜 45°：竖笔画顶端右移一个字高");
     }
 
+    // ── 4b. 镜像的块参照里（ToggleTextMirror）文字沿基线上下翻转，下划线跟着到基线上方 ─────────
+    {
+        Scene s;
+        StrokeFont font;
+        std::vector<Vertex_P3_C4> lines, fills;
+        std::vector<Vertex_P3_C4_UV> tex;
+        Overlay ov;
+        FontResolver resolver = [&](uint32_t) { return ResolvedTextStyle{ &font, 1.0, 0.0 }; };
+        DrawContext ctx(lines, fills, tex, ov, s.GetLayerManager(), s.GetLineTypeTable(), 0.0, nullptr, resolver);
+        ctx.ToggleTextMirror();
+        ctx.EmitMText({ 0, 0, 0 }, std::string(1, kUnderlineToggle) + "a", 0, 10.0, 0.0, 0.0, Math::Color4::White());
+        ctx.ToggleTextMirror();
+        ctx.EmitMText({ 100, 0, 0 }, "a", 0, 10.0, 0.0, 0.0, Math::Color4::White());
+
+        // 竖笔画 (0,0)-(0,-10)，下划线 (0,2)-(10,2)；翻回后的字照常 (100,0)-(100,10)
+        const bool ok = lines.size() == 6 && Near(lines[1].pos.y, -10.0) && Near(lines[2].pos.y, 2.0) && Near(lines[3].pos.x, 10.0)
+                     && Near(lines[4].pos.x, 100.0) && Near(lines[5].pos.y, 10.0);
+        Check(ok, "镜像：字形与下划线沿基线上下翻转，翻回后照常");
+    }
+
+    // ── 4c. 旋转的多行文字：附着点的偏移随文字旋转。管综.dwg 车位块里转 180° 的 "A"（左上附着）
+    //        以前首行基线落在插入点下方一个字高，画到了 "电动车" 上，差出两个字高 ─────────
+    {
+        struct PosSink : IDrawSink
+        {
+            Math::Point3 pos{};
+            double rotation = 0.0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void EmitMText(const Math::Point3& p, const std::string&, uint32_t, double, double r, double, const Math::Color4&) override { pos = p; rotation = r; }
+            Math::Color4 GetLayerColor(LayerID) const override { return Math::Color4::White(); }
+            bool IsLayerVisible(LayerID) const override { return true; }
+        };
+        const double pi = 3.14159265358979323846;
+        PosSink sink;
+        MTextEntity a(1, 0, "A", Math::Point3(100, 200, 0), 10.0, pi, 0.0);   // 左上附着
+        a.Draw(sink, false, false);
+        const bool flipped = Near(sink.pos.x, 100.0) && Near(sink.pos.y, 210.0);
+        const AABB box = a.GetBoundingBox();
+        MTextEntity b(2, 0, "A", Math::Point3(100, 200, 0), 10.0, pi / 2, 0.0);
+        b.SetAttachment(MTextAttachment::BottomLeft);
+        b.Draw(sink, false, false);
+        const bool quarter = Near(sink.pos.x, 100.0) && Near(sink.pos.y, 200.0);   // 单行左下附着：原点就是插入点
+        Check(flipped && quarter && box.Min.y > 199.9 && box.Max.y < 220.1,
+              "旋转的多行文字：附着点偏移随文字旋转，转 180° 的左上附着画在插入点上方");
+    }
+
 #ifdef MINICAD_ASSET_DIR
     // ── 5. SHX 形名不当作画笔指令；缺失字体用自带字体替代 ─────────────
     {
