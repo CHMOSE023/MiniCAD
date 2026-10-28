@@ -638,6 +638,14 @@ namespace
 
         // 文字符号照旧铺出
         Check(fontCalls > 0, "极小缩放下符号仍被铺出");
+
+        // 但周期数超过 kMaxDashes（4000）时与普通虚线一样画成实线、不画符号：
+        // 每个周期一组字形，10 万个周期会把大图卡住
+        verts.clear();
+        const int callsBefore = fontCalls;
+        ctx.DrawLine({ 0, 0, 0 }, { 100000.0, 0, 0 }, Math::Color4::White(), false);
+        Check(verts.size() == 2, "周期数过多：退化为一条实线");
+        Check(fontCalls == callsBefore, "周期数过多：不画符号");
     }
 
     // ── 4. 导入：真实样例的 GAS_LINE ─────────────────────────────────

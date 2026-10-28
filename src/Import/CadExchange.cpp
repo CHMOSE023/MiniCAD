@@ -2297,8 +2297,9 @@ namespace MiniCAD
                     ld.SetStyleId(sid);
                     ld.SetArrowEnabled(e->ArrowHeadEnabled);
                     ld.SetPath(static_cast<LeaderPath>(e->PathType));
-                    // 组码 74 = 钩线（水平基线）方向：1 = 与尾段同向（即不画钩线）。
-                    ld.SetHookline(e->HookLineDirection != Dwg::HookLineDirection::Same);
+                    // 有没有钩线看组码 75（MiniDWG 未建模），组码 74 只是钩线方向，不能拿来判断；
+                    // 钩线那一段已经在顶点序列里，再按 LeaderEntity 的规则延伸一段就画重了
+                    ld.SetHookline(false);
                     ld.SetAnnotationType(static_cast<LeaderAnnotation>(e->CreationType));
                     if (e->TextHeight > 0) ld.SetTextHeight(e->TextHeight);
                     return ent;
@@ -3109,12 +3110,18 @@ namespace MiniCAD
                 return f;
             }
 
-            // 一条边界路径 → 一个边界环：相接的直线、圆弧、椭圆弧合成一条多段线边，样条单独成边
+            // 一条边界路径 → 一个边界环：相接的直线、圆弧、椭圆弧合成一条多段线边，样条单独成边。
+            // 相邻边不相接时用直线接上（AutoCAD 允许的间隙容差 HPGAPTOL 就是这样闭合的）；但边与边、
+            // 首尾之间的缺口大到与整条路径同一量级时，这条路径已经不是一个区域（常见于编辑后残留的
+            // "未闭合"路径，各段散落在图纸各处），AutoCAD 不画它，这里也整条丢弃——硬接起来会画出
+            // 横跨图纸的大块实心
             static HatchLoop ConvertHatchPath(const Dwg::HatchBoundaryPath& path, const OcsMap& map)
             {
                 HatchLoop loop;
                 std::vector<Math::Point3> pts;
                 std::vector<double>       bulges;
+                double maxGap = 0.0;
+                AABB   box    = AABB::Empty();
                 auto flush = [&]
                 {
                     if (pts.size() >= 2)
@@ -3123,15 +3130,20 @@ namespace MiniCAD
                     bulges.clear();
                 };
                 auto finite = [](const Math::Point3& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); };
-                // 追加一段（世界坐标、MiniCAD 凸度）；起点与上一段终点不重合时用直线接上
+                // 追加一段（世界坐标、MiniCAD 凸度）；起点与上一段终点不重合时用直线接上，并记下缺口
                 auto add = [&](const Math::Point3& a, const Math::Point3& b, double bulge)
                 {
                     if (!finite(a) || !finite(b) || !std::isfinite(bulge))
                         return;
+                    box.Expand(a);
+                    box.Expand(b);
                     if (pts.empty() || std::abs(pts.back().x - a.x) > 1e-9 || std::abs(pts.back().y - a.y) > 1e-9)
                     {
                         if (!pts.empty())
+                        {
+                            maxGap = std::max(maxGap, std::hypot(a.x - pts.back().x, a.y - pts.back().y));
                             bulges.push_back(0.0);
+                        }
                         pts.push_back(a);
                     }
                     bulges.push_back(bulge);
@@ -3226,7 +3238,12 @@ namespace MiniCAD
                         loop.Edges.push_back(HatchEdge::MakeSpline(std::move(spline)));
                     }
                 }
+                // 只由直线 / 圆弧 / 椭圆弧组成时，首尾的缺口也算（有样条边时首尾由样条接上，不检查）
+                if (loop.Edges.empty() && pts.size() >= 2)
+                    maxGap = std::max(maxGap, std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y));
                 flush();
+                if (box.Min.x <= box.Max.x && maxGap > 0.1 * std::hypot(box.Max.x - box.Min.x, box.Max.y - box.Min.y))
+                    return HatchLoop{};
                 return loop;
             }
 
@@ -4676,9 +4693,8 @@ namespace MiniCAD
                     d->Normal   = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
-                // SHAPE：几何字段全部写回（形名/形号在 MiniDWG 的 Shape 类里没有
-                // 建模位置，导入时也不携带，这里写空 ⇒ 另存后是一个"无形名"的形，
-                // 外观与导入时一致，不会多出/少掉实体）。
+                // SHAPE：几何字段交给 MiniDWG；形号没有建模，DWG / DXF 写出器都不写 SHAPE
+                //（只提示一次"SHAPE 实体未写出"），没有形号与形文件的 SHAPE 写出去 AutoCAD 也认不出
                 if (auto* s = dynamic_cast<const ShapeEntity*>(&e))
                 {
                     auto d = std::make_unique<Dwg::Shape>();
@@ -5083,8 +5099,9 @@ namespace MiniCAD
                 auto d = std::make_unique<Dwg::Tolerance>();
                 d->InsertionPoint = ToXYZ(s.GetInsertion());
                 d->Direction      = ToXYZ(s.GetDirection());
-                d->Normal         = { 0.0, 0.0, 1.0 };
+                d->Normal         = NormalOf(s);
                 d->Text           = s.GetText();
+                d->StyleHandle    = HandleOf<Dwg::DimensionStyle>(m_db.DimensionStyles(), "Standard");   // 导入时也只认标准样式
                 return d;
             }
 
@@ -5102,6 +5119,8 @@ namespace MiniCAD
                                                        : Dwg::HookLineDirection::Same;
                 d->CreationType      = static_cast<Dwg::LeaderCreationType>(s.GetAnnotationType());
                 d->TextHeight        = s.GetTextHeight();
+                d->Normal            = NormalOf(s);
+                d->StyleHandle       = HandleOf<Dwg::DimensionStyle>(m_db.DimensionStyles(), "Standard");
                 return d;
             }
 
@@ -5423,11 +5442,11 @@ namespace MiniCAD
                 if (width < 1e-9 || height < 1e-9)
                     return Skip(e);
 
-                // 只支持轴对齐的矩形（P1 左下、P2 右下、P4 左上）；斜着的退回为按长宽写
+                // P1→P2 为 U、P1→P4 为 V（导入时的逆过程），旋转、斜置的图像也原样写回
                 auto d = std::make_unique<Dwg::RasterImage>();
                 d->InsertPoint = ToXYZ(r.P1);
-                d->UVector     = { width, 0.0, 0.0 };
-                d->VVector     = { 0.0, height, 0.0 };
+                d->UVector     = ToXYZ(r.P2 - r.P1);
+                d->VVector     = ToXYZ(r.P4 - r.P1);
                 d->Size        = { 1.0, 1.0 };   // 像素数未知，写成 1×1（只影响坐标换算，不影响外观）
                 d->Flags       = Dwg::ImageDisplayFlags::ShowImage | Dwg::ImageDisplayFlags::ShowNotAlignedImage;
 

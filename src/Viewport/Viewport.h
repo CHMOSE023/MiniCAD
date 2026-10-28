@@ -40,6 +40,10 @@ namespace MiniCAD
         void Render(IRenderer& renderer, IRenderTarget& target, const ViewState& viewState);
         // 场景静态流（填充、线、文字）的当前版本是否都已由渲染后端持有：是则调用方可以释放 CPU 端的拼接流
         static bool SceneUploaded(const IRenderer& renderer, const ViewState& viewState);
+        // 同上，按版本号查询（Editor 在渲染前核对自己的场景缓冲还在不在后端里：多个视口轮流渲染时会被别的文档顶掉）。
+        // textured：场景里有纹理文字（要查文字槽位）；glyphs：有矢量字形实例（要查字形槽位，网格版本为 meshVersion）
+        static bool SceneUploaded(const IRenderer& renderer, uint64_t sceneVersion, uint64_t glyphVersion,
+                                  bool textured, bool glyphs, uint64_t meshVersion);
 
         void Resize(float width, float height);
 
@@ -95,7 +99,10 @@ namespace MiniCAD
         std::vector<Vertex_P3_C4> m_gridVerts;
         std::vector<Vertex_P3_C4> m_axisVerts;
         std::vector<Vertex_P3_C4> m_gizmoVerts;
-        uint64_t m_viewVersion = 0;   // 供 SubmitCached 判断 GPU 缓冲是否需重传
+        // 供 SubmitCached 判断 GPU 缓冲是否需重传。进程内全局分配（NextViewVersion）：几个视口共用一个渲染器时
+        //（文档拖出成独立窗口），两个视口的网格 / 坐标轴才不会因为版本号相同被当成同一份缓冲
+        uint64_t m_viewVersion = 0;
+        static uint64_t NextViewVersion();
         uint64_t m_viewKey     = 0;   // 相机状态+尺寸+开关的指纹
 
         // 夹点几何缓存：按夹点内容（位置、类型、悬停）的指纹缓存，没变时不重建、GPU 缓冲不重新上传

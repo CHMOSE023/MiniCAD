@@ -605,15 +605,13 @@ namespace MiniCAD
             // 由 Editor 放进动态流，缩放时从这个小列表直接重铺，不再调用实体的 Draw。
             // 有线宽时实体本来就随视图变化（线宽按像素烘焙），按像素取舍即可。
             //
-            // 例外：带符号的复杂线型（文字/形）不参与这套取舍 —— 符号是这类线型的识别特征，
-            // 任何稀疏化都会让它「看起来没了」（缩小时看着正常、放大反而只剩零星几个符号）。
-            // 它们的 Pattern 段数有限（一个周期至多几段），顶点风险由 kMaxDashes 兜底。
+            // 例外：带符号的复杂线型（文字/形）不按像素取舍，也不延迟 —— 符号是字形实例，在世界坐标里、
+            // 不随缩放变化，延迟的长虚线又带不了符号；它们照常进静态流，数量由 kMaxDashes 限住：
+            // 超过时与普通虚线一样退化为实线、不画符号（每个周期一组字形，几万个周期会卡住）。
             if (!continuous)
             {
                 const double cycle = rec->PatternLength * scale;
-                if (cycle <= 1e-12)                                     // 周期算不出来：纯算术保护，否则下面的循环死循环
-                    continuous = true;
-                else if (order.empty() && len / cycle > kMaxDashes)      // dash 数量过大：退化为实线显示
+                if (cycle <= 1e-12 || len / cycle > kMaxDashes)          // dash 数量过大：退化为实线显示
                     continuous = true;
                 else if (order.empty() && len / cycle > kStaticMaxDashes)
                 {
@@ -631,35 +629,6 @@ namespace MiniCAD
             if (continuous)
             {
                 EmitSolid(a, b, color, width);
-
-                // 连续线型也有可能带符号（周期算不出来时会退到这里），
-                // 符号必须照铺，否则 GAS_LINE 的 "GAS" 会一起消失。
-                if (!order.empty())
-                {
-                    // 每个符号在周期内的偏移：段起点累计 |Pattern| 长度
-                    const size_t nPat = rec->Pattern.size();
-                    std::vector<double> starts(nPat, 0.0);
-                    double acc = 0.0;
-                    for (size_t i = 0; i < nPat; ++i)
-                    {
-                        starts[i] = acc;
-                        acc += std::abs(rec->Pattern[i]);
-                    }
-                    const double cycleLen = std::max(rec->PatternLength * scale, 1e-12);
-                    const double pitch = (m_worldPerPixel > 0.0)
-                                           ? std::max(cycleLen, m_worldPerPixel * 40.0)
-                                           : cycleLen;
-                    size_t repeats = static_cast<size_t>(len / pitch) + 1;
-                    repeats = std::min<size_t>(repeats, std::max<size_t>(1, 512 / order.size()));
-                    for (size_t r = 0; r < repeats; ++r)
-                        for (const auto& o : order)
-                        {
-                            const double inCycle = starts[o.first] * scale;
-                            const double at = std::min(r * pitch + inCycle, len);
-                            EmitLineTypeSymbol(P(at), ux, uy, uz,
-                                               rec->Symbols[o.second], scale, color);
-                        }
-                }
                 return;
             }
 
@@ -778,8 +747,8 @@ namespace MiniCAD
         }
 
         // 在沿线位置 p 铺一个复杂线型的文字/符号。
-        //   ux,uy,uz = 线段单位方向;p = 符号锚点 = 该 Pattern 段的**起点**
-        //   （官方约定：X/Y 偏移相对段首，见 EmitStyled 里的说明）。
+        //   ux,uy,uz = 线段单位方向;p = 符号锚点 = 该 Pattern 段的**末尾**
+        //   （X/Y 偏移相对这一点，见 LayPattern 里的说明）。
         //   sy.OffsetX/Y 是组码 44/45 的偏移,在线的局部坐标系里:局部 x 沿线、局部 y 向上。
         //   sy.Rotation = 0 时符号随线转向(AutoCAD 默认);AbsoluteRotation 时相对世界 X 轴。
         void EmitLineTypeSymbol(const Math::Point3& p, double ux, double uy, double uz,

@@ -15,14 +15,14 @@ namespace MiniCAD
 	// 可选的挤出方向（210）和角度（50）。画成什么样完全由图纸级 $PDMODE 决定。
 	// 这就是为什么"CAD 里是 ⊕、我们画成一个十字"—— 我们从来没读过它。
 	//
-	// $PDMODE 是位组合（AutoCAD 的 PDMODE 定义）：
+	// $PDMODE 是位组合（与 AutoCAD / LibreCAD 一致）：
 	//     低 4 位选"基本形"：0=实心小点 1=什么都不画 2=十字 3=叉 4=竖线
 	//     bit5 (32) = 外加一个外接圆
 	//     bit6 (64) = 外加一个外接方
 	//     96 = 32|64 = 圆和方都加
 	// 例：34 = 32|2 = 圆 + 十字 = ⊕。
 	//
-	// 低 4 位取 0~4 之外时按"十字"处理。
+	// 低 4 位取 0~4 之外时按"十字"处理（与 LibreCAD 的 case _ 一致）。
 	inline constexpr bool PdmodeHasCircle(int mode) { return (mode & 32) != 0; }
 	inline constexpr bool PdmodeHasSquare(int mode) { return (mode & 64) != 0; }
 	inline constexpr int  PdmodeShape(int mode)     { return mode & 0x0F; }
@@ -80,7 +80,8 @@ namespace MiniCAD
 		// 调用方应退化成 1 像素的实心小点。
 		//
 		// $PDSIZE 语义：>0 = 世界单位；=0 = 视口高度的 5%；<0 = 视口高度的 |值|%。
-		// 后两种是**屏幕相对**的，需要 worldPerPixel 与视口像素高度：
+		// 后两种是**屏幕相对**的，需要 worldPerPixel 与视口像素高度。
+		// 与 LibreCAD / 用户 WkViewer 的 relativeWorldSize 完全一致：
 		//     pct = (pdsize == 0) ? 5.0 : -pdsize;
 		//     world = pct/100 × viewportHeightPx × worldPerPixel
 		static double ResolveHalfSize(double pdSize, double worldPerPixel, double viewportHeightPx)

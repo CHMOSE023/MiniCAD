@@ -510,6 +510,32 @@ int wmain(int argc, wchar_t** argv)
                             std::printf("    E c=(%g,%g) m=(%g,%g) r=%g %g..%g ccw=%d\n", el->Center.X, el->Center.Y, el->MajorAxisEndPoint.X, el->MajorAxisEndPoint.Y, el->RadiusRatio, el->StartAngle, el->EndAngle, int(el->CounterClockWise));
                 }
             }
+        // MINICAD_HATCHPATHS=1：另外打印模型空间里每个 HATCH 的全部边界（多段线边逐顶点，b 为凸度）
+        if (std::getenv("MINICAD_HATCHPATHS") && db->ModelSpace())
+            for (MiniDWG::Handle mh : db->ModelSpace()->Entities)
+                if (const auto* h = db->FindAs<MiniDWG::Hatch>(mh))
+                {
+                    std::printf("HATCHPATHS %llx %s solid=%d assoc=%d elev=%g normal=(%g,%g,%g) paths=%zu\n", (unsigned long long)mh,
+                                h->IsSolid ? "SOLID" : h->Pattern.Name.c_str(), int(h->IsSolid), int(h->IsAssociative), h->Elevation,
+                                h->Normal.X, h->Normal.Y, h->Normal.Z, h->Paths.size());
+                    for (const auto& p : h->Paths)
+                    {
+                        std::printf("  PATH flags=%d edges=%zu sources=%zu\n", int(p.Flags), p.Edges.size(), p.Entities.size());
+                        for (const auto& e : p.Edges)
+                            if (const auto* pl = dynamic_cast<const MiniDWG::HatchBoundaryPathPolyline*>(e.get()))
+                            {
+                                std::printf("    P closed=%d n=%zu", int(pl->IsClosed), pl->Vertices.size());
+                                for (const auto& v : pl->Vertices) std::printf(" (%.6g,%.6g b=%g)", v.X, v.Y, v.Z);
+                                std::printf("\n");
+                            }
+                            else if (const auto* l = dynamic_cast<const MiniDWG::HatchBoundaryPathLine*>(e.get()))
+                                std::printf("    L (%g,%g)-(%g,%g)\n", l->Start.X, l->Start.Y, l->End.X, l->End.Y);
+                            else if (const auto* a = dynamic_cast<const MiniDWG::HatchBoundaryPathArc*>(e.get()))
+                                std::printf("    A c=(%g,%g) r=%g %g..%g ccw=%d\n", a->Center.X, a->Center.Y, a->Radius, a->StartAngle, a->EndAngle, int(a->CounterClockWise));
+                            else
+                                std::printf("    edge type %d\n", int(e->GetType()));
+                    }
+                }
         for (const auto& [handle, object] : db->Objects())
             if (const auto* s = dynamic_cast<const MiniDWG::SortEntitiesTable*>(object.get()))
             {

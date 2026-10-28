@@ -520,8 +520,30 @@ namespace MiniGUI
         return e.handled;
     }
 
+    void UIContext::SetModalOwner(UIContext* owner, std::function<void()> onBlockedPress)
+    {
+        m_modalOwner     = owner != this ? owner : nullptr;
+        m_onBlockedPress = std::move(onBlockedPress);
+    }
+
+    bool UIContext::BlockPointerByOwner()
+    {
+        if (!IsBlockedByOwner())
+            return false;
+        if (m_capture || m_buttons)
+            PointerCancel();
+        if (m_pointerInside)
+        {
+            m_pointerInside = false;    // 悬停效果、提示清掉；所有者的对话框关掉后下一次移动恢复
+            UpdateHoverFromPointer();
+        }
+        return true;
+    }
+
     bool UIContext::PointerMove(Vec2 pos, uint8_t modifiers)
     {
+        if (BlockPointerByOwner())
+            return true;
         m_pointerPos    = pos;
         m_pointerInside = true;
         m_modifiers     = modifiers;
@@ -537,6 +559,12 @@ namespace MiniGUI
 
     bool UIContext::PointerDown(Vec2 pos, MouseButton button, uint8_t modifiers, uint32_t timeMs)
     {
+        if (BlockPointerByOwner())
+        {
+            if (m_onBlockedPress)
+                m_onBlockedPress();
+            return true;
+        }
         m_pointerPos    = pos;
         m_pointerInside = true;
         m_modifiers     = modifiers;
@@ -584,6 +612,8 @@ namespace MiniGUI
 
     bool UIContext::PointerUp(Vec2 pos, MouseButton button, uint8_t modifiers)
     {
+        if (BlockPointerByOwner())
+            return true;
         m_pointerPos = pos;
         m_modifiers  = modifiers;
         m_buttons   &= static_cast<uint8_t>(~ToMask(button));
@@ -614,6 +644,8 @@ namespace MiniGUI
 
     bool UIContext::PointerWheel(Vec2 pos, Vec2 delta, uint8_t modifiers)
     {
+        if (BlockPointerByOwner())
+            return true;
         m_pointerPos = pos;
         m_modifiers  = modifiers;
         HideTooltip(true);
@@ -778,6 +810,17 @@ namespace MiniGUI
     {
         while (Popup* top = GetTopPopup())
             ClosePopup(top);
+    }
+
+    void UIContext::RaisePopup(Popup* popup)
+    {
+        // 只调整顺序，不摘下再挂上（那会打断正在分发的事件、清掉焦点）
+        auto& children = m_popupLayer->m_children;
+        auto  it = std::find_if(children.begin(), children.end(), [popup](const auto& c) { return c.get() == popup; });
+        if (it == children.end() || it + 1 == children.end())
+            return;
+        std::rotate(it, it + 1, children.end());
+        RequestRedraw();
     }
 
     Popup* UIContext::GetTopPopup() const
@@ -1141,6 +1184,8 @@ namespace MiniGUI
 
     bool UIContext::KeyDown(Key key, uint8_t modifiers, bool repeat)
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->KeyDown(key, modifiers, repeat);
         m_modifiers = modifiers;
         HideTooltip(true);
 
@@ -1224,6 +1269,8 @@ namespace MiniGUI
 
     bool UIContext::KeyUp(Key key, uint8_t modifiers)
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->KeyUp(key, modifiers);
         m_modifiers = modifiers;
 
         if (key == Key::Alt && m_altAlone)
@@ -1245,6 +1292,8 @@ namespace MiniGUI
 
     bool UIContext::TextInput(std::string_view utf8)
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->TextInput(utf8);
         if (!m_focus || utf8.empty())
             return false;
 
@@ -1266,6 +1315,8 @@ namespace MiniGUI
 
     void UIContext::CompositionStart()
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->CompositionStart();
         m_composing = true;
         if (m_focus)
             m_focus->OnComposition(CompositionEvent{ CompositionEvent::Type::Start, {}, 0 });
@@ -1273,6 +1324,8 @@ namespace MiniGUI
 
     void UIContext::CompositionUpdate(std::string_view utf8, int caret)
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->CompositionUpdate(utf8, caret);
         m_composing = true;
         if (m_focus)
             m_focus->OnComposition(CompositionEvent{ CompositionEvent::Type::Update, std::string(utf8), caret });
@@ -1280,6 +1333,8 @@ namespace MiniGUI
 
     void UIContext::CompositionEnd()
     {
+        if (IsBlockedByOwner())
+            return m_modalOwner->CompositionEnd();
         if (!m_composing)
             return;
         m_composing = false;

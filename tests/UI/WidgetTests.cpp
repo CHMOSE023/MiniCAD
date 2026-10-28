@@ -139,6 +139,42 @@ TEST(Popup_ModalBlocksInputAndConfinesTab)
     (void)name;
 }
 
+TEST(Popup_OwnerModalBlocksOtherWindow)
+{
+    // 程序的另一个窗口（自己的上下文）：所有者开着模态对话框时不接受指针，按下时通知宿主（把所有者置前），按键与文字转给对话框
+    TestUI owner({ 600, 400 });
+    TestUI other({ 400, 300 });
+    int raised = 0, clicks = 0;
+    other.ui.SetModalOwner(&owner.ui, [&] { ++raised; });
+    Node* c = other.Add();
+    c->SetLayoutStyle(StartAligned());
+    Button*  button = c->AddChild<Button>("次窗口按钮", [&] { ++clicks; });
+    TextBox* box    = c->AddChild<TextBox>();
+    other.Layout();
+    box->Focus();
+    CHECK(!other.ui.IsBlockedByOwner());
+
+    Dialog* d = owner.ui.OpenPopup<Dialog>("所有者的对话框");
+    TextBox* name = d->GetBody()->AddChild<TextBox>();
+    d->AddButton("取消", [d] { d->Close(); }, DialogButtonRole::Cancel);
+    owner.Layout();
+    CHECK(other.ui.IsBlockedByOwner());
+
+    other.Click(CenterOf(button));
+    CHECK(clicks == 0 && raised == 1);
+    CHECK(other.ui.GetFocus() == box && other.ui.GetHovered() == nullptr);     // 焦点不动，悬停清掉
+
+    // 字符进对话框里的输入框，不进次窗口里有焦点的那个；Esc 给对话框（关掉）
+    name->Focus();
+    other.ui.TextInput("ab");
+    CHECK(name->GetText() == "ab" && box->GetText().empty());
+    other.Key(Key::Escape);
+    CHECK(!d->IsOpen() && !other.ui.IsBlockedByOwner());
+
+    other.Click(CenterOf(button));
+    CHECK(clicks == 1 && raised == 1);
+}
+
 TEST(Popup_CloseFromOwnHandlerIsSafe)
 {
     TestUI t({ 400, 300 });

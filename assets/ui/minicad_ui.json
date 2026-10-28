@@ -13,6 +13,9 @@
 //   通用属性还有 position（absolute）+ left / top / right / bottom，passThrough（空白处点击穿透到下面）
 // - dock：停靠区，root 为布局树（split: row / column，tabs: 面板列表，size: 尺寸）。
 //   用户拖动后的布局保存在 %LOCALAPPDATA%\MiniCAD\layout.json，启动时优先使用；"视图 > 面板 > 重置面板布局"恢复这里的默认布局
+// - layouts.document：文档标签拖出主窗口后的独立窗口（桌面版），格式同 layout，命令、菜单、功能区与主窗口共用；
+//   能用的宿主面板：canvas、documents（视图方块、导航条、命令行）、doctabs、layerbar、properties、layers、nodes、statusbar
+//   （都是这个窗口自己的一份，显示它的文档），没有起始页；停靠区的布局不保存
 {
   "commands": {
     "draw.line": { "tooltip": "指定两点绘制直线段，Esc 结束" },
@@ -270,5 +273,66 @@
         ]
       }
     ]
+  },
+
+  // 文档窗口：标题栏（“文件”菜单、快速访问、文档标签、窗口按钮）、功能区、绘图区与停靠面板、状态栏
+  "layouts": {
+    "document": {
+      "type": "column",
+      "children": [
+        {
+          "type": "titlebar",
+          "icon": "app.png",
+          "shrink": 0,
+          "children": [
+            { "type": "menubar", "mnemonicSuffix": false, "compact": true, "shrink": 0 },
+            { "type": "toolbar", "id": "quick", "iconSize": 18, "padding": [ 0, 3, 4, 3 ] },
+            { "type": "separator", "height": 16 },
+            { "type": "panel", "name": "doctabs", "grow": 1 }
+          ]
+        },
+        {
+          "type": "column",
+          "grow": 1,
+          "children": [
+            { "type": "panel", "name": "canvas", "position": "absolute", "left": 0, "top": 0, "right": 0, "bottom": 0 },
+            {
+              "type": "column",
+              "position": "absolute", "left": 0, "top": 0, "right": 0, "bottom": 0,
+              "padding": 6,
+              "gap": 6,
+              "passThrough": true,
+              "children": [
+                { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1 } ] },
+                // 停靠区：同主窗口，documents 是透明的“洞”（视图方块、导航条、底部居中的命令行），右侧是这个窗口自己的特性、图层
+                {
+                  "type": "dock",
+                  "id": "main",
+                  "panels": [ "nodes" ],
+                  "grow": 1,
+                  "gap": 6,
+                  "floating": true,
+                  "root": {
+                    "split": "row",
+                    "children": [
+                      { "tabs": [ { "panel": "documents", "header": false, "closable": false } ] },
+                      {
+                        "split": "column",
+                        "size": 300,
+                        "children": [
+                          { "tabs": [ "properties" ] },
+                          { "tabs": [ "layers" ], "size": 240 }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                { "type": "panel", "name": "statusbar", "shrink": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   }
 }

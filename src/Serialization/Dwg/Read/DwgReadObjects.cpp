@@ -1029,7 +1029,7 @@ namespace MiniDWG::DwgRead
         DwgBitReader& r = m_objReader;
         if (R13_14Only())
         {
-            // 顺序：DIMTIH、DIMTOH、DIMSE1、DIMSE2（ACadSharp 中这四项错位，此处已按实测位流更正）
+            // 顺序按 ODA 规范（DIMTIH、DIMTOH、DIMSE1、DIMSE2），ACadSharp 中这四项错位
             d->GenerateTolerances = r.ReadBit();
             d->LimitsGeneration = r.ReadBit();
             d->TextInsideHorizontal = r.ReadBit();

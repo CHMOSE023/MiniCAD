@@ -1,4 +1,5 @@
 #include "Viewport.h"
+#include <atomic>
 #include "Render/VertexTypes.hpp"
 #include "Camera.h"
 #include <algorithm>
@@ -94,11 +95,24 @@ namespace MiniCAD
     bool Viewport::SceneUploaded(const IRenderer& renderer, const ViewState& viewState)
     {
         // 没有字体纹理时文字流不提交，也就不需要保留
-        return renderer.IsCached(kSlotSceneFill, viewState.SceneVersion, false)
-            && renderer.IsCached(kSlotScene, viewState.SceneVersion, false)
-            && renderer.IsCached(kSlotScenePoint, viewState.SceneVersion, false)
-            && (!viewState.FontTexture || renderer.IsCached(kSlotSceneText, viewState.SceneVersion, true))
-            && (viewState.Glyphs.empty() || renderer.IsGlyphCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes.Version));
+        return SceneUploaded(renderer, viewState.SceneVersion, viewState.SceneGlyphVersion,
+                             viewState.FontTexture != nullptr, !viewState.Glyphs.empty(), viewState.GlyphMeshes.Version);
+    }
+
+    bool Viewport::SceneUploaded(const IRenderer& renderer, uint64_t sceneVersion, uint64_t glyphVersion,
+                                 bool textured, bool glyphs, uint64_t meshVersion)
+    {
+        return renderer.IsCached(kSlotSceneFill, sceneVersion, false)
+            && renderer.IsCached(kSlotScene, sceneVersion, false)
+            && renderer.IsCached(kSlotScenePoint, sceneVersion, false)
+            && (!textured || renderer.IsCached(kSlotSceneText, glyphVersion, true))
+            && (!glyphs || renderer.IsGlyphCached(kSlotGlyph, glyphVersion, meshVersion));
+    }
+
+    uint64_t Viewport::NextViewVersion()
+    {
+        static std::atomic<uint64_t> counter{ 0 };
+        return ++counter;
     }
 
     // 应用层每帧调用：提供自己创建的 renderer 和 renderTarget。
@@ -140,6 +154,33 @@ namespace MiniCAD
         RefreshViewGeometry(viewState);
         renderer.SetLightBackground(m_lightBackground);
 
+        // 追加段：拼接流释放后新增实体的静态顶点，接到后端缓冲的末尾（后端据 (slot, 基础版本) 找缓冲）。
+        // 接不上（后端没有那个版本、显存不够）这一帧按基础版本画旧内容；SceneUploaded 随之为假，
+        // 应用层请编辑器下一帧全量重新拼接
+        uint64_t sceneVersion = viewState.SceneVersion;
+        if (viewState.SceneAppendActive && !renderer.IsCached(kSlotScene, viewState.SceneVersion, false))
+        {
+            // 先原地改写（修改 / 删除的实体那一段），再追加、升级版本
+            bool ok = true;
+            for (const ViewState::ScenePatch& p : viewState.ScenePatches)
+            {
+                const uint32_t slot = p.Stream == 0 ? kSlotScene : p.Stream == 1 ? kSlotSceneFill : kSlotScenePoint;
+                const auto&    src  = p.Stream == 0 ? viewState.ScenePatchLines : p.Stream == 1 ? viewState.ScenePatchFills : viewState.ScenePatchPoints;
+                if (p.First + p.Count > src.size() ||
+                    !renderer.WriteCached(slot, viewState.SceneAppendBase, p.Offset, src.subspan(p.First, p.Count)))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            const bool appended = ok &&
+                renderer.AppendCached(kSlotScene,      viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppend) &&
+                renderer.AppendCached(kSlotSceneFill,  viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppendFill) &&
+                renderer.AppendCached(kSlotScenePoint, viewState.SceneAppendBase, viewState.SceneVersion, viewState.SceneAppendPoints);
+            if (!appended)
+                sceneVersion = viewState.SceneAppendBase;
+        }
+
         auto drawStatic = [&]
         {
             if (plan)
@@ -165,19 +206,19 @@ namespace MiniCAD
             // 场景几何走缓存提交：版本未变时 GPU 缓冲直接复用，不重新上传
             // 点图元画在线之前、填充之后：图案填充的点（POINTLIST，恒定 1 屏幕像素）
             // 与场景线同版本，不随视图变化
-            renderer.SubmitCached(kSlotScenePoint, viewState.SceneVersion, viewState.ScenePoints, vp, PrimitiveType::Point, true, true);
-            renderer.SubmitCached(kSlotSceneFill, viewState.SceneVersion,    viewState.SceneFill,    vp, PrimitiveType::Triangle, true, true);
+            renderer.SubmitCached(kSlotScenePoint, sceneVersion, viewState.ScenePoints, vp, PrimitiveType::Point, true, true);
+            renderer.SubmitCached(kSlotSceneFill,  sceneVersion, viewState.SceneFill,   vp, PrimitiveType::Triangle, true, true);
             renderer.SubmitCached(kSlotDynFill,   viewState.SceneDynVersion, viewState.SceneDynFill, vp, PrimitiveType::Triangle, true, true);
             // 文字字形（实例化）：三角形在填充之后、线之前，轮廓线在线之后
-            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
+            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneGlyphVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
                                         vp, PrimitiveType::Triangle, true, true);
-            renderer.SubmitCached(kSlotScene,     viewState.SceneVersion,    viewState.Scene,        vpLines, PrimitiveType::Line, true, true);
+            renderer.SubmitCached(kSlotScene,     sceneVersion,              viewState.Scene,        vpLines, PrimitiveType::Line, true, true);
             renderer.SubmitCached(kSlotDyn,       viewState.SceneDynVersion, viewState.SceneDyn,     vpLines, PrimitiveType::Line, true, true);
             renderer.SubmitCached(kSlotSilhouette, viewState.ShadedVersion,  viewState.Silhouettes,  vpSilhouettes, PrimitiveType::Line, true, true);
-            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
+            renderer.SubmitGlyphsCached(kSlotGlyph, viewState.SceneGlyphVersion, viewState.GlyphMeshes, viewState.Glyphs, viewState.GlyphBatches,
                                         vpLines, PrimitiveType::Line, true, true);
             if (viewState.FontTexture)
-                renderer.SubmitTexturedCached(kSlotSceneText, viewState.SceneVersion, viewState.TextScene, vp, viewState.FontTexture, false, true);
+                renderer.SubmitTexturedCached(kSlotSceneText, viewState.SceneGlyphVersion, viewState.TextScene, vp, viewState.FontTexture, false, true);
         };
 
         // ── 缓存层：键 = 场景版本 + 视图版本（相机 / 尺寸 / 开关）+ 字体纹理 ──
@@ -198,6 +239,7 @@ namespace MiniCAD
             key = HashCombine(key, &viewState.SceneVersion, sizeof(viewState.SceneVersion));
             key = HashCombine(key, &viewState.SceneDynVersion, sizeof(viewState.SceneDynVersion));
             key = HashCombine(key, &viewState.GlyphMeshes.Version, sizeof(viewState.GlyphMeshes.Version));
+            key = HashCombine(key, &viewState.SceneGlyphVersion, sizeof(viewState.SceneGlyphVersion));
             key = HashCombine(key, &m_viewVersion, sizeof(m_viewVersion));
             key = HashCombine(key, &viewState.FontTexture, sizeof(viewState.FontTexture));
             key = HashCombine(key, &m_lightBackground, sizeof(m_lightBackground));
@@ -299,7 +341,7 @@ namespace MiniCAD
             return;
 
         m_viewKey = k;
-        ++m_viewVersion;
+        m_viewVersion = NextViewVersion();
 
         m_gridVerts.clear();
         m_axisVerts.clear();

@@ -33,6 +33,9 @@ namespace MiniGUI
         // 返回是否匹配并执行了某个快捷键
         bool Process(Key key, uint8_t modifiers, bool repeat, bool textInputActive);
 
+        // 宿主的额外条件：返回 false 时快捷键都不生效（例如程序的另一个窗口开着模态对话框）
+        void SetGate(std::function<bool()> gate) { m_gate = std::move(gate); }
+
         // 生命周期令牌：注册快捷键的一方（命令注册表）可能比快捷键表活得久，注销前用它判断表是否还在
         std::weak_ptr<void> GetLifetimeToken() const { return m_alive; }
 
@@ -47,6 +50,7 @@ namespace MiniGUI
         };
 
         std::vector<Entry> m_entries;
+        std::function<bool()> m_gate;
         Id                 m_nextId = 1;
         std::shared_ptr<void> m_alive = std::make_shared<int>(0);
     };

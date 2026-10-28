@@ -8,6 +8,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/ShapeEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -51,6 +52,14 @@ namespace
     {
         int n = 0;
         scene.ForEachObject([&](const Object&) { ++n; });
+        return n;
+    }
+
+    // SHAPE 读得进来但不写出（形号未建模），往返比较实体数时扣掉
+    int CountShapes(const Scene& scene)
+    {
+        int n = 0;
+        scene.ForEachObject([&](const Object& o) { if (o.IsKindOf<ShapeEntity>()) ++n; });
         return n;
     }
 
@@ -351,6 +360,52 @@ int RunCadExchangeTests()
               "关闭的真彩图层读回后保持关闭");
     }
 
+    // 边界路径里各段散落在图纸各处（编辑后残留的"未闭合"路径，组码 92 带 32）：AutoCAD 不画这条路径，
+    // 读入时整条丢弃，不能用直线硬接成横跨图纸的大块实心；间隙不大的路径（HPGAPTOL 式的缺口）照常接上
+    {
+        const std::string dxf =
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n"
+            "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n1\n"
+            "0\nLAYER\n2\n0\n70\n0\n62\n7\n6\nCONTINUOUS\n0\nENDTAB\n0\nENDSEC\n"
+            "0\nSECTION\n2\nENTITIES\n"
+            "0\nHATCH\n5\nBG\n8\n0\n100\nAcDbEntity\n100\nAcDbHatch\n"
+            "10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n1\n2\nSOLID\n70\n1\n71\n0\n91\n3\n"
+            // 环 1：正常的闭合方块 (0,0)-(10,10)
+            "92\n1\n93\n4\n"
+            "72\n1\n10\n0\n20\n0\n11\n10\n21\n0\n"
+            "72\n1\n10\n10\n20\n0\n11\n10\n21\n10\n"
+            "72\n1\n10\n10\n20\n10\n11\n0\n21\n10\n"
+            "72\n1\n10\n0\n20\n10\n11\n0\n21\n0\n"
+            "97\n0\n"
+            // 环 2：未闭合，三段互不相连、相距上万单位
+            "92\n33\n93\n3\n"
+            "72\n1\n10\n20\n20\n0\n11\n20\n21\n5\n"
+            "72\n1\n10\n50000\n20\n-80000\n11\n50300\n21\n-80000\n"
+            "72\n1\n10\n-40000\n20\n60000\n11\n-40000\n21\n60200\n"
+            "97\n0\n"
+            // 环 3：未闭合但缺口很小（右边缺 1 个单位）的方块 (30,0)-(40,10)
+            "92\n33\n93\n4\n"
+            "72\n1\n10\n30\n20\n0\n11\n40\n21\n0\n"
+            "72\n1\n10\n40\n20\n0\n11\n40\n21\n9\n"
+            "72\n1\n10\n40\n20\n10\n11\n30\n21\n10\n"
+            "72\n1\n10\n30\n20\n10\n11\n30\n21\n0\n"
+            "97\n0\n"
+            "75\n0\n76\n1\n98\n0\n"
+            "0\nENDSEC\n0\nEOF\n";
+        Scene scene;
+        const bool ok = ImportCad(std::vector<std::uint8_t>(dxf.begin(), dxf.end()), scene);
+        const auto* hatch = ok ? FindOne<HatchEntity>(scene) : nullptr;
+        Check(hatch != nullptr, "带散落边界路径的 HATCH 能导入");
+        if (hatch)
+        {
+            const auto box = hatch->GetBoundingBox();
+            std::printf("       环 %zu 个，范围 (%.1f,%.1f)-(%.1f,%.1f)\n", hatch->GetLoops().size(), box.Min.x, box.Min.y, box.Max.x, box.Max.y);
+            Check(hatch->GetLoops().size() == 2, "散落的未闭合边界路径被丢弃，其余两个环保留");
+            Check(Near(box.Min.x, 0) && Near(box.Min.y, 0) && Near(box.Max.x, 40) && Near(box.Max.y, 10),
+                  "填充范围只有两个方块（缺口小的环接上，散落的环没有撑大范围）");
+        }
+    }
+
     // 法向为 -Z 的二维填充（SOLID）：角点是 OCS 坐标，读入后换到世界坐标（左右镜像）
     for (const auto kind : { CadFileKind::Dwg, CadFileKind::Dxf })
     {
@@ -383,8 +438,8 @@ int RunCadExchangeTests()
 
         const auto out = ExportCad(scene, CadFileKind::Dwg);
         Scene again;
-        Check(!out.empty() && ImportCad(out, again, nullptr) && CountAll(again) == CountAll(scene),
-              (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变").c_str());
+        Check(!out.empty() && ImportCad(out, again, nullptr) && CountAll(again) == CountAll(scene) - CountShapes(scene),
+              (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变（SHAPE 不写出）").c_str());
     }
 
 #ifdef MINICAD_TCH_SAMPLE_DIR

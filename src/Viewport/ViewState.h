@@ -69,6 +69,28 @@ namespace MiniCAD
         // 场景顶点版本号：每次重建自增。渲染后端据此判断 GPU 缓冲是否需要
         // 重新上传（版本未变直接复用，避免每帧全量上传）。
         uint64_t                         SceneVersion = 0;
+        // 场景静态流的追加段：拼接流交给渲染后端释放之后新增的实体，CPU 端只有它们的顶点（Scene / SceneFill /
+        // ScenePoints 为空）。后端把这三段接到 (slot, SceneAppendBase) 缓冲的末尾并升级为 SceneVersion
+        //（IRenderer::AppendCached）；接不上时按 SceneAppendBase 画旧内容，应用层再请编辑器重新拼接
+        bool                             SceneAppendActive = false;
+        uint64_t                         SceneAppendBase   = 0;
+        std::span<const Vertex_P3_C4>    SceneAppend;
+        std::span<const Vertex_P3_C4>    SceneAppendFill;
+        std::span<const Vertex_P3_C4>    SceneAppendPoints;
+        // 原地改写段（与追加段同一帧、同一基础版本）：修改 / 删除 / 拖动中的实体在静态流里的那一段改成新顶点或透明的
+        // 退化图元（IRenderer::WriteCached），按顺序先写再追加。Stream：0 线、1 填充、2 点；顶点在 ScenePatchLines /
+        // ScenePatchFills / ScenePatchPoints 的 [First, First + Count)，写到缓冲的 Offset 处
+        struct ScenePatch
+        {
+            uint32_t Stream = 0;
+            size_t   Offset = 0;
+            size_t   First  = 0;
+            size_t   Count  = 0;
+        };
+        std::span<const ScenePatch>      ScenePatches;
+        std::span<const Vertex_P3_C4>    ScenePatchLines;
+        std::span<const Vertex_P3_C4>    ScenePatchFills;
+        std::span<const Vertex_P3_C4>    ScenePatchPoints;
         // 动态场景流：随视图变化的线与填充（按像素等宽的线宽、按像素画的点样式；虚线在世界坐标里，进静态流），缩放时只重建这一路，画在静态流之后
         std::span<const Vertex_P3_C4>    SceneDyn;
         std::span<const Vertex_P3_C4>    SceneDynFill;
@@ -81,10 +103,12 @@ namespace MiniCAD
         // 场景范围（可见实体的包围盒）：三维视图按它设置深度范围；为空时按相机缩放估计
         AABB                             SceneBounds = AABB::Empty();
 
-        // 场景文字的字形实例（按网格排序，版本同 SceneVersion）与字形网格库
+        // 场景文字的字形实例（按网格排序）与字形网格库、纹理文字顶点（TextScene）的版本：
+        // 只有文字变化时才自增，新画一条线不必把几十万个字形实例重新上传
         std::span<const GlyphInstance>   Glyphs;
         std::span<const GlyphBatch>      GlyphBatches;
         GlyphMeshView                    GlyphMeshes;
+        uint64_t                         SceneGlyphVersion = 0;
 
         // 选中流：选中/拖动中实体按选中态绘制，叠加在场景之上。
         // 仅在选择集变化或拖动时重建，选中不再触发全场景顶点重建。

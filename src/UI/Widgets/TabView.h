@@ -16,7 +16,10 @@ namespace MiniGUI
     // - "+" 按钮新建（OnNewTabRequested）；Ctrl+W / Ctrl+F4 关闭当前页；Ctrl+Tab / Ctrl+Shift+Tab 切换
     // - 右键标签：关闭、关闭其他、关闭右侧、关闭全部（可追加自定义项）
     // - 拖动标签调整顺序；标签太多时先等比缩窄，再放不下就滚动标签条，并用"⌄"按钮列出全部标签
-    // - 内容节点可以为空：只用标签条（例如多个文档共用一个 CAD 视口），此时把高度设为 kStripHeight 即可
+    // - 设置了 OnTabDragOut 时，标签一拖离标签条（上下超过 kDragOutDistance）就回调宿主（主窗口把文档拖出成独立窗口）；
+    //   宿主接手后本控件保持捕获，把之后的移动 / 松开经 OnTornTabDrag 转给宿主（窗口跟着光标走，像 Visual Studio）；
+    //   拖回时宿主用 DropIndexAt 找落点、SetDropIndicator 画插入标记
+// - 内容节点可以为空：只用标签条（例如多个文档共用一个 CAD 视口），此时把高度设为 kStripHeight 即可
     class TabView : public Node
     {
     public:
@@ -57,7 +60,8 @@ namespace MiniGUI
         // 标题栏样式（放进无边框窗口的标题栏，SolidCraft 式）：不画标签条底色和底线，标签画成圆角块
         void SetBarStyle(bool bar) { m_barStyle = bar; Invalidate(); }
         bool IsEmptyStripAt(Vec2 local) const { int tab; return HitAt(local, tab) == Hit::None; }   // 标签条空白处（标题栏里可拖动窗口）
-        void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged = std::move(cb); }
+        Rect GetTabRect(int index) const;          // 标签的位置（局部坐标，布局之后有效；越界为空矩形）。自测用
+void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged = std::move(cb); }
         void SetOnCloseRequested(std::function<void(int)> cb)   { m_onCloseRequested = std::move(cb); }
         void SetOnNewTabRequested(std::function<void()> cb)     { m_onNewTabRequested = std::move(cb); }
         void SetOnTabMoved(std::function<void(int from, int to)> cb) { m_onTabMoved = std::move(cb); }
@@ -65,7 +69,22 @@ namespace MiniGUI
         // 整个替换标签右键菜单（不要默认的「关闭…」几项，例如标签本身不能关闭时）；设置后忽略 Extra
         void SetTabContextMenu(std::function<std::vector<MenuItem>(int)> cb) { m_contextMenu = std::move(cb); }
 
-        static constexpr float kStripHeight = 34.0f;
+        // 标签拖到标签条之外（上下超过 kDragOutDistance）时回调，windowPos 是当时的指针位置（窗口坐标）。
+        // 返回 true 表示宿主接手（回调里可以移除该标签）：本控件不再排序，保持捕获，之后的移动、松开与取消经 OnTornTabDrag 上报；
+        // 返回 false 时标签留在条里，拖回条内照常排序。没设置时标签只能在条内拖动排序
+        enum class TornDragPhase { Move, End, Cancel };
+        void SetOnTabDragOut(std::function<bool(int index, Vec2 windowPos)> cb) { m_onTabDragOut = std::move(cb); }
+        void SetOnTornTabDrag(std::function<void(TornDragPhase, Vec2 windowPos)> cb) { m_onTornTabDrag = std::move(cb); }
+        bool IsDraggingOut() const { return m_dragOut; }    // 正拖着标签在标签条之外，宿主没接手（测试用）
+        bool IsTornDragging() const { return m_torn; }      // 宿主接手了拖出的标签，拖动还没结束（测试用）
+// 外部拖回：窗口坐标落在标签条（上下各放宽 kDragOutDistance）上时返回放下后的标签序号（0..GetTabCount()），否则 -1
+        int  DropIndexAt(Vec2 windowPos) const;
+        // 画落点的插入标记（DropIndexAt 的结果；-1 清除）
+        void SetDropIndicator(int index);
+        int  GetDropIndicator() const { return m_dropIndicator; }
+
+        static constexpr float kStripHeight     = 34.0f;
+        static constexpr float kDragOutDistance = 24.0f;
 
         // 自然宽度取各标签的理想宽度之和（只用标签条、放在一行里和别的控件并排时用，例如状态栏左侧的模型 / 布局标签）
         void  SetFitToTabs(bool fit) { m_fitToTabs = fit; InvalidateLayout(); }
@@ -117,11 +136,16 @@ namespace MiniGUI
         int   m_pressTab   = -1;
         float m_pressX     = 0.0f;
         bool  m_dragging   = false;
+        bool  m_dragOut    = false;     // 指针已拖到标签条之外，宿主没接手
+        bool  m_torn       = false;     // 宿主接手了拖出的标签：移动 / 松开转给 OnTornTabDrag
 
         bool                     m_barStyle = false;
         bool                     m_fitToTabs = false;
+        int                      m_dropIndicator = -1;
         std::function<void(int)> m_onSelectionChanged;
-        std::function<void(int)> m_onCloseRequested;
+        std::function<bool(int, Vec2)> m_onTabDragOut;
+        std::function<void(TornDragPhase, Vec2)> m_onTornTabDrag;
+std::function<void(int)> m_onCloseRequested;
         std::function<void()>    m_onNewTabRequested;
         std::function<void(int, int)> m_onTabMoved;
         std::function<std::vector<MenuItem>(int)> m_contextExtra;

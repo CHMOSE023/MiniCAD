@@ -45,9 +45,12 @@ namespace MiniCAD
         return *h;
     }
 
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateNodePanel()
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateNodePanel(ViewChrome& c)
     {
         using namespace MiniGUI;
+        // 这个窗口的节点编辑器：画它显示的文档的节点图（在窗口里按下时它已成为当前文档，求值、预览、烘焙都对当前文档）
+        ViewChrome* pc = &c;
+        PanelSet*   pp = c.panels.get();
         auto panel = std::make_unique<Panel>(Theme::PanelAlt);
         LayoutStyle ps;
         ps.direction = FlexDirection::Column;
@@ -73,23 +76,24 @@ namespace MiniCAD
         // 顺序按常见软件的习惯：文件（打开 / 保存 / 示例）→ 编辑（添加节点、参数）→ 视图 → 输出（烘焙），会删掉全部内容的“清空”放最后
         // 菜单挂在按钮下方：按钮在 addTool 返回后才有，经共享的指针取到
         auto fileButton = std::make_shared<Button*>(nullptr);
-        *fileButton = addTool("文件", "打开 / 保存节点图文件（.mcnode）：在不同图纸之间复用节点图；节点图本身也随图纸保存", [this, fileButton]
+        *fileButton = addTool("文件", "打开 / 保存节点图文件（.mcnode）：在不同图纸之间复用节点图；节点图本身也随图纸保存", [this, pp, fileButton]
         {
-            if (!m_nodeEditor || !*fileButton)
+            if (!pp->nodeEditor || !*fileButton)
                 return;
-            const bool selected = !m_nodeEditor->GetSelection().empty();
+            const bool selected = !pp->nodeEditor->GetSelection().empty();
             std::vector<MenuItem> items;
             items.emplace_back("打开节点图…", [this] { OpenNodeGraphFile(); });
             items.push_back(MenuItem::Separator());
             items.emplace_back("保存节点图…", [this] { SaveNodeGraphFile(false); });
             items.push_back(std::move(MenuItem("保存选中的节点…", [this] { SaveNodeGraphFile(true); }).Enabled(selected)));
             const Rect r = (*fileButton)->GetScreenBounds();
-            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+            // 菜单开在按钮所在的窗口里（节点面板可能浮出成独立窗口）
+            ShowContextMenu((*fileButton)->GetContext() ? *(*fileButton)->GetContext() : *m_ui, std::move(items), { r.min.x, r.max.y });
         });
         auto exampleButton = std::make_shared<Button*>(nullptr);
-        *exampleButton = addTool("示例", "插入示例节点图（随程序发布的 .mcnode 文件，在 nodes/examples 目录）；与已有参数重名的参数会自动改名", [this, exampleButton]
+        *exampleButton = addTool("示例", "插入示例节点图（随程序发布的 .mcnode 文件，在 nodes/examples 目录）；与已有参数重名的参数会自动改名", [this, pp, exampleButton]
         {
-            if (!m_nodeEditor || !*exampleButton)
+            if (!pp->nodeEditor || !*exampleButton)
                 return;
             // 示例是资源目录里的节点图文件，每次打开菜单时读索引（改了文件不用重启）；
             // 没有实体内核时（配置 -DMINICAD_WITH_SOLID=OFF 的构建），用到三维实体 / 曲面的示例禁用
@@ -102,13 +106,13 @@ namespace MiniCAD
                     items.push_back(MenuItem::Separator());
                 group = e.Group;
                 const bool usable = kernel || !e.NeedsKernel;
-                MenuItem item(usable ? e.Name : e.Name + "（需要实体内核）", [this, e]
+                MenuItem item(usable ? e.Name : e.Name + "（需要实体内核）", [this, pp, e]
                 {
                     const std::string text = Nodes::ReadTextFile(e.Path);
-                    if (!m_nodeEditor)
+                    if (!pp->nodeEditor)
                         return;
-                    m_nodeEditor->Focus();
-                    const bool ok = m_nodeEditor->InsertGraph(text);
+                    pp->nodeEditor->Focus();
+                    const bool ok = pp->nodeEditor->InsertGraph(text);
                     m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + e.Name + "——" + e.Description : "示例：读不出 " + e.Path);
                 });
                 items.push_back(std::move(item.Enabled(usable)));
@@ -116,69 +120,69 @@ namespace MiniCAD
             if (items.empty())
                 items.push_back(std::move(MenuItem("（没有找到示例文件）").Enabled(false)));
             const Rect r = (*exampleButton)->GetScreenBounds();
-            ShowContextMenu(*m_ui, std::move(items), { r.min.x, r.max.y });
+            ShowContextMenu((*exampleButton)->GetContext() ? *(*exampleButton)->GetContext() : *m_ui, std::move(items), { r.min.x, r.max.y });
         });
-        addTool("添加节点", "按分类添加节点（也可在画布上按 Tab 或双击空白处搜索，空白处右键按分类添加）", [this]
+        addTool("添加节点", "按分类添加节点（也可在画布上按 Tab 或双击空白处搜索，空白处右键按分类添加）", [pp]
         {
-            if (!m_nodeEditor)
+            if (!pp->nodeEditor)
                 return;
-            const Vec2 size = m_nodeEditor->GetSize();
-            m_nodeEditor->Focus();
-            m_nodeEditor->OpenAddMenuAt({ size.x * 0.35f, size.y * 0.3f });   // 新节点放在画布中部偏左上
+            const Vec2 size = pp->nodeEditor->GetSize();
+            pp->nodeEditor->Focus();
+            pp->nodeEditor->OpenAddMenuAt({ size.x * 0.35f, size.y * 0.3f });   // 新节点放在画布中部偏左上
         });
         addTool("参数", "参数表：集中编辑全部“参数”节点的名称、类别、值、公式，保存与切换类型（族类型）", [this] { OpenNodeParamsDialog(); });
-        addTool("适应窗口", "显示全部节点（有选中时显示选中的节点），快捷键 F", [this] { if (m_nodeEditor) m_nodeEditor->FrameAll(); });
+        addTool("适应窗口", "显示全部节点（有选中时显示选中的节点），快捷键 F", [pp] { if (pp->nodeEditor) pp->nodeEditor->FrameAll(); });
         addTool("烘焙", "把节点图的结果加入图纸（有选中节点时只烘焙选中的节点），可撤销", [this] { BakeNodeGraph(); });
-        addTool("清空", "删除全部节点（可在节点编辑器里按 Ctrl+Z 撤销）", [this]
+        addTool("清空", "删除全部节点（可在节点编辑器里按 Ctrl+Z 撤销）", [this, pc, pp]
         {
-            Document* doc = m_docManager.GetActive();
+            Document* doc = DocOf(*pc);
             if (!doc || doc->GetNodeGraph().Empty())
                 return;
             NodeHistory(*doc).Snapshot(doc->GetNodeGraph());
             doc->GetNodeGraph().Clear();
             doc->MarkDirty();
-            if (m_nodeEditor)
-                m_nodeEditor->SetSelection({});
+            if (pp->nodeEditor)
+                pp->nodeEditor->SetSelection({});
             m_platform->RequestRedraw();
         });
         tools->AddChild<Node>()->EditLayoutStyle().grow = 1.0f;
-        m_nodeStatus = tools->AddChild<Label>("", 12.0f, Theme::TextDim);
-        m_nodeStop = addTool("停止", "停止后台求值（已算完的节点保留结果）；修改节点图后重新开始", [this] { StopNodeEvaluation(); });
-        m_nodeStop->SetVisible(false);
+        pp->nodeStatus = tools->AddChild<Label>("", 12.0f, Theme::TextDim);
+        pp->nodeStop = addTool("停止", "停止后台求值（已算完的节点保留结果）；修改节点图后重新开始", [this] { StopNodeEvaluation(); });
+        pp->nodeStop->SetVisible(false);
 
         // ── 画布 ─────────────────────────────────────────────────
         NodeEditorView::Host host;
-        host.graph = [this]() -> Nodes::Graph*
+        host.graph = [this, pc]() -> Nodes::Graph*
         {
-            Document* doc = m_docManager.GetActive();
+            Document* doc = DocOf(*pc);
             return doc ? &doc->GetNodeGraph() : nullptr;
         };
-        host.beforeEdit = [this]
+        host.beforeEdit = [this, pc]
         {
-            if (Document* doc = m_docManager.GetActive())
+            if (Document* doc = DocOf(*pc))
                 NodeHistory(*doc).Snapshot(doc->GetNodeGraph());
         };
-        host.edited = [this](bool evaluate)
+        host.edited = [this, pc, pp](bool evaluate)
         {
-            if (Document* doc = m_docManager.GetActive())
+            if (Document* doc = DocOf(*pc))
             {
                 // 在组内编辑：写回组定义，同步到全部实例（PLAN.md 第 12.3 节）
-                if (m_nodeEditor && !m_nodeEditor->GetPath().empty())
-                    doc->GetNodeGraph().CommitGroupEdit(m_nodeEditor->GetPath(), evaluate);
+                if (pp->nodeEditor && !pp->nodeEditor->GetPath().empty())
+                    doc->GetNodeGraph().CommitGroupEdit(pp->nodeEditor->GetPath(), evaluate);
                 doc->MarkDirty();
             }
             m_platform->RequestRedraw();   // 下一帧 SyncNodeGraph 求值并刷新预览
             UpdateTitle();
         };
         host.selectionChanged = [this] { m_platform->RequestRedraw(); };
-        host.action = [this](Nodes::NodeId id, const std::string& action)
+        host.action = [this, pc](Nodes::NodeId id, const std::string& action)
         {
-            Document* doc = m_docManager.GetActive();
+            Document* doc = DocOf(*pc);
             if (!doc || (action != "pickCurves" && action != "pickPoints" && action != "pickBodies"))
                 return;
             // 引用节点：图纸里当前选中的、该节点能引用的对象（曲线 / 点 / 三维实体）
             const std::string noun = Nodes::Geo::ReferenceNoun(action);
-            std::vector<Object::ObjectID> ids(m_docManager.GetEditor().GetSelection().begin(), m_docManager.GetEditor().GetSelection().end());
+            std::vector<Object::ObjectID> ids(m_docManager.GetEditor(*doc).GetSelection().begin(), m_docManager.GetEditor(*doc).GetSelection().end());
             std::sort(ids.begin(), ids.end());
             std::string text;
             int count = 0;
@@ -194,21 +198,28 @@ namespace MiniCAD
             NodeHistory(*doc).Snapshot(g);
             g.SetParam(id, 0, Nodes::Value(text));
             doc->MarkDirty();
-            m_docManager.GetEditor().GetCmdLine().Echo(count > 0 ? "引用" + noun + "：已引用 " + std::to_string(count) + " 个对象"
+            m_docManager.GetEditor(*doc).GetCmdLine().Echo(count > 0 ? "引用" + noun + "：已引用 " + std::to_string(count) + " 个对象"
                                                                  : "引用" + noun + "：选择集里没有可引用的" + noun + "，已清空引用");
             m_platform->RequestRedraw();
         };
         host.evaluating = [this] { return m_nodeJob != nullptr; };
         auto editor = std::make_unique<NodeEditorView>(std::move(host));
         editor->EditLayoutStyle().grow = 1.0f;
-        m_nodeEditor = static_cast<NodeEditorView*>(panel->AddChild(std::move(editor)));
+        pp->nodeEditor = static_cast<NodeEditorView*>(panel->AddChild(std::move(editor)));
         return panel;
+    }
+
+    NodeEditorView* MainFrame::ActiveNodeEditor() const
+    {
+        if (const DocWindow* w = FindDocWindow(m_docManager.GetActive()))
+            return w->chrome.panels->nodeEditor;
+        return m_main.panels->nodeEditor;
     }
 
     Nodes::Graph& MainFrame::ShownNodeGraph(Document& doc)
     {
         // 进入组内编辑时预览、烘焙的是组内图
-        Nodes::Graph* shown = m_nodeEditor ? m_nodeEditor->CurrentGraph() : nullptr;
+        Nodes::Graph* shown = ActiveNodeEditor() ? ActiveNodeEditor()->CurrentGraph() : nullptr;
         return shown ? *shown : doc.GetNodeGraph();
     }
 
@@ -216,28 +227,30 @@ namespace MiniCAD
     {
         Nodes::Graph& g = ShownNodeGraph(doc);
         Editor& editor = m_docManager.GetEditor();
-        const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
+        const std::set<Nodes::NodeId> sel = ActiveNodeEditor() ? ActiveNodeEditor()->GetSelection() : std::set<Nodes::NodeId>{};
         Nodes::PreviewSet set = m_nodePreview.Build(g, sel, m_platform->GetSolidKernel());
         editor.SetPreviewGeometry(std::move(set.Entities), std::move(set.Points), std::move(set.HighlightPoints));
-        m_viewport->RequestRender();
+        RequestRenderAll();
     }
 
     void MainFrame::UpdateNodeStatus(const Nodes::Graph& g)
     {
-        if (m_nodeStop)
-            m_nodeStop->SetVisible(m_nodeJob != nullptr);
-        if (!m_nodeStatus)
+        // 当前文档所在窗口的节点面板（求值的总是当前文档）
+        PanelSet& P = *ChromeOf(m_docManager.GetActive()).panels;
+        if (P.nodeStop)
+            P.nodeStop->SetVisible(m_nodeJob != nullptr);
+        if (!P.nodeStatus)
             return;
         char buf[160];
         if (m_nodeJob)
         {
             std::snprintf(buf, sizeof(buf), "求值中… %d / %zu 个节点", m_nodeJob->solved.load(), m_nodeJob->pending.size());
-            m_nodeStatus->SetText(buf);
+            P.nodeStatus->SetText(buf);
             return;
         }
         if (m_nodePause.graph == g.Uid() && m_nodePause.dirty == g.DirtyVersion())
         {
-            m_nodeStatus->SetText("已停止求值，修改节点图后继续");
+            P.nodeStatus->SetText("已停止求值，修改节点图后继续");
             return;
         }
         double ms = 0.0;
@@ -262,7 +275,7 @@ namespace MiniCAD
             std::snprintf(buf, sizeof(buf), "，最慢：%s %.1f s", slowest->Title().c_str(), slowest->Millis / 1000);
             status += buf;
         }
-        m_nodeStatus->SetText(status);
+        P.nodeStatus->SetText(status);
     }
 
     void MainFrame::StartNodeEvaluation(Nodes::Graph& g, std::unique_ptr<Nodes::Graph> copy, const Nodes::SolveContext& ctx)
@@ -343,9 +356,16 @@ namespace MiniCAD
             return std::none_of(docs.begin(), docs.end(), [&](const auto& d) { return d.get() == kv.first; });
         });
 
+        // 各窗口的节点编辑器：显示的文档换了就复位视图
+        ForEachChrome([this](ViewChrome& c)
+        {
+            PanelSet& P = *c.panels;
+            const Document* shown = DocOf(c);
+            if (shown != P.nodeDoc && P.nodeEditor)
+                P.nodeEditor->ResetView();
+            P.nodeDoc = shown;
+        });
         Document* doc = m_docManager.GetActive();
-        if (doc != m_nodePreviewDoc && m_nodeEditor)
-            m_nodeEditor->ResetView();
         if (!doc)
         {
             m_nodePreviewDoc = nullptr;
@@ -391,22 +411,22 @@ namespace MiniCAD
         uint64_t sig = shown.EvalVersion() * 1000003ull + shown.GetLinks().size() + reinterpret_cast<uintptr_t>(&shown) * 7919ull;
         for (const auto& n : shown.GetNodes())
             sig = sig * 31 + n->Id * 2 + (n->Preview ? 1 : 0);
-        if (m_nodeEditor)
-            for (Nodes::NodeId id : m_nodeEditor->GetSelection())
+        if (ActiveNodeEditor())
+            for (Nodes::NodeId id : ActiveNodeEditor()->GetSelection())
                 sig = sig * 131 + id;
         if (doc != m_nodePreviewDoc || sig != m_nodePreviewSig)
         {
             m_nodePreviewDoc = doc;
             m_nodePreviewSig = sig;
             RefreshNodePreview(*doc);
-            if (m_nodeEditor)
-                m_nodeEditor->Invalidate();
+            if (ActiveNodeEditor())
+                ActiveNodeEditor()->Invalidate();
         }
         if (copy)
         {
             StartNodeEvaluation(g, std::move(copy), ctx);
-            if (m_nodeEditor)
-                m_nodeEditor->Invalidate();   // 卡片上显示“计算中”
+            if (ActiveNodeEditor())
+                ActiveNodeEditor()->Invalidate();   // 卡片上显示“计算中”
         }
         UpdateNodeStatus(g);
     }
@@ -625,27 +645,27 @@ namespace MiniCAD
         WaitNodeEvaluation();
         doc->GetNodeGraph().Evaluate(NodeSolveContext(*doc));   // 烘焙要完整的结果：后台没算完的在这里同步算
         Nodes::Graph& g = ShownNodeGraph(*doc);                  // 在组内时烘焙组内图（选中的节点或叶子）
-        const std::set<Nodes::NodeId> sel = m_nodeEditor ? m_nodeEditor->GetSelection() : std::set<Nodes::NodeId>{};
+        const std::set<Nodes::NodeId> sel = ActiveNodeEditor() ? ActiveNodeEditor()->GetSelection() : std::set<Nodes::NodeId>{};
         int voids = 0;
         const int n = Nodes::Bake(g, sel, doc->GetScene(), doc->GetCommandStack(), m_platform->GetSolidKernel(), &voids);
         const std::string skipped = voids > 0 ? "，跳过 " + std::to_string(voids) + " 个空心（空心只用来切除实心）" : std::string();
         editor.GetCmdLine().Echo(n > 0 ? "烘焙节点图：已加入 " + std::to_string(n) + " 个对象（可撤销）" + skipped
                                        : "烘焙节点图：没有可烘焙的几何" + (skipped.empty() ? std::string("（先在节点编辑器里搭建并预览）") : skipped));
-        m_viewport->RequestRender();
+        RequestRenderAll();
         StateChanged();
     }
 
     void MainFrame::SaveNodeGraphFile(bool selectionOnly)
     {
         Document* doc = m_docManager.GetActive();
-        if (!doc || !m_nodeEditor)
+        if (!doc || !ActiveNodeEditor())
             return;
         Editor& editor = m_docManager.GetEditor();
         // 整张图存顶层（含组定义与参数类型）；只存选中时存当前显示的那一层里选中的节点（剪贴板格式，带上用到的组定义）
         std::string text;
         if (selectionOnly)
         {
-            const auto& sel = m_nodeEditor->GetSelection();
+            const auto& sel = ActiveNodeEditor()->GetSelection();
             text = ShownNodeGraph(*doc).CopyToString(std::vector<Nodes::NodeId>(sel.begin(), sel.end()));
         }
         else if (!doc->GetNodeGraph().Empty())
@@ -704,13 +724,13 @@ namespace MiniCAD
     bool MainFrame::LoadNodeGraphText(const std::string& text, bool replace)
     {
         Document* doc = m_docManager.GetActive();
-        if (!doc || !m_nodeEditor)
+        if (!doc || !ActiveNodeEditor())
             return false;
         Editor& editor = m_docManager.GetEditor();
         if (!replace)
         {
-            m_nodeEditor->Focus();
-            const bool ok = m_nodeEditor->InsertGraph(text);
+            ActiveNodeEditor()->Focus();
+            const bool ok = ActiveNodeEditor()->InsertGraph(text);
             editor.GetCmdLine().Echo(ok ? "打开节点图：已插入" : "打开节点图：文件里没有可用的节点");
             return ok;
         }
@@ -721,13 +741,13 @@ namespace MiniCAD
             return false;
         }
         WaitNodeEvaluation();
-        m_nodeEditor->LeaveGroup(0);
+        ActiveNodeEditor()->LeaveGroup(0);
         Nodes::Graph& g = doc->GetNodeGraph();
         NodeHistory(*doc).Snapshot(g);
         g.LoadFromString(text);
         doc->MarkDirty();
-        m_nodeEditor->SetSelection({});
-        m_nodeEditor->FrameAll();
+        ActiveNodeEditor()->SetSelection({});
+        ActiveNodeEditor()->FrameAll();
         editor.GetCmdLine().Echo("打开节点图：已替换（" + std::to_string(g.GetNodes().size()) + " 个节点，可在节点编辑器里按 Ctrl+Z 撤销）");
         m_platform->RequestRedraw();
         UpdateTitle();
@@ -736,7 +756,10 @@ namespace MiniCAD
 
     void MainFrame::ShowNodePanel(bool toggle)
     {
-        MiniGUI::DockSpace* dock = m_layout ? m_layout->GetDock("main") : nullptr;
+        // 当前文档所在的窗口（没有文档时主窗口）的停靠区
+        DocWindow*          w    = FindDocWindow(m_docManager.GetActive());
+        PanelSet&           P    = w ? *w->chrome.panels : *m_main.panels;
+        MiniGUI::DockSpace* dock = w ? w->layout->GetDock("main") : (m_layout ? m_layout->GetDock("main") : nullptr);
         if (!dock || !dock->HasPanel("nodes"))
             return;
         if (dock->IsPanelVisible("nodes"))
@@ -748,26 +771,26 @@ namespace MiniCAD
             return;
         }
         // 第一次显示：停靠在绘图区下方（之后关闭再打开回到原处）
-        if (!m_nodePanelPlaced)
+        if (!P.nodePanelPlaced)
         {
-            m_nodePanelPlaced = true;
+            P.nodePanelPlaced = true;
             const float docH = dock->GetPanelRect("documents").Height();
             const float size = docH > 0.0f ? std::clamp(docH * 0.45f, 200.0f, 380.0f) : 380.0f;
             if (dock->Dock("nodes", "documents", MiniGUI::DockSide::Bottom, size))
             {
-                if (m_nodeEditor)
-                    m_nodeEditor->Focus();
+                if (ActiveNodeEditor())
+                    ActiveNodeEditor()->Focus();
                 return;
             }
         }
         dock->ShowPanel("nodes");
-        if (m_nodeEditor)
-            m_nodeEditor->Focus();
+        if (ActiveNodeEditor())
+            ActiveNodeEditor()->Focus();
     }
 
     bool MainFrame::NodeEditorHasFocus() const
     {
-        return m_nodeEditor && m_nodeEditor->HasFocus();
+        return ActiveNodeEditor() && ActiveNodeEditor()->HasFocus();
     }
 
     bool MainFrame::NodeGraphUndo(bool redo)
@@ -781,14 +804,14 @@ namespace MiniCAD
         if (ok)
         {
             doc->MarkDirty();
-            if (m_nodeEditor)
+            if (ActiveNodeEditor())
             {
                 // 撤销后节点可能已不存在：只保留仍然存在的选中节点
                 std::set<Nodes::NodeId> sel;
-                for (Nodes::NodeId id : m_nodeEditor->GetSelection())
+                for (Nodes::NodeId id : ActiveNodeEditor()->GetSelection())
                     if (g.GetNode(id))
                         sel.insert(id);
-                m_nodeEditor->SetSelection(std::move(sel));
+                ActiveNodeEditor()->SetSelection(std::move(sel));
             }
             m_platform->RequestRedraw();
         }

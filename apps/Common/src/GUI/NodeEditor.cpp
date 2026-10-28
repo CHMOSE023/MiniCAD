@@ -1325,6 +1325,8 @@ namespace MiniCAD
                 }
                 m_drag = Drag::Box;
                 break;
+            case Hit::Kind::Link:
+                break;      // 不按 Alt 单击连线什么也不做（Alt + 单击删除连线，见上）
             }
             break;
         }

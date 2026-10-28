@@ -44,7 +44,7 @@ namespace MiniGUI
 
     // 命令注册表。
     // - Execute 前检查 canExecute；执行后自动 NotifyStateChanged
-    // - BindShortcuts 把所有命令的快捷键注册到 ShortcutTable；快捷键变化（ApplyOverrides、SetShortcut）后自动重新绑定
+    // - BindShortcuts 把所有命令的快捷键注册到 ShortcutTable（可以绑定几张表：每个窗口一张）；快捷键变化（ApplyOverrides、SetShortcut）后自动重新绑定
     // - 状态变化通知：宿主的数据变化时（选中集、当前工具…）调用 NotifyStateChanged，
     //   工具栏、数据绑定等订阅者据此刷新可用/选中状态
     class CommandRegistry
@@ -79,8 +79,9 @@ namespace MiniGUI
         void ApplyOverrides(const JsonValue& commands, std::vector<std::string>& warnings);
 
         // 快捷键
-        void BindShortcuts(ShortcutTable& table);
-        void UnbindShortcuts();
+        void BindShortcuts(ShortcutTable& table);           // 加一张表（已绑定的不变）
+        void UnbindShortcuts(ShortcutTable& table);
+        void UnbindShortcuts();                             // 全部表
         // 两个命令用了同一个快捷键时返回描述（"Ctrl+S：file.save 与 file.saveAll"）
         std::vector<std::string> FindShortcutConflicts() const;
 
@@ -93,14 +94,19 @@ namespace MiniGUI
         std::weak_ptr<void> GetLifetimeToken() const { return m_alive; }
 
     private:
+        struct BoundTable
+        {
+            ShortcutTable*                 table = nullptr;
+            std::weak_ptr<void>            alive;       // 快捷键表（属于 UIContext）可能先销毁
+            std::vector<ShortcutTable::Id> ids;
+        };
         void Rebind();
+        void Rebind(BoundTable& bound);
 
         std::unordered_map<std::string, Command> m_commands;
         std::vector<std::string>                 m_order;
 
-        ShortcutTable*                  m_table = nullptr;
-        std::weak_ptr<void>             m_tableAlive;      // 快捷键表（属于 UIContext）可能先销毁
-        std::vector<ShortcutTable::Id>  m_bound;
+        std::vector<BoundTable>         m_tables;
 
         struct Listener { ListenerId id; std::function<void()> fn; };
         std::vector<Listener> m_listeners;

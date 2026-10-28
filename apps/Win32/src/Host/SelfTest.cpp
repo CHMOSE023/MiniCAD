@@ -1,7 +1,9 @@
 // ── MiniCAD 桌面版自测（--selftest）：注入窗口消息，验证输入在下一帧生效，以及主窗口的标题栏、多文档、图层 ─────────
 // MainFrame 的成员函数，只在 Win32 版编译；窗口句柄由 Win32Window 提供
+#include "GUI/FloatingPanelHost.h"
 #include "GUI/MainFrame.h"
 #include "Host/Win32Window.h"
+#include "Host/Win32FloatingWindow.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
 #include "Core/Entity/LineEntity.hpp"
@@ -17,6 +19,7 @@
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
+#include "Document/Command/MoveCommand.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -385,14 +388,14 @@ namespace MiniCAD
         // ── 9. 图层：新建后图层面板和工具栏下拉框同步 ────────────
         section("9. 图层：新建后图层面板和工具栏下拉框同步");
         {
-            const int rows = m_layerList->GetItemCount();
+            const int rows = m_main.panels->layerList->GetItemCount();
             m_commands.Execute("layer.new");
             RenderFrame();
             const size_t layers = m_docManager.GetActive()->GetLayerManager().GetAllLayerIDs().size();
-            check(m_layerList->GetItemCount() == rows + 1 && static_cast<size_t>(m_layerList->GetItemCount()) == layers,
+            check(m_main.panels->layerList->GetItemCount() == rows + 1 && static_cast<size_t>(m_main.panels->layerList->GetItemCount()) == layers,
                   "新建图层后图层面板多一行");
             const LayerID current = m_docManager.GetActive()->GetLayerManager().GetActiveLayerID();
-            check(m_layerIds.size() == layers && std::find(m_layerIds.begin(), m_layerIds.end(), current) != m_layerIds.end(),
+            check(m_main.panels->layerIds.size() == layers && std::find(m_main.panels->layerIds.begin(), m_main.panels->layerIds.end(), current) != m_main.panels->layerIds.end(),
                   "新建的图层成为当前图层并出现在面板里");
 
             // 图层操作走命令栈：撤销 → 图层消失、当前图层退回；重做 → 同一个 ID 回来，面板同步
@@ -400,11 +403,11 @@ namespace MiniCAD
             m_commands.Execute("edit.undo");
             RenderFrame();
             LayerManager& lm = m_docManager.GetActive()->GetLayerManager();
-            check(lm.GetLayer(newId) == nullptr && m_layerList->GetItemCount() == rows && lm.GetActiveLayerID() == Layer::DefaultLayerID,
+            check(lm.GetLayer(newId) == nullptr && m_main.panels->layerList->GetItemCount() == rows && lm.GetActiveLayerID() == Layer::DefaultLayerID,
                   "撤销新建图层：图层消失，当前图层退回 0 层，面板少一行");
             m_commands.Execute("edit.redo");
             RenderFrame();
-            check(lm.GetLayer(newId) != nullptr && lm.GetActiveLayerID() == newId && m_layerList->GetItemCount() == rows + 1,
+            check(lm.GetLayer(newId) != nullptr && lm.GetActiveLayerID() == newId && m_main.panels->layerList->GetItemCount() == rows + 1,
                   "重做：同一个 ID 的图层回来并重新成为当前");
         }
 
@@ -462,8 +465,8 @@ namespace MiniCAD
             SendMessageW(hwnd, WM_CHAR, 'l', 0);
             SendMessageW(hwnd, WM_KEYUP, 'L', 0);
             RenderFrame();
-            MiniGUI::AutoComplete* ac = m_console->GetInput()->GetAutoComplete();
-            check(m_console->HasInputFocus() && m_console->GetInputText() == "l", "绘图区按 L：焦点进入命令行，字母落入输入框");
+            MiniGUI::AutoComplete* ac = m_main.console->GetInput()->GetAutoComplete();
+            check(m_main.console->HasInputFocus() && m_main.console->GetInputText() == "l", "绘图区按 L：焦点进入命令行，字母落入输入框");
             check(ac && ac->IsOpen() && ac->GetCurrent() == 0 && ac->GetSuggestions().front().text == "Line",
                   "别名 L 对应的 Line 排在候选第一位并默认选中");
 
@@ -471,32 +474,32 @@ namespace MiniCAD
             RenderFrame();
             const auto& lines = editor.GetCmdLine().Lines();
             check(editor.IsActiveTool() && editor.GetLastCommand() == "Line", "空格执行候选：直线工具启动");
-            check(!lines.empty() && lines.back() == "命令: Line" && m_console->GetLogCount() == static_cast<int>(lines.size()),
+            check(!lines.empty() && lines.back() == "命令: Line" && m_main.console->GetLogCount() == static_cast<int>(lines.size()),
                   "回显同步到命令行");
             check(m_viewport->HasFocus() && m_commands.IsChecked("draw.line"), "执行后焦点回到绘图区，工具栏的直线按钮选中");
-            std::printf("    提示 \"%s\"\n", m_console->GetPrompt().c_str());
-            check(m_console->GetPrompt() != "命令:" && m_console->GetPrompt() == editor.GetCmdLine().Prompt(), "命令行显示当前工具的提示");
+            std::printf("    提示 \"%s\"\n", m_main.console->GetPrompt().c_str());
+            check(m_main.console->GetPrompt() != "命令:" && m_main.console->GetPrompt() == editor.GetCmdLine().Prompt(), "命令行显示当前工具的提示");
 
             // 工具进行中字母交给工具（不进入命令行）；Esc 取消工具，提示恢复
             SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
             SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
             RenderFrame();
-            check(!editor.IsActiveTool() && m_console->GetPrompt() == "命令:", "Esc 取消工具，提示恢复为“命令:”");
+            check(!editor.IsActiveTool() && m_main.console->GetPrompt() == "命令:", "Esc 取消工具，提示恢复为“命令:”");
 
             // 命令行里没有输入时回车 = 重复上一条命令；Esc 清空并把焦点还给绘图区
-            m_console->FocusInput();
+            m_main.console->FocusInput();
             m_ui->KeyDown(MiniGUI::Key::Enter, 0);
             RenderFrame();
             check(editor.IsActiveTool() && editor.GetLastCommand() == "Line", "空回车重复上一条命令");
-            m_console->FocusInput();
-            m_console->SetInputText("cir");
+            m_main.console->FocusInput();
+            m_main.console->SetInputText("cir");
             m_ui->KeyDown(MiniGUI::Key::Escape, 0);
             RenderFrame();
-            std::printf("    输入 \"%s\"，工具%s，视口%s焦点\n", m_console->GetInputText().c_str(),
+            std::printf("    输入 \"%s\"，工具%s，视口%s焦点\n", m_main.console->GetInputText().c_str(),
                         editor.IsActiveTool() ? "进行中" : "已结束", m_viewport->HasFocus() ? "有" : "没有");
-            check(m_console->GetInputText().empty() && !editor.IsActiveTool() && m_viewport->HasFocus(),
+            check(m_main.console->GetInputText().empty() && !editor.IsActiveTool() && m_viewport->HasFocus(),
                   "命令行里 Esc：清空输入、取消工具、焦点回到绘图区");
-            check(!m_console->GetHistory().empty() && m_console->GetHistory().back() == "Line", "历史记录执行过的命令");
+            check(!m_main.console->GetHistory().empty() && m_main.console->GetHistory().back() == "Line", "历史记录执行过的命令");
 
             // ZOOM：Z 空格 → 等待选项，E 空格 → 缩放到全图（相机真的移动到图形中心）
             {
@@ -1028,7 +1031,7 @@ namespace MiniCAD
                 check(camera.IsPlanView(), "撤销视图：回到俯视");
 
                 // 视图方块：点“上”面靠前的棱 → 前上方 45°；再点“前”面中央 → 前视；拖动 → 环绕；撤销逐步回到俯视
-                if (auto* cube = static_cast<ViewCube*>(m_viewCube); cube && cube->IsVisible())
+                if (auto* cube = static_cast<ViewCube*>(m_main.cube); cube && cube->IsVisible())
                 {
                     m_ui->Update();
                     const MiniGUI::Rect cb = cube->GetScreenBounds();
@@ -1116,12 +1119,12 @@ namespace MiniCAD
             m_ui->Update();
             RenderFrame();
             auto* dock = m_layout->GetDock("main");
-            check(m_nodeEditor && dock && dock->IsPanelVisible("nodes") && m_nodeEditor->GetSize().y > 150.0f,
+            check(ActiveNodeEditor() && dock && dock->IsPanelVisible("nodes") && ActiveNodeEditor()->GetSize().y > 150.0f,
                   "节点编辑器：打开面板（停靠在绘图区下方）");
             Graph& graph = doc->GetNodeGraph();
-            if (m_nodeEditor && graph.Empty())
+            if (ActiveNodeEditor() && graph.Empty())
             {
-                NodeEditorView& ne = *m_nodeEditor;
+                NodeEditorView& ne = *ActiveNodeEditor();
                 const NodeId slider = ne.AddNodeAt("input.integer", { 30.0f, 20.0f });
                 std::printf("    节点编辑器 %.0f × %.0f\n", ne.GetSize().x, ne.GetSize().y);
                 const NodeId box    = ne.AddNodeAt("solid.box", { 30.0f, 150.0f });
@@ -1461,8 +1464,8 @@ namespace MiniCAD
                 RenderFrame();
                 const double frameMs = static_cast<double>(NowTicks() - t0) * 1000.0 / static_cast<double>(kTicksPerSecond);
                 const bool started = m_nodeJob != nullptr;
-                check(started && graph.GetNode(buni)->Dirty && m_nodeStop && m_nodeStop->IsVisible() && m_nodeStatus &&
-                      m_nodeStatus->GetText().find("求值中") != std::string::npos,
+                check(started && graph.GetNode(buni)->Dirty && m_main.panels->nodeStop && m_main.panels->nodeStop->IsVisible() && m_main.panels->nodeStatus &&
+                      m_main.panels->nodeStatus->GetText().find("求值中") != std::string::npos,
                       "后台求值：节点图交给工作线程，这一帧不等结果，工具行显示进度与“停止”");
                 LOG_INFO("后台求值：开始求值的一帧 %.1f ms", frameMs);
                 graph.SetInputValue(barr, 2, int64_t(30));
@@ -1470,14 +1473,14 @@ namespace MiniCAD
                 check(!m_nodeJob || !m_nodeJob->cancel.load(), "后台求值：改了正在算的阵列数量，这次求值不取消（算完先显示，再接着算新的值）");
                 waitNodes();
                 check(!m_nodeJob && std::abs(bgVolume() - (10.0 + 29 * 5.0) * 100.0) < 1e-3 && !graph.NeedsEvaluate(NodeSolveContext(*doc)) &&
-                      !m_nodeStop->IsVisible(), "后台求值：重新求值得到 30 个长方体的并集");
+                      !m_main.panels->nodeStop->IsVisible(), "后台求值：重新求值得到 30 个长方体的并集");
 
                 graph.SetInputValue(barr, 2, int64_t(60));
                 RenderFrame();
                 bool stopped = false;
                 if (m_nodeJob && !m_nodeJob->finished.load())
                 {
-                    const MiniGUI::Vec2 c = m_nodeStop->GetScreenBounds().Center();
+                    const MiniGUI::Vec2 c = m_main.panels->nodeStop->GetScreenBounds().Center();
                     m_ui->PointerMove(c, 0);
                     m_ui->PointerDown(c, MiniGUI::MouseButton::Left, 0);
                     m_ui->PointerUp(c, MiniGUI::MouseButton::Left, 0);
@@ -1485,7 +1488,7 @@ namespace MiniCAD
                     waitNodes();
                     RenderFrame();
                 }
-                check(stopped && !m_nodeJob && graph.GetNode(buni)->Dirty && m_nodeStatus->GetText().find("已停止") != std::string::npos,
+                check(stopped && !m_nodeJob && graph.GetNode(buni)->Dirty && m_main.panels->nodeStatus->GetText().find("已停止") != std::string::npos,
                       "后台求值：点“停止”取消求值，之后不再自动求值");
                 graph.SetInputValue(barr, 2, int64_t(20));
                 RenderFrame();
@@ -2236,7 +2239,7 @@ namespace MiniCAD
         section("17. F10 = 极轴追踪（同 AutoCAD）：输入框有焦点时也生效，不激活菜单栏");
         {
             const bool before = editor.IsPolarEnabled();
-            m_console->FocusInput();
+            m_main.console->FocusInput();
             m_ui->KeyDown(MiniGUI::Key::F10, 0);
             m_ui->KeyUp(MiniGUI::Key::F10, 0);
             const bool menuMode = m_layout->GetMenuBar() && m_layout->GetMenuBar()->IsKeyboardMode();
@@ -2594,9 +2597,9 @@ namespace MiniCAD
             auto barShown = [&]
             {
                 // 在浮动状态栏的左侧
-                const MiniGUI::Rect b    = m_layoutTabsBar->GetScreenBounds();
-                const MiniGUI::Rect card = m_statusBar->GetParent()->GetScreenBounds();
-                return m_layoutTabsBar->IsVisible() && b.max.y - b.min.y > 20.0f &&
+                const MiniGUI::Rect b    = m_main.layoutTabsBar->GetScreenBounds();
+                const MiniGUI::Rect card = m_main.statusBar->GetParent()->GetScreenBounds();
+                return m_main.layoutTabsBar->IsVisible() && b.max.y - b.min.y > 20.0f &&
                        b.min.y >= card.min.y - 0.5f && b.max.y <= card.max.y + 0.5f && b.min.x < card.min.x + 10.0f;
             };
 
@@ -2604,9 +2607,9 @@ namespace MiniCAD
             RenderFrame();
             Document* fresh = m_docManager.GetActive();
             check(barShown(), "新建图纸：状态栏左侧显示模型 / 布局标签条");
-            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(0) == "模型" &&
-                  m_layoutTabs->GetTabTitle(1) == "布局1" && m_layoutTabs->GetTabTitle(2) == "布局2" &&
-                  m_layoutTabs->GetSelected() == 0, "新建图纸：标签为 模型 / 布局1 / 布局2，选中模型");
+            check(m_main.layoutTabs->GetTabCount() == 3 && m_main.layoutTabs->GetTabTitle(0) == "模型" &&
+                  m_main.layoutTabs->GetTabTitle(1) == "布局1" && m_main.layoutTabs->GetTabTitle(2) == "布局2" &&
+                  m_main.layoutTabs->GetSelected() == 0, "新建图纸：标签为 模型 / 布局1 / 布局2，选中模型");
 
             // 模型页先切到西南等轴测，再进布局：布局是二维图纸，回到俯视、不显示视图方块
             const bool cubeOn = m_viewCubeVisible;
@@ -2615,21 +2618,21 @@ namespace MiniCAD
             m_docManager.GetEditor().SetViewDirection(-135.0, 35.26);
             for (int i = 0; i < 30; ++i) RenderFrame();      // 走完视图过渡动画
             const double modelElevation = cam.GetElevation();
-            check(m_viewCube->IsVisible() && modelElevation < 89.0, "模型页：三维视图里显示视图方块");
+            check(m_main.cube->IsVisible() && modelElevation < 89.0, "模型页：三维视图里显示视图方块");
 
-            m_layoutTabs->SetSelected(1);       // 相当于点击「布局1」
+            m_main.layoutTabs->SetSelected(1);       // 相当于点击「布局1」
             RenderFrame();
             check(fresh && fresh->ActiveLayout() == 1 && fresh->ActiveLayoutIsPaper(), "点击布局1 标签切到图纸空间");
-            check(!m_viewCube->IsVisible(), "布局页不显示视图方块");
+            check(!m_main.cube->IsVisible(), "布局页不显示视图方块");
             check(cam.IsPlanView(), "从三维视图进布局时回到俯视");
             m_commands.Execute("view.swiso");
             for (int i = 0; i < 30; ++i) RenderFrame();
             check(cam.IsPlanView(), "布局页上标准视图命令不切三维视图");
 
-            m_layoutTabs->SetSelected(0);
+            m_main.layoutTabs->SetSelected(0);
             RenderFrame();
             check(fresh && fresh->ActiveLayout() == 0, "点回模型标签回到模型空间");
-            check(m_viewCube->IsVisible() && std::abs(cam.GetElevation() - modelElevation) < 1e-6,
+            check(m_main.cube->IsVisible() && std::abs(cam.GetElevation() - modelElevation) < 1e-6,
                   "回到模型页：视图方块重新显示，恢复原来的三维视图");
             SetViewCubeVisible(cubeOn);
             m_commands.Execute("view.top");
@@ -2650,7 +2653,7 @@ namespace MiniCAD
             m_viewport->RequestRender();       // 直接执行命令加的实体：请求重画（界面命令会自动请求）
             RenderFrame();
             check(drawnCount() > 0, "模型页显示模型里的直线（对照）");
-            m_layoutTabs->SetSelected(1);
+            m_main.layoutTabs->SetSelected(1);
             RenderFrame();
             check(drawnCount() == 0, "没有视口的布局不显示模型内容");
 
@@ -2687,24 +2690,24 @@ namespace MiniCAD
             // 新建 / 删除布局，可撤销
             m_commands.Execute("layout.new");
             RenderFrame();
-            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "新建布局：标签条多出 布局3");
-            m_layoutTabs->SetSelected(3);
+            check(m_main.layoutTabs->GetTabCount() == 4 && m_main.layoutTabs->GetTabTitle(3) == "布局3", "新建布局：标签条多出 布局3");
+            m_main.layoutTabs->SetSelected(3);
             RenderFrame();
             check(fresh->ActiveLayout() == 3, "切到新建的布局3");
             m_commands.Execute("layout.delete");
             RenderFrame();
-            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetSelected() == 0 && !fresh->ActiveLayoutIsPaper() &&
-                  m_viewCube->IsVisible() == m_viewCubeVisible,
+            check(m_main.layoutTabs->GetTabCount() == 3 && m_main.layoutTabs->GetSelected() == 0 && !fresh->ActiveLayoutIsPaper() &&
+                  m_main.cube->IsVisible() == m_viewCubeVisible,
                   "删除当前布局：标签去掉，回到模型页");
             m_commands.Execute("edit.undo");
             RenderFrame();
-            check(m_layoutTabs->GetTabCount() == 4 && m_layoutTabs->GetTabTitle(3) == "布局3", "撤销删除：布局3 回来");
-            m_layoutTabs->SetSelected(3);
+            check(m_main.layoutTabs->GetTabCount() == 4 && m_main.layoutTabs->GetTabTitle(3) == "布局3", "撤销删除：布局3 回来");
+            m_main.layoutTabs->SetSelected(3);
             RenderFrame();
             m_commands.Execute("edit.undo");          // 撤销新建：当前布局没了，回到模型页
             RenderFrame();
-            check(m_layoutTabs->GetTabCount() == 3 && !fresh->ActiveLayoutIsPaper(), "撤销新建：布局3 去掉，当前在它上面时回到模型页");
-            m_layoutTabs->SetSelected(0);
+            check(m_main.layoutTabs->GetTabCount() == 3 && !fresh->ActiveLayoutIsPaper(), "撤销新建：布局3 去掉，当前在它上面时回到模型页");
+            m_main.layoutTabs->SetSelected(0);
             RenderFrame();
 
             // 带布局的图纸：模型里一条线，图纸A 上一个视口看着它
@@ -2737,15 +2740,15 @@ namespace MiniCAD
             RenderFrame();
             Document* opened = m_docManager.GetActive();
             bool hasSheet = false;
-            for (int i = 0; i < m_layoutTabs->GetTabCount(); ++i)
-                hasSheet = hasSheet || m_layoutTabs->GetTabTitle(i) == "图纸A";
+            for (int i = 0; i < m_main.layoutTabs->GetTabCount(); ++i)
+                hasSheet = hasSheet || m_main.layoutTabs->GetTabTitle(i) == "图纸A";
             check(opened && opened != fresh && barShown() && hasSheet &&
-                  m_layoutTabs->GetTabCount() == static_cast<int>(opened->GetScene().Layouts().size()),
+                  m_main.layoutTabs->GetTabCount() == static_cast<int>(opened->GetScene().Layouts().size()),
                   "打开带布局的图纸：标签条显示图纸里的布局");
 
             m_docTabs->SetSelected(m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(fresh)));
             RenderFrame();
-            check(m_layoutTabs->GetTabCount() == 3 && m_layoutTabs->GetTabTitle(1) == "布局1",
+            check(m_main.layoutTabs->GetTabCount() == 3 && m_main.layoutTabs->GetTabTitle(1) == "布局1",
                   "切换文档后标签条换成该文档的布局");
 
             if (opened) { opened->MarkSaved(); CloseDocument(opened); }
@@ -2831,7 +2834,7 @@ namespace MiniCAD
                       "没有文档时打开图纸：显示绘图区，状态栏里看得到读取进度");
                 waitOpen();
                 Document* first = m_docManager.GetActive();
-                check(first && first->GetPath() == path && m_statusBar->IsVisible(), "第一张图纸打开后状态栏正常显示");
+                check(first && first->GetPath() == path && m_main.statusBar->IsVisible(), "第一张图纸打开后状态栏正常显示");
                 if (first) { first->MarkSaved(); CloseDocument(first); }
                 RenderFrame();
                 std::error_code ec;
@@ -2905,13 +2908,13 @@ namespace MiniCAD
             m_ui->Update();
             RenderFrame();
             const MiniGUI::Rect vpRect     = m_viewport->GetScreenBounds();
-            const MiniGUI::Rect statusRect = m_statusBar->GetParent()->GetScreenBounds();
+            const MiniGUI::Rect statusRect = m_main.statusBar->GetParent()->GetScreenBounds();
             MiniGUI::Ribbon*    ribbon     = m_layout->GetRibbon();
             check(ribbon && vpRect.min.y <= ribbon->GetScreenBounds().min.y && vpRect.max.y >= statusRect.max.y &&
                   vpRect.max.x >= statusRect.max.x, "绘图区铺满标题栏以下：功能区、状态栏浮在绘图区上");
 
             // 文档区（没被面板挡住的部分）、状态栏上方的缝：点击都落到绘图区（卡片之间竖向的缝是分隔条，可拖动调整宽度）
-            const MiniGUI::Vec2 holeCenter = m_docArea->GetScreenBounds().Center();
+            const MiniGUI::Vec2 holeCenter = m_main.area->GetScreenBounds().Center();
             check(m_ui->HitTest(holeCenter) == m_viewport &&
                   m_ui->HitTest(MiniGUI::Vec2{ statusRect.min.x + 20.0f, statusRect.min.y - 3.0f }) == m_viewport,
                   "文档区、状态栏上方的缝点击落到绘图区");
@@ -2919,25 +2922,25 @@ namespace MiniCAD
             // 浮动导航条上：显示箭头指针，绘图区不画十字光标；移回绘图区后恢复
             m_ui->PointerMove(holeCenter, 0);
             RenderFrame();
-            const bool crossOnCanvas = m_hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden;
-            const MiniGUI::Rect nav = m_navBar->GetChildren().front()->GetScreenBounds();
+            const bool crossOnCanvas = m_main.hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden;
+            const MiniGUI::Rect nav = m_main.navBar->GetChildren().front()->GetScreenBounds();
             m_ui->PointerMove(MiniGUI::Vec2{ nav.Center().x, nav.min.y + 16.0f }, 0);
             RenderFrame();
-            check(crossOnCanvas && !m_hovered && m_ui->GetCursor() != MiniGUI::CursorShape::Hidden,
+            check(crossOnCanvas && !m_main.hovered && m_ui->GetCursor() != MiniGUI::CursorShape::Hidden,
                   "导航条上显示鼠标指针，绘图区不画十字光标");
             m_ui->PointerMove(holeCenter, 0);
             RenderFrame();
-            check(m_hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden, "移回绘图区：十字光标");
+            check(m_main.hovered && m_ui->GetCursor() == MiniGUI::CursorShape::Hidden, "移回绘图区：十字光标");
 
             // 导航条竖排在视图方块下面，靠右与方块的右边对齐
-            const MiniGUI::Rect cube = m_viewCube->GetScreenBounds();
+            const MiniGUI::Rect cube = m_main.cube->GetScreenBounds();
             check(nav.min.y >= cube.max.y && std::abs(nav.max.x - cube.max.x) < 1.0f && nav.Height() > nav.Width(),
                   "导航条竖排在视图方块下面、贴着绘图区右边");
 
             // 命令行在状态栏上方居中
-            const MiniGUI::Rect cmd = m_cmdCard->GetScreenBounds();
+            const MiniGUI::Rect cmd = m_main.cmdCard->GetScreenBounds();
             check(IsCommandLineShown() && cmd.max.y <= statusRect.min.y &&
-                  std::abs(cmd.Center().x - m_docArea->GetScreenBounds().Center().x) < 1.0f, "命令行浮在状态栏上方、文档区居中");
+                  std::abs(cmd.Center().x - m_main.area->GetScreenBounds().Center().x) < 1.0f, "命令行浮在状态栏上方、文档区居中");
             m_commands.Execute("view.panel.commandline");
             RenderFrame();
             const bool hidden = !IsCommandLineShown();
@@ -3016,8 +3019,815 @@ namespace MiniCAD
             check(m_layout->GetTitleBar() != nullptr, "没有文档时重新加载界面");
         }
 
+        // ── 29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭 ──────────
+        section("29. 文档窗口：拖出、它自己的界面（标题栏、功能区、快捷键、动态输入）、平移 / 缩放 / 画线 / 选择、最大化 / 最小化、拖回、关闭");
+        {
+            // 两个文档：A 在主窗口里，B 拖出去
+            m_commands.Execute("file.new");
+            Document* docA = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* docB = m_docManager.GetActive();
+            RenderFrame();
+            auto addLine = [](Document& d, double y)
+            {
+                Scene& s = d.GetScene();
+                d.GetCommandStack().Execute(std::make_unique<AddEntityCommand>(
+                    std::make_unique<LineEntity>(s.NextObjectID(), Math::Point3{ -50, y, 0 }, Math::Point3{ 50, y, 0 })), s);
+            };
+            addLine(*docA, 0.0);
+            addLine(*docB, 0.0);
+            const int entitiesA = docA->GetScene().EntityCount();
+            const int entitiesB = docB->GetScene().EntityCount();
+
+            // 标签拖到标签条下方：经 TabView::OnTabDragOut → FloatDocument，一拖出就建窗口，之后窗口跟着光标走
+            auto tabPosOf = [this](Document* d)
+            {
+                const MiniGUI::Rect tl = m_docTabs->GetTabRect(m_docTabs->FindTabData(reinterpret_cast<uintptr_t>(d)));
+                return m_docTabs->GetScreenBounds().min + MiniGUI::Vec2{ tl.min.x + 12.0f, tl.Center().y };
+            };
+            MiniGUI::Vec2 tabPos = tabPosOf(docB);
+            int tx = static_cast<int>(std::lround(tabPos.x * m_dpiScale)), ty = static_cast<int>(std::lround(tabPos.y * m_dpiScale));
+            const int dropY = static_cast<int>(std::lround((tabPos.y + 200.0f) * m_dpiScale));
+
+            // 先拖出再拖回标签条松开：同一次拖动里合并回去
+            send(WM_MOUSEMOVE, 0, tx, ty);
+            send(WM_LBUTTONDOWN, MK_LBUTTON, tx, ty);
+            send(WM_MOUSEMOVE, MK_LBUTTON, tx + 8, ty);
+            send(WM_MOUSEMOVE, MK_LBUTTON, tx + 8, dropY);
+            RenderFrame();
+            pump();
+            check(m_docTabs->IsTornDragging() && DocWindowCount() == 1 && m_docManager.IsDetached(docB) && m_docTabs->GetTabCount() == 1,
+                  "标签拖到标签条下方：没松开就已经是独立窗口（拖动中能看到窗口）");
+            const int stripX = static_cast<int>(std::lround((m_docTabs->GetScreenBounds().min.x + 10.0f) * m_dpiScale));
+            send(WM_MOUSEMOVE, MK_LBUTTON, stripX, ty);
+            check(m_docTabs->GetDropIndicator() == 0, "继续拖到标签条上：标签条画出落点");
+            send(WM_LBUTTONUP, 0, stripX, ty);
+            RenderFrame();
+            pump();
+            check(DocWindowCount() == 0 && !m_docManager.IsDetached(docB) && m_docTabs->GetTabCount() == 2 &&
+                  m_docTabs->GetTabData(0) == reinterpret_cast<uintptr_t>(docB) && !m_docTabs->IsTornDragging() && m_docTabs->GetDropIndicator() < 0,
+                  "松开在标签条上：窗口关闭，B 插回落点处");
+
+            // 再拖出，松开在标签条外：窗口留下
+            tabPos = tabPosOf(docB);
+            tx = static_cast<int>(std::lround(tabPos.x * m_dpiScale));
+            ty = static_cast<int>(std::lround(tabPos.y * m_dpiScale));
+            send(WM_MOUSEMOVE, 0, tx, ty);
+            send(WM_LBUTTONDOWN, MK_LBUTTON, tx, ty);
+            send(WM_MOUSEMOVE, MK_LBUTTON, tx + 8, ty);
+            send(WM_MOUSEMOVE, MK_LBUTTON, tx + 8, dropY);
+            RenderFrame();
+            pump();
+            DocWindow* dw = FindDocWindow(docB);
+            if (dw)
+            {
+                const MiniGUI::Rect before = dw->window->GetRect();
+                send(WM_MOUSEMOVE, MK_LBUTTON, tx + 68, dropY + 40);
+                const MiniGUI::Rect after = dw->window->GetRect();
+                check(std::abs((after.min.x - before.min.x) * m_dpiScale - 60.0f) < 2.0f && std::abs((after.min.y - before.min.y) * m_dpiScale - 40.0f) < 2.0f &&
+                      std::abs(after.Width() - before.Width()) < 1.0f, "拖动中窗口跟着光标走，尺寸不变");
+            }
+            send(WM_LBUTTONUP, 0, tx + 68, dropY + 40);
+            RenderFrame();
+            pump();
+            dw = FindDocWindow(docB);
+            check(dw != nullptr && DocWindowCount() == 1 && m_docManager.IsDetached(docB) && !m_docTabs->IsTornDragging(), "松开在标签条外：文档 B 留在独立窗口里");
+            check(dw && dw->window->GetUI().GetFocus() == dw->host, "松开后激活文档窗口，焦点在它的视口上");
+            check(m_docManager.GetActive() == docB && m_docManager.GetMainDocument() == docA && m_docTabs->GetTabCount() == 1,
+                  "B 仍是当前文档，主视口显示 A，标签条上只剩 A");
+            check(m_title.find(docB->GetName()) == 0, "标题栏显示当前文档（B）的名字");
+            if (dw)
+            {
+                const HWND fw = static_cast<Win32FloatingWindow*>(dw->window.get())->GetHwnd();
+                check(fw != nullptr && IsWindowVisible(fw), "文档窗口是可见的系统窗口");
+                auto sendF = [&](UINT m, WPARAM wp, int x, int y) { SendMessageW(fw, m, wp, MAKELPARAM(x, y)); };
+                auto paintF = [&] { RedrawWindow(fw, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW); };
+                paintF();
+                RenderFrame();
+                Viewport*  vpB   = m_docManager.ViewportOf(docB);
+                Viewport&  vpMain = m_docManager.GetMainViewport();
+                const float fs = dw->window->GetUI().GetPixelScale();
+                // 在没被功能区、面板、视图方块遮住的绘图区（文档区）中间操作；视口坐标从它的左上角算起
+                const MiniGUI::Rect fa = dw->chrome.area->GetScreenBounds();
+                const int fcx = static_cast<int>(std::lround((fa.Center().x - 60.0f) * fs)), fcy = static_cast<int>(std::lround((fa.Center().y + 40.0f) * fs));
+                check(vpB && vpB != &vpMain && vpB->GetWidth() == static_cast<float>(dw->target->GetWidth()) && vpB->GetWidth() > 100.0f,
+                      "文档窗口有自己的视口与渲染目标，尺寸随窗口");
+                {
+                    const ViewChrome& c = dw->chrome;
+                    MiniGUI::UIContext* fui = &dw->window->GetUI();
+                    const bool own = c.cube && c.navBar && c.console && c.statusBar && c.layoutTabs && c.cmdCard &&
+                                     c.cube->GetContext() == fui && c.navBar->GetContext() == fui && c.console->GetContext() == fui &&
+                                     c.statusBar->GetContext() == fui && c.layoutTabs->GetContext() == fui;
+                    check(own && c.cube->IsVisible() && IsCommandLineShown(c) && c.layoutTabsBar && c.layoutTabsBar->IsVisible() &&
+                          c.layoutTabs->GetTabCount() == static_cast<int>(docB->GetScene().Layouts().size()),
+                          "文档窗口有自己的视图方块、导航条、命令行与状态栏（含模型 / 布局标签），显示 B 的布局");
+                    check(DocOf(c) == docB && DocOf(m_main) == docA, "文档窗口的一套绑定 B，主窗口的一套绑定主视口里的 A");
+                }
+
+                // 平移：中键拖动只动 B 的相机
+                const Math::Point2 bBefore = vpB->GetCamera().WorldToScreen(origin);
+                const Math::Point2 aBefore = vpMain.GetCamera().WorldToScreen(origin);
+                sendF(WM_MOUSEMOVE, 0, fcx, fcy);
+                sendF(WM_MBUTTONDOWN, MK_MBUTTON, fcx, fcy);
+                sendF(WM_MOUSEMOVE, MK_MBUTTON, fcx + 30, fcy + 20);
+                sendF(WM_MBUTTONUP, 0, fcx + 30, fcy + 20);
+                const Math::Point2 bAfter = vpB->GetCamera().WorldToScreen(origin);
+                const Math::Point2 aAfter = vpMain.GetCamera().WorldToScreen(origin);
+                check(std::abs((bAfter.x - bBefore.x) - 30.0) < 0.5 && std::abs((bAfter.y - bBefore.y) - 20.0) < 0.5, "在文档窗口里中键拖动：B 的视图平移");
+                check(aAfter.x == aBefore.x && aAfter.y == aBefore.y, "主窗口里 A 的视图不动");
+
+                // 滚轮缩放
+                const double zoomBefore = vpB->GetCamera().GetState().Zoom;
+                POINT sp{ fcx, fcy };
+                ClientToScreen(fw, &sp);
+                SendMessageW(fw, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM(sp.x, sp.y));
+                check(vpB->GetCamera().GetState().Zoom != zoomBefore && vpMain.GetCamera().GetState().Zoom != vpB->GetCamera().GetState().Zoom,
+                      "滚轮只缩放 B 的视图");
+
+                // 画线：在文档窗口里按 L、空格（字母进主窗口的命令行，空格执行），再点两点、Esc
+                Editor& edB = m_docManager.GetEditor(*docB);
+                sendF(WM_KEYDOWN, 'L', 0, 0);
+                SendMessageW(fw, WM_CHAR, 'l', 0);
+                sendF(WM_KEYUP, 'L', 0, 0);
+                RenderFrame();
+                check(dw->chrome.console->HasInputFocus() && dw->chrome.console->GetInputText() == "l" &&
+                      !m_main.console->HasInputFocus() && m_main.console->GetInputText().empty(),
+                      "文档窗口里按 L：字母进入文档窗口自己的命令行，主窗口的命令行不受影响");
+                SendMessageW(fw, WM_CHAR, ' ', 0);
+                paintF();
+                RenderFrame();
+                check(edB.IsActiveTool() && edB.GetLastCommand() == "Line" && !m_docManager.GetEditor(*docA).IsActiveTool(),
+                      "空格执行：直线工具在 B 的编辑器里启动");
+                check(dw->chrome.console->GetPrompt() == edB.GetCmdLine().Prompt() && !edB.GetCmdLine().Prompt().empty() &&
+                      m_main.console->GetPrompt() == "命令:",
+                      "文档窗口的命令行显示 B 的提示，主窗口的命令行显示 A 的（空闲）");
+                sendF(WM_MOUSEMOVE, 0, fcx - 40, fcy - 30);
+                sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx - 40, fcy - 30);
+                sendF(WM_LBUTTONUP, 0, fcx - 40, fcy - 30);
+                sendF(WM_MOUSEMOVE, 0, fcx + 40, fcy + 30);
+                paintF();
+                RenderFrame();
+                check(IsDynInputVisible(dw->chrome) && !IsDynInputVisible(m_main),
+                      "有锚点时动态输入框显示在文档窗口里（光标旁），主窗口的不显示");
+                sendF(WM_KEYDOWN, '5', 0, 0);
+                SendMessageW(fw, WM_CHAR, '5', 0);
+                sendF(WM_KEYUP, '5', 0, 0);
+                paintF();
+                check(DynInputHasFocus(dw->chrome) && GetDynInputText(dw->chrome, 0) == "5" && !m_main.console->HasInputFocus(),
+                      "在文档窗口里按数字：进它自己的长度框");
+                sendF(WM_KEYDOWN, VK_ESCAPE, 0, 0);     // 第一次 Esc 只清掉键入
+                sendF(WM_KEYUP, VK_ESCAPE, 0, 0);
+                dw->host->Focus();
+                sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx + 40, fcy + 30);
+                sendF(WM_LBUTTONUP, 0, fcx + 40, fcy + 30);
+                sendF(WM_KEYDOWN, VK_ESCAPE, 0, 0);
+                sendF(WM_KEYUP, VK_ESCAPE, 0, 0);
+                RenderFrame();
+                check(docB->GetScene().EntityCount() == entitiesB + 1 && docA->GetScene().EntityCount() == entitiesA && !edB.IsActiveTool(),
+                      "在文档窗口里画了一条线到 B（A 不变），Esc 结束工具");
+
+                // 选择：点刚画的线的中点
+                sendF(WM_MOUSEMOVE, 0, fcx, fcy);
+                sendF(WM_LBUTTONDOWN, MK_LBUTTON, fcx, fcy);
+                sendF(WM_LBUTTONUP, 0, fcx, fcy);
+                check(edB.GetSelection().size() == 1 && m_docManager.GetEditor(*docA).GetSelection().empty(), "在文档窗口里点选：选中 B 里的线");
+
+                // 文档窗口有自己的标题栏工具、功能区与图层下拉框（界面描述的 layouts.document），快捷键登记在它自己的界面上
+                {
+                    MiniGUI::UIContext* fui = &dw->window->GetUI();
+                    const MiniGUI::Ribbon* rb = dw->layout->GetRibbon();
+                    check(rb && rb->GetContext() == fui && rb->IsVisible() && dw->layout->GetMenuBar() && dw->layout->GetMenuBar()->GetContext() == fui &&
+                          dw->layout->GetToolBar("quick") && dw->titleBar == dw->layout->GetTitleBar() && dw->tabs->GetParent() &&
+                          dw->layerBar && dw->layerBar->GetContext() == fui && rb != m_layout->GetRibbon(),
+                          "文档窗口有自己的“文件”菜单、快速访问、功能区与图层下拉框");
+                    docB->GetLayerManager().AddLayer("多窗口阶段3");
+                    m_commands.NotifyStateChanged();
+                    check(dw->layerBar->GetItems().size() == SortedLayerIds(*docB).size() &&
+                          m_layerBarLayer->GetItems().size() == SortedLayerIds(*docA).size() &&
+                          dw->layerBar->GetItems().size() != m_layerBarLayer->GetItems().size(),
+                          "各窗口的图层下拉框显示自己窗口里文档的图层（B 多一个，主窗口的显示 A 的）");
+                    {
+                        const PanelSet& fp = *dw->chrome.panels;
+                        const MiniGUI::DockSpace* fdock = dw->layout->GetDock("main");
+                        check(fdock && fdock->IsPanelVisible("properties") && fdock->IsPanelVisible("layers") && fdock->HasPanel("nodes") &&
+                              fp.layerList && fp.layerList->GetContext() == fui && fp.nodeEditor && fp.nodeEditor != m_main.panels->nodeEditor &&
+                              m_layout->GetDock("main")->IsPanelVisible("layers"),
+                              "文档窗口有自己的停靠区：特性、图层（节点编辑器可打开），主窗口的面板还在");
+                        check(fp.layerIds.size() == SortedLayerIds(*docB).size() && m_main.panels->layerIds.size() == SortedLayerIds(*docA).size(),
+                              "各窗口的图层面板列出自己窗口里文档的图层");
+                    }
+
+                    const auto keepSel = edB.GetSelection();
+                    fui->KeyDown(MiniGUI::Key::A, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                    fui->KeyUp(MiniGUI::Key::A, static_cast<uint8_t>(MiniGUI::ModifierKey::Ctrl));
+                    check(edB.GetSelection().size() == docB->GetScene().EntityCount() && m_docManager.GetEditor(*docA).GetSelection().empty(),
+                          "文档窗口的快捷键（Ctrl+A）在它自己的界面上触发，作用于 B");
+                    edB.SetSelection({ keepSel.begin(), keepSel.end() });
+
+                    // 点主窗口的功能区：主窗口的 A 成为当前文档；再点文档窗口的功能区：B
+                    const MiniGUI::Rect mr = m_layout->GetRibbon()->GetScreenBounds();
+                    const int rx = static_cast<int>(std::lround((mr.max.x - 3.0f) * m_dpiScale)), ry = static_cast<int>(std::lround((mr.max.y - 3.0f) * m_dpiScale));
+                    send(WM_MOUSEMOVE, 0, rx, ry);
+                    send(WM_LBUTTONDOWN, MK_LBUTTON, rx, ry);
+                    send(WM_LBUTTONUP, 0, rx, ry);
+                    const bool mainActive = m_docManager.GetActive() == docA;
+                    const MiniGUI::Rect fr = rb->GetScreenBounds();
+                    const int frx = static_cast<int>(std::lround((fr.max.x - 3.0f) * fs)), fry = static_cast<int>(std::lround((fr.max.y - 3.0f) * fs));
+                    sendF(WM_MOUSEMOVE, 0, frx, fry);
+                    sendF(WM_LBUTTONDOWN, MK_LBUTTON, frx, fry);
+                    sendF(WM_LBUTTONUP, 0, frx, fry);
+                    check(mainActive && m_docManager.GetActive() == docB, "点哪个窗口的功能区，哪个窗口的文档成为当前文档（命令随后作用于它）");
+
+                    // 重新加载界面描述、切换主题：文档窗口一起
+                    const MiniGUI::TitleBar* oldBar = dw->titleBar;
+                    ReloadUi();
+                    RenderFrame();
+                    paintF();
+                    check(dw->titleBar && dw->titleBar != oldBar && dw->titleBar->GetContext() == fui && dw->tabs->GetContext() == fui &&
+                          dw->layout->GetRibbon() && dw->layerBar->GetContext() == fui && dw->host->GetContext() == fui,
+                          "重新加载界面描述：文档窗口按 layouts.document 一起重建，标签条、视口、图层下拉框还是原来的");
+                    const bool dark = m_ui->GetTheme().IsDark();
+                    m_commands.Execute("ui.theme");
+                    const bool themed = fui->GetTheme().IsDark() == m_ui->GetTheme().IsDark() && m_ui->GetTheme().IsDark() != dark;
+                    m_commands.Execute("ui.theme");
+                    check(themed && fui->GetTheme().IsDark() == dark, "切换主题：文档窗口跟着换");
+                    RenderFrame();
+                    paintF();
+                }
+                paintF();
+                RenderFrame();
+                {
+                    ViewportPixels px;
+                    const bool read = static_cast<Win32Window*>(m_platform)->GetGraphics().ReadPixels(*dw->target, px.W, px.H, px.Rgba);
+                    int lit = 0;
+                    if (read)
+                        for (int y = 0; y < px.H; ++y)
+                            for (int x = 0; x < px.W; ++x)
+                                if (px.At(x, y)[0] > 60 || px.At(x, y)[1] > 60 || px.At(x, y)[2] > 60) ++lit;
+                    check(read && lit > 50, "文档窗口的视口里画出了内容");
+                    if (read)
+                        SaveBmp(px, std::filesystem::temp_directory_path() / "minicad_selftest_docwindow.bmp");
+                    const ViewportPixels ui = CaptureWindow(fw);
+                    SaveBmp(ui, std::filesystem::temp_directory_path() / "minicad_selftest_docwindow_ui.bmp");
+                    // 视口的空白处（功能区下面、文档区的左上角）是窗口底色，与主窗口的绘图区相同，而不是浮动面板的面板色
+                    const MiniGUI::Rect ab = dw->chrome.area->GetScreenBounds();
+                    const int bx = static_cast<int>((ab.min.x + 20.0f) * fs), by = static_cast<int>((ab.min.y + 20.0f) * fs);
+                    const MiniGUI::Color32 bg = m_ui->GetTheme().Get(MiniGUI::ThemeColor::Background);
+                    bool bgOk = ui.Inside(bx, by);
+                    for (int c = 0; bgOk && c < 3; ++c)     // Color32 低字节为 R
+                        bgOk = std::abs(static_cast<int>(ui.At(bx, by)[c]) - static_cast<int>((bg >> (8 * c)) & 0xFF)) <= 2;
+                    check(bgOk, "文档窗口的绘图区空白处是窗口底色（与主窗口的绘图区相同）");
+                    SaveBmp(CaptureWindow(hwnd), std::filesystem::temp_directory_path() / "minicad_selftest_docwindow_main.bmp");
+                }
+
+                // 文档窗口的布局标签：切的是 B 的布局，A 不变；切回模型（选择集会清掉，之后恢复）
+                {
+                    const auto selB = edB.GetSelection();
+                    const int  layoutA = docA->ActiveLayout();
+                    dw->chrome.layoutTabs->SetSelected(1);
+                    paintF();
+                    RenderFrame();
+                    check(docB->ActiveLayout() == 1 && docA->ActiveLayout() == layoutA && m_docManager.GetActive() == docB &&
+                          !dw->chrome.cube->IsVisible() && m_main.cube->IsVisible(),
+                          "文档窗口的布局标签切换 B 的布局（布局页上它的视图方块隐藏），A 与主窗口的视图方块不变");
+                    dw->chrome.layoutTabs->SetSelected(0);
+                    paintF();
+                    RenderFrame();
+                    check(docB->ActiveLayout() == 0 && dw->chrome.cube->IsVisible(), "切回模型页");
+                    edB.SetSelection(selB);
+                }
+
+                // 标题栏：文档名、主窗口的图标；空白处是系统标题区域（拖动、双击最大化、贴边），按钮不是
+                {
+                    MiniGUI::TitleBar* tb = dw->titleBar;
+                    MiniGUI::UIContext& fui = dw->window->GetUI();
+                    check(tb && tb->GetTitle().rfind(docB->GetName(), 0) == 0 && tb->GetIcon() != MiniGUI::InvalidTextureId,
+                          "文档窗口的标题栏显示文档名与程序图标");
+                    auto screenOf = [&](MiniGUI::Vec2 p)
+                    {
+                        POINT s{ static_cast<LONG>(std::lround(p.x * fui.GetPixelScale())), static_cast<LONG>(std::lround(p.y * fui.GetPixelScale())) };
+                        ClientToScreen(fw, &s);
+                        return s;
+                    };
+                    auto buttonAt = [&](int fromRight)      // 0 = 关闭，1 = 最大化，2 = 最小化
+                    {
+                        const MiniGUI::Rect r = tb->GetScreenBounds();
+                        return MiniGUI::Vec2{ r.max.x - MiniGUI::TitleBar::kButtonWidth * (static_cast<float>(fromRight) + 0.5f), r.Center().y };
+                    };
+                    auto clickButton = [&](int fromRight)
+                    {
+                        const MiniGUI::Vec2 p = buttonAt(fromRight);
+                        fui.PointerMove(p, 0);
+                        fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 1);
+                        fui.PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                        paintF();
+                    };
+                    const POINT blank = screenOf(MiniGUI::Vec2{ tb->GetScreenBounds().Center().x, tb->GetScreenBounds().Center().y });
+                    const POINT maxButton = screenOf(buttonAt(1));
+                    check(SendMessageW(fw, WM_NCHITTEST, 0, MAKELPARAM(blank.x, blank.y)) == HTCAPTION &&
+                          SendMessageW(fw, WM_NCHITTEST, 0, MAKELPARAM(maxButton.x, maxButton.y)) == HTCLIENT,
+                          "标题栏空白处交给系统拖动（HTCAPTION），按钮不是");
+                    clickButton(1);
+                    check(IsZoomed(fw) && dw->window->IsWindowMaximized(), "最大化按钮：文档窗口最大化");
+                    clickButton(1);
+                    check(!IsZoomed(fw), "再点：还原");
+                    clickButton(2);
+                    check(IsIconic(fw) != FALSE, "最小化按钮：文档窗口最小化");
+                    ShowWindow(fw, SW_RESTORE);
+                    paintF();
+                    check(!IsIconic(fw) && m_docManager.IsDetached(docB) && DocWindowCount() == 1, "还原后文档仍在它的窗口里");
+                }
+
+                // 主窗口的视口：点一下 A 就成为当前文档
+                send(WM_MOUSEMOVE, 0, cx, cy);
+                send(WM_LBUTTONDOWN, MK_LBUTTON, cx, cy);
+                send(WM_LBUTTONUP, 0, cx, cy);
+                RenderFrame();
+                check(m_docManager.GetActive() == docA && m_docManager.IsDetached(docB), "点主窗口的视口：A 成为当前文档，B 仍在它的窗口里");
+                // 文档窗口被激活（点它、Alt+Tab）：B 成为当前文档
+                SendMessageW(fw, WM_NCACTIVATE, TRUE, 0);
+                check(m_docManager.GetActive() == docB && dw->titleBar->IsWindowActive(), "激活文档窗口：B 成为当前文档，标题栏按活动样式");
+
+                // 拖回：系统的移动循环拖文档窗口的标题栏到主窗口的标签条上松开（光标相对窗口左上角不变）
+                const CameraState bCam = vpB->GetCamera().GetState();
+                const MiniGUI::Rect stripMain = m_docTabs->GetScreenBounds();
+                const MiniGUI::Vec2 dropMain{ stripMain.min.x + 10.0f, stripMain.Center().y };     // 第一个标签的左半：插到最前
+                POINT cursor{};
+                RECT  wr{};
+                GetCursorPos(&cursor);
+                GetWindowRect(fw, &wr);
+                const POINT grab{ cursor.x - wr.left, cursor.y - wr.top };
+                POINT target{ static_cast<LONG>(std::lround(dropMain.x * m_dpiScale)), static_cast<LONG>(std::lround(dropMain.y * m_dpiScale)) };
+                ClientToScreen(hwnd, &target);
+                RECT moved{ target.x - grab.x, target.y - grab.y, target.x - grab.x + (wr.right - wr.left), target.y - grab.y + (wr.bottom - wr.top) };
+                SendMessageW(fw, WM_ENTERSIZEMOVE, 0, 0);
+                SendMessageW(fw, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&moved));
+                check(m_docTabs->GetDropIndicator() == 0 && DocWindowCount() == 1, "标题栏拖到标签条上：标签条画出落点");
+                SetWindowPos(fw, nullptr, moved.left, moved.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(fw, WM_EXITSIZEMOVE, 0, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 && !m_docManager.IsDetached(docB) && m_docTabs->GetTabCount() == 2 && m_docTabs->GetDropIndicator() < 0,
+                      "松开：文档窗口关闭，B 回到标签条");
+                check(m_docTabs->GetTabData(0) == reinterpret_cast<uintptr_t>(docB) && m_docTabs->GetSelected() == 0, "插在落点处（最前）并选中");
+                check(m_docManager.GetActive() == docB && m_docManager.GetMainDocument() == docB && vpMain.GetCamera().GetState().Zoom == bCam.Zoom,
+                      "B 成为当前文档与主视口文档，相机是它在独立窗口里的视图");
+                check(m_docManager.GetEditor(*docB).GetSelection().size() == 1, "选择集随文档保留");
+            }
+
+            // 关闭文档窗口 = 关闭文档：未保存时询问，取消后窗口还在；保存状态下直接关
+            check(FloatDocument(docB, MiniGUI::Vec2{ 300.0f, 300.0f }), "右键菜单的“在独立窗口中打开”");
+            RenderFrame();
+            pump();
+            if (DocWindow* w2 = FindDocWindow(docB))
+            {
+                const HWND fw = static_cast<Win32FloatingWindow*>(w2->window.get())->GetHwnd();
+                check(GetWindow(fw, GW_OWNER) == nullptr && (GetWindowLongPtrW(fw, GWL_EXSTYLE) & WS_EX_APPWINDOW) != 0,
+                      "文档窗口与主窗口平级（主窗口能盖在它上面，对话框不被挡住），任务栏里有按钮");
+                SendMessageW(fw, WM_CLOSE, 0, 0);
+                RenderFrame();
+                check(m_ui->HasModal() && DocWindowCount() == 1 && m_modalRaised, "关闭未保存的文档窗口：主窗口询问是否保存，并置前");
+                // 对话框开着：在文档窗口里点不会编辑，再关一次也不会叠出第二个对话框
+                {
+                    const MiniGUI::Rect hb2 = w2->host->GetScreenBounds();
+                    const float fs2 = w2->window->GetUI().GetPixelScale();
+                    const int px = static_cast<int>(std::lround(hb2.Center().x * fs2)), py = static_cast<int>(std::lround(hb2.Center().y * fs2));
+                    const size_t selBefore = m_docManager.GetEditor(*docB).GetSelection().size();
+                    SendMessageW(fw, WM_MOUSEMOVE, 0, MAKELPARAM(px + 200, py + 100));
+                    SendMessageW(fw, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(px + 200, py + 100));
+                    SendMessageW(fw, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(px - 200, py - 100));
+                    SendMessageW(fw, WM_LBUTTONUP, 0, MAKELPARAM(px - 200, py - 100));
+                    SendMessageW(fw, WM_CLOSE, 0, 0);
+                    check(m_docManager.GetEditor(*docB).GetSelection().size() == selBefore && DocWindowCount() == 1 && m_ui->HasModal(),
+                          "对话框开着时文档窗口不接受编辑（框选、再次关闭都不执行）");
+                    // 点它停靠区里的图层面板：焦点不进面板（否则随后的 Esc 给了面板而不是对话框），对话框还在
+                    MiniGUI::UIContext& fui2 = w2->window->GetUI();
+                    MiniGUI::Node* const focusBefore = fui2.GetFocus();
+                    MiniGUI::Node* const list = w2->chrome.panels->layerList;
+                    if (list && list->GetContext() == &fui2)
+                    {
+                        const MiniGUI::Vec2 lc = list->GetScreenBounds().Center();
+                        const int lx = static_cast<int>(std::lround(lc.x * fs2)), ly = static_cast<int>(std::lround(lc.y * fs2));
+                        SendMessageW(fw, WM_MOUSEMOVE, 0, MAKELPARAM(lx, ly));
+                        SendMessageW(fw, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(lx, ly));
+                        SendMessageW(fw, WM_LBUTTONUP, 0, MAKELPARAM(lx, ly));
+                    }
+                    check(list && fui2.GetFocus() == focusBefore && fui2.GetHovered() == nullptr && m_ui->HasModal(),
+                          "对话框开着时点文档窗口的面板：焦点、悬停都不变，对话框还在");
+                }
+                // Esc 按在文档窗口里：转给主窗口的对话框
+                SendMessageW(fw, WM_KEYDOWN, VK_ESCAPE, 0);
+                SendMessageW(fw, WM_KEYUP, VK_ESCAPE, 0);
+                RenderFrame();
+                check(!m_ui->HasModal() && DocWindowCount() == 1 && m_docManager.GetAll().size() >= 2, "在文档窗口里按 Esc 取消对话框，文档与窗口都还在");
+                docB->MarkSaved();
+                SendMessageW(fw, WM_CLOSE, 0, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 &&
+                      std::none_of(m_docManager.GetAll().begin(), m_docManager.GetAll().end(), [docB](const auto& d) { return d.get() == docB; }),
+                      "已保存的文档窗口关闭即关闭文档");
+                check(m_docManager.GetActive() == docA && m_docManager.GetMainDocument() == docA, "关闭后当前文档回到主视口里的 A");
+            }
+            if (docA) { docA->MarkSaved(); CloseDocument(docA); }
+            RenderFrame();
+        }
+
+        // ── 30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并 ──────────
+        section("30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并");
+        do      // W1 没建出来时 break：下面都要用它，不跳过会崩溃，后面的节就跑不到了
+        {
+            using PaneId = DocumentManager::PaneId;
+            constexpr PaneId kMain = DocumentManager::kMainPane;
+            m_commands.Execute("file.new");
+            Document* docA = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* docB = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* docC = m_docManager.GetActive();
+            RenderFrame();
+            auto key = [](const Document* d) { return reinterpret_cast<uintptr_t>(d); };
+            // 某个窗口里某个标签的中心偏左（避开关闭按钮），那个窗口的逻辑坐标
+            auto tabPoint = [&](PaneId pane, Document* d)
+            {
+                MiniGUI::TabView* tabs = TabsOfPane(pane);
+                const MiniGUI::Rect r = tabs->GetTabRect(tabs->FindTabData(key(d)));
+                return tabs->GetScreenBounds().min + MiniGUI::Vec2{ r.min.x + 12.0f, r.Center().y };
+            };
+            auto stripPoint = [&](PaneId pane, float fromLeft)      // 某个窗口的标签条上（主窗口坐标）
+            {
+                const MiniGUI::Rect r = TabsOfPane(pane)->GetScreenBounds();
+                return PaneToMain(pane, MiniGUI::Vec2{ r.min.x + fromLeft, r.Center().y });
+            };
+            auto px = [&](float v) { return static_cast<int>(std::lround(v * m_dpiScale)); };
+            // 在主窗口的标签条上按住某个标签拖到 mainTo（主窗口坐标），途中经过标签条下方，松开
+            auto dragMainTab = [&](Document* d, MiniGUI::Vec2 mainTo)
+            {
+                const MiniGUI::Vec2 p = tabPoint(kMain, d);
+                send(WM_MOUSEMOVE, 0, px(p.x), px(p.y));
+                send(WM_LBUTTONDOWN, MK_LBUTTON, px(p.x), px(p.y));
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(p.x + 8.0f), px(p.y));
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(p.x + 8.0f), px(p.y + 200.0f));
+                RenderFrame();
+                pump();
+                send(WM_MOUSEMOVE, MK_LBUTTON, px(mainTo.x), px(mainTo.y));
+                send(WM_LBUTTONUP, 0, px(mainTo.x), px(mainTo.y));
+                RenderFrame();
+                pump();
+            };
+            // 在文档窗口的标签条上按住某个标签（那个窗口自己的界面），拖出标签条，再拖到 mainTo（主窗口坐标），松开。
+            // 被拖的窗口跟着光标走：每一步都按它当时的位置换算
+            auto dragWindowTab = [&](PaneId pane, Document* d, MiniGUI::Vec2 mainTo, bool release = true)
+            {
+                DocWindow* w = FindPaneWindow(pane);
+                MiniGUI::UIContext& fui = w->window->GetUI();
+                const MiniGUI::Vec2 p = tabPoint(pane, d);
+                fui.PointerMove(p, 0);
+                fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 100);
+                fui.PointerMove(p + MiniGUI::Vec2{ 8.0f, 0.0f }, 0);
+                fui.PointerMove(p + MiniGUI::Vec2{ 8.0f, 200.0f }, 0);
+                RenderFrame();
+                pump();
+                fui.PointerMove(MainToPane(pane, mainTo), 0);
+                if (release)
+                {
+                    fui.PointerUp(MainToPane(pane, mainTo), MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                    pump();
+                }
+            };
+
+            // B 拖出成窗口 W1
+            const MiniGUI::Rect mainStrip = m_docTabs->GetScreenBounds();
+            dragMainTab(docB, MiniGUI::Vec2{ mainStrip.min.x + 200.0f, mainStrip.max.y + 300.0f });
+            const PaneId w1 = m_docManager.PaneOf(docB);
+            DocWindow* win1 = FindPaneWindow(w1);
+            check(win1 && w1 != kMain && DocWindowCount() == 1 && win1->tabs && win1->tabs->GetTabCount() == 1,
+                  "B 拖出成文档窗口 W1，W1 的标题栏里有它的标签条");
+            if (!win1)
+                break;
+
+            // C 从主窗口的标签条拖到 W1 的标签条上：途中建的临时窗口在松开后关掉，C 进 W1
+            dragMainTab(docC, stripPoint(w1, 200.0f));       // 标签右边的标题栏空白处：接到最后
+            check(m_docManager.PaneOf(docC) == w1 && DocWindowCount() == 1 && TabOrder(w1) == std::vector<Document*>{ docB, docC } &&
+                  m_docTabs->GetTabCount() == 1, "C 从主窗口拖到 W1 的标签条上：进 W1（排在 B 后面），途中的临时窗口关掉");
+            check(m_docManager.GetShownDocument(w1) == docC && m_docManager.GetActive() == docC && m_docManager.GetMainDocument() == docA &&
+                  win1->tabs->GetSelected() == win1->tabs->FindTabData(key(docC)), "W1 显示 C 并选中它的标签，C 是当前文档，主窗口仍是 A");
+
+            // W1 里点 B 的标签：B 显示出来，相机各自保留；主窗口不动
+            {
+                MiniGUI::UIContext& fui = win1->window->GetUI();
+                const MiniGUI::Vec2 p = tabPoint(w1, docB);
+                fui.PointerMove(p, 0);
+                fui.PointerDown(p, MiniGUI::MouseButton::Left, 0, 5000);
+                fui.PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                check(m_docManager.GetShownDocument(w1) == docB && m_docManager.GetActive() == docB && m_docManager.GetMainDocument() == docA &&
+                      win1->chrome.console && DocOf(win1->chrome) == docB, "点 W1 里 B 的标签：W1 改显示 B，它的命令行等跟着换，主窗口不动");
+            }
+
+            // 当前文档在 W1 里：新建的文档进 W1；关掉它回到两个标签
+            m_commands.Execute("file.new");
+            Document* docD = m_docManager.GetActive();
+            RenderFrame();
+            check(m_docManager.PaneOf(docD) == w1 && win1->tabs->GetTabCount() == 3 && m_docTabs->GetTabCount() == 1,
+                  "当前文档在 W1 里时新建：新文档进 W1");
+            docD->MarkSaved();
+            CloseDocument(docD);
+            RenderFrame();
+            check(win1->tabs->GetTabCount() == 2 && DocWindowCount() == 1, "关掉它：W1 剩两个标签");
+
+            // C 从 W1 拖回主窗口的标签条（插到 A 前面）：W1 有两个文档，拖出时先建临时窗口，松开后关掉
+            dragWindowTab(w1, docC, stripPoint(kMain, 6.0f));
+            check(m_docManager.PaneOf(docC) == kMain && m_docTabs->GetTabData(0) == key(docC) && m_docTabs->GetTabCount() == 2 &&
+                  DocWindowCount() == 1 && TabOrder(w1) == std::vector<Document*>{ docB },
+                  "C 从 W1 拖到主窗口标签条的最前面：进主窗口，W1 只剩 B，临时窗口关掉");
+            check(m_docManager.GetMainDocument() == docC && m_docManager.GetActive() == docC, "主窗口显示 C，它是当前文档");
+
+            // W1 只有 B：拖它的标签就是拖整个窗口（不建新窗口）；经过主窗口的标签条时窗口让到标签条下面，松开即合并
+            {
+                const MiniGUI::Rect before = win1->window->GetRect();
+                const MiniGUI::Vec2 away{ before.min.x + 300.0f, before.min.y + 420.0f };
+                dragWindowTab(w1, docB, away, false);
+                const MiniGUI::Rect moved = win1->window->GetRect();
+                check(DocWindowCount() == 1 && m_torn.window == w1 && std::abs(moved.min.y - before.min.y) > 50.0f,
+                      "只有一个标签的窗口：拖标签就是拖窗口，不建新窗口");
+                MiniGUI::UIContext& fui = win1->window->GetUI();
+                const MiniGUI::Vec2 onStrip = stripPoint(kMain, 300.0f);
+                fui.PointerMove(MainToPane(w1, onStrip), 0);
+                const float stripBottom = m_docTabs->GetScreenBounds().max.y;
+                check(m_docTabs->GetDropIndicator() >= 0 && win1->window->GetRect().min.y >= stripBottom,
+                      "拖到主窗口的标签条上：画出落点，被拖的窗口让到标签条下面");
+                fui.PointerUp(MainToPane(w1, onStrip), MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 && m_docManager.PaneOf(docB) == kMain && !m_docManager.HasPane(w1) && m_docTabs->GetTabCount() == 3 &&
+                      m_docTabs->GetDropIndicator() < 0, "松开：B 回主窗口，W1 空了随之关掉");
+            }
+
+            // 两个文档的窗口拖标题栏（系统的移动循环）到主窗口的标签条上：两个文档都移回去，窗口关掉；移动中窗口让开标签条
+            check(FloatDocument(docB, MiniGUI::Vec2{ 300.0f, 300.0f }), "B 再拖出成窗口");
+            RenderFrame();
+            pump();
+            const PaneId w2 = m_docManager.PaneOf(docB);
+            MoveDocumentsTo({ docC }, docC, w2, -1);
+            RenderFrame();
+            pump();
+            if (DocWindow* win2 = FindPaneWindow(w2))
+            {
+                check(TabOrder(w2) == std::vector<Document*>{ docB, docC } && m_docTabs->GetTabCount() == 1, "C 也移进这个窗口：它有两个标签");
+                const HWND fw = static_cast<Win32FloatingWindow*>(win2->window.get())->GetHwnd();
+                POINT cursor{};
+                RECT  wr{};
+                GetCursorPos(&cursor);
+                GetWindowRect(fw, &wr);
+                const POINT grab{ cursor.x - wr.left, cursor.y - wr.top };
+                const MiniGUI::Vec2 dropMain = stripPoint(kMain, 300.0f);
+                POINT target{ px(dropMain.x), px(dropMain.y) };
+                ClientToScreen(hwnd, &target);
+                RECT moved{ target.x - grab.x, target.y - grab.y, target.x - grab.x + (wr.right - wr.left), target.y - grab.y + (wr.bottom - wr.top) };
+                SendMessageW(fw, WM_ENTERSIZEMOVE, 0, 0);
+                SendMessageW(fw, WM_MOVING, WMSZ_LEFT, reinterpret_cast<LPARAM>(&moved));
+                POINT stripBottom{ 0, px(m_docTabs->GetScreenBounds().max.y) };
+                ClientToScreen(hwnd, &stripBottom);
+                check(m_docTabs->GetDropIndicator() >= 0 && moved.top >= stripBottom.y,
+                      "拖标题栏到主窗口的标签条上：画出落点，窗口让到标签条下面（系统给的位置被改）");
+                SetWindowPos(fw, nullptr, moved.left, moved.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                SendMessageW(fw, WM_EXITSIZEMOVE, 0, 0);
+                RenderFrame();
+                pump();
+                check(DocWindowCount() == 0 && m_docManager.PaneOf(docB) == kMain && m_docManager.PaneOf(docC) == kMain && m_docTabs->GetTabCount() == 3,
+                      "松开（光标还在标签条上，窗口位置已让开）：两个文档都回主窗口，窗口关掉");
+            }
+
+            // 主窗口的文档都移走：主窗口显示起始页（面板跟着窗口，主窗口自己的被起始页盖住）
+            check(FloatDocument(docA, MiniGUI::Vec2{ 300.0f, 300.0f }), "A 拖出成窗口");
+            RenderFrame();
+            pump();
+            const PaneId w3 = m_docManager.PaneOf(docA);
+            MoveDocumentsTo({ docB, docC }, docC, w3, -1);
+            RenderFrame();
+            check(!m_docManager.GetMainDocument() && m_docTabs->GetTabCount() == 0 && m_docTabs->IsVisible() && m_startPage && m_startPage->IsVisible() &&
+                  !m_viewport->IsVisible() && !m_startBack->IsVisible(),
+                  "主窗口的文档都移走：主窗口显示起始页（没有“返回”行），标签条还在（可以拖回来）");
+            check(m_docManager.GetActive() == docC && FindDocWindow(docC) != nullptr, "当前文档仍是别的窗口里的 C");
+            // 在空着的主窗口里点一下，再点回 W3（它的 C 本来就是当前文档）：之后打开的图纸进 W3
+            UseChrome(m_main);
+            UseChrome(FindPaneWindow(w3)->chrome);
+            check(m_docManager.GetNewDocumentPane() == w3, "点回次窗口：新建 / 打开的图纸进它（当前文档没变也一样）");
+            {
+                const std::filesystem::path file = std::filesystem::temp_directory_path() / u8"minicad_selftest_多窗口打开.dwg";
+                const auto u8 = file.u8string();
+                const std::string path(u8.begin(), u8.end());
+                Scene drawing;
+                drawing.AddEntity(std::make_unique<LineEntity>(drawing.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 100, 60, 0 }));
+                const auto data = ExportCad(drawing, CadFileKind::Dwg);
+                { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(data.data()), data.size()); }
+                OpenDrawings({ path });
+                UseChrome(m_main);          // 读取期间点了主窗口：仍加进发起打开的 W3
+                waitOpen();
+                RenderFrame();
+                Document* opened = m_docManager.FindOpen(path);
+                check(opened && m_docManager.PaneOf(opened) == w3 && !m_docManager.GetMainDocument() && m_startPage->IsVisible(),
+                      "在次窗口里打开的图纸加进次窗口（读取期间点了主窗口也一样），主窗口仍是起始页");
+                std::error_code ec;
+                std::filesystem::remove(file, ec);
+            }
+            // 在主窗口里操作（起始页上点“新建”）：新文档进主窗口
+            UseChrome(m_main);
+            m_commands.Execute("file.new");
+            Document* docE = m_docManager.GetActive();
+            RenderFrame();
+            check(m_docManager.PaneOf(docE) == kMain && m_docManager.GetMainDocument() == docE && !m_startPage->IsVisible() &&
+                  m_viewport->IsVisible() && IsCommandLineShown(),
+                  "在主窗口的起始页上新建：新文档进主窗口，起始页收起");
+
+            // 关闭有三个文档的窗口（都已保存）：文档都关掉，窗口随之关掉
+            for (Document* d : { docA, docB, docC })
+                d->MarkSaved();
+            CloseDocWindow(w3);
+            RenderFrame();
+            pump();
+            check(DocWindowCount() == 0 && m_docManager.GetAll().size() == 1 && m_docManager.GetActive() == docE,
+                  "关闭文档窗口：里面的三个文档都关掉，窗口随之关掉，当前文档回到主窗口");
+            docE->MarkSaved();
+            CloseDocument(docE);
+            RenderFrame();
+        } while (false);
+
+        // ── 31. 停靠面板拖出窗口：鼠标没松开就浮出成独立窗口，跟着光标走 ──────────
+        section("31. 停靠面板拖出窗口：没松开就浮出成独立窗口，跟着光标走（主窗口、文档窗口）");
+        {
+            // 拖动一个面板的标签到 (x, y)（那个窗口的物理像素），途中先移动一点开始拖动；不松开
+            auto tabPoint = [](const MiniGUI::DockSpace& d, const char* id, float scale)
+            {
+                const MiniGUI::Rect r = d.GetPanelRect(id);
+                return POINT{ static_cast<LONG>(std::lround((r.min.x + 12.0f) * scale)),
+                              static_cast<LONG>(std::lround((r.min.y - MiniGUI::DockSpace::kHeaderHeight * 0.5f) * scale)) };
+            };
+
+            m_commands.Execute("file.new");
+            Document* docP = m_docManager.GetActive();
+            RenderFrame();
+            pump();
+            MiniGUI::DockSpace* dock = m_layout->GetDock("main");
+            const bool ready = dock && dock->IsPanelVisible("layers") && !dock->IsPanelFloating("layers") && m_floatHost;
+            check(ready, "主窗口的停靠区里有图层面板");
+            if (ready)
+            {
+                const POINT  p      = tabPoint(*dock, "layers", m_dpiScale);
+                const size_t floats = m_floatHost->Count();
+                const MiniGUI::Rect rb = m_layout->GetRibbon()->GetScreenBounds();      // 功能区在停靠区之外
+                const int ox = static_cast<int>(std::lround(rb.Center().x * m_dpiScale)), oy = static_cast<int>(std::lround((rb.min.y + 12.0f) * m_dpiScale));
+                send(WM_MOUSEMOVE, 0, p.x, p.y);
+                send(WM_LBUTTONDOWN, MK_LBUTTON, p.x, p.y);
+                send(WM_MOUSEMOVE, MK_LBUTTON, p.x - 12, p.y);
+                send(WM_MOUSEMOVE, MK_LBUTTON, ox, oy);
+                pump();
+                check(dock->IsPanelFloating("layers") && dock->IsTornDragging() && m_floatHost->Count() == floats + 1,
+                      "主窗口：图层面板的标签拖出停靠区，没松开就已浮出成独立窗口");
+                const MiniGUI::Rect r1 = dock->GetFloatingRect("layers");
+                send(WM_MOUSEMOVE, MK_LBUTTON, ox + 60, oy + 30);
+                const MiniGUI::Rect r2 = dock->GetFloatingRect("layers");
+                check(std::abs((r2.min.x - r1.min.x) * m_dpiScale - 60.0f) < 2.0f && std::abs((r2.min.y - r1.min.y) * m_dpiScale - 30.0f) < 2.0f &&
+                      std::abs(r2.Width() - r1.Width()) < 1.0f, "拖动中浮动窗口跟着光标走，尺寸不变");
+                send(WM_LBUTTONUP, 0, ox + 60, oy + 30);
+                pump();
+                RenderFrame();
+                check(dock->IsPanelFloating("layers") && !dock->IsDragging() && m_ui->GetCapture() == nullptr,
+                      "松开在停靠区外：面板留在独立窗口里");
+                dock->RedockPanel("layers");
+                RenderFrame();
+                pump();
+                check(!dock->IsPanelFloating("layers") && dock->IsPanelVisible("layers") && m_floatHost->Count() == floats,
+                      "双击标题栏（RedockPanel）回到原处，浮动窗口关掉");
+
+                // 两个面板先后浮出：先浮出的内容仍在自己的窗口里；拖一个窗口的标题栏到另一个的标题栏上合并成标签；最大化按钮
+                const MiniGUI::JsonValue before = dock->SaveLayout();
+                check(dock->FloatPanel("layers", MiniGUI::Rect{ 200.0f, 150.0f, 520.0f, 450.0f }), "图层面板浮出");
+                RenderFrame();
+                pump();
+                IFloatingWindow* lw = m_floatHost->WindowOf(dock->GetPanelContent("layers"));
+                check(dock->FloatPanel("properties", MiniGUI::Rect{ 600.0f, 150.0f, 920.0f, 450.0f }), "特性面板也浮出");
+                RenderFrame();
+                pump();
+                IFloatingWindow* pw = m_floatHost->WindowOf(dock->GetPanelContent("properties"));
+                check(lw && pw && lw != pw && m_floatHost->WindowOf(dock->GetPanelContent("layers")) == lw && m_floatHost->Count() == floats + 2,
+                      "另一个面板浮出后，先浮出的图层面板的内容仍在自己的窗口里（以前会被摘走，窗口变空）");
+                if (lw && pw)
+                {
+                    // 在特性窗口的标题栏上按下，拖到图层窗口的标题栏上松开（光标的屏幕位置按特性窗口当时的位置换算成它的客户区坐标）
+                    const HWND ph = static_cast<Win32FloatingWindow*>(pw)->GetHwnd();
+                    const HWND lh = static_cast<Win32FloatingWindow*>(lw)->GetHwnd();
+                    auto sendP = [&](UINT m, WPARAM wp, POINT screen)
+                    {
+                        ScreenToClient(ph, &screen);
+                        SendMessageW(ph, m, wp, MAKELPARAM(screen.x, screen.y));
+                    };
+                    const float ps = pw->GetUI().GetPixelScale(), ls = lw->GetUI().GetPixelScale();
+                    POINT press{ static_cast<LONG>(std::lround(30.0f * ps)), static_cast<LONG>(std::lround(14.0f * ps)) };
+                    ClientToScreen(ph, &press);
+                    RECT lr{};
+                    GetWindowRect(lh, &lr);
+                    const POINT over{ lr.left + static_cast<LONG>(std::lround(60.0f * ls)), lr.top + static_cast<LONG>(std::lround(14.0f * ls)) };
+                    sendP(WM_MOUSEMOVE, 0, press);
+                    sendP(WM_LBUTTONDOWN, MK_LBUTTON, press);
+                    sendP(WM_MOUSEMOVE, MK_LBUTTON, POINT{ press.x + 12, press.y });
+                    sendP(WM_MOUSEMOVE, MK_LBUTTON, over);
+                    MiniGUI::Rect preview;
+                    const bool previewing = dock->GetDropPreview(preview);
+                    sendP(WM_LBUTTONUP, 0, over);
+                    RenderFrame();
+                    pump();
+                    check(previewing && dock->GetFloatPanels("layers").size() == 2 && m_floatHost->Count() == floats + 1 &&
+                          m_floatHost->WindowOf(dock->GetPanelContent("properties")) == lw,
+                          "拖特性窗口的标题栏到图层窗口的标题栏上：合并成同一个窗口里的两个标签");
+
+                    // 标题栏上 × 左边的最大化按钮：窗口最大化到所在的显示器，布局记下；再点还原
+                    auto clickL = [&](MiniGUI::Vec2 p)
+                    {
+                        const float s = lw->GetUI().GetPixelScale();
+                        const int   x = static_cast<int>(std::lround(p.x * s)), y = static_cast<int>(std::lround(p.y * s));
+                        SendMessageW(lh, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+                        SendMessageW(lh, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+                        SendMessageW(lh, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+                    };
+                    clickL({ lw->GetUI().GetDisplaySize().x - 38.0f, 14.0f });
+                    RenderFrame();
+                    pump();
+                    check(lw->IsWindowMaximized() && dock->SaveLayout().Dump().find("\"maximized\":true") != std::string::npos,
+                          "浮动窗口的最大化按钮：窗口最大化，布局记下");
+                    clickL({ lw->GetUI().GetDisplaySize().x - 38.0f, 14.0f });
+                    RenderFrame();
+                    pump();
+                    check(!lw->IsWindowMaximized(), "再点一次还原");
+                }
+                dock->LoadLayout(before);
+                RenderFrame();
+                pump();
+                RenderFrame();
+                check(!dock->IsPanelFloating("layers") && !dock->IsPanelFloating("properties") && m_floatHost->Count() == floats,
+                      "恢复原来的布局：浮动窗口都关掉");
+            }
+
+            // 文档窗口：它的面板也能拖出窗口（浮动窗口归它所有，位置按它的坐标换算）
+            m_commands.Execute("file.new");
+            Document* docQ = m_docManager.GetActive();
+            RenderFrame();
+            check(FloatDocument(docQ, MiniGUI::Vec2{ 300.0f, 300.0f }), "新文档拖出成窗口");
+            RenderFrame();
+            pump();
+            DocWindow* qw = FindDocWindow(docQ);
+            MiniGUI::DockSpace* fd = qw ? qw->layout->GetDock("main") : nullptr;
+            check(fd && fd->IsPanelVisible("layers"), "文档窗口的停靠区里有图层面板");
+            if (qw && fd)
+            {
+                const HWND fw = static_cast<Win32FloatingWindow*>(qw->window.get())->GetHwnd();
+                auto sendF = [&](UINT m, WPARAM wp, int x, int y) { SendMessageW(fw, m, wp, MAKELPARAM(x, y)); };
+                RedrawWindow(fw, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+                const float fs = qw->window->GetUI().GetPixelScale();
+                const POINT p  = tabPoint(*fd, "layers", fs);
+                const MiniGUI::Rect rb = qw->layout->GetRibbon()->GetScreenBounds();
+                const int ox = static_cast<int>(std::lround(rb.Center().x * fs)), oy = static_cast<int>(std::lround((rb.min.y + 12.0f) * fs));
+                sendF(WM_MOUSEMOVE, 0, p.x, p.y);
+                sendF(WM_LBUTTONDOWN, MK_LBUTTON, p.x, p.y);
+                sendF(WM_MOUSEMOVE, MK_LBUTTON, p.x - 12, p.y);
+                sendF(WM_MOUSEMOVE, MK_LBUTTON, ox, oy);
+                pump();
+                check(fd->IsPanelFloating("layers") && fd->IsTornDragging() && qw->floatHost->Count() == 1 && m_floatHost->Count() == 0,
+                      "文档窗口：图层面板拖出停靠区，没松开就浮出成它自己的独立窗口");
+                const MiniGUI::Rect r1 = fd->GetFloatingRect("layers");
+                sendF(WM_MOUSEMOVE, MK_LBUTTON, ox + 60, oy + 30);
+                const MiniGUI::Rect r2 = fd->GetFloatingRect("layers");
+                check(std::abs((r2.min.x - r1.min.x) * fs - 60.0f) < 2.0f && std::abs((r2.min.y - r1.min.y) * fs - 30.0f) < 2.0f,
+                      "拖动中浮动窗口跟着光标走（按文档窗口的坐标）");
+                sendF(WM_LBUTTONUP, 0, ox + 60, oy + 30);
+                pump();
+                RenderFrame();
+                check(fd->IsPanelFloating("layers") && !fd->IsDragging(), "松开：面板留在独立窗口里");
+
+                // 系统对话框（打开 / 另存为）开在用户正在用的窗口上
+                Win32Window& host = *static_cast<Win32Window*>(m_platform);
+                SetActiveWindow(fw);
+                const bool onDoc = host.DialogOwner() == fw;
+                SetActiveWindow(hwnd);
+                check(onDoc && host.DialogOwner() == hwnd, "打开 / 另存为对话框归当前激活的窗口：次窗口里点的开在次窗口上，主窗口的开在主窗口上");
+
+                // 关闭文档窗口：它浮出的面板窗口一起关掉
+                docQ->MarkSaved();
+                CloseDocWindow(qw->pane);
+                RenderFrame();
+                pump();
+                RenderFrame();
+                check(DocWindowCount() == 0 && !m_docManager.Contains(docQ), "关闭文档窗口：它浮出的面板窗口一起关掉");
+            }
+            docP->MarkSaved();
+            CloseDocument(docP);
+            RenderFrame();
+        }
+
         endSection();
-        std::sort(sectionTimes.begin(), sectionTimes.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::sort(sectionTimes.begin(), sectionTimes.end(),[](const auto& a, const auto& b) { return a.second > b.second; });
         std::printf("\n最耗时的测试项：\n");
         for (size_t i = 0; i < sectionTimes.size() && i < 5; ++i)
             std::printf("    %6.2f 秒  %s\n", sectionTimes[i].second, sectionTimes[i].first.c_str());
@@ -3082,6 +3892,112 @@ namespace MiniCAD
         POINT sp = { static_cast<LONG>(std::lround(vr.Center().x * m_dpiScale)), static_cast<LONG>(std::lround(vr.Center().y * m_dpiScale)) };
         SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
         RenderFrame();
+
+        // 新增实体：全图显示后在视口中心逐条加直线（走命令栈，与画线工具提交时相同），分别测命令本身、
+        // 之后的首帧（场景流追加 / 重新拼接 + 上传）与再一次鼠标移动帧（拾取索引、悬停）；大图纸里这就是"画完卡一下"的那一下
+        {
+            Scene& scene = doc->GetScene();
+            const Camera& cam = m_docManager.GetViewport().GetCamera();
+            std::vector<Object::ObjectID> added;
+            for (int i = 0; i < 3; ++i)
+            {
+                const Math::Point3 a = cam.ScreenToWorld(vr.Center().x - 100.0, vr.Center().y + 20.0 * i);
+                const Math::Point3 b = cam.ScreenToWorld(vr.Center().x + 100.0, vr.Center().y + 20.0 * i);
+                const auto st0 = editor.GetSceneStreamStats();
+                int64_t f0 = NowTicks();
+                added.push_back(scene.NextObjectID());
+                doc->GetCommandStack().Execute(std::make_unique<AddEntityCommand>(std::make_unique<LineEntity>(added.back(), a, b)), scene);
+                const double cmdMs = msSince(f0);
+                m_viewport->RequestRender();
+                f0 = NowTicks();
+                RenderFrame();
+                const double frameMs = msSince(f0), frameVp = m_timing.viewport;
+                f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x + 3 + i, sp.y + 2));
+                RenderFrame();
+                const double moveMs = msSince(f0);
+                auto [pm, wm] = memMb();
+                std::printf("新增直线 %d：命令 %.1f ms，首帧 %.1f ms（视口 %.1f ms），再移动鼠标一帧 %.1f ms；线顶点 %zu → %zu，私有 %.0f MB\n",
+                            i + 1, cmdMs, frameMs, frameVp, moveMs, st0.lines, editor.GetSceneStreamStats().lines, pm);
+            }
+            // 画线工具里移动鼠标（有捕捉与橡皮筋）：每帧耗时
+            editor.ActivateToolById("Line");
+            SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(sp.x - 80, sp.y - 60));
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(sp.x - 80, sp.y - 60));
+            RenderFrame();
+            double moveSum = 0, moveMax = 0;
+            const int moves = 12;
+            for (int i = 0; i < moves; ++i)
+            {
+                const int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x - 60 + 11 * i, sp.y - 40 + 7 * i));
+                RenderFrame();
+                const double ms = msSince(f0);
+                moveSum += ms; moveMax = std::max(moveMax, ms);
+            }
+            SendMessageW(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+            SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
+            RenderFrame();
+            std::printf("画线工具里移动鼠标 %d 帧：平均 %.1f ms，最慢 %.1f ms\n", moves, moveSum / moves, moveMax);
+            SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
+            RenderFrame();
+
+            // 修改 / 删除 / 撤销：对刚加的 3 条直线做移动命令（夹点拖完提交、特性面板改值都是"已在缓存的实体标脏"这一条路）、
+            // 夹点拖动（拖起时实体离开场景流、放下时回来）、删除、撤销，各测命令本身与之后的首帧；大图纸里这些原本都要重新拼接整张图
+            auto frameAfter = [&](const char* what, auto&& act)
+            {
+                int64_t f0 = NowTicks();
+                act();
+                const double cmdMs = msSince(f0);
+                m_viewport->RequestRender();
+                f0 = NowTicks();
+                RenderFrame();
+                std::printf("%s：命令 %.1f ms，首帧 %.1f ms（视口 %.1f ms）\n", what, cmdMs, msSince(f0), m_timing.viewport);
+            };
+            const Math::Vec3 up5 = cam.ScreenToWorld(vr.Center().x, vr.Center().y - 5.0) - cam.ScreenToWorld(vr.Center().x, vr.Center().y);
+            frameAfter("选中 3 条直线", [&] { editor.SetSelection({ added.begin(), added.end() }); });
+            frameAfter("移动 3 条直线", [&] { doc->GetCommandStack().Execute(std::make_unique<MoveCommand>(added, up5, scene), scene); });
+            {
+                // 夹点拖动第 1 条直线的中点：点一下激活、抬起后跟随，移动两帧，再点一下放下
+                editor.SetSelection({ added[0] });
+                RenderFrame();
+                // 相机的屏幕坐标是相对视口左上角的物理像素；鼠标消息要窗口客户区坐标
+                const Math::Point2 mid = cam.WorldToScreen(cam.ScreenToWorld(vr.Center().x, vr.Center().y) + up5);
+                const POINT gp = { static_cast<LONG>(std::lround(vr.min.x * m_dpiScale + mid.x)), static_cast<LONG>(std::lround(vr.min.y * m_dpiScale + mid.y)) };
+                SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(gp.x, gp.y));
+                RenderFrame();
+                int64_t f0 = NowTicks();
+                SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gp.x, gp.y));
+                SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(gp.x, gp.y));
+                RenderFrame();
+                const double pickMs = msSince(f0);
+                const bool   dragged = editor.GetGripEditor().IsDragging();
+                double dragMs[2] = {};
+                for (int i = 0; i < 2; ++i)
+                {
+                    f0 = NowTicks();
+                    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(gp.x + 15 * (i + 1), gp.y + 15 * (i + 1)));
+                    RenderFrame();
+                    dragMs[i] = msSince(f0);
+                }
+                f0 = NowTicks();
+                SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gp.x + 30, gp.y + 30));
+                SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(gp.x + 30, gp.y + 30));
+                RenderFrame();
+                const double dropMs = msSince(f0);
+                std::printf("夹点拖动 1 条直线：拖起首帧 %.1f ms，拖动两帧 %.1f / %.1f ms，放下首帧 %.1f ms（%s）\n",
+                            pickMs, dragMs[0], dragMs[1], dropMs, dragged ? "已拖动" : "夹点没点中");
+            }
+            frameAfter("撤销夹点拖动", [&] { m_docManager.Undo(); });
+            editor.SetSelection({ added.begin(), added.end() });
+            RenderFrame();
+            frameAfter("删除 3 条直线", [&] { editor.DeleteSelected(); });
+            frameAfter("撤销删除", [&] { m_docManager.Undo(); });
+            frameAfter("撤销移动", [&] { m_docManager.Undo(); });
+            editor.SetSelection({});
+            SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(sp.x, sp.y));
+            RenderFrame();
+        }
         ClientToScreen(hwnd, &sp);
         const int steps = 12;
         double peak = 0, low = 1e30, total = 0, worst = 0;

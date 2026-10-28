@@ -91,9 +91,7 @@ namespace MiniCAD
             (void)isHovered;
             const Math::Color4 color = ResolveDrawColor(sink);
 
-            // 有形文件时由 DrawContext 用 SHX 字形铺出来（实现在
-            // DrawContext::DrawShape 里，因为它要拿到字体解析器）。
-            // 走到这里说明渲染端没有接管，画一个占位标记。
+            // 形号没有从 DWG / DXF 读进来（MiniDWG 的 Shape 未建模），目前一律画占位标记
             EmitPlaceholder(sink, color);
         }
 

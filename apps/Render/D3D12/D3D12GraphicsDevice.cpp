@@ -11,6 +11,136 @@ using MiniGUI::D3D12ThrowIfFailed;
 
 namespace MiniCAD
 {
+    // =========================================================
+    // 窗口表面：一个系统窗口的交换链（翻转模型、垂直同步、帧延迟 1）。主窗口与浮动窗口各一个，共用上下文
+    // =========================================================
+    class D3D12WindowSurface : public IWindowSurface
+    {
+    public:
+        // 失败时抛 std::runtime_error
+        D3D12WindowSurface(MiniGUI::D3D12Context& ctx, HWND hwnd, int width, int height)
+            : m_ctx(ctx)
+        {
+            m_width  = width > 0 ? width : 1;
+            m_height = height > 0 ? height : 1;
+            DXGI_SWAP_CHAIN_DESC1 desc = {};
+            desc.Width            = static_cast<UINT>(m_width);
+            desc.Height           = static_cast<UINT>(m_height);
+            desc.Format           = kBackBufferFormat;
+            desc.BufferCount      = kBufferCount;
+            desc.BufferUsage      = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+            desc.SampleDesc.Count = 1;
+            desc.SwapEffect       = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+            desc.Flags            = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+            ComPtr<IDXGISwapChain1> swapChain;
+            D3D12ThrowIfFailed(m_ctx.GetFactory()->CreateSwapChainForHwnd(m_ctx.GetQueue(), hwnd, &desc, nullptr, nullptr,
+                                                                          swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
+            D3D12ThrowIfFailed(swapChain.As(&m_swapChain), "IDXGISwapChain3");
+            // 帧延迟 1（同 D3D11 版）：BeginPass 等上一帧交给显示器之后再画，输入到上屏更跟手
+            m_swapChain->SetMaximumFrameLatency(1);
+            m_frameLatency = m_swapChain->GetFrameLatencyWaitableObject();
+            m_ctx.GetFactory()->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+            CreateBackBuffers();
+        }
+
+        ~D3D12WindowSurface() override
+        {
+            m_ctx.WaitIdle();           // 后备缓冲区要等 GPU 用完
+            ReleaseBackBuffers();
+            for (auto& rtv : m_backBufferRtv)
+            {
+                m_ctx.FreeRtv(rtv);
+                rtv = {};
+            }
+            m_swapChain.Reset();
+            if (m_frameLatency)
+                CloseHandle(m_frameLatency);
+        }
+
+        void Resize(int width, int height) override
+        {
+            if (width <= 0 || height <= 0 || !m_swapChain)
+                return;
+            // 后备缓冲区的引用必须全部放掉才能 ResizeBuffers：先等 GPU 执行完
+            m_ctx.WaitIdle();
+            ReleaseBackBuffers();
+            m_width  = width;
+            m_height = height;
+            D3D12ThrowIfFailed(m_swapChain->ResizeBuffers(kBufferCount, static_cast<UINT>(width), static_cast<UINT>(height), kBackBufferFormat,
+                                                          DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT), "ResizeBuffers");
+            CreateBackBuffers();
+        }
+
+        void BeginPass() override
+        {
+            // 等交换链交还一个后备缓冲区（垂直同步）；窗口被遮挡时最多等 1 秒
+            if (m_frameLatency)
+                WaitForSingleObjectEx(m_frameLatency, 1000, TRUE);
+            m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+            ID3D12Resource* bb = m_backBuffers[m_backBufferIndex].Get();
+            m_ctx.Barrier(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            m_inPass = true;
+
+            const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_backBufferRtv[m_backBufferIndex];
+            ID3D12GraphicsCommandList* cl = m_ctx.GetList();
+            const float clear[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+            cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+            cl->ClearRenderTargetView(rtv, clear, 0, nullptr);
+            m_ctx.SetUiTarget({ rtv, m_width, m_height, kBackBufferFormat });
+        }
+
+        void Present() override
+        {
+            if (m_inPass)
+            {
+                m_ctx.Barrier(m_backBuffers[m_backBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+                m_ctx.SetUiTarget({});
+                m_inPass = false;
+            }
+            m_ctx.Submit();
+            const HRESULT hr = m_swapChain->Present(1, 0);     // 跟随显示器刷新率
+            if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
+                LOG_ERROR("D3D12：设备已移除 (0x%08X)", static_cast<unsigned int>(m_ctx.GetDevice()->GetDeviceRemovedReason()));
+            m_ctx.EndFrame();
+        }
+
+    private:
+        void CreateBackBuffers()
+        {
+            for (UINT i = 0; i < kBufferCount; ++i)
+            {
+                D3D12ThrowIfFailed(m_swapChain->GetBuffer(i, IID_PPV_ARGS(m_backBuffers[i].GetAddressOf())), "GetBuffer");
+                if (!m_backBufferRtv[i].ptr)
+                    m_backBufferRtv[i] = m_ctx.AllocateRtv();
+                m_ctx.GetDevice()->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRtv[i]);
+            }
+            m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+        }
+
+        void ReleaseBackBuffers()
+        {
+            for (auto& b : m_backBuffers)
+                b.Reset();
+        }
+
+        static constexpr UINT kBufferCount = 2;
+        static constexpr DXGI_FORMAT kBackBufferFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+        MiniGUI::D3D12Context&      m_ctx;
+        ComPtr<IDXGISwapChain3>     m_swapChain;
+        HANDLE                      m_frameLatency = nullptr;   // 交换链的帧延迟等待对象
+        ComPtr<ID3D12Resource>      m_backBuffers[kBufferCount];
+        D3D12_CPU_DESCRIPTOR_HANDLE m_backBufferRtv[kBufferCount] = {};
+        UINT                        m_backBufferIndex = 0;
+        bool                        m_inPass = false;
+        int                         m_width  = 0;
+        int                         m_height = 0;
+    };
+
+    // =========================================================
+    // 设备
+    // =========================================================
     D3D12GraphicsDevice::D3D12GraphicsDevice(bool warp)
         : m_warp(warp)
     {
@@ -22,10 +152,7 @@ namespace MiniCAD
             m_ctx->WaitIdle();          // 交换链的后备缓冲区、渲染器的缓冲都要等 GPU 用完
         m_backend.reset();
         m_renderer.reset();
-        ReleaseBackBuffers();
-        m_swapChain.Reset();
-        if (m_frameLatency)
-            CloseHandle(m_frameLatency);
+        m_main.reset();
         m_ctx.reset();
     }
 
@@ -40,30 +167,7 @@ namespace MiniCAD
 #endif
             m_ctx = std::make_unique<MiniGUI::D3D12Context>();
             m_ctx->Initialize(options);
-
-            m_width  = width > 0 ? width : 1;
-            m_height = height > 0 ? height : 1;
-            DXGI_SWAP_CHAIN_DESC1 desc = {};
-            desc.Width            = static_cast<UINT>(m_width);
-            desc.Height           = static_cast<UINT>(m_height);
-            desc.Format           = kBackBufferFormat;
-            desc.BufferCount      = kBufferCount;
-            desc.BufferUsage      = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-            desc.SampleDesc.Count = 1;
-            desc.SwapEffect       = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-            desc.Flags            = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-
-            const HWND hwnd = static_cast<HWND>(window.handle);
-            ComPtr<IDXGISwapChain1> swapChain;
-            D3D12ThrowIfFailed(m_ctx->GetFactory()->CreateSwapChainForHwnd(m_ctx->GetQueue(), hwnd, &desc, nullptr, nullptr,
-                                                                           swapChain.GetAddressOf()), "CreateSwapChainForHwnd");
-            D3D12ThrowIfFailed(swapChain.As(&m_swapChain), "IDXGISwapChain3");
-            // 帧延迟 1（同 D3D11 版）：BeginUiPass 等上一帧交给显示器之后再画，输入到上屏更跟手
-            m_swapChain->SetMaximumFrameLatency(1);
-            m_frameLatency = m_swapChain->GetFrameLatencyWaitableObject();
-            m_ctx->GetFactory()->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
-            CreateBackBuffers();
-
+            m_main     = std::make_unique<D3D12WindowSurface>(*m_ctx, static_cast<HWND>(window.handle), width, height);
             m_renderer = std::make_unique<D3D12Renderer>(*m_ctx);
             m_backend  = std::make_unique<MiniGUI::D3D12Backend>(*m_ctx);
             LOG_INFO("D3D12：%s", m_ctx->GetAdapterName().c_str());
@@ -73,80 +177,40 @@ namespace MiniCAD
             LOG_ERROR("D3D12 初始化失败：%s", e.what());
             m_backend.reset();
             m_renderer.reset();
-            ReleaseBackBuffers();
-            m_swapChain.Reset();
-            if (m_frameLatency)
-                CloseHandle(m_frameLatency);
-            m_frameLatency = nullptr;
+            m_main.reset();
             m_ctx.reset();
             return false;
         }
         return true;
     }
 
-    void D3D12GraphicsDevice::CreateBackBuffers()
+    std::unique_ptr<IWindowSurface> D3D12GraphicsDevice::CreateWindowSurface(const NativeWindow& window, int width, int height)
     {
-        for (UINT i = 0; i < kBufferCount; ++i)
+        try
         {
-            D3D12ThrowIfFailed(m_swapChain->GetBuffer(i, IID_PPV_ARGS(m_backBuffers[i].GetAddressOf())), "GetBuffer");
-            if (!m_backBufferRtv[i].ptr)
-                m_backBufferRtv[i] = m_ctx->AllocateRtv();
-            m_ctx->GetDevice()->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_backBufferRtv[i]);
+            return std::make_unique<D3D12WindowSurface>(*m_ctx, static_cast<HWND>(window.handle), width, height);
         }
-        m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
-    }
-
-    void D3D12GraphicsDevice::ReleaseBackBuffers()
-    {
-        for (auto& b : m_backBuffers)
-            b.Reset();
+        catch (const std::exception& e)
+        {
+            LOG_ERROR("D3D12 窗口表面创建失败：%s", e.what());
+            return nullptr;
+        }
     }
 
     void D3D12GraphicsDevice::Resize(int width, int height)
     {
-        if (width <= 0 || height <= 0 || !m_swapChain)
-            return;
-        // 后备缓冲区的引用必须全部放掉才能 ResizeBuffers：先等 GPU 执行完
-        m_ctx->WaitIdle();
-        ReleaseBackBuffers();
-        m_width  = width;
-        m_height = height;
-        D3D12ThrowIfFailed(m_swapChain->ResizeBuffers(kBufferCount, static_cast<UINT>(width), static_cast<UINT>(height), kBackBufferFormat,
-                                                      DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT), "ResizeBuffers");
-        CreateBackBuffers();
+        if (m_main)
+            m_main->Resize(width, height);
     }
 
     void D3D12GraphicsDevice::BeginUiPass()
     {
-        // 等交换链交还一个后备缓冲区（垂直同步）；窗口被遮挡时最多等 1 秒
-        if (m_frameLatency)
-            WaitForSingleObjectEx(m_frameLatency, 1000, TRUE);
-        m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
-        ID3D12Resource* bb = m_backBuffers[m_backBufferIndex].Get();
-        m_ctx->Barrier(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        m_inUiPass = true;
-
-        const D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_backBufferRtv[m_backBufferIndex];
-        ID3D12GraphicsCommandList* cl = m_ctx->GetList();
-        const float clear[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
-        cl->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-        cl->ClearRenderTargetView(rtv, clear, 0, nullptr);
-        m_ctx->SetUiTarget({ rtv, m_width, m_height, kBackBufferFormat });
+        m_main->BeginPass();
     }
 
     void D3D12GraphicsDevice::Present()
     {
-        if (m_inUiPass)
-        {
-            m_ctx->Barrier(m_backBuffers[m_backBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-            m_ctx->SetUiTarget({});
-            m_inUiPass = false;
-        }
-        m_ctx->Submit();
-        const HRESULT hr = m_swapChain->Present(1, 0);     // 跟随显示器刷新率
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
-            LOG_ERROR("D3D12：设备已移除 (0x%08X)", static_cast<unsigned int>(m_ctx->GetDevice()->GetDeviceRemovedReason()));
-        m_ctx->EndFrame();
+        m_main->Present();
     }
 
     void D3D12GraphicsDevice::WaitIdle()
