@@ -43,11 +43,13 @@ namespace
     void PutU32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i))); }
     void PutU16(std::vector<uint8_t>& v, uint16_t x) { v.push_back(static_cast<uint8_t>(x)); v.push_back(static_cast<uint8_t>(x >> 8)); }
 
-    // AutoCAD 的 OLE2FRAME 头：版本 + 四个角点（左上、右上、右下、左下）+ 30 字节（末尾 4 字节是复合文档长度）
-    std::vector<uint8_t> MakeFrameHeader(double x0, double y0, double x1, double y1)
+    // AutoCAD 的 OLE2FRAME 头：版本 + 四个角点（左上、右上、右下、左下）+ 26 字节填充 + 4 字节复合文档长度
+    // 版本 0x5581（AC1027 起）末尾那 4 字节是长度；0x5580（AC1024 及更早，test0.dwg 用的就是它）
+    // 同一个位置不是长度，复合文档直接从偏移 128 起。
+    std::vector<uint8_t> MakeFrameHeader(double x0, double y0, double x1, double y1, uint16_t version = 0x5581)
     {
         std::vector<uint8_t> v;
-        PutU16(v, 0x5581);
+        PutU16(v, version);
         const double pts[4][2] = { { x0, y1 }, { x1, y1 }, { x1, y0 }, { x0, y0 } };
         for (const auto& p : pts) { PutDouble(v, p[0]); PutDouble(v, p[1]); PutDouble(v, 0.0); }
         v.insert(v.end(), 26, 0);
@@ -65,6 +67,16 @@ namespace
         Check(f.CompoundOffset == 128 && f.CompoundSize == 0, "OLE2FRAME 头：复合文档起点 128、长度 0");
         Ole::Presentation pres;
         Check(!Ole::ExtractPresentation(data, pres), "没有复合文档：取不到展示图");
+
+        // 版本 0x5580：AC1024 及更早的图（用户报的 test0.dwg 里的 OLE2FRAME 就是这一版）。
+        // 以前只认 0x5581，这类对象解析失败后整条被当「导入不支持」丢掉，图纸里那块 OLE 什么都不显示
+        const std::vector<uint8_t> old = MakeFrameHeader(2450704.502, -1104089.591, 2474558.127, -1079597.512, 0x5580);
+        Ole::Frame fo;
+        Check(Ole::ParseFrame(old, fo), "OLE2FRAME 头 0x5580（AC1024）：解析成功");
+        Check(Near(fo.Corners[0].x, 2450704.502, 1e-3) && Near(fo.Corners[0].y, -1079597.512, 1e-3) &&
+              Near(fo.Corners[2].x, 2474558.127, 1e-3) && Near(fo.Corners[2].y, -1104089.591, 1e-3),
+              "OLE2FRAME 头 0x5580：四个角点按大地坐标解出（不是 0）");
+        Check(fo.CompoundOffset == 128 && fo.CompoundSize == 0, "OLE2FRAME 头 0x5580：复合文档起点 128");
 
         const uint64_t key = Ole::HashData(data);
         uint64_t parsed = 0;
