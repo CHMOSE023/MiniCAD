@@ -94,6 +94,19 @@ namespace
         Check(Ole::DecodeDib(bad, 1) == nullptr, "DIB 解码：数据不完整返回空");
     }
 
+    // UTF-8 文字 ↔ 路径：窄字符串直接构造 path 会按系统代码页解释（英文系统遇到中文抛异常），
+    // 反过来 path::string() 也一样 —— 见 AGENTS.md「路径与编码」
+    std::filesystem::path Utf8Path(const char* utf8)
+    {
+        return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8)));
+    }
+
+    std::string Utf8Name(const std::filesystem::path& p)
+    {
+        const std::u8string u8 = p.u8string();
+        return std::string(u8.begin(), u8.end());
+    }
+
     // 沿 (0,0)→(10,0) 按 dash 2 / gap 2 铺，返回实段的起止 x
     std::vector<std::pair<double, double>> Lay(double startOffset)
     {
@@ -145,7 +158,7 @@ namespace
         const uint64_t key = e->GetDataKey();
         scene.AddEntity(std::move(e));
 
-        const std::string path = (std::filesystem::current_path() / "ole_roundtrip.json").string();
+        const std::string path = Utf8Name(std::filesystem::current_path() / "ole_roundtrip.json");
         Check(doc.SaveAs(path), "OLE 对象写 JSON");
         Document back;
         std::string err;
@@ -182,7 +195,7 @@ namespace
         e->SetViewHeight(1000);
         e->SetFrozenLayers({ 5, 9 });
         scene.AddEntity(std::move(e));
-        const std::string path = (std::filesystem::current_path() / "viewport_roundtrip.json").string();
+        const std::string path = Utf8Name(std::filesystem::current_path() / "viewport_roundtrip.json");
         Check(doc.SaveAs(path), "视口写 JSON");
         Document back;
         std::string err;
@@ -196,7 +209,7 @@ namespace
 
     void TestSiteDrawing()
     {
-        const std::filesystem::path path = std::filesystem::path(MINIDWG_SAMPLE_DIR).parent_path() / u8"0525最终改总平面图.dwg";
+        const std::filesystem::path path = Utf8Path(MINIDWG_SAMPLE_DIR).parent_path() / u8"0525最终改总平面图.dwg";
         std::error_code ec;
         if (!std::filesystem::exists(path, ec))
         {
@@ -205,8 +218,7 @@ namespace
         }
         Document doc;
         std::string err;
-        const auto u8 = path.u8string();
-        Check(doc.LoadFromFile(std::string(u8.begin(), u8.end()), &err), "打开 0525 总平面图");
+        Check(doc.LoadFromFile(Utf8Name(path), &err), "打开 0525 总平面图");
         auto& scene = doc.GetScene();
 
         std::vector<const OleFrameEntity*> oles;

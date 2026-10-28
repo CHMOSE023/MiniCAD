@@ -1,7 +1,8 @@
-#pragma once 
+#pragma once
 #include "../Math/Point3.hpp"
 #include "../Math/Vec3.hpp"
-#include "../Math/Constants.hpp"   
+#include "../Math/Constants.hpp"
+#include "../Math/MathUtils.hpp"   // ProjectParam / ClosestPoint 用到 Math::Dot
  
 namespace MiniCAD
 { 

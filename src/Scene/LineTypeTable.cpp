@@ -76,6 +76,36 @@ namespace MiniCAD
             s.Value("description", r.Description);
             s.Value("pattern", r.Pattern);
             s.Value("patternLength", r.PatternLength);
+
+            // 复杂线型的文字/形段。旧文件没有这个键:BeginArray 读返回 false、
+            // 写也建不出元素 ⇒ Symbols 保持为空,旧图纸照旧按纯虚线画。
+            // PatternIndex 存成 int32:JSON 里它就是普通数字,旧版读取时缺键即 0。
+            size_t sym = r.Symbols.size();
+            if (s.BeginArray("symbols", sym))
+            {
+                if (s.IsLoading())
+                    r.Symbols.resize(std::min(sym, r.Pattern.size()));   // 越界的下标没有意义,丢掉
+                for (size_t k = 0; k < r.Symbols.size(); ++k)
+                {
+                    if (!s.BeginElement(k)) continue;
+                    LineTypeSymbol& sy = r.Symbols[k];
+                    int32_t idx = static_cast<int32_t>(sy.PatternIndex);
+                    s.Value("index", idx);
+                    sy.PatternIndex = idx > 0 ? static_cast<size_t>(idx) : 0;
+                    s.Value("text", sy.Text);
+                    s.Value("rotation", sy.Rotation);
+                    s.Value("scale", sy.Scale);
+                    s.Value("offsetX", sy.OffsetX);
+                    s.Value("offsetY", sy.OffsetY);
+                    s.Value("style", sy.StyleId);
+                    s.Value("absoluteRotation", sy.AbsoluteRotation);
+                    // 形号(组码 75):0 = 文字段。旧文件没有这个键 ⇒ 保持 0。
+                    s.Value("shape", sy.Shape);
+                    s.Value("shapeFont", sy.ShapeFont);
+                    s.EndElement();
+                }
+                s.EndArray();
+            }
             s.EndElement();
         }
         s.EndArray();

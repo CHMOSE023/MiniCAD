@@ -18,7 +18,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 
 - 随视图变化的实体（按像素等宽的线宽、按像素画的点样式、按屏幕大小的文字）绘制时调用 `IDrawSink::MarkViewDependent()`，线与填充进**动态流**；其余进**静态流**
 - 滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传
-- 虚线的几何在世界坐标里（线型的"点"笔划走点流，恒定 1 像素）；不超过 200 个周期的虚线不随缩放重建。更长的（`DrawContext::kStaticMaxDashes`）"延迟铺设"（`DeferredDash`：细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放铺进动态流，一个周期不足 4px 时画成实线）
+- 虚线的几何在世界坐标里（线型的"点"笔划走点流，恒定 1 像素）；不超过 200 个周期的虚线不随缩放重建。更长的（`DrawContext::kStaticMaxDashes`）"延迟铺设"（`DeferredDash`：细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放铺进动态流，一个周期不足 4px 时画成实线）。带文字 / 形符号的复杂线型不延迟也不按像素取舍（符号是世界坐标的字形实例，`Editor::RebuildDynamicStream` 不动字形实例流），超过 `DrawContext::kMaxDashes` 个周期时画成实线、不画符号
 - 拼接后的静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`、修改 / 删除实体）从缓存重新拼接，不重新细分
 - 拼接流释放后的增量更新（`Editor::UpdateSceneIncremental`）：后端能接追加段、原地改写（`IRenderer::SupportsCachedAppend`，D3D11 / D3D12 支持；宿主在 `MainFrame::InitDocument` 里 `Editor::SetSceneAppendOnGpu`）时，脏实体只细分自己，不从逐实体缓存重新拼接整张图
   - 新实体：静态顶点放进追加段（`ViewState::SceneAppendActive`），`Viewport::Render` 经 `IRenderer::AppendCached` 接到 (slot, 基础版本) 缓冲末尾并升级版本——放得下就写到末尾，放不下就新建多留 1/8 容量的缓冲在 GPU 内复制
