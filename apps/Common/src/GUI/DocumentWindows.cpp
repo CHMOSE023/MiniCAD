@@ -796,8 +796,8 @@ namespace MiniCAD
                 editor.RequestSceneRestitch();
                 w.host->RequestRender();
             }
-            // 视图切换的过渡动画：这一帧画完再请求下一帧
-            if (editor.IsViewTransitioning())
+            // 视图切换的过渡动画、分帧生成显示：这一帧画完再请求下一帧
+            if (editor.IsViewTransitioning() || editor.IsBuildingDisplay())
                 m_platform->Post([this, pane = w.pane]
                 {
                     if (DocWindow* dw = FindPaneWindow(pane))

@@ -385,6 +385,7 @@ namespace MiniCAD
         releaseStorage(m_sceneExcluded);
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
+        m_build = {};
         m_sceneVersion    = NextRenderVersion();   // 渲染后端的缓存顶点缓冲随之失效
         m_sceneDynVersion = NextRenderVersion();
         m_sceneGlyphVersion = NextRenderVersion();
@@ -3212,8 +3213,9 @@ namespace MiniCAD
         // AutoCAD 里裁剪框是一个常驻的视觉提示，用户据此知道这个块被裁过、裁到哪儿。
         // 必须画在**裁剪之后**（这里是 entity.Draw 返回后），否则边框会被自己的裁剪吃掉。
         // 颜色随块（ByLayer 时取图层色），与 WIPEOUTFRAME / IMAGEFRAME 的做法一致。
+        // 分段细分的块参照只在画完的那一段画边框
         if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
-            ins && ins->HasClipBoundary() && ins->IsClipFrameVisible())
+            ins && ins->HasClipBoundary() && ins->IsClipFrameVisible() && !ctx.ChunkStopped())
         {
             const auto& poly = ins->GetClipBoundary();
             if (poly.size() >= 2)
@@ -3498,7 +3500,8 @@ namespace MiniCAD
         c.placed = true;
         // 延迟的长虚线段按当前缩放铺进动态流（缩放时只重铺它们，实体不重新细分）
         EmitDeferredDashes(c, m_sceneDynVertices);
-        if (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty())
+        // 分帧细分接上的一段（id 为空）不登记：整个实体细分完再登记（AppendBuildPiece）
+        if (id != Object::InvalidID && (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty()))
             m_dynOrder.push_back(id);
         m_sceneViewDependent |= c.viewDependent || !c.longDashes.empty();
     }
@@ -3591,17 +3594,44 @@ namespace MiniCAD
 
         const bool exclusionChanged = (dragIds != m_sceneExcluded);
 
+        // 分帧细分（BeginProgressiveBuild）：每帧都接着细分，到本帧的时限为止
+        const bool building = m_build.active;
+        if (building)
+        {
+            // 两帧细分之间的上传、整图重画、界面也要时间（大图纸每帧几十毫秒）：本帧细分时限至少是它的 3 倍，
+            // 免得大半时间花在帧间开销上；最多放宽到预算的 4 倍，窗口仍能响应
+            const auto now = std::chrono::steady_clock::now();
+            double budget = m_build.budgetMs;
+            if (m_build.lastEnd != std::chrono::steady_clock::time_point{})
+                budget = std::clamp(3.0 * std::chrono::duration<double, std::milli>(now - m_build.lastEnd).count(),
+                                    m_build.budgetMs, 4.0 * m_build.budgetMs);
+            m_build.deadline = now + std::chrono::microseconds(static_cast<int64_t>(budget * 1000.0));
+            // 细分到一半的大块参照被改动 / 删除 / 拖动：已接进流里的那几段作废，全量拼接（不含它），之后重新细分
+            if (m_build.partId != Object::InvalidID &&
+                (scene.GetDirtyEntities().count(m_build.partId) || dragIds.count(m_build.partId)))
+            {
+                DropBuildPart();
+                m_sceneRestitch = true;
+            }
+            // 后端接不了追加段、拼接流又已交给它：每帧从逐实体缓存全量拼接，在 CPU 端的流上接着细分
+            if (m_sceneStreamsReleased && !s_sceneAppendOnGpu)
+                m_sceneRestitch = true;
+            // 细分期间图纸有改动：改动的实体由增量更新接到流尾，绘制序与画全后不同，画全后全量拼接一次
+            if (m_build.queued && scene.IsDirty())
+                m_build.finalStitch = true;
+        }
+
         bool need;
         if (!dragIds.empty() && !exclusionChanged)
         {
             // 拖动期间 GripEditor 每帧 MarkDirty（实时几何变化），但被拖实体
             // 已不在场景流中，场景流无需重建；仅缩放+线宽/虚线场合仍需重建。
-            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid || m_sceneRestitch;
+            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid || m_sceneRestitch || building;
         }
         else
         {
             need = scene.IsDirty() || exclusionChanged || m_displayInvalid || m_sceneRestitch ||
-                   (zoomChanged && m_sceneViewDependent);
+                   (zoomChanged && m_sceneViewDependent) || building;
         }
 
         if (!need) return false;
@@ -3649,21 +3679,6 @@ namespace MiniCAD
         // 与文字样式表无关，单独一条解析路径
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
 
-        // ── 只缩放：静态流不动，只重建动态流 ─────────────────
-        // 随视图变化的实体（按像素等宽的线宽、点样式；细线显示时几乎没有）通常只占很少一部分；静态流不重新拼接、
-        // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
-        if (zoomChanged && !invalidateAll && !exclusionChanged && !m_sceneRestitch && scene.GetDirtyEntities().empty())
-        {
-            for (Object::ObjectID id : m_dynOrder)
-                if (auto it = m_entityVertexCache.find(id); it != m_entityVertexCache.end() && it->second.viewDependent)
-                    m_entityVertexCache.erase(it);
-            RebuildDynamicStream(ctx);
-            scene.ClearDirty();
-            // 只重建了动态流，静态流与实体缓存都没变：不算"场景重建"——夹点、着色面不用跟着重建，
-            // 选中流也只需重建随视图变化的那一路（否则选中全图后每格滚轮都要把选中流整体复制上传一遍）
-            return false;
-        }
-
         auto isShown = [&](const Entity& entity)
         {
             const auto& attr = entity.GetAttr();
@@ -3674,6 +3689,32 @@ namespace MiniCAD
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
             return !layer || layer->IsVisible();
         };
+
+        // ── 只缩放：静态流不动，只重建动态流 ─────────────────
+        // 随视图变化的实体（按像素等宽的线宽、点样式；细线显示时几乎没有）通常只占很少一部分；静态流不重新拼接、
+        // 不重新裁剪、GPU 不重新上传（几百万顶点的图纸，每次滚轮原本要几百毫秒）
+        // 分帧细分时细分到一半的块参照里有随视图变化的段：走下面的全量拼接（丢掉它重新细分）
+        if (zoomChanged && !invalidateAll && !exclusionChanged && !m_sceneRestitch && scene.GetDirtyEntities().empty()
+            && (!building || (m_build.queued && !m_build.part.viewDependent)))
+        {
+            for (Object::ObjectID id : m_dynOrder)
+                if (auto it = m_entityVertexCache.find(id); it != m_entityVertexCache.end() && it->second.viewDependent)
+                    m_entityVertexCache.erase(it);
+            RebuildDynamicStream(ctx);
+            scene.ClearDirty();
+            if (building)
+                ContinueBuild(ctx, dragIds, isShown);
+            // 只重建了动态流，静态流与实体缓存都没变：不算"场景重建"——夹点、着色面不用跟着重建，
+            // 选中流也只需重建随视图变化的那一路（否则选中全图后每格滚轮都要把选中流整体复制上传一遍）
+            return false;
+        }
+
+        // 分帧细分、图纸没有别的改动：只接着细分，接到流尾（不算场景重建，同上）
+        if (building && m_build.queued && !invalidateAll && !zoomChanged && !exclusionChanged && !m_sceneRestitch && !scene.IsDirty())
+        {
+            ContinueBuild(ctx, dragIds, isShown);
+            return false;
+        }
 
         // 布局页上的视口把模型空间内容合成进了自己的缓存（ComposeModelIntoViewport）：
         // 模型实体变了（含增删、撤销）时视口缓存也要丢掉，否则视口里还是旧内容
@@ -3697,7 +3738,11 @@ namespace MiniCAD
         if (!invalidateAll && !zoomChanged && !m_sceneRestitch && !modelTouchedInPaper &&
             (!m_sceneStreamsReleased || appendOnGpu) &&
             UpdateSceneIncremental(ctx, dragIds, appendOnGpu, isShown))
+        {
+            if (building && m_build.queued)
+                ContinueBuild(ctx, dragIds, isShown);
             return true;
+        }
 
         // 全量拼接：之前没接上的追加段、改写段作废（这些实体的顶点在逐实体缓存里，下面会拼进去）
         m_sceneAppendActive = false;
@@ -3713,8 +3758,12 @@ namespace MiniCAD
         // ── 逐实体顶点缓存失效（全量拼接路径）────────────────
         // 全局失效时清空全部缓存;否则只丢弃脏实体的缓存,文字排版/标注
         // 绘制等重活只发生在真正变化的实体上。
+        // 分帧细分到一半的块参照同样作废（它累积的几段按旧的显示设置 / 缩放细分）
         if (invalidateAll)
+        {
             m_entityVertexCache.clear();
+            DropBuildPart();
+        }
         else
         {
             for (auto id : scene.GetDirtyEntities())   // 含已删除实体：顺带清理
@@ -3727,6 +3776,8 @@ namespace MiniCAD
                 });
             if (zoomChanged && m_sceneViewDependent)
                 std::erase_if(m_entityVertexCache, [](const auto& kv) { return kv.second.viewDependent; });
+            if (zoomChanged && m_build.part.viewDependent)
+                DropBuildPart();
         }
         // 这一轮没拼进去的实体（拖动中被排除的）位置作废
         for (auto& kv : m_entityVertexCache)
@@ -3748,6 +3799,13 @@ namespace MiniCAD
         std::vector<std::pair<Object::ObjectID, EntityVertexCache*>> visible;
         visible.reserve(m_entityVertexCache.size());
         std::size_t lineCount = 0, fillCount = 0, textCount = 0, glyphCount = 0, imageCount = 0;
+        const auto stitchStart = std::chrono::steady_clock::now();
+        if (building)
+        {
+            m_build.queue.clear();
+            m_build.next  = 0;
+            m_build.total = m_build.done = 0.0;
+        }
 
         scene.ForEachObject([&](const Object& obj)
         {
@@ -3762,16 +3820,37 @@ namespace MiniCAD
 
            // 选中/悬停高亮均不烘焙进场景顶点（选中走选中流、悬停走 overlay），
            // 因此选择集/悬停变化都不会触发整场景顶点重建。
-           auto it = m_entityVertexCache.find(obj.GetID());
-           if (it == m_entityVertexCache.end())
+           Object::ObjectID id = obj.GetID();
+           auto it = m_entityVertexCache.find(id);
+           EntityVertexCache* cached = it != m_entityVertexCache.end() ? &it->second : nullptr;
+           if (building)
+           {
+               // 分帧细分：缓存里没有的不当帧细分，按绘制序排进队列，由下面的 ContinueBuild 细分到本帧时限
+               const double weight = BuildWeight(entity);
+               m_build.total += weight;
+               if (cached)
+                   m_build.done += weight;
+               else
+               {
+                   m_build.queue.push_back(id);
+                   if (id != m_build.partId)
+                       return;
+                   // 细分到一半的大块参照：已细分的几段照常按绘制序拼进去（不登记进动态流的重建序，整个细分完再登记）。
+                   // 后面几段里记下的区域覆盖先裁剪它们，否则重新拼进去的是没裁过的
+                   ClipBuildPart();
+                   cached = &m_build.part;
+                   id     = Object::InvalidID;
+               }
+           }
+           else if (!cached)
            {
                EntityVertexCache c;
                TessellateEntity(entity, ctx, c);   // 缓存未命中：重新细分该实体
-               it = m_entityVertexCache.emplace(obj.GetID(), std::move(c)).first;
+               cached = &m_entityVertexCache.emplace(id, std::move(c)).first->second;
            }
 
-           auto& c = it->second;
-           visible.emplace_back(obj.GetID(), &c);
+           auto& c = *cached;
+           visible.emplace_back(id, &c);
            if (!c.viewDependent)
            {
                lineCount += c.lines.size();
@@ -3804,8 +3883,242 @@ namespace MiniCAD
         m_sceneRestitch        = false;
         UpdateSceneStats();
 
+        if (building)
+        {
+            // 这次就是按绘制序的全量拼接：此前追加的、改动的都已重新拼过。接着在 CPU 端的流上细分。
+            // 后端接不了追加段时每帧都走这里，拼接越来越慢：本帧细分至少是拼接用时的两倍，免得大半时间花在拼接上
+            m_build.queued      = true;
+            m_build.finalStitch = false;
+            const auto now = std::chrono::steady_clock::now();
+            m_build.deadline = std::max(m_build.deadline, now + 2 * (now - stitchStart));
+            ContinueBuild(ctx, m_sceneExcluded, isShown);
+        }
+
         scene.ClearDirty();
         return true;
+    }
+
+    void Editor::BeginProgressiveBuild(double budgetMs)
+    {
+        m_build          = {};
+        m_build.active   = budgetMs > 0.0;
+        m_build.budgetMs = budgetMs;
+    }
+
+    float Editor::DisplayBuildProgress() const
+    {
+        if (!m_build.active) return 1.0f;
+        if (!(m_build.total > 0.0)) return 0.0f;
+        return static_cast<float>(std::clamp((m_build.done + m_build.partDone) / m_build.total, 0.0, 1.0));
+    }
+
+    void Editor::DropBuildPart()
+    {
+        m_build.partId = Object::InvalidID;
+        m_build.partResume.clear();
+        m_build.partDone = 0.0;
+        m_build.part     = {};
+        m_build.partWipes.clear();
+    }
+
+    // 细分到一半的大块参照：后面几段里的区域覆盖裁剪它之前的顶点（记在 partWipes 里，同 DrawContext 在一个实体里的做法），裁完清空
+    void Editor::ClipBuildPart()
+    {
+        if (m_build.partWipes.empty()) return;
+        EntityVertexCache& p = m_build.part;
+        WipeClip::Batch own(5);
+        for (const auto& [w, ends] : m_build.partWipes)
+            own.Add(w, { ends[0], ends[1], ends[2], ends[3], ends[4] });
+        own.ClipLines(p.lines, 0);
+        own.ClipFills(p.fills, 1);
+        own.ClipTexts(p.texts, 2);
+        own.ClipPoints(p.points, 4);
+        own.ClipGlyphs(p.glyphs, 3, 0, m_glyphLibrary, p.lines, p.fills);
+        m_build.partWipes.clear();
+    }
+
+    // 进度的权重：普通实体 1，块参照按块内要画的子实体个数（嵌套的块参照展开计，同 DrawContext 的分段计数），按块定义缓存
+    double Editor::BuildWeight(const Entity& entity)
+    {
+        const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
+        if (!ins || !ins->GetBlock())
+            return 1.0;
+        std::function<double(const BlockEntity&)> leaves = [&](const BlockEntity& block) -> double
+        {
+            if (const auto it = m_build.blockWeights.find(&block); it != m_build.blockWeights.end())
+                return it->second;
+            m_build.blockWeights[&block] = 0.0;   // 块自己套自己时到这里停
+            double n = 0.0;
+            for (const auto& e : block.GetEntities())
+                if (const auto* sub = dynamic_cast<const InsertEntity*>(e.get()); sub && sub->GetBlock())
+                    n += leaves(*sub->GetBlock()) * sub->GetColumnCount() * sub->GetRowCount() + static_cast<double>(sub->GetAttribs().size());
+                else
+                    n += 1.0;
+            m_build.blockWeights[&block] = n;
+            return n;
+        };
+        return std::max(1.0, leaves(*ins->GetBlock()) * ins->GetColumnCount() * ins->GetRowCount() + static_cast<double>(ins->GetAttribs().size()));
+    }
+
+    // 分帧细分：把新细分的一段接到场景流尾部。拼接流还在 CPU 端（全量拼接的那一帧）就直接接上，区域覆盖照常裁剪此前的顶点；
+    // 已交给后端就放进追加段，位置接在后端已有的顶点之后，区域覆盖裁不到已上传的顶点，留到画全后的全量拼接。
+    // whole：piece 是整个实体，记下它的位置（之后修改时原地改写）、登记进动态流的重建序；大块参照的一段只接顶点
+    void Editor::AppendBuildPiece(Object::ObjectID id, EntityVertexCache& piece, bool whole, WipeClip::Batch& wipes, bool& glyphs, bool& dyn)
+    {
+        if (!m_sceneStreamsReleased)
+            AppendToSceneStreams(whole ? id : Object::InvalidID, piece, wipes, m_sceneVertices, m_sceneFillVertices, m_scenePointVertices);
+        else
+        {
+            const size_t l0 = m_sceneAppendLines.size(), f0 = m_sceneAppendFills.size(), p0 = m_sceneAppendPoints.size();
+            WipeClip::Batch unused(7);
+            AppendToSceneStreams(whole ? id : Object::InvalidID, piece, unused, m_sceneAppendLines, m_sceneAppendFills, m_sceneAppendPoints);
+            if (!piece.viewDependent)
+            {
+                piece.lineOff = m_sceneStats.lines + (piece.lineOff - l0);
+                piece.fillOff = m_sceneStats.fills + (piece.fillOff - f0);
+                m_sceneStats.lines += piece.lines.size();
+                m_sceneStats.fills += piece.fills.size();
+            }
+            piece.pointOff = m_sceneStats.points + (piece.pointOff - p0);
+            m_sceneStats.points += piece.points.size();
+            m_build.finalStitch |= !piece.wipes.empty();
+        }
+        glyphs |= !piece.glyphs.empty() || !piece.texts.empty() || !piece.wipes.empty();
+        dyn    |= piece.viewDependent || !piece.longDashes.empty() || !piece.wipes.empty();
+    }
+
+    void Editor::ContinueBuild(DrawContext& ctx, const std::unordered_set<Object::ObjectID>& dragIds,
+                               const std::function<bool(const Entity&)>& isShown)
+    {
+        auto& scene = m_doc->GetScene();
+        WipeClip::Batch wipes(7);
+        bool appended = false, glyphs = false, dyn = false, rebuildDyn = false;
+        // 大块参照的一段并进已细分的几段。这一段里的区域覆盖要裁剪本实体前几段的顶点：先记下来，整个实体细分完一次裁剪
+        //（每段都裁一遍已累积的几百万个顶点太慢），缓存里的整个实体与一次细分完的一致。
+        // 流里已接上的前几段：拼接流在 CPU 端时由 AppendBuildPiece 照常裁剪，已交给后端时留到画全后的全量拼接
+        auto merge = [this](EntityVertexCache& to, EntityVertexCache& from)
+        {
+            if (!to.lines.empty() || !to.fills.empty() || !to.texts.empty() || !to.glyphs.empty() || !to.points.empty())
+                for (const auto& w : from.wipes)
+                    m_build.partWipes.push_back({ w, { to.lines.size(), to.fills.size(), to.texts.size(), to.glyphs.size(), to.points.size() } });
+            auto add = [](auto& a, auto& b) { a.insert(a.end(), std::make_move_iterator(b.begin()), std::make_move_iterator(b.end())); };
+            add(to.lines, from.lines);
+            add(to.fills, from.fills);
+            add(to.points, from.points);
+            add(to.texts, from.texts);
+            add(to.glyphs, from.glyphs);
+            add(to.longDashes, from.longDashes);
+            add(to.images, from.images);
+            add(to.wipes, from.wipes);
+            to.viewDependent |= from.viewDependent;
+        };
+
+        // 每帧至少细分一个实体（大块参照至少一个子实体），之后到时限就停
+        for (bool first = true; m_build.next < m_build.queue.size(); first = false)
+        {
+            if (!first && std::chrono::steady_clock::now() >= m_build.deadline)
+                break;
+            const Object::ObjectID id = m_build.queue[m_build.next];
+            const Object* obj = scene.GetEntity(id);
+            const Entity* entity = obj && obj->IsKindOf<Entity>() ? static_cast<const Entity*>(obj) : nullptr;
+            // 排队之后被删掉、隐藏、拖动，或已由增量更新细分过的：跳过
+            if (!entity || dragIds.contains(id) || m_entityVertexCache.contains(id) || !isShown(*entity))
+            {
+                if (id == m_build.partId)
+                    DropBuildPart();
+                m_build.done += entity ? BuildWeight(*entity) : 1.0;
+                ++m_build.next;
+                continue;
+            }
+
+            EntityVertexCache piece;
+            // 块参照按块内子实体分段：到时限就停，下一帧从停下的子实体接着画
+            bool fresh = true, complete = true;
+            if (dynamic_cast<const InsertEntity*>(entity))
+            {
+                fresh = id != m_build.partId;
+                if (fresh)
+                {
+                    DropBuildPart();
+                    m_build.partId = id;
+                }
+                ctx.BeginChunk(std::move(m_build.partResume), m_build.deadline);
+                TessellateEntity(*entity, ctx, piece);
+                m_build.partDone += static_cast<double>(ctx.EndChunk(m_build.partResume));
+                complete = m_build.partResume.empty();
+            }
+            else
+                TessellateEntity(*entity, ctx, piece);
+            appended = true;
+
+            if (fresh && complete)
+            {
+                // 一次画完（普通实体，或一段就画完的块参照）：整个接上，位置连续，之后修改能原地改写
+                AppendBuildPiece(id, piece, true, wipes, glyphs, dyn);
+                m_entityVertexCache.emplace(id, std::move(piece));
+                if (id == m_build.partId)
+                    DropBuildPart();
+            }
+            else
+            {
+                AppendBuildPiece(id, piece, false, wipes, glyphs, dyn);
+                merge(m_build.part, piece);
+                if (!complete)
+                    break;
+                // 最后一段：后面几段里的区域覆盖裁剪它之前的顶点，整个实体进缓存。它分几段接进流里、位置不连续，
+                // 修改时只能全量拼接（placed 为假）；随视图变化的部分登记进动态流的重建序，重建一次动态流把它作为整个实体排进去
+                ClipBuildPart();
+                EntityVertexCache& c = m_entityVertexCache.emplace(id, std::move(m_build.part)).first->second;
+                c.placed = false;
+                if (c.viewDependent || !c.wipes.empty() || !c.longDashes.empty())
+                {
+                    m_dynOrder.push_back(id);
+                    m_sceneViewDependent |= c.viewDependent || !c.longDashes.empty();
+                    rebuildDyn = true;
+                }
+                // 有的段随视图变化、有的不：不随的那几段已进静态流，整个实体却按随视图变化进动态流，画全后全量拼接一次免得画两遍
+                m_build.finalStitch |= c.viewDependent;
+                DropBuildPart();
+            }
+            m_build.done += BuildWeight(*entity);
+            ++m_build.next;
+        }
+
+        if (appended)
+        {
+            if (!m_sceneStreamsReleased)
+                FlushSceneWipes(wipes);
+            if (rebuildDyn)
+                RebuildDynamicStream(ctx);
+            else if (dyn)
+                m_sceneDynVersion = NextRenderVersion();
+            if (glyphs)
+                SortSceneGlyphs();
+            if (m_sceneStreamsReleased)
+            {
+                // 追加段接在后端当前持有的版本之后；上一段还没上传成功时继续累积在同一段里（同 UpdateSceneIncremental）
+                if (!m_sceneAppendActive)
+                {
+                    m_sceneAppendActive = true;
+                    m_sceneAppendBase   = m_sceneVersion;
+                }
+                m_sceneStats.texts  = m_textVertices.size();
+                m_sceneStats.glyphs = m_glyphSorted.size();
+            }
+            else
+                UpdateSceneStats();
+            m_sceneVersion = NextRenderVersion();
+        }
+
+        m_build.lastEnd = std::chrono::steady_clock::now();
+        // 全部细分完：追加段里有没裁剪的区域覆盖、或细分期间图纸有改动时，下一帧全量拼接一次（全部命中缓存）再结束
+        if (m_build.next >= m_build.queue.size() && m_build.partId == Object::InvalidID)
+        {
+            if (m_build.finalStitch)
+                m_sceneRestitch = true;
+            else
+                m_build.active = false;
+        }
     }
 
     void Editor::ReleaseUploadedSceneStreams()

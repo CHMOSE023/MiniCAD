@@ -24,9 +24,10 @@ namespace MiniCAD
     public:
         static HatchPatternLibrary& Instance();
 
-        // 解析 .pat 文本，追加 / 覆盖到库中。返回成功载入的图案数；
+        // 解析 .pat 文本（UTF-8），追加 / 覆盖到库中。返回成功载入的图案数；
         // 有无法解析的行时写 error（行号 + 内容），已解析的图案仍然载入。
         size_t LoadText(std::string_view text, std::string* error = nullptr);
+        // 读 .pat 文件：不是合法 UTF-8 的按 GBK 解码（中文版 AutoCAD、天正自带的都是 GBK）
         size_t LoadFile(const std::string& utf8Path, std::string* error = nullptr);
 
         const HatchPattern*              Find(std::string_view name) const;   // 不区分大小写

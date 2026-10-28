@@ -220,6 +220,10 @@ namespace MiniCAD
                         if (const auto* def = dynamic_cast<const AttDefEntity*>(e.get()))
                             if (!def->ShowsInBlockReference())
                                 continue;
+                        // 分段细分（IDrawSink::BeginBlockChild）：嵌套的块参照可以整个跳过，进去后它的子实体再逐个来问
+                        const bool nested = dynamic_cast<const InsertEntity*>(e.get()) != nullptr;
+                        if (!xsink.BeginBlockChild(nested))
+                            continue;
                         // ⚠ 必须逐个成员切到**它自己的**属性上下文：DrawContext 解析线型 /
                         //   线宽 / 线型比例靠的是它的当前属性。此前整块只在外层设过一次
                         //   （外层是 InsertEntity 自己的 attr），块内成员自己的线型被完全忽略
@@ -231,6 +235,7 @@ namespace MiniCAD
                         xsink.SetEntityContext(&e->GetAttr());
                         e->Draw(xsink, isSelected, isHovered);
                         xsink.SetEntityContext(nullptr);
+                        xsink.EndBlockChild(nested);
                     }
                 }
 
@@ -244,8 +249,11 @@ namespace MiniCAD
             // 也不套本块的 XCLIP：`m_clip` 是**块坐标系**里的（与块内实体同系，见 GetClipBoundary），
             // 拿来判世界坐标的属性会把内外判反；宁可少裁，也不要错裁。
             for (const auto& a : m_attribs)
-                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId))
+                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId) && sink.BeginBlockChild(false))
+                {
                     a->Draw(sink, isSelected, isHovered);
+                    sink.EndBlockChild(false);
+                }
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override

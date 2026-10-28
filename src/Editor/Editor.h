@@ -29,6 +29,8 @@
 #include "Document/DeferredDash.hpp"
 #include "Core/Image/ImageLibrary.h"
 #include "Core/Ole/OleObject.h"
+#include <array>
+#include <chrono>
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -417,6 +419,14 @@ namespace MiniCAD
         // 整体重新上传。进程内全局，宿主在渲染器就绪后设置
         static void SetSceneAppendOnGpu(bool enabled);
 
+        // 分帧细分（打开图纸后的首次显示，宿主在加入刚读完的图纸后调用）：全量拼接不再当帧细分缓存里没有的实体，
+        // 而是每帧按绘制序细分一批、用时不超过 budgetMs（大块参照按块内子实体分段），接到场景流尾部，画全为止；
+        // 先细分好的部分先显示，窗口照常响应。画全后恢复同步细分（编辑、切换布局等仍当帧画完）
+        static constexpr double kProgressiveBudgetMs = 50.0;
+        void  BeginProgressiveBuild(double budgetMs = kProgressiveBudgetMs);
+        bool  IsBuildingDisplay() const { return m_build.active; }   // 为真时宿主每帧画完再请求下一帧
+        float DisplayBuildProgress() const;                          // 0～1：按实体个数估算，块参照按块内子实体个数
+
         // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
         struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0, points = 0; };
         SceneStreamStats GetSceneStreamStats() const { return m_sceneStats; }
@@ -596,6 +606,39 @@ namespace MiniCAD
             size_t glyphOff = 0;
         };
         std::unordered_map<Object::ObjectID, EntityVertexCache> m_entityVertexCache;
+
+        // ── 分帧细分（BeginProgressiveBuild）──────────────────
+        struct ProgressiveBuild
+        {
+            bool                                  active   = false;
+            double                                budgetMs = 0.0;      // 每帧细分用时的下限，帧间开销大时放宽到它的 4 倍
+            std::chrono::steady_clock::time_point deadline;            // 本帧细分到这个时刻为止
+            std::chrono::steady_clock::time_point lastEnd;             // 上一帧细分结束的时刻（量帧间开销）
+            std::vector<Object::ObjectID>         queue;               // 还没细分的实体，按绘制序（全量拼接时重排）
+            size_t                                next   = 0;
+            bool                                  queued = false;      // 已由一次全量拼接排好队列
+            // 细分到一半的大块参照：已细分的几段累积在 part 里（都已接进流里），下一段从 partResume 起
+            //（DrawContext::BeginChunk 的路径），已画了 partDone 个块内子实体
+            Object::ObjectID                      partId = 0;
+            std::vector<size_t>                   partResume;
+            double                                partDone = 0.0;
+            EntityVertexCache                     part;
+            // 后面几段里的区域覆盖：要裁剪本实体在它之前的顶点（同 DrawContext 在一个实体里的做法），记下当时 part 各流
+            //（线、填充、文字、字形实例、点）的长度，整个实体细分完或重新拼接 part 时再一次裁剪（ClipBuildPart）
+            std::vector<std::pair<std::vector<Math::Point3>, std::array<size_t, 5>>> partWipes;
+            bool                                 finalStitch = false; // 画全后全量拼接一次：追加段里有没裁剪的区域覆盖，或细分期间图纸有改动
+            double                                total = 0.0, done = 0.0;   // 进度（见 DisplayBuildProgress）
+            std::unordered_map<const void*, double> blockWeights;      // 块定义 → 块内子实体个数（含嵌套）
+        };
+        ProgressiveBuild m_build;
+        // 接着细分队列里的实体到本帧的时限，细分出来的接到场景流尾部（拼接流还在 CPU 端就直接接上，否则进追加段）
+        void   ContinueBuild(DrawContext& ctx, const std::unordered_set<Object::ObjectID>& dragIds,
+                             const std::function<bool(const Entity&)>& isShown);
+        // 把新细分的一段接到场景流尾部；whole 为真时它是整个实体（记下位置，之后能原地改写）
+        void   AppendBuildPiece(Object::ObjectID id, EntityVertexCache& piece, bool whole, WipeClip::Batch& wipes, bool& glyphs, bool& dyn);
+        double BuildWeight(const Entity& entity);
+        void   DropBuildPart();
+        void   ClipBuildPart();
         std::vector<AABB> m_sceneWipeBoxes;   // 拼接进场景的区域覆盖的包围盒：改写的实体碰到它们就全量拼接（要重新裁剪）
         // 原地改写段（见 ViewState::ScenePatches）：与追加段一起交给后端，上传后清空
         std::vector<ViewState::ScenePatch> m_scenePatches;

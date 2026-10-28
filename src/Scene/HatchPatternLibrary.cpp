@@ -1,4 +1,5 @@
 #include "Scene/HatchPatternLibrary.h"
+#include "Import/CadTextFile.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -209,7 +210,7 @@ namespace MiniCAD
         }
         std::ostringstream ss;
         ss << in.rdbuf();
-        return LoadText(ss.str(), error);
+        return LoadText(CadTextToUtf8(ss.str()), error);     // 中文版 AutoCAD、天正的 .pat 是 GBK
     }
 
     const HatchPattern* HatchPatternLibrary::Find(std::string_view name) const

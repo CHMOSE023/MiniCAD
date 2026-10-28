@@ -1,6 +1,7 @@
 # ── MiniCAD 核心库（平台无关的 CAD 内核：场景、文档、编辑器、视口、文字、导入导出）──
 # 源码在 src 下，头文件以 src 为根（"Core/Entity/LineEntity.hpp"），命名空间 MiniCAD。
-# 依赖 MiniDWG（只在 Import 中使用，PRIVATE 链接，公开头文件不暴露 MiniDWG 类型）。
+# 依赖 MiniDWG（只在 Import 中使用，PRIVATE 链接，公开头文件不暴露 MiniDWG 类型；
+# 其他模块要用它的代码页表时经 Import/CadTextFile.h）。
 
 set(MINICAD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
@@ -53,6 +54,7 @@ set(MINICAD_SERIALIZATION_SOURCES
 # ── Import（DWG/DXF 经 MiniDWG 与 Scene 互转）──────────────────────
 set(MINICAD_IMPORT_SOURCES
     "${MINICAD_SRC}/Import/CadExchange.cpp"
+    "${MINICAD_SRC}/Import/CadTextFile.cpp"
 )
 
 # ── Editor ──────────────────────────────────────────────────────────

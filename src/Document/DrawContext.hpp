@@ -20,7 +20,9 @@
 #include <string>
 #include <functional>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <type_traits>
 
 namespace MiniCAD
@@ -193,6 +195,79 @@ namespace MiniCAD
         // 块内子实体：只换线型/线宽解析所用的属性，不做实体边界处理。
         // 见 IDrawSink::SetEntityContext 的说明（块内成员自己的线型此前被 INSERT 覆盖）。
         void SetEntityContext(const EntityAttr* attr) override { m_curAttr = attr; }
+
+        // ── 分段细分大块参照（Editor 分帧细分用）──────────────────
+        // 之后画的块参照从 resume 处（空 = 从头）接着画块内子实体，到 deadline 就停（至少画一个）。位置是一条路径：
+        // 每层块参照里第几个子实体（BeginBlockChild 的调用序），路径之前的子实体整个跳过、不进嵌套块参照，
+        // 所以接着画的开销与已画了多少无关。画着的子实体里面（天正对象、标注里再套的块）不分段、不计序号
+        void BeginChunk(std::vector<size_t> resume, std::chrono::steady_clock::time_point deadline)
+        {
+            m_chunk          = {};
+            m_chunk.active   = true;
+            m_chunk.resuming = !resume.empty();
+            m_chunk.resume   = std::move(resume);
+            m_chunk.next     = { 0 };
+            m_chunk.deadline = deadline;
+        }
+        // 返回本段画了几个子实体；没画完时 resume 是下一段的起点，画完了为空
+        size_t EndChunk(std::vector<size_t>& resume)
+        {
+            resume = m_chunk.stopped ? std::move(m_chunk.resume) : std::vector<size_t>{};
+            const size_t drawn = m_chunk.drawn;
+            m_chunk = {};
+            return drawn;
+        }
+        bool ChunkStopped() const { return m_chunk.active && m_chunk.stopped; }
+
+        bool BeginBlockChild(bool nested) override
+        {
+            Chunk& c = m_chunk;
+            if (!c.active) return true;
+            if (c.leafDepth > 0)
+            {
+                ++c.leafDepth;
+                return true;
+            }
+            if (c.stopped) return false;
+            const size_t level = c.next.size() - 1;
+            const size_t i     = c.next[level]++;
+            c.path.resize(level + 1);
+            c.path[level] = i;
+            if (c.resuming)
+            {
+                const size_t r = level < c.resume.size() ? c.resume[level] : SIZE_MAX;
+                if (i < r) return false;                        // 前几段已画过
+                if (i == r && nested && level + 1 < c.resume.size())
+                {
+                    c.next.push_back(0);                        // 路径上的嵌套块参照：进去接着找
+                    return true;
+                }
+                c.resuming = false;                             // 走到上次停下的子实体（或块的内容变了）：从这里接着画
+            }
+            else if (!nested && c.drawn > 0 && std::chrono::steady_clock::now() >= c.deadline)
+            {
+                c.stopped = true;
+                c.resume  = c.path;
+                return false;
+            }
+            if (nested)
+            {
+                c.next.push_back(0);
+                return true;
+            }
+            ++c.drawn;
+            c.leafDepth = 1;
+            return true;
+        }
+        void EndBlockChild(bool nested) override
+        {
+            Chunk& c = m_chunk;
+            if (!c.active) return;
+            if (c.leafDepth > 0)
+                --c.leafDepth;
+            else if (nested && c.next.size() > 1)
+                c.next.pop_back();
+        }
 
         // 矢量文字按字形实例输出（见 GlyphMeshLibrary）：每个字一条实例，字形网格进网格库。
         // 不设置时（选中流等）字形照旧展开成世界坐标的线段与三角形
@@ -989,5 +1064,19 @@ namespace MiniCAD
         const TextStyleTable*          m_textStyles = nullptr;   // 复杂线型文字段的字高解析
         // 复杂线型形段的形文件解析（组码 75 的形号 → SHX 形文件 → 字形）
         ShapeFontResolver              m_shapeFontResolver;
+        // 分段细分块参照（BeginChunk）
+        struct Chunk
+        {
+            bool                                  active    = false;
+            bool                                  resuming  = false;   // 还没走到上次停下的子实体
+            bool                                  stopped   = false;
+            int                                   leafDepth = 0;       // 正在画的子实体里面又套了几层
+            size_t                                drawn     = 0;       // 本段画了几个子实体
+            std::vector<size_t>                   resume;              // 从哪接着画 / 停在哪：每层第几个子实体
+            std::vector<size_t>                   next;                // 每层下一个子实体的序号（一层一项）
+            std::vector<size_t>                   path;                // 当前子实体的路径
+            std::chrono::steady_clock::time_point deadline;
+        };
+        Chunk                          m_chunk;
     };
 }

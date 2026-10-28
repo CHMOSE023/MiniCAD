@@ -31,6 +31,12 @@ namespace MiniCAD
         // 又不能改用 BeginEntity：它会把 m_wipes 清空，块内的区域覆盖记录随之丢失。
         virtual void SetEntityContext(const EntityAttr* attr) { (void)attr; }
 
+        // 块参照展开时，块内每个子实体与属性画之前先调用 BeginBlockChild（nested：它本身是块参照，它的子实体再逐个来问）：
+        // 返回 false 就跳过它（嵌套的块参照整个跳过）；画了的画完调用 EndBlockChild。Editor 据此把一个很大的块参照分几帧细分
+        //（DrawContext::BeginChunk：从上次停下的子实体接着画，到时限就停），默认都画
+        virtual bool BeginBlockChild(bool nested) { (void)nested; return true; }
+        virtual void EndBlockChild(bool nested) { (void)nested; }
+
         virtual Math::Color4 GetLayerColor(LayerID layerId) const { return Math::Color4::White(); }
         // 图层是否显示（关闭或冻结为 false）：块参照展开时据此跳过块内隐藏图层上的子实体。默认都显示
         virtual bool IsLayerVisible(LayerID layerId) const { return true; }

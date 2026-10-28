@@ -446,9 +446,9 @@ namespace MiniCAD
         m_openDone = std::move(m_openJob);
         if (m_openDone->doc && m_openBar)
         {
-            // 生成显示（细分、裁剪）在下一帧的视口渲染里同步完成，大图纸要一两秒：先把提示画出来
+            // 加入后分帧生成显示（细分、裁剪，Editor::BeginProgressiveBuild），进度在 SyncOpenProgress 里跟着走
             m_openLabel->SetText("正在生成显示 " + m_openDone->name);
-            m_openProgress->SetValue(1.0f);
+            m_openProgress->SetValue(0.0f);
         }
         m_platform->RequestRedraw();
     }
@@ -470,6 +470,13 @@ namespace MiniCAD
                 if (m_docManager.HasPane(m_openPane))
                     m_docManager.SetNewDocumentPane(m_openPane);
                 opened = m_docManager.Add(std::move(job->doc));
+                // 显示数据每帧细分一批，先细分好的先画出来；大图纸不再在一帧里细分完整张图（窗口"未响应"）
+                if (opened)
+                {
+                    m_docManager.GetEditor(*opened).BeginProgressiveBuild();
+                    m_buildDoc  = opened;
+                    m_buildName = job->name;
+                }
             }
             m_openedAny = true;
             if (opened && !FindUnresolvedXrefs(opened->GetScene()).empty()
@@ -624,7 +631,27 @@ namespace MiniCAD
                 m_openProgress->SetValue(static_cast<float>(percent) / 100.0f);
             }
         }
-        else if (m_hideOpenProgress && !m_openDone)
+        else if (m_buildDoc && !m_openDone)
+        {
+            // 刚加入的图纸在分帧生成显示。它不在主窗口里显示时细分暂停，进度条不显示，切回来接着走
+            const bool live = m_docManager.Contains(m_buildDoc) && m_docManager.GetEditor(*m_buildDoc).IsBuildingDisplay();
+            if (!live)
+                m_buildDoc = nullptr;
+            else if (m_docManager.GetMainDocument() == m_buildDoc)
+            {
+                const int percent = static_cast<int>(m_docManager.GetEditor(*m_buildDoc).DisplayBuildProgress() * 100.0f);
+                if (!m_openBar->IsVisible() || percent != m_openPercent)
+                {
+                    m_openPercent = percent;
+                    m_openLabel->SetText("正在生成显示 " + m_buildName);
+                    m_openProgress->SetValue(static_cast<float>(percent) / 100.0f);
+                    m_openBar->SetVisible(true);
+                }
+            }
+            else
+                m_openBar->SetVisible(false);
+        }
+        if (m_hideOpenProgress && !m_openJob && !m_openDone && !m_buildDoc)
         {
             m_hideOpenProgress = false;
             m_openBar->SetVisible(false);
@@ -1536,12 +1563,13 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
             m_pendingInputTicks = 0;
         }
 
-        // 4.5 视图切换的过渡动画：帧结束后再请求下一帧。不能在渲染中途请求——本帧结束时（UIContext::Render、
-        //     WM_PAINT 的 ValidateRect）会把请求清掉，动画要等鼠标动了才继续
-        if (m_docManager.GetMainDocument() && m_docManager.GetMainEditor().IsViewTransitioning())
+        // 4.5 视图切换的过渡动画、分帧生成显示：帧结束后再请求下一帧。不能在渲染中途请求——本帧结束时（UIContext::Render、
+        //     WM_PAINT 的 ValidateRect）会把请求清掉，动画要等鼠标动了才继续。生成完显示后再画一帧，收起状态栏的进度
+        if (Document* main = m_docManager.GetMainDocument();
+            main && (main == m_buildDoc || m_docManager.GetMainEditor().IsViewTransitioning() || m_docManager.GetMainEditor().IsBuildingDisplay()))
             m_platform->Post([this] { m_viewport->RequestRender(); });
 
-        // 5. 读完的图纸在"正在生成显示"画出来之后才加入（下一帧生成显示时界面会停顿）。
+        // 5. 读完的图纸在"正在生成显示"画出来之后才加入（加入后分帧生成显示）。
         //    不能在这里直接加入：绘制结束（WM_PAINT 的 ValidateRect）会清掉加入时提出的重绘请求，图纸要等鼠标动了才显示
         if (m_openDone && !m_openAddPosted)
         {
