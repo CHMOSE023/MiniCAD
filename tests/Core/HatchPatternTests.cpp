@@ -1,6 +1,7 @@
 // ── 填充图案测试：.pat 解析、内置图案、线族绘制（错位 / 虚线 / 角度）、过密保护、序列化往返 ─────────
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Entity/HatchEntity.hpp"
+#include "Import/CadTextFile.h"
 #include "Scene/HatchPatternLibrary.h"
 #include "Serialization/EntityIO.h"
 #include "Serialization/JsonSerializer.h"
@@ -9,6 +10,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 using namespace MiniCAD;
@@ -188,6 +191,29 @@ int RunHatchPatternTests()
         out.clear();
         const bool bad = HatchPatternLibrary::Parse("*A\n0,0,0,0,1\n0,0,abc,0,1\n*B\n45,0,0,0,2\n", out, &err);
         Check(!bad && out.size() == 2 && err.find("第 3 行") != std::string::npos, "错误行报告行号，其余图案仍载入");
+    }
+
+    // ── 外部 .pat 的编码：中文版 AutoCAD、天正的文件是 GBK，读入后名称与说明是 UTF-8 ──
+    {
+        const std::string gbk  = "*GBK_PROBE, \xBB\xEC\xC4\xFD\xCD\xC1\r\n45, 0,0, 0,3.175\r\n";                 // 说明"混凝土"（GBK）
+        const std::string utf8 = "*GBK_PROBE, \xE6\xB7\xB7\xE5\x87\x9D\xE5\x9C\x9F\r\n45, 0,0, 0,3.175\r\n";     // 同一段（UTF-8）
+        Check(CadTextToUtf8(gbk) == utf8, "GBK 文本转成 UTF-8");
+        Check(CadTextToUtf8(utf8) == utf8 && CadTextToUtf8("*LINE\n0, 0,0, 0,1\n") == "*LINE\n0, 0,0, 0,1\n", "UTF-8 与纯 ASCII 原样保留");
+
+        // 名称是中文的 GBK 文件经 LoadFile 读入，按 UTF-8 名称找得到
+        const std::filesystem::path file = std::filesystem::temp_directory_path() / "minicad_gbk_probe.pat";
+        {
+            std::ofstream f(file, std::ios::binary);
+            f << "*\xBB\xEC\xC4\xFD\xCD\xC1, Tangent \xBB\xEC\xC4\xFD\xCD\xC1\r\n45, 0,0, 0,3.175\r\n";       // *混凝土, Tangent 混凝土
+        }
+        const std::u8string u8 = file.u8string();
+        std::string error;
+        const size_t n = lib.LoadFile(std::string(u8.begin(), u8.end()), &error);
+        const HatchPattern* p = lib.Find("\xE6\xB7\xB7\xE5\x87\x9D\xE5\x9C\x9F");
+        Check(n == 1 && error.empty() && p && p->Description == "Tangent \xE6\xB7\xB7\xE5\x87\x9D\xE5\x9C\x9F" && p->Families.size() == 1,
+              "GBK 的 .pat 文件：中文名称与说明读成 UTF-8");
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
     }
 
     // ── 3. 连续线：条数、长度、角度 ───────────────────────────────
