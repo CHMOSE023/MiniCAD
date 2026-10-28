@@ -30,7 +30,7 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 |---|---|
 | 某处缺东西 / 多东西 | `MINICAD_AT=x0,y0,x1,y1`（谁在这里画了线）、`MINICAD_BBOX=…`（包围盒相交的块参照与块内实体）、`MINICAD_RENDER=x0,y0,x1,y1[,文件]`（把范围画成 BMP） |
 | 某个对象 | `MINICAD_H=句柄,…`（类型、所有者、是否在模型空间、不可见标志） |
-| 文字 / 字体 | `MINICAD_FINDTEXT=内容`、`MINICAD_BLOCK=块名子串`、`MINICAD_GLYPHS`（字体缺哪些字形）、`MINICAD_TABLES=1`（文字样式 / 线型表） |
+| 文字 / 字体 | `MINICAD_GREPTEXT=子串`（按原文找 TEXT / MTEXT，看格式码与转义）、`MINICAD_FINDTEXT=内容`、`MINICAD_BLOCK=块名子串`、`MINICAD_GLYPHS`（字体缺哪些字形）、`MINICAD_TABLES=1`（文字样式 / 线型表） |
 | 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW` |
 | 布局页 / 视口 | `MINICAD_VIEWPORTS=1`、`MINICAD_LAYERS=子串`（冻结 / 关闭的图层） |
 | 遮挡 / 裁剪 | `MINICAD_WIPEOUT`、`MINICAD_WIPECHECK`、`MINICAD_XCLIP` |
@@ -39,10 +39,12 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 ## 3. 看 MiniCAD 画成了什么
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/drawing-debug/scripts/shot.ps1 图纸 [-Pause 秒] [-Release]
+pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/drawing-debug/scripts/shot.ps1 图纸 [-Pause 秒] [-Release] [-Views "x0,y0,x1,y1;..."]
 ```
 
-脚本把模型页（全部显示）、第一张布局页、第一个 OLE 对象的视口离屏存成 BMP 并转成 PNG，打印路径；用 Read 工具查看 PNG。**不要截整个屏幕**（会截到用户的其他窗口）。日志里的 `LOG_WARN`（跳过的实体、找不到的字体 / 外部参照）也在脚本输出的日志文件里。
+脚本把模型页（全部显示）、第一张布局页、第一个 OLE 对象的视口离屏存成 BMP 并转成 PNG，打印路径；用 Read 工具查看 PNG。`-Views` 再按世界坐标窗口各截一张 `view<序号>.png`（`MINICAD_BENCH_VIEWS`），并打印画面左上、右下角的世界坐标——适配时扣掉了功能区、面板挡住的留边，画面不以窗口为中心，按像素换算坐标要用这两个角。**不要截整个屏幕**（会截到用户的其他窗口）。日志里的 `LOG_WARN`（跳过的实体、找不到的字体 / 外部参照）也在脚本输出的日志文件里。
+
+与 AutoCAD 对照：本机 AutoCAD 2020 用 `acad.exe /nologo /t <acadiso.dwt> /b 脚本.scr` 启动，脚本里 `-INSERT "*图纸副本.dwg" 0,0 1 0`（坐标不变、句柄会变）后逐个 `ZOOM W x0,y0 x1,y1` + `PNGOUT 文件`，最后 `_.SAVEAS 2018 临时.dwg`、`FILEDIA 1`（`FILEDIA 0` 存进注册表，不改回会让用户的打开 / 保存对话框不再弹出）再 `_.QUIT`；与 `-Views` 用同样的窗口。天正对象的核对见 [tianzheng](../../features/tianzheng.md) 的约束。直接把图纸作为参数启动会停在"开始"页、脚本不执行。AutoCAD 默认把锁定图层上的对象淡显 50%（`LAYLOCKFADECTL`），块参照在锁定图层上时整块变暗，比较颜色时别当成差异。
 
 ## 4. 定位与修复
 

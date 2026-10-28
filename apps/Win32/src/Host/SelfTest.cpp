@@ -3904,6 +3904,39 @@ namespace MiniCAD
             RenderFrame();
             SaveBmp(ReadViewport(*m_platform), dir / "model.bmp");
             std::printf("截图：%s（模型页）\n", (dir / "model.bmp").string().c_str());
+
+            // MINICAD_BENCH_VIEWS=x0,y0,x1,y1;...：再按这些世界坐标窗口各存一张 view<序号>.bmp（与 AutoCAD 的 ZOOM W 对照），之后恢复全部显示
+            if (const char* views = std::getenv("MINICAD_BENCH_VIEWS"))
+            {
+                Camera& cam = m_docManager.GetViewport().GetCamera();
+                int index = 0;
+                for (const char* p = views; *p;)
+                {
+                    double x0, y0, x1, y1;
+                    if (std::sscanf(p, "%lf,%lf,%lf,%lf", &x0, &y0, &x1, &y1) == 4)
+                    {
+                        cam.ZoomToBounds(std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1), 1.0);
+                        do
+                        {
+                            m_viewport->RequestRender();
+                            RenderFrame();
+                        } while (editor.IsBuildingDisplay());
+                        RenderFrame();
+                        const std::string name = "view" + std::to_string(++index) + ".bmp";
+                        SaveBmp(ReadViewport(*m_platform), dir / name);
+                        // 适配时扣掉了功能区、面板挡住的留边，画面并不以窗口为中心：打印画面左上、右下角的世界坐标，按它换算像素
+                        const Math::Point3 tl = cam.ScreenToWorld(0.0, 0.0), br = cam.ScreenToWorld(cam.GetWidth(), cam.GetHeight());
+                        std::printf("截图：%s（窗口 %g,%g - %g,%g；画面左上 %.1f,%.1f 右下 %.1f,%.1f）\n", (dir / name).string().c_str(),
+                                    x0, y0, x1, y1, tl.x, tl.y, br.x, br.y);
+                    }
+                    const char* next = std::strchr(p, ';');
+                    if (!next) break;
+                    p = next + 1;
+                }
+                m_docManager.ZoomAll();
+                m_viewport->RequestRender();
+                RenderFrame();
+            }
         }
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();

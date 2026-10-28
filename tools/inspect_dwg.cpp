@@ -246,13 +246,56 @@ int wmain(int argc, wchar_t** argv)
             std::printf("H %llx type=%s owner=%llx inModel=%d invisible=%d\n", static_cast<unsigned long long>(h),
                         o ? std::string(o->GetDxfName()).c_str() : "(missing)", o ? static_cast<unsigned long long>(o->OwnerHandle) : 0ull, inModel,
                         e ? int(e->IsInvisible) : -1);
+            // 多行文字：插入点、附着点（1～9）、方向、字高、框宽、行距、内容
+            if (const auto* mt = dynamic_cast<const MiniDWG::MText*>(o))
+                std::printf("  MTEXT at=(%.1f,%.1f) attach=%d dir=(%.4f,%.4f) h=%g width=%g spacing=%g style=%d normal=(%g,%g,%g) [%s]\n", mt->InsertPoint.X,
+                            mt->InsertPoint.Y, int(mt->AttachmentPoint), mt->AlignmentPoint.X, mt->AlignmentPoint.Y, mt->Height, mt->RectangleWidth,
+                            mt->LineSpacing, int(mt->LineSpacingStyle), mt->Normal.X, mt->Normal.Y, mt->Normal.Z, mt->Value.c_str());
+            // 填充：每条边界路径的边数、端点范围与首尾缺口（OCS 坐标；读入时缺口过大的路径会整条丢弃）
+            if (const auto* hatch = dynamic_cast<const MiniDWG::Hatch*>(o))
+                for (const auto& p : hatch->Paths)
+                {
+                    std::vector<MiniDWG::XY> pts;
+                    for (const auto& ed : p.Edges)
+                        if (const auto* l = dynamic_cast<const MiniDWG::HatchBoundaryPathLine*>(ed.get())) { pts.push_back(l->Start); pts.push_back(l->End); }
+                        else if (const auto* pl = dynamic_cast<const MiniDWG::HatchBoundaryPathPolyline*>(ed.get()))
+                            for (const auto& v : pl->Vertices) pts.push_back({ v.X, v.Y });
+                        else if (const auto* sp = dynamic_cast<const MiniDWG::HatchBoundaryPathSpline*>(ed.get()))
+                            for (const auto& v : sp->ControlPoints) pts.push_back({ v.X, v.Y });
+                    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+                    for (const auto& q : pts) { x0 = std::min(x0, q.X); y0 = std::min(y0, q.Y); x1 = std::max(x1, q.X); y1 = std::max(y1, q.Y); }
+                    std::printf("  PATH flags=%d edges=%zu box=(%.1f,%.1f)-(%.1f,%.1f)", int(p.Flags), p.Edges.size(), x0, y0, x1, y1);
+                    for (const auto& ed : p.Edges) std::printf(" %d", int(ed->GetType()));
+                    std::printf("\n");
+                }
+            // 块记录：名称与引用它的 INSERT（句柄、所有者、颜色、透明度、图层）
+            if (const auto* br = dynamic_cast<const MiniDWG::BlockRecord*>(o))
+            {
+                std::printf("  block [%s]\n", br->Name.c_str());
+                for (const auto& [ih, io] : db->Objects())
+                    if (const auto* ins = dynamic_cast<const MiniDWG::Insert*>(io.get()); ins && ins->BlockHandle == h)
+                    {
+                        const auto* il = db->FindAs<MiniDWG::Layer>(ins->LayerHandle);
+                        std::printf("  INSERT %llx owner=%llx color=%d transparency=%d layer=[%s]\n", static_cast<unsigned long long>(ih),
+                                    static_cast<unsigned long long>(ins->OwnerHandle), int(ins->Color.Index()), int(ins->Transparency.Value()),
+                                    il ? il->Name.c_str() : "?");
+                    }
+            }
             if (e)
             {
                 const auto* lt = db->FindAs<MiniDWG::LineType>(e->LineTypeHandle);
                 const auto* layer = db->FindAs<MiniDWG::Layer>(e->LayerHandle);
                 const auto* llt = layer ? db->FindAs<MiniDWG::LineType>(layer->LineTypeHandle) : nullptr;
-                std::printf("  ltype=%llx [%s] ltscale=%g color=%d layer=[%s] layerLtype=[%s]", static_cast<unsigned long long>(e->LineTypeHandle), lt ? lt->Name.c_str() : "?",
-                            e->LineTypeScale, int(e->Color.Index()), layer ? layer->Name.c_str() : "?", llt ? llt->Name.c_str() : "?");
+                std::printf("  ltype=%llx [%s] ltscale=%g color=%d transparency=%d layer=[%s] layerLtype=[%s]", static_cast<unsigned long long>(e->LineTypeHandle), lt ? lt->Name.c_str() : "?",
+                            e->LineTypeScale, int(e->Color.Index()), int(e->Transparency.Value()), layer ? layer->Name.c_str() : "?", llt ? llt->Name.c_str() : "?");
+                if (layer)   // 图层透明度在扩展数据 AcCmTransparency 的 1071 里
+                    for (const auto& x : layer->ExtendedDataList)
+                        for (const auto& r : x.Records)
+                            if (const auto* v = std::get_if<std::int32_t>(&r.Value); v && r.Code == 1071)
+                            {
+                                const auto* app = db->FindAs<MiniDWG::AppId>(x.AppIdHandle);
+                                std::printf(" layerXdata[%s]1071=0x%08x", app ? app->Name.c_str() : "?", static_cast<unsigned>(*v));
+                            }
                 if (llt)
                 {
                     std::printf(" pattern:");
@@ -338,6 +381,26 @@ int wmain(int argc, wchar_t** argv)
                             t->Rotation, int(t->HorizontalAlignment), int(t->VerticalAlignment), t->Normal.X, t->Normal.Y, t->Normal.Z,
                             int(t->IsInvisible), static_cast<unsigned long long>(t->LayerHandle));
             }
+    // MINICAD_GREPTEXT=子串：打印原文含该子串的 TEXT / ATTRIB / ATTDEF / MTEXT（句柄、类型、所有者、文字样式、原始内容）
+    if (const wchar_t* gw = _wgetenv(L"MINICAD_GREPTEXT"))
+    {
+        const auto u = std::filesystem::path(gw).u8string();
+        const std::string sub(u.begin(), u.end());
+        for (const auto& [handle, object] : db->Objects())
+        {
+            const std::string* value = nullptr;
+            MiniDWG::Handle style = MiniDWG::kNullHandle;
+            MiniDWG::XYZ at;
+            double height = 0.0;
+            if (const auto* t = dynamic_cast<const MiniDWG::TextEntity*>(object.get())) value = &t->Value, style = t->StyleHandle, at = t->InsertPoint, height = t->Height;
+            else if (const auto* m = dynamic_cast<const MiniDWG::MText*>(object.get())) value = &m->Value, style = m->StyleHandle, at = m->InsertPoint, height = m->Height;
+            if (!value || value->find(sub) == std::string::npos) continue;
+            const auto* st = db->FindAs<MiniDWG::TextStyle>(style);
+            std::printf("GT %llx %s owner=%llx at=%.1f,%.1f h=%g style=[%s|%s|%s] [%s]\n", static_cast<unsigned long long>(handle), std::string(object->GetDxfName()).c_str(),
+                        static_cast<unsigned long long>(object->OwnerHandle), at.X, at.Y, height, st ? st->Name.c_str() : "?", st ? st->Filename.c_str() : "?",
+                        st ? st->BigFontFilename.c_str() : "?", value->c_str());
+        }
+    }
     // MINICAD_LAYERS=子串：打印名称含该子串的图层的标志（1 冻结、4 锁定）、开关与颜色
     if (const wchar_t* lw = _wgetenv(L"MINICAD_LAYERS"))
     {
@@ -476,6 +539,20 @@ int wmain(int argc, wchar_t** argv)
                 ++hs[std::string(owner ? owner->Name : "?") + " | " + (layer ? layer->Name : "?") + " | " + (h->IsSolid ? "SOLID" : h->Pattern.Name)];
             }
         for (const auto& [k, n] : hs) std::printf("HATCH %d %s\n", n, k.c_str());
+        // 读入时会跳过的两类：边界路径都没有边、非实心又没存图案线（要按名称查图案库）
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* h = dynamic_cast<const MiniDWG::Hatch*>(object.get()))
+            {
+                std::size_t edges = 0;
+                for (const auto& p : h->Paths) edges += p.Edges.size();
+                const bool noLines = !h->IsSolid && !h->GradientColor.Enabled && h->Pattern.Lines.empty();
+                if (edges == 0 || noLines)
+                {
+                    const auto* owner = db->FindAs<MiniDWG::BlockRecord>(h->OwnerHandle);
+                    std::printf("HATCHSKIP %llx owner=[%s] pattern=%s paths=%zu edges=%zu noPatternLines=%d\n", static_cast<unsigned long long>(handle),
+                                owner ? owner->Name.c_str() : "?", h->IsSolid ? "SOLID" : h->Pattern.Name.c_str(), h->Paths.size(), edges, int(noLines));
+                }
+            }
         // 每种图案打印一个样本的线族与边界
         std::map<std::string, int> seen;
         for (const auto& [handle, object] : db->Objects())
@@ -916,7 +993,7 @@ int wmain(int argc, wchar_t** argv)
         };
         auto visit = [&](const MiniCAD::Entity& e) {
             if (e.IsKindOf<MiniCAD::TextEntity>()) { const auto& t = static_cast<const MiniCAD::TextEntity&>(e); check(t.GetText(), t.GetStyleId()); }
-            else if (e.IsKindOf<MiniCAD::MTextEntity>()) { const auto& t = static_cast<const MiniCAD::MTextEntity&>(e); check(t.GetText(), t.GetStyleId()); }
+            else if (e.IsKindOf<MiniCAD::MTextEntity>()) { const auto& t = static_cast<const MiniCAD::MTextEntity&>(e); check(t.GetPlainText(), t.GetStyleId()); }
         };
         document.GetScene().ForEachObject([&](const MiniCAD::Object& o) { if (o.IsKindOf<MiniCAD::Entity>()) visit(static_cast<const MiniCAD::Entity&>(o)); });
         document.GetScene().GetBlockTable().ForEach([&](MiniCAD::BlockID, const MiniCAD::BlockEntity& b) { for (const auto& e : b.GetEntities()) visit(*e); });
