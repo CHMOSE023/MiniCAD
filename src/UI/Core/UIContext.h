@@ -177,6 +177,12 @@ namespace MiniGUI
         // 有焦点控件或有弹层打开时返回 true，宿主应把键盘和文字消息只交给 MiniGUI
         bool  WantsKeyboard() const;
 
+        // ── 所有者：同一程序的次窗口（另一个系统窗口，各有自己的上下文）随所有者的模态对话框一起阻塞 ──
+        // 所有者开着模态对话框时，这个上下文不接受指针（进行中的拖动取消，按下时调用 onBlockedPress，例如把所有者窗口置前），
+        // 按键、文字与输入法组合串转给所有者（Esc、回车给对话框）。所有者必须比这个上下文活得久
+        void  SetModalOwner(UIContext* owner, std::function<void()> onBlockedPress = {});
+        bool  IsBlockedByOwner() const { return m_modalOwner && m_modalOwner->HasModal(); }
+
         // ── 帧 ──────────────────────────────────────────────────
         bool Update();          // 执行布局；返回是否需要重绘
         void Render();          // 绘制整棵树并提交给后端
@@ -204,6 +210,7 @@ namespace MiniGUI
         void  FocusFromPointer(Node* target);
         void  CollectFocusable(Node* node, std::vector<Node*>& out) const;
 
+        bool  BlockPointerByOwner();              // 所有者开着模态对话框：取消拖动、清掉悬停，返回 true（指针事件不再分发）
         bool  DismissPopupsFor(Node* target);     // 轻触关闭；返回是否关闭了弹层
         bool  IsInPopupLayer(const Node* node) const;
         void  NotifyTimerScheduler();
@@ -290,6 +297,10 @@ namespace MiniGUI
         IMenuBarHost*  m_menuBarHost = nullptr;
         Node*          m_menuBarReturnFocus = nullptr;     // 进入菜单栏键盘模式前的焦点
         bool           m_altAlone    = false;
+
+        // 所有者（SetModalOwner）
+        UIContext*            m_modalOwner = nullptr;
+        std::function<void()> m_onBlockedPress;
 
         bool m_needsRedraw = true;
         bool m_inLayout    = false;

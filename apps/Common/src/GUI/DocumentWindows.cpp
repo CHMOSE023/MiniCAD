@@ -8,7 +8,8 @@
 //       松开在上面就把文档移进那个窗口（MoveDocumentsTo），原窗口空了就关掉（PruneDocWindows）
 //     · 拖文档窗口的标题栏是系统的移动循环（OnDocWindowMoving），同上；松开时它的文档全部移过去
 //   - 对话框：界面的对话框都画在主窗口里。文档窗口与主窗口平级（CreateFloatingWindow 的 document），主窗口弹出对话框时
-//     置前（RaiseMainForModal）；对话框开着时文档窗口不接受编辑，按键转给主窗口（Esc / 回车给对话框），点它只把主窗口置前
+//     置前（RaiseMainForModal）；对话框开着时整个文档窗口不接受指针，按键与文字转给主窗口（Esc / 回车给对话框），点它只把
+//     主窗口置前（UIContext::SetModalOwner，浮出的面板窗口同样）
 //   - 窗口：AppPlatform::CreateFloatingWindow（Win32FloatingWindow，带自己的 UIContext，能最小化 / 最大化）。界面由它自己的
 //     MiniGUI::UiLayout 按界面描述文件的 layouts.document 生成（ApplyDocWindowUi，命令表与主窗口共用，文件改了随主窗口一起重新加载）：
 //     标题栏（"文件"菜单、快速访问、文档标签条、最小化 / 最大化 / 关闭，按钮经 TitleBar::SetWindowActions 作用于这个窗口）、
@@ -23,8 +24,7 @@
 //     （MainFrame::ViewChrome）；窗口被激活、或在窗口里任何地方按下（DocWindowRoot），它显示的文档就成为当前文档，
 //     功能区、菜单的命令与特性 / 图层面板随之作用于它，之后新建 / 打开的文档也放进这个窗口。光标旁的动态输入框每个窗口一个
 //   - 输入：视口的指针事件交给显示的文档的 Editor（RouteViewportPointer）；按键先让它成为当前文档，再走 OnViewportKey，
-//     在绘图区敲字母进入这个窗口的命令行。快捷键登记在这个窗口自己的 UIContext 上（CommandRegistry::BindShortcuts），
-//     主窗口开着对话框时不生效（ShortcutTable::SetGate）；按键不再转给主窗口
+//     在绘图区敲字母进入这个窗口的命令行。快捷键登记在这个窗口自己的 UIContext 上（CommandRegistry::BindShortcuts）
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
@@ -345,17 +345,15 @@ namespace MiniCAD
         if (!m_platform->LoadUiFonts(ui.GetTextSystem()))
             LOG_WARN("文档窗口：没有找到界面字体");
         ui.SetTheme(m_ui->GetTheme());
+        // 主窗口开着对话框时整个窗口（视口、面板、功能区…）不接受指针，按下只把主窗口置前；按键与文字转给对话框
+        ui.SetModalOwner(m_ui.get(), [this] { m_platform->ActivateMainWindow(); });
 
         // 根节点：界面描述生成的内容放在这里。在窗口里任何地方按下（功能区、标题栏、视口、命令行、状态栏…），
         // 它显示的文档成为当前文档
         ViewChrome& c = w->chrome;
         c.pane = pane;
         w->active = activate;
-        auto root = std::make_unique<DocWindowRoot>([this, w]
-        {
-            if (!m_ui->HasModal())
-                UseChrome(w->chrome);
-        });
+        auto root = std::make_unique<DocWindowRoot>([this, w] { UseChrome(w->chrome); });
         {
             LayoutStyle& s = root->EditLayoutStyle();
             s.position  = PositionType::Absolute;
@@ -391,25 +389,17 @@ namespace MiniCAD
                 w->chrome.hovered = e.type == PointerEventType::Enter;     // 动态输入框只在光标在视口里时显示
                 return;
             }
-            // 主窗口开着对话框：文档窗口不接受编辑，按下时把主窗口（连同对话框）置前
-            if (m_ui->HasModal())
-            {
-                if (e.type == PointerEventType::Down)
-                    m_platform->ActivateMainWindow();
-                return;
-            }
             if (Document* doc = m_docManager.GetShownDocument(w->pane))
                 RouteViewportPointer(e, doc, w->input, *w->host);
         });
         // 在这个窗口的视口里敲键：它显示的文档成为当前文档（字母进的是这个窗口的命令行）
         host->SetOnKey([this, w](const KeyEvent& e)
         {
-            if (!m_ui->HasModal())
-                UseChrome(w->chrome);
-            return OnDocWindowKey(e);
+            UseChrome(w->chrome);
+            return OnViewportKey(e);       // 快捷键（Ctrl+S、Ctrl+Z …）已由窗口自己的界面先处理
         });
-        // 字符：对话框开着时给主窗口的对话框；否则视口不用字符（敲字母时焦点已经交给这个窗口的命令行），吞掉
-        host->SetOnText([this](std::string_view utf8) { return m_ui->HasModal() ? m_ui->TextInput(utf8) : true; });
+        // 字符：视口不用（敲字母时焦点已经交给这个窗口的命令行），吞掉
+        host->SetOnText([](std::string_view) { return true; });
         w->layout->RegisterPanel("canvas", std::move(host));
         w->layout->RegisterPanel("documents", CreateDocumentArea(c));
         w->layout->RegisterPanel("statusbar", CreateStatusBar(c));
@@ -420,9 +410,8 @@ namespace MiniCAD
         w->layout->RegisterPanel("nodes",      CreateNodePanel(c), "节点");
         ApplyDocWindowUi(*w);
 
-        // 快捷键登记在这个窗口自己的界面上；主窗口开着对话框时不生效（同主窗口）
+        // 快捷键登记在这个窗口自己的界面上；主窗口开着对话框时按键都转给对话框（SetModalOwner），不会触发
         m_commands.BindShortcuts(ui.GetShortcuts());
-        ui.GetShortcuts().SetGate([this] { return !m_ui->HasModal(); });
 
         w->window->SetOnClose([this, w] { CloseDocWindow(w->pane); });
         w->window->SetOnBeforeRender([this, w]
@@ -758,20 +747,6 @@ namespace MiniCAD
         if (modal && !m_modalRaised && !m_docWindows.empty())
             m_platform->ActivateMainWindow();
         m_modalRaised = modal;
-    }
-
-    bool MainFrame::OnDocWindowKey(const KeyEvent& e)
-    {
-        // 主窗口开着对话框：按键交给主窗口的界面（Esc、回车给对话框），字符随后也转过去（OnText）
-        if (m_ui->HasModal())
-        {
-            if (e.type == KeyEventType::Down)
-                m_ui->KeyDown(e.key, e.modifiers, e.repeat);
-            else
-                m_ui->KeyUp(e.key, e.modifiers);
-            return true;
-        }
-        return OnViewportKey(e);       // 快捷键（Ctrl+S、Ctrl+Z …）已由窗口自己的界面先处理
     }
 
     void MainFrame::SyncDocWindowChrome(DocWindow& w)

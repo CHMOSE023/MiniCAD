@@ -98,6 +98,8 @@ namespace MiniCAD
         if (!m_platform.LoadUiFonts(ui.GetTextSystem()))
             LOG_WARN("浮动窗口：没有找到界面字体");
         ui.SetTheme(m_mainUi.GetTheme());
+        // 主窗口开着对话框时不接受指针（按下只把主窗口置前），按键与文字转给对话框
+        ui.SetModalOwner(&m_mainUi, [this] { m_platform.ActivateMainWindow(); });
 
         auto panel = std::make_unique<FloatingPanel>(title);
         e->panel   = panel.get();

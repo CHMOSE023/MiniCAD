@@ -3400,6 +3400,20 @@ namespace MiniCAD
                     SendMessageW(fw, WM_CLOSE, 0, 0);
                     check(m_docManager.GetEditor(*docB).GetSelection().size() == selBefore && DocWindowCount() == 1 && m_ui->HasModal(),
                           "对话框开着时文档窗口不接受编辑（框选、再次关闭都不执行）");
+                    // 点它停靠区里的图层面板：焦点不进面板（否则随后的 Esc 给了面板而不是对话框），对话框还在
+                    MiniGUI::UIContext& fui2 = w2->window->GetUI();
+                    MiniGUI::Node* const focusBefore = fui2.GetFocus();
+                    MiniGUI::Node* const list = w2->chrome.panels->layerList;
+                    if (list && list->GetContext() == &fui2)
+                    {
+                        const MiniGUI::Vec2 lc = list->GetScreenBounds().Center();
+                        const int lx = static_cast<int>(std::lround(lc.x * fs2)), ly = static_cast<int>(std::lround(lc.y * fs2));
+                        SendMessageW(fw, WM_MOUSEMOVE, 0, MAKELPARAM(lx, ly));
+                        SendMessageW(fw, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(lx, ly));
+                        SendMessageW(fw, WM_LBUTTONUP, 0, MAKELPARAM(lx, ly));
+                    }
+                    check(list && fui2.GetFocus() == focusBefore && fui2.GetHovered() == nullptr && m_ui->HasModal(),
+                          "对话框开着时点文档窗口的面板：焦点、悬停都不变，对话框还在");
                 }
                 // Esc 按在文档窗口里：转给主窗口的对话框
                 SendMessageW(fw, WM_KEYDOWN, VK_ESCAPE, 0);
@@ -3421,6 +3435,7 @@ namespace MiniCAD
 
         // ── 30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并 ──────────
         section("30. 多窗口：一个窗口放几个文档，标签在任意窗口之间拖动合并");
+        do      // W1 没建出来时 break：下面都要用它，不跳过会崩溃，后面的节就跑不到了
         {
             using PaneId = DocumentManager::PaneId;
             constexpr PaneId kMain = DocumentManager::kMainPane;
@@ -3489,6 +3504,8 @@ namespace MiniCAD
             DocWindow* win1 = FindPaneWindow(w1);
             check(win1 && w1 != kMain && DocWindowCount() == 1 && win1->tabs && win1->tabs->GetTabCount() == 1,
                   "B 拖出成文档窗口 W1，W1 的标题栏里有它的标签条");
+            if (!win1)
+                break;
 
             // C 从主窗口的标签条拖到 W1 的标签条上：途中建的临时窗口在松开后关掉，C 进 W1
             dragMainTab(docC, stripPoint(w1, 200.0f));       // 标签右边的标题栏空白处：接到最后
@@ -3636,7 +3653,7 @@ namespace MiniCAD
             docE->MarkSaved();
             CloseDocument(docE);
             RenderFrame();
-        }
+        } while (false);
 
         // ── 31. 停靠面板拖出窗口：鼠标没松开就浮出成独立窗口，跟着光标走 ──────────
         section("31. 停靠面板拖出窗口：没松开就浮出成独立窗口，跟着光标走（主窗口、文档窗口）");
