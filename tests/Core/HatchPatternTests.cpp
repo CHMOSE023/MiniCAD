@@ -35,6 +35,31 @@ namespace
         void DrawPoint(const Math::Point3& p, const Math::Color4&, bool) override { points.push_back(p); }
     };
 
+    // 只统计实心填充的三角形个数与总面积
+    struct AreaSink : IDrawSink
+    {
+        double area = 0.0;
+        int    tris = 0;
+        void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+        void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+        {
+            area += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
+            ++tris;
+        }
+    };
+
+    // 正 n 边形（逆时针，首尾相同）
+    std::vector<Math::Point3> Ring(int n, double r)
+    {
+        std::vector<Math::Point3> pts;
+        for (int i = 0; i <= n; ++i)
+        {
+            const double a = Math::TwoPI * (i % n) / n;
+            pts.push_back({ r * std::cos(a), r * std::sin(a), 0.0 });
+        }
+        return pts;
+    }
+
     double Len(const Seg& s) { return std::hypot(s.b.x - s.a.x, s.b.y - s.a.y); }
 
     std::vector<Seg> Render(const HatchPattern& p, double scale, double angle, double x0, double y0, double x1, double y1)
@@ -88,25 +113,8 @@ int RunHatchPatternTests()
 
     // ── 实心填充：面积正确（含孔岛），相邻条带的梯形合并，三角形数与边数同阶 ──
     {
-        struct AreaSink : IDrawSink
-        {
-            double area = 0.0;
-            int    tris = 0;
-            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
-            void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
-            {
-                area += std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) * 0.5;
-                ++tris;
-            }
-        };
         // 40 边的近似圆（半径 10）中间挖一个 4×4 的方孔
-        std::vector<Math::Point3> ring;
-        for (int i = 0; i <= 40; ++i)
-        {
-            const double a = Math::TwoPI * (i % 40) / 40.0;
-            ring.push_back({ 10.0 * std::cos(a), 10.0 * std::sin(a), 0.0 });
-        }
-        HatchEntity h(2, std::vector<Polyline>{ Polyline(ring), Polyline({ { -2, -2, 0 }, { 2, -2, 0 }, { 2, 2, 0 }, { -2, 2, 0 }, { -2, -2, 0 } }) });
+        HatchEntity h(2, std::vector<Polyline>{ Polyline(Ring(40, 10.0)), Polyline({ { -2, -2, 0 }, { 2, -2, 0 }, { 2, 2, 0 }, { -2, 2, 0 }, { -2, -2, 0 } }) });
         AreaSink sink;
         h.Draw(sink, false, false);
         const double expected = 0.5 * 40 * 100.0 * std::sin(Math::TwoPI / 40.0) - 16.0;
@@ -118,6 +126,54 @@ int RunHatchPatternTests()
                     && brick->Families[2].Dashes[0] < 0.0 && !brick->Description.empty(),
               "BRICK：3 个线族，虚线与说明解析正确");
         Check(lib.Get("NO_SUCH").Solid, "找不到的图案退回实心");
+    }
+
+    // ── 梳形边界：同一条带里有上百条活动边，梯形跨条带延续 ──────────────
+    {
+        // 底座 99×2，上面 50 个宽 1、高 8 的齿：面积 198 + 400
+        std::vector<Math::Point3> comb{ { 0, 0, 0 }, { 99, 0, 0 } };
+        for (int k = 49; k >= 0; --k)
+        {
+            comb.push_back({ 2.0 * k + 1, 10, 0 });
+            comb.push_back({ 2.0 * k, 10, 0 });
+            if (k > 0)
+            {
+                comb.push_back({ 2.0 * k, 2, 0 });
+                comb.push_back({ 2.0 * k - 1, 2, 0 });
+            }
+        }
+        comb.push_back({ 0, 0, 0 });
+        AreaSink sink;
+        HatchEntity(3, Polyline(comb)).Draw(sink, false, false);
+        Check(std::abs(sink.area - 598.0) < 1e-9 && sink.tris == 2 * 51, "梳形实心填充：面积 598，底座 1 个梯形 + 每个齿 1 个梯形");
+    }
+
+    // ── 大边界（样条细分出上万个点）：耗时与点数近似线性 ──────────────────
+    // 原来实心填充每个条带遍历全部边、图案填充每条扫描线遍历全部边，都是平方复杂度：
+    // 图签 logo 里一个 1.6 万点的实心填充要 360 ms，6.4 万点要 4.6 s（Release）
+    {
+        const int n = 64000;
+        HatchEntity solid(4, std::vector<Polyline>{ Polyline(Ring(n, 100.0)), Polyline(Ring(n, 50.0)) });
+        AreaSink sink;
+        auto t0 = std::chrono::steady_clock::now();
+        solid.Draw(sink, false, false);
+        const double solidMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const double ringArea = 0.5 * n * std::sin(Math::TwoPI / n);      // 半径 1 的正 n 边形面积
+        std::printf("    %d × 2 点的实心填充（圆环）：%d 个三角形，%.1f ms\n", n, sink.tris, solidMs);
+        Check(std::abs(sink.area - ringArea * (100.0 * 100.0 - 50.0 * 50.0)) < 1e-6 * ringArea * 7500.0 && sink.tris <= 4 * n,
+              "大边界实心填充：圆环面积正确，三角形数与边数同阶");
+        Check(solidMs < 1000.0, "大边界实心填充：12.8 万条边 1 秒内完成（不是平方复杂度）");
+
+        HatchEntity lines(5, Polyline(Ring(n, 100.0)), HatchPattern::MakeLines(0.0, 0.025));    // 8000 条扫描线
+        RecordingSink rec;
+        t0 = std::chrono::steady_clock::now();
+        lines.Draw(rec, false, false);
+        const double linesMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("    %d 点边界、8000 条扫描线的图案填充：%zu 段，%.1f ms\n", n, rec.segs.size(), linesMs);
+        // 上下两端的扫描线是否正好擦过顶点取决于舍入，条数允许差一两条
+        Check(rec.segs.size() >= 7998 && rec.segs.size() <= 8002 && std::abs(TotalLen(rec.segs) * 0.025 - ringArea * 10000.0) < 1.0,
+              "大边界图案填充：每条扫描线一段，总长 × 间距 ≈ 面积");
+        Check(linesMs < 1000.0, "大边界图案填充：6.4 万条边 × 8000 条扫描线 1 秒内完成");
     }
 
     // ── 2. 解析：注释、BOM、CRLF、错误行 ───────────────────────────
