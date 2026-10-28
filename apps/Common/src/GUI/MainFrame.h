@@ -99,7 +99,8 @@ namespace MiniCAD
         void StateChanged();                    // 文档、选择集、当前工具可能变了：刷新命令状态、标签、面板、标题
         // 菜单、启动参数和拖放共用此入口；逐个在后台读取（状态栏显示进度），读完一个加入一个，失败汇总显示，成功文档保留。
         void OpenDrawings(const std::vector<std::string>& paths);
-        bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty(); }   // 还有图纸在读取或排队
+        // 还有图纸在读取、排队，或刚加入的图纸还在生成显示（分帧细分）
+        bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty() || m_buildDoc; }
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
         bool HasUnsavedDocuments() const;       // 网页版：关闭页面前据此提示
         const std::string&  GetUiPath() const { return m_uiPath; }
@@ -241,7 +242,7 @@ namespace MiniCAD
         void SyncDocuments();                   // 标签与 DocumentManager 的文档列表保持一致
         void StartNextOpen();                   // 后台读取队列里的下一张图纸
         void FinishOpen();                      // 界面线程：读完一张，提示"正在生成显示"，等这一帧画出后再加入
-        void AddOpened();                       // 帧尾：把读完的图纸加入文档列表（下一帧生成显示），继续下一张
+        void AddOpened();                       // 帧尾：把读完的图纸加入文档列表（之后每帧细分一批，见 Editor::BeginProgressiveBuild），继续下一张
         void EndOpenBatch();                    // 队列读完：同步界面，显示失败汇总
         void SyncOpenProgress();                // 每帧：把后台读取进度同步到状态栏
         // 外部参照（XREF）：本批打开的图纸有找不到的参照时提示，可选一个文件夹再找（网页版经浏览器授权读本地文件夹）
@@ -496,7 +497,9 @@ namespace MiniCAD
         std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
         std::vector<Document*>                 m_xrefMissingDocs;        // 本批打开的、有找不到的外部参照的图纸
         bool                                   m_openedAny  = false;
-        bool                                   m_hideOpenProgress = false;   // 最后一张已加入：画完它的首帧后隐藏进度
+        bool                                   m_hideOpenProgress = false;   // 最后一张已加入：它生成完显示后隐藏进度
+        Document*                             m_buildDoc = nullptr;     // 最近加入、还在生成显示的图纸（只用来比较，可能已关闭）
+        std::string                            m_buildName;
         MiniGUI::Node*                         m_openBar    = nullptr;   // 状态栏里的读取进度
         MiniGUI::Label*                        m_openLabel  = nullptr;
         MiniGUI::ProgressBar*                  m_openProgress = nullptr;

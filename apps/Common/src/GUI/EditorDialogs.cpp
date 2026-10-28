@@ -840,12 +840,27 @@ namespace MiniCAD
             if (patterns[i].Name == hs.Pattern)
                 selected = static_cast<int>(i);
         }
+        // 下拉项：样例 + 名称（列表里另加说明）
+        TextParams itemParams;
+        itemParams.size     = 13.0f;
+        itemParams.color    = Theme::Text;
+        itemParams.vAlign   = TextAlign::Center;
+        itemParams.ellipsis = true;         // 下拉层放不下的说明截断加"…"
+        auto itemText = [](const HatchPattern& p, bool inList)
+        {
+            return inList && !p.Description.empty() ? p.Name + "  " + p.Description : p.Name;
+        };
+
         auto* combo = AddRow<ComboBox>(body, "图案", names, selected);
         combo->EditLayoutStyle().width = 220.0f;
-        combo->SetDropDownWidth(320.0f);
+        // 下拉层按最长一项定宽：样例与内边距之外加上文字宽度，限制在 320～560。
+        // 外部 .pat（如天正的）说明较长，固定 320 时后半截被切掉
+        float textWidth = 0.0f;
+        for (const HatchPattern& p : patterns)
+            textWidth = std::max(textWidth, m_ui->GetTextSystem().Measure(itemText(p, true), itemParams).x);
+        combo->SetDropDownWidth(std::clamp(textWidth + 90.0f, 320.0f, 560.0f));
         combo->SetMaxVisibleItems(12);
-        // 下拉项：样例 + 名称（列表里另加说明）
-        combo->SetItemPainter([combo](DrawList& dl, const Rect& box, int index, bool inList)
+        combo->SetItemPainter([combo, itemParams, itemText](DrawList& dl, const Rect& box, int index, bool inList)
         {
             const auto& all = HatchPatternLibrary::Instance().All();
             if (index < 0 || index >= static_cast<int>(all.size()))
@@ -855,17 +870,13 @@ namespace MiniCAD
             const Rect swatch{ box.min.x + 6.0f, cy - 8.0f, box.min.x + 42.0f, cy + 8.0f };
             DrawPatternSwatch(dl, swatch, p, 1.0, 0.0, 20.0, Theme::Text);
             dl.AddRect(swatch, Theme::Border);
-            TextParams tp;
-            tp.size   = 13.0f;
-            tp.color  = Theme::Text;
-            tp.vAlign = TextAlign::Center;
-            std::string text = p.Name;
-            if (inList && !p.Description.empty())
-                text += "  " + p.Description;
-            combo->GetContext()->GetTextSystem().Draw(dl, Rect{ swatch.max.x + 8.0f, box.min.y, box.max.x, box.max.y }, text, tp);
+            combo->GetContext()->GetTextSystem().Draw(dl, Rect{ swatch.max.x + 8.0f, box.min.y, box.max.x, box.max.y },
+                                                      itemText(p, inList), itemParams);
         });
 
         Label* desc = body->AddChild<Label>("", 12.0f, Theme::TextDim);
+        desc->EditLayoutStyle().width = 300.0f;     // 与预览同宽，过长的说明加"…"，不撑大对话框
+        desc->SetEllipsis(true);
         auto* scale = AddRow<NumberBox>(body, "比例", hs.Scale, 0.001, 10000.0, 0.1, 3);
         auto* angle = AddRow<NumberBox>(body, "角度", hs.AngleDeg, -360.0, 360.0, 15.0, 2);
 

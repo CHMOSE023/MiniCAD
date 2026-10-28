@@ -508,7 +508,10 @@ namespace MiniCAD
 
         // 实心填充（奇偶规则）：按顶点 y 值切成水平条带，每条带内交点两两配对成梯形；
         // 相邻条带里由同一对边围成的梯形合并成一个（边是直线，合并是精确的），
-        // 三角形数与边数同阶，而不是条带数 × 交点数
+        // 三角形数与边数同阶，而不是条带数 × 交点数。
+        // 条带由低到高扫描，只看活动边表里的边（下端已在条带中线以下、上端还没扫过）：
+        // 原来每个条带遍历全部边，条带数又与顶点数同阶，样条边界细分出上万个点时是 O(E²)
+        //（实测图签 logo 一个 1.6 万点的填充要 360 ms）
         static void FillSolid(IDrawSink& sink,
                               const std::vector<std::vector<Math::Point3>>& polys,
                               double elevation,
@@ -545,6 +548,24 @@ namespace MiniCAD
                 sink.FillTriangle(A, C, D, color);
             };
 
+            // 边按下端 y 排序，扫描时依次移入活动边表
+            std::vector<double> lows(edges.size());
+            std::vector<size_t> byLow(edges.size());
+            for (size_t e = 0; e < edges.size(); ++e)
+            {
+                lows[e]  = std::min(edges[e].ya, edges[e].yb);
+                byLow[e] = e;
+            }
+            std::sort(byLow.begin(), byLow.end(), [&](size_t a, size_t b) { return lows[a] < lows[b]; });
+            std::vector<size_t> active;
+            size_t nextEdge = 0;
+
+            // 上一条带的梯形按左边查找：slot[e] 记着以边 e 为左边的梯形属于哪一条带、在 open 里的位置。
+            // 同一条带里每条边至多是一个梯形的左边
+            struct Slot { size_t band = SIZE_MAX, idx = 0; };
+            std::vector<Slot> slot(edges.size());
+            size_t openBand = SIZE_MAX;
+
             struct Trap { size_t l, r; double y0; };
             std::vector<Trap> open, next;
             std::vector<std::pair<double, size_t>> crossings;
@@ -556,25 +577,37 @@ namespace MiniCAD
                 if (y1 - y0 >= 1e-12)
                 {
                     const double ymid = 0.5 * (y0 + y1);
-                    for (size_t e = 0; e < edges.size(); ++e)
+                    while (nextEdge < byLow.size() && lows[byLow[nextEdge]] < ymid)
+                        active.push_back(byLow[nextEdge++]);
+                    // 交点：下端 < ymid < 上端。上端已不高于中线的边移出（之后的中线只会更高）
+                    size_t w = 0;
+                    for (const size_t e : active)
                     {
                         const Edge& g = edges[e];
-                        if (ymid <= std::min(g.ya, g.yb) || ymid >= std::max(g.ya, g.yb)) continue;
+                        if (ymid >= std::max(g.ya, g.yb)) continue;
+                        active[w++] = e;
                         crossings.push_back({ xAt(e, ymid), e });
                     }
+                    active.resize(w);
                     std::sort(crossings.begin(), crossings.end());
                     for (size_t k = 0; k + 1 < crossings.size(); k += 2)
                     {
                         const size_t l = crossings[k].second, r = crossings[k + 1].second;
                         double start = y0;
-                        for (auto& t : open)
-                            if (t.l == l && t.r == r) { start = t.y0; t.l = SIZE_MAX; break; }   // 延续上一条带的梯形
+                        if (const Slot& s = slot[l]; !open.empty() && s.band == openBand && open[s.idx].r == r)
+                        {
+                            start = open[s.idx].y0;          // 延续上一条带的梯形
+                            open[s.idx].l = SIZE_MAX;
+                        }
                         next.push_back({ l, r, start });
                     }
                 }
                 for (const auto& t : open)
                     if (t.l != SIZE_MAX) emit(t.l, t.r, t.y0, y0);                 // 没有延续的梯形到此结束
                 open.swap(next);
+                openBand = b;
+                for (size_t i = 0; i < open.size(); ++i)
+                    slot[open[i].l] = { b, i };
             }
             for (const auto& t : open)
                 emit(t.l, t.r, t.y0, ys.back());
@@ -878,61 +911,88 @@ namespace MiniCAD
                 sink.DrawLine(toWorld(u0, v), toWorld(u1, v), color, false);
             };
 
+            // ── 扫描线与边的相交判定 ────────────────────────────────────
+            //
+            // ⚠ 原来是 `v <= lo || v >= hi`（两端都开）。扫描线正好落在
+            //   边的端点上时该边被整条跳过 ⇒ 与填充边界重合的扫描线不出图。
+            //   实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条
+            //   （漏掉 v = 0 撞底边、v = 20 撞顶边两条）。
+            //
+            // 改为两端都闭，但扫描线正好穿过顶点时要按顶点类型计数，
+            // 否则交点个数的奇偶会错，[a,b] 两两配对整条错位：
+            //   · 经过型顶点（边界在此从下穿到上）只能算 1 次；
+            //   · 极值顶点（两侧边界都在同一侧）算 0 次或 2 次。
+            // 做法：边的下端点（lo）总计入；上端点（hi）只在边界越过该顶点后
+            // （跳过与扫描线等高的水平边）**不再向上**时计入 —— 向上时
+            // 这个交点已由上面那条边的下端点计过。
+            // 这样与填充边界重合的首末扫描线（矩形的底边、顶边）也都出图。
+            //
+            // 边按 lo 排序，扫描线由低到高推进时只看活动边表里的边（lo ≤ v ≤ hi）：
+            // 原来每条扫描线遍历全部边，边界点数上万、扫描线又多时是 O(扫描线数 × 边数)
+            struct ScanEdge
+            {
+                double va, vb, ua, ub, lo, hi;
+                size_t poly, i;
+                int    hiCounts = -1;      // 扫描线正好过上端点时是否计入：-1 未判定，0 不计，1 计入
+            };
+            std::vector<ScanEdge> edges;
+            for (size_t pi = 0; pi < polys.size(); ++pi)
+            {
+                const auto& poly = polys[pi];
+                for (size_t i = 0; i + 1 < poly.size(); ++i)
+                {
+                    const double va = toV(poly[i].x,     poly[i].y);
+                    const double vb = toV(poly[i + 1].x, poly[i + 1].y);
+                    // 水平边（va == vb）与扫描线平行（重合），不产生交点；
+                    // 留着的话 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线
+                    if (std::abs(vb - va) < 1e-12) continue;
+                    edges.push_back({ va, vb, toU(poly[i].x, poly[i].y), toU(poly[i + 1].x, poly[i + 1].y),
+                                      std::min(va, vb), std::max(va, vb), pi, i });
+                }
+            }
+            std::sort(edges.begin(), edges.end(), [](const ScanEdge& a, const ScanEdge& b) { return a.lo < b.lo; });
+
+            // 从上端点沿远离本边的方向找第一个不等高的顶点（poly 首尾相同，共 m 条边）：还向上时这个交点不计
+            auto hiCounts = [&](ScanEdge& e)
+            {
+                if (e.hiCounts < 0)
+                {
+                    const auto&  poly = polys[e.poly];
+                    const size_t m    = poly.size() - 1;
+                    const size_t j    = (e.va == e.hi) ? e.i : e.i + 1;
+                    const bool   fwd  = (j == e.i + 1);
+                    double next = e.hi;
+                    for (size_t s = 1; s <= m; ++s)
+                    {
+                        const size_t k = fwd ? (j + s) % m : (j + m - s % m) % m;
+                        const double vk = toV(poly[k].x, poly[k].y);
+                        if (vk != e.hi) { next = vk; break; }
+                    }
+                    e.hiCounts = next > e.hi ? 0 : 1;
+                }
+                return e.hiCounts == 1;
+            };
+
+            std::vector<size_t> active;
+            size_t nextEdge = 0;
             std::vector<double> us;
             for (double n = nFirst; n <= nLast && budget > 0; n += 1.0)
             {
                 const double v = vO + n * dy;
+                while (nextEdge < edges.size() && edges[nextEdge].lo <= v)
+                    active.push_back(nextEdge++);
                 us.clear();
-                for (const auto& poly : polys)
+                size_t w = 0;
+                for (const size_t ei : active)
                 {
-                    for (size_t i = 0; i + 1 < poly.size(); ++i)
-                    {
-                        double va = toV(poly[i].x,     poly[i].y);
-                        double vb = toV(poly[i + 1].x, poly[i + 1].y);
-
-                        // ── 扫描线与边的相交判定 ────────────────────────────
-                        //
-                        // ⚠ 原来是 `v <= lo || v >= hi`（两端都开）。扫描线正好落在
-                        //   边的端点上时该边被整条跳过 ⇒ 与填充边界重合的扫描线不出图。
-                        //   实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条
-                        //   （漏掉 v = 0 撞底边、v = 20 撞顶边两条）。
-                        //
-                        // 改为两端都闭，但扫描线正好穿过顶点时要按顶点类型计数，
-                        // 否则交点个数的奇偶会错，[a,b] 两两配对整条错位：
-                        //   · 经过型顶点（边界在此从下穿到上）只能算 1 次；
-                        //   · 极值顶点（两侧边界都在同一侧）算 0 次或 2 次。
-                        // 做法：边的下端点（lo）总计入；上端点（hi）只在边界越过该顶点后
-                        // （跳过与扫描线等高的水平边）**不再向上**时计入 —— 向上时
-                        // 这个交点已由上面那条边的下端点计过。
-                        // 这样与填充边界重合的首末扫描线（矩形的底边、顶边）也都出图。
-                        const double lo = std::min(va, vb), hi = std::max(va, vb);
-                        if (v < lo || v > hi) continue;
-                        // 水平边（va == vb）在上面的区间判定里会被 v == lo == hi 命中，
-                        // 但 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线。
-                        // 水平边与扫描线平行（重合），不产生交点，必须排除。
-                        if (std::abs(vb - va) < 1e-12) continue;
-                        if (v == hi)
-                        {
-                            // 从上端点沿远离本边的方向找第一个不等高的顶点（poly 首尾相同，共 m 条边）
-                            const size_t m   = poly.size() - 1;
-                            const size_t j   = (va == hi) ? i : i + 1;
-                            const bool   fwd = (j == i + 1);
-                            double next = v;
-                            for (size_t s = 1; s <= m; ++s)
-                            {
-                                const size_t k = fwd ? (j + s) % m : (j + m - s % m) % m;
-                                const double vk = toV(poly[k].x, poly[k].y);
-                                if (vk != v) { next = vk; break; }
-                            }
-                            if (next > v) continue;
-                        }
-
-                        double t  = (v - va) / (vb - va);
-                        double ua = toU(poly[i].x,     poly[i].y);
-                        double ub = toU(poly[i + 1].x, poly[i + 1].y);
-                        us.push_back(ua + t * (ub - ua));
-                    }
+                    ScanEdge& e = edges[ei];
+                    if (v > e.hi) continue;            // 扫过了：之后的扫描线只会更高
+                    active[w++] = ei;
+                    if (v == e.hi && !hiCounts(e)) continue;
+                    const double t = (v - e.va) / (e.vb - e.va);
+                    us.push_back(e.ua + t * (e.ub - e.ua));
                 }
+                active.resize(w);
                 if (us.size() < 2) continue;
 
                 std::sort(us.begin(), us.end());

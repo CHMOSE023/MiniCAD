@@ -1,5 +1,5 @@
 ---
-covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*
+covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/BlockTessCache.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*, src/Core/Draw/IDrawSink.hpp, src/Core/Draw/ClipDrawSink.hpp
 ---
 
 # 显示性能
@@ -32,6 +32,31 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - Vulkan（Linux，`VulkanRenderer` / `VulkanBackend`，共用 `MiniGUI::VulkanContext`）：缓存提交放在显存的缓冲里，规则同 D3D12；帧内数据走 1 MB 的上传页（主机可见，直接当顶点 / 索引缓冲用），超过 1 MB 的单独建页，超过 4 MB 的与换下的大缓冲在帧末等 GPU 执行完就释放。复制、布局转换要先结束动态渲染（`VulkanContext::EndRendering`），所以一帧里上传越少、渲染被打断得越少
 - WebGPU（网页）：缓冲写入在提交前统一生效，一帧里同一块缓冲不能写两次——矩阵占帧内 uniform 环形缓冲的一段，不缓存的顶点写帧内流缓冲的不同区段，缓存槽在一帧里只按一个版本上传；换下来的资源提交后再销毁（`WebGPUCommon::RetireList`）。见 `docs/Render/PLAN.md` 阶段 5
 
+## 打开图纸：分帧细分
+
+- 打开的图纸加入后（`MainFrame::AddOpened`）调用 `Editor::BeginProgressiveBuild`：全量拼接不再当帧细分缓存里没有的实体，而是按绘制序排进队列，每帧细分一批（`Editor::ContinueBuild`），用时到本帧时限就停，细分出来的接到场景流尾部——拼接流还在 CPU 端时直接接上（区域覆盖照常裁剪此前的顶点），已交给后端时进追加段（同上面的增量更新）。先细分好的先显示，窗口一直响应；画全后恢复同步细分（编辑、切换布局、改显示设置仍当帧画完）
+- 时限：默认 `Editor::kProgressiveBudgetMs`（50 ms），两帧细分之间的开销（上传、整图重画、界面）大时放宽到它的 3 倍、最多预算的 4 倍，免得大半时间花在帧间开销上
+- 大块参照按块内子实体分段（`DrawContext::BeginChunk`）：`InsertEntity::Draw` 画每个子实体前问 `IDrawSink::BeginBlockChild`（`TransformDrawSink`、`ClipDrawSink` 转发），到时限就停，停下的位置记成路径（每层嵌套块参照里第几个子实体），下一帧接着画时路径之前的子实体整个跳过、不进已画完的嵌套块参照——不能用"第几个子实体"的扁平计数：几十万个子实体的块每帧要从头数一遍，越画越慢。画着的子实体里面（天正对象、标注里再套的块）不分段。各段接进流里；整个实体画完才进逐实体缓存：后面几段里的区域覆盖要裁剪它之前的顶点，记下来（`ProgressiveBuild::partWipes`）等画完或全量拼接要重新拼进已画的几段时一次裁剪（`Editor::ClipBuildPart`；每段都裁一遍已累积的几百万个顶点太慢），缓存里的结果与一次细分完的相同。分几段接上的实体位置不连续（`placed` 为假），之后修改它走全量拼接
+- 画全后全量拼接一次（全部命中缓存）的情形：追加段里有没裁剪的区域覆盖（已上传的顶点裁不到）、细分期间图纸有改动（改动的实体由增量更新接到流尾，绘制序不同）、分段的实体里有随视图变化的段。细分到一半的块参照被改动 / 删除 / 拖动、全局显示失效（改图层显示等）时丢掉它已细分的几段，全量拼接后接着分帧
+- 后端接不了追加段（Vulkan / GLES3 / WebGPU）时每帧从逐实体缓存全量拼接、在 CPU 端的流上接着细分，本帧细分时限至少是拼接用时的两倍
+- 进度（`Editor::DisplayBuildProgress`）按实体个数估算，块参照按块内子实体个数（嵌套展开，按块定义缓存）
+- `--bench` 打印"首帧"（第一次出图，含画出的顶点数）、"画全"（帧数、最慢一帧）与打开后多久第一次出图、多久画全。2026-10-28 本机（GTX 1060，D3D12）：CK-05（`tests/Data/TchElec`）打开后 2.8 s 才出图 → 1.35 s 第一次出图（这一帧主要是拾取索引，几乎还是空的，再过约 0.15 s 有 30 万个线顶点）、3.4 s 画全（约 25 帧，最慢一帧 0.35 s）；CK-T（`tests/Data/TchHvac`）3.6 s → 1.1 s、4.9 s 画全（约 35 帧，最慢约 0.3 s，是画全后的那次全量拼接）。画全比同步细分晚 20%～35%（每帧的上传、整图重画），换来窗口不再"未响应"；与同步细分的截图逐字节相同。量的时候旧版 exe 要放在 `out/release/MiniCADWin` 里（资源目录是 exe 所在目录，放到别处缺字体、填充图案，慢十几倍）
+
+## 块定义级细分缓存
+
+- 同一块定义插入多次时只细分一次（`BlockTessCache`，`src/Document/BlockTessCache.hpp`）：`InsertEntity::Draw` 画每个阵列单元前问 `IDrawSink::BeginBlockInstance`（`TransformDrawSink` 把自己的变换接上再转发），`DrawContext` 命中就把记下的结果经平移、旋转接上，不再逐个画块内子实体，也不再为它克隆块内容（`InsertEntity::EnsureResolved`）
+- 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）。只缓存 XY 平面里的变换
+- 记录：记录期间 `DrawContext` 的输出（`DrawContext::PutLine` 等）同时按世界坐标双精度记一份，画完按这次插入的旋转、平移换回去存下；接上时换到新位置再落成 float，与逐个细分只差双精度的舍入。区域覆盖记下出现时各流的位置，接上时在同一位置调用 `Wipe`，裁剪范围不变。CK-05 / CK-T 的截图与不缓存时逐字节相同；线顶点只差几个（线长正好是线型周期的整数倍时末尾那段零长度的虚线有没有，取决于舍入），另有 Z 的 ±0 之差
+- 不记：按像素烘焙的（像素线宽、`MarkViewDependent`）、纹理文字、图像、绝对角度的线型符号、分段细分停在块中间的、一次超过 `DrawContext::kMaxBlockRecord` 个顶点的；只展开一次的块（如整张底图作为一个块插入）不记——第一次要判断时由 `Editor::CountBlockUses` 数一遍，数不到的块（天正对象、标注里引用的）第二次遇到才记；总量超过 `BlockTessCache::kMaxVertices` 后不再记新的
+- 裁剪框（XCLIP，`ClipDrawSink`）里：`BeginBlockInstance` 经过时加上本层裁剪框（`BlockClipChain`）。条目记着块内输入（线端点、三角形顶点、文字锚点等）在块坐标里的范围，`ClipDrawSink::Classify` 判断它整个在框内、整个在框外还是跨边：
+  - 整个在框内：原样接上，但要求块里没有区域覆盖、点、图像，也没问过裁剪框不转发的点样式、像素比例（`BlockTessEntry::clipSafe`；这些在框里画法不同）
+  - 整个在框外：逐个画也什么都不剩，直接跳过（只推进分段序号与进度）
+  - 跨边：照常逐个画
+  - 框里也照常记录：裁剪框截断、丢掉了内容或吞掉了查询时经 `IDrawSink::NoteClipped` 告诉 `DrawContext`（带着它往下数是第几层），在这层框里开始的记录作废——存下的必须与不裁剪时相同。CK-T 的建筑底图整个带裁剪框，不在框里记录时画全反而慢 0.2 s
+- 分段细分（`DrawContext::BeginChunk`）：块内子实体的层次不论分不分段都记着（`BeginBlockChild`），命中缓存时分段的序号跳过这个块的直接子实体个数、进度加上它的叶子子实体个数，停下的路径与接着画都不受影响（阵列里前一个单元接上缓存、后一个单元分段画，见 `tests/Core/BlockTessCacheTests.cpp`）
+- 生命周期：`Editor` 只在成批细分时留着——分帧细分期间跨帧保留，否则 `Editor::UpdateSceneVertices` 结束就清空；图纸有任何改动或显示设置变了时先清空（块定义可能也改了）。视口合成（`Editor::ComposeModelIntoViewport`）不用：每个视口冻结的图层、像素比例不同。`Editor::SetBlockCacheEnabled` 供测试对比
+- 效果（2026-10-28 本机，`--bench` 与旧版交替各跑两次）：画全 CK-05 约 2.32 → 2.15 s、CK-T 约 3.71 → 3.26 s（-7%、-12%），打开后画全 CK-05 3.3 → 3.1 s、CK-T 4.6 → 4.2 s 左右；CK-T 4.7 万次块参照单元里 2.3 万次接上缓存或在框外跳过。收益不大：重复多的是便宜的线、圆弧、多段线（家具、线图案块），贵的填充（每个约 40 µs）、单行文字（约 34 µs）几乎都只出现一次
+
 ## 文字
 
 矢量文字按字形实例化：`DrawContext` 把每个字输出为一条 `GlyphInstance`（36 字节，局部 → 世界的仿射变换 + 颜色），字形网格在 `GlyphMeshLibrary` 里每个字形只存一份；实例流按网格排序分批，用 `DrawInstanced` / `drawArraysInstanced` 绘制（字形三角形画在填充之后、线之前，轮廓线画在线之后）。被区域覆盖盖到的实例由 `WipeClip::Batch::ClipGlyphs` 展开成顶点再裁剪；选中流仍按顶点展开。
@@ -48,3 +73,6 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 
 - `SnapEngine` 每帧 O(n)，大图纸时可考虑接入空间索引
 - 布局页视口的合成结果不随缩放重建，见 [layout-viewport](layout-viewport.md)
+- 有了块定义级缓存之后，大图纸画全的大头：只出现一次的填充与单行文字（CK-T 里约 0.4 s + 0.3 s，单行文字每个约 34 µs，字体解析、排版每次都重做）、分帧细分每帧的上传与整图重画（约 30 帧 × 20 多 ms）；没命中缓存的块参照仍按插入深拷贝块内容（`InsertEntity::EnsureResolved`）
+- 布局页的视口实体一个就合成整个模型空间（`Editor::ComposeModelIntoViewport`），不分段：切到布局页仍在一帧里细分完（打开图纸总是先显示模型页）
+- 打开后第一帧的拾取空间索引（CK-05 约 0.2 s）、细分都在界面线程，单线程
