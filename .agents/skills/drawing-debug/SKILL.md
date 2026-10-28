@@ -15,7 +15,7 @@ cmd /c '"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Buil
 ```
 
 - `out/debug/tests/MiniCADDwgInspect.exe 图纸`：只读地列出原图内容（按类型统计实体、未支持的对象），再按环境变量打印细节，见 [references/inspect-flags.md](references/inspect-flags.md)
-- `out/debug/MiniCADWin/MiniCADWin.exe --bench 图纸`：按真实程序的流程打开、全部显示，可以离屏截图
+- `out/debug/MiniCADWin/MiniCADWin.exe --bench 图纸`：按真实程序的流程打开、全部显示（同样分帧生成显示，画全后再截图、计时），可以离屏截图
 
 ## 2. 看原图里有什么
 

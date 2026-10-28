@@ -40,6 +40,8 @@ namespace MiniCAD
         void BeginEntity(const EntityAttr* attr) override          { m_target.BeginEntity(attr); }
         // 块内成员自己的线型上下文（见 IDrawSink::SetEntityContext）
         void SetEntityContext(const EntityAttr* attr) override     { m_target.SetEntityContext(attr); }
+        bool BeginBlockChild(bool nested) override                 { return m_target.BeginBlockChild(nested); }
+        void EndBlockChild(bool nested) override                   { m_target.EndBlockChild(nested); }
 
         // 文字测量：裁剪不改变文字尺寸，原样转发（多重引线的基线要用）
         double MeasureMTextWidth(const std::string& text, uint32_t styleId,

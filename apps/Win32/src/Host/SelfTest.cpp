@@ -3867,15 +3867,33 @@ namespace MiniCAD
 
         m_docManager.ZoomAll();
         m_syncGpu = true;
+        Editor& editor = m_docManager.GetEditor();
+        // 与界面里打开图纸相同（MainFrame::AddOpened）：分帧细分，首帧先画出一部分，之后每帧接着细分到画全
+        editor.BeginProgressiveBuild();
         m_viewport->RequestRender();
         t = NowTicks();
         RenderFrame();
-        Editor& editor = m_docManager.GetEditor();
         {
-            const auto st = editor.GetSceneStreamStats();
+            const double firstMs = msSince(t);
+            const auto   st      = editor.GetSceneStreamStats();
+            std::printf("首帧 %.0f ms（视口 %.0f ms）：线顶点 %zu、填充 %zu，生成显示 %.0f%%\n", firstMs, m_timing.viewport,
+                        st.lines, st.fills, editor.DisplayBuildProgress() * 100.0f);
+            int    frames = 1;
+            double worst  = firstMs;
+            while (editor.IsBuildingDisplay() && msSince(t) < 300000.0)
+            {
+                const int64_t f0 = NowTicks();
+                m_viewport->RequestRender();
+                RenderFrame();
+                worst = std::max(worst, msSince(f0));
+                ++frames;
+            }
+            const double fullMs = msSince(t);
+            const auto   sf     = editor.GetSceneStreamStats();
             auto [m2, w2] = memMb();
-            std::printf("首帧 %.0f ms（视口 %.0f ms）：私有 %.0f MB，工作集 %.0f MB；顶点 线 %zu 填充 %zu 文字 %zu\n", msSince(t), m_timing.viewport,
-                        m2, w2, st.lines, st.fills, st.texts);
+            std::printf("画全 %.0f ms（%d 帧，最慢一帧 %.0f ms）：私有 %.0f MB，工作集 %.0f MB；顶点 线 %zu 填充 %zu 文字 %zu\n",
+                        fullMs, frames, worst, m2, w2, sf.lines, sf.fills, sf.texts);
+            std::printf("生成显示：打开后 %.0f ms 第一次出图，%.0f ms 画全\n", openMs + firstMs, openMs + fullMs);
         }
         // MINICAD_BENCH_SHOT=目录：模型页「全部显示」的视口也存一张 model.bmp，核对模型空间的显示（如外部参照）
         if (const char* shotDir = std::getenv("MINICAD_BENCH_SHOT"))
