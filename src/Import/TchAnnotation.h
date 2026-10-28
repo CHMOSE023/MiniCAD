@@ -225,8 +225,11 @@ namespace MiniCAD::Tch
             }
             return g;
         }
-        Detail::AddRuns(g, m.Upper, nominal, anchor, upper, 0, column);
-        Detail::AddRuns(g, m.Lower, nominal, anchor, lower, 0, column);
+        // 注释符号的字宽乘样式宽度因子，按天正步进排布、画出的宽度也取天正的（8#楼平面 _TCH_DIM 宽 0.7：
+        // 天正显示“预留DN100钢套管”长约 0.69 × 0.7 × 5 + 0.5714 × 0.7 × 5 名义字高，以前汉字段按 1.0 留位置又按 0.7 宽画，中间空出一截）
+        const double width = rule.StyleWidth;
+        for (const auto& [value, y] : {std::pair{m.Upper, upper}, std::pair{m.Lower, lower}})
+            Detail::AddRuns(g, value, nominal, anchor, y, 0, column, 7, 0, 0, 0.85, 0.6 / 0.85 * width, 0.5714 * width, 0.69 * width, true, rule.WideHeight);
         return g;
     }
     // ── TCH_COMPOSING 做法标注（CADReader TDbSymbComposing 读取函数 0x6ee920，版本 < 4 为明文分支）──

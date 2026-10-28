@@ -116,12 +116,30 @@ namespace MiniCAD::Tch
     }
 
     // SHX 样式：天正 2014 分解为西文、汉字交替的 TEXT：西文字高 = 名义字高 × 比例（样式自身宽度因子），汉字 × 0.96454（随大字体），颜色随层。
-    // 左下对齐时各段从插入点起首尾相接；其他对齐方式只有纯西文或纯汉字时按附着点显示，混排时按水平对齐近似。
+    // 混排时各段按天正步进首尾相接，画出的宽度也取天正步进（Detail::AddTextRuns）；只有纯西文或纯汉字时按附着点显示，
+    // 宽度同样取天正步进——MiniCAD 替代 GBCBIG 的 TSSDCHN 汉字宽约 37%，按字体自身宽度画会压到旁边的文字。含上标 ^U 时按分段画。
     // TrueType 样式（trueType，如“宋体”）：字高 = 名义字高 × 0.75527，用样式宽度因子；天正排布的步进汉字 = 字高、西文 = 0.5 × 字高
     //（宋体宽度因子 0.7 时与字形步进一致；8#楼封面目录的天正显示与分解结果核对）。
     // 混排时各段按附着点的水平、竖直位置排布（竖直：上 / 中按字高下移）
     // SHX 样式的西文字高、宽度因子按样式的 _TCH 扩展数据（TchTextStyleRule）；符号字体（如 _TCH_DIM、_TCH_WINDOW 的 simplex）
     // 按注释符号的方式排布（8#楼立剖面、详图，139 户型图的分解结果核对）
+    namespace Detail
+    {
+        // 天正单行文字（SHX 样式）的排布步进（× 名义字高）：符号字体为西文 0.5714、汉字 0.69，均乘样式宽度因子
+        //（8#楼详图的窗号、标高说明核对）；其他字体为西文 0.604、汉字 0.69
+        inline double TextAsciiStep(const TchTextStyleRule& rule) { return rule.Symbol() ? 0.5714 * rule.StyleWidth * rule.AsciiStep() : 0.604; }
+        inline double TextWideStep(const TchTextStyleRule& rule) { return rule.Symbol() ? 0.69 * rule.StyleWidth : 0.69; }
+
+        // 按天正单行文字的规则分段排布：各段按天正步进首尾相接，画出的宽度也取天正的（见 AddRuns）。
+        // column：0 左对齐、1 居中、2 右对齐，(x, y) 为该对齐位置的基线点
+        inline void AddTextRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int column,
+                                const TchTextStyleRule& rule)
+        {
+            AddRuns(g, text, nominal, x, y, rotation, column, 0, 0, 0, rule.HeightFactor(), rule.AsciiWidthFactor(), TextAsciiStep(rule),
+                    TextWideStep(rule), true, rule.WideHeight);
+        }
+    }
+
     inline TchGraphics BuildText(const TchText& t, const TchTextStyleRule& rule = {})
     {
         TchGraphics g;
@@ -129,14 +147,27 @@ namespace MiniCAD::Tch
         bool ascii = false, wide = false;
         for (unsigned char c : t.Value) (c >= 0x80 ? wide : ascii) = true;
         const bool trueType = rule.TrueType;
-        const double styleWidth = rule.StyleWidth;
         const double h = trueType ? nominal * 0.75527 : nominal;
-        const bool symbol = rule.Symbol();
         const double asciiScale = rule.HeightFactor(), asciiWidth = rule.AsciiWidthFactor();
-        if (!(ascii && wide))
+        const bool superscript = !trueType && t.Value.find("^U") != std::string::npos;
+        if (!(ascii && wide) && !superscript)
         {
-            g.Texts.push_back({{t.X, t.Y}, trueType ? h : nominal * (wide ? rule.WideHeight : asciiScale), t.Rotation, t.Value, t.Attachment, 0, 0,
-                               0, wide ? 0.0 : asciiWidth});
+            const double height = trueType ? h : nominal * (wide ? rule.WideHeight : asciiScale);
+            double width = wide ? 0.0 : asciiWidth;
+            // SHX 样式：画出的宽度取天正的步进（与混排的各段相同，见 Detail::AddRuns）
+            if (!trueType)
+            {
+                double tz = 0;
+                for (std::size_t i = 0; i < t.Value.size();)
+                {
+                    const unsigned char ch = static_cast<unsigned char>(t.Value[i]);
+                    tz += ch >= 0x80 ? Detail::TextWideStep(rule) : (ch == '.' || ch == ',') ? 0.2 * Detail::TextAsciiStep(rule) : Detail::TextAsciiStep(rule);
+                    i += ch < 0x80 ? 1 : ch < 0xe0 ? 2 : ch < 0xf0 ? 3 : 4;
+                }
+                if (const double natural = Detail::DisplayExtent(wide ? "" : "simplex", t.Value).Width * height; natural > 0)
+                    width = tz * nominal / natural;
+            }
+            g.Texts.push_back({{t.X, t.Y}, height, t.Rotation, t.Value, t.Attachment, 0, 0, 0, width});
             return g;
         }
         const int column = (t.Attachment - 1) % 3;      // 0 左、1 中、2 右
@@ -146,11 +177,7 @@ namespace MiniCAD::Tch
         const double x = t.X + drop * s, y = t.Y - drop * c;
         if (!trueType)
         {
-            // 天正排布步进：符号字体为西文 0.5714、汉字 0.69 × 名义字高，均乘样式宽度因子（8#楼详图的窗号、标高说明核对）
-            if (symbol)
-                Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.5714 * styleWidth * rule.AsciiStep(),
-                                0.69 * styleWidth, true, rule.WideHeight);
-            else Detail::AddRuns(g, t.Value, nominal, x, y, t.Rotation, column, 0, 0, 0, asciiScale, asciiWidth, 0.604, 0.69, false, rule.WideHeight);
+            Detail::AddTextRuns(g, t.Value, nominal, x, y, t.Rotation, column, rule);
             return g;
         }
         struct Run { std::string Value; bool Wide; double Width; };
@@ -294,8 +321,14 @@ namespace MiniCAD::Tch
                 if (run.find_first_not_of(' ') != std::string::npos)
                 {
                     if (symbol)
-                        g.Texts.push_back({at(runStart, 0), runWide ? rule.WideHeight * nominal : rule.HeightFactor() * nominal, t.Rotation, run, 7, 0, 0, 0,
-                                           runWide ? 0.0 : rule.AsciiWidthFactor()});
+                    {
+                        // 画出的宽度取这段在天正排布里占的位置（见 Detail::AddRuns；平面小说明的长句以前冲出表格）
+                        const double height = runWide ? rule.WideHeight * nominal : rule.HeightFactor() * nominal;
+                        double runWidth = runWide ? 0.0 : rule.AsciiWidthFactor();
+                        if (const double natural = Detail::DisplayExtent(runWide ? "" : "simplex", run).Width * height; natural > 0)
+                            runWidth = (pos - runStart) / natural;
+                        g.Texts.push_back({at(runStart, 0), height, t.Rotation, run, 7, 0, 0, 0, runWidth});
+                    }
                     else
                     {
                         TchText one = t;
