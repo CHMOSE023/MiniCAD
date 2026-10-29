@@ -56,8 +56,8 @@ namespace MiniCAD
             m_index.Query(q, out);
         }
 
-        // 实体是否可被拾取:实体本身可见,且所在图层未关闭。锁定图层上的对象可以拾取、选中、捕捉，
-        // 但不能修改（见 Scene::IsEntityLocked，各编辑入口自行跳过）。点选 / 窗选共用。
+        // 实体是否可被拾取:实体本身可见,且所在图层未关闭、未锁定。锁定图层上的对象不能点选、框选、悬停高亮，
+        // 也不能被工具点取，但仍可捕捉（SnapEngine 不经这里）。点选 / 窗选共用。
         bool IsPickable(const Object& obj) const;
 
         // 状态访问
@@ -128,8 +128,9 @@ namespace MiniCAD
         static bool SetEquals(const std::unordered_set<T>& a, const std::unordered_set<T>& b);
 
         // ── 空间索引 ─────────────────────────────────────────
-        // 若场景几何版本变化则重建索引，保证候选集与场景一致。
+        // 若场景几何版本变化则重建索引，保证候选集与场景一致；显示版本变化（图层关闭 / 锁定）时另去掉选不了的对象。
         void EnsureIndex();
+        void DropUnpickable();
         // 屏幕矩形 [x0,y0]-[x1,y1] 反投影为世界空间查询 AABB（z 取全范围）。
         AABB ScreenRectToWorldAABB(double x0, double y0, double x1, double y1) const;
 

@@ -20,6 +20,7 @@
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Document/Command/MoveCommand.h"
+#include "Document/Command/LayerCommands.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -2063,7 +2064,8 @@ namespace MiniCAD
                     editor.SetSelection({});
                 }
 
-                // 锁定语义：锁定图层上的对象可以点选、可以捕捉，但不能删除 / 改属性 / 改特性 / 移动 / 用夹点修改；解锁后恢复
+                // 锁定语义：锁定图层上的对象点不中、框不中，选中后再锁定就移出选择集；程序直接设进选择集的也不能删除 /
+                // 改属性 / 改特性 / 移动 / 用夹点修改；解锁后恢复
                 {
                     const LayerID lockLayer = scene.GetLayerManager().AddLayer("锁定语义自测");
                     const auto lockedId = scene.NextObjectID();
@@ -2081,18 +2083,39 @@ namespace MiniCAD
                     RenderFrame();
 
                     editor.SetSelection({});
+                    const MiniGUI::Rect lockBounds = m_viewport->GetScreenBounds();
+                    const Math::Point2 lockPt = camera.WorldToScreen(Math::Point3(10005.0, 0.0, 0.0));
+                    const int lx = static_cast<int>(std::lround(lockBounds.min.x * m_dpiScale)) + static_cast<int>(std::lround(lockPt.x));
+                    const int ly = static_cast<int>(std::lround(lockBounds.min.y * m_dpiScale)) + static_cast<int>(std::lround(lockPt.y));
+                    send(WM_MOUSEMOVE, 0, lx, ly);
+                    send(WM_LBUTTONDOWN, MK_LBUTTON, lx, ly);
+                    send(WM_LBUTTONUP, 0, lx, ly);
+                    RenderFrame();
+                    check(editor.GetSelection().count(lockedId) == 0 && editor.GetHovered().count(lockedId) == 0, "锁定：锁定图层上的对象点不中，也不悬停高亮");
+                    // 自右向左的交叉框横穿这条线
+                    auto crossing = [&]
                     {
-                        const MiniGUI::Rect bounds = m_viewport->GetScreenBounds();
-                        const Math::Point2 p = camera.WorldToScreen(Math::Point3(10005.0, 0.0, 0.0));
-                        const int x = static_cast<int>(std::lround(bounds.min.x * m_dpiScale)) + static_cast<int>(std::lround(p.x));
-                        const int y = static_cast<int>(std::lround(bounds.min.y * m_dpiScale)) + static_cast<int>(std::lround(p.y));
-                        send(WM_MOUSEMOVE, 0, x, y);
-                        send(WM_LBUTTONDOWN, MK_LBUTTON, x, y);
-                        send(WM_LBUTTONUP, 0, x, y);
+                        send(WM_LBUTTONDOWN, MK_LBUTTON, lx + 30, ly - 30);
+                        send(WM_MOUSEMOVE, MK_LBUTTON, lx, ly);
+                        send(WM_MOUSEMOVE, MK_LBUTTON, lx - 30, ly + 30);
+                        send(WM_LBUTTONUP, 0, lx - 30, ly + 30);
                         RenderFrame();
-                    }
-                    check(editor.GetSelection().count(lockedId) == 1, "锁定：锁定图层上的对象可以点选");
+                    };
+                    crossing();
+                    check(editor.GetSelection().count(lockedId) == 0, "锁定：交叉框选也选不中");
 
+                    // 解锁时同样的交叉框选得中；再锁定图层（走命令，同图层面板）：移出选择集
+                    scene.GetLayerManager().GetLayer(lockLayer)->SetLocked(false);
+                    crossing();
+                    check(editor.GetSelection().count(lockedId) == 1, "解锁时同样的交叉框选中它");
+                    m_docManager.GetActive()->GetCommandStack().Execute(
+                        std::make_unique<ChangeLayerCommand>(lockLayer, LayerChange{ .Locked = true }), scene);
+                    m_viewport->RequestRender();     // 图层面板经 LayerChanged 请求重绘
+                    RenderFrame();
+                    check(editor.GetSelection().empty(), "锁定：选中后锁定图层，移出选择集");
+
+                    // 程序直接设进选择集的锁定对象：修改操作照样跳过
+                    editor.SetSelection({ lockedId });
                     editor.DeleteSelected();
                     check(scene.GetEntity(lockedId) != nullptr, "锁定：不能删除");
                     AttrChange ch;
@@ -2108,6 +2131,7 @@ namespace MiniCAD
                     scene.GetLayerManager().GetLayer(lockLayer)->SetLocked(false);
                     check(editor.SetSelectionProperty("长度", PropValue(20.0)), "解锁后：可以改几何特性");
                     m_docManager.Undo();
+                    m_docManager.Undo();         // 撤销上面锁定图层的命令（之前已直接解锁，撤销后仍是解锁）
 
                     scene.RemoveEntity(lockedId);
                     editor.SetSelection({});

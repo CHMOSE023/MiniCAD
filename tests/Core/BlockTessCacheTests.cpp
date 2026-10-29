@@ -302,6 +302,53 @@ int RunBlockTessCacheTests()
         Check(Same(whole.lines, parts.lines), "分段时命中缓存：序号跳过接上的子实体，各段拼起来与一次画完相同");
     }
 
+    // ── 锁定图层淡显（DrawContext::kLockedFade）：锁定图层上的块参照整块淡显，块里锁定图层上的子实体也淡显 ─────
+    {
+        layers.GetLayer(red)->SetLocked(true);
+        // 不透明度只有 128（淡显）与 255 两种，别的算作淡显的反例
+        auto alphas = [](const Output& o, int& faded, int& opaque)
+        {
+            faded = opaque = 0;
+            int other = 0;
+            auto count = [&](const VertexColor& c) { ++(c.a == 128 ? faded : c.a == 255 ? opaque : other); };
+            for (const auto& v : o.lines)  count(v.color);
+            for (const auto& v : o.fills)  count(v.color);
+            for (const auto& g : o.glyphs) count(g.color);
+            if (other > 0) faded = -1;
+        };
+        int faded = 0, opaque = 0;
+        const Output lockedInsert = tess.Run({ model[0] }, nullptr);   // 在 BT_RED 上
+        alphas(lockedInsert, faded, opaque);
+        std::printf("    锁定的块参照：淡显 %d、不透明 %d、字形 %zu\n", faded, opaque, lockedInsert.glyphs.size());
+        Check(faded > 100 && opaque == 0 && !lockedInsert.glyphs.empty(), "锁定图层上的块参照：线、填充、文字的不透明度都减半");
+        const Output child = tess.Run({ model[1] }, nullptr);          // 在 BT_GREEN 上，块里有一条 BT_RED 上的线
+        alphas(child, faded, opaque);
+        Check(faded > 0 && opaque > faded, "没锁的块参照里，锁定图层上的子实体淡显，其余不变");
+
+        // 块 H 里一个 BT_GREEN 上的 E：H 一个插在锁定的 BT_RED 上、一个插在 0 层，两个 E 的插入属性相同，缓存不能混用
+        BlockEntity* h = blocks.Find(blocks.Create("BT_H", Math::Point3{ 0, 0, 0 }));
+        {
+            auto inner = MakeInsert(scene, e, { 0, 0, 0 });
+            EntityAttr a = inner->GetAttr();
+            a.LayerId = green;
+            inner->SetAttr(a);
+            h->AddEntity(std::move(inner));
+        }
+        auto h1 = MakeInsert(scene, h, { 0, 5000, 0 });
+        EntityAttr a = h1->GetAttr();
+        a.LayerId = red;
+        h1->SetAttr(a);
+        auto h2 = MakeInsert(scene, h, { 300, 5000, 0 });
+        const std::vector<const Entity*> pair{ h1.get(), h2.get(), h1.get() };
+        const Output plain = tess.Run(pair, nullptr);
+        BlockTessCache cache;
+        cache.SetUseCounter([&](std::unordered_map<const void*, int>& u) { u[e] = 2; u[h] = 2; });
+        const Output cached = tess.Run(pair, &cache);
+        alphas(plain, faded, opaque);
+        Check(faded > 0 && opaque > 0 && cache.Replays() >= 1 && Same(plain, cached), "整块淡显与不淡显的同一块定义分开缓存，与逐个细分相同");
+        layers.GetLayer(red)->SetLocked(false);
+    }
+
     std::printf("块定义级细分缓存测试：%d 项失败\n", g_failures);
     return g_failures;
 }

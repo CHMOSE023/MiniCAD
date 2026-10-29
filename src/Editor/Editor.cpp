@@ -2827,7 +2827,7 @@ namespace MiniCAD
         std::unordered_set<Object::ObjectID> ids;
         m_doc->GetScene().ForEachObject([&](const Object& o)
         {
-            if (o.IsKindOf<Entity>() && m_picking.IsPickable(o) && !m_doc->GetScene().IsEntityLocked(o))
+            if (o.IsKindOf<Entity>() && m_picking.IsPickable(o))
                 ids.insert(o.GetID());
         });
         const size_t n = ids.size();
@@ -3231,7 +3231,9 @@ namespace MiniCAD
             {
                 // 边界是**块坐标系**里的，要经本块的插入变换才落到世界坐标
                 const Math::Mat4 m = ins->CellMatrix(0, 0);
-                const Math::Color4 color = ins->ResolveDrawColor(ctx);
+                Math::Color4 color = ins->ResolveDrawColor(ctx);
+                if (m_doc->GetScene().IsEntityLocked(*ins))
+                    color.a *= DrawContext::kLockedFade;
                 for (size_t i = 0; i < poly.size(); ++i)
                 {
                     const Math::Point3 a = m * poly[i];

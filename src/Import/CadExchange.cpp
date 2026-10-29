@@ -770,6 +770,7 @@ namespace MiniCAD
                         // 冻结（标志位 1）与关闭一样不显示；MiniCAD 不区分冻结与关闭
                         const bool frozen = (static_cast<int>(src.Flags) & 1) != 0;
                         dst->SetVisible(src.IsOn && !frozen && (src.Color.IsTrueColor() || src.Color.Index() >= 0));
+                        dst->SetLocked((static_cast<int>(src.Flags) & 4) != 0);     // 标志位 4：锁定
                         LineTypeID lt = LookupLineType(src.LineTypeHandle);
                         if (lt == LineTypeTable::ByLayerID || lt == LineTypeTable::ByBlockID)
                             lt = LineTypeTable::ContinuousID;   // 图层线型不允许 ByLayer / ByBlock
@@ -4208,6 +4209,8 @@ namespace MiniCAD
 
                     dst->Color      = FromColor4(src->GetColor());
                     dst->IsOn       = src->IsVisible();
+                    dst->Flags      = static_cast<Dwg::StandardFlags>(src->IsLocked() ? static_cast<int>(dst->Flags) | 4
+                                                                                     : static_cast<int>(dst->Flags) & ~4);
                     dst->LineWeight = static_cast<Dwg::LineWeightType>(LineweightToRaw(src->GetLineweight()));
                     dst->LineTypeHandle = LineTypeHandle(src->GetLineType());
                 }

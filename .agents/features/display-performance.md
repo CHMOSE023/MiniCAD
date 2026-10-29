@@ -45,7 +45,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 ## 块定义级细分缓存
 
 - 同一块定义插入多次时只细分一次（`BlockTessCache`，`src/Document/BlockTessCache.hpp`）：`InsertEntity::Draw` 画每个阵列单元前问 `IDrawSink::BeginBlockInstance`（`TransformDrawSink` 把自己的变换接上再转发），`DrawContext` 命中就把记下的结果经平移、旋转接上，不再逐个画块内子实体，也不再为它克隆块内容（`InsertEntity::EnsureResolved`）
-- 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）。只缓存 XY 平面里的变换
+- 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）；外层的顶层实体是否在锁定图层上（整块淡显，`BlockTessKey::faded`）。只缓存 XY 平面里的变换
 - 记录：记录期间 `DrawContext` 的输出（`DrawContext::PutLine` 等）同时按世界坐标双精度记一份，画完按这次插入的旋转、平移换回去存下；接上时换到新位置再落成 float，与逐个细分只差双精度的舍入。区域覆盖记下出现时各流的位置，接上时在同一位置调用 `Wipe`，裁剪范围不变。CK-05 / CK-T 的截图与不缓存时逐字节相同；线顶点只差几个（线长正好是线型周期的整数倍时末尾那段零长度的虚线有没有，取决于舍入），另有 Z 的 ±0 之差
 - 不记：按像素烘焙的（像素线宽、`MarkViewDependent`）、纹理文字、图像、绝对角度的线型符号、分段细分停在块中间的、一次超过 `DrawContext::kMaxBlockRecord` 个顶点的；只展开一次的块（如整张底图作为一个块插入）不记——第一次要判断时由 `Editor::CountBlockUses` 数一遍，数不到的块（天正对象、标注里引用的）第二次遇到才记；总量超过 `BlockTessCache::kMaxVertices` 后不再记新的
 - 裁剪框（XCLIP，`ClipDrawSink`）里：`BeginBlockInstance` 经过时加上本层裁剪框（`BlockClipChain`）。条目记着块内输入（线端点、三角形顶点、文字锚点等）在块坐标里的范围，`ClipDrawSink::Classify` 判断它整个在框内、整个在框外还是跨边：
@@ -55,6 +55,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
   - 框里也照常记录：裁剪框截断、丢掉了内容或吞掉了查询时经 `IDrawSink::NoteClipped` 告诉 `DrawContext`（带着它往下数是第几层），在这层框里开始的记录作废——存下的必须与不裁剪时相同。CK-T 的建筑底图整个带裁剪框，不在框里记录时画全反而慢 0.2 s
 - 分段细分（`DrawContext::BeginChunk`）：块内子实体的层次不论分不分段都记着（`BeginBlockChild`），命中缓存时分段的序号跳过这个块的直接子实体个数、进度加上它的叶子子实体个数，停下的路径与接着画都不受影响（阵列里前一个单元接上缓存、后一个单元分段画，见 `tests/Core/BlockTessCacheTests.cpp`）
 - 生命周期：`Editor` 只在成批细分时留着——分帧细分期间跨帧保留，否则 `Editor::UpdateSceneVertices` 结束就清空；图纸有任何改动或显示设置变了时先清空（块定义可能也改了）。视口合成（`Editor::ComposeModelIntoViewport`）不用：每个视口冻结的图层、像素比例不同。`Editor::SetBlockCacheEnabled` 供测试对比
+- 锁定图层：顶层实体在锁定图层上时整个淡显（块参照即整块），块里锁定图层上的子实体也淡显——`DrawContext::BeginEntity` / `SetEntityContext` 记下是否淡显，输出的顶点不透明度乘 `DrawContext::kLockedFade`（0.5，同 AutoCAD 的 `LAYLOCKFADECTL` 默认 50：画到背景上前景、背景各半；场景流都开着混合，浅色背景的白↔黑互换照常）。锁定 / 解锁走 `ChangeLayerCommand`，`Scene::MarkDisplayDirty` 让逐实体缓存与块定义级缓存整体失效。拾取侧 `Picking::IsPickable` 排除锁定图层（点选、框选、悬停、工具点取都选不中，捕捉不受影响），显示版本变化时 `Picking::DropUnpickable` 把选择集里已锁定 / 关闭图层上的对象去掉
 - 效果（2026-10-28 本机，`--bench` 与旧版交替各跑两次）：画全 CK-05 约 2.32 → 2.15 s、CK-T 约 3.71 → 3.26 s（-7%、-12%），打开后画全 CK-05 3.3 → 3.1 s、CK-T 4.6 → 4.2 s 左右；CK-T 4.7 万次块参照单元里 2.3 万次接上缓存或在框外跳过。收益不大：重复多的是便宜的线、圆弧、多段线（家具、线图案块），贵的填充（每个约 40 µs）、单行文字（约 34 µs）几乎都只出现一次
 
 ## 文字

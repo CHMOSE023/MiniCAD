@@ -171,6 +171,7 @@ namespace MiniCAD
         {
             m_pickGeometry.clear();
             m_displayVersion = m_scene->DisplayVersion();
+            DropUnpickable();
         }
         const uint64_t v = m_scene->GeometryVersion();
         if (v == m_indexVersion) return;
@@ -250,7 +251,7 @@ namespace MiniCAD
         return false;
     }
 
-    // 实体是否可被拾取:实体本身可见,且所在图层未关闭（锁定的图层仍可拾取）。
+    // 实体是否可被拾取:实体本身可见,且所在图层未关闭、未锁定（锁定图层上的对象不能选中，仍可捕捉）。
     //
     // ⚠ 布局过滤必须放在这里：渲染侧靠 Editor::UpdateSceneVertices 的 isShown()
     //   （Document::IsVisibleInActiveLayout）决定画什么，拾取侧若不过滤同一条件，
@@ -268,10 +269,23 @@ namespace MiniCAD
         if (m_layoutFilter && !m_layoutFilter(attr)) return false;
 
         if (const Layer* layer = m_scene->GetLayerManager().GetLayer(attr.LayerId))
-            if (!layer->IsVisible())
-                return false;       // 锁定的图层可拾取（可选中、可看特性），修改时由各编辑入口跳过
+            if (!layer->IsVisible() || layer->IsLocked())
+                return false;
 
         return true;
+    }
+
+    // 图层关闭 / 锁定后，选择集与悬停里去掉已不能拾取的对象（夹点、选中高亮、特性面板随之更新）
+    void Picking::DropUnpickable()
+    {
+        const auto gone = [this](ObjectID id)
+        {
+            const Object* o = m_scene->GetEntity(id);
+            return o && !IsPickable(*o);
+        };
+        if (std::erase_if(m_selection, gone) > 0)
+            MarkDirty();
+        std::erase_if(m_hovered, gone);
     }
 
     // ───────────────── 查询接口 ─────────────────
@@ -1265,6 +1279,7 @@ namespace MiniCAD
     {
         if (m_lastSelection.empty()) return;
         m_selection = m_lastSelection;
+        DropUnpickable();   // 其间锁定 / 关闭了图层的不再选回
         MarkDirty();
     }
 

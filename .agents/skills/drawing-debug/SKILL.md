@@ -44,7 +44,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/drawing-debug/scrip
 
 脚本把模型页（全部显示）、第一张布局页、第一个 OLE 对象的视口离屏存成 BMP 并转成 PNG，打印路径；用 Read 工具查看 PNG。`-Views` 再按世界坐标窗口各截一张 `view<序号>.png`（`MINICAD_BENCH_VIEWS`），并打印画面左上、右下角的世界坐标——适配时扣掉了功能区、面板挡住的留边，画面不以窗口为中心，按像素换算坐标要用这两个角。**不要截整个屏幕**（会截到用户的其他窗口）。日志里的 `LOG_WARN`（跳过的实体、找不到的字体 / 外部参照）也在脚本输出的日志文件里。
 
-与 AutoCAD 对照：本机 AutoCAD 2020 用 `acad.exe /nologo /t <acadiso.dwt> /b 脚本.scr` 启动，脚本里 `-INSERT "*图纸副本.dwg" 0,0 1 0`（坐标不变、句柄会变）后逐个 `ZOOM W x0,y0 x1,y1` + `PNGOUT 文件`，最后 `_.SAVEAS 2018 临时.dwg`、`FILEDIA 1`（`FILEDIA 0` 存进注册表，不改回会让用户的打开 / 保存对话框不再弹出）再 `_.QUIT`；与 `-Views` 用同样的窗口。天正对象的核对见 [tianzheng](../../features/tianzheng.md) 的约束。直接把图纸作为参数启动会停在"开始"页、脚本不执行。AutoCAD 默认把锁定图层上的对象淡显 50%（`LAYLOCKFADECTL`），块参照在锁定图层上时整块变暗，比较颜色时别当成差异。
+与 AutoCAD 对照：本机 AutoCAD 2020 用 `acad.exe /nologo /t <acadiso.dwt> /b 脚本.scr` 启动，脚本里 `-INSERT "*图纸副本.dwg" 0,0 1 0`（坐标不变、句柄会变）后逐个 `ZOOM W x0,y0 x1,y1` + `PNGOUT 文件`，最后 `_.SAVEAS 2018 临时.dwg`、`FILEDIA 1`（`FILEDIA 0` 存进注册表，不改回会让用户的打开 / 保存对话框不再弹出）再 `_.QUIT`；与 `-Views` 用同样的窗口。天正对象的核对见 [tianzheng](../../features/tianzheng.md) 的约束。直接把图纸作为参数启动会停在"开始"页、脚本不执行。AutoCAD 默认把锁定图层上的对象淡显 50%（`LAYLOCKFADECTL`），块参照在锁定图层上时整块变暗；MiniCAD 同样淡显（`DrawContext::kLockedFade`），自测在 `SelfTest.cpp` 的"锁定语义"一节。
 
 ## 4. 定位与修复
 

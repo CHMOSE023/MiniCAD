@@ -188,11 +188,15 @@ namespace MiniCAD
         std::vector<GlyphInstance>*   Glyphs() { return m_glyphs; }
         std::vector<ImageDraw>&       Images() { return m_images; }
 
+        // 锁定图层上的对象淡显：顶点不透明度乘以它，画到背景上即前景、背景各半（同 AutoCAD 的 LAYLOCKFADECTL 默认值 50）
+        static constexpr float kLockedFade = 0.5f;
+
         // 实体级上下文:解析该实体生效的线型/线宽(ByLayer → 图层值)
         void BeginEntity(const EntityAttr* attr) override
         {
             FlushWipes();
             m_curAttr = attr;
+            m_lockedTop = m_locked = OnLockedLayer(attr);   // 块参照在锁定图层上时整块淡显
             if (attr)
             {
                 m_wipes.clear();
@@ -207,7 +211,11 @@ namespace MiniCAD
 
         // 块内子实体：只换线型/线宽解析所用的属性，不做实体边界处理。
         // 见 IDrawSink::SetEntityContext 的说明（块内成员自己的线型此前被 INSERT 覆盖）。
-        void SetEntityContext(const EntityAttr* attr) override { m_curAttr = attr; }
+        void SetEntityContext(const EntityAttr* attr) override
+        {
+            m_curAttr = attr;
+            m_locked  = m_lockedTop || OnLockedLayer(attr);     // 块里锁定图层上的子实体同样淡显
+        }
 
         // ── 分段细分大块参照（Editor 分帧细分用）──────────────────
         // 之后画的块参照从 resume 处（空 = 从头）接着画块内子实体，到 deadline 就停（至少画一个）。位置是一条路径：
@@ -318,7 +326,7 @@ namespace MiniCAD
             r.unsafe    = m_clipUnsafe;
             r.clips     = clips ? clips->count : 0;
             // 分段细分已停下（之后什么都不画）或还在找上次停下的位置（这个块参照只画后半）：不取、不记
-            if (!(m_chunk.active && (m_chunk.stopped || m_chunk.resuming)) && MakeBlockKey(block, host, xform, r))
+            if (!(m_chunk.active && (m_chunk.stopped || m_chunk.resuming)) && MakeBlockKey(block, host, xform, m_lockedTop, r))
             {
                 if (const BlockTessEntry* e = m_blockCache->Find(r.key))
                 {
@@ -584,9 +592,10 @@ namespace MiniCAD
             const float cosR = cosf(rotation);
             const float sinR = sinf(rotation);
 
-            Math::Float4 c4 = {
-                static_cast<float>(color.r), static_cast<float>(color.g),
-                static_cast<float>(color.b), static_cast<float>(color.a)
+            const Math::Color4 faded = Faded(color);
+            const Math::Float4 c4 = {
+                static_cast<float>(faded.r), static_cast<float>(faded.g),
+                static_cast<float>(faded.b), static_cast<float>(faded.a)
             };
 
             float curX = 0.f;
@@ -871,7 +880,7 @@ namespace MiniCAD
                 {
                     if (width <= 0.0 && m_deferLongDashes)
                     {
-                        PutDash({ a, b, color, CurrentLineTypeId(), scale });
+                        PutDash({ a, b, Faded(color), CurrentLineTypeId(), scale });
                         return;
                     }
                     MarkViewDependent();
@@ -1185,15 +1194,29 @@ namespace MiniCAD
 
         static Vertex_P3_C4 ToVertex(const Math::Point3& pt, const Math::Color4& col)
         {
-            return { ToFloat3(pt), ToColor(col) };
+            return { ToFloat3(pt), ToVertexColor(col) };
         }
         static Math::Float3 ToFloat3(const Math::Point3& p)
         {
             return { static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) };
         }
-        static VertexColor ToColor(const Math::Color4& c)
+        static VertexColor ToVertexColor(const Math::Color4& c)
         {
             return { static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), static_cast<float>(c.a) };
+        }
+        // 当前画的部分的顶点颜色：在锁定图层上时淡显
+        VertexColor ToColor(const Math::Color4& c) const { return ToVertexColor(Faded(c)); }
+        Math::Color4 Faded(const Math::Color4& c) const
+        {
+            if (!m_locked) return c;
+            Math::Color4 f = c;
+            f.a *= kLockedFade;
+            return f;
+        }
+        bool OnLockedLayer(const EntityAttr* attr) const
+        {
+            const Layer* layer = attr ? m_layerManager.GetLayer(attr->LayerId) : nullptr;
+            return layer && layer->IsLocked();
         }
 
         // ── 输出：线、填充、点、字形实例、延迟的长虚线。正在记块定义级缓存时同时按世界坐标（双精度）记一份 ──
@@ -1281,7 +1304,7 @@ namespace MiniCAD
 
         // 插入变换去掉旋转、平移后剩下的部分与随块的属性组成键（见 BlockTessCache），旋转、平移记进 r。
         // 只缓存 XY 平面里的变换（Z 轴只缩放、平移）
-        static bool MakeBlockKey(const void* block, const EntityAttr& host, const Math::Mat4& xform, BlockRecord& r)
+        static bool MakeBlockKey(const void* block, const EntityAttr& host, const Math::Mat4& xform, bool faded, BlockRecord& r)
         {
             const double* m = xform.Data();
             if (m[2] != 0.0 || m[6] != 0.0 || m[8] != 0.0 || m[9] != 0.0 || m[3] != 0.0 || m[7] != 0.0 || m[11] != 0.0 || m[15] != 1.0)
@@ -1313,6 +1336,7 @@ namespace MiniCAD
             k.yx          = std::llround(yx * 1e9);
             k.yy          = std::llround(yy * 1e9);
             k.zz          = std::llround(zz * 1e9);
+            k.faded       = faded;
             return true;
         }
 
@@ -1425,6 +1449,8 @@ namespace MiniCAD
         double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
         double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         const EntityAttr*              m_curAttr       = nullptr;
+        bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
+        bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）
         bool                           m_viewDependent = false;
         double                         m_textWidthFactor = 0.0;   // 当前实体的多行文字宽度因子（0 = 按样式）
         bool                           m_textMirror      = false; // 文字沿基线上下翻转（镜像的块参照里，见 ToggleTextMirror）
