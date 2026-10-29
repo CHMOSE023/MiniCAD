@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <functional>
 #include "Import/CadExchange.h"
+#include "Import/TchOpening.h"
 #include "Import/TchWall.h"
 #include "Import/TchText.h"
 #include "Import/TchElec.h"
@@ -420,7 +421,7 @@ int wmain(int argc, wchar_t** argv)
                 std::printf("WIPEOUT %llx owner=%s layer=%s clip=%d verts=%zu\n", static_cast<unsigned long long>(handle),
                             owner ? owner->Name.c_str() : "?", layer ? layer->Name.c_str() : "?", int(w->ClippingState), w->ClipBoundaryVertices.size());
             }
-    // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）
+    // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）、其后的字段与句柄；门窗的标志
     if (std::getenv("MINICAD_WALLRAW"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_WALL")
@@ -431,7 +432,51 @@ int wmain(int argc, wchar_t** argv)
                 const auto bytes = r.ReadBytes(84);
                 std::printf("WALLRAW %llx mark=%d key=%02x ", (unsigned long long)handle, mark, key);
                 for (auto b : bytes) std::printf("%02x", b);
+                // 受保护数据之后的字段（布局见 Tch::DecodeWall）与句柄流引用
+                const int rc0 = r.ReadByte(), openings = r.ReadBitShort(), material = r.ReadByte(), patches = r.ReadByte();
+                const double insulation = r.ReadBitDouble();
+                double joins[4];
+                for (double& j : joins) j = r.ReadBitDouble();
+                const int sig0 = r.ReadByte(), sig1 = r.Read3Bits();
+                std::printf("\n  tail rc0=%d openings=%d material=%d patches=%d insu=%g joins=%g,%g,%g,%g sig=%d,%d end=%llu/%llu refs=",
+                            rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
+                            (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
+                for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
                 std::printf("\n");
+            }
+            else if (u && u->Raw.DxfName == "TCH_OPENING")
+            {
+                // 门窗：类型、宽度、镜像、所在墙与门槛线相关的两个标志
+                MiniCAD::Tch::TchOpening o;
+                if (MiniCAD::Tch::DecodeOpening(*u, o))
+                    std::printf("OPENING %llx type=%d width=%g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.1f,%.1f angle=%.4f\n", (unsigned long long)handle,
+                                static_cast<int>(o.Type), o.Width, o.Mirror, (unsigned long long)o.Wall, o.Flags, static_cast<unsigned>(o.DisplayFlags),
+                                o.Position.X, o.Position.Y, o.Angle);
+                // 门扇在所在墙的哪一侧（+1 左侧、-1 右侧）：门图块的 +Y 为门扇，Y 镜像时翻到另一侧
+                MiniCAD::Tch::TchWall w;
+                if (const auto* host = db->FindAs<MiniDWG::UnknownEntity>(o.Wall); host && MiniCAD::Tch::DecodeWall(*host, w))
+                {
+                    const double ly = o.MirrorY() ? -1.0 : 1.0;
+                    const double dx = w.End.X - w.Start.X, dy = w.End.Y - w.Start.Y;
+                    std::printf("  leaf_on_wall_left=%+.0f\n", (-std::sin(o.Angle) * ly * -dy + std::cos(o.Angle) * ly * dx) > 0 ? 1.0 : -1.0);
+                }
+                std::printf("  main_bits=%llu main=", (unsigned long long)u->Raw.Dwg.MainBits);
+                for (auto b : u->Raw.Dwg.Main) std::printf("%02x", b);
+                std::printf("\n");
+            }
+    if (std::getenv("MINICAD_WALLRAW"))
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get()); u && u->Raw.DxfName == "TCH_DBCONFIG")
+            {
+                MiniCAD::Tch::TchConfig config;
+                const bool ok = MiniCAD::Tch::DecodeConfig(*u, config);
+                std::printf("CONFIG %llx ok=%d fill=%d detail_scale=%g\n", (unsigned long long)handle, ok, config.Fill, config.DetailScale);
+                for (std::size_t i = 0; i < config.Standard.size(); ++i)
+                    std::printf("  hatch[%zu] standard=\"%s\" detail=\"%s\"\n", i, config.Standard[i].c_str(), config.Detail[i].c_str());
+                // 文字流（R2007 起）里的字符串依次列出：其中有各材料的填充图案名
+                MiniDWG::DwgBitReader text(u->Raw.Dwg.Text, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
+                for (int i = 0; i < 64 && !text.Failed() && text.PositionInBits() < u->Raw.Dwg.TextBits; ++i)
+                    std::printf("  text[%d]=\"%s\"\n", i, text.ReadVariableText().c_str());
             }
     // MINICAD_MLEADER：打印天正引出标注的解码结果与文字样式（字体、宽度、_TCH 扩展数据）
     if (std::getenv("MINICAD_MLEADER"))

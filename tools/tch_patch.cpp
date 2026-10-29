@@ -30,9 +30,12 @@ int wmain(int argc, wchar_t** argv)
     const auto db = MiniDWG::ReadDwg(bytes);
     if (!db) { std::fprintf(stderr, "DWG parse failed\n"); return 1; }
     const auto handle = static_cast<MiniDWG::Handle>(std::wcstoull(argv[3], nullptr, 16));
-    auto* entity = db->FindAs<MiniDWG::UnknownEntity>(handle);
-    if (entity == nullptr) { std::fprintf(stderr, "handle %llx is not an unknown entity\n", static_cast<unsigned long long>(handle)); return 1; }
-    auto& raw = entity->Raw.Dwg;
+    // 图形对象（墙、门窗等）或非图形对象（如图纸设置 TCH_DBCONFIG）
+    MiniDWG::RawObjectData* object = nullptr;
+    if (auto* entity = db->FindAs<MiniDWG::UnknownEntity>(handle)) object = &entity->Raw;
+    else if (auto* nonGraphic = db->FindAs<MiniDWG::UnknownObject>(handle)) object = &nonGraphic->Raw;
+    if (object == nullptr) { std::fprintf(stderr, "handle %llx is not an unknown object\n", static_cast<unsigned long long>(handle)); return 1; }
+    auto& raw = object->Dwg;
     raw.Main = Load(argv[4]);
     raw.MainBits = std::wcstoull(argv[5], nullptr, 10);
     if (argc == 8)
@@ -46,7 +49,7 @@ int wmain(int argc, wchar_t** argv)
     const auto out = MiniDWG::WriteDwg(*db, options);
     if (out.empty()) { std::fprintf(stderr, "DWG write failed\n"); return 1; }
     std::ofstream(std::filesystem::path(argv[2]), std::ios::binary).write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
-    std::printf("patched %s %llx main=%llu bits, wrote %zu bytes\n", entity->Raw.DxfName.c_str(),
+    std::printf("patched %s %llx main=%llu bits, wrote %zu bytes\n", object->DxfName.c_str(),
                 static_cast<unsigned long long>(handle), static_cast<unsigned long long>(raw.MainBits), out.size());
     return 0;
 }

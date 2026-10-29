@@ -31,7 +31,7 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 | 某处缺东西 / 多东西 | `MINICAD_AT=x0,y0,x1,y1`（谁在这里画了线）、`MINICAD_BBOX=…`（包围盒相交的块参照与块内实体）、`MINICAD_RENDER=x0,y0,x1,y1[,文件]`（把范围画成 BMP） |
 | 某个对象 | `MINICAD_H=句柄,…`（类型、所有者、是否在模型空间、不可见标志） |
 | 文字 / 字体 | `MINICAD_GREPTEXT=子串`（按原文找 TEXT / MTEXT，看格式码与转义）、`MINICAD_FINDTEXT=内容`、`MINICAD_BLOCK=块名子串`、`MINICAD_GLYPHS`（字体缺哪些字形）、`MINICAD_TABLES=1`（文字样式 / 线型表） |
-| 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW` |
+| 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW`（墙的材料码、门窗标志、图纸的墙柱填充设置） |
 | 布局页 / 视口 | `MINICAD_VIEWPORTS=1`、`MINICAD_LAYERS=子串`（冻结 / 关闭的图层） |
 | 遮挡 / 裁剪 | `MINICAD_WIPEOUT`、`MINICAD_WIPECHECK`、`MINICAD_XCLIP` |
 | OLE 对象 | `MINICAD_OLEDIR=目录`（导出原始数据） |

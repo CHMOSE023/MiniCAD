@@ -1,10 +1,12 @@
 #pragma once
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace MiniCAD::Tch
@@ -17,6 +19,10 @@ namespace MiniCAD::Tch
         int OpeningCount = 0;   // 墙上的门窗数；门窗句柄在句柄流中（TCH_OPENING 引用）
         double Angle = 0;       // 弧墙的圆心角（弧度，正值为自起点逆时针到终点）；直墙为 0
         std::uint32_t Flags = 0;    // 受保护几何里的墙标志（内核 this+0x140）
+        // 材料码（内核 this+0xe8，TDbWall::IsLineHatch 按它分支）：10 轻质隔墙、20 玻璃幕墙、30 / 31 / 32 填充墙、
+        // 40 砖墙、50 石墙、60 钢筋混凝土（tianzheng.dwg 的砖墙为 40、钢筋混凝土墙为 60，与天正特性面板一致）
+        int Material = 0;
+        double Scale = 100;     // 出图比例：小于图纸设置的详图比例时按详图图案填充
 
         // 弧墙的圆心与轴线半径
         bool ArcCenter(double& cx, double& cy, double& radius) const
@@ -127,17 +133,19 @@ namespace MiniCAD::Tch
         result.LeftWidth = geometry.ReadRawDouble();
         result.RightWidth = geometry.ReadRawDouble();
         const double height = geometry.ReadRawDouble();
-        // 受保护数据之后：RC 0、门窗数 BS、2 位 0、4 位标志、RC 标志、2 位 0。
-        // 门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；有门窗的墙多出的位数与句柄流中多出的
-        // TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
-        // 4 位标志与其后的 RC 含义未明：8#楼-A平面图 的墙有 1010 / 1000 / 0111 / 1111 / 0010 与 0 / 128 / 192 多种取值，不影响几何
+        // 受保护数据之后（天正内核 TDbWall::dwgInFields）：RC 0、门窗数 BS（门窗句柄在句柄流）、材料码 RC、墙体造型数 RC
+        //（造型 TCH_WALL_PATCH 的句柄在句柄流）。门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；
+        // 有门窗的墙多出的位数与句柄流中多出的 TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
+        // 8#楼-A平面图 的材料码有 10 / 30 / 31 / 32 / 40 / 60；造型数只见过 0 和 1
         if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
         const int openings = r.ReadBitShort();
-        if (openings < 0 || openings > 1024 || r.Read2Bits() != 0) return fail("invalid native wall opening count");
-        r.Read2Bits(); r.Read2Bits();
-        if (const int f = r.ReadByte(), patch = r.Read2Bits(); (f & 0x3F) != 0 || patch > 1)   // 最后 2 位：附有墙体造型（TCH_WALL_PATCH）时为 1
-            return fail("native wall flags mismatch: rc=" + std::to_string(f) + " patch=" + std::to_string(patch));
+        if (openings < 0 || openings > 1024) return fail("invalid native wall opening count");
+        const int material = r.ReadByte(), patches = r.ReadByte();
+        if (material >= 64 || patches > 1)
+            return fail("native wall flags mismatch: material=" + std::to_string(material) + " patches=" + std::to_string(patches));
+        result.Material = material;
         result.OpeningCount = openings;
+        result.Scale = scale;
         const double insulation = r.ReadBitDouble();
         for (auto& join : result.Joins) join = r.ReadBitDouble();
         // The remaining 11-bit signature is 00000000 010.
@@ -168,5 +176,107 @@ namespace MiniCAD::Tch
         wall = result;
         if (diagnostic) diagnostic->clear();
         return true;
+    }
+
+    // 图纸的天正设置（非图形对象 TCH_DBCONFIG）里与墙柱填充有关的部分。缺省为天正 2014 的默认值（sys\TOptionsDef.xml“墙柱加粗填充”）
+    struct TchConfig
+    {
+        bool   Fill = false;        // 天正选项“墙柱填充”（状态栏的“填充”开关）；天正的默认值为否
+        double DetailScale = 100;   // 详图比例：对象的出图比例小于它时用详图图案
+        // 各材料的标准、详图填充图案名（序号见 MaterialSlot；空串为不填充）
+        std::array<std::string, 8> Standard{"", "", "", "", "", "", "SOLID", ""};
+        std::array<std::string, 8> Detail{"", "", "", "", "普通砖", "天然石材", "钢筋混凝土", "金属"};
+    };
+
+    // 材料码 → 图案序号：轻质隔墙、填充墙、填充墙1、填充墙2、砖、石、钢筋混凝土、钢（天正内核 TDbWall::IsLineHatch 按同样的顺序
+    // 取设置里的标志）；-1 为不填充（如玻璃幕墙 20）
+    inline int MaterialSlot(int material)
+    {
+        switch (material)
+        {
+        case 10: return 0;
+        case 30: return 1;
+        case 31: return 2;
+        case 32: return 3;
+        case 40: return 4;
+        case 50: return 5;
+        case 60: return 6;
+        case 70: return 7;
+        default: return -1;
+        }
+    }
+
+    // 按天正内核 TDbConfig::dwgInFields（版本 4～9）读：RC 版本、BD、BD、BS、RC 填充（this+0x22）、3 个 RC、BD、BD、2 个 RC、
+    // BL、BD、BD 详图比例（this+0x48）；12 个字符串依次为轻质隔墙、填充墙、砖、石、钢筋混凝土、钢的标准图案与同序的详图图案，
+    // 12 个 BD；版本 6 起 2 个字符串后为填充墙1 的标准、详图图案，2 个 BD，再是填充墙2 的。字符串 R2007 起在文字流，之前就地
+    // 在主数据流。tianzheng.dwg 把“填充”这一位清掉后，天正 2014 里所有墙柱的填充都不见了；8#楼-A平面图 改过轻质隔墙等的详图图案
+    //（轻质隔墙为卵石砌体，天正里显示成圆圈）。图案名读不出时保留默认值
+    inline bool DecodeConfig(const MiniDWG::UnknownObject& object, TchConfig& config)
+    {
+        using namespace MiniDWG;
+        const auto& data = object.Raw.Dwg;
+        if (object.Raw.DxfName != "TCH_DBCONFIG" || data.Main.size() < (data.MainBits + 7) / 8) return false;
+        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+        const int version = r.ReadByte();
+        if (version < 4 || version > 9) return false;
+        r.ReadBitDouble(); r.ReadBitDouble();
+        r.ReadBitShort();
+        const int fill = r.ReadByte();
+        r.ReadByte(); r.ReadByte(); r.ReadByte();
+        r.ReadBitDouble(); r.ReadBitDouble();
+        r.ReadByte(); r.ReadByte();
+        r.ReadBitLong();
+        r.ReadBitDouble();
+        const double detail = r.ReadBitDouble();
+        if (r.Failed() || r.PositionInBits() > data.MainBits || fill > 1 || !std::isfinite(detail) || detail <= 0 || detail > 1e6)
+            return false;
+        config.Fill = fill != 0;
+        config.DetailScale = detail;
+
+        const bool inlineText = data.Version < CadVersion::AC1021;
+        DwgBitReader text(data.Text, data.Version, Codec::CodePage::Gbk);
+        auto next = [&] { return inlineText ? r.ReadVariableText() : text.ReadVariableText(); };
+        TchConfig patterns = config;
+        for (auto* list : {&patterns.Standard, &patterns.Detail})
+            for (const int slot : {0, 1, 4, 5, 6, 7}) (*list)[slot] = next();
+        for (int i = 0; i < 12; ++i) r.ReadBitDouble();
+        if (version >= 6)
+        {
+            next(); next();
+            patterns.Standard[2] = next(); patterns.Detail[2] = next();
+            r.ReadBitDouble(); r.ReadBitDouble();
+            patterns.Standard[3] = next(); patterns.Detail[3] = next();
+        }
+        const bool namesOk = std::ranges::all_of(patterns.Standard, [](const std::string& s) { return s.size() < 256; }) &&
+                             std::ranges::all_of(patterns.Detail, [](const std::string& s) { return s.size() < 256; });
+        if (!r.Failed() && !text.Failed() && r.PositionInBits() <= data.MainBits && namesOk)
+            config = std::move(patterns);
+        return true;
+    }
+
+    // 墙、柱的填充图案名：出图比例小于详图比例时取详图图案；空为不填充
+    inline std::string_view MaterialHatch(const TchConfig& config, int material, bool detail)
+    {
+        const int slot = MaterialSlot(material);
+        if (slot < 0) return {};
+        return detail ? config.Detail[static_cast<std::size_t>(slot)] : config.Standard[static_cast<std::size_t>(slot)];
+    }
+
+    // 图案库里没有天正图案时的替代（.pat 格式，单位为图面毫米，乘出图比例）：普通砖为 45° 斜线、间距 2.5
+    //（与天正分解出的填充一致）；钢筋混凝土为同样的斜线加骨料：小三角形（三族线的虚线段在格点 i·(4.5,0) + j·(1.6,3.8)
+    // 处围成三角形，边长为格向量的 0.15）与两组点，样子近似天正的显示。其余图案（天然石材、金属及图纸设置里改用的卵石砌体、
+    // 加气混凝土等）没有替代：把天正的 acad.pat 放进 assets/patterns 才画得出来
+    inline const char* MaterialHatchFallback(std::string_view name)
+    {
+        if (name == "普通砖")
+            return "*普通砖\n45, 0,0, 0,2.5\n";
+        if (name == "钢筋混凝土")
+            return "*钢筋混凝土\n45, 0,0, 0,2.5\n"
+                   "0, 0,0, 1.6,3.8, 0.675,-3.825\n"
+                   "67.1663, 0,0, -1.7463,4.1474, 0.6185,-3.5046\n"
+                   "127.3493, 0.675,0, 2.73,3.5773, 0.717,-4.0631\n"
+                   "0, 2.2,1.3, 1.6,3.8, 0,-4.5\n"
+                   "0, 3.3,2.6, 1.6,3.8, 0,-4.5\n";
+        return nullptr;
     }
 }
