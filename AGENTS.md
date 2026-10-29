@@ -54,7 +54,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - **实体**（`src/Core/Entity/`）：继承 `Entity`（基类 `Object` 负责类型信息与 ID），纯头文件；支持克隆、包围盒、绘制到 `IDrawSink`、序列化；`ICurveEntity` 提供捕捉、求交、编辑用的几何接口。颜色 `EntityColor` 同时保存 DXF 语义（ByLayer / ByBlock / ACI / 真彩）与解析后的 RGBA
 - **场景**（`src/Scene/`）：`Scene` 是实体容器，管理图层、线型、块、文字样式、标注样式与当前属性；脏标记 + 几何版本号
 - **文档与撤销**（`src/Document/`）：`Document` 包装场景，负责保存 / 打开、撤销 / 重做；`CommandStack` + `ICommand`（`src/Document/Command/`）；`DocumentManager` 管理多文档，共用一个 `Viewport`，每个文档一个 `Editor`
-- **编辑器**（`src/Editor/`）：输入管线 `InputResolver` → `Editor` → 工具 / 约束；工具 `ITool`（`src/Editor/Tools/`，修改工具在 `src/Editor/Tools/Modify/`）；拾取（空间索引）、`SnapEngine`、`GripEditor`；需要界面配合的操作通过"请求"交给宿主（`GetTextInputRequest` 等）
+- **编辑器**（`src/Editor/`）：输入管线 `InputResolver` → `Editor` → 工具 / 约束（对象捕捉优先：捕捉到对象上的点时不再套正交 / 极轴，同 AutoCAD）；工具 `ITool`（`src/Editor/Tools/`，修改工具在 `src/Editor/Tools/Modify/`）；拾取（空间索引）、`SnapEngine`、`GripEditor`；需要界面配合的操作通过"请求"交给宿主（`GetTextInputRequest` 等）
 - **渲染**：`Viewport`（相机、分两层绘制：缓存层 + 每帧的动态内容）；渲染器实现 `IRenderer`。CAD 视口由 CAD 渲染器绘制，界面由 MiniGUI 后端绘制，两者不是一回事。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
 - **序列化**（`src/Serialization/`）：`ISerializer`，`JsonSerializer` / `BinarySerializer`（键值树，缺少的键取默认值，可以加字段而不破坏旧文件），`EntityIO` 负责实体映射。`.mcad`（不区分大小写）→ 二进制，其余 → JSON
 - **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；天正对象的适配在 `src/Import/Tch*.h`

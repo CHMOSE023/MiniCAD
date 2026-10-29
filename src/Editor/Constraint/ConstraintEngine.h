@@ -13,6 +13,8 @@ namespace MiniCAD
         // 尝试应用已启用的约束，返回 true 表示有约束生效。
         // 结果可通过 GetConstrainedPoint() / GetGuideLine() 读取。
         bool Apply(const ConstraintContext& ctx);
+        // 这一次不约束（如对象捕捉优先）：清掉上一次的结果与辅助线
+        void Clear() { m_hasResult = false; m_guideLine = { {}, {} }; }
 
         Math::Point3 GetConstrainedPoint() const { return m_resultPoint; }
         const Line&  GetGuideLine()        const { return m_guideLine;   }

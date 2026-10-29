@@ -1,5 +1,5 @@
 ---
-covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/BlockTessCache.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*, src/Core/Draw/IDrawSink.hpp, src/Core/Draw/ClipDrawSink.hpp
+covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/BlockTessCache.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*, src/Core/Draw/IDrawSink.hpp, src/Core/Draw/ClipDrawSink.hpp, src/Core/Draw/CurveSampling.hpp
 ---
 
 # 显示性能
@@ -38,8 +38,18 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - 所有世界坐标的顶点流（场景静态 / 动态流、点流、字形实例的平移、纹理文字、图像、选中流、悬停高亮、`Overlay`、着色面与轮廓线、节点图预览）都存"世界坐标 − 渲染原点"（`ToRenderFloat3`）：`DrawContext::SetRenderOrigin`，`Overlay` 内部存双精度、`Overlay::ToVertices` 时才减；区域覆盖与视口合成的裁剪多边形同样减去原点（与顶点比较），块定义级缓存记的仍是世界坐标、延迟长虚线段的端点也是世界坐标（铺的时候减，`DrawContext::EmitDeferredDash` 的 origin 参数）
 - `ViewState::RenderOrigin` 交给 `Viewport::Render`，原点平移在双精度里乘进 `vp` / `vpLines` / `vpSilhouettes`，GPU 拿到的矩阵平移量只剩视图中心与原点之差。三维视图的网格与坐标轴按世界坐标生成，用合进原点之前的矩阵
 - 原点在所有实体重新细分时（`Editor::UpdateSceneVertices` 的 invalidateAll：打开、`Scene::MarkDirty`、`Scene::MarkDisplayDirty`）由 `Editor::ChooseRenderOrigin` 重选：可见实体外包框中心的中位数（各轴分开，等间隔抽至多 1024 个；远处零散的几个实体拉不动它），取 `Editor::kRenderOriginGrid`（4096）的整数倍——图纸在原点附近时原点就是 0，顶点与以前一样。改动的实体离原点超过 `Editor::kRenderRebaseDistance` 且超过选原点时可见范围的 4 倍（`Editor::NeedsRenderRebase`，如空图纸里画到测绘坐标上）时也整体重新细分、换原点
-- 读顶点流的测试与自测要加回原点：`Editor::GetRenderOrigin`；`Editor::ForEachCachedVertex` 已加回。回归测试 `tests/Core/RenderOriginTests.cpp` 按 GPU 的 float 运算把顶点换到屏幕，与 `Camera::WorldToScreen` 比（场景线、选中流、夹点、橡皮筋）
+- 读顶点流的测试与自测要加回原点：`Editor::GetRenderOrigin`；`Editor::ForEachCachedVertex` 已加回。回归测试 `tests/Core/RenderOriginTests.cpp` 按 GPU 的 float 运算把顶点换到屏幕，与 `Camera::WorldToScreen` 比（场景线、选中流、夹点、橡皮筋、深度放大）
 - 核对：`--bench` 加 `MINICAD_BENCH_SHOT` / `MINICAD_BENCH_VIEWS` 放大到几个单位宽的窗口截图（打印的画面角点有 4 位小数，按它把原图坐标换成像素）。地形测试.dwg 在约 4.7 单位宽的视窗里，折线到最近亮像素的距离从平均 20 像素（最多 43）降到 0.2 像素
+
+## 深度放大：局部显示与曲线加密
+
+- 全图一个原点、圆每圈 64 段，只够常规缩放：放到最大（可视高度 `Camera` 的下限 0.01）时，原点附近的普通图纸坐标几百就差几个像素、上千差十几像素（float），R21 的圆 64 段折线离真圆 0.025，即 2500 像素（issue #29：看着线交不上、圆上取的点不在圆上；几何数据本身是双精度的捕捉结果，没错）
+- 曲线细分（`src/Core/Draw/CurveSampling.hpp`）：圆、圆弧、椭圆、多段线的圆弧段（含带宽度的，`PolylineEntity` 的 `BuildNodes` 与虚线粗线）先按各自原来的段数均分（`SampleCurveSpans`，不加密时画出的点与以前逐位相同），再逐段问 `IDrawSink::RefineCurveSegment` 要不要二分。默认不加密；`TransformDrawSink` 把弦端点经插入变换、弦高与伸出量按最大轴向缩放放大后转发，`ClipDrawSink` 原样转发，`DrawContext::SetCurveRefinement` 与悬停高亮按 `CurveRefinement` 判断：靠近范围、弦高超过容差的段要加密。天正对象、填充、样条、文字（SHX 字形）里的圆弧仍按自己的段数
+- 局部显示（`Editor::UpdateLocalDisplay`，每帧在拾取索引同步之后判断，相机、视口、几何版本都没变时跳过）：视图附近（向四周各扩一个视图）的实体不多（块参照按块内子实体计，不超过 `Editor::kLocalMaxWeight`），且全图显示在这个缩放下 float 误差超过 1/4 像素、或那里按默认段数细分的曲线棱角（半径 × 0.0012）超过半个像素时，只细分那个范围里的实体（`isShown` 按 `LocalDisplay::ids` 过滤，范围的 z 取全范围：测点块参照的 z 是高程）：原点取在范围中心（`Editor::ChooseRenderOrigin`），圆弧在范围里按弦高 ≤ 1/4 像素加密（`Editor::LocalRefinement`），不用块定义级缓存（加密只在范围里，接到别的插入上不对）。视图出了范围或缩放出了建立时的一半到两倍就换范围（整体重新细分范围里的实体）；已在局部显示时门槛放宽（float 0.1 像素、棱角 1/4 像素、实体数 2 倍），免得在临界处来回切换
+- 查视图附近的结果记在 `Editor::LocalEval`（范围、是否太多、曲线最大半径）：视图还在它的范围里、范围不比视图大 6 倍以上时不再查拾取索引，只按当前缩放重算误差；包围盒取拾取索引里记的（`Picking::GetIndexedBox`），曲线半径从大的实体看起。不缓存时每次相机变化都查一遍、逐个算包围盒，CK-05 平移每帧从 25 ms 变成 245 ms（调试版）；缓存后与不判断时相同
+- 全图的逐实体缓存进局部显示时收起来（`m_globalStash`），缩小回来（`Editor::LeaveLocalDisplay`）拿回来重新拼接、不重新细分；局部显示期间改动过的实体与按当时缩放烘焙的（`viewDependent`）丢掉重新细分，全图的显示设置变了（`Scene::MarkDisplayDirty` 等）整个作废。局部显示期间改动的实体按包围盒重新判断在不在范围里；选中流里范围外的实体不画（拖动中的照画）
+- 三维视图、布局页里的模型视口照常（局部显示只在俯视时）；进出局部显示都是一次整体重新拼接，拼接流交给后端释放过时要重新上传
+- 回归测试：`tests/Core/RenderOriginTests.cpp` 的"放到最大"一段（原点附近、带标高的 R21 圆与直线：圆离真圆 < 0.5 像素、直线 < 0.2 像素、顶点数没有暴涨，局部显示期间新画的线缩小回来仍在）。截图核对：地形测试.dwg 测点圆盘（带宽度的多段线）放到最大，边缘离真圆平均 0.24 像素（改前是 5° 一段的折线，折角处差约 15 像素）
 
 ## 打开图纸：分帧细分
 

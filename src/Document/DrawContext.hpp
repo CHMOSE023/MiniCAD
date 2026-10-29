@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Draw/ClipDrawSink.hpp"
+#include "Core/Draw/CurveSampling.hpp"
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Render/VertexTypes.hpp"
@@ -507,6 +508,13 @@ namespace MiniCAD
         // 视口把原点合进视图投影矩阵。开始输出之前设置；默认 (0, 0, 0) 即世界坐标
         void SetRenderOrigin(const Math::Point3& origin) { m_origin = origin; }
         const Math::Point3& GetRenderOrigin() const     { return m_origin; }
+
+        // 曲线加密（深度放大的局部显示）：与 box 相交、弦高超过 tolerance 的曲线段再二分（见 SampleCurve）。默认不加密
+        void SetCurveRefinement(const CurveRefinement& r) { m_refine = r; }
+        bool RefineCurveSegment(const Math::Point3& a, const Math::Point3& b, double sagitta, double reach) const override
+        {
+            return m_refine.Refine(a, b, sagitta, reach);
+        }
 
         // 当前实体的线型记录（ByLayer → 图层线型、ByBlock → Continuous）。
         // DrawLine 与 DrawStyledLine 共用，保证「铺线型」与「单独判定虚线」取到同一个线型。
@@ -1452,6 +1460,7 @@ namespace MiniCAD
         double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
         double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
         Math::Point3                   m_origin;               // 渲染原点（SetRenderOrigin）
+        CurveRefinement                m_refine;               // 曲线加密（SetCurveRefinement）
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
         bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）

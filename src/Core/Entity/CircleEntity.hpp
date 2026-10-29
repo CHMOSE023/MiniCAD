@@ -4,6 +4,7 @@
 #include "../Math/Point3.hpp"
 #include "Entity.hpp"
 #include "ICurveEntity.hpp"
+#include "../Draw/CurveSampling.hpp"
 
 namespace MiniCAD
 {
@@ -43,33 +44,15 @@ namespace MiniCAD
 
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
 
+            // 默认 64 段；深度放大时 sink 要求在视图附近加密（见 SampleCurve）
             constexpr int kSegments = 64;
 
             const auto& center = m_circle.Center;
             const double r    = m_circle.Radius;
 
-            for (int i = 0; i < kSegments; ++i)
-            {
-                double a0 = Math::TwoPI * i / kSegments;
-                double a1 = Math::TwoPI * (i + 1) / kSegments;
-
-                Math::Point3 p0 =
-                {
-                    center.x + r * std::cos(a0),
-                    center.y + r * std::sin(a0),
-                    center.z
-                };
-
-                Math::Point3 p1 =
-                {
-                    center.x + r * std::cos(a1),
-                    center.y + r * std::sin(a1),
-                    center.z
-                }; 
-
-                sink.DrawLine(p0, p1, color, false);
-            }
-
+            SampleCurve(sink, 0.0, Math::TwoPI, kSegments, r,
+                        [&](double a) { return Math::Point3{ center.x + r * std::cos(a), center.y + r * std::sin(a), center.z }; },
+                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
         }
 
         DECLARE_RUNTIME_TYPE(CircleEntity, Entity)

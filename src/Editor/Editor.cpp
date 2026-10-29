@@ -18,6 +18,12 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Constants.hpp"
 #include "Core/Entity/Entity.hpp"
+#include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/ArcEntity.hpp"
+#include "Core/Entity/EllipseEntity.hpp"
+#include "Core/Entity/PolylineEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/BlockEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include <algorithm>
@@ -97,6 +103,8 @@
 #include "Core/Draw/TransformDrawSink.hpp"
 
 #include <cstdio>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <algorithm>
 
@@ -153,6 +161,12 @@ namespace MiniCAD
             }
             double GetWorldPerPixel() const override    { return m_worldPerPixel; }
             double GetViewportHeightPx() const override { return m_viewportHeightPx; }
+            // 曲线加密与场景流相同（深度放大的局部显示，见 Editor::LocalRefinement）
+            void SetCurveRefinement(const CurveRefinement& r) { m_refine = r; }
+            bool RefineCurveSegment(const Math::Point3& a, const Math::Point3& b, double sagitta, double reach) const override
+            {
+                return m_refine.Refine(a, b, sagitta, reach);
+            }
             std::string GetLayerName(LayerID layerId) const override
             {
                 const Layer* layer = m_layers.GetLayer(layerId);
@@ -209,6 +223,7 @@ namespace MiniCAD
             Math::Color4               m_color;
             const LayerManager&        m_layers;
             Math::Point3               m_origin;
+            CurveRefinement            m_refine;
         };
     }
 
@@ -321,6 +336,9 @@ namespace MiniCAD
         m_viewAnim.Active  = false;
         m_currentSnap      = {};
         m_overlay.Clear();
+        LeaveLocalDisplay();   // 局部显示按原来视口的相机建的
+        m_localKey  = 0;
+        m_localEval = {};
         m_viewport = &viewport;
         m_overlay.Bind(viewport);
         m_previewOverlay.Bind(viewport);
@@ -396,6 +414,13 @@ namespace MiniCAD
         m_sceneViewDependent = false;
         m_selViewDependent   = false;
         m_build = {};
+        m_local = {};
+        m_localRebuild     = false;
+        m_globalStashValid = false;
+        m_localKey         = 0;
+        m_localEval        = {};
+        releaseStorage(m_globalStash);
+        releaseStorage(m_stashStale);
         m_blockTessCache.Clear();   // 记下的字形实例引用字形网格库的编号
         m_sceneVersion    = NextRenderVersion();   // 渲染后端的缓存顶点缓冲随之失效
         m_sceneDynVersion = NextRenderVersion();
@@ -3011,6 +3036,8 @@ namespace MiniCAD
         // 拾取空间索引按脏实体集增量同步——必须在 UpdateSceneVertices 的
         // Scene::ClearDirty 之前,否则脏集被清掉后索引只能整表重建。
         m_picking.SyncIndex();
+        // 深度放大时进 / 出局部显示（用拾取索引查视图附近的实体，所以在同步之后）
+        UpdateLocalDisplay(worldPerPixel);
 
         bool sceneRebuilt = UpdateSceneVertices(worldPerPixel, zoomChanged);
         UpdateShadedVertices(sceneRebuilt);
@@ -3139,6 +3166,7 @@ namespace MiniCAD
             return;
 
         HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager(), m_renderOrigin);
+        sink.SetCurveRefinement(LocalRefinement());
         sink.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize(),
                            m_viewport->GetCamera().GetWorldPerPixel(), static_cast<double>(m_viewport->GetHeight()));
 
@@ -3604,6 +3632,13 @@ namespace MiniCAD
     // 图纸在原点附近时就是 (0, 0, 0)，顶点与以前一样就是世界坐标。实体多时等间隔抽 kSamples 个
     void Editor::ChooseRenderOrigin(const std::function<bool(const Entity&)>& isShown)
     {
+        // 局部显示：原点取在它的范围中心
+        if (m_local.active)
+        {
+            m_renderOrigin = { (m_local.box.Min.x + m_local.box.Max.x) * 0.5, (m_local.box.Min.y + m_local.box.Max.y) * 0.5, 0.0 };
+            m_renderReach  = std::max(m_local.box.Max.x - m_local.box.Min.x, m_local.box.Max.y - m_local.box.Min.y) * 0.5;
+            return;
+        }
         constexpr size_t kSamples = 1024;
         const Scene& scene = m_doc->GetScene();
         size_t shown = 0;
@@ -3644,6 +3679,8 @@ namespace MiniCAD
     // 范围本来就大的图纸（零散的实体远在天边）不会因为在范围里改动而反复换原点
     bool Editor::NeedsRenderRebase(const std::function<bool(const Entity&)>& isShown) const
     {
+        if (m_local.active)
+            return false;   // 局部显示只画范围里的实体，原点就在范围中心
         const Scene& scene = m_doc->GetScene();
         const double limit = std::max(kRenderRebaseDistance, 4.0 * m_renderReach);
         for (Object::ObjectID id : scene.GetDirtyEntities())
@@ -3663,6 +3700,215 @@ namespace MiniCAD
         return false;
     }
 
+    namespace
+    {
+        // 实体里按默认段数细分的曲线（圆、圆弧、椭圆、多段线的圆弧段，块参照里的这些）最大的半径，没有为 0。
+        // 默认段数（每圈 64 段，多段线每 5° 一段）的弦高约为半径的 0.0012 倍
+        double MaxCurveRadius(const Entity& e, int depth = 0)
+        {
+            if (const auto* c = dynamic_cast<const CircleEntity*>(&e))
+                return c->GetCircle().Radius;
+            if (const auto* a = dynamic_cast<const ArcEntity*>(&e))
+                return a->GetArc().Radius;
+            if (const auto* el = dynamic_cast<const EllipseEntity*>(&e))
+                return std::max(std::abs(el->GetEllipse().RadiusX), std::abs(el->GetEllipse().RadiusY));
+            if (const auto* pl = dynamic_cast<const PolylineEntity*>(&e))
+            {
+                const Polyline& p = pl->GetPolyline();
+                double r = 0.0;
+                for (int i = 0; i < p.SegCount(); ++i)
+                    if (!p.SegIsLine(i))
+                        r = std::max(r, Polyline::ComputeArc(p.SegStart(i), p.SegEnd(i), p.SegBulge(i)).Radius);
+                return r;
+            }
+            if (const auto* ins = dynamic_cast<const InsertEntity*>(&e); ins && ins->GetBlock() && depth < 4)
+            {
+                double r = 0.0;
+                for (const auto& sub : ins->GetBlock()->GetEntities())
+                    r = std::max(r, MaxCurveRadius(*sub, depth + 1));
+                const Math::Vec3& s = ins->GetScale();
+                return r * std::max(std::abs(s.x), std::abs(s.y));
+            }
+            return 0.0;
+        }
+
+        constexpr double kCurveFacet = 0.0012;   // 默认段数的弦高 / 半径（1 − cos(π/64)）
+    }
+
+    CurveRefinement Editor::LocalRefinement() const
+    {
+        if (!m_local.active)
+            return {};
+        return { m_local.box, 0.25 * m_local.wpp };   // 弦高不超过 1/4 像素
+    }
+
+    // 查视图附近（box）的实体，记进 m_localEval：个数（块参照按块内子实体计）是否太多、按默认段数细分的曲线最大半径。
+    // 包围盒用拾取索引里记的，不重新计算；曲线半径从大的实体看起，比已找到的半径小的不必再看
+    void Editor::EvaluateLocalRegion(const AABB& box)
+    {
+        LocalEval& ev = m_localEval;
+        ev = {};
+        ev.valid = true;
+        ev.geom  = m_doc->GetScene().GeometryVersion();
+        ev.box   = box;
+        // 已在局部显示时放宽一倍，免得在临界处来回切换
+        const double limit = (m_local.active ? 2.0 : 1.0) * kLocalMaxWeight;
+        m_picking.QueryWorldAABB(box, ev.ids, static_cast<size_t>(limit));
+        if (ev.ids.size() > static_cast<size_t>(limit))
+        {
+            ev.tooMany = true;
+            ev.ids.clear();
+            return;
+        }
+        const Scene& scene = m_doc->GetScene();
+        std::vector<std::pair<double, const Entity*>> bySize;
+        bySize.reserve(ev.ids.size());
+        double weight = 0.0;
+        for (Object::ObjectID id : ev.ids)
+        {
+            const Object* obj = scene.GetEntity(id);
+            if (!obj || !obj->IsKindOf<Entity>()) continue;
+            const auto& e = static_cast<const Entity&>(*obj);
+            if (!e.GetAttr().Visible || !m_doc->IsVisibleInActiveLayout(e.GetAttr())) continue;
+            weight += BuildWeight(e);
+            if (weight > limit)
+            {
+                ev.tooMany = true;
+                ev.ids.clear();
+                return;
+            }
+            AABB b;
+            if (m_picking.GetIndexedBox(id, b))
+                bySize.emplace_back(std::max(b.Max.x - b.Min.x, b.Max.y - b.Min.y) * 0.5, &e);
+        }
+        // 曲线的棱角不超过包围盒半宽的 kCurveFacet 倍（圆就是半径；平缓的大半径圆弧段数少、弦高也受包围盒限制）
+        std::sort(bySize.begin(), bySize.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (const auto& [half, e] : bySize)
+        {
+            if (half <= ev.curveR)
+                break;
+            ev.curveR = std::max(ev.curveR, std::min(half, MaxCurveRadius(*e)));
+        }
+    }
+
+    // 每帧（拾取索引同步之后）判断：进 / 出局部显示，或局部显示的范围要不要换。要局部显示的情形：
+    //  · float：顶点与矩阵各舍入一次，误差约为视图离全图原点的距离 × 2^-23，超过 1/4 像素；
+    //  · 曲线：视图附近按默认段数细分的曲线，棱角（半径 × kCurveFacet）超过半个像素；
+    // 且视图附近的实体不多。已在局部显示时门槛放宽，免得在临界处来回切换
+    void Editor::UpdateLocalDisplay(double wpp)
+    {
+        // 图纸有没处理的改动（刚打开、全图原点还没选、可能要换原点）时这一帧不判断，等 UpdateSceneVertices 处理完的下一帧
+        if (!m_local.active && (m_doc->GetScene().IsDirty() || m_displayInvalid))
+            return;
+        const Camera& cam = m_viewport->GetCamera();
+        const CameraState cs = cam.GetState();
+        uint64_t key = 1469598103934665603ull;
+        auto mix = [&key](const void* p, size_t n)
+        {
+            const auto* b = static_cast<const unsigned char*>(p);
+            for (size_t i = 0; i < n; ++i) { key ^= b[i]; key *= 1099511628211ull; }
+        };
+        const double w = cam.GetWidth(), h = cam.GetHeight();
+        const uint64_t geom = m_doc->GetScene().GeometryVersion();
+        mix(&cs.Target, sizeof(cs.Target)); mix(&cs.Zoom, sizeof(cs.Zoom)); mix(&cs.Azimuth, sizeof(cs.Azimuth));
+        mix(&cs.Elevation, sizeof(cs.Elevation)); mix(&w, sizeof(w)); mix(&h, sizeof(h)); mix(&geom, sizeof(geom));
+        if (key == m_localKey)
+            return;
+        m_localKey = key;
+
+        if (!cam.IsPlanView() || !(w > 0.0 && h > 0.0) || !(wpp > 0.0))
+        {
+            if (m_local.active)
+                LeaveLocalDisplay();
+            return;
+        }
+        const Math::Point3 p0 = cam.ScreenToWorld(0.0, 0.0), p1 = cam.ScreenToWorld(w, h);
+        AABB view = AABB::Empty();
+        view.Expand(p0);
+        view.Expand(p1);
+        auto contains = [&view](const AABB& b)
+        {
+            return view.Min.x >= b.Min.x && view.Max.x <= b.Max.x && view.Min.y >= b.Min.y && view.Max.y <= b.Max.y;
+        };
+        // 局部显示还够用：视图仍在范围里，缩放在建立时的一半到两倍之间
+        if (m_local.active && contains(m_local.box) && wpp >= 0.5 * m_local.wpp && wpp <= 2.0 * m_local.wpp)
+            return;
+
+        // 上次查的结果还能用：几何没变，视图在它的范围里，范围不比视图大太多（放大很多后重查，范围收紧）
+        const double vw = view.Max.x - view.Min.x, vh = view.Max.y - view.Min.y;
+        const LocalEval& ev = m_localEval;
+        if (!(ev.valid && ev.geom == geom && contains(ev.box) && ev.box.Max.x - ev.box.Min.x <= 6.0 * vw))
+        {
+            AABB box = view;
+            box.Min.x -= vw; box.Max.x += vw;
+            box.Min.y -= vh; box.Max.y += vh;
+            // 俯视与 z 无关：z 置为全范围，有标高的实体（测点块参照的 z 是高程）不被包围盒相交判断排除
+            box.Min.z = -std::numeric_limits<double>::infinity();
+            box.Max.z =  std::numeric_limits<double>::infinity();
+            EvaluateLocalRegion(box);
+        }
+
+        bool need = false;
+        if (!ev.tooMany)
+        {
+            const bool stay = m_local.active;
+            const Math::Point3& o = stay ? m_globalOrigin : m_renderOrigin;
+            const double far = std::max({ std::abs(view.Min.x - o.x), std::abs(view.Max.x - o.x),
+                                          std::abs(view.Min.y - o.y), std::abs(view.Max.y - o.y) });
+            need = far / wpp * 1.2e-7 > (stay ? 0.1 : 0.25) || ev.curveR * kCurveFacet / wpp > (stay ? 0.25 : 0.5);
+        }
+        if (!need)
+        {
+            if (m_local.active)
+                LeaveLocalDisplay();
+            return;
+        }
+        if (!m_local.active)
+        {
+            // 收起全图的逐实体缓存与原点，缩小回来时拿回来
+            m_globalStash.swap(m_entityVertexCache);
+            m_entityVertexCache.clear();
+            m_globalStashValid = true;
+            m_stashStale.clear();
+            m_globalOrigin = m_renderOrigin;
+            m_globalReach  = m_renderReach;
+        }
+        DropBuildPart();
+        m_local.active = true;
+        m_local.box    = ev.box;
+        m_local.wpp    = wpp;
+        m_local.ids    = std::unordered_set<Object::ObjectID>(ev.ids.begin(), ev.ids.end());
+        m_localRebuild = true;
+    }
+
+    // 回到全图显示：拿回收起来的逐实体缓存与原点，下一帧重新拼接（局部显示期间改动过的、按当时缩放烘焙的实体重新细分）
+    void Editor::LeaveLocalDisplay()
+    {
+        if (!m_local.active)
+            return;
+        m_local = {};
+        m_localRebuild = false;
+        DropBuildPart();
+        if (m_globalStashValid)
+        {
+            for (Object::ObjectID id : m_stashStale)
+                m_globalStash.erase(id);
+            std::erase_if(m_globalStash, [](const auto& kv) { return kv.second.viewDependent; });
+            m_entityVertexCache.swap(m_globalStash);
+            m_renderOrigin  = m_globalOrigin;
+            m_renderReach   = m_globalReach;
+            m_sceneRestitch = true;
+        }
+        else
+        {
+            m_entityVertexCache.clear();
+            m_displayInvalid = true;   // 局部显示期间全图的显示设置变了：整体重新细分
+        }
+        std::unordered_map<Object::ObjectID, EntityVertexCache>{}.swap(m_globalStash);
+        m_globalStashValid = false;
+        m_stashStale.clear();
+    }
+
     bool Editor::UpdateSceneVertices(double worldPerPixel, bool zoomChanged)
     {
         auto& scene = m_doc->GetScene();
@@ -3674,6 +3920,27 @@ namespace MiniCAD
                 dragIds.insert(id);
 
         const bool exclusionChanged = (dragIds != m_sceneExcluded);
+
+        // 局部显示：改动过的实体按包围盒重新判断在不在范围里，拿回全图缓存时丢掉它们；整体标脏（可能新增了一批实体）时重新查范围
+        if (m_local.active && scene.IsDirty())
+        {
+            if (scene.IsGeometryAllDirty())
+            {
+                std::vector<Object::ObjectID> ids;
+                m_picking.QueryWorldAABB(m_local.box, ids);
+                m_local.ids = std::unordered_set<Object::ObjectID>(ids.begin(), ids.end());
+            }
+            for (Object::ObjectID id : scene.GetDirtyEntities())
+            {
+                m_stashStale.insert(id);
+                const Object* obj = scene.GetEntity(id);
+                const auto*   e   = obj && obj->IsKindOf<Entity>() ? static_cast<const Entity*>(obj) : nullptr;
+                if (e && (e->IsBoundless() || e->GetBoundingBox().Intersects(m_local.box)))
+                    m_local.ids.insert(id);
+                else
+                    m_local.ids.erase(id);
+            }
+        }
 
         // 分帧细分（BeginProgressiveBuild）：每帧都接着细分，到本帧的时限为止
         const bool building = m_build.active;
@@ -3707,11 +3974,11 @@ namespace MiniCAD
         {
             // 拖动期间 GripEditor 每帧 MarkDirty（实时几何变化），但被拖实体
             // 已不在场景流中，场景流无需重建；仅缩放+线宽/虚线场合仍需重建。
-            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid || m_sceneRestitch || building;
+            need = (zoomChanged && m_sceneViewDependent) || m_displayInvalid || m_localRebuild || m_sceneRestitch || building;
         }
         else
         {
-            need = scene.IsDirty() || exclusionChanged || m_displayInvalid || m_sceneRestitch ||
+            need = scene.IsDirty() || exclusionChanged || m_displayInvalid || m_localRebuild || m_sceneRestitch ||
                    (zoomChanged && m_sceneViewDependent) || building;
         }
 
@@ -3733,6 +4000,8 @@ namespace MiniCAD
         const auto& layerMgr = scene.GetLayerManager();
         auto isShown = [&](const Entity& entity)
         {
+            // 局部显示只画范围里的实体（见 UpdateLocalDisplay）
+            if (m_local.active && !m_local.ids.contains(entity.GetID())) return false;
             const auto& attr = entity.GetAttr();
             if (!attr.Visible) return false;
             // 布局过滤：模型页只画模型空间实体，布局页只画本布局的图纸空间实体。
@@ -3745,8 +4014,16 @@ namespace MiniCAD
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
         // 缩放变化只让依赖像素比例的实体（线宽/虚线按屏幕像素烘焙进世界顶点）失效。
         // 改动的实体离渲染原点太远（空图纸里画到测绘坐标上）时同样整体失效：换原点，所有顶点相对新原点重新细分
-        const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid || NeedsRenderRebase(isShown);
+        // 局部显示换范围（m_localRebuild）同样整体重新细分，但收起来的全图缓存仍然有效；全图的显示设置变了它才作废
+        const bool displayChanged = scene.IsAllDirty() || m_displayInvalid;
+        const bool invalidateAll  = displayChanged || m_localRebuild || NeedsRenderRebase(isShown);
+        if (displayChanged && m_globalStashValid)
+        {
+            std::unordered_map<Object::ObjectID, EntityVertexCache>{}.swap(m_globalStash);
+            m_globalStashValid = false;
+        }
         m_displayInvalid = false;
+        m_localRebuild   = false;
         if (invalidateAll)
             ChooseRenderOrigin(isShown);
 
@@ -3766,6 +4043,7 @@ namespace MiniCAD
         ctx.SetImageProvider(imageProvider);
         ctx.SetThinLines(m_thinLines);
         ctx.SetRenderOrigin(m_renderOrigin);
+        ctx.SetCurveRefinement(LocalRefinement());
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
         ctx.SetDeferLongDashes(true);   // 长虚线段延迟铺设：进动态流，缩放时只重铺这些段
 
@@ -3784,7 +4062,8 @@ namespace MiniCAD
         // 复杂线型形段（组码 75）的字形来自 SHX 形文件（ltypeshp.shx），
         // 与文字样式表无关，单独一条解析路径
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
-        if (s_blockCacheEnabled)
+        // 局部显示不用块定义级缓存：曲线只在范围里加密，记下的结果接到别处的插入上不对
+        if (s_blockCacheEnabled && !m_local.active)
             ctx.SetBlockCache(&m_blockTessCache);
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
@@ -4546,6 +4825,7 @@ namespace MiniCAD
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
             ctx.SetRenderOrigin(m_renderOrigin);   // 与场景流同一个原点：下面还从逐实体缓存复制顶点
+            ctx.SetCurveRefinement(LocalRefinement());
             // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
             ctx.SetLineTypeScale(scene.GetLineTypeScale());
             ctx.SetTextStyleTable(&scene.GetTextStyleTable());
@@ -4559,6 +4839,8 @@ namespace MiniCAD
 
             auto drawOne = [&](Object::ObjectID id)
             {
+                // 局部显示时范围外的选中实体在屏幕外，不画（全选了大图纸也不逐个细分）；拖动中的照画
+                if (m_local.active && !m_local.ids.contains(id) && std::find(dragIds.begin(), dragIds.end(), id) == dragIds.end()) return;
                 auto* obj = scene.GetEntity(id);
                 if (!obj || !obj->IsKindOf<Entity>()) return;
 

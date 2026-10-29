@@ -5,6 +5,7 @@
 #include "../Math/Color4.hpp"
 #include "Entity.hpp"
 #include "ICurveEntity.hpp"
+#include "../Draw/CurveSampling.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -68,16 +69,13 @@ namespace MiniCAD
         {
             const auto& attr  = GetAttr();
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
-            // 分段数按张角比例，与整圆 64 段的密度相同（小弧不必也分 64 段）
+            // 分段数按张角比例，与整圆 64 段的密度相同（小弧不必也分 64 段）；深度放大时 sink 要求在视图附近加密
             const double sweep     = m_arc.SweepAngle();
             const int    kSegments = std::max(4, static_cast<int>(std::ceil(std::abs(sweep) / (Math::TwoPI / 64.0))));
 
-            for (int i = 0; i < kSegments; ++i)
-            {
-                double a0 = m_arc.StartAngle + sweep *  i      / kSegments;
-                double a1 = m_arc.StartAngle + sweep * (i + 1) / kSegments;
-                sink.DrawLine(m_arc.PointAt(a0), m_arc.PointAt(a1), color, false);
-            }
+            SampleCurve(sink, m_arc.StartAngle, sweep, kSegments, m_arc.Radius,
+                        [&](double a) { return m_arc.PointAt(a); },
+                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
         }
 
         DECLARE_RUNTIME_TYPE(ArcEntity, Entity)

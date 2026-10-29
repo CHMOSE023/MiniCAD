@@ -14,6 +14,6 @@ covers: .agents/features/*.md
 | [tianzheng](tianzheng.md) | 天正对象（`TCH_*`）的解析与显示适配 | `src/Import/Tch*.h` | `MiniCADTch*Tests`、`MiniCADTianzhengTests` |
 | [view3d](view3d.md) | 三维视图、着色与轮廓线、视图方块、背景深浅 | `Camera`、`Editor`、`GUI/ViewCube` | `SolidViewTests` |
 | [main-window](main-window.md) | 主窗口界面：布局、功能区、面板（含浮出成独立窗口，浮动窗口里合并标签、最大化；图层面板按名字里的 `$` 分级显示成树）、文档拖出成独立窗口（对等多窗口：各有标题栏、功能区、快捷键）、命令行、桌面 / 网页 / Linux 宿主| `apps/Common/src/GUI`、`apps/Win32`、`apps/Web`、`apps/Linux` | `MiniCADWin --selftest`、`MiniGUITests` |
-| [display-performance](display-performance.md) | 显示性能：静态 / 动态流、虚线延迟铺设、字形实例化、选择集与夹点缓存、打开图纸后分帧细分、块定义级细分缓存、锁定图层淡显、大坐标的渲染原点（测绘坐标放大后线画偏、夹点不在线上） | `Editor`、`Viewport`、`DrawContext`、`BlockTessCache`、渲染器 | `MiniCADWin --bench` |
+| [display-performance](display-performance.md) | 显示性能：静态 / 动态流、虚线延迟铺设、字形实例化、选择集与夹点缓存、打开图纸后分帧细分、块定义级细分缓存、锁定图层淡显、大坐标的渲染原点（测绘坐标放大后线画偏、夹点不在线上）、深度放大的局部显示与曲线加密 | `Editor`、`Viewport`、`DrawContext`、`BlockTessCache`、渲染器 | `MiniCADWin --bench` |
 
 新增功能指南时照现有的结构写（概述 → 入口与数据流 → 约束与坑 → 测试与排查），开头用 `covers:` 列出覆盖的代码（逗号分隔，`*` 通配），并在上表里加一行。写完运行 `.agents/scripts/check-docs.ps1` 核对引用。

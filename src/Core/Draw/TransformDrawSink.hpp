@@ -1,6 +1,7 @@
 #pragma once
 #include "IDrawSink.hpp"
 #include "Core/Math/Mat4.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace MiniCAD
@@ -18,6 +19,8 @@ namespace MiniCAD
             // 预算缩放与镜像,供文字近似变换使用(取 X 轴向量;行向量约定,第 0、1 行是 X、Y 轴的像)。
             const double* m = m_xform.Data();
             m_scale    = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+            m_maxScale = std::max({ m_scale, std::sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]),
+                                    std::sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]) });
             m_mirrored = m[0] * m[5] - m[1] * m[4] < 0.0;
         }
 
@@ -142,6 +145,11 @@ namespace MiniCAD
         double GetWorldPerPixel() const override   { return m_target.GetWorldPerPixel(); }
         double GetViewportHeightPx() const override { return m_target.GetViewportHeightPx(); }
         void   MarkViewDependent() override        { m_target.MarkViewDependent(); }
+        // 曲线加密：弦的两端经插入变换，弦高按最大的轴向缩放放大（不等比缩放时偏保守）
+        bool   RefineCurveSegment(const Math::Point3& a, const Math::Point3& b, double sagitta, double reach) const override
+        {
+            return m_target.RefineCurveSegment(m_xform * a, m_xform * b, sagitta * m_maxScale, reach * m_maxScale);
+        }
         void   SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
         void   ToggleTextMirror() override           { m_target.ToggleTextMirror(); }
 
@@ -158,6 +166,7 @@ namespace MiniCAD
         IDrawSink&  m_target;
         Math::Mat4  m_xform;
         double      m_scale    = 1.0;     // 由矩阵 X 轴长度估算的统一缩放
+        double      m_maxScale = 1.0;     // 三个轴里最大的缩放（曲线加密的弦高用）
         bool        m_mirrored = false;   // XY 平面内行列式为负（负比例、法向朝 -Z 的插入）
     };
 }

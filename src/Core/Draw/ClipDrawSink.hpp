@@ -96,6 +96,11 @@ namespace MiniCAD
         double GetWorldPerPixel() const override           { NoteAltered(); return 0.0; }
         double GetViewportHeightPx() const override        { NoteAltered(); return 0.0; }
         void MarkViewDependent() override                  { NoteAltered(); }
+        // 曲线加密：裁剪不改变坐标，原样转发（裁剪框里的圆弧深度放大时同样加密）
+        bool RefineCurveSegment(const Math::Point3& a, const Math::Point3& b, double sagitta, double reach) const override
+        {
+            return m_target.RefineCurveSegment(a, b, sagitta, reach);
+        }
 
         // 文字测量：裁剪不改变文字尺寸，原样转发（多重引线的基线要用）
         double MeasureMTextWidth(const std::string& text, uint32_t styleId,
