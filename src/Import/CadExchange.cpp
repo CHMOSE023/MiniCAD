@@ -2834,15 +2834,10 @@ namespace MiniCAD
                 if (!m_tchConfig.Fill) return nullptr;
                 const std::string_view name = Tch::MaterialHatch(m_tchConfig, material, scale < m_tchConfig.DetailScale - 1e-9);
                 if (name.empty()) return nullptr;
-                // 图案库（内置 SOLID；assets/patterns 可放天正自带的 acad.pat）优先，没有时用近似的替代图案，再没有就不画
-                HatchPattern pattern;
-                std::vector<HatchPattern> parsed;
-                if (const HatchPattern* lib = HatchPatternLibrary::Instance().Find(name)) pattern = *lib;
-                else if (const char* text = Tch::MaterialHatchFallback(name); text && HatchPatternLibrary::Parse(text, parsed) && !parsed.empty())
-                    pattern = parsed.front();
-                else
-                    return nullptr;
-                auto e = Make<HatchEntity>(src, nullptr, std::move(boundary), std::move(pattern));
+                // 按天正自带的 acad.pat 取（已编进图案库，标准图案也按天正的比例），图案库里也没有就不画
+                const HatchPattern* pattern = HatchPatternLibrary::Instance().FindTianzheng(name);
+                if (!pattern) return nullptr;
+                auto e = Make<HatchEntity>(src, nullptr, std::move(boundary), *pattern);
                 auto& hatch = static_cast<HatchEntity&>(*e);
                 if (!hatch.GetPattern().Solid) hatch.SetScale(scale);
                 EntityAttr attr = hatch.GetAttr();

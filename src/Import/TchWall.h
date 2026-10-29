@@ -302,22 +302,4 @@ namespace MiniCAD::Tch
         if (slot < 0) return {};
         return detail ? config.Detail[static_cast<std::size_t>(slot)] : config.Standard[static_cast<std::size_t>(slot)];
     }
-
-    // 图案库里没有天正图案时的替代（.pat 格式，单位为图面毫米，乘出图比例）：普通砖为 45° 斜线、间距 2.5
-    //（与天正分解出的填充一致）；钢筋混凝土为同样的斜线加骨料：小三角形（三族线的虚线段在格点 i·(4.5,0) + j·(1.6,3.8)
-    // 处围成三角形，边长为格向量的 0.15）与两组点，样子近似天正的显示。其余图案（天然石材、金属及图纸设置里改用的卵石砌体、
-    // 加气混凝土等）没有替代：把天正的 acad.pat 放进 assets/patterns 才画得出来
-    inline const char* MaterialHatchFallback(std::string_view name)
-    {
-        if (name == "普通砖")
-            return "*普通砖\n45, 0,0, 0,2.5\n";
-        if (name == "钢筋混凝土")
-            return "*钢筋混凝土\n45, 0,0, 0,2.5\n"
-                   "0, 0,0, 1.6,3.8, 0.675,-3.825\n"
-                   "67.1663, 0,0, -1.7463,4.1474, 0.6185,-3.5046\n"
-                   "127.3493, 0.675,0, 2.73,3.5773, 0.717,-4.0631\n"
-                   "0, 2.2,1.3, 1.6,3.8, 0,-4.5\n"
-                   "0, 3.3,2.6, 1.6,3.8, 0,-4.5\n";
-        return nullptr;
-    }
 }
