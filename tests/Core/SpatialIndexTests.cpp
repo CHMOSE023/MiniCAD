@@ -52,6 +52,7 @@ int RunBlockFixTests();      // BlockFixTests.cpp，返回失败项数
 int RunMiddleDoubleClickZoomTests();  // MiddleDoubleClickZoomTests.cpp，返回失败项数
 int RunLayoutTests();                 // LayoutTests.cpp，返回失败项数
 int RunSceneAppendTests();            // SceneAppendTests.cpp，场景流追加段，返回失败项数
+int RunRenderOriginTests();           // RenderOriginTests.cpp，大坐标下顶点相对渲染原点，返回失败项数
 int RunProgressiveBuildTests();       // ProgressiveBuildTests.cpp，打开后分帧细分，返回失败项数
 int RunBlockTessCacheTests();         // BlockTessCacheTests.cpp，块定义级细分缓存，返回失败项数
 int RunDocumentViewportTests();       // DocumentViewportTests.cpp，文档拖出成独立视口，返回失败项数
@@ -340,6 +341,7 @@ int main()
     g_failures += RunMiddleDoubleClickZoomTests();
     g_failures += RunLayoutTests();
     g_failures += RunSceneAppendTests();
+    g_failures += RunRenderOriginTests();
     g_failures += RunProgressiveBuildTests();
     g_failures += RunBlockTessCacheTests();
     g_failures += RunDocumentViewportTests();

@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <functional>
 #include "Import/CadExchange.h"
+#include "Import/TchOpening.h"
 #include "Import/TchWall.h"
 #include "Import/TchText.h"
 #include "Import/TchElec.h"
@@ -246,13 +247,56 @@ int wmain(int argc, wchar_t** argv)
             std::printf("H %llx type=%s owner=%llx inModel=%d invisible=%d\n", static_cast<unsigned long long>(h),
                         o ? std::string(o->GetDxfName()).c_str() : "(missing)", o ? static_cast<unsigned long long>(o->OwnerHandle) : 0ull, inModel,
                         e ? int(e->IsInvisible) : -1);
+            // 多行文字：插入点、附着点（1～9）、方向、字高、框宽、行距、内容
+            if (const auto* mt = dynamic_cast<const MiniDWG::MText*>(o))
+                std::printf("  MTEXT at=(%.1f,%.1f) attach=%d dir=(%.4f,%.4f) h=%g width=%g spacing=%g style=%d normal=(%g,%g,%g) [%s]\n", mt->InsertPoint.X,
+                            mt->InsertPoint.Y, int(mt->AttachmentPoint), mt->AlignmentPoint.X, mt->AlignmentPoint.Y, mt->Height, mt->RectangleWidth,
+                            mt->LineSpacing, int(mt->LineSpacingStyle), mt->Normal.X, mt->Normal.Y, mt->Normal.Z, mt->Value.c_str());
+            // 填充：每条边界路径的边数、端点范围与首尾缺口（OCS 坐标；读入时缺口过大的路径会整条丢弃）
+            if (const auto* hatch = dynamic_cast<const MiniDWG::Hatch*>(o))
+                for (const auto& p : hatch->Paths)
+                {
+                    std::vector<MiniDWG::XY> pts;
+                    for (const auto& ed : p.Edges)
+                        if (const auto* l = dynamic_cast<const MiniDWG::HatchBoundaryPathLine*>(ed.get())) { pts.push_back(l->Start); pts.push_back(l->End); }
+                        else if (const auto* pl = dynamic_cast<const MiniDWG::HatchBoundaryPathPolyline*>(ed.get()))
+                            for (const auto& v : pl->Vertices) pts.push_back({ v.X, v.Y });
+                        else if (const auto* sp = dynamic_cast<const MiniDWG::HatchBoundaryPathSpline*>(ed.get()))
+                            for (const auto& v : sp->ControlPoints) pts.push_back({ v.X, v.Y });
+                    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+                    for (const auto& q : pts) { x0 = std::min(x0, q.X); y0 = std::min(y0, q.Y); x1 = std::max(x1, q.X); y1 = std::max(y1, q.Y); }
+                    std::printf("  PATH flags=%d edges=%zu box=(%.1f,%.1f)-(%.1f,%.1f)", int(p.Flags), p.Edges.size(), x0, y0, x1, y1);
+                    for (const auto& ed : p.Edges) std::printf(" %d", int(ed->GetType()));
+                    std::printf("\n");
+                }
+            // 块记录：名称与引用它的 INSERT（句柄、所有者、颜色、透明度、图层）
+            if (const auto* br = dynamic_cast<const MiniDWG::BlockRecord*>(o))
+            {
+                std::printf("  block [%s]\n", br->Name.c_str());
+                for (const auto& [ih, io] : db->Objects())
+                    if (const auto* ins = dynamic_cast<const MiniDWG::Insert*>(io.get()); ins && ins->BlockHandle == h)
+                    {
+                        const auto* il = db->FindAs<MiniDWG::Layer>(ins->LayerHandle);
+                        std::printf("  INSERT %llx owner=%llx color=%d transparency=%d layer=[%s]\n", static_cast<unsigned long long>(ih),
+                                    static_cast<unsigned long long>(ins->OwnerHandle), int(ins->Color.Index()), int(ins->Transparency.Value()),
+                                    il ? il->Name.c_str() : "?");
+                    }
+            }
             if (e)
             {
                 const auto* lt = db->FindAs<MiniDWG::LineType>(e->LineTypeHandle);
                 const auto* layer = db->FindAs<MiniDWG::Layer>(e->LayerHandle);
                 const auto* llt = layer ? db->FindAs<MiniDWG::LineType>(layer->LineTypeHandle) : nullptr;
-                std::printf("  ltype=%llx [%s] ltscale=%g color=%d layer=[%s] layerLtype=[%s]", static_cast<unsigned long long>(e->LineTypeHandle), lt ? lt->Name.c_str() : "?",
-                            e->LineTypeScale, int(e->Color.Index()), layer ? layer->Name.c_str() : "?", llt ? llt->Name.c_str() : "?");
+                std::printf("  ltype=%llx [%s] ltscale=%g color=%d transparency=%d layer=[%s] layerLtype=[%s]", static_cast<unsigned long long>(e->LineTypeHandle), lt ? lt->Name.c_str() : "?",
+                            e->LineTypeScale, int(e->Color.Index()), int(e->Transparency.Value()), layer ? layer->Name.c_str() : "?", llt ? llt->Name.c_str() : "?");
+                if (layer)   // 图层透明度在扩展数据 AcCmTransparency 的 1071 里
+                    for (const auto& x : layer->ExtendedDataList)
+                        for (const auto& r : x.Records)
+                            if (const auto* v = std::get_if<std::int32_t>(&r.Value); v && r.Code == 1071)
+                            {
+                                const auto* app = db->FindAs<MiniDWG::AppId>(x.AppIdHandle);
+                                std::printf(" layerXdata[%s]1071=0x%08x", app ? app->Name.c_str() : "?", static_cast<unsigned>(*v));
+                            }
                 if (llt)
                 {
                     std::printf(" pattern:");
@@ -338,6 +382,26 @@ int wmain(int argc, wchar_t** argv)
                             t->Rotation, int(t->HorizontalAlignment), int(t->VerticalAlignment), t->Normal.X, t->Normal.Y, t->Normal.Z,
                             int(t->IsInvisible), static_cast<unsigned long long>(t->LayerHandle));
             }
+    // MINICAD_GREPTEXT=子串：打印原文含该子串的 TEXT / ATTRIB / ATTDEF / MTEXT（句柄、类型、所有者、文字样式、原始内容）
+    if (const wchar_t* gw = _wgetenv(L"MINICAD_GREPTEXT"))
+    {
+        const auto u = std::filesystem::path(gw).u8string();
+        const std::string sub(u.begin(), u.end());
+        for (const auto& [handle, object] : db->Objects())
+        {
+            const std::string* value = nullptr;
+            MiniDWG::Handle style = MiniDWG::kNullHandle;
+            MiniDWG::XYZ at;
+            double height = 0.0;
+            if (const auto* t = dynamic_cast<const MiniDWG::TextEntity*>(object.get())) value = &t->Value, style = t->StyleHandle, at = t->InsertPoint, height = t->Height;
+            else if (const auto* m = dynamic_cast<const MiniDWG::MText*>(object.get())) value = &m->Value, style = m->StyleHandle, at = m->InsertPoint, height = m->Height;
+            if (!value || value->find(sub) == std::string::npos) continue;
+            const auto* st = db->FindAs<MiniDWG::TextStyle>(style);
+            std::printf("GT %llx %s owner=%llx at=%.1f,%.1f h=%g style=[%s|%s|%s] [%s]\n", static_cast<unsigned long long>(handle), std::string(object->GetDxfName()).c_str(),
+                        static_cast<unsigned long long>(object->OwnerHandle), at.X, at.Y, height, st ? st->Name.c_str() : "?", st ? st->Filename.c_str() : "?",
+                        st ? st->BigFontFilename.c_str() : "?", value->c_str());
+        }
+    }
     // MINICAD_LAYERS=子串：打印名称含该子串的图层的标志（1 冻结、4 锁定）、开关与颜色
     if (const wchar_t* lw = _wgetenv(L"MINICAD_LAYERS"))
     {
@@ -357,18 +421,101 @@ int wmain(int argc, wchar_t** argv)
                 std::printf("WIPEOUT %llx owner=%s layer=%s clip=%d verts=%zu\n", static_cast<unsigned long long>(handle),
                             owner ? owner->Name.c_str() : "?", layer ? layer->Name.c_str() : "?", int(w->ClippingState), w->ClipBoundaryVertices.size());
             }
-    // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）
+    // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）、其后的字段与句柄；门窗的标志
     if (std::getenv("MINICAD_WALLRAW"))
         for (const auto& [handle, object] : db->Objects())
-            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_WALL")
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && (u->Raw.DxfName == "TCH_WALL" || u->Raw.DxfName == "TCH_CURTAIN_WALL"))
             {
                 MiniDWG::DwgBitReader r(u->Raw.Dwg.Main, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
                 r.ReadByte(); r.ReadBitDouble(); r.ReadBitShort(); r.ReadByte(); r.Read2Bits(); r.ReadRawShort();
                 const int mark = r.ReadByte(), key = r.ReadByte();
                 const auto bytes = r.ReadBytes(84);
-                std::printf("WALLRAW %llx mark=%d key=%02x ", (unsigned long long)handle, mark, key);
+                std::printf("WALLRAW %llx %s mark=%d key=%02x ", (unsigned long long)handle, u->Raw.DxfName.c_str() + 4, mark, key);
                 for (auto b : bytes) std::printf("%02x", b);
+                // 受保护数据之后的字段（布局见 Tch::DecodeWall）与句柄流引用
+                const int rc0 = r.ReadByte(), openings = r.ReadBitShort(), material = r.ReadByte(), patches = r.ReadByte();
+                const double insulation = r.ReadBitDouble();
+                double joins[4];
+                for (double& j : joins) j = r.ReadBitDouble();
+                const int sig0 = r.ReadByte(), sig1 = r.Read3Bits();
+                std::printf("\n  tail rc0=%d openings=%d material=%d patches=%d insu=%g joins=%.9g,%.9g,%.9g,%.9g sig=%d,%d end=%llu/%llu refs=",
+                            rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
+                            (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
+                for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
+                // 句柄流按顺序（含空句柄 0）：内核 TDbWall::dwgInFields 先读 6 个软指针
+                std::printf("\n  handles=");
+                MiniDWG::DwgBitReader hs(u->Raw.Dwg.Handles, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
+                while (!hs.Failed() && hs.PositionInBits() < u->Raw.Dwg.HandleBits)
+                {
+                    const MiniDWG::Handle h = hs.ReadHandle(handle);
+                    if (!hs.Failed()) std::printf("%llx ", (unsigned long long)h);
+                }
                 std::printf("\n");
+                // 解码后的轴线、左右宽、连接量（块里的墙为块内坐标）
+                if (MiniCAD::Tch::TchWall w; MiniCAD::Tch::DecodeWall(*u, w) || MiniCAD::Tch::DecodeCurtainWall(*u, w) || MiniCAD::Tch::DecodeWallPrefix(*u, w))
+                    std::printf("  wall owner=%llx start=%.17g,%.17g end=%.17g,%.17g angle=%.4f width=%g,%g joins=%g,%g,%g,%g material=%d flags=0x%x\n",
+                                (unsigned long long)u->OwnerHandle, w.Start.X, w.Start.Y, w.End.X, w.End.Y, w.Angle, w.LeftWidth, w.RightWidth,
+                                w.Joins[0], w.Joins[1], w.Joins[2], w.Joins[3], w.Material, w.Flags);
+            }
+            else if (u && u->Raw.DxfName == "TCH_OPENING")
+            {
+                // 门窗：类型、宽度、镜像、所在墙与门槛线相关的两个标志
+                MiniCAD::Tch::TchOpening o;
+                if (MiniCAD::Tch::DecodeOpening(*u, o))
+                    std::printf("OPENING %llx type=%d width=%.17g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.17g,%.17g angle=%.4f\n", (unsigned long long)handle,
+                                static_cast<int>(o.Type), o.Width, o.Mirror, (unsigned long long)o.Wall, o.Flags, static_cast<unsigned>(o.DisplayFlags),
+                                o.Position.X, o.Position.Y, o.Angle);
+                // 门扇在所在墙的哪一侧（+1 左侧、-1 右侧）：门图块的 +Y 为门扇，Y 镜像时翻到另一侧
+                MiniCAD::Tch::TchWall w;
+                if (const auto* host = db->FindAs<MiniDWG::UnknownEntity>(o.Wall); host && MiniCAD::Tch::DecodeWall(*host, w))
+                {
+                    const double ly = o.MirrorY() ? -1.0 : 1.0;
+                    const double dx = w.End.X - w.Start.X, dy = w.End.Y - w.Start.Y;
+                    std::printf("  leaf_on_wall_left=%+.0f\n", (-std::sin(o.Angle) * ly * -dy + std::cos(o.Angle) * ly * dx) > 0 ? 1.0 : -1.0);
+                }
+                std::printf("  main_bits=%llu main=", (unsigned long long)u->Raw.Dwg.MainBits);
+                for (auto b : u->Raw.Dwg.Main) std::printf("%02x", b);
+                std::printf("\n");
+            }
+    if (std::getenv("MINICAD_WALLRAW"))
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get()); u && u->Raw.DxfName == "TCH_DBCONFIG")
+            {
+                MiniCAD::Tch::TchConfig config;
+                const bool ok = MiniCAD::Tch::DecodeConfig(*u, config);
+                std::printf("CONFIG %llx ok=%d fill=%d detail_scale=%g\n", (unsigned long long)handle, ok, config.Fill, config.DetailScale);
+                for (std::size_t i = 0; i < config.Standard.size(); ++i)
+                    std::printf("  hatch[%zu] standard=\"%s\" detail=\"%s\"\n", i, config.Standard[i].c_str(), config.Detail[i].c_str());
+                // 文字流（R2007 起）里的字符串依次列出：其中有各材料的填充图案名
+                MiniDWG::DwgBitReader text(u->Raw.Dwg.Text, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
+                for (int i = 0; i < 64 && !text.Failed() && text.PositionInBits() < u->Raw.Dwg.TextBits; ++i)
+                    std::printf("  text[%d]=\"%s\"\n", i, text.ReadVariableText().c_str());
+            }
+    // MINICAD_DIM：天正尺寸标注（TCH_DIMENSION2）中另行指定了文字位置（标志 0x02）的（MINICAD_DIM=all 时全部）：各段长度，
+    // 以及有位置的段的位置、该段尺寸线中点，和两者之差沿 / 垂直尺寸线方向的分量（坐标为对象所在空间的坐标）
+    if (const char* dimEnv = std::getenv("MINICAD_DIM"))
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_DIMENSION2")
+            {
+                MiniCAD::Tch::TchDimension d;
+                if (!MiniCAD::Tch::DecodeDimension(*u, d) || (d.TextPositions.empty() && std::strcmp(dimEnv, "all") != 0)) continue;
+                const double ux = std::cos(d.Angle), uy = std::sin(d.Angle), off = d.Offset * d.Scale;
+                std::printf("DIM %llx owner=%llx at=%.3f,%.3f angle=%.17g offset=%g scale=%g flags=0x%x spans=", (unsigned long long)handle,
+                            (unsigned long long)u->OwnerHandle, d.Position.X, d.Position.Y, d.Angle, off, d.Scale, d.Flags);
+                for (double s : d.Spans) std::printf("%g ", s);
+                std::printf("\n");
+                double t = 0;
+                for (std::size_t i = 0; i < d.Spans.size(); ++i)
+                {
+                    const double mid = t + d.Spans[i] / 2;
+                    t += d.Spans[i];
+                    const auto it = d.TextPositions.find(static_cast<int>(i));
+                    if (it == d.TextPositions.end()) continue;
+                    const double mx = d.Position.X + ux * mid - uy * off, my = d.Position.Y + uy * mid + ux * off;
+                    const double dx = it->second.first - mx, dy = it->second.second - my;
+                    std::printf("  seg %zu text=%.3f,%.3f mid=%.3f,%.3f along=%.3f across=%.3f\n", i, it->second.first, it->second.second, mx, my,
+                                dx * ux + dy * uy, -dx * uy + dy * ux);
+                }
             }
     // MINICAD_MLEADER：打印天正引出标注的解码结果与文字样式（字体、宽度、_TCH 扩展数据）
     if (std::getenv("MINICAD_MLEADER"))
@@ -476,6 +623,20 @@ int wmain(int argc, wchar_t** argv)
                 ++hs[std::string(owner ? owner->Name : "?") + " | " + (layer ? layer->Name : "?") + " | " + (h->IsSolid ? "SOLID" : h->Pattern.Name)];
             }
         for (const auto& [k, n] : hs) std::printf("HATCH %d %s\n", n, k.c_str());
+        // 读入时会跳过的两类：边界路径都没有边、非实心又没存图案线（要按名称查图案库）
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* h = dynamic_cast<const MiniDWG::Hatch*>(object.get()))
+            {
+                std::size_t edges = 0;
+                for (const auto& p : h->Paths) edges += p.Edges.size();
+                const bool noLines = !h->IsSolid && !h->GradientColor.Enabled && h->Pattern.Lines.empty();
+                if (edges == 0 || noLines)
+                {
+                    const auto* owner = db->FindAs<MiniDWG::BlockRecord>(h->OwnerHandle);
+                    std::printf("HATCHSKIP %llx owner=[%s] pattern=%s paths=%zu edges=%zu noPatternLines=%d\n", static_cast<unsigned long long>(handle),
+                                owner ? owner->Name.c_str() : "?", h->IsSolid ? "SOLID" : h->Pattern.Name.c_str(), h->Paths.size(), edges, int(noLines));
+                }
+            }
         // 每种图案打印一个样本的线族与边界
         std::map<std::string, int> seen;
         for (const auto& [handle, object] : db->Objects())
@@ -574,10 +735,12 @@ int wmain(int argc, wchar_t** argv)
             if (const auto* ds = dynamic_cast<const MiniDWG::DimensionStyle*>(target))
             {
                 const auto* ts = db->FindAs<MiniDWG::TextStyle>(ds->StyleHandle);
-                std::printf("    DIMSTYLE %s scale=%g txt=%g asz=%g tsz=%g exo=%g exe=%g gap=%g tvp=%g dec=%d adec=%d lfac=%g txsty=%s\n",
+                // 颜色为 ACI 号：0 随块，256 随层，-1 真彩
+                std::printf("    DIMSTYLE %s scale=%g txt=%g asz=%g tsz=%g exo=%g exe=%g gap=%g tvp=%g dec=%d adec=%d azin=%d lfac=%g txsty=%s clrt=%d clrd=%d clre=%d\n",
                             ds->Name.c_str(), ds->ScaleFactor, ds->TextHeight, ds->ArrowSize, ds->TickSize,
                             ds->ExtensionLineOffset, ds->ExtensionLineExtension, ds->DimensionLineGap, ds->TextVerticalPosition,
-                            ds->DecimalPlaces, ds->AngularDecimalPlaces, ds->LinearScaleFactor, ts ? ts->Name.c_str() : "?");
+                            ds->DecimalPlaces, ds->AngularDecimalPlaces, static_cast<int>(ds->AngularZeroHandling), ds->LinearScaleFactor,
+                            ts ? ts->Name.c_str() : "?", ds->TextColor.Index(), ds->DimensionLineColor.Index(), ds->ExtensionLineColor.Index());
             }
             if (const auto* ts = dynamic_cast<const MiniDWG::TextStyle*>(target))
             {
@@ -916,7 +1079,7 @@ int wmain(int argc, wchar_t** argv)
         };
         auto visit = [&](const MiniCAD::Entity& e) {
             if (e.IsKindOf<MiniCAD::TextEntity>()) { const auto& t = static_cast<const MiniCAD::TextEntity&>(e); check(t.GetText(), t.GetStyleId()); }
-            else if (e.IsKindOf<MiniCAD::MTextEntity>()) { const auto& t = static_cast<const MiniCAD::MTextEntity&>(e); check(t.GetText(), t.GetStyleId()); }
+            else if (e.IsKindOf<MiniCAD::MTextEntity>()) { const auto& t = static_cast<const MiniCAD::MTextEntity&>(e); check(t.GetPlainText(), t.GetStyleId()); }
         };
         document.GetScene().ForEachObject([&](const MiniCAD::Object& o) { if (o.IsKindOf<MiniCAD::Entity>()) visit(static_cast<const MiniCAD::Entity&>(o)); });
         document.GetScene().GetBlockTable().ForEach([&](MiniCAD::BlockID, const MiniCAD::BlockEntity& b) { for (const auto& e : b.GetEntities()) visit(*e); });

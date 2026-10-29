@@ -151,8 +151,8 @@ namespace MiniCAD
                         if (cell.Align == TableAlign::Center)     ox = std::max(m_margin, (m_cols[c] - maxW) * 0.5);
                         else if (cell.Align == TableAlign::Right) ox = std::max(m_margin, m_cols[c] - m_margin - maxW);
 
-                        // EmitMText 的原点在首行底部
-                        sink.EmitMText(ToWorld(colLeft + ox, -(top + th)), plain, GetStyleId(), th, GetRotation(),
+                        // EmitMText 的原点在首行底部；绘制时保留下划线等装饰的开关
+                        sink.EmitMText(ToWorld(colLeft + ox, -(top + th)), StripInlineCodes(cell.Text, true), GetStyleId(), th, GetRotation(),
                                        cell.Align == TableAlign::Left ? avail : 0.0, color);
                     }
                     colLeft += m_cols[c];

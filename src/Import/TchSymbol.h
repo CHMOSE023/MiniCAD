@@ -690,62 +690,62 @@ namespace MiniCAD::Tch
         // align：0 左对齐、1 居中、2 右对齐，(x, y) 为该对齐位置的基线点
         // asciiScale / asciiWidth / tzAscii：西文段的字高系数、宽度因子（0 为样式自身）、天正排布用的每字宽度（× 名义字高）；
         // 注释符号为 0.85、0.6 / 0.85、0.5714，天正单行文字为 1、0（样式）、0.604
+        // tianzhengAdvance：各段也按天正步进排布，每段画出的宽度同样取天正的——按 MiniCAD 实际显示的字体（simplex / TSSDCHN）
+        // 反算宽度因子。天正的大字体 GBCBIG 汉字步进约 0.728 × 字高，替代的 TSSDCHN 为 1，不反算时汉字段压到下一段上、
+        // 长句冲出表格（8#楼平面的引出标注、平面小说明）；天正的显示也是各段占满自己的步进（DN100 每字 0.4 × 名义字高）。
+        // 天正上标 ^U…^U（m^U2^U 为 m²）：字高为本段的一半、抬高 0.5 × 名义字高，每字步进 0.35 × 西文步进
+        //（8#楼平面“公卫（4.56m²）”“厨房（8.58m²）”的天正 2014 分解结果核对）
         inline void AddRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int align,
                             int color = 7, int layer = 0, int style = 0, double asciiScale = 0.85, double asciiWidth = 0.6 / 0.85,
                             double tzAscii = 0.5714, double tzWide = 0.69, bool tianzhengAdvance = false, double wideScale = 0.96454)
         {
-            struct Run { std::string Value; bool Wide; double Width; double Tz = 0; };
+            struct Run { std::string Value; bool Wide = false, Sup = false; double Width = 0, Tz = 0; };
             std::vector<Run> runs;
+            bool sup = false;
             for (std::size_t i = 0; i < text.size();)
             {
+                if (text.compare(i, 2, "^U") == 0) { sup = !sup; i += 2; continue; }
                 const unsigned char c = static_cast<unsigned char>(text[i]);
-                const std::size_t len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+                std::size_t len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
+                // 对齐按天正自己的字宽定起点（分解结果核对：西文每字 0.5714、句点 0.114、汉字约 0.69 × 名义字高），
+                // 这样文字起点与天正一致，不会因 MiniCAD 字体宽窄不同越过引线转折点等
+                double tz = c >= 0x80 ? tzWide : (c == '.' || c == ',') ? 0.2 * tzAscii : tzAscii;
+                // AutoCAD 控制码 %%%、%%c / %%d / %%p、%%nnn 显示为一个字符
+                if (c == '%' && i + 2 < text.size() && text[i + 1] == '%')
+                {
+                    len = 3;
+                    while (len < 5 && i + len < text.size() && std::isdigit(static_cast<unsigned char>(text[i + len])) &&
+                           std::isdigit(static_cast<unsigned char>(text[i + 2]))) ++len;
+                    tz = tzAscii;
+                }
                 const bool wide = c >= 0x80;
-                if (runs.empty() || runs.back().Wide != wide) runs.push_back({{}, wide, 0, 0});
+                if (runs.empty() || runs.back().Wide != wide || runs.back().Sup != sup) runs.push_back({{}, wide, sup});
                 runs.back().Value.append(text, i, len);
+                runs.back().Tz += (sup ? 0.35 : 1.0) * tz * nominal;
                 i += len;
             }
-            double total = 0;
+            double tz = 0;
             for (auto& r : runs)
             {
                 r.Width = r.Wide ? DisplayExtent("", r.Value).Width * wideScale * nominal
                                  : DisplayExtent("simplex", r.Value).Width * asciiScale * (asciiWidth > 0 ? asciiWidth : 1.0) * nominal;
-                total += r.Width;
+                if (r.Sup) r.Width *= 0.5;
+                tz += r.Tz;
             }
-            // 对齐按天正自己的字宽定起点（分解结果核对：西文每字 0.5714、句点 0.114、汉字约 0.69 × 名义字高），
-            // 这样文字起点与天正一致，不会因 MiniCAD 字体宽窄不同越过引线转折点等
-            double tz = 0;
-            std::size_t runIndex = 0, runEnd = runs.empty() ? 0 : runs[0].Value.size(), consumed = 0;
-            for (std::size_t i = 0; i < text.size();)
-            {
-                while (runIndex + 1 < runs.size() && i >= consumed + runEnd) { consumed += runEnd; runEnd = runs[++runIndex].Value.size(); }
-                const double before = tz;
-                const unsigned char c = static_cast<unsigned char>(text[i]);
-                // AutoCAD 控制码 %%%、%%c / %%d / %%p、%%nnn 显示为一个字符
-                if (c == '%' && i + 2 < text.size() && text[i + 1] == '%')
-                {
-                    std::size_t n = 3;
-                    while (n < 5 && i + n < text.size() && std::isdigit(static_cast<unsigned char>(text[i + n])) &&
-                           std::isdigit(static_cast<unsigned char>(text[i + 2]))) ++n;
-                    tz += tzAscii;
-                    i += n;
-                    if (!runs.empty()) runs[runIndex].Tz += (tz - before) * nominal;
-                    continue;
-                }
-                tz += c >= 0x80 ? tzWide : (c == '.' || c == ',') ? 0.2 * tzAscii : tzAscii;
-                i += c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
-                if (!runs.empty()) runs[runIndex].Tz += (tz - before) * nominal;
-            }
-            tz *= nominal;
-            (void)total;
             double cursor = align == 1 ? -tz / 2 : align == 2 ? -tz : 0;
             const double c = std::cos(rotation), s = std::sin(rotation);
             for (const auto& r : runs)
             {
                 if (r.Value.find_first_not_of(' ') != std::string::npos)
-                    g.Texts.push_back({{x + cursor * c, y + cursor * s}, r.Wide ? wideScale * nominal : asciiScale * nominal, rotation, r.Value, 7, style, color, layer,
-                                       r.Wide ? 0.0 : asciiWidth});
-                cursor += tianzhengAdvance ? r.Tz : r.Width;     // tianzhengAdvance：各段也按天正步进排布（MiniCAD 字宽与天正字体相差较大时）
+                {
+                    const double height = (r.Wide ? wideScale : asciiScale) * nominal * (r.Sup ? 0.5 : 1.0);
+                    const double rise = r.Sup ? 0.5 * nominal : 0.0;
+                    double width = r.Wide ? 0.0 : asciiWidth;
+                    if (tianzhengAdvance)
+                        if (const double natural = DisplayExtent(r.Wide ? "" : "simplex", r.Value).Width * height; natural > 0) width = r.Tz / natural;
+                    g.Texts.push_back({{x + cursor * c - rise * s, y + cursor * s + rise * c}, height, rotation, r.Value, 7, style, color, layer, width});
+                }
+                cursor += tianzhengAdvance ? r.Tz : r.Width;
             }
         }
     }

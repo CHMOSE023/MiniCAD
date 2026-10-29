@@ -15,6 +15,8 @@ namespace MiniGUI
 
     // ── 列表 ─────────────────────────────────────────────────────
 
+    enum class ExpandState : uint8_t { None, Collapsed, Expanded };     // None：没有子行，不画展开箭头
+
     struct ListItem
     {
         std::string text;                           // 第一列 / 单列时的文字
@@ -22,6 +24,8 @@ namespace MiniGUI
         Color32     swatch = Colors::Transparent;   // 单列时行首的小色块（例如图层颜色），透明表示没有
         std::vector<std::string> cells;             // 多列时第 1 列起的文字（第 0 列用 text）
         uint64_t    userData = 0;
+        int         depth  = 0;                     // 树形表格（ListView::SetTreeColumn）：缩进几级
+        ExpandState expand = ExpandState::None;     // 树形表格：展开箭头
     };
 
     // 表格列
@@ -42,6 +46,7 @@ namespace MiniGUI
     // 列表视图：固定行高，只绘制可见的行（十万行也不卡）。
     // - 单列：文字 + 可选色块 + 右侧次要文字，或完全自定义绘制（SetItemPainter，例如线型预览）
     // - 多列（SetColumns）：表头可拖动调整列宽、点击标题排序（由调用方排序数据）、单元格可自定义绘制和点击
+    // - 树形表格（SetTreeColumn）：某一列按层级缩进、画展开箭头，展开 / 折叠由调用方增减行
     // - 键盘：上下、Home/End、PageUp/PageDown（Shift 连选），Enter 激活，F2 在位编辑，
     //   多选时 Ctrl+空格切换、Ctrl+A 全选；直接输入字母按开头查找
     // - 右键：先选中所在行，再弹出 SetRowContextMenu 提供的菜单
@@ -76,13 +81,22 @@ namespace MiniGUI
 
         static constexpr float kHeaderHeight = 28.0f;
 
+        // ── 树形表格 ────────────────────────────────────────────
+        // 指定一列按 ListItem::depth 缩进并画展开箭头（-1 关闭）。行的增减由调用方完成：点箭头、在行上按 → / ←
+        // 时回调 SetOnExpandToggled，调用方改 expand 后重新 SetItems。← 在没有展开的行上回到上级行。
+        // 这一列的 CellPainter、在位编辑框拿到的是缩进与箭头之后的区域
+        void SetTreeColumn(int column) { m_treeColumn = column; Invalidate(); }
+        void SetOnExpandToggled(std::function<void(int row)> cb) { m_onExpandToggled = std::move(cb); }
+        static constexpr float kTreeIndent = 16.0f;     // 每一级的缩进
+        static constexpr float kTreeArrow  = 16.0f;     // 展开箭头占的宽度（没有箭头的行也留出，名字对齐）
+
         // ── 自定义绘制 ──────────────────────────────────────────
         void SetItemPainter(ItemPainter painter) { m_itemPainter = std::move(painter); Invalidate(); }
         void SetCellPainter(CellPainter painter) { m_cellPainter = std::move(painter); Invalidate(); }
 
         // ── 选择 ────────────────────────────────────────────────
         int  GetCurrent() const { return m_current; }               // 焦点行（单选时即选中行）
-        void SetCurrent(int index, bool select = true);
+        void SetCurrent(int index, bool select = true, bool scroll = true);   // scroll：滚动到这一行
         bool IsSelected(int index) const;
         std::vector<int> GetSelection() const;
         void SelectAll();
@@ -126,8 +140,11 @@ namespace MiniGUI
         int  BoundaryAt(float localX) const;                        // 表头里靠近哪条列分隔线
         int  FirstEditableColumn() const;
         void CancelSlowEdit();
+        float TreeInset(int row, int column) const;                 // 树形列里缩进与箭头的宽度；别的列为 0
+        void ToggleExpand(int row);
 
         std::vector<ListItem>   m_items;
+        uint32_t                m_itemsVersion = 0;                 // SetItems 一次加一：在位编辑的回调里行被换掉时不再写回
         std::vector<char>       m_selected;
         std::vector<ListColumn> m_columns;
         SelectionMode           m_mode      = SelectionMode::Single;
@@ -149,6 +166,8 @@ namespace MiniGUI
         float m_resizeStartW   = 0.0f;
         int   m_pressedHeader  = -1;
 
+        int   m_treeColumn     = -1;
+
         // 在位编辑
         bool         m_editable = false;
         InlineEditor m_editor;
@@ -164,6 +183,7 @@ namespace MiniGUI
         std::function<void(int, int)> m_onCellClicked;
         std::function<void(int)> m_onHeaderClicked;
         std::function<bool(int, int, const std::string&)> m_onItemEdited;
+        std::function<void(int)> m_onExpandToggled;
     };
 
     // ── 树 ───────────────────────────────────────────────────────

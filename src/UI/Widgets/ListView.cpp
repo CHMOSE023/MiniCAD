@@ -44,6 +44,15 @@ namespace MiniGUI
             last  = std::min(count - 1, static_cast<int>(std::floor((clip.max.y - content.min.y) / rowH)));
         }
 
+        // 展开箭头：▸ / ▾（树、树形表格共用）
+        void DrawExpandArrow(DrawList& dl, Vec2 c, bool expanded, ColorRef color)
+        {
+            if (expanded)
+                dl.AddTriangleFilled({ c.x - 4.0f, c.y - 2.0f }, { c.x + 4.0f, c.y - 2.0f }, { c.x, c.y + 3.0f }, color);
+            else
+                dl.AddTriangleFilled({ c.x - 2.0f, c.y - 4.0f }, { c.x + 3.0f, c.y }, { c.x - 2.0f, c.y + 4.0f }, color);
+        }
+
         bool StartsWithNoCase(const std::string& text, const std::string& prefix)
         {
             if (prefix.size() > text.size())
@@ -118,10 +127,18 @@ namespace MiniGUI
                     for (int c = 0; c < static_cast<int>(m_list->m_columns.size()); ++c)
                     {
                         const ListColumn& col = m_list->m_columns[static_cast<size_t>(c)];
-                        const Rect cell{ x, row.min.y, x + col.width, row.max.y };
+                        Rect cell{ x, row.min.y, x + col.width, row.max.y };
                         x += col.width;
                         if (cell.max.x < dl.GetClipRect().min.x || cell.min.x > dl.GetClipRect().max.x)
                             continue;
+                        if (c == m_list->m_treeColumn)
+                        {
+                            const float inset = m_list->TreeInset(i, c);
+                            if (item.expand != ExpandState::None)
+                                DrawExpandArrow(dl, { cell.min.x + inset - ListView::kTreeArrow * 0.5f, cell.Center().y },
+                                                item.expand == ExpandState::Expanded, enabled ? Theme::TextDim : Theme::TextDisabled);
+                            cell.min.x = std::min(cell.max.x, cell.min.x + inset);
+                        }
                         if (m_list->m_cellPainter && m_list->m_cellPainter(dl, cell, i, c, selected))
                             continue;
                         text.Draw(dl, Rect{ cell.min.x + kCellPad, cell.min.y, cell.max.x - kCellPad, cell.max.y },
@@ -174,8 +191,19 @@ namespace MiniGUI
                     break;
                 if (e.button == MouseButton::Left && valid >= 0)
                 {
-                    m_list->ClickRow(valid, m_list->ColumnAt(e.localPosition.x), e.modifiers, e.clickCount);
+                    const int column = m_list->ColumnAt(e.localPosition.x);
                     e.handled = true;
+                    // 点在展开箭头上：只切换展开，不改选择
+                    if (column == m_list->m_treeColumn && m_list->m_items[static_cast<size_t>(valid)].expand != ExpandState::None)
+                    {
+                        const float right = m_list->GetCellRect(valid, column).min.x + m_list->TreeInset(valid, column);
+                        if (e.localPosition.x >= right - ListView::kTreeArrow && e.localPosition.x < right)
+                        {
+                            m_list->ToggleExpand(valid);
+                            break;
+                        }
+                    }
+                    m_list->ClickRow(valid, column, e.modifiers, e.clickCount);
                 }
                 else if (e.button == MouseButton::Right)
                 {
@@ -216,6 +244,7 @@ namespace MiniGUI
         m_editor.Cancel();
         CancelSlowEdit();
         m_items = std::move(items);
+        ++m_itemsVersion;
         m_selected.assign(m_items.size(), 0);
         m_current  = m_items.empty() ? -1 : std::min(m_current, GetItemCount() - 1);
         m_anchor   = m_current;
@@ -301,6 +330,25 @@ namespace MiniGUI
         return m_columns.empty() ? 0 : static_cast<int>(m_columns.size()) - 1;
     }
 
+    float ListView::TreeInset(int row, int column) const
+    {
+        if (column != m_treeColumn || row < 0 || row >= GetItemCount())
+            return 0.0f;
+        return 2.0f + kTreeIndent * static_cast<float>(m_items[static_cast<size_t>(row)].depth) + kTreeArrow;
+    }
+
+    void ListView::ToggleExpand(int row)
+    {
+        CancelSlowEdit();
+        if (m_editor.IsActive())
+            m_editor.Commit();
+        if (m_onExpandToggled && row >= 0 && row < GetItemCount() && m_items[static_cast<size_t>(row)].expand != ExpandState::None)
+        {
+            auto cb = m_onExpandToggled;
+            cb(row);
+        }
+    }
+
     // =========================================================
     // 选择
     // =========================================================
@@ -352,7 +400,7 @@ namespace MiniGUI
         ScrollIntoView(Rect{ GetScrollOffset().x, m_rowHeight * index, GetScrollOffset().x + 1.0f, m_rowHeight * (index + 1) });
     }
 
-    void ListView::SetCurrent(int index, bool select)
+    void ListView::SetCurrent(int index, bool select, bool scroll)
     {
         if (index < 0 || index >= GetItemCount())
             return;
@@ -363,7 +411,8 @@ namespace MiniGUI
             m_selected[static_cast<size_t>(index)] = 1;
             NotifySelection();
         }
-        EnsureVisible(index);
+        if (scroll)
+            EnsureVisible(index);
         Invalidate();
     }
 
@@ -507,13 +556,17 @@ namespace MiniGUI
             // 单列：编辑框从文字开始（跳过色块）
             rect.min.x += ColorAlpha(m_items[static_cast<size_t>(row)].swatch) != 0 ? 24.0f : 2.0f;
         }
+        if (const float inset = TreeInset(row, column); inset > 0.0f)
+            rect.min.x = std::max(rect.min.x, std::min(rect.max.x - 24.0f, rect.min.x + inset));   // 树形列：从缩进、箭头之后开始
         rect = rect.Deflated(1.0f);
 
         m_editor.Begin(GetContent(), this, rect, GetCellText(row, column), [this, row, column](const std::string& text)
         {
+            const uint32_t version = m_itemsVersion;
             if (m_onItemEdited && !m_onItemEdited(row, column, text))
                 return false;
-            SetCellText(row, column, text);
+            if (m_itemsVersion == version)      // 回调里重建了行（例如图层改名后重新排序）：新的行已是改后的样子
+                SetCellText(row, column, text);
             return true;
         });
         return true;
@@ -711,6 +764,32 @@ namespace MiniGUI
             if (!BeginEdit(m_current))
                 return;
             break;
+        case Key::Right:
+        case Key::Left:
+        {
+            // 树形表格：→ 展开（已展开时进第一个子行）；← 折叠（没展开时回到上级行）
+            if (m_treeColumn < 0 || cur < 0 || shift || ctrl)
+                return;
+            const ListItem& item = m_items[static_cast<size_t>(cur)];
+            if (e.key == Key::Right)
+            {
+                if (item.expand == ExpandState::Collapsed)
+                    ToggleExpand(cur);
+                else if (item.expand == ExpandState::Expanded && cur + 1 < GetItemCount())
+                    MoveCurrent(cur + 1, false, false);
+            }
+            else if (item.expand == ExpandState::Expanded)
+                ToggleExpand(cur);
+            else
+            {
+                int parent = cur - 1;
+                while (parent >= 0 && m_items[static_cast<size_t>(parent)].depth >= item.depth)
+                    --parent;
+                if (parent >= 0)
+                    MoveCurrent(parent, false, false);
+            }
+            break;
+        }
         case Key::Space:
             if (m_mode == SelectionMode::Multiple && ctrl && cur >= 0)
             {
@@ -850,15 +929,7 @@ namespace MiniGUI
                 float x = row.min.x + 4.0f + m_tree->m_indent * static_cast<float>(rowInfo.depth);
                 const float cy = row.Center().y;
                 if (item->HasChildren())
-                {
-                    // 展开箭头：▸ / ▾
-                    const Vec2 c{ x + 8.0f, cy };
-                    const ColorRef ac = enabled ? Theme::TextDim : Theme::TextDisabled;
-                    if (item->IsExpanded())
-                        dl.AddTriangleFilled({ c.x - 4.0f, c.y - 2.0f }, { c.x + 4.0f, c.y - 2.0f }, { c.x, c.y + 3.0f }, ac);
-                    else
-                        dl.AddTriangleFilled({ c.x - 2.0f, c.y - 4.0f }, { c.x + 3.0f, c.y }, { c.x - 2.0f, c.y + 4.0f }, ac);
-                }
+                    DrawExpandArrow(dl, { x + 8.0f, cy }, item->IsExpanded(), enabled ? Theme::TextDim : Theme::TextDisabled);
                 x += 18.0f;
 
                 if (ColorAlpha(item->GetSwatch()) != 0)

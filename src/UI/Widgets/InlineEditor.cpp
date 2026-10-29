@@ -48,11 +48,16 @@ namespace MiniGUI
             // 此时正处于焦点切换过程中，不能再抢回焦点：被拒绝就直接取消
             if (!focused && !m_ending && m_box)
             {
-                const std::string text = m_box->GetText();
-                if (m_commit && !m_commit(text))
-                    Cancel();
-                else if (m_box)
-                    End();
+                TextBox* const box = m_box;
+                const std::string text = box->GetText();
+                const bool accepted = !m_commit || m_commit(text);
+                if (m_box == box)       // 回调里可能已经结束了这次编辑（见 Commit）
+                {
+                    if (accepted)
+                        End();
+                    else
+                        Cancel();
+                }
             }
         });
 
@@ -66,18 +71,22 @@ namespace MiniGUI
     {
         if (!m_box || m_ending)
             return false;
-        const std::string text = m_box->GetText();
+        // 回调里可能已经结束了这次编辑，甚至开始了新的一次：例如图层面板改名后同步重建行，
+        // ListView::SetItems 会取消编辑。只结束 / 重新聚焦自己这次的输入框
+        TextBox* const box = m_box;
+        const std::string text = box->GetText();
         if (m_commit && !m_commit(text))
         {
             // 拒绝：继续编辑（输入框可能因为失焦而提交，重新聚焦）
-            if (m_box)
+            if (m_box == box)
             {
-                m_box->Focus();
-                m_box->SelectAll();
+                box->Focus();
+                box->SelectAll();
             }
             return false;
         }
-        End();
+        if (m_box == box)
+            End();
         return true;
     }
 

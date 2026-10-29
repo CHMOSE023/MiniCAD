@@ -1,7 +1,8 @@
-// 天正线图案（TCH_PATH_ARRAY）：私有布局解码与沿路径排布
+// 天正线图案（TCH_PATH_ARRAY）：私有布局解码与沿路径排布；天正矩形（TCH_RECT）的对角线
 // 合成对象的数值取自真实样例与用 MiniCADTchPatch 构造的变体，期望值取自天正 2014 的分解结果（docs/Tch-compatibility.md）：
 // 图案块里的圆弧经不等比缩放分解为椭圆弧，按中心与两轴长比对；直线按端点比对
 #include "Import/TchPathArray.h"
+#include "Import/TchShape.h"
 #include "Import/CadExchange.h"
 #include "Dwg/Write/DwgBitWriter.h"
 #include "Dwg/Write/DwgWriter.h"
@@ -61,6 +62,29 @@ namespace
         r.WriteHandle(DwgRef::SoftPointer, 0);
         r.WriteHandle(DwgRef::HardPointer, block);
         raw.HandleBits = r.PositionInBits(); raw.Handles = r.Take();
+        return e;
+    }
+
+    // 天正矩形（版本 2）：中心 (1000, 2000)、长 400、宽 200、转角 rotation，flag 为矩形标志
+    std::unique_ptr<UnknownEntity> RectObject(int flag, double rotation = 0)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_RECT";
+        auto& raw = e->Raw.Dwg;
+        raw.Version = CadVersion::AC1027;
+        DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
+        r.WriteByte(5); r.WriteBitDouble(100); r.WriteBitDouble(0); r.WriteByte(1); r.WriteByte(0); r.WriteBitLong(0);
+        r.WriteByte(2); r.WriteBitShort(static_cast<std::int16_t>(flag));
+        r.WriteBitDouble(1000); r.WriteBitDouble(2000); r.WriteBitDouble(0);
+        // 天正自定义编码的双精度：两位 00 后接 RD，10 为 0
+        auto tchDouble = [&](double v) {
+            if (v == 0) { r.WriteBit(true); r.WriteBit(false); return; }
+            r.WriteBit(false); r.WriteBit(false); r.WriteRawDouble(v);
+        };
+        tchDouble(rotation); tchDouble(400); tchDouble(200); tchDouble(0);
+        r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteBitDouble(1);
+        r.WriteByte(0);
+        raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         return e;
     }
 
@@ -208,6 +232,43 @@ int main()
         Check(!DecodePathArray(*PathObject(one), a), "a path needs at least two vertices");
         PathSpec zero = Cases()[0].Spec; zero.Width = 0;
         Check(!DecodePathArray(*PathObject(zero), a), "zero pattern width is rejected");
+    }
+
+    // ── 天正矩形的对角线（内核 TDbRect::ExplodeOrDraw2d）：标志 1 左下—右上，2 左上—右下，3 两条都画（8#楼 套管图例），0 只有矩形 ──
+    {
+        // 矩形之外的线段（两点的路径），端点按 x 排序
+        auto diagonals = [](const TchGraphics& g) {
+            std::vector<Seg> out;
+            for (std::size_t i = 1; i < g.Paths.size(); ++i)
+            {
+                if (g.Paths[i].Points.size() != 2) return std::vector<Seg>{};
+                auto a = g.Paths[i].Points[0].P, b = g.Paths[i].Points[1].P;
+                if (b.X < a.X) std::swap(a, b);
+                out.push_back({a.X, a.Y, b.X, b.Y});
+            }
+            return out;
+        };
+        auto same = [](const std::vector<Seg>& got, const std::vector<Seg>& want) {
+            if (got.size() != want.size()) return false;
+            for (const auto& w : want)
+                if (!std::any_of(got.begin(), got.end(), [&](const Seg& s) { return SameSeg(s, w); })) return false;
+            return true;
+        };
+        const Seg rising{800, 1900, 1200, 2100}, falling{800, 2100, 1200, 1900};
+        TchRect t;
+        bool ok = true;
+        for (int flag : {0, 1, 2, 3})
+        {
+            ok = ok && DecodeRect(*RectObject(flag), t, &why) && t.Flag == flag && Near(t.Length, 400) && Near(t.Width, 200);
+            const auto d = diagonals(BuildRect(t));
+            const std::vector<Seg> want = flag == 0 ? std::vector<Seg>{} : flag == 1 ? std::vector<Seg>{rising}
+                                        : flag == 2 ? std::vector<Seg>{falling} : std::vector<Seg>{rising, falling};
+            ok = ok && BuildRect(t).Paths.front().Points.size() == 5 && same(d, want);
+        }
+        Check(ok, ("rectangle flag adds the diagonals drawn by Tianzheng (1 rising, 2 falling, 3 both) " + why).c_str());
+        // 转 90°：局部的左下—右上变成 (1100, 1800)—(900, 2200)
+        Check(DecodeRect(*RectObject(1, std::numbers::pi / 2), t) && same(diagonals(BuildRect(t)), {{900, 2200, 1100, 1800}}),
+              "rectangle diagonals turn with the rectangle");
     }
 
     // ── 端到端：图案块 + 线图案 → DWG → Scene，每个单元一个块参照 ──

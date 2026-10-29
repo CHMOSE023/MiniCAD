@@ -1,4 +1,4 @@
-// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形、TrueType 单点轮廓 ─────────
+// ── 文字样式测试：样式表规则、场景序列化、使用统计、宽度因子 / 倾斜角作用于字形、TrueType 单点轮廓、\U+XXXX 转义、下划线 ─────────
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
@@ -8,6 +8,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Text/Font/FontEngine.h"
 #include "Text/Font/TTFFont.h"
+#include "Text/Layout/TextLayoutEngine.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -209,6 +210,52 @@ int RunTextStyleTests()
         Check(ok, "宽度因子 2：字距加倍；倾斜 45°：竖笔画顶端右移一个字高");
     }
 
+    // ── 4b. 镜像的块参照里（ToggleTextMirror）文字沿基线上下翻转，下划线跟着到基线上方 ─────────
+    {
+        Scene s;
+        StrokeFont font;
+        std::vector<Vertex_P3_C4> lines, fills;
+        std::vector<Vertex_P3_C4_UV> tex;
+        Overlay ov;
+        FontResolver resolver = [&](uint32_t) { return ResolvedTextStyle{ &font, 1.0, 0.0 }; };
+        DrawContext ctx(lines, fills, tex, ov, s.GetLayerManager(), s.GetLineTypeTable(), 0.0, nullptr, resolver);
+        ctx.ToggleTextMirror();
+        ctx.EmitMText({ 0, 0, 0 }, std::string(1, kUnderlineToggle) + "a", 0, 10.0, 0.0, 0.0, Math::Color4::White());
+        ctx.ToggleTextMirror();
+        ctx.EmitMText({ 100, 0, 0 }, "a", 0, 10.0, 0.0, 0.0, Math::Color4::White());
+
+        // 竖笔画 (0,0)-(0,-10)，下划线 (0,2)-(10,2)；翻回后的字照常 (100,0)-(100,10)
+        const bool ok = lines.size() == 6 && Near(lines[1].pos.y, -10.0) && Near(lines[2].pos.y, 2.0) && Near(lines[3].pos.x, 10.0)
+                     && Near(lines[4].pos.x, 100.0) && Near(lines[5].pos.y, 10.0);
+        Check(ok, "镜像：字形与下划线沿基线上下翻转，翻回后照常");
+    }
+
+    // ── 4c. 旋转的多行文字：附着点的偏移随文字旋转。管综.dwg 车位块里转 180° 的 "A"（左上附着）
+    //        以前首行基线落在插入点下方一个字高，画到了 "电动车" 上，差出两个字高 ─────────
+    {
+        struct PosSink : IDrawSink
+        {
+            Math::Point3 pos{};
+            double rotation = 0.0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void EmitMText(const Math::Point3& p, const std::string&, uint32_t, double, double r, double, const Math::Color4&) override { pos = p; rotation = r; }
+            Math::Color4 GetLayerColor(LayerID) const override { return Math::Color4::White(); }
+            bool IsLayerVisible(LayerID) const override { return true; }
+        };
+        const double pi = 3.14159265358979323846;
+        PosSink sink;
+        MTextEntity a(1, 0, "A", Math::Point3(100, 200, 0), 10.0, pi, 0.0);   // 左上附着
+        a.Draw(sink, false, false);
+        const bool flipped = Near(sink.pos.x, 100.0) && Near(sink.pos.y, 210.0);
+        const AABB box = a.GetBoundingBox();
+        MTextEntity b(2, 0, "A", Math::Point3(100, 200, 0), 10.0, pi / 2, 0.0);
+        b.SetAttachment(MTextAttachment::BottomLeft);
+        b.Draw(sink, false, false);
+        const bool quarter = Near(sink.pos.x, 100.0) && Near(sink.pos.y, 200.0);   // 单行左下附着：原点就是插入点
+        Check(flipped && quarter && box.Min.y > 199.9 && box.Max.y < 220.1,
+              "旋转的多行文字：附着点偏移随文字旋转，转 180° 的左上附着画在插入点上方");
+    }
+
 #ifdef MINICAD_ASSET_DIR
     // ── 5. SHX 形名不当作画笔指令；缺失字体用自带字体替代 ─────────────
     {
@@ -307,6 +354,87 @@ int RunTextStyleTests()
         std::printf("    单点轮廓的字形：最多 %zu 条线段\n", lines);
         Check(ok, "只有一个曲线外的点的轮廓：字形只剩这个点上的零长度线段，不再越界读出随机的起点");
     }
+
+    // ── 8. \U+XXXX（代码页外字符）：管综.dwg 的 MTEXT 存成 "\L\U+8D1F\U+4E00..."，
+    //       以前去格式码时把 "\U" 当未知转义丢掉，画出 "+8D1F+4E00..." ───────────
+    {
+        Check(MTextEntity::StripInlineCodes("\\L\\U+8D1F\\u+4e00层\\P\\U+00B0") == "负一层\n°",
+              "多行文字：\\U+XXXX（大小写均可）还原为字符，与其他格式码混用");
+        Check(MTextEntity::StripInlineCodes("\\U+12G4") == "+12G4", "多行文字：不足 4 位十六进制的 \\U 按未知转义处理");
+
+        TextLayoutEngine engine;
+        const std::vector<uint32_t> cps = engine.DecodeLine("A\\U+8D1FB%%d\\U+12");
+        Check(cps == std::vector<uint32_t>{ 'A', 0x8D1F, 'B', kRawShapeFlag | 0x00B0u, '\\', 'U', '+', '1', '2' },
+              "单行文字：\\U+XXXX 还原为码点，%% 控制码照旧，不完整的转义原样显示");
+    }
+
+    // ── 9. 下划线 / 上划线 / 删除线：管综.dwg 的图名是 "\L\U+8D1F..."，以前 \L 直接丢掉。
+    //       位置按 AutoCAD 2020 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高 ─────────
+    {
+        const std::string U(1, kUnderlineToggle), O(1, kOverlineToggle), K(1, kStrikeToggle);
+        Check(MTextEntity::StripInlineCodes("{\\LAB}C", true) == U + "AB" + U + "C" && MTextEntity::StripInlineCodes("{\\LAB}C") == "ABC",
+              "多行文字：\\L 在绘制用的文本里换成开关，分组结束时关掉；纯文本不含开关");
+        Check(MTextEntity::StripInlineCodes("\\L{\\lA}B\\OC\\o\\KD", true) == "A" + U + "B" + O + "C" + O + K + "D",
+              "多行文字：组内关掉的下划线出组后恢复；上划线、删除线各自开关");
+
+        // 每个字符步进 1 个字体单位、字高 10 ⇒ 每字宽 10
+        struct FixedFont : IFont
+        {
+            Glyph empty;
+            const Glyph& GetGlyph(uint32_t) override { return empty; }
+            double GetAdvance(uint32_t) override { return 1.0; }
+            double GetHeight() const override { return 1.0; }
+            uint64_t GetFontId() const override { return 1; }
+            const char* GetName() const override { return "fixed"; }
+            bool HasGlyph(uint32_t) override { return true; }
+        } font;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+        auto seg = [&](const TextLayoutEngine::DecorationLine& d, double x0, double x1, double y) { return near(d.m_x0, x0) && near(d.m_x1, x1) && near(d.m_y, y); };
+
+        TextLayoutEngine engine;
+        auto r = engine.Layout(U + "AB" + U + "C", &font, 10.0, 1.0, 0.0, 0.0);
+        Check(r.m_glyphs.size() == 3 && r.m_decorations.size() == 1 && seg(r.m_decorations[0], 0.0, 20.0, -2.0),
+              "排版：下划线从开处画到关处，在基线下 0.2 倍字高，开关不占宽度");
+
+        r = engine.Layout(U + "A\nBC", &font, 10.0, 1.0, 0.0, 0.0);
+        Check(r.m_decorations.size() == 2 && seg(r.m_decorations[0], 0.0, 10.0, -2.0) && seg(r.m_decorations[1], 0.0, 20.0, -12.0),
+              "排版：没关的下划线在行尾收口、下一行续上");
+
+        r = engine.Layout("%%oAB%%o" + K + "C", &font, 10.0, 1.0, 0.0, 0.0, TextLayoutEngine::HAlign::Right);
+        Check(r.m_glyphs.size() == 3 && r.m_decorations.size() == 2 && seg(r.m_decorations[0], -30.0, -10.0, 12.0) && seg(r.m_decorations[1], -10.0, 0.0, 5.0),
+              "排版：单行文字的 %%o 上划线在基线上 1.2 倍字高，删除线 0.5 倍；右对齐时开关不计入行宽");
+    }
+
+#ifdef MINICAD_ASSET_DIR
+    // ── 10. TrueType 缺字：管综.dwg 的 Arial_5（arial.ttf）样式写中文，以前画成 .notdef 方块；
+    //        AutoCAD 经 Windows 字体链接照样显示汉字。现在缺的字用自带的 GB2312.ttf 补上 ─────────
+    {
+        const std::string dir = std::string(MINICAD_ASSET_DIR) + "/fonts/";
+        const std::vector<uint8_t> bytes = MakeSinglePointFont();   // 只有 'A'
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "minicad_latin_only.ttf";
+        {
+            std::ofstream out(path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        const std::u8string u8 = path.u8string();
+        const std::string file(u8.begin(), u8.end());
+
+        TTFFont alone("latin", file, 200);
+        FontEngine engine;
+        engine.SetFontDir(dir);
+        FontStyle latin;
+        latin.name = "Arial"; latin.fontFile = file; latin.isShx = false;
+        IFont& font = engine.Resolve(latin);
+        TTFFont gb("gb", dir + "GB2312.ttf", 201);
+        const Glyph& fallback = font.GetGlyph(0x8D1F);
+        const bool ok = alone.HasGlyph('A') && !alone.HasGlyph(0x8D1F) && font.HasGlyph('A') && font.HasGlyph(0x8D1F)
+                     && !fallback.Lines.empty() && fallback.Lines.size() == gb.GetGlyph(0x8D1F).Lines.size()
+                     && Near(font.GetAdvance(0x8D1F), gb.GetAdvance(0x8D1F)) && Near(font.GetAdvance('A'), alone.GetAdvance('A'));
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        Check(ok, "TrueType 缺字（西文字体里的汉字）用自带 GB2312.ttf 的字形与步进，本字体有的字照旧");
+    }
+#endif
 
     return g_failures;
 }

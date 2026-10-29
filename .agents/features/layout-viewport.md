@@ -21,5 +21,5 @@ covers: src/Core/Entity/ViewportEntity.hpp, tests/Core/LayoutTests.cpp, tests/Co
 ## 测试与排查
 
 - `MiniCADTests`：`LayoutTests.cpp`、`OleFrameTests.cpp`（视口目标点换算、冻结图层往返；本机有 `tests/Data/0525最终改总平面图.dwg` 时再核对真实图纸）
-- `MiniCADWin.exe --bench 图纸`：有布局时切到第一张布局测滚轮与平移；`MINICAD_BENCH_SHOT=目录` 存模型页、布局页的截图，`MINICAD_BENCH_PAUSE=秒` 在布局页停留
+- `MiniCADWin.exe --bench 图纸`：有布局时切到第一张布局测滚轮与平移；`MINICAD_BENCH_SHOT=目录` 存模型页、布局页的截图，`MINICAD_BENCH_VIEWS=x0,y0,x1,y1;...` 另按这些模型空间窗口各存一张，`MINICAD_BENCH_PAUSE=秒` 在布局页停留
 - `MiniCADDwgInspect 图纸` 加 `MINICAD_VIEWPORTS=1` 打印全部视口的目标点、方向、视图中心、冻结图层

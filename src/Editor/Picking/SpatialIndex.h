@@ -206,14 +206,15 @@ namespace MiniCAD
         }
 
         // 查询世界空间窗口 q，返回候选 ObjectID（去重）。out 先被清空再填充。
-        void Query(const AABB& q, std::vector<ObjectID>& out) const
+        // limit：收集到多于 limit 个就停（out 里是 limit + 1 个，调用方据此知道"太多"），只想知道窗口里多不多时用
+        void Query(const AABB& q, std::vector<ObjectID>& out, size_t limit = SIZE_MAX) const
         {
             out.clear();
 
             // overflow（无限实体）始终是候选
             out.insert(out.end(), m_overflow.begin(), m_overflow.end());
 
-            if (m_entries.empty())
+            if (m_entries.empty() || out.size() > limit)
                 return;
 
             if (++m_stampCounter == 0)            // 计数回绕：清零重来
@@ -241,15 +242,37 @@ namespace MiniCAD
                     {
                         const size_t row = static_cast<size_t>(cy) * static_cast<size_t>(m_gw);
                         for (size_t c = row + static_cast<size_t>(cx0); c <= row + static_cast<size_t>(cx1); ++c)
+                        {
                             for (uint32_t k = m_cellStart[c]; k < m_cellStart[c + 1]; ++k)
                                 consider(m_cellItems[k]);
+                            if (out.size() > limit)
+                                return;
+                        }
                     }
                 }
             }
             for (uint32_t idx : m_large)
+            {
                 consider(idx);
+                if (out.size() > limit)
+                    return;
+            }
             for (uint32_t idx : m_extra)
+            {
                 consider(idx);
+                if (out.size() > limit)
+                    return;
+            }
+        }
+
+        // 索引里记的包围盒（重建 / 增量更新时算好的）；无界实体与不在索引里的返回 false
+        bool GetBox(ObjectID id, AABB& out) const
+        {
+            const auto it = m_byId.find(id);
+            if (it == m_byId.end())
+                return false;
+            out = m_entries[it->second].Box;
+            return true;
         }
 
         Stats GetStats() const

@@ -9,8 +9,13 @@
 #include "Scene/Scene.h"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
+#include "Core/Entity/HatchEntity.hpp"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 using namespace MiniDWG;
 
@@ -28,6 +33,7 @@ namespace
         XYZ    Position{47362.925244676284, 25106.878374984874, 0};
         double Width = 900, Height = 2100, Angle = 4.971049166241167;
         int    Mirror = 3, Kind = 0, Version = 5, BaseVersion = 5;
+        int    Flags = 0x400;                       // 门窗标志：0x400 门槛线在门扇对面（样例 321），0x200 在门扇一侧
         bool   NestedBag = false;
         Handle Block2D = 0x2b1, Block3D = 0x2bc, Wall = 0x2ab;
     };
@@ -59,7 +65,7 @@ namespace
         r.WriteByte(static_cast<std::uint8_t>(s.Mirror)); r.WriteByte(static_cast<std::uint8_t>(s.Kind));
         r.WriteBitDouble(0);
         r.WriteBitDouble(47744.78); r.WriteBitDouble(25207.91); r.WriteBitDouble(0);
-        r.WriteBitShort(1024);
+        r.WriteBitShort(static_cast<std::int16_t>(s.Flags));
         r.WriteBitDouble(3.5); r.WriteBitDouble(100); r.WriteBitDouble(40); r.WriteBitDouble(40);
         r.WriteBitShort(0);
         if (s.Version > 2) { r.WriteBitLong(0); r.WriteBitShort(7); r.WriteBit(false); for (int i = 0; i < 4; ++i) r.WriteBitDouble(0); }
@@ -73,8 +79,9 @@ namespace
         return e;
     }
 
-    // 带 openings 个门窗的直墙（布局同 TianzhengWallTests），起点 (1000,2000)、终点 (5000,2000)、两侧各 120、接头 0
-    std::unique_ptr<UnknownEntity> Wall(int openings)
+    // 带 openings 个门窗的直墙（布局同 TianzhengWallTests），起点 (1000,2000)、终点 (5000,2000)、两侧各 120；
+    // material 为材料码（40 砖、60 钢筋混凝土），scale 为出图比例，joins 为左起、左终、右起、右终的连接量
+    std::unique_ptr<UnknownEntity> Wall(int openings, int material = 40, double scale = 100, std::array<double, 4> joins = {})
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_WALL";
@@ -86,13 +93,13 @@ namespace
         auto protectedData = g.Take();
         for (auto& b : protectedData) b ^= 0x3b;
         DwgBitWriter r(CadVersion::AC1027, Codec::CodePage::Gbk);
-        r.WriteByte(5); r.WriteBitDouble(100); r.WriteBitShort(0); r.WriteByte(3);
+        r.WriteByte(5); r.WriteBitDouble(scale); r.WriteBitShort(0); r.WriteByte(3);
         r.Write2Bits(0); r.WriteRawShort(512); r.WriteByte(8); r.WriteByte(0x3b);
         r.WriteBytes(protectedData);
-        r.WriteByte(0); r.WriteBitShort(static_cast<std::int16_t>(openings)); r.Write2Bits(0); r.Write2Bits(2); r.Write2Bits(2);
-        r.WriteByte(0); r.Write2Bits(0);
+        r.WriteByte(0); r.WriteBitShort(static_cast<std::int16_t>(openings));
+        r.WriteByte(static_cast<std::uint8_t>(material)); r.WriteByte(0);   // 材料码、墙体造型数
         r.WriteBitDouble(0);
-        for (int i = 0; i < 4; ++i) r.WriteBitDouble(0);
+        for (double join : joins) r.WriteBitDouble(join);
         r.WriteByte(0); r.Write3Bits(2);
         e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
         return e;
@@ -129,6 +136,61 @@ namespace
         r.WriteBitShort(0); r.WriteByte(0); r.WriteBitDouble(80.08);
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         return e;
+    }
+
+    // 图纸设置（TCH_DBCONFIG，非图形对象）：按 TDbConfig::dwgInFields 版本 9 写到填充墙2 的图案为止；
+    // names 为空时没有文字流（图案名取默认值），否则是文字流里依次的字符串
+    std::unique_ptr<UnknownObject> Config(bool fill, double detailScale = 100, const std::vector<std::string>& names = {})
+    {
+        auto o = std::make_unique<UnknownObject>();
+        o->Raw.DxfName = "TCH_DBCONFIG";
+        auto& raw = o->Raw.Dwg;
+        raw.Version = CadVersion::AC1027;
+        DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
+        r.WriteByte(9); r.WriteBitDouble(0.4); r.WriteBitDouble(0); r.WriteBitShort(36);
+        r.WriteByte(fill ? 1 : 0); r.WriteByte(0); r.WriteByte(0); r.WriteByte(0);
+        r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteByte(0); r.WriteByte(0); r.WriteBitLong(0);
+        r.WriteBitDouble(100); r.WriteBitDouble(detailScale);
+        for (int i = 0; i < 14; ++i) r.WriteBitDouble(0.25);      // 12 个加粗宽度等，版本 6 起又 2 个
+        raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+        if (!names.empty())
+        {
+            DwgBitWriter text(raw.Version, Codec::CodePage::Gbk);
+            for (const auto& s : names) text.WriteVariableText(s);
+            raw.TextBits = text.PositionInBits(); raw.Text = text.Take();
+        }
+        return o;
+    }
+
+    // 墙 + 门（门窗标志 flags，门扇在 -Y 一侧）导入后，门槛线的 y 坐标（墙沿 x 轴，两侧墙面 y = 1880 / 2120）
+    std::vector<double> ThresholdLines(int flags)
+    {
+        CadDatabase db;
+        db.SetVersion(CadVersion::AC1027);
+        db.CreateDefaults();
+        db.Classes.push_back(Class("TCH_WALL", "TDbWall", 500));
+        db.Classes.push_back(Class("TCH_OPENING", "TDbOpening", 501));
+        BlockRecord* doorBlock = db.CreateBlockRecord("$TCHSYS$DOOR2D");
+        auto leaf = std::make_unique<Line>(); leaf->StartPoint = {0.45, 0, 0}; leaf->EndPoint = {0.45, 0.975, 0};
+        db.AddEntity(doorBlock, std::move(leaf));
+        OpeningSpec spec;
+        spec.Position = {3000, 2000, 0}; spec.Angle = 0; spec.Mirror = 3; spec.Flags = flags;
+        spec.Block2D = doorBlock->ObjectHandle; spec.Block3D = 0; spec.Wall = db.AddEntity(db.ModelSpace(), Wall(1))->ObjectHandle;
+        db.AddEntity(db.ModelSpace(), Opening(spec));
+        DwgWriteOptions options; options.Version = CadVersion::AC1027;
+        MiniCAD::Scene scene;
+        std::vector<double> ys;
+        if (!MiniCAD::ImportCad(WriteDwg(db, options), scene)) return {-1};
+        scene.ForEachObject([&](const MiniCAD::Object& obj)
+        {
+            const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj);
+            if (!insert || !insert->GetBlock() || !insert->GetBlock()->GetName().starts_with("*U_TCH_OPENING_")) return;
+            for (const auto& e : insert->GetBlock()->GetEntities())
+                if (const auto* line = dynamic_cast<const MiniCAD::LineEntity*>(e.get()))
+                    ys.push_back(line->GetLine().Start.y);
+        });
+        std::sort(ys.begin(), ys.end());
+        return ys;
     }
 }
 
@@ -222,7 +284,7 @@ int main()
     MiniCAD::Scene scene;
     Check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) && scene.EntityCount() == 3, "wall, door and column all appear in the scene");
 
-    int wallPieces = 0, gapOk = 0, threshold = 0;
+    int wallPieces = 0, gapOk = 0, threshold = 0, caps = 0;
     const MiniCAD::InsertEntity* doorInsert = nullptr;
     scene.ForEachObject([&](const MiniCAD::Object& obj)
     {
@@ -240,6 +302,13 @@ int main()
                                  Near(std::max(g.Start.x, g.End.x), 3450);
                     continue;
                 }
+                if (Near(g.Start.x, g.End.x))
+                {
+                    // 门洞两侧的墙端封口：x = 2550 / 3450，横穿墙厚 1880..2120
+                    caps += (Near(g.Start.x, 2550) || Near(g.Start.x, 3450)) && Near(std::min(g.Start.y, g.End.y), 1880) &&
+                            Near(std::max(g.Start.y, g.End.y), 2120);
+                    continue;
+                }
                 ++wallPieces;
                 const double lo = std::min(g.Start.x, g.End.x), hi = std::max(g.Start.x, g.End.x);
                 gapOk += (Near(hi, 2550) && Near(lo, 1000)) || (Near(lo, 3450) && Near(hi, 5000));
@@ -249,6 +318,7 @@ int main()
         }
     });
     Check(wallPieces == 4 && gapOk == 4, "both wall sides are cut over the door width (centre 3000, width 900)");
+    Check(caps == 2, "the wall ends on both sides of the door are closed across the wall thickness");
     Check(doorInsert && Near(doorInsert->GetPosition().x, 3000) && Near(doorInsert->GetPosition().y, 2000) &&
           Near(doorInsert->GetScale().x, 900) && Near(doorInsert->GetScale().y, -900) && Near(doorInsert->GetRotation(), 0),
           "door 2D block is inserted at the axis point with scale (width, -width)");
@@ -267,6 +337,115 @@ int main()
         const auto saved = MiniCAD::ExportCad(scene, kind);
         Check(!saved.empty() && MiniCAD::ImportCad(saved, restored) && restored.EntityCount() == 3,
               "displayed wall, door and column survive plain export and reimport");
+    }
+
+    // ── 门槛线：门窗标志 0x200 在门扇一侧、0x400 在门扇对面，都没有时不画（tianzheng.dwg 的门及其变体在天正 2014 里核对）──
+    Check(ThresholdLines(0).empty(), "a door without door-line flags has no threshold line");
+    Check(ThresholdLines(0x200) == std::vector<double>{1880}, "flag 0x200 puts the threshold line on the leaf side");
+    Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
+    Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
+
+    // ── 门窗占满两端斜接之间的墙段（8#楼-A平面图 通风井的百叶，宽 1999.9999999963）：墙两端左侧伸出、右侧缩进 120，
+    // 门窗宽度比右侧墙线短 3.7e-9。断口恰到右侧墙线的两端，不画横穿墙厚的封口线，也不留零长的墙线 ──
+    {
+        CadDatabase ndb;
+        ndb.SetVersion(CadVersion::AC1027);
+        ndb.CreateDefaults();
+        ndb.Classes.push_back(Class("TCH_WALL", "TDbWall", 500));
+        ndb.Classes.push_back(Class("TCH_OPENING", "TDbOpening", 501));
+        BlockRecord* block = ndb.CreateBlockRecord("$TCHSYS$DOOR2D");
+        auto line = std::make_unique<Line>(); line->StartPoint = {0.45, 0, 0}; line->EndPoint = {0.45, 0.975, 0};
+        ndb.AddEntity(block, std::move(line));
+        OpeningSpec full;
+        full.Position = {3000, 2000, 0}; full.Angle = 0; full.Flags = 0; full.Width = 3760 - 3.7e-9;
+        full.Block2D = block->ObjectHandle; full.Block3D = 0;
+        full.Wall = ndb.AddEntity(ndb.ModelSpace(), Wall(1, 40, 100, {-120, -120, 120, 120}))->ObjectHandle;
+        const std::string wallBlock = "*U_TCH_" + std::to_string(full.Wall);
+        ndb.AddEntity(ndb.ModelSpace(), Opening(full));
+        DwgWriteOptions no; no.Version = CadVersion::AC1027;
+        MiniCAD::Scene ns;
+        std::vector<std::array<double, 4>> lines;
+        const bool imported = MiniCAD::ImportCad(WriteDwg(ndb, no), ns);
+        ns.ForEachObject([&](const MiniCAD::Object& obj)
+        {
+            const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj);
+            if (!insert || !insert->GetBlock() || insert->GetBlock()->GetName() != wallBlock) return;
+            for (const auto& e : insert->GetBlock()->GetEntities())
+                if (const auto* l = dynamic_cast<const MiniCAD::LineEntity*>(e.get()))
+                    lines.push_back({l->GetLine().Start.x, l->GetLine().Start.y, l->GetLine().End.x, l->GetLine().End.y});
+        });
+        // 只剩左侧（y = 2120）两端伸出的两段：880..1120 与 4880..5120
+        const bool sidesOnly = lines.size() == 2 && std::all_of(lines.begin(), lines.end(), [](const auto& s) {
+            return Near(s[1], 2120) && Near(s[3], 2120) && Near(std::abs(s[2] - s[0]), 240); });
+        Check(imported && sidesOnly, "an opening filling the wall between its mitered corners leaves no caps or zero-length lines");
+    }
+
+    // ── 图纸设置（TCH_DBCONFIG）──
+    MiniCAD::Tch::TchConfig config;
+    Check(MiniCAD::Tch::DecodeConfig(*Config(true, 100), config) && config.Fill && Near(config.DetailScale, 100) &&
+          config.Standard[6] == "SOLID" && config.Detail[4] == "普通砖" && config.Detail[0].empty(),
+          "config decodes the fill switch and detail scale; pattern names keep the defaults without a string stream");
+    // 文字流：轻质隔墙、填充墙、砖、石、钢筋混凝土、钢的标准图案，同序的详图图案，2 个其他字符串，填充墙1、填充墙2 的标准与详图图案
+    const std::vector<std::string> names{"", "", "", "", "SOLID", "", "卵石砌体", "加气混凝土", "普通砖", "天然石材", "钢筋混凝土", "金属",
+                                         "", "TArch", "", "多孔材料", "", "空心砖"};
+    MiniCAD::Tch::TchConfig custom;
+    Check(MiniCAD::Tch::DecodeConfig(*Config(false, 50, names), custom) && !custom.Fill && Near(custom.DetailScale, 50) &&
+          custom.Detail[0] == "卵石砌体" && custom.Detail[1] == "加气混凝土" && custom.Detail[2] == "多孔材料" &&
+          custom.Detail[3] == "空心砖" && custom.Detail[6] == "钢筋混凝土" && custom.Standard[6] == "SOLID",
+          "pattern names are read from the string stream in material order (8#楼-A平面图 layout)");
+    Check(MiniCAD::Tch::MaterialHatch(custom, 10, true) == "卵石砌体" && MiniCAD::Tch::MaterialHatch(custom, 60, false) == "SOLID" &&
+          MiniCAD::Tch::MaterialHatch(custom, 40, false).empty() && MiniCAD::Tch::MaterialHatch(custom, 20, true).empty(),
+          "material codes pick their standard or detail pattern; glass curtain walls are never filled");
+
+    // ── 墙柱填充：钢筋混凝土 1:100 实心，砖 1:50 详图“普通砖”（图案比例 50），砖 1:100 不填；关掉“填充”时都不填 ──
+    for (const bool fill : {true, false})
+    {
+        CadDatabase fdb;
+        fdb.SetVersion(CadVersion::AC1027);
+        fdb.CreateDefaults();
+        fdb.Classes.push_back(Class("TCH_WALL", "TDbWall", 500));
+        fdb.Classes.push_back(Class("TCH_COLUMN", "TDbColumn", 502));
+        DxfClass configClass = Class("TCH_DBCONFIG", "TDbConfig", 503);
+        configClass.IsAnEntity = false; configClass.ItemClassId = 0x1f3;
+        fdb.Classes.push_back(configClass);
+        auto configObject = Config(fill);
+        configObject->OwnerHandle = fdb.RootDictionary()->ObjectHandle;   // 写出时只写根字典之下的对象
+        fdb.AddObject(std::move(configObject));
+        fdb.AddEntity(fdb.ModelSpace(), Wall(0, 60, 100));
+        fdb.AddEntity(fdb.ModelSpace(), Wall(0, 40, 50));
+        fdb.AddEntity(fdb.ModelSpace(), Wall(0, 40, 100));
+        fdb.AddEntity(fdb.ModelSpace(), Column());
+        DwgWriteOptions fo; fo.Version = CadVersion::AC1027;
+        MiniCAD::Scene fs;
+        const bool imported = MiniCAD::ImportCad(WriteDwg(fdb, fo), fs);
+        int solid = 0, brick = 0, other = 0, solidQuads = 0;
+        fs.ForEachObject([&](const MiniCAD::Object& obj)
+        {
+            const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj);
+            if (!insert || !insert->GetBlock()) return;
+            for (const auto& e : insert->GetBlock()->GetEntities())
+                if (const auto* h = dynamic_cast<const MiniCAD::HatchEntity*>(e.get()))
+                {
+                    const auto& pattern = h->GetPattern();
+                    if (pattern.Solid)
+                    {
+                        ++solid;
+                        // 墙体四边形：两侧墙线 y = 2120 / 1880，x 1000..5000
+                        const auto pts = h->GetLoops().front().Tessellate();
+                        int corners = 0;
+                        for (const auto& p : pts)
+                            corners += (Near(p.x, 1000) || Near(p.x, 5000)) && (Near(p.y, 1880) || Near(p.y, 2120));
+                        solidQuads += corners >= 4;
+                    }
+                    else if (pattern.Name == "普通砖" && Near(h->GetScale(), 50) && !pattern.Families.empty()) ++brick;
+                    else ++other;
+                }
+        });
+        if (fill)
+            Check(imported && solid == 2 && solidQuads == 1 && brick == 1 && other == 0,
+                  "with fill on: the concrete wall body and column are solid, the 1:50 brick wall uses the detail brick pattern");
+        else
+            Check(imported && solid + brick + other == 0, "with fill off no wall or column is hatched");
     }
     return g_failed;
 }

@@ -187,7 +187,7 @@ namespace
     }
 
     // 场景中句柄 → 生成的显示几何（模型空间与块定义里的天正显示块都收集）。
-    // 句柄 0 收集模型空间与各块定义中的普通多段线（柱显示为闭合多段线，不生成天正显示块），坐标为所在空间的坐标
+    // 句柄 0 收集模型空间与各块定义中的普通多段线（柱显示为闭合多段线；填充时在天正显示块里），坐标为所在空间的坐标
     std::map<unsigned long long, Geometry> Collect(const Scene& scene)
     {
         std::map<unsigned long long, Geometry> out;
@@ -207,7 +207,17 @@ namespace
             if (h == 0) return;
             Geometry& g = out[h];
             g.Found = true;
-            Flatten(*in->GetBlock(), Xf{in->GetPosition().x, in->GetPosition().y, in->GetRotation(), in->GetScale().x, in->GetScale().y}, g);
+            const Xf xf{in->GetPosition().x, in->GetPosition().y, in->GetRotation(), in->GetScale().x, in->GetScale().y};
+            Flatten(*in->GetBlock(), xf, g);
+            // 图纸设置开启“填充”时柱显示为填充 + 闭合多段线的天正显示块：多段线也收进句柄 0
+            BlockEntity polylines(0, "", Math::Point3{0, 0, 0});
+            for (const auto& child : in->GetBlock()->GetEntities())
+                if (dynamic_cast<const PolylineEntity*>(child.get())) polylines.AddEntity(child->Clone(0));
+            if (!polylines.GetEntities().empty())
+            {
+                out[0].Found = true;
+                Flatten(polylines, xf, out[0]);
+            }
         };
         scene.ForEachObject([&](const Object& o) { if (const auto* e = dynamic_cast<const Entity*>(&o)) visit(*e); });
         scene.GetBlockTable().ForEach([&](BlockID, const BlockEntity& block) {

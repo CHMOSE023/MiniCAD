@@ -46,7 +46,11 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 - `MainCommands.cpp`：所有操作注册为 MiniGUI 命令（id、标签、图标、快捷键、执行、可用条件）
 - `CommandLine.cpp`：命令行；界面层命令（`NODES`、`NAVVCUBE`、`XREF` 等）在这里处理，其余交给 `Editor::RunCommand`
 - `MainPanels.cpp`、`LayerPanels.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、动态输入、对话框、状态栏、视图方块
-- 图层排序：面板、特性面板、工具栏下拉框都按名称的自然顺序（`MainFrame::SortedLayerIds`，0 层最前，按 "ID:名称" 缓存，增删改名才重排）；图层面板有搜索框（不分大小写，Esc 清空），点"名称"表头切换升降序
+- 图层排序：面板、特性面板、工具栏下拉框都按名称的自然顺序（`MainFrame::SortedLayerIds`，0 层最前，按 "ID:名称" 缓存，增删改名才重排；按层级逐级比较，上级在下级前面）；图层面板有搜索框（不分大小写，Esc 清空；搜索时全部展开），点"名称"表头切换升降序（同级之间倒序）
+- 图层层级（同 Rhino 的子图层）：层级写在图层名里，用 `$` 分隔（`src/Scene/LayerPath.h`）。DWG 的图层表是平的、AutoCAD 图层名不能含 `:`，Rhino 导出 DWG 时子图层也写成 `父$子`，所以文件格式不变，与 AutoCAD、Rhino 往返不丢层级；有空的一级（`$0$xx` 这类绑定外部参照留下的名字）不分级
+  - 图层面板的名称列是树（`ListView::SetTreeColumn`）：`MainFrame::RefreshLayerPanel` 按 `SortedLayerIds` 的顺序建树，只有 `A$B` 没有 `A` 时补分组行（`PanelSet::kGroupRow`，开 / 锁定显示下级的总体状态，没有颜色线型）；行的完整路径在 `PanelSet::layerPaths`，折叠状态在 `PanelSet::layerCollapsed`
+  - 下级不继承上级的状态：上级的开关、锁定、删除、改名连同下级一起改（`LayerOps::ChangeTree`、`LayerOps::DeleteTree`、`RenameLayerTreeCommand`，一步撤销），文件里存的就是每个图层实际的状态，AutoCAD 里看到的相同。改名只改这一级，名字里带 `$` 即再往下分级；右键 / 工具行"子图层"新建 `上级$图层N` 并进入改名。改名提交时面板同步重建行（`ListView::SetItems` 会取消编辑），`InlineEditor::Commit` 只结束自己那次编辑（以前按 Enter 改名会空指针崩溃）
+  - 工具栏、特性面板的图层下拉框（`MainFrame::PaintLayerChoice`）：下拉列表里接在最近的、确有其层的上级下面缩进、只写这一段（`MainFrame::SortedLayerIndents`；上级都不存在时写全名，没有分组行，下标仍与 `SortedLayerIds` 一一对应），收起时写全名（不同上级下可能有同名的）
 - 停靠卡片：激活的标签与面板内容同色连成一片（`DockGroup::BodyColor` 读内容 `Panel` 的背景色，标题条深一级）
 
 ## 宿主

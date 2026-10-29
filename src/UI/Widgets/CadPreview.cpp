@@ -204,15 +204,30 @@ namespace MiniGUI
 
     void DrawLayerLockIcon(DrawList& dl, const Rect& r, bool locked)
     {
-        const Vec2 c = r.Center();
-        const ColorRef col = locked ? ColorRef(ColorFromHex(0xE0A050)) : Theme::TextDim;
-        dl.AddRectFilled(Rect{ c.x - 4.5f, c.y - 1.0f, c.x + 4.5f, c.y + 5.5f }, col, 1.5f);
-        // 锁梁：锁定时闭合，解锁时右侧抬起
-        dl.PathArcTo({ c.x, c.y - 1.5f }, 3.0f, std::numbers::pi_v<float>, std::numbers::pi_v<float> * 2.0f);
-        dl.PathStroke(col, false, 1.4f);
+        // 两种状态的形状不同，不只靠颜色区分（颜色相近时也认得出）：
+        // 锁定：琥珀色实心锁身 + 锁孔，锁梁两脚都插进锁身；解锁：灰色空心锁身，锁梁抬起、左脚离开锁身
+        const Vec2  c  = r.Center();
+        const float pi = std::numbers::pi_v<float>;
+        const Rect  body{ c.x - 5.0f, c.y - 0.5f, c.x + 5.0f, c.y + 5.5f };
         if (locked)
-            dl.AddLine({ c.x + 3.0f, c.y - 1.5f }, { c.x + 3.0f, c.y - 1.0f }, col, 1.4f);
+        {
+            const Color32 col = ColorFromHex(0xE8A33D), hole = ColorFromHex(0x6B4210);
+            dl.PathLineTo({ c.x - 3.0f, body.min.y });
+            dl.PathArcTo({ c.x, c.y - 2.5f }, 3.0f, pi, pi * 2.0f);
+            dl.PathLineTo({ c.x + 3.0f, body.min.y });
+            dl.PathStroke(col, false, 1.6f);
+            dl.AddRectFilled(body, col, 1.5f);
+            dl.AddCircleFilled({ c.x, c.y + 1.8f }, 1.1f, hole);
+            dl.AddRectFilled(Rect{ c.x - 0.5f, c.y + 2.0f, c.x + 0.5f, c.y + 3.8f }, hole);
+        }
         else
-            dl.AddLine({ c.x + 3.0f, c.y - 1.5f }, { c.x + 3.0f, c.y - 4.0f }, col, 1.4f);
+        {
+            const ColorRef col = Theme::TextDim;
+            dl.PathLineTo({ c.x - 3.0f, c.y - 3.0f });
+            dl.PathArcTo({ c.x, c.y - 4.5f }, 3.0f, pi, pi * 2.0f);
+            dl.PathLineTo({ c.x + 3.0f, body.min.y });
+            dl.PathStroke(col, false, 1.4f);
+            dl.AddRect(body, col, 1.5f, 1.3f);
+        }
     }
 }

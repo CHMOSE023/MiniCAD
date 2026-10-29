@@ -2,6 +2,7 @@
 #include <span>
 #include <vector> 
 #include "Core/Math/Point2.hpp"
+#include "Core/Math/Point3.hpp"
 #include "Core/Math/Color4.hpp"
 #include "Render/VertexTypes.hpp"
 #include "Render/GlyphInstancing.hpp"
@@ -102,6 +103,9 @@ namespace MiniCAD
         uint64_t                         ShadedVersion = 0;
         // 场景范围（可见实体的包围盒）：三维视图按它设置深度范围；为空时按相机缩放估计
         AABB                             SceneBounds = AABB::Empty();
+        // 渲染原点：上面与下面各路世界坐标的顶点（场景、选中、预览、着色面、图像、字形实例）存的都是"世界坐标 − 它"
+        //（见 ToRenderFloat3），Viewport 把它合进视图投影矩阵（双精度）。夹点、捕捉标记、框选框是屏幕坐标，与它无关
+        Math::Point3                     RenderOrigin;
 
         // 场景文字的字形实例（按网格排序）与字形网格库、纹理文字顶点（TextScene）的版本：
         // 只有文字变化时才自增，新画一条线不必把几十万个字形实例重新上传

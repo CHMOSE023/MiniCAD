@@ -16,8 +16,8 @@ namespace MiniCAD
     //   ...（一行一个线族）
     // 名为 SOLID 的图案视为实心填充（忽略其线族）。
     //
-    // 首次访问时载入内置的公制图案（单位 mm，与 acadiso.pat 的量级一致）；
-    // 之后可用 LoadFile / LoadText 追加，同名图案（不区分大小写）以后载入的为准。
+    // 首次访问时载入内置的公制图案（单位 mm，与 acadiso.pat 的量级一致）与（钢筋混凝土、加气混凝土等）；
+    // 图案数据都在 HatchPatternLibrary.inc。之后可用 LoadFile / LoadText 追加，同名图案（不区分大小写）以后载入的为准。
     // =========================================================================
     class HatchPatternLibrary
     {
@@ -32,6 +32,9 @@ namespace MiniCAD
 
         const HatchPattern*              Find(std::string_view name) const;   // 不区分大小写
         const std::vector<HatchPattern>& All() const { return m_patterns; }
+        // 天正对象的墙柱填充按名称取：先找天正 acad.pat 里的（与 AutoCAD 同名的标准图案天正改了比例，如 ANSI31 是
+        // acadiso 的一半，只在这里用），没有再找库里的（patterns 目录里另加的图案）
+        const HatchPattern*              FindTianzheng(std::string_view name) const;
 
         // 按名称取图案；找不到时返回实心填充
         HatchPattern Get(std::string_view name) const;
@@ -42,5 +45,6 @@ namespace MiniCAD
     private:
         HatchPatternLibrary();
         std::vector<HatchPattern> m_patterns;
+        std::vector<HatchPattern> m_tianzheng;      // 天正 acad.pat 的全部图案（FindTianzheng）
     };
 }

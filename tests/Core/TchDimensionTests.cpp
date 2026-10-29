@@ -12,8 +12,11 @@
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/PolylineEntity.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
+#include <tuple>
 
 using namespace MiniDWG;
 using MiniCAD::Tch::TchGraphics;
@@ -45,6 +48,7 @@ namespace
         double ArcRadius = 0, MeasuredRadius = 0;
         int Version = 1;
         std::vector<std::pair<int, std::string>> Overrides;
+        std::vector<std::tuple<int, double, double>> Positions;   // 标志 0x02：段号、文字中心
     };
 
     // 按基类与版本 1 布局写出
@@ -62,6 +66,11 @@ namespace
         r.WriteBitShort(static_cast<std::int16_t>(s.Spans.size()));
         for (double v : s.Spans) r.WriteBitDouble(v);
         r.WriteBitShort(static_cast<std::int16_t>(s.Flags));
+        if (s.Flags & 2)
+        {
+            r.WriteBitShort(static_cast<std::int16_t>(s.Positions.size()));
+            for (const auto& [index, x, y] : s.Positions) { r.WriteBitShort(static_cast<std::int16_t>(index)); r.WriteRawDouble(x); r.WriteRawDouble(y); }
+        }
         if (s.Flags & 4)
         {
             r.WriteBitShort(static_cast<std::int16_t>(s.Overrides.size()));
@@ -200,6 +209,13 @@ int main()
     Check(g.Texts.size() == 1 && g.Texts[0].Value == "6000" && Near(g.Texts[0].Center, 79000.2, 17121.3) &&
           Near(g.Texts[0].Height, 297.5) && Near(g.Texts[0].Rotation, 0),
           "text is centred DIMTXT/2 + DIMGAP above the dimension line");
+    {
+        // 文字颜色取标注样式的 DIMCLRT（8#楼-A平面图 的 _TCH_ARCH 为随层：尺寸数字与尺寸线同色，不是白色）
+        TchDimStyle byLayer;
+        byLayer.TextColor = 256;
+        Check(g.Texts[0].Color == 7 && BuildDimension(d, byLayer).Texts[0].Color == 256,
+              "dimension text colour follows DIMCLRT (by-layer stays by-layer)");
+    }
 
     // ── 斜向两段 ──
     auto slanted = DimObject(Slanted());
@@ -227,12 +243,43 @@ int main()
           "radial extension line runs from DIMEXO inside the measured radius to DIMEXE past the arc");
     Check(g.Texts.size() == 1 && g.Texts[0].Value == "100.55\xC2\xB0" && Near(g.Texts[0].Center, 55102.8, 25161.6) &&
           Near(g.Texts[0].Rotation, 0.230803, 1e-5), "angle text uses two decimals and a degree sign");
+    {
+        // DIMAZIN 2 去掉小数末尾的零（8#楼 的 90.00° 在天正 + AutoCAD 里显示为 90°）
+        TchDimStyle trailing = style;
+        trailing.AngularZeros = 2;
+        trailing.AngularDecimals = 4;
+        Check(BuildDimension(d, trailing).Texts[0].Value == "100.5547\xC2\xB0" &&
+              Detail::SuppressZeros("90.00", 2) == "90" && Detail::SuppressZeros("12.50", 2) == "12.5" &&
+              Detail::SuppressZeros("0.50", 3) == ".5" && Detail::SuppressZeros("90.00", 0) == "90.00",
+              "angular zero suppression drops trailing zeros (and the point) only when DIMAZIN asks");
+    }
 
     // ── 替代文字 ──
     DimSpec withText = Horizontal();
     withText.Flags = 0x84; withText.Overrides = {{0, "轴距"}};
     Check(DecodeDimension(*DimObject(withText), d) && d.TextOverrides.size() == 1 &&
           BuildDimension(d, style).Texts[0].Value == "轴距", "text overrides come from the text stream");
+
+    // ── 另行指定的文字位置（标志 0x02，8#楼-A平面图 电梯井 93DEE5 的数值）：两端的 100 挤不下，文字移到界线外侧，以该点为中心；
+    // 中间一段没有指定，仍在尺寸线上方 ──
+    DimSpec moved{{54802.5, 127676.5, 0}, std::numbers::pi, -270.61 / 50, {100, 900, 100}, 0x82};
+    moved.Positions = {{0, 54915.0, 128059.61}, {2, 53590.0, 128059.61}};
+    Check(DecodeDimension(*DimObject(moved), d) && d.TextPositions.size() == 2 && Near(d.TextPositions[2].first, 53590.0),
+          "text positions are decoded per span");
+    {
+        const TchDimStyle style25{3, 2.5, 1, 2.5, 1};   // 8#楼 的标注样式：DIMTXT 2.5
+        d.Scale = 50;
+        g = BuildDimension(d, style25);
+        Check(g.Texts.size() == 3 && Near(g.Texts[0].Center, 54915.0, 128059.61) && Near(g.Texts[2].Center, 53590.0, 128059.61) &&
+              Near(g.Texts[1].Center, 54252.5, 128059.61),
+              "moved span texts are centred on their stored points; the others stay DIMTXT/2 + DIMGAP above the line");
+    }
+
+    // ── 竖向标注的方向比 π/2 略大（8#楼 93F105 大 2e-9）：文字仍自下而上读、在尺寸线左侧，不翻到右侧 ──
+    DimSpec vertical{{0, 0, 0}, std::numbers::pi / 2 + 2e-9, -2.0, {1000}};
+    Check(DecodeDimension(*DimObject(vertical), d) && (g = BuildDimension(d, style)).Texts.size() == 1 &&
+              Near(g.Texts[0].Rotation, std::numbers::pi / 2, 1e-6) && Near(g.Texts[0].Center, 200 - 275, 500),
+          "a near-vertical dimension keeps bottom-to-top text on the left of the dimension line");
 
     // ── 拒绝 ──
     Check(AcceptedTruncations(*slanted, [](auto& e, auto& o, std::string* w) { return DecodeDimension(e, o, w); }, d) == 0,
@@ -245,7 +292,8 @@ int main()
     Check(axis->Raw.Dwg.MainBits == 741, "synthetic axis label reproduces the 741-bit real layout");
     TchAxisLabel a;
     Check(DecodeAxisLabel(*axis, a, &why) && a.Axes.size() == 3 && a.Axes[0].Label == "1" && a.Axes[2].Label == "3" &&
-          a.TextStyle == 0x296, "axis labels decode spacings, labels (after the base property bag name) and text style");
+          a.TextStyle == 0x296 && a.TextLayer == 0x297,
+          "axis labels decode spacings, labels (after the base property bag name), text style and text layer");
     g = BuildAxisLabel(a);
     Check(g.Circles.size() == 6 && Near(g.Circles[0].Center, 76000.2, 15746.3) && Near(g.Circles[0].Radius, 400) &&
           Near(g.Circles[3].Center, 78400.2, 28278.4) && Near(g.Circles[4].Center, 82000.2, 15746.3),
@@ -254,6 +302,8 @@ int main()
           Count(g.Lines, [](auto& s) { return SameSegment(s, 82000.2, 23878.4, 82000.2, 27878.4); }) == 1,
           "extension lines run 40 x scale outward from both axis ends");
     Check(g.Texts.size() == 6 && g.Texts[2].Value == "2" && Near(g.Texts[2].Center, 78400.2, 15746.3), "labels are centred in the circles");
+    Check(std::all_of(g.Texts.begin(), g.Texts.end(), [](const TchGraphics::Text& t) { return t.Layer == 2 && t.Color == 256; }),
+          "labels go on the text layer (second layer) by layer, not white");
     Check(AcceptedTruncations(*axis, [](auto& e, auto& o, std::string* w) { return DecodeAxisLabel(e, o, w); }, a) == 0,
           "every truncated axis label payload is rejected");
     Check(!DecodeAxisLabel(*AxisLabel(1), a), "unverified axis label modes are not drawn");
@@ -313,6 +363,11 @@ int main()
     auto* dimStyle = db.FindTableEntry<DimensionStyle>(db.DimensionStyles(), "Standard");
     dimStyle->ExtensionLineOffset = 3; dimStyle->ExtensionLineExtension = 2.5; dimStyle->ArrowSize = 1;
     dimStyle->TextHeight = 3.5; dimStyle->DimensionLineGap = 1; dimStyle->DecimalPlaces = 0; dimStyle->AngularDecimalPlaces = 2;
+    dimStyle->TextColor = Color::ByLayer();
+    auto axisText = std::make_unique<Layer>();
+    axisText->Name = "AXIS_TEXT";
+    axisText->Color = Color(std::int16_t(142));
+    const Handle axisTextLayer = db.AddTableEntry(db.Layers(), std::move(axisText))->ObjectHandle;
     db.AddEntity(db.ModelSpace(), DimObject(Horizontal(), dimStyle->ObjectHandle));
     db.AddEntity(db.ModelSpace(), DimObject(Angular(), dimStyle->ObjectHandle));
     db.Classes.push_back(Class("TCH_RADIUSDIM", "TDbRadiusDim", 502));
@@ -322,6 +377,7 @@ int main()
     {
         DwgBitWriter w(CadVersion::AC1027, Codec::CodePage::Gbk);
         w.WriteHandle(DwgRef::HardPointer, db.FindTableEntry(db.TextStyles(), "Standard")->ObjectHandle);
+        w.WriteHandle(DwgRef::HardPointer, axisTextLayer);     // 编号文字的图层
         label->Raw.Dwg.HandleBits = w.PositionInBits(); label->Raw.Dwg.Handles = w.Take();
     }
     db.AddEntity(db.ModelSpace(), std::move(label));
@@ -330,7 +386,10 @@ int main()
     MiniCAD::Scene scene;
     Check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) && scene.EntityCount() == 4, "both dimensions, the radius dimension and the axis label appear in the scene");
 
-    int lines = 0, ticks = 0, arcs = 0, solids = 0, texts = 0, circles = 0, narrowTexts = 0;
+    MiniCAD::LayerID axisTextId = 0xFFFFFFFFu;
+    for (MiniCAD::LayerID id : scene.GetLayerManager().GetAllLayerIDs())
+        if (scene.GetLayerManager().GetLayer(id)->GetName() == "AXIS_TEXT") axisTextId = id;
+    int lines = 0, ticks = 0, arcs = 0, solids = 0, texts = 0, circles = 0, narrowTexts = 0, byLayerTexts = 0, axisTexts = 0;
     scene.ForEachObject([&](const MiniCAD::Object& obj)
     {
         const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj);
@@ -346,6 +405,8 @@ int main()
             {
                 ++texts;
                 narrowTexts += Near(t->GetWidthFactor(), 0.7, 1e-9);
+                byLayerTexts += t->GetAttr().Color.Method == MiniCAD::ColorMethod::ByLayer;
+                axisTexts += t->GetAttr().LayerId == axisTextId;
             }
         }
     });
@@ -354,6 +415,8 @@ int main()
     Check(lines == 12 && ticks == 2 && arcs == 1 && solids == 3 && circles == 6 && texts == 9,
           "display blocks contain the expected lines, ticks, arc, arrows, circles and texts");
     Check(narrowTexts == 3, "dimension texts carry a 0.7 width factor on the mtext");
+    Check(byLayerTexts == 9 && axisTexts == 6,
+          "texts are by layer: dimension texts per DIMCLRT, axis labels on the AXIS_TEXT layer the object refers to");
 
     for (auto kind : {MiniCAD::CadFileKind::Dwg, MiniCAD::CadFileKind::Dxf})
     {

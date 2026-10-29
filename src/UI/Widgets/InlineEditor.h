@@ -12,6 +12,7 @@ namespace MiniGUI
     // - Enter 提交；Esc 取消；点到别处（失去焦点）也提交
     // - commit 回调返回 false 表示拒绝（例如图层重名），此时继续编辑并全选文字
     // - 结束后焦点回到 owner，输入框推迟到下一次 Render 销毁（可能正在它自己的回调里）
+    // - commit 回调里可以结束这次编辑（例如列表重建行时 Cancel），回调返回后不会再结束一次
     class InlineEditor
     {
     public:

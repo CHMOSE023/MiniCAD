@@ -494,10 +494,20 @@ namespace MiniCAD
                     names.push_back(d->GetLayerManager().GetLayer(id)->GetName());
             return names;
         };
+        // 下拉列表里图层按层级缩进，收起时写全名
+        auto paintLayers = [doc](ComboBox* combo)
+        {
+            combo->SetItemPainter([combo, doc](DrawList& dl, const Rect& box, int index, bool inList)
+            {
+                if (Document* d = doc())
+                    PaintLayerChoice(combo->GetContext(), dl, box, *d, index, inList, /*icons=*/false);
+            });
+        };
 
         // ── 当前设置（新建对象使用）─────────────────────────────
         Expander* current = grid->AddGroup("当前（新建对象）");
         auto* layer = grid->AddProperty<ComboBox>(current, "图层");
+        paintLayers(layer);
         P.bindings.BindChoice(layer,
             [doc]() -> std::optional<int>
             {
@@ -590,6 +600,7 @@ namespace MiniCAD
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, "图层");
         selLayer->SetPlaceholder("—");
+        paintLayers(selLayer);
         P.bindings.BindChoice(selLayer,
             [this, doc]() -> std::optional<int>
             {
