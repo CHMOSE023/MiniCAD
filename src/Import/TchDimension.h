@@ -20,6 +20,7 @@ namespace MiniCAD::Tch
         double              ArcRadius = 0;      // 标志 0x10：尺寸线圆弧半径
         double              MeasuredRadius = 0; // 标志 0x10：被标注点所在半径（Position 在此半径上）
         std::map<int, std::string> TextOverrides;   // 标志 0x04：段号 → 替代文字
+        std::map<int, std::pair<double, double>> TextPositions;   // 标志 0x02：段号 → 文字另行指定的位置
         double              Scale = 1;
         MiniDWG::Handle     DimStyle = MiniDWG::kNullHandle;
 
@@ -83,11 +84,16 @@ namespace MiniCAD::Tch
         if (spans < 1 || spans > 4096) return fail("invalid dimension span count");
         for (int i = 0; i < spans && !r.Failed(); ++i) d.Spans.push_back(r.ReadBitDouble());
         d.Flags = r.ReadBitShort();
-        if (d.Flags & 2)                                // 各段文字位置（尚未用于显示）
+        if (d.Flags & 2)                                // 各段文字位置：每项 BS 段号、RD x、RD y
         {
             const int n = r.ReadBitShort();
             if (n < 0 || n > 4096) return fail("invalid dimension text position count");
-            for (int i = 0; i < n && !r.Failed(); ++i) { r.ReadBitShort(); r.ReadRawDouble(); r.ReadRawDouble(); }
+            for (int i = 0; i < n && !r.Failed(); ++i)
+            {
+                const int index = r.ReadBitShort();
+                const double x = r.ReadRawDouble(), y = r.ReadRawDouble();
+                d.TextPositions[index] = {x, y};
+            }
         }
         if (d.Flags & 4)                                // 替代文字：每项 BS 段号、字符串
         {
@@ -328,13 +334,23 @@ namespace MiniCAD::Tch
         {
             constexpr double pi = std::numbers::pi;
             rotation = std::remainder(rotation, 2 * pi);
-            if (rotation > pi / 2 + 1e-9 || rotation <= -pi / 2 + 1e-9)
+            // 竖直方向带浮点误差时一律按自下而上读（8#楼-A平面图 的竖向尺寸 93F105 方向比 π/2 大 2e-9，天正仍自下而上，文字在左侧）
+            if (rotation > pi / 2 + 1e-6 || rotation <= -pi / 2 + 1e-6)
             {
                 rotation = std::remainder(rotation + pi, 2 * pi);
                 return true;
             }
             return false;
         }
+    }
+
+    // 第 i 段文字的中心：标志 0x02 另行指定了位置（天正里拖动过的文字，如挤不下时移到尺寸线外侧、上一行或下方）时取该点，
+    // 否则为按样式算出的 fallback（8#楼-A平面图 的电梯井尺寸：未移动的文字恰在尺寸线上方 (DIMTXT / 2 + DIMGAP) × 比例处，
+    // 移动过的在其上一行、尺寸线下方对称处或界线外侧）
+    inline TchGraphics::Point TextCenter(const TchDimension& d, std::size_t i, TchGraphics::Point fallback)
+    {
+        const auto it = d.TextPositions.find(static_cast<int>(i));
+        return it == d.TextPositions.end() ? fallback : TchGraphics::Point{it->second.first, it->second.second};
     }
 
     inline TchGraphics BuildDimension(const TchDimension& d, const TchDimStyle& style)
@@ -368,7 +384,8 @@ namespace MiniCAD::Tch
             {
                 const auto it = d.TextOverrides.find(static_cast<int>(i));
                 std::string value = it != d.TextOverrides.end() ? it->second : Detail::FormatNumber(std::abs(d.Spans[i]), style.Decimals);
-                g.Texts.push_back({at((stations[i] + stations[i + 1]) / 2, off + up * lift), style.TextHeight * 0.85 * s, rotation, std::move(value)});
+                const P center = TextCenter(d, i, at((stations[i] + stations[i + 1]) / 2, off + up * lift));
+                g.Texts.push_back({center, style.TextHeight * 0.85 * s, rotation, std::move(value)});
             }
             return g;
         }
@@ -403,7 +420,7 @@ namespace MiniCAD::Tch
             const auto it = d.TextOverrides.find(static_cast<int>(i));
             std::string value = it != d.TextOverrides.end()
                 ? it->second : Detail::FormatNumber(std::abs(d.Spans[i]) * 180 / std::numbers::pi, style.AngularDecimals) + "\xC2\xB0";
-            g.Texts.push_back({polar(mid, r - up * (textHeight / 2 + style.Gap * s)), textHeight, rotation, std::move(value)});
+            g.Texts.push_back({TextCenter(d, i, polar(mid, r - up * (textHeight / 2 + style.Gap * s))), textHeight, rotation, std::move(value)});
         }
         return g;
     }

@@ -1987,6 +1987,13 @@ namespace MiniCAD
                     auto countWall = [&] { if (curtainWall) ++m_tchConverted[unknown->Raw.DxfName]; else ++m_tianzhengWalls; };
                     if (plainCurtain || Tch::DecodeWall(*unknown, wall, &nativeReason))
                     {
+                        // 起点（end 0）/ 终点（end 1）接着的墙里有材料不同的：天正在两种材料之间画分界线，这一端画端线；
+                        // 同材料的墙在节点处连成一体，不画（tianzheng.dwg 钢筋混凝土墙与砖墙的夹角、8#楼 墙与玻璃幕墙的丁字接头，天正 2014 显示核对）
+                        auto otherMaterialAt = [&](int end) {
+                            for (int k : {0, 1})
+                                if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]); m && *m != wall.Material) return true;
+                            return false;
+                        };
                         double arcX = 0, arcY = 0, arcR = 0;
                         if (wall.ArcCenter(arcX, arcY, arcR))
                         {
@@ -2051,6 +2058,10 @@ namespace MiniCAD
                                 }
                                 if (cursor < span) addArc(cursor, span);
                             }
+                            if (leftR > 0 && rightR > 0)
+                                for (const int end : {0, 1})
+                                    if (otherMaterialAt(end))
+                                        arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, end * span), arcPoint(rightR, end * span)));
                             countWall();
                             return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
                         }
@@ -2063,7 +2074,7 @@ namespace MiniCAD
                             {wall.End.X + nx * wall.LeftWidth - ux * wall.Joins[1], wall.End.Y + ny * wall.LeftWidth - uy * wall.Joins[1], wall.End.Z},
                             {wall.End.X - nx * wall.RightWidth - ux * wall.Joins[3], wall.End.Y - ny * wall.RightWidth - uy * wall.Joins[3], wall.End.Z},
                             {wall.Start.X - nx * wall.RightWidth + ux * wall.Joins[2], wall.Start.Y - ny * wall.RightWidth + uy * wall.Joins[2], wall.Start.Z}};
-                        // 墙与墙相接的端部不封口（每段墙各画端线会在节点处多出接缝），只在门窗断口处封口
+                        // 墙与同材料的墙相接的端部不封口（每段墙各画端线会在节点处多出接缝），门窗断口与材料不同的墙相接处封口
                         std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
                         while (m_scene.GetBlockTable().Get(name)) name += "_";
                         const auto blockId = m_scene.GetBlockTable().Create(name);
@@ -2126,6 +2137,8 @@ namespace MiniCAD
                         };
                         addSide(points[0], points[1], wall.Joins[0], length - wall.Joins[1]);
                         addSide(points[3], points[2], wall.Joins[2], length - wall.Joins[3]);
+                        if (otherMaterialAt(0)) block->AddEntity(Make<LineEntity>(src, nullptr, points[0], points[3]));
+                        if (otherMaterialAt(1)) block->AddEntity(Make<LineEntity>(src, nullptr, points[1], points[2]));
                         countWall();
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }
@@ -2847,6 +2860,18 @@ namespace MiniCAD
                     if (!merged.empty() && c.first <= merged.back().second) merged.back().second = std::max(merged.back().second, c.second);
                     else merged.push_back(c);
                 return merged;
+            }
+
+            // 墙（含幕墙）的材料码；空句柄或读不出时为空
+            std::optional<int> TchWallMaterial(Dwg::Handle h)
+            {
+                if (h == Dwg::kNullHandle) return std::nullopt;
+                if (const auto it = m_wallMaterials.find(h); it != m_wallMaterials.end()) return it->second;
+                std::optional<int> material;
+                if (const auto* u = m_db.FindAs<Dwg::UnknownEntity>(h))
+                    if (Tch::TchWall w; Tch::DecodeWall(*u, w) || Tch::DecodeCurtainWall(*u, w)) material = w.Material;
+                m_wallMaterials.emplace(h, material);
+                return material;
             }
 
             // 填充图层：对象引用的图层中名为 PUB_HATCH 的（天正默认的填充图层；空的图层引用读不出位置，只能按名字认），
@@ -3800,6 +3825,7 @@ namespace MiniCAD
             std::set<Dwg::Handle>              m_filledBlocks;
             std::map<Dwg::Handle, Tch::TchOpening> m_openings;                      // 门窗句柄 → 解码结果
             std::map<Dwg::Handle, std::vector<Tch::TchOpening>> m_wallOpenings;    // 墙句柄 → 墙上的门窗
+            std::map<Dwg::Handle, std::optional<int>> m_wallMaterials;            // 墙句柄 → 材料码（墙端是否接着别的材料）
             std::map<std::string, int>         m_skipped;
             std::map<Dwg::Handle, std::map<Dwg::Handle, Dwg::Handle>> m_sortKeys;   // 块记录 → 实体 → 排序句柄
             bool m_wipeoutFrame = true;                                              // WIPEOUTFRAME（没有该对象时 AutoCAD 默认显示）

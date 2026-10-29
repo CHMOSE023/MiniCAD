@@ -23,6 +23,9 @@ namespace MiniCAD::Tch
         // 40 砖墙、50 石墙、60 钢筋混凝土（tianzheng.dwg 的砖墙为 40、钢筋混凝土墙为 60，与天正特性面板一致）
         int Material = 0;
         double Scale = 100;     // 出图比例：小于图纸设置的详图比例时按详图图案填充
+        // 两端相接的墙：内核 TDbWall::dwgInFields 先读的 6 个软指针里的后 4 个（句柄流第 3～6 个），起点两个、终点两个；
+        // 空句柄为没有（tianzheng.dwg 的钢筋混凝土墙 3B1：起点 3B3 / 3B2，终点 3B0 / 3B0）
+        std::array<MiniDWG::Handle, 4> Connections{};
 
         // 弧墙的圆心与轴线半径
         bool ArcCenter(double& cx, double& cy, double& radius) const
@@ -186,6 +189,12 @@ namespace MiniCAD::Tch
             const double joinLimit = length + 2 * (result.LeftWidth + result.RightWidth);
             for (double join : result.Joins)
                 if (!std::isfinite(join) || std::abs(join) >= joinLimit) return fail("invalid native wall join");
+            // 相接的墙在句柄流里；没有句柄流（或不足 6 个）时按两端都没有相接的墙
+            DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            std::array<Handle, 6> soft{};
+            for (auto& h : soft) h = handles.ReadHandle(entity.ObjectHandle);
+            if (!handles.Failed() && handles.PositionInBits() <= data.HandleBits)
+                std::copy(soft.begin() + 2, soft.end(), result.Connections.begin());
             wall = result;
             if (diagnostic) diagnostic->clear();
             return true;

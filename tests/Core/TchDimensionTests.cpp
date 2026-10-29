@@ -14,6 +14,8 @@
 #include "Core/Entity/PolylineEntity.hpp"
 #include <cmath>
 #include <cstdio>
+#include <numbers>
+#include <tuple>
 
 using namespace MiniDWG;
 using MiniCAD::Tch::TchGraphics;
@@ -45,6 +47,7 @@ namespace
         double ArcRadius = 0, MeasuredRadius = 0;
         int Version = 1;
         std::vector<std::pair<int, std::string>> Overrides;
+        std::vector<std::tuple<int, double, double>> Positions;   // 标志 0x02：段号、文字中心
     };
 
     // 按基类与版本 1 布局写出
@@ -62,6 +65,11 @@ namespace
         r.WriteBitShort(static_cast<std::int16_t>(s.Spans.size()));
         for (double v : s.Spans) r.WriteBitDouble(v);
         r.WriteBitShort(static_cast<std::int16_t>(s.Flags));
+        if (s.Flags & 2)
+        {
+            r.WriteBitShort(static_cast<std::int16_t>(s.Positions.size()));
+            for (const auto& [index, x, y] : s.Positions) { r.WriteBitShort(static_cast<std::int16_t>(index)); r.WriteRawDouble(x); r.WriteRawDouble(y); }
+        }
         if (s.Flags & 4)
         {
             r.WriteBitShort(static_cast<std::int16_t>(s.Overrides.size()));
@@ -233,6 +241,27 @@ int main()
     withText.Flags = 0x84; withText.Overrides = {{0, "轴距"}};
     Check(DecodeDimension(*DimObject(withText), d) && d.TextOverrides.size() == 1 &&
           BuildDimension(d, style).Texts[0].Value == "轴距", "text overrides come from the text stream");
+
+    // ── 另行指定的文字位置（标志 0x02，8#楼-A平面图 电梯井 93DEE5 的数值）：两端的 100 挤不下，文字移到界线外侧，以该点为中心；
+    // 中间一段没有指定，仍在尺寸线上方 ──
+    DimSpec moved{{54802.5, 127676.5, 0}, std::numbers::pi, -270.61 / 50, {100, 900, 100}, 0x82};
+    moved.Positions = {{0, 54915.0, 128059.61}, {2, 53590.0, 128059.61}};
+    Check(DecodeDimension(*DimObject(moved), d) && d.TextPositions.size() == 2 && Near(d.TextPositions[2].first, 53590.0),
+          "text positions are decoded per span");
+    {
+        const TchDimStyle style25{3, 2.5, 1, 2.5, 1};   // 8#楼 的标注样式：DIMTXT 2.5
+        d.Scale = 50;
+        g = BuildDimension(d, style25);
+        Check(g.Texts.size() == 3 && Near(g.Texts[0].Center, 54915.0, 128059.61) && Near(g.Texts[2].Center, 53590.0, 128059.61) &&
+              Near(g.Texts[1].Center, 54252.5, 128059.61),
+              "moved span texts are centred on their stored points; the others stay DIMTXT/2 + DIMGAP above the line");
+    }
+
+    // ── 竖向标注的方向比 π/2 略大（8#楼 93F105 大 2e-9）：文字仍自下而上读、在尺寸线左侧，不翻到右侧 ──
+    DimSpec vertical{{0, 0, 0}, std::numbers::pi / 2 + 2e-9, -2.0, {1000}};
+    Check(DecodeDimension(*DimObject(vertical), d) && (g = BuildDimension(d, style)).Texts.size() == 1 &&
+              Near(g.Texts[0].Rotation, std::numbers::pi / 2, 1e-6) && Near(g.Texts[0].Center, 200 - 275, 500),
+          "a near-vertical dimension keeps bottom-to-top text on the left of the dimension line");
 
     // ── 拒绝 ──
     Check(AcceptedTruncations(*slanted, [](auto& e, auto& o, std::string* w) { return DecodeDimension(e, o, w); }, d) == 0,

@@ -442,6 +442,14 @@ int wmain(int argc, wchar_t** argv)
                             rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
                             (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
                 for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
+                // 句柄流按顺序（含空句柄 0）：内核 TDbWall::dwgInFields 先读 6 个软指针
+                std::printf("\n  handles=");
+                MiniDWG::DwgBitReader hs(u->Raw.Dwg.Handles, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
+                while (!hs.Failed() && hs.PositionInBits() < u->Raw.Dwg.HandleBits)
+                {
+                    const MiniDWG::Handle h = hs.ReadHandle(handle);
+                    if (!hs.Failed()) std::printf("%llx ", (unsigned long long)h);
+                }
                 std::printf("\n");
                 // 解码后的轴线、左右宽、连接量（块里的墙为块内坐标）
                 if (MiniCAD::Tch::TchWall w; MiniCAD::Tch::DecodeWall(*u, w) || MiniCAD::Tch::DecodeCurtainWall(*u, w) || MiniCAD::Tch::DecodeWallPrefix(*u, w))
@@ -482,6 +490,32 @@ int wmain(int argc, wchar_t** argv)
                 MiniDWG::DwgBitReader text(u->Raw.Dwg.Text, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
                 for (int i = 0; i < 64 && !text.Failed() && text.PositionInBits() < u->Raw.Dwg.TextBits; ++i)
                     std::printf("  text[%d]=\"%s\"\n", i, text.ReadVariableText().c_str());
+            }
+    // MINICAD_DIM：天正尺寸标注（TCH_DIMENSION2）中另行指定了文字位置（标志 0x02）的（MINICAD_DIM=all 时全部）：各段长度，
+    // 以及有位置的段的位置、该段尺寸线中点，和两者之差沿 / 垂直尺寸线方向的分量（坐标为对象所在空间的坐标）
+    if (const char* dimEnv = std::getenv("MINICAD_DIM"))
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_DIMENSION2")
+            {
+                MiniCAD::Tch::TchDimension d;
+                if (!MiniCAD::Tch::DecodeDimension(*u, d) || (d.TextPositions.empty() && std::strcmp(dimEnv, "all") != 0)) continue;
+                const double ux = std::cos(d.Angle), uy = std::sin(d.Angle), off = d.Offset * d.Scale;
+                std::printf("DIM %llx owner=%llx at=%.3f,%.3f angle=%.17g offset=%g scale=%g flags=0x%x spans=", (unsigned long long)handle,
+                            (unsigned long long)u->OwnerHandle, d.Position.X, d.Position.Y, d.Angle, off, d.Scale, d.Flags);
+                for (double s : d.Spans) std::printf("%g ", s);
+                std::printf("\n");
+                double t = 0;
+                for (std::size_t i = 0; i < d.Spans.size(); ++i)
+                {
+                    const double mid = t + d.Spans[i] / 2;
+                    t += d.Spans[i];
+                    const auto it = d.TextPositions.find(static_cast<int>(i));
+                    if (it == d.TextPositions.end()) continue;
+                    const double mx = d.Position.X + ux * mid - uy * off, my = d.Position.Y + uy * mid + ux * off;
+                    const double dx = it->second.first - mx, dy = it->second.second - my;
+                    std::printf("  seg %zu text=%.3f,%.3f mid=%.3f,%.3f along=%.3f across=%.3f\n", i, it->second.first, it->second.second, mx, my,
+                                dx * ux + dy * uy, -dx * uy + dy * ux);
+                }
             }
     // MINICAD_MLEADER：打印天正引出标注的解码结果与文字样式（字体、宽度、_TCH 扩展数据）
     if (std::getenv("MINICAD_MLEADER"))
