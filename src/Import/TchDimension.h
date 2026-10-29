@@ -51,6 +51,7 @@ namespace MiniCAD::Tch
         double            Scale = 1;
         bool              ShowText = true;      // 末尾 BS 的第 0 位为 0 时隐藏全部编号
         MiniDWG::Handle   TextStyle = MiniDWG::kNullHandle;
+        MiniDWG::Handle   TextLayer = MiniDWG::kNullHandle;     // 编号文字所在的图层（天正默认 AXIS_TEXT），编号随层
     };
 
     namespace Detail
@@ -191,7 +192,7 @@ namespace MiniCAD::Tch
         a.StartExtension = r.ReadBitDouble();
         a.EndExtension = version > 2 ? r.ReadBitDouble() : a.StartExtension;
         a.Radius = r.ReadBitDouble();
-        // 版本 > 1：句柄流中多一个句柄（图层）
+        // 版本 > 1：句柄流中多一个句柄（编号文字的图层，见下）
         if (version > 3) r.ReadBitShort();
         if (version > 4) a.ShowText = (r.ReadBitShort() & 1) != 0;
         if (r.Failed() || r.PositionInBits() != data.MainBits)
@@ -214,6 +215,8 @@ namespace MiniCAD::Tch
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         a.TextStyle = handles.ReadHandle(entity.ObjectHandle);
+        // 编号文字的图层（内核 TDbAxisLabelSet::GetTextLayerId；版本 < 2 时为默认的 AXIS_TEXT 图层，不存句柄）
+        if (version > 1) a.TextLayer = handles.ReadHandle(entity.ObjectHandle);
         if (handles.Failed() || handles.PositionInBits() > data.HandleBits)
             return fail("axis label handle stream is incomplete");
         label = std::move(a);
@@ -291,6 +294,10 @@ namespace MiniCAD::Tch
     {
         double ExtOffset = 3, ExtExtension = 2.5, ArrowSize = 1, TextHeight = 3.5, Gap = 1;
         int    Decimals = 0, AngularDecimals = 2;
+        // 文字颜色 DIMCLRT（ACI；0 随块、256 随层）：8#楼-A平面图 的 _TCH_ARCH 为随层，天正 + AutoCAD 里尺寸数字与尺寸线同色
+        int    TextColor = 7;
+        // 角度去零 DIMAZIN：1 去掉整数部分的 0，2 去掉小数末尾的零（8#楼 为 2：90.00° 显示为 90°，100.55° 不变）
+        int    AngularZeros = 0;
     };
 
     struct TchGraphics
@@ -306,7 +313,8 @@ namespace MiniCAD::Tch
         struct Path { std::vector<PathPoint> Points; double Width = 0; int Layer = 0; };   // 开放多段线，Width 为全程线宽
         // Center 为对齐点；Attachment 同 MTEXT 的附着点（5 正中、4 左中、6 右中）
         // Style：0 为对象的主文字样式，1 为第二文字样式（如索引符号旁注用的标注文字样式）
-        // Color 为 ACI 颜色号（天正分解出的文字多为 7 号色）
+        // Color 为 ACI 颜色号（0 随块、256 随层；默认 7 号色）。尺寸标注的取标注样式的 DIMCLRT，轴号编号随文字图层；
+        // 索引、引出、箭头、剖切、指北针、楼梯的文字在天正里就是 7 号色（改了它们的文字图层颜色也不变，8#楼-A平面图 核对）
         // WidthFactor：大于 0 时按此宽度因子显示（天正把混排文字拆成西文、汉字两段，西文宽度因子 0.6 / 0.85）
         struct Text { Point Center; double Height = 0, Rotation = 0; std::string Value; int Attachment = 5; int Style = 0; int Color = 7; int Layer = 0; double WidthFactor = 0; };
 
@@ -327,6 +335,18 @@ namespace MiniCAD::Tch
             char buf[64];
             std::snprintf(buf, sizeof buf, "%.*f", std::clamp(decimals, 0, 8), v);
             return buf;
+        }
+
+        // 按 DIMAZIN / DIMZIN 的位去零：2 去掉小数末尾的零（全是零时连小数点一起），1 去掉整数部分的 0（"0.50" → ".50"）
+        inline std::string SuppressZeros(std::string s, int zeros)
+        {
+            if ((zeros & 2) && s.find('.') != std::string::npos)
+            {
+                while (s.back() == '0') s.pop_back();
+                if (s.back() == '.') s.pop_back();
+            }
+            if ((zeros & 1) && s.size() > 1 && s[0] == '0' && s[1] == '.') s.erase(0, 1);
+            return s;
         }
 
         // 文字方向朝左时转 180°，保持可读（样例都朝右，转向规则未核对）
@@ -385,7 +405,7 @@ namespace MiniCAD::Tch
                 const auto it = d.TextOverrides.find(static_cast<int>(i));
                 std::string value = it != d.TextOverrides.end() ? it->second : Detail::FormatNumber(std::abs(d.Spans[i]), style.Decimals);
                 const P center = TextCenter(d, i, at((stations[i] + stations[i + 1]) / 2, off + up * lift));
-                g.Texts.push_back({center, style.TextHeight * 0.85 * s, rotation, std::move(value)});
+                g.Texts.push_back({center, style.TextHeight * 0.85 * s, rotation, std::move(value), 5, 0, style.TextColor});
             }
             return g;
         }
@@ -419,8 +439,11 @@ namespace MiniCAD::Tch
             const double up = Detail::Upright(rotation) ? -1.0 : 1.0;
             const auto it = d.TextOverrides.find(static_cast<int>(i));
             std::string value = it != d.TextOverrides.end()
-                ? it->second : Detail::FormatNumber(std::abs(d.Spans[i]) * 180 / std::numbers::pi, style.AngularDecimals) + "\xC2\xB0";
-            g.Texts.push_back({TextCenter(d, i, polar(mid, r - up * (textHeight / 2 + style.Gap * s))), textHeight, rotation, std::move(value)});
+                ? it->second
+                : Detail::SuppressZeros(Detail::FormatNumber(std::abs(d.Spans[i]) * 180 / std::numbers::pi, style.AngularDecimals),
+                                        style.AngularZeros) + "\xC2\xB0";
+            g.Texts.push_back({TextCenter(d, i, polar(mid, r - up * (textHeight / 2 + style.Gap * s))), textHeight, rotation, std::move(value),
+                               5, 0, style.TextColor});
         }
         return g;
     }
@@ -448,11 +471,12 @@ namespace MiniCAD::Tch
         const bool flipped = Detail::Upright(rotation);
         const double height = style.TextHeight * 0.85 * s;
         if (d.HasTextPosition)
-            g.Texts.push_back({{d.TextX, d.TextY}, height, rotation, std::move(value), 5});
+            g.Texts.push_back({{d.TextX, d.TextY}, height, rotation, std::move(value), 5, 0, style.TextColor});
         else
         {
             const double lift = (style.TextHeight / 2 + style.Gap) * s;
-            g.Texts.push_back({at(length - style.Gap * s, flipped ? -lift : lift), height, rotation, std::move(value), flipped ? 4 : 6});
+            g.Texts.push_back({at(length - style.Gap * s, flipped ? -lift : lift), height, rotation, std::move(value), flipped ? 4 : 6, 0,
+                               style.TextColor});
         }
         return g;
     }
@@ -505,11 +529,12 @@ namespace MiniCAD::Tch
                 if (!a.ShowText || axis.Label.empty()) continue;
                 // 附加轴号“分子/分母”（内核按 '/' 拆成上下两段）：圆内画水平直径，两段居中在圆心上下 0.457 × 半径，
                 // 字高约 0.62 × 半径（8#楼墙身大样的分解结果核对）
+                // 编号放在文字图层（图层 2：TchAxisLabel::TextLayer）上、随层（8#楼-A平面图 在天正 + AutoCAD 里与轴号圆同色，不是白色）
                 if (const auto slash = axis.Label.find('/'); slash != std::string::npos)
                 {
                     g.Lines.push_back({{c.X - radius, c.Y}, {c.X + radius, c.Y}});
-                    g.Texts.push_back({{c.X, c.Y + 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(0, slash)});
-                    g.Texts.push_back({{c.X, c.Y - 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(slash + 1)});
+                    g.Texts.push_back({{c.X, c.Y + 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(0, slash), 5, 0, 256, 2});
+                    g.Texts.push_back({{c.X, c.Y - 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(slash + 1), 5, 0, 256, 2});
                 }
                 else
                 {
@@ -517,7 +542,7 @@ namespace MiniCAD::Tch
                     std::size_t chars = 0;
                     for (unsigned char ch : axis.Label) chars += (ch & 0xc0) != 0x80;
                     const double height = chars <= 1 ? 1.24 * radius : 1.94 * radius / static_cast<double>(chars);
-                    g.Texts.push_back({c, height, 0, axis.Label});
+                    g.Texts.push_back({c, height, 0, axis.Label, 5, 0, 256, 2});
                 }
             }
         }

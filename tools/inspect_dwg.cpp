@@ -735,10 +735,12 @@ int wmain(int argc, wchar_t** argv)
             if (const auto* ds = dynamic_cast<const MiniDWG::DimensionStyle*>(target))
             {
                 const auto* ts = db->FindAs<MiniDWG::TextStyle>(ds->StyleHandle);
-                std::printf("    DIMSTYLE %s scale=%g txt=%g asz=%g tsz=%g exo=%g exe=%g gap=%g tvp=%g dec=%d adec=%d lfac=%g txsty=%s\n",
+                // 颜色为 ACI 号：0 随块，256 随层，-1 真彩
+                std::printf("    DIMSTYLE %s scale=%g txt=%g asz=%g tsz=%g exo=%g exe=%g gap=%g tvp=%g dec=%d adec=%d azin=%d lfac=%g txsty=%s clrt=%d clrd=%d clre=%d\n",
                             ds->Name.c_str(), ds->ScaleFactor, ds->TextHeight, ds->ArrowSize, ds->TickSize,
                             ds->ExtensionLineOffset, ds->ExtensionLineExtension, ds->DimensionLineGap, ds->TextVerticalPosition,
-                            ds->DecimalPlaces, ds->AngularDecimalPlaces, ds->LinearScaleFactor, ts ? ts->Name.c_str() : "?");
+                            ds->DecimalPlaces, ds->AngularDecimalPlaces, static_cast<int>(ds->AngularZeroHandling), ds->LinearScaleFactor,
+                            ts ? ts->Name.c_str() : "?", ds->TextColor.Index(), ds->DimensionLineColor.Index(), ds->ExtensionLineColor.Index());
             }
             if (const auto* ts = dynamic_cast<const MiniDWG::TextStyle*>(target))
             {

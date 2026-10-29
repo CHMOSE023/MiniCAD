@@ -1953,7 +1953,8 @@ namespace MiniCAD
                     if (Tch::DecodeAxisLabel(*unknown, axisLabel, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchSymbol(src, Tch::BuildAxisLabel(axisLabel), LookupStyle(axisLabel.TextStyle));
+                        return MakeTchSymbol(src, Tch::BuildAxisLabel(axisLabel), LookupStyle(axisLabel.TextStyle), std::nullopt,
+                                             Dwg::kNullHandle, axisLabel.TextLayer);
                     }
                     Tch::TchColumn column;
                     if (Tch::DecodeColumn(*unknown, column, &nativeReason))
@@ -2683,6 +2684,9 @@ namespace MiniCAD
                     style.Gap = std::abs(ds->DimensionLineGap);
                     style.Decimals = ds->DecimalPlaces;
                     style.AngularDecimals = ds->AngularDecimalPlaces;
+                    const int clrt = ds->TextColor.IsTrueColor() ? ds->TextColor.ApproxIndex() : ds->TextColor.Index();
+                    style.TextColor = clrt >= 0 && clrt <= 256 ? clrt : 7;     // DIMCLRT：0 随块、256 随层
+                    style.AngularZeros = static_cast<int>(ds->AngularZeroHandling);
                     textStyle = LookupStyle(ds->StyleHandle);
                 }
                 return style;
