@@ -56,6 +56,6 @@ namespace MiniGUI
     void DrawLayerOnIcon(DrawList& dl, const Rect& r, bool on);
     // 冻结小图标：冻结 = 蓝色雪花，解冻 = 太阳
     void DrawLayerFreezeIcon(DrawList& dl, const Rect& r, bool frozen);
-    // 锁定小图标
+    // 锁定小图标：锁定 = 琥珀色闭合的锁，解锁 = 灰色空心、锁梁打开的锁
     void DrawLayerLockIcon(DrawList& dl, const Rect& r, bool locked);
 }

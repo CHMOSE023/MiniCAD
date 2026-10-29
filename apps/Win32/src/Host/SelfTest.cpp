@@ -412,6 +412,89 @@ namespace MiniCAD
                   "重做：同一个 ID 的图层回来并重新成为当前");
         }
 
+        // ── 9.2 图层层级：名字里的 $ 分级显示成树（Scene/LayerPath.h）────
+        section("9.2 图层面板：名字里的 $ 分级显示成树，折叠、锁定带下级");
+        {
+            Document*     doc = m_docManager.GetActive();
+            LayerManager& lm  = doc->GetLayerManager();
+            if (MiniGUI::DockSpace* dock = m_layout->GetDock("main"))
+                dock->ShowPanel("layers");
+            const LayerID b = lm.AddLayer("自测层级$B"), c = lm.AddLayer("自测层级$B$C"), d = lm.AddLayer("自测层级$D");
+            StateChanged();
+            RenderFrame();
+            PanelSet&          P    = *m_main.panels;
+            MiniGUI::ListView* list = P.layerList;
+            constexpr int colName = 1, colLock = 3;     // LayerPanels.cpp 的 LayerColumn
+            auto rowOf = [&P](const std::string& path)
+            {
+                const auto it = std::find(P.layerPaths.begin(), P.layerPaths.end(), path);
+                return it == P.layerPaths.end() ? -1 : static_cast<int>(it - P.layerPaths.begin());
+            };
+            auto clickCell = [&](int row, int col, float dx)
+            {
+                list->EnsureVisible(row);
+                const MiniGUI::Rect cell = list->GetCellRect(row, col);
+                const MiniGUI::Vec2 o    = list->GetContent()->GetScreenBounds().min;
+                const MiniGUI::Vec2 p{ o.x + cell.min.x + dx, o.y + cell.Center().y };
+                m_ui->PointerMove(p, 0);
+                m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+            };
+            const int g = rowOf("自测层级");
+            check(g >= 0 && P.layerIds[static_cast<size_t>(g)] == PanelSet::kGroupRow && rowOf("自测层级$B") == g + 1 && rowOf("自测层级$B$C") == g + 2 &&
+                  list->GetItem(g + 1).depth == 1 && list->GetItem(g + 2).depth == 2 && list->GetCellText(g + 2, colName) == "C" &&
+                  list->GetItem(g).expand == MiniGUI::ExpandState::Expanded,
+                  "只有 A$B 时补出分组行 A；下级逐级缩进，名称列只显示最后一级");
+            {
+                // 工具栏 / 特性面板的图层下拉框：接在最近的、确有其层的上级下面缩进
+                const auto& ids     = SortedLayerIds(*doc);
+                const auto& indents = SortedLayerIndents(*doc);
+                auto indentOf = [&](LayerID id) { return indents[static_cast<size_t>(std::find(ids.begin(), ids.end(), id) - ids.begin())]; };
+                check(indents.size() == ids.size() && indentOf(b).depth == 0 && indentOf(b).labelStart == 0 && indentOf(c).depth == 1 &&
+                      lm.GetLayer(c)->GetName().substr(indentOf(c).labelStart) == "C" && indentOf(d).depth == 0,
+                      "图层下拉框：没有“自测层级”这一层时 B 写全名，C 缩进在 B 下面只写 C");
+            }
+            if (g >= 0)
+            {
+                clickCell(g, colName, 10.0f);           // 第 0 级的展开箭头
+                check(rowOf("自测层级$B") < 0 && rowOf("自测层级") == g && list->GetItem(g).expand == MiniGUI::ExpandState::Collapsed,
+                      "点箭头折叠：下级行收起");
+                clickCell(g, colName, 10.0f);
+                check(rowOf("自测层级$B$C") == g + 2, "再点展开");
+                clickCell(g, colLock, 16.0f);
+                check(lm.GetLayer(b)->IsLocked() && lm.GetLayer(c)->IsLocked(), "点分组行的锁：下级全部锁定");
+                m_commands.Execute("edit.undo");
+                RenderFrame();
+                check(!lm.GetLayer(b)->IsLocked() && !lm.GetLayer(c)->IsLocked(), "一步撤销：下级全部解锁");
+
+                // 在位改名：只改这一级；与同级重名时拒绝、继续编辑，Esc 放弃；Enter 提交（提交时面板重建行）
+                auto rename = [&](const std::string& path, const char* text, bool escape)
+                {
+                    const int row = rowOf(path);
+                    if (row < 0 || !list->BeginEdit(row, colName))
+                        return false;
+                    m_ui->TextInput(text);
+                    m_ui->KeyDown(MiniGUI::Key::Enter, 0);
+                    RenderFrame();
+                    const bool stillEditing = list->IsEditing();
+                    if (escape)
+                        m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                    RenderFrame();
+                    return stillEditing;
+                };
+                check(rename("自测层级$D", "B", true) && lm.GetLayer(d)->GetName() == "自测层级$D" && !list->IsEditing(),
+                      "改成同级已有的名字：拒绝并继续编辑，Esc 放弃，名字不变");
+                check(!rename("自测层级$D", "E", false) && lm.GetLayer(d)->GetName() == "自测层级$E" && !list->IsEditing() && rowOf("自测层级$E") >= 0,
+                      "Enter 提交改名：只改最后一级，编辑结束，面板显示新名字");
+            }
+            lm.RemoveLayer(b);
+            lm.RemoveLayer(c);
+            lm.RemoveLayer(d);
+            StateChanged();
+            RenderFrame();
+        }
+
         // ── 9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单 ──
         section("9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单");
         {

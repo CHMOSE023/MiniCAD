@@ -3,10 +3,13 @@
 #include "Scene/Scene.h"
 #include "Scene/Layer.h"
 #include "Scene/LayerManager.h"
+#include "Scene/LayerPath.h"
 #include "Core/Entity/Entity.hpp"
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace MiniCAD
@@ -236,5 +239,147 @@ namespace MiniCAD
         LayerID                m_id;
         LayerChange            m_change;
         std::unique_ptr<Layer> m_before;
+    };
+
+    // =========================================================================
+    // 图层层级（Scene/LayerPath.h）：对上级改名、开关、锁定、删除时下级图层一起改，合成一步撤销。
+    // 下级不继承上级的状态：上级关闭时把下级也逐个关闭，存进文件的就是各图层实际的开关，AutoCAD 里看到的相同。
+    // =========================================================================
+
+    // 一组图层命令合成一步撤销。与 BatchCommand 不同，没有生效的子命令（例如本来就关着的下级图层）跳过，
+    // 不让整批失败；一个都没生效时失败
+    class LayerBatchCommand : public ICommand
+    {
+    public:
+        explicit LayerBatchCommand(std::vector<std::unique_ptr<ICommand>> cmds) : m_commands(std::move(cmds)) {}
+
+        bool Execute(Scene& scene) override
+        {
+            if (m_executed)
+            {
+                for (auto& c : m_commands)              // 重做：都是上次生效过的
+                    c->Execute(scene);
+                return true;
+            }
+            std::vector<std::unique_ptr<ICommand>> done;
+            for (auto& c : m_commands)
+                if (c->Execute(scene))
+                    done.push_back(std::move(c));
+            m_commands = std::move(done);
+            m_executed = true;
+            return !m_commands.empty();
+        }
+
+        void Undo(Scene& scene) override
+        {
+            for (auto it = m_commands.rbegin(); it != m_commands.rend(); ++it)
+                (*it)->Undo(scene);
+        }
+
+        std::string GetName() const override { return m_commands.empty() ? "修改图层" : m_commands.front()->GetName(); }
+
+    private:
+        std::vector<std::unique_ptr<ICommand>> m_commands;
+        bool                                   m_executed = false;
+    };
+
+    namespace LayerOps
+    {
+        // 名为 path 的图层与它的全部下级图层（path 可以没有对应的图层：只有 "A$B" 时的 "A"）
+        inline std::vector<LayerID> Subtree(const LayerManager& lm, std::string_view path)
+        {
+            std::vector<LayerID> ids;
+            for (LayerID id : lm.GetAllLayerIDs())
+                if (LayerPath::InSubtree(lm.GetLayer(id)->GetName(), path))
+                    ids.push_back(id);
+            return ids;
+        }
+
+        // 上级与全部下级都改成 change（开关、锁定等；不用来改名，改名用 RenameLayerTreeCommand）
+        inline std::unique_ptr<ICommand> ChangeTree(const LayerManager& lm, std::string_view path, const LayerChange& change)
+        {
+            std::vector<std::unique_ptr<ICommand>> cmds;
+            for (LayerID id : Subtree(lm, path))
+                cmds.push_back(std::make_unique<ChangeLayerCommand>(id, change));
+            return std::make_unique<LayerBatchCommand>(std::move(cmds));
+        }
+
+        // 删除上级与全部下级图层（0 层除外），上面的对象移到 0 层
+        inline std::unique_ptr<ICommand> DeleteTree(const LayerManager& lm, std::string_view path)
+        {
+            std::vector<std::unique_ptr<ICommand>> cmds;
+            for (LayerID id : Subtree(lm, path))
+                if (id != Layer::DefaultLayerID)
+                    cmds.push_back(std::make_unique<DeleteLayerCommand>(id));
+            return std::make_unique<LayerBatchCommand>(std::move(cmds));
+        }
+    }
+
+    // ── 上级改名：自己与全部下级图层一起改（"A" 改成 "B" 时 "A$x" 成为 "B$x"）──────────────
+    // from 可以没有对应的图层（只用来分组的上级）。to 里带 '$' 即移到别的上级下面（"A$x" 改成 "B$x" 是从 A 移到 B）。
+    // 失败：没有这样的图层、0 层在其中、移进自己的下级、改后与这组以外的图层重名、分级的名字里有空的一级
+    class RenameLayerTreeCommand : public ICommand
+    {
+    public:
+        RenameLayerTreeCommand(std::string from, std::string to) : m_from(std::move(from)), m_to(std::move(to)) {}
+
+        bool Execute(Scene& scene) override
+        {
+            LayerManager& lm = scene.GetLayerManager();
+            if (m_renames.empty())
+            {
+                const std::vector<LayerID> ids = LayerOps::Subtree(lm, m_from);
+                if (ids.empty() || m_to.empty() || m_to == m_from)
+                    return false;
+                // 没有上下级的普通图层照旧可以取任意名字；有上下级的，新路径的每一级都不能空
+                const bool plain = ids.size() == 1 && lm.GetLayer(ids[0])->GetName() == m_from && LayerPath::Split(m_from).size() == 1;
+                if (!plain && !LayerPath::IsValidRelative(m_to))
+                    return false;
+                if (LayerPath::InSubtree(m_to, m_from) && LayerPath::Split(m_to).size() > LayerPath::Split(m_from).size())
+                    return false;
+
+                std::vector<Rename> renames;
+                for (LayerID id : ids)
+                {
+                    if (id == Layer::DefaultLayerID)
+                        return false;
+                    const std::string& name = lm.GetLayer(id)->GetName();
+                    renames.push_back({ id, name, LayerPath::Rebase(name, m_from, m_to) });
+                }
+                std::vector<std::string> taken;
+                for (LayerID other : lm.GetAllLayerIDs())
+                    if (std::find(ids.begin(), ids.end(), other) == ids.end())
+                        taken.push_back(lm.GetLayer(other)->GetName());
+                for (const Rename& r : renames)
+                    taken.push_back(r.after);
+                std::sort(taken.begin(), taken.end());
+                if (std::adjacent_find(taken.begin(), taken.end()) != taken.end())
+                    return false;
+                m_renames = std::move(renames);
+            }
+            for (const Rename& r : m_renames)
+                if (!lm.GetLayer(r.id))
+                    return false;
+            for (const Rename& r : m_renames)
+                lm.GetLayer(r.id)->SetName(r.after);
+            scene.MarkDisplayDirty();
+            return true;
+        }
+
+        void Undo(Scene& scene) override
+        {
+            for (const Rename& r : m_renames)
+                if (Layer* l = scene.GetLayerManager().GetLayer(r.id))
+                    l->SetName(r.before);
+            scene.MarkDisplayDirty();
+        }
+
+        std::string GetName() const override { return "图层改名"; }
+        size_t      RenamedCount() const     { return m_renames.size(); }
+
+    private:
+        struct Rename { LayerID id; std::string before, after; };
+        std::string         m_from, m_to;
+        std::vector<Rename> m_renames;
     };
 }

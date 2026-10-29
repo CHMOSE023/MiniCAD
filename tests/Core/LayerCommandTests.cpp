@@ -150,5 +150,75 @@ int RunLayerCommandTests()
         Check(!LayerOps::NameTaken(lm, n), "UniqueName 给出不重名的名字");
     }
 
+    // ── 层级：名字里用 '$' 分级（同 Rhino 导出的 DWG）──────────────────────
+    {
+        using namespace LayerPath;
+        const auto parts = Split("模型$G2$钢箱梁");
+        Check(parts.size() == 3 && parts[0] == "模型" && parts[2] == "钢箱梁", "按 $ 拆成各级");
+        Check(Split("$0$QNJ_2").size() == 1 && Split("a$$b").size() == 1 && Split("a$").size() == 1 && Split("墙").size() == 1,
+              "有空的一级时不分级（绑定外部参照留下的 $0$ 名字）");
+        Check(Parent("A$B$C") == "A$B" && Leaf("A$B$C") == "C" && Parent("A").empty() && Leaf("$0$x") == "$0$x", "上级路径与最后一级");
+        Check(InSubtree("A$B$C", "A$B") && InSubtree("a$b", "A") && InSubtree("A", "A") && !InSubtree("AB$C", "A") &&
+              !InSubtree("A", "A$B") && !InSubtree("$0$x$y", "$0$x"), "是否在某个上级下面（不分大小写，不分级的名字不算）");
+        Check(Rebase("A$B$C", "A$B", "X") == "X$C" && Join("", "B") == "B" && Join("A", "B") == "A$B", "搬到别的上级下面");
+        Check(IsValidRelative("B$C") && !IsValidRelative("$B") && !IsValidRelative("B$") && !IsValidRelative("B$$C") && !IsValidRelative(""),
+              "一级名称不能空");
+    }
+    {
+        stack.Clear();
+        const LayerID a = lm.AddLayer("A"), ab = lm.AddLayer("A$B"), abc = lm.AddLayer("A$B$C"), ax = lm.AddLayer("A$X");
+        const LayerID gy = lm.AddLayer("G$Y"), other = lm.AddLayer("AB");
+        auto nameOf = [&](LayerID id) { return lm.GetLayer(id)->GetName(); };
+
+        Check(LayerOps::Subtree(lm, "A$B").size() == 2 && LayerOps::Subtree(lm, "A").size() == 4 && LayerOps::Subtree(lm, "G").size() == 1,
+              "上级与全部下级（分组的上级 G 没有对应的图层）");
+
+        // 上级改名：下级一起改，一步撤销
+        auto ren = std::make_unique<RenameLayerTreeCommand>("A$B", "A$桥");
+        RenameLayerTreeCommand* renRaw = ren.get();
+        Check(stack.Execute(std::move(ren), scene) && renRaw->RenamedCount() == 2 && nameOf(ab) == "A$桥" && nameOf(abc) == "A$桥$C" &&
+              nameOf(a) == "A" && nameOf(ax) == "A$X", "上级改名：自己与下级一起改，别的分支不动");
+        stack.Undo(scene);
+        Check(nameOf(ab) == "A$B" && nameOf(abc) == "A$B$C", "撤销改名：全部还原");
+        stack.Redo(scene);
+        Check(nameOf(abc) == "A$桥$C", "重做改名");
+        stack.Undo(scene);
+
+        Check(stack.Execute(std::make_unique<RenameLayerTreeCommand>("G", "H"), scene) && nameOf(gy) == "H$Y", "分组的上级（没有对应的图层）改名");
+        stack.Undo(scene);
+        Check(stack.Execute(std::make_unique<RenameLayerTreeCommand>("A$B", "G$B"), scene) && nameOf(abc) == "G$B$C", "改到别的上级下面");
+        stack.Undo(scene);
+        Check(!stack.Execute(std::make_unique<RenameLayerTreeCommand>("A$B", "A$X"), scene) && nameOf(ab) == "A$B", "与这组以外的图层重名：失败，不改");
+        Check(!stack.Execute(std::make_unique<RenameLayerTreeCommand>("A", "A$B$D"), scene), "不能移进自己的下级");
+        Check(!stack.Execute(std::make_unique<RenameLayerTreeCommand>("A", "B$"), scene), "有下级时新路径不能有空的一级");
+        Check(stack.Execute(std::make_unique<RenameLayerTreeCommand>("AB", "$1$AB"), scene) && nameOf(other) == "$1$AB",
+              "没有上下级的普通图层照旧可以取任意名字");
+        stack.Undo(scene);
+        Check(!stack.Execute(std::make_unique<RenameLayerTreeCommand>("不存在", "Z"), scene), "没有这样的图层：失败");
+
+        // 开关、锁定：下级跟着改，本来就是这个状态的跳过
+        LayerChange off; off.Visible = false;
+        Check(stack.Execute(std::make_unique<ChangeLayerCommand>(abc, off), scene), "先单独关闭一个下级");
+        auto offTree = LayerOps::ChangeTree(lm, "A", off);
+        const ICommand* offRaw = offTree.get();
+        Check(stack.Execute(std::move(offTree), scene) && !lm.GetLayer(a)->IsVisible() && !lm.GetLayer(ab)->IsVisible() &&
+              !lm.GetLayer(ax)->IsVisible() && lm.GetLayer(other)->IsVisible(), "关闭上级：下级一起关闭，同名前缀的 AB 不受影响");
+        Check(offRaw->GetName() == "关闭图层", "撤销记录名是“关闭图层”");
+        stack.Undo(scene);
+        Check(lm.GetLayer(a)->IsVisible() && lm.GetLayer(ab)->IsVisible() && !lm.GetLayer(abc)->IsVisible(), "一步撤销：原来单独关着的仍关着");
+        stack.Undo(scene);
+        Check(!stack.Execute(LayerOps::ChangeTree(lm, "A", LayerChange{ .Visible = true }), scene), "全都本来就开着：不入撤销栈");
+
+        // 删除上级：下级一起删，对象移到 0 层，一步撤销
+        const auto line = scene.NextObjectID();
+        auto e = std::make_unique<LineEntity>(line, Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 });
+        e->SetLayerId(abc);
+        scene.AddEntity(std::move(e));
+        Check(stack.Execute(LayerOps::DeleteTree(lm, "A$B"), scene) && !lm.GetLayer(ab) && !lm.GetLayer(abc) && lm.GetLayer(a) &&
+              static_cast<Entity*>(scene.GetEntity(line))->GetLayerID() == Layer::DefaultLayerID, "删除上级：下级一起删，对象移到 0 层");
+        stack.Undo(scene);
+        Check(lm.GetLayer(ab) && lm.GetLayer(abc) && static_cast<Entity*>(scene.GetEntity(line))->GetLayerID() == abc, "一步撤销删除");
+    }
+
     return g_failures;
 }
