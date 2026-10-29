@@ -216,6 +216,7 @@ namespace MiniGUI
         m_editor.Cancel();
         CancelSlowEdit();
         m_items = std::move(items);
+        ++m_itemsVersion;
         m_selected.assign(m_items.size(), 0);
         m_current  = m_items.empty() ? -1 : std::min(m_current, GetItemCount() - 1);
         m_anchor   = m_current;
@@ -511,9 +512,11 @@ namespace MiniGUI
 
         m_editor.Begin(GetContent(), this, rect, GetCellText(row, column), [this, row, column](const std::string& text)
         {
+            const uint32_t version = m_itemsVersion;
             if (m_onItemEdited && !m_onItemEdited(row, column, text))
                 return false;
-            SetCellText(row, column, text);
+            if (m_itemsVersion == version)      // 回调里重建了行（例如图层改名后重新排序）：新的行已是改后的样子
+                SetCellText(row, column, text);
             return true;
         });
         return true;

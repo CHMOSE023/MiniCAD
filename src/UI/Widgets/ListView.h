@@ -128,6 +128,7 @@ namespace MiniGUI
         void CancelSlowEdit();
 
         std::vector<ListItem>   m_items;
+        uint32_t                m_itemsVersion = 0;                 // SetItems 一次加一：在位编辑的回调里行被换掉时不再写回
         std::vector<char>       m_selected;
         std::vector<ListColumn> m_columns;
         SelectionMode           m_mode      = SelectionMode::Single;
