@@ -1980,7 +1980,12 @@ namespace MiniCAD
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(columnBlockId), columnName, Math::Point3{0, 0, 0});
                     }
                     Tch::TchWall wall;
-                    if (Tch::DecodeWall(*unknown, wall, &nativeReason))
+                    // 非玻璃幕墙与墙画法相同（连接量、按材料填充、门窗处封口）：8#楼-A平面图 玻璃幕墙与墙转角之间的填充墙段是这种幕墙
+                    const bool curtainWall = unknown->Raw.DxfName == "TCH_CURTAIN_WALL";
+                    const bool curtainFields = curtainWall && Tch::DecodeCurtainWall(*unknown, wall);
+                    const bool plainCurtain = curtainFields && (wall.Flags & 0x4) == 0;
+                    auto countWall = [&] { if (curtainWall) ++m_tchConverted[unknown->Raw.DxfName]; else ++m_tianzhengWalls; };
+                    if (plainCurtain || Tch::DecodeWall(*unknown, wall, &nativeReason))
                     {
                         double arcX = 0, arcY = 0, arcR = 0;
                         if (wall.ArcCenter(arcX, arcY, arcR))
@@ -2046,7 +2051,7 @@ namespace MiniCAD
                                 }
                                 if (cursor < span) addArc(cursor, span);
                             }
-                            ++m_tianzhengWalls;
+                            countWall();
                             return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
                         }
                         const double dx = wall.End.X - wall.Start.X, dy = wall.End.Y - wall.Start.Y;
@@ -2075,6 +2080,9 @@ namespace MiniCAD
                         cuts = MergeIntervals(std::move(cuts));
                         const double leftFrom = wall.Joins[0], leftTo = length - wall.Joins[1];
                         const double rightFrom = wall.Joins[2], rightTo = length - wall.Joins[3];
+                        // 比较断口与墙线端点的容差：门窗宽度带浮点误差（8#楼-A平面图 通风井百叶宽 1999.9999999963，
+                        // 断口恰到斜接后的墙线端点），按 1e-9 会多出横穿墙厚的封口线和零长的墙线
+                        constexpr double tol = 1e-6;
                         // 一侧墙线上轴线参数 t 处的点：超出该侧范围时取端点，该侧退化为点时就是那个点
                         auto sidePoint = [](const Math::Point3& a, const Math::Point3& b, double from, double to, double t) {
                             if (to - from < 1e-9) return a;
@@ -2085,7 +2093,7 @@ namespace MiniCAD
                         auto rightAt = [&](double t) { return sidePoint(points[3], points[2], rightFrom, rightTo, t); };
                         // 填充：门窗之间各一块，墙端按连接量斜接（与墙线一致），放在墙线下面
                         auto addPiece = [&](double a, double b) {
-                            if (b <= a) return;
+                            if (b <= a + tol) return;
                             std::vector<Math::Point3> piece;
                             for (const auto& p : {leftAt(a), leftAt(b), rightAt(b), rightAt(a)})
                                 if (piece.empty() || std::hypot(p.x - piece.back().x, p.y - piece.back().y) > 1e-9) piece.push_back(p);
@@ -2100,7 +2108,7 @@ namespace MiniCAD
                         // 门窗两侧的墙端各一条横穿墙厚的线（天正 2014 的显示与分解结果都有，tianzheng.dwg 的两扇门核对）
                         for (const auto& [c0, c1] : cuts)
                             for (const double t : {c0, c1})
-                                if (t > std::max(leftFrom, rightFrom) + 1e-9 && t < std::min(leftTo, rightTo) - 1e-9)
+                                if (t > std::max(leftFrom, rightFrom) + tol && t < std::min(leftTo, rightTo) - tol)
                                     block->AddEntity(Make<LineEntity>(src, nullptr, leftAt(t), rightAt(t)));
                         auto addSide = [&](const Math::Point3& a, const Math::Point3& b, double from, double to)
                         {
@@ -2111,20 +2119,22 @@ namespace MiniCAD
                             for (const auto& [c0, c1] : cuts)
                             {
                                 if (c1 <= cursor || c0 >= to) continue;
-                                if (c0 > cursor) block->AddEntity(Make<LineEntity>(src, nullptr, at(cursor), at(c0)));
+                                if (c0 > cursor + tol) block->AddEntity(Make<LineEntity>(src, nullptr, at(cursor), at(c0)));
                                 cursor = std::max(cursor, c1);
                             }
-                            if (cursor < to) block->AddEntity(Make<LineEntity>(src, nullptr, at(cursor), at(to)));
+                            if (cursor < to - tol) block->AddEntity(Make<LineEntity>(src, nullptr, at(cursor), at(to)));
                         };
                         addSide(points[0], points[1], wall.Joins[0], length - wall.Joins[1]);
                         addSide(points[3], points[2], wall.Joins[2], length - wall.Joins[3]);
-                        ++m_tianzhengWalls;
+                        countWall();
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }
-                    if (Tch::TchWall curtain; unknown->Raw.DxfName == "TCH_CURTAIN_WALL" && Tch::DecodeWallPrefix(*unknown, curtain))
+                    if (Tch::TchWall curtain = wall; curtainWall && (curtainFields || Tch::DecodeWallPrefix(*unknown, curtain)))
                     {
-                        // 幕墙（代理图形为空，按天正 2014 分解结果近似）：墙标志含 0x4 时为玻璃幕墙，沿墙厚三等分画 4 条线、两端封口；
-                        // 否则按普通墙画两条侧边线。都在门窗处断开；与相邻墙的交接（斜接、连接量）不处理
+                        // 幕墙（代理图形为空，按天正 2014 分解结果近似）：墙标志含 0x4 时为玻璃幕墙，沿墙厚三等分画 4 条线、方头的一端封口；
+                        // 否则（读不出墙的字段时）按普通墙画两条侧边线。都在门窗处断开。直幕墙两端按连接量缩进或伸出，
+                        // 各线在左右两侧的连接量之间按偏移插值，端线与相邻墙的斜接线重合（8#楼-A平面图 与天正 2014 显示核对）；
+                        // 弧幕墙不用连接量（样例均为 0）
                         const bool glass = (curtain.Flags & 0x4) != 0;
                         const double width = curtain.LeftWidth + curtain.RightWidth;
                         std::vector<double> offsets;    // 相对轴线的偏移，左侧为正
@@ -2173,7 +2183,7 @@ namespace MiniCAD
                             return Math::Point3{curtain.Start.X + ux * t - uy * off, curtain.Start.Y + uy * t + ux * off, z};
                         };
                         auto addPiece = [&](double off, double t0, double t1) {
-                            if (t1 - t0 < 1e-9) return;
+                            if (t1 - t0 < 1e-6) return;   // 门窗宽度的浮点误差留下的碎段
                             if (!arc)
                             {
                                 block->AddEntity(Make<LineEntity>(src, nullptr, at(t0, off), at(t1, off)));
@@ -2185,20 +2195,35 @@ namespace MiniCAD
                             if (ccw < 0) std::swap(s0, s1);
                             block->AddEntity(Make<ArcEntity>(src, nullptr, Math::Point3{arcX, arcY, z}, r, s0, s1));
                         };
+                        // 偏移 off 处的线在起点（end 0）/ 终点（end 1）沿轴线的缩进量
+                        auto trim = [&](double off, int end) {
+                            if (arc || width <= 0) return 0.0;
+                            return curtain.Joins[end] + (curtain.Joins[2 + end] - curtain.Joins[end]) * (curtain.LeftWidth - off) / width;
+                        };
                         for (const double off : offsets)
                         {
-                            double cursor = 0;
+                            double cursor = trim(off, 0);
+                            const double to = span - trim(off, 1);
                             for (const auto& [c0, c1] : cuts)
                             {
-                                if (c1 <= cursor || c0 >= span) continue;
+                                if (c1 <= cursor || c0 >= to) continue;
                                 if (c0 > cursor) addPiece(off, cursor, c0);
                                 cursor = std::max(cursor, c1);
                             }
-                            if (cursor < span) addPiece(off, cursor, span);
+                            if (cursor < to) addPiece(off, cursor, to);
                         }
+                        // 玻璃幕墙的端线：只在方头的一端画；两侧连接量不同（与相邻幕墙斜接）的一端不画，
+                        // 各线在斜接线上与相邻幕墙的线相接（8#楼-A平面图 两段玻璃幕墙的转角，天正 2014 显示核对）
                         if (glass)
-                            for (const double t : {0.0, span})
-                                block->AddEntity(Make<LineEntity>(src, nullptr, at(t, curtain.LeftWidth), at(t, -curtain.RightWidth)));
+                        {
+                            const double left = curtain.LeftWidth, right = -curtain.RightWidth;
+                            for (const int end : {0, 1})
+                            {
+                                if (std::abs(trim(left, end) - trim(right, end)) > 1e-6) continue;
+                                const double t = end == 0 ? trim(left, 0) : span - trim(left, 1);
+                                block->AddEntity(Make<LineEntity>(src, nullptr, at(t, left), at(t, right)));
+                            }
+                        }
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }

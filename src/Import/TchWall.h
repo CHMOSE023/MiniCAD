@@ -93,89 +93,121 @@ namespace MiniCAD::Tch
         return true;
     }
 
+    namespace Detail
+    {
+        // 天正内核 TDbWall::dwgInFields 读的字段；幕墙（curtain）的这些字段之后还有幕墙自己的字段
+        inline bool DecodeWallFields(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic, bool curtain)
+        {
+            using namespace MiniDWG;
+            const auto& data = entity.Raw.Dwg;
+            if (diagnostic) *diagnostic = "native wall fields do not match verified schema-5 straight-wall layout";
+            // 门窗数为 0 时 BS 占 2 位（1157 位），1～255 时占 10 位（1165 位），更多时占 18 位；幕墙自己的字段至多 4 个 RC + 6 个 BD
+            const std::uint64_t maxBits = 1173 + (curtain ? 4 * 8 + 6 * 66 : 0);
+            if (data.MainBits < 773 || data.MainBits > maxBits)
+            {
+                if (diagnostic) *diagnostic = "unsupported native wall layout: " + std::to_string(data.MainBits) +
+                    " bits; verified range is 773.." + std::to_string(maxBits);
+                return false;
+            }
+            // AC1018（2004 格式，天正电气 1#楼平面图）、AC1024（2010 格式，8#楼-A平面图）与 AC1027 的这段位流布局相同；其他版本未核对
+            if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
+                return false;
+            auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            if (const int v = r.ReadByte(); v != 5) return fail("unsupported native wall base version " + std::to_string(v));
+            const double scale = r.ReadBitDouble();
+            const int bs = r.ReadBitShort(), rc = r.ReadByte(), b2 = r.Read2Bits(), raw = r.ReadRawShort(), rc8 = r.ReadByte();
+            if (!std::isfinite(scale) || scale <= 0 || bs != 0 || rc != 3 || b2 != 0 || raw != 512 || (rc8 != 8 && rc8 != 7))
+                return fail("native wall header mismatch: scale=" + std::to_string(scale) + " bs=" + std::to_string(bs) + " rc=" + std::to_string(rc) +
+                            " bits=" + std::to_string(b2) + " raw=" + std::to_string(raw) + " rc8=" + std::to_string(rc8));
+            const auto protectionKey = r.ReadByte();
+            auto decoded = r.ReadBytes(84);
+            Detail::Unprotect(decoded, rc8, protectionKey);
+            DwgBitReader geometry(decoded, data.Version, Codec::CodePage::Gbk);
+            TchWall result;
+            result.Start = geometry.Read3RawDouble();
+            result.End = geometry.Read3RawDouble();
+            const double curveParameter = geometry.ReadRawDouble();
+            const auto flags = geometry.ReadRawLong();
+            result.LeftWidth = geometry.ReadRawDouble();
+            result.RightWidth = geometry.ReadRawDouble();
+            const double height = geometry.ReadRawDouble();
+            // 受保护数据之后（天正内核 TDbWall::dwgInFields）：RC 0、门窗数 BS（门窗句柄在句柄流）、材料码 RC、墙体造型数 RC
+            //（造型 TCH_WALL_PATCH 的句柄在句柄流）。门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；
+            // 有门窗的墙多出的位数与句柄流中多出的 TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
+            // 8#楼-A平面图 的材料码有 10 / 30 / 31 / 32 / 40 / 60；造型数只见过 0 和 1
+            if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
+            const int openings = r.ReadBitShort();
+            if (openings < 0 || openings > 1024) return fail("invalid native wall opening count");
+            const int material = r.ReadByte(), patches = r.ReadByte();
+            if (material >= 64 || patches > 1)
+                return fail("native wall flags mismatch: material=" + std::to_string(material) + " patches=" + std::to_string(patches));
+            result.Material = material;
+            result.OpeningCount = openings;
+            result.Scale = scale;
+            const double insulation = r.ReadBitDouble();
+            for (auto& join : result.Joins) join = r.ReadBitDouble();
+            // The remaining 11-bit signature is 00000000 010.
+            const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
+            // 最后是一个字符串（R2007 起在文字流）；R2004 就地在主数据流（1#楼平面图的墙均为空串，占 2 位）
+            if (data.Version < CadVersion::AC1021) r.ReadVariableText();
+            if (!signature) return fail("native wall trailing signature mismatch");
+            if (curtain)
+            {
+                // TDbCurtainWall::dwgInFields：RC 版本（≤ 2）、RC、6 个 BD、2 个 RC（按其值新建对象，不再读数据）；3 个硬指针在句柄流
+                // （8#楼-A平面图 的 38 个幕墙这一段都是 300 位）
+                const int version = r.ReadByte();
+                r.ReadByte();
+                for (int i = 0; i < 6; ++i) r.ReadBitDouble();
+                r.ReadByte();
+                r.ReadByte();
+                if (version > 2) return fail("unsupported native curtain wall version " + std::to_string(version));
+            }
+            if (r.Failed() || geometry.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native wall fields end at bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits));
+            // 标志低位：识别为外墙等（散水样例为 1）；8#楼 还有 0x400 / 0x2000 / 0x4000 等高位。
+            // 幕墙另有 0x8000 以上的位（8#楼 为 0x18100 / 0x1c100 / 0x1810c 等），0x4 为玻璃幕墙
+            if ((flags & (curtain ? ~0x3FFFF : ~0x7FFF)) != 0)
+                return fail("unsupported native wall flags " + std::to_string(flags));
+            result.Flags = static_cast<std::uint32_t>(flags);
+            const std::array<double, 10> values{result.Start.X, result.Start.Y, result.Start.Z,
+                result.End.X, result.End.Y, result.End.Z, result.LeftWidth, result.RightWidth, height, insulation};
+            for (double value : values)
+                if (!std::isfinite(value) || std::abs(value) > 1e12) return fail("nonfinite native wall geometry");
+            const double length = std::hypot(result.End.X - result.Start.X, result.End.Y - result.Start.Y);
+            // 曲线参数为弧墙的圆心角（天正 2014 生成的弧墙样例核对：弦长 6000、拱高 1500 时为 1.8546）
+            if (!std::isfinite(curveParameter) || std::abs(curveParameter) >= 2 * 3.14159265358979 - 1e-6) return fail("invalid native wall arc angle");
+            result.Angle = curveParameter;
+            // 一侧宽度可以为 0（轴线贴墙边）；短墙（墙垛、门垛）的长度可以小于墙厚，端部连接量也可以超过墙长，
+            // 一侧连接量之和不小于墙长时该侧边退化为点（8#楼-A平面图 均有此类墙）
+            if (length < 1e-6 || result.Start.Z != result.End.Z || result.LeftWidth < 0 || result.RightWidth < 0 ||
+                result.LeftWidth + result.RightWidth <= 0 || height <= 0 || insulation < 0)
+                return fail("invalid native wall geometry");
+            const double joinLimit = length + 2 * (result.LeftWidth + result.RightWidth);
+            for (double join : result.Joins)
+                if (!std::isfinite(join) || std::abs(join) >= joinLimit) return fail("invalid native wall join");
+            wall = result;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // Read-only compatibility adapter for the schema-5 straight-wall layout
     // observed in tianzheng.dwg. Unidentified fields are checked as signatures,
     // not assigned speculative meanings. Other layouts remain unknown entities.
     // See docs/Tianzheng-wall-compatibility.md for evidence and limitations.
     inline bool DecodeWall(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic = nullptr)
     {
-        using namespace MiniDWG;
-        const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_WALL") return false;
-        if (diagnostic) *diagnostic = "native wall fields do not match verified schema-5 straight-wall layout";
-        // 门窗数为 0 时 BS 占 2 位（1157 位），1～255 时占 10 位（1165 位），更多时占 18 位
-        if (data.MainBits < 773 || data.MainBits > 1173)
-        {
-            if (diagnostic) *diagnostic = "unsupported native wall layout: " + std::to_string(data.MainBits) +
-                " bits; verified range is 773..1173";
-            return false;
-        }
-        // AC1018（2004 格式，天正电气 1#楼平面图）、AC1024（2010 格式，8#楼-A平面图）与 AC1027 的这段位流布局相同；其他版本未核对
-        if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
-            return false;
-        auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        if (const int v = r.ReadByte(); v != 5) return fail("unsupported native wall base version " + std::to_string(v));
-        const double scale = r.ReadBitDouble();
-        const int bs = r.ReadBitShort(), rc = r.ReadByte(), b2 = r.Read2Bits(), raw = r.ReadRawShort(), rc8 = r.ReadByte();
-        if (!std::isfinite(scale) || scale <= 0 || bs != 0 || rc != 3 || b2 != 0 || raw != 512 || (rc8 != 8 && rc8 != 7))
-            return fail("native wall header mismatch: scale=" + std::to_string(scale) + " bs=" + std::to_string(bs) + " rc=" + std::to_string(rc) +
-                        " bits=" + std::to_string(b2) + " raw=" + std::to_string(raw) + " rc8=" + std::to_string(rc8));
-        const auto protectionKey = r.ReadByte();
-        auto decoded = r.ReadBytes(84);
-        Detail::Unprotect(decoded, rc8, protectionKey);
-        DwgBitReader geometry(decoded, data.Version, Codec::CodePage::Gbk);
-        TchWall result;
-        result.Start = geometry.Read3RawDouble();
-        result.End = geometry.Read3RawDouble();
-        const double curveParameter = geometry.ReadRawDouble();
-        const auto flags = geometry.ReadRawLong();
-        result.LeftWidth = geometry.ReadRawDouble();
-        result.RightWidth = geometry.ReadRawDouble();
-        const double height = geometry.ReadRawDouble();
-        // 受保护数据之后（天正内核 TDbWall::dwgInFields）：RC 0、门窗数 BS（门窗句柄在句柄流）、材料码 RC、墙体造型数 RC
-        //（造型 TCH_WALL_PATCH 的句柄在句柄流）。门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；
-        // 有门窗的墙多出的位数与句柄流中多出的 TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
-        // 8#楼-A平面图 的材料码有 10 / 30 / 31 / 32 / 40 / 60；造型数只见过 0 和 1
-        if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
-        const int openings = r.ReadBitShort();
-        if (openings < 0 || openings > 1024) return fail("invalid native wall opening count");
-        const int material = r.ReadByte(), patches = r.ReadByte();
-        if (material >= 64 || patches > 1)
-            return fail("native wall flags mismatch: material=" + std::to_string(material) + " patches=" + std::to_string(patches));
-        result.Material = material;
-        result.OpeningCount = openings;
-        result.Scale = scale;
-        const double insulation = r.ReadBitDouble();
-        for (auto& join : result.Joins) join = r.ReadBitDouble();
-        // The remaining 11-bit signature is 00000000 010.
-        const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
-        // 最后是一个字符串（R2007 起在文字流）；R2004 就地在主数据流（1#楼平面图的墙均为空串，占 2 位）
-        if (data.Version < CadVersion::AC1021) r.ReadVariableText();
-        if (!signature) return fail("native wall trailing signature mismatch");
-        if (r.Failed() || geometry.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native wall fields end at bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits));
-        if ((flags & ~0x7FFF) != 0)   // 标志低位：识别为外墙等（散水样例为 1）；8#楼 还有 0x400 / 0x2000 / 0x4000 等高位
-            return fail("unsupported native wall flags " + std::to_string(flags));
-        const std::array<double, 10> values{result.Start.X, result.Start.Y, result.Start.Z,
-            result.End.X, result.End.Y, result.End.Z, result.LeftWidth, result.RightWidth, height, insulation};
-        for (double value : values)
-            if (!std::isfinite(value) || std::abs(value) > 1e12) return fail("nonfinite native wall geometry");
-        const double length = std::hypot(result.End.X - result.Start.X, result.End.Y - result.Start.Y);
-        // 曲线参数为弧墙的圆心角（天正 2014 生成的弧墙样例核对：弦长 6000、拱高 1500 时为 1.8546）
-        if (!std::isfinite(curveParameter) || std::abs(curveParameter) >= 2 * 3.14159265358979 - 1e-6) return fail("invalid native wall arc angle");
-        result.Angle = curveParameter;
-        // 一侧宽度可以为 0（轴线贴墙边）；短墙（墙垛、门垛）的长度可以小于墙厚，端部连接量也可以超过墙长，
-        // 一侧连接量之和不小于墙长时该侧边退化为点（8#楼-A平面图 均有此类墙）
-        if (length < 1e-6 || result.Start.Z != result.End.Z || result.LeftWidth < 0 || result.RightWidth < 0 ||
-            result.LeftWidth + result.RightWidth <= 0 || height <= 0 || insulation < 0)
-            return fail("invalid native wall geometry");
-        const double joinLimit = length + 2 * (result.LeftWidth + result.RightWidth);
-        for (double join : result.Joins)
-            if (!std::isfinite(join) || std::abs(join) >= joinLimit) return fail("invalid native wall join");
-        wall = result;
-        if (diagnostic) diagnostic->clear();
-        return true;
+        return Detail::DecodeWallFields(entity, wall, diagnostic, false);
+    }
+
+    // 幕墙（TCH_CURTAIN_WALL）：内核 TDbCurtainWall::dwgInFields 先调用 TDbWall::dwgInFields，墙的字段（连接量、材料码等）
+    // 与墙相同，其后是幕墙自己的字段（只核对，不取值）。读不出时退回 DecodeWallPrefix（只有轴线与左右宽）
+    inline bool DecodeCurtainWall(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic = nullptr)
+    {
+        if (entity.Raw.DxfName != "TCH_CURTAIN_WALL") return false;
+        return Detail::DecodeWallFields(entity, wall, diagnostic, true);
     }
 
     // 图纸的天正设置（非图形对象 TCH_DBCONFIG）里与墙柱填充有关的部分。缺省为天正 2014 的默认值（sys\TOptionsDef.xml“墙柱加粗填充”）

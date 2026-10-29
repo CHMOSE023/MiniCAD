@@ -424,13 +424,13 @@ int wmain(int argc, wchar_t** argv)
     // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）、其后的字段与句柄；门窗的标志
     if (std::getenv("MINICAD_WALLRAW"))
         for (const auto& [handle, object] : db->Objects())
-            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_WALL")
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && (u->Raw.DxfName == "TCH_WALL" || u->Raw.DxfName == "TCH_CURTAIN_WALL"))
             {
                 MiniDWG::DwgBitReader r(u->Raw.Dwg.Main, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
                 r.ReadByte(); r.ReadBitDouble(); r.ReadBitShort(); r.ReadByte(); r.Read2Bits(); r.ReadRawShort();
                 const int mark = r.ReadByte(), key = r.ReadByte();
                 const auto bytes = r.ReadBytes(84);
-                std::printf("WALLRAW %llx mark=%d key=%02x ", (unsigned long long)handle, mark, key);
+                std::printf("WALLRAW %llx %s mark=%d key=%02x ", (unsigned long long)handle, u->Raw.DxfName.c_str() + 4, mark, key);
                 for (auto b : bytes) std::printf("%02x", b);
                 // 受保护数据之后的字段（布局见 Tch::DecodeWall）与句柄流引用
                 const int rc0 = r.ReadByte(), openings = r.ReadBitShort(), material = r.ReadByte(), patches = r.ReadByte();
@@ -438,18 +438,23 @@ int wmain(int argc, wchar_t** argv)
                 double joins[4];
                 for (double& j : joins) j = r.ReadBitDouble();
                 const int sig0 = r.ReadByte(), sig1 = r.Read3Bits();
-                std::printf("\n  tail rc0=%d openings=%d material=%d patches=%d insu=%g joins=%g,%g,%g,%g sig=%d,%d end=%llu/%llu refs=",
+                std::printf("\n  tail rc0=%d openings=%d material=%d patches=%d insu=%g joins=%.9g,%.9g,%.9g,%.9g sig=%d,%d end=%llu/%llu refs=",
                             rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
                             (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
                 for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
                 std::printf("\n");
+                // 解码后的轴线、左右宽、连接量（块里的墙为块内坐标）
+                if (MiniCAD::Tch::TchWall w; MiniCAD::Tch::DecodeWall(*u, w) || MiniCAD::Tch::DecodeCurtainWall(*u, w) || MiniCAD::Tch::DecodeWallPrefix(*u, w))
+                    std::printf("  wall owner=%llx start=%.17g,%.17g end=%.17g,%.17g angle=%.4f width=%g,%g joins=%g,%g,%g,%g material=%d flags=0x%x\n",
+                                (unsigned long long)u->OwnerHandle, w.Start.X, w.Start.Y, w.End.X, w.End.Y, w.Angle, w.LeftWidth, w.RightWidth,
+                                w.Joins[0], w.Joins[1], w.Joins[2], w.Joins[3], w.Material, w.Flags);
             }
             else if (u && u->Raw.DxfName == "TCH_OPENING")
             {
                 // 门窗：类型、宽度、镜像、所在墙与门槛线相关的两个标志
                 MiniCAD::Tch::TchOpening o;
                 if (MiniCAD::Tch::DecodeOpening(*u, o))
-                    std::printf("OPENING %llx type=%d width=%g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.1f,%.1f angle=%.4f\n", (unsigned long long)handle,
+                    std::printf("OPENING %llx type=%d width=%.17g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.17g,%.17g angle=%.4f\n", (unsigned long long)handle,
                                 static_cast<int>(o.Type), o.Width, o.Mirror, (unsigned long long)o.Wall, o.Flags, static_cast<unsigned>(o.DisplayFlags),
                                 o.Position.X, o.Position.Y, o.Angle);
                 // 门扇在所在墙的哪一侧（+1 左侧、-1 右侧）：门图块的 +Y 为门扇，Y 镜像时翻到另一侧

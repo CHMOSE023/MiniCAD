@@ -11,6 +11,7 @@
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -78,9 +79,9 @@ namespace
         return e;
     }
 
-    // 带 openings 个门窗的直墙（布局同 TianzhengWallTests），起点 (1000,2000)、终点 (5000,2000)、两侧各 120、接头 0；
-    // material 为材料码（40 砖、60 钢筋混凝土），scale 为出图比例
-    std::unique_ptr<UnknownEntity> Wall(int openings, int material = 40, double scale = 100)
+    // 带 openings 个门窗的直墙（布局同 TianzhengWallTests），起点 (1000,2000)、终点 (5000,2000)、两侧各 120；
+    // material 为材料码（40 砖、60 钢筋混凝土），scale 为出图比例，joins 为左起、左终、右起、右终的连接量
+    std::unique_ptr<UnknownEntity> Wall(int openings, int material = 40, double scale = 100, std::array<double, 4> joins = {})
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_WALL";
@@ -98,7 +99,7 @@ namespace
         r.WriteByte(0); r.WriteBitShort(static_cast<std::int16_t>(openings));
         r.WriteByte(static_cast<std::uint8_t>(material)); r.WriteByte(0);   // 材料码、墙体造型数
         r.WriteBitDouble(0);
-        for (int i = 0; i < 4; ++i) r.WriteBitDouble(0);
+        for (double join : joins) r.WriteBitDouble(join);
         r.WriteByte(0); r.Write3Bits(2);
         e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
         return e;
@@ -344,6 +345,40 @@ int main()
     Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
     Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
 
+    // ── 门窗占满两端斜接之间的墙段（8#楼-A平面图 通风井的百叶，宽 1999.9999999963）：墙两端左侧伸出、右侧缩进 120，
+    // 门窗宽度比右侧墙线短 3.7e-9。断口恰到右侧墙线的两端，不画横穿墙厚的封口线，也不留零长的墙线 ──
+    {
+        CadDatabase ndb;
+        ndb.SetVersion(CadVersion::AC1027);
+        ndb.CreateDefaults();
+        ndb.Classes.push_back(Class("TCH_WALL", "TDbWall", 500));
+        ndb.Classes.push_back(Class("TCH_OPENING", "TDbOpening", 501));
+        BlockRecord* block = ndb.CreateBlockRecord("$TCHSYS$DOOR2D");
+        auto line = std::make_unique<Line>(); line->StartPoint = {0.45, 0, 0}; line->EndPoint = {0.45, 0.975, 0};
+        ndb.AddEntity(block, std::move(line));
+        OpeningSpec full;
+        full.Position = {3000, 2000, 0}; full.Angle = 0; full.Flags = 0; full.Width = 3760 - 3.7e-9;
+        full.Block2D = block->ObjectHandle; full.Block3D = 0;
+        full.Wall = ndb.AddEntity(ndb.ModelSpace(), Wall(1, 40, 100, {-120, -120, 120, 120}))->ObjectHandle;
+        const std::string wallBlock = "*U_TCH_" + std::to_string(full.Wall);
+        ndb.AddEntity(ndb.ModelSpace(), Opening(full));
+        DwgWriteOptions no; no.Version = CadVersion::AC1027;
+        MiniCAD::Scene ns;
+        std::vector<std::array<double, 4>> lines;
+        const bool imported = MiniCAD::ImportCad(WriteDwg(ndb, no), ns);
+        ns.ForEachObject([&](const MiniCAD::Object& obj)
+        {
+            const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj);
+            if (!insert || !insert->GetBlock() || insert->GetBlock()->GetName() != wallBlock) return;
+            for (const auto& e : insert->GetBlock()->GetEntities())
+                if (const auto* l = dynamic_cast<const MiniCAD::LineEntity*>(e.get()))
+                    lines.push_back({l->GetLine().Start.x, l->GetLine().Start.y, l->GetLine().End.x, l->GetLine().End.y});
+        });
+        // 只剩左侧（y = 2120）两端伸出的两段：880..1120 与 4880..5120
+        const bool sidesOnly = lines.size() == 2 && std::all_of(lines.begin(), lines.end(), [](const auto& s) {
+            return Near(s[1], 2120) && Near(s[3], 2120) && Near(std::abs(s[2] - s[0]), 240); });
+        Check(imported && sidesOnly, "an opening filling the wall between its mitered corners leaves no caps or zero-length lines");
+    }
 
     // ── 图纸设置（TCH_DBCONFIG）──
     MiniCAD::Tch::TchConfig config;
