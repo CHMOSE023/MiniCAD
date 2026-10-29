@@ -455,10 +455,9 @@ namespace MiniCAD
             if (!img) return false;
             DropBlockRecords();   // 图像不记进块定义级缓存
 
-            auto V = [](const Math::Point3& p, float u, float v) -> Vertex_P3_C4_UV
+            auto V = [this](const Math::Point3& p, float u, float v) -> Vertex_P3_C4_UV
             {
-                return { { static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) },
-                         { 1.f, 1.f, 1.f, 1.f }, { u, v } };
+                return { ToRenderFloat3(p, m_origin), { 1.f, 1.f, 1.f, 1.f }, { u, v } };
             };
             ImageDraw d;
             d.Image    = std::move(img);
@@ -476,8 +475,12 @@ namespace MiniCAD
             for (const auto& p : polygon)
                 NoteInput(p);
             ++m_clipUnsafe;   // 裁剪框里的区域覆盖要与框求交
-            m_pendingWipes.Add(polygon, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0, m_points.size() });
-            m_wipes.push_back(polygon);
+            // 裁剪的是顶点流：多边形与顶点一样相对渲染原点（块定义级缓存记的仍是世界坐标）
+            std::vector<Math::Point3> local(polygon);
+            for (auto& p : local)
+                p = { p.x - m_origin.x, p.y - m_origin.y, p.z - m_origin.z };
+            m_pendingWipes.Add(local, { m_verts.size(), m_fillVerts.size(), m_textVerts.size(), m_glyphs ? m_glyphs->size() : 0, m_points.size() });
+            m_wipes.push_back(std::move(local));
             if (m_recording > 0)
                 m_rec.wipes.push_back({ polygon, m_rec.lines.size(), m_rec.fills.size(), m_rec.points.size(), m_rec.glyphs.size() });
         }
@@ -499,6 +502,11 @@ namespace MiniCAD
 
         // 全局细线：忽略线宽，全部按 1px 细线显示（同 AutoCAD 关闭"显示线宽"）
         void SetThinLines(bool thin) { m_thinLines = thin; }
+
+        // 渲染原点：输出的顶点、字形实例、图像、区域覆盖多边形都是"世界坐标 − 原点"（见 ToRenderFloat3），
+        // 视口把原点合进视图投影矩阵。开始输出之前设置；默认 (0, 0, 0) 即世界坐标
+        void SetRenderOrigin(const Math::Point3& origin) { m_origin = origin; }
+        const Math::Point3& GetRenderOrigin() const     { return m_origin; }
 
         // 当前实体的线型记录（ByLayer → 图层线型、ByBlock → Continuous）。
         // DrawLine 与 DrawStyledLine 共用，保证「铺线型」与「单独判定虚线」取到同一个线型。
@@ -616,11 +624,8 @@ namespace MiniCAD
 
                 auto xform = [&](float lx, float ly) -> Math::Float3 {
                     float wx =  lx, wy = -ly;
-                    return {
-                        static_cast<float>(pos.x) + wx * cosR - wy * sinR,
-                        static_cast<float>(pos.y) + wx * sinR + wy * cosR,
-                        static_cast<float>(pos.z)
-                    };
+                    const Math::Float3 at = ToRenderFloat3(pos, m_origin);
+                    return { at.x + wx * cosR - wy * sinR, at.y + wx * sinR + wy * cosR, at.z };
                 };
 
                 Math::Float3 tl = xform(lx0, ly0), tr = xform(lx1, ly0);
@@ -1109,22 +1114,23 @@ namespace MiniCAD
 
         // 延迟的长虚线段按当前缩放铺成线段：一个周期不足 4px（或缩放未知）时画成一段实线；
         // 点笔划画成 1.5px 的小段（动态流随缩放重建，不需要点流）
+        // 段的端点是世界坐标，铺出的顶点相对 origin（渲染原点，见 SetRenderOrigin）
         static void EmitDeferredDash(const DeferredDash& d, const LineTypeTable& lineTypes, double worldPerPixel,
-                                     std::vector<Vertex_P3_C4>& out)
+                                     std::vector<Vertex_P3_C4>& out, const Math::Point3& origin = {})
         {
             const LineTypeRecord* rec = lineTypes.Find(d.lineType);
             const double cycle = (rec && !rec->IsContinuous()) ? rec->PatternLength * d.scale : 0.0;
             if (cycle <= 1e-12 || worldPerPixel <= 0.0 || cycle / worldPerPixel < 4.0)
             {
-                out.push_back(ToVertex(d.a, d.color));
-                out.push_back(ToVertex(d.b, d.color));
+                out.push_back(ToVertex(d.a, d.color, origin));
+                out.push_back(ToVertex(d.b, d.color, origin));
                 return;
             }
             LayPattern(d.a, d.b, *rec, d.scale, worldPerPixel * 1.5,
                        [&](const Math::Point3& p, const Math::Point3& q)
                        {
-                           out.push_back(ToVertex(p, d.color));
-                           out.push_back(ToVertex(q, d.color));
+                           out.push_back(ToVertex(p, d.color, origin));
+                           out.push_back(ToVertex(q, d.color, origin));
                        },
                        [](const Math::Point3&) {}, d.phase);
         }
@@ -1192,13 +1198,9 @@ namespace MiniCAD
             cp = 0xFFFD; return p + 1;
         }
 
-        static Vertex_P3_C4 ToVertex(const Math::Point3& pt, const Math::Color4& col)
+        static Vertex_P3_C4 ToVertex(const Math::Point3& pt, const Math::Color4& col, const Math::Point3& origin)
         {
-            return { ToFloat3(pt), ToVertexColor(col) };
-        }
-        static Math::Float3 ToFloat3(const Math::Point3& p)
-        {
-            return { static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) };
+            return { ToRenderFloat3(pt, origin), ToVertexColor(col) };
         }
         static VertexColor ToVertexColor(const Math::Color4& c)
         {
@@ -1219,26 +1221,27 @@ namespace MiniCAD
             return layer && layer->IsLocked();
         }
 
-        // ── 输出：线、填充、点、字形实例、延迟的长虚线。正在记块定义级缓存时同时按世界坐标（双精度）记一份 ──
+        // ── 输出：线、填充、点、字形实例、延迟的长虚线。顶点相对渲染原点；正在记块定义级缓存时同时按世界坐标（双精度）记一份 ──
         void PutLine(const Math::Point3& p, VertexColor c)
         {
-            m_verts.push_back({ ToFloat3(p), c });
+            m_verts.push_back({ ToRenderFloat3(p, m_origin), c });
             if (m_recording > 0) m_rec.lines.push_back({ p, c });
         }
         void PutFill(const Math::Point3& p, VertexColor c)
         {
-            m_fillVerts.push_back({ ToFloat3(p), c });
+            m_fillVerts.push_back({ ToRenderFloat3(p, m_origin), c });
             if (m_recording > 0) m_rec.fills.push_back({ p, c });
         }
         void PutPoint(const Math::Point3& p, VertexColor c)
         {
-            m_points.push_back({ ToFloat3(p), c });
+            m_points.push_back({ ToRenderFloat3(p, m_origin), c });
             if (m_recording > 0) m_rec.points.push_back({ p, c });
         }
         void PutGlyph(const BlockTessGlyph& g)
         {
+            const Math::Float3 t = ToRenderFloat3({ g.tx, g.ty, g.z }, m_origin);
             m_glyphs->push_back({ static_cast<float>(g.m00), static_cast<float>(g.m01), static_cast<float>(g.m10), static_cast<float>(g.m11),
-                                  static_cast<float>(g.tx), static_cast<float>(g.ty), static_cast<float>(g.z), g.color, g.mesh });
+                                  t.x, t.y, t.z, g.color, g.mesh });
             if (m_recording > 0) m_rec.glyphs.push_back(g);
         }
         void PutDash(const DeferredDash& d)
@@ -1448,6 +1451,7 @@ namespace MiniCAD
         int                            m_pointMode = 0;    // $PDMODE：点样式
         double                         m_pointSize = 0.0;  // $PDSIZE：点图形尺寸
         double                         m_lineTypeScale = 1.0;  // $LTSCALE：全局线型比例
+        Math::Point3                   m_origin;               // 渲染原点（SetRenderOrigin）
         const EntityAttr*              m_curAttr       = nullptr;
         bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
         bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）

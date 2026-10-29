@@ -433,8 +433,12 @@ namespace MiniCAD
         // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
         struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0, points = 0; };
         SceneStreamStats GetSceneStreamStats() const { return m_sceneStats; }
-        // 逐实体缓存里的线与填充顶点（调试与自测用）
+        // 逐实体缓存里的线与填充顶点（调试与自测用；已加回渲染原点，是世界坐标）
         void ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const;
+        // 渲染原点：顶点流里的坐标都是"世界坐标 − 它"（见 ViewState::RenderOrigin）
+        const Math::Point3& GetRenderOrigin() const { return m_renderOrigin; }
+        static constexpr double kRenderOriginGrid     = 4096.0;   // 原点取它的整数倍：图纸在原点附近时原点就是 0
+        static constexpr double kRenderRebaseDistance = 1.0e4;    // float 在 1 万处的间隔约 0.001，再远就换原点
 
     private:
         bool HandleGlobal (const InputEvent& e);
@@ -715,5 +719,13 @@ namespace MiniCAD
 
         bool                         m_thinLines      = true;    // 全局细线：忽略线宽
         bool                         m_displayInvalid = false;   // 显示设置变化：下一帧所有实体重新细分
+
+        // 渲染原点（见 ToRenderFloat3）：各顶点流（场景、选中、悬停、预览、着色面）都存"世界坐标 − 原点"，
+        // Viewport 把它（ViewState::RenderOrigin）合进视图投影矩阵。所有实体重新细分时（UpdateSceneVertices 的
+        // invalidateAll）重新选（ChooseRenderOrigin）；改动的实体离它太远时（NeedsRenderRebase）也整体重新细分、换原点
+        Math::Point3                 m_renderOrigin;
+        double                       m_renderReach = 0.0;        // 选原点时（抽样的）可见实体中心离它最远多少
+        void ChooseRenderOrigin(const std::function<bool(const Entity&)>& isShown);
+        bool NeedsRenderRebase(const std::function<bool(const Entity&)>& isShown) const;
     };
 }

@@ -104,20 +104,21 @@ namespace MiniCAD
 {
     namespace
     {
-        // 节点图预览的线：实体 Draw() 输出的线段按各自的颜色写入顶点（填充三角形不画）
+        // 节点图预览的线：实体 Draw() 输出的线段按各自的颜色写入顶点（填充三角形不画），相对渲染原点
         class PreviewLineSink : public IDrawSink
         {
         public:
-            explicit PreviewLineSink(std::vector<Vertex_P3_C4>& out) : m_out(out) {}
+            PreviewLineSink(std::vector<Vertex_P3_C4>& out, const Math::Point3& origin) : m_out(out), m_origin(origin) {}
             void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& c, bool) override
             {
                 const VertexColor color(Math::Float4{ static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), 1.0f });
-                m_out.push_back({ { static_cast<float>(a.x), static_cast<float>(a.y), static_cast<float>(a.z) }, color });
-                m_out.push_back({ { static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(b.z) }, color });
+                m_out.push_back({ ToRenderFloat3(a, m_origin), color });
+                m_out.push_back({ ToRenderFloat3(b, m_origin), color });
             }
 
         private:
             std::vector<Vertex_P3_C4>& m_out;
+            Math::Point3               m_origin;
         };
 
         // 高亮（选中 / 悬停）里的点图元：高亮流只有线段，点画成按当前缩放 ±2 像素的小十字
@@ -130,13 +131,13 @@ namespace MiniCAD
             out.push_back({ { p.x, p.y + d, p.z }, color });
         }
 
-        // 悬停高亮收集器：把实体 Draw() 输出的几何以固定高亮色直接写入 overlay 顶点缓冲。
+        // 悬停高亮收集器：把实体 Draw() 输出的几何以固定高亮色直接写入 overlay 顶点缓冲（相对渲染原点）。
         // 用于每帧重建“当前悬停实体”的高亮，无需触碰整场景顶点。
         class HoverHighlightSink : public IDrawSink
         {
         public:
-            HoverHighlightSink(std::vector<Vertex_P3_C4>& out, const Math::Color4& color, const LayerManager& layers)
-                : m_out(out), m_color(color), m_layers(layers) {}
+            HoverHighlightSink(std::vector<Vertex_P3_C4>& out, const Math::Color4& color, const LayerManager& layers, const Math::Point3& origin)
+                : m_out(out), m_color(color), m_layers(layers), m_origin(origin) {}
 
             // 点样式与场景流一致（POINT 的 $PDMODE/$PDSIZE），否则悬停时 ⊕ 等图形不出高亮
             void SetPointStyle(int mode, double size, double worldPerPixel, double viewportHeightPx)
@@ -198,7 +199,7 @@ namespace MiniCAD
             Vertex_P3_C4 V(const Math::Point3& p) const
             {
                 return {
-                    { static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) },
+                    ToRenderFloat3(p, m_origin),
                     { static_cast<float>(m_color.r), static_cast<float>(m_color.g),
                       static_cast<float>(m_color.b), static_cast<float>(m_color.a) }
                 };
@@ -207,6 +208,7 @@ namespace MiniCAD
             std::vector<Vertex_P3_C4>& m_out;
             Math::Color4               m_color;
             const LayerManager&        m_layers;
+            Math::Point3               m_origin;
         };
     }
 
@@ -1693,7 +1695,7 @@ namespace MiniCAD
         const Math::Vec3 r = cam.GetRight(), u = cam.GetUp();
         const Math::Vec3 light = (-f * 0.75 + u * 0.55 - r * 0.35).Normalized();
         auto dot = [](const Math::Vec3& a, const Math::Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
-        auto toFloat3 = [](const Math::Point3& p) { return Math::Float3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) }; };
+        auto toFloat3 = [this](const Math::Point3& p) { return ToRenderFloat3(p, m_renderOrigin); };
 
         const Scene& scene = m_doc->GetScene();
         const LayerManager& layers = scene.GetLayerManager();
@@ -1765,7 +1767,7 @@ namespace MiniCAD
             {
                 if (e->IsKindOf<Solid3DEntity>())
                     addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
-                PreviewLineSink sink(m_silhouetteVertices);
+                PreviewLineSink sink(m_silhouetteVertices, m_renderOrigin);
                 e->Draw(sink, false, false);
             }
         }
@@ -3026,7 +3028,7 @@ namespace MiniCAD
             UpdateSelectionVertices(worldPerPixel, selFull || (zoomChanged && m_selViewDependent), !selFull);
         }
 
-        m_overlay.ToVertices(m_overlayVertices);
+        m_overlay.ToVertices(m_overlayVertices, m_renderOrigin);
         // 节点图预览点在模型空间，布局页上不画（同 UpdateShadedVertices 里的预览实体）
         if ((!m_previewPoints.empty() || !m_previewHighlightPoints.empty()) && !m_doc->ActiveLayoutIsPaper())
         {
@@ -3035,7 +3037,7 @@ namespace MiniCAD
                 m_previewOverlay.AddPoint(p, Math::Color4{ 0.86, 0.36, 0.30, 1.0 });
             for (const auto& p : m_previewHighlightPoints)
                 m_previewOverlay.AddPoint(p, Math::Color4{ 0.30, 0.85, 0.40, 1.0 });
-            m_previewOverlay.ToVertices(m_overlayVertices);
+            m_previewOverlay.ToVertices(m_overlayVertices, m_renderOrigin);
         }
 
         // 约束辅助线：直接写入「每帧重建」的 m_overlayVertices，绝不入持久的
@@ -3054,12 +3056,8 @@ namespace MiniCAD
             if (guideLine.IsValid())
             {
                 const Math::Float4 c{ 0.1f, 0.7f, 0.1f, 0.6f };
-                m_overlayVertices.push_back({ { static_cast<float>(guideLine.Start.x),
-                                                static_cast<float>(guideLine.Start.y),
-                                                static_cast<float>(guideLine.Start.z) }, c });
-                m_overlayVertices.push_back({ { static_cast<float>(guideLine.End.x),
-                                                static_cast<float>(guideLine.End.y),
-                                                static_cast<float>(guideLine.End.z) }, c });
+                m_overlayVertices.push_back({ ToRenderFloat3(guideLine.Start, m_renderOrigin), c });
+                m_overlayVertices.push_back({ ToRenderFloat3(guideLine.End, m_renderOrigin), c });
             }
         }
 
@@ -3140,7 +3138,7 @@ namespace MiniCAD
             layer && !layer->IsVisible())
             return;
 
-        HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager());
+        HoverHighlightSink sink(out, IDrawSink::kHoverColor, scene.GetLayerManager(), m_renderOrigin);
         sink.SetPointStyle(scene.GetPointDisplayMode(), scene.GetPointDisplaySize(),
                            m_viewport->GetCamera().GetWorldPerPixel(), static_cast<double>(m_viewport->GetHeight()));
 
@@ -3154,14 +3152,18 @@ namespace MiniCAD
         if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
             ins && ins->HasClipBoundary())
         {
-            // 边界在块坐标系里，经插入变换落到世界坐标后才能与已画出的顶点比较
+            // 边界在块坐标系里，经插入变换落到世界坐标、再减去渲染原点后才能与已画出的顶点比较
             const Math::Mat4 m = ins->CellMatrix(0, 0);
-            std::vector<Math::Point3> world;
+            std::vector<Math::Point3> world, local;
             world.reserve(ins->GetClipBoundary().size());
+            local.reserve(ins->GetClipBoundary().size());
             for (const auto& p : ins->GetClipBoundary())
+            {
                 world.push_back(m * p);
+                local.push_back({ world.back().x - m_renderOrigin.x, world.back().y - m_renderOrigin.y, world.back().z - m_renderOrigin.z });
+            }
 
-            WipeClip::Poly poly(world);
+            WipeClip::Poly poly(local);
             if (poly.Valid() && out.size() > from)
             {
                 std::vector<Vertex_P3_C4> tail(out.begin() + static_cast<std::ptrdiff_t>(from), out.end());
@@ -3238,10 +3240,10 @@ namespace MiniCAD
                 {
                     const Math::Point3 a = m * poly[i];
                     const Math::Point3 b = m * poly[(i + 1) % poly.size()];
-                    m_scratchLines.push_back({ { static_cast<float>(a.x), static_cast<float>(a.y), static_cast<float>(a.z) },
+                    m_scratchLines.push_back({ ToRenderFloat3(a, ctx.GetRenderOrigin()),
                                                { static_cast<float>(color.r), static_cast<float>(color.g),
                                                  static_cast<float>(color.b), static_cast<float>(color.a) } });
-                    m_scratchLines.push_back({ { static_cast<float>(b.x), static_cast<float>(b.y), static_cast<float>(b.z) },
+                    m_scratchLines.push_back({ ToRenderFloat3(b, ctx.GetRenderOrigin()),
                                                { static_cast<float>(color.r), static_cast<float>(color.g),
                                                  static_cast<float>(color.b), static_cast<float>(color.a) } });
                 }
@@ -3419,14 +3421,16 @@ namespace MiniCAD
         });
         ctx.SetLineTypeScale(lineTypeScale);
 
-        // 循环结束后裁掉本次合成落在视口矩形外的顶点（只裁 [from, end) 区间）
+        // 循环结束后裁掉本次合成落在视口矩形外的顶点（只裁 [from, end) 区间）。
+        // 顶点相对渲染原点，裁剪矩形也减去原点；下面的延迟长虚线段是纸面坐标，按原来的矩形裁
         const double hw = vp.GetWidth() * 0.5;
         const double hh = vp.GetHeight() * 0.5;
         const Math::Point3 vc = vp.GetCenter();
-        const WipeClip::Poly clipRect({ Math::Point3{ vc.x - hw, vc.y - hh, vc.z },
-                                        Math::Point3{ vc.x + hw, vc.y - hh, vc.z },
-                                        Math::Point3{ vc.x + hw, vc.y + hh, vc.z },
-                                        Math::Point3{ vc.x - hw, vc.y + hh, vc.z } });
+        const Math::Point3& o = ctx.GetRenderOrigin();
+        const WipeClip::Poly clipRect({ Math::Point3{ vc.x - hw - o.x, vc.y - hh - o.y, vc.z - o.z },
+                                        Math::Point3{ vc.x + hw - o.x, vc.y - hh - o.y, vc.z - o.z },
+                                        Math::Point3{ vc.x + hw - o.x, vc.y + hh - o.y, vc.z - o.z },
+                                        Math::Point3{ vc.x - hw - o.x, vc.y + hh - o.y, vc.z - o.z } });
         if (clipRect.Valid())
         {
             // keepInside=true：只保留视口矩形**内**的内容。
@@ -3525,7 +3529,7 @@ namespace MiniCAD
         if (c.longDashes.empty()) return;
         const LineTypeTable& lineTypes = m_doc->GetScene().GetLineTypeTable();
         for (const DeferredDash& d : c.longDashes)
-            DrawContext::EmitDeferredDash(d, lineTypes, m_lastWorldPerPixel, out);
+            DrawContext::EmitDeferredDash(d, lineTypes, m_lastWorldPerPixel, out, m_renderOrigin);
     }
 
     // OLE 对象的快照（OleFrameEntity 经 EmitImage 请求 "ole:<哈希>"）：数据从登记处取，展示流是位图就直接解码，
@@ -3596,6 +3600,69 @@ namespace MiniCAD
         m_sceneDynVersion = NextRenderVersion();
     }
 
+    // 渲染原点：可见实体外包框中心的中位数（各轴分开取：零散在远处的几个实体拉不动它），取 kRenderOriginGrid 的整数倍——
+    // 图纸在原点附近时就是 (0, 0, 0)，顶点与以前一样就是世界坐标。实体多时等间隔抽 kSamples 个
+    void Editor::ChooseRenderOrigin(const std::function<bool(const Entity&)>& isShown)
+    {
+        constexpr size_t kSamples = 1024;
+        const Scene& scene = m_doc->GetScene();
+        size_t shown = 0;
+        scene.ForEachObject([&](const Object& obj)
+        {
+            if (obj.IsKindOf<Entity>() && isShown(static_cast<const Entity&>(obj)))
+                ++shown;
+        });
+        const size_t stride = std::max<size_t>(1, shown / kSamples);
+        std::vector<double> xs, ys, zs;
+        xs.reserve(kSamples + 1); ys.reserve(kSamples + 1); zs.reserve(kSamples + 1);
+        size_t index = 0;
+        scene.ForEachObject([&](const Object& obj)
+        {
+            if (!obj.IsKindOf<Entity>()) return;
+            const auto& entity = static_cast<const Entity&>(obj);
+            if (!isShown(entity) || index++ % stride != 0 || entity.IsBoundless()) return;
+            const AABB box = entity.GetBoundingBox();
+            const double cx = (box.Min.x + box.Max.x) * 0.5, cy = (box.Min.y + box.Max.y) * 0.5, cz = (box.Min.z + box.Max.z) * 0.5;
+            if (!(box.Min.x <= box.Max.x) || !std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cz)) return;
+            xs.push_back(cx); ys.push_back(cy); zs.push_back(cz);
+        });
+
+        auto median = [](std::vector<double>& v)
+        {
+            if (v.empty()) return 0.0;
+            std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+            return std::round(v[v.size() / 2] / kRenderOriginGrid) * kRenderOriginGrid;
+        };
+        m_renderOrigin = { median(xs), median(ys), median(zs) };
+        m_renderReach  = 0.0;
+        for (size_t i = 0; i < xs.size(); ++i)
+            m_renderReach = std::max({ m_renderReach, std::abs(xs[i] - m_renderOrigin.x), std::abs(ys[i] - m_renderOrigin.y),
+                                       std::abs(zs[i] - m_renderOrigin.z) });
+    }
+
+    // 改动的实体离渲染原点太远：超出选原点时可见实体的范围（的 4 倍）且超出 kRenderRebaseDistance。
+    // 范围本来就大的图纸（零散的实体远在天边）不会因为在范围里改动而反复换原点
+    bool Editor::NeedsRenderRebase(const std::function<bool(const Entity&)>& isShown) const
+    {
+        const Scene& scene = m_doc->GetScene();
+        const double limit = std::max(kRenderRebaseDistance, 4.0 * m_renderReach);
+        for (Object::ObjectID id : scene.GetDirtyEntities())
+        {
+            const Object* obj = scene.GetEntity(id);
+            if (!obj || !obj->IsKindOf<Entity>()) continue;
+            const auto& entity = static_cast<const Entity&>(*obj);
+            if (!isShown(entity) || entity.IsBoundless()) continue;
+            const AABB box = entity.GetBoundingBox();
+            if (!(box.Min.x <= box.Max.x)) continue;
+            const double d = std::max({ std::abs((box.Min.x + box.Max.x) * 0.5 - m_renderOrigin.x),
+                                        std::abs((box.Min.y + box.Max.y) * 0.5 - m_renderOrigin.y),
+                                        std::abs((box.Min.z + box.Max.z) * 0.5 - m_renderOrigin.z) });
+            if (d > limit && std::isfinite(d))
+                return true;
+        }
+        return false;
+    }
+
     bool Editor::UpdateSceneVertices(double worldPerPixel, bool zoomChanged)
     {
         auto& scene = m_doc->GetScene();
@@ -3663,10 +3730,25 @@ namespace MiniCAD
             return p.compare(0, 4, "ole:") == 0 ? OleImage(p) : m_imageLibrary.Get(p);
         };
 
+        const auto& layerMgr = scene.GetLayerManager();
+        auto isShown = [&](const Entity& entity)
+        {
+            const auto& attr = entity.GetAttr();
+            if (!attr.Visible) return false;
+            // 布局过滤：模型页只画模型空间实体，布局页只画本布局的图纸空间实体。
+            // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
+            if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
+            const Layer* layer = layerMgr.GetLayer(attr.LayerId);
+            return !layer || layer->IsVisible();
+        };
+
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
         // 缩放变化只让依赖像素比例的实体（线宽/虚线按屏幕像素烘焙进世界顶点）失效。
-        const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid;
+        // 改动的实体离渲染原点太远（空图纸里画到测绘坐标上）时同样整体失效：换原点，所有顶点相对新原点重新细分
+        const bool invalidateAll = scene.IsAllDirty() || m_displayInvalid || NeedsRenderRebase(isShown);
         m_displayInvalid = false;
+        if (invalidateAll)
+            ChooseRenderOrigin(isShown);
 
         // 块定义级细分缓存（BlockTessCache）只在成批细分时留着：不在分帧细分时本次更新结束就清空，不长期占内存。
         // 图纸有改动时先清空（块定义可能也改了）；显示设置变了（invalidateAll）记下的结果也作废
@@ -3678,12 +3760,12 @@ namespace MiniCAD
         if (invalidateAll || scene.IsDirty())
             m_blockTessCache.Clear();
 
-        const auto& layerMgr = scene.GetLayerManager();
         DrawContext ctx(m_scratchLines, m_scratchFills, m_scratchTexts, m_overlay,
                         layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                         m_glyphProvider, MakeFontResolver(m_doc));
         ctx.SetImageProvider(imageProvider);
         ctx.SetThinLines(m_thinLines);
+        ctx.SetRenderOrigin(m_renderOrigin);
         ctx.SetGlyphInstanceSink(&m_scratchGlyphs, &m_glyphLibrary);
         ctx.SetDeferLongDashes(true);   // 长虚线段延迟铺设：进动态流，缩放时只重铺这些段
 
@@ -3704,17 +3786,6 @@ namespace MiniCAD
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
         if (s_blockCacheEnabled)
             ctx.SetBlockCache(&m_blockTessCache);
-
-        auto isShown = [&](const Entity& entity)
-        {
-            const auto& attr = entity.GetAttr();
-            if (!attr.Visible) return false;
-            // 布局过滤：模型页只画模型空间实体，布局页只画本布局的图纸空间实体。
-            // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
-            if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
-            const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-            return !layer || layer->IsVisible();
-        };
 
         // ── 只缩放：静态流不动，只重建动态流 ─────────────────
         // 随视图变化的实体（按像素等宽的线宽、点样式；细线显示时几乎没有）通常只占很少一部分；静态流不重新拼接、
@@ -4404,10 +4475,17 @@ namespace MiniCAD
 
     void Editor::ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const
     {
+        // 缓存里的顶点相对渲染原点，加回去交给调用方（世界坐标）
+        auto world = [this](Vertex_P3_C4 v)
+        {
+            v.pos = { static_cast<float>(v.pos.x + m_renderOrigin.x), static_cast<float>(v.pos.y + m_renderOrigin.y),
+                      static_cast<float>(v.pos.z + m_renderOrigin.z) };
+            return v;
+        };
         for (const auto& [id, c] : m_entityVertexCache)
         {
-            for (const auto& v : c.lines) fn(v);
-            for (const auto& v : c.fills) fn(v);
+            for (const auto& v : c.lines) fn(world(v));
+            for (const auto& v : c.fills) fn(world(v));
         }
     }
 
@@ -4467,6 +4545,7 @@ namespace MiniCAD
                             layerMgr, scene.GetLineTypeTable(), worldPerPixel,
                             m_glyphProvider, MakeFontResolver(m_doc));
             ctx.SetThinLines(m_thinLines);
+            ctx.SetRenderOrigin(m_renderOrigin);   // 与场景流同一个原点：下面还从逐实体缓存复制顶点
             // 选中流的虚线周期必须与场景流一致，否则同一实体选中前后线型疏密不同
             ctx.SetLineTypeScale(scene.GetLineTypeScale());
             ctx.SetTextStyleTable(&scene.GetTextStyleTable());
@@ -4592,7 +4671,7 @@ namespace MiniCAD
                 {
                     std::vector<Vertex_P3_C4> dashes;
                     for (const DeferredDash& d : c->longDashes)
-                        DrawContext::EmitDeferredDash(d, lineTypes, worldPerPixel, dashes);
+                        DrawContext::EmitDeferredDash(d, lineTypes, worldPerPixel, dashes, m_renderOrigin);
                     appendRecolored(m_selDynVertices, dashes);
                     copiedViewDependent = true;
                 }
@@ -4655,6 +4734,7 @@ namespace MiniCAD
         vs.Shaded          = m_shadedVertices;
         vs.Silhouettes     = m_silhouetteVertices;
         vs.ShadedVersion   = m_shadedVersion;
+        vs.RenderOrigin    = m_renderOrigin;
         if (!m_viewport->GetCamera().IsPlanView())
         {
             // 三维视图的深度范围：按场景版本缓存（全图遍历一次）

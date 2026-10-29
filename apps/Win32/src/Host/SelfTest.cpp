@@ -4033,7 +4033,7 @@ namespace MiniCAD
                         SaveBmp(ReadViewport(*m_platform), dir / name);
                         // 适配时扣掉了功能区、面板挡住的留边，画面并不以窗口为中心：打印画面左上、右下角的世界坐标，按它换算像素
                         const Math::Point3 tl = cam.ScreenToWorld(0.0, 0.0), br = cam.ScreenToWorld(cam.GetWidth(), cam.GetHeight());
-                        std::printf("截图：%s（窗口 %g,%g - %g,%g；画面左上 %.1f,%.1f 右下 %.1f,%.1f）\n", (dir / name).string().c_str(),
+                        std::printf("截图：%s（窗口 %g,%g - %g,%g；画面左上 %.4f,%.4f 右下 %.4f,%.4f）\n", (dir / name).string().c_str(),
                                     x0, y0, x1, y1, tl.x, tl.y, br.x, br.y);
                     }
                     const char* next = std::strchr(p, ';');

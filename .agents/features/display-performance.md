@@ -32,6 +32,15 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - Vulkan（Linux，`VulkanRenderer` / `VulkanBackend`，共用 `MiniGUI::VulkanContext`）：缓存提交放在显存的缓冲里，规则同 D3D12；帧内数据走 1 MB 的上传页（主机可见，直接当顶点 / 索引缓冲用），超过 1 MB 的单独建页，超过 4 MB 的与换下的大缓冲在帧末等 GPU 执行完就释放。复制、布局转换要先结束动态渲染（`VulkanContext::EndRendering`），所以一帧里上传越少、渲染被打断得越少
 - WebGPU（网页）：缓冲写入在提交前统一生效，一帧里同一块缓冲不能写两次——矩阵占帧内 uniform 环形缓冲的一段，不缓存的顶点写帧内流缓冲的不同区段，缓存槽在一帧里只按一个版本上传；换下来的资源提交后再销毁（`WebGPUCommon::RetireList`）。见 `docs/Render/PLAN.md` 阶段 5
 
+## 大坐标：渲染原点
+
+- 测绘坐标的图纸（如 `tests/Data/地形测试.dwg`，x≈53 万、y≈368 万）直接把世界坐标转 float 只剩 0.25 的分辨率，视图投影矩阵里几百万的平移转成 float 后再与顶点相减又丢一截：放大后线画偏几十个像素，画线的橡皮筋一格一格地跳，而夹点、捕捉标记、框选框是按双精度换算的屏幕坐标，看起来"不在线上"
+- 所有世界坐标的顶点流（场景静态 / 动态流、点流、字形实例的平移、纹理文字、图像、选中流、悬停高亮、`Overlay`、着色面与轮廓线、节点图预览）都存"世界坐标 − 渲染原点"（`ToRenderFloat3`）：`DrawContext::SetRenderOrigin`，`Overlay` 内部存双精度、`Overlay::ToVertices` 时才减；区域覆盖与视口合成的裁剪多边形同样减去原点（与顶点比较），块定义级缓存记的仍是世界坐标、延迟长虚线段的端点也是世界坐标（铺的时候减，`DrawContext::EmitDeferredDash` 的 origin 参数）
+- `ViewState::RenderOrigin` 交给 `Viewport::Render`，原点平移在双精度里乘进 `vp` / `vpLines` / `vpSilhouettes`，GPU 拿到的矩阵平移量只剩视图中心与原点之差。三维视图的网格与坐标轴按世界坐标生成，用合进原点之前的矩阵
+- 原点在所有实体重新细分时（`Editor::UpdateSceneVertices` 的 invalidateAll：打开、`Scene::MarkDirty`、`Scene::MarkDisplayDirty`）由 `Editor::ChooseRenderOrigin` 重选：可见实体外包框中心的中位数（各轴分开，等间隔抽至多 1024 个；远处零散的几个实体拉不动它），取 `Editor::kRenderOriginGrid`（4096）的整数倍——图纸在原点附近时原点就是 0，顶点与以前一样。改动的实体离原点超过 `Editor::kRenderRebaseDistance` 且超过选原点时可见范围的 4 倍（`Editor::NeedsRenderRebase`，如空图纸里画到测绘坐标上）时也整体重新细分、换原点
+- 读顶点流的测试与自测要加回原点：`Editor::GetRenderOrigin`；`Editor::ForEachCachedVertex` 已加回。回归测试 `tests/Core/RenderOriginTests.cpp` 按 GPU 的 float 运算把顶点换到屏幕，与 `Camera::WorldToScreen` 比（场景线、选中流、夹点、橡皮筋）
+- 核对：`--bench` 加 `MINICAD_BENCH_SHOT` / `MINICAD_BENCH_VIEWS` 放大到几个单位宽的窗口截图（打印的画面角点有 4 位小数，按它把原图坐标换成像素）。地形测试.dwg 在约 4.7 单位宽的视窗里，折线到最近亮像素的距离从平均 20 像素（最多 43）降到 0.2 像素
+
 ## 打开图纸：分帧细分
 
 - 打开的图纸加入后（`MainFrame::AddOpened`）调用 `Editor::BeginProgressiveBuild`：全量拼接不再当帧细分缓存里没有的实体，而是按绘制序排进队列，每帧细分一批（`Editor::ContinueBuild`），用时到本帧时限就停，细分出来的接到场景流尾部——拼接流还在 CPU 端时直接接上（区域覆盖照常裁剪此前的顶点），已交给后端时进追加段（同上面的增量更新）。先细分好的先显示，窗口一直响应；画全后恢复同步细分（编辑、切换布局、改显示设置仍当帧画完）

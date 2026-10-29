@@ -15,6 +15,8 @@ namespace MiniCAD
     /// <summary>
     /// “非持久、仅用于显示”的临时几何数据
     /// </summary>
+    // 端点按世界坐标（双精度）存，ToVertices 时才相对渲染原点转成 float：测绘坐标下直接存 float，
+    // 橡皮筋线会一格一格地跳（y≈368 万时 float 的间隔是 0.25）
     class Overlay
     {
     public:
@@ -26,55 +28,18 @@ namespace MiniCAD
         {
             m_lines.clear();
             m_points.clear();
-        } 
+        }
 
         // ===== Point =====
         void AddPoint(const  Math::Point3& p, const  Math::Color4& color)
         {
-            Float3 fp =
-            {
-                static_cast<float>(p.x),
-                static_cast<float>(p.y),
-                static_cast<float>(p.z),
-            };
-
-            Float4 fcolor =
-            {
-                static_cast<float>(color.r),
-                static_cast<float>(color.g),
-                static_cast<float>(color.b),
-                static_cast<float>(color.a),
-            };
-
-            m_points.push_back({ fp, fcolor });
+            m_points.push_back({ p, ToFloat4(color) });
         }
 
         // ===== Line =====
         void AddLine(const Math::Point3& aa, const Math::Point3& bb, const Math::Color4& mcolor)
         {
-            Float3 a =
-            {
-                static_cast<float>(aa.x),
-                static_cast<float>(aa.y),
-                static_cast<float>(aa.z),
-            };
-
-            Float3 b =
-            {
-                static_cast<float>(bb.x),
-                static_cast<float>(bb.y),
-                static_cast<float>(bb.z),
-            };
-
-            Float4 color =
-            {
-                static_cast<float>(mcolor.r),
-                static_cast<float>(mcolor.g),
-                static_cast<float>(mcolor.b),
-                static_cast<float>(mcolor.a),
-            };
-
-            m_lines.push_back({ a, b, color });
+            m_lines.push_back({ aa, bb, ToFloat4(mcolor) });
         }
 
         // ===== Rect =====
@@ -89,7 +54,7 @@ namespace MiniCAD
         }
         void AddRect(const Math::Point3& p1, const Math::Point3& p2, const Math::Point3& p3, const Math::Point3& p4, const Math::Color4& mcolor)
         {
-            
+
             AddLine(p1, p2, mcolor);
             AddLine(p2, p3, mcolor);
             AddLine(p3, p4, mcolor);
@@ -114,7 +79,7 @@ namespace MiniCAD
 
             AddArcInternal(center, radius, startAngle, sweep, mcolor, segments);
         }
-     
+
         // ===== ArcGeom =====
         // 直接接受 ArcGeom，SweepAngle 为有符号值（正=CCW，负=CW）
         // 适用于 PolylineTool（Polyline::ComputeArc 返回的 ArcGeom）
@@ -146,13 +111,7 @@ namespace MiniCAD
             if (rx <= 0.0 || ry <= 0.0 || segments < 1)
                 return;
 
-            Float4 color =
-            {
-                static_cast<float>(mcolor.r),
-                static_cast<float>(mcolor.g),
-                static_cast<float>(mcolor.b),
-                static_cast<float>(mcolor.a),
-            };
+            const Float4 color = ToFloat4(mcolor);
 
             double cosR = std::cos(rotation);
             double sinR = std::sin(rotation);
@@ -165,17 +124,17 @@ namespace MiniCAD
                 double t1 = startParam + sweepParam * (i + 1) / segments;
 
                 // 参数方程（与 Ellipse::PointAt 完全一致）
-                Float3 p0 =
+                const Math::Point3 p0 =
                 {
-                    static_cast<float>(center.x + rx * std::cos(t0) * cosR - ry * std::sin(t0) * sinR),
-                    static_cast<float>(center.y + rx * std::cos(t0) * sinR + ry * std::sin(t0) * cosR),
-                    static_cast<float>(center.z),
+                    center.x + rx * std::cos(t0) * cosR - ry * std::sin(t0) * sinR,
+                    center.y + rx * std::cos(t0) * sinR + ry * std::sin(t0) * cosR,
+                    center.z,
                 };
-                Float3 p1 =
+                const Math::Point3 p1 =
                 {
-                    static_cast<float>(center.x + rx * std::cos(t1) * cosR - ry * std::sin(t1) * sinR),
-                    static_cast<float>(center.y + rx * std::cos(t1) * sinR + ry * std::sin(t1) * cosR),
-                    static_cast<float>(center.z),
+                    center.x + rx * std::cos(t1) * cosR - ry * std::sin(t1) * sinR,
+                    center.y + rx * std::cos(t1) * sinR + ry * std::sin(t1) * cosR,
+                    center.z,
                 };
 
                 m_lines.push_back({ p0, p1, color });
@@ -187,13 +146,7 @@ namespace MiniCAD
             if (radius <= 0.0 || segments < 3)
                 return;
 
-            Float4 color =
-            {
-                static_cast<float>(mcolor.r),
-                static_cast<float>(mcolor.g),
-                static_cast<float>(mcolor.b),
-                static_cast<float>(mcolor.a),
-            };
+            const Float4 color = ToFloat4(mcolor);
 
             // 预分配：每段 1 条线 = 2 个顶点
             m_lines.reserve(m_lines.size() + segments);
@@ -203,19 +156,8 @@ namespace MiniCAD
                 double a0 = (i / static_cast<double>(segments)) * Math::TwoPI;
                 double a1 = ((i + 1) / static_cast<double>(segments)) * Math::TwoPI;
 
-                Float3 p0 =
-                {
-                    static_cast<float>(center.x + std::cos(a0) * radius),
-                    static_cast<float>(center.y + std::sin(a0) * radius),
-                    static_cast<float>(center.z),
-                };
-
-                Float3 p1 =
-                {
-                    static_cast<float>(center.x + std::cos(a1) * radius),
-                    static_cast<float>(center.y + std::sin(a1) * radius),
-                    static_cast<float>(center.z),
-                };
+                const Math::Point3 p0 = { center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, center.z };
+                const Math::Point3 p1 = { center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, center.z };
 
                 m_lines.push_back({ p0, p1, color });
             }
@@ -235,18 +177,19 @@ namespace MiniCAD
         }
 
         // ===== Export to GPU vertices =====
-        void ToVertices(std::vector<Vertex_P3_C4>& out) const
+        // 顶点 = 世界坐标 − origin（渲染原点，与场景流相同，见 ToRenderFloat3）
+        void ToVertices(std::vector<Vertex_P3_C4>& out, const Math::Point3& origin = {}) const
         {
             out.reserve(out.size() + m_lines.size() * 2 + m_points.size());
-           
+
             // Lines -> 2 vertices
             for (const auto& l : m_lines)
             {
-                out.push_back({ {l.a.x, l.a.y, l.a.z}, {l.color.x, l.color.y, l.color.z, l.color.w} });
-                out.push_back({ {l.b.x, l.b.y, l.b.z}, {l.color.x, l.color.y, l.color.z, l.color.w} });
+                out.push_back({ ToRenderFloat3(l.a, origin), {l.color.x, l.color.y, l.color.z, l.color.w} });
+                out.push_back({ ToRenderFloat3(l.b, origin), {l.color.x, l.color.y, l.color.z, l.color.w} });
             }
 
-            // Points 
+            // Points
             for (const auto& pt : m_points)
             {
                 // 生成圆
@@ -255,44 +198,18 @@ namespace MiniCAD
 
                 auto& camera = m_viewport->GetCamera();
 
-                auto point = camera.WorldToScreen({ pt.p.x, pt.p.y, pt.p.z });
+                auto point = camera.WorldToScreen(pt.p);
 
                 for (int i = 0; i < segments; ++i)
                 {
                     double a0 = (i / (float)segments)       * Math::TwoPI;
                     double a1 = ((i + 1) / (float)segments) * Math::TwoPI;
-                      
+
 					auto worldP0 = camera.ScreenToWorld(point.x + cosf(a0) * radius, point.y + sinf(a0) * radius);
 					auto worldP1 = camera.ScreenToWorld(point.x + cosf(a1) * radius, point.y + sinf(a1) * radius);
 
-                    out.push_back({ 
-                        {
-                           static_cast<float>  (worldP0.x),
-                           static_cast<float>  (worldP0.y),
-                           static_cast<float>  (worldP0.z)
-                        },
-                        {
-                            static_cast<float>  (pt.color.x),
-                            static_cast<float>  (pt.color.y), 
-                            static_cast<float>  (pt.color.z),
-                            static_cast<float>  (pt.color.w)
-                        } 
-                    });
-
-                    out.push_back({
-                        {
-                           static_cast<float>  (worldP1.x),
-                           static_cast<float>  (worldP1.y),
-                           static_cast<float>  (worldP1.z)
-                        },
-                        {
-                            static_cast<float>  (pt.color.x),
-                            static_cast<float>  (pt.color.y),
-                            static_cast<float>  (pt.color.z),
-                            static_cast<float>  (pt.color.w)
-                        }
-                    }); 
-
+                    out.push_back({ ToRenderFloat3(worldP0, origin), { pt.color.x, pt.color.y, pt.color.z, pt.color.w } });
+                    out.push_back({ ToRenderFloat3(worldP1, origin), { pt.color.x, pt.color.y, pt.color.z, pt.color.w } });
                 }
             }
         }
@@ -301,19 +218,13 @@ namespace MiniCAD
         {
             return m_lines.empty() && m_points.empty();
         }
-          
+
     private:
 
         // 底层绘制：按有符号 sweepAngle 方向画弧（正=CCW，负=CW）
         void AddArcInternal(const Math::Point3& center, double radius, double startAngle, double sweepAngle, const Math::Color4& mcolor, int segments)
         {
-            Float4 color =
-            {
-                static_cast<float>(mcolor.r),
-                static_cast<float>(mcolor.g),
-                static_cast<float>(mcolor.b),
-                static_cast<float>(mcolor.a),
-            };
+            const Float4 color = ToFloat4(mcolor);
 
             m_lines.reserve(m_lines.size() + segments);
 
@@ -322,29 +233,12 @@ namespace MiniCAD
                 double a0 = startAngle + sweepAngle * i / segments;
                 double a1 = startAngle + sweepAngle * (i + 1) / segments;
 
-                Float3 p0 =
-                {
-                    static_cast<float>(center.x + std::cos(a0) * radius),
-                    static_cast<float>(center.y + std::sin(a0) * radius),
-                    static_cast<float>(center.z),
-                };
-                Float3 p1 =
-                {
-                    static_cast<float>(center.x + std::cos(a1) * radius),
-                    static_cast<float>(center.y + std::sin(a1) * radius),
-                    static_cast<float>(center.z),
-                };
+                const Math::Point3 p0 = { center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, center.z };
+                const Math::Point3 p1 = { center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, center.z };
 
                 m_lines.push_back({ p0, p1, color });
             }
         }
-
-        struct Float3
-        {
-            float x;
-            float y;
-            float z;
-        };
 
         struct Float4
         {
@@ -354,17 +248,22 @@ namespace MiniCAD
             float w;
         };
 
+        static Float4 ToFloat4(const Math::Color4& c)
+        {
+            return { static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), static_cast<float>(c.a) };
+        }
+
         struct Line
         {
-            Float3 a;
-            Float3 b;
-            Float4 color;
-        }; 
+            Math::Point3 a;
+            Math::Point3 b;
+            Float4       color;
+        };
 
         struct Point
         {
-            Float3 p;
-            Float4 color;
+            Math::Point3 p;
+            Float4       color;
         };
 
     private:
@@ -374,5 +273,5 @@ namespace MiniCAD
     private:
 
         Viewport* m_viewport = nullptr;
-    }; 
+    };
 }
