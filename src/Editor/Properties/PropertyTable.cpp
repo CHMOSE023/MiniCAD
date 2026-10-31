@@ -351,7 +351,19 @@ namespace MiniCAD
         {
             using T = HatchEntity;
             return {
-                ReadOnly<T>("图案", PropKind::String, [](const T& e) { return e.GetPattern().Name; }),
+                // 图案：渐变填充时显示成「渐变（LINEAR）」，否则只看得到 SOLID，看不出区别
+                ReadOnly<T>("图案", PropKind::String, [](const T& e) {
+                    if (!e.IsGradient())
+                        return e.GetPattern().Name;
+                    return std::string("渐变（") + HatchGradient::TypeName(e.GetGradient().Type) + "）";
+                }),
+                // 渐变参数：不是渐变填充时显示「—」/ 0，避免面板上多出无意义的行
+                ReadOnly<T>("渐变类型", PropKind::String, [](const T& e) {
+                    return e.IsGradient() ? std::string(HatchGradient::TypeName(e.GetGradient().Type)) : std::string("—");
+                }),
+                ReadOnly<T>("渐变角度", PropKind::Number, [](const T& e) {
+                    return e.IsGradient() ? e.GetGradient().Angle : 0.0;
+                }),
                 Editable<T>("比例", PropKind::Number, [](const T& e) { return e.GetScale(); },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetScale(v); return true; }),
                 Editable<T>("角度", PropKind::Angle, [](const T& e) { return e.GetAngle(); },

@@ -3262,6 +3262,30 @@ namespace MiniCAD
                 auto& hatch = static_cast<HatchEntity&>(*ent);
                 hatch.SetScale(scale);
                 hatch.SetAngle(angleDeg);
+
+                // 渐变填充（ACAD 的 GRADIENT）：组码 450～470 在 MiniDWG 里已解好，
+                // 这里映射成核心层的 HatchGradient。以前整条降级成「单色实心」，
+                // 图上只看到一片纯色（用户报的 sample_AC1032.dwg 蓝→黄渐变）
+                if (h.GradientColor.Enabled)
+                {
+                    HatchGradient grad;
+                    grad.Enabled    = true;
+                    grad.Name       = h.GradientColor.Name.empty() ? std::string("LINEAR") : h.GradientColor.Name;
+                    grad.Type       = HatchGradient::ParseType(grad.Name);
+                    grad.Angle      = h.GradientColor.Angle;
+                    grad.Shift      = h.GradientColor.Shift;
+                    grad.SingleColor = h.GradientColor.IsSingleColorGradient;
+                    grad.ColorTint  = h.GradientColor.ColorTint;
+                    for (const auto& c : h.GradientColor.Colors)
+                        grad.Stops.push_back({ c.Value, LayerColorToColor4(c.Color) });
+                    // 停靠点必须按 Value 升序，Sample 的区间查找依赖这个顺序
+                    std::sort(grad.Stops.begin(), grad.Stops.end(),
+                              [](const GradientStop& a, const GradientStop& b) { return a.Value < b.Value; });
+                    if (grad.Stops.empty())
+                        grad.Enabled = false;   // 没有颜色信息的渐变按普通实心填充走
+                    else
+                        hatch.SetGradient(std::move(grad));
+                }
                 return ent;
             }
 
@@ -5524,6 +5548,25 @@ namespace MiniCAD
                         for (double dash : f.Dashes)
                             line.DashLengths.push_back(dash * scale);
                         d->Pattern.Lines.push_back(std::move(line));
+                    }
+                }
+
+                // 渐变填充：把 HatchGradient 写回组码 450～470，另存为 DWG / DXF 后仍能读回来
+                if (const HatchGradient& grad = h.GetGradient(); grad.Enabled && !grad.Stops.empty())
+                {
+                    Dwg::HatchGradientPattern& g = d->GradientColor;
+                    g.Enabled    = true;
+                    g.Name       = grad.Name.empty() ? std::string(HatchGradient::TypeName(grad.Type)) : grad.Name;
+                    g.Angle      = grad.Angle;
+                    g.Shift      = grad.Shift;
+                    g.ColorTint  = grad.ColorTint;
+                    g.IsSingleColorGradient = grad.SingleColor;
+                    for (const GradientStop& stop : grad.Stops)
+                    {
+                        Dwg::GradientColor c;
+                        c.Value = stop.Value;
+                        c.Color = FromColor4(stop.Color);
+                        g.Colors.push_back(c);
                     }
                 }
                 return Finish(e, std::move(d));

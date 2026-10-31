@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include "Paint/Image.h"
@@ -12,6 +13,12 @@ namespace MiniGUI::Test
 {
     namespace
     {
+        // 路径按 UTF-8 转成宽字符：窄字符串交给 fopen_s 会按系统代码页解释，中文目录下打不开
+        std::wstring WidePath(const std::string& path)
+        {
+            const std::filesystem::path p(std::u8string(reinterpret_cast<const char8_t*>(path.data()), path.size()));
+            return p.wstring();
+        }
         // ── CRC32（PNG 块校验）、Adler32（zlib 校验）─────────────
         uint32_t Crc32(const uint8_t* data, size_t size, uint32_t crc = 0)
         {
@@ -252,7 +259,7 @@ namespace MiniGUI::Test
         bool ReadFile(const std::string& path, std::vector<uint8_t>& out)
         {
             FILE* f = nullptr;
-            if (fopen_s(&f, path.c_str(), "rb") != 0 || !f)
+            if (_wfopen_s(&f, WidePath(path).c_str(), L"rb") != 0 || !f)
                 return false;
             std::fseek(f, 0, SEEK_END);
             const long size = std::ftell(f);
@@ -280,7 +287,7 @@ namespace MiniGUI::Test
         PutChunk(file, "IEND", {});
 
         FILE* f = nullptr;
-        if (fopen_s(&f, path.c_str(), "wb") != 0 || !f)
+        if (_wfopen_s(&f, WidePath(path).c_str(), L"wb") != 0 || !f)
             return false;
         const size_t written = std::fwrite(file.data(), 1, file.size(), f);
         std::fclose(f);

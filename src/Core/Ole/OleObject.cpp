@@ -217,14 +217,26 @@ namespace MiniCAD::Ole
     bool ParseFrame(const std::vector<uint8_t>& data, Frame& out)
     {
         out = Frame{};
-        const size_t kHeader = 2 + 12 * 8 + 30;     // 版本 + 四个角点 + 30 字节（末尾 4 字节是复合文档长度）
-        if (data.size() >= kHeader && U16(data.data()) == 0x5581)
+
+        // 头 128 字节 + 复合文档。两个版本号，角点算法相同（X/Y/Z 各 8 字节、步长 24），差别只在
+        // 复合文档长度怎么算：
+        //   0x5580 —— 实测（test0.dwg，AC1024）：复合文档固定在偏移 128，130～131 那两字节不是长度，
+        //             直接取剩余全部；用末尾 4 字节当长度会读出 0 或越界
+        //   0x5581 —— 末尾 4 字节是复合文档长度（130 起 26 字节填充 + 长度，正好 128）
+        const size_t kHeader = 2 + 4 * 24 + 26 + 4;   // = 128
+        const uint16_t version = data.size() >= kHeader ? U16(data.data()) : 0;
+        if (version == 0x5580 || version == 0x5581)
         {
             for (size_t i = 0; i < 4; ++i)
                 out.Corners[i] = { F64(data.data() + 2 + i * 24), F64(data.data() + 2 + i * 24 + 8), F64(data.data() + 2 + i * 24 + 16) };
             out.CompoundOffset = kHeader;
-            out.CompoundSize   = std::min<size_t>(U32(data.data() + kHeader - 4), data.size() - kHeader);
-            if (out.CompoundSize == 0) out.CompoundSize = data.size() - kHeader;
+            out.CompoundSize   = data.size() - kHeader;
+            if (version == 0x5581)
+            {
+                const size_t announced = U32(data.data() + kHeader - 4);
+                if (announced > 0 && announced <= out.CompoundSize)
+                    out.CompoundSize = announced;
+            }
             bool finite = true;
             for (const auto& c : out.Corners)
                 finite = finite && std::isfinite(c.x) && std::isfinite(c.y) && std::isfinite(c.z);

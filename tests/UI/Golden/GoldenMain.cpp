@@ -50,6 +50,19 @@ namespace
 {
     constexpr Color32 kClearColor = ColorFromHex(0x1E1F22);
 
+    // UTF-8 文字 ↔ 路径。仓库放在中文目录下时，编译宏里的绝对路径是 UTF-8 字节：
+    // 窄字符串直接构造 path 会按系统代码页解释并抛 filesystem_error，path::string() 同样会丢字符
+    std::filesystem::path U8Path(const char* utf8)
+    {
+        return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8)));
+    }
+
+    std::string U8Text(const std::filesystem::path& p)
+    {
+        const std::u8string u8 = p.u8string();
+        return std::string(u8.begin(), u8.end());
+    }
+
     // ── 字体 ─────────────────────────────────────────────────────
     // 文字场景依赖系统字体（微软雅黑 UI + Segoe UI Symbol）。不同 Windows 版本的字体文件可能不同，
     // 所以基准目录里记录生成基准时字体文件的指纹；指纹不一致时跳过文字场景，而不是报失败
@@ -821,8 +834,10 @@ int main(int argc, char** argv)
         else                                              filter = argv[i];
     }
 
-    const std::filesystem::path baselineDir = MINIGUI_GOLDEN_DIR;
-    const std::filesystem::path outDir      = MINIGUI_GOLDEN_OUT;
+    // 这两个路径来自编译宏（源码目录与构建目录的绝对路径），仓库放在中文目录下时是 UTF-8 字节：
+    // 窄字符串直接构造 path 会按系统代码页解释并抛 filesystem_error（见 AGENTS.md「路径与编码」）
+    const std::filesystem::path baselineDir = U8Path(MINIGUI_GOLDEN_DIR);
+    const std::filesystem::path outDir      = U8Path(MINIGUI_GOLDEN_OUT);
     std::filesystem::create_directories(baselineDir);
     std::filesystem::create_directories(outDir);
 
@@ -868,7 +883,7 @@ int main(int argc, char** argv)
     }
     if (useD3D12)
         std::printf("D3D12 适配器：%s\n", d3d12.GetAdapterName().c_str());
-    std::printf("基准目录：%s\n\n", baselineDir.string().c_str());
+    std::printf("基准目录：%s\n\n", U8Text(baselineDir).c_str());
 
     int failures = 0;
     int ran      = 0;
@@ -885,8 +900,8 @@ int main(int argc, char** argv)
         }
         ++ran;
 
-        const std::string baselinePath = (baselineDir / (std::string(scene.name) + ".png")).string();
-        const std::string outPrefix    = (outDir / scene.name).string();
+        const std::string baselinePath = U8Text(baselineDir / (std::string(scene.name) + ".png"));
+        const std::string outPrefix    = U8Text(outDir / scene.name);
 
         const SoftwareImage sw = RenderScene(scene, software,
             [&](int w, int h) { software.BeginFrame(w, h, kClearColor); },
@@ -979,6 +994,6 @@ int main(int argc, char** argv)
     std::printf("\n%s（运行 %d 个场景，跳过 %d 个，失败 %d 项）\n",
                 failures == 0 ? "全部通过" : "存在失败", ran, skipped, failures);
     if (failures)
-        std::printf("实际图片与差异图：%s\n", outDir.string().c_str());
+        std::printf("实际图片与差异图：%s\n", U8Text(outDir).c_str());
     return failures == 0 ? 0 : 1;
 }

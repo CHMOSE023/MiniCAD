@@ -11,6 +11,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 
 namespace MiniCAD
 {
@@ -31,6 +32,158 @@ namespace MiniCAD
         double              DeltaX   = 0.0;
         std::vector<double> Dashes;
     };
+
+    // ── HatchGradient ─────────────────────────────────────────────────────────
+    // 渐变填充（AutoCAD 的 GRADIENT，DWG 组码 450～470、DXF 同名组码）。
+    //
+    // 与图案填充的关系：渐变本身**不用** .pat 图案，它按实心形状铺满整个边界，
+    // 只是颜色沿某个方向（或按球面 / 柱面）插值。所以 HatchPattern::Solid 仍为
+    // true，渐变参数单独放一份（见 HatchEntity::SetGradient）。
+    //
+    // 两种形态（AutoCAD 只有这两种）：
+    //   · 双色渐变：Colors 有 2 项，color0 在 Value=0 端、color1 在 Value=1 端
+    //   · 单色渐变：Colors 有 1 项，另一端是把这颜色按 ColorTint 提亮（>0）或压暗（<0）后的结果
+    //
+    // 渐变类型（Name，AutoCAD 的取值）：
+    //   LINEAR      线性，沿 Angle 方向
+    //   CYLINDER    柱面，沿 Angle 方向做「亮-暗-亮」的柱面明暗
+    //   INVCYLINDER 反柱面
+    //   SPHERICAL   球面，从中心向外的球形明暗
+    //   INVSPHERICAL 反球面
+    //   HEMISPHERICAL / INVHEMISPHERICAL 半球
+    //   CURVED / INVCURVED 曲线（沿直线做弧形偏移）
+    enum class GradientType
+    {
+        Linear,
+        Cylinder,
+        InvCylinder,
+        Spherical,
+        InvSpherical,
+        Hemispherical,
+        InvHemispherical,
+        Curved,
+        InvCurved
+    };
+
+    struct GradientStop
+    {
+        double       Value = 0.0;   // 沿渐变方向的归一化位置 0～1（组码 463）
+        Math::Color4 Color;         // 该位置的颜色（组码 63 / 421）
+
+        bool operator==(const GradientStop&) const = default;
+    };
+
+    struct HatchGradient
+    {
+        bool                        Enabled = false;
+        GradientType                Type    = GradientType::Linear;
+        std::string                 Name    = "LINEAR";   // 原始类型名（大小写不敏感），Type 的可靠来源
+        double                      Angle   = 0.0;        // 度（组码 460）：渐变方向，LINEAR / CYLINDER 用
+        double                      Shift   = 0.0;        // 0～1（组码 461）：把渐变中心沿方向偏移
+        bool                        SingleColor = false;  // 单色渐变（组码 452）
+        double                      ColorTint   = 0.0;    // 单色渐变的另一端的提亮/压暗量（组码 462，-1～1）
+        std::vector<GradientStop>   Stops;                // 颜色停靠点（组码 453）
+
+        bool IsValid() const { return Enabled && !Stops.empty(); }
+
+        // 按名称解析渐变类型；不认识的按线性处理（AutoCAD 打开未知名称也是这个行为）
+        static GradientType ParseType(const std::string& name);
+
+        // 从名字取渐变类型（写回 DWG / DXF 用）
+        static const char* TypeName(GradientType type);
+
+        // 单色渐变的「另一端」颜色：ColorTint > 0 提亮、< 0 压暗（见 ResolveSingleColor）
+        static Math::Color4 TintedColor(const Math::Color4& base, double tint);
+
+        // 取 Value 落在哪一段，返回两侧停靠点的颜色与段内比例 t（0～1）。
+        // 单色渐变在这里把缺失的一端按 ColorTint 补出来。
+        void Sample(double value, Math::Color4& outA, Math::Color4& outB, double& t) const;
+
+        bool operator==(const HatchGradient&) const = default;
+    };
+
+    // 名字 → 类型（大小写不敏感）。AutoCAD 的渐变名全大写，但 DXF 里不保证
+    inline GradientType HatchGradient::ParseType(const std::string& name)
+    {
+        std::string u;
+        u.reserve(name.size());
+        for (char c : name)
+            u.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        if (u == "CYLINDER")         return GradientType::Cylinder;
+        if (u == "INVCYLINDER")      return GradientType::InvCylinder;
+        if (u == "SPHERICAL")        return GradientType::Spherical;
+        if (u == "INVSPHERICAL")     return GradientType::InvSpherical;
+        if (u == "HEMISPHERICAL")    return GradientType::Hemispherical;
+        if (u == "INVHEMISPHERICAL") return GradientType::InvHemispherical;
+        if (u == "CURVED")           return GradientType::Curved;
+        if (u == "INVCURVED")        return GradientType::InvCurved;
+        return GradientType::Linear;
+    }
+
+    inline const char* HatchGradient::TypeName(GradientType type)
+    {
+        switch (type)
+        {
+        case GradientType::Cylinder:         return "CYLINDER";
+        case GradientType::InvCylinder:      return "INVCYLINDER";
+        case GradientType::Spherical:        return "SPHERICAL";
+        case GradientType::InvSpherical:     return "INVSPHERICAL";
+        case GradientType::Hemispherical:    return "HEMISPHERICAL";
+        case GradientType::InvHemispherical: return "INVHEMISPHERICAL";
+        case GradientType::Curved:           return "CURVED";
+        case GradientType::InvCurved:        return "INVCURVED";
+        case GradientType::Linear:           break;
+        }
+        return "LINEAR";
+    }
+
+    // 单色渐变的另一端：ACAD 的语义是「同色相、改亮度」。tint > 0 向白色提亮，
+    // tint < 0 向黑色压暗，|tint| = 1 时到达纯白 / 纯黑（与 AutoCAD 调色板一致）
+    inline Math::Color4 HatchGradient::TintedColor(const Math::Color4& base, double tint)
+    {
+        const double t = std::clamp(tint, -1.0, 1.0);
+        const double r = std::clamp(base.r + (t > 0.0 ? (1.0 - base.r) * t : base.r * t), 0.0, 1.0);
+        const double g = std::clamp(base.g + (t > 0.0 ? (1.0 - base.g) * t : base.g * t), 0.0, 1.0);
+        const double b = std::clamp(base.b + (t > 0.0 ? (1.0 - base.b) * t : base.b * t), 0.0, 1.0);
+        return { r, g, b, base.a };
+    }
+
+    // 取 value（0～1）落在哪一段，返回两侧颜色与段内比例
+    inline void HatchGradient::Sample(double value, Math::Color4& outA, Math::Color4& outB, double& t) const
+    {
+        outA = outB = Math::Color4::White();
+        t    = 0.0;
+        if (Stops.empty())
+            return;
+
+        // 单色渐变：只有一个停靠点，另一端按 ColorTint 补
+        if (Stops.size() == 1)
+        {
+            const Math::Color4 base = Stops[0].Color;
+            const Math::Color4 other = TintedColor(base, ColorTint == 0.0 ? 1.0 : ColorTint);
+            if (Stops[0].Value <= 0.5) { outA = base;  outB = other; }
+            else                       { outA = other; outB = base;  }
+            t = std::clamp(value, 0.0, 1.0);
+            return;
+        }
+
+        const double v = std::clamp(value, 0.0, 1.0);
+        // 停靠点按 Value 升序；越界时取端点色
+        if (v <= Stops.front().Value) { outA = outB = Stops.front().Color; t = 0.0; return; }
+        if (v >= Stops.back().Value)  { outA = outB = Stops.back().Color;  t = 0.0; return; }
+        for (size_t i = 0; i + 1 < Stops.size(); ++i)
+        {
+            const double v0 = Stops[i].Value, v1 = Stops[i + 1].Value;
+            if (v < v0 || v > v1)
+                continue;
+            outA = Stops[i].Color;
+            outB = Stops[i + 1].Color;
+            t    = (v1 - v0) > 1e-12 ? (v - v0) / (v1 - v0) : 0.0;
+            return;
+        }
+        outA = outB = Stops.back().Color;
+        t = 0.0;
+    }
 
     // ── HatchPattern ──────────────────────────────────────────────────────────
     // 填充图案：要么是实体填充（Solid），要么由一组平行线族组合而成。
@@ -238,6 +391,21 @@ namespace MiniCAD
         const HatchPattern& GetPattern() const           { return m_pattern; }
         void SetPattern(HatchPattern p)                  { m_pattern = std::move(p); }
 
+        // ── 渐变填充 ───────────────────────────────────────────────────────
+        // 设置渐变时图案本身按实心处理（渐变铺满整个边界，与 .pat 图案无关）。
+        const HatchGradient& GetGradient() const         { return m_gradient; }
+        void SetGradient(HatchGradient g)
+        {
+            m_gradient = std::move(g);
+            if (m_gradient.Enabled)
+            {
+                m_pattern.Solid    = true;
+                m_pattern.Families.clear();
+            }
+        }
+        void ClearGradient()                             { m_gradient = HatchGradient{}; }
+        bool IsGradient() const                          { return m_gradient.IsValid(); }
+
         double GetScale() const                          { return m_scale; }
         void   SetScale(double s)                        { m_scale = (s > 1e-9) ? s : 1.0; }
 
@@ -266,6 +434,7 @@ namespace MiniCAD
             auto e = std::make_unique<HatchEntity>(newId, m_loops, m_pattern);
             e->m_scale    = m_scale;
             e->m_angleDeg = m_angleDeg;
+            e->m_gradient = m_gradient;
             e->SetAttr(GetAttr());
             return e;
         }
@@ -294,8 +463,17 @@ namespace MiniCAD
                                        : isHovered ? IDrawSink::kHoverColor
                                                    : ResolveDrawColor(sink);
 
-            // 图案本体
-            if (m_pattern.Solid)
+            // 图案本体。选中 / 悬停时按高亮色实心显示（与其它实体的高亮一致，
+            // 渐变在选中态也失去辨识意义，统一成高亮色更容易看清选中范围）
+            if (isSelected || isHovered)
+            {
+                FillSolid(sink, polys, elevation, color);
+            }
+            else if (m_gradient.IsValid())
+            {
+                FillGradient(sink, polys, elevation);
+            }
+            else if (m_pattern.Solid)
             {
                 FillSolid(sink, polys, elevation, color);
             }
@@ -438,6 +616,223 @@ namespace MiniCAD
         // 单个填充对象最多输出的线段数：图案相对区域过密（比例太小）时不再继续生成，
         // 避免一次绘制产生上千万条线段（AutoCAD 同样会拒绝过密的填充）
         static constexpr size_t kMaxPatternSegments = 500000;
+
+        // ── 渐变的几何参数：把一个点映射到 0～1 的渐变位置 ──────────────────
+        //
+        // 这里实现的是 AutoCAD 六种渐变在**边界包围盒**上的近似（ACAD 自己也用包围盒，
+        // 不是逐像素的严格球面光照）。以包围盒为单位正方形 (u, v) ∈ [0,1]²：
+        //   · LINEAR      : 沿 Angle 方向的投影，再按 Shift 平移
+        //   · CYLINDER    : 垂直方向的柱面明暗，1 - |2v-1| 形式
+        //   · SPHERICAL   : 以中心为原点的径向距离
+        //   · HEMISPHERICAL: 只取一半（上半）的球面
+        //   · CURVED      : 沿方向的弧形（等价于线性加上正弦偏移）
+        struct GradientGeometry
+        {
+            double ux = 1.0, uy = 0.0;   // 渐变方向（单位向量）
+            double cx = 0.0, cy = 0.0;   // 包围盒中心
+            double hx = 1.0, hy = 1.0;   // 包围盒半宽、半高（半径）
+            double shift = 0.0;
+            GradientType type = GradientType::Linear;
+
+            // 点 → 0～1 的渐变位置（越界会夹到端点，由 Sample 兜住）
+            double Param(double x, double y) const
+            {
+                // 归一化到以中心为原点、半径 1 的坐标
+                const double nx = hx > 1e-12 ? (x - cx) / hx : 0.0;
+                const double ny = hy > 1e-12 ? (y - cy) / hy : 0.0;
+                // 沿渐变方向的有符号投影，范围约 [-1, 1]
+                const double along = nx * ux + ny * uy;
+                auto lin = [&](double s) { return std::clamp(0.5 * (s + 1.0) + shift, 0.0, 1.0); };
+
+                switch (type)
+                {
+                case GradientType::Linear:
+                case GradientType::Curved:
+                case GradientType::InvCurved:
+                    return lin(along);
+
+                case GradientType::Cylinder:
+                case GradientType::InvCylinder:
+                {
+                    // 柱面：垂直方向余弦，两端亮中间暗（反柱面相反）
+                    const double across = std::clamp(-nx * uy + ny * ux, -1.0, 1.0);
+                    const double s = std::cos(across * Math::PI * 0.5);
+                    return type == GradientType::Cylinder ? std::clamp(s + shift, 0.0, 1.0)
+                                                          : std::clamp(1.0 - s + shift, 0.0, 1.0);
+                }
+
+                case GradientType::Spherical:
+                case GradientType::InvSpherical:
+                {
+                    const double r = std::clamp(std::sqrt(nx * nx + ny * ny), 0.0, 1.0);
+                    return type == GradientType::Spherical ? std::clamp(r + shift, 0.0, 1.0)
+                                                           : std::clamp(1.0 - r + shift, 0.0, 1.0);
+                }
+
+                case GradientType::Hemispherical:
+                case GradientType::InvHemispherical:
+                {
+                    // 半球：只取球面的上半，下半用 1 填充
+                    const double nyUp = std::max(0.0, ny);
+                    const double r = std::clamp(std::sqrt(nx * nx + nyUp * nyUp), 0.0, 1.0);
+                    return type == GradientType::Hemispherical ? std::clamp(r + shift, 0.0, 1.0)
+                                                               : std::clamp(1.0 - r + shift, 0.0, 1.0);
+                }
+                }
+                return lin(along);
+            }
+        };
+
+        GradientGeometry MakeGradientGeometry(const std::vector<std::vector<Math::Point3>>& polys) const
+        {
+            GradientGeometry g;
+            g.type = m_gradient.Type;
+
+            // 包围盒（只用 xy，渐变是平面图形）
+            double minX = 1e308, minY = 1e308, maxX = -1e308, maxY = -1e308;
+            for (const auto& poly : polys)
+                for (const auto& p : poly)
+                {
+                    minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+                    minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+                }
+            if (minX > maxX) return g;
+            g.cx = 0.5 * (minX + maxX);
+            g.cy = 0.5 * (minY + maxY);
+            g.hx = std::max(0.5 * (maxX - minX), 1e-9);
+            g.hy = std::max(0.5 * (maxY - minY), 1e-9);
+            g.shift = m_gradient.Shift;
+
+            // 角度：ACAD 的渐变角度按逆时针为正、0° = 从左到右
+            const double rad = m_gradient.Angle * Math::PI / 180.0;
+            g.ux = std::cos(rad);
+            g.uy = std::sin(rad);
+            return g;
+        }
+
+        // 渐变填充：三角剖分与实心填充同一条扫描线，但**非线性渐变要细分**。
+        //
+        // 为什么必须细分：扫描线在矩形上只切出 2 个三角形（上下两条带）。GPU 按顶点插值，
+        // 线性渐变在两个三角形里就是精确的，但球面 / 柱面 / 半球是**非线性**的 ——
+        // 只用 4 个角点插值，球心的亮（暗）点根本不存在，整片会被拉成线性梯度甚至单色
+        //（实测：SPHERICAL 的矩形渐变退化成纯色）。所以按条带再细分，让每个小三角形的
+        // 顶点足够密，非线性曲面的明暗才出得来。
+        void FillGradient(IDrawSink& sink,
+                          const std::vector<std::vector<Math::Point3>>& polys,
+                          double elevation) const
+        {
+            const GradientGeometry geom = MakeGradientGeometry(polys);
+
+            auto colorAt = [&](double x, double y) -> Math::Color4
+            {
+                Math::Color4 a, b;
+                double t = 0.0;
+                m_gradient.Sample(geom.Param(x, y), a, b, t);
+                return { a.r + (b.r - a.r) * t,
+                         a.g + (b.g - a.g) * t,
+                         a.b + (b.b - a.b) * t,
+                         a.a + (b.a - a.a) * t };
+            };
+
+            // 线性 / 曲线渐变沿方向是线性的，扫描线条带已经够；其余按网格细分
+            const bool needsMesh = geom.type != GradientType::Linear;
+
+            struct Edge { double xa, ya, xb, yb; };
+            std::vector<Edge> edges;
+            std::vector<double> ys;
+            for (const auto& poly : polys)
+                for (size_t i = 0; i + 1 < poly.size(); ++i)
+                {
+                    ys.push_back(poly[i].y);
+                    if (std::abs(poly[i + 1].y - poly[i].y) > 1e-12)
+                        edges.push_back({ poly[i].x, poly[i].y, poly[i + 1].x, poly[i + 1].y });
+                }
+            if (ys.size() < 2 || edges.size() < 2) return;
+
+            std::sort(ys.begin(), ys.end());
+            ys.erase(std::unique(ys.begin(), ys.end(),
+                     [](double a, double b){ return std::abs(a - b) < 1e-9; }), ys.end());
+
+            // 非线性渐变：把每条带再切成 kGradientRows 份，且每份横向切成若干段，
+            // 让顶点在包围盒里接近均匀分布（球心的明暗点才会落在顶点附近）
+            constexpr int kGradientRows = 24;
+            constexpr int kGradientCols = 16;
+
+            auto xAt = [&](size_t e, double y)
+            {
+                const Edge& g = edges[e];
+                return g.xa + (g.xb - g.xa) * (y - g.ya) / (g.yb - g.ya);
+            };
+
+            // 输出一条带里的一段梯形：left/right 是该 y 上的左右边界 x
+            auto emitBand = [&](size_t l, size_t r, double y0, double y1)
+            {
+                if (!needsMesh)
+                {
+                    const Math::Point3 A{ xAt(l, y0), y0, elevation };
+                    const Math::Point3 B{ xAt(r, y0), y0, elevation };
+                    const Math::Point3 C{ xAt(r, y1), y1, elevation };
+                    const Math::Point3 D{ xAt(l, y1), y1, elevation };
+                    sink.FillTriangleColored(A, B, C, colorAt(A.x, A.y), colorAt(B.x, B.y), colorAt(C.x, C.y));
+                    sink.FillTriangleColored(A, C, D, colorAt(A.x, A.y), colorAt(C.x, C.y), colorAt(D.x, D.y));
+                    return;
+                }
+
+                // 细分：行方向 kGradientRows 等分，列方向按该行左右宽度等分
+                for (int iy = 0; iy < kGradientRows; ++iy)
+                {
+                    const double ya = y0 + (y1 - y0) * (static_cast<double>(iy) / kGradientRows);
+                    const double yb = y0 + (y1 - y0) * (static_cast<double>(iy + 1) / kGradientRows);
+                    const double la = xAt(l, ya), ra = xAt(r, ya);
+                    const double lb = xAt(l, yb), rb = xAt(r, yb);
+                    for (int ix = 0; ix < kGradientCols; ++ix)
+                    {
+                        const double u0 = static_cast<double>(ix) / kGradientCols;
+                        const double u1 = static_cast<double>(ix + 1) / kGradientCols;
+                        const Math::Point3 A{ la + (ra - la) * u0, ya, elevation };
+                        const Math::Point3 B{ la + (ra - la) * u1, ya, elevation };
+                        const Math::Point3 C{ lb + (rb - lb) * u1, yb, elevation };
+                        const Math::Point3 D{ lb + (rb - lb) * u0, yb, elevation };
+                        sink.FillTriangleColored(A, B, C, colorAt(A.x, A.y), colorAt(B.x, B.y), colorAt(C.x, C.y));
+                        sink.FillTriangleColored(A, C, D, colorAt(A.x, A.y), colorAt(C.x, C.y), colorAt(D.x, D.y));
+                    }
+                }
+            };
+
+            struct Trap { size_t l, r; double y0; };
+            std::vector<Trap> open, next;
+            std::vector<std::pair<double, size_t>> crossings;
+            for (size_t b = 0; b + 1 < ys.size(); ++b)
+            {
+                const double y0 = ys[b], y1 = ys[b + 1];
+                next.clear();
+                crossings.clear();
+                if (y1 - y0 >= 1e-12)
+                {
+                    const double ymid = 0.5 * (y0 + y1);
+                    for (size_t e = 0; e < edges.size(); ++e)
+                    {
+                        const Edge& g = edges[e];
+                        if (ymid <= std::min(g.ya, g.yb) || ymid >= std::max(g.ya, g.yb)) continue;
+                        crossings.push_back({ xAt(e, ymid), e });
+                    }
+                    std::sort(crossings.begin(), crossings.end());
+                    for (size_t k = 0; k + 1 < crossings.size(); k += 2)
+                    {
+                        const size_t l = crossings[k].second, r = crossings[k + 1].second;
+                        double start = y0;
+                        for (auto& t : open)
+                            if (t.l == l && t.r == r) { start = t.y0; t.l = SIZE_MAX; break; }
+                        next.push_back({ l, r, start });
+                    }
+                }
+                for (const auto& t : open)
+                    if (t.l != SIZE_MAX) emitBand(t.l, t.r, t.y0, y0);
+                open.swap(next);
+            }
+            for (const auto& t : open)
+                emitBand(t.l, t.r, t.y0, ys.back());
+        }
 
         // ── 线图案：扫描线裁剪 + 虚线 ──────────────────────────────────────
         // 第 n 条线经过 O + n·(DeltaX·û + Spacing·v̂)（û 沿线方向、v̂ 垂直方向）：
@@ -672,6 +1067,7 @@ namespace MiniCAD
 
         std::vector<HatchLoop> m_loops;      // 闭合边界环（首环外轮廓，其余为孔岛）
         HatchPattern           m_pattern;    // 填充图案
+        HatchGradient          m_gradient;   // 渐变填充（Enabled 时覆盖 m_pattern 的图案）
         double                 m_scale = 1.0; // 图案缩放
         double                 m_angleDeg = 0.0; // 图案整体旋转（度）
     };

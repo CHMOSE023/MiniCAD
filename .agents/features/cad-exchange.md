@@ -22,6 +22,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 表：图层、线型、文字样式、多线样式、块（含外部参照块）、布局（标注样式只在组装标注时查参数，不导入成表）。图层的冻结（标志位 1）当作关闭；锁定（标志位 4）读成 `Layer::SetLocked`，导出时写回同一位——锁定图层上的对象淡显、选不中（见 [display-performance](display-performance.md) 的"锁定图层"）
 - 实体：Line / Circle / Arc / Ellipse / Point / Polyline / LwPolyline / Spline / Text / MText / Insert（含属性 ATTRIB 与属性定义 ATTDEF）/ Solid / 3DFace / Hatch（直线、圆弧、椭圆弧、样条、多段线边界）/ MultiLeader / MLine / Wipeout / Viewport / Ray / XLine / Leader / Tolerance / RasterImage（`ImageEntity`，读写）；PolyfaceMesh 与 Mesh 读成 `MeshEntity`；ACAD_TABLE 按其匿名块还原为 Insert（`Importer::ConvertTable`）；SHAPE 读成 `ShapeEntity`，形号未建模，只画占位框，导出时 DWG / DXF 写出器都不写
 - 填充边界（`Importer::ConvertHatchPath`）：相邻边之间的小缺口用直线接上（AutoCAD 的间隙容差 HPGAPTOL）；缺口超过该路径范围对角线的 10% 时整条路径丢弃——这是编辑后残留的"未闭合"路径（标志 32），各段散落在图纸各处，AutoCAD 不画，硬接会画出横跨图纸的大块实心。用 `MINICAD_HATCHPATHS` 看各段是否相接
+- 渐变填充（ACAD 的 GRADIENT，组码 450～470）：MiniDWG 的 `Hatch::GradientColor` 已有全部字段，`Importer::ConvertHatch` 映射成核心层的 `HatchGradient`（`src/Core/Entity/HatchEntity.hpp`）：类型（LINEAR / CYLINDER / SPHERICAL / HEMISPHERICAL / CURVED 及反相）、角度、位移、单色/双色、色调值、颜色停靠点。绘制走 `IDrawSink::FillTriangleColored` 逐顶点着色；**非线性渐变（球面 / 柱面 / 半球）必须细分**——矩形只切出 2 个三角形时球心不存在，整片会被拉成线性甚至单色。导出写回组码 450～470，另存为 DWG / DXF 后仍能读回
 - 标注用其匿名块还原为 Insert；绘制次序按 SortEntitiesTable
 - 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型

@@ -4308,6 +4308,16 @@ namespace MiniCAD
                 doc->GetScene().ForEachObject([&](const Object& o) { if (!ole) ole = dynamic_cast<const OleFrameEntity*>(&o); });
                 if (ole)
                 {
+                    // OLE 对象通常在模型空间：先切回模型页，否则放大到它的世界坐标也只是在布局页里
+                    // 看一片空白（布局页按纸张范围绘制，模型空间的那块不在这里）
+                    if (!ole->GetAttr().InPaperSpace && doc->ActiveLayout() != 0)
+                    {
+                        CameraState state = m_docManager.GetViewport().GetCamera().GetState();
+                        doc->SetActiveLayout(0, state);
+                        m_docManager.GetViewport().GetCamera().SetState(state);
+                        m_viewport->RequestRender();
+                        RenderFrame();
+                    }
                     const AABB box = ole->GetBoundingBox();
                     cam.ZoomToBounds(box.Min.x, box.Min.y, box.Max.x, box.Max.y, 1.2);
                     m_viewport->RequestRender();
