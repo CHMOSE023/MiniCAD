@@ -43,9 +43,12 @@ namespace MiniCAD::Tch
         double X = 0, Y = 0;            // 中心
         double Rotation = 0;
         double Length = 0, Width = 0;
+        // 矩形标志（内核 TDbRect::GetRectFlag，this+0xa0）：TDbRect::ExplodeOrDraw2d 在矩形之外，1 画左下—右上的对角线，
+        // 2 画左上—右下的对角线，3 两条都画（8#楼-A平面图 暖通套管规格表的套管图例）；其他值只画矩形
+        int Flag = 0;
     };
 
-    // 天正基类、RC 版本、BS 基点类型、3BD 中心、转角、长、宽、高（自定义编码 BD）、3BD 法向；版本 ≥ 2：RC
+    // 天正基类、RC 版本、BS 矩形标志、3BD 中心、转角、长、宽、高（自定义编码 BD）、3BD 法向；版本 ≥ 2：RC 基点位置（GetBaseFlag）
     inline bool DecodeRect(const MiniDWG::UnknownEntity& entity, TchRect& rect, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -58,7 +61,7 @@ namespace MiniCAD::Tch
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native rectangle version");
         TchRect t;
-        r.ReadBitShort();
+        t.Flag = r.ReadBitShort();
         t.X = r.ReadBitDouble(); t.Y = r.ReadBitDouble(); r.ReadBitDouble();
         t.Rotation = Detail::ReadTchDouble(r);
         t.Length = Detail::ReadTchDouble(r);
@@ -75,7 +78,7 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解为一条闭合多段线（2 个变体核对）
+    // 天正 2014 分解为一条闭合多段线（2 个变体核对），按矩形标志再加对角线（内核 TDbRect::ExplodeOrDraw2d）
     inline TchGraphics BuildRect(const TchRect& t)
     {
         TchGraphics g;
@@ -84,6 +87,13 @@ namespace MiniCAD::Tch
         for (auto [x, y] : {std::pair{-hl, -hw}, {hl, -hw}, {hl, hw}, {-hl, hw}, {-hl, -hw}})
             p.Points.push_back({Detail::Local(t.X, t.Y, t.Rotation, x, y)});
         g.Paths.push_back(std::move(p));
+        auto diagonal = [&](double x0, double y0, double x1, double y1) {
+            TchGraphics::Path d;
+            d.Points = {{Detail::Local(t.X, t.Y, t.Rotation, x0, y0)}, {Detail::Local(t.X, t.Y, t.Rotation, x1, y1)}};
+            g.Paths.push_back(std::move(d));
+        };
+        if (t.Flag == 1 || t.Flag == 3) diagonal(-hl, -hw, hl, hw);
+        if (t.Flag == 2 || t.Flag == 3) diagonal(-hl, hw, hl, -hw);
         return g;
     }
     namespace Detail

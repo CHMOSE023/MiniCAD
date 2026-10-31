@@ -96,11 +96,29 @@ namespace MiniCAD
     // IFont 接口
     // ──────────────────────────────────────────────────────────────────────
 
+#ifndef MINICAD_WEB
+    // %%d / %%p / %%c 等控制码带 kRawShapeFlag（SHX 按形号查），TrueType 里就是 Unicode 码点
+    static int TtfCodepoint(uint32_t codepoint) { return static_cast<int>(codepoint & ~kRawShapeFlag); }
+#endif
+
+    bool TTFFont::Covers(uint32_t codepoint) const
+    {
+#ifndef MINICAD_WEB
+        return m_stbFont && stbtt_FindGlyphIndex(static_cast<const stbtt_fontinfo*>(m_stbFont), TtfCodepoint(codepoint)) != 0;
+#else
+        (void)codepoint;
+        return false;
+#endif
+    }
+
     const Glyph& TTFFont::GetGlyph(uint32_t codepoint)
     {
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
 
+        // 缺字：直接用替代字体缓存里的字形（引用一直有效），同一个汉字在各西文字体里共用一份
+        if (m_fallback && !Covers(codepoint) && m_fallback->Covers(codepoint))
+            return m_fallback->GetGlyph(codepoint);
         return m_glyphCache.emplace(codepoint, BuildGlyph(codepoint)).first->second;
     }
 
@@ -111,11 +129,13 @@ namespace MiniCAD
 
         double adv = 0.6;
 #ifndef MINICAD_WEB
-        if (m_stbFont)
+        if (m_fallback && !Covers(codepoint) && m_fallback->Covers(codepoint))
+            adv = m_fallback->GetAdvance(codepoint);
+        else if (m_stbFont)
         {
             auto* info = static_cast<stbtt_fontinfo*>(m_stbFont);
             int advance = 0, lsb = 0;
-            stbtt_GetCodepointHMetrics(info, static_cast<int>(codepoint), &advance, &lsb);
+            stbtt_GetCodepointHMetrics(info, TtfCodepoint(codepoint), &advance, &lsb);
             adv = advance * m_scale;
         }
 #endif
@@ -137,7 +157,7 @@ namespace MiniCAD
         auto* info = static_cast<stbtt_fontinfo*>(m_stbFont);
 
         stbtt_vertex* verts = nullptr;
-        int n = stbtt_GetCodepointShape(info, static_cast<int>(codepoint), &verts);
+        int n = stbtt_GetCodepointShape(info, TtfCodepoint(codepoint), &verts);
         if (n <= 0 || !verts) return g;
 
         // 展平容差（归一化单位）：1 个字体单位，约字高的 0.5%；再细只会成倍增加线段和三角形，屏幕上看不出

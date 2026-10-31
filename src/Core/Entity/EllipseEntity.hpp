@@ -5,6 +5,7 @@
 #include "../Math/Color4.hpp"
 #include "Entity.hpp"
 #include "ICurveEntity.hpp"
+#include "../Draw/CurveSampling.hpp"
 #include <cmath>
 
 namespace MiniCAD
@@ -58,18 +59,14 @@ namespace MiniCAD
         {
             const auto& attr = GetAttr();
             const Math::Color4& color = isSelected ? IDrawSink::kSelectionColor : isHovered ? IDrawSink::kHoverColor : ResolveDrawColor(sink);
-            // 分段数按跨度比例取，椭圆弧与整椭圆的弦密度一致
+            // 分段数按跨度比例取，椭圆弧与整椭圆的弦密度一致；深度放大时 sink 要求在视图附近加密（弦高按长半轴估）
             const double t0       = m_ellipse.IsFull() ? 0.0 : m_ellipse.StartParam;
             const double sweep    = m_ellipse.SweepParam();
             const int    segments = std::max(4, static_cast<int>(std::ceil(64.0 * sweep / Math::TwoPI)));
 
-            for (int i = 0; i < segments; ++i)
-            {
-                double a = t0 + sweep *  i      / segments;
-                double b = t0 + sweep * (i + 1) / segments;
-                sink.DrawLine(m_ellipse.PointAt(a), m_ellipse.PointAt(b),
-                              color, false);
-            }
+            SampleCurve(sink, t0, sweep, segments, std::max(std::abs(m_ellipse.RadiusX), std::abs(m_ellipse.RadiusY)),
+                        [&](double t) { return m_ellipse.PointAt(t); },
+                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
         }
 
         DECLARE_RUNTIME_TYPE(EllipseEntity, Entity)

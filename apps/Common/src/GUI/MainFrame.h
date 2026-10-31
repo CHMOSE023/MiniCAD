@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,6 +29,7 @@
 namespace MiniGUI
 {
     class UIContext;
+    class DrawList;
     class TitleBar;
     class ViewportHost;
     class CommandConsole;
@@ -81,6 +83,10 @@ namespace MiniCAD
     public:
         MainFrame();
         ~MainFrame();
+
+        // 下拉框里一个图层的缩进：接在最近的、确有其层的上级下面，depth 为缩进几级，
+        // labelStart 为显示的那段在图层名里的起点（只有 "A" 和 "A$B$C" 时 C 显示为 A 下面的 "B$C"）
+        struct LayerIndent { int depth = 0; size_t labelStart = 0; };
 
         // 界面描述文件（UTF-8 路径）；不设置时优先用源码目录里的文件，其次是可执行文件旁的 ui/minicad_ui.json
         void SetUiFile(std::string utf8Path) { m_uiPath = std::move(utf8Path); }
@@ -201,6 +207,11 @@ namespace MiniCAD
         // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
         // 结果缓存到图层增删改名为止，只在界面线程使用
         static const std::vector<uint32_t>& SortedLayerIds(Document& doc);
+        // 下拉框里的图层按层级缩进（与 SortedLayerIds 一一对应，见 LayerIndent）
+        static const std::vector<LayerIndent>& SortedLayerIndents(Document& doc);
+        // 下拉框的一项图层：下拉列表里按层级缩进，收起时写全名（不同上级下可能有同名的）；icons 时行首画 开 / 锁定 / 颜色
+        static void PaintLayerChoice(MiniGUI::UIContext* ctx, MiniGUI::DrawList& dl, const MiniGUI::Rect& box, Document& doc,
+                                     int index, bool inList, bool icons);
         // 选择集的统计（特性面板与工具栏下拉框共用）：公共图层 / 颜色 / 线型 / 线宽的下标（没有选中为 -1，
         // 取值不同为 nullopt，显示"*多种*"）、线型比例、公共几何特性。按选择集版本与场景版本缓存：
         // 各个绑定每次刷新都要扫一遍选择集，13 万个对象扫 6 遍要 40 ms，而每次点击、按键都会刷新
@@ -284,7 +295,10 @@ namespace MiniCAD
             std::function<void()>    syncGeometryRows;          // 特性面板「几何」组：按选择集重新分配行
             MiniGUI::ListView*       layerList   = nullptr;
             MiniGUI::TextBox*        layerSearch = nullptr;     // 图层面板的搜索框
-            std::vector<uint32_t>    layerIds;                  // 图层面板每一行对应的图层 ID
+            static constexpr uint32_t kGroupRow = 0xFFFFFFFFu;  // layerIds 里的分组行：只有 "A$B" 没有 "A" 时补出的上级 "A"
+            std::vector<uint32_t>    layerIds;                  // 图层面板每一行对应的图层 ID（分组行为 kGroupRow）
+            std::vector<std::string> layerPaths;                // 每一行的完整路径：图层名，或分组行的上级路径
+            std::set<std::string>    layerCollapsed;            // 图层面板里折叠了的上级路径
             std::string              layerSignature;            // 图层面板当前显示的内容，没变时不重建行
             std::string              layerFilter;               // 图层面板只显示名称含这段文字的图层（不分大小写）
             bool                     layerSortDesc = false;     // 图层面板按名称降序（点"名称"表头切换）

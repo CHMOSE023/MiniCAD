@@ -27,9 +27,16 @@ namespace MiniCAD
             double       m_scale    = 1.0;
         };
 
+        // 下划线 / 上划线 / 删除线：一条水平线段，与 GlyphInstance::m_position 同一排版坐标（未旋转）
+        struct DecorationLine
+        {
+            double m_x0 = 0.0, m_x1 = 0.0, m_y = 0.0;
+        };
+
         struct LayoutResult
         {
-            std::vector<GlyphInstance> m_glyphs;
+            std::vector<GlyphInstance>  m_glyphs;
+            std::vector<DecorationLine> m_decorations;
         };
 
     public:

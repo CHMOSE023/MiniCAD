@@ -11,6 +11,10 @@ namespace MiniCAD::Tch
         MiniDWG::XYZ        Position;   // 柱的插入点（Z 为底标高）
         std::vector<Vertex> Outline;    // 闭合轮廓，世界坐标；Bulge 为该顶点到下一顶点的凸度
         double              Height = 0;
+        // 材料码（内核 TDbColumn::dwgInFields 的 this+0x104，版本 2 时 0 / 1 / 2 换算为 60 / 70 / 40）：
+        // 40 砖、60 钢筋混凝土、70 钢；填充规则与墙相同（Tch::MaterialHatch）。版本 1 没有材料，按 0 不填充
+        int                 Material = 0;
+        double              Scale = 100;    // 出图比例
     };
 
     // TCH_COLUMN 柱：按 TDbColumn 的私有布局
@@ -45,7 +49,12 @@ namespace MiniCAD::Tch
         c.Height = r.ReadBitDouble();
         r.ReadByte();
         r.ReadByte();                                           // 句柄个数（句柄在句柄流）
-        if (version >= 2) r.ReadByte();
+        if (version >= 2)
+        {
+            const int material = r.ReadByte();
+            c.Material = version >= 3 ? material : material == 1 ? 70 : material == 2 ? 40 : 60;
+        }
+        c.Scale = base.Scale;
         if (version > 3)
         {
             const int flags = r.ReadBitShort();

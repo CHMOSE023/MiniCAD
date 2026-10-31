@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,7 +26,13 @@ namespace MiniCAD
         const char* GetName   ()   const override { return m_name.c_str(); }
         bool        IsLoaded  ()   const          { return m_stbFont != nullptr; }
 
-        bool        HasGlyph(uint32_t codepoint) override { return !GetGlyph(codepoint).empty(); }   // 原先用 operator[] 会把空字形塞进缓存
+        bool        HasGlyph(uint32_t codepoint) override { return Covers(codepoint) || (m_fallback && m_fallback->Covers(codepoint)); }
+
+        // 字体文件里有这个字符（缺字时 stb_truetype 给的是 .notdef 方块，不算）
+        bool        Covers(uint32_t codepoint) const;
+        // 本字体缺的字改用这个字体的字形，与 Windows 的字体链接一样（AutoCAD 里 Arial 等西文字体的汉字照样显示）。
+        // 两者都按大写字母高归一化，字形可以直接拿来用。FontEngine 设为自带的 GB2312.ttf
+        void        SetFallback(std::shared_ptr<TTFFont> fallback) { m_fallback = std::move(fallback); }
     private:
         void  Load(const std::string& filePath);
         Glyph BuildGlyph(uint32_t codepoint);
@@ -62,5 +69,6 @@ namespace MiniCAD
 
         std::unordered_map<uint32_t, Glyph>  m_glyphCache;
         std::unordered_map<uint32_t, double> m_advanceCache;
+        std::shared_ptr<TTFFont>             m_fallback;
     };
 }

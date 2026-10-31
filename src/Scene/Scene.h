@@ -57,8 +57,8 @@ namespace MiniCAD
 
 		bool Has(ObjectID id) const ;
 
-		// 对象是否在锁定的图层上（锁定语义同 AutoCAD：可见、可选中、可捕捉，但不能修改 / 删除）。
-		// 所有会修改或删除已有对象的操作都应跳过锁定对象；复制 / 偏移这类只读取原对象的操作不受限制
+		// 对象是否在锁定的图层上（锁定语义：淡显、可捕捉，但不能选中、修改、删除；选不中由 Picking::IsPickable 保证）。
+		// 程序直接设的选择集里仍可能有锁定对象：会修改或删除已有对象的操作都应再跳过它们
 		bool IsEntityLocked(const Object& obj) const;
 
 		std::vector<ObjectID> GetAllIDs() const;             // 返回所有实体 ID

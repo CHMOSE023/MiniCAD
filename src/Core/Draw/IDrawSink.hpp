@@ -102,9 +102,20 @@ namespace MiniCAD
         virtual double GetViewportHeightPx() const { return 0.0; }
         // 几何按当前缩放烘焙（如 $PDSIZE<=0 的点图形按视口百分比换算成世界尺寸）：缩放后要重新细分
         virtual void MarkViewDependent() {}
+        // 曲线细分里弦 a→b（本 sink 坐标）要不要再二分：sagitta 是画出来的边离弦最远多少（判断够不够细），reach 是画出来的
+        // 东西伸出弦多远（判断在不在视图附近；带宽度的多段线是弦高 + 半宽）。默认不加密，各实体按自己的默认段数；
+        // DrawContext 在深度放大的局部显示里对视图附近、弦高超过 1/4 像素的段返回 true（见 CurveSampling.hpp 的 SampleCurve）
+        virtual bool RefineCurveSegment(const Math::Point3& a, const Math::Point3& b, double sagitta, double reach) const
+        {
+            (void)a; (void)b; (void)sagitta; (void)reach;
+            return false;
+        }
         // 之后的 EmitMText / MeasureMText* 用这个宽度因子代替样式的（> 0 时；0 = 按样式）。
         // 多行文字实体自己的宽度因子（天正文字按 0.7 宽显示等）经这里传下去，不必为每种宽度派生一个文字样式
         virtual void SetTextWidthFactor(double widthFactor) { (void)widthFactor; }
+        // 之后的文字沿基线上下翻转 / 翻回：镜像的块参照（插入变换行列式为负）里的文字与 AutoCAD 一样画成镜像。
+        // TransformDrawSink 在转发文字前后各调用一次；转发型 sink 原样转发，两层镜像相互抵消
+        virtual void ToggleTextMirror() {}
 
         // 按线型铺设有宽度的线段（width 为模型单位）。粗多段线无法整体填充成一条带宽度、
         // 又带线型的路径：填充几何不经过线型解析，虚线会被画成实线。所以虚线粗线逐段走这里，

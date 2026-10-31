@@ -4,6 +4,7 @@
 #include "../Math/Color4.hpp"
 #include "Entity.hpp"
 #include "ICurveEntity.hpp"
+#include "../Draw/CurveSampling.hpp"
 #include "../GeomKernel/Curves.hpp"
 #include <algorithm>
 
@@ -225,24 +226,20 @@ namespace MiniCAD
                         }
                         else
                         {
-                            std::vector<Math::Point3> pts;
-                            Polyline::TessellateArc(A, B, m_polyline.SegBulge(i), pts, kAngleTol);
-                            pts.push_back(B);
-                            for (size_t k = 0; k + 1 < pts.size(); ++k)
-                            {
-                                // 圆弧细分点上宽度按弧长线性插值，端点用本段的起止宽度
-                                const double t0 = static_cast<double>(k)     / (pts.size() - 1);
-                                const double t1 = static_cast<double>(k + 1) / (pts.size() - 1);
-                                const double w0 = SegmentStartWidth(i) + (SegmentEndWidth(i) - SegmentStartWidth(i)) * t0;
-                                const double w1 = SegmentStartWidth(i) + (SegmentEndWidth(i) - SegmentStartWidth(i)) * t1;
-                                sink.DrawStyledLine(pts[k], pts[k + 1], color, std::max(w0, w1));
-                            }
+                            // 圆弧细分点上宽度按弧长线性插值，端点用本段的起止宽度
+                            const double ws = SegmentStartWidth(i), we = SegmentEndWidth(i);
+                            if (!SampleArcSegment(sink, A, B, m_polyline.SegBulge(i), kAngleTol,
+                                                  [&](const Math::Point3& p, const Math::Point3& q, double t0, double t1)
+                                                  {
+                                                      sink.DrawStyledLine(p, q, color, std::max(ws + (we - ws) * t0, ws + (we - ws) * t1));
+                                                  }, 0.5 * std::max(ws, we)))
+                                sink.DrawStyledLine(A, B, color, std::max(ws, we));
                         }
                     }
                     return;
                 }
 
-                const std::vector<Node> nodes = BuildNodes(kAngleTol);
+                const std::vector<Node> nodes = BuildNodes(sink, kAngleTol);
                 EmitThickPolyline(sink, nodes, color);
                 return;
             }
@@ -256,14 +253,10 @@ namespace MiniCAD
                 {
                     sink.DrawLine(A, B, color, false);
                 }
-                else
+                else if (!SampleArcSegment(sink, A, B, m_polyline.SegBulge(i), kAngleTol,
+                                           [&](const Math::Point3& p, const Math::Point3& q, double, double) { sink.DrawLine(p, q, color, false); }))
                 {
-                    std::vector<Math::Point3> pts;
-                    Polyline::TessellateArc(A, B, m_polyline.SegBulge(i), pts, kAngleTol);
-                    pts.push_back(B);
-
-                    for (size_t k = 0; k + 1 < pts.size(); ++k)
-                        sink.DrawLine(pts[k], pts[k + 1], color, false);
+                    sink.DrawLine(A, B, color, false);
                 }
             }
         }
@@ -271,6 +264,29 @@ namespace MiniCAD
         DECLARE_RUNTIME_TYPE(PolylineEntity, Entity)
 
     private:
+        // 圆弧段 A→B 按参数 t ∈ [0, 1] 细分，取点与 Polyline::TessellateArc 相同（每 angleTol 一段，末点就是 B）；
+        // 深度放大时 sink 要求在视图附近加密（见 SampleCurveSpans；halfWidth：带宽度时的半宽，外边缘比中心线伸出这么多）。
+        // emit(p, q, tp, tq)。半径太小（当直线段画）时返回 false
+        template <class Emit>
+        static bool SampleArcSegment(const IDrawSink& sink, const Math::Point3& A, const Math::Point3& B, double bulge, double angleTol, Emit&& emit,
+                                     double halfWidth = 0.0)
+        {
+            const ArcGeom arc = Polyline::ComputeArc(A, B, bulge);
+            if (arc.Radius < Math::LengthEPS)
+                return false;
+            const int segs = std::max(2, static_cast<int>(std::ceil(std::abs(arc.SweepAngle) / angleTol)));
+            SampleCurveSpans(sink, 0.0, 1.0, segs, (arc.Radius + halfWidth) * arc.SweepAngle * arc.SweepAngle,
+                             [&](double t)
+                             {
+                                 if (t == 1.0) return B;
+                                 const double angle = arc.StartAngle + t * arc.SweepAngle;
+                                 return Math::Point3{ arc.Center.x + arc.Radius * std::cos(angle), arc.Center.y + arc.Radius * std::sin(angle),
+                                                      A.z + t * (B.z - A.z) };
+                             },
+                             emit, halfWidth);
+            return true;
+        }
+
         // ── 粗线（宽度 >= 1）三角形拼接 ──────────────────────────────────────
         // 把中心线展开为带宽度的填充几何。每段两端的半宽可以不同（DXF 顶点组码 40/41
         // 的锥形段，例如 `sample_AC1032.dwg` 句柄 35B：顶点 0 起止宽度 0.2 → 0.1，
@@ -293,7 +309,7 @@ namespace MiniCAD
 
         // 把多段线按角度容差离散成带半宽的节点序列（含所有顶点与圆弧插值点）。
         // 圆弧段上的半宽按弧长线性插值——宽度沿段均匀变化，与 AutoCAD 一致。
-        std::vector<Node> BuildNodes(double angleTol) const
+        std::vector<Node> BuildNodes(const IDrawSink& sink, double angleTol) const
         {
             std::vector<Node> nodes;
             if (!m_polyline.IsValid()) return nodes;
@@ -321,18 +337,17 @@ namespace MiniCAD
                 }
                 else
                 {
-                    std::vector<Math::Point3> pts;
-                    Polyline::TessellateArc(A, B, m_polyline.SegBulge(i), pts, angleTol);
-                    const size_t n = pts.size();          // 含起点 A（t=0），不含终点 B
-                    // 从 k=1 开始：pts[0] 就是 A，与上面的折点重复；
-                    // 若把它再压进去，折点会被复制成两个重合节点，
-                    // 使「上一段 → 本弧」接缝处的斜接被 l0==0 判掉而留下缺口。
-                    for (size_t k = 1; k < n; ++k)
-                    {
-                        const double t = static_cast<double>(k) / static_cast<double>(n);
-                        const double h = h0 + (h1 - h0) * t;
-                        nodes.push_back({ pts[k], h, h });
-                    }
+                    // 每段的终点进节点（起点 A 已是上面的折点：再压一次会复制成两个重合节点，
+                    // 使「上一段 → 本弧」接缝处的斜接被 l0==0 判掉而留下缺口）；最后一段的终点就是 B，下面单独压
+                    SampleArcSegment(sink, A, B, m_polyline.SegBulge(i), angleTol,
+                                     [&](const Math::Point3&, const Math::Point3& q, double, double t)
+                                     {
+                                         if (t < 1.0)
+                                         {
+                                             const double h = h0 + (h1 - h0) * t;
+                                             nodes.push_back({ q, h, h });
+                                         }
+                                     }, std::max(h0, h1));
                     nodes.push_back({ B, h1, h1 });       // 弧的终点
                 }
             }

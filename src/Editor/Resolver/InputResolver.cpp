@@ -82,6 +82,9 @@ namespace MiniCAD
         }
 
         // 3. Constraint（基于 anchor + snap/raw）
+        // 对象捕捉优先（同 AutoCAD）：捕捉到对象上的点（端点、交点、圆上的点……）时不再套正交 / 极轴，否则捕捉到的点
+        // 会被挪到水平 / 竖直线或极轴角的射线上，线头差一点或冒出一点。网格捕捉不是对象捕捉，照常约束
+        const bool objectSnap = hasSnap && snap.SnapType != SnapResult::Type::Grid;
         Math::Point3 anchor;
         bool hasAnchor = false;
 
@@ -99,7 +102,9 @@ namespace MiniCAD
             }
         }
 
-        if (hasAnchor && ctx.constraint.IsAnyActive())
+        if (hasAnchor && ctx.constraint.IsAnyActive() && objectSnap)
+            ctx.constraint.Clear();   // 这一帧没有约束：不留上一次的辅助线
+        else if (hasAnchor && ctx.constraint.IsAnyActive())
         {
             ConstraintContext cctx;
             cctx.anchor = anchor;

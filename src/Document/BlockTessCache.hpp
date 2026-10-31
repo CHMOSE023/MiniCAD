@@ -37,6 +37,8 @@ namespace MiniCAD
         // 插入变换去掉旋转后的线性部分：X 轴长度（按 40 位尾数取整），Y 轴与 Z 轴相对它的比值（按 1e-9 取整）。
         // 不同插入算出的同一个缩放只差最后几位，取整后落在同一个键里
         int64_t     scale = 0, yx = 0, yy = 0, zz = 0;
+        // 外层的顶层实体在锁定图层上（整块淡显，见 DrawContext::kLockedFade）：同一块参照在不锁定的实体里不淡显
+        bool        faded = false;
 
         bool operator==(const BlockTessKey&) const = default;
     };
@@ -57,6 +59,7 @@ namespace MiniCAD
             mix(static_cast<uint64_t>(k.yx));
             mix(static_cast<uint64_t>(k.yy));
             mix(static_cast<uint64_t>(k.zz));
+            mix(k.faded);
             return static_cast<size_t>(h);
         }
     };

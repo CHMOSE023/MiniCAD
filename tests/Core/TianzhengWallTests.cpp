@@ -5,8 +5,13 @@
 #include "Scene/Scene.h"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <limits>
+#include <map>
+#include <vector>
 
 using namespace MiniDWG;
 namespace {
@@ -33,6 +38,43 @@ namespace {
         r.WriteByte(0); r.Write3Bits(2);
         e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
         return e;
+    }
+
+    // 幕墙：墙的字段（两侧各 100）之后是 TDbCurtainWall::dwgInFields 的 RC 版本、RC、6 个 BD、2 个 RC；
+    // 数值按 8#楼-A平面图 的幕墙（4 个 BD 非 0、1，这一段共 300 位）。flags 0x1810c 为玻璃幕墙，0x1c100 为普通
+    std::unique_ptr<UnknownEntity> CurtainFixture(XYZ start, XYZ end, std::array<double, 4> joins, int material, std::uint32_t flags,
+                                                  int curtainVersion = 2)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_CURTAIN_WALL";
+        e->Raw.Dwg.Version = CadVersion::AC1024;
+        DwgBitWriter g(CadVersion::AC1024, Codec::CodePage::Gbk);
+        g.Write3RawDouble(start); g.Write3RawDouble(end);
+        g.WriteRawDouble(0); g.WriteRawLong(static_cast<std::int32_t>(flags));
+        g.WriteRawDouble(100); g.WriteRawDouble(100); g.WriteRawDouble(3000);
+        auto protectedData = g.Take();
+        for (auto& byte : protectedData) byte ^= 0xeb;
+        DwgBitWriter r(CadVersion::AC1024, Codec::CodePage::Gbk);
+        r.WriteByte(5); r.WriteBitDouble(100); r.WriteBitShort(0); r.WriteByte(3);
+        r.Write2Bits(0); r.WriteRawShort(512); r.WriteByte(8); r.WriteByte(0xeb);
+        r.WriteBytes(protectedData);
+        r.WriteByte(0); r.WriteBitShort(0); r.WriteByte(static_cast<std::uint8_t>(material)); r.WriteByte(0);
+        r.WriteBitDouble(80.08);
+        for (double join : joins) r.WriteBitDouble(join);
+        r.WriteByte(0); r.Write3Bits(2);
+        r.WriteByte(static_cast<std::uint8_t>(curtainVersion)); r.WriteByte(1);
+        for (double v : {3000.0, 1200.0, 0.0, 1.0, 50.0, 60.0}) r.WriteBitDouble(v);
+        r.WriteByte(0); r.WriteByte(0);
+        e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
+        return e;
+    }
+
+    DxfClass TchClass(const char* dxf, const char* cpp, std::int16_t number)
+    {
+        DxfClass c;
+        c.DxfName = dxf; c.CppClassName = cpp; c.ApplicationName = "TCH_KERNAL";
+        c.ClassNumber = number; c.IsAnEntity = true; c.ItemClassId = 0x1f2;
+        return c;
     }
 }
 int main()
@@ -113,5 +155,65 @@ int main()
         check(!saved.empty() && MiniCAD::ImportCad(saved, restored) && restored.EntityCount() == 1,
             "converted wall geometry survives export and reimport");
     }
+
+    // ── 幕墙（8#楼-A平面图 外窗所在的墙）：玻璃幕墙 (0,0)→(0,5200) 起点两侧缩进 100（丁字接到墙上），
+    // 普通幕墙 (0,5500)→(0,5200) 是转角处的填充墙段，起点斜接（一侧缩进 100、一侧伸出 100）──
+    const auto plain = CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100);
+    const auto glass = CurtainFixture({0, 0, 0}, {0, 5200, 0}, {100, 0, 100, 0}, 20, 0x1810c);
+    check(plain->Raw.Dwg.MainBits == 1029 + 300, "synthetic curtain wall reproduces the 8#楼 layout (1029 wall bits + 300 curtain bits)");
+    check(MiniCAD::Tch::DecodeCurtainWall(*plain, wall) && wall.Start.Y == 5500 && wall.Joins[0] == 100 && wall.Joins[2] == -100 &&
+        wall.Material == 30 && wall.Flags == 0x1c100 && !MiniCAD::Tch::DecodeWall(*plain, wall),
+        "curtain wall decodes the wall fields (joins, material, flags); DecodeWall still rejects curtain walls");
+    check(MiniCAD::Tch::DecodeCurtainWall(*glass, wall) && (wall.Flags & 0x4) != 0 && wall.Material == 20 &&
+        !MiniCAD::Tch::DecodeCurtainWall(*good, wall), "glass curtain flag is kept; ordinary walls are not decoded as curtain walls");
+    int curtainAccepted = 0;
+    for (std::size_t size = 0; size < plain->Raw.Dwg.Main.size(); ++size) {
+        auto truncated = CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100);
+        truncated->Raw.Dwg.Main.resize(size);
+        curtainAccepted += MiniCAD::Tch::DecodeCurtainWall(*truncated, wall);
+    }
+    auto longer = CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100);
+    longer->Raw.Dwg.MainBits += 1;
+    check(curtainAccepted == 0 && !MiniCAD::Tch::DecodeCurtainWall(*longer, wall) &&
+        !MiniCAD::Tch::DecodeCurtainWall(*CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100, 3), wall),
+        "truncated, overlong and unverified-version curtain payloads are rejected");
+
+    CadDatabase cdb;
+    cdb.SetVersion(CadVersion::AC1024); cdb.CreateDefaults();
+    cdb.Classes.push_back(TchClass("TCH_CURTAIN_WALL", "TDbCurtainWall", 500));
+    const Handle glassHandle = cdb.AddEntity(cdb.ModelSpace(), CurtainFixture({0, 0, 0}, {0, 5200, 0}, {100, 0, 100, 0}, 20, 0x1810c))->ObjectHandle;
+    const Handle plainHandle = cdb.AddEntity(cdb.ModelSpace(), CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100))->ObjectHandle;
+    // 起点与另一段玻璃幕墙斜接（左侧缩进 100、右侧伸出 100）
+    const Handle miterHandle = cdb.AddEntity(cdb.ModelSpace(), CurtainFixture({2000, 0, 0}, {2000, 5200, 0}, {100, 0, -100, 0}, 20, 0x1810c))->ObjectHandle;
+    DwgWriteOptions coptions; coptions.Version = CadVersion::AC1024;
+    MiniCAD::Scene cscene;
+    check(MiniCAD::ImportCad(WriteDwg(cdb, coptions), cscene) && cscene.EntityCount() == 3, "all curtain walls are imported");
+    // 各幕墙显示块里的线段（端点按 x、y 排序，坐标取整到 0.1）
+    using Seg = std::array<double, 4>;
+    std::map<Handle, std::vector<Seg>> segs;
+    cscene.ForEachObject([&](const MiniCAD::Object& object) {
+        const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&object);
+        if (!insert || !insert->GetBlock() || !insert->GetBlock()->GetName().starts_with("*U_TCH_")) return;
+        const Handle h = std::stoull(insert->GetBlock()->GetName().substr(7));
+        for (const auto& entity : insert->GetBlock()->GetEntities())
+            if (const auto* line = dynamic_cast<const MiniCAD::LineEntity*>(entity.get())) {
+                auto r = [](double v) { return std::round(v * 10) / 10; };
+                std::array<double, 2> a{r(line->GetLine().Start.x), r(line->GetLine().Start.y)}, b{r(line->GetLine().End.x), r(line->GetLine().End.y)};
+                if (b < a) std::swap(a, b);
+                segs[h].push_back({a[0], a[1], b[0], b[1]});
+            }
+        std::sort(segs[h].begin(), segs[h].end());
+    });
+    // 玻璃幕墙：沿墙厚三等分的 4 条线从 y = 100（缩进后的起点）画到 5200，两端封口
+    const std::vector<Seg> glassExpected{{-100, 100, -100, 5200}, {-100, 100, 100, 100}, {-100, 5200, 100, 5200},
+                                         {-33.3, 100, -33.3, 5200}, {33.3, 100, 33.3, 5200}, {100, 100, 100, 5200}};
+    check(segs[glassHandle] == glassExpected, "glass curtain wall lines start at the join-trimmed end (not 100 into the host wall)");
+    // 普通幕墙按墙画：左侧（x = 100）自 5400、右侧（x = -100）自 5600 起，与相邻墙斜接；墙与墙相接处不封口
+    const std::vector<Seg> plainExpected{{-100, 5200, -100, 5600}, {100, 5200, 100, 5400}};
+    check(segs[plainHandle] == plainExpected, "plain curtain wall is drawn like a wall: mitered by its joins, no end caps");
+    // 斜接的一端：各线的起点在斜接线上（连接量按偏移插值），不画端线；方头的终点照常封口
+    const std::vector<Seg> miterExpected{{1900, 100, 1900, 5200}, {1900, 5200, 2100, 5200}, {1966.7, 33.3, 1966.7, 5200},
+                                         {2033.3, -33.3, 2033.3, 5200}, {2100, -100, 2100, 5200}};
+    check(segs[miterHandle] == miterExpected, "glass curtain lines meet the miter line at a mitered end, which gets no end line");
     return failed ? 1 : 0;
 }

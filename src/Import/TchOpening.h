@@ -2,6 +2,7 @@
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,10 @@ namespace MiniCAD::Tch
         std::vector<Segment> Segments;
         std::vector<TchOpening> Parts;                   // 组合门窗的子门窗（各自按门、窗显示）
         bool   InGroup = false;                          // 组合门窗的子门窗：不画门槛线
+        // 门窗标志（BS，内核 this+0x118）与显示标志（BL，this+0x148）：天正内核 TDbOpening::DrawDoorLine 只在
+        // 标志含 0x200 / 0x400 或显示标志含 8 时画门槛线（tianzheng.dwg 同一墙上两扇门，一扇有一扇没有）
+        int    Flags = 0;
+        std::int32_t DisplayFlags = 0;
 
         bool MirrorX() const { return Mirror == 1 || Mirror == 2; }
         bool MirrorY() const { return Mirror == 2 || Mirror == 3; }
@@ -134,7 +139,7 @@ namespace MiniCAD::Tch
             // 句柄流：二维图块、三维图块
             o.LabelX = r.ReadBitDouble(); o.LabelY = r.ReadBitDouble(); r.ReadBitDouble();     // 编号文字位置
             // 句柄流：所在墙
-            const int flags = r.ReadBitShort();
+            const int flags = o.Flags = r.ReadBitShort();
             if ((flags & 1) || kind == 10) { r.ReadBitDouble(); r.ReadBitDouble(); }
             if (kind == 4)
             {
@@ -159,7 +164,7 @@ namespace MiniCAD::Tch
             }
             if (version > 2)
             {
-                r.ReadBitLong(); r.ReadBitShort(); r.ReadBit();
+                o.DisplayFlags = r.ReadBitLong(); r.ReadBitShort(); r.ReadBit();
                 text.Next();
                 for (int k = 0; k < 4; ++k) r.ReadBitDouble();
             }

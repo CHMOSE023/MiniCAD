@@ -170,6 +170,26 @@ TEST(ListView_InPlaceEditCommitCancelReject)
     t.Layout();
     CHECK(!list->IsEditing());
     CHECK(list->GetItems()[1].text == "墙体");
+
+    // 回调里重建行（图层面板改名后重新排序）：编辑在回调里已被取消，回调返回后不能再结束一次（曾空指针崩溃），
+    // 也不能把文字写回同一行号（那一行已换成别的项）
+    list->SetOnItemEdited([list](int, int, const std::string& text)
+    {
+        list->SetItems(std::vector<std::string>{ text, "图层0", "图层2" });
+        return true;
+    });
+    t.Key(Key::F2);
+    t.ui.TextInput("A墙");
+    t.Key(Key::Enter);
+    CHECK(!list->IsEditing());
+    CHECK(list->GetItems()[0].text == "A墙" && list->GetItems()[1].text == "图层0");
+    list->SetCurrent(1);
+    t.Key(Key::F2);
+    t.ui.TextInput("B墙");
+    list->Focus();                       // 失焦提交也走同样的路
+    t.Layout();
+    CHECK(!list->IsEditing());
+    CHECK(list->GetItems()[0].text == "B墙");
 }
 
 TEST(ListView_SlowClickStartsEditDoubleClickDoesNot)

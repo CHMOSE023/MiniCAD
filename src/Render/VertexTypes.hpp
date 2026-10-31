@@ -1,8 +1,16 @@
 #pragma once
 #include "Core/Math/PackedTypes.hpp"
+#include "Core/Math/Point3.hpp"
 
-namespace MiniCAD 
+namespace MiniCAD
 {
+    // 世界坐标 → 顶点坐标：先减去渲染原点（双精度）再转 float。测绘坐标的图纸（如 (538845, 3686089)）直接转 float
+    // 只剩 0.25 的分辨率，放大后线画偏、橡皮筋一格一格地跳；Viewport 把原点合进视图投影矩阵（双精度）再交给 GPU
+    inline Math::Float3 ToRenderFloat3(const Math::Point3& p, const Math::Point3& origin)
+    {
+        return { static_cast<float>(p.x - origin.x), static_cast<float>(p.y - origin.y), static_cast<float>(p.z - origin.z) };
+    }
+
     // 顶点颜色：RGBA 各 8 位，GPU 按 UNORM 读成 0～1 的 float4（D3D11 R8G8B8A8_UNORM / GL 归一化 UNSIGNED_BYTE）。
     // 实体颜色本来就是 8 位（ACI / 真彩），几百万顶点的图纸顶点从 28 字节降到 16 字节
     struct VertexColor

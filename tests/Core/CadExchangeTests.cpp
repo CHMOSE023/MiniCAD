@@ -67,6 +67,7 @@ namespace
     {
         LayerID walls = scene.GetLayerManager().AddLayer("Walls");
         scene.GetLayerManager().GetLayer(walls)->SetColor({ 1.0, 0.0, 0.0, 1.0 });
+        scene.GetLayerManager().GetLayer(scene.GetLayerManager().AddLayer("Locked"))->SetLocked(true);
 
         auto line = std::make_unique<LineEntity>(scene.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 10, 5, 0 });
         EntityAttr a = line->GetAttr();
@@ -127,6 +128,11 @@ namespace
         const Layer* layer = line ? dst.GetLayerManager().GetLayer(line->GetAttr().LayerId) : nullptr;
         Check(layer && layer->GetName() == "Walls" && Near(layer->GetColor().r, 1.0), "图层名与颜色保留");
         Check(layer && layer->IsVisible(), "真彩图层读回后仍可见（-1 索引不是关闭标志）");
+        bool lockedBack = false;
+        for (LayerID id : dst.GetLayerManager().GetAllLayerIDs())
+            if (const Layer* l = dst.GetLayerManager().GetLayer(id); l && l->GetName() == "Locked")
+                lockedBack = l->IsLocked() && l->IsVisible();
+        Check(lockedBack && layer && !layer->IsLocked(), "图层的锁定标志写出、读回（标志位 4），没锁的仍不锁");
 
         const auto* circle = FindOne<CircleEntity>(dst);
         Check(circle && Near(circle->GetCircle().Radius, 4.0) && Near(circle->GetCircle().Center.x, 20), "圆一致");

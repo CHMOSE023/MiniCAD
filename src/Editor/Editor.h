@@ -28,6 +28,7 @@
 #include "Render/ImageDraw.hpp"
 #include "Document/DeferredDash.hpp"
 #include "Document/BlockTessCache.hpp"
+#include "Core/Draw/CurveSampling.hpp"
 #include "Core/Image/ImageLibrary.h"
 #include "Core/Ole/OleObject.h"
 #include <array>
@@ -433,8 +434,12 @@ namespace MiniCAD
         // 场景流最近一次拼接时的顶点数（拼接流释放后仍可查询）
         struct SceneStreamStats { size_t lines = 0, fills = 0, texts = 0, glyphs = 0, glyphMeshes = 0, points = 0; };
         SceneStreamStats GetSceneStreamStats() const { return m_sceneStats; }
-        // 逐实体缓存里的线与填充顶点（调试与自测用）
+        // 逐实体缓存里的线与填充顶点（调试与自测用；已加回渲染原点，是世界坐标）
         void ForEachCachedVertex(const std::function<void(const Vertex_P3_C4&)>& fn) const;
+        // 渲染原点：顶点流里的坐标都是"世界坐标 − 它"（见 ViewState::RenderOrigin）
+        const Math::Point3& GetRenderOrigin() const { return m_renderOrigin; }
+        static constexpr double kRenderOriginGrid     = 4096.0;   // 原点取它的整数倍：图纸在原点附近时原点就是 0
+        static constexpr double kRenderRebaseDistance = 1.0e4;    // float 在 1 万处的间隔约 0.001，再远就换原点
 
     private:
         bool HandleGlobal (const InputEvent& e);
@@ -715,5 +720,50 @@ namespace MiniCAD
 
         bool                         m_thinLines      = true;    // 全局细线：忽略线宽
         bool                         m_displayInvalid = false;   // 显示设置变化：下一帧所有实体重新细分
+
+        // 渲染原点（见 ToRenderFloat3）：各顶点流（场景、选中、悬停、预览、着色面）都存"世界坐标 − 原点"，
+        // Viewport 把它（ViewState::RenderOrigin）合进视图投影矩阵。所有实体重新细分时（UpdateSceneVertices 的
+        // invalidateAll）重新选（ChooseRenderOrigin）；改动的实体离它太远时（NeedsRenderRebase）也整体重新细分、换原点
+        Math::Point3                 m_renderOrigin;
+        double                       m_renderReach = 0.0;        // 选原点时（抽样的）可见实体中心离它最远多少
+        void ChooseRenderOrigin(const std::function<bool(const Entity&)>& isShown);
+        bool NeedsRenderRebase(const std::function<bool(const Entity&)>& isShown) const;
+
+        // ── 深度放大的局部显示 ──────────────────────────────────
+        // 全图的显示数据按常规缩放细分：圆每圈 64 段，顶点相对全图的渲染原点存 float。放大到这两样的误差超过约半个像素、
+        // 视图附近的实体又不多时（UpdateLocalDisplay），只细分视图附近（向四周各扩一个视图）的实体：原点取在那里的中心，
+        // 圆弧在那里按弦高 ≤ 1/4 像素加密（CurveRefinement）。全图的逐实体缓存先收起来（m_globalStash），缩小回来时
+        // 拿回来重新拼接、不重新细分；局部显示期间改动过的实体与按当时缩放烘焙的实体除外
+        struct LocalDisplay
+        {
+            bool   active = false;
+            AABB   box    = AABB::Empty();   // 只显示 ids 里的实体：包围盒与它相交的
+            double wpp    = 0.0;             // 建立时的像素比例：曲线按它加密，缩放出了它的一半到两倍就重建
+            std::unordered_set<Object::ObjectID> ids;
+        };
+        LocalDisplay                 m_local;
+        bool                         m_localRebuild = false;     // 局部显示的范围变了：下一帧整体重新细分（收起来的全图缓存不动）
+        std::unordered_map<Object::ObjectID, EntityVertexCache> m_globalStash;
+        bool                         m_globalStashValid = false;
+        std::unordered_set<Object::ObjectID> m_stashStale;       // 局部显示期间改动过的实体：拿回全图缓存时丢掉它们
+        Math::Point3                 m_globalOrigin;              // 全图的渲染原点（局部显示期间收着）
+        double                       m_globalReach = 0.0;
+        uint64_t                     m_localKey = 0;             // 上次判断局部显示时的相机、视口与几何版本
+        static constexpr double      kLocalMaxWeight = 5000.0;   // 视图附近的实体（块参照按块内子实体计）多于它就不局部细分
+        // 上次查视图附近的结果：视图还在 box 里（且 box 不比视图大太多）时直接用，平移、缩放不必每帧查拾取索引
+        struct LocalEval
+        {
+            bool     valid   = false;
+            uint64_t geom    = 0;                 // 查时的几何版本
+            AABB     box     = AABB::Empty();     // 查的范围（视图向四周各扩一个视图）
+            bool     tooMany = false;             // 范围里的实体太多，不局部细分
+            double   curveR  = 0.0;               // 范围里按默认段数细分的曲线最大半径
+            std::vector<Object::ObjectID> ids;
+        };
+        LocalEval                    m_localEval;
+        void UpdateLocalDisplay(double worldPerPixel);
+        void EvaluateLocalRegion(const AABB& box);
+        void LeaveLocalDisplay();
+        CurveRefinement LocalRefinement() const;
     };
 }

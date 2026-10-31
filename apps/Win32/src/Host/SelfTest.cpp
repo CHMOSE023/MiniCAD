@@ -20,6 +20,7 @@
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Document/Command/AddEntityCommand.h"
 #include "Document/Command/MoveCommand.h"
+#include "Document/Command/LayerCommands.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "GUI/StatusBarView.h"
@@ -409,6 +410,89 @@ namespace MiniCAD
             RenderFrame();
             check(lm.GetLayer(newId) != nullptr && lm.GetActiveLayerID() == newId && m_main.panels->layerList->GetItemCount() == rows + 1,
                   "重做：同一个 ID 的图层回来并重新成为当前");
+        }
+
+        // ── 9.2 图层层级：名字里的 $ 分级显示成树（Scene/LayerPath.h）────
+        section("9.2 图层面板：名字里的 $ 分级显示成树，折叠、锁定带下级");
+        {
+            Document*     doc = m_docManager.GetActive();
+            LayerManager& lm  = doc->GetLayerManager();
+            if (MiniGUI::DockSpace* dock = m_layout->GetDock("main"))
+                dock->ShowPanel("layers");
+            const LayerID b = lm.AddLayer("自测层级$B"), c = lm.AddLayer("自测层级$B$C"), d = lm.AddLayer("自测层级$D");
+            StateChanged();
+            RenderFrame();
+            PanelSet&          P    = *m_main.panels;
+            MiniGUI::ListView* list = P.layerList;
+            constexpr int colName = 1, colLock = 3;     // LayerPanels.cpp 的 LayerColumn
+            auto rowOf = [&P](const std::string& path)
+            {
+                const auto it = std::find(P.layerPaths.begin(), P.layerPaths.end(), path);
+                return it == P.layerPaths.end() ? -1 : static_cast<int>(it - P.layerPaths.begin());
+            };
+            auto clickCell = [&](int row, int col, float dx)
+            {
+                list->EnsureVisible(row);
+                const MiniGUI::Rect cell = list->GetCellRect(row, col);
+                const MiniGUI::Vec2 o    = list->GetContent()->GetScreenBounds().min;
+                const MiniGUI::Vec2 p{ o.x + cell.min.x + dx, o.y + cell.Center().y };
+                m_ui->PointerMove(p, 0);
+                m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                RenderFrame();
+            };
+            const int g = rowOf("自测层级");
+            check(g >= 0 && P.layerIds[static_cast<size_t>(g)] == PanelSet::kGroupRow && rowOf("自测层级$B") == g + 1 && rowOf("自测层级$B$C") == g + 2 &&
+                  list->GetItem(g + 1).depth == 1 && list->GetItem(g + 2).depth == 2 && list->GetCellText(g + 2, colName) == "C" &&
+                  list->GetItem(g).expand == MiniGUI::ExpandState::Expanded,
+                  "只有 A$B 时补出分组行 A；下级逐级缩进，名称列只显示最后一级");
+            {
+                // 工具栏 / 特性面板的图层下拉框：接在最近的、确有其层的上级下面缩进
+                const auto& ids     = SortedLayerIds(*doc);
+                const auto& indents = SortedLayerIndents(*doc);
+                auto indentOf = [&](LayerID id) { return indents[static_cast<size_t>(std::find(ids.begin(), ids.end(), id) - ids.begin())]; };
+                check(indents.size() == ids.size() && indentOf(b).depth == 0 && indentOf(b).labelStart == 0 && indentOf(c).depth == 1 &&
+                      lm.GetLayer(c)->GetName().substr(indentOf(c).labelStart) == "C" && indentOf(d).depth == 0,
+                      "图层下拉框：没有“自测层级”这一层时 B 写全名，C 缩进在 B 下面只写 C");
+            }
+            if (g >= 0)
+            {
+                clickCell(g, colName, 10.0f);           // 第 0 级的展开箭头
+                check(rowOf("自测层级$B") < 0 && rowOf("自测层级") == g && list->GetItem(g).expand == MiniGUI::ExpandState::Collapsed,
+                      "点箭头折叠：下级行收起");
+                clickCell(g, colName, 10.0f);
+                check(rowOf("自测层级$B$C") == g + 2, "再点展开");
+                clickCell(g, colLock, 16.0f);
+                check(lm.GetLayer(b)->IsLocked() && lm.GetLayer(c)->IsLocked(), "点分组行的锁：下级全部锁定");
+                m_commands.Execute("edit.undo");
+                RenderFrame();
+                check(!lm.GetLayer(b)->IsLocked() && !lm.GetLayer(c)->IsLocked(), "一步撤销：下级全部解锁");
+
+                // 在位改名：只改这一级；与同级重名时拒绝、继续编辑，Esc 放弃；Enter 提交（提交时面板重建行）
+                auto rename = [&](const std::string& path, const char* text, bool escape)
+                {
+                    const int row = rowOf(path);
+                    if (row < 0 || !list->BeginEdit(row, colName))
+                        return false;
+                    m_ui->TextInput(text);
+                    m_ui->KeyDown(MiniGUI::Key::Enter, 0);
+                    RenderFrame();
+                    const bool stillEditing = list->IsEditing();
+                    if (escape)
+                        m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                    RenderFrame();
+                    return stillEditing;
+                };
+                check(rename("自测层级$D", "B", true) && lm.GetLayer(d)->GetName() == "自测层级$D" && !list->IsEditing(),
+                      "改成同级已有的名字：拒绝并继续编辑，Esc 放弃，名字不变");
+                check(!rename("自测层级$D", "E", false) && lm.GetLayer(d)->GetName() == "自测层级$E" && !list->IsEditing() && rowOf("自测层级$E") >= 0,
+                      "Enter 提交改名：只改最后一级，编辑结束，面板显示新名字");
+            }
+            lm.RemoveLayer(b);
+            lm.RemoveLayer(c);
+            lm.RemoveLayer(d);
+            StateChanged();
+            RenderFrame();
         }
 
         // ── 9.5 工具栏图层框跟随选择集；绘图区有焦点时 Alt+F 打开菜单 ──
@@ -2063,7 +2147,8 @@ namespace MiniCAD
                     editor.SetSelection({});
                 }
 
-                // 锁定语义：锁定图层上的对象可以点选、可以捕捉，但不能删除 / 改属性 / 改特性 / 移动 / 用夹点修改；解锁后恢复
+                // 锁定语义：锁定图层上的对象点不中、框不中，选中后再锁定就移出选择集；程序直接设进选择集的也不能删除 /
+                // 改属性 / 改特性 / 移动 / 用夹点修改；解锁后恢复
                 {
                     const LayerID lockLayer = scene.GetLayerManager().AddLayer("锁定语义自测");
                     const auto lockedId = scene.NextObjectID();
@@ -2081,18 +2166,39 @@ namespace MiniCAD
                     RenderFrame();
 
                     editor.SetSelection({});
+                    const MiniGUI::Rect lockBounds = m_viewport->GetScreenBounds();
+                    const Math::Point2 lockPt = camera.WorldToScreen(Math::Point3(10005.0, 0.0, 0.0));
+                    const int lx = static_cast<int>(std::lround(lockBounds.min.x * m_dpiScale)) + static_cast<int>(std::lround(lockPt.x));
+                    const int ly = static_cast<int>(std::lround(lockBounds.min.y * m_dpiScale)) + static_cast<int>(std::lround(lockPt.y));
+                    send(WM_MOUSEMOVE, 0, lx, ly);
+                    send(WM_LBUTTONDOWN, MK_LBUTTON, lx, ly);
+                    send(WM_LBUTTONUP, 0, lx, ly);
+                    RenderFrame();
+                    check(editor.GetSelection().count(lockedId) == 0 && editor.GetHovered().count(lockedId) == 0, "锁定：锁定图层上的对象点不中，也不悬停高亮");
+                    // 自右向左的交叉框横穿这条线
+                    auto crossing = [&]
                     {
-                        const MiniGUI::Rect bounds = m_viewport->GetScreenBounds();
-                        const Math::Point2 p = camera.WorldToScreen(Math::Point3(10005.0, 0.0, 0.0));
-                        const int x = static_cast<int>(std::lround(bounds.min.x * m_dpiScale)) + static_cast<int>(std::lround(p.x));
-                        const int y = static_cast<int>(std::lround(bounds.min.y * m_dpiScale)) + static_cast<int>(std::lround(p.y));
-                        send(WM_MOUSEMOVE, 0, x, y);
-                        send(WM_LBUTTONDOWN, MK_LBUTTON, x, y);
-                        send(WM_LBUTTONUP, 0, x, y);
+                        send(WM_LBUTTONDOWN, MK_LBUTTON, lx + 30, ly - 30);
+                        send(WM_MOUSEMOVE, MK_LBUTTON, lx, ly);
+                        send(WM_MOUSEMOVE, MK_LBUTTON, lx - 30, ly + 30);
+                        send(WM_LBUTTONUP, 0, lx - 30, ly + 30);
                         RenderFrame();
-                    }
-                    check(editor.GetSelection().count(lockedId) == 1, "锁定：锁定图层上的对象可以点选");
+                    };
+                    crossing();
+                    check(editor.GetSelection().count(lockedId) == 0, "锁定：交叉框选也选不中");
 
+                    // 解锁时同样的交叉框选得中；再锁定图层（走命令，同图层面板）：移出选择集
+                    scene.GetLayerManager().GetLayer(lockLayer)->SetLocked(false);
+                    crossing();
+                    check(editor.GetSelection().count(lockedId) == 1, "解锁时同样的交叉框选中它");
+                    m_docManager.GetActive()->GetCommandStack().Execute(
+                        std::make_unique<ChangeLayerCommand>(lockLayer, LayerChange{ .Locked = true }), scene);
+                    m_viewport->RequestRender();     // 图层面板经 LayerChanged 请求重绘
+                    RenderFrame();
+                    check(editor.GetSelection().empty(), "锁定：选中后锁定图层，移出选择集");
+
+                    // 程序直接设进选择集的锁定对象：修改操作照样跳过
+                    editor.SetSelection({ lockedId });
                     editor.DeleteSelected();
                     check(scene.GetEntity(lockedId) != nullptr, "锁定：不能删除");
                     AttrChange ch;
@@ -2108,6 +2214,7 @@ namespace MiniCAD
                     scene.GetLayerManager().GetLayer(lockLayer)->SetLocked(false);
                     check(editor.SetSelectionProperty("长度", PropValue(20.0)), "解锁后：可以改几何特性");
                     m_docManager.Undo();
+                    m_docManager.Undo();         // 撤销上面锁定图层的命令（之前已直接解锁，撤销后仍是解锁）
 
                     scene.RemoveEntity(lockedId);
                     editor.SetSelection({});
@@ -3904,6 +4011,39 @@ namespace MiniCAD
             RenderFrame();
             SaveBmp(ReadViewport(*m_platform), dir / "model.bmp");
             std::printf("截图：%s（模型页）\n", (dir / "model.bmp").string().c_str());
+
+            // MINICAD_BENCH_VIEWS=x0,y0,x1,y1;...：再按这些世界坐标窗口各存一张 view<序号>.bmp（与 AutoCAD 的 ZOOM W 对照），之后恢复全部显示
+            if (const char* views = std::getenv("MINICAD_BENCH_VIEWS"))
+            {
+                Camera& cam = m_docManager.GetViewport().GetCamera();
+                int index = 0;
+                for (const char* p = views; *p;)
+                {
+                    double x0, y0, x1, y1;
+                    if (std::sscanf(p, "%lf,%lf,%lf,%lf", &x0, &y0, &x1, &y1) == 4)
+                    {
+                        cam.ZoomToBounds(std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1), 1.0);
+                        do
+                        {
+                            m_viewport->RequestRender();
+                            RenderFrame();
+                        } while (editor.IsBuildingDisplay());
+                        RenderFrame();
+                        const std::string name = "view" + std::to_string(++index) + ".bmp";
+                        SaveBmp(ReadViewport(*m_platform), dir / name);
+                        // 适配时扣掉了功能区、面板挡住的留边，画面并不以窗口为中心：打印画面左上、右下角的世界坐标，按它换算像素
+                        const Math::Point3 tl = cam.ScreenToWorld(0.0, 0.0), br = cam.ScreenToWorld(cam.GetWidth(), cam.GetHeight());
+                        std::printf("截图：%s（窗口 %g,%g - %g,%g；画面左上 %.4f,%.4f 右下 %.4f,%.4f）\n", (dir / name).string().c_str(),
+                                    x0, y0, x1, y1, tl.x, tl.y, br.x, br.y);
+                    }
+                    const char* next = std::strchr(p, ';');
+                    if (!next) break;
+                    p = next + 1;
+                }
+                m_docManager.ZoomAll();
+                m_viewport->RequestRender();
+                RenderFrame();
+            }
         }
 
         const MiniGUI::Rect vr = m_viewport->GetScreenBounds();

@@ -11,65 +11,8 @@ namespace MiniCAD
 {
     namespace
     {
-        // 内置图案（公制，单位 mm）。按 .pat 格式书写，便于和外部图案文件对照。
-        constexpr std::string_view kBuiltinPatterns = R"PAT(
-*SOLID, 实心填充
-45, 0,0, 0,3.175
-*ANSI31, ANSI 铁、砖、石材
-45, 0,0, 0,3.175
-*ANSI32, ANSI 钢
-45, 0,0, 0,9.525
-45, 4.490128,0, 0,9.525
-*ANSI33, ANSI 青铜、黄铜、紫铜
-45, 0,0, 0,6.35
-45, 4.490128,0, 0,6.35, 3.175,-1.5875
-*ANSI34, ANSI 塑料、橡胶
-45, 0,0, 0,19.05
-45, 4.490128,0, 0,19.05
-45, 8.980256,0, 0,19.05
-45, 13.470384,0, 0,19.05
-*ANSI35, ANSI 耐火砖、耐火材料
-45, 0,0, 0,6.35
-45, 4.490128,0, 0,6.35, 7.9375,-1.5875,0,-1.5875
-*ANSI36, ANSI 大理石、板岩、玻璃
-45, 0,0, 5.55625,3.175, 7.9375,-1.5875,0,-1.5875
-*ANSI37, ANSI 铅、锌、镁、电绝缘材料
-45, 0,0, 0,3.175
-135, 0,0, 0,3.175
-*ANSI38, ANSI 铝
-45, 0,0, 0,3.175
-135, 0,0, 6.35,3.175, 7.9375,-4.7625
-*LINE, 平行水平线
-0, 0,0, 0,3.175
-*NET, 水平 / 垂直网格
-0, 0,0, 0,3.175
-90, 0,0, 0,3.175
-*NET3, 0° / 60° / 120° 网格
-0, 0,0, 0,3.175
-60, 0,0, 0,3.175
-120, 0,0, 0,3.175
-*DASH, 虚线
-0, 0,0, 3.175,3.175, 3.175,-3.175
-*DOTS, 点阵
-0, 0,0, 0.79375,1.5875, 0,-1.5875
-*SQUARE, 小方格
-0, 0,0, 0,3.175, 3.175,-3.175
-90, 0,0, 0,3.175, 3.175,-3.175
-*BRICK, 砖墙
-0, 0,0, 0,6.35
-90, 0,0, 0,12.7, 6.35,-6.35
-90, 6.35,0, 0,12.7, -6.35,6.35
-*ZIGZAG, 阶梯折线
-0, 0,0, 3.175,3.175, 3.175,-3.175
-90, 3.175,0, 3.175,3.175, 3.175,-3.175
-*EARTH, 土壤
-0, 0,0, 6.35,6.35, 6.35,-6.35
-0, 0,2.38125, 6.35,6.35, 6.35,-6.35
-0, 0,4.7625, 6.35,6.35, 6.35,-6.35
-90, 0.79375,5.55625, 6.35,6.35, 6.35,-6.35
-90, 3.175,5.55625, 6.35,6.35, 6.35,-6.35
-90, 5.55625,5.55625, 6.35,6.35, 6.35,-6.35
-)PAT";
+        // 图案数据：内置的公制图案、天正自带的图案（同 CADReader 的做法编进程序，不用另放天正的 acad.pat）
+#include "Scene/HatchPatternLibrary.inc"
 
         std::string Upper(std::string_view s)
         {
@@ -117,6 +60,13 @@ namespace MiniCAD
     HatchPatternLibrary::HatchPatternLibrary()
     {
         LoadText(kBuiltinPatterns);
+        for (std::string_view text : kTianzhengOwnPatterns)
+        {
+            LoadText(text);
+            Parse(text, m_tianzheng);
+        }
+        for (std::string_view text : kTianzhengStandardPatterns)
+            Parse(text, m_tianzheng);
     }
 
     bool HatchPatternLibrary::Parse(std::string_view text, std::vector<HatchPattern>& out, std::string* error)
@@ -220,6 +170,15 @@ namespace MiniCAD
             if (p.Name == key)
                 return &p;
         return nullptr;
+    }
+
+    const HatchPattern* HatchPatternLibrary::FindTianzheng(std::string_view name) const
+    {
+        const std::string key = Upper(name);
+        for (const auto& p : m_tianzheng)
+            if (p.Name == key)
+                return &p;
+        return Find(name);
     }
 
     HatchPattern HatchPatternLibrary::Get(std::string_view name) const

@@ -150,6 +150,18 @@ namespace MiniCAD
             vpSilhouettes.m[14] -= 6.0 * m_camera.GetWorldPerPixel() / span;
         }
 
+        // 顶点相对渲染原点（ViewState::RenderOrigin）：原点的平移在双精度里合进矩阵，交给 GPU 的矩阵平移量只剩
+        // 视图中心与原点之差（测绘坐标下世界坐标的矩阵里是几百万，转成 float 后与顶点相减，误差有好几个像素）。
+        // 三维视图的网格与坐标轴按世界坐标生成，用合进原点之前的矩阵
+        const Math::Mat4 vpWorldLines = vpLines;
+        if (const Math::Point3& o = viewState.RenderOrigin; o.x != 0.0 || o.y != 0.0 || o.z != 0.0)
+        {
+            const Math::Mat4 shift = Math::Mat4::Translation(Math::Vec3{ o.x, o.y, o.z });
+            vp            = shift * vp;
+            vpLines       = shift * vpLines;
+            vpSilhouettes = shift * vpSilhouettes;
+        }
+
         // 网格/坐标轴/Gizmo 只依赖相机+尺寸+开关：版本未变时 CPU 不重建、GPU 缓冲直接复用
         RefreshViewGeometry(viewState);
         renderer.SetLightBackground(m_lightBackground);
@@ -199,8 +211,8 @@ namespace MiniCAD
             if (!plan)
             {
                 // 三维视图的网格与坐标轴（世界坐标，z = 0 平面）：画在着色面之后，被实体挡住的部分不显示
-                renderer.SubmitCached(kSlotGrid, m_viewVersion, m_gridVerts, vpLines, PrimitiveType::Line, true, true);
-                renderer.SubmitCached(kSlotAxis, m_viewVersion, m_axisVerts, vpLines, PrimitiveType::Line, true, true);
+                renderer.SubmitCached(kSlotGrid, m_viewVersion, m_gridVerts, vpWorldLines, PrimitiveType::Line, true, true);
+                renderer.SubmitCached(kSlotAxis, m_viewVersion, m_axisVerts, vpWorldLines, PrimitiveType::Line, true, true);
             }
 
             // 场景几何走缓存提交：版本未变时 GPU 缓冲直接复用，不重新上传

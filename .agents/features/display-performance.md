@@ -1,5 +1,5 @@
 ---
-covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/BlockTessCache.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*, src/Core/Draw/IDrawSink.hpp, src/Core/Draw/ClipDrawSink.hpp
+covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.hpp, src/Document/BlockTessCache.hpp, src/Document/WipeClip.hpp, src/Render/*, apps/Render/*, src/Core/Draw/IDrawSink.hpp, src/Core/Draw/ClipDrawSink.hpp, src/Core/Draw/CurveSampling.hpp
 ---
 
 # 显示性能
@@ -32,6 +32,25 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - Vulkan（Linux，`VulkanRenderer` / `VulkanBackend`，共用 `MiniGUI::VulkanContext`）：缓存提交放在显存的缓冲里，规则同 D3D12；帧内数据走 1 MB 的上传页（主机可见，直接当顶点 / 索引缓冲用），超过 1 MB 的单独建页，超过 4 MB 的与换下的大缓冲在帧末等 GPU 执行完就释放。复制、布局转换要先结束动态渲染（`VulkanContext::EndRendering`），所以一帧里上传越少、渲染被打断得越少
 - WebGPU（网页）：缓冲写入在提交前统一生效，一帧里同一块缓冲不能写两次——矩阵占帧内 uniform 环形缓冲的一段，不缓存的顶点写帧内流缓冲的不同区段，缓存槽在一帧里只按一个版本上传；换下来的资源提交后再销毁（`WebGPUCommon::RetireList`）。见 `docs/Render/PLAN.md` 阶段 5
 
+## 大坐标：渲染原点
+
+- 测绘坐标的图纸（如 `tests/Data/地形测试.dwg`，x≈53 万、y≈368 万）直接把世界坐标转 float 只剩 0.25 的分辨率，视图投影矩阵里几百万的平移转成 float 后再与顶点相减又丢一截：放大后线画偏几十个像素，画线的橡皮筋一格一格地跳，而夹点、捕捉标记、框选框是按双精度换算的屏幕坐标，看起来"不在线上"
+- 所有世界坐标的顶点流（场景静态 / 动态流、点流、字形实例的平移、纹理文字、图像、选中流、悬停高亮、`Overlay`、着色面与轮廓线、节点图预览）都存"世界坐标 − 渲染原点"（`ToRenderFloat3`）：`DrawContext::SetRenderOrigin`，`Overlay` 内部存双精度、`Overlay::ToVertices` 时才减；区域覆盖与视口合成的裁剪多边形同样减去原点（与顶点比较），块定义级缓存记的仍是世界坐标、延迟长虚线段的端点也是世界坐标（铺的时候减，`DrawContext::EmitDeferredDash` 的 origin 参数）
+- `ViewState::RenderOrigin` 交给 `Viewport::Render`，原点平移在双精度里乘进 `vp` / `vpLines` / `vpSilhouettes`，GPU 拿到的矩阵平移量只剩视图中心与原点之差。三维视图的网格与坐标轴按世界坐标生成，用合进原点之前的矩阵
+- 原点在所有实体重新细分时（`Editor::UpdateSceneVertices` 的 invalidateAll：打开、`Scene::MarkDirty`、`Scene::MarkDisplayDirty`）由 `Editor::ChooseRenderOrigin` 重选：可见实体外包框中心的中位数（各轴分开，等间隔抽至多 1024 个；远处零散的几个实体拉不动它），取 `Editor::kRenderOriginGrid`（4096）的整数倍——图纸在原点附近时原点就是 0，顶点与以前一样。改动的实体离原点超过 `Editor::kRenderRebaseDistance` 且超过选原点时可见范围的 4 倍（`Editor::NeedsRenderRebase`，如空图纸里画到测绘坐标上）时也整体重新细分、换原点
+- 读顶点流的测试与自测要加回原点：`Editor::GetRenderOrigin`；`Editor::ForEachCachedVertex` 已加回。回归测试 `tests/Core/RenderOriginTests.cpp` 按 GPU 的 float 运算把顶点换到屏幕，与 `Camera::WorldToScreen` 比（场景线、选中流、夹点、橡皮筋、深度放大）
+- 核对：`--bench` 加 `MINICAD_BENCH_SHOT` / `MINICAD_BENCH_VIEWS` 放大到几个单位宽的窗口截图（打印的画面角点有 4 位小数，按它把原图坐标换成像素）。地形测试.dwg 在约 4.7 单位宽的视窗里，折线到最近亮像素的距离从平均 20 像素（最多 43）降到 0.2 像素
+
+## 深度放大：局部显示与曲线加密
+
+- 全图一个原点、圆每圈 64 段，只够常规缩放：放到最大（可视高度 `Camera` 的下限 0.01）时，原点附近的普通图纸坐标几百就差几个像素、上千差十几像素（float），R21 的圆 64 段折线离真圆 0.025，即 2500 像素（issue #29：看着线交不上、圆上取的点不在圆上；几何数据本身是双精度的捕捉结果，没错）
+- 曲线细分（`src/Core/Draw/CurveSampling.hpp`）：圆、圆弧、椭圆、多段线的圆弧段（含带宽度的，`PolylineEntity` 的 `BuildNodes` 与虚线粗线）先按各自原来的段数均分（`SampleCurveSpans`，不加密时画出的点与以前逐位相同），再逐段问 `IDrawSink::RefineCurveSegment` 要不要二分。默认不加密；`TransformDrawSink` 把弦端点经插入变换、弦高与伸出量按最大轴向缩放放大后转发，`ClipDrawSink` 原样转发，`DrawContext::SetCurveRefinement` 与悬停高亮按 `CurveRefinement` 判断：靠近范围、弦高超过容差的段要加密。天正对象、填充、样条、文字（SHX 字形）里的圆弧仍按自己的段数
+- 局部显示（`Editor::UpdateLocalDisplay`，每帧在拾取索引同步之后判断，相机、视口、几何版本都没变时跳过）：视图附近（向四周各扩一个视图）的实体不多（块参照按块内子实体计，不超过 `Editor::kLocalMaxWeight`），且全图显示在这个缩放下 float 误差超过 1/4 像素、或那里按默认段数细分的曲线棱角（半径 × 0.0012）超过半个像素时，只细分那个范围里的实体（`isShown` 按 `LocalDisplay::ids` 过滤，范围的 z 取全范围：测点块参照的 z 是高程）：原点取在范围中心（`Editor::ChooseRenderOrigin`），圆弧在范围里按弦高 ≤ 1/4 像素加密（`Editor::LocalRefinement`），不用块定义级缓存（加密只在范围里，接到别的插入上不对）。视图出了范围或缩放出了建立时的一半到两倍就换范围（整体重新细分范围里的实体）；已在局部显示时门槛放宽（float 0.1 像素、棱角 1/4 像素、实体数 2 倍），免得在临界处来回切换
+- 查视图附近的结果记在 `Editor::LocalEval`（范围、是否太多、曲线最大半径）：视图还在它的范围里、范围不比视图大 6 倍以上时不再查拾取索引，只按当前缩放重算误差；包围盒取拾取索引里记的（`Picking::GetIndexedBox`），曲线半径从大的实体看起。不缓存时每次相机变化都查一遍、逐个算包围盒，CK-05 平移每帧从 25 ms 变成 245 ms（调试版）；缓存后与不判断时相同
+- 全图的逐实体缓存进局部显示时收起来（`m_globalStash`），缩小回来（`Editor::LeaveLocalDisplay`）拿回来重新拼接、不重新细分；局部显示期间改动过的实体与按当时缩放烘焙的（`viewDependent`）丢掉重新细分，全图的显示设置变了（`Scene::MarkDisplayDirty` 等）整个作废。局部显示期间改动的实体按包围盒重新判断在不在范围里；选中流里范围外的实体不画（拖动中的照画）
+- 三维视图、布局页里的模型视口照常（局部显示只在俯视时）；进出局部显示都是一次整体重新拼接，拼接流交给后端释放过时要重新上传
+- 回归测试：`tests/Core/RenderOriginTests.cpp` 的"放到最大"一段（原点附近、带标高的 R21 圆与直线：圆离真圆 < 0.5 像素、直线 < 0.2 像素、顶点数没有暴涨，局部显示期间新画的线缩小回来仍在）。截图核对：地形测试.dwg 测点圆盘（带宽度的多段线）放到最大，边缘离真圆平均 0.24 像素（改前是 5° 一段的折线，折角处差约 15 像素）
+
 ## 打开图纸：分帧细分
 
 - 打开的图纸加入后（`MainFrame::AddOpened`）调用 `Editor::BeginProgressiveBuild`：全量拼接不再当帧细分缓存里没有的实体，而是按绘制序排进队列，每帧细分一批（`Editor::ContinueBuild`），用时到本帧时限就停，细分出来的接到场景流尾部——拼接流还在 CPU 端时直接接上（区域覆盖照常裁剪此前的顶点），已交给后端时进追加段（同上面的增量更新）。先细分好的先显示，窗口一直响应；画全后恢复同步细分（编辑、切换布局、改显示设置仍当帧画完）
@@ -45,7 +64,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 ## 块定义级细分缓存
 
 - 同一块定义插入多次时只细分一次（`BlockTessCache`，`src/Document/BlockTessCache.hpp`）：`InsertEntity::Draw` 画每个阵列单元前问 `IDrawSink::BeginBlockInstance`（`TransformDrawSink` 把自己的变换接上再转发），`DrawContext` 命中就把记下的结果经平移、旋转接上，不再逐个画块内子实体，也不再为它克隆块内容（`InsertEntity::EnsureResolved`）
-- 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）。只缓存 XY 平面里的变换
+- 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）；外层的顶层实体是否在锁定图层上（整块淡显，`BlockTessKey::faded`）。只缓存 XY 平面里的变换
 - 记录：记录期间 `DrawContext` 的输出（`DrawContext::PutLine` 等）同时按世界坐标双精度记一份，画完按这次插入的旋转、平移换回去存下；接上时换到新位置再落成 float，与逐个细分只差双精度的舍入。区域覆盖记下出现时各流的位置，接上时在同一位置调用 `Wipe`，裁剪范围不变。CK-05 / CK-T 的截图与不缓存时逐字节相同；线顶点只差几个（线长正好是线型周期的整数倍时末尾那段零长度的虚线有没有，取决于舍入），另有 Z 的 ±0 之差
 - 不记：按像素烘焙的（像素线宽、`MarkViewDependent`）、纹理文字、图像、绝对角度的线型符号、分段细分停在块中间的、一次超过 `DrawContext::kMaxBlockRecord` 个顶点的；只展开一次的块（如整张底图作为一个块插入）不记——第一次要判断时由 `Editor::CountBlockUses` 数一遍，数不到的块（天正对象、标注里引用的）第二次遇到才记；总量超过 `BlockTessCache::kMaxVertices` 后不再记新的
 - 裁剪框（XCLIP，`ClipDrawSink`）里：`BeginBlockInstance` 经过时加上本层裁剪框（`BlockClipChain`）。条目记着块内输入（线端点、三角形顶点、文字锚点等）在块坐标里的范围，`ClipDrawSink::Classify` 判断它整个在框内、整个在框外还是跨边：
@@ -55,6 +74,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
   - 框里也照常记录：裁剪框截断、丢掉了内容或吞掉了查询时经 `IDrawSink::NoteClipped` 告诉 `DrawContext`（带着它往下数是第几层），在这层框里开始的记录作废——存下的必须与不裁剪时相同。CK-T 的建筑底图整个带裁剪框，不在框里记录时画全反而慢 0.2 s
 - 分段细分（`DrawContext::BeginChunk`）：块内子实体的层次不论分不分段都记着（`BeginBlockChild`），命中缓存时分段的序号跳过这个块的直接子实体个数、进度加上它的叶子子实体个数，停下的路径与接着画都不受影响（阵列里前一个单元接上缓存、后一个单元分段画，见 `tests/Core/BlockTessCacheTests.cpp`）
 - 生命周期：`Editor` 只在成批细分时留着——分帧细分期间跨帧保留，否则 `Editor::UpdateSceneVertices` 结束就清空；图纸有任何改动或显示设置变了时先清空（块定义可能也改了）。视口合成（`Editor::ComposeModelIntoViewport`）不用：每个视口冻结的图层、像素比例不同。`Editor::SetBlockCacheEnabled` 供测试对比
+- 锁定图层：顶层实体在锁定图层上时整个淡显（块参照即整块），块里锁定图层上的子实体也淡显——`DrawContext::BeginEntity` / `SetEntityContext` 记下是否淡显，输出的顶点不透明度乘 `DrawContext::kLockedFade`（0.5，同 AutoCAD 的 `LAYLOCKFADECTL` 默认 50：画到背景上前景、背景各半；场景流都开着混合，浅色背景的白↔黑互换照常）。锁定 / 解锁走 `ChangeLayerCommand`，`Scene::MarkDisplayDirty` 让逐实体缓存与块定义级缓存整体失效。拾取侧 `Picking::IsPickable` 排除锁定图层（点选、框选、悬停、工具点取都选不中，捕捉不受影响），显示版本变化时 `Picking::DropUnpickable` 把选择集里已锁定 / 关闭图层上的对象去掉
 - 效果（2026-10-28 本机，`--bench` 与旧版交替各跑两次）：画全 CK-05 约 2.32 → 2.15 s、CK-T 约 3.71 → 3.26 s（-7%、-12%），打开后画全 CK-05 3.3 → 3.1 s、CK-T 4.6 → 4.2 s 左右；CK-T 4.7 万次块参照单元里 2.3 万次接上缓存或在框外跳过。收益不大：重复多的是便宜的线、圆弧、多段线（家具、线图案块），贵的填充（每个约 40 µs）、单行文字（约 34 µs）几乎都只出现一次
 
 ## 文字
