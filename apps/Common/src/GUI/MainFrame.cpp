@@ -1,6 +1,7 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "MiniI18n/I18n.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
 #include "Core/Entity/LineEntity.hpp"
@@ -282,12 +283,12 @@ namespace MiniCAD
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());
-        m_layout->RegisterPanel("properties", CreatePropertiesPanel(m_main), "特性");
-        m_layout->RegisterPanel("layers",     CreateLayerPanel(m_main), "图层");
+        m_layout->RegisterPanel("properties", CreatePropertiesPanel(m_main), N_("特性"));
+        m_layout->RegisterPanel("layers",     CreateLayerPanel(m_main), N_("图层"));
         m_layout->RegisterPanel("layerbar",   CreateLayerBar(m_main.panels->bindings, [this] { return DocOf(m_main); }, &m_layerBarLayer));
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
-        m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), "节点");
-        m_layout->RegisterPanel("start",      CreateStartPage(), "起始页");
+        m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), N_("节点"));
+        m_layout->RegisterPanel("start",      CreateStartPage(), N_("起始页"));
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成

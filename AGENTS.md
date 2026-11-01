@@ -121,6 +121,7 @@ doc.GetCommandStack().Execute(std::move(cmd), scene);   // 工具里是 m_ctx->c
 - 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）
 - 改了界面文字后运行 `python -X utf8 tools/i18n_extract.py` 更新翻译文件（CI 跑 `--check`）；英文日志反查原文用 `--where "<英文>"`
 - 运行时语言：`--lang en|zh-CN|qps`（`qps` 是伪语言，找出没走 `Tr` 的文字）或环境变量 `MINICAD_LANG`；默认按"设置 > 语言"、再按系统语言。自测与基准不读设置、不看系统语言
+- "设置 > 语言"立即生效（`MainFrame::Retranslate` 重建界面）：代码里建的界面开始显示译文时，要在 `MainFrame::Retranslate` 里重建它或重写文字；只在打开时才建的对话框、弹出菜单不用管
 
 ### 文本格式
 仓库里文本统一存为 LF（`.gitattributes`），`.bat` 为 CRLF，`.dwg` / `.dxf` 按二进制。代码注释与提交信息用简体中文。

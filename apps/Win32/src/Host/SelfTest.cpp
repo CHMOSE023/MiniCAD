@@ -2,6 +2,7 @@
 // MainFrame 的成员函数，只在 Win32 版编译；窗口句柄由 Win32Window 提供
 #include "GUI/FloatingPanelHost.h"
 #include "GUI/MainFrame.h"
+#include "GUI/Language.h"
 #include "Host/Win32Window.h"
 #include "Host/Win32FloatingWindow.h"
 #include "Editor/Input/InputEvent.h"
@@ -3124,6 +3125,68 @@ namespace MiniCAD
             RenderFrame();
             sweep();
             check(m_layout->GetTitleBar() != nullptr, "没有文档时重新加载界面");
+        }
+
+        // ── 28.5 运行时切换界面语言 ─────────────────────────────
+        section("28.5 运行时切换界面语言：功能区、命令名称、起始页换成英文，停靠布局不变；切回简体中文");
+        {
+            auto ribbonTab = [&]
+            {
+                const MiniGUI::Ribbon* r = m_layout->GetRibbon();
+                return r && r->GetTabCount() > 0 ? r->GetTabTitle(0) : std::string();
+            };
+            std::function<bool(const MiniGUI::Node*, const std::string&)> hasLabel = [&](const MiniGUI::Node* n, const std::string& text)
+            {
+                if (const auto* l = dynamic_cast<const MiniGUI::Label*>(n); l && l->GetText() == text)
+                    return true;
+                for (const auto& child : n->GetChildren())
+                    if (hasLabel(child.get(), text))
+                        return true;
+                return false;
+            };
+            auto dockState = [&]
+            {
+                const MiniGUI::DockSpace* d = m_layout->GetDock("main");
+                return d ? d->SaveLayout().Dump() : std::string();
+            };
+            // 一个文档在主窗口，一个拖出成文档窗口：两个窗口的界面都要换
+            m_commands.Execute("file.new");
+            Document* inMain = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* floated = m_docManager.GetActive();
+            check(FloatDocument(floated, MiniGUI::Vec2{ 300.0f, 300.0f }), "拖出一个文档窗口");
+            RenderFrame();
+            pump();
+            auto windowTab = [&]
+            {
+                const DocWindow* w = FindDocWindow(floated);
+                const MiniGUI::Ribbon* r = w ? w->layout->GetRibbon() : nullptr;
+                return r && r->GetTabCount() > 0 ? r->GetTabTitle(0) : std::string();
+            };
+            const std::string zhTab  = ribbonTab();
+            const std::string before = dockState();
+            SetLanguage("en", false);       // 不写用户设置
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "en" && ribbonTab() == "Home" && m_commands.GetLabel("file.new") == "New",
+                  "切到英文：功能区选项卡、命令名称是英文");
+            check(m_startPage && hasLabel(m_startPage, "Start"), "切到英文：起始页重建");
+            check(dockState() == before, "切到英文：停靠布局不变");
+            check(DocWindowCount() == 1 && windowTab() == "Home", "切到英文：文档窗口的功能区也是英文");
+            SetLanguage("zh-CN", false);
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "zh-CN" && ribbonTab() == zhTab && m_startPage && hasLabel(m_startPage, "开始"), "切回简体中文");
+            check(dockState() == before, "切回简体中文：停靠布局不变");
+            check(DocWindowCount() == 1 && windowTab() == zhTab, "切回简体中文：文档窗口");
+            for (Document* d : { floated, inMain })
+            {
+                d->MarkSaved();
+                CloseDocument(d);
+                pump();
+            }
+            RenderFrame();
+            check(DocWindowCount() == 0 && !m_docManager.GetActive(), "关掉这两个文档");
         }
 
         // ── 29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭 ──────────

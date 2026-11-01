@@ -13,7 +13,6 @@ namespace MiniCAD
     namespace
     {
         std::string g_current = kSourceLanguage;
-        std::string g_pending = kSourceLanguage;
 
         constexpr const char* kSettingKey = "language";
 
@@ -152,20 +151,20 @@ namespace MiniCAD
                 code = Match(available, "en");      // 没有这种语言的翻译时用英文（中文系统已在 Match 里归到简体中文）
         }
         g_current = Apply(resourceDir, code);
-        g_pending = g_current;
         if (g_current != kSourceLanguage)
             LOG_INFO_TR("界面语言：{0}", g_current);
         return g_current;
     }
 
     const std::string& CurrentLanguage() { return g_current; }
-    const std::string& PendingLanguage() { return g_pending; }
 
-    bool SaveLanguageSetting(AppPlatform& platform, const std::string& code)
+    std::string SwitchLanguage(AppPlatform& platform, const std::string& code, bool save)
     {
-        if (!platform.WriteUserSetting(kSettingKey, code))
-            return false;
-        g_pending = code;
-        return true;
+        g_current = Apply(platform.GetResourceDir(), code);
+        LOG_INFO_TR("界面语言：{0}", g_current);
+        // 保存不了（没有用户数据目录）时照样切换，只是下次启动不记得
+        if (save && !platform.WriteUserSetting(kSettingKey, code))
+            LOG_WARN_TR("无法保存界面语言的设置");
+        return g_current;
     }
 }

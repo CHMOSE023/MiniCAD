@@ -1,6 +1,8 @@
 // ── 宿主面板（文档区、特性、状态栏）与界面描述文件、用户布局的加载 ─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "GUI/StatusBarView.h"
 #include "GUI/Lineweights.h"
 #include "Core/Entity/Entity.hpp"
@@ -900,6 +902,45 @@ namespace MiniCAD
         if (hadFocus && m_viewport->GetParent() && m_viewport->IsVisible())
             m_viewport->Focus();
         StateChanged();
+    }
+
+    void MainFrame::SetLanguage(const std::string& code, bool save)
+    {
+        SwitchLanguage(*m_platform, code, save);
+        Retranslate();
+    }
+
+    void MainFrame::Retranslate()
+    {
+        using namespace MiniGUI;
+        // 重新应用界面描述文件会回到文件里的默认停靠布局（浮出的面板窗口也会关掉）：先记下各窗口当前的，重建后恢复
+        std::vector<std::pair<UiLayout*, JsonValue>> docks;
+        auto remember = [&docks](UiLayout& layout)
+        {
+            if (DockSpace* dock = layout.GetDock("main"))
+                docks.emplace_back(&layout, dock->SaveLayout());
+        };
+        remember(*m_layout);
+        for (auto& w : m_docWindows)
+            remember(*w->layout);
+
+        ReloadUi();
+        for (auto& [layout, state] : docks)
+            if (DockSpace* dock = layout->GetDock("main"))
+                dock->LoadLayout(state);
+
+        // 代码里建的、显示了译文的部分
+        BuildAppBar();
+        BuildStartPage();
+        ForEachChrome([this](ViewChrome& c)
+        {
+            if (c.navBar)
+                BuildViewNavBar(c);
+        });
+        UpdateChromeVisibility();
+        UpdateTitle();
+        m_ui->Update();
+        RequestRenderAll();
     }
 
     void MainFrame::CheckUiFileChanged()

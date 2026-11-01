@@ -416,26 +416,19 @@ RequestRenderAll();      // 视口背景随主题反转白色内容（RenderFram
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
         m_commands.Register({ .id = "help.about", .label = N_("关于(&A)…"), .shortcut = "F1", .execute = [this] { ShowAbout(); } });
 
-        // ── 界面语言（"设置 > 语言"）：每种语言一条命令 ui.language.<代码>，选了写进用户设置，重启后生效 ──
-        // 名称是该语言自己的写法（"English"），不翻译
+        // ── 界面语言（"设置 > 语言"）：每种语言一条命令 ui.language.<代码>，选了立即切换并写进用户设置 ──
+        // 名称是该语言自己的写法（"English"），不翻译：看不懂当前界面语言的人也找得到自己的语言。
+        // 切换要重建界面，而菜单还开着（命令在菜单项的回调里执行）：放到这一帧之后
         for (const LanguageInfo& lang : ListLanguages(ResourceDir()))
         {
             const std::string code = lang.code;
-            const std::string name = lang.name;
-            m_commands.Register({ .id = std::string(kLanguageCommandPrefix) + code, .label = name,
-                                  .execute = [this, code, name]
+            m_commands.Register({ .id = std::string(kLanguageCommandPrefix) + code, .label = lang.name,
+                                  .execute = [this, code]
                                   {
-                                      if (code == PendingLanguage())
-                                          return;
-                                      if (!SaveLanguageSetting(*m_platform, code))
-                                      {
-                                          MiniGUI::ShowMessageBox(*m_ui, Tr("语言"), Tr("无法保存设置（没有用户数据目录）。可以在命令行上用 --lang 指定界面语言。"), { Tr("确定") });
-                                          return;
-                                      }
                                       if (code != CurrentLanguage())
-                                          MiniGUI::ShowMessageBox(*m_ui, Tr("语言"), TrF("重新打开 MiniCAD 后界面切换为 {0}。", name), { Tr("确定") });
+                                          m_platform->Post([this, code] { SetLanguage(code); });
                                   },
-                                  .isChecked = [code] { return PendingLanguage() == code; } });
+                                  .isChecked = [code] { return CurrentLanguage() == code; } });
         }
     }
 }

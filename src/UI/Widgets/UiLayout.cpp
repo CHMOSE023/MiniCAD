@@ -588,7 +588,7 @@ namespace MiniGUI
                     continue;
                 }
                 st.usedPanels.insert(name);
-                dock->AddPanel(name, it->second.title, std::move(it->second.owned));
+                dock->AddPanel(name, Tr(it->second.title), std::move(it->second.owned));
             }
             if (desc.Find("root"))
                 dock->LoadLayout(desc["root"], &m_warnings);

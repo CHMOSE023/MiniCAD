@@ -131,11 +131,14 @@ namespace MiniCAD
         std::unique_ptr<MiniGUI::Node> CreateDocumentArea(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateDocTabs();           // 文档标签条（面板 "doctabs"，放在标题栏里）
         std::unique_ptr<MiniGUI::Node> CreateViewNavBar(ViewChrome& c);   // 视图方块下面竖排的导航条（ViewNavBar.cpp）
+        void BuildViewNavBar(ViewChrome& c);                      // 导航条里的按钮（切换语言时重建）
         std::unique_ptr<MiniGUI::Node> CreateAppBar();            // 标题栏右侧：AI、设置、帮助、版本号（面板 "appbar"，ViewNavBar.cpp）
+        void BuildAppBar();                                       // 标题栏右侧的按钮（切换语言时重建）
         std::unique_ptr<MiniGUI::Node> CreateLayoutTabs(ViewChrome& c);   // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
         // 特性、图层、节点编辑器面板（面板 "properties" / "layers" / "nodes"）：每个窗口的停靠区里一套，显示、修改那个窗口里的文档
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
+        void BuildStartPage();                                    // 起始页的内容（切换语言时重建）
         void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
         void ShowStartPage(bool show);                            // 有文档时切换起始页 / 图纸
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
@@ -231,6 +234,11 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         std::unique_ptr<MiniGUI::Node> CreateUiHost();            // 主窗口里界面描述生成的内容放在这里
         void ReloadUi();
+        // 切换界面语言（"设置 > 语言"）：换翻译表、save 时写进用户设置（自测不写），再 Retranslate
+        void SetLanguage(const std::string& code, bool save = true);
+        // 按当前语言重建界面：界面描述生成的部分（菜单、功能区、标题栏、停靠区标签）重新应用，停靠布局保持不变；
+        // 代码里建的、显示了译文的部分（起始页、标题栏右侧、导航条）各自重建。新加的这类界面要在这里重建或重写文字
+        void Retranslate();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
         bool IsCommandLineShown() const { return IsCommandLineShown(m_main); }   // 主窗口的浮动命令行在界面上可见

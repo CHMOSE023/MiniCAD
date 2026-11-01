@@ -1,6 +1,6 @@
 #pragma once
 // 界面语言：选定语言、读翻译文件（资源目录下 i18n/<语言>.json）、装进 MiniI18n（见 docs/I18n/PLAN.md 3.6）。
-// 源语言是简体中文（没有翻译文件）。切换语言重启后生效
+// 源语言是简体中文（没有翻译文件）。运行中可以切换（SwitchLanguage），界面由 MainFrame::SetLanguage 重建
 #include <string>
 #include <vector>
 
@@ -28,8 +28,8 @@ namespace MiniCAD
     std::string InitLanguage(AppPlatform& platform, const std::string& requested, bool useUserSetting = true);
 
     const std::string& CurrentLanguage();       // 正在使用的语言
-    const std::string& PendingLanguage();       // "设置 > 语言"选中的（重启后生效；没改过时同 CurrentLanguage）
 
-    // "设置 > 语言"：写进用户设置，重启后生效
-    bool SaveLanguageSetting(AppPlatform& platform, const std::string& code);
+    // "设置 > 语言"：换上 code 的翻译表（在界面线程调用），save 时写进用户设置；返回实际使用的语言代码
+    // （翻译文件读不出时是简体中文）。只换表，界面的重建由调用方负责（MainFrame::SetLanguage）
+    std::string SwitchLanguage(AppPlatform& platform, const std::string& code, bool save = true);
 }

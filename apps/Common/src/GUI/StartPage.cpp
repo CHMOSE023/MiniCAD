@@ -392,8 +392,6 @@ namespace MiniCAD
 
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateStartPage()
     {
-        const std::string icons = ResourceDir() + "/icons/";
-
         auto view = std::make_unique<StartPageView>([this] { if (m_startShown) ShowStartPage(false); });
         {
             LayoutStyle& vs = view->EditLayoutStyle();
@@ -401,6 +399,19 @@ namespace MiniCAD
             vs.alignItems = Align::Stretch;
             vs.grow      = 1.0f;
         }
+        m_startPage = view.get();
+        BuildStartPage();
+        return view;
+    }
+
+    // 起始页的内容（切换界面语言时重建；外层节点不变，界面描述里的位置与显示状态跟着它）
+    void MainFrame::BuildStartPage()
+    {
+        const std::string icons = ResourceDir() + "/icons/";
+        Node* view = m_startPage;
+        const bool hadFocus = m_ui && m_ui->GetFocus() && view->IsAncestorOf(m_ui->GetFocus());
+        while (!view->GetChildren().empty())
+            view->RemoveChild(view->GetChildren().back().get());
 
         // ── 左侧导航列 ─────────────────────────────────────────
         auto* nav = view->AddChild<Panel>(Theme::Rail);
@@ -491,9 +502,10 @@ namespace MiniCAD
             }
         }
 
-        m_startPage = view.get();
         RefreshStartPage();
-        return view;
+        RefreshStartNav();
+        if (hadFocus)
+            view->Focus();
     }
 
     void MainFrame::RefreshStartPage()

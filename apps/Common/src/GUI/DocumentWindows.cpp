@@ -28,6 +28,7 @@
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "MiniI18n/I18n.h"
 #include "GUI/StatusBarView.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -405,9 +406,9 @@ namespace MiniCAD
         w->layout->RegisterPanel("statusbar", CreateStatusBar(c));
         w->layout->RegisterPanel("layerbar", CreateLayerBar(c.panels->bindings, [this, w] { return m_docManager.GetShownDocument(w->pane); },
                                                             &w->layerBar));
-        w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), "特性");     // 它的绑定集合的 OnChanged 在这里设好
-        w->layout->RegisterPanel("layers",     CreateLayerPanel(c), "图层");
-        w->layout->RegisterPanel("nodes",      CreateNodePanel(c), "节点");
+        w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), N_("特性"));     // 它的绑定集合的 OnChanged 在这里设好
+        w->layout->RegisterPanel("layers",     CreateLayerPanel(c), N_("图层"));
+        w->layout->RegisterPanel("nodes",      CreateNodePanel(c), N_("节点"));
         ApplyDocWindowUi(*w);
 
         // 快捷键登记在这个窗口自己的界面上；主窗口开着对话框时按键都转给对话框（SetModalOwner），不会触发

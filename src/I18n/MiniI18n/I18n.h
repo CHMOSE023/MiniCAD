@@ -7,7 +7,7 @@
 //   TrF("{0} 个外部参照没有找到", n)           → 先翻译再替换 {0}、{1}（译文里可以换顺序）
 //   N_("保存(&S)")                             → 原样返回，只给提取工具（tools/i18n_extract.py）做标记：
 //                                                存进数据、显示时才翻译的字符串用它（命令名称、节点名称……）
-// 翻译表在启动时（任何后台线程开始之前）由 SetCatalog 装好，之后只读，各线程都可以直接调用。
+// 翻译表由 SetCatalog 装上，运行中可以再换（切换界面语言）；表本身只读，各线程都可以直接调用 Tr。
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -55,7 +55,8 @@ namespace MiniI18n
         bool        m_pseudo = false;
     };
 
-    // 装上当前语言的翻译表（nullptr = 源语言，不翻译）。不是线程安全的：只在启动时、后台线程开始之前调用
+    // 装上当前语言的翻译表（nullptr = 源语言，不翻译）。在界面线程调用；换下来的表不释放（后台线程可能正在查它），
+    // 到程序退出才释放——切换语言很少，每张表几十 KB
     void           SetCatalog(std::unique_ptr<Catalog> catalog);
     const Catalog* GetCatalog();
 

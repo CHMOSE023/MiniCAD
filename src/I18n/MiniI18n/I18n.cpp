@@ -1,12 +1,16 @@
 #include "MiniI18n/I18n.h"
+#include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <mutex>
 
 namespace MiniI18n
 {
     namespace
     {
-        std::unique_ptr<Catalog> g_catalog;
+        std::atomic<const Catalog*>           g_catalog{ nullptr };     // 当前的表；Tr 只读这个指针
+        std::mutex                            g_ownedMutex;
+        std::vector<std::unique_ptr<Catalog>> g_owned;                  // 装过的表都留着，见 SetCatalog
 
         std::string ContextKey(std::string_view context, std::string_view msgid)
         {
@@ -305,17 +309,23 @@ namespace MiniI18n
 
     void SetCatalog(std::unique_ptr<Catalog> catalog)
     {
-        g_catalog = std::move(catalog);
+        const Catalog* c = catalog.get();
+        if (catalog)
+        {
+            std::lock_guard lock(g_ownedMutex);
+            g_owned.push_back(std::move(catalog));
+        }
+        g_catalog.store(c, std::memory_order_release);
     }
 
     const Catalog* GetCatalog()
     {
-        return g_catalog.get();
+        return g_catalog.load(std::memory_order_acquire);
     }
 
     std::string Tr(std::string_view msgid)
     {
-        const Catalog* c = g_catalog.get();
+        const Catalog* c = GetCatalog();
         if (!c || msgid.empty())
             return std::string(msgid);
         if (const std::string* t = c->Find(msgid))
@@ -325,7 +335,7 @@ namespace MiniI18n
 
     std::string TrC(std::string_view context, std::string_view msgid)
     {
-        const Catalog* c = g_catalog.get();
+        const Catalog* c = GetCatalog();
         if (!c || msgid.empty())
             return std::string(msgid);
         if (const std::string* t = c->Find(context, msgid))

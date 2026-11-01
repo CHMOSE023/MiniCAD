@@ -99,6 +99,17 @@ int RunI18nTests()
     Check(Tr("保存(&S)") == "[&Save~~]", "伪语言：有译文的包译文");
     Check(TrF("共 {0} 个", 5) == "[共 5 个~~~]", "伪语言下占位符照样替换");
 
+    // ── 运行中换表：换下来的表不释放（后台线程可能正拿着它查）──────────
+    auto first = std::make_unique<MiniI18n::Catalog>();
+    first->Add("保存", "Save");
+    const MiniI18n::Catalog* old = first.get();
+    MiniI18n::SetCatalog(std::move(first));
+    auto second = std::make_unique<MiniI18n::Catalog>();
+    second->Add("保存", "Enregistrer");
+    MiniI18n::SetCatalog(std::move(second));
+    Check(Tr("保存") == "Enregistrer" && MiniI18n::GetCatalog() != old, "换表后按新表翻译");
+    Check(old->Find("保存") && *old->Find("保存") == "Save", "换下来的表仍可读");
+
     MiniI18n::SetCatalog(nullptr);
     Check(Tr("保存(&S)") == "保存(&S)", "卸下翻译表后回到原文");
     return g_failures;

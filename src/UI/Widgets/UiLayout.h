@@ -57,6 +57,7 @@ namespace MiniGUI
 
         // 宿主提供的面板：界面重建时会被回收、再放回新的位置（不会销毁），布局里没有引用的面板不显示
         // title：放进停靠区时标签上显示的名称（为空时用 name）
+        // title 是停靠区标签上的名称（原文，放进停靠区时经 Tr 翻译，宿主写 N_("…")）
         void  RegisterPanel(const std::string& name, std::unique_ptr<Node> panel, std::string title = {});
         Node* GetPanel(const std::string& name) const;
 
