@@ -1,4 +1,5 @@
 #include "Widgets/CommandUI.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "Paint/DrawList.h"
 #include "Style/Theme.hpp"
@@ -58,7 +59,7 @@ namespace MiniGUI
         m_more->SetFocusable(false);
         m_more->SetText(vertical ? "︾" : "»")->SetFontSize(14.0f);
         m_more->EditLayoutStyle().padding = Edges::Symmetric(6.0f, kButtonPadding);
-        m_more->SetTooltip("更多命令");
+        m_more->SetTooltip(Tr("更多命令"));
 
         m_listener      = m_commands.AddListener([this] { RefreshState(); });
         m_registryAlive = m_commands.GetLifetimeToken();
@@ -81,7 +82,7 @@ namespace MiniGUI
         {
             b->SetText("?" + id)->SetFontSize(13.0f);
             b->SetEnabled(false);
-            b->SetTooltip("没有名为 " + id + " 的命令");
+            b->SetTooltip(TrF("没有名为 {0} 的命令", id));
         }
         else
         {

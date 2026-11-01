@@ -251,7 +251,11 @@ namespace MiniGUI
     std::string CommandRegistry::GetLabel(std::string_view id) const
     {
         const Command* c = Find(id);
-        return c ? (c->label.empty() ? c->id : Tr(c->label)) : std::string(id);
+        if (!c)
+            return std::string(id);
+        if (c->label.empty())
+            return c->id;
+        return c->labelContext.empty() ? Tr(c->label) : TrC(c->labelContext, c->label);
     }
 
     std::string CommandRegistry::GetTooltip(std::string_view id) const
@@ -283,7 +287,7 @@ namespace MiniGUI
             Command* c = Find(id);
             if (!c)
             {
-                warnings.push_back("commands：没有名为 \"" + id + "\" 的命令");
+                warnings.push_back(TrF("commands：没有名为 \"{0}\" 的命令", id));
                 continue;
             }
             if (const JsonValue* v = fields.Find("label"))    c->label   = v->AsString();
@@ -294,7 +298,7 @@ namespace MiniGUI
                 KeyChord chord;
                 const std::string& text = v->AsString();
                 if (!text.empty() && !ParseKeyChord(text, chord))
-                    warnings.push_back("commands." + id + "：无法识别的快捷键 \"" + text + "\"");
+                    warnings.push_back(TrF("commands.{0}：无法识别的快捷键 \"{1}\"", id, text));
                 else
                     c->shortcut = text.empty() ? std::string() : FormatKeyChord(chord);
             }
@@ -376,10 +380,10 @@ namespace MiniGUI
         {
             if (ids.size() < 2)
                 continue;
-            std::string s = chord + "：";
+            std::string list;       // 命令 Id 用逗号分隔，不随语言变
             for (size_t i = 0; i < ids.size(); ++i)
-                s += (i ? " 与 " : "") + ids[i];
-            result.push_back(std::move(s));
+                list += (i ? ", " : "") + ids[i];
+            result.push_back(TrF("{0}：{1}", chord, list));
         }
         return result;
     }

@@ -3,6 +3,7 @@
 #include "Document/DocumentManager.h"
 #include "Editor/Editor.h"
 #include "Editor/Snap/SnapEngine.h"
+#include "MiniI18n/I18n.h"
 #include "Core/Popup.h"
 #include "Core/UIContext.h"
 #include "Widgets/Button.h"
@@ -55,6 +56,12 @@ namespace MiniCAD
             m_label->SetHitTestVisible(false);
         }
 
+        void SetTitle(const std::string& title)
+        {
+            m_title = title;
+            m_label->SetText(title);
+        }
+
         void SetOn(bool on)
         {
             m_label->SetColor(on ? Theme::Text : Theme::Placeholder);
@@ -83,24 +90,36 @@ namespace MiniCAD
         spacer->SetHitTestVisible(false);
 
         // ── 捕捉 / 正交 / 悬停 / 细线 ─────────────────────────────
-        m_snap = AddChild<StatusToggle>("捕捉", [this] { Toggle(&Editor::ToggleSnap); });
-        m_snap->SetTooltip("左键: 开/关 (F3)\n右键: 对象捕捉设置");
+        m_snap = AddChild<StatusToggle>(std::string(), [this] { Toggle(&Editor::ToggleSnap); });
         m_snap->SetContextMenuHandler([this](MiniGUI::Vec2) { OpenSnapSettings(); return true; });
-
-        m_ortho = AddChild<StatusToggle>("正交", [this] { Toggle(&Editor::ToggleOrtho); });
-        m_ortho->SetTooltip("左键: 开/关 (F8)");
-
-        m_hover = AddChild<StatusToggle>("悬停", [this] { Toggle(&Editor::ToggleHover); });
-        m_hover->SetTooltip("左键: 开/关 鼠标悬停高亮");
-
-        m_thin = AddChild<StatusToggle>("细线", [this] { Toggle(&Editor::ToggleThinLines); });
-        m_thin->SetTooltip("左键: 开/关 全局细线（忽略线宽，只影响显示）");
+        m_ortho = AddChild<StatusToggle>(std::string(), [this] { Toggle(&Editor::ToggleOrtho); });
+        m_hover = AddChild<StatusToggle>(std::string(), [this] { Toggle(&Editor::ToggleHover); });
+        m_thin  = AddChild<StatusToggle>(std::string(), [this] { Toggle(&Editor::ToggleThinLines); });
+        ApplyTexts();
 
         // 窗口变窄时开关保持自然宽度，只压缩左边的空白
         for (const auto& child : GetChildren())
             child->EditLayoutStyle().shrink = 0.0f;
         spacer->EditLayoutStyle().shrink   = 1.0f;
         spacer->EditLayoutStyle().minWidth = 0.0f;
+    }
+
+    void StatusBarView::ApplyTexts()
+    {
+        m_snap->SetTitle(Tr("捕捉"));
+        m_snap->SetTooltip(Tr("左键: 开/关 (F3)\n右键: 对象捕捉设置"));
+        m_ortho->SetTitle(Tr("正交"));
+        m_ortho->SetTooltip(Tr("左键: 开/关 (F8)"));
+        m_hover->SetTitle(Tr("悬停"));
+        m_hover->SetTooltip(Tr("左键: 开/关 鼠标悬停高亮"));
+        m_thin->SetTitle(Tr("细线"));
+        m_thin->SetTooltip(Tr("左键: 开/关 全局细线（忽略线宽，只影响显示）"));
+    }
+
+    void StatusBarView::Retranslate()
+    {
+        ApplyTexts();
+        InvalidateLayout();
     }
 
     MiniGUI::Node* StatusBarView::AddRightItem(std::unique_ptr<MiniGUI::Node> item)
@@ -168,24 +187,24 @@ namespace MiniCAD
             s.width   = 230.0f;
             popup->SetLayoutStyle(s);
         }
-        popup->AddChild<Label>("对象捕捉模式", 12.0f, Theme::TextDim);
+        popup->AddChild<Label>(Tr("对象捕捉模式"), 12.0f, Theme::TextDim);
         popup->AddChild<MiniGUI::Separator>();
 
         struct ModeItem { const char* label; SnapMode mode; };
         const ModeItem modes[] =
         {
-            { "端点",   SnapMode::Endpoint },
-            { "中点",   SnapMode::Midpoint },
-            { "交点",   SnapMode::Intersection },
-            { "象限点", SnapMode::Quadrant },
-            { "垂足",   SnapMode::Perpendicular },
-            { "最近点", SnapMode::Nearest },
-            { "网格",   SnapMode::Grid },
+            { N_("端点"),   SnapMode::Endpoint },
+            { N_("中点"),   SnapMode::Midpoint },
+            { N_("交点"),   SnapMode::Intersection },
+            { N_("象限点"), SnapMode::Quadrant },
+            { N_("垂足"),   SnapMode::Perpendicular },
+            { N_("最近点"), SnapMode::Nearest },
+            { N_("网格"),   SnapMode::Grid },
         };
         std::vector<std::pair<MiniGUI::CheckBox*, SnapMode>> boxes;
         for (const auto& m : modes)
         {
-            auto* box = popup->AddChild<MiniGUI::CheckBox>(m.label, snap.IsModeEnabled(m.mode));
+            auto* box = popup->AddChild<MiniGUI::CheckBox>(Tr(m.label), snap.IsModeEnabled(m.mode));
             const SnapMode mode = m.mode;
             box->SetOnChanged([&snap, mode](bool on) { snap.SetModeEnabled(mode, on); });
             boxes.emplace_back(box, mode);
@@ -199,12 +218,12 @@ namespace MiniCAD
             for (const auto& [box, mode] : boxes)
                 box->SetChecked(snap.IsModeEnabled(mode));
         };
-        buttons->AddChild<MiniGUI::Button>("全部选择", [&snap, syncBoxes]
+        buttons->AddChild<MiniGUI::Button>(Tr("全部选择"), [&snap, syncBoxes]
         {
             snap.SetSnapModes(static_cast<uint32_t>(SnapMode::Default) | static_cast<uint32_t>(SnapMode::Grid));
             syncBoxes();
         });
-        buttons->AddChild<MiniGUI::Button>("全部清除", [&snap, syncBoxes]
+        buttons->AddChild<MiniGUI::Button>(Tr("全部清除"), [&snap, syncBoxes]
         {
             snap.SetSnapModes(static_cast<uint32_t>(SnapMode::None));
             syncBoxes();
@@ -213,7 +232,7 @@ namespace MiniCAD
         popup->AddChild<MiniGUI::Separator>();
         Node* radiusRow = popup->AddChild<Node>();
         radiusRow->SetLayoutStyle(RowStyle(8.0f));
-        radiusRow->AddChild<Label>("捕捉孔径", 13.0f);
+        radiusRow->AddChild<Label>(Tr("捕捉孔径"), 13.0f);
         auto* slider = radiusRow->AddChild<MiniGUI::Slider>(2.0f, 20.0f, static_cast<float>(snap.GetSnapRadiusPx()));
         slider->SetStep(1.0f);
         slider->EditLayoutStyle().grow = 1.0f;

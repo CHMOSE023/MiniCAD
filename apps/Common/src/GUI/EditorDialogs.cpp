@@ -467,7 +467,7 @@ namespace MiniCAD
         name->EditLayoutStyle().width = kFieldWidth;
         std::vector<std::string> labels;
         for (const SaveFormat& f : kSaveFormats)
-            labels.emplace_back(f.label);
+            labels.emplace_back(Tr(f.label));
         ComboBox* type = AddRow<ComboBox>(body, "格式", labels, format);
         type->EditLayoutStyle().width = kFieldWidth;
 
@@ -1486,7 +1486,7 @@ namespace MiniCAD
     void MainFrame::ShowAbout()
     {
         using namespace MiniGUI;
-        auto dialog   = std::make_unique<Dialog>("关于");
+        auto dialog   = std::make_unique<Dialog>(Tr("关于"));
         Node* body    = dialog->GetBody();
 
         LayoutStyle s = ColumnStyle(12.0f);
@@ -1504,20 +1504,20 @@ namespace MiniCAD
         // 项目地址：点击交给平台用默认程序（浏览器）打开
         Node* linkRow = body->AddChild<Node>();
         linkRow->SetLayoutStyle(rowStyle);
-        linkRow->AddChild<Label>("源码 ", 13.0f, Theme::TextDim);
+        linkRow->AddChild<Label>(Tr("源码") + " ", 13.0f, Theme::TextDim);
         AppPlatform* platform = m_platform;
 
         LinkLabel* link = linkRow->AddChild<LinkLabel>("https://github.com/CHMOSE023/MiniCAD", 13.0f,   [platform] { platform->OpenUrl("https://github.com/CHMOSE023/MiniCAD"); });
-        link->SetTooltip("使用默认浏览器打开"); 
+        link->SetTooltip(Tr("使用默认浏览器打开"));
 
-        body->AddChild<Label>("版本 v" MINICAD_VERSION_STRING " ", 13.0f, Theme::TextDim);
+        body->AddChild<Label>(TrF("版本 {0}", "v" MINICAD_VERSION_STRING) + " ", 13.0f, Theme::TextDim);
         // 实际使用的图形接口（D3D11、WebGPU、WebGL2 ……），排查显示问题时先看这里
-        body->AddChild<Label>(std::string("图形 ") + m_platform->GetGraphicsName(), 13.0f, Theme::TextDim);
+        body->AddChild<Label>(TrF("图形 {0}", m_platform->GetGraphicsName()), 13.0f, Theme::TextDim);
         // 界面语言：英文用户贴来的日志、截图，开发者据此知道要反查原文（tools/i18n_extract.py --where）
         body->AddChild<Label>(TrF("界面语言 {0}", CurrentLanguage()), 13.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
-        raw->AddButton("确定", [raw] { raw->Close(); }, DialogButtonRole::Default);
+        raw->AddButton(Tr("确定"), [raw] { raw->Close(); }, DialogButtonRole::Default);
 
         m_ui->OpenPopup(std::move(dialog));
     }

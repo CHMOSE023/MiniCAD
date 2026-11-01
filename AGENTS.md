@@ -115,7 +115,7 @@ doc.GetCommandStack().Execute(std::move(cmd), scene);   // 工具里是 m_ctx->c
 
 ### 界面文字（多语言）
 源语言是简体中文，翻译表的键就是代码里的中文原文（`docs/I18n/PLAN.md`）：
-- 直接显示的文字写 `Tr("…")`；要替换数字等的写 `TrF("{0} 个…", n)`，不要拼接句子碎片（英文语序不同）；同字不同义时 `TrC("上下文", "…")`
+- 直接显示的文字写 `Tr("…")`；要替换数字等的写 `TrF("{0} 个…", n)`，不要拼接句子碎片（英文语序不同）；同字不同义时 `TrC("上下文", "…")`（只标记的写 `NC_("上下文", "…")`，命令名称填 `Command::labelContext`）
 - 存进数据、显示时才翻译的（命令的 `label` / `tooltip`、节点名称）写 `N_("…")`，显示处再翻译；命令文字一律经 `CommandRegistry::GetLabel` / `CommandRegistry::GetTooltip` 显示，不要直接读 `Command::label`
 - 不要按显示的文字比较或查找（翻译后就对不上），按 Id / 下标
 - 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）

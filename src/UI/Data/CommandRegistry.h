@@ -31,7 +31,8 @@ namespace MiniGUI
     struct Command
     {
         std::string id;                     // "file.save"
-        std::string label;                  // "保存(&S)"：菜单显示，& 后为助记符
+        std::string label;                  // "保存(&S)"：菜单显示，& 后为助记符（源语言原文，显示时翻译）
+        std::string labelContext;           // label 的翻译上下文（同字不同义时，见 NC_）；空 = 不带上下文
         std::string tooltip;                // 工具栏悬浮提示的补充说明（第二行）
         std::string icon;                   // 图标路径（相对界面资源目录），空表示没有图标
         std::string shortcut;               // "Ctrl+S"；空表示没有

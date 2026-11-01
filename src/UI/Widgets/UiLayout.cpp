@@ -145,7 +145,7 @@ namespace MiniGUI
         std::string text;
         if (!ReadTextFile(utf8Path, text))
         {
-            m_error = "无法读取界面描述文件：" + utf8Path;
+            m_error = TrF("无法读取界面描述文件：{0}", utf8Path);
             return false;
         }
         return ApplyText(parent, text);
@@ -157,7 +157,7 @@ namespace MiniGUI
         JsonError err;
         if (!ParseJson(jsonText, doc, err))
         {
-            m_error = "界面描述文件格式错误，" + err.ToString();
+            m_error = TrF("界面描述文件格式错误，{0}", err.ToString());
             return false;
         }
         return Apply(parent, doc);
@@ -217,14 +217,14 @@ namespace MiniGUI
         m_warnings.clear();
         if (!doc.IsObject())
         {
-            m_error = "界面描述文件的顶层必须是对象 { … }";
+            m_error = Tr("界面描述文件的顶层必须是对象 { … }");
             return false;
         }
         for (const auto& [key, value] : doc.GetObject())
         {
             (void)value;
             if (key != "commands" && key != "menus" && key != "toolbars" && key != "ribbons" && key != "layout" && key != "layouts" && key != "comment")
-                m_warnings.push_back("顶层：未知的字段 \"" + key + "\"");
+                m_warnings.push_back(TrF("顶层：未知的字段 \"{0}\"", key));
         }
 
         // ── 命令覆盖（只由生成默认布局的那个负责）───────────────────
@@ -233,7 +233,7 @@ namespace MiniGUI
             RestoreCommandDefaults();
             m_commands.ApplyOverrides(doc["commands"], m_warnings);
             for (const std::string& c : m_commands.FindShortcutConflicts())
-                m_warnings.push_back("快捷键冲突 " + c);
+                m_warnings.push_back(TrF("快捷键冲突 {0}", c));
         }
 
         // ── 清空旧界面（推迟销毁）并重建 ──────────────────────────
@@ -258,7 +258,7 @@ namespace MiniGUI
         const JsonValue& layout = m_layoutName.empty() ? doc["layout"] : doc["layouts"][m_layoutName];
         if (!layout.IsObject())
         {
-            m_warnings.push_back("缺少 " + st.path + "，界面为空");
+            m_warnings.push_back(TrF("缺少 {0}，界面为空", st.path));
             return true;
         }
         if (std::unique_ptr<Node> root = BuildNode(layout, doc, false, st))
@@ -286,7 +286,7 @@ namespace MiniGUI
                 else if (v->IsString() && v->AsString() == "auto")
                     field = kAuto;
                 else
-                    m_warnings.push_back(std::string(key) + " 应为数字");
+                    m_warnings.push_back(TrF("{0} 应为数字", std::string(key)));
             }
         };
         num("width", s.width);
@@ -306,7 +306,7 @@ namespace MiniGUI
         {
             if (v->AsString() == "absolute")      s.position = PositionType::Absolute;
             else if (v->AsString() == "relative") s.position = PositionType::Relative;
-            else m_warnings.push_back("position 应为 absolute / relative");
+            else m_warnings.push_back(Tr("position 应为 absolute / relative"));
         }
         // passThrough：自己不接收指针事件（空白处点击落到下面的节点，例如叠在绘图区上的容器），子节点照常
         if (const JsonValue* v = desc.Find("passThrough"))
@@ -323,7 +323,7 @@ namespace MiniGUI
                 s.padding = Edges::Make(static_cast<float>(a[0].AsNumber()), static_cast<float>(a[1].AsNumber()),
                                         static_cast<float>(a[2].AsNumber()), static_cast<float>(a[3].AsNumber()));
             else
-                m_warnings.push_back("padding 应为数字、[水平, 竖直] 或 [左, 上, 右, 下]");
+                m_warnings.push_back(Tr("padding 应为数字、[水平, 竖直] 或 [左, 上, 右, 下]"));
         }
 
         if (const JsonValue* v = desc.Find("align"))
@@ -333,7 +333,7 @@ namespace MiniGUI
             else if (a == "center")  s.alignItems = Align::Center;
             else if (a == "end")     s.alignItems = Align::End;
             else if (a == "stretch") s.alignItems = Align::Stretch;
-            else m_warnings.push_back("align 应为 start / center / end / stretch");
+            else m_warnings.push_back(Tr("align 应为 start / center / end / stretch"));
         }
         if (const JsonValue* v = desc.Find("justify"))
         {
@@ -342,20 +342,20 @@ namespace MiniGUI
             else if (j == "center")        s.justify = Justify::Center;
             else if (j == "end")           s.justify = Justify::End;
             else if (j == "space-between") s.justify = Justify::SpaceBetween;
-            else m_warnings.push_back("justify 应为 start / center / end / space-between");
+            else m_warnings.push_back(Tr("justify 应为 start / center / end / space-between"));
         }
 
         if (const JsonValue* v = desc.Find("background"))
         {
             ColorRef color;
             if (!ParseColor(v->AsString(), color))
-                m_warnings.push_back("无法识别的颜色 \"" + v->AsString() + "\"（用 #RRGGBB 或主题颜色名）");
+                m_warnings.push_back(TrF("无法识别的颜色 \"{0}\"（用 #RRGGBB 或主题颜色名）", v->AsString()));
             else if (auto* panel = dynamic_cast<Panel*>(node))
                 panel->SetBackground(color);
             else if (auto* toolbar = dynamic_cast<ToolBar*>(node))
                 toolbar->SetBackground(color);
             else if (!isPanel)
-                m_warnings.push_back("background 只能用于 row / column / toolbar");
+                m_warnings.push_back(Tr("background 只能用于 row / column / toolbar"));
         }
 
         if (const JsonValue* v = desc.Find("visible"))
@@ -366,7 +366,7 @@ namespace MiniGUI
     {
         if (!desc.IsObject())
         {
-            m_warnings.push_back(st.path + "：布局节点应为对象 { \"type\": … }");
+            m_warnings.push_back(TrF("{0}：布局节点应为对象 { \"type\": … }", st.path));
             return nullptr;
         }
         const std::string& type = desc["type"].AsString();
@@ -376,7 +376,7 @@ namespace MiniGUI
         {
             (void)value;
             if (!CommonKeys().count(key) && !TypeKeys(type).count(key))
-                m_warnings.push_back(where + "：未知的属性 \"" + key + "\"");
+                m_warnings.push_back(TrF("{0}：未知的属性 \"{1}\"", where, key));
         }
 
         std::unique_ptr<Node> node;
@@ -407,7 +407,7 @@ namespace MiniGUI
                 Node* target = next ? (i + 1 < kids.size() ? kids[i + 1].get() : nullptr)
                                     : (i > 0 ? kids[i - 1].get() : nullptr);
                 if (!target)
-                    m_warnings.push_back(where + "：splitter 旁边没有可调整的节点");
+                    m_warnings.push_back(TrF("{0}：splitter 旁边没有可调整的节点", where));
                 sp->SetTarget(target);
             }
             node = std::move(panel);
@@ -428,7 +428,7 @@ namespace MiniGUI
                     else if (it.IsString())
                     {
                         if (!m_commands.Find(it.AsString()))
-                            m_warnings.push_back("菜单 " + menuPath + "：没有名为 \"" + it.AsString() + "\" 的命令");
+                            m_warnings.push_back(TrF("菜单 {0}：没有名为 \"{1}\" 的命令", menuPath, it.AsString()));
                         result.push_back(CommandMenuItem(m_commands, it.AsString()));
                     }
                     else if (it.IsObject() && it.Find("items"))
@@ -443,7 +443,7 @@ namespace MiniGUI
                         const auto src = m_dynamicMenus.find(name);
                         if (src == m_dynamicMenus.end())
                         {
-                            m_warnings.push_back("菜单 " + menuPath + "：宿主没有提供名为 \"" + name + "\" 的动态菜单内容");
+                            m_warnings.push_back(TrF("菜单 {0}：宿主没有提供名为 \"{1}\" 的动态菜单内容", menuPath, name));
                             result.push_back(MenuItem(title).Enabled(false));
                         }
                         else
@@ -452,7 +452,7 @@ namespace MiniGUI
                         }
                     }
                     else
-                        m_warnings.push_back("菜单 " + menuPath + "：无法识别的菜单项 " + it.Dump());
+                        m_warnings.push_back(TrF("菜单 {0}：无法识别的菜单项 {1}", menuPath, it.Dump()));
                 }
                 return result;
             };
@@ -464,14 +464,14 @@ namespace MiniGUI
                 {
                     icon = st.ctx ? st.ctx->LoadTexture(m_iconDir + "/" + path->AsString(), { MenuBar::kIconSize, MenuBar::kIconSize }) : InvalidTextureId;
                     if (icon == InvalidTextureId)
-                        m_warnings.push_back("菜单 " + title + "：无法加载图标 \"" + path->AsString() + "\"");
+                        m_warnings.push_back(TrF("菜单 {0}：无法加载图标 \"{1}\"", title, path->AsString()));
                 }
                 bar->AddMenu(title, buildItems(menu["items"], title), icon);
             }
             if (doc["menus"].Size() == 0)
-                m_warnings.push_back(where + "：menus 为空");
+                m_warnings.push_back(TrF("{0}：menus 为空", where));
             if (m_menuBar)
-                m_warnings.push_back(where + "：出现了多个菜单栏，键盘导航只对最后一个有效");
+                m_warnings.push_back(TrF("{0}：出现了多个菜单栏，键盘导航只对最后一个有效", where));
             m_menuBar = bar.get();
             node = std::move(bar);
         }
@@ -483,7 +483,7 @@ namespace MiniGUI
             {
                 const TextureId tex = st.ctx ? st.ctx->LoadTexture(m_iconDir + "/" + icon->AsString(), { 16.0f, 16.0f }) : InvalidTextureId;
                 if (tex == InvalidTextureId)
-                    m_warnings.push_back(where + "：无法加载图标 \"" + icon->AsString() + "\"");
+                    m_warnings.push_back(TrF("{0}：无法加载图标 \"{1}\"", where, icon->AsString()));
                 bar->SetIcon(tex);
             }
             const std::string base = st.path;
@@ -501,7 +501,7 @@ namespace MiniGUI
             }
             st.path = base;
             if (m_titleBar)
-                m_warnings.push_back(where + "：出现了多个标题栏，GetTitleBar 只返回最后一个");
+                m_warnings.push_back(TrF("{0}：出现了多个标题栏，GetTitleBar 只返回最后一个", where));
             m_titleBar = bar.get();
             node = std::move(bar);
         }
@@ -513,7 +513,7 @@ namespace MiniGUI
             {
                 def = doc["toolbars"].Find(id);
                 if (!def)
-                    m_warnings.push_back(where + "：toolbars 里没有 \"" + id + "\"");
+                    m_warnings.push_back(TrF("{0}：toolbars 里没有 \"{1}\"", where, id));
             }
             // 工具栏定义：{ "items": [...], "iconSize": 20 } 或直接是数组；布局节点上的 items / iconSize 优先
             const JsonValue& items = desc.Find("items") ? desc["items"]
@@ -532,11 +532,11 @@ namespace MiniGUI
                 {
                     const std::string cmd = it.IsString() ? it.AsString() : it["command"].AsString();
                     if (!m_commands.Find(cmd))
-                        m_warnings.push_back("工具栏 " + (id.empty() ? where : id) + "：没有名为 \"" + cmd + "\" 的命令");
+                        m_warnings.push_back(TrF("工具栏 {0}：没有名为 \"{1}\" 的命令", (id.empty() ? where : id), cmd));
                     bar->AddCommand(cmd, it.IsObject() && it["text"].AsBool(false));
                 }
                 else
-                    m_warnings.push_back("工具栏 " + id + "：无法识别的项 " + it.Dump());
+                    m_warnings.push_back(TrF("工具栏 {0}：无法识别的项 {1}", id, it.Dump()));
             }
             if (!id.empty())
                 m_toolBars[id] = bar.get();
@@ -548,12 +548,12 @@ namespace MiniGUI
             auto it = m_panels.find(name);
             if (it == m_panels.end())
             {
-                m_warnings.push_back(where + "：宿主没有提供名为 \"" + name + "\" 的面板");
+                m_warnings.push_back(TrF("{0}：宿主没有提供名为 \"{1}\" 的面板", where, name));
                 return nullptr;
             }
             if (!it->second.owned)
             {
-                m_warnings.push_back(where + "：面板 \"" + name + "\" 被引用了多次，只放在第一处");
+                m_warnings.push_back(TrF("{0}：面板 \"{1}\" 被引用了多次，只放在第一处", where, name));
                 return nullptr;
             }
             st.usedPanels.insert(name);
@@ -584,7 +584,7 @@ namespace MiniGUI
                     continue;       // 未知面板由 LoadLayout 报告；同一停靠区里重复引用也由它报告
                 if (!it->second.owned)
                 {
-                    m_warnings.push_back(where + "：面板 \"" + name + "\" 已在别处使用");
+                    m_warnings.push_back(TrF("{0}：面板 \"{1}\" 已在别处使用", where, name));
                     continue;
                 }
                 st.usedPanels.insert(name);
@@ -604,7 +604,7 @@ namespace MiniGUI
             if (desc["target"].AsString() == "next")
                 st.splittersTargetNext.insert(sp.get());       // 目标由所在容器在建完兄弟后设置
             else if (desc.Find("target") && desc["target"].AsString() != "previous")
-                m_warnings.push_back(where + "：target 应为 previous 或 next");
+                m_warnings.push_back(TrF("{0}：target 应为 previous 或 next", where));
             if (parentIsRow) sp->EditLayoutStyle().width = 5.0f;
             else             sp->EditLayoutStyle().height = 5.0f;
             node = std::move(sp);
@@ -616,7 +616,7 @@ namespace MiniGUI
             const JsonValue* def = doc["ribbons"].Find(id);
             if (!def)
             {
-                m_warnings.push_back(where + "：ribbons 里没有 \"" + id + "\"");
+                m_warnings.push_back(TrF("{0}：ribbons 里没有 \"{1}\"", where, id));
                 return nullptr;
             }
             auto ribbon = std::make_unique<Ribbon>(m_commands);
@@ -632,7 +632,7 @@ namespace MiniGUI
                         if (it.IsString())
                         {
                             if (!m_commands.Find(it.AsString()))
-                                m_warnings.push_back("功能区 " + id + "：没有名为 \"" + it.AsString() + "\" 的命令");
+                                m_warnings.push_back(TrF("功能区 {0}：没有名为 \"{1}\" 的命令", id, it.AsString()));
                             ribbon->AddCommand(tab, panel, it.AsString());
                         }
                         else if (const JsonValue* host = it.Find("panel"))
@@ -640,14 +640,14 @@ namespace MiniGUI
                             auto slot = m_panels.find(host->AsString());
                             if (slot == m_panels.end() || !slot->second.owned)
                             {
-                                m_warnings.push_back("功能区 " + id + "：宿主面板 \"" + host->AsString() + "\" 不存在或已被引用");
+                                m_warnings.push_back(TrF("功能区 {0}：宿主面板 \"{1}\" 不存在或已被引用", id, host->AsString()));
                                 continue;
                             }
                             st.usedPanels.insert(host->AsString());
                             ribbon->AddHostNode(tab, panel, std::move(slot->second.owned));
                         }
                         else
-                            m_warnings.push_back("功能区 " + id + "：无法识别的项 " + it.Dump());
+                            m_warnings.push_back(TrF("功能区 {0}：无法识别的项 {1}", id, it.Dump()));
                     }
                 }
             }
@@ -659,7 +659,7 @@ namespace MiniGUI
             if (const int keep = ribbon->FindTab(m_ribbonTab); keep >= 0)
                 ribbon->SelectTab(keep);
             if (m_ribbon)
-                m_warnings.push_back(where + "：出现了多个功能区，GetRibbon 只返回最后一个");
+                m_warnings.push_back(TrF("{0}：出现了多个功能区，GetRibbon 只返回最后一个", where));
             m_ribbon = ribbon.get();
             node = std::move(ribbon);
         }
@@ -678,14 +678,14 @@ namespace MiniGUI
         {
             ColorRef color = Theme::Text;
             if (const JsonValue* c = desc.Find("color"); c && !ParseColor(c->AsString(), color))
-                m_warnings.push_back(where + "：无法识别的颜色 \"" + c->AsString() + "\"");
+                m_warnings.push_back(TrF("{0}：无法识别的颜色 \"{1}\"", where, c->AsString()));
             auto label = std::make_unique<Label>(Tr(desc["text"].AsString()),static_cast<float>(desc["size"].AsNumber(Theme::FontSize)), color);
             label->SetBold(desc["bold"].AsBool(false));
             node = std::move(label);
         }
         else
         {
-            m_warnings.push_back(where + "：未知的类型 \"" + type + "\"");
+            m_warnings.push_back(TrF("{0}：未知的类型 \"{1}\"", where, type));
             return nullptr;
         }
 

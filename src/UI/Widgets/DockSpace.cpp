@@ -1,4 +1,5 @@
 #include "Widgets/DockSpace.h"
+#include "MiniI18n/I18n.h"
 #include "Widgets/FloatingPanel.h"
 #include "Widgets/Panel.h"
 #include "Core/UIContext.h"
@@ -2265,7 +2266,7 @@ namespace MiniGUI
     {
         if (!v.IsObject())
         {
-            warnings.push_back("dock：节点应为对象 { \"tabs\": … } 或 { \"split\": … }");
+            warnings.push_back(Tr("dock：节点应为对象 { \"tabs\": … } 或 { \"split\": … }"));
             return nullptr;
         }
         auto node = std::make_unique<Tree>();
@@ -2279,12 +2280,12 @@ namespace MiniGUI
                 auto it = m_panels.find(id);
                 if (it == m_panels.end())
                 {
-                    warnings.push_back("dock：没有名为 \"" + id + "\" 的面板");
+                    warnings.push_back(TrF("dock：没有名为 \"{0}\" 的面板", id));
                     continue;
                 }
                 if (std::find(used.begin(), used.end(), id) != used.end())
                 {
-                    warnings.push_back("dock：面板 \"" + id + "\" 被引用了多次");
+                    warnings.push_back(TrF("dock：面板 \"{0}\" 被引用了多次", id));
                     continue;
                 }
                 if (t.IsObject())
@@ -2306,7 +2307,7 @@ namespace MiniGUI
         {
             const std::string& dir = split->AsString();
             if (dir != "row" && dir != "column")
-                warnings.push_back("dock：split 应为 row 或 column");
+                warnings.push_back(Tr("dock：split 应为 row 或 column"));
             node->split      = true;
             node->horizontal = dir != "column";
             for (const JsonValue& c : v["children"].GetArray())
@@ -2326,7 +2327,7 @@ namespace MiniGUI
             return node;
         }
 
-        warnings.push_back("dock：节点缺少 tabs 或 split");
+        warnings.push_back(Tr("dock：节点缺少 tabs 或 split"));
         return nullptr;
     }
 
@@ -2336,7 +2337,7 @@ namespace MiniGUI
         std::vector<std::string>& w = warnings ? *warnings : local;
         if (!layout.IsObject())
         {
-            w.push_back("dock：布局应为对象");
+            w.push_back(Tr("dock：布局应为对象"));
             return false;
         }
         if (m_drag.active)
@@ -2347,7 +2348,7 @@ namespace MiniGUI
         const bool hasTree = layout.Find("tabs") || layout.Find("split");
         m_root = hasTree ? LoadTree(layout, w, used) : nullptr;
         if (layout.Size() > 0 && !hasTree && !floating)
-            w.push_back("dock：节点缺少 tabs 或 split");
+            w.push_back(Tr("dock：节点缺少 tabs 或 split"));
 
         // 浮动窗口：一个面板写 "panel"，几个面板写这个窗口的布局树；没挂到界面上时先记下，第一次布局时再开
         if (floating)
@@ -2364,12 +2365,12 @@ namespace MiniGUI
                     const std::string id = f["panel"].AsString();
                     if (!m_panels.count(id))
                     {
-                        w.push_back("dock：没有名为 \"" + id + "\" 的面板");
+                        w.push_back(TrF("dock：没有名为 \"{0}\" 的面板", id));
                         continue;
                     }
                     if (std::find(used.begin(), used.end(), id) != used.end())
                     {
-                        w.push_back("dock：面板 \"" + id + "\" 被引用了多次");
+                        w.push_back(TrF("dock：面板 \"{0}\" 被引用了多次", id));
                         continue;
                     }
                     if (!m_panels.at(id).options.showHeader)

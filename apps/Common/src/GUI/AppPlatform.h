@@ -4,6 +4,7 @@
 #include "Import/CadExchange.h"
 #include "Core/Ole/OleObject.h"
 #include "Core/Types/Rect.hpp"
+#include "MiniI18n/I18n.h"
 #include <cctype>
 #include <memory>
 #include <iterator>
@@ -35,26 +36,26 @@ namespace MiniCAD
     // 另存为可选的格式（桌面版系统对话框的筛选器与网页版另存为对话框共用，顺序即列表顺序）
     struct SaveFormat
     {
-        const char*    label;
+        const char*    label;       // N_ 标记，显示时 Tr
         const char*    ext;         // 小写，带点
         CadSaveVersion version;     // 只对 .dwg / .dxf 有意义
     };
     // DWG 没有 2007：MiniDWG 不能写 2007 格式的 DWG（见 CadSaveVersionSupported）
     inline constexpr SaveFormat kSaveFormats[] =
     {
-        { "MiniCAD 文档 (*.mcad)",          ".mcad", kDefaultCadSaveVersion },
-        { "AutoCAD 2018 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2018 },
-        { "AutoCAD 2013/2014 图形 (*.dwg)", ".dwg",  CadSaveVersion::R2013 },
-        { "AutoCAD 2010 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2010 },
-        { "AutoCAD 2004 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2004 },
-        { "AutoCAD 2000 图形 (*.dwg)",      ".dwg",  CadSaveVersion::R2000 },
-        { "AutoCAD 2018 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2018 },
-        { "AutoCAD 2013/2014 DXF (*.dxf)",  ".dxf",  CadSaveVersion::R2013 },
-        { "AutoCAD 2010 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2010 },
-        { "AutoCAD 2007 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2007 },
-        { "AutoCAD 2004 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2004 },
-        { "AutoCAD 2000 DXF (*.dxf)",       ".dxf",  CadSaveVersion::R2000 },
-        { "JSON 文件 (*.json)",             ".json", kDefaultCadSaveVersion },
+        { N_("MiniCAD 文档 (*.mcad)"),          ".mcad", kDefaultCadSaveVersion },
+        { N_("AutoCAD 2018 图形 (*.dwg)"),      ".dwg",  CadSaveVersion::R2018 },
+        { N_("AutoCAD 2013/2014 图形 (*.dwg)"), ".dwg",  CadSaveVersion::R2013 },
+        { N_("AutoCAD 2010 图形 (*.dwg)"),      ".dwg",  CadSaveVersion::R2010 },
+        { N_("AutoCAD 2004 图形 (*.dwg)"),      ".dwg",  CadSaveVersion::R2004 },
+        { N_("AutoCAD 2000 图形 (*.dwg)"),      ".dwg",  CadSaveVersion::R2000 },
+        { N_("AutoCAD 2018 DXF (*.dxf)"),       ".dxf",  CadSaveVersion::R2018 },
+        { N_("AutoCAD 2013/2014 DXF (*.dxf)"),  ".dxf",  CadSaveVersion::R2013 },
+        { N_("AutoCAD 2010 DXF (*.dxf)"),       ".dxf",  CadSaveVersion::R2010 },
+        { N_("AutoCAD 2007 DXF (*.dxf)"),       ".dxf",  CadSaveVersion::R2007 },
+        { N_("AutoCAD 2004 DXF (*.dxf)"),       ".dxf",  CadSaveVersion::R2004 },
+        { N_("AutoCAD 2000 DXF (*.dxf)"),       ".dxf",  CadSaveVersion::R2000 },
+        { N_("JSON 文件 (*.json)"),             ".json", kDefaultCadSaveVersion },
     };
 
     // 文件名（不区分大小写）与版本对应的另存格式下标：扩展名相同时优先版本一致的，
@@ -208,6 +209,8 @@ namespace MiniCAD
         // 系统的界面语言（BCP 47，如 "zh-CN"、"en-US"）；不知道时返回空串。
         // 桌面版：GetUserDefaultUILanguage；网页版：navigator.language；Linux：LC_ALL / LC_MESSAGES / LANG
         virtual std::string GetSystemLanguage() const { return {}; }
+        // 界面语言换了之后（启动时由宿主自己处理）：网页版据此设定 <html lang>
+        virtual void OnLanguageChanged(const std::string& code) { (void)code; }
         // 用户设置（"设置 > 语言"等）：默认存在用户数据目录下的 settings.json（GUI/UserSettings.cpp），
         // 没有用户数据目录时读出空串、写入失败；网页版存在浏览器的 localStorage
         virtual std::string ReadUserSetting(const std::string& key) const;

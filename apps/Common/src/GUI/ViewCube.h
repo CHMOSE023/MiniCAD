@@ -24,6 +24,7 @@ namespace MiniCAD
         };
 
         explicit ViewCube(Callbacks callbacks);
+        void Retranslate();     // 切换界面语言后重设提示（面上的字每帧画时翻译）
 
         // 局部坐标处点击后的视图方向（方位角 / 仰角，度），不在方块或指南针字母上返回 false
         bool PickView(MiniGUI::Vec2 local, double& azimuthDeg, double& elevationDeg) const;

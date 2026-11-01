@@ -1,4 +1,5 @@
 #include "Widgets/TitleBar.h"
+#include "MiniI18n/I18n.h"
 #include "Widgets/TabView.h"
 #include "Core/UIContext.h"
 #include "Data/CommandRegistry.h"
@@ -88,9 +89,9 @@ namespace MiniGUI
             }
             switch (m_kind)
             {
-            case CaptionKind::Minimize: SetTooltip("最小化"); break;
-            case CaptionKind::Maximize: SetTooltip(m_maximized ? "向下还原" : "最大化"); break;
-            case CaptionKind::Close:    SetTooltip("关闭"); break;
+            case CaptionKind::Minimize: SetTooltip(Tr("最小化")); break;
+            case CaptionKind::Maximize: SetTooltip(m_maximized ? Tr("向下还原") : Tr("最大化")); break;
+            case CaptionKind::Close:    SetTooltip(Tr("关闭")); break;
             }
         }
 

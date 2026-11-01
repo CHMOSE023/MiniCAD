@@ -7,6 +7,7 @@
 //   TrF("{0} 个外部参照没有找到", n)           → 先翻译再替换 {0}、{1}（译文里可以换顺序）
 //   N_("保存(&S)")                             → 原样返回，只给提取工具（tools/i18n_extract.py）做标记：
 //                                                存进数据、显示时才翻译的字符串用它（命令名称、节点名称……）
+//   NC_("视图方块", "上")                      → 同上，带上下文：显示时 TrC("视图方块", 变量)
 // 翻译表由 SetCatalog 装上，运行中可以再换（切换界面语言）；表本身只读，各线程都可以直接调用 Tr。
 #include <cstdint>
 #include <memory>
@@ -95,6 +96,7 @@ namespace MiniI18n
     }
 
     constexpr const char* N_(const char* msgid) { return msgid; }
+    constexpr const char* NC_(const char* /*context*/, const char* msgid) { return msgid; }
 }
 
 // 各库的代码直接写 Tr("…")，不必带命名空间
@@ -103,3 +105,4 @@ using MiniI18n::TrC;
 using MiniI18n::TrF;
 using MiniI18n::TrCF;
 using MiniI18n::N_;
+using MiniI18n::NC_;

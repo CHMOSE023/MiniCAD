@@ -24,6 +24,7 @@ namespace MiniCAD
         StatusBarView(DocumentManager& dm, std::function<Document*()> doc, float height);
 
         void Refresh();
+        void Retranslate();     // 切换界面语言后按当前语言重写开关的文字与提示
 
         // 点击捕捉 / 正交 / 悬停开关之后回调（宿主据此刷新工具栏、菜单的勾选状态）
         void SetOnToggled(std::function<void()> cb) { m_onToggled = std::move(cb); }
@@ -33,6 +34,7 @@ namespace MiniCAD
 
     private:
         void    OpenSnapSettings();
+        void    ApplyTexts();
         Editor* CurrentEditor();                // 这个窗口里文档的编辑器；没有文档时为空
         void    Toggle(void (Editor::*toggle)());
 

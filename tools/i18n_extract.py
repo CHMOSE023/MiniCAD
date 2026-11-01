@@ -7,7 +7,7 @@
     python tools/i18n_extract.py --where TEXT # 反查：译文或原文里含 TEXT 的条目，列出原文与代码位置（英文日志、截图定位用）
 
 提取的来源：
-- 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF 的上下文与原文
+- 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF / NC_ 的上下文与原文
 - 界面描述文件 assets/ui/minicad_ui.json 的 title / label / tooltip / text / search（只取含非 ASCII 字符的）
 不提取：自测（apps/Win32/src/Host/SelfTest.cpp）、tests/、tools/。
 """
@@ -26,7 +26,7 @@ UI_TEXT_FIELDS = {"title", "label", "tooltip", "text", "search"}
 
 STRING = r'"((?:[^"\\\n]|\\.)*)"'
 CALL1 = re.compile(r'\b(?:Tr|TrF|N_|LOG_INFO_TR|LOG_WARN_TR|LOG_ERROR_TR)\s*\(\s*' + STRING)
-CALL2 = re.compile(r'\b(?:TrC|TrCF)\s*\(\s*' + STRING + r'\s*,\s*' + STRING)
+CALL2 = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING + r'\s*,\s*' + STRING)
 PLACEHOLDER = re.compile(r'(?<!\{)\{(\d+)\}')
 OPTION_LETTER = re.compile(r'\(([A-Za-z0-9])\)')     # 命令行选项 [闭合(C)/放弃(U)]；助记符 (&S) 不算
 MNEMONIC = re.compile(r'&([^&])')

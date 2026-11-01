@@ -4,6 +4,7 @@
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "Paint/Image.h"
 #include "Platform/SDL/SDLFonts.h"
@@ -53,53 +54,78 @@ namespace MiniCAD
         }
 
         // ── 文件对话框（SDL3：xdg-desktop-portal，没有时 zenity）────────────
-        constexpr SDL_DialogFileFilter kDrawingFilters[] =
+        struct FilterSpec
         {
-            { "所有支持的文件",           "mcad;dwg;dxf;json" },
-            { "MiniCAD 文档 (*.mcad)",    "mcad" },
-            { "AutoCAD 图形 (*.dwg)",     "dwg" },
-            { "AutoCAD 交换文件 (*.dxf)", "dxf" },
-            { "JSON 文件 (*.json)",       "json" },
-            { "所有文件",                 "*" },
+            const char* name;       // N_ 标记的原文，打开对话框时翻译
+            const char* pattern;
         };
-        constexpr SDL_DialogFileFilter kImageFilters[] =
+        constexpr FilterSpec kDrawingFilters[] =
         {
-            { "图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)", "png;jpg;jpeg;bmp;tga;gif" },
-            { "所有文件", "*" },
+            { N_("所有支持的文件"),           "mcad;dwg;dxf;json" },
+            { N_("MiniCAD 文档 (*.mcad)"),    "mcad" },
+            { N_("AutoCAD 图形 (*.dwg)"),     "dwg" },
+            { N_("AutoCAD 交换文件 (*.dxf)"), "dxf" },
+            { N_("JSON 文件 (*.json)"),       "json" },
+            { N_("所有文件"),                 "*" },
         };
-        constexpr SDL_DialogFileFilter kNodeGraphFilters[] =
+        constexpr FilterSpec kImageFilters[] =
         {
-            { "MiniCAD 节点图 (*.mcnode)", "mcnode" },
-            { "JSON 文件 (*.json)",        "json" },
-            { "所有文件",                  "*" },
+            { N_("图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)"), "png;jpg;jpeg;bmp;tga;gif" },
+            { N_("所有文件"), "*" },
+        };
+        constexpr FilterSpec kNodeGraphFilters[] =
+        {
+            { N_("MiniCAD 节点图 (*.mcnode)"), "mcnode" },
+            { N_("JSON 文件 (*.json)"),        "json" },
+            { N_("所有文件"),                  "*" },
         };
 
-        // 另存为的筛选器（顺序与 kSaveFormats 一致，所选下标即格式与版本）
-        const std::vector<SDL_DialogFileFilter>& SaveFilters()
-        {
-            static const std::vector<SDL_DialogFileFilter> filters = []
-            {
-                std::vector<SDL_DialogFileFilter> f;
-                for (const SaveFormat& fmt : kSaveFormats)
-                    f.push_back({ fmt.label, fmt.ext + 1 });    // 扩展名去掉点
-                return f;
-            }();
-            return filters;
-        }
-
+        // 翻译后的筛选器。SDL 要求筛选器在回调之前一直有效：异步对话框随请求保存（只移动、不复制，
+        // 移动 vector 时元素不搬家，items 里指向 names 的指针仍然有效）
         struct DialogFilters
         {
-            const SDL_DialogFileFilter* items = nullptr;
-            int                         count = 0;
+            std::vector<std::string>          names;
+            std::vector<SDL_DialogFileFilter> items;
+
+            DialogFilters() = default;
+            DialogFilters(DialogFilters&&) = default;
+            DialogFilters& operator=(DialogFilters&&) = default;
+            DialogFilters(const DialogFilters&) = delete;
+            DialogFilters& operator=(const DialogFilters&) = delete;
+
+            const SDL_DialogFileFilter* data() const { return items.data(); }
+            int count() const { return static_cast<int>(items.size()); }
         };
+
+        template <size_t N>
+        DialogFilters TranslateFilters(const FilterSpec (&specs)[N])
+        {
+            DialogFilters f;
+            for (const FilterSpec& s : specs)
+                f.names.push_back(Tr(s.name));
+            for (size_t i = 0; i < N; ++i)
+                f.items.push_back({ f.names[i].c_str(), specs[i].pattern });
+            return f;
+        }
+
+        // 另存为的筛选器（顺序与 kSaveFormats 一致，所选下标即格式与版本）
+        DialogFilters SaveFilters()
+        {
+            DialogFilters f;
+            for (const SaveFormat& fmt : kSaveFormats)
+                f.names.push_back(Tr(fmt.label));
+            for (size_t i = 0; i < std::size(kSaveFormats); ++i)
+                f.items.push_back({ f.names[i].c_str(), kSaveFormats[i].ext + 1 });    // 扩展名去掉点
+            return f;
+        }
 
         DialogFilters FiltersFor(FileKind kind)
         {
             switch (kind)
             {
-            case FileKind::Image:     return { kImageFilters,     static_cast<int>(std::size(kImageFilters)) };
-            case FileKind::NodeGraph: return { kNodeGraphFilters, static_cast<int>(std::size(kNodeGraphFilters)) };
-            default:                  return { kDrawingFilters,   static_cast<int>(std::size(kDrawingFilters)) };
+            case FileKind::Image:     return TranslateFilters(kImageFilters);
+            case FileKind::NodeGraph: return TranslateFilters(kNodeGraphFilters);
+            default:                  return TranslateFilters(kDrawingFilters);
             }
         }
 
@@ -110,6 +136,7 @@ namespace MiniCAD
         {
             uint32_t     uiEvent = 0;
             DialogResult result;
+            DialogFilters filters;      // 回调之前 SDL 一直用着
         };
 
         // SDL 的回调可能在其他线程上：整理好结果后交回界面线程
@@ -121,7 +148,7 @@ namespace MiniCAD
             if (!filelist)
             {
                 const char* e = SDL_GetError();
-                error = e && *e ? e : "未知错误";
+                error = e && *e ? std::string(e) : Tr("未知错误");
             }
             else
             {
@@ -150,7 +177,7 @@ namespace MiniCAD
             if (!filelist)
             {
                 const char* e = SDL_GetError();
-                d->error = e && *e ? e : "未知错误";
+                d->error = e && *e ? std::string(e) : Tr("未知错误");
             }
             else if (*filelist)
             {
@@ -512,15 +539,14 @@ namespace MiniCAD
     void LinuxApp::ShowDialogError(const char* what)
     {
         LOG_ERROR("文件对话框打不开：%s", what);
-        MiniGUI::ShowMessageBox(m_main.GetUI(), "无法打开文件对话框",
-                                std::string(what) + "\n\n需要 xdg-desktop-portal 或 zenity。也可以把文件拖进窗口，或在命令行上给出图纸路径。",
-                                { "确定" }, [](int) {});
+        MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("无法打开文件对话框"),
+                                std::string(what) + "\n\n" + Tr("需要 xdg-desktop-portal 或 zenity。也可以把文件拖进窗口，或在命令行上给出图纸路径。"),
+                                { Tr("确定") }, [](int) {});
         RequestRedraw();
     }
 
     void LinuxApp::PickFile(FileKind kind, std::function<void(const std::string& path)> done)
     {
-        const DialogFilters f = FiltersFor(kind);
         auto* request = new DialogRequest{ m_uiEvent, [this, done = std::move(done)](std::vector<std::string> paths, int, std::string error)
         {
             if (!error.empty())
@@ -528,7 +554,9 @@ namespace MiniCAD
             else if (!paths.empty() && done)
                 done(paths.front());
         } };
-        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, f.items, f.count, nullptr, false);
+        request->filters = FiltersFor(kind);
+        const DialogFilters& f = request->filters;     // 回调里会删掉 request：调用之后不再碰它
+        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, f.data(), f.count(), nullptr, false);
     }
 
     void LinuxApp::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
@@ -540,7 +568,9 @@ namespace MiniCAD
             else if (!paths.empty() && done)
                 done(paths);
         } };
-        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, kDrawingFilters, static_cast<int>(std::size(kDrawingFilters)), nullptr, true);
+        request->filters = TranslateFilters(kDrawingFilters);
+        const DialogFilters& f = request->filters;
+        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, f.data(), f.count(), nullptr, true);
     }
 
     bool LinuxApp::PickFolder(const std::vector<std::string>&, std::function<void(const std::string& dir)> done)
@@ -560,9 +590,9 @@ namespace MiniCAD
     std::string LinuxApp::ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version)
     {
         // AppPlatform 要求当场返回路径：在界面线程上等对话框关闭（期间只取系统事件，不画界面）
-        const auto& filters = SaveFilters();
+        const DialogFilters filters = SaveFilters();
         SyncDialog dialog;
-        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, filters.data(), static_cast<int>(filters.size()),
+        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, filters.data(), filters.count(),
                                suggestedName.empty() ? nullptr : suggestedName.c_str());
         while (!dialog.done)
         {
@@ -601,7 +631,7 @@ namespace MiniCAD
     {
         const DialogFilters f = FiltersFor(kind);
         SyncDialog dialog;
-        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, f.items, f.count,
+        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, f.data(), f.count(),
                                suggestedName.empty() ? nullptr : suggestedName.c_str());
         while (!dialog.done)
         {

@@ -405,7 +405,7 @@ namespace MiniCAD
 
         if (m_openBar)
         {
-            m_openLabel->SetText("正在打开 " + job->name);
+            m_openLabel->SetText(TrF("正在打开 {0}", job->name));
             m_openProgress->SetValue(0.0f);
             m_openBar->SetVisible(true);
         }
@@ -448,7 +448,7 @@ namespace MiniCAD
         if (m_openDone->doc && m_openBar)
         {
             // 加入后分帧生成显示（细分、裁剪，Editor::BeginProgressiveBuild），进度在 SyncOpenProgress 里跟着走
-            m_openLabel->SetText("正在生成显示 " + m_openDone->name);
+            m_openLabel->SetText(TrF("正在生成显示 {0}", m_openDone->name));
             m_openProgress->SetValue(0.0f);
         }
         m_platform->RequestRedraw();
@@ -494,7 +494,7 @@ namespace MiniCAD
             // 打不开的多半已被删掉 / 移走：从「最近打开」里去掉，避免下次还点它
             ForgetRecentFile(job->path);
             if (!m_openFailures.empty()) m_openFailures += "\n\n";
-            m_openFailures += job->path + "\n" + (job->error.empty() ? "无法打开图纸" : job->error);
+            m_openFailures += job->path + "\n" + (job->error.empty() ? Tr("无法打开图纸") : job->error);
         }
         StartNextOpen();
     }
@@ -511,7 +511,7 @@ namespace MiniCAD
         }
         m_openedAny = false;
         if (!m_openFailures.empty() && m_ui)
-            MiniGUI::ShowMessageBox(*m_ui, "打开图纸失败", m_openFailures, { "确定" }, [](int) {});
+            MiniGUI::ShowMessageBox(*m_ui, Tr("打开图纸失败"), m_openFailures, { Tr("确定") }, [](int) {});
         m_openFailures.clear();
         PromptMissingXrefs();
     }
@@ -541,11 +541,11 @@ namespace MiniCAD
                 {
                     if (++total > limit)
                         continue;
-                    text += "\n" + (docs.size() > 1 ? doc->GetName() + "：" : std::string()) + x.Name + " — " + (x.Path.empty() ? "（没有路径）" : x.Path);
+                    text += "\n" + (docs.size() > 1 ? TrF("{0}：", doc->GetName()) : std::string()) + x.Name + " — " + (x.Path.empty() ? Tr("（没有路径）") : x.Path);
                     ++lines;
                 }
             if (total > lines)
-                text += "\n……另有 " + std::to_string(total - lines) + " 个";
+                text += "\n" + TrF("……另有 {0} 个", total - lines);
             return text;
         }
     }
@@ -561,9 +561,9 @@ namespace MiniCAD
         size_t count = 0;
         for (Document* d : docs)
             count += FindUnresolvedXrefs(d->GetScene()).size();
-        const std::string message = "有 " + std::to_string(count) + " 个外部参照没有找到，图中在插入点显示其路径：\n"
-                                  + ListMissingXrefs(docs, 8) + "\n\n可以选择参照文件所在的文件夹（或它的上级文件夹），在里面查找。";
-        MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到", message, { "选择文件夹…", "忽略" }, [this, docs](int button)
+        const std::string message = TrF("有 {0} 个外部参照没有找到，图中在插入点显示其路径：", count) + "\n"
+                                  + ListMissingXrefs(docs, 8) + "\n\n" + Tr("可以选择参照文件所在的文件夹（或它的上级文件夹），在里面查找。");
+        MiniGUI::ShowMessageBox(*m_ui, Tr("外部参照未找到"), message, { Tr("选择文件夹…"), Tr("忽略") }, [this, docs](int button)
         {
             if (button == 0)
                 LocateXrefs(docs);
@@ -600,15 +600,16 @@ namespace MiniCAD
                 if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
                     m_docManager.ZoomAll(false);
                 if (m_docManager.GetActive())
-                    m_docManager.GetEditor().GetCmdLine().Echo("外部参照：读入 " + std::to_string(loaded) + " 个");
+                    m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
                 if (m_viewport) m_viewport->RequestRender();
                 StateChanged();
             }
             if (!remaining.empty() && m_ui)
-                MiniGUI::ShowMessageBox(*m_ui, "外部参照未找到",
-                                        (loaded > 0 ? "已读入 " + std::to_string(loaded) + " 个，" : std::string("在所选文件夹里没有找到，")) +
-                                        "仍有以下外部参照没有找到：\n" + ListMissingXrefs(remaining, 8),
-                                        { "选择其他文件夹…", "关闭" }, [this, remaining](int button)
+                MiniGUI::ShowMessageBox(*m_ui, Tr("外部参照未找到"),
+                                        (loaded > 0 ? TrF("已读入 {0} 个，仍有以下外部参照没有找到：", loaded)
+                                                    : Tr("在所选文件夹里没有找到，仍有以下外部参照没有找到：")) +
+                                        "\n" + ListMissingXrefs(remaining, 8),
+                                        { Tr("选择其他文件夹…"), Tr("关闭") }, [this, remaining](int button)
                                         {
                                             if (button == 0)
                                                 LocateXrefs(remaining);
@@ -616,7 +617,7 @@ namespace MiniCAD
             m_platform->RequestRedraw();
         });
         if (!supported && m_ui)
-            MiniGUI::ShowMessageBox(*m_ui, "外部参照", "当前平台不支持选择文件夹。", { "确定" }, [](int) {});
+            MiniGUI::ShowMessageBox(*m_ui, Tr("外部参照"), Tr("当前平台不支持选择文件夹。"), { Tr("确定") }, [](int) {});
     }
 
     void MainFrame::SyncOpenProgress()
@@ -644,7 +645,7 @@ namespace MiniCAD
                 if (!m_openBar->IsVisible() || percent != m_openPercent)
                 {
                     m_openPercent = percent;
-                    m_openLabel->SetText("正在生成显示 " + m_buildName);
+                    m_openLabel->SetText(TrF("正在生成显示 {0}", m_buildName));
                     m_openProgress->SetValue(static_cast<float>(percent) / 100.0f);
                     m_openBar->SetVisible(true);
                 }
@@ -746,7 +747,7 @@ namespace MiniCAD
             return;
         }
 
-        ShowSaveStatus(SaveState::Saving, all ? std::string("正在保存全部文档") : "正在保存 " + active->GetName());
+        ShowSaveStatus(SaveState::Saving, all ? Tr("正在保存全部文档") : TrF("正在保存 {0}", active->GetName()));
         m_saveStatusShown = true;
         // 先把"正在保存"画出来再保存（大图纸写 DWG 要一会儿）：
         // 桌面版投递的消息先于 WM_PAINT 处理，所以在消息里自己画一帧；网页版 RunInBackground 先画一帧再执行
@@ -877,12 +878,14 @@ namespace MiniCAD
         }
 
         const auto& layouts = doc->GetScene().Layouts();
+        // 模型页的名称是写进图纸的数据（"模型"，DWG 里是 Model），标签上按当前语言显示；图纸布局显示自己的名称
+        auto title = [](const DrawingLayout& l) { return l.Model ? Tr("模型") : l.Name; };
         c.syncingLayouts = true;
-        // 数量或名称变化才重建（避免每帧抖掉用户的选中）
+        // 数量或名称变化才重建（避免每帧抖掉用户的选中）；切换语言后模型页的标题变了，也重建
         bool rebuild = c.layoutTabs->GetTabCount() != static_cast<int>(layouts.size());
         if (!rebuild)
             for (size_t i = 0; i < layouts.size(); ++i)
-                if (c.layoutTabs->GetTabTitle(static_cast<int>(i)) != layouts[i].Name)
+                if (c.layoutTabs->GetTabTitle(static_cast<int>(i)) != title(layouts[i]))
                 { rebuild = true; break; }
 
         if (rebuild)
@@ -890,7 +893,7 @@ namespace MiniCAD
             for (int i = c.layoutTabs->GetTabCount() - 1; i >= 0; --i)
                 c.layoutTabs->RemoveTab(i);
             for (const auto& l : layouts)
-                c.layoutTabs->AddTab(l.Name, nullptr, false);
+                c.layoutTabs->AddTab(title(l), nullptr, false);
         }
         c.layoutTabs->SetSelected(doc->ActiveLayout());
         c.syncingLayouts = false;
@@ -958,13 +961,13 @@ namespace MiniCAD
         sheet.OwnerKey = 0;               // 由命令分配新键
         for (int n = 1; ; ++n)
         {
-            sheet.Name = "布局" + std::to_string(n);
+            sheet.Name = "布局" + std::to_string(n);      // i18n: 数据（写进图纸的布局名）
             if (std::none_of(layouts.begin(), layouts.end(), [&](const DrawingLayout& l) { return l.Name == sheet.Name; }))
                 break;
         }
         sheet.Order = static_cast<int>(layouts.size());
         doc->GetCommandStack().Execute(std::make_unique<AddLayoutCommand>(sheet, static_cast<int>(layouts.size())), doc->GetScene());
-        m_docManager.GetEditor().GetCmdLine().Echo("新建布局：" + sheet.Name);
+        m_docManager.GetEditor().GetCmdLine().Echo(TrF("新建布局：{0}", sheet.Name));
         StateChanged();
     }
 
@@ -981,7 +984,7 @@ namespace MiniCAD
         auto& cmd = m_docManager.GetEditor().GetCmdLine();
         if (RemoveLayoutCommand::PaperCount(doc->GetScene()) <= 1)
         {
-            cmd.Echo("至少要保留一张布局");
+            cmd.Echo(Tr("至少要保留一张布局"));
             return;
         }
         const std::string name = layouts[static_cast<size_t>(index)].Name;
@@ -989,7 +992,7 @@ namespace MiniCAD
         m_docManager.GetEditor().SetSelection({});
         if (doc->GetCommandStack().Execute(std::make_unique<RemoveLayoutCommand>(layouts[static_cast<size_t>(index)].OwnerKey),
                                            doc->GetScene()))
-            cmd.Echo("删除布局：" + name);
+            cmd.Echo(TrF("删除布局：{0}", name));
         HostOf(doc).RequestRender();
         StateChanged();
     }
@@ -1065,8 +1068,8 @@ namespace MiniCAD
             close();
             return;
         }
-        MiniGUI::ShowMessageBox(*m_ui, "MiniCAD", "“" + doc->GetName() + "”尚未保存，是否保存修改？",
-            { "保存", "不保存", "取消" },
+        MiniGUI::ShowMessageBox(*m_ui, "MiniCAD", TrF("“{0}”尚未保存，是否保存修改？", doc->GetName()),
+            { Tr("保存"), Tr("不保存"), Tr("取消") },
             [this, doc, close, alive](int r)
             {
                 if (r == 0 && alive())
@@ -1140,10 +1143,10 @@ namespace MiniCAD
         // 状态栏：保存结果。没有显示过"正在保存"（经过另存为对话框）时，没保存上的多半是取消了对话框，不提示失败
         const bool shown = std::exchange(m_saveStatusShown, false);
         if (failed > 0 && shown)
-            ShowSaveStatus(SaveState::Failed, "保存失败");
+            ShowSaveStatus(SaveState::Failed, Tr("保存失败"));
         else if (saved > 0)
-            ShowSaveStatus(SaveState::Saved, saved == 1 && targets.size() == 1 ? "已保存 " + targets.front().first->GetName()
-                                                                               : "已保存 " + std::to_string(saved) + " 个文档");
+            ShowSaveStatus(SaveState::Saved, saved == 1 && targets.size() == 1 ? TrF("已保存 {0}", targets.front().first->GetName())
+                                                                               : TrF("已保存 {0} 个文档", saved));
         else
             ShowSaveStatus(SaveState::Hidden);
         if (onSaved && active && !active->IsDirty())
@@ -1168,8 +1171,8 @@ namespace MiniCAD
         }
         if (m_ui->HasModal())
             return;             // 已经在询问了（例如连续点了两次关闭）
-        MiniGUI::ShowMessageBox(*m_ui, "退出 MiniCAD", "有 " + std::to_string(dirty) + " 个文档未保存。",
-            { "全部保存", "不保存", "取消" },
+        MiniGUI::ShowMessageBox(*m_ui, Tr("退出 MiniCAD"), TrF("有 {0} 个文档未保存。", dirty),
+            { Tr("全部保存"), Tr("不保存"), Tr("取消") },
             [this](int r)
             {
                 if (r == 0)

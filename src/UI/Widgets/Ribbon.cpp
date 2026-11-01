@@ -166,7 +166,7 @@ namespace MiniGUI
                 m_label = c ? CommandRegistry::StripMnemonic(commands.GetLabel(id)) : "?" + id;
                 if (!m_label.empty() && m_label.size() >= 3 && m_label.compare(m_label.size() - 3, 3, "…") == 0)
                     m_label.erase(m_label.size() - 3);          // 按钮上不显示"…"
-                SetTooltip(c ? commands.GetTooltip(id) : "没有名为 " + id + " 的命令");
+                SetTooltip(c ? commands.GetTooltip(id) : TrF("没有名为 {0} 的命令", id));
                 if (!c)
                     SetEnabled(false);
             }
@@ -188,7 +188,13 @@ namespace MiniGUI
                 UIContext* ctx = GetContext();
                 if (!ctx)
                     return;
-                const Rect icon = Rect::FromXYWH(std::round(r.Center().x - kIconSize * 0.5f), r.min.y + 7.0f, kIconSize, kIconSize);
+                TextParams p = Params(kLabelSize, enabled ? Theme::Text : Theme::TextDisabled, TextAlign::Center, TextAlign::Start);
+                p.wrap = true;
+                // 名称分成两行（英文等）时放不下：图标与名称一起上移
+                const float textH = ctx->GetTextSystem().Measure(m_label, p, r.Width() - 4.0f).y;
+                const float room  = r.max.y - 1.0f - (r.min.y + 7.0f + kIconSize + 3.0f);
+                const float lift  = std::clamp(std::ceil(textH - room), 0.0f, 6.0f);
+                const Rect icon = Rect::FromXYWH(std::round(r.Center().x - kIconSize * 0.5f), r.min.y + 7.0f - lift, kIconSize, kIconSize);
                 TextureId tex = InvalidTextureId;
                 if (!m_icon.empty())
                     tex = ctx->LoadTexture(m_icon, icon.Size());
@@ -201,8 +207,6 @@ namespace MiniGUI
                     ctx->GetTextSystem().Draw(dl, icon, FirstChar(m_label), Params(13.0f, enabled ? Theme::Text : Theme::TextDisabled));
                 }
                 const Rect label{ r.min.x + 2.0f, icon.max.y + 3.0f, r.max.x - 2.0f, r.max.y - 1.0f };
-                TextParams p = Params(kLabelSize, enabled ? Theme::Text : Theme::TextDisabled, TextAlign::Center, TextAlign::Start);
-                p.wrap = true;
                 dl.PushClipRect(label);
                 ctx->GetTextSystem().Draw(dl, label, m_label, p);
                 dl.PopClipRect();
@@ -287,7 +291,7 @@ namespace MiniGUI
     {
         SetClipChildren(true);
         m_collapseButton = AddChild<ChevronButton>([this] { SetCollapsed(!m_collapsed); }, [this] { return m_collapsed; });
-        m_collapseButton->SetTooltip("收起功能区（双击选项卡也可以）");
+        m_collapseButton->SetTooltip(Tr("收起功能区（双击选项卡也可以）"));
         m_listener      = m_commands.AddListener([this] { RefreshState(); });
         m_registryAlive = m_commands.GetLifetimeToken();
     }
@@ -389,9 +393,9 @@ namespace MiniGUI
                 ListItem li;
                 li.text = CommandRegistry::StripMnemonic(m_commands.GetLabel(id));
                 if (!m_commands.IsEnabled(id))
-                    li.text += "（当前不可用）";
+                    li.text += Tr("（当前不可用）");
                 const auto place = places.find(id);
-                li.detail = place != places.end() ? place->second : std::string("文件菜单");
+                li.detail = place != places.end() ? place->second : Tr("文件菜单");
                 if (const Command* c = m_commands.Find(id); c && !c->shortcut.empty())
                     li.detail += "   " + c->shortcut;
                 li.userData = i;
@@ -575,12 +579,45 @@ namespace MiniGUI
     {
         if (item.id.empty())
             return item.node->Measure({ 1e6f, kButtonH }).x;
-        if (narrow)
-            return kButtonMinW;
         UIContext* ctx = GetContext();
+        if (!ctx)
+            return narrow ? kButtonMinW : kButtonMaxW;
         const auto* b = static_cast<const RibbonButton*>(item.node);
-        const float textW = ctx ? ctx->GetTextSystem().Measure(b->Label(), Params(kLabelSize, Theme::Text)).x : 40.0f;
-        return std::clamp(std::ceil(textW) + kLabelPad, kButtonMinW, kButtonMaxW);
+        const std::string& label = b->Label();
+        TextSystem& ts = ctx->GetTextSystem();
+        const TextParams p = Params(kLabelSize, Theme::Text);
+        auto width = [&](std::string_view s) { return std::ceil(ts.Measure(s, p).x); };
+
+        // 名称最多两行。英文等按空格分行，单词不能断开：按钮至少放得下最长的词，一行放不下时取分成两行后较宽那行的最小值。
+        // 中文可以在任意两字之间分行：三字节及以上的 UTF-8 字符（中日韩文字与标点）不算进单词
+        const std::string_view text = label;
+        float longestWord = 0.0f, twoLines = width(text);
+        size_t wordStart = std::string_view::npos;
+        auto endWord = [&](size_t end)
+        {
+            if (wordStart != std::string_view::npos)
+                longestWord = std::max(longestWord, width(text.substr(wordStart, end - wordStart)));
+            wordStart = std::string_view::npos;
+        };
+        for (size_t i = 0; i < text.size();)
+        {
+            const auto c = static_cast<unsigned char>(text[i]);
+            if (c == ' ' || c >= 0xE0)
+            {
+                endWord(i);
+                if (c == ' ')
+                    twoLines = std::min(twoLines, std::max(width(text.substr(0, i)), width(text.substr(i + 1))));
+            }
+            else if (wordStart == std::string_view::npos)
+                wordStart = i;
+            i += c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        }
+        endWord(text.size());
+        const float minW = std::max(kButtonMinW, longestWord + kLabelPad);
+        if (narrow)
+            return minW;        // 窄模式：一律最窄，只保证单词不断开
+        const float oneLine = width(label) + kLabelPad;
+        return std::max(minW, oneLine <= kButtonMaxW ? oneLine : std::min(twoLines + kLabelPad, kButtonMaxW));
     }
 
     float Ribbon::PanelTitleMinW(const Panel& p) const
@@ -650,7 +687,7 @@ namespace MiniGUI
             right -= w + 4.0f;
         }
         m_collapseButton->SetBounds(Rect::FromXYWH(right - kChevronW, 3.0f, kChevronW, kTabRowH - 6.0f));
-        m_collapseButton->SetTooltip(m_collapsed ? "展开功能区（双击选项卡也可以）" : "收起功能区（双击选项卡也可以）");
+        m_collapseButton->SetTooltip(m_collapsed ? Tr("展开功能区（双击选项卡也可以）") : Tr("收起功能区（双击选项卡也可以）"));
 
         if (m_selected < 0 || m_selected >= GetTabCount())
             return;

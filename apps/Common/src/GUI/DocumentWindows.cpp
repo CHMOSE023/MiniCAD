@@ -290,16 +290,16 @@ namespace MiniCAD
             Document* doc = docAt(i);
             const bool alone = pane != kMainPane && m_docManager.DocumentsIn(pane).size() <= 1;    // 已经独占一个窗口
             std::vector<MenuItem> items{
-                MenuItem("保存(&S)",    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
-                MenuItem("另存为(&A)…", [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
-                MenuItem("在新窗口中打开(&W)", [this, t, doc, pane]
+                MenuItem(Tr("保存(&S)"),    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
+                MenuItem(Tr("另存为(&A)…"), [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
+                MenuItem(Tr("在新窗口中打开(&W)"), [this, t, doc, pane]
                 {
                     const Rect r = t->GetScreenBounds();
                     FloatDocument(doc, PaneToMain(pane, Vec2{ r.min.x + 120.0f, r.max.y + 80.0f }));
                 }).Enabled(!alone),
             };
             if (pane != kMainPane)
-                items.push_back(MenuItem("移到主窗口(&M)", [this, doc] { MoveDocumentsTo({ doc }, doc, kMainPane, -1); }));
+                items.push_back(MenuItem(Tr("移到主窗口(&M)"), [this, doc] { MoveDocumentsTo({ doc }, doc, kMainPane, -1); }));
             return items;
         });
     }

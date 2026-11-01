@@ -283,8 +283,8 @@ namespace MiniCAD
                 canDelete = !doc->GetScene().Layouts()[static_cast<size_t>(i)].Model &&
                             RemoveLayoutCommand::PaperCount(doc->GetScene()) > 1;
             return std::vector<MenuItem>{
-                MenuItem("新建布局(&N)", [this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); }),
-                MenuItem("删除布局(&D)", [this, pc, i] { UseChrome(*pc); DeleteLayout(i); }).Enabled(canDelete),
+                MenuItem(Tr("新建布局(&N)"), [this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); }),
+                MenuItem(Tr("删除布局(&D)"), [this, pc, i] { UseChrome(*pc); DeleteLayout(i); }).Enabled(canDelete),
             };
         });
 
@@ -378,7 +378,7 @@ namespace MiniCAD
                 CommandMenuItem(m_commands, "view.top"),   CommandMenuItem(m_commands, "view.front"),
                 CommandMenuItem(m_commands, "view.right"), CommandMenuItem(m_commands, "view.swiso"),
                 MenuItem::Separator(),
-                MenuItem("隐藏视图方块(&H)", [this] { SetViewCubeVisible(false); }),
+                MenuItem(Tr("隐藏视图方块(&H)"), [this] { SetViewCubeVisible(false); }),
             };
             auto popup = std::make_unique<MenuPopup>(std::move(items));
             popup->SetAnchor(Rect{ pos.x, pos.y, pos.x, pos.y }, PopupPlacement::Below);
@@ -850,7 +850,7 @@ namespace MiniCAD
             LOG_ERROR("界面描述：%s", m_layout->GetError().c_str());
             if (firstLoad)
                 m_layout->ApplyText(m_uiHost, kFallbackLayout);     // 第一次就失败：至少显示绘图区和状态栏
-            m_uiStatus->SetText(m_layout->GetError() + "（保留当前界面）");
+            m_uiStatus->SetText(TrF("{0}（保留当前界面）", m_layout->GetError()));
             m_uiStatus->SetColor(Theme::Danger);
         }
         else
@@ -861,7 +861,7 @@ namespace MiniCAD
             const size_t n = m_layout->GetWarnings().size();
             std::string text;
             if (n > 0)
-                text = "界面：" + fileName + "，" + std::to_string(n) + " 条警告：" + m_layout->GetWarnings().front();
+                text = TrF("界面：{0}，{1} 条警告：{2}", fileName, n, m_layout->GetWarnings().front());
             m_uiStatus->SetText(text);
             m_uiStatus->SetColor(n > 0 ? Theme::Danger : Theme::TextDim);
             m_uiStatus->SetTooltip(m_uiPath);
@@ -906,7 +906,7 @@ namespace MiniCAD
 
     void MainFrame::SetLanguage(const std::string& code, bool save)
     {
-        SwitchLanguage(*m_platform, code, save);
+        m_platform->OnLanguageChanged(SwitchLanguage(*m_platform, code, save));
         Retranslate();
     }
 
@@ -936,7 +936,12 @@ namespace MiniCAD
         {
             if (c.navBar)
                 BuildViewNavBar(c);
+            if (c.statusBar)
+                c.statusBar->Retranslate();
+            if (auto* cube = dynamic_cast<ViewCube*>(c.cube))
+                cube->Retranslate();
         });
+        SyncLayoutTabs();                // 模型页的标签名（"模型"是数据，显示时翻译）
         UpdateChromeVisibility();
         UpdateTitle();
         m_ui->Update();
@@ -1041,7 +1046,7 @@ namespace MiniCAD
             return;
 
         JsonValue root = JsonValue::MakeObject();
-        root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));
+        root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));    // i18n: 数据（写进文件）
         root.Set("dock", dock->SaveLayout());
         root.Set("version", JsonValue(static_cast<double>(kUserLayoutVersion)));
         root.Set("viewCube", JsonValue(m_viewCubeVisible));
@@ -1140,12 +1145,12 @@ namespace MiniCAD
         {
             // 一条记录都没有：仍返回一个（禁用的）提示项，让「最近打开」本身保持可展开——
             // 否则菜单项会被 MenuPopup 判为空而整个灰掉，看起来像没有这个功能
-            items.push_back(MenuItem("（无最近打开的文件）").Enabled(false));
+            items.push_back(MenuItem(Tr("（无最近打开的文件）")).Enabled(false));
             return items;
         }
 
         items.push_back(MenuItem::Separator());
-        items.push_back(MenuItem("清除记录(&C)", [this] { ClearRecentFiles(); }));
+        items.push_back(MenuItem(Tr("清除记录(&C)"), [this] { ClearRecentFiles(); }));
         return items;
     }
 }

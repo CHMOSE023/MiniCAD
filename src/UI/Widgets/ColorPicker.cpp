@@ -1,4 +1,5 @@
 #include "Widgets/ColorPicker.h"
+#include "MiniI18n/I18n.h"
 #include "Widgets/Label.h"
 #include "Widgets/TextBox.h"
 #include "Style/Theme.hpp"
@@ -255,7 +256,7 @@ namespace MiniGUI
             s.gap        = 8.0f;
             row->SetLayoutStyle(s);
         }
-        row->AddChild<Label>("十六进制", 12.0f, Theme::TextDim);
+        row->AddChild<Label>(Tr("十六进制"), 12.0f, Theme::TextDim);
         TextBox* hex = row->AddChild<TextBox>(ToHex(current));
         hex->EditLayoutStyle().grow = 1.0f;
         hex->SetOnSubmit([choose, hex](const std::string& text)
