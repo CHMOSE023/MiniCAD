@@ -84,8 +84,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_points.empty()) return "指定引线箭头落点:";
-            return "指定下一点 [右键提交/ESC 取消]:";
+            if (m_points.empty()) return Tr("指定引线箭头落点:");
+            return Tr("指定下一点 [右键提交/ESC 取消]:");
         }
 
         void OnSceneChanged() override { Reset(); }
@@ -130,7 +130,7 @@ namespace MiniCAD
             auto id     = m_ctx->scene.NextObjectID();
             Math::Point3 tail = m_points.back();
             auto entity = std::make_unique<LeaderEntity>(id, m_points);
-            entity->SetText(m_defaultText);          // 默认注释,稍后可编辑
+            entity->SetText(m_defaultText.empty() ? Tr("说明") : m_defaultText);          // 默认注释,稍后可编辑
             m_ctx->ApplyCurrentAttr(*entity);
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
@@ -154,6 +154,6 @@ namespace MiniCAD
 
         std::vector<Math::Point3> m_points;
         Math::Point3              m_cursor{};
-        std::string               m_defaultText = "说明";   // 默认注释文字
+        std::string               m_defaultText;            // 默认注释文字；空 = "说明"（按界面语言）
     };
 }

@@ -97,7 +97,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasRoot ? "指定通过点 [右键/ESC 退出]:" : "指定根点:";
+            return m_hasRoot ? Tr("指定通过点 [右键/ESC 退出]:") : Tr("指定根点:");
         }
 
         void OnSceneChanged() override { Reset(); }

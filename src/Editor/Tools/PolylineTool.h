@@ -108,11 +108,11 @@ namespace MiniCAD
         std::string GetPrompt() const override
         {
             if (m_points.empty())
-                return "指定起点 [L 直线/A 圆弧]:";
+                return Tr("指定起点 [L 直线/A 圆弧]:");
             if (m_mode == DrawMode::Arc)
-                return m_hasArcMid ? "指定圆弧终点:" : "指定圆弧上一点:";
-            return CanClose() ? "指定下一点 [L 直线/A 圆弧/C 闭合/右键提交/ESC]:"
-                              : "指定下一点 [L 直线/A 圆弧/右键提交/ESC]:";
+                return m_hasArcMid ? Tr("指定圆弧终点:") : Tr("指定圆弧上一点:");
+            return CanClose() ? Tr("指定下一点 [L 直线/A 圆弧/C 闭合/右键提交/ESC]:")
+                              : Tr("指定下一点 [L 直线/A 圆弧/右键提交/ESC]:");
         }
 
         void OnSceneChanged() override

@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdlib>
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 
 #ifdef MINICAD_WEB
 #include <emscripten.h>
@@ -112,6 +113,14 @@ namespace MiniCAD
 {
     namespace
     {
+        // 回显里的面积、周长、体积：保留 4 位小数，再填进 TrF 的占位
+        std::string Fixed4(double v)
+        {
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "%.4f", v);
+            return buf;
+        }
+
         // 节点图预览的线：实体 Draw() 输出的线段按各自的颜色写入顶点（填充三角形不画），相对渲染原点
         class PreviewLineSink : public IDrawSink
         {
@@ -563,7 +572,7 @@ namespace MiniCAD
                 LOG_WARN("[Editor] Block: no (editable) selection");
                 return nullptr;
             }
-            return std::make_unique<PickPointTool>("指定基点:",
+            return std::make_unique<PickPointTool>(N_("指定基点:"),
                 [this, ids = std::move(ids)](const Math::Point3& p)
                 {
 #ifdef MINICAD_WEB
@@ -806,7 +815,7 @@ namespace MiniCAD
             }
         }
 
-        m_commandLine.Echo("未知命令: " + alias);
+        m_commandLine.Echo(TrF("未知命令: {0}", alias));
         LOG_WARN("[Editor] Unknown command: %s", alias.c_str());
     }
 
@@ -877,7 +886,7 @@ namespace MiniCAD
         }
         if (!any)
         {
-            m_commandLine.Echo("图形中没有可显示的对象");
+            m_commandLine.Echo(Tr("图形中没有可显示的对象"));
             return;
         }
         Camera& cam = m_viewport->GetCamera();
@@ -900,7 +909,7 @@ namespace MiniCAD
         else if (opt == "E" || opt == "EXTENTS" || opt == "W" || opt == "WINDOW")
             ActivateToolById("ZoomWindow");
         else
-            m_commandLine.Echo("*取消*（ZOOM 目前支持 A / E）");
+            m_commandLine.Echo(Tr("*取消*（ZOOM 目前支持 A / E）"));
     }
 
     void Editor::RunCommand(const std::string& text)
@@ -912,7 +921,7 @@ namespace MiniCAD
             if (m_zoomPending)   // ZOOM 等待选项时空回车 = 取消
             {
                 m_zoomPending = false;
-                m_commandLine.Echo("*取消*");
+                m_commandLine.Echo(Tr("*取消*"));
                 return;
             }
             // 空回车 = 重复上一条命令（AutoCAD 行为）
@@ -948,7 +957,7 @@ namespace MiniCAD
                     opt = cmd.substr(o);
             }
             std::transform(opt.begin(), opt.end(), opt.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            m_commandLine.Echo("命令: " + cmd);
+            m_commandLine.Echo(TrF("命令: {0}", cmd));
             if (opt.empty())
                 m_zoomPending = true;
             else
@@ -990,14 +999,14 @@ namespace MiniCAD
             if (!m_doc)
                 return;
             m_imageRequest.Active = true;
-            m_commandLine.Echo("命令: Image");
+            m_commandLine.Echo(TrF("命令: {0}", "Image"));
             m_lastCommand = "Image";
             return;
         }
 
         if (toolId == "ZoomAll")       // 特例命令:ZOOM A（空回车重复上一条命令时用）
         {
-            m_commandLine.Echo("命令: ZOOM A");
+            m_commandLine.Echo(TrF("命令: {0}", "ZOOM A"));
             ZoomAll();
             return;
         }
@@ -1011,7 +1020,7 @@ namespace MiniCAD
         for (const auto& [name, view] : kViews)
             if (toolId == name)
             {
-                m_commandLine.Echo(std::string("命令: ") + name);
+                m_commandLine.Echo(TrF("命令: {0}", name));
                 SetStandardView(view);
                 m_lastCommand = name;
                 return;
@@ -1020,14 +1029,14 @@ namespace MiniCAD
         {
             const bool shaded = toolId == "Shade";
             SetVisualStyle(shaded ? VisualStyle::Shaded : VisualStyle::Wireframe);
-            m_commandLine.Echo(shaded ? "视觉样式：着色" : "视觉样式：线框");
+            m_commandLine.Echo(shaded ? Tr("视觉样式：着色") : Tr("视觉样式：线框"));
             m_lastCommand = toolId;
             return;
         }
 
         if (toolId == "Zoom")          // 只输入 ZOOM（别名 Z、补全到全名后空格 / 回车）：等待下一行输入选项
         {
-            m_commandLine.Echo("命令: ZOOM");
+            m_commandLine.Echo(TrF("命令: {0}", "ZOOM"));
             m_zoomPending = true;
             return;
         }
@@ -1036,7 +1045,7 @@ namespace MiniCAD
              || toolId == "SolidSection" || toolId == "Flatshot" || toolId == "Revolve" || toolId == "Sweep"
              || toolId == "FilletEdge" || toolId == "ChamferEdge") && !m_solidKernel)
         {
-            m_commandLine.Echo(toolId + ": 三维建模不可用（此版本没有实体内核）");
+            m_commandLine.Echo(TrF("{0}: 三维建模不可用（此版本没有实体内核）", toolId));
             return;
         }
 
@@ -1085,7 +1094,7 @@ namespace MiniCAD
             if (!m_doc)
                 return;
             m_textStyleRequest.Active = true;
-            m_commandLine.Echo("命令: Style");
+            m_commandLine.Echo(TrF("命令: {0}", "Style"));
             m_lastCommand = "Style";
             return;
         }
@@ -1095,7 +1104,7 @@ namespace MiniCAD
             if (!m_doc)
                 return;
             m_mlineStyleRequest.Active = true;
-            m_commandLine.Echo("命令: MLSTYLE");
+            m_commandLine.Echo(TrF("命令: {0}", "MLSTYLE"));
             m_lastCommand = "MLStyle";
             return;
         }
@@ -1103,7 +1112,7 @@ namespace MiniCAD
         if (toolId == "Hatch" && m_hatchDialogEnabled && m_doc)   // 对话框模式:先选图案
         {
             m_hatchRequest.Active = true;
-            m_commandLine.Echo("命令: Hatch");
+            m_commandLine.Echo(TrF("命令: {0}", "Hatch"));
             m_lastCommand = "Hatch";
             return;
         }
@@ -1116,7 +1125,7 @@ namespace MiniCAD
         auto it = m_toolRegistry.find(toolId);
         if (it == m_toolRegistry.end())
         {
-            m_commandLine.Echo("未知命令: " + toolId);
+            m_commandLine.Echo(TrF("未知命令: {0}", toolId));
             LOG_WARN("[Editor] Unknown tool: %s", toolId.c_str());
             return;
         }
@@ -1125,12 +1134,12 @@ namespace MiniCAD
 
         if (!tool)
         {
-            m_commandLine.Echo(toolId + ": 需要先选择对象");
+            m_commandLine.Echo(TrF("{0}: 需要先选择对象", toolId));
             LOG_WARN("[Editor] Tool '%s' has no targets, skipped.", toolId.c_str());
             return;
         }
 
-        m_commandLine.Echo("命令: " + toolId);
+        m_commandLine.Echo(TrF("命令: {0}", toolId));
         LOG_INFO("[Editor] Start %s", toolId.c_str());
         m_lastCommand = toolId;
         ActivateTool(std::move(tool));
@@ -1334,7 +1343,7 @@ namespace MiniCAD
             return;
         }
 
-        m_commandLine.Echo("命令: Paste");
+        m_commandLine.Echo(TrF("命令: {0}", "Paste"));
         LOG_INFO("[Editor] Start Paste");
         ActivateTool(std::make_unique<PasteTool>(clipboard, std::move(onCommitted), basePoint));
     }
@@ -1370,14 +1379,14 @@ namespace MiniCAD
         std::string blockName = name.empty() ? GenerateBlockName() : name;
         if (table.FindByName(blockName) != BlockTable::InvalidID)
         {
-            m_commandLine.Echo("块名已存在: " + blockName);
+            m_commandLine.Echo(TrF("块名已存在: {0}", blockName));
             return;
         }
 
         auto cmd = std::make_unique<DefineBlockCommand>(blockName, basePoint, ids);
         if (m_doc->GetCommandStack().Execute(std::move(cmd), scene))
         {
-            m_commandLine.Echo("已定义块: " + blockName + " (" + std::to_string(ids.size()) + " 个对象)");
+            m_commandLine.Echo(TrF("已定义块: {0} ({1} 个对象)", blockName, ids.size()));
             LOG_INFO("[Editor] DefineBlock %s: %zu entities", blockName.c_str(), ids.size());
             m_picking.MarkDirty();
             m_gripEditor.RebuildGrips();
@@ -1385,7 +1394,7 @@ namespace MiniCAD
         }
         else
         {
-            m_commandLine.Echo("定义块失败");
+            m_commandLine.Echo(Tr("定义块失败"));
         }
     }
 
@@ -1414,11 +1423,11 @@ namespace MiniCAD
         });
         if (!any)
         {
-            m_commandLine.Echo("当前文档没有可插入的块定义");
+            m_commandLine.Echo(Tr("当前文档没有可插入的块定义"));
             return;
         }
 
-        m_commandLine.Echo("命令: Insert");
+        m_commandLine.Echo(TrF("命令: {0}", "Insert"));
         m_lastCommand = "Insert";   // 空回车可重复插入
         m_blockInsertRequest.Active = true;
     }
@@ -1439,7 +1448,7 @@ namespace MiniCAD
         auto img = m_imageLibrary.Get(path);
         if (!img)
         {
-            m_commandLine.Echo("无法读取图像: " + path);
+            m_commandLine.Echo(TrF("无法读取图像: {0}", path));
             return false;
         }
 
@@ -1457,7 +1466,7 @@ namespace MiniCAD
         const BlockEntity* blk = m_doc->GetScene().GetBlockTable().Find(blockId);
         if (!blk || blk->IsEmpty())
         {
-            m_commandLine.Echo("无效的块定义");
+            m_commandLine.Echo(Tr("无效的块定义"));
             return;
         }
 
@@ -1474,7 +1483,7 @@ namespace MiniCAD
     {
         if (!m_doc)
             return;
-        m_commandLine.Echo("命令: Region");
+        m_commandLine.Echo(TrF("命令: {0}", "Region"));
         m_lastCommand = "Region";
 
         auto& scene = m_doc->GetScene();
@@ -1487,14 +1496,14 @@ namespace MiniCAD
         }
         if (ents.empty())
         {
-            m_commandLine.Echo("Region: 需要先选择封闭的对象（圆、椭圆、矩形、封闭多段线，或首尾相接的直线 / 圆弧）");
+            m_commandLine.Echo(Tr("Region: 需要先选择封闭的对象（圆、椭圆、矩形、封闭多段线，或首尾相接的直线 / 圆弧）"));
             return;
         }
 
         auto built = RegionBuilder::Build(ents);
         if (built.Loops.empty())
         {
-            m_commandLine.Echo("Region: 选中的对象里没有封闭的边界（已忽略 " + std::to_string(built.Skipped) + " 个）");
+            m_commandLine.Echo(TrF("Region: 选中的对象里没有封闭的边界（已忽略 {0} 个）", built.Skipped));
             return;
         }
 
@@ -1522,11 +1531,11 @@ namespace MiniCAD
         else
             m_doc->GetCommandStack().Execute(std::make_unique<BatchAddCommand>(std::move(regions)), scene);
 
-        char buf[200];
-        std::snprintf(buf, sizeof(buf), "已创建 %zu 个面域，面积 = %.4f，周长 = %.4f%s", regionCount, totalArea, totalPerimeter,
-                      built.Skipped > 0 ? ("（忽略 " + std::to_string(built.Skipped) + " 个对象）").c_str() : "");
-        m_commandLine.Echo(buf);
-        m_commandLine.Echo("原对象已保留；不再需要时请自行删除");
+        std::string msg = TrF("已创建 {0} 个面域，面积 = {1}，周长 = {2}", regionCount, Fixed4(totalArea), Fixed4(totalPerimeter));
+        if (built.Skipped > 0)
+            msg += TrF("（忽略 {0} 个对象）", built.Skipped);
+        m_commandLine.Echo(msg);
+        m_commandLine.Echo(Tr("原对象已保留；不再需要时请自行删除"));
     }
 
     std::unique_ptr<Entity> SolidToolDetail::MakeLineEntity(Object::ObjectID id, const Math::Point3& a, const Math::Point3& b)
@@ -1579,7 +1588,7 @@ namespace MiniCAD
             return;
         if (m_doc->ActiveLayoutIsPaper())       // 布局是二维图纸，只有俯视
         {
-            m_commandLine.Echo("布局中不能切换三维视图");
+            m_commandLine.Echo(Tr("布局中不能切换三维视图"));
             return;
         }
         Camera& cam = m_viewport->GetCamera();
@@ -1594,7 +1603,7 @@ namespace MiniCAD
             cam.ZoomToBounds(box);
         const CameraState after = cam.GetState();
         cam.SetState(before);   // 由命令来应用，撤销时回到 before（同 ZoomAll）
-        m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, "视图"), m_doc->GetScene());
+        m_doc->GetCommandStack().Execute(std::make_unique<ZoomViewCommand>(cam, before, after, N_("视图")), m_doc->GetScene());
 
         // 过渡动画：撤销栈里记的仍是 before → after，这里只把相机放回 before，之后每帧（Render）向 after 插值
         m_viewAnim.Active = false;
@@ -1825,13 +1834,15 @@ namespace MiniCAD
     void Editor::SolidBoolean(BooleanOp op)
     {
         static const char* kNames[] = { "Union", "Subtract", "Intersect" };
-        static const char* kLabel[] = { "并集", "差集", "交集" };
+        static const char* kLabel[] = { N_("并集"), N_("差集"), N_("交集") };
+        static const char* kUndo[]  = { N_("实体并集"), N_("实体差集"), N_("实体交集") };
         const int opi = static_cast<int>(op);
-        m_commandLine.Echo(std::string("命令: ") + kNames[opi]);
+        const std::string label = Tr(kLabel[opi]);
+        m_commandLine.Echo(TrF("命令: {0}", kNames[opi]));
         m_lastCommand = kNames[opi];
         if (!m_solidKernel)
         {
-            m_commandLine.Echo(std::string(kNames[opi]) + ": 三维实体运算不可用（此版本没有实体内核）");
+            m_commandLine.Echo(TrF("{0}: 三维实体运算不可用（此版本没有实体内核）", kNames[opi]));
             return;
         }
 
@@ -1848,11 +1859,11 @@ namespace MiniCAD
             solids[id] = static_cast<const Solid3DEntity*>(o);
         }
         std::string notes;
-        if (others > 0) notes += "（" + std::to_string(others) + " 个不是三维实体的对象已忽略）";
-        if (locked > 0) notes += "（" + std::to_string(locked) + " 个实体在锁定的图层上，已跳过）";
+        if (others > 0) notes += TrF("（{0} 个不是三维实体的对象已忽略）", others);
+        if (locked > 0) notes += TrF("（{0} 个实体在锁定的图层上，已跳过）", locked);
         if (solids.size() < 2)
         {
-            m_commandLine.Echo(std::string(kNames[opi]) + ": 需要至少选择两个三维实体" + notes);
+            m_commandLine.Echo(TrF("{0}: 需要至少选择两个三维实体", kNames[opi]) + notes);
             return;
         }
 
@@ -1864,14 +1875,14 @@ namespace MiniCAD
             Solid::BodyPtr body = solid->GetWorldBody(*m_solidKernel);
             if (body && !m_solidKernel->IsSolid(body))
             {
-                m_commandLine.Echo(std::string(kLabel[opi]) + "只适用于封闭实体：选择集里有开放曲面（可在节点编辑器里先“加厚”），未做修改");
+                m_commandLine.Echo(TrF("{0}只适用于封闭实体：选择集里有开放曲面（可在节点编辑器里先“加厚”），未做修改", label));
                 return;
             }
             if (body && result)
                 body = m_solidKernel->Boolean(kop, result, body);
             if (!body)
             {
-                m_commandLine.Echo(std::string(kLabel[opi]) + "失败，未做修改（" + m_solidKernel->LastError() + "）");
+                m_commandLine.Echo(TrF("{0}失败，未做修改（{1}）", label, m_solidKernel->LastError()));
                 return;
             }
             result = body;
@@ -1880,7 +1891,8 @@ namespace MiniCAD
         auto entity = Solid3DEntity::Create(scene.NextObjectID(), *m_solidKernel, result);
         if (!entity || entity->GetLocalWire().empty())
         {
-            m_commandLine.Echo(std::string(kLabel[opi]) + "：结果为空" + (op == BooleanOp::Intersect ? "（这些实体没有公共部分）" : "") + "，未做修改");
+            m_commandLine.Echo(op == BooleanOp::Intersect ? TrF("{0}：结果为空（这些实体没有公共部分），未做修改", label)
+                                                          : TrF("{0}：结果为空，未做修改", label));
             return;
         }
         entity->SetAttr(solids.begin()->second->GetAttr());   // 属性取自 ID 最小的原实体
@@ -1903,11 +1915,9 @@ namespace MiniCAD
         m_picking.ClearSelection();
         m_picking.MarkDirty();
         m_gripEditor.MarkDirty();
-        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>(std::string("实体") + kLabel[opi], std::move(items)), scene);
+        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>(kUndo[opi], std::move(items)), scene);
 
-        char buf[160];
-        std::snprintf(buf, sizeof(buf), "%s：%zu 个实体合成一个，体积 = %.4f", kLabel[opi], solids.size(), volume);
-        m_commandLine.Echo(buf + notes);
+        m_commandLine.Echo(TrF("{0}：{1} 个实体合成一个，体积 = {2}", label, solids.size(), Fixed4(volume)) + notes);
     }
 
     void Editor::RegionBoolean(BooleanOp op)
@@ -1922,9 +1932,10 @@ namespace MiniCAD
                 return;
             }
         static const char* kNames[] = { "Union", "Subtract", "Intersect" };
-        static const char* kLabel[] = { "并集", "差集", "交集" };
+        static const char* kLabel[] = { N_("并集"), N_("差集"), N_("交集") };
+        static const char* kUndo[]  = { N_("面域并集"), N_("面域差集"), N_("面域交集") };
         const int opi = static_cast<int>(op);
-        m_commandLine.Echo(std::string("命令: ") + kNames[opi]);
+        m_commandLine.Echo(TrF("命令: {0}", kNames[opi]));
         m_lastCommand = kNames[opi];
 
         auto& scene = m_doc->GetScene();
@@ -1952,9 +1963,9 @@ namespace MiniCAD
 
         if (operands.size() < 2)
         {
-            m_commandLine.Echo(std::string(kNames[opi]) + ": 需要至少选择两个面域或封闭对象"
-                               + (ignored > 0 ? "（有 " + std::to_string(ignored) + " 个对象不能围成区域，已忽略）" : "")
-                               + (lockedSkipped > 0 ? "（有 " + std::to_string(lockedSkipped) + " 个对象在锁定的图层上，已跳过）" : ""));
+            m_commandLine.Echo(TrF("{0}: 需要至少选择两个面域或封闭对象", kNames[opi])
+                               + (ignored > 0 ? TrF("（有 {0} 个对象不能围成区域，已忽略）", ignored) : std::string())
+                               + (lockedSkipped > 0 ? TrF("（有 {0} 个对象在锁定的图层上，已跳过）", lockedSkipped) : std::string()));
             return;
         }
 
@@ -1967,7 +1978,8 @@ namespace MiniCAD
 
         if (result.empty())
         {
-            m_commandLine.Echo(std::string(kNames[opi]) + ": 结果为空" + (op == BooleanOp::Intersect ? "（这些区域没有公共部分）" : "") + "，未做修改");
+            m_commandLine.Echo(op == BooleanOp::Intersect ? TrF("{0}: 结果为空（这些区域没有公共部分），未做修改", kNames[opi])
+                                                          : TrF("{0}: 结果为空，未做修改", kNames[opi]));
             return;
         }
 
@@ -1993,20 +2005,18 @@ namespace MiniCAD
         m_picking.MarkDirty();
         m_gripEditor.MarkDirty();
         m_doc->GetCommandStack().Execute(
-            std::make_unique<GeometryEditCommand>(std::string("面域") + kLabel[opi], std::move(items)), scene);
+            std::make_unique<GeometryEditCommand>(kUndo[opi], std::move(items)), scene);
 
-        char buf[200];
-        std::snprintf(buf, sizeof(buf), "%s：已生成面域（%zu 个环），面积 = %.4f，周长 = %.4f", kLabel[opi], result.size(), area, perimeter);
-        m_commandLine.Echo(buf);
+        m_commandLine.Echo(TrF("{0}：已生成面域（{1} 个环），面积 = {2}，周长 = {3}", Tr(kLabel[opi]), result.size(), Fixed4(area), Fixed4(perimeter)));
         if (ignored > 0)
-            m_commandLine.Echo("有 " + std::to_string(ignored) + " 个对象不能围成区域，已忽略");
+            m_commandLine.Echo(TrF("有 {0} 个对象不能围成区域，已忽略", ignored));
     }
 
     void Editor::ReportArea()
     {
         if (!m_doc)
             return;
-        m_commandLine.Echo("命令: Area");
+        m_commandLine.Echo(TrF("命令: {0}", "Area"));
         m_lastCommand = "Area";
 
         auto& scene = m_doc->GetScene();
@@ -2021,18 +2031,16 @@ namespace MiniCAD
             double a = 0.0, p = 0.0;
             if (!RegionMeasure::Measure(static_cast<const Entity&>(*o), a, p))
                 continue;
-            std::snprintf(buf, sizeof(buf), "对象 %llu：面积 = %.4f，周长 = %.4f", static_cast<unsigned long long>(id), a, p);
-            m_commandLine.Echo(buf);
+            m_commandLine.Echo(TrF("对象 {0}：面积 = {1}，周长 = {2}", id, Fixed4(a), Fixed4(p)));
             total += a;
             ++count;
         }
 
         if (count == 0)
-            m_commandLine.Echo("Area: 需要先选择能围成区域的对象（面域、填充、圆、椭圆、矩形、封闭多段线或首尾相接的线段）");
+            m_commandLine.Echo(Tr("Area: 需要先选择能围成区域的对象（面域、填充、圆、椭圆、矩形、封闭多段线或首尾相接的线段）"));
         else if (count > 1)
         {
-            std::snprintf(buf, sizeof(buf), "共 %d 个对象，总面积 = %.4f", count, total);
-            m_commandLine.Echo(buf);
+            m_commandLine.Echo(TrF("共 {0} 个对象，总面积 = {1}", count, Fixed4(total)));
         }
     }
 
@@ -2044,7 +2052,7 @@ namespace MiniCAD
         const auto& sel = m_picking.GetSelection();
         if (sel.empty())
         {
-            m_commandLine.Echo("Array: 需要先选择对象");
+            m_commandLine.Echo(Tr("Array: 需要先选择对象"));
             LOG_WARN("[Editor] Array: no selection");
             return;
         }
@@ -2056,7 +2064,7 @@ namespace MiniCAD
         m_arrayRequest.Params.center =
             ComputeArrayGroupBase(m_doc->GetScene(), m_arrayRequest.SourceIds);
 
-        m_commandLine.Echo("命令: Array");
+        m_commandLine.Echo(TrF("命令: {0}", "Array"));
         m_lastCommand = "Array";
     }
 
@@ -2068,7 +2076,7 @@ namespace MiniCAD
         m_arrayRequest.PickingCenter = true;
 
         ActivateTool(std::make_unique<PickPointTool>(
-            "指定阵列中心点 [右键/ESC 返回]:",
+            N_("指定阵列中心点 [右键/ESC 返回]:"),
             [this](const Math::Point3& p) { m_arrayRequest.Params.center = p; }));
 
         // 覆盖 ActivateTool 设置的 OnFinished:无论拾取成功还是取消,
@@ -2096,7 +2104,7 @@ namespace MiniCAD
 
         if (!req.Params.ProducesCopies())
         {
-            m_commandLine.Echo("Array: 参数无效(数量过小)");
+            m_commandLine.Echo(Tr("Array: 参数无效(数量过小)"));
             return;
         }
 
@@ -2104,14 +2112,14 @@ namespace MiniCAD
         auto  cmd   = std::make_unique<ArrayCommand>(req.SourceIds, req.Params);
         if (m_doc->GetCommandStack().Execute(std::move(cmd), scene))
         {
-            m_commandLine.Echo("阵列完成");
+            m_commandLine.Echo(Tr("阵列完成"));
             LOG_INFO("[Editor] Array done: %zu sources", req.SourceIds.size());
             m_picking.MarkDirty();
             m_gripEditor.RebuildGrips();
         }
         else
         {
-            m_commandLine.Echo("阵列失败");
+            m_commandLine.Echo(Tr("阵列失败"));
         }
     }
 
@@ -2778,6 +2786,7 @@ namespace MiniCAD
             return false;
 
         const bool ok = m_doc->GetCommandStack().Execute(
+            // i18n: 数据（撤销记录的名称，目前不显示）
             std::make_unique<GeometryEditCommand>("修改特性：" + name, std::move(items)), m_doc->GetScene());
         if (ok)
             m_gripEditor.MarkDirty();               // 夹点位置跟着几何走
@@ -2790,7 +2799,7 @@ namespace MiniCAD
             return 0;
         if (m_picking.GetSelection().empty())
         {
-            m_commandLine.Echo("请先选择要分解的对象");
+            m_commandLine.Echo(Tr("请先选择要分解的对象"));
             return 0;
         }
 
@@ -2834,15 +2843,15 @@ namespace MiniCAD
 
         if (exploded == 0)
         {
-            m_commandLine.Echo("无法分解：" + (reason.empty() ? std::string("选择集里没有可分解的对象") : reason));
+            m_commandLine.Echo(TrF("无法分解：{0}", reason.empty() ? Tr("选择集里没有可分解的对象") : reason));
             return 0;
         }
 
         const size_t count = created.size();
-        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>("分解", std::move(items)), scene);
+        m_doc->GetCommandStack().Execute(std::make_unique<GeometryEditCommand>(N_("分解"), std::move(items)), scene);
         SetSelection(std::move(created));               // 选中分解出来的对象
-        m_commandLine.Echo("已分解 " + std::to_string(exploded) + " 个对象，生成 " + std::to_string(count) + " 个对象" +
-                           (skipped ? "；" + std::to_string(skipped) + " 个对象不能分解，保持不变" : std::string()));
+        m_commandLine.Echo(TrF("已分解 {0} 个对象，生成 {1} 个对象", exploded, count) +
+                           (skipped ? TrF("；{0} 个对象不能分解，保持不变", skipped) : std::string()));
         return exploded;
     }
 
@@ -2859,7 +2868,7 @@ namespace MiniCAD
         });
         const size_t n = ids.size();
         SetSelection(std::move(ids));
-        m_commandLine.Echo(n == 0 ? "没有可选择的对象" : "已选择 " + std::to_string(n) + " 个对象");
+        m_commandLine.Echo(n == 0 ? Tr("没有可选择的对象") : TrF("已选择 {0} 个对象", n));
         return n;
     }
 
@@ -2897,8 +2906,8 @@ namespace MiniCAD
         }
         std::sort(ids.begin(), ids.end());              // 顺序确定，撤销 / 重做结果一致
         if (announce && locked > 0)
-            m_commandLine.Echo(ids.empty() ? std::string("所选对象都在锁定的图层上，不能修改")
-                                           : "已跳过 " + std::to_string(locked) + " 个锁定图层上的对象");
+            m_commandLine.Echo(ids.empty() ? Tr("所选对象都在锁定的图层上，不能修改")
+                                           : TrF("已跳过 {0} 个锁定图层上的对象", locked));
         return ids;
     }
 
@@ -3018,7 +3027,7 @@ namespace MiniCAD
 
         // 命令行提示 = 当前工具的状态提示（无工具时为空）
         m_commandLine.SetPrompt(m_tool ? m_tool->GetPrompt()
-                                       : (m_zoomPending ? std::string("ZOOM 选项 [全部(A)/范围(E)]:") : std::string{}));
+                                       : (m_zoomPending ? Tr("ZOOM 选项 [全部(A)/范围(E)]:") : std::string{}));
 
         m_overlayVertices.clear();
 

@@ -870,7 +870,8 @@ namespace MiniCAD
             static std::string TrueTypeFontFile(const std::string& typeface)
             {
                 static const std::pair<const char*, const char*> kFiles[] = {
-                    { "simsun", "simsun.ttc" }, { "宋体", "simsun.ttc" }, { "nsimsun", "simsun.ttc" }, { "新宋体", "simsun.ttc" },
+                    // i18n: 数据（图纸里的字体名）
+            { "simsun", "simsun.ttc" }, { "宋体", "simsun.ttc" }, { "nsimsun", "simsun.ttc" }, { "新宋体", "simsun.ttc" },
                     { "simhei", "simhei.ttf" }, { "黑体", "simhei.ttf" },
                     { "kaiti", "simkai.ttf" }, { "kaiti_gb2312", "simkai.ttf" }, { "楷体", "simkai.ttf" }, { "楷体_gb2312", "simkai.ttf" },
                     { "fangsong", "simfang.ttf" }, { "fangsong_gb2312", "simfang.ttf" }, { "仿宋", "simfang.ttf" }, { "仿宋_gb2312", "simfang.ttf" },
@@ -1167,7 +1168,7 @@ namespace MiniCAD
                     if (const auto* rec = m_db.FindAs<Dwg::BlockRecord>(lay->AssociatedBlockHandle);
                         rec != nullptr && Lower(rec->Name).rfind("*model_space", 0) == 0)
                         continue;
-                    if (EqualsNoCase(lay->Name, "Model") || EqualsNoCase(lay->Name, "模型"))
+                    if (EqualsNoCase(lay->Name, "Model") || EqualsNoCase(lay->Name, "模型"))   // i18n: 数据
                         continue;
                     layoutObjs.push_back(lay);
                 }
@@ -2897,6 +2898,7 @@ namespace MiniCAD
                 const auto* layer = m_db.FindAs<Dwg::Layer>(src.LayerHandle);
                 if (!layer) return {Dwg::kNullHandle, Dwg::kNullHandle};
                 std::string base = layer->Name;
+                // i18n: 数据（天正的图层名）
                 if (const std::string tail = "管"; base.ends_with(tail)) base.erase(base.size() - tail.size());
                 return {LayerByName(base + "中心线"), LayerByName(base + "管端线")};
             }
@@ -5765,7 +5767,7 @@ namespace MiniCAD
         const Dwg::CadFileInfo info = Dwg::DetectFileFormat({ data.data(), headLen });
 
         if (info.format == Dwg::CadFileFormat::Unknown)
-            return fail("不是 DWG / DXF 文件");
+            return fail(Tr("不是 DWG / DXF 文件"));
         std::string firstError;
         // 进度：读取占前 40%，转换占后 60%（大图纸上两者耗时大致如此）
         auto stage = [&progress](float from, float to) -> ImportProgress
@@ -5778,7 +5780,7 @@ namespace MiniCAD
         const auto t1 = std::chrono::steady_clock::now();
 
         if (!db)
-            return fail(firstError.empty() ? "文件已损坏或版本不受支持" : firstError);
+            return fail(firstError.empty() ? Tr("文件已损坏或版本不受支持") : firstError);
 
         if (version)
             *version = FromCadVersion(db->GetVersion());
@@ -5895,7 +5897,7 @@ namespace MiniCAD
         if (out.empty())
         {
             if (error)
-                *error = firstError.empty() ? "写出失败" : firstError;
+                *error = firstError.empty() ? Tr("写出失败") : firstError;
             LOG_ERROR("DWG/DXF 导出失败：%s", firstError.c_str());
         }
         return out;

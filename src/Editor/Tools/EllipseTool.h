@@ -198,11 +198,11 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-                case 1:  return "指定长轴端点:";
-                case 2:  return m_arcMode ? "指定短轴端点:" : "指定短轴端点 [右键/ESC 退出]:";
-                case 3:  return "指定起始角度:";
-                case 4:  return "指定终止角度 [右键/ESC 退出]:";
-                default: return "指定圆心:";
+                case 1:  return Tr("指定长轴端点:");
+                case 2:  return m_arcMode ? Tr("指定短轴端点:") : Tr("指定短轴端点 [右键/ESC 退出]:");
+                case 3:  return Tr("指定起始角度:");
+                case 4:  return Tr("指定终止角度 [右键/ESC 退出]:");
+                default: return Tr("指定圆心:");
             }
         }
 

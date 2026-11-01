@@ -23,7 +23,7 @@ namespace MiniCAD
 	// 0 表示未提供（模型布局 / 老数据）→ 不做归属过滤（退化为全部显示）。
 	struct DrawingLayout
 	{
-		std::string Name  = "模型";
+		std::string Name  = "模型";   // i18n: 数据（布局名，显示时翻译）
 		bool        Model = true;
 		int         Order = 0;
 		double      MinX = 0.0;

@@ -410,7 +410,7 @@ namespace MiniCAD::Tch
         double Rotation = 0;                // 指向（弧度）
         double TextHeight = 5;              // 文字名义字高
         int    Color = 7;
-        std::string Text = "北";
+        std::string Text = "北";   // i18n: 数据
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
     };
 

@@ -32,7 +32,7 @@ namespace MiniCAD
             Apply(scene, m_before);
         }
 
-        std::string GetName() const override { return "拖动直线"; }
+        std::string GetName() const override { return N_("拖动直线"); }
 
     private:
         Object::ObjectID m_id;
@@ -85,7 +85,7 @@ namespace MiniCAD
                 scene.MarkEntityDirty(e.Id);
         }
 
-        std::string GetName() const override { return "拖动直线"; }
+        std::string GetName() const override { return N_("拖动直线"); }
 
     private:
         std::vector<Entry> m_entries;

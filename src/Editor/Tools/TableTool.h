@@ -73,7 +73,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasFirst ? "指定对角点 [回车=默认 4×3]:" : "指定表格左上角:";
+            return m_hasFirst ? Tr("指定对角点 [回车=默认 4×3]:") : Tr("指定表格左上角:");
         }
 
     private:

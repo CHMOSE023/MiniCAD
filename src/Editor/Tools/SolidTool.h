@@ -82,10 +82,10 @@ namespace MiniCAD
         {
             switch (m_pts.size())
             {
-            case 0:  return "指定第一点:";
-            case 1:  return "指定第二点:";
-            case 2:  return "指定第三点:";
-            default: return "指定第四点或 [回车/右键=三角形]:";
+            case 0:  return Tr("指定第一点:");
+            case 1:  return Tr("指定第二点:");
+            case 2:  return Tr("指定第三点:");
+            default: return Tr("指定第四点或 [回车/右键=三角形]:");
             }
         }
 

@@ -1,4 +1,5 @@
 #include "EntityExplode.h"
+#include "MiniI18n/I18n.h"
 #include "EntityMirror.h"
 #include "EntityRotate.h"
 #include "EntityScale.h"
@@ -26,7 +27,7 @@ namespace MiniCAD
 {
     namespace
     {
-        void Fail(std::string* reason, const char* text)
+        void Fail(std::string* reason, const std::string& text)
         {
             if (reason) *reason = text;
         }
@@ -83,12 +84,12 @@ namespace MiniCAD
             const BlockEntity* block = ins.GetBlock();
             if (!block)
             {
-                Fail(reason, "块定义不存在");
+                Fail(reason, Tr("块定义不存在"));
                 return false;
             }
             if (!ins.HasDefaultExtrusion())
             {
-                Fail(reason, "块插入带挤出方向（不在 XY 平面），暂不支持分解");
+                Fail(reason, Tr("块插入带挤出方向（不在 XY 平面），暂不支持分解"));
                 return false;
             }
 
@@ -96,7 +97,7 @@ namespace MiniCAD
             const double ax = std::abs(sc.x), ay = std::abs(sc.y);
             if (ax < 1e-12 || ay < 1e-12 || std::abs(ax - ay) > 1e-9 * std::max(ax, ay))
             {
-                Fail(reason, "块插入的 X / Y 缩放不相等，分解会把圆变成椭圆，暂不支持");
+                Fail(reason, Tr("块插入的 X / Y 缩放不相等，分解会把圆变成椭圆，暂不支持"));
                 return false;
             }
 
@@ -171,7 +172,7 @@ namespace MiniCAD
             }
             if (out.size() == before)
             {
-                Fail(reason, "块里没有对象");
+                Fail(reason, Tr("块里没有对象"));
                 return false;
             }
             return true;
@@ -190,7 +191,7 @@ namespace MiniCAD
         else if (e.IsKindOf<RectangleEntity>() && !e.IsKindOf<ImageEntity>() && !e.IsKindOf<SolidEntity>())
             ok = ExplodeRectangle(static_cast<const RectangleEntity&>(e), result);
         else
-            Fail(reason, "该类型的对象不能分解");
+            Fail(reason, Tr("该类型的对象不能分解"));
 
         if (!ok || result.empty())
             return false;

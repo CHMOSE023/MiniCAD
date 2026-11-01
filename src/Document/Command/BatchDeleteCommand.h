@@ -38,7 +38,7 @@ namespace MiniCAD
             m_saved.clear();
         }
 
-        std::string GetName() const override { return "批量删除实体"; }
+        std::string GetName() const override { return N_("批量删除实体"); }
 
     private:
         std::vector<Object::ObjectID>        m_ids;

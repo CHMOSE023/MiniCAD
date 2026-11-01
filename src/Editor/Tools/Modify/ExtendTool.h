@@ -96,7 +96,7 @@ namespace MiniCAD
         void OnSceneChanged() override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusLost()    override { if (m_overlay) m_overlay->Clear(); }
 
-        std::string GetPrompt() const override { return "选择要延伸的对象 [右键/ESC 退出]:"; }
+        std::string GetPrompt() const override { return Tr("选择要延伸的对象 [右键/ESC 退出]:"); }
 
     private:
         struct ExtendPlan
@@ -380,7 +380,7 @@ namespace MiniCAD
             it.after  = std::move(plan.modified);
             items.push_back(std::move(it));
 
-            auto cmd = std::make_unique<GeometryEditCommand>("延伸", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("延伸"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
             LOG_DEBUG("[ExtendTool] 已延伸");

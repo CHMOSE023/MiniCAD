@@ -33,7 +33,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "按住左键拖动平移视图 [右键/ESC/回车 退出]:";
+            return Tr("按住左键拖动平移视图 [右键/ESC/回车 退出]:");
         }
 
         void Cancel() override {}

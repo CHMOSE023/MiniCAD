@@ -121,10 +121,10 @@ namespace MiniCAD
         {
             switch (m_phase)
             {
-                case Phase::Corner2: return "指定交叉窗口的对角点:";
-                case Phase::Base:    return "指定基点:";
-                case Phase::Target:  return "指定位移的目标点（或键入距离）:";
-                default:             return "指定交叉窗口的第一个角点:";
+                case Phase::Corner2: return Tr("指定交叉窗口的对角点:");
+                case Phase::Base:    return Tr("指定基点:");
+                case Phase::Target:  return Tr("指定位移的目标点（或键入距离）:");
+                default:             return Tr("指定交叉窗口的第一个角点:");
             }
         }
 
@@ -216,7 +216,7 @@ namespace MiniCAD
             if (!items.empty())
             {
                 const size_t n = items.size();
-                m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>("拉伸", std::move(items)), m_ctx->scene);
+                m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("拉伸"), std::move(items)), m_ctx->scene);
                 LOG_DEBUG("[StretchTool] 拉伸 %zu 个对象，位移 (%.3f, %.3f)", n, dx, dy);
             }
             else

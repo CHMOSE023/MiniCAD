@@ -69,7 +69,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasStart ? "指定另一个角点 [右键/ESC 退出]:" : "指定第一个角点:";
+            return m_hasStart ? Tr("指定另一个角点 [右键/ESC 退出]:") : Tr("指定第一个角点:");
         }
 
         void OnSceneChanged() override { Reset(); }

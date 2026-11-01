@@ -126,16 +126,16 @@ namespace MiniCAD
             return -1;
         }
 
-        // 颜色下拉项：随层、随块、ACI 1..7，最后一项"其他"表示别的 ACI / 真彩（只用于显示，选中它不做修改）
+        // 颜色下拉项：随层、随块、ACI 1..7，最后一项"其他"表示别的 ACI / 真彩（只用于显示，选中它不做修改）。名称 N_ 标记，显示时 Tr
         struct ColorItem { const char* label; EntityColor color; };
         const std::vector<ColorItem>& ColorItems()
         {
             static const std::vector<ColorItem> items =
             {
                 { "ByLayer", EntityColor::ByLayer() }, { "ByBlock", EntityColor::ByBlock() },
-                { "红", EntityColor::FromAci(1) }, { "黄", EntityColor::FromAci(2) }, { "绿", EntityColor::FromAci(3) },
-                { "青", EntityColor::FromAci(4) }, { "蓝", EntityColor::FromAci(5) }, { "品红", EntityColor::FromAci(6) },
-                { "白", EntityColor::FromAci(7) },
+                { N_("红"), EntityColor::FromAci(1) }, { N_("黄"), EntityColor::FromAci(2) }, { N_("绿"), EntityColor::FromAci(3) },
+                { N_("青"), EntityColor::FromAci(4) }, { N_("蓝"), EntityColor::FromAci(5) }, { N_("品红"), EntityColor::FromAci(6) },
+                { N_("白"), EntityColor::FromAci(7) },
             };
             return items;
         }
@@ -156,8 +156,8 @@ namespace MiniCAD
         {
             std::vector<std::string> labels;
             for (const auto& it : ColorItems())
-                labels.emplace_back(it.label);
-            labels.emplace_back("其他");
+                labels.emplace_back(Tr(it.label));
+            labels.emplace_back(Tr("其他"));
             return labels;
         }
 
@@ -165,7 +165,7 @@ namespace MiniCAD
         {
             std::vector<std::string> labels;
             for (const auto& it : kLineweightItems)
-                labels.emplace_back(it.label);
+                labels.emplace_back(Tr(it.label));
             return labels;
         }
     }
@@ -485,6 +485,21 @@ namespace MiniCAD
         grid->EditLayoutStyle().grow = 1.0f;
         grid->SetNameWidth(90.0f);
 
+        // 面板只建一次：显示译文的地方经 keep 写一次，并登记到 P.retranslate，切换界面语言时再写一次
+        auto keep = [&P](std::function<void()> write) { write(); P.retranslate.push_back(std::move(write)); };
+        auto group = [&keep, grid](const char* title)
+        {
+            Expander* g = grid->AddGroup(std::string());
+            keep([g, title] { g->SetTitle(Tr(title)); });
+            return g;
+        };
+        // 编辑控件所在行的名称（PropertyGrid 的行：名称标签 + 控件）；context 非空时按上下文翻译（TrC）
+        auto rowName = [&keep](Node* editor, const char* name, const char* context = nullptr)
+        {
+            auto* label = static_cast<Label*>(editor->GetParent()->GetChildren().front().get());
+            keep([label, name, context] { label->SetText(context ? TrC(context, name) : Tr(name)); });
+        };
+
         auto doc = [this, pc]() -> Document* { return DocOf(*pc); };
         // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取这个窗口的文档的（没有文档时是空闲的编辑器）
         auto editor = [this, doc]() -> Editor& { Document* d = doc(); return d ? m_docManager.GetEditor(*d) : m_docManager.GetEditor(); };
@@ -507,8 +522,9 @@ namespace MiniCAD
         };
 
         // ── 当前设置（新建对象使用）─────────────────────────────
-        Expander* current = grid->AddGroup("当前（新建对象）");
-        auto* layer = grid->AddProperty<ComboBox>(current, "图层");
+        Expander* current = group(N_("当前（新建对象）"));
+        auto* layer = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(layer, NC_("特性面板", "图层"), "特性面板");      // 单数（面板标题"图层"是复数）
         paintLayers(layer);
         P.bindings.BindChoice(layer,
             [doc]() -> std::optional<int>
@@ -526,7 +542,8 @@ namespace MiniCAD
             },
             layerNames);
 
-        auto* linetype = grid->AddProperty<ComboBox>(current, "线型");
+        auto* linetype = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(linetype, N_("线型"));
         P.bindings.BindChoice(linetype,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? static_cast<int>(d->GetScene().GetCurrentLineType()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i)); },
@@ -539,7 +556,8 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* textStyle = grid->AddProperty<ComboBox>(current, "文字样式");
+        auto* textStyle = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(textStyle, N_("文字样式"));
         P.bindings.BindChoice(textStyle,
             [doc]() -> std::optional<int>
             {
@@ -565,13 +583,16 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* textHeight = grid->AddProperty<NumberBox>(current, "文字高度", 2.5, 0.001, 10000.0, 0.5, 3);
-        textHeight->SetTooltip("新建文字的字高；当前文字样式设了固定字高时以样式为准");
+        auto* textHeight = grid->AddProperty<NumberBox>(current, std::string(), 2.5, 0.001, 10000.0, 0.5, 3);
+        rowName(textHeight, N_("文字高度"));
+        keep([textHeight] { textHeight->SetTooltip(Tr("新建文字的字高；当前文字样式设了固定字高时以样式为准")); });
         P.bindings.BindNumber(textHeight,
             [editor] { return std::optional<double>(editor().GetTextHeight()); },
             [editor](const double& v) { editor().SetTextHeight(v); });
 
-        auto* lineweight = grid->AddProperty<ComboBox>(current, "线宽", LineweightLabels());
+        auto* lineweight = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(lineweight, N_("线宽"));
+        keep([lineweight] { lineweight->SetItems(LineweightLabels()); });
         P.bindings.BindChoice(lineweight,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? LineweightIndex(d->GetScene().GetCurrentLineweight()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
@@ -593,14 +614,16 @@ namespace MiniCAD
         //    [editor](const double& v) { editor().GetSnapEngine().SetSnapRadiusPx(v); });
 
         // ── 选择集（可编辑：多个对象取值不同时显示"*多种*"；修改走 ChangeAttrCommand，可撤销）────────────
-        Expander* sel = grid->AddGroup("选择集");
-        auto* count = grid->AddProperty<Label>(sel, "数量", std::string(), 13.0f);
+        Expander* sel = group(N_("选择集"));
+        auto* count = grid->AddProperty<Label>(sel, std::string(), std::string(), 13.0f);
+        rowName(count, N_("数量"));
         P.bindings.BindLabel(count, [this, doc]
         {
             const size_t n = doc() ? SelectionInfo(doc()).count : 0;
-            return n == 0 ? std::string("未选择") : std::to_string(n) + " 个对象";
+            return n == 0 ? Tr("未选择") : TrF("{0} 个对象", n);
         });
-        auto* selLayer = grid->AddProperty<ComboBox>(sel, "图层");
+        auto* selLayer = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selLayer, NC_("特性面板", "图层"), "特性面板");
         selLayer->SetPlaceholder("—");
         paintLayers(selLayer);
         P.bindings.BindChoice(selLayer,
@@ -619,7 +642,9 @@ namespace MiniCAD
             },
             layerNames);
 
-        auto* selColor = grid->AddProperty<ComboBox>(sel, "颜色", ColorLabels());
+        auto* selColor = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selColor, N_("颜色"));
+        keep([selColor] { selColor->SetItems(ColorLabels()); });
         selColor->SetPlaceholder("—");
         P.bindings.BindChoice(selColor,
             [this, editor, doc]() -> std::optional<int>
@@ -634,7 +659,8 @@ namespace MiniCAD
                     editor().ChangeSelectionAttr(AttrChange{ .Color = items[static_cast<size_t>(i)].color });
             });
 
-        auto* selLinetype = grid->AddProperty<ComboBox>(sel, "线型");
+        auto* selLinetype = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selLinetype, N_("线型"));
         selLinetype->SetPlaceholder("—");
         P.bindings.BindChoice(selLinetype,
             [this, editor, doc]() -> std::optional<int>
@@ -656,7 +682,8 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* selScale = grid->AddProperty<NumberBox>(sel, "线型比例", 1.0, 0.001, 10000.0, 0.1, 3);
+        auto* selScale = grid->AddProperty<NumberBox>(sel, std::string(), 1.0, 0.001, 10000.0, 0.1, 3);
+        rowName(selScale, N_("线型比例"));
         P.bindings.BindNumber(selScale,
             [this, doc]() -> std::optional<double>
             {
@@ -665,7 +692,9 @@ namespace MiniCAD
             },
             [editor](const double& v) { editor().ChangeSelectionAttr(AttrChange{ .LinetypeScale = v }); });
 
-        auto* selWeight = grid->AddProperty<ComboBox>(sel, "线宽", LineweightLabels());
+        auto* selWeight = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selWeight, N_("线宽"));
+        keep([selWeight] { selWeight->SetItems(LineweightLabels()); });
         selWeight->SetPlaceholder("—");
         P.bindings.BindChoice(selWeight,
             [this, editor, doc]() -> std::optional<int>
@@ -682,12 +711,12 @@ namespace MiniCAD
         // ── 几何（属性描述表驱动）────────────────────────────────
         // 面板里预建固定数量的"槽"（一行 = 名称 + 编辑控件）；选择集变化时按公共特性重新分配：
         // 用到的槽显示名称并绑定对应特性，没用到的整行隐藏。没有选择 / 没有描述表时整组隐藏
-        Expander* geom = grid->AddGroup("几何");
+        Expander* geom = group(N_("几何"));
         struct Slot { std::string name; PropKind kind = PropKind::Number; bool editable = false; std::optional<PropValue> value; };
         constexpr size_t kNumberSlots = 8;          // 目前各实体最多 7 个数值特性（圆弧）
         auto slots = std::make_shared<std::vector<Slot>>(kNumberSlots + 1);     // 下标 0 是文字槽，其余是数值槽
 
-        auto* textSlot = grid->AddProperty<TextBox>(geom, "内容");
+        auto* textSlot = grid->AddProperty<TextBox>(geom, std::string());     // 槽的名称由 syncGeometryRows 按特性写
         P.bindings.BindText(textSlot,
             [slots]() -> std::optional<std::string>
             {
@@ -751,7 +780,7 @@ namespace MiniCAD
                 row->SetVisible(used);
                 if (!used) return;
                 if (auto* label = dynamic_cast<MiniGUI::Label*>(row->GetChildren().front().get()))
-                    label->SetText(s.name);
+                    label->SetText(Tr(s.name));     // s.name 是 N_ 标记的原文
                 box->SetEnabled(s.editable);
             };
             apply(textSlot, (*slots)[0]);
@@ -938,10 +967,20 @@ namespace MiniCAD
                 BuildViewNavBar(c);
             if (c.statusBar)
                 c.statusBar->Retranslate();
+            if (c.console)
+                c.console->Retranslate();
+            if (c.panels)
+            {
+                for (auto& write : c.panels->retranslate)
+                    write();
+                if (c.panels->syncGeometryRows)
+                    c.panels->syncGeometryRows();
+            }
             if (auto* cube = dynamic_cast<ViewCube*>(c.cube))
                 cube->Retranslate();
         });
         SyncLayoutTabs();                // 模型页的标签名（"模型"是数据，显示时翻译）
+        SyncCommandLine();               // 空闲提示"命令:"
         UpdateChromeVisibility();
         UpdateTitle();
         m_ui->Update();

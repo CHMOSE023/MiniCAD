@@ -73,9 +73,9 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_pts.empty()) return "指定第一点:";
-            if (m_pts.size() < 3) return "指定下一点:";
-            return "指定下一点 [回车/右键闭合]:";
+            if (m_pts.empty()) return Tr("指定第一点:");
+            if (m_pts.size() < 3) return Tr("指定下一点:");
+            return Tr("指定下一点 [回车/右键闭合]:");
         }
 
         void OnSceneChanged() override { Reset(); }

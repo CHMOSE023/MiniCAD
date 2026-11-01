@@ -131,9 +131,9 @@ namespace MiniCAD
         {
             switch (m_phase)
             {
-                case Phase::P1:        return "指定镜像线第二点:";
-                case Phase::AskDelete: return "是否删除源对象? [是(Y)/否(N)]:";
-                default:               return "指定镜像线第一点:";
+                case Phase::P1:        return Tr("指定镜像线第二点:");
+                case Phase::AskDelete: return Tr("是否删除源对象? [是(Y)/否(N)]:");
+                default:               return Tr("指定镜像线第一点:");
             }
         }
 

@@ -226,7 +226,7 @@ namespace MiniCAD::Tch
         double DetailScale = 100;   // 详图比例：对象的出图比例小于它时用详图图案
         // 各材料的标准、详图填充图案名（序号见 MaterialSlot；空串为不填充）
         std::array<std::string, 8> Standard{"", "", "", "", "", "", "SOLID", ""};
-        std::array<std::string, 8> Detail{"", "", "", "", "普通砖", "天然石材", "钢筋混凝土", "金属"};
+        std::array<std::string, 8> Detail{"", "", "", "", "普通砖", "天然石材", "钢筋混凝土", "金属"};   // i18n: 数据
     };
 
     // 材料码 → 图案序号：轻质隔墙、填充墙、填充墙1、填充墙2、砖、石、钢筋混凝土、钢（天正内核 TDbWall::IsLineHatch 按同样的顺序

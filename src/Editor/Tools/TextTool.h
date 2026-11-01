@@ -48,7 +48,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定文字插入点 [ESC 退出]:";
+            return Tr("指定文字插入点 [ESC 退出]:");
         }
     };
 }

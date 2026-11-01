@@ -1,4 +1,5 @@
 #include "Editor/Properties/PropertyTable.h"
+#include "MiniI18n/I18n.h"      // 特性名用 N_ 标记：它也是多选求交集的键，显示时才 Tr
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
 #include "Core/Entity/ArcEntity.hpp"
@@ -65,12 +66,12 @@ namespace MiniCAD
             using T = LineEntity;
             auto modify = [](T& e, auto fn) { Line l = e.GetLine(); fn(l); e.SetLine(l); };
             return {
-                Coord<T>("起点 X", [](const T& e) { return e.GetLine().Start.x; }, [=](T& e, double v) { modify(e, [v](Line& l) { l.Start.x = v; }); }),
-                Coord<T>("起点 Y", [](const T& e) { return e.GetLine().Start.y; }, [=](T& e, double v) { modify(e, [v](Line& l) { l.Start.y = v; }); }),
-                Coord<T>("端点 X", [](const T& e) { return e.GetLine().End.x; },   [=](T& e, double v) { modify(e, [v](Line& l) { l.End.x = v; }); }),
-                Coord<T>("端点 Y", [](const T& e) { return e.GetLine().End.y; },   [=](T& e, double v) { modify(e, [v](Line& l) { l.End.y = v; }); }),
+                Coord<T>(N_("起点 X"), [](const T& e) { return e.GetLine().Start.x; }, [=](T& e, double v) { modify(e, [v](Line& l) { l.Start.x = v; }); }),
+                Coord<T>(N_("起点 Y"), [](const T& e) { return e.GetLine().Start.y; }, [=](T& e, double v) { modify(e, [v](Line& l) { l.Start.y = v; }); }),
+                Coord<T>(N_("端点 X"), [](const T& e) { return e.GetLine().End.x; },   [=](T& e, double v) { modify(e, [v](Line& l) { l.End.x = v; }); }),
+                Coord<T>(N_("端点 Y"), [](const T& e) { return e.GetLine().End.y; },   [=](T& e, double v) { modify(e, [v](Line& l) { l.End.y = v; }); }),
                 // 长度：起点不动，沿原方向伸缩端点；零长度的线没有方向，不能改
-                Editable<T>("长度", PropKind::Number, [](const T& e) { return e.GetLine().Length(); },
+                Editable<T>(N_("长度"), PropKind::Number, [](const T& e) { return e.GetLine().Length(); },
                     [=](T& e, double v)
                     {
                         const Line& l = e.GetLine();
@@ -86,7 +87,7 @@ namespace MiniCAD
                         return true;
                     }),
                 // 角度：起点不动，绕起点转动端点（XY 平面内，长度不变）
-                Editable<T>("角度", PropKind::Angle,
+                Editable<T>(N_("角度"), PropKind::Angle,
                     [](const T& e) { const Line& l = e.GetLine(); return Deg(std::atan2(l.End.y - l.Start.y, l.End.x - l.Start.x)); },
                     [=](T& e, double v)
                     {
@@ -109,14 +110,14 @@ namespace MiniCAD
         {
             using T = CircleEntity;
             return {
-                Coord<T>("圆心 X", [](const T& e) { return e.GetCircle().Center.x; }, [](T& e, double v) { auto c = e.GetCircle().Center; c.x = v; e.SetCenter(c); }),
-                Coord<T>("圆心 Y", [](const T& e) { return e.GetCircle().Center.y; }, [](T& e, double v) { auto c = e.GetCircle().Center; c.y = v; e.SetCenter(c); }),
-                Editable<T>("半径", PropKind::Number, [](const T& e) { return e.GetCircle().Radius; },
+                Coord<T>(N_("圆心 X"), [](const T& e) { return e.GetCircle().Center.x; }, [](T& e, double v) { auto c = e.GetCircle().Center; c.x = v; e.SetCenter(c); }),
+                Coord<T>(N_("圆心 Y"), [](const T& e) { return e.GetCircle().Center.y; }, [](T& e, double v) { auto c = e.GetCircle().Center; c.y = v; e.SetCenter(c); }),
+                Editable<T>(N_("半径"), PropKind::Number, [](const T& e) { return e.GetCircle().Radius; },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetRadius(v); return true; }),
-                Editable<T>("直径", PropKind::Number, [](const T& e) { return e.GetCircle().Radius * 2.0; },
+                Editable<T>(N_("直径"), PropKind::Number, [](const T& e) { return e.GetCircle().Radius * 2.0; },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetRadius(v * 0.5); return true; }),
-                ReadOnly<T>("周长", PropKind::Number, [](const T& e) { return Math::TwoPI * e.GetCircle().Radius; }),
-                ReadOnly<T>("面积", PropKind::Number, [](const T& e) { return Math::PI * e.GetCircle().Radius * e.GetCircle().Radius; }),
+                ReadOnly<T>(N_("周长"), PropKind::Number, [](const T& e) { return Math::TwoPI * e.GetCircle().Radius; }),
+                ReadOnly<T>(N_("面积"), PropKind::Number, [](const T& e) { return Math::PI * e.GetCircle().Radius * e.GetCircle().Radius; }),
             };
         }
 
@@ -125,23 +126,23 @@ namespace MiniCAD
         {
             using T = ArcEntity;
             return {
-                Coord<T>("圆心 X", [](const T& e) { return e.GetArc().Center.x; }, [](T& e, double v) { auto c = e.GetArc().Center; c.x = v; e.SetCenter(c); }),
-                Coord<T>("圆心 Y", [](const T& e) { return e.GetArc().Center.y; }, [](T& e, double v) { auto c = e.GetArc().Center; c.y = v; e.SetCenter(c); }),
-                Editable<T>("半径", PropKind::Number, [](const T& e) { return e.GetArc().Radius; },
+                Coord<T>(N_("圆心 X"), [](const T& e) { return e.GetArc().Center.x; }, [](T& e, double v) { auto c = e.GetArc().Center; c.x = v; e.SetCenter(c); }),
+                Coord<T>(N_("圆心 Y"), [](const T& e) { return e.GetArc().Center.y; }, [](T& e, double v) { auto c = e.GetArc().Center; c.y = v; e.SetCenter(c); }),
+                Editable<T>(N_("半径"), PropKind::Number, [](const T& e) { return e.GetArc().Radius; },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetRadius(v); return true; }),
-                Editable<T>("起始角", PropKind::Angle, [](const T& e) { return Deg(e.GetArc().StartAngle); },
+                Editable<T>(N_("起始角"), PropKind::Angle, [](const T& e) { return Deg(e.GetArc().StartAngle); },
                             [](T& e, double v) { e.SetStartAngle(Rad(v)); return true; }),
-                Editable<T>("终止角", PropKind::Angle, [](const T& e) { return Deg(e.GetArc().EndAngle); },
+                Editable<T>(N_("终止角"), PropKind::Angle, [](const T& e) { return Deg(e.GetArc().EndAngle); },
                             [](T& e, double v) { e.SetEndAngle(Rad(v)); return true; }),
                 // 总角度：起始角不动，改终止角（0 < 角度 ≤ 360）
-                Editable<T>("总角度", PropKind::Angle, [](const T& e) { return Deg(e.GetArc().SweepAngle()); },
+                Editable<T>(N_("总角度"), PropKind::Angle, [](const T& e) { return Deg(e.GetArc().SweepAngle()); },
                             [](T& e, double v)
                             {
                                 if (v <= kEps || v > 360.0 + kEps) return false;
                                 e.SetEndAngle(e.GetArc().StartAngle + Rad(v));
                                 return true;
                             }),
-                ReadOnly<T>("弧长", PropKind::Number, [](const T& e) { return e.GetArc().Radius * e.GetArc().SweepAngle(); }),
+                ReadOnly<T>(N_("弧长"), PropKind::Number, [](const T& e) { return e.GetArc().Radius * e.GetArc().SweepAngle(); }),
             };
         }
 
@@ -150,7 +151,7 @@ namespace MiniCAD
         {
             using T = TextEntity;
             return {
-                { "内容", PropKind::String,
+                { N_("内容"), PropKind::String,
                   [](const Entity& e) -> PropValue { return static_cast<const T&>(e).GetText(); },
                   [](Entity& e, const PropValue& v)
                   {
@@ -159,11 +160,11 @@ namespace MiniCAD
                       static_cast<T&>(e).SetText(s);
                       return true;
                   } },
-                Coord<T>("位置 X", [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
-                Coord<T>("位置 Y", [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
-                Editable<T>("高度", PropKind::Number, [](const T& e) { return static_cast<double>(e.GetHeight()); },
+                Coord<T>(N_("位置 X"), [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
+                Coord<T>(N_("位置 Y"), [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
+                Editable<T>(N_("高度"), PropKind::Number, [](const T& e) { return static_cast<double>(e.GetHeight()); },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetHeight(static_cast<float>(v)); return true; }),
-                Editable<T>("旋转", PropKind::Angle, [](const T& e) { return Deg(static_cast<double>(e.GetRotation())); },
+                Editable<T>(N_("旋转"), PropKind::Angle, [](const T& e) { return Deg(static_cast<double>(e.GetRotation())); },
                             [](T& e, double v) { e.SetRotation(static_cast<float>(Rad(v))); return true; }),
             };
         }
@@ -174,8 +175,8 @@ namespace MiniCAD
             using T = PointEntity;
             auto at = [](T& e, auto fn) { Point p = e.GetPoint(); fn(p.Position); e.SetPoint(p); };
             return {
-                Coord<T>("位置 X", [](const T& e) { return e.GetPoint().Position.x; }, [=](T& e, double v) { at(e, [v](Math::Point3& q) { q.x = v; }); }),
-                Coord<T>("位置 Y", [](const T& e) { return e.GetPoint().Position.y; }, [=](T& e, double v) { at(e, [v](Math::Point3& q) { q.y = v; }); }),
+                Coord<T>(N_("位置 X"), [](const T& e) { return e.GetPoint().Position.x; }, [=](T& e, double v) { at(e, [v](Math::Point3& q) { q.x = v; }); }),
+                Coord<T>(N_("位置 Y"), [](const T& e) { return e.GetPoint().Position.y; }, [=](T& e, double v) { at(e, [v](Math::Point3& q) { q.y = v; }); }),
             };
         }
 
@@ -195,9 +196,9 @@ namespace MiniCAD
                 e.SetRectangle(r);
             };
             return {
-                Coord<T>("中心 X", [=](const T& e) { return centerX(e.GetRectangle()); }, [=](T& e, double v) { shift(e, v - centerX(e.GetRectangle()), 0.0); }),
-                Coord<T>("中心 Y", [=](const T& e) { return centerY(e.GetRectangle()); }, [=](T& e, double v) { shift(e, 0.0, v - centerY(e.GetRectangle())); }),
-                Editable<T>("宽度", PropKind::Number, [=](const T& e) { return width(e.GetRectangle()); },
+                Coord<T>(N_("中心 X"), [=](const T& e) { return centerX(e.GetRectangle()); }, [=](T& e, double v) { shift(e, v - centerX(e.GetRectangle()), 0.0); }),
+                Coord<T>(N_("中心 Y"), [=](const T& e) { return centerY(e.GetRectangle()); }, [=](T& e, double v) { shift(e, 0.0, v - centerY(e.GetRectangle())); }),
+                Editable<T>(N_("宽度"), PropKind::Number, [=](const T& e) { return width(e.GetRectangle()); },
                     [=](T& e, double v)
                     {
                         Rectangle r = e.GetRectangle();
@@ -211,7 +212,7 @@ namespace MiniCAD
                         e.SetRectangle(r);
                         return true;
                     }),
-                Editable<T>("高度", PropKind::Number, [=](const T& e) { return height(e.GetRectangle()); },
+                Editable<T>(N_("高度"), PropKind::Number, [=](const T& e) { return height(e.GetRectangle()); },
                     [=](T& e, double v)
                     {
                         Rectangle r = e.GetRectangle();
@@ -224,8 +225,8 @@ namespace MiniCAD
                         e.SetRectangle(r);
                         return true;
                     }),
-                ReadOnly<T>("面积", PropKind::Number, [=](const T& e) { return width(e.GetRectangle()) * height(e.GetRectangle()); }),
-                ReadOnly<T>("周长", PropKind::Number, [=](const T& e) { return 2.0 * (width(e.GetRectangle()) + height(e.GetRectangle())); }),
+                ReadOnly<T>(N_("面积"), PropKind::Number, [=](const T& e) { return width(e.GetRectangle()) * height(e.GetRectangle()); }),
+                ReadOnly<T>(N_("周长"), PropKind::Number, [=](const T& e) { return 2.0 * (width(e.GetRectangle()) + height(e.GetRectangle())); }),
             };
         }
 
@@ -235,17 +236,17 @@ namespace MiniCAD
             using T = EllipseEntity;
             auto modify = [](T& e, auto fn) { Ellipse el = e.GetEllipse(); fn(el); e.SetEllipse(el); };
             return {
-                Coord<T>("圆心 X", [](const T& e) { return e.GetEllipse().Center.x; }, [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.Center.x = v; }); }),
-                Coord<T>("圆心 Y", [](const T& e) { return e.GetEllipse().Center.y; }, [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.Center.y = v; }); }),
-                Editable<T>("半轴 X", PropKind::Number, [](const T& e) { return e.GetEllipse().RadiusX; },
+                Coord<T>(N_("圆心 X"), [](const T& e) { return e.GetEllipse().Center.x; }, [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.Center.x = v; }); }),
+                Coord<T>(N_("圆心 Y"), [](const T& e) { return e.GetEllipse().Center.y; }, [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.Center.y = v; }); }),
+                Editable<T>(N_("半轴 X"), PropKind::Number, [](const T& e) { return e.GetEllipse().RadiusX; },
                             [=](T& e, double v) { if (v <= kEps) return false; modify(e, [v](Ellipse& el) { el.RadiusX = v; }); return true; }),
-                Editable<T>("半轴 Y", PropKind::Number, [](const T& e) { return e.GetEllipse().RadiusY; },
+                Editable<T>(N_("半轴 Y"), PropKind::Number, [](const T& e) { return e.GetEllipse().RadiusY; },
                             [=](T& e, double v) { if (v <= kEps) return false; modify(e, [v](Ellipse& el) { el.RadiusY = v; }); return true; }),
-                Editable<T>("旋转", PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().Rotation); },
+                Editable<T>(N_("旋转"), PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().Rotation); },
                             [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.Rotation = Rad(v); }); return true; }),
-                Editable<T>("起始参数", PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().StartParam); },
+                Editable<T>(N_("起始参数"), PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().StartParam); },
                             [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.StartParam = Rad(v); }); return true; }),
-                Editable<T>("终止参数", PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().EndParam); },
+                Editable<T>(N_("终止参数"), PropKind::Angle, [](const T& e) { return Deg(e.GetEllipse().EndParam); },
                             [=](T& e, double v) { modify(e, [v](Ellipse& el) { el.EndParam = Rad(v); }); return true; }),
             };
         }
@@ -269,13 +270,13 @@ namespace MiniCAD
                 return pts.empty() ? 0.0 : (isX ? pts[i].x : pts[i].y);
             };
             return {
-                ReadOnly<T>("顶点数", PropKind::Number, [](const T& e) { return static_cast<double>(e.GetPolyline().Points.size()); }),
-                Coord<T>("起点 X", [=](const T& e) { return coord(e, 0, true); },        [=](T& e, double v) { movePoint(e, 0, true, v); }),
-                Coord<T>("起点 Y", [=](const T& e) { return coord(e, 0, false); },       [=](T& e, double v) { movePoint(e, 0, false, v); }),
-                Coord<T>("终点 X", [=](const T& e) { return coord(e, last(e), true); },  [=](T& e, double v) { movePoint(e, last(e), true, v); }),
-                Coord<T>("终点 Y", [=](const T& e) { return coord(e, last(e), false); }, [=](T& e, double v) { movePoint(e, last(e), false, v); }),
-                ReadOnly<T>("长度", PropKind::Number, [](const T& e) { return e.GetPolyline().Length(); }),
-                Editable<T>("线宽", PropKind::Number, [](const T& e) { return e.GetWidth(); },
+                ReadOnly<T>(N_("顶点数"), PropKind::Number, [](const T& e) { return static_cast<double>(e.GetPolyline().Points.size()); }),
+                Coord<T>(N_("起点 X"), [=](const T& e) { return coord(e, 0, true); },        [=](T& e, double v) { movePoint(e, 0, true, v); }),
+                Coord<T>(N_("起点 Y"), [=](const T& e) { return coord(e, 0, false); },       [=](T& e, double v) { movePoint(e, 0, false, v); }),
+                Coord<T>(N_("终点 X"), [=](const T& e) { return coord(e, last(e), true); },  [=](T& e, double v) { movePoint(e, last(e), true, v); }),
+                Coord<T>(N_("终点 Y"), [=](const T& e) { return coord(e, last(e), false); }, [=](T& e, double v) { movePoint(e, last(e), false, v); }),
+                ReadOnly<T>(N_("长度"), PropKind::Number, [](const T& e) { return e.GetPolyline().Length(); }),
+                Editable<T>(N_("全局宽度"), PropKind::Number, [](const T& e) { return e.GetWidth(); },
                             [](T& e, double v) { if (v < 0.0) return false; e.SetWidth(v); return true; }),
             };
         }
@@ -285,7 +286,7 @@ namespace MiniCAD
         {
             using T = MTextEntity;
             return {
-                { "内容", PropKind::String,
+                { N_("内容"), PropKind::String,
                   [](const Entity& e) -> PropValue { return static_cast<const T&>(e).GetText(); },
                   [](Entity& e, const PropValue& v)
                   {
@@ -294,13 +295,13 @@ namespace MiniCAD
                       static_cast<T&>(e).SetText(s);
                       return true;
                   } },
-                Coord<T>("位置 X", [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
-                Coord<T>("位置 Y", [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
-                Editable<T>("高度", PropKind::Number, [](const T& e) { return e.GetHeight(); },
+                Coord<T>(N_("位置 X"), [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
+                Coord<T>(N_("位置 Y"), [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
+                Editable<T>(N_("高度"), PropKind::Number, [](const T& e) { return e.GetHeight(); },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetHeight(v); return true; }),
-                Editable<T>("旋转", PropKind::Angle, [](const T& e) { return Deg(e.GetRotation()); },
+                Editable<T>(N_("旋转"), PropKind::Angle, [](const T& e) { return Deg(e.GetRotation()); },
                             [](T& e, double v) { e.SetRotation(Rad(v)); return true; }),
-                Editable<T>("框宽度", PropKind::Number, [](const T& e) { return e.GetBoxWidth(); },      // 0 = 不限宽度，不自动换行
+                Editable<T>(N_("框宽度"), PropKind::Number, [](const T& e) { return e.GetBoxWidth(); },      // 0 = 不限宽度，不自动换行
                             [](T& e, double v) { if (v < 0.0) return false; e.SetBoxWidth(v); return true; }),
             };
         }
@@ -311,15 +312,15 @@ namespace MiniCAD
             using T = InsertEntity;
             auto scaleOf = [](T& e, bool isX, double v) { auto sc = e.GetScale(); if (isX) sc.x = v; else sc.y = v; e.SetScale(sc); };
             return {
-                ReadOnly<T>("块名", PropKind::String, [](const T& e) { return e.GetBlockName(); }),
-                Coord<T>("位置 X", [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
-                Coord<T>("位置 Y", [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
+                ReadOnly<T>(N_("块名"), PropKind::String, [](const T& e) { return e.GetBlockName(); }),
+                Coord<T>(N_("位置 X"), [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),
+                Coord<T>(N_("位置 Y"), [](const T& e) { return e.GetPosition().y; }, [](T& e, double v) { auto p = e.GetPosition(); p.y = v; e.SetPosition(p); }),
                 // 缩放不能为 0（负值表示镜像）
-                Editable<T>("缩放 X", PropKind::Number, [](const T& e) { return e.GetScale().x; },
+                Editable<T>(N_("缩放 X"), PropKind::Number, [](const T& e) { return e.GetScale().x; },
                             [=](T& e, double v) { if (std::abs(v) <= kEps) return false; scaleOf(e, true, v); return true; }),
-                Editable<T>("缩放 Y", PropKind::Number, [](const T& e) { return e.GetScale().y; },
+                Editable<T>(N_("缩放 Y"), PropKind::Number, [](const T& e) { return e.GetScale().y; },
                             [=](T& e, double v) { if (std::abs(v) <= kEps) return false; scaleOf(e, false, v); return true; }),
-                Editable<T>("旋转", PropKind::Angle, [](const T& e) { return Deg(e.GetRotation()); },
+                Editable<T>(N_("旋转"), PropKind::Angle, [](const T& e) { return Deg(e.GetRotation()); },
                             [](T& e, double v) { e.SetRotation(Rad(v)); return true; }),
             };
         }
@@ -329,9 +330,9 @@ namespace MiniCAD
         std::vector<PropertyDesc> MakeLinearProps(Origin origin, Dir dir, SetOrigin setOrigin, SetDir setDir)
         {
             return {
-                Coord<T>("基点 X", [=](const T& e) { return origin(e).x; }, [=](T& e, double v) { auto p = origin(e); p.x = v; setOrigin(e, p); }),
-                Coord<T>("基点 Y", [=](const T& e) { return origin(e).y; }, [=](T& e, double v) { auto p = origin(e); p.y = v; setOrigin(e, p); }),
-                Editable<T>("角度", PropKind::Angle,
+                Coord<T>(N_("基点 X"), [=](const T& e) { return origin(e).x; }, [=](T& e, double v) { auto p = origin(e); p.x = v; setOrigin(e, p); }),
+                Coord<T>(N_("基点 Y"), [=](const T& e) { return origin(e).y; }, [=](T& e, double v) { auto p = origin(e); p.y = v; setOrigin(e, p); }),
+                Editable<T>(N_("角度"), PropKind::Angle,
                     [=](const T& e) { const auto d = dir(e); return Deg(std::atan2(d.y, d.x)); },
                     [=](T& e, double v)
                     {
@@ -351,10 +352,10 @@ namespace MiniCAD
         {
             using T = HatchEntity;
             return {
-                ReadOnly<T>("图案", PropKind::String, [](const T& e) { return e.GetPattern().Name; }),
-                Editable<T>("比例", PropKind::Number, [](const T& e) { return e.GetScale(); },
+                ReadOnly<T>(N_("图案"), PropKind::String, [](const T& e) { return e.GetPattern().Name; }),
+                Editable<T>(N_("比例"), PropKind::Number, [](const T& e) { return e.GetScale(); },
                             [](T& e, double v) { if (v <= kEps) return false; e.SetScale(v); return true; }),
-                Editable<T>("角度", PropKind::Angle, [](const T& e) { return e.GetAngle(); },
+                Editable<T>(N_("角度"), PropKind::Angle, [](const T& e) { return e.GetAngle(); },
                             [](T& e, double v) { e.SetAngle(v); return true; }),
             };
         }
@@ -364,8 +365,8 @@ namespace MiniCAD
         {
             using T = RegionEntity;
             return {
-                ReadOnly<T>("面积", PropKind::Number, [](const T& e) { return e.Area(); }),
-                ReadOnly<T>("周长", PropKind::Number, [](const T& e) { return e.Perimeter(); }),
+                ReadOnly<T>(N_("面积"), PropKind::Number, [](const T& e) { return e.Area(); }),
+                ReadOnly<T>(N_("周长"), PropKind::Number, [](const T& e) { return e.Perimeter(); }),
             };
         }
     }

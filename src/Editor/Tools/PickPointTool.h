@@ -13,6 +13,7 @@ namespace MiniCAD
     class PickPointTool : public ITool
     {
     public:
+        // prompt：N_ 标记的原文，显示时翻译
         PickPointTool(std::string prompt, std::function<void(const Math::Point3&)> onPicked)
             : m_prompt(std::move(prompt))
             , m_onPicked(std::move(onPicked))
@@ -45,7 +46,7 @@ namespace MiniCAD
 
         void Cancel() override { if (OnFinished) OnFinished(); }
 
-        std::string GetPrompt() const override { return m_prompt; }
+        std::string GetPrompt() const override { return Tr(m_prompt); }
 
     private:
         std::string                               m_prompt;

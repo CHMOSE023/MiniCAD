@@ -50,13 +50,16 @@ namespace MiniCAD
 
         inline double Distance2D(const Math::Point3& a, const Math::Point3& b) { return std::hypot(b.x - a.x, b.y - a.y); }
 
+        // 操作名（长方体、拉伸……）用 NC_("三维实体", …) 标记，回显时按这个上下文翻译（"拉伸""旋转"与二维修改的同字不同义）
+        inline std::string OpName(const char* what) { return TrC("三维实体", what); }
+
         // 内核实体 → 新的 Solid3DEntity（当前图层与线型线宽，同 EditorContext::ApplyCurrentAttr），经撤销栈加入场景
         inline bool AddSolid(const SolidToolEnv& env, const Solid::BodyPtr& body, const char* what)
         {
             auto entity = body ? Solid3DEntity::Create(env.scene.NextObjectID(), env.kernel, body) : nullptr;
             if (!entity)
             {
-                env.echo(std::string(what) + "：创建失败（" + env.kernel.LastError() + "）");
+                env.echo(TrF("{0}：创建失败（{1}）", OpName(what), env.kernel.LastError()));
                 return false;
             }
             auto& attr      = entity->GetAttr();
@@ -226,9 +229,9 @@ namespace MiniCAD
                 env.picking.MarkDirty();
                 env.cmdStack.Execute(std::make_unique<GeometryEditCommand>(what, std::move(items)), scene);
             }
-            std::string msg = std::string(what) + "：已创建 " + std::to_string(created) + " 个实体";
-            if (skipped > 0) msg += "，" + std::to_string(skipped) + " 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略";
-            if (failed > 0)  msg += "，" + std::to_string(failed) + " 个失败（" + error + "）";
+            std::string msg = TrF("{0}：已创建 {1} 个实体", OpName(what), created);
+            if (skipped > 0) msg += TrF("，{0} 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略", skipped);
+            if (failed > 0)  msg += TrF("，{0} 个失败（{1}）", failed, error);
             env.echo(msg);
         }
 
@@ -403,9 +406,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 0:  return "长方体 指定第一个角点:";
-            case 1:  return "指定对角点:";
-            default: return "指定高度（键入数值，负数向下；或点取两点距离）:";
+            case 0:  return Tr("长方体 指定第一个角点:");
+            case 1:  return Tr("指定对角点:");
+            default: return Tr("指定高度（键入数值，负数向下；或点取两点距离）:");
             }
         }
 
@@ -418,7 +421,7 @@ namespace MiniCAD
                 return;   // 高度为 0，继续等待
             const Math::Point3 mn{ std::min(m_c0.x, m_c1.x), std::min(m_c0.y, m_c1.y), m_c0.z + std::min(0.0, height) };
             const auto body = m_env.kernel.Box(mn, std::abs(m_c1.x - m_c0.x), std::abs(m_c1.y - m_c0.y), std::abs(height));
-            SolidToolDetail::AddSolid(m_env, body, "长方体");
+            SolidToolDetail::AddSolid(m_env, body, NC_("三维实体", "长方体"));
             Reset();
         }
 
@@ -502,9 +505,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 0:  return m_kind == Kind::Cylinder ? "圆柱体 指定底面中心点:" : "球体 指定中心点:";
-            case 1:  return "指定半径:";
-            default: return "指定高度（键入数值，负数向下；或点取两点距离）:";
+            case 0:  return m_kind == Kind::Cylinder ? Tr("圆柱体 指定底面中心点:") : Tr("球体 指定中心点:");
+            case 1:  return Tr("指定半径:");
+            default: return Tr("指定高度（键入数值，负数向下；或点取两点距离）:");
             }
         }
 
@@ -519,7 +522,7 @@ namespace MiniCAD
             m_radiusPoint = at;
             if (m_kind == Kind::Sphere)
             {
-                SolidToolDetail::AddSolid(m_env, m_env.kernel.Sphere(m_center, r), "球体");
+                SolidToolDetail::AddSolid(m_env, m_env.kernel.Sphere(m_center, r), NC_("三维实体", "球体"));
                 Reset();
                 return;
             }
@@ -531,7 +534,7 @@ namespace MiniCAD
             if (std::abs(height) < Math::LengthEPS)
                 return;
             const Math::Point3 base{ m_center.x, m_center.y, m_center.z + std::min(0.0, height) };
-            SolidToolDetail::AddSolid(m_env, m_env.kernel.Cylinder(base, m_radius, std::abs(height)), "圆柱体");
+            SolidToolDetail::AddSolid(m_env, m_env.kernel.Cylinder(base, m_radius, std::abs(height)), NC_("三维实体", "圆柱体"));
             Reset();
         }
 
@@ -591,7 +594,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasBase ? "指定第二点（两点距离为高度）:" : "拉伸 指定高度（键入数值，负数向下；或点取两点距离）:";
+            return m_hasBase ? Tr("指定第二点（两点距离为高度）:") : Tr("拉伸 指定高度（键入数值，负数向下；或点取两点距离）:");
         }
 
     private:
@@ -599,7 +602,7 @@ namespace MiniCAD
         {
             if (std::abs(height) < Math::LengthEPS)
                 return;
-            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "拉伸", [&](const Solid::Profile& p) { return m_env.kernel.Extrude(p, height); });
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, NC_("三维实体", "拉伸"), [&](const Solid::Profile& p) { return m_env.kernel.Extrude(p, height); });
             if (OnFinished) OnFinished();
         }
 
@@ -670,9 +673,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 0:  return "截面 键入水平截面的高度 Z，或指定铅垂截切线的第一点:";
-            case 1:  return "指定截切线的第二点:";
-            default: return "指定剖面图的放置点（对应第一点、Z = 0）:";
+            case 0:  return Tr("截面 键入水平截面的高度 Z，或指定铅垂截切线的第一点:");
+            case 1:  return Tr("指定截切线的第二点:");
+            default: return Tr("指定剖面图的放置点（对应第一点、Z = 0）:");
             }
         }
 
@@ -725,9 +728,9 @@ namespace MiniCAD
             }
             const size_t count = out.Count();
             out.Commit();
-            std::string msg = count > 0 ? "截面：生成 " + std::to_string(count) + " 条曲线" : std::string("截面：截平面与所选实体不相交");
-            if (others > 0) msg += "，" + std::to_string(others) + " 个对象不是三维实体，已忽略";
-            if (failed > 0) msg += "，" + std::to_string(failed) + " 个实体失败（" + m_env.kernel.LastError() + "）";
+            std::string msg = count > 0 ? TrF("截面：生成 {0} 条曲线", count) : Tr("截面：截平面与所选实体不相交");
+            if (others > 0) msg += TrF("，{0} 个对象不是三维实体，已忽略", others);
+            if (failed > 0) msg += TrF("，{0} 个实体失败（{1}）", failed, m_env.kernel.LastError());
             m_env.echo(msg);
             Finish();
         }
@@ -770,7 +773,7 @@ namespace MiniCAD
         }
         static const char* NameOf(View v)
         {
-            static const char* names[] = { "俯视", "仰视", "前视", "后视", "右视", "左视" };
+            static const char* names[] = { N_("俯视"), N_("仰视"), N_("前视"), N_("后视"), N_("右视"), N_("左视") };   // 显示时 Tr
             return names[static_cast<int>(v)];
         }
 
@@ -798,13 +801,13 @@ namespace MiniCAD
                     if (e.Key == key)
                     {
                         m_view = view;
-                        m_env.echo(std::string("投影：") + NameOf(view));
+                        m_env.echo(TrF("投影：{0}", Tr(NameOf(view))));
                         return true;
                     }
                 if (e.Key == KeyCode::H)
                 {
                     m_hidden = !m_hidden;
-                    m_env.echo(m_hidden ? "投影：生成隐藏线" : "投影：不生成隐藏线");
+                    m_env.echo(m_hidden ? Tr("投影：生成隐藏线") : Tr("投影：不生成隐藏线"));
                     return true;
                 }
             }
@@ -813,8 +816,9 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return std::string("投影 [俯视(T)/仰视(U)/前视(F)/后视(B)/右视(R)/左视(L)/隐藏线(H)] 当前：") + NameOf(m_view)
-                 + (m_hidden ? "，含隐藏线" : "，无隐藏线") + "；指定放置点（投影图左下角）:";
+            const std::string view = Tr(NameOf(m_view));
+            return m_hidden ? TrF("投影 [俯视(T)/仰视(U)/前视(F)/后视(B)/右视(R)/左视(L)/隐藏线(H)] 当前：{0}，含隐藏线；指定放置点（投影图左下角）:", view)
+                            : TrF("投影 [俯视(T)/仰视(U)/前视(F)/后视(B)/右视(R)/左视(L)/隐藏线(H)] 当前：{0}，无隐藏线；指定放置点（投影图左下角）:", view);
         }
 
     private:
@@ -897,9 +901,9 @@ namespace MiniCAD
 
             const size_t count = out.Count();
             out.Commit();
-            std::string msg = count > 0 ? std::string("投影（") + NameOf(m_view) + "）：生成 " + std::to_string(count) + " 条曲线"
-                                        : "投影：没有生成曲线（" + (solids.empty() ? std::string("没有选中三维实体") : kernel.LastError()) + "）";
-            if (others > 0) msg += "，" + std::to_string(others) + " 个对象不是三维实体，已忽略";
+            std::string msg = count > 0 ? TrF("投影（{0}）：生成 {1} 条曲线", Tr(NameOf(m_view)), count)
+                                        : TrF("投影：没有生成曲线（{0}）", solids.empty() ? Tr("没有选中三维实体") : kernel.LastError());
+            if (others > 0) msg += TrF("，{0} 个对象不是三维实体，已忽略", others);
             m_env.echo(msg);
             if (OnFinished) OnFinished();
         }
@@ -938,7 +942,7 @@ namespace MiniCAD
                 m_p1   = { 0, 0, 0 };
                 m_p2   = e.Key == KeyCode::X ? Math::Point3{ 1, 0, 0 } : Math::Point3{ 0, 1, 0 };
                 m_step = 2;
-                m_env.echo(e.Key == KeyCode::X ? "旋转轴：X 轴" : "旋转轴：Y 轴");
+                m_env.echo(e.Key == KeyCode::X ? Tr("旋转轴：X 轴") : Tr("旋转轴：Y 轴"));
                 return true;
             }
             if (e.IsLeftClick() && m_step < 2)
@@ -981,9 +985,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 0:  return "旋转 指定轴的起点 或 [X 轴(X)/Y 轴(Y)]:";
-            case 1:  return "指定轴的端点:";
-            default: return "指定旋转角度（键入度数，按右手定则绕轴的起点 → 端点）<360>:";
+            case 0:  return Tr("旋转 指定轴的起点 或 [X 轴(X)/Y 轴(Y)]:");
+            case 1:  return Tr("指定轴的端点:");
+            default: return Tr("指定旋转角度（键入度数，按右手定则绕轴的起点 → 端点）<360>:");
             }
         }
 
@@ -996,11 +1000,11 @@ namespace MiniCAD
         {
             if (std::abs(angleDeg) < 1e-9 || std::abs(angleDeg) > 360.0 + 1e-9)
             {
-                m_env.echo("旋转：角度应在 0 到 360 度之间（不含 0）");
+                m_env.echo(Tr("旋转：角度应在 0 到 360 度之间（不含 0）"));
                 return;
             }
             const Math::Vec3 dir{ m_p2.x - m_p1.x, m_p2.y - m_p1.y, 0.0 };
-            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "旋转", [&](const Solid::Profile& p) {
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, NC_("三维实体", "旋转"), [&](const Solid::Profile& p) {
                 return m_env.kernel.Revolve(p, { m_p1.x, m_p1.y, SolidToolDetail::ProfileZ(p) }, dir, angleDeg);
             });
             Finish();
@@ -1045,21 +1049,21 @@ namespace MiniCAD
                 return true;
             if (std::find(m_ids.begin(), m_ids.end(), id) != m_ids.end())
             {
-                m_env.echo("扫掠：路径不能是要扫掠的轮廓");
+                m_env.echo(Tr("扫掠：路径不能是要扫掠的轮廓"));
                 return true;
             }
             const auto path = SolidToolDetail::PathOf(static_cast<const Entity&>(*o));
             if (!path)
             {
-                m_env.echo("扫掠：路径应为直线、圆弧、圆、多段线或矩形（位于水平面内）");
+                m_env.echo(Tr("扫掠：路径应为直线、圆弧、圆、多段线或矩形（位于水平面内）"));
                 return true;
             }
-            SolidToolDetail::ReplaceProfiles(m_env, m_ids, "扫掠", [&](const Solid::Profile& p) { return m_env.kernel.Sweep(p, *path); });
+            SolidToolDetail::ReplaceProfiles(m_env, m_ids, NC_("三维实体", "扫掠"), [&](const Solid::Profile& p) { return m_env.kernel.Sweep(p, *path); });
             if (OnFinished) OnFinished();
             return true;
         }
 
-        std::string GetPrompt() const override { return "扫掠 选择扫掠路径（直线、圆弧、圆、多段线）:"; }
+        std::string GetPrompt() const override { return Tr("扫掠 选择扫掠路径（直线、圆弧、圆、多段线）:"); }
 
     private:
         std::vector<Object::ObjectID> m_ids;
@@ -1140,11 +1144,11 @@ namespace MiniCAD
             char buf[64];
             std::snprintf(buf, sizeof(buf), "%g", *m_value);
             const bool fillet = m_kind == Kind::Fillet;
-            std::string p = std::string(fillet ? "圆角边" : "倒角边") + " 选择边（Tab 切换重叠的边；键入数值改" + (fillet ? "半径" : "距离")
-                          + " <" + buf + ">）";
-            if (!m_selected.empty())
-                p += "，已选 " + std::to_string(m_selected.size()) + " 条，回车完成";
-            return p + ":";
+            if (m_selected.empty())
+                return fillet ? TrF("圆角边 选择边（Tab 切换重叠的边；键入数值改半径 <{0}>）:", buf)
+                              : TrF("倒角边 选择边（Tab 切换重叠的边；键入数值改距离 <{0}>）:", buf);
+            return fillet ? TrF("圆角边 选择边（Tab 切换重叠的边；键入数值改半径 <{0}>），已选 {1} 条，回车完成:", buf, m_selected.size())
+                          : TrF("倒角边 选择边（Tab 切换重叠的边；键入数值改距离 <{0}>），已选 {1} 条，回车完成:", buf, m_selected.size());
         }
 
         void OnSceneChanged() override
@@ -1195,7 +1199,7 @@ namespace MiniCAD
                 const Object::ObjectID other = m_env.picking.HitTest(mouse, kPickPixels);
                 const Object* o = other != Object::InvalidID ? m_env.scene.GetEntity(other) : nullptr;
                 if (other != m_solidId && o && o->IsKindOf<Solid3DEntity>())
-                    m_env.echo("只能选择同一个实体上的边；先回车完成当前实体");
+                    m_env.echo(Tr("只能选择同一个实体上的边；先回车完成当前实体"));
             }
             if (found != m_candidates)
             {
@@ -1266,7 +1270,7 @@ namespace MiniCAD
         void Commit()
         {
             const bool  fillet = m_kind == Kind::Fillet;
-            const char* what   = fillet ? "圆角" : "倒角";
+            const char* what   = fillet ? N_("圆角") : N_("倒角");      // 撤销记录的名称
             const Object* o = m_env.scene.GetEntity(m_solidId);
             if (!o || !m_body || m_edgeSolid != m_solidId)
             {
@@ -1281,7 +1285,8 @@ namespace MiniCAD
             auto entity = result ? Solid3DEntity::Create(m_env.scene.NextObjectID(), m_env.kernel, result) : nullptr;
             if (!entity)
             {
-                m_env.echo(std::string(what) + "失败，未做修改（" + m_env.kernel.LastError() + "）；可换较小的" + (fillet ? "半径" : "距离") + "再试");
+                m_env.echo(fillet ? TrF("圆角失败，未做修改（{0}）；可换较小的半径再试", m_env.kernel.LastError())
+                                  : TrF("倒角失败，未做修改（{0}）；可换较小的距离再试", m_env.kernel.LastError()));
                 Finish();
                 return;
             }
@@ -1297,9 +1302,9 @@ namespace MiniCAD
             m_env.picking.MarkDirty();
             m_env.cmdStack.Execute(std::make_unique<GeometryEditCommand>(what, std::move(items)), m_env.scene);
 
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "%s：%zu 条边，%s = %g", what, ids.size(), fillet ? "半径" : "距离", value);
-            m_env.echo(buf);
+            char v[32];
+            std::snprintf(v, sizeof(v), "%g", value);
+            m_env.echo(fillet ? TrF("圆角：{0} 条边，半径 = {1}", ids.size(), v) : TrF("倒角：{0} 条边，距离 = {1}", ids.size(), v));
             Finish();
         }
 

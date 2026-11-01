@@ -164,7 +164,7 @@ namespace MiniCAD
                             const Math::Point3* basePoint = nullptr);
 
         // 单点拾取:左键拾取一个点后回调并结束,右键/ESC 取消(带基点复制等轻交互)
-        void StartPickPointTool(std::string prompt, std::function<void(const Math::Point3&)> onPicked);
+        void StartPickPointTool(std::string prompt, std::function<void(const Math::Point3&)> onPicked);   // prompt：N_ 标记的原文
 
         // 定义块(AutoCAD BLOCK):把指定实体收进新块并原位替换为块引用;
         // name 为空时自动生成唯一块名(Block1..N)

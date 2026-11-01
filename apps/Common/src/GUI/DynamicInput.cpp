@@ -30,17 +30,17 @@ namespace MiniCAD
     {
         namespace Theme = MiniGUI::Theme;
 
-        const char* SnapTypeName(SnapResult::Type t)
+        const char* SnapTypeName(SnapResult::Type t)      // N_ 标记，显示时 Tr
         {
             switch (t)
             {
-            case SnapResult::Type::Endpoint:      return "端点";
-            case SnapResult::Type::Midpoint:      return "中点";
-            case SnapResult::Type::Nearest:       return "最近点";
-            case SnapResult::Type::Quadrant:      return "象限点";
-            case SnapResult::Type::Intersection:  return "交点";
-            case SnapResult::Type::Perpendicular: return "垂足";
-            case SnapResult::Type::Grid:          return "网格";
+            case SnapResult::Type::Endpoint:      return N_("端点");
+            case SnapResult::Type::Midpoint:      return N_("中点");
+            case SnapResult::Type::Nearest:       return N_("最近点");
+            case SnapResult::Type::Quadrant:      return N_("象限点");
+            case SnapResult::Type::Intersection:  return N_("交点");
+            case SnapResult::Type::Perpendicular: return N_("垂足");
+            case SnapResult::Type::Grid:          return N_("网格");
             default:                              return nullptr;
             }
         }
@@ -105,15 +105,15 @@ namespace MiniCAD
             s.padding    = Edges::Symmetric(6.0f, 3.0f);
             SetLayoutStyle(s);
 
-            auto caption = [this](const char* text)
+            auto caption = [this](int i)
             {
-                Label* l = AddChild<Label>(text, 12.0f, Theme::TextDim);
-                l->SetHitTestVisible(false);
+                m_captions[i] = AddChild<Label>(Tr(kCaptions[i]), 12.0f, Theme::TextDim);
+                m_captions[i]->SetHitTestVisible(false);
             };
-            caption("长度");
+            caption(0);
             m_fields[0] = AddChild<DynField>(*this, 0);
             m_fields[0]->EditLayoutStyle().width = 86.0f;
-            caption("角度");
+            caption(1);
             m_fields[1] = AddChild<DynField>(*this, 1);
             m_fields[1]->EditLayoutStyle().width = 66.0f;
             m_info = AddChild<Label>("", 12.0f, Theme::TextDim);
@@ -135,16 +135,21 @@ namespace MiniCAD
             std::snprintf(buf, sizeof(buf), "%.2f", s.AngleDeg);
             SetLive(1, buf);
 
+            // 字段名跟随界面语言（切换语言后不重建这个框）
+            for (int i = 0; i < 2; ++i)
+                if (std::string text = Tr(kCaptions[i]); text != m_captions[i]->GetText())
+                    m_captions[i]->SetText(std::move(text));
+
             std::string info;
             if (s.OrthoOn)
-                info = "正交";
+                info = Tr("正交");
             else if (s.PolarOn)
             {
-                std::snprintf(buf, sizeof(buf), "极轴 %.0f°", s.PolarAngleDeg);
-                info = buf;
+                std::snprintf(buf, sizeof(buf), "%.0f", s.PolarAngleDeg);
+                info = TrF("极轴 {0}°", buf);
             }
             if (const char* sn = SnapTypeName(s.SnapType))
-                info += (info.empty() ? "" : "  ") + std::string("捕捉：") + sn;
+                info += (info.empty() ? "" : "  ") + TrF("捕捉：{0}", Tr(sn));
             if (info != m_info->GetText())
                 m_info->SetText(info);
             m_info->SetVisible(!info.empty());
@@ -233,7 +238,9 @@ namespace MiniCAD
         }
 
         Callbacks          m_cb;
+        static constexpr const char* kCaptions[2] = { N_("长度"), N_("角度") };
         DynField*          m_fields[2] = {};
+        MiniGUI::Label*    m_captions[2] = {};
         MiniGUI::Label*    m_info = nullptr;
         std::string        m_live[2];
     };
@@ -350,7 +357,7 @@ namespace MiniCAD
             {
                 const bool ok = m_docManager.GetEditor().SubmitCoordinateText(text);
                 if (!ok)
-                    m_docManager.GetEditor().GetCmdLine().Echo("无效的坐标：" + text);
+                    m_docManager.GetEditor().GetCmdLine().Echo(TrF("无效的坐标：{0}", text));
                 NoteInput();
                 StateChanged();
                 return ok;

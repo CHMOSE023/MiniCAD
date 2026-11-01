@@ -125,9 +125,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-                case 1:  return "指定圆弧上一点:";
-                case 2:  return "指定终点 [右键/ESC 退出]:";
-                default: return "指定起点:";
+                case 1:  return Tr("指定圆弧上一点:");
+                case 2:  return Tr("指定终点 [右键/ESC 退出]:");
+                default: return Tr("指定起点:");
             }
         }
 

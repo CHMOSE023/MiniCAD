@@ -50,7 +50,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasStart ? "指定窗口的另一个角点 [右键/ESC 取消]:" : "指定窗口的第一个角点 [右键/ESC 取消]:";
+            return m_hasStart ? Tr("指定窗口的另一个角点 [右键/ESC 取消]:") : Tr("指定窗口的第一个角点 [右键/ESC 取消]:");
         }
 
         void Cancel() override { Reset(); }

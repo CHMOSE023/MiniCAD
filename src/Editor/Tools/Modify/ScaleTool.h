@@ -114,9 +114,9 @@ namespace MiniCAD
         {
             switch (m_phase)
             {
-                case Phase::AskCopy: return "是否保留源对象? [是(Y)/否(N)]:";
-                case Phase::Factor:  return "指定比例因子（键入数字，或移动光标，距基点的距离即比例）:";
-                default:             return "指定基点:";
+                case Phase::AskCopy: return Tr("是否保留源对象? [是(Y)/否(N)]:");
+                case Phase::Factor:  return Tr("指定比例因子（键入数字，或移动光标，距基点的距离即比例）:");
+                default:             return Tr("指定基点:");
             }
         }
 
@@ -201,7 +201,7 @@ namespace MiniCAD
 
             if (!items.empty())
             {
-                m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>("缩放", std::move(items)), m_ctx->scene);
+                m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("缩放"), std::move(items)), m_ctx->scene);
                 LOG_DEBUG("[ScaleTool] 缩放 %zu 个对象，比例 %.4f%s", m_sourceIds.size() - skipped, k, m_keepSource ? "（保留源）" : "");
             }
 

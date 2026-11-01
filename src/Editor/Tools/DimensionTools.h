@@ -174,12 +174,12 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case Step::SecondLine:   return "选择第二条直线:";
-            case Step::Vertex:       return "指定角的顶点:";
-            case Step::FirstPoint:   return "指定角的第一个端点:";
-            case Step::SecondPoint:  return "指定角的第二个端点:";
-            case Step::Place:        return "指定标注弧线位置 [右键/ESC 退出]:";
-            default:                 return "选择圆弧、圆、直线或 <回车 指定顶点>:";
+            case Step::SecondLine:   return Tr("选择第二条直线:");
+            case Step::Vertex:       return Tr("指定角的顶点:");
+            case Step::FirstPoint:   return Tr("指定角的第一个端点:");
+            case Step::SecondPoint:  return Tr("指定角的第二个端点:");
+            case Step::Place:        return Tr("指定标注弧线位置 [右键/ESC 退出]:");
+            default:                 return Tr("选择圆弧、圆、直线或 <回车 指定顶点>:");
             }
         }
         bool HasAnchor() const override { return m_step == Step::FirstPoint || m_step == Step::SecondPoint; }
@@ -362,10 +362,10 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 1:  return m_kind == Kind::Jogged ? "指定图示中心位置（替代圆心）:" : "指定尺寸线位置 [右键/ESC 退出]:";
-            case 2:  return "指定尺寸线位置:";
-            case 3:  return "指定折弯位置 [右键/ESC 退出]:";
-            default: return "选择圆弧或圆:";
+            case 1:  return m_kind == Kind::Jogged ? Tr("指定图示中心位置（替代圆心）:") : Tr("指定尺寸线位置 [右键/ESC 退出]:");
+            case 2:  return Tr("指定尺寸线位置:");
+            case 3:  return Tr("指定折弯位置 [右键/ESC 退出]:");
+            default: return Tr("选择圆弧或圆:");
             }
         }
 
@@ -461,7 +461,7 @@ namespace MiniCAD
     public:
         std::string GetPrompt() const override
         {
-            return m_has ? "指定弧长标注位置 [右键/ESC 退出]:" : "选择圆弧:";
+            return m_has ? Tr("指定弧长标注位置 [右键/ESC 退出]:") : Tr("选择圆弧:");
         }
 
     protected:
@@ -527,7 +527,7 @@ namespace MiniCAD
     public:
         std::string GetPrompt() const override
         {
-            return m_has ? "指定引线端点位置 [右键/ESC 退出]:" : "指定点坐标:";
+            return m_has ? Tr("指定引线端点位置 [右键/ESC 退出]:") : Tr("指定点坐标:");
         }
         bool HasAnchor() const override { return m_has; }
         Math::Point3 GetAnchor() const override { return m_feature; }

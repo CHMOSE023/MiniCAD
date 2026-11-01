@@ -96,8 +96,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_fitPoints.empty() ? "指定起点:"
-                                       : "指定下一点 [右键提交/C 闭合/Z 撤回/ESC 取消]:";
+            return m_fitPoints.empty() ? Tr("指定起点:")
+                                       : Tr("指定下一点 [右键提交/C 闭合/Z 撤回/ESC 取消]:");
         }
 
         void OnSceneChanged() override { Reset(); }

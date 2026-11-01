@@ -26,7 +26,7 @@ namespace MiniCAD
             m_entity = scene.RemoveEntity(m_id); // 取回所有权
         }
 
-        std::string GetName() const override { return "添加实体"; }
+        std::string GetName() const override { return N_("添加实体"); }
 
     private:
         std::unique_ptr<Object> m_entity;

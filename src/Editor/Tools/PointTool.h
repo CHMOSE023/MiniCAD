@@ -65,7 +65,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定点位置 [右键退出]:";
+            return Tr("指定点位置 [右键退出]:");
         }
 
     private:

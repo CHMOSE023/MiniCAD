@@ -54,7 +54,7 @@ namespace MiniCAD
                             items.end());
                 ListItem first{ resolved };
                 if (!StartsWithNoCase(resolved, text))
-                    first.detail = "别名 " + text;
+                    first.detail = TrF("别名 {0}", text);
                 items.insert(items.begin(), first);
             }
             // 候选里显示对应的中文名称（直线、圆…）
@@ -108,7 +108,7 @@ namespace MiniCAD
             const std::string name = upper.substr(0, space), option = space == std::string::npos ? "" : upper.substr(space + 1);
             if (name == "NODES" || name == "NODEBAKE")
             {
-                editor.GetCmdLine().Echo(std::string("命令: ") + text);
+                editor.GetCmdLine().Echo(TrF("命令: {0}", text));
                 if (name == "NODES")
                     ShowNodePanel(false);
                 else
@@ -118,7 +118,7 @@ namespace MiniCAD
             }
             if (name == "XREF" || name == "XR")
             {
-                editor.GetCmdLine().Echo(std::string("命令: ") + text);
+                editor.GetCmdLine().Echo(TrF("命令: {0}", text));
                 m_commands.Execute("xref.locate");
                 return;
             }
@@ -126,8 +126,8 @@ namespace MiniCAD
             {
                 const bool show = option == "ON" ? true : option == "OFF" ? false : !m_viewCubeVisible;
                 SetViewCubeVisible(show);
-                editor.GetCmdLine().Echo(std::string("命令: ") + text);
-                editor.GetCmdLine().Echo(show ? "视图方块：显示" : "视图方块：隐藏");
+                editor.GetCmdLine().Echo(TrF("命令: {0}", text));
+                editor.GetCmdLine().Echo(show ? Tr("视图方块：显示") : Tr("视图方块：隐藏"));
                 StateChanged();
                 return;
             }
@@ -153,7 +153,7 @@ namespace MiniCAD
             if (text.size() == 1 && std::isalpha(first))
                 SendKeyToEditor(MiniGUI::KeyFromLetter(static_cast<char>(std::toupper(first))));
             else if (text.find_first_of("0123456789,<@") != std::string::npos)
-                editor.GetCmdLine().Echo("无效的点或距离：" + text);
+                editor.GetCmdLine().Echo(TrF("无效的点或距离：{0}", text));
             else
                 editor.RunCommand(text);
         }
@@ -198,11 +198,11 @@ namespace MiniCAD
         Document* doc = DocOf(c);
         if (!doc)
         {
-            c.console->SetPrompt("命令:");
+            c.console->SetPrompt(Tr("命令:"));
             return;
         }
         const CommandLine& cl = m_docManager.GetEditor(*doc).GetCmdLine();
-        c.console->SetPrompt(cl.Prompt().empty() ? std::string("命令:") : cl.Prompt());
+        c.console->SetPrompt(cl.Prompt().empty() ? Tr("命令:") : cl.Prompt());
         c.console->SetLog(cl.Lines());
     }
 }

@@ -96,7 +96,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_id == Object::InvalidID ? "选择要打断的对象 [右键/ESC 退出]:" : "指定第二个打断点（与第一点重合则只断开）:";
+            return m_id == Object::InvalidID ? Tr("选择要打断的对象 [右键/ESC 退出]:") : Tr("指定第二个打断点（与第一点重合则只断开）:");
         }
 
     private:
@@ -321,7 +321,7 @@ namespace MiniCAD
                 items.push_back(std::move(add));
             }
 
-            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>("打断", std::move(items)), m_ctx->scene);
+            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("打断"), std::move(items)), m_ctx->scene);
             LOG_DEBUG("[BreakTool] 已打断");
         }
 

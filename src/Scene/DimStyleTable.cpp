@@ -24,14 +24,14 @@ namespace MiniCAD
         mech.Terminator = DimTerminator::Arrow;
         mech.TextHeight = 3.5;
         mech.ArrowSize  = 3.5;
-        m_records.push_back({ "GB_机械", mech });
+        m_records.push_back({ "GB_机械", mech });   // i18n: 数据（样式名）
 
         // GB 建筑:45° 斜线终端。
         DimStyle arch;
         arch.Terminator = DimTerminator::Oblique;
         arch.TextHeight = 3.5;
         arch.ArrowSize  = 3.0;
-        m_records.push_back({ "GB_建筑", arch });
+        m_records.push_back({ "GB_建筑", arch });   // i18n: 数据（样式名）
     }
 
     DimStyleID DimStyleTable::Add(DimStyleRecord rec)

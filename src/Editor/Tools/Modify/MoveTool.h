@@ -99,7 +99,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasBase ? "指定目标点 [右键/ESC 取消]:" : "指定基点:";
+            return m_hasBase ? Tr("指定目标点 [右键/ESC 取消]:") : Tr("指定基点:");
         }
 
     private:

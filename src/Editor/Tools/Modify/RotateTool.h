@@ -133,9 +133,9 @@ namespace MiniCAD
         {
             switch (m_phase)
             {
-                case Phase::AskCopy: return "是否保留源对象? [是(Y)/否(N)]:";
-                case Phase::Angle:   return "指定旋转角度 [右键/ESC 取消]:";
-                default:             return "指定基点（旋转中心）:";
+                case Phase::AskCopy: return Tr("是否保留源对象? [是(Y)/否(N)]:");
+                case Phase::Angle:   return Tr("指定旋转角度 [右键/ESC 取消]:");
+                default:             return Tr("指定基点（旋转中心）:");
             }
         }
 

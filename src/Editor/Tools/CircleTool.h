@@ -86,8 +86,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasCenter ? "指定半径 [右键/ESC 退出]:"
-                               : "指定圆心:";
+            return m_hasCenter ? Tr("指定半径 [右键/ESC 退出]:")
+                               : Tr("指定圆心:");
         }
 
         void OnSceneChanged() override

@@ -111,37 +111,36 @@ namespace MiniCAD
         std::string GetPrompt() const override
         {
             if (!m_hasKind)
-                return "选择编辑方式 [C 十字交叉 / T T形相交 / R 拐角结合 / O 顶点断开 / M 顶点结合]:";
-            const char* name = KindName(m_kind);
+                return Tr("选择编辑方式 [C 十字交叉 / T T形相交 / R 拐角结合 / O 顶点断开 / M 顶点结合]:");
+            const std::string name = Tr(KindName(m_kind));
             switch (m_kind)
             {
             case MLineEditKind::Open:
-                return std::string(name) + "：点选多线上要断开的顶点 [右键/ESC 退出]:";
+                return TrF("{0}：点选多线上要断开的顶点 [右键/ESC 退出]:", name);
             case MLineEditKind::Tee:
-                return std::string(name) + (m_firstId == Object::InvalidID
-                    ? "：请点选第一条多线（被剪的一条，点在要保留的一侧）:"
-                    : "：请点选第二条多线（被接到的一条）:");
+                return m_firstId == Object::InvalidID ? TrF("{0}：请点选第一条多线（被剪的一条，点在要保留的一侧）:", name)
+                                                      : TrF("{0}：请点选第二条多线（被接到的一条）:", name);
             case MLineEditKind::Cross:
-                return std::string(name) + (m_firstId == Object::InvalidID
-                    ? "：请点选第一条多线（将被断开）:" : "：请点选第二条多线:");
+                return m_firstId == Object::InvalidID ? TrF("{0}：请点选第一条多线（将被断开）:", name)
+                                                      : TrF("{0}：请点选第二条多线:", name);
             default:
-                return std::string(name) + (m_firstId == Object::InvalidID
-                    ? "：请点选第一条多线（点在要保留的一侧）:" : "：请点选第二条多线（点在要保留的一侧）:");
+                return m_firstId == Object::InvalidID ? TrF("{0}：请点选第一条多线（点在要保留的一侧）:", name)
+                                                      : TrF("{0}：请点选第二条多线（点在要保留的一侧）:", name);
             }
         }
 
     private:
         using Path = std::vector<Math::Point3>;
 
-        static const char* KindName(MLineEditKind k)
+        static const char* KindName(MLineEditKind k)      // N_ 标记，显示时 Tr
         {
             switch (k)
             {
-            case MLineEditKind::Cross:  return "十字交叉";
-            case MLineEditKind::Tee:    return "T形相交";
-            case MLineEditKind::Corner: return "拐角结合";
-            case MLineEditKind::Open:   return "顶点断开";
-            case MLineEditKind::Merge:  return "顶点结合";
+            case MLineEditKind::Cross:  return N_("十字交叉");
+            case MLineEditKind::Tee:    return N_("T形相交");
+            case MLineEditKind::Corner: return N_("拐角结合");
+            case MLineEditKind::Open:   return N_("顶点断开");
+            case MLineEditKind::Merge:  return N_("顶点结合");
             }
             return "";
         }
@@ -322,7 +321,7 @@ namespace MiniCAD
             items.push_back(Replace(ml, MakeLike(ml, ml.GetID(), sp.First, false)));
             if (sp.Second.size() >= 2)
                 items.push_back(Add(ml, sp.Second, false));
-            Submit("顶点断开", std::move(items));
+            Submit(N_("顶点断开"), std::move(items));
         }
 
         // ── 两条多线的编辑 ─────────────────────────────────────────────────
@@ -343,7 +342,7 @@ namespace MiniCAD
                 std::vector<GeometryEditCommand::Item> items;
                 items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(joined), false)));
                 items.push_back(Replace(b, nullptr));
-                Submit("顶点结合", std::move(items));
+                Submit(N_("顶点结合"), std::move(items));
                 return;
             }
 
@@ -374,7 +373,7 @@ namespace MiniCAD
                 }
                 else
                     items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(tail), false)));
-                Submit("十字交叉", std::move(items));
+                Submit(N_("十字交叉"), std::move(items));
                 return;
             }
 
@@ -389,7 +388,7 @@ namespace MiniCAD
                 if (kept.empty()) { LOG_WARN("[MLineEditTool] 剪切后没有剩余部分"); return; }
                 std::vector<GeometryEditCommand::Item> items;
                 items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(kept), false)));
-                Submit("T形相交", std::move(items));
+                Submit(N_("T形相交"), std::move(items));
                 return;
             }
 
@@ -405,7 +404,7 @@ namespace MiniCAD
             std::vector<GeometryEditCommand::Item> items;
             items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(corner), false)));
             items.push_back(Replace(b, nullptr));
-            Submit("拐角结合", std::move(items));
+            Submit(N_("拐角结合"), std::move(items));
         }
 
         const EditorContext* m_ctx     = nullptr;       // 仅在 OnInput 内有效

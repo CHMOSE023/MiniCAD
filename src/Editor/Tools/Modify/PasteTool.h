@@ -99,7 +99,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定插入点 [右键/ESC 取消]:";
+            return Tr("指定插入点 [右键/ESC 取消]:");
         }
 
     private:

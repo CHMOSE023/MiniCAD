@@ -78,7 +78,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "拾取内部点 [图案 " + m_settings.Pattern + " | 右键退出]:";
+            return TrF("拾取内部点 [图案 {0} | 右键退出]:", m_settings.Pattern);
         }
 
         void OnSceneChanged() override

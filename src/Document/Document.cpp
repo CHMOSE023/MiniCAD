@@ -1,5 +1,6 @@
 #include "Document.h"
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 #include "Document/DimAssoc.h"
 #include "Import/CadExchange.h"
 #include "NodeGraph/Graph.h"
@@ -215,7 +216,7 @@ namespace MiniCAD
         std::ifstream file(Utf8Path(path), std::ios::binary);
         if (!file.is_open())
         {
-            return fail("无法读取文件，请检查文件是否存在及访问权限");
+            return fail(Tr("无法读取文件，请检查文件是否存在及访问权限"));
         }
 
         if (CadKindFromPath(path) != CadFileKind::None)
@@ -225,21 +226,21 @@ namespace MiniCAD
             const auto length = file.tellg();
             if (length < 0 || static_cast<std::uintmax_t>(length) > std::numeric_limits<std::streamsize>::max())
             {
-                return fail("无法确定图纸文件大小");
+                return fail(Tr("无法确定图纸文件大小"));
             }
             std::vector<std::uint8_t> bytes;
             if (static_cast<std::uintmax_t>(length) > bytes.max_size())
-                return fail("图纸文件过大，无法分配读取缓冲区");
+                return fail(Tr("图纸文件过大，无法分配读取缓冲区"));
             bytes.resize(static_cast<std::size_t>(length));
             file.seekg(0, std::ios::beg);
             if (!file || (!bytes.empty() && !file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(length))))
             {
-                return fail("无法完整读取图纸文件");
+                return fail(Tr("无法完整读取图纸文件"));
             }
             std::string err;
             if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource, progress, path))
             {
-                return fail(err.empty() ? "图纸已损坏或版本不受支持" : err);
+                return fail(err.empty() ? Tr("图纸已损坏或版本不受支持") : err);
             }
             m_dirty = false;
             SetPath(path);
@@ -250,11 +251,11 @@ namespace MiniCAD
         std::ostringstream buf;
         buf << file.rdbuf();
         if (file.bad())
-            return fail("无法完整读取文档文件");
+            return fail(Tr("无法完整读取文档文件"));
         const std::string content = buf.str();
         if (!LoadFromString(content))
         {
-            return fail("不是有效的 MiniCAD 文档，或文件已损坏");
+            return fail(Tr("不是有效的 MiniCAD 文档，或文件已损坏"));
         }
 
         SetPath(path);

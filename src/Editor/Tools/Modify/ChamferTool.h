@@ -93,9 +93,11 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            char buf[112];
-            std::snprintf(buf, sizeof(buf), "当前倒角距离 = %.4g, %.4g。", m_d1 ? *m_d1 : 0.0, m_d2 ? *m_d2 : 0.0);
-            return std::string(buf) + (m_firstId == Object::InvalidID ? "选择第一条直线 [键入 距离 或 D1,D2 修改]:" : "选择第二条直线 [键入 距离 或 D1,D2 修改]:");
+            char d1[32], d2[32];
+            std::snprintf(d1, sizeof(d1), "%.4g", m_d1 ? *m_d1 : 0.0);
+            std::snprintf(d2, sizeof(d2), "%.4g", m_d2 ? *m_d2 : 0.0);
+            return TrF("当前倒角距离 = {0}, {1}。", d1, d2) +
+                   (m_firstId == Object::InvalidID ? Tr("选择第一条直线 [键入 距离 或 D1,D2 修改]:") : Tr("选择第二条直线 [键入 距离 或 D1,D2 修改]:"));
         }
 
     private:
@@ -158,7 +160,7 @@ namespace MiniCAD
                 items.push_back(std::move(item));
             }
 
-            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>("倒角", std::move(items)), m_ctx->scene);
+            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("倒角"), std::move(items)), m_ctx->scene);
             LOG_DEBUG("[ChamferTool] 倒角完成，距离 %.4g, %.4g", *m_d1, *m_d2);
 
             m_firstId = Object::InvalidID;              // 回到「选择第一条直线」

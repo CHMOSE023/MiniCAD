@@ -126,6 +126,7 @@ namespace MiniCAD
 
         // ── 宿主面板（MainPanels.cpp / LayerPanels.cpp）─────────────
         struct ViewChrome;      // 一个窗口里的视图方块、导航条、命令行、状态栏（见下文“每个窗口一套的绘图区界面”）
+        struct PanelSet;        // 一个窗口的特性 / 图层 / 节点面板的状态（见下文）
         std::unique_ptr<MiniGUI::Node> CreateCanvas();            // 绘图区（面板 "canvas"）：铺满标题栏以下，其余界面浮在上面
         // 透明的“洞”（主窗口的面板 "documents"，文档窗口里铺满视口）：视图方块、导航条、命令行
         std::unique_ptr<MiniGUI::Node> CreateDocumentArea(ViewChrome& c);
@@ -148,8 +149,8 @@ namespace MiniCAD
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel(ViewChrome& c);
-        // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 bindings
-        std::unique_ptr<MiniGUI::Node> CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> doc,
+        // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 panels.bindings
+        std::unique_ptr<MiniGUI::Node> CreateLayerBar(PanelSet& panels, std::function<Document*()> doc,
                                                       MiniGUI::ComboBox** layerOut = nullptr);
         std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
         std::unique_ptr<MiniGUI::Node> CreateSaveProgress();      // 状态栏里的保存进度（同读取进度的样式），只在保存时显示
@@ -301,6 +302,7 @@ namespace MiniCAD
         {
             MiniGUI::BindingSet      bindings;                  // 特性面板与功能区图层下拉框的绑定
             std::function<void()>    syncGeometryRows;          // 特性面板「几何」组：按选择集重新分配行
+            std::vector<std::function<void()>> retranslate;     // 特性面板里代码写的文字（组名、行名、提示）：切换界面语言时重写
             MiniGUI::ListView*       layerList   = nullptr;
             MiniGUI::TextBox*        layerSearch = nullptr;     // 图层面板的搜索框
             static constexpr uint32_t kGroupRow = 0xFFFFFFFFu;  // layerIds 里的分组行：只有 "A$B" 没有 "A" 时补出的上级 "A"

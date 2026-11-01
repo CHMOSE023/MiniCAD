@@ -93,8 +93,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_srcId == Object::InvalidID ? "选择要偏移的对象 [右键/ESC 退出]:"
-                                                : "指定通过点 [右键/ESC 退出]:";
+            return m_srcId == Object::InvalidID ? Tr("选择要偏移的对象 [右键/ESC 退出]:")
+                                                : Tr("指定通过点 [右键/ESC 退出]:");
         }
 
     private:
@@ -212,7 +212,7 @@ namespace MiniCAD
             it.after  = std::move(ent);
             items.push_back(std::move(it));
 
-            auto cmd = std::make_unique<GeometryEditCommand>("偏移", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("偏移"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
             LOG_DEBUG("[OffsetTool] 已偏移");

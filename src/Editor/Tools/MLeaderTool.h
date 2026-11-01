@@ -101,9 +101,9 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_step == 1) return "指定基线/文字位置 [右键/ESC 退出]:";
-            if (m_arrows.empty()) return "指定第一个箭头落点:";
-            return "指定下一个箭头落点 [右键结束放置]:";
+            if (m_step == 1) return Tr("指定基线/文字位置 [右键/ESC 退出]:");
+            if (m_arrows.empty()) return Tr("指定第一个箭头落点:");
+            return Tr("指定下一个箭头落点 [右键结束放置]:");
         }
 
         void OnSceneChanged() override { Reset(); }
@@ -179,7 +179,7 @@ namespace MiniCAD
             ent->SetLanding(landing);
             const Math::Vec3 dir = DoglegDir(landing);
             ent->SetDoglegDir(dir);
-            ent->SetText(m_defaultText);                      // 默认注释(同时置内容为 MText)
+            ent->SetText(m_defaultText.empty() ? Tr("说明") : m_defaultText);                      // 默认注释(同时置内容为 MText)
             // 不设文字原点：绘制时按 landing 与实际文字宽推出（见 MLeaderEntity::ResolveTextOrigin）。
             // 引线在右（dir 指向 +x）时文字在左、右缘贴着基线，对应附着点 Right
             ent->SetTextAnchor(dir.x > 0.0 ? MLeaderTextAnchor::Right : MLeaderTextAnchor::Left);
@@ -210,6 +210,6 @@ namespace MiniCAD
         std::vector<Math::Point3> m_arrows;     // 各箭头落点(每个 = 一条单点引线)
         Math::Point3              m_cursor{};
         MLeaderStyle              m_style;
-        std::string               m_defaultText = "说明";   // 默认注释文字
+        std::string               m_defaultText;            // 默认注释文字；空 = "说明"（按界面语言）
     };
 }

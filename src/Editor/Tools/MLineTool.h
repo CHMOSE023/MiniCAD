@@ -108,13 +108,15 @@ namespace MiniCAD
         {
             // ⚠ 不要在这里访问 m_ctx：本函数由 Editor::Render() 每帧调用，
             //   而 m_ctx 指向 OnInput 的栈参数、事件返回后即失效。样式名用缓存值。
-            static const char* kJ[] = { "上", "无", "下" };
-            char buf[160];
-            std::snprintf(buf, sizeof(buf), "%s [J 对正=%s  S 比例=%g  T 样式=%s%s]:",
-                          m_pts.empty() ? "指定起点" : "指定下一点",
-                          kJ[static_cast<int>(m_settings.Justify)], m_settings.Scale,
-                          m_styleName.c_str(), m_pts.size() >= 3 ? "  C 闭合" : "");
-            return buf;
+            static const char* kJ[] = { NC_("多线对正", "上"), NC_("多线对正", "无"), NC_("多线对正", "下") };
+            char scale[32];
+            std::snprintf(scale, sizeof(scale), "%g", m_settings.Scale);
+            const std::string justify = TrC("多线对正", kJ[static_cast<int>(m_settings.Justify)]);
+            if (m_pts.empty())
+                return TrF("指定起点 [J 对正={0}  S 比例={1}  T 样式={2}]:", justify, scale, m_styleName);
+            if (m_pts.size() >= 3)
+                return TrF("指定下一点 [J 对正={0}  S 比例={1}  T 样式={2}  C 闭合]:", justify, scale, m_styleName);
+            return TrF("指定下一点 [J 对正={0}  S 比例={1}  T 样式={2}]:", justify, scale, m_styleName);
         }
 
         void OnSceneChanged() override { m_pts.clear(); if (m_overlay) m_overlay->Clear(); }

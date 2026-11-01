@@ -1,5 +1,6 @@
 #include "Widgets/NumberBox.h"
 #include "Widgets/TextBox.h"
+#include "MiniI18n/I18n.h"
 #include "Style/Theme.hpp"
 #include "Core/UIContext.h"
 #include "Paint/DrawList.h"
@@ -289,7 +290,7 @@ namespace MiniGUI
     {
         m_mixed = true;
         m_box->ReplaceAll({});
-        m_box->SetPlaceholder("*多种*");
+        m_box->SetPlaceholder(Tr("*多种*"));
     }
 
     void NumberBox::Apply(double value, bool notify)

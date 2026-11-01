@@ -59,7 +59,7 @@ namespace MiniCAD
 
         // 对话框里的一行："名称 [控件]"，名称列对齐
         template<typename T, typename... Args>
-        T* AddRow(MiniGUI::Node* parent, const char* name, Args&&... args)
+        T* AddRow(MiniGUI::Node* parent, const std::string& name, Args&&... args)
         {
             using namespace MiniGUI;
             Node* row = parent->AddChild<Node>();
@@ -302,7 +302,7 @@ namespace MiniCAD
         {
             box->SetMultiline(true);
             box->SetRows(3);
-            popup->AddChild<Label>("Ctrl+Enter 确认，Esc 取消，点击外面也会确认", 11.0f, Theme::TextDim);
+            popup->AddChild<Label>(Tr("Ctrl+Enter 确认，Esc 取消，点击外面也会确认"), 11.0f, Theme::TextDim);
         }
         else
         {
@@ -386,13 +386,13 @@ namespace MiniCAD
         Editor&           editor = m_docManager.GetEditor();
         const BlockTable& table  = m_docManager.GetActive()->GetScene().GetBlockTable();
 
-        auto dialog = std::make_unique<Dialog>("定义块");
+        auto dialog = std::make_unique<Dialog>(Tr("定义块"));
         Node* body = dialog->GetBody();
         body->SetLayoutStyle(ColumnStyle(8.0f));
-        TextBox* name = AddRow<TextBox>(body, "块名", editor.GetBlockNameRequest().DefaultName);
+        TextBox* name = AddRow<TextBox>(body, Tr("块名"), editor.GetBlockNameRequest().DefaultName);
         name->EditLayoutStyle().width = 220.0f;
         Label* error = body->AddChild<Label>("", 12.0f, Theme::Danger);
-        body->AddChild<Label>(std::to_string(editor.GetBlockNameRequest().Ids.size()) + " 个对象将收进新块，并原位替换为块引用",
+        body->AddChild<Label>(TrF("{0} 个对象将收进新块，并原位替换为块引用", editor.GetBlockNameRequest().Ids.size()),
                               12.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
@@ -400,11 +400,11 @@ namespace MiniCAD
         {
             const std::string n = Trimmed(name->GetText());
             const bool exists = !n.empty() && table.FindByName(n) != BlockTable::InvalidID;
-            error->SetText(n.empty() ? "请输入块名" : exists ? "块名已存在" : "");
+            error->SetText(n.empty() ? Tr("请输入块名") : exists ? Tr("块名已存在") : "");
             error->SetVisible(n.empty() || exists);
             return !n.empty() && !exists;
         };
-        Button* ok = raw->AddButton("确定", [this, raw, name, valid]
+        Button* ok = raw->AddButton(Tr("确定"), [this, raw, name, valid]
         {
             if (!valid())
                 return;
@@ -413,7 +413,7 @@ namespace MiniCAD
             RequestRenderAll();
             StateChanged();
         }, DialogButtonRole::Default);
-        raw->AddButton("取消", [this, raw]
+        raw->AddButton(Tr("取消"), [this, raw]
         {
             m_docManager.GetEditor().GetBlockNameRequest() = {};
             raw->Close();
@@ -456,19 +456,19 @@ namespace MiniCAD
                 base.resize(base.size() - ext.size());
         }
 
-        auto dialog = std::make_unique<Dialog>("另存为");
+        auto dialog = std::make_unique<Dialog>(Tr("另存为"));
         Node* body = dialog->GetBody();
         LayoutStyle bs = ColumnStyle(10.0f);
         bs.padding = Edges::Make(16.0f, 12.0f, 16.0f, 4.0f);
         body->SetLayoutStyle(bs);
 
         constexpr float kFieldWidth = 280.0f;
-        TextBox* name = AddRow<TextBox>(body, "文件名", base);
+        TextBox* name = AddRow<TextBox>(body, Tr("文件名"), base);
         name->EditLayoutStyle().width = kFieldWidth;
         std::vector<std::string> labels;
         for (const SaveFormat& f : kSaveFormats)
             labels.emplace_back(Tr(f.label));
-        ComboBox* type = AddRow<ComboBox>(body, "格式", labels, format);
+        ComboBox* type = AddRow<ComboBox>(body, Tr("格式"), labels, format);
         type->EditLayoutStyle().width = kFieldWidth;
 
         // 提示与输入框左对齐（名称列 72 + 间距 8）
@@ -476,11 +476,11 @@ namespace MiniCAD
         LayoutStyle hs = ColumnStyle(2.0f);
         hs.margin = Edges::Make(80.0f, 0.0f, 0.0f, 0.0f);
         hints->SetLayoutStyle(hs);
-        hints->AddChild<Label>("AutoCAD 2013～2017 共用 2013 格式；DWG 不支持 2007 格式", 12.0f, Theme::TextDim);
-        hints->AddChild<Label>("保存后由浏览器下载到本机", 12.0f, Theme::TextDim);
+        hints->AddChild<Label>(Tr("AutoCAD 2013～2017 共用 2013 格式；DWG 不支持 2007 格式"), 12.0f, Theme::TextDim);
+        hints->AddChild<Label>(Tr("保存后由浏览器下载到本机"), 12.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
-        Button* ok = raw->AddButton("保存", [this, raw, name, type, doc, onSaved]
+        Button* ok = raw->AddButton(Tr("保存"), [this, raw, name, type, doc, onSaved]
         {
             const std::string n = Trimmed(name->GetText());
             const int i = type->GetSelectedIndex();
@@ -506,7 +506,7 @@ namespace MiniCAD
             }
             StateChanged();
         }, DialogButtonRole::Default);
-        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->AddButton(Tr("取消"), [raw] { raw->Close(); }, DialogButtonRole::Cancel);
         name->SetOnChanged([ok](const std::string& t) { ok->SetEnabled(!Trimmed(t).empty()); });
         ok->SetEnabled(!Trimmed(name->GetText()).empty());
 
@@ -536,15 +536,15 @@ namespace MiniCAD
                 return;
             ListItem item;
             item.text     = b.GetName();
-            item.detail   = std::to_string(b.EntityCount()) + " 个对象";
+            item.detail   = TrF("{0} 个对象", b.EntityCount());
             item.userData = id;
             items.push_back(std::move(item));
         });
 
-        auto dialog = std::make_unique<Dialog>("插入块");
+        auto dialog = std::make_unique<Dialog>(Tr("插入块"));
         Node* body = dialog->GetBody();
         body->SetLayoutStyle(ColumnStyle(6.0f));
-        body->AddChild<Label>("选择要插入的块（双击直接插入），然后在绘图区指定插入点：", 12.0f, Theme::TextDim);
+        body->AddChild<Label>(Tr("选择要插入的块（双击直接插入），然后在绘图区指定插入点："), 12.0f, Theme::TextDim);
         ListView* list = body->AddChild<ListView>();
         list->EditLayoutStyle().width  = 320.0f;
         list->EditLayoutStyle().height = 220.0f;
@@ -565,9 +565,9 @@ namespace MiniCAD
             StateChanged();
         };
         list->SetOnItemActivated([insert](int) { insert(); });
-        Button* ok = raw->AddButton("插入", insert, DialogButtonRole::Default);
+        Button* ok = raw->AddButton(Tr("插入"), insert, DialogButtonRole::Default);
         ok->SetEnabled(!items.empty());
-        raw->AddButton("取消", [this, raw]
+        raw->AddButton(Tr("取消"), [this, raw]
         {
             m_docManager.GetEditor().GetBlockInsertRequest() = {};
             raw->Close();
@@ -595,7 +595,7 @@ namespace MiniCAD
         class ArrayDialog : public MiniGUI::Dialog
         {
         public:
-            ArrayDialog() : MiniGUI::Dialog("阵列") {}
+            ArrayDialog() : MiniGUI::Dialog(Tr("阵列")) {}
             MiniGUI::RadioGroup group;
         };
     }
@@ -617,8 +617,8 @@ namespace MiniCAD
         ts.direction = FlexDirection::Row;
         ts.gap       = 16.0f;
         types->SetLayoutStyle(ts);
-        types->AddChild<RadioButton>(&raw->group, static_cast<int>(ArrayType::Rectangular), "矩形阵列");
-        types->AddChild<RadioButton>(&raw->group, static_cast<int>(ArrayType::Polar),       "环形阵列");
+        types->AddChild<RadioButton>(&raw->group, static_cast<int>(ArrayType::Rectangular), Tr("矩形阵列"));
+        types->AddChild<RadioButton>(&raw->group, static_cast<int>(ArrayType::Polar),       Tr("环形阵列"));
         raw->group.SetValue(static_cast<int>(p.type));
         body->AddChild<Separator>();
 
@@ -629,11 +629,11 @@ namespace MiniCAD
         // ── 矩形 ─────────────────────────────────────────────────
         Node* rect = body->AddChild<Node>();
         rect->SetLayoutStyle(ColumnStyle(6.0f));
-        auto* rows   = AddRow<NumberBox>(rect, "行数",     static_cast<double>(p.rows), 1.0, 1000.0, 1.0, 0);
-        auto* cols   = AddRow<NumberBox>(rect, "列数",     static_cast<double>(p.cols), 1.0, 1000.0, 1.0, 0);
-        auto* rowGap = AddRow<NumberBox>(rect, "行间距",   p.rowSpacing);
-        auto* colGap = AddRow<NumberBox>(rect, "列间距",   p.colSpacing);
-        auto* angle  = AddRow<NumberBox>(rect, "阵列角度", p.angleDeg);
+        auto* rows   = AddRow<NumberBox>(rect, Tr("行数"),     static_cast<double>(p.rows), 1.0, 1000.0, 1.0, 0);
+        auto* cols   = AddRow<NumberBox>(rect, Tr("列数"),     static_cast<double>(p.cols), 1.0, 1000.0, 1.0, 0);
+        auto* rowGap = AddRow<NumberBox>(rect, Tr("行间距"),   p.rowSpacing);
+        auto* colGap = AddRow<NumberBox>(rect, Tr("列间距"),   p.colSpacing);
+        auto* angle  = AddRow<NumberBox>(rect, Tr("阵列角度"), p.angleDeg);
         rowGap->SetDecimals(3);
         colGap->SetDecimals(3);
         angle->SetDecimals(2);
@@ -647,7 +647,7 @@ namespace MiniCAD
         cs.alignItems = Align::Center;
         cs.gap        = 6.0f;
         centerRow->SetLayoutStyle(cs);
-        centerRow->AddChild<Label>("中心点", 13.0f, Theme::TextDim)->EditLayoutStyle().width = 72.0f;
+        centerRow->AddChild<Label>(Tr("中心点"), 13.0f, Theme::TextDim)->EditLayoutStyle().width = 72.0f;
         auto* cx = centerRow->AddChild<NumberBox>(p.center.x);
         auto* cy = centerRow->AddChild<NumberBox>(p.center.y);
         cx->SetDecimals(3);
@@ -656,17 +656,17 @@ namespace MiniCAD
         cy->EditLayoutStyle().width = 100.0f;
         cx->SetTooltip("X");
         cy->SetTooltip("Y");
-        Button* pick = centerRow->AddChild<Button>("拾取 <", [this]
+        Button* pick = centerRow->AddChild<Button>(Tr("拾取 <"), [this]
         {
             m_docManager.GetEditor().BeginArrayCenterPick();      // 对话框暂时关闭，在绘图区点选中心
             StateChanged();
             m_viewport->Focus();
         });
-        pick->SetTooltip("在绘图区点选阵列中心");
-        auto* count  = AddRow<NumberBox>(polar, "项目总数", static_cast<double>(p.count), 2.0, 1000.0, 1.0, 0);
-        auto* fill   = AddRow<NumberBox>(polar, "填充角度", p.fillAngleDeg);
+        pick->SetTooltip(Tr("在绘图区点选阵列中心"));
+        auto* count  = AddRow<NumberBox>(polar, Tr("项目总数"), static_cast<double>(p.count), 2.0, 1000.0, 1.0, 0);
+        auto* fill   = AddRow<NumberBox>(polar, Tr("填充角度"), p.fillAngleDeg);
         fill->SetDecimals(2);
-        auto* rotate = polar->AddChild<CheckBox>("旋转项目", p.rotateItems);
+        auto* rotate = polar->AddChild<CheckBox>(Tr("旋转项目"), p.rotateItems);
 
         body->AddChild<Separator>();
         summary = body->AddChild<Label>("", 12.0f, Theme::TextDim);
@@ -678,7 +678,7 @@ namespace MiniCAD
             rect->SetVisible(q.type == ArrayType::Rectangular);
             polar->SetVisible(q.type == ArrayType::Polar);
             const int n = q.type == ArrayType::Rectangular ? q.rows * q.cols : q.count;
-            summary->SetText("共 " + std::to_string(n) + " 个项目（含源对象）");
+            summary->SetText(TrF("共 {0} 个项目（含源对象）", n));
             m_docManager.GetEditor().BuildArrayPreview(q);
             RequestRenderAll();
         };
@@ -711,7 +711,7 @@ namespace MiniCAD
         rotate->SetOnChanged([this, changed](bool v) { m_docManager.GetEditor().GetArrayRequest().Params.rotateItems = v; (*changed)(); });
         raw->group.SetOnChanged([changed](int) { (*changed)(); });
 
-        raw->AddButton("确定", [this, raw]
+        raw->AddButton(Tr("确定"), [this, raw]
         {
             Editor& ed = m_docManager.GetEditor();
             if (!ed.GetArrayRequest().Params.ProducesCopies())
@@ -721,7 +721,7 @@ namespace MiniCAD
             RequestRenderAll();
             StateChanged();
         }, DialogButtonRole::Default);
-        raw->AddButton("取消", [this, raw]
+        raw->AddButton(Tr("取消"), [this, raw]
         {
             m_docManager.GetEditor().CancelArray();
             raw->Close();
@@ -827,7 +827,7 @@ namespace MiniCAD
         HatchSettings& hs = m_docManager.GetEditor().GetHatchSettings();
         const auto& patterns = HatchPatternLibrary::Instance().All();
 
-        auto dialog = std::make_unique<Dialog>("图案填充");
+        auto dialog = std::make_unique<Dialog>(Tr("图案填充"));
         Dialog* raw = dialog.get();
         Node* body = raw->GetBody();
         LayoutStyle bs = ColumnStyle(8.0f);
@@ -853,7 +853,7 @@ namespace MiniCAD
             return inList && !p.Description.empty() ? p.Name + "  " + p.Description : p.Name;
         };
 
-        auto* combo = AddRow<ComboBox>(body, "图案", names, selected);
+        auto* combo = AddRow<ComboBox>(body, Tr("图案"), names, selected);
         combo->EditLayoutStyle().width = 220.0f;
         // 下拉层按最长一项定宽：样例与内边距之外加上文字宽度，限制在 320～560。
         // 外部 .pat（如天正的）说明较长，固定 320 时后半截被切掉
@@ -879,8 +879,8 @@ namespace MiniCAD
         Label* desc = body->AddChild<Label>("", 12.0f, Theme::TextDim);
         desc->EditLayoutStyle().width = 300.0f;     // 与预览同宽，过长的说明加"…"，不撑大对话框
         desc->SetEllipsis(true);
-        auto* scale = AddRow<NumberBox>(body, "比例", hs.Scale, 0.001, 10000.0, 0.1, 3);
-        auto* angle = AddRow<NumberBox>(body, "角度", hs.AngleDeg, -360.0, 360.0, 15.0, 2);
+        auto* scale = AddRow<NumberBox>(body, Tr("比例"), hs.Scale, 0.001, 10000.0, 0.1, 3);
+        auto* angle = AddRow<NumberBox>(body, Tr("角度"), hs.AngleDeg, -360.0, 360.0, 15.0, 2);
 
         auto* preview = body->AddChild<HatchPreview>(hs);
         preview->EditLayoutStyle().width  = 300.0f;
@@ -901,16 +901,16 @@ namespace MiniCAD
         });
         scale->SetOnChanged([&hs, refresh](double v) { if (v > 0.0) hs.Scale = v; refresh(); });
         angle->SetOnChanged([&hs, refresh](double v) { hs.AngleDeg = v; refresh(); });
-        body->AddChild<Label>("确定后在封闭区域内部点击填充，右键 / Esc 结束", 12.0f, Theme::TextDim);
+        body->AddChild<Label>(Tr("确定后在封闭区域内部点击填充，右键 / Esc 结束"), 12.0f, Theme::TextDim);
 
-        raw->AddButton("确定", [this, raw]
+        raw->AddButton(Tr("确定"), [this, raw]
         {
             m_docManager.GetEditor().SubmitHatch();     // 先提交再关闭：关闭回调会把仍在的请求当作取消
             raw->Close();
             m_viewport->Focus();
             StateChanged();
         }, DialogButtonRole::Default);
-        raw->AddButton("取消", [this, raw]
+        raw->AddButton(Tr("取消"), [this, raw]
         {
             m_docManager.GetEditor().CancelHatch();
             raw->Close();
@@ -993,7 +993,7 @@ namespace MiniCAD
                 Overlay overlay;
                 const Scene& scene = m_doc->GetScene();
                 DrawContext ctx(lines, fills, textured, overlay, scene.GetLayerManager(), scene.GetLineTypeTable(), 0.0, nullptr, resolver);
-                TextEntity sample(1, { 0, 0, 0 }, "AaBb 123 中文样例", 10.0f, 0.0f, *m_styleId);
+                TextEntity sample(1, { 0, 0, 0 }, "AaBb 123 中文样例", 10.0f, 0.0f, *m_styleId);    // i18n: 数据（预览字体的中文字形，不随界面语言变）
                 sample.Draw(ctx, false, false);
                 if (lines.empty() && fills.empty())
                     return;
@@ -1028,7 +1028,7 @@ namespace MiniCAD
         class TextStyleDialog : public MiniGUI::Dialog
         {
         public:
-            TextStyleDialog() : MiniGUI::Dialog("文字样式") {}
+            TextStyleDialog() : MiniGUI::Dialog(Tr("文字样式")) {}
             TextStyleID selected = TextStyleTable::StandardID;     // 正在编辑的样式
         };
 
@@ -1125,7 +1125,7 @@ namespace MiniCAD
         class PointStyleDialog : public MiniGUI::Dialog
         {
         public:
-            PointStyleDialog() : MiniGUI::Dialog("点样式") {}
+            PointStyleDialog() : MiniGUI::Dialog(Tr("点样式")) {}
 
             // ── 对话框自身持有全部状态 ─────────────────────────────────
             // ⚠ 这些**必须是成员**，不能让回调按引用捕获 OpenPointStyleDialog 的局部变量：
@@ -1253,7 +1253,7 @@ namespace MiniCAD
         class LineTypeScaleDialog : public MiniGUI::Dialog
         {
         public:
-            LineTypeScaleDialog() : MiniGUI::Dialog("线型比例") {}
+            LineTypeScaleDialog() : MiniGUI::Dialog(Tr("线型比例")) {}
 
             // ── 对话框自身持有全部状态 ─────────────────────────────────
             // ⚠ 必须是成员：回调在对话框存活期间随时触发，按引用捕获
@@ -1290,11 +1290,11 @@ namespace MiniCAD
         body->SetLayoutStyle(bs);
 
         const std::string fontDir = ResourceDir() + "/fonts";
-        auto* styleCombo = AddRow<ComboBox>(body, "样式");
+        auto* styleCombo = AddRow<ComboBox>(body, Tr("样式"));
         styleCombo->EditLayoutStyle().width = 240.0f;
         Label* current = body->AddChild<Label>("", 12.0f, Theme::TextDim);
 
-        auto* name = AddRow<TextBox>(body, "名称");
+        auto* name = AddRow<TextBox>(body, Tr("名称"));
         name->EditLayoutStyle().width = 240.0f;
         Node* actions = body->AddChild<Node>();
         LayoutStyle as;
@@ -1304,15 +1304,15 @@ namespace MiniCAD
         actions->SetLayoutStyle(as);
         body->AddChild<Separator>();
 
-        auto* font    = AddRow<ComboBox>(body, "字体");
-        auto* bigFont = AddRow<ComboBox>(body, "大字体");
+        auto* font    = AddRow<ComboBox>(body, Tr("字体"));
+        auto* bigFont = AddRow<ComboBox>(body, Tr("大字体"));
         font->EditLayoutStyle().width    = 240.0f;
         bigFont->EditLayoutStyle().width = 240.0f;
-        bigFont->SetTooltip("SHX 字体中显示中文等双字节字符的字体；TrueType 字体不需要");
-        auto* height  = AddRow<NumberBox>(body, "高度", 0.0, 0.0, 10000.0, 0.5, 3);
-        height->SetTooltip("固定字高；0 表示不固定，新建文字时使用默认字高");
-        auto* width   = AddRow<NumberBox>(body, "宽度因子", 1.0, 0.01, 100.0, 0.1, 3);
-        auto* oblique = AddRow<NumberBox>(body, "倾斜角度", 0.0, -85.0, 85.0, 5.0, 1);
+        bigFont->SetTooltip(Tr("SHX 字体中显示中文等双字节字符的字体；TrueType 字体不需要"));
+        auto* height  = AddRow<NumberBox>(body, Tr("高度"), 0.0, 0.0, 10000.0, 0.5, 3);
+        height->SetTooltip(Tr("固定字高；0 表示不固定，新建文字时使用默认字高"));
+        auto* width   = AddRow<NumberBox>(body, Tr("宽度因子"), 1.0, 0.01, 100.0, 0.1, 3);
+        auto* oblique = AddRow<NumberBox>(body, Tr("倾斜角度"), 0.0, -85.0, 85.0, 5.0, 1);
         auto* preview = body->AddChild<TextStylePreview>(doc, &raw->selected);
         preview->EditLayoutStyle().width  = 330.0f;
         preview->EditLayoutStyle().height = 80.0f;
@@ -1344,7 +1344,7 @@ namespace MiniCAD
             }
             styleCombo->SetItems(names);
             styleCombo->SetSelectedIndex(sel);
-            current->SetText("当前样式：" + table.Resolve(doc->GetScene().GetCurrentTextStyle()).Name);
+            current->SetText(TrF("当前样式：{0}", table.Resolve(doc->GetScene().GetCurrentTextStyle()).Name));
             name->SetText(rec.Name);
 
             std::vector<std::string> fonts = ListFontFiles(fontDir, false);
@@ -1353,7 +1353,7 @@ namespace MiniCAD
             font->SetSelectedIndex(IndexOf(fonts, rec.FontFile));
 
             std::vector<std::string> bigs = ListFontFiles(fontDir, true);
-            bigs.insert(bigs.begin(), "（无）");
+            bigs.insert(bigs.begin(), Tr("（无）"));
             if (!rec.BigFontFile.empty() && IndexOf(bigs, rec.BigFontFile) < 0) bigs.push_back(rec.BigFontFile);
             bigFont->SetItems(bigs);
             bigFont->SetSelectedIndex(rec.BigFontFile.empty() ? 0 : IndexOf(bigs, rec.BigFontFile));
@@ -1403,12 +1403,12 @@ namespace MiniCAD
         width->SetOnChanged([=](double v)   { edit([&](TextStyleRecord& r) { r.WidthFactor = v; }); });
         oblique->SetOnChanged([=](double v) { edit([&](TextStyleRecord& r) { r.ObliqueDeg = v; }); });
 
-        auto addAction = [&](const char* text, std::function<void()> fn)
+        auto addAction = [&](const std::string& text, std::function<void()> fn)
         {
             Button* b = actions->AddChild<Button>(text, std::move(fn));
             b->SetFocusable(false);
         };
-        addAction("新建", [=]
+        addAction(Tr("新建"), [=]
         {
             TextStyleTable& table = doc->GetScene().GetTextStyleTable();
             TextStyleRecord rec = *table.Find(raw->selected);          // 以选中样式为模板
@@ -1416,7 +1416,7 @@ namespace MiniCAD
             if (rec.Name.empty() || table.FindByName(rec.Name) != TextStyleTable::InvalidID)
                 for (int n = 1; ; ++n)                                  // 名称为空或重名：自动取"样式N"
                 {
-                    rec.Name = "样式" + std::to_string(n);
+                    rec.Name = "样式" + std::to_string(n);      // i18n: 数据（新样式名）
                     if (table.FindByName(rec.Name) == TextStyleTable::InvalidID) break;
                 }
             raw->selected = table.Add(rec);
@@ -1424,13 +1424,13 @@ namespace MiniCAD
             (*sync)();
             changed();
         });
-        addAction("重命名", [=]
+        addAction(Tr("重命名"), [=]
         {
             TextStyleTable& table = doc->GetScene().GetTextStyleTable();
             if (raw->selected == TextStyleTable::StandardID)
-                error->SetText("Standard 样式不能重命名");
+                error->SetText(Tr("Standard 样式不能重命名"));
             else if (!table.Rename(raw->selected, Trimmed(name->GetText())))
-                error->SetText("名称为空或与其他样式重名");
+                error->SetText(Tr("名称为空或与其他样式重名"));
             else
             {
                 error->SetText("");
@@ -1438,16 +1438,16 @@ namespace MiniCAD
                 changed();
             }
         });
-        addAction("删除", [=]
+        addAction(Tr("删除"), [=]
         {
             Scene& scene = doc->GetScene();
             const auto used = scene.CollectUsedTextStyles();
             if (raw->selected == TextStyleTable::StandardID)
-                error->SetText("Standard 样式不能删除");
+                error->SetText(Tr("Standard 样式不能删除"));
             else if (raw->selected == scene.GetCurrentTextStyle())
-                error->SetText("当前样式不能删除，请先把其他样式置为当前");
+                error->SetText(Tr("当前样式不能删除，请先把其他样式置为当前"));
             else if (std::find(used.begin(), used.end(), raw->selected) != used.end())
-                error->SetText("该样式正被图中的文字或标注使用，不能删除");
+                error->SetText(Tr("该样式正被图中的文字或标注使用，不能删除"));
             else
             {
                 scene.GetTextStyleTable().Remove(raw->selected);
@@ -1457,7 +1457,7 @@ namespace MiniCAD
                 changed();
             }
         });
-        addAction("置为当前", [=]
+        addAction(Tr("置为当前"), [=]
         {
             doc->GetScene().SetCurrentTextStyle(raw->selected);
             error->SetText("");
@@ -1465,7 +1465,7 @@ namespace MiniCAD
             changed();
         });
 
-        raw->AddButton("关闭", [raw] { raw->Close(); }, DialogButtonRole::Default);
+        raw->AddButton(Tr("关闭"), [raw] { raw->Close(); }, DialogButtonRole::Default);
         raw->SetOnClosed([this, raw]
         {
             if (m_textStyleDialog == raw)
@@ -1578,10 +1578,10 @@ namespace MiniCAD
         // ── 点大小 ───────────────────────────────────────────────────────
         body->AddChild<Separator>();
         RadioGroup& sizeGroup = raw->sizeGroup;         // 对话框成员，回调长期引用
-        body->AddChild<RadioButton>(&sizeGroup, 0, "相对于屏幕设置大小(&R)");
-        body->AddChild<RadioButton>(&sizeGroup, 1, "按绝对单位设置大小(&A)");
-        auto* sizeBox = AddRow<NumberBox>(body, "点大小", raw->size, 0.0, 1.0e6, 0.1, 4);
-        sizeBox->SetTooltip("相对屏幕时是视口高度的百分比；绝对单位时是世界单位");
+        body->AddChild<RadioButton>(&sizeGroup, 0, Tr("相对于屏幕设置大小(&R)"));
+        body->AddChild<RadioButton>(&sizeGroup, 1, Tr("按绝对单位设置大小(&A)"));
+        auto* sizeBox = AddRow<NumberBox>(body, Tr("点大小"), raw->size, 0.0, 1.0e6, 0.1, 4);
+        sizeBox->SetTooltip(Tr("相对屏幕时是视口高度的百分比；绝对单位时是世界单位"));
         Label* hint = body->AddChild<Label>("", 12.0f, Theme::TextDim);
 
         raw->sizeBox = sizeBox;
@@ -1613,8 +1613,8 @@ namespace MiniCAD
             if (raw->grid) { raw->grid->selected = mode; raw->grid->Invalidate(); }
             if (raw->hint)
                 raw->hint->SetText(raw->relative
-                    ? "视口高度的百分比；缩放时点图形大小不变"
-                    : "世界单位；缩放时点图形跟着变大变小");
+                    ? Tr("视口高度的百分比；缩放时点图形大小不变")
+                    : Tr("世界单位；缩放时点图形跟着变大变小"));
 
             // POINT 的显示属性变了但几何没变 ⇒ 用 MarkDisplayDirty
             // （不重建拾取索引；大图纸整表重建要上百毫秒，与图层配色同一档）。
@@ -1626,13 +1626,14 @@ namespace MiniCAD
         auto syncLabel = [raw, modeLabel, grid]()
         {
             const int m = raw->mode;
-            const char* outer = PdmodeHasCircle(m) && PdmodeHasSquare(m) ? "方+圆"
-                              : PdmodeHasCircle(m) ? "圆"
-                              : PdmodeHasSquare(m) ? "方" : "无外框";
-            static const char* kShape[5] = { "实心点", "无", "十字", "叉号", "竖线" };
+            const char* outer = PdmodeHasCircle(m) && PdmodeHasSquare(m) ? NC_("点样式", "方+圆")
+                              : PdmodeHasCircle(m) ? NC_("点样式", "圆")
+                              : PdmodeHasSquare(m) ? NC_("点样式", "方") : NC_("点样式", "无外框");
+            static const char* kShape[5] = { NC_("点样式", "实心点"), NC_("点样式", "无"), NC_("点样式", "十字"),
+                                             NC_("点样式", "叉号"), NC_("点样式", "竖线") };
             const int sh = PdmodeShape(m);
-            modeLabel->SetText("当前：$PDMODE = " + std::to_string(m) + "（" + outer + " + " +
-                               kShape[(sh >= 0 && sh <= 4) ? sh : 2] + "）");
+            modeLabel->SetText(TrF("当前：$PDMODE = {0}（{1} + {2}）", m, TrC("点样式", outer),
+                                   TrC("点样式", kShape[(sh >= 0 && sh <= 4) ? sh : 2])));
         };
 
         grid->onPick = [raw, syncLabel](int m)
@@ -1657,18 +1658,18 @@ namespace MiniCAD
         syncLabel();
         // 初始化说明文字（不触发回调）
         hint->SetText(raw->relative
-            ? "视口高度的百分比；缩放时点图形大小不变"
-            : "世界单位；缩放时点图形跟着变大变小");
+            ? Tr("视口高度的百分比；缩放时点图形大小不变")
+            : Tr("世界单位；缩放时点图形跟着变大变小"));
 
-        raw->AddButton("确定", [raw] { raw->Accept = true; raw->Close(); },
+        raw->AddButton(Tr("确定"), [raw] { raw->Accept = true; raw->Close(); },
                        DialogButtonRole::Default);
-        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->AddButton(Tr("取消"), [raw] { raw->Close(); }, DialogButtonRole::Cancel);
         raw->SetOnClosed([this, raw]
         {
             // 改动是实时生效的：「确定」把打开前后的差别作为一条命令入撤销栈（同时标记文档已修改），
             // 「取消」还原打开时的值
             if (raw->doc && raw->doc == m_docManager.GetActive())
-                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, "点样式");
+                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, N_("点样式"));
             if (m_pointStyleDialog == raw)
                 m_pointStyleDialog = nullptr;
             m_pointStyleDoc = nullptr;
@@ -1706,13 +1707,12 @@ namespace MiniCAD
         raw->origVars  = DrawingVars::From(scene);
 
         body->AddChild<Label>(
-            "全局线型比例（$LTSCALE）。虚线一个周期的实际长度 =\n"
-            "线型图案周期 × 实体线型比例 × 本值。", 12.0f, Theme::TextDim);
+            Tr("全局线型比例（$LTSCALE）。虚线一个周期的实际长度 =\n线型图案周期 × 实体线型比例 × 本值。"), 12.0f, Theme::TextDim);
 
         // ── 比例输入 ───────────────────────────────────────────────────
         body->AddChild<Separator>();
-        auto* scaleBox = AddRow<NumberBox>(body, "全局比例", raw->scale, 0.001, 1.0e6, 0.1, 4);
-        scaleBox->SetTooltip("大尺寸图纸常设为几百上千；1 是默认值");
+        auto* scaleBox = AddRow<NumberBox>(body, Tr("全局比例"), raw->scale, 0.001, 1.0e6, 0.1, 4);
+        scaleBox->SetTooltip(Tr("大尺寸图纸常设为几百上千；1 是默认值"));
         raw->scaleBox = scaleBox;
 
         // ── 预览 ───────────────────────────────────────────────────────
@@ -1758,17 +1758,15 @@ namespace MiniCAD
                 {
                     const double cycle = rec->PatternLength * entity * s;
                     const double cyclePx = cycle / LineTypeScalePreview::kWorldPerPixel;
-                    char buf[96];
-                    std::snprintf(buf, sizeof(buf), "虚线周期 = %.6g × %.6g × %.6g = %.6g 世界单位",
-                                  rec->PatternLength, entity, s, cycle);
-                    txt = buf;
+                    auto g6 = [](double v) { char b[32]; std::snprintf(b, sizeof(b), "%.6g", v); return std::string(b); };
+                    txt = TrF("虚线周期 = {0} × {1} × {2} = {3} 世界单位", g6(rec->PatternLength), g6(entity), g6(s), g6(cycle));
                     // 与 EmitStyled / 预览同一档护栏：周期不足 4px 图里退化为实线
                     if (cyclePx < 4.0)
-                        txt += "；周期过密，图里将显示为实线";
+                        txt += Tr("；周期过密，图里将显示为实线");
                 }
                 else
                 {
-                    txt = "当前线型是连续线，比例不影响显示";
+                    txt = Tr("当前线型是连续线，比例不影响显示");
                 }
                 raw->hint->SetText(txt);
             }
@@ -1795,14 +1793,14 @@ namespace MiniCAD
 
         scaleBox->SetOnChanged([raw](double) { raw->Commit(); });
 
-        raw->AddButton("确定", [raw] { raw->Accept = true; raw->Close(); },
+        raw->AddButton(Tr("确定"), [raw] { raw->Accept = true; raw->Close(); },
                        DialogButtonRole::Default);
-        raw->AddButton("取消", [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->AddButton(Tr("取消"), [raw] { raw->Close(); }, DialogButtonRole::Cancel);
         raw->SetOnClosed([this, raw]
         {
             // 同点样式：「确定」入撤销栈，「取消」还原
             if (raw->doc && raw->doc == m_docManager.GetActive())
-                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, "线型比例");
+                CommitDrawingVars(*raw->doc, raw->origVars, raw->Accept, N_("线型比例"));
             if (m_lineTypeScaleDialog == raw)
                 m_lineTypeScaleDialog = nullptr;
             m_lineTypeScaleDoc = nullptr;
@@ -1833,7 +1831,7 @@ namespace MiniCAD
         if (!doc)
             return;
 
-        auto dialog = std::make_unique<MiniGUI::Dialog>("多线样式");
+        auto dialog = std::make_unique<MiniGUI::Dialog>(Tr("多线样式"));
         MiniGUI::Dialog* raw = dialog.get();
         Node* body = raw->GetBody();
         LayoutStyle bs = ColumnStyle(8.0f);
@@ -1844,11 +1842,11 @@ namespace MiniCAD
         // 写入用的 Update/Add/Remove 就调不动了。各 lambda 里用 doc 现取。
         auto selected = std::make_shared<MLineStyleID>(doc->GetScene().GetCurrentMLineStyle());
 
-        auto* styleCombo = AddRow<ComboBox>(body, "样式");
+        auto* styleCombo = AddRow<ComboBox>(body, Tr("样式"));
         styleCombo->EditLayoutStyle().width = 240.0f;
         Label* current = body->AddChild<Label>("", 12.0f, Theme::TextDim);
 
-        auto* name = AddRow<TextBox>(body, "名称");
+        auto* name = AddRow<TextBox>(body, Tr("名称"));
         name->EditLayoutStyle().width = 240.0f;
 
         Node* actions = body->AddChild<Node>();
@@ -1862,7 +1860,7 @@ namespace MiniCAD
         body->AddChild<Separator>();
 
         // ── 元素线表：每条一个偏移输入框 ────────────────────────────
-        Label* elemTitle = body->AddChild<Label>("元素线（负值在中心线右侧）", 12.0f, Theme::TextDim);
+        Label* elemTitle = body->AddChild<Label>(Tr("元素线（负值在中心线右侧）"), 12.0f, Theme::TextDim);
         Node* elemRow = body->AddChild<Node>();
         {
             LayoutStyle es;
@@ -1875,9 +1873,9 @@ namespace MiniCAD
         body->AddChild<Separator>();
 
         // ── 封口 / 连接线 ──────────────────────────────────────────
-        auto* startCap = body->AddChild<CheckBox>("起点封口");
-        auto* endCap   = body->AddChild<CheckBox>("终点封口");
-        auto* joints   = body->AddChild<CheckBox>("顶点连接线");
+        auto* startCap = body->AddChild<CheckBox>(Tr("起点封口"));
+        auto* endCap   = body->AddChild<CheckBox>(Tr("终点封口"));
+        auto* joints   = body->AddChild<CheckBox>(Tr("顶点连接线"));
 
         Label* error = body->AddChild<Label>("", 12.0f, Theme::Danger);
 
@@ -1910,7 +1908,7 @@ namespace MiniCAD
             styleCombo->SetSelectedIndex(sel);
 
             const MLineStyleRecord& rec = table.Resolve(*selected);
-            current->SetText("当前样式：" + table.Resolve(doc->GetScene().GetCurrentMLineStyle()).Name);
+            current->SetText(TrF("当前样式：{0}", table.Resolve(doc->GetScene().GetCurrentMLineStyle()).Name));
             name->SetText(rec.Name);
             startCap->SetChecked(rec.StartCap);
             endCap->SetChecked(rec.EndCap);
@@ -1968,13 +1966,13 @@ namespace MiniCAD
         bindToggle(endCap,   &MLineStyleRecord::EndCap);
         bindToggle(joints,   &MLineStyleRecord::Joints);
 
-        auto addAction = [&](const char* label, std::function<void()> fn)
+        auto addAction = [&](const std::string& label, std::function<void()> fn)
         {
             auto* b = actions->AddChild<Button>(label, std::move(fn));
             b->EditLayoutStyle().padding = Edges::Symmetric(10.0f, 4.0f);
         };
 
-        addAction("置为当前", [=]
+        addAction(Tr("置为当前"), [=]
         {
             doc->GetScene().SetCurrentMLineStyle(*selected);
             error->SetText("");
@@ -1982,7 +1980,7 @@ namespace MiniCAD
             changed();
         });
 
-        addAction("新建", [=]
+        addAction(Tr("新建"), [=]
         {
             auto& table = doc->GetScene().GetMLineStyleTable();
             MLineStyleRecord rec = table.Resolve(*selected);       // 以选中样式为模板
@@ -1990,7 +1988,7 @@ namespace MiniCAD
             if (rec.Name.empty() || table.FindByName(rec.Name) != MLineStyleTable::InvalidID)
                 for (int n = 1; ; ++n)
                 {
-                    rec.Name = "多线样式" + std::to_string(n);
+                    rec.Name = "多线样式" + std::to_string(n);      // i18n: 数据（新样式名）
                     if (table.FindByName(rec.Name) == MLineStyleTable::InvalidID) break;
                 }
             *selected = table.Add(rec);
@@ -1999,13 +1997,13 @@ namespace MiniCAD
             changed();
         });
 
-        addAction("重命名", [=]
+        addAction(Tr("重命名"), [=]
         {
             auto& table = doc->GetScene().GetMLineStyleTable();
             if (*selected == MLineStyleTable::StandardID)
-                error->SetText("Standard 样式不能重命名");
+                error->SetText(Tr("Standard 样式不能重命名"));
             else if (!table.Rename(*selected, Trimmed(name->GetText())))
-                error->SetText("名称为空或与其他样式重名");
+                error->SetText(Tr("名称为空或与其他样式重名"));
             else
             {
                 error->SetText("");
@@ -2014,13 +2012,13 @@ namespace MiniCAD
             }
         });
 
-        addAction("删除", [=]
+        addAction(Tr("删除"), [=]
         {
             auto& table = doc->GetScene().GetMLineStyleTable();
             if (*selected == MLineStyleTable::StandardID)
-                error->SetText("Standard 样式不能删除");
+                error->SetText(Tr("Standard 样式不能删除"));
             else if (*selected == doc->GetScene().GetCurrentMLineStyle())
-                error->SetText("当前样式不能删除，请先把其他样式置为当前");
+                error->SetText(Tr("当前样式不能删除，请先把其他样式置为当前"));
             else
             {
                 table.Remove(*selected);
@@ -2033,7 +2031,7 @@ namespace MiniCAD
 
         (*sync)();
 
-        raw->AddButton("关闭", [raw] { raw->Close(); }, DialogButtonRole::Default);
+        raw->AddButton(Tr("关闭"), [raw] { raw->Close(); }, DialogButtonRole::Default);
         raw->SetOnClosed([this, raw]
         {
             if (m_mlineStyleDialog == raw)

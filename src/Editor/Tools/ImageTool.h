@@ -73,7 +73,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasBase ? "指定宽度与旋转 [回车=原始大小]:" : "指定图像左下角:";
+            return m_hasBase ? Tr("指定宽度与旋转 [回车=原始大小]:") : Tr("指定图像左下角:");
         }
 
     private:

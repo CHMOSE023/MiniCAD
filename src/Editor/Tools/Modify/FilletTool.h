@@ -93,9 +93,10 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "当前圆角半径 = %.4g。", m_radius ? *m_radius : 0.0);
-            return std::string(buf) + (m_firstId == Object::InvalidID ? "选择第一个对象 [键入数字修改半径]:" : "选择第二个对象 [键入数字修改半径]:");
+            char r[32];
+            std::snprintf(r, sizeof(r), "%.4g", m_radius ? *m_radius : 0.0);
+            return TrF("当前圆角半径 = {0}。", r) +
+                   (m_firstId == Object::InvalidID ? Tr("选择第一个对象 [键入数字修改半径]:") : Tr("选择第二个对象 [键入数字修改半径]:"));
         }
 
     private:
@@ -164,7 +165,7 @@ namespace MiniCAD
                 items.push_back(std::move(item));
             }
 
-            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>("圆角", std::move(items)), m_ctx->scene);
+            m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("圆角"), std::move(items)), m_ctx->scene);
             LOG_DEBUG("[FilletTool] 圆角完成，半径 %.4g", *m_radius);
 
             m_firstId = Object::InvalidID;              // 回到「选择第一个对象」

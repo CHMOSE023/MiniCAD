@@ -99,7 +99,7 @@ namespace MiniCAD
         void OnSceneChanged() override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusLost()    override { if (m_overlay) m_overlay->Clear(); }
 
-        std::string GetPrompt() const override { return "选择要修剪的对象 [右键/ESC 退出]:"; }
+        std::string GetPrompt() const override { return Tr("选择要修剪的对象 [右键/ESC 退出]:"); }
 
     private:
         // ── 编辑计划：原实体改成 modified（可空=删除），可选再新增 added ──────
@@ -425,7 +425,7 @@ namespace MiniCAD
                 items.push_back(std::move(add));
             }
 
-            auto cmd = std::make_unique<GeometryEditCommand>("修剪", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("修剪"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
             LOG_DEBUG("[TrimTool] 已修剪");

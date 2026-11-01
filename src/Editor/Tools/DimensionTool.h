@@ -100,9 +100,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-                case 1:  return "指定第二标注点:";
-                case 2:  return "指定尺寸线位置 [右键/ESC 退出]:";
-                default: return "指定第一标注点:";
+                case 1:  return Tr("指定第二标注点:");
+                case 2:  return Tr("指定尺寸线位置 [右键/ESC 退出]:");
+                default: return Tr("指定第一标注点:");
             }
         }
 

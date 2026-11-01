@@ -285,7 +285,7 @@ namespace MiniCAD
         m_layout->RegisterPanel("appbar",     CreateAppBar());
         m_layout->RegisterPanel("properties", CreatePropertiesPanel(m_main), N_("特性"));
         m_layout->RegisterPanel("layers",     CreateLayerPanel(m_main), N_("图层"));
-        m_layout->RegisterPanel("layerbar",   CreateLayerBar(m_main.panels->bindings, [this] { return DocOf(m_main); }, &m_layerBarLayer));
+        m_layout->RegisterPanel("layerbar",   CreateLayerBar(*m_main.panels, [this] { return DocOf(m_main); }, &m_layerBarLayer));
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
         m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), N_("节点"));
         m_layout->RegisterPanel("start",      CreateStartPage(), N_("起始页"));

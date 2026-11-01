@@ -404,7 +404,7 @@ namespace MiniCAD
         w->layout->RegisterPanel("canvas", std::move(host));
         w->layout->RegisterPanel("documents", CreateDocumentArea(c));
         w->layout->RegisterPanel("statusbar", CreateStatusBar(c));
-        w->layout->RegisterPanel("layerbar", CreateLayerBar(c.panels->bindings, [this, w] { return m_docManager.GetShownDocument(w->pane); },
+        w->layout->RegisterPanel("layerbar", CreateLayerBar(*c.panels, [this, w] { return m_docManager.GetShownDocument(w->pane); },
                                                             &w->layerBar));
         w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), N_("特性"));     // 它的绑定集合的 OnChanged 在这里设好
         w->layout->RegisterPanel("layers",     CreateLayerPanel(c), N_("图层"));
