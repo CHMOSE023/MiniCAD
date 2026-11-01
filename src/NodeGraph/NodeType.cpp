@@ -146,8 +146,12 @@ namespace MiniCAD::Nodes
                 return PortMatch::Type;
             return PortMatch::Convert;   // 实体接到要求曲面的端口（或反过来）：能连，但求值时多半报错
         }
-        if (from == DataType::Any || to == DataType::Any || from == DataType::Geometry || to == DataType::Geometry || to == DataType::Text)
+        if (from == DataType::Any || to == DataType::Any || to == DataType::Text)
             return PortMatch::Generic;
+        // Geometry 只收几何类型（拉伸的“轮廓”收曲线与空间曲线）：几何接到它是真正的匹配，不能像 Any 那样在空关键词时藏起来；
+        // 反过来 Geometry 接到具体的几何端口要等求值时逐项检查，算转换
+        if (to == DataType::Geometry)
+            return PortMatch::Type;
         return PortMatch::Convert;
     }
 

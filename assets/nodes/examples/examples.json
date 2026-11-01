@@ -44,6 +44,13 @@
       "description": "马鞍面上的插值曲线 → 网络曲面 → 加厚 → 差集开天窗"
     },
     {
+      "file": "qiansimen-bridge.mcnode",
+      "name": "重庆千厮门大桥",
+      "group": "应用",
+      "kernel": true,
+      "description": "单塔单索面部分斜拉钢桁梁桥（88 + 312 + 240 + 80 米）：天梭形塔身开泪滴形洞口、等高三角形钢桁梁、双层桥面、10 对拉索；改“参数”表里的跨径、塔高、桁高、拉索对数"
+    },
+    {
       "file": "mesh-export.mcnode",
       "name": "网格化导出",
       "group": "应用",

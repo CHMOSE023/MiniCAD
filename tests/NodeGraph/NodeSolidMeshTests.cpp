@@ -386,7 +386,7 @@ namespace NodeSolidTest
         const std::string exampleDir = std::string(MINICAD_ASSET_DIR) + "/nodes/examples";
         auto example = [&](const char* file) { return ReadTextFile(exampleDir + "/" + file); };
         const auto examples = ReadExampleIndex(exampleDir);
-        Check(examples.size() == 8, "examples: index lists 8 example files");
+        Check(examples.size() == 9, "examples: index lists 9 example files");
         for (const auto& ex : examples)
         {
             Fixture e;
@@ -498,6 +498,26 @@ namespace NodeSolidTest
             Check(before > 20 * 12 * 0.3 && e.kernel->IsSolid(roof->Outputs[0][0].AsBody()) && after < before - kPi * 1.5 * 1.5 * 0.29 &&
                       after > before - kPi * 1.5 * 1.5 * 0.4,
                   "N10 example roof: thickened network surface minus the skylight");
+        }
+        {
+            // 千厮门大桥：塔身是开了洞的实体；两片桁架各 90 根腹杆、上下弦各一根；单索面 10 对 20 根拉索，拉索对数改 8 后 16 根
+            Fixture e;
+            e.g.PasteFromString(example("qiansimen-bridge.mcnode"), 0, 0);
+            e.Eval();
+            const Node* outline = FirstOfType(e.g, "solid.extrude");
+            const Node* tower = FirstOfType(e.g, "solid.combine");
+            const Node* truss = FirstOfType(e.g, "xform.lineararray");
+            const Node* cables = FirstOfType(e.g, "surface.pipe");
+            const double full = outline && !outline->Outputs[0].empty() ? e.kernel->Volume(outline->Outputs[0][0].AsBody()) : 0.0;
+            const double cut = tower && !tower->Outputs[0].empty() ? e.kernel->Volume(tower->Outputs[0][0].AsBody()) : 0.0;
+            Check(cut > 0 && e.kernel->IsSolid(tower->Outputs[0][0].AsBody()) && cut < full * 0.85, "example bridge: the tower is a solid with the eye cut");
+            Check(truss && truss->Outputs[0].size() == 2 * (90 + 2) && cables && cables->Outputs[0].size() == 20,
+                  "example bridge: two truss planes and 20 stay cables");
+            for (const auto& n : e.g.GetNodes())
+                if (n->Type && n->Type->Id == "input.param" && n->Params[0].AsText() == "拉索对数")
+                    e.g.SetParam(n->Id, 2, Value(8.0));
+            e.Eval();
+            Check(cables && cables->Outputs[0].size() == 16, "example bridge: the cable count parameter drives the cables");
         }
         {
             // 网格化导出：封闭网格 + 6 圈等高线；烘焙后导出 DXF，读回仍是同样面数的网格
