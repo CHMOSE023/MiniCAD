@@ -58,7 +58,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item -Recurse out/ci/MiniCADWin "dist/$name"
           Get-ChildItem "dist/$name" -Recurse -Include *.pdb,*.ilk,*.exp,*.lib | Remove-Item
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md "dist/$name"
+          Copy-Item README.md, README.zh-CN.md, LICENSE, THIRD_PARTY_NOTICES.md "dist/$name"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
 
       - name: Upload artifact
@@ -97,7 +97,7 @@ jobs:
           name="MiniCAD-$PACKAGE_VERSION-web"
           mkdir -p "dist/$name"
           cp out/web/MiniCADWeb/index.* "dist/$name/"
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          cp README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
           (cd dist && zip -r "$name.zip" "$name")
 
       - name: Upload artifact
@@ -168,7 +168,7 @@ jobs:
           mkdir -p "dist/$name"
           cp -r out/linux/MiniCADLinux/. "dist/$name/"
           strip "dist/$name/MiniCADLinux"
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          cp README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
       - name: Upload artifact

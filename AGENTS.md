@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件为 AI 编程助手在本仓库中工作时提供指引。构建命令见 `README.md`；各库的开发计划在 `docs/*/PLAN.md`，发布说明在 `docs/release-notes/`。
+本文件为 AI 编程助手在本仓库中工作时提供指引。各库的开发计划在 `docs/*/PLAN.md`，发布说明在 `docs/release-notes/`。
 
 ## 按需阅读（`.agents/`）
 
