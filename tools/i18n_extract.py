@@ -7,8 +7,11 @@
     python tools/i18n_extract.py --where TEXT # 反查：译文或原文里含 TEXT 的条目，列出原文与代码位置（英文日志、截图定位用）
 
 提取的来源：
-- 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF / NC_ 的上下文与原文
+- 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF / NC_ 的上下文与原文；
+  节点的显示文字 NN_("…") 归上下文"节点"（显示时 Nodes::TrNode）；
+  相邻的字面量（"甲" "乙"，可以跨行）按 C++ 的规则连成一条
 - 界面描述文件 assets/ui/minicad_ui.json 的 title / label / tooltip / text / search（只取含非 ASCII 字符的）
+- 节点示例索引 assets/nodes/examples/examples.json 的 name / description
 不提取：自测（apps/Win32/src/Host/SelfTest.cpp）、tests/、tools/。
 """
 import argparse
@@ -23,16 +26,27 @@ UI_FILES = [ROOT / "assets" / "ui" / "minicad_ui.json"]
 CODE_DIRS = [ROOT / "src", ROOT / "apps"]
 CODE_EXCLUDE = {ROOT / "apps" / "Win32" / "src" / "Host" / "SelfTest.cpp"}
 UI_TEXT_FIELDS = {"title", "label", "tooltip", "text", "search"}
+# 其他要翻译的资源文件：文件 → 要取的字段（节点示例的名称与说明，节点面板“示例”菜单里显示）
+TEXT_FILES = {ROOT / "assets" / "nodes" / "examples" / "examples.json": {"name", "description"}}
 
-STRING = r'"((?:[^"\\\n]|\\.)*)"'
+LITERAL = r'"(?:[^"\\\n]|\\.)*"'
+STRING = r'((?:' + LITERAL + r'\s*)+)'          # 一个或几个相邻的字面量（"甲" "乙"，可以跨行），按 C++ 的规则连成一条
 CALL1 = re.compile(r'\b(?:Tr|TrF|N_|LOG_INFO_TR|LOG_WARN_TR|LOG_ERROR_TR)\s*\(\s*' + STRING)
 CALL2 = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING + r'\s*,\s*' + STRING)
+NODE_CALL = re.compile(r'\bNN_\s*\(\s*' + STRING)     # 节点的显示文字（src/NodeGraph/Value.h），上下文固定
+NODE_CONTEXT = "节点"
 PLACEHOLDER = re.compile(r'(?<!\{)\{(\d+)\}')
 OPTION_LETTER = re.compile(r'\(([A-Za-z0-9])\)')     # 命令行选项 [闭合(C)/放弃(U)]；助记符 (&S) 不算
 MNEMONIC = re.compile(r'&([^&])')
 
 
 def unescape(s):
+    """STRING 匹配到的一串相邻字面量 → 连起来、去掉转义的文字"""
+    return "".join(unescape_one(x) for x in re.findall(LITERAL, s))
+
+
+def unescape_one(s):
+    s = s[1:-1]
     out, i = [], 0
     table = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "'": "'", "0": "\0"}
     while i < len(s):
@@ -144,17 +158,20 @@ def extract_code(msgs):
             for m in CALL1.finditer(text):
                 line = text.count("\n", 0, m.start()) + 1
                 msgs.add(None, unescape(m.group(1)), f"{rel(path)}:{line}")
+            for m in NODE_CALL.finditer(text):
+                line = text.count("\n", 0, m.start()) + 1
+                msgs.add(NODE_CONTEXT, unescape(m.group(1)), f"{rel(path)}:{line}")
 
 
 def extract_ui(msgs):
-    for path in UI_FILES:
+    for path, fields in [(p, UI_TEXT_FIELDS) for p in UI_FILES] + list(TEXT_FILES.items()):
         text = path.read_text(encoding="utf-8-sig")
         doc = json.loads(strip_json_comments(text))
 
         def walk(v):
             if isinstance(v, dict):
                 for k, x in v.items():
-                    if k in UI_TEXT_FIELDS and isinstance(x, str) and any(ord(ch) > 127 for ch in x):
+                    if k in fields and isinstance(x, str) and any(ord(ch) > 127 for ch in x):
                         # 行号：原文第一次出现的地方
                         pos = text.find(json.dumps(x, ensure_ascii=False))
                         line = text.count("\n", 0, pos) + 1 if pos >= 0 else 0

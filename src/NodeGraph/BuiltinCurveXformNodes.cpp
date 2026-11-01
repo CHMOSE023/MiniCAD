@@ -29,7 +29,7 @@ namespace MiniCAD::Nodes
             const Curve3DPtr& c = a.In(port).AsCurve3D();
             if (!c || !c->IsValid())
             {
-                a.Error("曲线无效");
+                a.Error(Tr("曲线无效"));
                 return nullptr;
             }
             return c.get();
@@ -54,23 +54,23 @@ namespace MiniCAD::Nodes
 
         void RegisterCurveExtra(NodeRegistry& r)
         {
-            const char* basic = "曲线/基本", *analysis = "曲线/分析";
+            const char* basic = NN_("曲线/基本"), *analysis = NN_("曲线/分析");
             {
-                NodeTypeInfo t{ .Id = "curve.arc3pt", .Name = "三点圆弧", .Category = basic,
-                                .Description = "从起点经过中间点到终点的圆弧（三点在同一水平面上）" };
+                NodeTypeInfo t{ .Id = "curve.arc3pt", .Name = NN_("三点圆弧"), .Category = basic,
+                                .Description = NN_("从起点经过中间点到终点的圆弧（三点在同一水平面上）") };
                 t.Keywords = "arc three points 3pt 圆弧";
-                t.Inputs   = { In("起点", DataType::Vector, Vec(0, 0, 0)), In("经过点", DataType::Vector, Vec(5, 3, 0)), In("终点", DataType::Vector, Vec(10, 0, 0)) };
-                t.Outputs  = { Out("曲线", DataType::Curve) };
+                t.Inputs   = { In(NN_("起点"), DataType::Vector, Vec(0, 0, 0)), In(NN_("经过点"), DataType::Vector, Vec(5, 3, 0)), In(NN_("终点"), DataType::Vector, Vec(10, 0, 0)) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Curve) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Math::Vec3 p1 = a.Vector(0), p2 = a.Vector(1), p3 = a.Vector(2);
                     if (std::abs(p1.z - p2.z) > 1e-9 || std::abs(p1.z - p3.z) > 1e-9)
-                        return a.Error("三点不在同一水平面上");
+                        return a.Error(Tr("三点不在同一水平面上"));
                     // 外接圆圆心
                     const double ax = p1.x, ay = p1.y, bx = p2.x, by = p2.y, cx = p3.x, cy = p3.y;
                     const double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
                     if (std::abs(d) < 1e-12)
-                        return a.Error("三点共线");
+                        return a.Error(Tr("三点共线"));
                     const double a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
                     const Math::Point3 o{ (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d, (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d, p1.z };
                     const double rad = std::hypot(ax - o.x, ay - o.y);
@@ -83,18 +83,18 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.ellipse", .Name = "椭圆", .Category = basic,
-                                .Description = "平面上以原点为中心、沿平面 X / Y 轴的两个半径的椭圆（精确的有理 NURBS 空间曲线）" };
+                NodeTypeInfo t{ .Id = "curve.ellipse", .Name = NN_("椭圆"), .Category = basic,
+                                .Description = NN_("平面上以原点为中心、沿平面 X / Y 轴的两个半径的椭圆（精确的有理 NURBS 空间曲线）") };
                 t.Keywords = "ellipse oval 椭圆";
-                t.Inputs   = { In("平面", DataType::Plane, Plane{}), In("X 半径", DataType::Number, 10.0), In("Y 半径", DataType::Number, 5.0) };
-                t.Outputs  = { Out("曲线", DataType::Curve3D) };
+                t.Inputs   = { In(NN_("平面"), DataType::Plane, Plane{}), In(NN_("X 半径"), DataType::Number, 10.0), In(NN_("Y 半径"), DataType::Number, 5.0) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Curve3D) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     if (a.Number(1) <= 0 || a.Number(2) <= 0)
-                        return a.Error("半径应为正数");
+                        return a.Error(Tr("半径应为正数"));
                     auto circle = Geo::NurbsOf(*Geo::MakeCircle({ 0, 0, 0 }, 1.0));
                     if (!circle)
-                        return a.Error("构造失败");
+                        return a.Error(Tr("构造失败"));
                     circle->Transform(Math::Mat4::Scale({ a.Number(1), a.Number(2), 1.0 }) * a.In(0).AsPlane().ToWorld());
                     a.Out(0, std::move(*circle));
                 };
@@ -102,10 +102,10 @@ namespace MiniCAD::Nodes
             }
 
             {
-                NodeTypeInfo t{ .Id = "curve.endpoints", .Name = "端点", .Category = analysis, .Description = "曲线的起点与终点；曲线实体自动转换" };
+                NodeTypeInfo t{ .Id = "curve.endpoints", .Name = NN_("端点"), .Category = analysis, .Description = NN_("曲线的起点与终点；曲线实体自动转换") };
                 t.Keywords = "endpoints start end 起点 终点";
-                t.Inputs   = { In("曲线", DataType::Curve3D) };
-                t.Outputs  = { Out("起点", DataType::Vector), Out("终点", DataType::Vector) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Curve3D) };
+                t.Outputs  = { Out(NN_("起点"), DataType::Vector), Out(NN_("终点"), DataType::Vector) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* c = CurveOf(a, 0);
@@ -117,11 +117,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.info", .Name = "曲线信息", .Category = analysis,
-                                .Description = "是否闭合、是否在一个平面上（按控制点判断）、阶数与控制点" };
+                NodeTypeInfo t{ .Id = "curve.info", .Name = NN_("曲线信息"), .Category = analysis,
+                                .Description = NN_("是否闭合、是否在一个平面上（按控制点判断）、阶数与控制点") };
                 t.Keywords = "curve info degree control points closed planar 闭合 平面 阶数";
-                t.Inputs   = { In("曲线", DataType::Curve3D) };
-                t.Outputs  = { Out("闭合", DataType::Boolean), Out("平面", DataType::Boolean), Out("阶数", DataType::Integer), Out("控制点", DataType::Vector) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Curve3D) };
+                t.Outputs  = { Out(NN_("闭合"), DataType::Boolean), Out(NN_("平面"), DataType::Boolean), Out(NN_("阶数"), DataType::Integer), Out(NN_("控制点"), DataType::Vector) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* c = CurveOf(a, 0);
@@ -153,11 +153,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.closest", .Name = "曲线最近点", .Category = analysis,
-                                .Description = "曲线上离给定点最近的点、参数 t（0～1，同“曲线取点”）与距离" };
+                NodeTypeInfo t{ .Id = "curve.closest", .Name = NN_("曲线最近点"), .Category = analysis,
+                                .Description = NN_("曲线上离给定点最近的点、参数 t（0～1，同“曲线取点”）与距离") };
                 t.Keywords = "closest point project 投影 最近";
-                t.Inputs   = { In("曲线", DataType::Curve3D), In("点", DataType::Vector, Vec(0, 0, 0)) };
-                t.Outputs  = { Out("点", DataType::Vector), Out("t", DataType::Number), Out("距离", DataType::Number) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Curve3D), In(NN_("点"), DataType::Vector, Vec(0, 0, 0)) };
+                t.Outputs  = { Out(NN_("点"), DataType::Vector), Out("t", DataType::Number), Out(NN_("距离"), DataType::Number) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* c = CurveOf(a, 0);
@@ -173,11 +173,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.intersect", .Name = "曲线求交", .Category = analysis,
-                                .Description = "两条曲线的交点（空间曲线按距离容差判断相交）与各自的参数 t（0～1）；重合的部分不计" };
+                NodeTypeInfo t{ .Id = "curve.intersect", .Name = NN_("曲线求交"), .Category = analysis,
+                                .Description = NN_("两条曲线的交点（空间曲线按距离容差判断相交）与各自的参数 t（0～1）；重合的部分不计") };
                 t.Keywords = "intersect intersection crossing 交点 相交";
-                t.Inputs   = { In("A", DataType::Curve3D), In("B", DataType::Curve3D), In("容差", DataType::Number, 1e-6) };
-                t.Outputs  = { Out("点", DataType::Vector), Out("tA", DataType::Number), Out("tB", DataType::Number) };
+                t.Inputs   = { In("A", DataType::Curve3D), In("B", DataType::Curve3D), In(NN_("容差"), DataType::Number, 1e-6) };
+                t.Outputs  = { Out(NN_("点"), DataType::Vector), Out("tA", DataType::Number), Out("tB", DataType::Number) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* ca = CurveOf(a, 0);
@@ -194,11 +194,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.planeintersect", .Name = "曲线与平面求交", .Category = analysis,
-                                .Description = "曲线穿过平面的点与参数 t（0～1）；曲线落在平面内的部分不计" };
+                NodeTypeInfo t{ .Id = "curve.planeintersect", .Name = NN_("曲线与平面求交"), .Category = analysis,
+                                .Description = NN_("曲线穿过平面的点与参数 t（0～1）；曲线落在平面内的部分不计") };
                 t.Keywords = "intersect plane section 交点 截面";
-                t.Inputs   = { In("曲线", DataType::Curve3D), In("平面", DataType::Plane, Plane{}) };
-                t.Outputs  = { Out("点", DataType::Vector), Out("t", DataType::Number) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Curve3D), In(NN_("平面"), DataType::Plane, Plane{}) };
+                t.Outputs  = { Out(NN_("点"), DataType::Vector), Out("t", DataType::Number) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* c = CurveOf(a, 0);
@@ -255,9 +255,9 @@ namespace MiniCAD::Nodes
             const Scene* scene = a.Context().DocScene;
             const std::string& ids = a.Param(0).AsText();
             if (ids.empty())
-                return a.Warning(std::string("还没有引用对象：在绘图区选择") + noun + "后点“用选择集设置”");
+                return a.Warning(TrF("还没有引用对象：在绘图区选择{0}后点“用选择集设置”", TrNode(noun)));
             if (!scene)
-                return a.Error("没有打开的图纸");
+                return a.Error(Tr("没有打开的图纸"));
             std::istringstream in(ids);
             std::string tok;
             int missing = 0;
@@ -268,22 +268,22 @@ namespace MiniCAD::Nodes
                     ++missing;
             }
             if (missing > 0)
-                a.Warning(std::to_string(missing) + " 个引用的对象已删除或不是" + noun);
+                a.Warning(TrF("{0} 个引用的对象已删除或不是{1}", missing, TrNode(noun)));
         }
 
         void RegisterReferenceExtra(NodeRegistry& r)
         {
             {
-                NodeTypeInfo t{ .Id = "doc.points", .Name = "引用点", .Category = "图纸",
-                                .Description = "读取图纸里的点对象；先在绘图区选择，再点节点上的“用选择集设置”。图纸改动后自动重算" };
+                NodeTypeInfo t{ .Id = "doc.points", .Name = NN_("引用点"), .Category = NN_("图纸"),
+                                .Description = NN_("读取图纸里的点对象；先在绘图区选择，再点节点上的“用选择集设置”。图纸改动后自动重算") };
                 t.Keywords       = "reference point 拾取 选择";
-                t.Params         = { Param("实体", std::string(), ParamWidget::Hidden) };
-                t.Outputs        = { Out("点", DataType::Vector) };
+                t.Params         = { Param(NN_("实体"), std::string(), ParamWidget::Hidden) };
+                t.Outputs        = { Out(NN_("点"), DataType::Vector) };
                 t.DependsOnScene = true;
                 t.Action         = "pickPoints";
                 t.Solve          = [](SolveArgs& a)
                 {
-                    ForEachReferenced(a, "点", [&](const Entity& e)
+                    ForEachReferenced(a, NN_("点"), [&](const Entity& e)
                     {
                         if (!Geo::CanReference("pickPoints", e))
                             return false;
@@ -294,17 +294,17 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "doc.bodies", .Name = "引用实体", .Category = "图纸",
-                                .Description = "读取图纸里的三维实体（含位置），可以作为布尔运算、剪切的输入；图纸改动后自动重算" };
+                NodeTypeInfo t{ .Id = "doc.bodies", .Name = NN_("引用实体"), .Category = NN_("图纸"),
+                                .Description = NN_("读取图纸里的三维实体（含位置），可以作为布尔运算、剪切的输入；图纸改动后自动重算") };
                 t.Keywords       = "reference solid 3dsolid 三维实体 拾取 选择";
-                t.Params         = { Param("实体", std::string(), ParamWidget::Hidden) };
-                t.Outputs        = { Out("实体", DataType::Body) };
+                t.Params         = { Param(NN_("实体"), std::string(), ParamWidget::Hidden) };
+                t.Outputs        = { Out(NN_("实体"), DataType::Body) };
                 t.DependsOnScene = true;
                 t.Action         = "pickBodies";
                 t.Solve          = [](SolveArgs& a)
                 {
                     Solid::ISolidKernel* k = a.Context().Kernel;
-                    ForEachReferenced(a, "三维实体", [&](const Entity& e)
+                    ForEachReferenced(a, NN_("三维实体"), [&](const Entity& e)
                     {
                         if (!Geo::CanReference("pickBodies", e))
                             return false;
@@ -326,18 +326,18 @@ namespace MiniCAD::Nodes
 
         void RegisterTransformExtra(NodeRegistry& r)
         {
-            const char* basic = "变换/基本", *array = "变换/阵列";
+            const char* basic = NN_("变换/基本"), *array = NN_("变换/阵列");
             {
-                NodeTypeInfo t{ .Id = "xform.scalenu", .Name = "非均匀缩放", .Category = basic,
-                                .Description = "以平面原点为基点，沿平面 X / Y / Z 轴分别缩放；曲线变为空间曲线" };
+                NodeTypeInfo t{ .Id = "xform.scalenu", .Name = NN_("非均匀缩放"), .Category = basic,
+                                .Description = NN_("以平面原点为基点，沿平面 X / Y / Z 轴分别缩放；曲线变为空间曲线") };
                 t.Keywords = "scale nonuniform stretch 拉伸 比例";
-                t.Inputs   = { In("几何", DataType::Geometry), In("平面", DataType::Plane, Plane{}), In("系数", DataType::Vector, Vec(2, 1, 1)) };
-                t.Outputs  = { Out("几何", DataType::Geometry) };
+                t.Inputs   = { In(NN_("几何"), DataType::Geometry), In(NN_("平面"), DataType::Plane, Plane{}), In(NN_("系数"), DataType::Vector, Vec(2, 1, 1)) };
+                t.Outputs  = { Out(NN_("几何"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Math::Vec3& f = a.Vector(2);
                     if (f.x <= 0 || f.y <= 0 || f.z <= 0)
-                        return a.Error("系数应为正数");
+                        return a.Error(Tr("系数应为正数"));
                     Geo::Xform x;
                     x.K = Geo::Xform::Kind::Matrix;
                     x.M = Geo::ScaleInPlane(a.In(1).AsPlane(), f);
@@ -346,11 +346,11 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.orient", .Name = "定向", .Category = basic,
-                                .Description = "把源平面上的几何搬到目标平面上（如把 XY 上画的轮廓放到任意工作平面）；离开水平面的曲线变为空间曲线" };
+                NodeTypeInfo t{ .Id = "xform.orient", .Name = NN_("定向"), .Category = basic,
+                                .Description = NN_("把源平面上的几何搬到目标平面上（如把 XY 上画的轮廓放到任意工作平面）；离开水平面的曲线变为空间曲线") };
                 t.Keywords = "orient align plane to plane 对齐 工作平面";
-                t.Inputs   = { In("几何", DataType::Geometry), In("源平面", DataType::Plane, Plane{}), In("目标平面", DataType::Plane, Plane{}) };
-                t.Outputs  = { Out("几何", DataType::Geometry) };
+                t.Inputs   = { In(NN_("几何"), DataType::Geometry), In(NN_("源平面"), DataType::Plane, Plane{}), In(NN_("目标平面"), DataType::Plane, Plane{}) };
+                t.Outputs  = { Out(NN_("几何"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     Geo::Xform x;
@@ -361,17 +361,17 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.rectarray", .Name = "矩形阵列", .Category = array,
-                                .Description = "按 X、Y 两个方向的间距复制成行列（含原件，先沿 X）" };
+                NodeTypeInfo t{ .Id = "xform.rectarray", .Name = NN_("矩形阵列"), .Category = array,
+                                .Description = NN_("按 X、Y 两个方向的间距复制成行列（含原件，先沿 X）") };
                 t.Keywords = "array rectangular grid 行列 复制";
-                t.Inputs   = { In("几何", DataType::Geometry), In("X 间距", DataType::Vector, Vec(10, 0, 0)), In("Y 间距", DataType::Vector, Vec(0, 10, 0)),
-                               In("X 数量", DataType::Integer, int64_t(3)), In("Y 数量", DataType::Integer, int64_t(3)) };
-                t.Outputs  = { Out("几何", DataType::Geometry) };
+                t.Inputs   = { In(NN_("几何"), DataType::Geometry), In(NN_("X 间距"), DataType::Vector, Vec(10, 0, 0)), In(NN_("Y 间距"), DataType::Vector, Vec(0, 10, 0)),
+                               In(NN_("X 数量"), DataType::Integer, int64_t(3)), In(NN_("Y 数量"), DataType::Integer, int64_t(3)) };
+                t.Outputs  = { Out(NN_("几何"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const int64_t nx = a.Integer(3), ny = a.Integer(4);
                     if (nx < 1 || ny < 1 || nx * ny > 10000)
-                        return a.Error("数量应至少为 1，总数不超过 10000");
+                        return a.Error(Tr("数量应至少为 1，总数不超过 10000"));
                     for (int64_t j = 0; j < ny; ++j)
                         for (int64_t i = 0; i < nx; ++i)
                         {
@@ -384,12 +384,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "xform.curvearray", .Name = "沿曲线阵列", .Category = array,
-                                .Description = "沿曲线按弧长等距复制（原件视为放在曲线起点）；“沿切线定向”时随曲线方向转动，否则只平移。闭合曲线首尾不重复" };
+                NodeTypeInfo t{ .Id = "xform.curvearray", .Name = NN_("沿曲线阵列"), .Category = array,
+                                .Description = NN_("沿曲线按弧长等距复制（原件视为放在曲线起点）；“沿切线定向”时随曲线方向转动，否则只平移。闭合曲线首尾不重复") };
                 t.Keywords = "array path curve 路径阵列 复制";
-                t.Inputs   = { In("几何", DataType::Geometry), In("曲线", DataType::Curve3D), In("数量", DataType::Integer, int64_t(5)) };
-                t.Params   = { Param("沿切线定向", true, ParamWidget::Toggle) };
-                t.Outputs  = { Out("几何", DataType::Geometry) };
+                t.Inputs   = { In(NN_("几何"), DataType::Geometry), In(NN_("曲线"), DataType::Curve3D), In(NN_("数量"), DataType::Integer, int64_t(5)) };
+                t.Params   = { Param(NN_("沿切线定向"), true, ParamWidget::Toggle) };
+                t.Outputs  = { Out(NN_("几何"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Solid::NurbsCurve* c = CurveOf(a, 1);
@@ -397,7 +397,7 @@ namespace MiniCAD::Nodes
                         return;
                     const int64_t n = a.Integer(2);
                     if (n < 1 || n > 10000)
-                        return a.Error("数量应在 1～10000 之间");
+                        return a.Error(Tr("数量应在 1～10000 之间"));
                     const bool closed = c->IsClosed();
                     const int segments = static_cast<int>(closed ? n : std::max<int64_t>(n - 1, 1));
                     const std::vector<double> us = Geo::DivideByLength(*c, segments);

@@ -100,10 +100,10 @@ namespace MiniCAD::Nodes
         std::sort(outs.begin(), outs.end(), byPos);
 
         std::set<std::string> used;
-        auto uniqueName = [&](std::string base, const char* fallback, size_t i)
+        auto uniqueName = [&](std::string base, const std::string& fallback, size_t i)
         {
             if (base.empty())
-                base = fallback + std::to_string(i + 1);
+                base = fallback + " " + std::to_string(i + 1);
             std::string name = base;
             for (int k = 2; used.count(name); ++k)
                 name = base + " " + std::to_string(k);
@@ -132,7 +132,8 @@ namespace MiniCAD::Nodes
         t.Id          = def.Id;
         t.Name        = def.Name;
         t.Category    = kGroupCategory;
-        t.Description = "组“" + def.Name + "”：组内 " + std::to_string(g.GetNodes().size()) + " 个节点。双击进入编辑，右键解组";
+        // 组的说明、默认端口名在建类型时按当前语言写好（含组名，不能按原文查表）
+        t.Description = TrF("组“{0}”：组内 {1} 个节点。双击进入编辑，右键解组", def.Name, g.GetNodes().size());
         t.Keywords    = "group cluster 子图 组";
         t.Group       = 1;   // 菜单里排在组输入、组输出之后
         t.DependsOnScene = scene;
@@ -141,14 +142,14 @@ namespace MiniCAD::Nodes
         for (size_t i = 0; i < ins.size(); ++i)
         {
             PortSpec p;
-            p.Name     = uniqueName(PortNameParam(*ins[i]), "输入 ", i);
+            p.Name     = uniqueName(PortNameParam(*ins[i]), Tr("输入"), i);
             p.Acc      = Access::List;
             p.Optional = true;
             bool first = true;
             for (const Link& l : g.LinksFrom(ins[i]->Id, 0))
                 if (const Node* d = g.GetNode(l.ToNode); d && d->Type && l.ToPort >= 0 && l.ToPort < static_cast<int>(d->Type->Inputs.size()))
                     merge(first, p, d->Type->Inputs[l.ToPort]);
-            p.Tip = "没有数据时用组内“" + p.Name + "”的默认值";
+            p.Tip = TrF("没有数据时用组内“{0}”的默认值", TrNode(p.Name));
             t.Inputs.push_back(std::move(p));
             def.InputNodes.push_back(ins[i]->Id);
         }
@@ -156,7 +157,7 @@ namespace MiniCAD::Nodes
         for (size_t i = 0; i < outs.size(); ++i)
         {
             PortSpec p;
-            p.Name = uniqueName(PortNameParam(*outs[i]), "输出 ", i);
+            p.Name = uniqueName(PortNameParam(*outs[i]), Tr("输出"), i);
             bool first = true;
             for (const Link& l : g.LinksInto(outs[i]->Id, 0))
                 if (const Node* s = g.GetNode(l.FromNode); s && s->Type && l.FromPort >= 0 && l.FromPort < static_cast<int>(s->Type->Outputs.size()))
@@ -327,21 +328,21 @@ namespace MiniCAD::Nodes
     {
         using namespace Builtin;
         {
-            NodeTypeInfo t{ .Id = kGroupInputType, .Name = "组输入", .Category = kGroupCategory,
-                            .Description = "组的输入端口：组实例上对应输入收到的数据从这里输出，实例上没有数据时输出“默认”。"
-                                           "端口名称取“名称”，顺序按节点在画布上从上到下" };
+            NodeTypeInfo t{ .Id = kGroupInputType, .Name = NN_("组输入"), .Category = kGroupCategory,
+                            .Description = NN_("组的输入端口：组实例上对应输入收到的数据从这里输出，实例上没有数据时输出“默认”。"
+                                           "端口名称取“名称”，顺序按节点在画布上从上到下") };
             t.Keywords = "group input cluster 输入端口 接口";
-            t.Inputs   = { InList("默认", DataType::Any, true, "组实例的这个输入没有数据时输出的值") };
-            t.Outputs  = { Out("值", DataType::Any) };
-            t.Params   = { Param("名称", std::string()) };
+            t.Inputs   = { InList(NN_("默认"), DataType::Any, true, NN_("组实例的这个输入没有数据时输出的值")) };
+            t.Outputs  = { Out(NN_("值"), DataType::Any) };
+            t.Params   = { Param(NN_("名称"), std::string()) };
             r.Register(std::move(t));   // 求值由 Graph::SolveNode 处理（要知道是哪个节点）
         }
         {
-            NodeTypeInfo t{ .Id = kGroupOutputType, .Name = "组输出", .Category = kGroupCategory,
-                            .Description = "组的输出端口：连到这里的数据成为组实例上对应输出的数据。端口名称取“名称”，顺序按节点在画布上从上到下" };
+            NodeTypeInfo t{ .Id = kGroupOutputType, .Name = NN_("组输出"), .Category = kGroupCategory,
+                            .Description = NN_("组的输出端口：连到这里的数据成为组实例上对应输出的数据。端口名称取“名称”，顺序按节点在画布上从上到下") };
             t.Keywords = "group output cluster 输出端口 接口";
-            t.Inputs   = { InList("值", DataType::Any, true) };
-            t.Params   = { Param("名称", std::string()) };
+            t.Inputs   = { InList(NN_("值"), DataType::Any, true) };
+            t.Params   = { Param(NN_("名称"), std::string()) };
             r.Register(std::move(t));
         }
     }

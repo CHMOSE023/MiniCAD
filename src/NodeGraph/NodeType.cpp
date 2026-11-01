@@ -20,7 +20,7 @@ namespace MiniCAD::Nodes
     Solid::ISolidKernel* SolveArgs::Kernel()
     {
         if (!Context().Kernel)
-            Error("三维实体内核不可用（当前构建没有编入实体内核）");
+            Error(Tr("三维实体内核不可用（当前构建没有编入实体内核）"));
         return Context().Kernel;
     }
 
@@ -78,17 +78,17 @@ namespace MiniCAD::Nodes
         // 从数据到几何、从低维到高维，最后是作用于所有几何的变换；小类按 创建 → 运算 → 修改 → 分析 / 转换。
         // 新增分类时按 docs/NodeGraph/PLAN.md 第 4.2 节的位置插入（每个分类至少要有一个节点，NodeGraphTests 检查）
         static const std::vector<std::string> kOrder = {
-            "输入",
-            "图纸",
-            "数学/运算", "数学/函数", "数学/表达式", "数学/序列",
-            "列表",
-            "向量/点", "向量/向量", "向量/平面",
-            "曲线/基本", "曲线/NURBS", "曲线/修改", "曲线/分析",
-            "曲面/创建", "曲面/修改", "曲面/分析",
-            "实体/创建", "实体/空心", "实体/运算", "实体/修改", "实体/分析",
-            "网格/创建", "网格/修改", "网格/转换", "网格/分析",
-            "变换/基本", "变换/阵列",
-            "组",
+            NN_("输入"),
+            NN_("图纸"),
+            NN_("数学/运算"), NN_("数学/函数"), NN_("数学/表达式"), NN_("数学/序列"),
+            NN_("列表"),
+            NN_("向量/点"), NN_("向量/向量"), NN_("向量/平面"),
+            NN_("曲线/基本"), NN_("曲线/NURBS"), NN_("曲线/修改"), NN_("曲线/分析"),
+            NN_("曲面/创建"), NN_("曲面/修改"), NN_("曲面/分析"),
+            NN_("实体/创建"), NN_("实体/空心"), NN_("实体/运算"), NN_("实体/修改"), NN_("实体/分析"),
+            NN_("网格/创建"), NN_("网格/修改"), NN_("网格/转换"), NN_("网格/分析"),
+            NN_("变换/基本"), NN_("变换/阵列"),
+            NN_("组"),
         };
         return kOrder;
     }
@@ -158,9 +158,9 @@ namespace MiniCAD::Nodes
     std::string KindName(DataType t, BodyKind k)
     {
         if (t == DataType::Body && k == BodyKind::Solid)
-            return "实体";
+            return TrNode(NN_("实体"));
         if (t == DataType::Body && k == BodyKind::Surface)
-            return "曲面";
+            return TrNode(NN_("曲面"));
         return TypeName(t);
     }
 
@@ -255,15 +255,18 @@ namespace MiniCAD::Nodes
         for (const NodeTypeInfo* t : Ordered())
         {
             const std::u32string name = Fold(t->Name), id = Fold(t->Id), cat = Fold(t->Category), desc = Fold(t->Description);
+            // 名称、分类、说明的译文也参与匹配（没有翻译时与原文相同），两种语言都能搜到
+            const std::u32string trName = Fold(t->DisplayName()), trCat = Fold(TrNode(t->Category)), trDesc = Fold(TrNode(t->Description));
             const std::vector<std::u32string> keywords = SplitTerms(Fold(t->Keywords));
             int total = 0;
             for (const auto& term : terms)
             {
                 // 显示名、ID 权重最高，关键词（别名、旧名）略低，分类再次；说明只认包含
-                int s = std::max({ FieldScore(term, name, 3), FieldScore(term, id, 3), FieldScore(term, cat, 2) });
+                int s = std::max({ FieldScore(term, name, 3), FieldScore(term, trName, 3), FieldScore(term, id, 3),
+                                   FieldScore(term, cat, 2), FieldScore(term, trCat, 2) });
                 for (const auto& k : keywords)
                     s = std::max(s, FieldScore(term, k, 3) * 9 / 10);
-                if (s == 0 && desc.find(term) != std::u32string::npos)
+                if (s == 0 && (desc.find(term) != std::u32string::npos || trDesc.find(term) != std::u32string::npos))
                     s = 10;
                 if (s == 0)
                 {

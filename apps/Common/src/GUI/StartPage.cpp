@@ -496,7 +496,7 @@ namespace MiniCAD
             {
                 const bool usable = kernel || !e.NeedsKernel;
                 const std::string icon = icons + (e.NeedsKernel ? "Box3D.png" : "Nodes.png");
-                auto* card = grid->AddChild<SampleCard>(icon, e.Name, usable ? e.Description : Tr("需要三维实体内核"),
+                auto* card = grid->AddChild<SampleCard>(icon, Tr(e.Name), usable ? Tr(e.Description) : Tr("需要三维实体内核"),
                                                         [this, e] { OpenNodeExample(e.Path, e.Name, e.Description); });
                 card->SetEnabled(usable);
             }
@@ -609,7 +609,7 @@ namespace MiniCAD
         m_ui->Update();                     // 节点面板刚显示：先布局，插入的示例才能按画布尺寸摆放
         ActiveNodeEditor()->Focus();
         const bool ok = !text.empty() && ActiveNodeEditor()->InsertGraph(text);
-        m_docManager.GetEditor().GetCmdLine().Echo(ok ? TrF("示例：{0}——{1}", name, description) : TrF("示例：读不出 {0}", path));
+        m_docManager.GetEditor().GetCmdLine().Echo(ok ? TrF("示例：{0}——{1}", Tr(name), Tr(description)) : TrF("示例：读不出 {0}", path));
         if (ok)
             ActiveNodeEditor()->FrameAll();
     }

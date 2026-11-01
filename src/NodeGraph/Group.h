@@ -21,7 +21,7 @@ namespace MiniCAD::Nodes
     inline constexpr const char* kGroupInputType  = "group.input";
     inline constexpr const char* kGroupOutputType = "group.output";
     inline constexpr const char* kGroupTypePrefix = "group:";
-    inline constexpr const char* kGroupCategory   = "组";
+    inline constexpr const char* kGroupCategory   = NN_("组");
     inline bool IsGroupTypeId(const std::string& id) { return id.rfind(kGroupTypePrefix, 0) == 0; }
 
     struct GroupDef

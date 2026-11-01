@@ -38,7 +38,7 @@ namespace MiniCAD::Nodes
         void OutForm(SolveArgs& a, Solid::ISolidKernel& k, const Solid::BodyPtr& b, const char* what, bool isVoid)
         {
             if (!b)
-                return a.Error(std::string(what) + "失败：" + k.LastError());
+                return a.Error(TrF("{0}失败：{1}", TrNode(what), k.LastError()));
             a.Out(0, Value::VoidBody(b, isVoid));
         }
 
@@ -162,7 +162,7 @@ namespace MiniCAD::Nodes
             if (!k) return;
             const double start = a.Number(2), end = a.Number(1);
             if (std::abs(end - start) < 1e-12)
-                return a.Error("起点与终点不能相同");
+                return a.Error(Tr("起点与终点不能相同"));
             // 轮廓：曲线实体（圆、矩形、多段线走内核的精确拉伸，其余转成空间曲线）或闭合的空间曲线（椭圆、样条节点的输出）
             const Value& in = a.In(0);
             std::optional<Solid::NurbsCurve> loop;
@@ -180,12 +180,12 @@ namespace MiniCAD::Nodes
             if (!b)
             {
                 if (!loop || !IsHorizontal(*loop))
-                    return a.Error("轮廓不是闭合的水平曲线（圆、椭圆、闭合样条、多段线、矩形）");
+                    return a.Error(Tr("轮廓不是闭合的水平曲线（圆、椭圆、闭合样条、多段线、矩形）"));
                 b = ExtrudeLoop(*k, *loop, end - start);
             }
             if (b && std::abs(start) > 1e-12)
                 b = k->Transform(b, Math::Mat4::Translation({ 0, 0, start }));
-            OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 3)), "拉伸", isVoid);
+            OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 3)), NN_("拉伸"), isVoid);
         }
 
         void SolveBlend(SolveArgs& a, bool isVoid)
@@ -195,16 +195,16 @@ namespace MiniCAD::Nodes
             auto bottom = LoopOf(*a.Curve(0));
             auto top    = LoopOf(*a.Curve(1));
             if (!bottom || !top)
-                return a.Error("底部、顶部轮廓都应为闭合曲线");
+                return a.Error(Tr("底部、顶部轮廓都应为闭合曲线"));
             CurveOps::MatchLoops(*bottom, *top);   // 起点与参数不对应时内核连出来的侧面是扭的
             const double h = a.Number(2);
             if (std::abs(h) < 1e-12)
-                return a.Error("高度不能为 0");
+                return a.Error(Tr("高度不能为 0"));
             // 顶部轮廓按 XY 坐标解释，放在底部轮廓所在高度 + h 处
             const double zb = bottom->ControlPoints.front().z, zt = top->ControlPoints.front().z;
             top->Transform(Math::Mat4::Translation({ 0, 0, zb + h - zt }));
             const Solid::NurbsCurve sections[2] = { *bottom, *top };
-            OutForm(a, *k, OnPlane(*k, k->LoftSolid(sections, true), PlaneIn(a, 3)), "融合", isVoid);
+            OutForm(a, *k, OnPlane(*k, k->LoftSolid(sections, true), PlaneIn(a, 3)), NN_("融合"), isVoid);
         }
 
         void SolveRevolve(SolveArgs& a, bool isVoid)
@@ -213,32 +213,32 @@ namespace MiniCAD::Nodes
             if (!k) return;
             const auto profile = Geo::ProfileOf(*a.Curve(0));
             if (!profile)
-                return a.Error("轮廓不是闭合的水平曲线");
+                return a.Error(Tr("轮廓不是闭合的水平曲线"));
             // 接了轴线时轴点、轴方向取这条直线（起点 → 终点）
             Math::Vec3 origin = a.Vector(1), dir = a.Vector(2);
             if (a.Has(6))
             {
                 const auto line = Geo::NurbsOf(*a.Curve(6));
                 if (!line || !IsStraight(*line))
-                    return a.Error("轴线应为直线");
+                    return a.Error(Tr("轴线应为直线"));
                 origin = V(line->ControlPoints.front());
                 dir    = V(line->ControlPoints.back()) - origin;
             }
             if (dir.Length() < 1e-12)
-                return a.Error("轴方向不能为零向量");
+                return a.Error(Tr("轴方向不能为零向量"));
             double start = a.Number(4), end = a.Number(3);
             if (end < start)
                 std::swap(start, end);
             const double sweep = end - start;
             if (sweep < 1e-9)
-                return a.Error("起始角度与结束角度不能相同");
+                return a.Error(Tr("起始角度与结束角度不能相同"));
             if (sweep > 360.0 + 1e-9)
-                return a.Error("角度范围不能超过 360°");
+                return a.Error(Tr("角度范围不能超过 360°"));
             const Math::Vec3 axis = dir.Normalized();
             Solid::BodyPtr b = k->Revolve(*profile, P(origin), axis, std::min(sweep, 360.0));
             if (b && std::abs(start) > 1e-12 && sweep < 360.0 - 1e-9)
                 b = k->Transform(b, Geo::RotationAbout(P(origin), axis, start * kDeg));
-            OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 5)), "旋转", isVoid);
+            OutForm(a, *k, OnPlane(*k, b, PlaneIn(a, 5)), NN_("旋转成形"), isVoid);
         }
 
         // 路径输入：曲线实体或空间曲线
@@ -264,22 +264,22 @@ namespace MiniCAD::Nodes
                 {
                     const auto profile = Geo::ProfileOf(*a.Curve(0));
                     if (!profile)
-                        return a.Error("轮廓不是闭合的水平曲线");
-                    return OutForm(a, *k, k->Sweep(*profile, *path), "放样", isVoid);
+                        return a.Error(Tr("轮廓不是闭合的水平曲线"));
+                    return OutForm(a, *k, k->Sweep(*profile, *path), NN_("放样"), isVoid);
                 }
             const auto path = PathCurve(pathV);
             if (!path)
-                return a.Error("路径应为曲线或空间曲线");
+                return a.Error(Tr("路径应为曲线或空间曲线"));
             const auto loop = LoopOf(*a.Curve(0));
             if (!loop)
-                return a.Error("轮廓应为闭合曲线");
+                return a.Error(Tr("轮廓应为闭合曲线"));
             const Math::Vec3 t = StartTangent(*path);
             if (t.Length() < 0.5)
-                return a.Error("路径起点处没有切线方向");
+                return a.Error(Tr("路径起点处没有切线方向"));
             Solid::NurbsCurve placed = *loop;
             placed.Transform(ProfileToFrame(CenterOf(*loop), angle, flip, FrameAt(path->PointAt(path->StartParam()), t, Vec(0, 0, 1))));
             const Solid::NurbsCurve profile[1] = { placed };
-            OutForm(a, *k, k->SweepAlong(profile, *path), "放样", isVoid);
+            OutForm(a, *k, k->SweepAlong(profile, *path), NN_("放样"), isVoid);
         }
 
         // 放样融合：沿路径取若干站，各站的截面由起点 / 终点轮廓按弧长比例过渡（两端是原轮廓），再封口放样。
@@ -290,18 +290,18 @@ namespace MiniCAD::Nodes
             if (!k) return;
             const auto path = PathCurve(a.In(0));
             if (!path)
-                return a.Error("路径应为曲线或空间曲线");
+                return a.Error(Tr("路径应为曲线或空间曲线"));
             auto l0 = LoopOf(*a.Curve(1));
             auto l1 = LoopOf(*a.Curve(2));
             if (!l0 || !l1)
-                return a.Error("起点、终点轮廓都应为闭合曲线");
+                return a.Error(Tr("起点、终点轮廓都应为闭合曲线"));
             CurveOps::MatchLoops(*l0, *l1);
             const double a0 = a.Number(3), a1 = a.Number(4);
             const bool straight = IsStraight(*path);
             const int stations = straight ? 2 : 9;
             const std::vector<double> ts = Geo::DivideByLength(*path, stations - 1);
             if (static_cast<int>(ts.size()) != stations)
-                return a.Error("路径太短");
+                return a.Error(Tr("路径太短"));
 
             // 中间站的截面：两个轮廓（中心移到原点）各按弧长取同样多的点，按比例插值，再插值成闭合曲线
             constexpr int kSamples = 32;
@@ -321,7 +321,7 @@ namespace MiniCAD::Nodes
             };
             const auto s0 = samples(*l0), s1 = samples(*l1);
             if (s0.size() != s1.size() || s0.size() < 3)
-                return a.Error("轮廓太短");
+                return a.Error(Tr("轮廓太短"));
 
             std::vector<Solid::NurbsCurve> sections;
             Math::Vec3 up = Vec(0, 0, 1);
@@ -329,7 +329,7 @@ namespace MiniCAD::Nodes
             {
                 const Math::Vec3 t = Geo::TangentAt(*path, ts[i]);
                 if (t.Length() < 0.5)
-                    return a.Error("路径上有没有切线方向的点");
+                    return a.Error(Tr("路径上有没有切线方向的点"));
                 const Plane frame = FrameAt(path->PointAt(ts[i]), t, up);
                 up = frame.Y;   // 下一站沿用这一站的“上”，轮廓不随路径翻转
                 const double s = static_cast<double>(i) / (stations - 1);
@@ -347,106 +347,107 @@ namespace MiniCAD::Nodes
                     pts.push_back(m.TransformPoint(P(s0[j] * (1.0 - s) + s1[j] * s)));
                 Solid::NurbsCurve c = k->InterpolateCurve(pts, true);
                 if (!c.IsValid())
-                    return a.Error("放样融合失败：" + k->LastError());
+                    return a.Error(TrF("放样融合失败：{0}", k->LastError()));
                 sections.push_back(std::move(c));
             }
-            OutForm(a, *k, k->LoftSolid(sections, straight), "放样融合", isVoid);
+            OutForm(a, *k, k->LoftSolid(sections, straight), NN_("放样融合"), isVoid);
         }
 
         void RegisterForm(NodeRegistry& r, Form form, bool isVoid)
         {
-            const char* cat = isVoid ? "实体/空心" : "实体/创建";
-            const std::string prefix = isVoid ? "空心" : "";
-            const std::string voidTip = isVoid ? "；输出空心形体：只用来切除实心（形体合并、剪切几何），预览为橙色线框，不烘焙" : "";
+            const char* cat = isVoid ? NN_("实体/空心") : NN_("实体/创建");
+            // 空心的说明另起一行：TrNode 逐行翻译
+            const std::string voidTip = isVoid ? std::string("\n") + NN_("输出空心形体：只用来切除实心（形体合并、剪切几何），预览为橙色线框，不烘焙") : "";
             NodeTypeInfo t;
             t.Category = cat;
-            const PortSpec plane = In("工作平面", DataType::Plane, Value(Plane{}), "轮廓按 XY 坐标画，再放到这个平面上（默认世界 XY）");
+            const PortSpec plane = In(NN_("工作平面"), DataType::Plane, Value(Plane{}), NN_("轮廓按 XY 坐标画，再放到这个平面上（默认世界 XY）"));
             switch (form)
             {
             case Form::Extrude:
                 t.Id          = isVoid ? "void.extrude" : "solid.extrude";
-                t.Name        = prefix + "拉伸";
-                t.Description = "闭合轮廓（圆、椭圆、闭合样条、多段线、矩形；不闭合的多段线首尾相连）沿工作平面法向从起点拉伸到终点；终点小于起点时反向" + voidTip;
+                t.Name        = isVoid ? NN_("空心拉伸") : NN_("拉伸");
+                t.Description = NN_("闭合轮廓（圆、椭圆、闭合样条、多段线、矩形；不闭合的多段线首尾相连）沿工作平面法向从起点拉伸到终点；终点小于起点时反向") + voidTip;
                 t.Keywords    = isVoid ? "void extrusion 空心拉伸 挤出" : "extrusion 拉伸体 挤出 高度";
-                t.Inputs      = { In("轮廓", DataType::Geometry, {}, "曲线或空间曲线"), In("终点", DataType::Number, 10.0, "拉伸终点（旧版的“高度”）"),
-                                  In("起点", DataType::Number, 0.0), plane };
+                t.Inputs      = { In(NN_("轮廓"), DataType::Geometry, {}, NN_("曲线或空间曲线")), In(NN_("终点"), DataType::Number, 10.0, NN_("拉伸终点（旧版的“高度”）")),
+                                  In(NN_("起点"), DataType::Number, 0.0), plane };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveExtrude(a, isVoid); };
                 break;
             case Form::Blend:
                 t.Id          = isVoid ? "void.blend" : "solid.blend";
-                t.Name        = prefix + "融合";
-                t.Description = "底部轮廓与顶部轮廓之间过渡（直纹）；顶部轮廓画在 XY 上、放在底部轮廓之上“高度”处" + voidTip;
+                t.Name        = isVoid ? NN_("空心融合") : NN_("融合");
+                t.Description = NN_("底部轮廓与顶部轮廓之间过渡（直纹）；顶部轮廓画在 XY 上、放在底部轮廓之上“高度”处") + voidTip;
                 t.Keywords    = isVoid ? "void blend 空心融合" : "blend 融合 过渡 棱台";
-                t.Inputs      = { In("底部轮廓", DataType::Curve), In("顶部轮廓", DataType::Curve), In("高度", DataType::Number, 10.0), plane };
+                t.Inputs      = { In(NN_("底部轮廓"), DataType::Curve), In(NN_("顶部轮廓"), DataType::Curve), In(NN_("高度"), DataType::Number, 10.0), plane };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveBlend(a, isVoid); };
                 break;
             case Form::Revolve:
                 t.Id          = isVoid ? "void.revolve" : "solid.revolve";
-                t.Name        = prefix + "旋转";
-                t.Description = "闭合轮廓绕轴从起始角度旋转到结束角度（度，范围 360 为整圈）；轴不能穿过轮廓" + voidTip;
+                t.Name        = isVoid ? NN_("空心旋转") : NC_("形体", "旋转");   // 与变换的“旋转”（Rotate）不同义
+                t.NameContext = isVoid ? "" : "形体";
+                t.Description = NN_("闭合轮廓绕轴从起始角度旋转到结束角度（度，范围 360 为整圈）；轴不能穿过轮廓") + voidTip;
                 t.Keywords    = isVoid ? "void revolve 空心旋转" : "旋转成体 revolve 回转";
-                t.Inputs      = { In("轮廓", DataType::Curve), In("轴点", DataType::Vector, Vec(0, 0, 0)), In("轴方向", DataType::Vector, Vec(0, 1, 0)),
-                                  In("结束角度", DataType::Number, 360.0), In("起始角度", DataType::Number, 0.0), plane,
-                                  Optional(In("轴线", DataType::Curve, {}, "直线（如引用曲线选中的线）：接上时代替轴点、轴方向，方向为起点 → 终点")) };
+                t.Inputs      = { In(NN_("轮廓"), DataType::Curve), In(NN_("轴点"), DataType::Vector, Vec(0, 0, 0)), In(NN_("轴方向"), DataType::Vector, Vec(0, 1, 0)),
+                                  In(NN_("结束角度"), DataType::Number, 360.0), In(NN_("起始角度"), DataType::Number, 0.0), plane,
+                                  Optional(In(NN_("轴线"), DataType::Curve, {}, NN_("直线（如引用曲线选中的线）：接上时代替轴点、轴方向，方向为起点 → 终点"))) };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveRevolve(a, isVoid); };
                 break;
             case Form::Sweep:
                 t.Id          = isVoid ? "void.sweep" : "solid.sweep";
-                t.Name        = prefix + "放样";
-                t.Description = "闭合轮廓（XY 上画，中心对准路径起点、与路径垂直）沿路径扫掠；路径可以是水平曲线或空间曲线" + voidTip;
+                t.Name        = isVoid ? NN_("空心放样") : NN_("放样");
+                t.Description = NN_("闭合轮廓（XY 上画，中心对准路径起点、与路径垂直）沿路径扫掠；路径可以是水平曲线或空间曲线") + voidTip;
                 t.Keywords    = isVoid ? "void sweep 空心放样 空心扫掠" : "扫掠 sweep 路径";
-                t.Inputs      = { In("轮廓", DataType::Curve), In("路径", DataType::Geometry, {}, "曲线或空间曲线"),
-                                  In("轮廓角度", DataType::Number, 0.0, "轮廓绕自身中心转动的角度（度）") };
-                t.Params      = { Param("翻转", false, ParamWidget::Toggle) };
+                t.Inputs      = { In(NN_("轮廓"), DataType::Curve), In(NN_("路径"), DataType::Geometry, {}, NN_("曲线或空间曲线")),
+                                  In(NN_("轮廓角度"), DataType::Number, 0.0, NN_("轮廓绕自身中心转动的角度（度）")) };
+                t.Params      = { Param(NN_("翻转"), false, ParamWidget::Toggle) };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveSweep(a, isVoid); };
                 break;
             case Form::SweptBlend:
                 t.Id          = isVoid ? "void.sweptblend" : "solid.sweptblend";
-                t.Name        = prefix + "放样融合";
-                t.Description = "沿路径从起点轮廓过渡到终点轮廓（轮廓都在 XY 上画）；路径为直线时精确，曲线路径按 9 个截面近似" + voidTip;
+                t.Name        = isVoid ? NN_("空心放样融合") : NN_("放样融合");
+                t.Description = NN_("沿路径从起点轮廓过渡到终点轮廓（轮廓都在 XY 上画）；路径为直线时精确，曲线路径按 9 个截面近似") + voidTip;
                 t.Keywords    = isVoid ? "void swept blend 空心放样融合" : "swept blend 放样融合 扫掠融合";
-                t.Inputs      = { In("路径", DataType::Curve3D), In("起点轮廓", DataType::Curve), In("终点轮廓", DataType::Curve),
-                                  In("起点角度", DataType::Number, 0.0), In("终点角度", DataType::Number, 0.0) };
+                t.Inputs      = { In(NN_("路径"), DataType::Curve3D), In(NN_("起点轮廓"), DataType::Curve), In(NN_("终点轮廓"), DataType::Curve),
+                                  In(NN_("起点角度"), DataType::Number, 0.0), In(NN_("终点角度"), DataType::Number, 0.0) };
                 t.Solve       = [isVoid](SolveArgs& a) { SolveSweptBlend(a, isVoid); };
                 break;
             }
-            t.Outputs = { SolidPort(Out(isVoid ? "空心" : "实体", DataType::Body)) };
+            t.Outputs = { SolidPort(Out(isVoid ? NN_("空心") : NN_("实体"), DataType::Body)) };
             r.Register(std::move(t));
         }
 
         void RegisterPrimitives(NodeRegistry& r)
         {
             {
-                NodeTypeInfo t{ .Id = "solid.cone", .Name = "圆锥", .Category = "实体/创建",
-                                .Description = "底面中心、底面半径、顶面半径（0 为尖顶，否则为圆台）、高度（沿 +Z）" };
+                NodeTypeInfo t{ .Id = "solid.cone", .Name = NN_("圆锥"), .Category = NN_("实体/创建"),
+                                .Description = NN_("底面中心、底面半径、顶面半径（0 为尖顶，否则为圆台）、高度（沿 +Z）") };
                 t.Keywords = "cone 圆台 锥体";
                 t.Group    = 1;
-                t.Inputs   = { In("底面中心", DataType::Vector, Vec(0, 0, 0)), In("底面半径", DataType::Number, 5.0), In("顶面半径", DataType::Number, 0.0),
-                               In("高", DataType::Number, 10.0) };
-                t.Outputs  = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs   = { In(NN_("底面中心"), DataType::Vector, Vec(0, 0, 0)), In(NN_("底面半径"), DataType::Number, 5.0), In(NN_("顶面半径"), DataType::Number, 0.0),
+                               In(NN_("高"), DataType::Number, 10.0) };
+                t.Outputs  = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     if (a.Number(1) < 0 || a.Number(2) < 0 || a.Number(1) + a.Number(2) <= 0 || a.Number(3) <= 0)
-                        return a.Error("半径不能为负、不能都为 0，高应为正数");
-                    OutForm(a, *k, k->Cone(P(a.Vector(0)), a.Number(1), a.Number(2), a.Number(3)), "圆锥", false);
+                        return a.Error(Tr("半径不能为负、不能都为 0，高应为正数"));
+                    OutForm(a, *k, k->Cone(P(a.Vector(0)), a.Number(1), a.Number(2), a.Number(3)), NN_("圆锥"), false);
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.torus", .Name = "圆环", .Category = "实体/创建", .Description = "中心、主半径、截面半径（轴沿 +Z）" };
+                NodeTypeInfo t{ .Id = "solid.torus", .Name = NN_("圆环"), .Category = NN_("实体/创建"), .Description = NN_("中心、主半径、截面半径（轴沿 +Z）") };
                 t.Keywords = "torus 环 圆环体";
                 t.Group    = 1;
-                t.Inputs   = { In("中心", DataType::Vector, Vec(0, 0, 0)), In("主半径", DataType::Number, 10.0), In("截面半径", DataType::Number, 2.0) };
-                t.Outputs  = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs   = { In(NN_("中心"), DataType::Vector, Vec(0, 0, 0)), In(NN_("主半径"), DataType::Number, 10.0), In(NN_("截面半径"), DataType::Number, 2.0) };
+                t.Outputs  = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     if (!(a.Number(2) > 0 && a.Number(1) > a.Number(2)))
-                        return a.Error("应满足 主半径 > 截面半径 > 0");
-                    OutForm(a, *k, k->Torus(P(a.Vector(0)), a.Number(1), a.Number(2)), "圆环", false);
+                        return a.Error(Tr("应满足 主半径 > 截面半径 > 0"));
+                    OutForm(a, *k, k->Torus(P(a.Vector(0)), a.Number(1), a.Number(2)), NN_("圆环"), false);
                 };
                 r.Register(std::move(t));
             }
@@ -463,13 +464,13 @@ namespace MiniCAD::Nodes
             for (size_t i = 0; i < cutters.size(); ++i)
             {
                 const Solid::BodyPtr& c = cutters[i].AsBody();
-                Geo::WarnManyFaces(a, k, c, "第 " + std::to_string(i + 1) + " 个" + noun);
+                Geo::WarnManyFaces(a, k, c, TrF("第 {0} 个{1}", i + 1, TrNode(noun)));
                 if (!k.IsSolid(c))
                 {
-                    a.Error("第 " + std::to_string(i + 1) + " 个" + noun + "是开放曲面（可先“加厚”）");
+                    a.Error(TrF("第 {0} 个{1}是开放曲面（可先“加厚”）", i + 1, TrNode(noun)));
                     return nullptr;
                 }
-                const std::string miss = "第 " + std::to_string(i + 1) + " 个" + noun + "没有切到实体";
+                const std::string miss = TrF("第 {0} 个{1}没有切到实体", i + 1, TrNode(noun));
                 if (!Overlaps(k.Bounds(body), k.Bounds(c)))
                 {
                     a.Warning(miss);
@@ -479,7 +480,7 @@ namespace MiniCAD::Nodes
                 Solid::BodyPtr r = k.Boolean(Solid::BooleanOp::Difference, body, c);
                 if (!r)
                 {
-                    a.Error("切除失败（第 " + std::to_string(i + 1) + " 个" + noun + "）：" + k.LastError());
+                    a.Error(TrF("切除失败（第 {0} 个{1}）：{2}", i + 1, TrNode(noun), k.LastError()));
                     return nullptr;
                 }
                 if (std::abs(k.Volume(r) - before) <= 1e-9 * std::max(1.0, before))
@@ -491,13 +492,13 @@ namespace MiniCAD::Nodes
 
         void RegisterOperations(NodeRegistry& r)
         {
-            const char* cat = "实体/运算";
+            const char* cat = NN_("实体/运算");
             {
-                NodeTypeInfo t{ .Id = "solid.combine", .Name = "形体合并", .Category = cat,
-                                .Description = "一组形体：全部实心求并，再减去全部空心（Revit 族里形体的默认组合方式）" };
+                NodeTypeInfo t{ .Id = "solid.combine", .Name = NN_("形体合并"), .Category = cat,
+                                .Description = NN_("一组形体：全部实心求并，再减去全部空心（Revit 族里形体的默认组合方式）") };
                 t.Keywords = "combine 合并 空心切除 族 形体";
-                t.Inputs   = { InList("形体", DataType::Body) };
-                t.Outputs  = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs   = { InList(NN_("形体"), DataType::Body) };
+                t.Outputs  = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -512,51 +513,51 @@ namespace MiniCAD::Nodes
                             voids.push_back(v);
                             continue;
                         }
-                        Geo::WarnManyFaces(a, *k, v.AsBody(), "第 " + std::to_string(i + 1) + " 个形体");
+                        Geo::WarnManyFaces(a, *k, v.AsBody(), TrF("第 {0} 个形体", i + 1));
                         if (!k->IsSolid(v.AsBody()))
-                            return a.Error("第 " + std::to_string(i + 1) + " 个形体是开放曲面（可先“加厚”）");
+                            return a.Error(TrF("第 {0} 个形体是开放曲面（可先“加厚”）", i + 1));
                         acc = acc ? k->Boolean(Solid::BooleanOp::Union, acc, v.AsBody()) : v.AsBody();
                         if (!acc)
-                            return a.Error("合并实心失败：" + k->LastError());
+                            return a.Error(TrF("合并实心失败：{0}", k->LastError()));
                     }
                     if (!acc)
-                        return a.Error("没有实心形体（全部是空心）");
-                    if (Solid::BodyPtr b = Subtract(a, *k, acc, voids, "空心"))
+                        return a.Error(Tr("没有实心形体（全部是空心）"));
+                    if (Solid::BodyPtr b = Subtract(a, *k, acc, voids, NN_("空心")))
                         a.Out(0, b);
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.cut", .Name = "剪切几何", .Category = cat,
-                                .Description = "被切实体逐个减去全部切除体（实心或空心都可以）；可以切图纸里引用的实体（烘焙时生成新实体，原实体不变）" };
+                NodeTypeInfo t{ .Id = "solid.cut", .Name = NN_("剪切几何"), .Category = cat,
+                                .Description = NN_("被切实体逐个减去全部切除体（实心或空心都可以）；可以切图纸里引用的实体（烘焙时生成新实体，原实体不变）") };
                 t.Keywords = "cut 剪切 剪切几何图形 切除 空心";
-                t.Inputs   = { SolidPort(In("被切实体", DataType::Body)), InList("切除体", DataType::Body) };
-                t.Outputs  = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs   = { SolidPort(In(NN_("被切实体"), DataType::Body)), InList(NN_("切除体"), DataType::Body) };
+                t.Outputs  = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
-                    Geo::WarnManyFaces(a, *k, a.Body(0), "被切实体");
+                    Geo::WarnManyFaces(a, *k, a.Body(0), TrNode("被切实体"));
                     if (!k->IsSolid(a.Body(0)))
-                        return a.Error("被切实体是开放曲面（可先“加厚”）");
-                    if (Solid::BodyPtr b = Subtract(a, *k, a.Body(0), a.List(1), "切除体"))
+                        return a.Error(Tr("被切实体是开放曲面（可先“加厚”）"));
+                    if (Solid::BodyPtr b = Subtract(a, *k, a.Body(0), a.List(1), NN_("切除体")))
                         a.Out(0, Value::VoidBody(b, a.In(0).Void));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.split", .Name = "分割实体", .Category = cat,
-                                .Description = "用平面把实体切成两部分：平面法向所指的一侧与另一侧（某一侧没有实体时该输出为空）" };
+                NodeTypeInfo t{ .Id = "solid.split", .Name = NN_("分割实体"), .Category = cat,
+                                .Description = NN_("用平面把实体切成两部分：平面法向所指的一侧与另一侧（某一侧没有实体时该输出为空）") };
                 t.Keywords = "split 分割 切开 剖分";
-                t.Inputs   = { SolidPort(In("实体", DataType::Body)), In("平面", DataType::Plane, Value(Plane{})) };
-                t.Outputs  = { SolidPort(Out("正侧", DataType::Body, "平面法向一侧")), SolidPort(Out("负侧", DataType::Body)) };
+                t.Inputs   = { SolidPort(In(NN_("实体"), DataType::Body)), In(NN_("平面"), DataType::Plane, Value(Plane{})) };
+                t.Outputs  = { SolidPort(Out(NN_("正侧"), DataType::Body, NN_("平面法向一侧"))), SolidPort(Out(NN_("负侧"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     const Value& in = a.In(0);
                     if (!k->IsSolid(in.AsBody()))
-                        return a.Error("只适用于封闭实体（开放曲面的分割见“曲面/修改”）");
+                        return a.Error(Tr("只适用于封闭实体（开放曲面的分割见“曲面/修改”）"));
                     const Plane& pl = a.In(1).AsPlane();
                     const AABB box = k->Bounds(in.AsBody());
                     // 实体包围盒在平面坐标系里的范围
@@ -578,11 +579,11 @@ namespace MiniCAD::Nodes
                     if (half && !IsWorldXY(pl))
                         half = k->Transform(half, pl.ToWorld());
                     if (!half)
-                        return a.Error("分割失败：" + k->LastError());
+                        return a.Error(TrF("分割失败：{0}", k->LastError()));
                     Solid::BodyPtr pos = k->Boolean(Solid::BooleanOp::Intersection, in.AsBody(), half);
                     Solid::BodyPtr neg = k->Boolean(Solid::BooleanOp::Difference, in.AsBody(), half);
                     if (!pos || !neg)
-                        return a.Error("分割失败：" + k->LastError());
+                        return a.Error(TrF("分割失败：{0}", k->LastError()));
                     a.Out(0, Value::VoidBody(pos, in.Void));
                     a.Out(1, Value::VoidBody(neg, in.Void));
                 };
@@ -592,38 +593,38 @@ namespace MiniCAD::Nodes
 
         void RegisterModify(NodeRegistry& r)
         {
-            const char* cat = "实体/修改";
+            const char* cat = NN_("实体/修改");
             {
-                NodeTypeInfo t{ .Id = "solid.shell", .Name = "抽壳", .Category = cat,
-                                .Description = "封闭实体向内留下给定厚度的壳；“开口面”为去掉的面的序号（见“曲面信息”的面数），不接时得到封闭的空腔" };
+                NodeTypeInfo t{ .Id = "solid.shell", .Name = NN_("抽壳"), .Category = cat,
+                                .Description = NN_("封闭实体向内留下给定厚度的壳；“开口面”为去掉的面的序号（见“曲面信息”的面数），不接时得到封闭的空腔") };
                 t.Keywords = "shell 抽壳 壳体 薄壁";
-                t.Inputs   = { SolidPort(In("实体", DataType::Body)), In("厚度", DataType::Number, 1.0), InList("开口面", DataType::Integer, /*optional=*/true) };
-                t.Outputs  = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs   = { SolidPort(In(NN_("实体"), DataType::Body)), In(NN_("厚度"), DataType::Number, 1.0), InList(NN_("开口面"), DataType::Integer, /*optional=*/true) };
+                t.Outputs  = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     if (a.Number(1) <= 0)
-                        return a.Error("厚度应为正数");
+                        return a.Error(Tr("厚度应为正数"));
                     if (!k->IsSolid(a.Body(0)))
-                        return a.Error("只适用于封闭实体（开放曲面用“加厚”）");
+                        return a.Error(Tr("只适用于封闭实体（开放曲面用“加厚”）"));
                     std::vector<int> faces;
                     for (const auto& v : a.List(2))
                         if (std::find(faces.begin(), faces.end(), static_cast<int>(v.AsInteger())) == faces.end())
                             faces.push_back(static_cast<int>(v.AsInteger()));
                     Solid::BodyPtr b = k->Shell(a.Body(0), a.Number(1), faces);
                     if (!b)
-                        return a.Error("抽壳失败：" + k->LastError());
+                        return a.Error(TrF("抽壳失败：{0}", k->LastError()));
                     a.Out(0, Value::VoidBody(b, a.In(0).Void));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.role", .Name = "实心 / 空心", .Category = cat,
-                                .Description = "设置形体的角色：空心只用来切除实心（形体合并、剪切几何），预览为橙色线框、不烘焙" };
+                NodeTypeInfo t{ .Id = "solid.role", .Name = NN_("实心 / 空心"), .Category = cat,
+                                .Description = NN_("设置形体的角色：空心只用来切除实心（形体合并、剪切几何），预览为橙色线框、不烘焙") };
                 t.Keywords = "role void solid 实心 空心 角色";
-                t.Inputs   = { In("形体", DataType::Body), In("空心", DataType::Boolean, true) };
-                t.Outputs  = { Out("形体", DataType::Body) };
+                t.Inputs   = { In(NN_("形体"), DataType::Body), In(NN_("空心"), DataType::Boolean, true) };
+                t.Outputs  = { Out(NN_("形体"), DataType::Body) };
                 t.Solve    = [](SolveArgs& a) { a.Out(0, Value::VoidBody(a.Body(0), a.Bool(1))); };
                 r.Register(std::move(t));
             }

@@ -349,6 +349,9 @@ Revit 与 Grasshopper 的中文叫法有冲突，按以下约定区分（关键�
 | 拉伸 / 挤出 | 拉伸（Extrusion，封闭实体） | Extrude（曲线 → 开放曲面） | 实体“拉伸”；曲面“挤出曲面” |
 | 旋转 | 旋转（Revolve） | Revolve | 实体“旋转”；曲面“旋转曲面” |
 
+英文界面（`docs/I18n/PLAN.md` 阶段 3）沿用 Revit 英文版：实体“放样”= Sweep、“融合”= Blend、“拉伸”= Extrusion、“旋转”= Revolve；
+实体“旋转”与变换“旋转”（Rotate）同字，实体的用 `NodeTypeInfo::NameContext`（"形体"）区分。节点的显示文字定义处写 `NN_`，显示时 `TrNode`。
+
 ### 4.4 实现注意（已有节点）
 
 注意：MiniCAD 多段线的凸度正值为**顺时针**（与 `SolidToolDetail::KernelBulge` 一致，交给内核前取反），

@@ -19,7 +19,7 @@ namespace MiniCAD::Nodes
         void OutBody(SolveArgs& a, Solid::ISolidKernel& k, int port, const Solid::BodyPtr& b, const char* what)
         {
             if (!b)
-                return a.Error(std::string(what) + "失败：" + k.LastError());
+                return a.Error(TrF("{0}失败：{1}", TrNode(what), k.LastError()));
             a.Out(port, b);
         }
 
@@ -27,11 +27,11 @@ namespace MiniCAD::Nodes
         bool RequireSolids(SolveArgs& a, Solid::ISolidKernel& k, const DataList& list, const char* what)
         {
             for (size_t i = 0; i < list.size(); ++i)
-                Geo::WarnManyFaces(a, k, list[i].AsBody(), std::string(what) + "的第 " + std::to_string(i + 1) + " 项");
+                Geo::WarnManyFaces(a, k, list[i].AsBody(), TrF("{0}的第 {1} 项", TrNode(what), i + 1));
             for (size_t i = 0; i < list.size(); ++i)
                 if (!k.IsSolid(list[i].AsBody()))
                 {
-                    a.Error(std::string(what) + "只适用于封闭实体：第 " + std::to_string(i + 1) + " 项是开放曲面（可先“加厚”）");
+                    a.Error(TrF("{0}只适用于封闭实体：第 {1} 项是开放曲面（可先“加厚”）", TrNode(what), i + 1));
                     return false;
                 }
             return true;
@@ -110,59 +110,59 @@ namespace MiniCAD::Nodes
 
         void RegisterPrimitives(NodeRegistry& r)
         {
-            const char* cat = "实体/创建";   // 基本体在形体之后（Group 1，菜单里画分隔线）
+            const char* cat = NN_("实体/创建");   // 基本体在形体之后（Group 1，菜单里画分隔线）
             {
-                NodeTypeInfo t{ .Id = "solid.box", .Name = "长方体", .Category = cat,
-                                .Description = "以基点和三个边长给出的长方体；“居中”时基点为底面中心" };
+                NodeTypeInfo t{ .Id = "solid.box", .Name = NN_("长方体"), .Category = cat,
+                                .Description = NN_("以基点和三个边长给出的长方体；“居中”时基点为底面中心") };
                 t.Keywords = "box cube 立方体";
                 t.Group    = 1;
-                t.Inputs  = { In("基点", DataType::Vector, Vec(0, 0, 0)), In("长", DataType::Number, 10.0), In("宽", DataType::Number, 10.0),
-                              In("高", DataType::Number, 10.0) };
-                t.Params  = { Param("居中", false, ParamWidget::Toggle) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs  = { In(NN_("基点"), DataType::Vector, Vec(0, 0, 0)), In(NN_("长"), DataType::Number, 10.0), In(NN_("宽"), DataType::Number, 10.0),
+                              In(NN_("高"), DataType::Number, 10.0) };
+                t.Params  = { Param(NN_("居中"), false, ParamWidget::Toggle) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     const double dx = a.Number(1), dy = a.Number(2), dz = a.Number(3);
                     if (dx <= 0 || dy <= 0 || dz <= 0)
-                        return a.Error("边长应为正数");
+                        return a.Error(Tr("边长应为正数"));
                     Math::Point3 o = P(a.Vector(0));
                     if (a.ParamBool(0))
                         o = { o.x - dx / 2, o.y - dy / 2, o.z };
-                    OutBody(a, *k, 0, k->Box(o, dx, dy, dz), "长方体");
+                    OutBody(a, *k, 0, k->Box(o, dx, dy, dz), NN_("长方体"));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.cylinder", .Name = "圆柱", .Category = cat, .Description = "底面中心、半径、高度（沿 +Z）" };
+                NodeTypeInfo t{ .Id = "solid.cylinder", .Name = NN_("圆柱"), .Category = cat, .Description = NN_("底面中心、半径、高度（沿 +Z）") };
                 t.Keywords = "cylinder 圆柱体";
                 t.Group    = 1;
-                t.Inputs  = { In("底面中心", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0), In("高", DataType::Number, 10.0) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs  = { In(NN_("底面中心"), DataType::Vector, Vec(0, 0, 0)), In(NN_("半径"), DataType::Number, 5.0), In(NN_("高"), DataType::Number, 10.0) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     if (a.Number(1) <= 0 || a.Number(2) <= 0)
-                        return a.Error("半径、高应为正数");
-                    OutBody(a, *k, 0, k->Cylinder(P(a.Vector(0)), a.Number(1), a.Number(2)), "圆柱");
+                        return a.Error(Tr("半径、高应为正数"));
+                    OutBody(a, *k, 0, k->Cylinder(P(a.Vector(0)), a.Number(1), a.Number(2)), NN_("圆柱"));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.sphere", .Name = "球", .Category = cat, .Description = "中心、半径" };
+                NodeTypeInfo t{ .Id = "solid.sphere", .Name = NN_("球"), .Category = cat, .Description = NN_("中心、半径") };
                 t.Keywords = "sphere 球体";
                 t.Group    = 1;
-                t.Inputs  = { In("中心", DataType::Vector, Vec(0, 0, 0)), In("半径", DataType::Number, 5.0) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs  = { In(NN_("中心"), DataType::Vector, Vec(0, 0, 0)), In(NN_("半径"), DataType::Number, 5.0) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
                     if (!k) return;
                     if (a.Number(1) <= 0)
-                        return a.Error("半径应为正数");
-                    OutBody(a, *k, 0, k->Sphere(P(a.Vector(0)), a.Number(1)), "球");
+                        return a.Error(Tr("半径应为正数"));
+                    OutBody(a, *k, 0, k->Sphere(P(a.Vector(0)), a.Number(1)), NN_("球"));
                 };
                 r.Register(std::move(t));
             }
@@ -170,62 +170,62 @@ namespace MiniCAD::Nodes
 
         void RegisterBooleans(NodeRegistry& r)
         {
-            const char* cat = "实体/运算";
+            const char* cat = NN_("实体/运算");
             {
-                NodeTypeInfo t{ .Id = "solid.union", .Name = "并集", .Category = cat, .Description = "列表中所有实体合并为一个" };
+                NodeTypeInfo t{ .Id = "solid.union", .Name = NN_("并集"), .Category = cat, .Description = NN_("列表中所有实体合并为一个") };
                 t.Keywords = "union 布尔 合并 加";
-                t.Inputs  = { SolidPort(InList("实体", DataType::Body)) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs  = { SolidPort(InList(NN_("实体"), DataType::Body)) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
-                    if (!k || !RequireSolids(a, *k, a.List(0), "并集")) return;
+                    if (!k || !RequireSolids(a, *k, a.List(0), NN_("并集"))) return;
                     Solid::BodyPtr acc;
                     for (const auto& v : a.List(0))
                     {
                         acc = acc ? k->Boolean(Solid::BooleanOp::Union, acc, v.AsBody()) : v.AsBody();
                         if (!acc)
-                            return a.Error("并集失败：" + k->LastError());
+                            return a.Error(TrF("并集失败：{0}", k->LastError()));
                     }
                     a.Out(0, RoleOfFirst(acc, a.List(0)));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.difference", .Name = "差集", .Category = cat, .Description = "A 减去 B 列表中的全部实体" };
+                NodeTypeInfo t{ .Id = "solid.difference", .Name = NN_("差集"), .Category = cat, .Description = NN_("A 减去 B 列表中的全部实体") };
                 t.Keywords = "difference subtract 布尔 减 剪切";
                 t.Inputs  = { SolidPort(In("A", DataType::Body)), SolidPort(InList("B", DataType::Body, /*optional=*/true)) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
-                    if (!k || !RequireSolids(a, *k, { a.In(0) }, "差集") || !RequireSolids(a, *k, a.List(1), "差集")) return;
+                    if (!k || !RequireSolids(a, *k, { a.In(0) }, NN_("差集")) || !RequireSolids(a, *k, a.List(1), NN_("差集"))) return;
                     Solid::BodyPtr acc = a.Body(0);
                     for (const auto& v : a.List(1))
                     {
                         acc = k->Boolean(Solid::BooleanOp::Difference, acc, v.AsBody());
                         if (!acc)
-                            return a.Error("差集失败：" + k->LastError());
+                            return a.Error(TrF("差集失败：{0}", k->LastError()));
                     }
                     a.Out(0, Value::VoidBody(acc, a.In(0).Void));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.intersection", .Name = "交集", .Category = cat, .Description = "列表中所有实体的公共部分" };
+                NodeTypeInfo t{ .Id = "solid.intersection", .Name = NN_("交集"), .Category = cat, .Description = NN_("列表中所有实体的公共部分") };
                 t.Keywords = "intersection 布尔 相交";
-                t.Inputs  = { SolidPort(InList("实体", DataType::Body)) };
-                t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+                t.Inputs  = { SolidPort(InList(NN_("实体"), DataType::Body)) };
+                t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
-                    if (!k || !RequireSolids(a, *k, a.List(0), "交集")) return;
+                    if (!k || !RequireSolids(a, *k, a.List(0), NN_("交集"))) return;
                     Solid::BodyPtr acc;
                     for (const auto& v : a.List(0))
                     {
                         acc = acc ? k->Boolean(Solid::BooleanOp::Intersection, acc, v.AsBody()) : v.AsBody();
                         if (!acc)
-                            return a.Error("交集失败（可能没有公共部分）：" + k->LastError());
+                            return a.Error(TrF("交集失败（可能没有公共部分）：{0}", k->LastError()));
                     }
                     a.Out(0, RoleOfFirst(acc, a.List(0)));
                 };
@@ -236,17 +236,18 @@ namespace MiniCAD::Nodes
         // 圆角 / 倒角：边编号列表为空时处理全部边
         void RegisterEdgeOp(NodeRegistry& r, const char* id, const char* name, const char* amount, double def, bool chamfer, const char* keywords)
         {
-            NodeTypeInfo t{ .Id = id, .Name = name, .Category = "实体/修改",
-                            .Description = std::string(chamfer ? "对实体的边倒角" : "对实体的边倒圆角") + "；“边”为边的编号（见“实体信息”的边数），不接时处理全部边" };
+            NodeTypeInfo t{ .Id = id, .Name = name, .Category = NN_("实体/修改"),
+                            .Description = chamfer ? NN_("对实体的边倒角；“边”为边的编号（见“实体信息”的边数），不接时处理全部边")
+                                    : NN_("对实体的边倒圆角；“边”为边的编号（见“实体信息”的边数），不接时处理全部边") };
             t.Keywords = keywords;
-            t.Inputs  = { SolidPort(In("实体", DataType::Body)), In(amount, DataType::Number, def), InList("边", DataType::Integer, /*optional=*/true) };
-            t.Outputs = { SolidPort(Out("实体", DataType::Body)) };
+            t.Inputs  = { SolidPort(In(NN_("实体"), DataType::Body)), In(amount, DataType::Number, def), InList(NN_("边"), DataType::Integer, /*optional=*/true) };
+            t.Outputs = { SolidPort(Out(NN_("实体"), DataType::Body)) };
             t.Solve   = [chamfer, name](SolveArgs& a)
             {
                 auto* k = a.Kernel();
                 if (!k) return;
                 if (a.Number(1) <= 0)
-                    return a.Error("半径 / 距离应为正数");
+                    return a.Error(Tr("半径 / 距离应为正数"));
                 const Solid::BodyPtr& body = a.Body(0);
                 const size_t edgeCount = k->Edges(body).Lines.size();
                 std::vector<int> edges;
@@ -254,7 +255,7 @@ namespace MiniCAD::Nodes
                 {
                     const int64_t e = v.AsInteger();
                     if (e < 0 || e >= static_cast<int64_t>(edgeCount))
-                        return a.Error("边编号 " + std::to_string(e) + " 超出范围（共 " + std::to_string(edgeCount) + " 条边）");
+                        return a.Error(TrF("边编号 {0} 超出范围（共 {1} 条边）", e, edgeCount));
                     if (std::find(edges.begin(), edges.end(), static_cast<int>(e)) == edges.end())
                         edges.push_back(static_cast<int>(e));
                 }
@@ -268,14 +269,14 @@ namespace MiniCAD::Nodes
 
         void RegisterAnalysis(NodeRegistry& r)
         {
-            const char* cat = "实体/分析";
+            const char* cat = NN_("实体/分析");
             {
-                NodeTypeInfo t{ .Id = "solid.info", .Name = "实体信息", .Category = cat,
-                                .Description = "体积、边数、包围盒；开放曲面没有体积（输出 0 并提示，面积见“曲面信息”）" };
+                NodeTypeInfo t{ .Id = "solid.info", .Name = NN_("实体信息"), .Category = cat,
+                                .Description = NN_("体积、边数、包围盒；开放曲面没有体积（输出 0 并提示，面积见“曲面信息”）") };
                 t.Keywords = "volume 体积 包围盒";
-                t.Inputs  = { SolidPort(In("实体", DataType::Body)) };
-                t.Outputs = { Out("体积", DataType::Number), Out("边数", DataType::Integer), Out("最小点", DataType::Vector),
-                              Out("最大点", DataType::Vector), Out("中心", DataType::Vector) };
+                t.Inputs  = { SolidPort(In(NN_("实体"), DataType::Body)) };
+                t.Outputs = { Out(NN_("体积"), DataType::Number), Out(NN_("边数"), DataType::Integer), Out(NN_("最小点"), DataType::Vector),
+                              Out(NN_("最大点"), DataType::Vector), Out(NN_("中心"), DataType::Vector) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -283,9 +284,9 @@ namespace MiniCAD::Nodes
                     const bool   solid = k->IsSolid(a.Body(0));
                     const double vol   = solid ? k->Volume(a.Body(0)) : 0.0;
                     if (vol < 0)
-                        return a.Error("无法计算体积：" + k->LastError());
+                        return a.Error(TrF("无法计算体积：{0}", k->LastError()));
                     if (!solid)
-                        a.Warning("开放曲面没有体积（体积输出 0；面积见“曲面信息”）");
+                        a.Warning(Tr("开放曲面没有体积（体积输出 0；面积见“曲面信息”）"));
                     const AABB box = k->Bounds(a.Body(0));
                     a.Out(0, vol);
                     a.Out(1, static_cast<int64_t>(k->Edges(a.Body(0)).Lines.size()));
@@ -296,12 +297,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "solid.section", .Name = "截面", .Category = cat,
-                                .Description = "实体与平面（沿法向偏移“高度”）的截交线：水平截面输出曲线（多段线），任意平面输出空间曲线（折线）" };
+                NodeTypeInfo t{ .Id = "solid.section", .Name = NN_("截面"), .Category = cat,
+                                .Description = NN_("实体与平面（沿法向偏移“高度”）的截交线：水平截面输出曲线（多段线），任意平面输出空间曲线（折线）") };
                 t.Keywords = "section 剖切 截面 水平截面";
-                t.Inputs  = { In("实体", DataType::Body), In("高度", DataType::Number, 5.0, "截平面沿平面法向的偏移"),
-                              In("平面", DataType::Plane, Value(Plane{})) };
-                t.Outputs = { Out("曲线", DataType::Curve, "水平截面的多段线（截平面不水平时为空）"), Out("空间曲线", DataType::Curve3D) };
+                t.Inputs  = { In(NN_("实体"), DataType::Body), In(NN_("高度"), DataType::Number, 5.0, NN_("截平面沿平面法向的偏移")),
+                              In(NN_("平面"), DataType::Plane, Value(Plane{})) };
+                t.Outputs = { Out(NN_("曲线"), DataType::Curve, NN_("水平截面的多段线（截平面不水平时为空）")), Out(NN_("空间曲线"), DataType::Curve3D) };
                 t.Solve   = [](SolveArgs& a)
                 {
                     auto* k = a.Kernel();
@@ -320,7 +321,7 @@ namespace MiniCAD::Nodes
                             lines.push_back(std::move(l.Points));
                         }
                         if (!lines.empty())
-                            a.Warning("内核没有截出结果，已改用网格近似（误差约为网格弦高）");
+                            a.Warning(Tr("内核没有截出结果，已改用网格近似（误差约为网格弦高）"));
                     }
                     const bool horizontal = std::abs(std::abs(n.z) - 1.0) < 1e-12;
                     for (Chain& c : ChainLines(std::move(lines)))
@@ -342,8 +343,8 @@ namespace MiniCAD::Nodes
     {
         RegisterPrimitives(r);   // 拉伸、旋转、放样等形体在 BuiltinFormNodes.cpp
         RegisterBooleans(r);
-        RegisterEdgeOp(r, "solid.fillet", "圆角", "半径", 1.0, false, "fillet 倒圆 圆角");
-        RegisterEdgeOp(r, "solid.chamfer", "倒角", "距离", 1.0, true, "chamfer 斜角");
+        RegisterEdgeOp(r, "solid.fillet", NN_("圆角"), NN_("半径"), 1.0, false, "fillet 倒圆 圆角");
+        RegisterEdgeOp(r, "solid.chamfer", NN_("倒角"), NN_("距离"), 1.0, true, "chamfer 斜角");
         RegisterAnalysis(r);
     }
 }

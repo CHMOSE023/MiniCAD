@@ -86,19 +86,19 @@ namespace MiniCAD::Nodes
     {
         struct TypeRow { DataType Type; const char* Key; const char* Name; };
         constexpr TypeRow kTypes[] = {
-            { DataType::Any,      "any",      "任意" },
-            { DataType::Number,   "number",   "数值" },
-            { DataType::Integer,  "integer",  "整数" },
-            { DataType::Boolean,  "boolean",  "布尔" },
-            { DataType::Text,     "text",     "文字" },
-            { DataType::Vector,   "vector",   "点 / 向量" },
-            { DataType::Curve,    "curve",    "曲线" },
-            { DataType::Body,     "body",     "实体 / 曲面" },
-            { DataType::Curve3D,  "curve3d",  "空间曲线" },
-            { DataType::Geometry, "geometry", "几何" },
-            { DataType::Domain,   "domain",   "区间" },
-            { DataType::Plane,    "plane",    "平面" },
-            { DataType::Mesh,     "mesh",     "网格" },
+            { DataType::Any,      "any",      NN_("任意") },
+            { DataType::Number,   "number",   NN_("数值") },
+            { DataType::Integer,  "integer",  NN_("整数") },
+            { DataType::Boolean,  "boolean",  NN_("布尔") },
+            { DataType::Text,     "text",     NN_("文字") },
+            { DataType::Vector,   "vector",   NN_("点 / 向量") },
+            { DataType::Curve,    "curve",    NN_("曲线") },
+            { DataType::Body,     "body",     NN_("实体 / 曲面") },
+            { DataType::Curve3D,  "curve3d",  NN_("空间曲线") },
+            { DataType::Geometry, "geometry", NN_("几何") },
+            { DataType::Domain,   "domain",   NN_("区间") },
+            { DataType::Plane,    "plane",    NN_("平面") },
+            { DataType::Mesh,     "mesh",     NN_("网格") },
         };
 
         bool IsScalar(DataType t) { return t == DataType::Number || t == DataType::Integer || t == DataType::Boolean; }
@@ -122,10 +122,26 @@ namespace MiniCAD::Nodes
         }
     }
 
-    const char* TypeName(DataType t)
+    std::string TrNode(std::string_view text)
+    {
+        if (text.find('\n') == std::string_view::npos)
+            return TrC(kNodeTextContext, text);
+        std::string out;
+        for (size_t pos = 0;;)
+        {
+            const size_t end = text.find('\n', pos);
+            out += TrC(kNodeTextContext, text.substr(pos, end == std::string_view::npos ? std::string_view::npos : end - pos));
+            if (end == std::string_view::npos)
+                return out;
+            out += '\n';
+            pos = end + 1;
+        }
+    }
+
+    std::string TypeName(DataType t)
     {
         for (const auto& r : kTypes)
-            if (r.Type == t) return r.Name;
+            if (r.Type == t) return TrNode(r.Name);
         return "?";
     }
 
@@ -237,6 +253,15 @@ namespace MiniCAD::Nodes
         }
     }
 
+    std::string PlaneName(const Plane& pl)
+    {
+        const Math::Vec3 n = pl.Normal();
+        const char* name = std::abs(n.z) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? NN_("XY 平面")
+                         : std::abs(n.x) > 1 - 1e-9 && std::abs(pl.X.y) > 1 - 1e-9 ? NN_("YZ 平面")
+                         : std::abs(n.y) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? NN_("XZ 平面") : NN_("平面");
+        return TrNode(name);
+    }
+
     std::string ToDisplayString(const Value& v)
     {
         switch (v.Type())
@@ -254,45 +279,41 @@ namespace MiniCAD::Nodes
         {
             const auto& c = v.AsCurve();
             if (!c)
-                return "曲线（空）";
+                return Tr("曲线（空）");
             static const std::pair<const char*, const char*> kNames[] = {
-                { "LineEntity", "直线" }, { "ArcEntity", "圆弧" }, { "CircleEntity", "圆" },
-                { "PolylineEntity", "多段线" }, { "RectangleEntity", "矩形" }, { "SplineEntity", "样条" },
-                { "EllipseEntity", "椭圆" },
+                { "LineEntity", NN_("直线") }, { "ArcEntity", NN_("圆弧") }, { "CircleEntity", NN_("圆") },
+                { "PolylineEntity", NN_("多段线") }, { "RectangleEntity", NN_("矩形") }, { "SplineEntity", NN_("样条") },
+                { "EllipseEntity", NN_("椭圆") },
             };
             const std::string type = c->GetTypeInfo()->Name;
             for (const auto& [key, name] : kNames)
-                if (type == key) return std::string("曲线（") + name + "）";
-            return "曲线（" + type + "）";
+                if (type == key) return TrF("曲线（{0}）", TrNode(name));
+            return TrF("曲线（{0}）", type);
         }
-        case DataType::Body:    return !v.AsBody() ? "实体 / 曲面（空）" : v.Void ? "空心形体" : "实体 / 曲面";
-        case DataType::Domain:  return FormatNumber(v.AsDomain().Min) + " 至 " + FormatNumber(v.AsDomain().Max);
+        case DataType::Body:    return !v.AsBody() ? Tr("实体 / 曲面（空）") : v.Void ? Tr("空心形体") : TrNode("实体 / 曲面");
+        case DataType::Domain:  return TrF("{0} 至 {1}", FormatNumber(v.AsDomain().Min), FormatNumber(v.AsDomain().Max));
         case DataType::Plane:
         {
             const Plane& pl = v.AsPlane();
-            const Math::Vec3 n = pl.Normal();
             auto vec = [](const Math::Vec3& p) { return "{" + FormatNumber(p.x) + ", " + FormatNumber(p.y) + ", " + FormatNumber(p.z) + "}"; };
-            const char* name = std::abs(n.z) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? "XY 平面"
-                             : std::abs(n.x) > 1 - 1e-9 && std::abs(pl.X.y) > 1 - 1e-9 ? "YZ 平面"
-                             : std::abs(n.y) > 1 - 1e-9 && std::abs(pl.X.x) > 1 - 1e-9 ? "XZ 平面" : "平面";
-            return std::string(name) + "（原点 " + vec(pl.Origin) + "，法向 " + vec(n) + "）";
+            return TrF("{0}（原点 {1}，法向 {2}）", PlaneName(pl), vec(pl.Origin), vec(pl.Normal()));
         }
         case DataType::Mesh:
         {
             const auto& m = v.AsMesh();
             if (!m)
-                return "网格（空）";
-            return "网格（" + std::to_string(m->Positions.size()) + " 个顶点，" + std::to_string(m->TriangleCount()) + " 个面）";
+                return Tr("网格（空）");
+            return TrF("网格（{0} 个顶点，{1} 个面）", m->Positions.size(), m->TriangleCount());
         }
         case DataType::Curve3D:
         {
             const auto& c = v.AsCurve3D();
             if (!c || !c->IsValid())
-                return "空间曲线（无效）";
-            return "空间曲线（" + std::to_string(c->Degree) + " 次，" + std::to_string(c->ControlPoints.size()) + " 个控制点" +
-                   (c->IsClosed() ? "，闭合" : "") + "）";
+                return Tr("空间曲线（无效）");
+            return c->IsClosed() ? TrF("空间曲线（{0} 次，{1} 个控制点，闭合）", c->Degree, c->ControlPoints.size())
+                                 : TrF("空间曲线（{0} 次，{1} 个控制点）", c->Degree, c->ControlPoints.size());
         }
-        default:                return "<空>";
+        default:                return Tr("<空>");
         }
     }
 }
