@@ -36,8 +36,11 @@ if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
     endif()
 endif()
 
-# 三个库的头文件各有自己的 include 根：MiniCAD → src，MiniGUI → src/UI，MiniDWG → src/Serialization；渲染后端 → apps/Render。
+# 各库的头文件各有自己的 include 根：MiniCAD → src，MiniGUI → src/UI，MiniDWG → src/Serialization，MiniI18n → src/I18n；渲染后端 → apps/Render。
 # 各根之下的 "目录/文件.h" 相对路径不能重复，否则会按搜索顺序互相遮挡（编译器不报错）。
+
+# ── MiniI18n（界面文字的翻译，下面三个库都链接它）──────────────────────
+include(cmake/MiniI18n.cmake)
 
 # ── MiniDWG（DWG/DXF 读写库）────────────────────────────────────────
 include(cmake/MiniDWG.cmake)

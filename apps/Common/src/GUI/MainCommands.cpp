@@ -2,6 +2,8 @@
 // 名称、图标、快捷键是默认值，界面描述文件（ui/minicad_ui.json）的 "commands" 可以覆盖
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "GUI/NodeEditor.h"
 #include "Document/Document.h"
 #include "Document/Command/LayerCommands.h"
@@ -50,15 +52,15 @@ namespace MiniCAD
         // ── 窗口：标题栏的最小化 / 最大化 / 关闭按钮执行这三个命令（网页版没有窗口按钮：不注册，标题栏就不显示）──
         if (platform->HasWindowControls())
         {
-            m_commands.Register({ .id = MiniGUI::TitleBar::kMinimizeCommand, .label = "最小化(&N)", .execute = [platform] { platform->MinimizeWindow(); } });
-            m_commands.Register({ .id = MiniGUI::TitleBar::kMaximizeCommand, .label = "最大化(&X)",
+            m_commands.Register({ .id = MiniGUI::TitleBar::kMinimizeCommand, .label = N_("最小化(&N)"), .execute = [platform] { platform->MinimizeWindow(); } });
+            m_commands.Register({ .id = MiniGUI::TitleBar::kMaximizeCommand, .label = N_("最大化(&X)"),
                                   .execute = [platform] { platform->ToggleMaximizeWindow(); }, .isChecked = [platform] { return platform->IsWindowMaximized(); } });
-            m_commands.Register({ .id = MiniGUI::TitleBar::kCloseCommand,    .label = "关闭(&C)",   .execute = [platform] { platform->CloseWindow(); } });
+            m_commands.Register({ .id = MiniGUI::TitleBar::kCloseCommand,    .label = N_("关闭(&C)"),   .execute = [platform] { platform->CloseWindow(); } });
         }
 
         // ── 文件 ─────────────────────────────────────────────────
-        m_commands.Register({ .id = "file.new",     .label = "新建(&N)",  .icon = "New.png",   .shortcut = "Ctrl+N",       .execute = [&dm] { dm.New(); }});
-        m_commands.Register({ .id = "file.open",    .label = "打开(&O)…", .icon = "Open.png",   .shortcut = "Ctrl+O",
+        m_commands.Register({ .id = "file.new",     .label = N_("新建(&N)"),  .icon = "New.png",   .shortcut = "Ctrl+N",       .execute = [&dm] { dm.New(); }});
+        m_commands.Register({ .id = "file.open",    .label = N_("打开(&O)…"), .icon = "Open.png",   .shortcut = "Ctrl+O",
                               .execute = [this, platform, &dm]
                               {
                                   platform->PickDrawingFiles([this](const std::vector<std::string>& paths)
@@ -66,14 +68,14 @@ namespace MiniCAD
                                       OpenDrawings(paths);
                                   });
                               } });
-        m_commands.Register({ .id = "file.save",    .label = "保存(&S)",   .icon = "Save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveWithProgress(false); }, .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.save",    .label = N_("保存(&S)"),   .icon = "Save.png", .shortcut = "Ctrl+S",       .execute = [this] { SaveWithProgress(false); }, .canExecute = hasDoc });
        
-        m_commands.Register({ .id = "file.saveAs",  .label = "另存为(&A)…",  .shortcut = "Ctrl+Shift+S", .execute = [this] { SaveDocuments(false, true); },  .canExecute = hasDoc });
-        m_commands.Register({ .id = "file.saveAll", .label = "全部保存(&L)", .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveWithProgress(true); },  .canExecute = hasDoc });
-        m_commands.Register({ .id = "file.close",   .label = "关闭(&C)",     .shortcut = "Ctrl+W",
+        m_commands.Register({ .id = "file.saveAs",  .label = N_("另存为(&A)…"),  .shortcut = "Ctrl+Shift+S", .execute = [this] { SaveDocuments(false, true); },  .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.saveAll", .label = N_("全部保存(&L)"), .shortcut = "Ctrl+Alt+S",   .execute = [this] { SaveWithProgress(true); },  .canExecute = hasDoc });
+        m_commands.Register({ .id = "file.close",   .label = N_("关闭(&C)"),     .shortcut = "Ctrl+W",
                               .execute = [this, &dm] { CloseDocument(dm.GetActive()); }, .canExecute = hasDoc });
-        m_commands.Register({ .id = "xref.locate", .label = "查找外部参照(&E)…",
-                              .tooltip = "为没有找到的外部参照选择所在的文件夹，在里面查找并读入（命令 XREF）",
+        m_commands.Register({ .id = "xref.locate", .label = N_("查找外部参照(&E)…"),
+                              .tooltip = N_("为没有找到的外部参照选择所在的文件夹，在里面查找并读入（命令 XREF）"),
                               .execute = [this, &dm]
                               {
                                   Document* doc = dm.GetActive();
@@ -81,21 +83,21 @@ namespace MiniCAD
                                   const size_t missing = FindUnresolvedXrefs(doc->GetScene()).size();
                                   if (missing == 0)
                                   {
-                                      dm.GetEditor().GetCmdLine().Echo("没有找不到的外部参照");
+                                      dm.GetEditor().GetCmdLine().Echo(Tr("没有找不到的外部参照"));
                                       return;
                                   }
-                                  dm.GetEditor().GetCmdLine().Echo(std::to_string(missing) + " 个外部参照没有找到，请选择所在的文件夹");
+                                  dm.GetEditor().GetCmdLine().Echo(TrF("{0} 个外部参照没有找到，请选择所在的文件夹", missing));
                                   LocateXrefs({ doc });
                               },
                               .canExecute = hasDoc });
-        m_commands.Register({ .id = "app.exit",     .label = "退出(&X)",     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
-        m_commands.Register({ .id = "view.start", .label = "起始页(&H)",
-                              .tooltip = "显示起始页：新建、打开、最近的图纸（Esc 返回当前图纸）", .icon = "Home.png",
+        m_commands.Register({ .id = "app.exit",     .label = N_("退出(&X)"),     .shortcut = "Alt+F4",       .execute = [platform] { platform->CloseWindow(); } });
+        m_commands.Register({ .id = "view.start", .label = N_("起始页(&H)"),
+                              .tooltip = N_("显示起始页：新建、打开、最近的图纸（Esc 返回当前图纸）"), .icon = "Home.png",
                               .execute    = [this] { ShowStartPage(!m_startShown); },
                               .canExecute = hasDoc,
                               .isChecked  = [this] { return m_startShown || !m_docManager.GetMainDocument(); } });
-        m_commands.Register({ .id = "ui.search", .label = "搜索命令(&K)",
-                              .tooltip = "在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行", .shortcut = "Ctrl+K",
+        m_commands.Register({ .id = "ui.search", .label = N_("搜索命令(&K)"),
+                              .tooltip = N_("在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行"), .shortcut = "Ctrl+K",
                               .execute    = [this] { if (MiniGUI::Ribbon* r = CurrentRibbon()) r->FocusSearch(); },
                               .canExecute = [this]
                               {
@@ -105,8 +107,8 @@ namespace MiniCAD
                                   return r && r->GetSearchBox() && m_docManager.GetActive() && !(inMain && (m_startShown || !m_docManager.GetMainDocument()));
                               } });
         // 「最近打开」的内容由 BuildRecentMenuItems() 在打开菜单时生成，这两条供命令行 / 快捷键直接调用
-        m_commands.Register({ .id = "file.recent.clear", .label = "清除最近打开记录(&C)",
-                              .tooltip = "清空「文件 > 最近打开」列表",
+        m_commands.Register({ .id = "file.recent.clear", .label = N_("清除最近打开记录(&C)"),
+                              .tooltip = N_("清空「文件 > 最近打开」列表"),
                               .execute    = [this] { ClearRecentFiles(); },
                               .canExecute = [this] { return !m_recentFiles.Empty(); } });
 
@@ -118,8 +120,8 @@ namespace MiniCAD
                 m_docTabs->SetSelected((m_docTabs->GetSelected() + dir + n) % n);     // 选中回调里激活文档
         };
         auto multiDoc = [&dm] { return dm.GetAll().size() > 1; };
-        m_commands.Register({ .id = "doc.next", .label = "下一个文档(&N)", .shortcut = "Ctrl+Tab",       .execute = [stepDoc] { stepDoc(1); },  .canExecute = multiDoc });
-        m_commands.Register({ .id = "doc.prev", .label = "上一个文档(&P)", .shortcut = "Ctrl+Shift+Tab", .execute = [stepDoc] { stepDoc(-1); }, .canExecute = multiDoc });
+        m_commands.Register({ .id = "doc.next", .label = N_("下一个文档(&N)"), .shortcut = "Ctrl+Tab",       .execute = [stepDoc] { stepDoc(1); },  .canExecute = multiDoc });
+        m_commands.Register({ .id = "doc.prev", .label = N_("上一个文档(&P)"), .shortcut = "Ctrl+Shift+Tab", .execute = [stepDoc] { stepDoc(-1); }, .canExecute = multiDoc });
 
         // ── 编辑 ─────────────────────────────────────────────────
         // 节点编辑器有焦点时，撤销 / 重做 / 全选作用于节点图（节点图有自己的撤销历史，见 docs/NodeGraph/PLAN.md 第 3.6 节）
@@ -340,8 +342,8 @@ namespace MiniCAD
         // 视口导航条在加载界面描述文件之前创建，它用到的图标在这里给出
         m_commands.Find("view.grid")->icon     = "Grid.png";
         m_commands.Find("view.viewcube")->icon = "ViewCube.png";
-        m_commands.Register({ .id = "view.panel.nodes", .label = "节点编辑器(&N)",
-                              .tooltip = "节点式参数化建模：把几何运算连成节点图，改参数实时更新（docs/NodeGraph/PLAN.md）",
+        m_commands.Register({ .id = "view.panel.nodes", .label = N_("节点编辑器(&N)"),
+                              .tooltip = N_("节点式参数化建模：把几何运算连成节点图，改参数实时更新（docs/NodeGraph/PLAN.md）"),
                               .shortcut = "Ctrl+Shift+N",
                               .execute   = [this] { ShowNodePanel(true); },
                               .canExecute = [this] { auto* d = CurrentDock(); return d && d->HasPanel("nodes"); },
@@ -397,11 +399,11 @@ namespace MiniCAD
                               .canExecute = hasDoc });
 
         // ── 界面 ─────────────────────────────────────────────────
-        m_commands.Register({ .id = "ui.reload", .label = "重新加载界面(&R)",
-                              .tooltip = "重新读取界面描述文件（保存文件时也会自动重新加载）",
+        m_commands.Register({ .id = "ui.reload", .label = N_("重新加载界面(&R)"),
+                              .tooltip = N_("重新读取界面描述文件（保存文件时也会自动重新加载）"),
                               .shortcut = "F5", .allowInTextInput = true,
                               .execute = [this] { m_platform->Post([this] { ReloadUi(); }); } });
-        m_commands.Register({ .id = "ui.theme", .label = "浅色主题(&T)", .shortcut = "Ctrl+T",
+        m_commands.Register({ .id = "ui.theme", .label = N_("浅色主题(&T)"), .shortcut = "Ctrl+T",
                               .execute   = [this]
                               {
                                   const bool toLight = m_ui->GetTheme().IsDark();
@@ -412,6 +414,28 @@ namespace MiniCAD
 RequestRenderAll();      // 视口背景随主题反转白色内容（RenderFrame 同步）
                               },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
-        m_commands.Register({ .id = "help.about", .label = "关于(&A)…", .shortcut = "F1", .execute = [this] { ShowAbout(); } });
+        m_commands.Register({ .id = "help.about", .label = N_("关于(&A)…"), .shortcut = "F1", .execute = [this] { ShowAbout(); } });
+
+        // ── 界面语言（"设置 > 语言"）：每种语言一条命令 ui.language.<代码>，选了写进用户设置，重启后生效 ──
+        // 名称是该语言自己的写法（"English"），不翻译
+        for (const LanguageInfo& lang : ListLanguages(ResourceDir()))
+        {
+            const std::string code = lang.code;
+            const std::string name = lang.name;
+            m_commands.Register({ .id = std::string(kLanguageCommandPrefix) + code, .label = name,
+                                  .execute = [this, code, name]
+                                  {
+                                      if (code == PendingLanguage())
+                                          return;
+                                      if (!SaveLanguageSetting(*m_platform, code))
+                                      {
+                                          MiniGUI::ShowMessageBox(*m_ui, Tr("语言"), Tr("无法保存设置（没有用户数据目录）。可以在命令行上用 --lang 指定界面语言。"), { Tr("确定") });
+                                          return;
+                                      }
+                                      if (code != CurrentLanguage())
+                                          MiniGUI::ShowMessageBox(*m_ui, Tr("语言"), TrF("重新打开 MiniCAD 后界面切换为 {0}。", name), { Tr("确定") });
+                                  },
+                                  .isChecked = [code] { return PendingLanguage() == code; } });
+        }
     }
 }

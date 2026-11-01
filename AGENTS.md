@@ -28,6 +28,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）、`Platform/Web`（`MiniGUI_Web`）与 `Platform/SDL`（`MiniGUI_SDL`，Linux，需要 SDL3）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD，核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。`*.g.cpp` 由已归档的 MiniDWG 仓库里的脚本生成，不要手改。开发计划：`docs/MiniDWG/PLAN.md`
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
+- `src/I18n/MiniI18n/`：MiniI18n（目标 `MiniI18n`，定义在 `cmake/MiniI18n.cmake`，命名空间 `MiniI18n`）：界面文字的翻译，只用标准库，MiniCAD、MiniGUI、MiniDWG 都链接它。翻译文件 `assets/i18n/<语言>.json`，由共用应用的 `GUI/Language.cpp` 选定语言并装入。开发计划：`docs/I18n/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，各宿主共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
 - `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；Linux 默认 `VulkanGraphicsDevice`（`VulkanRenderer`、`VulkanBackend`，共用 `MiniGUI::VulkanContext`，要 Vulkan 1.3；GLSL 着色器构建时编成 SPIR-V），不行时 `GLES3GraphicsDevice`（OpenGL ES 3），窗口表面与 GL 上下文都由宿主经 SDL3 创建；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
@@ -42,12 +43,12 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 ### include 根目录（重要）
 
-每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`，Linux 版 → `apps/Linux/src`。
+每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，MiniI18n → `src/I18n`（`"MiniI18n/I18n.h"`），共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`，Linux 版 → `apps/Linux/src`。
 `src` 和 `src/UI` 下都有 `Core/`、`Render/`、`Text/`；不要让同一个相对路径（如 `Core/<文件>.h`）同时存在于两个根下——重名时编译器按搜索顺序悄悄选中其中一个，不会报错。
 
 ### 源文件登记
 
-源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt` / `apps/Linux/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
+源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，MiniI18n `cmake/MiniI18n.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt` / `apps/Linux/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
 
 ## 架构
 
@@ -110,7 +111,16 @@ doc.GetCommandStack().Execute(std::move(cmd), scene);   // 工具里是 m_ctx->c
 路径在接口间一律传 UTF-8 `std::string`；转成 `std::filesystem::path` 用 `std::u8string`，转回用 `u8string()`。不要用 `path::string()` 或窄字符串构造 path（按系统代码页转换，英文系统遇到中文会抛异常）。
 
 ### 日志
-`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。
+`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。要翻译的日志用 `LOG_INFO_TR` / `LOG_WARN_TR` / `LOG_ERROR_TR`（`{0}` 占位，不是 printf 格式串）。
+
+### 界面文字（多语言）
+源语言是简体中文，翻译表的键就是代码里的中文原文（`docs/I18n/PLAN.md`）：
+- 直接显示的文字写 `Tr("…")`；要替换数字等的写 `TrF("{0} 个…", n)`，不要拼接句子碎片（英文语序不同）；同字不同义时 `TrC("上下文", "…")`
+- 存进数据、显示时才翻译的（命令的 `label` / `tooltip`、节点名称）写 `N_("…")`，显示处再翻译；命令文字一律经 `CommandRegistry::GetLabel` / `CommandRegistry::GetTooltip` 显示，不要直接读 `Command::label`
+- 不要按显示的文字比较或查找（翻译后就对不上），按 Id / 下标
+- 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）
+- 改了界面文字后运行 `python -X utf8 tools/i18n_extract.py` 更新翻译文件（CI 跑 `--check`）；英文日志反查原文用 `--where "<英文>"`
+- 运行时语言：`--lang en|zh-CN|qps`（`qps` 是伪语言，找出没走 `Tr` 的文字）或环境变量 `MINICAD_LANG`；默认按"设置 > 语言"、再按系统语言。自测与基准不读设置、不看系统语言
 
 ### 文本格式
 仓库里文本统一存为 LF（`.gitattributes`），`.bat` 为 CRLF，`.dwg` / `.dxf` 按二进制。代码注释与提交信息用简体中文。

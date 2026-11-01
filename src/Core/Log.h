@@ -1,4 +1,5 @@
 #pragma once
+#include "MiniI18n/I18n.h"
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -165,6 +166,13 @@ inline void LogWrite(LogLevel level, const char* file, int line, const char* fmt
 #define LOG_WARN(fmt, ...)  ::MiniCAD::Detail::LogWrite(::MiniCAD::LogLevel::Warn,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) ::MiniCAD::Detail::LogWrite(::MiniCAD::LogLevel::Error, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #endif
+
+// 要翻译的日志（见 docs/I18n/PLAN.md 3.7）：msgid 是中文原文，用 {0}、{1} 占位，不是 printf 格式串——
+// printf 格式串不能拿去翻译（译文里 %s / %d 的个数或顺序错了就是未定义行为）
+//   LOG_WARN_TR("找不到字体 {0}，改用 {1}", name, fallback);
+#define LOG_INFO_TR(msgid, ...)  LOG_INFO("%s",  ::MiniI18n::TrF(msgid, ##__VA_ARGS__).c_str())
+#define LOG_WARN_TR(msgid, ...)  LOG_WARN("%s",  ::MiniI18n::TrF(msgid, ##__VA_ARGS__).c_str())
+#define LOG_ERROR_TR(msgid, ...) LOG_ERROR("%s", ::MiniI18n::TrF(msgid, ##__VA_ARGS__).c_str())
 
 // Runtime level control
 #define LOG_SET_LEVEL(lvl)  (::MiniCAD::g_logLevel = (lvl))

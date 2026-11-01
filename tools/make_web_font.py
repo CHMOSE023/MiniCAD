@@ -1,7 +1,7 @@
 """生成网页版界面字体：Noto Sans SC 可变字体 → Regular 字重 + 常用字子集。
 
 浏览器里读不到系统字体，WASM 版的 MiniGUI 界面使用这里生成的字体文件。
-覆盖范围：ASCII、拉丁补充、常用标点与符号、GB2312 全部字符，以及源码和界面描述文件里出现的所有字符。
+覆盖范围：ASCII、拉丁补充、常用标点与符号、GB2312 全部字符，以及源码、界面描述文件和翻译文件（assets/i18n）里出现的所有字符。
 
 用法（需要 pip install fonttools）：
     python tools/make_web_font.py [源字体路径]
@@ -34,7 +34,7 @@ def gb2312_chars():
 def source_chars():
     chars = set()
     patterns = ["src/**/*.cpp", "src/**/*.h", "src/**/*.hpp", "apps/**/*.cpp", "apps/**/*.h",
-                "wasm/**/*.cpp", "wasm/**/*.h", "assets/ui/*.json"]
+                "wasm/**/*.cpp", "wasm/**/*.h", "assets/ui/*.json", "assets/i18n/*.json"]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
             try:

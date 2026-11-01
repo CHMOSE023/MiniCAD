@@ -8,6 +8,7 @@
 #include "Widgets/AutoComplete.h"
 #include "Widgets/Menu.h"
 #include "Widgets/TextBox.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -479,15 +480,17 @@ namespace MiniGUI
             const Command* c = m_commands.Find(id);
             if (!c || c->label.empty())
                 continue;
-            const std::u32string label  = Decode(CommandRegistry::StripMnemonic(c->label));
-            const std::u32string idText = Decode(id);
-            const std::u32string tip    = Decode(c->tooltip);
+            // 译文与原文都能搜到：中文用户切到英文界面后照样可以用中文名称查找
+            const std::u32string label    = Decode(CommandRegistry::StripMnemonic(m_commands.GetLabel(id)));
+            const std::u32string original = Decode(CommandRegistry::StripMnemonic(c->label));
+            const std::u32string idText   = Decode(id);
+            const std::u32string tip      = Decode(Tr(c->tooltip) + "\n" + c->tooltip);
             const auto place = places.find(id);
 
             int total = 1 << 30;
             for (const std::u32string& w : words)
             {
-                int best = std::max(MatchScore(w, label), MatchScore(w, idText));
+                int best = std::max({ MatchScore(w, label), MatchScore(w, original), MatchScore(w, idText) });
                 if (tip.find(w) != std::u32string::npos)
                     best = std::max(best, 400);
                 if (place != places.end() && place->second.find(w) != std::u32string::npos)

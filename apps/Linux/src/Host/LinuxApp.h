@@ -71,6 +71,7 @@ namespace MiniCAD
         std::string GetAppDir() const override { return GetResourceDir(); }   // 与 Win32 相同：都是可执行文件所在目录
         std::string GetUserDataDir() const override;
         std::vector<std::string> GetSystemFontDirs() const override;
+        std::string GetSystemLanguage() const override;
         bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;

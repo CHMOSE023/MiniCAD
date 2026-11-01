@@ -49,6 +49,8 @@ $rules = @(
     @('^src/NodeGraph/Builtin(Solid|Surface|Form|Mesh)',  'NodeSolidTests'),
     @('^src/NodeGraph/',                                  'NodeGraphTests'),
     @('^src/UI/',                                         'MiniGUITests'),
+    @('^src/I18n/',                                       'MiniCADTests','MiniGUITests','MiniCADWin'),
+    @('^assets/i18n/',                                    'MiniCADWin'),
     @('^src/(Core|Scene|Document|Editor|Serialization|Text|Viewport|Render|Import)/', 'MiniCADTests'),
     @('^apps/Web/',                                       'js'),
     @('^apps/(Common|Win32)/|^assets/ui/',                'MiniCADWin'),

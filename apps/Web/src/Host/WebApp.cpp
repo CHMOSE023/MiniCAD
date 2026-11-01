@@ -3,6 +3,7 @@
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "Document/Document.h"
+#include "GUI/Language.h"
 #include "Platform/Web/WebFonts.h"
 #include "Widgets/Dialog.h"
 #include "Platform/Web/WebInput.h"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 
 namespace MiniCAD
@@ -191,6 +193,34 @@ namespace MiniCAD
         if (Module["onAbort"]) Module["onAbort"](UTF8ToString(what));
     });
 
+    // 界面语言：网址的 ?lang=（优先）、浏览器语言；"设置 > 语言"存在 localStorage（网页版没有用户数据目录）。
+    // 返回的字符串由调用方 free
+    EM_JS(char*, MiniCADWeb_UrlLanguage, (), {
+        try { return stringToNewUTF8(new URLSearchParams(location.search).get("lang") || ""); } catch (e) { return stringToNewUTF8(""); }
+    });
+
+    EM_JS(char*, MiniCADWeb_BrowserLanguage, (), {
+        return stringToNewUTF8(navigator.language || "");
+    });
+
+    EM_JS(char*, MiniCADWeb_ReadSetting, (const char* key), {
+        try { return stringToNewUTF8(localStorage.getItem("MiniCAD." + UTF8ToString(key)) || ""); } catch (e) { return stringToNewUTF8(""); }
+    });
+
+    EM_JS(int, MiniCADWeb_WriteSetting, (const char* key, const char* value), {
+        try { localStorage.setItem("MiniCAD." + UTF8ToString(key), UTF8ToString(value)); return 1; } catch (e) { return 0; }
+    });
+
+    namespace
+    {
+        std::string TakeJsString(char* s)
+        {
+            std::string r = s ? s : "";
+            std::free(s);
+            return r;
+        }
+    }
+
     EM_JS(void, MiniCADWeb_SetTitle, (const char* title), {
         document.title = UTF8ToString(title);
     });
@@ -242,8 +272,24 @@ namespace MiniCAD
             g_app = nullptr;
     }
 
+    std::string WebApp::GetSystemLanguage() const
+    {
+        return TakeJsString(MiniCADWeb_BrowserLanguage());
+    }
+
+    std::string WebApp::ReadUserSetting(const std::string& key) const
+    {
+        return TakeJsString(MiniCADWeb_ReadSetting(key.c_str()));
+    }
+
+    bool WebApp::WriteUserSetting(const std::string& key, const std::string& value)
+    {
+        return MiniCADWeb_WriteSetting(key.c_str(), value.c_str()) != 0;
+    }
+
     bool WebApp::Initialize()
     {
+        InitLanguage(*this, TakeJsString(MiniCADWeb_UrlLanguage()));    // 在请求图形设备之前：它的出错信息也要翻译
         if (!m_host.Initialize())
             return false;
         if (MiniCADWeb_PreferWebGL())

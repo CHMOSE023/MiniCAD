@@ -143,6 +143,7 @@ add_executable(MiniCADTests
     "Core/MLineEditTests.cpp"
     "Core/TransformSinkTests.cpp"
     "Core/ReferenceEntityTests.cpp"
+    "Core/I18nTests.cpp"
 )
 target_link_libraries(MiniCADTests PRIVATE MiniCAD)
 target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")

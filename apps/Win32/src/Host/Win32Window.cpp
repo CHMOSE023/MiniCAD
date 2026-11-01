@@ -708,4 +708,16 @@ namespace MiniCAD
         const std::u8string u8 = (std::filesystem::path(buf) / L"MiniCAD").u8string();
         return std::string(u8.begin(), u8.end());
     }
+
+    std::string Win32Window::GetSystemLanguage() const
+    {
+        // 系统的显示语言（"设置 > 时间和语言"里选的），不是区域格式
+        wchar_t name[LOCALE_NAME_MAX_LENGTH] = L"";
+        if (LCIDToLocaleName(MAKELCID(GetUserDefaultUILanguage(), SORT_DEFAULT), name, LOCALE_NAME_MAX_LENGTH, 0) <= 0)
+            return {};
+        std::string s;
+        for (const wchar_t* p = name; *p; ++p)
+            s += static_cast<char>(*p);     // 语言名都是 ASCII（"zh-CN"、"en-US"）
+        return s;
+    }
 }

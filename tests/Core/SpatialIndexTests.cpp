@@ -66,7 +66,8 @@ int RunMLineImportTests();            // MLineImportTests.cpp，返回失败项�
 int RunMLineEditTests();              // MLineEditTests.cpp，返回失败项数
 int RunTransformSinkTests();           // TransformSinkTests.cpp，返回失败项数
 int RunSplineKnotTests();   // SplineKnotTests.cpp，返回失败项数
-int RunReferenceEntityTests(); // ReferenceEntityTests.cpp，返回失败项数              // TransformSinkTests.cpp，返回失败项数
+int RunReferenceEntityTests(); // ReferenceEntityTests.cpp，返回失败项数
+int RunI18nTests();            // I18nTests.cpp，返回失败项数              // TransformSinkTests.cpp，返回失败项数
 
 namespace
 {
@@ -356,6 +357,7 @@ g_failures += RunOleFrameTests();
     g_failures += RunTransformSinkTests();
     g_failures += RunSplineKnotTests();
     g_failures += RunReferenceEntityTests();
+    g_failures += RunI18nTests();
 
     std::printf("%s：%d 项失败\n", g_failures == 0 ? "全部通过" : "存在失败", g_failures);
     return g_failures;

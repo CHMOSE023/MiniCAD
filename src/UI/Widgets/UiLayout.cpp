@@ -12,6 +12,7 @@
 #include "Widgets/Ribbon.h"
 #include "Widgets/Splitter.h"
 #include "Widgets/TitleBar.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <functional>
 #include <set>
@@ -432,12 +433,12 @@ namespace MiniGUI
                     }
                     else if (it.IsObject() && it.Find("items"))
                     {
-                        const std::string title = it["title"].AsString("?");
+                        const std::string title = Tr(it["title"].AsString("?"));
                         result.push_back(MenuItem::Sub(title, buildItems(it["items"], menuPath + " > " + title)));
                     }
                     else if (it.IsObject() && it.Find("dynamic"))
                     {
-                        const std::string title = it["title"].AsString("?");
+                        const std::string title = Tr(it["title"].AsString("?"));
                         const std::string name  = it["dynamic"].AsString();
                         const auto src = m_dynamicMenus.find(name);
                         if (src == m_dynamicMenus.end())
@@ -457,7 +458,7 @@ namespace MiniGUI
             };
             for (const JsonValue& menu : doc["menus"].GetArray())
             {
-                const std::string title = menu["title"].AsString("?");
+                const std::string title = Tr(menu["title"].AsString("?"));
                 TextureId icon = InvalidTextureId;
                 if (const JsonValue* path = menu.Find("icon"))      // 有图标时标题只显示图标
                 {
@@ -477,7 +478,7 @@ namespace MiniGUI
         else if (type == "titlebar")
         {
             auto bar = std::make_unique<TitleBar>(m_commands);
-            bar->SetTitle(desc["title"].AsString());
+            bar->SetTitle(Tr(desc["title"].AsString()));
             if (const JsonValue* icon = desc.Find("icon"))
             {
                 const TextureId tex = st.ctx ? st.ctx->LoadTexture(m_iconDir + "/" + icon->AsString(), { 16.0f, 16.0f }) : InvalidTextureId;
@@ -622,10 +623,10 @@ namespace MiniGUI
             ribbon->SetIconDir(m_iconDir);
             for (const JsonValue& t : (*def)["tabs"].GetArray())
             {
-                const int tab = ribbon->AddTab(t["title"].AsString());
+                const int tab = ribbon->AddTab(Tr(t["title"].AsString()));
                 for (const JsonValue& p : t["panels"].GetArray())
                 {
-                    const int panel = ribbon->AddPanel(tab, p["title"].AsString());
+                    const int panel = ribbon->AddPanel(tab, Tr(p["title"].AsString()));
                     for (const JsonValue& it : p["items"].GetArray())
                     {
                         if (it.IsString())
@@ -652,7 +653,7 @@ namespace MiniGUI
             }
             // "search"：true（默认）显示命令搜索框，字符串作为占位提示，false 不显示
             if (const JsonValue& search = (*def)["search"]; search.IsString())
-                ribbon->EnableSearch(search.AsString());
+                ribbon->EnableSearch(Tr(search.AsString()));
             else if (search.AsBool(true))
                 ribbon->EnableSearch();
             if (const int keep = ribbon->FindTab(m_ribbonTab); keep >= 0)
@@ -678,7 +679,7 @@ namespace MiniGUI
             ColorRef color = Theme::Text;
             if (const JsonValue* c = desc.Find("color"); c && !ParseColor(c->AsString(), color))
                 m_warnings.push_back(where + "：无法识别的颜色 \"" + c->AsString() + "\"");
-            auto label = std::make_unique<Label>(desc["text"].AsString(), static_cast<float>(desc["size"].AsNumber(Theme::FontSize)), color);
+            auto label = std::make_unique<Label>(Tr(desc["text"].AsString()),static_cast<float>(desc["size"].AsNumber(Theme::FontSize)), color);
             label->SetBold(desc["bold"].AsBool(false));
             node = std::move(label);
         }

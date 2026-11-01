@@ -7,6 +7,7 @@
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
 #include "GUI/NodeEditor.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "NodeGraph/Examples.h"
 #include "Style/Theme.hpp"
@@ -74,19 +75,6 @@ namespace MiniCAD
             char buf[32];
             std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
             return buf;
-        }
-
-        // 去掉菜单助记符："新建(&N)" → "新建"，"打开(&O)…" → "打开…"
-        std::string PlainLabel(std::string s)
-        {
-            const size_t open = s.find("(&");
-            if (open != std::string::npos)
-            {
-                const size_t close = s.find(')', open);
-                if (close != std::string::npos)
-                    s.erase(open, close - open + 1);
-            }
-            return s;
         }
 
         TextParams Text(float size, ColorRef color, TextAlign h = TextAlign::Start, TextAlign v = TextAlign::Center)
@@ -184,7 +172,7 @@ namespace MiniCAD
                 dl.AddRect(key, ColorRef(ThemeColor::RailInk, 128), Theme::RadiusSm, 1.0f);
                 ctx->GetTextSystem().Draw(dl, key, "Esc", Text(11.0f, Theme::RailInk, TextAlign::Center));
                 ctx->GetTextSystem().Draw(dl, Rect{ inner.min.x + 20.0f, inner.min.y, key.min.x - 8.0f, inner.max.y },
-                                          "返回 " + m_doc, Text(13.5f, Theme::RailInk));
+                                          TrF("返回 {0}", m_doc), Text(13.5f, Theme::RailInk));
             }
 
         private:
@@ -426,7 +414,7 @@ namespace MiniCAD
         }
         m_startNav.clear();
         m_startBack = nav->AddChild<BackRow>([this] { ShowStartPage(false); });
-        nav->AddChild<NavRow>("开始", "", true, std::function<void()>{});
+        nav->AddChild<NavRow>(Tr("开始"), "", true, std::function<void()>{});
         // action 为空时执行命令本身；可用状态总是跟随命令
         auto navCommand = [&](const char* id, const char* text = nullptr, std::function<void()> action = {})
         {
@@ -436,7 +424,9 @@ namespace MiniCAD
             const std::string cmd = id;
             if (!action)
                 action = [this, cmd] { m_commands.Execute(cmd); };
-            Button* b = nav->AddChild<NavRow>(text ? std::string(text) : PlainLabel(c->label), c->shortcut, false, std::move(action));
+            // 去掉菜单助记符："新建(&N)" → "新建"，"&Open…" → "Open…"
+            const std::string label = text ? Tr(text) : MiniGUI::CommandRegistry::StripMnemonic(m_commands.GetLabel(cmd));
+            Button* b = nav->AddChild<NavRow>(label, c->shortcut, false, std::move(action));
             m_startNav.emplace_back(b, cmd);
         };
         navCommand("file.new");
@@ -445,11 +435,11 @@ namespace MiniCAD
         navCommand("file.save");
         navCommand("file.saveAs");
         navCommand("file.saveAll");
-        navCommand("file.close", "关闭图纸");
+        navCommand("file.close", N_("关闭图纸"));
         AddNavSeparator(nav);
         // 命令本身是切换面板，而起始页显示时停靠区是隐藏的：先回到图纸（没有文档时新建）再显示
         navCommand("view.panel.nodes", nullptr, [this] { OpenNodeEditorFromStart(false); });
-        navCommand("help.about", "关于 MiniCAD");
+        navCommand("help.about", N_("关于 MiniCAD"));
 
         // ── 右侧内容（可滚动）────────────────────────────────────
         auto* scroll = view->AddChild<ScrollView>();
@@ -461,26 +451,26 @@ namespace MiniCAD
             cs.direction = FlexDirection::Column;
             cs.padding   = Edges::Symmetric(kInsetX, kInsetY);
         }
-        col->AddChild<Label>("开始", 28.0f, Theme::Text);
-        auto* hint = col->AddChild<Label>("新建图纸、打开最近的图纸，或从示例开始。", 14.0f, Theme::TextDim);
+        col->AddChild<Label>(Tr("开始"), 28.0f, Theme::Text);
+        auto* hint = col->AddChild<Label>(Tr("新建图纸、打开最近的图纸，或从示例开始。"), 14.0f, Theme::TextDim);
         hint->EditLayoutStyle().margin.top = 6.0f;
 
-        AddSectionTitle(col, "新建");
+        AddSectionTitle(col, Tr("新建"));
         auto* tiles = col->AddChild<TileGrid>(kTileMinW, kTileH);
-        tiles->AddChild<ActionTile>(icons + "New.png", "新建图纸", "空白二维图纸 · 毫米 · DWG 2004", true,
+        tiles->AddChild<ActionTile>(icons + "New.png", Tr("新建图纸"), Tr("空白二维图纸 · 毫米 · DWG 2004"), true,
                                     [this] { m_commands.Execute("file.new"); });
-        tiles->AddChild<ActionTile>(icons + "Box3D.png", "新建三维模型", "西南等轴测、着色显示", false, [this]
+        tiles->AddChild<ActionTile>(icons + "Box3D.png", Tr("新建三维模型"), Tr("西南等轴测、着色显示"), false, [this]
         {
             m_commands.Execute("file.new");
             m_commands.Execute("view.swiso");
             m_commands.Execute("view.style.shaded");
         });
-        tiles->AddChild<ActionTile>(icons + "Open.png", "打开…", "DWG、DXF 或 MCAD 图纸（Ctrl+O）", false,
+        tiles->AddChild<ActionTile>(icons + "Open.png", Tr("打开…"), Tr("DWG、DXF 或 MCAD 图纸（Ctrl+O）"), false,
                                     [this] { m_commands.Execute("file.open"); });
-        tiles->AddChild<ActionTile>(icons + "Nodes.png", "节点建模", "新建图纸并打开节点编辑器", false,
+        tiles->AddChild<ActionTile>(icons + "Nodes.png", Tr("节点建模"), Tr("新建图纸并打开节点编辑器"), false,
                                     [this] { OpenNodeEditorFromStart(true); });
 
-        AddSectionTitle(col, "最近");
+        AddSectionTitle(col, Tr("最近"));
         m_startRecent = col->AddChild<Node>();
 
         // 示例：随程序发布的节点图（assets/nodes/examples，顺序与名称来自 examples.json）。
@@ -488,14 +478,14 @@ namespace MiniCAD
         const auto examples = Nodes::ReadExampleIndex(ResourceDir() + "/nodes/examples");
         if (!examples.empty())
         {
-            AddSectionTitle(col, "示例");
+            AddSectionTitle(col, Tr("示例"));
             const bool kernel = m_platform->GetSolidKernel() != nullptr;
             auto* grid = col->AddChild<TileGrid>(kSampleMinW, kSampleCardH);
             for (const Nodes::ExampleFile& e : examples)
             {
                 const bool usable = kernel || !e.NeedsKernel;
                 const std::string icon = icons + (e.NeedsKernel ? "Box3D.png" : "Nodes.png");
-                auto* card = grid->AddChild<SampleCard>(icon, e.Name, usable ? e.Description : "需要三维实体内核",
+                auto* card = grid->AddChild<SampleCard>(icon, e.Name, usable ? e.Description : Tr("需要三维实体内核"),
                                                         [this, e] { OpenNodeExample(e.Path, e.Name, e.Description); });
                 card->SetEnabled(usable);
             }
@@ -517,7 +507,7 @@ namespace MiniCAD
         if (list.empty())
         {
             m_startRecent->SetLayoutStyle(LayoutStyle{});
-            m_startRecent->AddChild<Label>("打开或保存过的图纸会显示在这里。", 13.0f, Theme::TextDim);
+            m_startRecent->AddChild<Label>(Tr("打开或保存过的图纸会显示在这里。"), 13.0f, Theme::TextDim);
             m_startRecent->Invalidate();
             return;
         }
@@ -607,7 +597,7 @@ namespace MiniCAD
         m_ui->Update();                     // 节点面板刚显示：先布局，插入的示例才能按画布尺寸摆放
         ActiveNodeEditor()->Focus();
         const bool ok = !text.empty() && ActiveNodeEditor()->InsertGraph(text);
-        m_docManager.GetEditor().GetCmdLine().Echo(ok ? "示例：" + name + "——" + description : "示例：读不出 " + path);
+        m_docManager.GetEditor().GetCmdLine().Echo(ok ? TrF("示例：{0}——{1}", name, description) : TrF("示例：读不出 {0}", path));
         if (ok)
             ActiveNodeEditor()->FrameAll();
     }

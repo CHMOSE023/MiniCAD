@@ -1,6 +1,6 @@
 # 多语言版本（界面国际化）
 
-> 状态：**计划**
+> 状态：阶段 0 完成（2026-11-01）：`MiniI18n` 库、显示时翻译命令与界面描述的标题、语言选择与"设置 > 语言"、提取与检查工具、"文件"菜单的英文。
 > 定位：界面、命令行提示、对话框、节点编辑器能切换成英文（以后可再加语言），图纸数据与文件格式不变；
 > 源语言仍是简体中文，代码里照旧写中文原文，没有翻译的地方显示中文。
 > 不做：图纸里的文字、图层名、样式名等**数据**的翻译；`docs/` 的文档翻译（README 已有两份：`README.md` 英文为默认，`README.zh-CN.md` 中文）；从右到左的文字（阿拉伯文等）。
@@ -77,12 +77,12 @@ MiniCAD 核心库、MiniGUI、MiniDWG 三者之间：MiniCAD 私有链接 MiniDW
 |---|---|
 | 新库 `MiniI18n`（`cmake/MiniI18n.cmake`，源码 `src/I18n/MiniI18n/`，include 根 `src/I18n`，命名空间 `MiniI18n`） | `Catalog`（键 → 译文，带上下文），全局的当前翻译表，`Tr` / `TrC` / `TrF` / `N_`，`{0}` 占位替换。一个头文件 + 一个 `.cpp`，只用标准库 |
 | MiniCAD、MiniGUI、MiniDWG、`MiniCADSolid`、渲染后端 | 链接 `MiniI18n`，直接 `#include "MiniI18n/I18n.h"` 调用；MiniGUI 在建控件时翻译命令的名称 / 提示、界面描述的标题，控件自带的文字也经它 |
-| 共用应用 `apps/Common` | 读语言设置、读翻译文件（自带一个小 JSON 解析，或用 MiniGUI 的 `src/UI/Data/Json.cpp`，支持注释）、装进 `MiniI18n`。**宿主在创建图形设备之前调用**（3.7） |
+| 共用应用 `apps/Common` | `GUI/Language.cpp`：选定语言、读翻译文件、装进 `MiniI18n`（翻译文件的 JSON 由 `MiniI18n::Catalog::Parse` 自己解析，支持注释，单元测试不用链接 MiniGUI）。**宿主在创建图形设备之前调用**（3.7） |
 
 include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n/I18n.h` 这个相对路径在其他根下都不存在，不会与 `src`、`src/UI` 的 `Core/` 等撞名。
 不用"每个库各留一个翻译钩子"的做法：那样占位替换要写三份，MiniDWG 的通知也没法在原处整句翻译。
 
-查表：`std::unordered_map` + 透明哈希（`std::string_view` 直接查），返回翻译表里字符串的引用；翻译表加载后**不再修改**，
+查表：`std::unordered_map` + 透明哈希（`std::string_view` 直接查），`Tr` 返回 `std::string`（复制一份：拼接方便、没有生命周期问题，开销可以忽略）；翻译表加载后**不再修改**，
 所以后台线程（`OpenDrawings` 里的 `DocumentManager::Load` 出错信息）可以直接调用，不用加锁。每帧都调用的 `GetPrompt` 只是一次哈希查找，开销可以忽略。
 
 ### 3.3 什么时候翻译
@@ -110,13 +110,13 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
   "language": "en",
   "name": "English",            // "设置 > 语言"里显示的名字（用该语言自己写）
   "messages": {
-    "保存(&S)": "&Save",
+    "保存(&S)": "Save",
     "指定第一个点:": "Specify first point:",
     "{0} 个外部参照没有找到，请选择所在的文件夹": "{0} external reference(s) not found. Choose the folder that contains them."
   },
   "contexts": {
-    "窗口": { "关闭(&C)": "&Close" },
-    "文档": { "关闭(&C)": "&Close Drawing" }
+    "窗口": { "关闭(&C)": "Close" },
+    "文档": { "关闭(&C)": "Close Drawing" }
   },
   "obsolete": { }               // 提取工具把代码里已经没有的条目移到这里，确认没用后删掉
 }
@@ -124,7 +124,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 
 - 简体中文没有翻译文件（原文就是）
 - 值为空串表示还没翻译，显示原文
-- 翻译文件写错（JSON 格式错误）时退回中文，状态栏显示出错位置（同界面描述文件的做法）
+- 翻译文件写错（JSON 格式错误）时退回中文，日志里报出错的行号（阶段 0 只进日志；以后可以像界面描述文件那样显示在状态栏）
 
 ### 3.5 提取与检查工具 `tools/i18n_extract.py`
 
@@ -133,7 +133,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 - **检查**（`--check`，进 CI 的 Windows 任务）：
   - 占位符一致：译文里的 `{n}` 与原文相同
   - 命令行选项字母一致：原文 `[闭合(C)/放弃(U)]` 里括号中的字母，译文里也要有（英文可写成 `[Close(C)/Undo(U)]`）——选项靠按键，字母错了按了没反应
-  - 助记符：同一个菜单里的 `&` 字母不重复（菜单结构取自界面描述文件）
+  - 助记符：译文里带 `&` 时同一个菜单里的字母不重复（菜单结构取自界面描述文件）；英文不带，只是警告
 - **漏网检查**（`--lint`）：列出没有包 `Tr` / `N_` 的中文字面量，以及格式串含中文的 `LOG_*`（要改成 3.7 的写法）。白名单：注释、`tests/`、`SelfTest.cpp`、`tools/`、
   第 5.3 节的数据字符串（行尾注释 `// i18n: 数据` 标明）。迁移阶段只报告，阶段 5 起进 CI
 - **反查**（`--where "<译文>"`）：由英文（或其他语言）的一句话找到中文原文和代码位置——英文用户贴来的日志、截图靠它定位（3.7）
@@ -173,7 +173,19 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 
 每个阶段单独编译、测试、提交，做完一段英文版就多一块能用。
 
-### 阶段 0：基础设施（小）
+### 阶段 0：基础设施（小）——已完成（2026-11-01）
+
+做法与计划的出入：
+- `Tr` 返回 `std::string`，不是表里字符串的引用（3.2）；翻译文件的 JSON 由 `MiniI18n::Catalog::Parse` 解析（不依赖 MiniGUI）
+- 用户设置做成 `AppPlatform::ReadUserSetting` / `AppPlatform::WriteUserSetting`：默认实现在 `GUI/UserSettings.cpp`（用户数据目录下 `settings.json`），`WebApp` 改用 `localStorage`（键 `MiniCAD.<名称>`）
+- 每种语言一条命令 `ui.language.<代码>`（`kLanguageCommandPrefix`），"设置"菜单里写 `@language` 展开成"语言"子菜单（`ViewNavBar.cpp`）；选了之后弹出"重新打开 MiniCAD 后界面切换为…"
+- 自测、基准（`--selftest` / `--bench`）不读设置、不看系统语言，只认 `--lang` / `MINICAD_LANG`：自测按中文文字检查
+- 关于对话框加了"界面语言"一行；功能区命令搜索同时匹配译文与原文（原计划在阶段 1）
+- 除了"文件"菜单，界面描述文件里的功能区选项卡与组名、命令提示也一并有了英文（提取到什么就翻了什么，共 120 条）；起始页（左侧导航、标题、新建卡片、最近、示例的分组名）也已翻译，示例的名称与说明来自 `examples.json`，仍是中文；功能区按钮的命令名称仍是中文，等阶段 1
+- 英文译文不带助记符（`&`）：菜单上不显示下划线
+- `--lint` 没做（阶段 5 前补上）；翻译文件出错只进日志
+- 没在网页版、Linux 版上实际运行过（只改了代码，Linux 宿主在 Windows 上不编译）
+
 
 - `MiniI18n` 库（`cmake/MiniI18n.cmake`）：`Catalog`、`Tr` / `TrC` / `TrF` / `N_`；MiniCAD、MiniGUI、MiniDWG、`MiniCADSolid`、渲染后端链接它
 - `CommandRegistry` 与 `UiLayout` 在显示命令名称、提示、标题时调用 `Tr`
@@ -262,7 +274,7 @@ AutoCAD 也要重启才换语言，没有用户要求就不做。
 ### 5.4 标点与格式
 
 - 中文原文用全角标点（`：`、`，`、`（）`），英文译文用半角并按英文习惯加空格；命令行提示照 AutoCAD 英文版以 `:` 结尾
-- 原文里的 `(&S)` 是中文菜单的助记符写法，英文译文写成 `&Save`（`CommandRegistry::StripMnemonic` 两种都处理）；快捷键不翻译
+- 原文里的 `(&S)` 是中文菜单的助记符写法，英文译文不写助记符（`Save`，菜单上不显示下划线）；需要时可写成 `&Save`，`CommandRegistry::StripMnemonic` 两种都处理；快捷键不翻译
 - 原文里有 `\n` 的多行提示，译文行数可以不同
 
 ### 5.5 英文更长
@@ -279,7 +291,7 @@ AutoCAD 也要重启才换语言，没有用户要求就不做。
 
 ### 5.7 其他
 
-- 翻译表在任何后台线程开始前装好，之后只读；`Tr` 的返回值是表里字符串的引用，表不释放
+- 翻译表在任何后台线程开始前装好，之后只读（`MiniI18n::SetCatalog` 不加锁）
 - 翻译表缺条目、文件损坏时一律显示原文，不能让界面出现空白
 - 单元测试不装翻译表，`Tr` 原样返回中文，现有按中文提示断言的测试（如 `tests/UI/ConsoleTests.cpp`）不用改
 - 网页版的翻译文件随 `assets/` 打进虚拟文件系统，大小可以忽略（英文全部约 200 KB，压缩后更小）

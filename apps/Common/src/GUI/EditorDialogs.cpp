@@ -3,6 +3,8 @@
 // 确认后回调 Editor 的 Submit*。对话框都是 MiniGUI 的弹层。
 #include "GUI/MainFrame.h"
 #include "GUI/LinetypePreview.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "MiniCADVersion.h"
 #include "Document/Document.h"
@@ -1511,6 +1513,8 @@ namespace MiniCAD
         body->AddChild<Label>("版本 v" MINICAD_VERSION_STRING " ", 13.0f, Theme::TextDim);
         // 实际使用的图形接口（D3D11、WebGPU、WebGL2 ……），排查显示问题时先看这里
         body->AddChild<Label>(std::string("图形 ") + m_platform->GetGraphicsName(), 13.0f, Theme::TextDim);
+        // 界面语言：英文用户贴来的日志、截图，开发者据此知道要反查原文（tools/i18n_extract.py --where）
+        body->AddChild<Label>(TrF("界面语言 {0}", CurrentLanguage()), 13.0f, Theme::TextDim);
 
         Dialog* raw = dialog.get();
         raw->AddButton("确定", [raw] { raw->Close(); }, DialogButtonRole::Default);

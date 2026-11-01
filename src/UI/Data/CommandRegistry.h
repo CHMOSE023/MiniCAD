@@ -67,7 +67,8 @@ namespace MiniGUI
         bool IsChecked(std::string_view id) const;
         bool IsToggle(std::string_view id) const;
 
-        // 显示用：菜单项文字（含助记符）、去掉助记符的名称、工具栏提示（名称 (快捷键) + 说明）
+        // 显示用：菜单项文字（含助记符）、去掉助记符的名称、工具栏提示（名称 (快捷键) + 说明）。
+        // Command 里存原文，这两个函数返回当前语言的译文（MiniI18n::Tr）——显示命令文字一律经它们，不要直接读 label / tooltip
         std::string GetLabel(std::string_view id) const;
         static std::string StripMnemonic(std::string_view label);    // "保存(&S)" → "保存"；"&File" → "File"
         std::string GetTooltip(std::string_view id) const;

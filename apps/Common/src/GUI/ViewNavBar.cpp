@@ -4,6 +4,8 @@
 //   每个窗口一条（主窗口、各文档窗口）：命令作用于当前文档，按下时所在窗口的文档已成为当前文档（MainFrame::UseChrome）
 // - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号。
 #include "GUI/MainFrame.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "MiniCADVersion.h"
 #include "Core/UIContext.h"
 #include "Style/Theme.hpp"
@@ -19,9 +21,12 @@ namespace MiniCAD
 {
     namespace
     {
+        // 菜单项写成它时展开为"语言"子菜单：所有 ui.language.<代码> 命令
+        constexpr const char* kLanguageMenu = "@language";
+
         // 只有图标的按钮，点击弹出菜单（菜单项是命令）；placement 决定菜单在按钮的哪一侧
         MiniGUI::Button* AddMenuButton(MiniGUI::Node* parent, MiniGUI::CommandRegistry& commands,
-                                       const std::string& icon, const char* tip, std::vector<std::string> ids,
+                                       const std::string& icon, const std::string& tip, std::vector<std::string> ids,
                                        MiniGUI::PopupPlacement placement, float iconSize)
         {
             using namespace MiniGUI;
@@ -38,7 +43,18 @@ namespace MiniCAD
                     return;
                 std::vector<MenuItem> items;
                 for (const std::string& id : ids)
+                {
+                    if (id == kLanguageMenu)
+                    {
+                        std::vector<MenuItem> langs;
+                        for (const std::string& cmd : commands.GetIds())
+                            if (cmd.starts_with(kLanguageCommandPrefix))
+                                langs.push_back(CommandMenuItem(commands, cmd));
+                        items.push_back(MenuItem::Sub(Tr("语言(&L)"), std::move(langs)));
+                        continue;
+                    }
                     items.push_back(id == "-" ? MenuItem::Separator() : CommandMenuItem(commands, id));
+                }
                 auto popup = std::make_unique<MenuPopup>(std::move(items));
                 popup->SetAnchor(b->GetScreenBounds(), placement);     // 放不下时自动翻到另一侧
                 popup->SetOwner(b);
@@ -138,15 +154,15 @@ namespace MiniCAD
             m_ui->OpenPopup(std::move(dialog));
         });
 
-        AddMenuButton(row.get(), m_commands, icons + "/Settings.png", "设置",
-                      { "ui.theme", "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
+        AddMenuButton(row.get(), m_commands, icons + "/Settings.png", Tr("设置"),
+                      { "ui.theme", kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
                       PopupPlacement::Below, 18.0f);
-        AddMenuButton(row.get(), m_commands, icons + "/Help.png", "帮助",
+        AddMenuButton(row.get(), m_commands, icons + "/Help.png", Tr("帮助"),
                       { "ui.search", "view.start", "-", "help.about" }, PopupPlacement::Below, 18.0f);
 
         auto* version = row->AddChild<Label>("v" MINICAD_VERSION_STRING, 12.0f, Theme::TextDim);
         version->EditLayoutStyle().margin = Edges::Make(6.0f, 0.0f, 0.0f, 0.0f);
-        version->SetTooltip("MiniCAD 版本");
+        version->SetTooltip(Tr("MiniCAD 版本"));
         m_appBar = row.get();
         return row;
     }

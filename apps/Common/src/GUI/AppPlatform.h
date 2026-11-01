@@ -204,6 +204,15 @@ namespace MiniCAD
         // 桌面版：%WINDIR%\Fonts 与当前用户安装字体的目录；网页版没有，仍用自带的 GB2312.ttf 代替
         virtual std::vector<std::string> GetSystemFontDirs() const { return {}; }
 
+        // ── 语言与用户设置（见 GUI/Language.h）────────────────────
+        // 系统的界面语言（BCP 47，如 "zh-CN"、"en-US"）；不知道时返回空串。
+        // 桌面版：GetUserDefaultUILanguage；网页版：navigator.language；Linux：LC_ALL / LC_MESSAGES / LANG
+        virtual std::string GetSystemLanguage() const { return {}; }
+        // 用户设置（"设置 > 语言"等）：默认存在用户数据目录下的 settings.json（GUI/UserSettings.cpp），
+        // 没有用户数据目录时读出空串、写入失败；网页版存在浏览器的 localStorage
+        virtual std::string ReadUserSetting(const std::string& key) const;
+        virtual bool        WriteUserSetting(const std::string& key, const std::string& value);
+
         // ── 系统 ─────────────────────────────────────────────────
         // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
         virtual bool OpenUrl(const std::string& url) { (void)url; return false; }

@@ -643,6 +643,15 @@ namespace MiniCAD
         return base + "/MiniCAD";
     }
 
+    std::string LinuxApp::GetSystemLanguage() const
+    {
+        // 同 gettext 的优先级；"zh_CN.UTF-8" 由 InitLanguage 规范成 "zh-CN"，"C" / "POSIX" 当作不知道
+        for (const char* name : { "LC_ALL", "LC_MESSAGES", "LANG" })
+            if (std::string v = GetEnv(name); !v.empty())
+                return v;
+        return {};
+    }
+
     std::vector<std::string> LinuxApp::GetSystemFontDirs() const
     {
         // FontEngine 只按文件名在目录里找、不进子目录，而 Linux 的字体按包分在子目录里（truetype/dejavu/ ……）：逐级列出

@@ -1,5 +1,6 @@
 #include "Data/CommandRegistry.h"
 #include "Data/Json.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -246,10 +247,11 @@ namespace MiniGUI
         return s;
     }
 
+    // 命令里存的是原文（注册时用 N_ 标记），显示时翻译
     std::string CommandRegistry::GetLabel(std::string_view id) const
     {
         const Command* c = Find(id);
-        return c ? (c->label.empty() ? c->id : c->label) : std::string(id);
+        return c ? (c->label.empty() ? c->id : Tr(c->label)) : std::string(id);
     }
 
     std::string CommandRegistry::GetTooltip(std::string_view id) const
@@ -261,7 +263,7 @@ namespace MiniGUI
         if (!c->shortcut.empty())
             tip += " (" + c->shortcut + ")";
         if (!c->tooltip.empty())
-            tip += "\n" + c->tooltip;
+            tip += "\n" + Tr(c->tooltip);
         return tip;
     }
 
