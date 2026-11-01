@@ -16,7 +16,7 @@ namespace MiniGUI
             "ScrollThumb", "ScrollThumbHover", "ModalScrim", "Shadow", "Outline",
             "Rail", "RailHover", "RailInk", "CardPrimary", "CardPrimaryInk", "CardPrimaryBorder",
         };
-        static_assert(std::size(kSlotNames) == ThemeColors::kCount, "槽位名称与 ThemeColor 不一致");
+        static_assert(std::size(kSlotNames) == ThemeColors::kCount, "slot names out of sync with ThemeColor");
     }
 
     // =========================================================

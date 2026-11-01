@@ -111,15 +111,16 @@ doc.GetCommandStack().Execute(std::move(cmd), scene);   // 工具里是 m_ctx->c
 路径在接口间一律传 UTF-8 `std::string`；转成 `std::filesystem::path` 用 `std::u8string`，转回用 `u8string()`。不要用 `path::string()` 或窄字符串构造 path（按系统代码页转换，英文系统遇到中文会抛异常）。
 
 ### 日志
-`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。要翻译的日志用 `LOG_INFO_TR` / `LOG_WARN_TR` / `LOG_ERROR_TR`（`{0}` 占位，不是 printf 格式串）。
+`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。给用户看的日志用 `LOG_INFO_TR` / `LOG_WARN_TR` / `LOG_ERROR_TR`（`{0}` 占位，不是 printf 格式串；专有名词、十六进制句柄先格式化成字符串再作参数）；工具的跟踪日志、`LOG_DEBUG`、断言、GPU 调试标签直接写英文、用 `LOG_*`，不翻译。`LOG_*` 的格式串里不能有中文（`--lint` 会报）。
 
 ### 界面文字（多语言）
 源语言是简体中文，翻译表的键就是代码里的中文原文（`docs/I18n/PLAN.md`）：
 - 直接显示的文字写 `Tr("…")`；要替换数字等的写 `TrF("{0} 个…", n)`，不要拼接句子碎片（英文语序不同）；同字不同义时 `TrC("上下文", "…")`（只标记的写 `NC_("上下文", "…")`，命令名称填 `Command::labelContext`）
 - 存进数据、显示时才翻译的（命令的 `label` / `tooltip`、节点名称）写 `N_("…")`，显示处再翻译；命令文字一律经 `CommandRegistry::GetLabel` / `CommandRegistry::GetTooltip` 显示，不要直接读 `Command::label`
 - 不要按显示的文字比较或查找（翻译后就对不上），按 Id / 下标
-- 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）
-- 改了界面文字后运行 `python -X utf8 tools/i18n_extract.py` 更新翻译文件（CI 跑 `--check`）；英文日志反查原文用 `--where "<英文>"`
+- 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）；新建图纸 / 布局的名字按当时的语言起（`TrF("布局{0}", n)`），建好后就是数据
+- 改了界面文字后运行 `python -X utf8 tools/i18n_extract.py` 更新翻译文件（CI 跑 `--check` 与 `--lint`）；英文日志反查原文用 `--where "<英文>"`
+- `--lint` 报出没包 `Tr` / `N_` 等的中文字面量：确实是数据或上下文的，在行尾或语句上方加注释 `// i18n: 数据`（以 `i18n:` 开头即可）
 - 运行时语言：`--lang en|zh-CN|qps`（`qps` 是伪语言，找出没走 `Tr` 的文字）或环境变量 `MINICAD_LANG`；默认按"设置 > 语言"、再按系统语言。自测与基准不读设置、不看系统语言
 - "设置 > 语言"立即生效（`MainFrame::Retranslate` 重建界面）：代码里建的界面开始显示译文时，要在 `MainFrame::Retranslate` 里重建它或重写文字；只在打开时才建的对话框、弹出菜单不用管
 

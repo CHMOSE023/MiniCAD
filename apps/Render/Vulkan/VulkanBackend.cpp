@@ -32,7 +32,7 @@ namespace MiniGUI
         li.pSetLayouts            = &setLayout;
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges    = &range;
-        VulkanCheck(vkCreatePipelineLayout(m_ctx.GetDevice(), &li, nullptr, &m_layout), "vkCreatePipelineLayout(界面)");
+        VulkanCheck(vkCreatePipelineLayout(m_ctx.GetDevice(), &li, nullptr, &m_layout), "vkCreatePipelineLayout(UI)");
     }
 
     VulkanBackend::~VulkanBackend()
@@ -128,7 +128,7 @@ namespace MiniGUI
         pi.layout              = m_layout;
 
         VkPipeline pipeline = VK_NULL_HANDLE;
-        VulkanCheck(vkCreateGraphicsPipelines(m_ctx.GetDevice(), VK_NULL_HANDLE, 1, &pi, nullptr, &pipeline), "vkCreateGraphicsPipelines(界面)");
+        VulkanCheck(vkCreateGraphicsPipelines(m_ctx.GetDevice(), VK_NULL_HANDLE, 1, &pi, nullptr, &pipeline), "vkCreateGraphicsPipelines(UI)");
         m_pipelines.emplace(static_cast<int>(format), pipeline);
         return pipeline;
     }
@@ -167,7 +167,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > t.width || region.y + region.height > t.height)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
         m_ctx.UploadImage(t, region.x, region.y, region.width, region.height, pixels, pitch);
@@ -287,7 +287,7 @@ namespace MiniGUI
                     auto it = m_textures.find(cmd.texture);
                     if (it == m_textures.end() || !it->second.image)
                     {
-                        assert(false && "DrawCmd 引用了不存在的纹理");
+                        assert(false && "DrawCmd references a missing texture");
                         continue;
                     }
                     const VkDescriptorSet set = m_ctx.GetImageSet(it->second.image);

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <utility>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG
 {
@@ -14,7 +15,7 @@ namespace MiniDWG
         if (info.format != CadFileFormat::DxfAscii && info.format != CadFileFormat::DxfBinary)
         {
             if (options.Notify)
-                options.Notify(NotificationType::Error, "不是 DXF 文件");
+                options.Notify(NotificationType::Error, Tr("不是 DXF 文件"));
             return nullptr;
         }
         DxfRead::Reader reader(data, options);
@@ -226,7 +227,7 @@ namespace MiniDWG::DxfRead
                 if (cp != Codec::CodePage::Unknown && Codec::IsSupported(cp))
                     m_stream.SetCodePage(cp);
                 else
-                    Notify(NotificationType::Warning, "不支持的代码页 " + g.Value.AsString() + "，按 ANSI_1252 读取");
+                    Notify(NotificationType::Warning, TrF("不支持的代码页 {0}，按 {1} 读取", g.Value.AsString(), "ANSI_1252"));
             }
             variable.clear();
         }
@@ -281,7 +282,7 @@ namespace MiniDWG::DxfRead
             }
             else
             {
-                NotifyOnce("section:" + name, NotificationType::Info, "跳过未支持的段 " + name);
+                NotifyOnce("section:" + name, NotificationType::Info, TrF("跳过未支持的段 {0}", name));
                 SkipSection();
             }
         }
@@ -558,7 +559,7 @@ namespace MiniDWG::DxfRead
                 const CadObjectType controlType = ControlTypeOfTable(name);
                 if (controlType == CadObjectType::INVALID)
                 {
-                    NotifyOnce("table:" + name, NotificationType::Warning, "跳过未知的表 " + name);
+                    NotifyOnce("table:" + name, NotificationType::Warning, TrF("跳过未知的表 {0}", name));
                     table = nullptr;
                     continue;
                 }

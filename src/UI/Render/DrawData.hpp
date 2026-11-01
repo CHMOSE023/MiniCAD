@@ -22,7 +22,7 @@ namespace MiniGUI
         Vec2    uv;     // 纹理坐标
         Color32 color;  // RGBA8
     };
-    static_assert(sizeof(DrawVert) == 20, "DrawVert 布局必须与着色器输入一致");
+    static_assert(sizeof(DrawVert) == 20, "DrawVert layout must match the shader input");
 
     // 绘制命令：纹理或裁剪矩形变化时才切分出新命令
     struct DrawCmd

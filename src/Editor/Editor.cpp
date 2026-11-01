@@ -3591,11 +3591,11 @@ namespace MiniCAD
                     image = m_oleRasterizer(pres, kOleImageMaxSide);
             }
             else
-                LOG_WARN("OLE 对象没有可显示的展示数据，只画边框");
+                LOG_WARN_TR("OLE 对象没有可显示的展示数据，只画边框");
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             if (image)
-                LOG_INFO("OLE 对象快照：%s %zu 字节 → %u×%u 像素，%.0f ms", pres.Format == Ole::PictureFormat::Emf ? "EMF" : pres.Format == Ole::PictureFormat::Wmf ? "WMF" : "DIB",
-                         pres.Data.size(), image->Width, image->Height, ms);
+                LOG_INFO_TR("OLE 对象快照：{0} {1} 字节 → {2}×{3} 像素，{4} ms", pres.Format == Ole::PictureFormat::Emf ? "EMF" : pres.Format == Ole::PictureFormat::Wmf ? "WMF" : "DIB",
+                            pres.Data.size(), image->Width, image->Height, static_cast<long long>(ms));
         }
         m_oleImages.emplace(key, image);
         return image;

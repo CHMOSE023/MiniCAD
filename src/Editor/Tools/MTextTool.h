@@ -12,10 +12,10 @@ namespace MiniCAD
     public:
         MTextTool()
         {
-            LOG_DEBUG("[MTextTool] 左键选择插入点 | ESC 退出");
+            LOG_DEBUG("[MTextTool] click insertion point | ESC exits");
         }
 
-        ~MTextTool() { LOG_DEBUG("退出多行文字绘制"); }
+        ~MTextTool() { LOG_DEBUG("Exit multiline text"); }
 
         std::function<void(Math::Point3)> OnInsertPointPicked;
 

@@ -29,10 +29,10 @@ namespace MiniCAD
     public:
         explicit InfiniteLineToolBase(const char* tag) : m_tag(tag)
         {
-            LOG_DEBUG("[%s] 左键定根点 | 左键定通过点 | 右键/ESC 退出", m_tag);
+            LOG_DEBUG("[%s] click root point | click through point | right-click/ESC exits", m_tag);
         }
 
-        ~InfiniteLineToolBase() override { LOG_DEBUG("退出绘制"); }
+        ~InfiniteLineToolBase() override { LOG_DEBUG("Exit drawing"); }
 
         bool OnInput(const EditorContext& ctx) override
         {

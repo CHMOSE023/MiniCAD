@@ -36,10 +36,10 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            LOG_INFO("[MirrorTool] 左键镜像线第一点");
+            LOG_INFO("[MirrorTool] click first point of mirror line");
         }
 
-        ~MirrorTool() { LOG_DEBUG("[MirrorTool] 退出"); }
+        ~MirrorTool() { LOG_DEBUG("[MirrorTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -61,7 +61,7 @@ namespace MiniCAD
                 {
                     m_p0 = GetPoint(e);
                     m_phase = Phase::P1;
-                    LOG_INFO("[MirrorTool] 镜像线第一点 (%.3f, %.3f),左键第二点", m_p0.x, m_p0.y);
+                    LOG_INFO("[MirrorTool] mirror line first point (%.3f, %.3f), click second point", m_p0.x, m_p0.y);
                     return true;
                 }
                 break;
@@ -74,11 +74,11 @@ namespace MiniCAD
                     if (std::abs(m_p1.x - m_p0.x) < 1e-9 &&
                         std::abs(m_p1.y - m_p0.y) < 1e-9)
                     {
-                        LOG_WARN("[MirrorTool] 两点重合,请重新选第二点");
+                        LOG_WARN("[MirrorTool] the points coincide, pick the second point again");
                         return true;
                     }
                     m_phase = Phase::AskDelete;
-                    LOG_INFO("[MirrorTool] 是否删除源对象? [Y/N] <N>");
+                    LOG_INFO("[MirrorTool] erase source objects? [Y/N] <N>");
                     return true;
                 }
                 if (e.Type == InputEventType::MouseMove)
@@ -243,13 +243,13 @@ namespace MiniCAD
             {
                 auto cmd = std::make_unique<MirrorMoveCommand>(m_sourceIds, axis, m_ctx->scene);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                LOG_DEBUG("[MirrorTool] 镜像 %zu 个对象,源已删除", m_sourceIds.size());
+                LOG_DEBUG("[MirrorTool] mirrored %zu objects, source erased", m_sourceIds.size());
             }
             else
             {
                 auto cmd = std::make_unique<MirrorCopyCommand>(m_sourceIds, axis);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                LOG_DEBUG("[MirrorTool] 镜像 %zu 个对象,源保留", m_sourceIds.size());
+                LOG_DEBUG("[MirrorTool] mirrored %zu objects, source kept", m_sourceIds.size());
             }
 
             m_ctx->overlay.Clear();

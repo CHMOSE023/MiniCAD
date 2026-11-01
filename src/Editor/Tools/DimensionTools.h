@@ -128,7 +128,7 @@ namespace MiniCAD
             Associate(static_cast<DimensionEntity&>(*real));
             m_ctx->ApplyCurrentAttr(*real);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(real)), m_ctx->scene);
-            LOG_DEBUG("[DimTool] 标注已创建，测量值 %.4f", measure);
+            LOG_DEBUG("[DimTool] dimension created, measurement %.4f", measure);
             Reset();
         }
 
@@ -168,7 +168,7 @@ namespace MiniCAD
     class DimAngularTool : public DimToolBase
     {
     public:
-        DimAngularTool() { LOG_DEBUG("[DimAngular] 选择圆弧、圆、直线，或回车指定顶点"); }
+        DimAngularTool() { LOG_DEBUG("[DimAngular] select an arc, circle or line, or press Enter to specify the vertex"); }
 
         std::string GetPrompt() const override
         {
@@ -231,7 +231,7 @@ namespace MiniCAD
                     m_step   = Step::SecondPoint;
                 }
                 else
-                    LOG_WARN("[DimAngular] 请选择直线、圆弧或圆，或回车指定顶点");
+                    LOG_WARN("[DimAngular] select a line, arc or circle, or press Enter to specify the vertex");
                 break;
             }
             case Step::SecondLine:
@@ -239,7 +239,7 @@ namespace MiniCAD
                 Entity* ent = HitEntity(e);
                 if (!ent || !ent->IsKindOf<LineEntity>())
                 {
-                    LOG_WARN("[DimAngular] 请选择第二条直线");
+                    LOG_WARN("[DimAngular] select the second line");
                     break;
                 }
                 m_line2 = static_cast<LineEntity*>(ent)->GetLine();
@@ -249,7 +249,7 @@ namespace MiniCAD
                 const double den = u1.x * u2.y - u1.y * u2.x;
                 if (std::abs(den) < 1e-9)
                 {
-                    LOG_WARN("[DimAngular] 两条直线平行，无法标注角度");
+                    LOG_WARN("[DimAngular] the lines are parallel, no angle to dimension");
                     m_step = Step::Select;
                     break;
                 }
@@ -381,7 +381,7 @@ namespace MiniCAD
                     m_step = 1;
                 }
                 else
-                    LOG_WARN("[DimRadial] 请选择圆或圆弧");
+                    LOG_WARN("[DimRadial] select a circle or arc");
                 break;
             case 1:
                 if (m_kind == Kind::Jogged) { m_override = pt; m_step = 2; }
@@ -472,7 +472,7 @@ namespace MiniCAD
                 Entity* ent = HitEntity(e);
                 if (!ent || !ent->IsKindOf<ArcEntity>())
                 {
-                    LOG_WARN("[DimArc] 请选择圆弧");
+                    LOG_WARN("[DimArc] select an arc");
                     return;
                 }
                 m_arc   = static_cast<ArcEntity*>(ent)->GetArc();

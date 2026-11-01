@@ -23,10 +23,10 @@ namespace MiniCAD
     public:
         LeaderTool()
         {
-            LOG_DEBUG("[LeaderTool] 左键箭头落点 | 左键追加顶点 | 右键提交 | ESC 取消");
+            LOG_DEBUG("[LeaderTool] click arrowhead | click to add vertices | right-click commits | ESC cancels");
         }
 
-        ~LeaderTool() { LOG_DEBUG("[LeaderTool] 退出"); }
+        ~LeaderTool() { LOG_DEBUG("[LeaderTool] exit"); }
 
         // 提交后回调:newId = 新建引线 Id,tail = 末端顶点(文本锚点附近)。
         // 编辑器可挂接此回调弹出文本输入框写入注释;未挂接时引线以默认文字提交。
@@ -52,7 +52,7 @@ namespace MiniCAD
             {
                 auto pt = GetPoint(e);
                 m_points.push_back(pt);
-                LOG_INFO("[LeaderTool] 顶点 #%zu (%.3f, %.3f)", m_points.size(), pt.x, pt.y);
+                LOG_INFO("[LeaderTool] vertex #%zu (%.3f, %.3f)", m_points.size(), pt.x, pt.y);
                 RefreshOverlay();
                 return true;
             }
@@ -123,7 +123,7 @@ namespace MiniCAD
         {
             if (m_points.size() < 2)
             {
-                LOG_WARN("[LeaderTool] 顶点不足，放弃提交");
+                LOG_WARN("[LeaderTool] not enough vertices, nothing committed");
                 return;
             }
 
@@ -135,7 +135,7 @@ namespace MiniCAD
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[LeaderTool] 提交 Id=%d  顶点=%zu",
+            LOG_DEBUG("[LeaderTool] commit Id=%d vertices=%zu",
                    static_cast<int>(id), m_points.size());
 
             if (OnLeaderCreated) OnLeaderCreated(id, tail);

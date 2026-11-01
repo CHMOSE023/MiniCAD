@@ -19,10 +19,10 @@ namespace MiniCAD
     public:
         DimensionTool()
         {
-            LOG_DEBUG("[DimensionTool] 左键第一标注点 | 左键第二标注点 | 左键尺寸线位置 | 右键/ESC 退出");
+            LOG_DEBUG("[DimensionTool] click first point | click second point | click dimension line | right-click/ESC exits");
         }
 
-        ~DimensionTool() { LOG_DEBUG("退出尺寸标注"); }
+        ~DimensionTool() { LOG_DEBUG("Exit dimension"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -39,14 +39,14 @@ namespace MiniCAD
                         m_p1 = pt;
                         m_ref1 = SnapAssocRef(ctx, pt);
                         m_step = 1;
-                        LOG_INFO("[DimensionTool] 第一标注点 (%.3f, %.3f) 已定", pt.x, pt.y);
+                        LOG_INFO("[DimensionTool] first point (%.3f, %.3f) set", pt.x, pt.y);
                         break;
 
                     case 1:
                         m_p2 = pt;
                         m_ref2 = SnapAssocRef(ctx, pt);
                         m_step = 2;
-                        LOG_INFO("[DimensionTool] 第二标注点 (%.3f, %.3f) 已定，请指定尺寸线位置",
+                        LOG_INFO("[DimensionTool] second point (%.3f, %.3f) set, specify dimension line location",
                                pt.x, pt.y);
                         break;
 
@@ -183,7 +183,7 @@ namespace MiniCAD
             auto cmd = std::make_unique<AddEntityCommand>(std::move(dim));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("尺寸标注 Id %d  %s  测量值=%.3f",
+            LOG_DEBUG("Dimension Id %d %s measurement=%.3f",
                    static_cast<int>(id), linear ? "Linear" : "Aligned", measure);
         }
 

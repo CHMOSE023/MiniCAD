@@ -124,10 +124,10 @@ namespace MiniCAD::Nodes
                 c.i = static_cast<size_t>(end - c.s.c_str());
                 return Make(Expression::Node::Kind::Number, {}, v);
             }
-            if (c.Eat("(") || c.Eat("（"))
+            if (c.Eat("(") || c.Eat("（"))        // i18n: 数据（也认全角括号）
             {
                 NodePtr inner = ParseCompare(c, vars);
-                if (inner && !c.Eat(")") && !c.Eat("）"))
+                if (inner && !c.Eat(")") && !c.Eat("）"))     // i18n: 数据
                     c.Fail(Tr("缺少右括号"));
                 return c.error.empty() ? std::move(inner) : nullptr;
             }
@@ -137,10 +137,10 @@ namespace MiniCAD::Nodes
                 while (c.i < c.s.size() && IsNameChar(c.s, c.i))
                     ++c.i;
                 std::string name = c.s.substr(start, c.i - start);
-                if (c.Eat("(") || c.Eat("（"))
+                if (c.Eat("(") || c.Eat("（"))        // i18n: 数据（也认全角括号）
                 {
                     NodePtr call = Make(Expression::Node::Kind::Call, name);
-                    if (!c.Eat(")") && !c.Eat("）"))
+                    if (!c.Eat(")") && !c.Eat("）"))     // i18n: 数据
                     {
                         do
                         {
@@ -148,8 +148,8 @@ namespace MiniCAD::Nodes
                             if (!arg)
                                 return nullptr;
                             call->Args.push_back(std::move(arg));
-                        } while (c.Eat(",") || c.Eat("，"));
-                        if (!c.Eat(")") && !c.Eat("）"))
+                        } while (c.Eat(",") || c.Eat("，"));     // i18n: 数据（也认全角逗号）
+                        if (!c.Eat(")") && !c.Eat("）"))     // i18n: 数据
                         {
                             c.Fail(TrF("函数 {0} 缺少右括号", name));
                             return nullptr;

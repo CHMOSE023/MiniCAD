@@ -34,7 +34,8 @@ namespace MiniCAD
         constexpr float kFontSize = 12.0f;
         constexpr int   kDisplayLines = 8;
 
-        // 标题栏颜色：先按完整分类（"实体/空心"），再按大类（docs/NodeGraph/PLAN.md 第 4.1 节）；键为分类原文，不翻译
+        // 标题栏颜色：先按完整分类（"实体/空心"），再按大类（docs/NodeGraph/PLAN.md 第 4.1 节）
+        // i18n: 数据（键为分类原文）
         Color32 CategoryColor(const std::string& cat)
         {
             static const std::map<std::string, Color32> kColors = {

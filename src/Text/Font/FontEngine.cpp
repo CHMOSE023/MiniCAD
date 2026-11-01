@@ -47,7 +47,7 @@ namespace MiniCAD
                         return path;
                 }
         if (found) *found = false;
-        LOG_WARN("字体 %s 不存在，以 %s 代替", fontFile.c_str(), substitute);
+        LOG_WARN_TR("字体 {0} 不存在，以 {1} 代替", fontFile.c_str(), substitute);
         return ResolvePath(substitute);
     }
 

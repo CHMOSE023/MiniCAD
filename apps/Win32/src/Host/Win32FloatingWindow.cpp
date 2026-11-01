@@ -92,7 +92,7 @@ namespace MiniCAD
         m_surface = owner.GetGraphics().CreateWindowSurface(NativeWindow{ m_hwnd }, w, h);
         if (!m_surface)
         {
-            LOG_WARN("浮动窗口：图形后端 %s 不支持多窗口，面板在主窗口里浮动", owner.GetGraphics().GetName());
+            LOG_WARN_TR("浮动窗口：图形后端 {0} 不支持多窗口，面板在主窗口里浮动", owner.GetGraphics().GetName());
             m_frame.reset();
             DestroyWindow(m_hwnd);
             m_hwnd = nullptr;

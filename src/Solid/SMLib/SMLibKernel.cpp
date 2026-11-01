@@ -2,6 +2,7 @@
 // SMLib 的头文件带有 ULONG、TRUE 等宏，只在本文件里包含；接口之外只交出 MiniCAD 的类型。
 // 所有权约定见 SM_API 各函数的注释：调用方拥有的对象一律用 unique_ptr / SmObjsDelete 管理。
 #include "Solid/SMLib/SMLibKernel.h"
+#include "MiniI18n/I18n.h"
 
 #include <SmSmlibAll.h>
 #include <SmPoly.h>
@@ -256,7 +257,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(dx > 0.0 && dy > 0.0 && dz > 0.0))
-                return Fail("Box: 边长必须为正");
+                return Fail(Tr("Box: 边长必须为正"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateBox(ToSm(origin), dx, dy, dz, raw);
             return Wrap(status, raw, "SmApiCreateBox");
@@ -266,7 +267,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(radius > 0.0 && height > 0.0))
-                return Fail("Cylinder: 半径和高度必须为正");
+                return Fail(Tr("Cylinder: 半径和高度必须为正"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateCylinder(ToSm(baseCenter), radius, height, raw);
             return Wrap(status, raw, "SmApiCreateCylinder");
@@ -276,7 +277,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(radius > 0.0))
-                return Fail("Sphere: 半径必须为正");
+                return Fail(Tr("Sphere: 半径必须为正"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateSphere(ToSm(center), radius, raw);
             return Wrap(status, raw, "SmApiCreateSphere");
@@ -286,7 +287,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (std::abs(height) < 1e-12)
-                return Fail("Extrude: 高度不能为 0");
+                return Fail(Tr("Extrude: 高度不能为 0"));
             SmTArray<SmCurve*> curves;
             SmObjsDelete<SmCurve*> cleanup(&curves);   // SmApiCreateLinearSweep 复制曲线，不接管
             if (!MakeProfileCurves(profile, curves))
@@ -302,7 +303,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (axisDir.LengthSq() < 1e-24 || std::abs(angleDeg) < 1e-9)
-                return Fail("Revolve: 轴方向为零或角度为 0");
+                return Fail(Tr("Revolve: 轴方向为零或角度为 0"));
             SmTArray<SmCurve*> curves;
             SmObjsDelete<SmCurve*> cleanup(&curves);
             if (!MakeProfileCurves(profile, curves))
@@ -323,7 +324,7 @@ namespace MiniCAD::Solid
                     size = std::max(size, std::abs(side));
                 }
                 if (lo < -1e-9 * size && hi > 1e-9 * size)
-                    return Fail("Revolve: 旋转轴穿过轮廓");
+                    return Fail(Tr("Revolve: 旋转轴穿过轮廓"));
             }
 
             SmBrep* raw = nullptr;
@@ -348,7 +349,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(radiusBase >= 0.0 && radiusTop >= 0.0 && radiusBase + radiusTop > 0.0 && height > 0.0))
-                return Fail("Cone: 半径不能为负且不能都为 0，高度必须为正");
+                return Fail(Tr("Cone: 半径不能为负且不能都为 0，高度必须为正"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateCone(ToSm(baseCenter), radiusBase, radiusTop, height, raw);
             return Wrap(status, raw, "SmApiCreateCone");
@@ -358,7 +359,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(minorRadius > 0.0 && majorRadius > minorRadius))
-                return Fail("Torus: 应满足 主半径 > 截面半径 > 0");
+                return Fail(Tr("Torus: 应满足 主半径 > 截面半径 > 0"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreateTorus(ToSm(center), majorRadius, minorRadius, raw);
             return Wrap(status, raw, "SmApiCreateTorus");
@@ -368,7 +369,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (sections.size() < 2)
-                return Fail("封口放样: 至少需要 2 条截面曲线");
+                return Fail(Tr("封口放样: 至少需要 2 条截面曲线"));
             std::vector<SmCurvePtr> owned;
             SmTArray<ULONG> counts;
             SmTArray<const SmCurve*> curves;   // 只读，不接管
@@ -376,7 +377,7 @@ namespace MiniCAD::Solid
             {
                 SmCurvePtr c = ToSmCurve(sections[i]);
                 if (!c)
-                    return Fail("封口放样: 第 " + std::to_string(i + 1) + " 条截面曲线无效");
+                    return Fail(TrF("封口放样: 第 {0} 条截面曲线无效", i + 1));
                 counts.Add(1);
                 curves.Add(c.get());
                 owned.push_back(std::move(c));
@@ -391,20 +392,20 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (profile.empty())
-                return Fail("扫掠: 没有轮廓");
+                return Fail(Tr("扫掠: 没有轮廓"));
             std::vector<SmCurvePtr> owned;
             SmTArray<SmCurve*> curves;   // 只读，不接管
             for (size_t i = 0; i < profile.size(); ++i)
             {
                 SmCurvePtr c = ToSmCurve(profile[i]);
                 if (!c)
-                    return Fail("扫掠: 第 " + std::to_string(i + 1) + " 条轮廓曲线无效");
+                    return Fail(TrF("扫掠: 第 {0} 条轮廓曲线无效", i + 1));
                 curves.Add(c.get());
                 owned.push_back(std::move(c));
             }
             SmCurvePtr rail = ToSmCurve(path);
             if (!rail)
-                return Fail("扫掠: 路径曲线无效");
+                return Fail(Tr("扫掠: 路径曲线无效"));
             SmSweepOptions options;
             options.bCapEndsArg = TRUE;
             // 轮廓的包围盒中心移到路径起点（不设时 SMLib 把轮廓的起点移到路径起点）；方向已由调用方放好，不再转动
@@ -437,7 +438,7 @@ namespace MiniCAD::Solid
                 return Fail(what, status);
             copyB.release();
             if (result != copyA.get())
-                return Fail("布尔运算的结果不是第一个输入");
+                return Fail(Tr("布尔运算的结果不是第一个输入"));
             return Finish(std::move(copyA));
         }
 
@@ -455,7 +456,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(thickness > 0.0))
-                return Fail("抽壳: 厚度必须为正");
+                return Fail(Tr("抽壳: 厚度必须为正"));
             SmBrep* brep = BrepOf(body);
             if (!brep)
                 return nullptr;
@@ -466,7 +467,7 @@ namespace MiniCAD::Solid
             for (int id : openFaces)
             {
                 if (id < 0 || static_cast<ULONG>(id) >= faces.GetSize())
-                    return Fail("抽壳: 面的序号超出范围（共 " + std::to_string(faces.GetSize()) + " 个面）");
+                    return Fail(TrF("抽壳: 面的序号超出范围（共 {0} 个面）", faces.GetSize()));
                 open.Add(faces[static_cast<ULONG>(id)]);
             }
             SmBrep* raw = nullptr;
@@ -643,7 +644,7 @@ namespace MiniCAD::Solid
             SmVector3d view = ToSm(-viewDir);
             if (viewDir.LengthSq() < 1e-24 || view.Unitize() != SM_SUCCESS)
             {
-                Fail("HiddenLines: 视线方向为零");
+                Fail(Tr("HiddenLines: 视线方向为零"));
                 return result;
             }
 
@@ -676,7 +677,7 @@ namespace MiniCAD::Solid
                 return result;
             if (planeNormal.LengthSq() < 1e-24)
             {
-                Fail("Section: 平面法线为零");
+                Fail(Tr("Section: 平面法线为零"));
                 return result;
             }
 
@@ -745,7 +746,7 @@ namespace MiniCAD::Solid
             const std::vector<uint8_t> payload{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
             if (payload.empty() || payload.size() > UINT32_MAX)
             {
-                Fail("Save: 临时文件为空或过大");
+                Fail(Tr("Save: 临时文件为空或过大"));
                 return {};
             }
 
@@ -762,19 +763,19 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (bytes.size() <= kHeaderSize || std::memcmp(bytes.data(), kMagic, 4) != 0)
-                return Fail("Load: 不是 SMLib 实体数据");
+                return Fail(Tr("Load: 不是 SMLib 实体数据"));
             if (GetU32(bytes.data() + 4) != kFormatVersion)
-                return Fail("Load: 不支持的格式版本");
+                return Fail(Tr("Load: 不支持的格式版本"));
             const std::span<const uint8_t> payload = bytes.subspan(kHeaderSize);
             if (GetU32(bytes.data() + 8) != payload.size() || GetU32(bytes.data() + 12) != Crc32(payload))
-                return Fail("Load: 数据已损坏（长度或校验和不符）");
+                return Fail(Tr("Load: 数据已损坏（长度或校验和不符）"));
 
             TempFile file;
             {
                 std::ofstream out(file.Path, std::ios::binary);
                 out.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
                 if (!out)
-                    return Fail("Load: 写不了临时文件");
+                    return Fail(Tr("Load: 写不了临时文件"));
             }
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiReadBrepFromFile(file.Path.c_str(), FALSE, FALSE, raw);
@@ -829,10 +830,10 @@ namespace MiniCAD::Solid
             if (closed && pts.size() >= 2 && (pts.front() - pts.back()).Length() < 1e-12)
                 pts.pop_back();
             if (pts.size() < 3)
-                return FailCurve("插值曲线: 至少需要 3 个点");
+                return FailCurve(Tr("插值曲线: 至少需要 3 个点"));
             for (size_t i = 0; i + 1 < pts.size() + (closed ? 1 : 0); ++i)
                 if ((pts[(i + 1) % pts.size()] - pts[i]).Length() < 1e-12)
-                    return FailCurve("插值曲线: 相邻的点重合");
+                    return FailCurve(Tr("插值曲线: 相邻的点重合"));
 
             SmTArray<SmPoint3d> smPoints;
             for (const auto& p : pts)
@@ -851,7 +852,7 @@ namespace MiniCAD::Solid
                 if (SmBSplineCurve::CreateInterpolatingCurve(*SmApiGetOrCreateContext(), SM_CP_CHORDLENGTH, 3, 3, smPoints, none, nullptr, FALSE, probe) != SM_SUCCESS || !probe)
                 {
                     delete probe;
-                    return FailCurve("插值曲线: SMLib 插值失败");
+                    return FailCurve(Tr("插值曲线: SMLib 插值失败"));
                 }
                 const SmExtent1d domain = probe->GetNaturalInterval();
                 delete probe;
@@ -864,10 +865,10 @@ namespace MiniCAD::Solid
             const SmStatus status = SmBSplineCurve::CreateInterpolatingCurve(*SmApiGetOrCreateContext(), SM_CP_CHORDLENGTH, 3, 3, smPoints, tangents, nullptr, FALSE, raw);
             SmCurvePtr curve(raw);
             if (status != SM_SUCCESS || !curve)
-                return FailCurve("插值曲线: SMLib 插值失败", status);
+                return FailCurve(Tr("插值曲线: SMLib 插值失败"), status);
             NurbsCurve out = FromSmCurve(*curve);
             if (!out.IsValid())
-                return FailCurve("插值曲线: 读不出曲线数据");
+                return FailCurve(Tr("插值曲线: 读不出曲线数据"));
             return out;
         }
 
@@ -875,7 +876,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (points.size() < 4)
-                return FailCurve("拟合曲线: 至少需要 4 个点");
+                return FailCurve(Tr("拟合曲线: 至少需要 4 个点"));
             SmTArray<SmPoint3d> smPoints;
             AABB box = AABB::Empty();
             for (const auto& p : points)
@@ -905,7 +906,7 @@ namespace MiniCAD::Solid
                     break;
             }
             if (!best.IsValid())
-                return FailCurve("拟合曲线: SMLib 拟合失败");
+                return FailCurve(Tr("拟合曲线: SMLib 拟合失败"));
             return best;
         }
 
@@ -913,9 +914,9 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(height > 0.0 && radius0 > 0.0 && radius1 > 0.0 && turns > 0.0))
-                return FailCurve("螺旋线: 高度、半径、圈数都必须为正");
+                return FailCurve(Tr("螺旋线: 高度、半径、圈数都必须为正"));
             if (turns > 124.0)
-                return FailCurve("螺旋线: 圈数不能超过 124");
+                return FailCurve(Tr("螺旋线: 圈数不能超过 124"));
             // 拟合容差：最大半径的 1e-5（SM_API 要求 ≥ 1e-6）
             const double tol = std::max(1e-6, std::max(radius0, radius1) * 1e-5);
             SmBSplineCurve* raw = nullptr;
@@ -931,7 +932,7 @@ namespace MiniCAD::Solid
             const auto lock = Begin();
             SmCurvePtr c = ToSmCurve(curve);
             if (!c)
-                return FailCurve("偏移: 曲线无效");
+                return FailCurve(Tr("偏移: 曲线无效"));
             // 逼近容差按曲线尺寸取；SMLib 的正值偏向右侧（从平面法线正向看），这里约定正值偏向左侧
             const double tol = std::max(1e-6, curve.BoundsSize() * 1e-6);
             SmBSplineCurve* raw = nullptr;
@@ -939,7 +940,7 @@ namespace MiniCAD::Solid
             const SmStatus status = c->CreateSimpleOffset(*SmApiGetOrCreateContext(), tol, SmVector3d(0, 0, 1), -distance, raw, gap);
             SmCurvePtr out(raw);
             if (status != SM_SUCCESS || !out)
-                return FailCurve("偏移: SMLib 偏移失败（距离过大或曲线自交）", status);
+                return FailCurve(Tr("偏移: SMLib 偏移失败（距离过大或曲线自交）"), status);
             return FromSmCurve(*out);
         }
 
@@ -947,7 +948,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (curves.empty())
-                return FailCurve("连接: 没有曲线");
+                return FailCurve(Tr("连接: 没有曲线"));
             std::vector<SmCurvePtr> owned;
             int degree = 1;
             for (const auto& c : curves)
@@ -957,9 +958,9 @@ namespace MiniCAD::Solid
             {
                 SmCurvePtr c = ToSmCurve(curves[i]);
                 if (!c)
-                    return FailCurve("连接: 第 " + std::to_string(i + 1) + " 条曲线无效");
+                    return FailCurve(TrF("连接: 第 {0} 条曲线无效", i + 1));
                 if (curves[i].Degree < degree && c->DegreeElevate(static_cast<ULONG>(degree)) != SM_SUCCESS)
-                    return FailCurve("连接: 升阶失败");
+                    return FailCurve(Tr("连接: 升阶失败"));
                 segments.Add(c.get());
                 owned.push_back(std::move(c));
             }
@@ -967,7 +968,7 @@ namespace MiniCAD::Solid
             const SmStatus status = SmBSplineCurve::CreateByJoining(*SmApiGetOrCreateContext(), segments, nullptr, raw);
             SmCurvePtr out(raw);
             if (status != SM_SUCCESS || !out)
-                return FailCurve("连接: SMLib 连接失败（曲线没有首尾相接）", status);
+                return FailCurve(Tr("连接: SMLib 连接失败（曲线没有首尾相接）"), status);
             return FromSmCurve(*out);
         }
 
@@ -980,12 +981,12 @@ namespace MiniCAD::Solid
             if (!brep || !c)
             {
                 if (brep)
-                    Fail("投影: 曲线无效");
+                    Fail(Tr("投影: 曲线无效"));
                 return out;
             }
             if (direction.Length() < 1e-12)
             {
-                Fail("投影: 方向为零");
+                Fail(Tr("投影: 方向为零"));
                 return out;
             }
             SmTArray<SmCurve*> curves;
@@ -1006,14 +1007,14 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (sections.size() < 2)
-                return Fail("放样: 至少需要 2 条截面曲线");
+                return Fail(Tr("放样: 至少需要 2 条截面曲线"));
             std::vector<SmCurvePtr> owned;
             SmTArray<SmBSplineCurve*> profiles;
             for (size_t i = 0; i < sections.size(); ++i)
             {
                 SmCurvePtr c = ToSmCurve(sections[i]);
                 if (!c)
-                    return Fail("放样: 第 " + std::to_string(i + 1) + " 条截面曲线无效");
+                    return Fail(TrF("放样: 第 {0} 条截面曲线无效", i + 1));
                 profiles.Add(c.get());
                 owned.push_back(std::move(c));
             }
@@ -1024,7 +1025,7 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmApiCreateSkin", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "放样");
+            return SheetFromSurface(SurfacePtr(raw), N_("放样"));
         }
 
         BodyPtr RuledSurface(const NurbsCurve& a, const NurbsCurve& b) override
@@ -1032,7 +1033,7 @@ namespace MiniCAD::Solid
             const auto lock = Begin();
             SmCurvePtr ca = ToSmCurve(a), cb = ToSmCurve(b);
             if (!ca || !cb)
-                return Fail("直纹面: 曲线无效");
+                return Fail(Tr("直纹面: 曲线无效"));
             SmSurface* raw = nullptr;
             const SmApiStatus status = SmApiCreateRuledSurface(ca.get(), cb.get(), raw);
             if (status != SM_SUCCESS || !raw)
@@ -1040,17 +1041,17 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmApiCreateRuledSurface", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "直纹面");
+            return SheetFromSurface(SurfacePtr(raw), N_("直纹面"));
         }
 
         BodyPtr RevolveSurface(const NurbsCurve& curve, const Math::Point3& axisPoint, const Math::Vec3& axisDir, double angleDeg) override
         {
             const auto lock = Begin();
             if (axisDir.LengthSq() < 1e-24 || std::abs(angleDeg) < 1e-9)
-                return Fail("旋转曲面: 轴方向为零或角度为 0");
+                return Fail(Tr("旋转曲面: 轴方向为零或角度为 0"));
             SmCurvePtr c = ToSmCurve(curve);
             if (!c)
-                return Fail("旋转曲面: 曲线无效");
+                return Fail(Tr("旋转曲面: 曲线无效"));
             // 负角度：轴反向、角度取正（右手定则下效果相同）
             const Math::Vec3 dir = angleDeg < 0.0 ? -axisDir : axisDir;
             SmSurface* raw = nullptr;
@@ -1060,14 +1061,14 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmApiCreateSurfaceRevolution", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "旋转曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("旋转曲面"));
         }
 
         BodyPtr SurfaceFromPoints(std::span<const Math::Point3> points, int rows, int columns) override
         {
             const auto lock = Begin();
             if (rows < 2 || columns < 2 || points.size() != static_cast<size_t>(rows) * static_cast<size_t>(columns))
-                return Fail("点阵曲面: 行、列至少各 2 个，点数应为行数 × 列数");
+                return Fail(Tr("点阵曲面: 行、列至少各 2 个，点数应为行数 × 列数"));
             SmTArray<SmPoint3d> smPoints;
             for (const auto& p : points)
                 smPoints.Add(ToSm(p));
@@ -1082,7 +1083,7 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmBSplineSurface::ApproximatePoints", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "点阵曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("点阵曲面"));
         }
 
         BodyPtr OffsetSurface(const BodyPtr& surface, double distance) override
@@ -1104,7 +1105,7 @@ namespace MiniCAD::Solid
                     delete raw;
                     return Fail("SmApiCreateOffsetSurface", status);
                 }
-                if (!AddSurfaceFaces(*brep, SurfacePtr(raw), "偏移曲面"))
+                if (!AddSurfaceFaces(*brep, SurfacePtr(raw), N_("偏移曲面")))
                     return nullptr;
             }
             Stitch(*brep);
@@ -1115,10 +1116,10 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (!(radius > 0.0))
-                return Fail("管道: 半径必须为正");
+                return Fail(Tr("管道: 半径必须为正"));
             SmCurvePtr c = ToSmCurve(path);
             if (!c)
-                return Fail("管道: 路径曲线无效");
+                return Fail(Tr("管道: 路径曲线无效"));
             SmBrep* raw = nullptr;
             const SmApiStatus status = SmApiCreatePipeSweep(radius, c.get(), capEnds ? TRUE : FALSE, raw);
             return Wrap(status, raw, "SmApiCreatePipeSweep");
@@ -1128,13 +1129,13 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (std::abs(thickness) < 1e-12)
-                return Fail("加厚: 厚度不能为 0");
+                return Fail(Tr("加厚: 厚度不能为 0"));
             SmBrep* brep = BrepOf(surface);
             if (!brep)
                 return nullptr;
             SmTArray<SmFace*> faces;
             if (const SmApiStatus status = SmApiGetFaces(brep, faces); status != SM_SUCCESS || faces.GetSize() == 0)
-                return Fail("加厚: 没有面", status);
+                return Fail(Tr("加厚: 没有面"), status);
             // 面列表是“不偏移、原样保留”的面，加厚时为空：全部面都偏移
             const SmTArray<const SmFace*> keep;
             const double d = FaceNormalSign(faces[0]) * thickness;
@@ -1151,7 +1152,7 @@ namespace MiniCAD::Solid
                 return false;
             if (face < 0 || static_cast<ULONG>(face) >= faces.GetSize())
             {
-                Fail("曲面取点: 面的序号超出范围（共 " + std::to_string(faces.GetSize()) + " 个面）");
+                Fail(TrF("曲面取点: 面的序号超出范围（共 {0} 个面）", faces.GetSize()));
                 return false;
             }
             const SmSurface* srf = faces[static_cast<ULONG>(face)]->GetSurface();
@@ -1202,7 +1203,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (loops.empty())
-                return Fail("平面曲面: 没有曲线");
+                return Fail(Tr("平面曲面: 没有曲线"));
             SmTArray<SmCurve*> curves;
             for (size_t i = 0; i < loops.size(); ++i)
             {
@@ -1211,7 +1212,7 @@ namespace MiniCAD::Solid
                 {
                     for (ULONG k = 0; k < curves.GetSize(); ++k)
                         delete curves[k];
-                    return Fail("平面曲面: 第 " + std::to_string(i + 1) + " 条曲线无效");
+                    return Fail(TrF("平面曲面: 第 {0} 条曲线无效", i + 1));
                 }
                 curves.Add(c.release());
             }
@@ -1220,17 +1221,17 @@ namespace MiniCAD::Solid
             if (status != SM_SUCCESS)
                 for (ULONG k = 0; k < curves.GetSize(); ++k)
                     delete curves[k];
-            return Wrap(status, raw, "SmApiCreatePlanarFaces（曲线应共面、闭合、互不相交）");
+            return Wrap(status, raw, TrF("{0}（曲线应共面、闭合、互不相交）", "SmApiCreatePlanarFaces"));
         }
 
         BodyPtr ExtrudeCurve(const NurbsCurve& curve, const Math::Vec3& vector) override
         {
             const auto lock = Begin();
             if (vector.Length() < 1e-12)
-                return Fail("挤出曲面: 向量为零");
+                return Fail(Tr("挤出曲面: 向量为零"));
             SmCurvePtr c = ToSmCurve(curve);
             if (!c)
-                return Fail("挤出曲面: 曲线无效");
+                return Fail(Tr("挤出曲面: 曲线无效"));
             SmSurface* raw = nullptr;
             const SmApiStatus status = SmApiCreateExtrude(c.get(), ToSm(vector), raw);
             if (status != SM_SUCCESS || !raw)
@@ -1238,7 +1239,7 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmApiCreateExtrude", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "挤出曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("挤出曲面"));
         }
 
         BodyPtr SweepSurface(const NurbsCurve& section, const NurbsCurve& rail) override
@@ -1246,7 +1247,7 @@ namespace MiniCAD::Solid
             const auto lock = Begin();
             SmCurvePtr s = ToSmCurve(section), r = ToSmCurve(rail);
             if (!s || !r)
-                return Fail("单轨扫描: 曲线无效");
+                return Fail(Tr("单轨扫描: 曲线无效"));
             SmTArray<SmCurve*> curves;
             curves.Add(s.get());
             SmSweepOptions options;   // 不封口；截面起点放在轨道起点，再把结果移回截面所在位置
@@ -1261,7 +1262,7 @@ namespace MiniCAD::Solid
             const auto lock = Begin();
             SmCurvePtr b = ToSmCurve(bottom), r = ToSmCurve(right), t = ToSmCurve(top), l = ToSmCurve(left);
             if (!b || !r || !t || !l)
-                return Fail("边界曲面: 曲线无效");
+                return Fail(Tr("边界曲面: 曲线无效"));
             SmTArray<SmBSplineCurve*> edges, derivs;   // SMLib 的顺序：左、右、下、上
             edges.Add(l.get());
             edges.Add(r.get());
@@ -1272,16 +1273,16 @@ namespace MiniCAD::Solid
             if (status != SM_SUCCESS || !raw)
             {
                 delete raw;
-                return Fail("SmBSplineSurface::CreateCoonsPatch（四条边应首尾相接）", status);
+                return Fail(TrF("{0}（四条边应首尾相接）", "SmBSplineSurface::CreateCoonsPatch"), status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "边界曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("边界曲面"));
         }
 
         BodyPtr NetworkSurface(std::span<const NurbsCurve> u, std::span<const NurbsCurve> v) override
         {
             const auto lock = Begin();
             if (u.size() < 2 || v.size() < 2)
-                return Fail("网络曲面: 两个方向各至少需要 2 条曲线");
+                return Fail(Tr("网络曲面: 两个方向各至少需要 2 条曲线"));
             std::vector<SmCurvePtr> owned;
             SmTArray<SmBSplineCurve*> us, vs;
             for (auto [list, out] : { std::pair{ u, &us }, std::pair{ v, &vs } })
@@ -1289,7 +1290,7 @@ namespace MiniCAD::Solid
                 {
                     SmCurvePtr sc = ToSmCurve(c);
                     if (!sc)
-                        return Fail("网络曲面: 曲线无效");
+                        return Fail(Tr("网络曲面: 曲线无效"));
                     out->Add(sc.get());
                     owned.push_back(std::move(sc));
                 }
@@ -1298,18 +1299,18 @@ namespace MiniCAD::Solid
             if (status != SM_SUCCESS || !raw)
             {
                 delete raw;
-                return Fail("SmBSplineSurface::CreateGordonSurface（两组曲线应两两相交）", status);
+                return Fail(TrF("{0}（两组曲线应两两相交）", "SmBSplineSurface::CreateGordonSurface"), status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "网络曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("网络曲面"));
         }
 
         BodyPtr FitSurface(std::span<const Math::Point3> points, int controlPoints) override
         {
             const auto lock = Begin();
             if (points.size() < 9)
-                return Fail("拟合曲面: 至少需要 9 个点");
+                return Fail(Tr("拟合曲面: 至少需要 9 个点"));
             if (controlPoints < 2)
-                return Fail("拟合曲面: 控制点数至少为 2");
+                return Fail(Tr("拟合曲面: 控制点数至少为 2"));
             SmTArray<SmPoint3d> pts;
             for (const auto& p : points)
                 pts.Add(ToSm(p));
@@ -1321,17 +1322,17 @@ namespace MiniCAD::Solid
                 delete raw;
                 return Fail("SmBSplineSurface::ApproximateRandomPoints", status);
             }
-            return SheetFromSurface(SurfacePtr(raw), "拟合曲面");
+            return SheetFromSurface(SurfacePtr(raw), N_("拟合曲面"));
         }
 
         BodyPtr TrimSurface(const BodyPtr& surface, const NurbsCurve& cutter, const Math::Vec3& direction, const Math::Point3& keepPoint, bool split) override
         {
             const auto lock = Begin();
             if (direction.Length() < 1e-12)
-                return Fail("修剪: 投影方向为零");
+                return Fail(Tr("修剪: 投影方向为零"));
             SmCurvePtr c = ToSmCurve(cutter);
             if (!c)
-                return Fail("修剪: 切割曲线无效");
+                return Fail(Tr("修剪: 切割曲线无效"));
             BrepPtr copy = CopyOf(surface);
             if (!copy)
                 return nullptr;
@@ -1343,7 +1344,7 @@ namespace MiniCAD::Solid
                 if (raw != work)
                     delete work;
                 delete raw;
-                return Fail("SmApiTrimProjectParallel（切割曲线投影后应穿过曲面）", status);
+                return Fail(TrF("{0}（切割曲线投影后应穿过曲面）", "SmApiTrimProjectParallel"), status);
             }
             if (raw != work)
                 delete work;
@@ -1354,7 +1355,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (bodies.empty())
-                return Fail("拼接: 没有曲面");
+                return Fail(Tr("拼接: 没有曲面"));
             BrepPtr brep(new (*SmApiGetOrCreateContext()) SmBrep());
             for (const BodyPtr& b : bodies)
             {
@@ -1362,7 +1363,7 @@ namespace MiniCAD::Solid
                 if (!FacesOf(b, faces))
                     return nullptr;
                 if (const SmStatus status = BrepOf(b)->CopyFaces(faces, brep.get(), nullptr, FALSE); status != SM_SUCCESS)
-                    return Fail("拼接: 复制面失败", status);
+                    return Fail(Tr("拼接: 复制面失败"), status);
             }
             SmBoolean solid = FALSE;
             ULONG stitched = 0;
@@ -1380,7 +1381,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (mesh.TriangleCount() == 0)
-                return Fail("网格转实体: 网格为空");
+                return Fail(Tr("网格转实体: 网格为空"));
             const SmContext& ctx = *SmApiGetOrCreateContext();
             BrepPtr brep(new (ctx) SmBrep());
             size_t made = 0;
@@ -1399,7 +1400,7 @@ namespace MiniCAD::Solid
                     {
                         for (ULONG k = 0; k < curves.GetSize(); ++k)
                             delete curves[k];
-                        return Fail("网格转实体: 第 " + std::to_string(t + 1) + " 个三角形的边创建失败");
+                        return Fail(TrF("网格转实体: 第 {0} 个三角形的边创建失败", t + 1));
                     }
                     curves.Add(seg);
                 }
@@ -1408,7 +1409,7 @@ namespace MiniCAD::Solid
                     ++made;
             }
             if (made == 0)
-                return Fail("网格转实体: 没有生成面");
+                return Fail(Tr("网格转实体: 没有生成面"));
             SmBoolean solid = FALSE;
             ULONG stitched = 0;
             double vertexGap = 0.0, edgeGap = 0.0;
@@ -1436,7 +1437,7 @@ namespace MiniCAD::Solid
                 if (all[i]->IsLamina())
                     open.push_back(all[i]);
             if (open.empty())
-                return Fail("封口: 没有开口");
+                return Fail(Tr("封口: 没有开口"));
             int capped = 0;
             while (!open.empty())
             {
@@ -1490,7 +1491,7 @@ namespace MiniCAD::Solid
                     ++capped;
             }
             if (capped == 0)
-                return Fail("封口: 没有平面的开口（非平面开口可先用“边界曲面”补面再拼接）");
+                return Fail(Tr("封口: 没有平面的开口（非平面开口可先用“边界曲面”补面再拼接）"));
             SmBoolean solid = FALSE;
             ULONG stitched = 0;
             double vertexGap = 0.0, edgeGap = 0.0;
@@ -1514,7 +1515,7 @@ namespace MiniCAD::Solid
                 one.Add(faces[i]);
                 if (const SmStatus status = BrepOf(body)->CopyFaces(one, brep.get(), nullptr, FALSE); status != SM_SUCCESS)
                 {
-                    Fail("炸开: 复制面失败", status);
+                    Fail(Tr("炸开: 复制面失败"), status);
                     return {};
                 }
                 out.push_back(Finish(std::move(brep)));
@@ -1525,21 +1526,21 @@ namespace MiniCAD::Solid
         BodyPtr FlipSurface(const BodyPtr& surface) override
         {
             const auto lock = Begin();
-            SmBSplineSurface* raw = SingleFaceBSpline(surface, "翻转");
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, N_("翻转"));
             if (!raw)
                 return nullptr;
             SurfacePtr owned(raw);
             if (const SmStatus status = raw->Reverse(SM_SP_U); status != SM_SUCCESS)
-                return Fail("翻转: 反转参数失败", status);
-            return SheetFromSurface(std::move(owned), "翻转");
+                return Fail(Tr("翻转: 反转参数失败"), status);
+            return SheetFromSurface(std::move(owned), N_("翻转"));
         }
 
         BodyPtr ExtendSurface(const BodyPtr& surface, double distance) override
         {
             const auto lock = Begin();
             if (!(distance > 0.0))
-                return Fail("延伸: 距离必须为正");
-            SmBSplineSurface* raw = SingleFaceBSpline(surface, "延伸");
+                return Fail(Tr("延伸: 距离必须为正"));
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, N_("延伸"));
             if (!raw)
                 return nullptr;
             SurfacePtr owned(raw);
@@ -1550,15 +1551,15 @@ namespace MiniCAD::Solid
                 delete extended;
                 return Fail("SmBSplineSurface::CreateExtendedSurface", status);
             }
-            return SheetFromSurface(SurfacePtr(extended), "延伸");
+            return SheetFromSurface(SurfacePtr(extended), N_("延伸"));
         }
 
         BodyPtr RebuildSurface(const BodyPtr& surface, int uCount, int vCount) override
         {
             const auto lock = Begin();
             if (uCount < 4 || vCount < 4)
-                return Fail("重建: 每个方向至少 4 个控制点");
-            SmBSplineSurface* raw = SingleFaceBSpline(surface, "重建");
+                return Fail(Tr("重建: 每个方向至少 4 个控制点"));
+            SmBSplineSurface* raw = SingleFaceBSpline(surface, N_("重建"));
             if (!raw)
                 return nullptr;
             SurfacePtr owned(raw);
@@ -1570,7 +1571,7 @@ namespace MiniCAD::Solid
                 delete rebuilt;
                 return Fail("SmBSplineSurface::RebuildSurface", status);
             }
-            return SheetFromSurface(SurfacePtr(rebuilt), "重建");
+            return SheetFromSurface(SurfacePtr(rebuilt), N_("重建"));
         }
 
         std::vector<NurbsCurve> EdgeCurves(const BodyPtr& body) override
@@ -1592,7 +1593,7 @@ namespace MiniCAD::Solid
                 NurbsCurve nc = c ? FromSmCurve(*c) : NurbsCurve{};
                 if (!nc.IsValid())
                 {
-                    Fail("边曲线: 第 " + std::to_string(i + 1) + " 条边转换失败");
+                    Fail(TrF("边曲线: 第 {0} 条边转换失败", i + 1));
                     return {};
                 }
                 out.push_back(std::move(nc));
@@ -1643,7 +1644,7 @@ namespace MiniCAD::Solid
             if (!brep || !c)
             {
                 if (brep)
-                    Fail("求交: 曲线无效");
+                    Fail(Tr("求交: 曲线无效"));
                 return out;
             }
             SmTArray<SmCurve*> overlaps;
@@ -1687,15 +1688,15 @@ namespace MiniCAD::Solid
             return lock;
         }
 
-        std::nullptr_t Fail(const char* what, SmApiStatus status = SM_ERR)
+        std::nullptr_t Fail(const std::string& what, SmApiStatus status = SM_ERR)     // what 已是当前语言（SMLib 的接口名原样）
         {
             t_lastError = what;
             if (status != SM_ERR)
-                t_lastError += "（状态 " + std::to_string(status) + "）";
+                t_lastError += TrF("（状态 {0}）", static_cast<int>(status));
             return nullptr;
         }
 
-        BodyPtr Wrap(SmApiStatus status, SmBrep* raw, const char* what)
+        BodyPtr Wrap(SmApiStatus status, SmBrep* raw, const std::string& what)
         {
             BrepPtr brep(raw);
             if (status != SM_SUCCESS || !brep)
@@ -1710,7 +1711,7 @@ namespace MiniCAD::Solid
             const auto* smBody = dynamic_cast<const SMLibBody*>(body.get());
             if (!smBody)
             {
-                Fail("实体为空或不是 SMLib 创建的");
+                Fail(Tr("实体为空或不是 SMLib 创建的"));
                 return nullptr;
             }
             return smBody->Brep();
@@ -1737,7 +1738,7 @@ namespace MiniCAD::Solid
         {
             const auto lock = Begin();
             if (edgeIds.empty() || !(radius > 0.0))
-                return Fail(std::string(what) + ": 没有边或半径不为正");
+                return Fail(TrF("{0}: 没有边或半径不为正", what));
             BrepPtr copy = CopyOf(body);
             if (!copy)
                 return nullptr;
@@ -1750,7 +1751,7 @@ namespace MiniCAD::Solid
             for (int id : edgeIds)
             {
                 if (id < 0 || static_cast<ULONG>(id) >= all.GetSize())
-                    return Fail(std::string(what) + ": 边编号超出范围");
+                    return Fail(TrF("{0}: 边编号超出范围", what));
                 edges.Add(all[static_cast<ULONG>(id)]);
             }
 
@@ -1766,7 +1767,7 @@ namespace MiniCAD::Solid
             const size_t segments = path.Closed ? vs.size() : (vs.empty() ? 0 : vs.size() - 1);
             if (segments == 0 || (path.Closed && vs.size() == 2 && std::abs(vs[0].Bulge) < 1e-12 && std::abs(vs[1].Bulge) < 1e-12))
             {
-                Fail("路径: 顶点太少");
+                Fail(Tr("路径: 顶点太少"));
                 return false;
             }
             for (size_t i = 0; i < segments; ++i)
@@ -1776,7 +1777,7 @@ namespace MiniCAD::Solid
                 if (status != SM_SUCCESS || !segment)
                 {
                     delete segment;
-                    Fail("路径: 生成第 " + std::to_string(i) + " 段曲线失败", status);
+                    Fail(TrF("路径: 生成第 {0} 段曲线失败", i), status);
                     return false;
                 }
                 curves.Add(segment);
@@ -1790,7 +1791,7 @@ namespace MiniCAD::Solid
             {
                 if (!(profile.Radius > 0.0))
                 {
-                    Fail("轮廓: 圆的半径必须为正");
+                    Fail(Tr("轮廓: 圆的半径必须为正"));
                     return false;
                 }
                 SmBSplineCurve* circle = nullptr;
@@ -1808,7 +1809,7 @@ namespace MiniCAD::Solid
             const auto& vs = profile.Vertices;
             if (vs.size() < 2 || (vs.size() == 2 && std::abs(vs[0].Bulge) < 1e-12 && std::abs(vs[1].Bulge) < 1e-12))
             {
-                Fail("轮廓: 顶点太少，围不成区域");
+                Fail(Tr("轮廓: 顶点太少，围不成区域"));
                 return false;
             }
             for (size_t i = 0; i < vs.size(); ++i)
@@ -1818,15 +1819,13 @@ namespace MiniCAD::Solid
                 if (status != SM_SUCCESS || !segment)
                 {
                     delete segment;
-                    Fail("轮廓: 生成第 " + std::to_string(i) + " 段曲线失败", status);
+                    Fail(TrF("轮廓: 生成第 {0} 段曲线失败", i), status);
                     return false;
                 }
                 curves.Add(segment);
             }
             return true;
         }
-
-        std::nullptr_t Fail(const std::string& what, SmApiStatus status = SM_ERR) { return Fail(what.c_str(), status); }
 
         NurbsCurve FailCurve(const std::string& what, SmApiStatus status = SM_ERR)
         {
@@ -1901,7 +1900,7 @@ namespace MiniCAD::Solid
             const SmStatus status = brep.CreateFacesFromSurface(surface.release(), domain, SM_CT_C1, faces);
             if (status != SM_SUCCESS || faces.GetSize() == 0)
             {
-                Fail(std::string(what) + ": 由曲面生成面失败", status);
+                Fail(TrF("{0}: 由曲面生成面失败", Tr(what)), status);
                 return false;
             }
             return true;
@@ -1991,7 +1990,7 @@ namespace MiniCAD::Solid
                 return nullptr;
             if (face < 0 || static_cast<ULONG>(face) >= faces.GetSize())
             {
-                Fail("面的序号超出范围（共 " + std::to_string(faces.GetSize()) + " 个面）");
+                Fail(TrF("面的序号超出范围（共 {0} 个面）", faces.GetSize()));
                 return nullptr;
             }
             return faces[static_cast<ULONG>(face)]->GetSurface();
@@ -2005,14 +2004,14 @@ namespace MiniCAD::Solid
                 return nullptr;
             if (faces.GetSize() != 1)
             {
-                Fail(std::string(what) + ": 只用于单个面的曲面（可先“炸开”）");
+                Fail(TrF("{0}: 只用于单个面的曲面（可先“炸开”）", Tr(what)));
                 return nullptr;
             }
             SmBSplineSurface* copy = nullptr;
             if (faces[0]->GetSurface()->MakeExactBSplineIfPossible(copy) != SM_SUCCESS || !copy)
             {
                 delete copy;
-                Fail(std::string(what) + ": 曲面不能转换为 B 样条");
+                Fail(TrF("{0}: 曲面不能转换为 B 样条", Tr(what)));
                 return nullptr;
             }
             BrepPtr whole(new (*SmApiGetOrCreateContext()) SmBrep());
@@ -2024,7 +2023,7 @@ namespace MiniCAD::Solid
             if (faceArea < 0 || wholeArea < 0 || std::abs(faceArea - wholeArea) > 1e-6 * std::max(1.0, wholeArea))
             {
                 delete copy;
-                Fail(std::string(what) + ": 修剪过的面暂不支持");
+                Fail(TrF("{0}: 修剪过的面暂不支持", Tr(what)));
                 return nullptr;
             }
             return copy;

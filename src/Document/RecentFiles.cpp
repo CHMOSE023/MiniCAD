@@ -120,7 +120,7 @@ namespace MiniCAD
         if (!out)
         {
             const std::u8string u8 = path.u8string();
-            LOG_WARN("无法保存最近打开列表：%s", std::string(u8.begin(), u8.end()).c_str());
+            LOG_WARN_TR("无法保存最近打开列表：{0}", std::string(u8.begin(), u8.end()).c_str());
             return false;
         }
         for (const std::string& item : m_items)

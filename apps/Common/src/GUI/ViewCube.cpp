@@ -33,7 +33,7 @@ namespace MiniCAD
         struct Compass { Math::Vec3 Dir; const char* Label; };
         const std::array<Compass, 4> kCompass = { { { { 1, 0, 0 }, NC_("视图方块", "东") }, { { 0, -1, 0 }, NC_("视图方块", "南") },
                                                     { { -1, 0, 0 }, NC_("视图方块", "西") }, { { 0, 1, 0 }, NC_("视图方块", "北") } } };
-        constexpr const char* kContext = "视图方块";     // 面与方位的字是单字，加上下文翻译（每帧画的时候翻译，切换语言后自然跟着换）
+        constexpr const char* kContext = "视图方块";     // i18n: 上下文     // 面与方位的字是单字，加上下文翻译（每帧画的时候翻译，切换语言后自然跟着换）
 
         constexpr double kSplit       = 0.6;    // 3 × 3 × 3 分块的界线（立方体为 [−1, 1]³）
         constexpr double kRingRadius  = 2.05;   // 大于立方体在任何视角下的投影半径（√3），字不被方块挡住

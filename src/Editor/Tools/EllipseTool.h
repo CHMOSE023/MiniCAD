@@ -20,13 +20,13 @@ namespace MiniCAD
         explicit EllipseTool(bool arcMode = false)
             : m_arcMode(arcMode)
         {
-            LOG_DEBUG("[EllipseTool] 左键圆心 | 左键长轴端点 | 左键短轴端点%s | 右键/ESC 退出",
-                      arcMode ? " | 左键起始角 | 左键终止角" : "确认");
+            LOG_DEBUG("[EllipseTool] click center | click major axis end | click minor axis end%s | right-click/ESC exits",
+                      arcMode ? " | click start angle | click end angle" : "");
         }
 
         ~EllipseTool()
         {
-            LOG_DEBUG("退出绘制");
+            LOG_DEBUG("Exit drawing");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -43,7 +43,7 @@ namespace MiniCAD
                     case 0:
                         m_center = pt;
                         m_step   = 1;
-                        LOG_INFO("[EllipseTool] 圆心 (%.3f, %.3f) 已定，请点击长轴端点",
+                        LOG_INFO("[EllipseTool] center (%.3f, %.3f) set, click major axis end",
                                pt.x, pt.y);
                         break;
 
@@ -52,14 +52,14 @@ namespace MiniCAD
                         double rx = Distance2D(m_center, pt);
                         if (rx < Math::LengthEPS)
                         {
-                            LOG_WARN("[EllipseTool] 长轴太短，请重新点击");
+                            LOG_WARN("[EllipseTool] major axis too short, click again");
                             break;
                         }
                         m_rx       = rx;
                         m_rotation = std::atan2(pt.y - m_center.y,
                                                 pt.x - m_center.x);
                         m_step     = 2;
-                        LOG_INFO("[EllipseTool] 长轴端点已定，rx=%.3f  rot=%.1f°，请点击短轴端点",
+                        LOG_INFO("[EllipseTool] major axis set, rx=%.3f rot=%.1f°, click minor axis end",
                                m_rx, m_rotation * 180.0 / Math::PI);
                         break;
                     }
@@ -69,7 +69,7 @@ namespace MiniCAD
                         double ry = ComputeRY(pt);
                         if (ry < Math::LengthEPS)
                         {
-                            LOG_WARN("[EllipseTool] 短轴太短，请重新点击");
+                            LOG_WARN("[EllipseTool] minor axis too short, click again");
                             break;
                         }
                         if (!m_arcMode)
@@ -94,7 +94,7 @@ namespace MiniCAD
                         el.SetParams(m_startParam, el.ParamOfPoint(pt));
                         if (el.IsFull())
                         {
-                            LOG_WARN("[EllipseTool] 起止角重合，请重新点击终止角");
+                            LOG_WARN("[EllipseTool] start and end angles coincide, click the end angle again");
                             break;
                         }
                         Commit(el);
@@ -240,7 +240,7 @@ namespace MiniCAD
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("椭圆 Id %d  center(%.3f,%.3f)  rx=%.3f  ry=%.3f  rot=%.1f°  param[%.1f°, %.1f°]",
+            LOG_DEBUG("Ellipse Id %d center(%.3f,%.3f) rx=%.3f ry=%.3f rot=%.1f° param[%.1f°, %.1f°]",
                    static_cast<int>(id),
                    el.Center.x, el.Center.y, el.RadiusX, el.RadiusY,
                    el.Rotation * 180.0 / Math::PI,

@@ -19,7 +19,7 @@ namespace MiniCAD
         ImageTool(std::string path, uint32_t pixelW, uint32_t pixelH)
             : m_path(std::move(path)), m_pw(pixelW ? pixelW : 1), m_ph(pixelH ? pixelH : 1)
         {
-            LOG_DEBUG("[ImageTool] 左键指定左下角 | 再指定宽度 / 旋转（回车 = 原始大小）| ESC 退出");
+            LOG_DEBUG("[ImageTool] click lower-left corner | then width / rotation (Enter = original size) | ESC exits");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -120,7 +120,7 @@ namespace MiniCAD
             auto img = std::make_unique<ImageEntity>(id, m_path, c[0], c[1], c[2], c[3]);
             m_ctx->ApplyCurrentAttr(*img);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(img)), m_ctx->scene);
-            LOG_DEBUG("[ImageTool] 图像 Id=%d 宽 %.3f 旋转 %.3f", static_cast<int>(id), width, angle);
+            LOG_DEBUG("[ImageTool] image Id=%d width %.3f rotation %.3f", static_cast<int>(id), width, angle);
 
             m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();

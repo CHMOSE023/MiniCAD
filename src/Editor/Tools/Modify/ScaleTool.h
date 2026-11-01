@@ -34,10 +34,10 @@ namespace MiniCAD
         {
             for (Object* o : targets)
                 if (o) m_sourceIds.push_back(o->GetID());
-            LOG_INFO("[ScaleTool] 左键指定缩放基点");
+            LOG_INFO("[ScaleTool] click base point");
         }
 
-        ~ScaleTool() { LOG_DEBUG("[ScaleTool] 退出"); }
+        ~ScaleTool() { LOG_DEBUG("[ScaleTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -159,7 +159,7 @@ namespace MiniCAD
         {
             if (!(k > 1e-9))
             {
-                LOG_WARN("[ScaleTool] 比例因子必须大于 0");
+                LOG_WARN("[ScaleTool] scale factor must be greater than 0");
                 return;                         // 留在工具里，让用户重新指定
             }
 
@@ -197,12 +197,12 @@ namespace MiniCAD
                 for (auto& it : items) DimAssoc::RemapCopy(*it.after, srcToNew);
 
             if (skipped > 0)
-                LOG_WARN("[ScaleTool] %zu 个对象的类型暂不支持缩放，已跳过", skipped);
+                LOG_WARN("[ScaleTool] %zu objects of unsupported types skipped", skipped);
 
             if (!items.empty())
             {
                 m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("缩放"), std::move(items)), m_ctx->scene);
-                LOG_DEBUG("[ScaleTool] 缩放 %zu 个对象，比例 %.4f%s", m_sourceIds.size() - skipped, k, m_keepSource ? "（保留源）" : "");
+                LOG_DEBUG("[ScaleTool] scaled %zu objects, factor %.4f%s", m_sourceIds.size() - skipped, k, m_keepSource ? " (source kept)" : "");
             }
 
             m_ctx->overlay.Clear();

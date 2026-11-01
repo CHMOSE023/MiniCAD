@@ -14,7 +14,7 @@ namespace MiniCAD
     public:
         RectangleTool()
         {
-            LOG_DEBUG("[RectangleTool] 左键第一角点 | 左键第二角点确认 | 右键/ESC 退出");
+            LOG_DEBUG("[RectangleTool] click first corner | click second corner | right-click/ESC exits");
         }
 
         ~RectangleTool()
@@ -90,7 +90,7 @@ namespace MiniCAD
             auto cmd  = std::make_unique<AddEntityCommand>(std::move(rect));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[RectangleTool] 矩形 Id=%d  (%.3f,%.3f)-(%.3f,%.3f)",
+            LOG_DEBUG("[RectangleTool] rectangle Id=%d (%.3f,%.3f)-(%.3f,%.3f)",
                    static_cast<int>(id), a.x, a.y, b.x, b.y);
         }
 

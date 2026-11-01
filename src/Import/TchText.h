@@ -235,6 +235,7 @@ namespace MiniCAD::Tch
             const double wide = (trueType ? 0.75527 : 0.69) * nominal, ascii = (trueType ? 0.5 * 0.75527 : 0.604) * nominal;
             return ch >= 0x80 ? wide : (ch == '.' || ch == ',') ? 0.2 * ascii : ascii;
         };
+        // i18n: 数据（避头的标点）
         static const std::string kNoLineStart[] = {"。", "，", "、", "；", "：", "？", "！", "）", "》", "」", "』", "】", "”", "’", "…",
                                                    ",", ".", ";", ":", "?", "!", ")"};
         auto noLineStart = [&](const std::string& u) { return std::find(std::begin(kNoLineStart), std::end(kNoLineStart), u) != std::end(kNoLineStart); };

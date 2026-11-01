@@ -31,8 +31,8 @@ namespace MiniCAD
     class MLineEditTool : public ITool
     {
     public:
-        MLineEditTool()  { LOG_DEBUG("[MLineEditTool] C 十字 | T T形 | R 拐角 | O 顶点断开 | M 顶点结合 | 右键/ESC 退出"); }
-        ~MLineEditTool() { LOG_DEBUG("[MLineEditTool] 退出"); }
+        MLineEditTool()  { LOG_DEBUG("[MLineEditTool] C cross | T tee | R corner | O cut vertex | M weld vertex | right-click/ESC exits"); }
+        ~MLineEditTool() { LOG_DEBUG("[MLineEditTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -59,14 +59,14 @@ namespace MiniCAD
             {
                 if (!m_hasKind)
                 {
-                    LOG_WARN("[MLineEditTool] 请先选择编辑方式（C / T / R / O / M）");
+                    LOG_WARN("[MLineEditTool] choose an edit mode first (C / T / R / O / M)");
                     return true;
                 }
                 const Math::Point3 p = m_ctx->viewport.GetCamera().ScreenToWorld(e.MouseX, e.MouseY);
                 MLineEntity* ml = HitMLine(e);
                 if (!ml)
                 {
-                    LOG_WARN("[MLineEditTool] 请点选多线");
+                    LOG_WARN("[MLineEditTool] pick a multiline");
                     return true;
                 }
 
@@ -83,7 +83,7 @@ namespace MiniCAD
                 }
                 if (ml->GetID() == m_firstId)
                 {
-                    LOG_WARN("[MLineEditTool] 第二条多线不能与第一条相同");
+                    LOG_WARN("[MLineEditTool] the second multiline must differ from the first");
                     return true;
                 }
                 if (MLineEntity* first = FindMLine(m_firstId))
@@ -285,7 +285,7 @@ namespace MiniCAD
         void Submit(const char* name, std::vector<GeometryEditCommand::Item> items)
         {
             m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(name, std::move(items)), m_ctx->scene);
-            LOG_DEBUG("[MLineEditTool] %s 完成", name);
+            LOG_DEBUG("[MLineEditTool] %s done", name);
         }
         static GeometryEditCommand::Item Replace(const MLineEntity& src, std::unique_ptr<Entity> after)
         {
@@ -314,7 +314,7 @@ namespace MiniCAD
             const MLineSplit sp = MLineEdit::SplitAtVertex(path, idx, ml.IsClosed());
             if (!sp.Valid)
             {
-                LOG_WARN("[MLineEditTool] 端点处无法断开，请点选中间的顶点");
+                LOG_WARN("[MLineEditTool] cannot cut at an end point, pick an inner vertex");
                 return;
             }
             std::vector<GeometryEditCommand::Item> items;
@@ -331,7 +331,7 @@ namespace MiniCAD
             const Path pb = b.ComputeGeometry().Path;
             if (a.IsClosed() || b.IsClosed())
             {
-                LOG_WARN("[MLineEditTool] %s 只支持开放多线（封闭多线可先用 O 顶点断开）", KindName(m_kind));
+                LOG_WARN("[MLineEditTool] %s only supports open multilines (cut a closed one with O first)", KindName(m_kind));
                 return;
             }
 
@@ -349,7 +349,7 @@ namespace MiniCAD
             const auto cross = MLineEdit::Intersect(pa, pb);
             if (!cross.Valid)
             {
-                LOG_WARN("[MLineEditTool] 两条多线的中心线不相交");
+                LOG_WARN("[MLineEditTool] the multiline center lines do not intersect");
                 return;
             }
             const double la = Length(pa);
@@ -365,7 +365,7 @@ namespace MiniCAD
                 std::vector<GeometryEditCommand::Item> items;
                 Path head = SubPath(pa, 0.0, lo);
                 Path tail = SubPath(pa, hi, la);
-                if (head.empty() && tail.empty()) { LOG_WARN("[MLineEditTool] 断开后没有剩余部分"); return; }
+                if (head.empty() && tail.empty()) { LOG_WARN("[MLineEditTool] nothing left after the cut"); return; }
                 if (!head.empty())
                 {
                     items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(head), false)));
@@ -385,7 +385,7 @@ namespace MiniCAD
                 CoveredSpan(pa, sa, b, reach, lo, hi);
                 // 剪到横线近侧的元素线：保留起点一侧时剪到 lo，保留终点一侧时从 hi 开始
                 Path kept = keepHeadA ? SubPath(pa, 0.0, lo) : SubPath(pa, hi, la);
-                if (kept.empty()) { LOG_WARN("[MLineEditTool] 剪切后没有剩余部分"); return; }
+                if (kept.empty()) { LOG_WARN("[MLineEditTool] nothing left after cutting"); return; }
                 std::vector<GeometryEditCommand::Item> items;
                 items.push_back(Replace(a, MakeLike(a, a.GetID(), std::move(kept), false)));
                 Submit(N_("T形相交"), std::move(items));
@@ -396,7 +396,7 @@ namespace MiniCAD
             const bool keepHeadB = Project(pb, pickB) < sb;
             Path partA = keepHeadA ? SubPath(pa, 0.0, sa) : SubPath(pa, sa, la);
             Path partB = keepHeadB ? SubPath(pb, 0.0, sb) : SubPath(pb, sb, Length(pb));
-            if (partA.empty() || partB.empty() || la < eps) { LOG_WARN("[MLineEditTool] 交点在端点上，无法结合"); return; }
+            if (partA.empty() || partB.empty() || la < eps) { LOG_WARN("[MLineEditTool] the intersection is at an end point, cannot weld"); return; }
             if (!keepHeadA) std::reverse(partA.begin(), partA.end());
             if (keepHeadB)  std::reverse(partB.begin(), partB.end());
             Path corner = partA;

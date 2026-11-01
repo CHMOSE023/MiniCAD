@@ -370,7 +370,7 @@ namespace MiniGUI
             return nullptr;
         }
         const std::string& type = desc["type"].AsString();
-        const std::string  where = st.path + "（" + (type.empty() ? std::string("?") : type) + "）";
+        const std::string  where = TrF("{0}（{1}）", st.path, type.empty() ? std::string("?") : type);
 
         for (const auto& [key, value] : desc.GetObject())
         {

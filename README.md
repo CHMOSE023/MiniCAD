@@ -29,9 +29,9 @@
   <a href="https://github.com/CHMOSE023/MiniCAD/stargazers"><img src="https://img.shields.io/github/stars/CHMOSE023/MiniCAD?style=flat" alt="Stars" /></a>
 </p>
 
-![MiniCAD](docs/images/screenshot.jpg)
+![MiniCAD](docs/images/screenshot-en.jpg)
 
-> The user interface is currently in Simplified Chinese; an English UI is planned (see [docs/I18n/PLAN.md](docs/I18n/PLAN.md)).
+> The interface is available in English and Simplified Chinese: choose it under Settings (the gear at the top right) > Language, or start with `--lang en`. By default it follows the system language.
 
 ## Building on Windows
 

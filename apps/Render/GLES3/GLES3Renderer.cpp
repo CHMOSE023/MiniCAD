@@ -133,7 +133,7 @@ namespace MiniCAD
             {
                 char log[1024] = {};
                 glGetShaderInfoLog(s, sizeof(log), nullptr, log);
-                LOG_ERROR("GLES3Renderer: 着色器编译失败：%s", log);
+                LOG_ERROR_TR("GLES3Renderer: 着色器编译失败：{0}", log);
             }
             return s;
         }
@@ -154,7 +154,7 @@ namespace MiniCAD
             {
                 char log[1024] = {};
                 glGetProgramInfoLog(p, sizeof(log), nullptr, log);
-                LOG_ERROR("GLES3Renderer: 着色器链接失败：%s", log);
+                LOG_ERROR_TR("GLES3Renderer: 着色器链接失败：{0}", log);
             }
             return p;
         }

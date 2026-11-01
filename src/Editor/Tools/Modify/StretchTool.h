@@ -27,8 +27,8 @@ namespace MiniCAD
     class StretchTool : public ITool
     {
     public:
-        StretchTool()  { LOG_INFO("[StretchTool] 左键指定交叉窗口的第一个角点"); }
-        ~StretchTool() { LOG_DEBUG("[StretchTool] 退出"); }
+        StretchTool()  { LOG_INFO("[StretchTool] click first corner of the crossing window"); }
+        ~StretchTool() { LOG_DEBUG("[StretchTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -60,7 +60,7 @@ namespace MiniCAD
                     CollectAffected();
                     if (m_affected.empty())
                     {
-                        LOG_WARN("[StretchTool] 窗口内没有可拉伸的定义点，请重新指定窗口");
+                        LOG_WARN("[StretchTool] no stretchable points in the window, specify it again");
                         m_ctx->overlay.Clear();
                         m_phase = Phase::Corner1;
                         return true;
@@ -217,10 +217,10 @@ namespace MiniCAD
             {
                 const size_t n = items.size();
                 m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("拉伸"), std::move(items)), m_ctx->scene);
-                LOG_DEBUG("[StretchTool] 拉伸 %zu 个对象，位移 (%.3f, %.3f)", n, dx, dy);
+                LOG_DEBUG("[StretchTool] stretched %zu objects, displacement (%.3f, %.3f)", n, dx, dy);
             }
             else
-                LOG_WARN("[StretchTool] 位移为零，没有对象被拉伸");
+                LOG_WARN("[StretchTool] zero displacement, nothing stretched");
 
             m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();

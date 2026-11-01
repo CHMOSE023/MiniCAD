@@ -28,7 +28,7 @@ namespace MiniCAD::Nodes
     {
         if (m_byId.count(info.Id))
         {
-            LOG_WARN("节点类型重复注册：%s", info.Id.c_str());
+            LOG_WARN_TR("节点类型重复注册：{0}", info.Id.c_str());
             return;
         }
         // 输入端口的内联值转换为端口类型，保证编辑器与存档里的值类型一致

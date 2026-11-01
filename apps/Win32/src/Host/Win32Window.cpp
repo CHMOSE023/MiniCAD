@@ -249,7 +249,7 @@ namespace MiniCAD
         if (m_uiWatch == INVALID_HANDLE_VALUE)
         {
             m_uiWatch = nullptr;
-            LOG_WARN("无法监视界面描述文件所在目录，修改后请按 F5 重新加载");
+            LOG_WARN_TR("无法监视界面描述文件所在目录，修改后请按 F5 重新加载");
         }
     }
 

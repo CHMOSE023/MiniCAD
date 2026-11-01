@@ -343,8 +343,8 @@ namespace MiniCAD::Nodes
     {
         RegisterPrimitives(r);   // 拉伸、旋转、放样等形体在 BuiltinFormNodes.cpp
         RegisterBooleans(r);
-        RegisterEdgeOp(r, "solid.fillet", NN_("圆角"), NN_("半径"), 1.0, false, "fillet 倒圆 圆角");
-        RegisterEdgeOp(r, "solid.chamfer", NN_("倒角"), NN_("距离"), 1.0, true, "chamfer 斜角");
+        RegisterEdgeOp(r, "solid.fillet", NN_("圆角"), NN_("半径"), 1.0, false, "fillet 倒圆 圆角");    // i18n: 搜索关键字
+        RegisterEdgeOp(r, "solid.chamfer", NN_("倒角"), NN_("距离"), 1.0, true, "chamfer 斜角");      // i18n: 搜索关键字
         RegisterAnalysis(r);
     }
 }

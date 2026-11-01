@@ -383,7 +383,7 @@ namespace MiniCAD::Nodes
             case Form::Revolve:
                 t.Id          = isVoid ? "void.revolve" : "solid.revolve";
                 t.Name        = isVoid ? NN_("空心旋转") : NC_("形体", "旋转");   // 与变换的“旋转”（Rotate）不同义
-                t.NameContext = isVoid ? "" : "形体";
+                t.NameContext = isVoid ? "" : "形体";    // i18n: 上下文
                 t.Description = NN_("闭合轮廓绕轴从起始角度旋转到结束角度（度，范围 360 为整圈）；轴不能穿过轮廓") + voidTip;
                 t.Keywords    = isVoid ? "void revolve 空心旋转" : "旋转成体 revolve 回转";
                 t.Inputs      = { In(NN_("轮廓"), DataType::Curve), In(NN_("轴点"), DataType::Vector, Vec(0, 0, 0)), In(NN_("轴方向"), DataType::Vector, Vec(0, 1, 0)),

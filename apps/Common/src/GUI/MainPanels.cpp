@@ -524,7 +524,7 @@ namespace MiniCAD
         // ── 当前设置（新建对象使用）─────────────────────────────
         Expander* current = group(N_("当前（新建对象）"));
         auto* layer = grid->AddProperty<ComboBox>(current, std::string());
-        rowName(layer, NC_("特性面板", "图层"), "特性面板");      // 单数（面板标题"图层"是复数）
+        rowName(layer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文      // 单数（面板标题"图层"是复数）
         paintLayers(layer);
         P.bindings.BindChoice(layer,
             [doc]() -> std::optional<int>
@@ -623,7 +623,7 @@ namespace MiniCAD
             return n == 0 ? Tr("未选择") : TrF("{0} 个对象", n);
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, std::string());
-        rowName(selLayer, NC_("特性面板", "图层"), "特性面板");
+        rowName(selLayer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文
         selLayer->SetPlaceholder("—");
         paintLayers(selLayer);
         P.bindings.BindChoice(selLayer,
@@ -876,7 +876,7 @@ namespace MiniCAD
         }
         if (!ok)
         {
-            LOG_ERROR("界面描述：%s", m_layout->GetError().c_str());
+            LOG_ERROR_TR("界面描述：{0}", m_layout->GetError().c_str());
             if (firstLoad)
                 m_layout->ApplyText(m_uiHost, kFallbackLayout);     // 第一次就失败：至少显示绘图区和状态栏
             m_uiStatus->SetText(TrF("{0}（保留当前界面）", m_layout->GetError()));
@@ -885,7 +885,7 @@ namespace MiniCAD
         else
         {
             for (const std::string& w : m_layout->GetWarnings())
-                LOG_WARN("界面描述：%s", w.c_str());
+                LOG_WARN_TR("界面描述：{0}", w.c_str());
             // 界面描述文件正常时状态栏不显示它（右侧是发布版本），有警告时才显示
             const size_t n = m_layout->GetWarnings().size();
             std::string text;
@@ -894,7 +894,7 @@ namespace MiniCAD
             m_uiStatus->SetText(text);
             m_uiStatus->SetColor(n > 0 ? Theme::Danger : Theme::TextDim);
             m_uiStatus->SetTooltip(m_uiPath);
-            LOG_INFO("界面描述已加载：%s（%zu 条警告）", m_uiPath.c_str(), n);
+            LOG_INFO_TR("界面描述已加载：{0}（{1} 条警告）", m_uiPath.c_str(), n);
         }
 
         // 标题栏是重新生成的：恢复标题和激活状态
@@ -1015,7 +1015,7 @@ namespace MiniCAD
         JsonError err;
         if (!ParseJson(text, saved, err) || !saved["dock"].IsObject())
         {
-            LOG_WARN("用户布局文件无法解析，使用默认布局：%s", err.ToString().c_str());
+            LOG_WARN_TR("用户布局文件无法解析，使用默认布局：{0}", err.ToString().c_str());
             return;
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
@@ -1024,7 +1024,7 @@ namespace MiniCAD
         // 布局格式 2：绘图区铺满窗口、停靠区浮在上面、命令行不在停靠区里。更早保存的停靠布局不再适用
         if (saved["version"].AsNumber(1) < kUserLayoutVersion)
         {
-            LOG_INFO("用户布局是旧版界面保存的，使用默认布局");
+            LOG_INFO_TR("用户布局是旧版界面保存的，使用默认布局");
             return;
         }
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
@@ -1034,7 +1034,7 @@ namespace MiniCAD
             const auto& list = known.GetArray();
             if (std::none_of(list.begin(), list.end(), [&id](const JsonValue& v) { return v.AsString() == id; }))
             {
-                LOG_INFO("界面新增了面板 %s，使用默认布局", id.c_str());
+                LOG_INFO_TR("界面新增了面板 {0}，使用默认布局", id.c_str());
                 return;
             }
         }
@@ -1044,12 +1044,12 @@ namespace MiniCAD
         // 文档区必须在布局里；文件损坏或界面描述换了面板时回到默认布局
         if (!dock->LoadLayout(saved["dock"], &warnings) || !dock->IsPanelVisible("documents"))
         {
-            LOG_WARN("用户布局与当前界面不符，使用默认布局");
+            LOG_WARN_TR("用户布局与当前界面不符，使用默认布局");
             dock->LoadLayout(defaults);
             return;
         }
         for (const std::string& w : warnings)
-            LOG_WARN("用户布局：%s", w.c_str());
+            LOG_WARN_TR("用户布局：{0}", w.c_str());
     }
 
     void MainFrame::SetViewCubeVisible(bool visible)
@@ -1102,7 +1102,7 @@ namespace MiniCAD
         if (!out)
         {
             const std::u8string u8 = path.u8string();
-            LOG_WARN("无法保存用户布局：%s", std::string(u8.begin(), u8.end()).c_str());
+            LOG_WARN_TR("无法保存用户布局：{0}", std::string(u8.begin(), u8.end()).c_str());
         }
     }
 

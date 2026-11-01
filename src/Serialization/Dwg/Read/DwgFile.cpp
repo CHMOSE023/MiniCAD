@@ -3,6 +3,7 @@
 #include "Dwg/Read/DwgDecompress.h"
 #include <algorithm>
 #include <cstring>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgRead
 {
@@ -85,7 +86,7 @@ namespace MiniDWG::DwgRead
         // RS：CRC，之后是结束哨兵
         pos += 2;
         if (pos + 16 > m_data.size() || std::memcmp(m_data.data() + pos, kEndSentinelAC15, 16) != 0)
-            Warn(notify, "DWG 文件头的结束哨兵不正确");
+            Warn(notify, Tr("DWG 文件头的结束哨兵不正确"));
 
         m_codePage = Codec::CodePageFromDwgIndex(m_codePageIndex);
         if (m_codePage == Codec::CodePage::Unknown || !Codec::IsSupported(m_codePage))
@@ -120,7 +121,7 @@ namespace MiniDWG::DwgRead
         }
         const std::span<const std::uint8_t> h(header, sizeof(header));
         if (std::memcmp(header, "AcFssFcAJMB\0", 12) != 0)
-            Warn(notify, "DWG 文件头校验失败（AcFssFcAJMB）");
+            Warn(notify, TrF("DWG 文件头校验失败（{0}）", "AcFssFcAJMB"));
 
         const std::uint32_t sectionMapId = Le<std::uint32_t>(h, 0x5C);
         const std::uint64_t pageMapAddress = Le<std::uint64_t>(h, 0x54) + 0x100;

@@ -172,7 +172,7 @@ namespace MiniCAD
     EM_JS(void, MiniCADWeb_Download, (const char* pathPtr), {
         const path = UTF8ToString(pathPtr);
         let data;
-        try { data = FS.readFile(path); } catch (e) { console.error("MiniCAD: 找不到要下载的文件 " + path); return; }
+        try { data = FS.readFile(path); } catch (e) { console.error("MiniCAD: file to download not found " + path); return; }
         const blob = new Blob([data], { type: "application/octet-stream" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -304,7 +304,7 @@ namespace MiniCAD
             return false;
         if (MiniCADWeb_PreferWebGL())
         {
-            LOG_INFO("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
+            LOG_INFO_TR("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
             return InitializeWebGL();
         }
 
@@ -321,7 +321,7 @@ namespace MiniCAD
                 }
                 else
                 {
-                    LOG_INFO("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
+                    LOG_INFO_TR("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
                     ok = InitializeWebGL();
                 }
                 if (!ok)
@@ -342,7 +342,7 @@ namespace MiniCAD
 
     bool WebApp::OnGraphicsReady()
     {
-        LOG_INFO("MiniCAD 网页版：图形接口 %s", m_graphics->GetName());
+        LOG_INFO_TR("MiniCAD 网页版：图形接口 {0}", m_graphics->GetName());
         // 异步等待期间画布尺寸可能变了：按当前尺寸
         m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
         m_viewportRT = m_graphics->CreateRenderTarget();
@@ -365,7 +365,7 @@ namespace MiniCAD
 
     void WebApp::ReportFailure(const char* what)
     {
-        std::printf("MiniCAD：%s\n", what);
+        std::printf("MiniCAD: %s\n", what);
         MiniCADWeb_ReportFailure(what);
     }
 
@@ -432,7 +432,7 @@ namespace MiniCAD
     void WebApp::Quit()
     {
         // 网页不能自己关闭标签页：未保存的修改已经处理完，什么也不做
-        LOG_INFO("MiniCAD 网页版：关闭浏览器标签页即可退出");
+        LOG_INFO_TR("MiniCAD 网页版：关闭浏览器标签页即可退出");
     }
 
     bool WebApp::OpenUrl(const std::string& url)

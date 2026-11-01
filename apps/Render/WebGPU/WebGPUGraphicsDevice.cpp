@@ -34,9 +34,9 @@ namespace MiniCAD
             WGPUInstance                            instance = nullptr;
             WGPUAdapter                             adapter  = nullptr;
 
-            void Fail(const char* what, WGPUStringView message)
+            void Fail(const std::string& what, WGPUStringView message)
             {
-                LOG_WARN("WebGPU：%s（%s）", what, ToString(message).c_str());
+                LOG_WARN_TR("WebGPU：{0}（{1}）", what, ToString(message).c_str());
                 if (adapter)  wgpuAdapterRelease(adapter);
                 if (instance) wgpuInstanceRelease(instance);
                 adapter  = nullptr;
@@ -47,14 +47,14 @@ namespace MiniCAD
 
         void OnUncapturedError(WGPUDevice const*, WGPUErrorType type, WGPUStringView message, void*, void*)
         {
-            LOG_ERROR("WebGPU 错误（类型 %d）：%s", static_cast<int>(type), ToString(message).c_str());
+            LOG_ERROR_TR("WebGPU 错误（类型 {0}）：{1}", static_cast<int>(type), ToString(message).c_str());
         }
 
         void OnDeviceLost(WGPUDevice const*, WGPUDeviceLostReason reason, WGPUStringView message, void*, void*)
         {
             // 设备丢失后不恢复（与原型相同），只记日志；正常销毁不算
             if (reason != WGPUDeviceLostReason_Destroyed && reason != WGPUDeviceLostReason_CallbackCancelled)
-                LOG_ERROR("WebGPU 设备丢失（原因 %d）：%s", static_cast<int>(reason), ToString(message).c_str());
+                LOG_ERROR_TR("WebGPU 设备丢失（原因 {0}）：{1}", static_cast<int>(reason), ToString(message).c_str());
         }
 
         void OnDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata, void*)
@@ -62,7 +62,7 @@ namespace MiniCAD
             std::unique_ptr<PendingCreate> p(static_cast<PendingCreate*>(userdata));
             if (status != WGPURequestDeviceStatus_Success || !device)
             {
-                p->Fail("取不到设备", message);
+                p->Fail(Tr("取不到设备"), message);
                 return;
             }
             auto graphics = std::make_unique<WebGPUGraphicsDevice>(p->instance, p->adapter, device);   // 接手三者的引用
@@ -70,7 +70,7 @@ namespace MiniCAD
             p->adapter  = nullptr;
             if (!graphics->Initialize(NativeWindow{ const_cast<char*>(p->selector.c_str()) }, p->width, p->height))
             {
-                LOG_WARN("WebGPU：画布表面创建失败");
+                LOG_WARN_TR("WebGPU：画布表面创建失败");
                 graphics.reset();
             }
             p->done(std::move(graphics));
@@ -81,7 +81,7 @@ namespace MiniCAD
             std::unique_ptr<PendingCreate> p(static_cast<PendingCreate*>(userdata));
             if (status != WGPURequestAdapterStatus_Success || !adapter)
             {
-                p->Fail("取不到适配器", message);
+                p->Fail(Tr("取不到适配器"), message);
                 return;
             }
             p->adapter = adapter;
@@ -119,7 +119,7 @@ namespace MiniCAD
     {
         if (!IsAvailable())
         {
-            LOG_INFO("WebGPU：浏览器没有 navigator.gpu");
+            LOG_INFO_TR("WebGPU：浏览器没有 navigator.gpu");
             done(nullptr);
             return;
         }
@@ -131,7 +131,7 @@ namespace MiniCAD
         p->instance = wgpuCreateInstance(nullptr);
         if (!p->instance)
         {
-            p->Fail("创建实例失败", Str(""));
+            p->Fail(Tr("创建实例失败"), Str(""));
             return;
         }
 

@@ -719,7 +719,7 @@ namespace MiniCAD
         for (int i = 1; i <= 2; ++i)
         {
             DrawingLayout sheet;
-            sheet.Name  = "布局" + std::to_string(i);   // i18n: 数据（同 AutoCAD 中文版的布局名）
+            sheet.Name  = TrF("布局{0}", i);   // 同 AutoCAD：按当前语言起名（英文 Layout1），建好后是写进图纸的数据，不再翻译
             sheet.Model = false;
             sheet.Order = i;
             layouts.push_back(std::move(sheet));

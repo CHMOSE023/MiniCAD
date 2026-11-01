@@ -15,12 +15,12 @@ namespace MiniCAD
     public:
         PointTool()
         {
-            LOG_DEBUG("[PointTool] 左键放点 | 右键退出");
+            LOG_DEBUG("[PointTool] click to place points | right-click exits");
         }
 
         ~PointTool()
         {
-            LOG_DEBUG("退出点绘制工具");
+            LOG_DEBUG("Exit point tool");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -88,7 +88,7 @@ namespace MiniCAD
             auto cmd = std::make_unique<AddEntityCommand>(std::move(pointEntity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("点 Id %d  (%.3f, %.3f, %.3f)", static_cast<int>(id), p.x, p.y, p.z);
+            LOG_DEBUG("Point Id %d (%.3f, %.3f, %.3f)", static_cast<int>(id), p.x, p.y, p.z);
         }
 
     private:

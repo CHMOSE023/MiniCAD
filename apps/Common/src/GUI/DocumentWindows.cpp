@@ -207,7 +207,7 @@ namespace MiniCAD
         const bool ok    = w.layout->ApplyFile(w.uiHost, m_uiPath);
         if ((!ok && first) || (ok && !w.layout->GetTitleBar()))
         {
-            LOG_WARN("文档窗口：界面描述里没有可用的 layouts.document，使用最小布局");
+            LOG_WARN_TR("文档窗口：界面描述里没有可用的 layouts.document，使用最小布局");
             w.layout->ApplyText(w.uiHost, kFallbackDocumentLayout);
         }
         if (ok || first)
@@ -344,7 +344,7 @@ namespace MiniCAD
         w->grab   = windowPos - origin;     // 标签拖出后继续拖：光标保持在标题栏的这个位置
         w->size   = size;
         if (!m_platform->LoadUiFonts(ui.GetTextSystem()))
-            LOG_WARN("文档窗口：没有找到界面字体");
+            LOG_WARN_TR("文档窗口：没有找到界面字体");
         ui.SetTheme(m_ui->GetTheme());
         // 主窗口开着对话框时整个窗口（视口、面板、功能区…）不接受指针，按下只把主窗口置前；按键与文字转给对话框
         ui.SetModalOwner(m_ui.get(), [this] { m_platform->ActivateMainWindow(); });

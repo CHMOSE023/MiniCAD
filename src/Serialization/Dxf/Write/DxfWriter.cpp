@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG
 {
@@ -140,7 +141,7 @@ namespace MiniDWG::DxfWrite
         if (m_version < CadVersion::AC1015)
         {
             Notify(NotificationType::Info,
-                   std::string(VersionDisplayName(m_version)) + " DXF 不支持写出，改写为 R2000（AC1015）");
+                   TrF("{0} DXF 不支持写出，改写为 {1}（{2}）", VersionDisplayName(m_version), "R2000", "AC1015"));
             m_version = CadVersion::AC1015;
         }
 
@@ -159,7 +160,7 @@ namespace MiniDWG::DxfWrite
                 || m_codePage == Codec::CodePage::Utf8)
             {
                 if (!m_codePageName.empty() && !EqualsIgnoreCase(m_codePageName, "ANSI_1252"))
-                    Notify(NotificationType::Warning, "不支持的代码页 " + m_codePageName + "，按 ANSI_1252 写出");
+                    Notify(NotificationType::Warning, TrF("不支持的代码页 {0}，按 {1} 写出", m_codePageName, "ANSI_1252"));
                 m_codePage = Codec::CodePage::Windows1252;
                 m_codePageName = "ANSI_1252";
             }
@@ -174,7 +175,7 @@ namespace MiniDWG::DxfWrite
 
         if (m_db.BlockRecords() == nullptr || m_db.ModelSpace() == nullptr || m_db.PaperSpace() == nullptr
             || m_db.RootDictionary() == nullptr)
-            Notify(NotificationType::Warning, "数据库缺少符号表、模型空间/图纸空间或根字典，写出的文件可能无法打开（先调用 CreateDefaults）");
+            Notify(NotificationType::Warning, Tr("数据库缺少符号表、模型空间/图纸空间或根字典，写出的文件可能无法打开（先调用 CreateDefaults）"));
 
         // 缺少的 BLOCK / ENDBLK
         if (const CadTable* records = m_db.BlockRecords())
@@ -410,7 +411,7 @@ namespace MiniDWG::DxfWrite
             const auto* appId = m_db.FindAs<AppId>(data.AppIdHandle);
             if (appId == nullptr || appId->Name.empty())
             {
-                NotifyOnce("xdata-app", NotificationType::Warning, "扩展数据的应用程序（APPID）不存在，已跳过");
+                NotifyOnce("xdata-app", NotificationType::Warning, TrF("扩展数据的应用程序（{0}）不存在，已跳过", "APPID"));
                 continue;
             }
             WriteString(1001, appId->Name);
@@ -419,7 +420,7 @@ namespace MiniDWG::DxfWrite
                 // 不跟在 X 之后的单独 Y/Z 分量（R12 文件中偶见）：R13 起 AutoCAD 拒绝整个对象，不写
                 if (record.Code >= 1020 && record.Code <= 1033)
                 {
-                    NotifyOnce("xdata:lone", NotificationType::Info, "扩展数据中单独的 Y/Z 坐标分量（1020～1033）未写出");
+                    NotifyOnce("xdata:lone", NotificationType::Info, Tr("扩展数据中单独的 Y/Z 坐标分量（1020～1033）未写出"));
                     continue;
                 }
                 // 按组码的类型写出（二进制 DXF 中值的长度由组码决定，不能按存储的类型写）
@@ -577,7 +578,7 @@ namespace MiniDWG::DxfWrite
     {
         if (table == nullptr)
         {
-            NotifyOnce("table:" + std::string(name), NotificationType::Warning, "数据库中没有 " + std::string(name) + " 表");
+            NotifyOnce("table:" + std::string(name), NotificationType::Warning, TrF("数据库中没有 {0} 表", name));
             return;
         }
 
@@ -589,7 +590,7 @@ namespace MiniDWG::DxfWrite
             if (entry == nullptr || entry->GetDxfName() != table->GetEntryDxfName())
             {
                 NotifyOnce("entry:" + std::to_string(h), NotificationType::Warning,
-                           std::string(name) + " 表中的句柄 " + DxfValue(HandleValue{ h }).AsString() + " 不是有效的表项，已跳过");
+                           TrF("{0} 表中的句柄 {1} 不是有效的表项，已跳过", name, DxfValue(HandleValue{ h }).AsString()));
                 continue;
             }
             entries.push_back(entry);
@@ -1058,7 +1059,7 @@ namespace MiniDWG::DxfWrite
                 ++orphans;
         }
         if (orphans > 0)
-            Notify(NotificationType::Info, std::to_string(orphans) + " 个对象不在根字典之下（也没有被引用），未写出");
+            Notify(NotificationType::Info, TrF("{0} 个对象不在根字典之下（也没有被引用），未写出", orphans));
     }
 
     void Writer::WriteObject(const CadObject& object)
@@ -1102,7 +1103,7 @@ namespace MiniDWG::DxfWrite
         }
         else
             NotifyOnce("object:" + std::string(object.GetDxfName()), NotificationType::Warning,
-                       "未实现写出的对象 " + std::string(object.GetDxfName()));
+                       TrF("未实现写出的对象 {0}", object.GetDxfName()));
 
         WriteExtendedData(object);
     }

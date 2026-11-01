@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include "MiniI18n/I18n.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -49,9 +50,9 @@ namespace MiniGUI
     {
         if (FAILED(hr))
         {
-            char buffer[160] = {};
-            std::snprintf(buffer, sizeof(buffer), "D3D12: %s 失败 (HRESULT 0x%08X)", what, static_cast<unsigned int>(hr));
-            throw std::runtime_error(buffer);
+            char code[16] = {};
+            std::snprintf(code, sizeof(code), "0x%08X", static_cast<unsigned int>(hr));
+            throw std::runtime_error(TrF("D3D12：{0} 失败（HRESULT {1}）", what, code));
         }
     }
 
@@ -169,7 +170,7 @@ namespace MiniGUI
                         adapter.Reset();
             }
             if (!adapter)
-                throw std::runtime_error("D3D12: 没有支持 D3D12 的显卡");
+                throw std::runtime_error(Tr("D3D12：没有支持 D3D12 的显卡"));
         }
 
         D3D12ThrowIfFailed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(m_device.GetAddressOf())), "D3D12CreateDevice");
@@ -184,7 +185,7 @@ namespace MiniGUI
             ComPtr<ID3D12InfoQueue1> info;
             DWORD cookie = 0;
             if (SUCCEEDED(m_device.As(&info)) && SUCCEEDED(info->RegisterMessageCallback(OnDebugMessage, D3D12_MESSAGE_CALLBACK_FLAG_NONE, nullptr, &cookie)))
-                std::fprintf(stderr, "D3D12 调试层已打开：警告与错误输出到 stderr（以 [D3D12] 开头）\n");
+                std::fprintf(stderr, "D3D12 debug layer on: warnings and errors go to stderr (prefixed [D3D12])\n");
         }
     }
 
@@ -228,7 +229,7 @@ namespace MiniGUI
         }
         else
         {
-            std::fprintf(stderr, "D3D12: 命令列表关闭失败 (HRESULT 0x%08X)，本次命令丢弃\n", static_cast<unsigned int>(hr));
+            std::fprintf(stderr, "D3D12: closing the command list failed (HRESULT 0x%08X), commands dropped\n", static_cast<unsigned int>(hr));
         }
         const uint64_t value = ++m_lastSignaled;
         m_queue->Signal(m_fence.Get(), value);
@@ -365,10 +366,10 @@ namespace MiniGUI
         desc.SampleDesc.Count = 1;
         desc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         D3D12ThrowIfFailed(m_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                             nullptr, IID_PPV_ARGS(page.resource.GetAddressOf())), "CreateCommittedResource(上传页)");
+                                                             nullptr, IID_PPV_ARGS(page.resource.GetAddressOf())), "CreateCommittedResource(upload page)");
         void* cpu = nullptr;
         const D3D12_RANGE noRead = { 0, 0 };
-        D3D12ThrowIfFailed(page.resource->Map(0, &noRead, &cpu), "Map(上传页)");
+        D3D12ThrowIfFailed(page.resource->Map(0, &noRead, &cpu), "Map(upload page)");
         page.cpu       = static_cast<uint8_t*>(cpu);
         page.gpu       = page.resource->GetGPUVirtualAddress();
         page.size      = size;
@@ -594,7 +595,7 @@ namespace MiniGUI
         ComPtr<ID3D12DescriptorHeap> cpu, gpu;
         D3D12ThrowIfFailed(m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(cpu.GetAddressOf())), "CreateDescriptorHeap(SRV)");
         desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        D3D12ThrowIfFailed(m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(gpu.GetAddressOf())), "CreateDescriptorHeap(SRV, 着色器可见)");
+        D3D12ThrowIfFailed(m_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(gpu.GetAddressOf())), "CreateDescriptorHeap(SRV, shader visible)");
 
         if (m_srvCpu && m_srvNext > 0)
         {
@@ -686,7 +687,7 @@ namespace MiniGUI
                                       blob.GetAddressOf(), errors.GetAddressOf());
         if (FAILED(hr))
         {
-            std::string msg = std::string("D3D12: 着色器编译失败 ") + entry + " (" + target + ")";
+            std::string msg = TrF("D3D12：着色器编译失败 {0}（{1}）", entry, target);
             if (errors)
                 msg += std::string("\n") + static_cast<const char*>(errors->GetBufferPointer());
             throw std::runtime_error(msg);

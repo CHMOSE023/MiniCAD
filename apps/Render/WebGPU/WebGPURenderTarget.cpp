@@ -44,9 +44,9 @@ namespace MiniCAD
         // 颜色：渲染附件 + 界面采样 + 缓存层复制（DrawLayer 的源与目标）
         WGPUTexture color = CreateTexture(m_device, width, height, kColorFormat,
             WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst,
-            "MiniCAD 视口颜色");
+            "MiniCAD viewport color");
         WGPUTextureView colorView = wgpuTextureCreateView(color, nullptr);
-        WGPUTexture depth = CreateTexture(m_device, width, height, kDepthFormat, WGPUTextureUsage_RenderAttachment, "MiniCAD 视口深度");
+        WGPUTexture depth = CreateTexture(m_device, width, height, kDepthFormat, WGPUTextureUsage_RenderAttachment, "MiniCAD viewport depth");
         WGPUTextureView depthView = wgpuTextureCreateView(depth, nullptr);
 
         Release();

@@ -3,6 +3,7 @@
 #include "Database/DimensionMeasurement.h"
 #include <algorithm>
 #include <cmath>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DxfWrite
 {
@@ -51,7 +52,7 @@ namespace MiniDWG::DxfWrite
         if (raw == nullptr || CanWriteRawDxf(*raw, m_version))
             return true;
         NotifyOnce("raw:" + raw->DxfName, NotificationType::Info,
-                   "未建模的 " + raw->DxfName + " 只能原样写回同一版本的 DXF，未写出");
+                   TrF("未建模的 {0} 只能原样写回同一版本的 {1}，未写出", raw->DxfName, "DXF"));
         return false;
     }
 
@@ -72,14 +73,14 @@ namespace MiniDWG::DxfWrite
         if (dynamic_cast<const Shape*>(&entity) != nullptr)
         {
             // 与 ACadSharp 默认配置一致：形的名称依赖 SHX 文件，没有建模，不写出
-            NotifyOnce("entity:SHAPE", NotificationType::Info, "SHAPE 实体未写出");
+            NotifyOnce("entity:SHAPE", NotificationType::Info, TrF("{0} 实体未写出", "SHAPE"));
             return false;
         }
         if (const auto* insert = dynamic_cast<const Insert*>(&entity);
             insert != nullptr && m_db.FindAs<BlockRecord>(insert->BlockHandle) == nullptr)
         {
             NotifyOnce("insert:" + std::to_string(entity.ObjectHandle), NotificationType::Warning,
-                       "块参照 " + DxfValue(HandleValue{ entity.ObjectHandle }).AsString() + " 引用的块不存在，未写出");
+                       TrF("块参照 {0} 引用的块不存在，未写出", DxfValue(HandleValue{ entity.ObjectHandle }).AsString()));
             return false;
         }
         return true;
@@ -99,7 +100,7 @@ namespace MiniDWG::DxfWrite
             if (m_db.FindAs<BlockRecord>(table->BlockHandle) == nullptr)
                 return;
             NotifyOnce("table-insert", NotificationType::Info,
-                       "表格（ACAD_TABLE）只能原样写回同一版本的 DXF，写为引用其匿名块的块参照");
+                       TrF("表格（{0}）只能原样写回同一版本的 {1}，写为引用其匿名块的块参照", "ACAD_TABLE", "DXF"));
             const auto insert = MakeTableInsert(*table);
             WriteEntity(*insert, owner, paperSpace);
             return;
@@ -839,7 +840,7 @@ namespace MiniDWG::DxfWrite
             if (AtLeast(CadVersion::AC1024))
                 WriteInt(280, 0);
             if (att->AttributeType != AttributeType::SingleLine)
-                NotifyOnce("attribute:multiline", NotificationType::Info, "多行属性（内嵌 MTEXT 尚未建模）按单行写出");
+                NotifyOnce("attribute:multiline", NotificationType::Info, TrF("多行属性写为单行（内嵌 {0} 未建模）", "MTEXT"));
             if (def != nullptr)
                 WriteString(3, def->Prompt);
             WriteString(2, att->Tag);

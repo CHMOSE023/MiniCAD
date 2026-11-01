@@ -35,12 +35,12 @@ namespace MiniCAD
         explicit HatchTool(HatchSettings& settings)
             : m_settings(settings)
         {
-            LOG_DEBUG("[HatchTool] 在闭合区域内部点击以填充 | S=实心 H=ANSI31 N=网格 | 右键/ESC 退出");
+            LOG_DEBUG("[HatchTool] click inside a closed area to fill | S=solid H=ANSI31 N=net | right-click/ESC exits");
         }
 
         ~HatchTool()
         {
-            LOG_DEBUG("[HatchTool] 退出");
+            LOG_DEBUG("[HatchTool] exit");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -92,7 +92,7 @@ namespace MiniCAD
         void SetPattern(const char* name)
         {
             m_settings.Pattern = name;
-            LOG_INFO("[HatchTool] 图案 = %s", name);
+            LOG_INFO("[HatchTool] pattern = %s", name);
             UpdatePreview();
         }
 
@@ -124,7 +124,7 @@ namespace MiniCAD
             HatchLoop loop;
             if (!HatchBoundary::FindEnclosingLoop(m_ctx->scene, pt, loop))
             {
-                LOG_WARN("[HatchTool] 该点未被闭合区域包围，未创建填充");
+                LOG_WARN("[HatchTool] the point is not inside a closed area, no hatch created");
                 return;
             }
 
@@ -138,7 +138,7 @@ namespace MiniCAD
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[HatchTool] 提交 Id=%d  图案=%s",
+            LOG_DEBUG("[HatchTool] commit Id=%d pattern=%s",
                    static_cast<int>(id), pattern.Name.c_str());
 
             // 刷新预览(场景已变)

@@ -26,8 +26,8 @@ namespace MiniCAD
     class ChamferTool : public ITool
     {
     public:
-        ChamferTool(double* d1, double* d2) : m_d1(d1), m_d2(d2) { LOG_INFO("[ChamferTool] 选择第一条直线 | 键入数字修改倒角距离"); }
-        ~ChamferTool() { LOG_DEBUG("[ChamferTool] 退出"); }
+        ChamferTool(double* d1, double* d2) : m_d1(d1), m_d2(d2) { LOG_INFO("[ChamferTool] select the first line | type a number to change the distance"); }
+        ~ChamferTool() { LOG_DEBUG("[ChamferTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -134,7 +134,7 @@ namespace MiniCAD
             ChamferResult r;
             if (!first || !ComputeChamfer(*first, m_firstPick, second, pick, *m_d1, *m_d2, r))
             {
-                LOG_WARN("[ChamferTool] 这两条直线之间无法倒角（平行、距离超过线的长度，或只有一个距离为 0）");
+                LOG_WARN("[ChamferTool] cannot chamfer these lines (parallel, distance longer than a line, or only one distance is 0)");
                 m_firstId = Object::InvalidID;
                 m_ctx->overlay.Clear();
                 return;
@@ -161,7 +161,7 @@ namespace MiniCAD
             }
 
             m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("倒角"), std::move(items)), m_ctx->scene);
-            LOG_DEBUG("[ChamferTool] 倒角完成，距离 %.4g, %.4g", *m_d1, *m_d2);
+            LOG_DEBUG("[ChamferTool] chamfer done, distances %.4g, %.4g", *m_d1, *m_d2);
 
             m_firstId = Object::InvalidID;              // 回到「选择第一条直线」
             m_ctx->overlay.Clear();

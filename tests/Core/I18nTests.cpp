@@ -1,9 +1,17 @@
 // 界面文字的翻译（MiniI18n，见 docs/I18n/PLAN.md）：查表、上下文、占位符、翻译文件的解析、伪语言。
 // 结束时卸下翻译表：其他测试按中文原文断言
 #include "MiniI18n/I18n.h"
+#include "Import/CadExchange.h"
+#include "Scene/Scene.h"
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -112,5 +120,29 @@ int RunI18nTests()
 
     MiniI18n::SetCatalog(nullptr);
     Check(Tr("保存(&S)") == "保存(&S)", "卸下翻译表后回到原文");
+
+    // ── 诊断信息（阶段 4）：装上英文表后 MiniDWG 的通知（打开失败的原因）是英文 ──────────
+    {
+        auto hasChinese = [](const std::string& s)
+        {
+            // UTF-8 里汉字与全角标点的首字节在 0xE3～0xEF 之间
+            return std::any_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) >= 0xE3 && static_cast<unsigned char>(c) <= 0xEF; });
+        };
+        const std::string bad = "AC1015 不是有效的图纸";
+        const std::vector<std::uint8_t> data(bad.begin(), bad.end());
+        MiniCAD::Scene zhScene, enScene;
+        std::string zh, en;
+        const bool zhFailed = !MiniCAD::ImportCad(data, zhScene, &zh);      // 先读，再拼说明（参数的求值顺序不定）
+        Check(zhFailed && hasChinese(zh), ("没有翻译表时打开失败的原因是中文：" + zh).c_str());
+
+        std::ifstream in(std::filesystem::path(MINICAD_ASSET_DIR "/i18n/en.json"), std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto english = std::make_unique<MiniI18n::Catalog>();
+        Check(english->Parse(json), "读入 assets/i18n/en.json");
+        MiniI18n::SetCatalog(std::move(english));
+        const bool enFailed = !MiniCAD::ImportCad(data, enScene, &en);
+        Check(enFailed && !en.empty() && !hasChinese(en), ("装上英文表后打开失败的原因是英文：" + en).c_str());
+        MiniI18n::SetCatalog(nullptr);
+    }
     return g_failures;
 }

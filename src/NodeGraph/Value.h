@@ -23,7 +23,7 @@ namespace MiniCAD::Nodes
     // 节点的显示文字（名称、分类、说明、端口、参数、选项、类型名）：定义处写 NN_("…") 只做标记，显示时 TrNode 按上下文"节点"翻译。
     // 单独一个上下文，因为与界面其他处同字不同义的很多（"网格"在这里是 Mesh，"旋转"是 Revolve）。
     // 节点出错 / 警告的文字不在这个上下文里，直接 Tr / TrF。
-    inline constexpr const char* kNodeTextContext = "节点";
+    inline constexpr const char* kNodeTextContext = "节点";    // i18n: 上下文
     constexpr const char* NN_(const char* msgid) { return msgid; }
     std::string TrNode(std::string_view text);   // 多行时逐行翻译（空心形体的说明另起一行）；分类按整条翻译
 

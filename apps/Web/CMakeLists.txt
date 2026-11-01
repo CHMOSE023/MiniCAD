@@ -7,6 +7,7 @@ add_library(MiniCADWebHost STATIC
     src/Host/WebHost.cpp
 )
 target_include_directories(MiniCADWebHost PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(MiniCADWebHost PRIVATE MiniI18n)     # 出错信息按界面语言
 
 set(MINICAD_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/shell/minigui_shell.html")
 

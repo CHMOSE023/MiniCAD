@@ -73,7 +73,7 @@ namespace MiniGUI
 
     EM_JS(void, MiniGUIWeb_Install, (const char* selectorPtr), {
         const canvas = document.querySelector(UTF8ToString(selectorPtr));
-        if (!canvas) { console.error("MiniGUI: 找不到画布 " + UTF8ToString(selectorPtr)); return; }
+        if (!canvas) { console.error("MiniGUI: canvas not found " + UTF8ToString(selectorPtr)); return; }
 
         // 透明 textarea：接收文字输入与输入法
         const ta = document.createElement("textarea");
@@ -206,7 +206,7 @@ namespace MiniGUI
     EM_JS(void, MiniGUIWeb_WriteClipboard, (const char* text), {
         const s = UTF8ToString(text);
         if (navigator.clipboard && navigator.clipboard.writeText)
-            navigator.clipboard.writeText(s).catch((err) => console.warn("MiniGUI: 写入剪贴板失败", err));
+            navigator.clipboard.writeText(s).catch((err) => console.warn("MiniGUI: writing to the clipboard failed", err));
     });
 
     // =========================================================

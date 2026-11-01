@@ -30,7 +30,8 @@
 </p>
 
 ![MiniCAD](docs/images/screenshot.jpg)
- 
+
+> 界面有简体中文与英文两种：在右上角"设置 > 语言"里切换，或启动时加 `--lang en`；默认跟随系统语言。
 
 ## Windows版编译
 

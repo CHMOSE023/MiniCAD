@@ -64,9 +64,9 @@ namespace MiniGUI
         rs.pStaticSamplers   = &sampler;
         rs.Flags             = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> blob, errors;
-        D3D12ThrowIfFailed(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, blob.GetAddressOf(), errors.GetAddressOf()), "SerializeRootSignature(界面)");
+        D3D12ThrowIfFailed(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, blob.GetAddressOf(), errors.GetAddressOf()), "SerializeRootSignature(UI)");
         D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
-                                                                  IID_PPV_ARGS(m_rootSignature.GetAddressOf())), "CreateRootSignature(界面)");
+                                                                  IID_PPV_ARGS(m_rootSignature.GetAddressOf())), "CreateRootSignature(UI)");
     }
 
     D3D12Backend::~D3D12Backend()
@@ -119,7 +119,7 @@ namespace MiniGUI
         pd.SampleDesc.Count      = 1;
 
         ComPtr<ID3D12PipelineState> pso;
-        D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(pso.GetAddressOf())), "CreateGraphicsPipelineState(界面)");
+        D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(pso.GetAddressOf())), "CreateGraphicsPipelineState(UI)");
         return m_pipelines.emplace(static_cast<int>(format), std::move(pso)).first->second.Get();
     }
 
@@ -156,7 +156,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > t.width || region.y + region.height > t.height)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
         m_ctx.UploadTexture(t, region.x, region.y, region.width, region.height, pixels, pitch);
@@ -276,7 +276,7 @@ namespace MiniGUI
                     auto it = m_textures.find(cmd.texture);
                     if (it == m_textures.end())
                     {
-                        assert(false && "DrawCmd 引用了不存在的纹理");
+                        assert(false && "DrawCmd references a missing texture");
                         continue;
                     }
                     D3D12Texture* t = it->second.texture;

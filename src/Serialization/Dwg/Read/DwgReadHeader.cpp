@@ -1,6 +1,7 @@
 // DWG 读取：头段（对应 ACadSharp DwgHeaderReader）。主体由 ACadSharp 源码逐行移植，变量顺序不能改
 #include "Dwg/Read/DwgReaderImpl.h"
 #include <cmath>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgRead
 {
@@ -58,7 +59,7 @@ namespace MiniDWG::DwgRead
 
         DwgBitReader m(section, version, codePage);
         if (!m.CheckSentinel(kHeaderStart) && notify)
-            notify(NotificationType::Warning, "头段的开始哨兵不正确");
+            notify(NotificationType::Warning, Tr("头段的开始哨兵不正确"));
 
         // RL：段大小；R2010/R2013 维护版本大于 3 或 R2018 起另有 4 字节
         const std::int64_t size = m.ReadRawLong();

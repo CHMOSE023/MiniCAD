@@ -220,7 +220,7 @@ namespace MiniCAD
         SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");       // 关闭按钮只发 CLOSE_REQUESTED，由 MainFrame 询问未保存的文档
         if (!SDL_Init(SDL_INIT_VIDEO))
         {
-            LOG_ERROR("SDL_Init 失败：%s", SDL_GetError());
+            LOG_ERROR_TR("SDL_Init 失败：{0}", SDL_GetError());
             return false;
         }
         m_uiEvent = SDL_RegisterEvents(1);
@@ -239,7 +239,7 @@ namespace MiniCAD
                 m_graphics = CreateGraphicsDevice(VulkanWindow(), PixelWidth(), PixelHeight(), "vulkan");
             if (!m_graphics)
             {
-                LOG_WARN("Vulkan 不可用，改用 OpenGL ES 3");
+                LOG_WARN_TR("Vulkan 不可用，改用 OpenGL ES 3");
                 SDL_DestroyWindow(m_sdl.window);
                 m_sdl.window = nullptr;
             }
@@ -255,7 +255,7 @@ namespace MiniCAD
         if (!m_graphics)
             return false;
         SDL_SetWindowMinimumSize(m_sdl.window, static_cast<int>(640 * s), static_cast<int>(420 * s));
-        LOG_INFO("图形后端：%s", m_graphics->GetName());
+        LOG_INFO_TR("图形后端：{0}", m_graphics->GetName());
 
         const int pw = PixelWidth();
         const int ph = PixelHeight();
@@ -287,9 +287,9 @@ namespace MiniCAD
         if (!m_sdl.window)
         {
             if (api == SDL_WINDOW_VULKAN)
-                LOG_WARN("创建 Vulkan 窗口失败：%s", SDL_GetError());      // 之后改用 OpenGL ES 3
+                LOG_WARN_TR("创建 Vulkan 窗口失败：{0}", SDL_GetError());      // 之后改用 OpenGL ES 3
             else
-                LOG_ERROR("创建窗口失败：%s", SDL_GetError());
+                LOG_ERROR_TR("创建窗口失败：{0}", SDL_GetError());
         }
         return m_sdl.window != nullptr;
     }
@@ -305,7 +305,7 @@ namespace MiniCAD
         m_sdl.context = SDL_GL_CreateContext(m_sdl.window);
         if (!m_sdl.context)
         {
-            LOG_ERROR("创建 OpenGL ES 3 上下文失败：%s", SDL_GetError());
+            LOG_ERROR_TR("创建 OpenGL ES 3 上下文失败：{0}", SDL_GetError());
             return false;
         }
         SDL_GL_MakeCurrent(m_sdl.window, m_sdl.context);
@@ -325,7 +325,7 @@ namespace MiniCAD
             VkSurfaceKHR s{};   // SDL_vulkan.h 自带句柄类型的定义，没有 vulkan.h 的 VK_NULL_HANDLE
             if (!SDL_Vulkan_CreateSurface(w, static_cast<VkInstance>(instance), nullptr, &s))
             {
-                LOG_WARN("SDL_Vulkan_CreateSurface 失败：%s", SDL_GetError());
+                LOG_WARN_TR("SDL_Vulkan_CreateSurface 失败：{0}", SDL_GetError());
                 return false;
             }
             *surface = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(s));
@@ -538,7 +538,7 @@ namespace MiniCAD
     // =========================================================
     void LinuxApp::ShowDialogError(const char* what)
     {
-        LOG_ERROR("文件对话框打不开：%s", what);
+        LOG_ERROR_TR("文件对话框打不开：{0}", what);
         MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("无法打开文件对话框"),
                                 std::string(what) + "\n\n" + Tr("需要 xdg-desktop-portal 或 zenity。也可以把文件拖进窗口，或在命令行上给出图纸路径。"),
                                 { Tr("确定") }, [](int) {});

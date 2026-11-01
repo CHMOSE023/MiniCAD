@@ -197,7 +197,7 @@ namespace MiniCAD
             { "solid.cylinder", "Cylinder", N_("圆柱体(&C)"),   "" },
             { "solid.sphere",   "Sphere",   N_("球体(&S)"),     "" },
             { "solid.extrude",  "Extrude",  N_("拉伸(&X)"),     "" },
-            { "solid.revolve",  "Revolve",  NC_("三维实体", "旋转(&R)"), "", "三维实体" },
+            { "solid.revolve",  "Revolve",  NC_("三维实体", "旋转(&R)"), "", "三维实体" },    // i18n: 上下文
             { "solid.sweep",    "Sweep",    N_("扫掠(&W)"),     "" },
             { "solid.filletedge",  "FilletEdge",  N_("圆角边(&F)"), "" },
             { "solid.chamferedge", "ChamferEdge", N_("倒角边(&H)"), "" },

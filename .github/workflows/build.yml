@@ -43,6 +43,10 @@ jobs:
       - name: Check translations
         run: python -X utf8 tools/i18n_extract.py --check
 
+      # 漏网的中文：没有包 Tr / N_ 的中文字面量、格式串含中文的日志（数据加注释 // i18n: 数据）
+      - name: Lint untranslated text
+        run: python -X utf8 tools/i18n_extract.py --lint
+
       # USE_WIN32=ON：窗口程序，启动时不带控制台（与 release 预设相同）
       - name: Configure
         run: cmake -S . -B out/ci -DUSE_WIN32=ON

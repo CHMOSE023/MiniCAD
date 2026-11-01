@@ -26,12 +26,12 @@ namespace MiniCAD
         MoveTool(std::vector<Object*> targets)
             : m_targets(std::move(targets))
         {
-            LOG_INFO("[MoveTool] 左键基点 | 左键目标点 | 右键/ESC 取消");
+            LOG_INFO("[MoveTool] click base point | click destination | right-click/ESC cancels");
         }
 
         ~MoveTool()
         {
-            LOG_DEBUG("[MoveTool] 退出");
+            LOG_DEBUG("[MoveTool] exit");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -48,7 +48,7 @@ namespace MiniCAD
                 {
                     m_base = pt;
                     m_hasBase = true;
-                    LOG_INFO("[MoveTool] 基点 (%.3f, %.3f)", pt.x, pt.y);
+                    LOG_INFO("[MoveTool] base point (%.3f, %.3f)", pt.x, pt.y);
                     return true;
                 }
                 else
@@ -226,7 +226,7 @@ namespace MiniCAD
 
             if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f)
             {
-                LOG_WARN("[MoveTool] 偏移量为零，忽略");
+                LOG_WARN("[MoveTool] zero displacement, ignored");
                 Cancel();
                 return;
             }
@@ -240,7 +240,7 @@ namespace MiniCAD
 
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[MoveTool] 移动 %zu 个对象  delta=(%.3f, %.3f)", ids.size(), dx, dy);
+            LOG_DEBUG("[MoveTool] moved %zu objects  delta=(%.3f, %.3f)", ids.size(), dx, dy);
 
             m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();

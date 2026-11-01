@@ -35,8 +35,8 @@ namespace MiniCAD
     class BreakTool : public ITool
     {
     public:
-        BreakTool()  { LOG_DEBUG("[BreakTool] 点击对象（第一断点）| 点击第二断点 | 右键/ESC 退出"); }
-        ~BreakTool() { LOG_DEBUG("[BreakTool] 退出"); }
+        BreakTool()  { LOG_DEBUG("[BreakTool] click object (first break point) | click second break point | right-click/ESC exits"); }
+        ~BreakTool() { LOG_DEBUG("[BreakTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -50,7 +50,7 @@ namespace MiniCAD
                 if (m_id == Object::InvalidID)
                 {
                     Entity* ent = HitBreakable(e);
-                    if (!ent) { LOG_WARN("[BreakTool] 请点击直线、圆弧或圆"); return true; }
+                    if (!ent) { LOG_WARN("[BreakTool] click a line, arc or circle"); return true; }
                     m_id = ent->GetID();
                     m_first = p;
                 }
@@ -301,7 +301,7 @@ namespace MiniCAD
             Plan plan = Compute(ent, p1, p2);
             if (!plan.valid)
             {
-                LOG_WARN("[BreakTool] 两个断点无法打断该对象");
+                LOG_WARN("[BreakTool] cannot break the object at these two points");
                 return;
             }
 
@@ -322,7 +322,7 @@ namespace MiniCAD
             }
 
             m_ctx->cmdStack.Execute(std::make_unique<GeometryEditCommand>(N_("打断"), std::move(items)), m_ctx->scene);
-            LOG_DEBUG("[BreakTool] 已打断");
+            LOG_DEBUG("[BreakTool] broken");
         }
 
         const EditorContext* m_ctx     = nullptr;       // 仅在 OnInput 内有效

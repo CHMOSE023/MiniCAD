@@ -65,7 +65,7 @@ namespace MiniCAD
         li.pSetLayouts            = &setLayout;
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges    = &range;
-        MiniGUI::VulkanCheck(vkCreatePipelineLayout(m_ctx.GetDevice(), &li, nullptr, &m_layout), "vkCreatePipelineLayout(视口)");
+        MiniGUI::VulkanCheck(vkCreatePipelineLayout(m_ctx.GetDevice(), &li, nullptr, &m_layout), "vkCreatePipelineLayout(viewport)");
     }
 
     VulkanRenderer::~VulkanRenderer()
@@ -198,7 +198,7 @@ namespace MiniCAD
         pi.layout              = m_layout;
 
         VkPipeline pipeline = VK_NULL_HANDLE;
-        MiniGUI::VulkanCheck(vkCreateGraphicsPipelines(m_ctx.GetDevice(), VK_NULL_HANDLE, 1, &pi, nullptr, &pipeline), "vkCreateGraphicsPipelines(视口)");
+        MiniGUI::VulkanCheck(vkCreateGraphicsPipelines(m_ctx.GetDevice(), VK_NULL_HANDLE, 1, &pi, nullptr, &pipeline), "vkCreateGraphicsPipelines(viewport)");
         m_pipelines.emplace(key, pipeline);
         return pipeline;
     }

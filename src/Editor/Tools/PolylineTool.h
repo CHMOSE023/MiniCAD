@@ -27,12 +27,12 @@ namespace MiniCAD
 
         PolylineTool()
         {
-            LOG_DEBUG("[PolylineTool] L=直线 A=圆弧 C=闭合 | 左键追加顶点 | 右键 / 回车提交 | ESC取消");
+            LOG_DEBUG("[PolylineTool] L=line A=arc C=close | click to add vertices | right-click / Enter commits | ESC cancels");
         }
 
         ~PolylineTool()
         {
-            LOG_DEBUG("[PolylineTool] 退出");
+            LOG_DEBUG("[PolylineTool] exit");
         }
 
     public:
@@ -127,7 +127,7 @@ namespace MiniCAD
             m_mode      = DrawMode::Line;
             m_hasArcMid = false;
             m_arcMid    = {};
-            LOG_INFO("[PolylineTool] 模式 = 直线");
+            LOG_INFO("[PolylineTool] mode = line");
             RefreshOverlay();
         }
 
@@ -136,7 +136,7 @@ namespace MiniCAD
             m_mode      = DrawMode::Arc;
             m_hasArcMid = false;
             m_arcMid    = {};
-            LOG_INFO("[PolylineTool] 模式 = 圆弧（三点：弧上点 → 终点）");
+            LOG_INFO("[PolylineTool] mode = arc (three points: point on arc -> end)");
             RefreshOverlay();
         }
 
@@ -154,7 +154,7 @@ namespace MiniCAD
         {
             if (!CanClose())
             {
-                LOG_INFO("[PolylineTool] 闭合至少需要 3 个顶点");
+                LOG_INFO("[PolylineTool] closing needs at least 3 vertices");
                 return false;
             }
             const Math::Point3 start = m_points.front();
@@ -175,7 +175,7 @@ namespace MiniCAD
             if (m_points.empty())
             {
                 m_points.push_back(pt);
-                LOG_INFO("[PolylineTool] 起点 (%.3f, %.3f)", pt.x, pt.y);
+                LOG_INFO("[PolylineTool] start (%.3f, %.3f)", pt.x, pt.y);
                 RefreshOverlay();
                 return;
             }
@@ -184,7 +184,7 @@ namespace MiniCAD
             {
                 m_bulges.push_back(0.0);
                 m_points.push_back(pt);
-                LOG_INFO("[PolylineTool] 直线顶点 #%zu (%.3f, %.3f)",  m_points.size(), pt.x, pt.y);
+                LOG_INFO("[PolylineTool] line vertex #%zu (%.3f, %.3f)",  m_points.size(), pt.x, pt.y);
             }
             else
             {
@@ -192,7 +192,7 @@ namespace MiniCAD
                 {
                     m_arcMid    = pt;
                     m_hasArcMid = true;
-                    LOG_INFO("[PolylineTool] 弧上点 (%.3f, %.3f)，请继续点击弧终点",  pt.x, pt.y);
+                    LOG_INFO("[PolylineTool] point on arc (%.3f, %.3f), click the arc end",  pt.x, pt.y);
                 }
                 else
                 {
@@ -201,7 +201,7 @@ namespace MiniCAD
                     m_bulges.push_back(bulge);
                     m_points.push_back(pt);
 
-                    LOG_DEBUG("[PolylineTool] 弧终点 (%.3f, %.3f)  Bulge=%.6f",  pt.x, pt.y, bulge);
+                    LOG_DEBUG("[PolylineTool] arc end (%.3f, %.3f)  Bulge=%.6f",  pt.x, pt.y, bulge);
 
                     m_hasArcMid = false;
                     m_arcMid    = {};
@@ -334,7 +334,7 @@ namespace MiniCAD
         {
             if (m_points.size() < 2)
             {
-                LOG_WARN("[PolylineTool] 顶点不足，放弃提交");
+                LOG_WARN("[PolylineTool] not enough vertices, nothing committed");
                 return;
             }
 
@@ -348,7 +348,7 @@ namespace MiniCAD
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[PolylineTool] 提交 Id=%d  顶点=%zu  直线段=%d  弧段=%d", static_cast<int>(id), m_points.size(), lineCount, arcCount);
+            LOG_DEBUG("[PolylineTool] commit Id=%d  vertices=%zu  lines=%d  arcs=%d", static_cast<int>(id), m_points.size(), lineCount, arcCount);
         }
 
         void Reset()

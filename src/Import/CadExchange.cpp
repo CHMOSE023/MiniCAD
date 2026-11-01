@@ -464,7 +464,7 @@ namespace MiniCAD
                 ImportBlocks();
                 ImportModelSpace();
                 for (const auto& [name, count] : m_skipped)
-                    LOG_WARN("外部参照 %s：不支持的实体 %s × %d 已跳过", m_namePrefix.c_str(), name.c_str(), count);
+                    LOG_WARN_TR("外部参照 {0}：不支持的实体 {1} × {2} 已跳过", m_namePrefix.c_str(), name.c_str(), count);
             }
 
             // 块参照的 XCLIP 裁剪边界（扩展字典 ACAD_FILTER → SPATIAL 的 SPATIAL_FILTER），换算到块坐标系；
@@ -584,15 +584,18 @@ namespace MiniCAD
                 RecordSource();
 
                 for (const auto& [name, count] : m_skipped)
-                    LOG_WARN("DWG/DXF 导入：不支持的实体 %s × %d 已跳过", name.c_str(), count);
+                    LOG_WARN_TR("DWG/DXF 导入：不支持的实体 {0} × {1} 已跳过", name.c_str(), count);
                 if (m_tianzhengWalls > 0)
-                    LOG_WARN("TCH_WALL × %d 显示为普通轮廓；不修改时另存为原格式原版本可保留天正对象", m_tianzhengWalls);
+                    LOG_WARN_TR("TCH_WALL × {0} 显示为普通轮廓；不修改时另存为原格式原版本可保留天正对象", m_tianzhengWalls);
                 for (const auto& [name, count] : m_tchConverted)
-                    LOG_WARN("%s × %d 显示为普通几何；不修改时另存为原格式原版本可保留天正对象", name.c_str(), count);
+                    LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留天正对象", name.c_str(), count);
                 for (const auto& [name, reasons] : m_tchFailures)
                     for (const auto& [reason, handles] : reasons)
-                        LOG_WARN("%s × %d 无法恢复显示（如句柄 %llX）：%s", name.c_str(), static_cast<int>(handles.size()),
-                                 static_cast<unsigned long long>(*handles.begin()), reason.c_str());
+                    {
+                        char handle[24];
+                        std::snprintf(handle, sizeof(handle), "%llX", static_cast<unsigned long long>(*handles.begin()));
+                        LOG_WARN_TR("{0} × {1} 无法恢复显示（如句柄 {2}）：{3}", name, handles.size(), handle, reason);
+                    }
             }
 
         private:
@@ -635,7 +638,7 @@ namespace MiniCAD
                 if (!(lts >= kMin && lts <= kMax))
                 {
                     if (lts != 0.0)
-                        LOG_WARN("DWG/DXF 导入：$LTSCALE=%.6g 超出合理范围，按 1 处理", lts);
+                        LOG_WARN_TR("DWG/DXF 导入：$LTSCALE={0} 超出合理范围，按 1 处理", lts);
                     return;                       // Scene 默认 1.0
                 }
                 m_scene.SetLineTypeScale(lts);
@@ -1006,12 +1009,12 @@ namespace MiniCAD
                     const std::string name = Prefixed(rec.Name);
                     if (b->IsUnloaded)
                     {
-                        LOG_INFO("外部参照 %s 已卸载，不显示", name.c_str());
+                        LOG_INFO_TR("外部参照 {0} 已卸载，不显示", name.c_str());
                         return;
                     }
                     if (!m_xref)
                     {
-                        LOG_WARN("外部参照 %s（%s）：图纸没有路径，无法解析外部文件", name.c_str(), b->XRefPath.c_str());
+                        LOG_WARN_TR("外部参照 {0}（{1}）：图纸没有路径，无法解析外部文件", name.c_str(), b->XRefPath.c_str());
                         return;
                     }
                     // 叠加型（Overlay）外部参照不随宿主再被别人参照时显示
@@ -1031,7 +1034,7 @@ namespace MiniCAD
                 const fs::path file = ResolveXrefPath(parent, xrefPath);
                 if (file.empty())
                 {
-                    LOG_WARN("外部参照 %s：找不到文件 %s（已在 %s 下查找）", name.c_str(), xrefPath.c_str(), PathToUtf8(parent.HostDir).c_str());
+                    LOG_WARN_TR("外部参照 {0}：找不到文件 {1}（已在 {2} 下查找）", name.c_str(), xrefPath.c_str(), PathToUtf8(parent.HostDir).c_str());
                     return false;
                 }
                 std::error_code ec;
@@ -1040,33 +1043,33 @@ namespace MiniCAD
                 const std::string key = Lower(PathToUtf8(canonical));
                 if (parent.Loading.count(key))
                 {
-                    LOG_WARN("外部参照 %s：%s 正在被读取（循环引用），跳过", name.c_str(), PathToUtf8(file).c_str());
+                    LOG_WARN_TR("外部参照 {0}：{1} 正在被读取（循环引用），跳过", name.c_str(), PathToUtf8(file).c_str());
                     return false;
                 }
                 if (parent.Depth >= 8)
                 {
-                    LOG_WARN("外部参照 %s：嵌套层数过多，跳过", name.c_str());
+                    LOG_WARN_TR("外部参照 {0}：嵌套层数过多，跳过", name.c_str());
                     return false;
                 }
 
                 std::ifstream in(file, std::ios::binary);
                 if (!in)
                 {
-                    LOG_WARN("外部参照 %s：无法读取 %s", name.c_str(), PathToUtf8(file).c_str());
+                    LOG_WARN_TR("外部参照 {0}：无法读取 {1}", name.c_str(), PathToUtf8(file).c_str());
                     return false;
                 }
                 const std::vector<std::uint8_t> bytes{ std::istreambuf_iterator<char>(in), {} };
                 const Dwg::CadFileInfo info = Dwg::DetectFileFormat({ bytes.data(), std::min<size_t>(bytes.size(), 1024) });
                 if (info.format == Dwg::CadFileFormat::Unknown)
                 {
-                    LOG_WARN("外部参照 %s：%s 不是 DWG / DXF 文件", name.c_str(), PathToUtf8(file).c_str());
+                    LOG_WARN_TR("外部参照 {0}：{1} 不是 DWG / DXF 文件", name.c_str(), PathToUtf8(file).c_str());
                     return false;
                 }
                 std::string firstError;
                 std::unique_ptr<Dwg::CadDatabase> db = ReadDatabase(bytes, info.format, MakeNotify(&firstError));
                 if (!db)
                 {
-                    LOG_WARN("外部参照 %s：读取 %s 失败：%s", name.c_str(), PathToUtf8(file).c_str(), firstError.c_str());
+                    LOG_WARN_TR("外部参照 {0}：读取 {1} 失败：{2}", name.c_str(), PathToUtf8(file).c_str(), firstError.c_str());
                     return false;
                 }
 
@@ -1078,7 +1081,7 @@ namespace MiniCAD
                 ctx->Loading.insert(key);
                 Importer nested(*db, scene, nullptr);
                 nested.ImportAsXref(name + "|", target, std::move(ctx));
-                LOG_INFO("外部参照 %s：从 %s 读入 %zu 个实体", name.c_str(), PathToUtf8(file).c_str(), target.GetEntities().size());
+                LOG_INFO_TR("外部参照 {0}：从 {1} 读入 {2} 个实体", name.c_str(), PathToUtf8(file).c_str(), target.GetEntities().size());
                 return true;
             }
 
@@ -2581,9 +2584,12 @@ namespace MiniCAD
                     if (e->ViewDirection.Z <= 0.0 ||
                         std::abs(e->ViewDirection.X) > 1.0e-9 * std::abs(e->ViewDirection.Z) ||
                         std::abs(e->ViewDirection.Y) > 1.0e-9 * std::abs(e->ViewDirection.Z))
-                        LOG_WARN("VIEWPORT %llx：视线方向 (%g,%g,%g) 不是俯视，按俯视显示",
-                                 static_cast<unsigned long long>(src.ObjectHandle),
-                                 e->ViewDirection.X, e->ViewDirection.Y, e->ViewDirection.Z);
+                    {
+                        char handle[24];
+                        std::snprintf(handle, sizeof(handle), "%llx", static_cast<unsigned long long>(src.ObjectHandle));
+                        LOG_WARN_TR("VIEWPORT {0}：视线方向 ({1},{2},{3}) 不是俯视，按俯视显示", handle,
+                                    e->ViewDirection.X, e->ViewDirection.Y, e->ViewDirection.Z);
+                    }
                     // 本视口里冻结的图层（331，VPLAYER）
                     std::vector<LayerID> frozen;
                     for (Dwg::Handle lh : e->FrozenLayers)
@@ -2900,7 +2906,7 @@ namespace MiniCAD
                 std::string base = layer->Name;
                 // i18n: 数据（天正的图层名）
                 if (const std::string tail = "管"; base.ends_with(tail)) base.erase(base.size() - tail.size());
-                return {LayerByName(base + "中心线"), LayerByName(base + "管端线")};
+                return {LayerByName(base + "中心线"), LayerByName(base + "管端线")};    // i18n: 数据
             }
 
             // 原图中按名称找图层（如天正电气桥架中心线所在的 CABLETRAY_DOTE）；找不到时为空句柄，按对象自身的图层显示
@@ -3929,11 +3935,11 @@ namespace MiniCAD
                 ExportLayouts();
 
                 for (const auto& [name, count] : m_skipped)
-                    LOG_WARN("DWG/DXF 导出：不支持的实体 %s × %d 已跳过", name.c_str(), count);
+                    LOG_WARN_TR("DWG/DXF 导出：不支持的实体 {0} × {1} 已跳过", name.c_str(), count);
                 if (m_solidNoMesh > 0)
-                    LOG_WARN("DWG/DXF 导出：%d 个三维实体没有网格数据（早期版本保存），已跳过", m_solidNoMesh);
+                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体没有网格数据（早期版本保存），已跳过", m_solidNoMesh);
                 if (m_solidTooLarge > 0)
-                    LOG_WARN("DWG/DXF 导出：%d 个三维实体的网格超过 32767 个顶点或面，已跳过", m_solidTooLarge);
+                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体的网格超过 32767 个顶点或面，已跳过", m_solidTooLarge);
             }
 
         private:
@@ -4001,9 +4007,9 @@ namespace MiniCAD
                 for (auto& e : appended)
                     m_db.AddEntity(model, std::move(e));
 
-                LOG_INFO("DWG/DXF 导出：以原图为底，%d 个未修改的实体原样写回（其中天正对象 %d 个）", kept, keptTch);
+                LOG_INFO_TR("DWG/DXF 导出：以原图为底，{0} 个未修改的实体原样写回（其中天正对象 {1} 个）", kept, keptTch);
                 if (rewrittenTch > 0)
-                    LOG_WARN("DWG/DXF 导出：%d 个修改过的天正对象写为普通几何", rewrittenTch);
+                    LOG_WARN_TR("DWG/DXF 导出：{0} 个修改过的天正对象写为普通几何", rewrittenTch);
             }
 
             // ── 布局导出 ──────────────────────────────────────────────────
@@ -5759,7 +5765,7 @@ namespace MiniCAD
         {
             if (error)
                 *error = msg;
-            LOG_ERROR("DWG/DXF 导入失败：%s", msg.c_str());
+            LOG_ERROR_TR("DWG/DXF 导入失败：{0}", msg.c_str());
             return false;
         };
 
@@ -5799,7 +5805,7 @@ namespace MiniCAD
         importer.Run();
         if (progress) progress(1.0f);
         auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
-        LOG_INFO("DWG/DXF 导入：读取 %.0f ms，转换 %.0f ms", ms(t1 - t0), ms(std::chrono::steady_clock::now() - t1));
+        LOG_INFO_TR("DWG/DXF 导入：读取 {0} ms，转换 {1} ms", static_cast<long long>(ms(t1 - t0)), static_cast<long long>(ms(std::chrono::steady_clock::now() - t1)));
         if (source != nullptr)
             *source = std::move(src);
         return true;
@@ -5855,7 +5861,7 @@ namespace MiniCAD
         std::string firstError;
         if (!CadSaveVersionSupported(kind, version))
         {
-            LOG_WARN("DWG/DXF 导出：%s 格式的 DWG 不支持写出，改写为 2010 格式", CadSaveVersionName(version));
+            LOG_WARN_TR("DWG/DXF 导出：{0} 格式的 DWG 不支持写出，改写为 2010 格式", CadSaveVersionName(version));
             version = CadSaveVersion::R2010;
         }
         const Dwg::CadVersion target = ToCadVersion(version);
@@ -5875,8 +5881,7 @@ namespace MiniCAD
         {
             db = std::make_unique<Dwg::CadDatabase>();
             if (CadSourceTchCount(source) > 0)
-                LOG_WARN("DWG/DXF 导出：格式或版本与原图不同，天正对象 × %d 不能原样写回，只写出显示用的普通几何",
-                         CadSourceTchCount(source));
+                LOG_WARN_TR("DWG/DXF 导出：格式或版本与原图不同，天正对象 × {0} 不能原样写回，只写出显示用的普通几何", CadSourceTchCount(source));
         }
         Exporter(scene, *db, target, base).Run();
 
@@ -5898,7 +5903,7 @@ namespace MiniCAD
         {
             if (error)
                 *error = firstError.empty() ? Tr("写出失败") : firstError;
-            LOG_ERROR("DWG/DXF 导出失败：%s", firstError.c_str());
+            LOG_ERROR_TR("DWG/DXF 导出失败：{0}", firstError.c_str());
         }
         return out;
     }

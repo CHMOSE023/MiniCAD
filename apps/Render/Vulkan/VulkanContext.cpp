@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include "MiniI18n/I18n.h"
 
 namespace MiniGUI
 {
@@ -61,9 +62,7 @@ namespace MiniGUI
     {
         if (result != VK_SUCCESS)
         {
-            char buffer[256] = {};
-            std::snprintf(buffer, sizeof(buffer), "%s 失败（VkResult %d）", what, static_cast<int>(result));
-            throw std::runtime_error(buffer);
+            throw std::runtime_error(TrF("{0} 失败（VkResult {1}）", what, static_cast<int>(result)));
         }
     }
 
@@ -132,7 +131,7 @@ namespace MiniGUI
     {
         CreateInstance(options);
         if (options.createSurface && !options.createSurface(m_instance, &m_surface))
-            throw std::runtime_error("建窗口表面失败");
+            throw std::runtime_error(Tr("建窗口表面失败"));
         PickPhysicalDevice();
         CreateDevice();
 
@@ -266,7 +265,7 @@ namespace MiniGUI
             }
         }
         if (!m_physical)
-            throw std::runtime_error("没有支持 Vulkan 1.3 动态渲染的设备");
+            throw std::runtime_error(Tr("没有支持 Vulkan 1.3 动态渲染的设备"));
         vkGetPhysicalDeviceMemoryProperties(m_physical, &m_memory);
     }
 
@@ -594,7 +593,7 @@ namespace MiniGUI
         p.buffer    = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
         p.dedicated = dedicated;
         if (!p.buffer)
-            throw std::runtime_error("建上传缓冲失败");
+            throw std::runtime_error(Tr("建上传缓冲失败"));
         return p;
     }
 

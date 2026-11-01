@@ -142,7 +142,7 @@ namespace MiniCAD
     {
         struct OpenCancelled : std::exception
         {
-            const char* what() const noexcept override { return "已取消"; }
+            const char* what() const noexcept override { return "cancelled"; }      // 只在关闭程序时抛出，不显示
         };
     }
 
@@ -228,7 +228,7 @@ namespace MiniCAD
 
         if (!m_fontSystem.IsReady())
         {
-            LOG_ERROR("MainFrame: 字体系统初始化失败");
+            LOG_ERROR_TR("MainFrame: 字体系统初始化失败");
             return false;
         }
         m_docManager.SetFontSystem(&m_fontSystem);     // 文字样式由各文档的文字样式表定义
@@ -242,7 +242,7 @@ namespace MiniCAD
     {
         m_ui = std::make_unique<MiniGUI::UIContext>(&m_platform->GetUiBackend());
         if (!m_platform->LoadUiFonts(m_ui->GetTextSystem()))
-            LOG_ERROR("MainFrame: 没有找到界面字体");
+            LOG_ERROR_TR("MainFrame: 没有找到界面字体");
 
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });
@@ -330,9 +330,9 @@ namespace MiniCAD
             const std::string   file(u8.begin(), u8.end());
             std::string error;
             const size_t n = HatchPatternLibrary::Instance().LoadFile(file, &error);
-            LOG_INFO("填充图案：%s 载入 %zu 个", file.c_str(), n);
+            LOG_INFO_TR("填充图案：{0} 载入 {1} 个", file.c_str(), n);
             if (!error.empty())
-                LOG_WARN("填充图案：%s %s", file.c_str(), error.c_str());
+                LOG_WARN_TR("填充图案：{0} {1}", file.c_str(), error.c_str());
         }
     }
 
@@ -590,7 +590,7 @@ namespace MiniCAD
                 const int n = ReloadUnresolvedXrefs(doc->GetScene(), doc->GetPath(), { dir });
                 loaded += n;
                 if (n > 0)
-                    LOG_INFO("外部参照：%s 从 %s 读入 %d 个", doc->GetName().c_str(), dir.c_str(), n);
+                    LOG_INFO_TR("外部参照：{0} 从 {1} 读入 {2} 个", doc->GetName().c_str(), dir.c_str(), n);
                 if (!FindUnresolvedXrefs(doc->GetScene()).empty())
                     remaining.push_back(doc);
             }
@@ -961,7 +961,7 @@ namespace MiniCAD
         sheet.OwnerKey = 0;               // 由命令分配新键
         for (int n = 1; ; ++n)
         {
-            sheet.Name = "布局" + std::to_string(n);      // i18n: 数据（写进图纸的布局名）
+            sheet.Name = TrF("布局{0}", n);      // 按当前语言起名（同 DocumentManager::New），建好后是数据
             if (std::none_of(layouts.begin(), layouts.end(), [&](const DrawingLayout& l) { return l.Name == sheet.Name; }))
                 break;
         }

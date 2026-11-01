@@ -3189,6 +3189,65 @@ namespace MiniCAD
             check(DocWindowCount() == 0 && !m_docManager.GetActive(), "关掉这两个文档");
         }
 
+        // ── 28.6 英文界面下走一遍：只看界面建得起来、命令照常执行（不逐条核对译文）──────────
+        section("28.6 英文界面：新建图纸、画直线、新建布局、撤销，命令行提示是英文");
+        {
+            auto hasChinese = [](const std::string& s)
+            {
+                // UTF-8 里汉字与全角标点的首字节在 0xE3～0xEF 之间
+                return std::any_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) >= 0xE3 && static_cast<unsigned char>(c) <= 0xEF; });
+            };
+            SetLanguage("en", false);
+            pump();
+            RenderFrame();
+            m_commands.Execute("file.new");
+            Document* doc = m_docManager.GetActive();
+            RenderFrame();
+            check(doc && m_layout->GetRibbon() && m_viewport->IsVisible(), "英文界面下新建图纸");
+            check(doc && m_main.layoutTabs->GetTabCount() >= 2 && m_main.layoutTabs->GetTabTitle(1) == "Layout1",
+                  "新图纸的布局按当前语言起名（Layout1）");
+            if (doc)
+            {
+                const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
+                auto clickAt = [&](float fx, float fy)
+                {
+                    const MiniGUI::Vec2 p{ vr.min.x + (vr.max.x - vr.min.x) * fx, vr.min.y + (vr.max.y - vr.min.y) * fy };
+                    m_ui->PointerMove(p, 0);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                };
+                const int before = doc->GetScene().EntityCount();
+                m_commands.Execute("draw.line");
+                clickAt(0.4f, 0.5f);
+                const std::string prompt = m_main.console->GetPrompt();
+                std::printf("    提示 \"%s\"\n", prompt.c_str());
+                check(!prompt.empty() && !hasChinese(prompt), "直线工具的命令行提示是英文");
+                clickAt(0.6f, 0.5f);
+                m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                m_ui->KeyUp(MiniGUI::Key::Escape, 0);
+                RenderFrame();
+                check(doc->GetScene().EntityCount() == before + 1, "英文界面下画直线");
+                check(!hasChinese(m_main.console->GetPrompt()), "退出工具后的提示是英文");
+                const int tabs = m_main.layoutTabs->GetTabCount();
+                m_commands.Execute("layout.new");
+                RenderFrame();
+                check(m_main.layoutTabs->GetTabCount() == tabs + 1 && m_main.layoutTabs->GetTabTitle(tabs).rfind("Layout", 0) == 0,
+                      "新建布局按当前语言起名");
+                m_commands.Execute("edit.undo");
+                m_commands.Execute("edit.undo");
+                RenderFrame();
+                check(m_main.layoutTabs->GetTabCount() == tabs && doc->GetScene().EntityCount() == before, "撤销新建布局与直线");
+                doc->MarkSaved();
+                CloseDocument(doc);
+                pump();
+            }
+            SetLanguage("zh-CN", false);
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "zh-CN" && !m_docManager.GetActive(), "切回简体中文，关掉文档");
+        }
+
         // ── 29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭 ──────────
         section("29. 文档窗口：拖出、它自己的界面（标题栏、功能区、快捷键、动态输入）、平移 / 缩放 / 画线 / 选择、最大化 / 最小化、拖回、关闭");
         {

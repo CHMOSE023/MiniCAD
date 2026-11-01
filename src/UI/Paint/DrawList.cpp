@@ -66,7 +66,7 @@ namespace MiniGUI
 
     void DrawList::PopClipRect()
     {
-        assert(m_clipStack.size() > 1 && "PopClipRect 与 PushClipRect 不配对");
+        assert(m_clipStack.size() > 1 && "PopClipRect without matching PushClipRect");
         if (m_clipStack.size() > 1)
             m_clipStack.pop_back();
         UpdateCurrentCommand();
@@ -80,7 +80,7 @@ namespace MiniGUI
 
     void DrawList::PopTexture()
     {
-        assert(m_textureStack.size() > 1 && "PopTexture 与 PushTexture 不配对");
+        assert(m_textureStack.size() > 1 && "PopTexture without matching PushTexture");
         if (m_textureStack.size() > 1)
             m_textureStack.pop_back();
         UpdateCurrentCommand();

@@ -3,6 +3,7 @@
 #include "Database/DimensionMeasurement.h"
 #include <algorithm>
 #include <cstring>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgWrite
 {
@@ -414,7 +415,7 @@ namespace MiniDWG::DwgWrite
         {
             // 多行属性的内嵌 MTEXT 未建模：写为单行
             if (att.AttributeType != AttributeType::SingleLine)
-                NotifyOnce("att:multiline", NotificationType::Info, "多行属性写为单行（内嵌 MTEXT 未建模）");
+                NotifyOnce("att:multiline", NotificationType::Info, TrF("多行属性写为单行（内嵌 {0} 未建模）", "MTEXT"));
             m.WriteByte(static_cast<std::uint8_t>(AttributeType::SingleLine));
         }
         Text(att.Tag);

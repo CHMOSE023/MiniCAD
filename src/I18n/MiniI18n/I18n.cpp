@@ -31,7 +31,7 @@ namespace MiniI18n
             bool Fail(const std::string& why)
             {
                 if (error.empty())
-                    error = "第 " + std::to_string(line) + " 行：" + why;
+                    error = TrF("第 {0} 行：{1}", line, why);     // 按当前装着的表翻译（启动时还没有表，是中文）
                 return false;
             }
 
@@ -65,7 +65,7 @@ namespace MiniI18n
             bool Expect(char c)
             {
                 if (!Peek(c))
-                    return Fail(std::string("这里应为 '") + c + "'");
+                    return Fail(TrF("这里应为 '{0}'", c));
                 ++pos;
                 return true;
             }
@@ -92,7 +92,7 @@ namespace MiniI18n
             bool Hex4(uint32_t& v)
             {
                 if (pos + 4 > text.size())
-                    return Fail("\\u 后面应有 4 位十六进制数");
+                    return Fail(Tr("\\u 后面应有 4 位十六进制数"));
                 v = 0;
                 for (int i = 0; i < 4; ++i)
                 {
@@ -101,7 +101,7 @@ namespace MiniI18n
                     if (c >= '0' && c <= '9') v |= static_cast<uint32_t>(c - '0');
                     else if (c >= 'a' && c <= 'f') v |= static_cast<uint32_t>(c - 'a' + 10);
                     else if (c >= 'A' && c <= 'F') v |= static_cast<uint32_t>(c - 'A' + 10);
-                    else return Fail("\\u 后面应有 4 位十六进制数");
+                    else return Fail(Tr("\\u 后面应有 4 位十六进制数"));
                 }
                 return true;
             }
@@ -117,7 +117,7 @@ namespace MiniI18n
                     if (c == '"')
                         return true;
                     if (c == '\n')
-                        return Fail("字符串没有结束（缺少 '\"'）");
+                        return Fail(Tr("字符串没有结束（缺少 '\"'）"));
                     if (c != '\\')
                     {
                         out += c;
@@ -153,10 +153,10 @@ namespace MiniI18n
                         break;
                     }
                     default:
-                        return Fail(std::string("无法识别的转义 \\") + e);
+                        return Fail(TrF("无法识别的转义 \\{0}", e));
                     }
                 }
-                return Fail("字符串没有结束（缺少 '\"'）");
+                return Fail(Tr("字符串没有结束（缺少 '\"'）"));
             }
 
             // 跳过任意一个值（数字、true / false / null、数组、对象、字符串）
@@ -164,7 +164,7 @@ namespace MiniI18n
             {
                 SkipSpace();
                 if (pos >= text.size())
-                    return Fail("文件意外结束");
+                    return Fail(Tr("文件意外结束"));
                 const char c = text[pos];
                 if (c == '"')
                 {
@@ -193,7 +193,7 @@ namespace MiniI18n
                 const size_t start = pos;
                 while (pos < text.size() && (std::isalnum(static_cast<unsigned char>(text[pos])) || text[pos] == '-' || text[pos] == '+' || text[pos] == '.'))
                     ++pos;
-                return pos > start ? true : Fail(std::string("无法识别的字符 '") + c + "'");
+                return pos > start ? true : Fail(TrF("无法识别的字符 '{0}'", c));
             }
 
             // 对象：对每个成员调用 fn(key)，fn 负责读取值
@@ -274,7 +274,7 @@ namespace MiniI18n
         });
         r.SkipSpace();
         if (ok && r.pos < json.size())
-            r.Fail("对象结束后还有多余的内容");
+            r.Fail(Tr("对象结束后还有多余的内容"));
         if (!r.error.empty())
         {
             m_messages.clear();

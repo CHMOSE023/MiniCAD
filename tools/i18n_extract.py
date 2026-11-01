@@ -5,14 +5,19 @@
     python tools/i18n_extract.py --check      # 检查（不改文件，CI 用）：翻译文件格式、占位符、命令行选项字母、菜单助记符；
                                               #   翻译文件与代码不同步（有新条目或过时条目）只提示，不算失败
     python tools/i18n_extract.py --where TEXT # 反查：译文或原文里含 TEXT 的条目，列出原文与代码位置（英文日志、截图定位用）
+    python tools/i18n_extract.py --lint       # 漏网检查（CI 用）：没有包 Tr / N_ 的中文字面量、格式串含中文的 LOG_*
 
 提取的来源：
 - 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF / NC_ 的上下文与原文；
-  节点的显示文字 NN_("…") 归上下文"节点"（显示时 Nodes::TrNode）；
+  节点的显示文字 NN_("…") / TrNode("…") 归上下文"节点"（显示时 Nodes::TrNode）；
   相邻的字面量（"甲" "乙"，可以跨行）按 C++ 的规则连成一条
 - 界面描述文件 assets/ui/minicad_ui.json 的 title / label / tooltip / text / search（只取含非 ASCII 字符的）
 - 节点示例索引 assets/nodes/examples/examples.json 的 name / description
 不提取：自测（apps/Win32/src/Host/SelfTest.cpp）、tests/、tools/。
+
+漏网检查（--lint）跳过：
+- 行里或紧挨着的上一行（只有注释的行）有 "i18n:" 注释的（// i18n: 数据、// i18n: 上下文……，写明为什么不翻）
+- 节点的搜索关键字（Keywords = "…"，中英文都写，不翻）
 """
 import argparse
 import json
@@ -33,7 +38,11 @@ LITERAL = r'"(?:[^"\\\n]|\\.)*"'
 STRING = r'((?:' + LITERAL + r'\s*)+)'          # 一个或几个相邻的字面量（"甲" "乙"，可以跨行），按 C++ 的规则连成一条
 CALL1 = re.compile(r'\b(?:Tr|TrF|N_|LOG_INFO_TR|LOG_WARN_TR|LOG_ERROR_TR)\s*\(\s*' + STRING)
 CALL2 = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING + r'\s*,\s*' + STRING)
-NODE_CALL = re.compile(r'\bNN_\s*\(\s*' + STRING)     # 节点的显示文字（src/NodeGraph/Value.h），上下文固定
+NODE_CALL = re.compile(r'\b(?:NN_|TrNode)\s*\(\s*' + STRING)     # 节点的显示文字（src/NodeGraph/Value.h），上下文固定
+CONTEXT_ARG = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING)   # 上下文（原文是变量时只有上下文是字面量）
+PLAIN_LOG = re.compile(r'\bLOG_(?:TRACE|DEBUG|INFO|WARN|ERROR)\s*\(\s*' + STRING)
+CJK = re.compile(r'[　-〿㐀-鿿＀-￯]')     # 汉字与全角标点
+KEYWORDS = re.compile(r'\bKeywords\s*=')
 NODE_CONTEXT = "节点"
 PLACEHOLDER = re.compile(r'(?<!\{)\{(\d+)\}')
 OPTION_LETTER = re.compile(r'\(([A-Za-z0-9])\)')     # 命令行选项 [闭合(C)/放弃(U)]；助记符 (&S) 不算
@@ -147,20 +156,17 @@ def rel(path):
 
 
 def extract_code(msgs):
-    for d in CODE_DIRS:
-        for path in sorted(d.rglob("*")):
-            if path.suffix not in (".h", ".hpp", ".cpp") or path in CODE_EXCLUDE:
-                continue
-            text = strip_cpp_comments(path.read_text(encoding="utf-8", errors="replace"))
-            for m in CALL2.finditer(text):
-                line = text.count("\n", 0, m.start()) + 1
-                msgs.add(unescape(m.group(1)), unescape(m.group(2)), f"{rel(path)}:{line}")
-            for m in CALL1.finditer(text):
-                line = text.count("\n", 0, m.start()) + 1
-                msgs.add(None, unescape(m.group(1)), f"{rel(path)}:{line}")
-            for m in NODE_CALL.finditer(text):
-                line = text.count("\n", 0, m.start()) + 1
-                msgs.add(NODE_CONTEXT, unescape(m.group(1)), f"{rel(path)}:{line}")
+    for path in code_files():
+        text = strip_cpp_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for m in CALL2.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            msgs.add(unescape(m.group(1)), unescape(m.group(2)), f"{rel(path)}:{line}")
+        for m in CALL1.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            msgs.add(None, unescape(m.group(1)), f"{rel(path)}:{line}")
+        for m in NODE_CALL.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            msgs.add(NODE_CONTEXT, unescape(m.group(1)), f"{rel(path)}:{line}")
 
 
 def extract_ui(msgs):
@@ -314,6 +320,53 @@ def check(msgs):
     return errors, warnings
 
 
+def code_files():
+    for d in CODE_DIRS:
+        for path in sorted(d.rglob("*")):
+            if path.suffix in (".h", ".hpp", ".cpp") and path not in CODE_EXCLUDE:
+                yield path
+
+
+def marked_above(lines, line):
+    """同一条语句前面有只写注释的一行，并且写了 i18n:（字面量所在的行放不下注释、一整张表都是数据时）"""
+    for i in range(line - 1, max(line - 40, -1), -1):
+        above = lines[i].strip()
+        if above.startswith("//"):
+            if "i18n:" in above:
+                return True
+            continue
+        if above.endswith((";", "}")):         # 到了上一条语句
+            return False
+    return False
+
+
+def lint():
+    """没有包 Tr / N_ 的中文字面量、格式串含中文的 LOG_*（要改成 LOG_*_TR，开发者看的改写成英文）"""
+    problems = []
+    for path in code_files():
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        text = strip_cpp_comments(raw)
+        lines = raw.split("\n")
+        covered = []
+        for rx in (CALL1, NODE_CALL, CONTEXT_ARG):
+            covered += [m.span(1) for m in rx.finditer(text)]
+        for m in CALL2.finditer(text):
+            covered += [m.span(1), m.span(2)]
+        for m in PLAIN_LOG.finditer(text):
+            covered.append(m.span(1))
+            line = text.count("\n", 0, m.start())
+            if CJK.search(unescape(m.group(1))) and "i18n:" not in lines[line]:
+                problems.append(f"{rel(path)}:{line + 1}：日志的格式串含中文（改 LOG_*_TR，开发者看的改写成英文）\n    {lines[line].strip()}")
+        for m in re.finditer(LITERAL, text):
+            if not CJK.search(m.group(0)) or any(a <= m.start() < b for a, b in covered):
+                continue
+            line = text.count("\n", 0, m.start())
+            if "i18n:" in lines[line] or KEYWORDS.search(lines[line]) or marked_above(lines, line):
+                continue
+            problems.append(f"{rel(path)}:{line + 1}：中文字面量没有包 Tr / N_（数据加注释 // i18n: 数据）\n    {lines[line].strip()}")
+    return list(dict.fromkeys(problems))     # 同一行的几个字面量只报一次
+
+
 def where(msgs, text):
     def norm(s):
         return (s or "").replace("&", "").lower()      # 菜单里的助记符不影响查找
@@ -348,7 +401,15 @@ def main():
     ap = argparse.ArgumentParser(description="界面文字的提取与检查")
     ap.add_argument("--check", action="store_true", help="只检查，不改文件")
     ap.add_argument("--where", metavar="TEXT", help="反查含 TEXT 的译文或原文")
+    ap.add_argument("--lint", action="store_true", help="列出没有包 Tr / N_ 的中文字面量与格式串含中文的日志")
     args = ap.parse_args()
+
+    if args.lint:
+        problems = lint()
+        for p in problems:
+            print(p)
+        print(f"{len(problems)} 处漏网的中文")
+        return 1 if problems else 0
 
     msgs = collect()
     if args.where:

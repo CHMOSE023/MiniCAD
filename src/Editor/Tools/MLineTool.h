@@ -22,7 +22,7 @@ namespace MiniCAD
     public:
         explicit MLineTool(MLineSettings& settings) : m_settings(settings)
         {
-            LOG_DEBUG("[MLineTool] 左键加点 | 回车/右键结束 | J 对正 S 比例 T 样式 C 闭合 | Backspace 撤销点 | ESC 放弃");
+            LOG_DEBUG("[MLineTool] click to add points | Enter/right-click ends | J justify S scale T style C close | Backspace undoes a point | ESC discards");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -168,7 +168,7 @@ namespace MiniCAD
             auto ml = std::make_unique<MLineEntity>(id, m_pts, Style(), m_settings.Justify, m_settings.Scale, closed);
             m_ctx->ApplyCurrentAttr(*ml);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(ml)), m_ctx->scene);
-            LOG_DEBUG("[MLineTool] 多线 Id=%d (%zu 点%s)", static_cast<int>(id), m_pts.size(), closed ? "，闭合" : "");
+            LOG_DEBUG("[MLineTool] multiline Id=%d (%zu points%s)", static_cast<int>(id), m_pts.size(), closed ? ", closed" : "");
         }
 
         void Finish()

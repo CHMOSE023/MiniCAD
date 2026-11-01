@@ -127,7 +127,7 @@ namespace MiniCAD
         if (wgpuDeviceGetLimits(m_device, &limits) == WGPUStatus_Success)
             m_maxTextureSize = limits.maxTextureDimension2D;
 
-        m_shader = CreateShader(m_device, kShader, "MiniCAD 视口着色器");
+        m_shader = CreateShader(m_device, kShader, "MiniCAD viewport shader");
         CreateLayouts();
 
         WGPUSamplerDescriptor sd = WGPU_SAMPLER_DESCRIPTOR_INIT;
@@ -278,7 +278,7 @@ namespace MiniCAD
         ds.depthWriteEnabled = depth == DepthMode::TestWrite ? WGPUOptionalBool_True : WGPUOptionalBool_False;
 
         WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
-        desc.label  = Str("MiniCAD 视口管线");
+        desc.label  = Str("MiniCAD viewport pipeline");
         desc.layout = (p == Program::Text || p == Program::Image) ? m_texPipeLayout : m_colorPipeLayout;
         desc.vertex.module      = m_shader;
         desc.vertex.entryPoint  = Str(vsEntry);
@@ -518,7 +518,7 @@ namespace MiniCAD
             if (image.Width <= m_maxTextureSize && image.Height <= m_maxTextureSize)
             {
                 WGPUTextureDescriptor td = WGPU_TEXTURE_DESCRIPTOR_INIT;
-                td.label  = Str("MiniCAD 光栅图像");
+                td.label  = Str("MiniCAD raster image");
                 td.usage  = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
                 td.size   = WGPUExtent3D{ static_cast<uint32_t>(image.Width), static_cast<uint32_t>(image.Height), 1 };
                 td.format = WGPUTextureFormat_RGBA8Unorm;
@@ -536,8 +536,7 @@ namespace MiniCAD
             }
             else
             {
-                LOG_WARN("WebGPURenderer: 光栅图像 %ux%u 超过纹理尺寸上限 %u，不显示",
-                         static_cast<unsigned>(image.Width), static_cast<unsigned>(image.Height), m_maxTextureSize);
+                LOG_WARN_TR("WebGPURenderer: 光栅图像 {0}x{1} 超过纹理尺寸上限 {2}，不显示", static_cast<unsigned>(image.Width), static_cast<unsigned>(image.Height), m_maxTextureSize);
             }
             it = m_imageTextures.emplace(image.Key, im).first;
         }

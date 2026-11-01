@@ -9,6 +9,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include "MiniI18n/I18n.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -20,9 +21,9 @@ namespace MiniGUI
         {
             if (FAILED(hr))
             {
-                char buffer[128] = {};
-                std::snprintf(buffer, sizeof(buffer), "MiniGUI D3D11: %s 失败 (HRESULT 0x%08X)", what, static_cast<unsigned int>(hr));
-                throw std::runtime_error(buffer);
+                char code[16] = {};
+                std::snprintf(code, sizeof(code), "0x%08X", static_cast<unsigned int>(hr));
+                throw std::runtime_error(TrF("MiniGUI D3D11：{0} 失败（HRESULT {1}）", what, code));
             }
         }
 
@@ -48,7 +49,7 @@ namespace MiniGUI
                                     entry, target, flags, 0, blob.GetAddressOf(), errors.GetAddressOf());
             if (FAILED(hr))
             {
-                std::string msg = "MiniGUI D3D11: 着色器编译失败 ";
+                std::string msg = Tr("MiniGUI D3D11：着色器编译失败") + " ";
                 msg += entry;
                 if (errors)
                 {
@@ -181,7 +182,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > e.width || region.y + region.height > e.height)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
 
@@ -373,7 +374,7 @@ namespace MiniGUI
                     auto it = m_textures.find(cmd.texture);
                     if (it == m_textures.end())
                     {
-                        assert(false && "DrawCmd 引用了不存在的纹理");
+                        assert(false && "DrawCmd references a missing texture");
                         continue;
                     }
                     ID3D11ShaderResourceView* srv = it->second.srv.Get();
