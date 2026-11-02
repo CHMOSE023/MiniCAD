@@ -128,7 +128,7 @@ namespace MiniCAD
             Associate(static_cast<DimensionEntity&>(*real));
             m_ctx->ApplyCurrentAttr(*real);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(real)), m_ctx->scene);
-            LOG_DEBUG("[DimTool] 标注已创建，测量值 %.4f", measure);
+            LOG_DEBUG("[DimTool] dimension created, measurement %.4f", measure);
             Reset();
         }
 
@@ -168,18 +168,18 @@ namespace MiniCAD
     class DimAngularTool : public DimToolBase
     {
     public:
-        DimAngularTool() { LOG_DEBUG("[DimAngular] 选择圆弧、圆、直线，或回车指定顶点"); }
+        DimAngularTool() { LOG_DEBUG("[DimAngular] select an arc, circle or line, or press Enter to specify the vertex"); }
 
         std::string GetPrompt() const override
         {
             switch (m_step)
             {
-            case Step::SecondLine:   return "选择第二条直线:";
-            case Step::Vertex:       return "指定角的顶点:";
-            case Step::FirstPoint:   return "指定角的第一个端点:";
-            case Step::SecondPoint:  return "指定角的第二个端点:";
-            case Step::Place:        return "指定标注弧线位置 [右键/ESC 退出]:";
-            default:                 return "选择圆弧、圆、直线或 <回车 指定顶点>:";
+            case Step::SecondLine:   return Tr("选择第二条直线:");
+            case Step::Vertex:       return Tr("指定角的顶点:");
+            case Step::FirstPoint:   return Tr("指定角的第一个端点:");
+            case Step::SecondPoint:  return Tr("指定角的第二个端点:");
+            case Step::Place:        return Tr("指定标注弧线位置 [右键/ESC 退出]:");
+            default:                 return Tr("选择圆弧、圆、直线或 <回车 指定顶点>:");
             }
         }
         bool HasAnchor() const override { return m_step == Step::FirstPoint || m_step == Step::SecondPoint; }
@@ -231,7 +231,7 @@ namespace MiniCAD
                     m_step   = Step::SecondPoint;
                 }
                 else
-                    LOG_WARN("[DimAngular] 请选择直线、圆弧或圆，或回车指定顶点");
+                    LOG_WARN("[DimAngular] select a line, arc or circle, or press Enter to specify the vertex");
                 break;
             }
             case Step::SecondLine:
@@ -239,7 +239,7 @@ namespace MiniCAD
                 Entity* ent = HitEntity(e);
                 if (!ent || !ent->IsKindOf<LineEntity>())
                 {
-                    LOG_WARN("[DimAngular] 请选择第二条直线");
+                    LOG_WARN("[DimAngular] select the second line");
                     break;
                 }
                 m_line2 = static_cast<LineEntity*>(ent)->GetLine();
@@ -249,7 +249,7 @@ namespace MiniCAD
                 const double den = u1.x * u2.y - u1.y * u2.x;
                 if (std::abs(den) < 1e-9)
                 {
-                    LOG_WARN("[DimAngular] 两条直线平行，无法标注角度");
+                    LOG_WARN("[DimAngular] the lines are parallel, no angle to dimension");
                     m_step = Step::Select;
                     break;
                 }
@@ -362,10 +362,10 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-            case 1:  return m_kind == Kind::Jogged ? "指定图示中心位置（替代圆心）:" : "指定尺寸线位置 [右键/ESC 退出]:";
-            case 2:  return "指定尺寸线位置:";
-            case 3:  return "指定折弯位置 [右键/ESC 退出]:";
-            default: return "选择圆弧或圆:";
+            case 1:  return m_kind == Kind::Jogged ? Tr("指定图示中心位置（替代圆心）:") : Tr("指定尺寸线位置 [右键/ESC 退出]:");
+            case 2:  return Tr("指定尺寸线位置:");
+            case 3:  return Tr("指定折弯位置 [右键/ESC 退出]:");
+            default: return Tr("选择圆弧或圆:");
             }
         }
 
@@ -381,7 +381,7 @@ namespace MiniCAD
                     m_step = 1;
                 }
                 else
-                    LOG_WARN("[DimRadial] 请选择圆或圆弧");
+                    LOG_WARN("[DimRadial] select a circle or arc");
                 break;
             case 1:
                 if (m_kind == Kind::Jogged) { m_override = pt; m_step = 2; }
@@ -461,7 +461,7 @@ namespace MiniCAD
     public:
         std::string GetPrompt() const override
         {
-            return m_has ? "指定弧长标注位置 [右键/ESC 退出]:" : "选择圆弧:";
+            return m_has ? Tr("指定弧长标注位置 [右键/ESC 退出]:") : Tr("选择圆弧:");
         }
 
     protected:
@@ -472,7 +472,7 @@ namespace MiniCAD
                 Entity* ent = HitEntity(e);
                 if (!ent || !ent->IsKindOf<ArcEntity>())
                 {
-                    LOG_WARN("[DimArc] 请选择圆弧");
+                    LOG_WARN("[DimArc] select an arc");
                     return;
                 }
                 m_arc   = static_cast<ArcEntity*>(ent)->GetArc();
@@ -527,7 +527,7 @@ namespace MiniCAD
     public:
         std::string GetPrompt() const override
         {
-            return m_has ? "指定引线端点位置 [右键/ESC 退出]:" : "指定点坐标:";
+            return m_has ? Tr("指定引线端点位置 [右键/ESC 退出]:") : Tr("指定点坐标:");
         }
         bool HasAnchor() const override { return m_has; }
         Math::Point3 GetAnchor() const override { return m_feature; }

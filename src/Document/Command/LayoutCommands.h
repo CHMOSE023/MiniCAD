@@ -46,7 +46,7 @@ namespace MiniCAD
             scene.SetLayouts(std::move(layouts));
         }
 
-        std::string GetName() const override { return "新建布局"; }
+        std::string GetName() const override { return N_("新建布局"); }
         uint64_t    GetKey() const { return m_layout.OwnerKey; }    // 执行后有效
 
     private:
@@ -96,7 +96,7 @@ namespace MiniCAD
             m_entities.clear();
         }
 
-        std::string GetName() const override { return "删除布局"; }
+        std::string GetName() const override { return N_("删除布局"); }
 
         static int PaperCount(const Scene& scene)
         {

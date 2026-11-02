@@ -1,4 +1,4 @@
-// 另存为与原图相同的格式、版本时以原图为底：未修改的天正对象与跳过的实体原样写回，改过的实体按场景重写
+// 另存为与原图相同的格式、版本时以原图为底：未修改的TCH对象与跳过的实体原样写回，改过的实体按场景重写
 #include "Dwg/Read/DwgReader.h"
 #include "Dwg/Write/DwgBitWriter.h"
 #include "Dwg/Write/DwgWriter.h"
@@ -24,7 +24,6 @@ namespace
         g_failed += ok ? 0 : 1;
     }
 
-    // 可显示的天正直墙（布局同 TianzhengWallTests）
     std::unique_ptr<UnknownEntity> Wall()
     {
         auto e = std::make_unique<UnknownEntity>();
@@ -48,7 +47,7 @@ namespace
         return e;
     }
 
-    // 无法显示的天正对象（私有数据未知、没有代理图形）：导入时跳过
+    // 无法显示的TCH对象（私有数据未知、没有代理图形）：导入时跳过
     std::unique_ptr<UnknownEntity> Column()
     {
         auto e = std::make_unique<UnknownEntity>();

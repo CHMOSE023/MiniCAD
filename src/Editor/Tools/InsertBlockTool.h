@@ -25,7 +25,7 @@ namespace MiniCAD
             , m_preview(0, blockId, block->GetName(), block->GetBasePoint())
         {
             m_preview.SetBlock(block);
-            LOG_INFO("[InsertBlockTool] %s: 左键指定插入点 | 右键/ESC 取消", block->GetName().c_str());
+            LOG_INFO("[InsertBlockTool] %s: click insertion point | right-click/ESC cancels", block->GetName().c_str());
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -67,7 +67,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定插入点 [右键/ESC 取消]:";
+            return Tr("指定插入点 [右键/ESC 取消]:");
         }
 
     private:
@@ -121,7 +121,7 @@ namespace MiniCAD
             batch.push_back(std::move(ins));
             if (m_ctx->cmdStack.Execute(std::make_unique<BatchAddCommand>(std::move(batch)), scene))
             {
-                LOG_DEBUG("[InsertBlockTool] 插入 %s at (%.3f, %.3f)",
+                LOG_DEBUG("[InsertBlockTool] insert %s at (%.3f, %.3f)",
                           m_block->GetName().c_str(), p.x, p.y);
             }
         }

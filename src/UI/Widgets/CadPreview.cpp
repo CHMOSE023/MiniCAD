@@ -9,6 +9,7 @@ namespace MiniGUI
 {
     const std::vector<LinetypeDef>& StandardLinetypes()
     {
+        // i18n: 说明文字只用于控件展示（tests/UI/Golden/Demo），不翻译
         static const std::vector<LinetypeDef> table =
         {
             { "Continuous", "实线",               {} },

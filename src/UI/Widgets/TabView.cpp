@@ -1,4 +1,5 @@
 #include "Widgets/TabView.h"
+#include "MiniI18n/I18n.h"
 #include "Widgets/Menu.h"
 #include "Style/Theme.hpp"
 #include "Core/UIContext.h"
@@ -514,10 +515,10 @@ if (focusRing && sel)
         const bool closable = m_tabs[static_cast<size_t>(tab)].closable;
         std::vector<MenuItem> items =
         {
-            MenuItem("关闭(&C)", [this, tab] { RequestClose(tab); }, "Ctrl+W").Enabled(closable),
-            MenuItem("关闭其他(&O)", [this, tab] { CloseOthers(tab); }).Enabled(GetTabCount() > 1),
-            MenuItem("关闭右侧(&R)", [this, tab] { CloseToRight(tab); }).Enabled(tab + 1 < GetTabCount()),
-            MenuItem("全部关闭(&A)", [this] { for (int i = GetTabCount() - 1; i >= 0; --i) RequestClose(i); }),
+            MenuItem(Tr("关闭(&C)"), [this, tab] { RequestClose(tab); }, "Ctrl+W").Enabled(closable),
+            MenuItem(Tr("关闭其他(&O)"), [this, tab] { CloseOthers(tab); }).Enabled(GetTabCount() > 1),
+            MenuItem(Tr("关闭右侧(&R)"), [this, tab] { CloseToRight(tab); }).Enabled(tab + 1 < GetTabCount()),
+            MenuItem(Tr("全部关闭(&A)"), [this] { for (int i = GetTabCount() - 1; i >= 0; --i) RequestClose(i); }),
         };
         if (m_contextExtra)
         {

@@ -138,7 +138,7 @@ namespace
         return e;
     }
 
-    // 图纸设置（TCH_DBCONFIG，非图形对象）：按 TDbConfig::dwgInFields 版本 9 写到填充墙2 的图案为止；
+    // 图纸设置（TCH_DBCONFIG，非图形对象）：按版本 9 写到填充墙2 的图案为止；
     // names 为空时没有文字流（图案名取默认值），否则是文字流里依次的字符串
     std::unique_ptr<UnknownObject> Config(bool fill, double detailScale = 100, const std::vector<std::string>& names = {})
     {
@@ -345,7 +345,7 @@ int main()
     Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
     Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
 
-    // ── 门窗占满两端斜接之间的墙段（8#楼-A平面图 通风井的百叶，宽 1999.9999999963）：墙两端左侧伸出、右侧缩进 120，
+    // ── 门窗占满两端斜接之间的墙段（建筑平面样图通风井的百叶，宽 1999.9999999963）：墙两端左侧伸出、右侧缩进 120，
     // 门窗宽度比右侧墙线短 3.7e-9。断口恰到右侧墙线的两端，不画横穿墙厚的封口线，也不留零长的墙线 ──
     {
         CadDatabase ndb;
@@ -392,7 +392,7 @@ int main()
     Check(MiniCAD::Tch::DecodeConfig(*Config(false, 50, names), custom) && !custom.Fill && Near(custom.DetailScale, 50) &&
           custom.Detail[0] == "卵石砌体" && custom.Detail[1] == "加气混凝土" && custom.Detail[2] == "多孔材料" &&
           custom.Detail[3] == "空心砖" && custom.Detail[6] == "钢筋混凝土" && custom.Standard[6] == "SOLID",
-          "pattern names are read from the string stream in material order (8#楼-A平面图 layout)");
+          "pattern names are read from the string stream in material order (建筑平面样图 layout)");
     Check(MiniCAD::Tch::MaterialHatch(custom, 10, true) == "卵石砌体" && MiniCAD::Tch::MaterialHatch(custom, 60, false) == "SOLID" &&
           MiniCAD::Tch::MaterialHatch(custom, 40, false).empty() && MiniCAD::Tch::MaterialHatch(custom, 20, true).empty(),
           "material codes pick their standard or detail pattern; glass curtain walls are never filled");

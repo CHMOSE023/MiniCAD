@@ -1,6 +1,7 @@
 #include "DocumentManager.h"
 #include "Document.h"
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 #include "Import/CadExchange.h"
 #include <algorithm>
 #include <utility>
@@ -95,8 +96,8 @@ namespace MiniCAD
         auto styleId = doc->GetScene().GetTextStyleTable().FindByName("GB2312");
         auto styleId1 = 0;
 
-        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId, "TTF >>> 仿宋字体  GB2312.ttf  ", Math::Point3(1, 2, 0), 1, 0, 100));
-        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "SHX >>> 探索者中文字体 %%% %%p %%c20 %%p0.5 %%13225 %%1318@200  4%%132 %%132   %%132%%131%%130 TSSDCHN.SHX L1 梁 %%132 25 @ 200mm  ", Math::Point3(1, 0.5, 0), 1, 0, 100));
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId, "TTF >>> 仿宋字体  GB2312.ttf  ", Math::Point3(1, 2, 0), 1, 0, 100));   // i18n: 数据
+        doc->GetScene().AddEntity(std::make_unique<MTextEntity>(doc->GetScene().NextObjectID(), styleId1, "SHX >>> 探索者中文字体 %%% %%p %%c20 %%p0.5 %%13225 %%1318@200  4%%132 %%132   %%132%%131%%130 TSSDCHN.SHX L1 梁 %%132 25 @ 200mm  ", Math::Point3(1, 0.5, 0), 1, 0, 100));   // i18n: 数据
         
         // 添加图层
 		auto layerId1 = doc->GetLayerManager().AddLayer("Layer 1");
@@ -298,7 +299,7 @@ namespace MiniCAD
             // 单引线：折线 + 起端箭头 + 末端基线(hookline) + 文字标签
             auto ld = std::make_unique<LeaderEntity>(scene.NextObjectID(),
                 std::vector<Math::Point3>{ { 0, -42, 0 }, { 6, -46, 0 }, { 14, -46, 0 } }, dst);
-            ld->SetText("R 倒角");
+            ld->SetText("R 倒角");   // i18n: 数据
             EntityAttr la; la.Color = { 0.9, 0.8, 0.4, 1.0 };
             ld->SetAttr(la);
             scene.AddEntity(std::move(ld));
@@ -313,7 +314,7 @@ namespace MiniCAD
             ml->SetDoglegDir({ -1, 0, 0 });   // 内容在右，dogleg 指回左侧引线
             ml->AddLeaderLine({ { 24, -42, 0 }, { 30, -45, 0 } });
             ml->AddLeaderLine({ { 26, -50, 0 }, { 31, -47, 0 } });
-            ml->SetText("2× 标记");
+            ml->SetText("2× 标记");   // i18n: 数据
             EntityAttr ma; ma.Color = { 0.5, 0.9, 0.7, 1.0 };
             ml->SetAttr(ma);
             scene.AddEntity(std::move(ml));
@@ -718,7 +719,7 @@ namespace MiniCAD
         for (int i = 1; i <= 2; ++i)
         {
             DrawingLayout sheet;
-            sheet.Name  = "布局" + std::to_string(i);
+            sheet.Name  = TrF("布局{0}", i);   // 同 AutoCAD：按当前语言起名（英文 Layout1），建好后是写进图纸的数据，不再翻译
             sheet.Model = false;
             sheet.Order = i;
             layouts.push_back(std::move(sheet));
@@ -769,7 +770,7 @@ namespace MiniCAD
         }
         catch (const std::exception& e)
         {
-            if (error) *error = std::string("读取图纸失败：") + e.what();
+            if (error) *error = TrF("读取图纸失败：{0}", e.what());
             LOG_ERROR("Open failed: %s (%s)", path.c_str(), e.what());
             return nullptr;
         }
@@ -890,8 +891,8 @@ for (auto& doc : m_docs)
             return;
 
         Editor& editor = GetEditor();
-        editor.GetCmdLine().Echo("命令: CopyBase");
-        editor.StartPickPointTool("指定基点:", [this](const Math::Point3& p)
+        editor.GetCmdLine().Echo(TrF("命令: {0}", "CopyBase"));
+        editor.StartPickPointTool(N_("指定基点:"), [this](const Math::Point3& p)
         {
             m_clipboardBase    = p;
             m_clipboardHasBase = true;

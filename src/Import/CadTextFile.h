@@ -5,7 +5,5 @@
 
 namespace MiniCAD
 {
-    // 文件内容转 UTF-8：本来就是合法 UTF-8（含纯 ASCII、带 BOM 的）原样返回，
-    // 否则按 GBK 解码——中文版 AutoCAD 与天正自带的 .pat 都是 GBK
     std::string CadTextToUtf8(std::string_view bytes);
 }

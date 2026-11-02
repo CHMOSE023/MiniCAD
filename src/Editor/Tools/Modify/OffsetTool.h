@@ -39,8 +39,8 @@ namespace MiniCAD
     class OffsetTool : public ITool
     {
     public:
-        OffsetTool()  { LOG_DEBUG("[OffsetTool] 选择要偏移的对象 | 右键/ESC 退出"); }
-        ~OffsetTool() { LOG_DEBUG("[OffsetTool] 退出"); }
+        OffsetTool()  { LOG_DEBUG("[OffsetTool] select object to offset | right-click/ESC exits"); }
+        ~OffsetTool() { LOG_DEBUG("[OffsetTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -55,7 +55,7 @@ namespace MiniCAD
                     if (Entity* ent = HitCurve(e))
                     {
                         m_srcId = ent->GetID();
-                        LOG_INFO("[OffsetTool] 已选源对象，指定通过点");
+                        LOG_INFO("[OffsetTool] source selected, specify through point");
                     }
                 }
                 else
@@ -93,8 +93,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_srcId == Object::InvalidID ? "选择要偏移的对象 [右键/ESC 退出]:"
-                                                : "指定通过点 [右键/ESC 退出]:";
+            return m_srcId == Object::InvalidID ? Tr("选择要偏移的对象 [右键/ESC 退出]:")
+                                                : Tr("指定通过点 [右键/ESC 退出]:");
         }
 
     private:
@@ -203,7 +203,7 @@ namespace MiniCAD
 
             Object::ObjectID newId = m_ctx->scene.NextObjectID();
             auto ent = MakeOffset(src, through, newId);
-            if (!ent) { LOG_WARN("[OffsetTool] 通过点无效"); return false; }
+            if (!ent) { LOG_WARN("[OffsetTool] invalid through point"); return false; }
 
             std::vector<GeometryEditCommand::Item> items;
             GeometryEditCommand::Item it;
@@ -212,10 +212,10 @@ namespace MiniCAD
             it.after  = std::move(ent);
             items.push_back(std::move(it));
 
-            auto cmd = std::make_unique<GeometryEditCommand>("偏移", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("偏移"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
-            LOG_DEBUG("[OffsetTool] 已偏移");
+            LOG_DEBUG("[OffsetTool] offset done");
             return true;
         }
 

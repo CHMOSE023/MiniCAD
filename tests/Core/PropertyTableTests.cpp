@@ -160,7 +160,7 @@ int RunPropertyTableTests()
         auto e = ApplyProperty(pl, "终点 Y", PropValue(8.0));
         Check(e && Near(Num(*e, "长度"), 11.0) && Near(Num(*e, "顶点数"), 3.0), "多段线：改终点 Y，长度跟着变");
         Check(!ApplyProperty(pl, "长度", PropValue(1.0)) && !ApplyProperty(pl, "顶点数", PropValue(1.0)), "多段线：长度、顶点数只读");
-        Check(!ApplyProperty(pl, "线宽", PropValue(-1.0)), "多段线：线宽不能为负");
+        Check(!ApplyProperty(pl, "全局宽度", PropValue(-1.0)), "多段线：全局宽度不能为负");
     }
 
     // ── 多行文字 ─────────────────────────────────────────────

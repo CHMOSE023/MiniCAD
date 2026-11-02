@@ -15,12 +15,12 @@ namespace MiniCAD
     public:
         ArcTool()
         {
-            LOG_DEBUG("[ArcTool] 左键起点 | 左键弧上点 | 左键终点确认 | 右键/ESC 退出");
+            LOG_DEBUG("[ArcTool] click start | click point on arc | click end | right-click/ESC exits");
         }
 
         ~ArcTool()
         {
-            LOG_DEBUG("退出绘制");
+            LOG_DEBUG("Exit drawing");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -37,14 +37,14 @@ namespace MiniCAD
                     case 0:
                         m_p1 = pt;
                         m_step = 1;
-                        LOG_INFO("[ArcTool] 起点 (%.3f, %.3f) 已定，请点击弧上经过点",
+                        LOG_INFO("[ArcTool] start (%.3f, %.3f) set, click a point on the arc",
                                pt.x, pt.y);
                         break;
 
                     case 1:
                         m_p2 = pt;
                         m_step = 2;
-                        LOG_INFO("[ArcTool] 弧上点 (%.3f, %.3f) 已定，请点击终点",
+                        LOG_INFO("[ArcTool] point on arc (%.3f, %.3f) set, click end point",
                                pt.x, pt.y);
                         break;
 
@@ -58,7 +58,7 @@ namespace MiniCAD
                         }
                         else
                         {
-                            LOG_WARN("[ArcTool] 三点共线，无法构成圆弧，请重新选择终点");
+                            LOG_WARN("[ArcTool] the three points are collinear, pick another end point");
                         }
                         Reset();
                         break;
@@ -125,9 +125,9 @@ namespace MiniCAD
         {
             switch (m_step)
             {
-                case 1:  return "指定圆弧上一点:";
-                case 2:  return "指定终点 [右键/ESC 退出]:";
-                default: return "指定起点:";
+                case 1:  return Tr("指定圆弧上一点:");
+                case 2:  return Tr("指定终点 [右键/ESC 退出]:");
+                default: return Tr("指定起点:");
             }
         }
 
@@ -152,7 +152,7 @@ namespace MiniCAD
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("圆弧 Id %d  center(%.3f,%.3f)  r=%.3f  [%.1f°, %.1f°]",
+            LOG_DEBUG("Arc Id %d center(%.3f,%.3f) r=%.3f [%.1f°, %.1f°]",
                    static_cast<int>(id),
                    arc.Center.x, arc.Center.y,
                    arc.Radius,

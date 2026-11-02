@@ -82,7 +82,7 @@ namespace MiniCAD
             m_removed.clear();
         }
 
-        std::string GetName() const override { return "定义块 " + m_name; }
+        std::string GetName() const override { return "定义块 " + m_name; }   // i18n: 数据（撤销记录名，目前不显示）
 
     private:
         std::string                          m_name;

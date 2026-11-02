@@ -1,8 +1,10 @@
 // MiniCADWin：MiniCAD 桌面版入口（界面由 MiniGUI 绘制）
-// 用法：MiniCADWin.exe [--selftest [--full]] [--bench 图纸] [--ui 界面描述文件.json] [--gpu d3d12|d3d11|warp] [--] [图纸路径 ...]
-// 图形接口也可以用环境变量 MINICAD_GPU 指定（命令行优先）；指定的不可用时按默认顺序回退
+// 用法：MiniCADWin.exe [--selftest [--full]] [--bench 图纸] [--ui 界面描述文件.json] [--gpu d3d12|d3d11|warp] [--lang en|zh-CN|qps] [--] [图纸路径 ...]
+// 图形接口也可以用环境变量 MINICAD_GPU 指定、界面语言用 MINICAD_LANG 指定（命令行优先）；指定的不可用时按默认顺序回退
+// 不指定语言时用"设置 > 语言"选的，再看系统语言；自测与基准只认指定的（默认简体中文）
 // 以 USE_WIN32 编译时为窗口程序（没有控制台，日志和自测输出不可见）
 #include "Host/Win32Window.h"
+#include "GUI/Language.h"
 #include <shellapi.h>
 #include <cstdio>
 #include <iterator>
@@ -46,6 +48,7 @@ namespace
         bool        selfTestFull = false;   // --full：自测另跑 20 万条线的耗时测量（慢）
         std::string benchPath;
         std::string gpu;
+        std::string lang;
         std::vector<std::string> drawingPaths;
         bool positional = false;
 
@@ -67,6 +70,8 @@ namespace
                 frame.SetUiFile(ToUtf8(argv[++i]));
             else if (!positional && a == "--gpu" && i + 1 < argc)
                 gpu = ToUtf8(argv[++i]);
+            else if (!positional && a == "--lang" && i + 1 < argc)
+                lang = ToUtf8(argv[++i]);
             else
                 drawingPaths.push_back(a);
         }
@@ -77,6 +82,12 @@ namespace
             if (GetEnvironmentVariableW(L"MINICAD_GPU", env, static_cast<DWORD>(std::size(env))) > 0)
                 gpu = ToUtf8(env);
         }
+        if (lang.empty())
+        {
+            wchar_t env[64] = {};
+            if (GetEnvironmentVariableW(L"MINICAD_LANG", env, static_cast<DWORD>(std::size(env))) > 0)
+                lang = ToUtf8(env);
+        }
 
         if (!benchPath.empty())
             selfTest = true;    // 基准与自测一样：不读写用户布局，输出不缓冲
@@ -85,11 +96,14 @@ namespace
         else
             WidenConsole();
         frame.SetUseUserLayout(!selfTest);      // 自测不受本机保存的面板布局影响，也不覆盖它
+        InitLanguage(window, lang, !selfTest);  // 在创建图形设备之前：它的出错信息也要翻译
         if (!window.Initialize(L"MiniCAD", 1280, 800, gpu))
             return 2;
 
         if (!selfTest && !drawingPaths.empty())
             frame.OpenDrawings(drawingPaths);
+        if (!selfTest)
+            frame.CheckForUpdates();
 
         if (!benchPath.empty())
             return frame.RunBenchmark(benchPath);

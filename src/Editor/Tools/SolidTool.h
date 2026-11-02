@@ -19,7 +19,7 @@ namespace MiniCAD
     public:
         SolidTool()
         {
-            LOG_DEBUG("[SolidTool] 左键依次指定 1-2-3-4 点 | 第 3 点后回车/右键=三角形 | ESC 退出");
+            LOG_DEBUG("[SolidTool] click points 1-2-3-4 | Enter/right-click after point 3 = triangle | ESC exits");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -82,10 +82,10 @@ namespace MiniCAD
         {
             switch (m_pts.size())
             {
-            case 0:  return "指定第一点:";
-            case 1:  return "指定第二点:";
-            case 2:  return "指定第三点:";
-            default: return "指定第四点或 [回车/右键=三角形]:";
+            case 0:  return Tr("指定第一点:");
+            case 1:  return Tr("指定第二点:");
+            case 2:  return Tr("指定第三点:");
+            default: return Tr("指定第四点或 [回车/右键=三角形]:");
             }
         }
 
@@ -129,7 +129,7 @@ namespace MiniCAD
 
             m_ctx->ApplyCurrentAttr(*solid);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(solid)), m_ctx->scene);
-            LOG_DEBUG("[SolidTool] 二维填充 Id=%d (%zu 点)", static_cast<int>(id), m_pts.size());
+            LOG_DEBUG("[SolidTool] 2D solid Id=%d (%zu points)", static_cast<int>(id), m_pts.size());
         }
 
         void Reset()

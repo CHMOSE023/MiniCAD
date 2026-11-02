@@ -1,16 +1,14 @@
 #pragma once
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
+#include "Import/TchCipher.h"
 #include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace MiniCAD::Tch
-{
-    // 天正对象公共基类（TCH_Base）私有数据中与显示无关、但决定位流布局的部分。
-    // 布局依据已核对的基类私有布局；R2007 起字符串在文字流（R2004 及更早就地嵌在主数据流，见 InlineText）、
-    // 句柄在句柄流，主数据流中不占位。只支持基类版本 1～5，更高版本含未核对的段，按不支持处理
+{ 
     struct TchBase
     {
         int Version = 0;
@@ -21,11 +19,8 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // R2004 及更早没有独立的文字流：天正对象的字符串（TV）就地写在主数据流中 dwgInFields 读它的位置
         inline bool InlineText(const MiniDWG::DwgBitReader& r) { return r.Version() < MiniDWG::CadVersion::AC1021; }
 
-        // 天正对象的字符串：R2007 起依次取自文字流，更早的版本就地读主数据流。
-        // 解码时必须在 dwgInFields 读字符串的位置调用 Next()（R2007 起只要求次序一致）
         struct TextStream
         {
             MiniDWG::DwgBitReader Reader;
@@ -35,13 +30,11 @@ namespace MiniCAD::Tch
             std::string Next() { return Main ? Main->ReadVariableText() : Reader.ReadVariableText(); }
         };
 
-        // 天正对象支持的 DWG 版本：R2004 起（R2004 字符串在主数据流，R2007 起在文字流）
         inline bool SupportedVersion(const MiniDWG::RawDwgData& data)
         {
             return data.Version >= MiniDWG::CadVersion::AC1018 && data.Main.size() >= (data.MainBits + 7) / 8;
         }
 
-        // 属性包：BL 个数；每项为名字（文字流）、BL 类型、按类型读值。类型 100 为嵌套属性包
         inline bool SkipPropertyBag(MiniDWG::DwgBitReader& r, int& texts, int& handles, int depth = 0)
         {
             const bool inlineText = InlineText(r);
@@ -92,27 +85,23 @@ namespace MiniCAD::Tch
 
     struct TchOpening
     {
-        // 2 洞口（两侧各一条横穿墙厚的线）；5 带形窗（沿墙画窗线，没有二维图块）；8 组合门窗（由子门窗组成）
         enum class Kind { Door = 0, Window = 1, Hole = 2, Band = 5, Group = 8 };
         struct Segment { double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0, Bulge = 0; };
 
         MiniDWG::XYZ Position;      // 墙轴线上的门窗中点；Z 为窗台高
         double Width = 0, Height = 0;
-        double Thickness = 0;       // 门窗自身的厚度：没有所在墙时窗的二维图块按它缩放（8#楼平面图独立窗的分解结果核对）
+        double Thickness = 0;       // 门窗自身的厚度：没有所在墙时窗的二维图块按它缩放（建筑平面样图独立窗的分解结果核对）
         double Angle = 0;           // 弧度，沿所在墙的方向
         Kind   Type = Kind::Door;
-        int    Mirror = 0;          // 0 不镜像，1 X，2 X 与 Y，3 Y（转换函数 0x706e70；3 已由天正 2014 分解结果核对）
+        int    Mirror = 0;          
         MiniDWG::Handle Block2D = MiniDWG::kNullHandle;  // 二维图块（$TCHSYS$DOOR2D / $TCHSYS$WIN2D）
         MiniDWG::Handle Wall = MiniDWG::kNullHandle;     // 所在墙（TCH_WALL 或幕墙 TCH_CURTAIN_WALL，可以为空）
-        // 带形窗、组合门窗用：编号文字、出图比例、文字样式、分段（直段带形窗无分段，按 Position / Width / Angle）
         std::string Label;
         double LabelX = 0, LabelY = 0, LabelHeight = 3.5, Scale = 100;
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
         std::vector<Segment> Segments;
         std::vector<TchOpening> Parts;                   // 组合门窗的子门窗（各自按门、窗显示）
         bool   InGroup = false;                          // 组合门窗的子门窗：不画门槛线
-        // 门窗标志（BS，内核 this+0x118）与显示标志（BL，this+0x148）：天正内核 TDbOpening::DrawDoorLine 只在
-        // 标志含 0x200 / 0x400 或显示标志含 8 时画门槛线（tianzheng.dwg 同一墙上两扇门，一扇有一扇没有）
         int    Flags = 0;
         std::int32_t DisplayFlags = 0;
 
@@ -122,7 +111,15 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // TDbOpening 的私有布局（版本 < 6 的明文分支）：天正基类之后的门窗字段，不检查是否读完
+        inline bool CheckOpening(const TchOpening& o, const char*& why)
+        {
+            const double values[] = {o.Position.X, o.Position.Y, o.Position.Z, o.Width, o.Height, o.Angle};
+            for (double v : values)
+                if (!std::isfinite(v) || std::abs(v) > 1e12) { why = "nonfinite opening geometry"; return false; }
+            if (o.Width <= 0 || o.Mirror < 0 || o.Mirror > 3) { why = "invalid opening size or mirror mode"; return false; }
+            return true;
+        }
+
         inline bool ReadOpeningFields(MiniDWG::DwgBitReader& r, TextStream& text, TchOpening& o, int& kind, const char*& why)
         {
             const int version = r.ReadByte();
@@ -170,14 +167,9 @@ namespace MiniCAD::Tch
             }
             if (version > 3) r.ReadBitDouble();
             if (r.Failed()) { why = "native opening fields are truncated"; return false; }
-            const double values[] = {o.Position.X, o.Position.Y, o.Position.Z, o.Width, o.Height, o.Angle};
-            for (double v : values)
-                if (!std::isfinite(v) || std::abs(v) > 1e12) { why = "nonfinite opening geometry"; return false; }
-            if (o.Width <= 0 || o.Mirror < 0 || o.Mirror > 3) { why = "invalid opening size or mirror mode"; return false; }
-            return true;
+            return CheckOpening(o, why);
         }
 
-        // 句柄流中一个门窗的 8 个句柄：二维图块、三维图块、所在墙、文字样式、4 个图层
         inline void ReadOpeningHandles(MiniDWG::DwgBitReader& handles, MiniDWG::Handle owner, TchOpening& o)
         {
             o.Block2D = handles.ReadHandle(owner);
@@ -186,18 +178,63 @@ namespace MiniCAD::Tch
             o.Style = handles.ReadHandle(owner);
             for (int i = 0; i < 4; ++i) handles.ReadHandle(owner);
         }
+         
+        inline bool DecodeOpeningCipher(const MiniDWG::UnknownEntity& entity, TchOpening& opening, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 6) return fail("unsupported native opening version");
+            f.ReadKey();
+            TchOpening o;
+            o.Position = f.Point3();
+            o.Width = f.Double(); o.Thickness = f.Double(); o.Height = f.Double(); o.Angle = f.Double();
+            o.Mirror = f.Byte();
+            const int kind = f.Byte();
+            f.Double();
+            o.Label = f.Text();
+            o.Block2D = f.Handle();
+            f.Handle();
+            const auto label = f.Point3();
+            o.LabelX = label.X; o.LabelY = label.Y;
+            o.Wall = f.Handle();
+            o.Flags = f.Short();
+            if ((o.Flags & 1) || kind == 10) { f.Double(); f.Double(); }
+            if (kind == 4 || kind == 8) return fail("bay and group openings are not supported");
+            if (kind == 6 || kind == 7 || kind == 10) { f.Double(); if (kind != 7) f.Double(); }
+            o.Style = f.Handle();
+            for (int i = 0; i < 4; ++i) f.Handle();
+            o.LabelHeight = f.Double(); f.Double(); f.Double(); f.Double();
+            const int segments = f.Short();
+            if (segments > 1024) return fail("invalid opening segment count");
+            for (int i = 0; i < segments && f.Ok(); ++i)
+            {
+                const auto a = f.Point2(), b = f.Point2();
+                o.Segments.push_back({a.X, a.Y, b.X, b.Y, f.Double()});
+            }
+            o.DisplayFlags = f.Long(); f.Short(); f.Bool(); f.Text();
+            for (int i = 0; i < 5; ++i) f.Double();
+            if (!f.Exact()) return fail("native opening fields do not consume the payload exactly");
+            const char* why = "";
+            if (!CheckOpening(o, why)) return fail(why);
+            if (kind != 0 && kind != 1 && kind != 2 && kind != 5) return fail("only doors, windows, holes and band openings are supported");
+            o.Type = static_cast<TchOpening::Kind>(kind);
+            if (o.Block2D == MiniDWG::kNullHandle && o.Type != TchOpening::Kind::Band && o.Type != TchOpening::Kind::Hole)
+                return fail("opening handle stream is incomplete");
+            if (o.Type == TchOpening::Kind::Band) o.Scale = f.Scale;
+            else o.Label.clear();
+            opening = std::move(o);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
     }
-
-    // TCH_OPENING 门窗：按 TDbOpening 的私有布局版本 < 6 的明文分支解析，必须恰好读完主数据流。
-    // 接受门（类型 0）、窗（类型 1）、洞口（类型 2）、带形窗（类型 5）与组合门窗（类型 8，类 TDbGroupOpening）。门窗的显示方式
-    // （插入二维图块，X 缩放为宽度，Y 缩放门为宽度、窗为墙厚，旋转为 Angle）与天正 2014 分解出的块参照一致，见 docs/Tch-compatibility.md。
-    // 组合门窗（天正内核 TDbGroupOpening::dwgInFields）：自身的门窗字段之后为 RC 版本（0）、BL 子门窗数，
-    // 每个子门窗是嵌入对象：AcDbEntity 通用字段（样例为固定的 37 位，句柄流中 4 个句柄）后接完整的 TDbOpening 数据
+     
     inline bool DecodeOpening(const MiniDWG::UnknownEntity& entity, TchOpening& opening, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_OPENING") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeOpeningCipher(entity, opening, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native opening");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);

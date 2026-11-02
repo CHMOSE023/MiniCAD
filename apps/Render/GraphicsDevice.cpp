@@ -67,7 +67,7 @@ namespace MiniCAD
                 if (preference == b.name)
                     order.push_back(&b);
             if (order.empty())
-                LOG_WARN("没有名为 %s 的图形接口，按默认顺序创建", preference.c_str());
+                LOG_WARN_TR("没有名为 {0} 的图形接口，按默认顺序创建", preference.c_str());
         }
         const bool known = !order.empty();
         for (const Backend& b : kBackends)
@@ -80,8 +80,8 @@ namespace MiniCAD
             if (!device->Initialize(window, width, height))
                 continue;
             if (known && preference != b->name)
-                LOG_WARN("图形接口 %s 不可用，改用 %s", preference.c_str(), device->GetName());
-            LOG_INFO("图形接口：%s", device->GetName());
+                LOG_WARN_TR("图形接口 {0} 不可用，改用 {1}", preference.c_str(), device->GetName());
+            LOG_INFO_TR("图形接口：{0}", device->GetName());
             return device;
         }
         return nullptr;

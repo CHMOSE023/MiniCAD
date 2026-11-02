@@ -130,7 +130,8 @@ namespace MiniCAD::Nodes
     struct NodeTypeInfo
     {
         std::string            Id;          // 存档用（如 "solid.box"），发布后不能改
-        std::string            Name;        // 显示名
+        std::string            Name;        // 显示名（原文；显示时经 DisplayName 翻译）
+        std::string            NameContext; // 名称与别的节点同字不同义时的翻译上下文（实体的“旋转”是 Revolve）：名称写 NC_(上下文, "…")
         std::string            Category;    // 分类（编辑器菜单与标题栏颜色）；"大类/小类" 时菜单里分两级（如 "实体/创建"）
         std::string            Description;
         std::vector<PortSpec>  Inputs;
@@ -142,6 +143,8 @@ namespace MiniCAD::Nodes
         std::string Action;                 // 编辑器在卡片上显示的操作按钮（如 "pickCurves"：用图纸的选择集设置引用），由宿主实现
         std::string Keywords;               // 搜索用的别名（空格分开，可中英混写；改名后在这里留下旧名）
         int         Group = 0;              // 同一分类里的分组：菜单按组排序，组之间画分隔线
+
+        std::string DisplayName() const { return NameContext.empty() ? TrNode(Name) : TrC(NameContext, Name); }
     };
 
     // 一对端口的匹配程度（从高到低）：类型相同且实体 / 曲面子类型也相同 > 类型相同 > 需要转换 > 只能经 Any / Geometry / Text 接上

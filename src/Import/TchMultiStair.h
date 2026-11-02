@@ -4,14 +4,11 @@
 #include <numbers>
 #include <string>
 #include <vector>
-
-// 天正 2014 的双分平行、双分转角、双分三跑、交叉、剪刀、三角、矩形转角楼梯（CADReader 没有这些类，
-// 布局由属性取不同值的构造变体与位流对照得出，几何按天正 2014 分解结果归纳）
+ 
 namespace MiniCAD::Tch
 {
     namespace Detail
     {
-        // 这批楼梯共用的局部绘图器：局部坐标 x 向右、y 向上（楼梯自基点向局部 −y 展开），最后整体转到世界坐标
         struct StairSketch
         {
             using P = TchGraphics::Point;
@@ -25,10 +22,10 @@ namespace MiniCAD::Tch
             }
             void Line(double x0, double y0, double x1, double y1) { Line(P{x0, y0}, P{x1, y1}); }
 
-            // 箭头：Points 为折线（最后一点为箭头尖）；箭头长 3 × 比例、半宽 0.4 × 比例；
-            // 文字（“上”“下”）基线在起点外 1.3 × 名义字高（起点处折线方向的反向）
-            TchGraphics Finish(double x, double y, double rotation, double scale, double textHeight)
+            
+            TchGraphics Finish(double x, double y, double rotation, double scale, double textHeight, bool arrows)
             {
+                if (!arrows) Arrows.clear();
                 const double cr = std::cos(rotation), sr = std::sin(rotation);
                 auto world = [&](const P& q) { return P{x + q.X * cr - q.Y * sr, y + q.X * sr + q.Y * cr}; };
                 TchGraphics g = std::move(G);
@@ -66,8 +63,7 @@ namespace MiniCAD::Tch
 
         inline const char* kUp = "\xe4\xb8\x8a";      // “上”
         inline const char* kDown = "\xe4\xb8\x8b";    // “下”
-
-        // 这批楼梯的句柄流：楼梯基类一个，之后依次为扶手图层、两个空句柄、栏杆图层、文字图层、文字样式、箭头图层
+         
         inline void ReadStairHandles(const MiniDWG::UnknownEntity& entity, const TchBase& base, MiniDWG::Handle& style, MiniDWG::Handle& arrowLayer)
         {
             using namespace MiniDWG;
@@ -81,11 +77,7 @@ namespace MiniCAD::Tch
 
         // 楼层类型（属性 StairFlag）：0 首层、1 中间层、2 顶层
         enum class StairFloor { First = 0, Middle = 1, Top = 2 };
-
-        // 一跑梯段：局部坐标 (u, v)，原点在起步端 u = 0 的一侧，v 沿上行方向，u 轴为 v 轴顺时针转 90°；
-        // 宽 Width（u 0 ～ Width）、踏步数 Steps（踏步线 v = k·T，k = 0 ～ Steps − 1）。
-        // RailBands：扶手占据的 u 区间（踏步线在此断开）；BreakKind：0 无、1 首层单剖断、2 中间层双剖断；
-        // 剖断线中心在 (Width / 2, (BreakSteps − 0.5)·T)，方向为 u 轴转向 v 轴 BreakAngle
+         
         struct FlightSpec
         {
             TchGraphics::Point Origin;
@@ -106,7 +98,6 @@ namespace MiniCAD::Tch
         {
             using P = TchGraphics::Point;
             const double L = f.Length(), cv = f.BreakCenterV();
-            // 斜放的剖断线超出梯段两端时，天正改为垂直于梯段放置（三角楼梯样例核对）
             double t = std::tan(f.BreakAngle);
             if (cv - f.Width / 2 * std::abs(t) < 0 || cv + f.Width / 2 * std::abs(t) > L) t = 0;
             const P a = f.At(0, cv - f.Width / 2 * t), b = f.At(f.Width, cv + f.Width / 2 * t);
@@ -155,68 +146,89 @@ namespace MiniCAD::Tch
         int    BreakSteps = 5;                 // 剖断线中心距起步端的踏步数（SectStepNum）
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        // 新版 TCH_PARALLELSTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadParallelStairFields(R& r, TchParallelStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.SideWidth = r.D();
+            s.MidWidth = r.D();
+            s.Landing = r.D();
+            r.D(); r.D();
+            s.Steps1 = r.RC();
+            s.Steps2 = r.RC();
+            s.SpaceWidth = r.D();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailTop = r.D();
+            s.RailBottom = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC（1～2）、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 边梯段宽、BD 中梯段宽、
-    // BD 平台宽、2 个 BD、RC 第一跑步数、RC 第二跑步数、BD 梯间宽、BD 扶手高、RC 楼层、RC 起步位置、RC、
-    // BD 扶手宽、BD 扶手距边、BD 向平台伸出、BD 向起步端伸出、BS 剖断步数、BD 剖断角、BD 字高、BL 标志、3 个 BD（梁高、梁宽、板厚）、RC
     inline bool DecodeParallelStair(const MiniDWG::UnknownEntity& entity, TchParallelStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_PARALLELSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_PARALLELSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native parallel stair version");
         TchParallelStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.SideWidth = r.ReadBitDouble();
-        s.MidWidth = r.ReadBitDouble();
-        s.Landing = r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadBitDouble();
-        s.Steps1 = r.ReadByte();
-        s.Steps2 = r.ReadByte();
-        s.SpaceWidth = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailTop = r.ReadBitDouble();
-        s.RailBottom = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native parallel stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native parallel stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadParallelStairFields(r, s);
+            if (!f.Exact()) return fail("native parallel stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_PARALLELSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native parallel stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadParallelStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native parallel stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.SideWidth, s.MidWidth, s.Landing, s.SpaceWidth, s.RailWidth, s.RailToSide,
                          s.RailTop, s.RailBottom, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native parallel stair settings");
         if (s.Tread <= 0 || s.Steps1 < 2 || s.Steps2 < 2 || s.Floor < 0 || s.Floor > 2 || s.SideWidth <= 0 || s.MidWidth <= 0)
             return fail("invalid native parallel stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、起步在中间 / 两边、属性取不同值共 6 个样例核对）：
-    // 平台在上（y 0 ～ −平台宽），三跑梯段在下；梯井两侧的扶手在梯段边内侧“扶手距边”处，宽为扶手宽，
-    // 两侧扶手外轮廓向平台端伸出 RailTop、向起步端伸出 RailBottom 后连通；
-    // 剖断线中心在起步梯段中线、距起步端 (SectStepNum − 0.5) 级踏步处，倾角 BreakAngle，只截断踏步与梯段边；
-    // 首层只画起步梯段剖断线以下的部分（单剖断），顶层不剖断、两侧扶手在起步端连通
+ 
     inline TchGraphics BuildParallelStair(const TchParallelStair& s)
     {
         using P = TchGraphics::Point;
@@ -234,7 +246,6 @@ namespace MiniCAD::Tch
         flights.push_back({xm0, xm1, midStarts ? startLen : otherLen, midStarts});
         flights.push_back({s.SpaceWidth - s.SideWidth, s.SpaceWidth, midStarts ? otherLen : startLen, !midStarts});
         const double rw = s.RailWidth, rd = s.RailToSide;
-        // 各梯段内扶手占据的 x 区间（扶手在梯井一侧）
         auto railsIn = [&](const Flight& f) {
             std::vector<std::pair<double, double>> r;
             if (f.X0 > 1e-9) r.push_back({f.X0 + rd, f.X0 + rd + rw});
@@ -340,7 +351,7 @@ namespace MiniCAD::Tch
                 for (double xs : startXs)
                     k.Arrows.push_back({{P{xo, startY}, P{xo, landY}, P{xs, landY}, P{xs, endY}}, Detail::kDown});
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
     // ── TCH_CORNERSTAIR 双分转角楼梯 ──
@@ -356,65 +367,88 @@ namespace MiniCAD::Tch
         int    BreakSteps = 6;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 边梯段宽、BD 中梯段宽、BD 平台进深、BD 平台长、
-    // RC 第一跑步数、RC 第二跑步数、BD 扶手高、RC 楼层、RC 起步位置、BD 扶手宽、BD 扶手距边、BD 向另一端伸出、BD 向起步端伸出、
-    // BS 剖断步数、BD 剖断角、BD 字高、BL 标志、3 个 BD、RC
+    
+    namespace Detail
+    {
+        // 新版 TCH_CORNERSTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadCornerStairFields(R& r, TchCornerStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.SideWidth = r.D();
+            s.MidWidth = r.D();
+            s.LandingDepth = r.D();
+            s.LandingLength = r.D();
+            s.Steps1 = r.RC();
+            s.Steps2 = r.RC();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailFar = r.D();
+            s.RailStart = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
+
     inline bool DecodeCornerStair(const MiniDWG::UnknownEntity& entity, TchCornerStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CORNERSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_CORNERSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native corner stair version");
         TchCornerStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.SideWidth = r.ReadBitDouble();
-        s.MidWidth = r.ReadBitDouble();
-        s.LandingDepth = r.ReadBitDouble();
-        s.LandingLength = r.ReadBitDouble();
-        s.Steps1 = r.ReadByte();
-        s.Steps2 = r.ReadByte();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailFar = r.ReadBitDouble();
-        s.RailStart = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native corner stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native corner stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadCornerStairFields(r, s);
+            if (!f.Exact()) return fail("native corner stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_CORNERSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native corner stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadCornerStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native corner stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.SideWidth, s.MidWidth, s.LandingDepth, s.LandingLength, s.RailWidth,
                          s.RailToSide, s.RailFar, s.RailStart, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native corner stair settings");
         if (s.Tread <= 0 || s.Steps1 < 2 || s.Steps2 < 2 || s.Floor < 0 || s.Floor > 2 || s.SideWidth <= 0 || s.MidWidth <= 0)
             return fail("invalid native corner stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对，均为两边起步）：
-    // 两边梯段横向（左段向右上行、右段向左上行，宽 y 0 ～ −边梯段宽），平台居中（长 SlabLength、进深 SlabSize），
-    // 中梯段自平台向下（−y）上行；转角处两条 L 形扶手沿边梯段内侧与中梯段两侧，起步端伸出 LayerDist、另一端伸出 RotationDist；
-    // 首层只画起步梯段剖断线以下部分，顶层不剖断
+     
     inline TchGraphics BuildCornerStair(const TchCornerStair& s)
     {
         using P = TchGraphics::Point;
@@ -496,10 +530,9 @@ namespace MiniCAD::Tch
                 k.Arrows.push_back({{P{total + s.Tread / 2, yc}, P{xc, yc}, P{xc, endY}}, Detail::kDown});
             }
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
-    // ── TCH_DOUBLEMULSTAIR 双分三跑楼梯 ──
     struct TchDoubleMulStair
     {
         double X = 0, Y = 0, Rotation = 0;     // 基点：左侧平台外侧左上角
@@ -513,67 +546,90 @@ namespace MiniCAD::Tch
         int    BreakSteps = 5;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        // 新版 TCH_DOUBLEMULSTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadDoubleMulStairFields(R& r, TchDoubleMulStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.SideWidth = r.D();
+            s.MidWidth = r.D();
+            s.SecondWidth = r.D();
+            s.SidePlatLength = r.D();
+            s.MidPlatLength = r.D();
+            s.Steps1 = r.RC(); s.Steps2 = r.RC(); s.Steps3 = r.RC();
+            r.D(); r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailMid = r.D();
+            s.RailSide = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.SidePlatWidth = r.D();
+            s.MidPlatWidth = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 边梯段宽、BD 中梯段宽、BD 第二跑宽、
-    // BD 侧平台进深、BD 中平台进深、3 个 RC 各跑步数、BD 梯间宽、BD 扶手高、RC 楼层、RC 起步位置、RC、BD 扶手宽、BD 扶手距边、
-    // BD 中梯段端伸出、BD 边梯段端伸出、BS 剖断步数、BD 剖断角、BD 侧平台宽、BD 中平台宽、BD 字高、BL 标志、3 个 BD、RC
     inline bool DecodeDoubleMulStair(const MiniDWG::UnknownEntity& entity, TchDoubleMulStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_DOUBLEMULSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_DOUBLEMULSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native double three-run stair version");
         TchDoubleMulStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.SideWidth = r.ReadBitDouble();
-        s.MidWidth = r.ReadBitDouble();
-        s.SecondWidth = r.ReadBitDouble();
-        s.SidePlatLength = r.ReadBitDouble();
-        s.MidPlatLength = r.ReadBitDouble();
-        s.Steps1 = r.ReadByte(); s.Steps2 = r.ReadByte(); s.Steps3 = r.ReadByte();
-        r.ReadBitDouble(); r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailMid = r.ReadBitDouble();
-        s.RailSide = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.SidePlatWidth = r.ReadBitDouble();
-        s.MidPlatWidth = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native double three-run stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native double three-run stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadDoubleMulStairFields(r, s);
+            if (!f.Exact()) return fail("native double three-run stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_DOUBLEMULSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native double three-run stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadDoubleMulStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native double three-run stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.SideWidth, s.MidWidth, s.SecondWidth, s.SidePlatLength, s.MidPlatLength,
                          s.SidePlatWidth, s.MidPlatWidth, s.RailWidth, s.RailToSide, s.RailMid, s.RailSide, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native double three-run stair settings");
         if (s.Tread <= 0 || s.Steps1 < 2 || s.Steps2 < 2 || s.Steps3 < 2 || s.Floor < 0 || s.Floor > 2 || s.SideWidth <= 0 || s.MidWidth <= 0)
             return fail("invalid native double three-run stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对，均为两边起步）：
-    // 两边起步梯段向上（+y）到侧平台，第二跑横向走向中间平台，中梯段自中间平台向下（−y）；
-    // U 形扶手沿起步梯段内侧、第二跑下边、中梯段外侧，两端分别伸出 RailOutDistSide、RailOutDist
+ 
     inline TchGraphics BuildDoubleMulStair(const TchDoubleMulStair& s)
     {
         using P = TchGraphics::Point;
@@ -666,7 +722,7 @@ namespace MiniCAD::Tch
                     k.Arrows.push_back({{P{x, sideBottom - T / 2}, P{x, yTurn}, P{xc, yTurn}, P{xc, endY}}, Detail::kDown});
             }
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
     // ── TCH_SCISSORSSTAIR 剪刀楼梯 ──
@@ -682,63 +738,85 @@ namespace MiniCAD::Tch
         int    BreakSteps = 5;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        template <class R>
+        void ReadScissorsStairFields(R& r, TchScissorsStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.Width = r.D();
+            s.Landing = r.D();
+            s.Steps1 = r.RC(); s.Steps2 = r.RC();
+            s.SpaceWidth = r.D();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailLanding = r.D();
+            s.RailEnd = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 梯段宽、BD 平台进深、
-    // 2 个 RC 步数、BD 梯间宽、BD 扶手高、RC 楼层、RC 起步位置、RC、BD 扶手宽、BD 扶手距边、BD 向平台伸出、BD 向梯段端伸出、
-    // BS 剖断步数、BD 剖断角、BD 字高、BL 标志、3 个 BD、RC
     inline bool DecodeScissorsStair(const MiniDWG::UnknownEntity& entity, TchScissorsStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_SCISSORSSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_SCISSORSSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native scissors stair version");
         TchScissorsStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.Width = r.ReadBitDouble();
-        s.Landing = r.ReadBitDouble();
-        s.Steps1 = r.ReadByte(); s.Steps2 = r.ReadByte();
-        s.SpaceWidth = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailLanding = r.ReadBitDouble();
-        s.RailEnd = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native scissors stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native scissors stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadScissorsStairFields(r, s);
+            if (!f.Exact()) return fail("native scissors stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_SCISSORSSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native scissors stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadScissorsStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native scissors stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.Width, s.Landing, s.SpaceWidth, s.RailWidth, s.RailToSide, s.RailLanding,
                          s.RailEnd, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native scissors stair settings");
         if (s.Tread <= 0 || s.Steps1 < 2 || s.Steps2 < 2 || s.Floor < 0 || s.Floor > 2 || s.Width <= 0)
             return fail("invalid native scissors stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对，均为右边起步）：
-    // 中间平台（y ±平台进深 / 2）两侧各有两跑并列梯段；下半部右侧梯段自下端起步向上，左侧梯段向下到楼层，
-    // 上半部与下半部关于平台中心成 180° 对称；梯井中的扶手两端分别伸出 RotationDist（平台端）、LayerDist（梯段端）
+     
     inline TchGraphics BuildScissorsStair(const TchScissorsStair& s)
     {
         using P = TchGraphics::Point;
@@ -747,7 +825,6 @@ namespace MiniCAD::Tch
         const double T = s.Tread, rw = s.RailWidth, rd = s.RailToSide, W = s.Width, total = s.SpaceWidth;
         const double half = s.Landing / 2, L = (s.Steps1 - 1) * T, bottom = -half - L;
         const int startBreak = floor == Detail::StairFloor::Middle ? 2 : (floor == Detail::StairFloor::First ? 1 : 0);
-        // 下半部：右侧为起步梯段（u 自左边量起），左侧为另一梯段
         Detail::FlightSpec start, other;
         start.Origin = {total - W, bottom}; start.Vx = 0; start.Vy = 1;
         other.Origin = {0, bottom}; other.Vx = 0; other.Vy = 1;
@@ -818,7 +895,7 @@ namespace MiniCAD::Tch
             for (auto& l : k.G.Lines) { l.A.X = total - l.A.X; l.B.X = total - l.B.X; }
             for (auto& a : k.Arrows) for (auto& p : a.Points) p.X = total - p.X;
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
     // ── TCH_CROSSSTAIR 交叉楼梯 ──
@@ -835,64 +912,87 @@ namespace MiniCAD::Tch
         int    BreakSteps = 10;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        // 新版 TCH_CROSSSTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadCrossStairFields(R& r, TchCrossStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.Width = r.D();
+            s.LeftTop = r.D();
+            s.RightTop = r.D();
+            s.RightBottom = r.D();
+            s.Steps = r.RC();
+            s.SpaceWidth = r.D();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailOut = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 梯段宽、3 个 BD 平台长、RC 踏步数、
-    // BD 梯间宽、BD 扶手高、RC 楼层、RC 起步位置、RC、BD 扶手宽、BD 扶手距边、BD 扶手伸出、BS 剖断步数、BD 剖断角、BD 字高、
-    // BL 标志、3 个 BD、RC
     inline bool DecodeCrossStair(const MiniDWG::UnknownEntity& entity, TchCrossStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CROSSSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_CROSSSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native cross stair version");
         TchCrossStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.Width = r.ReadBitDouble();
-        s.LeftTop = r.ReadBitDouble();
-        s.RightTop = r.ReadBitDouble();
-        s.RightBottom = r.ReadBitDouble();
-        s.Steps = r.ReadByte();
-        s.SpaceWidth = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailOut = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native cross stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native cross stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadCrossStairFields(r, s);
+            if (!f.Exact()) return fail("native cross stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_CROSSSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native cross stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadCrossStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native cross stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.Width, s.LeftTop, s.RightTop, s.RightBottom, s.SpaceWidth, s.RailWidth,
                          s.RailToSide, s.RailOut, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native cross stair settings");
         if (s.Tread <= 0 || s.Steps < 2 || s.Floor < 0 || s.Floor > 2 || s.Width <= 0)
             return fail("invalid native cross stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对）：两段等长梯段并列，
-    // 左段自上端（距基点 LeftTop）起步向下、右段自下端起步向上（上端距基点 RightTop），各自在距起步端 (SectStepNum − 0.5) 级处剖断；
-    // 扶手在各段梯井一侧；每段起步端有上行箭头、另一端有下行箭头（都指向剖断线），顶层下行箭头到起步端前一级为止
+ 
     inline TchGraphics BuildCrossStair(const TchCrossStair& s)
     {
         using P = TchGraphics::Point;
@@ -938,7 +1038,7 @@ namespace MiniCAD::Tch
             for (auto& l : k.G.Lines) { l.A.X = s.SpaceWidth - l.A.X; l.B.X = s.SpaceWidth - l.B.X; }
             for (auto& a : k.Arrows) for (auto& p : a.Points) p.X = s.SpaceWidth - p.X;
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
     // ── TCH_TRIANGLESTAIR 三角楼梯 ──
@@ -954,61 +1054,83 @@ namespace MiniCAD::Tch
         int    BreakSteps = 5;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        // 新版 TCH_TRIANGLESTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadTriangleStairFields(R& r, TchTriangleStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            s.Width = r.D();
+            s.Landing = r.D();
+            s.Steps = r.RC();
+            s.SpaceWidth = r.D();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailOut = r.D();
+            s.BreakSteps = r.BS();
+            s.BreakAngle = r.D();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、BD 梯段宽、BD 平台边长、RC 每跑步数、
-    // BD 梯井宽、BD 扶手高、RC 楼层、RC 起步方向、BD 扶手宽、BD 扶手距边、BD 扶手伸出、BS 剖断步数、BD 剖断角、BD 字高、
-    // BL 标志、3 个 BD、RC
     inline bool DecodeTriangleStair(const MiniDWG::UnknownEntity& entity, TchTriangleStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_TRIANGLESTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_TRIANGLESTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native triangle stair version");
         TchTriangleStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.Width = r.ReadBitDouble();
-        s.Landing = r.ReadBitDouble();
-        s.Steps = r.ReadByte();
-        s.SpaceWidth = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailOut = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.BreakAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native triangle stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native triangle stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadTriangleStairFields(r, s);
+            if (!f.Exact()) return fail("native triangle stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_TRIANGLESTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native triangle stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadTriangleStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native triangle stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.Width, s.Landing, s.SpaceWidth, s.RailWidth, s.RailToSide, s.RailOut, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native triangle stair settings");
         if (s.Tread <= 0 || s.Steps < 2 || s.Floor < 0 || s.Floor > 2 || s.Width <= 0 || s.SpaceWidth < 0)
             return fail("invalid native triangle stair settings");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对）：三跑梯段围绕切角三角形梯井，
-    // 第一跑沿 +y 上行（x 0 ～ 梯段宽），之后每跑依次顺时针转 120°（绕梯井中心）；每跑之后为菱形平台（外边长 SlabSize）；
-    // 梯井三角形边长 = 梯段长 + 2 × 梯井宽，中心在 (梯段宽 + 内切圆半径, 梯段长 / 2)；
-    // 剖断线放不下时垂直于梯段；扶手中心线在每跑两端伸出 RailOut，转角处以垂直于角平分线的斜线相接
+     
     inline TchGraphics BuildTriangleStair(const TchTriangleStair& s)
     {
         using P = TchGraphics::Point;
@@ -1102,7 +1224,7 @@ namespace MiniCAD::Tch
             k.Arrows.push_back({{turn({xm, L + T / 2}, 2), turn({xm, -T}, 2), turn({xm, L + T}, 1), turn({xm, -T}, 1), P{xm, L + T}, P{xm, endV}},
                                 Detail::kDown});
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 
     // ── TCH_RECTCORNERSTAIR 矩形转角楼梯 ──
@@ -1120,49 +1242,76 @@ namespace MiniCAD::Tch
         int    BreakSteps = 5;
         double BreakAngle = std::numbers::pi / 6;
         double TextHeight = 3.5, Scale = 100;
+        std::uint32_t Flags = 0x400;           // 位 10：画箭头
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+ 
+    namespace Detail
+    {
+        // 新版 TCH_RECTCORNERSTAIR 版本 1 与明文版本 0 字段相同
+        template <class R>
+        void ReadRectCornerStairFields(R& r, TchRectCornerStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            s.StepHeight = r.D();
+            s.Tread = r.D();
+            for (double& w : s.Width) w = r.D();
+            for (double& w : s.SlabAlong) w = r.D();
+            for (double& w : s.SlabAcross) w = r.D();
+            for (int& n : s.Steps) n = r.RC();
+            s.RailEnd = r.D();
+            r.D();
+            s.Floor = r.RC();
+            s.StartSide = r.RC();
+            s.Runs = r.RC();
+            s.RailWidth = r.D();
+            s.RailToSide = r.D();
+            s.RailStart = r.D();
+            s.BreakAngle = r.D();
+            s.BreakSteps = r.BS();
+            s.TextHeight = r.D();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D(); r.D(); r.D();
+            for (int i = 0; i < 5; ++i) r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC、RC 版本（0）、3BD 基点、BD 转角、BD 踏步高、BD 踏步宽、4 个 BD 梯段宽、3 个 BD 平台横向长、
-    // 3 个 BD 平台纵向长（SlabWidth）、3 个 BD 平台横向长（SlabSize）、4 个 RC 各跑步数、BD 末端伸出、BD 扶手高、RC 楼层、RC 起步方向、RC 跑数、BD 扶手宽、BD 扶手距边、
-    // BD 起步端伸出、BD 剖断角、BS 剖断步数、BD 字高、BL 标志、3 个 BD、RC
     inline bool DecodeRectCornerStair(const MiniDWG::UnknownEntity& entity, TchRectCornerStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_RECTCORNERSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_RECTCORNERSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native rectangular corner stair version");
         TchRectCornerStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        s.StepHeight = r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        for (double& w : s.Width) w = r.ReadBitDouble();
-        for (double& w : s.SlabAlong) w = r.ReadBitDouble();
-        for (double& w : s.SlabAcross) w = r.ReadBitDouble();
-        for (int& n : s.Steps) n = r.ReadByte();
-        s.RailEnd = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        s.StartSide = r.ReadByte();
-        s.Runs = r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailToSide = r.ReadBitDouble();
-        s.RailStart = r.ReadBitDouble();
-        s.BreakAngle = r.ReadBitDouble();
-        s.BreakSteps = r.ReadBitShort();
-        s.TextHeight = r.ReadBitDouble();
-        r.ReadBitLong();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native rectangular corner stair fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native rectangular corner stair version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadRectCornerStairFields(r, s);
+            if (!f.Exact()) return fail("native rectangular corner stair fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_RECTCORNERSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native rectangular corner stair version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadRectCornerStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native rectangular corner stair fields do not consume the payload exactly");
+            Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.RailWidth, s.RailToSide, s.RailEnd, s.RailStart, s.BreakAngle, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native rectangular corner stair settings");
         for (int i = 0; i < 4; ++i)
@@ -1172,16 +1321,12 @@ namespace MiniCAD::Tch
         if (s.Tread <= 0 || s.Runs < 2 || s.Runs > 4 || s.Floor < 0 || s.Floor > 2) return fail("invalid native rectangular corner stair settings");
         for (int i = 0; i < s.Runs; ++i)
             if (s.Steps[i] < 2) return fail("invalid native rectangular corner stair steps");
-        Detail::ReadStairHandles(entity, base, s.TextStyle, s.ArrowLayer);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解结果（两跑：中间层 / 首层 / 顶层、属性取不同值共 4 个样例核对；三、四跑按同一规律推出，未核对）：
-    // 第一跑沿 +y 上行，之后每跑顺时针转 90°；第 i 跑之后的平台沿第 i 跑方向长 SlabWidth、沿下一跑方向长 SlabSize；
-    // 扶手沿各跑内侧（梯井侧），中间层在第一跑起步端、末跑末端外伸后封闭成环；
-    // 首层为开口折线（起步端伸出 RailOutDistDown、末端伸出半个扶手宽，两端封口）；顶层的封闭边延伸到第一跑外边
+     
     inline TchGraphics BuildRectCornerStair(const TchRectCornerStair& s)
     {
         using P = TchGraphics::Point;
@@ -1288,6 +1433,6 @@ namespace MiniCAD::Tch
             path.push_back(center(0, floor == Detail::StairFloor::Top ? T / 2 : cv + T / 2));
             k.Arrows.push_back({std::move(path), Detail::kDown});
         }
-        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight);
+        return k.Finish(s.X, s.Y, s.Rotation, s.Scale, s.TextHeight, (s.Flags & 0x400) != 0);
     }
 }

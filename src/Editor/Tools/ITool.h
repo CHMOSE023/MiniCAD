@@ -1,6 +1,7 @@
 #pragma once
 #include "Editor/Input/InputEvent.h"
 #include "Core/Math/Point3.hpp"
+#include "MiniI18n/I18n.h"      // 工具的提示与回显经 Tr 翻译
 #include <functional>
 #include <string>
 

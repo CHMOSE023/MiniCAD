@@ -3,6 +3,7 @@
 #include "Paint/DrawList.h"
 #include "Style/Theme.hpp"
 #include "Text/TextSystem.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,16 +22,18 @@ namespace MiniCAD
         };
         // 上 / 下 / 前 / 后 / 左 / 右：前视的眼睛在 −Y，左视在 −X
         const std::array<Face, 6> kFaces = { {
-            { {  0,  0,  1 }, {  1,  0, 0 }, { 0,  1, 0 }, "上" },
-            { {  0,  0, -1 }, {  1,  0, 0 }, { 0, -1, 0 }, "下" },
-            { {  0, -1,  0 }, {  1,  0, 0 }, { 0,  0, 1 }, "前" },
-            { {  0,  1,  0 }, { -1,  0, 0 }, { 0,  0, 1 }, "后" },
-            { { -1,  0,  0 }, {  0, -1, 0 }, { 0,  0, 1 }, "左" },
-            { {  1,  0,  0 }, {  0,  1, 0 }, { 0,  0, 1 }, "右" },
+            { {  0,  0,  1 }, {  1,  0, 0 }, { 0,  1, 0 }, NC_("视图方块", "上") },
+            { {  0,  0, -1 }, {  1,  0, 0 }, { 0, -1, 0 }, NC_("视图方块", "下") },
+            { {  0, -1,  0 }, {  1,  0, 0 }, { 0,  0, 1 }, NC_("视图方块", "前") },
+            { {  0,  1,  0 }, { -1,  0, 0 }, { 0,  0, 1 }, NC_("视图方块", "后") },
+            { { -1,  0,  0 }, {  0, -1, 0 }, { 0,  0, 1 }, NC_("视图方块", "左") },
+            { {  1,  0,  0 }, {  0,  1, 0 }, { 0,  0, 1 }, NC_("视图方块", "右") },
         } };
 
         struct Compass { Math::Vec3 Dir; const char* Label; };
-        const std::array<Compass, 4> kCompass = { { { { 1, 0, 0 }, "东" }, { { 0, -1, 0 }, "南" }, { { -1, 0, 0 }, "西" }, { { 0, 1, 0 }, "北" } } };
+        const std::array<Compass, 4> kCompass = { { { { 1, 0, 0 }, NC_("视图方块", "东") }, { { 0, -1, 0 }, NC_("视图方块", "南") },
+                                                    { { -1, 0, 0 }, NC_("视图方块", "西") }, { { 0, 1, 0 }, NC_("视图方块", "北") } } };
+        constexpr const char* kContext = "视图方块";     // i18n: 上下文     // 面与方位的字是单字，加上下文翻译（每帧画的时候翻译，切换语言后自然跟着换）
 
         constexpr double kSplit       = 0.6;    // 3 × 3 × 3 分块的界线（立方体为 [−1, 1]³）
         constexpr double kRingRadius  = 2.05;   // 大于立方体在任何视角下的投影半径（√3），字不被方块挡住
@@ -60,7 +63,12 @@ namespace MiniCAD
     ViewCube::ViewCube(Callbacks callbacks) : m_cb(std::move(callbacks))
     {
         SetFocusable(false);
-        SetTooltip("视图方块：点面、棱、角或东南西北切换视图，拖动环绕");
+        Retranslate();
+    }
+
+    void ViewCube::Retranslate()
+    {
+        SetTooltip(Tr("视图方块：点面、棱、角或东南西北切换视图，拖动环绕"));
     }
 
     float ViewCube::Scale() const
@@ -190,7 +198,7 @@ namespace MiniCAD
             if (m_hover.Compass == i)
                 dl.AddCircleFilled(p, kLabelHitPx, highlight);
             labelParams.color = m_hover.Compass == i ? MiniGUI::Theme::TextOnAccent : MiniGUI::Theme::Text;
-            ctx->GetTextSystem().Draw(dl, MiniGUI::Rect{ p.x - 10.0f, p.y - 9.0f, p.x + 10.0f, p.y + 9.0f }, kCompass[i].Label, labelParams);
+            ctx->GetTextSystem().Draw(dl, MiniGUI::Rect{ p.x - 10.0f, p.y - 9.0f, p.x + 10.0f, p.y + 9.0f }, TrC(kContext, kCompass[i].Label), labelParams);
         }
 
         // 可见的面（凸体：朝向眼睛的面互不遮挡），明暗按朝向
@@ -233,8 +241,14 @@ namespace MiniCAD
                 const float unitsPerPx = static_cast<float>(kFaceTextSize / kFaceTextPx);
                 const Vec2 xAxis{ (ca.x - c.x) * unitsPerPx, (ca.y - c.y) * unitsPerPx };      // 排版的 +x → 面的 +A
                 const Vec2 yAxis{ -(cb.x - c.x) * unitsPerPx, -(cb.y - c.y) * unitsPerPx };    // 排版的 +y（向下）→ 面的 −B
+                // 译文可能比单字长（"BOTTOM"）：超出面宽的 85% 时缩小字号
+                const std::string text = TrC(kContext, f.Label);
+                const float widthPx = ctx->GetTextSystem().Measure(text, p).x;
+                const float maxPx   = static_cast<float>(1.7 / unitsPerPx);
+                if (widthPx > maxPx)
+                    p.size *= maxPx / widthPx;
                 const size_t first = dl.GetVertexCount();
-                ctx->GetTextSystem().Draw(dl, MiniGUI::Rect{ c.x - 30.0f, c.y - 20.0f, c.x + 30.0f, c.y + 20.0f }, f.Label, p);
+                ctx->GetTextSystem().Draw(dl, MiniGUI::Rect{ c.x - 60.0f, c.y - 20.0f, c.x + 60.0f, c.y + 20.0f }, text, p);
                 dl.TransformVertices(first, c, xAxis, yAxis, c);
             }
         }

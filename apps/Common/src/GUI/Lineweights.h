@@ -1,16 +1,17 @@
 #pragma once
 // ── 线宽下拉项（对应 DXF 标准线宽枚举）：工具栏、特性面板、图层面板共用 ─────────
 #include "Core/Entity/Lineweight.hpp"
+#include "MiniI18n/I18n.h"
 
 namespace MiniCAD
 {
-    struct LineweightItem { Lineweight lw; const char* label; };
+    struct LineweightItem { Lineweight lw; const char* label; };     // label：N_ 标记的原文，显示时 Tr
 
     inline constexpr LineweightItem kLineweightItems[] =
     {
         { Lineweight::ByLayer, "ByLayer" },
         { Lineweight::ByBlock, "ByBlock" },
-        { Lineweight::Default, "默认"    },
+        { Lineweight::Default, N_("默认") },
         { Lineweight::W000, "0.00 mm" }, { Lineweight::W005, "0.05 mm" },
         { Lineweight::W009, "0.09 mm" }, { Lineweight::W013, "0.13 mm" },
         { Lineweight::W015, "0.15 mm" }, { Lineweight::W018, "0.18 mm" },
@@ -29,6 +30,6 @@ namespace MiniCAD
     {
         for (const auto& it : kLineweightItems)
             if (it.lw == lw) return it.label;
-        return "默认";
+        return N_("默认");
     }
 }

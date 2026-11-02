@@ -39,6 +39,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 翻译文件：格式、占位符、命令行选项字母（见 docs/I18n/PLAN.md 3.5）
+      - name: Check translations
+        run: python -X utf8 tools/i18n_extract.py --check
+
+      # 漏网的中文：没有包 Tr / N_ 的中文字面量、格式串含中文的日志（数据加注释 // i18n: 数据）
+      - name: Lint untranslated text
+        run: python -X utf8 tools/i18n_extract.py --lint
+
       # USE_WIN32=ON：窗口程序，启动时不带控制台（与 release 预设相同）
       - name: Configure
         run: cmake -S . -B out/ci -DUSE_WIN32=ON
@@ -58,7 +66,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item -Recurse out/ci/MiniCADWin "dist/$name"
           Get-ChildItem "dist/$name" -Recurse -Include *.pdb,*.ilk,*.exp,*.lib | Remove-Item
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md "dist/$name"
+          Copy-Item README.md, README.zh-CN.md, LICENSE, THIRD_PARTY_NOTICES.md "dist/$name"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
 
       - name: Upload artifact
@@ -97,7 +105,7 @@ jobs:
           name="MiniCAD-$PACKAGE_VERSION-web"
           mkdir -p "dist/$name"
           cp out/web/MiniCADWeb/index.* "dist/$name/"
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          cp README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
           (cd dist && zip -r "$name.zip" "$name")
 
       - name: Upload artifact
@@ -168,7 +176,7 @@ jobs:
           mkdir -p "dist/$name"
           cp -r out/linux/MiniCADLinux/. "dist/$name/"
           strip "dist/$name/MiniCADLinux"
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
+          cp README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
       - name: Upload artifact

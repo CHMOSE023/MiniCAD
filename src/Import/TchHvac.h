@@ -3,14 +3,9 @@
 #include <cmath>
 #include <numbers>
 #include <string>
-
-// 天正暖通的风管（TCH_DBHVACDUCT，TDbHvacDuct）与风管管件（TCH_DBHFITTING，TDbHvacFitting）。
-// 两者与天正电气的桥架、桥架配件同属 TDbPipeBase / TDbFittingBase（tch_PipeBase.arx），数据布局相同，按属性表取几何。
-// 显示与天正暖通（AutoCAD 2014，THvac20V6）分解 CK-T 暖通平面图的结果核对：图元都随层；
-// 边线在对象自身的图层，中心线、管端线在自身图层名去掉末尾“管”后加“中心线”“管端线”的图层（TchGraphics 的 Layer 1、2）
+ 
 namespace MiniCAD::Tch
-{
-    // ── 风管：Start / End 中心线端点，R2 宽度（R3 为高度，平面图不用）──
+{ 
     struct TchHvacDuct
     {
         MiniDWG::XYZ Start, End;
@@ -31,8 +26,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 沿中心线、宽 R2 的矩形，另加中心线（Layer 1）；长度为 0 时天正不显示
+     
     inline TchGraphics BuildHvacDuct(const TchHvacDuct& d)
     {
         TchGraphics g;
@@ -51,14 +45,7 @@ namespace MiniCAD::Tch
         g.Paths.push_back(std::move(c));
         return g;
     }
-
-    // ── 风管管件：按属性表中的键区分类型 ──
-    // 法兰（有 R22）：Pt0、Pt2 为法兰两面的中心，R2 风管宽度（圆管为直径），R22 法兰边宽（1:100 图面尺寸，按出图比例缩放）；
-    // 变径 / 天圆地方（有 R28、Vt6）：Pt0 端宽 R5、Pt2 端宽 R7，I0 / I7 为 1 时 Pt0 / Pt2 端为圆口，端面垂直于 Vt0；
-    // 弯头（有 R21、Pt1）：Pt0、Pt2 两端中心，Pt1 两支中心线交点，R5 宽度，R21 中心线半径与宽度之比，R0 两端直段长，
-    // I4 ≥ 3 时为分节弯头（1#楼暖通的圆管弯头 I4 = 3：每侧 2 段弦线）；
-    // 三通（有 R9、Pt3，I4 为 1）：主管 Pt0（宽 R5）→ Pt2（宽 R7），支管自主管垂直伸到 Pt3，宽 R9。
-    // 来回弯、弧形三通（I4 为 5）等其他管件样例很少，未解析
+ 
     struct TchHvacFitting
     {
         enum class Kind { Flange, Reducer, Elbow, Tee };
@@ -91,7 +78,7 @@ namespace MiniCAD::Tch
             if (!positive(width) || !rim || !Detail::Finite(*rim) || *rim < 0) return fail("invalid duct flange size");
             f.Type = TchHvacFitting::Kind::Flange;
             f.Width0 = f.Width2 = *width;
-            f.Extra = *rim * (base.Scale > 0 ? base.Scale : 100) / 100;      // 边宽按 1:100 的图面尺寸给出（1#楼 1:50 时减半）
+            f.Extra = *rim * (base.Scale > 0 ? base.Scale : 100) / 100;      // 边宽按 1:100 的图面尺寸给出（暖通样图 1:50 时减半）
         }
         else if (map.Find("R21") && p1)
         {
@@ -150,12 +137,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 法兰：Pt0、Pt2 中点处垂直于 Pt0 → Pt2 的一条线，半长 R2 / 2 + R22（自身图层）。
-    // 变径：两端端面垂直于 Vt0，两条斜边（Pt0 ± 半宽 R5 → Pt2 ± 半宽 R7），两端管端线（Layer 2），中心线 Pt0 → Pt2（Layer 1）；
-    // 天圆地方（只有一端为圆口）另自圆口中心连到方口两角（CK-T 暖通平面图 55 个变径核对）。
-    // 三通：见上方 TchHvacFitting 的说明与函数内注释。
-    // 弯头：中心线自 Pt0 直行、沿圆弧转过两支夹角、再直行到 Pt2，两侧边线为其偏移 ± 半宽，两端管端线。
-    // 90° 弯头直段长 R0、中心线半径 R21 × 宽度；非 90° 弯头直段只有 0.1，半径由臂长反推（Pt1 按 R21 × 宽度、R0 + 0.1 定位，分解时圆弧放大）
+    
     inline TchGraphics BuildHvacFitting(const TchHvacFitting& f)
     {
         using P = TchGraphics::Point;
@@ -195,7 +177,7 @@ namespace MiniCAD::Tch
         if (f.Type == TchHvacFitting::Kind::Tee)
         {
             // 主管两侧边线 Pt0 ± R5/2 → Pt2 ± R7/2；支管两边线（距支管中心线 ± R9/2）自主管边线伸到 Pt3；
-            // 开口处一段圆弧过两个交点与支管中心线上自主管边线向主管内 0.15 × R9 的一点（1#楼暖通 80 个三通）
+            // 开口处一段圆弧过两个交点与支管中心线上自主管边线向主管内 0.15 × R9 的一点（暖通样图 80 个三通）
             const double len = std::hypot(f.Pt2.X - f.Pt0.X, f.Pt2.Y - f.Pt0.Y);
             const double along = ((f.Pt3.X - f.Pt0.X) * d.X + (f.Pt3.Y - f.Pt0.Y) * d.Y);
             const double toward = ((f.Pt3.X - f.Pt0.X) * n.X + (f.Pt3.Y - f.Pt0.Y) * n.Y) > 0 ? 1.0 : -1.0;

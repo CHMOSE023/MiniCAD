@@ -32,7 +32,7 @@ namespace MiniCAD
             scene.MarkEntityDirty(m_id);   // 仅该实体重新细分
         }
 
-        std::string GetName() const override { return "编辑文字"; }
+        std::string GetName() const override { return N_("编辑文字"); }
 
     private:
         Object::ObjectID m_id;
@@ -63,7 +63,7 @@ namespace MiniCAD
             scene.MarkEntityDirty(m_id);   // 仅该实体重新细分
         }
 
-        std::string GetName() const override { return "编辑多行文字"; }
+        std::string GetName() const override { return N_("编辑多行文字"); }
 
     private:
         Object::ObjectID m_id;
@@ -96,7 +96,7 @@ namespace MiniCAD
             }
         }
 
-        std::string GetName() const override { return "编辑单元格"; }
+        std::string GetName() const override { return N_("编辑单元格"); }
 
     private:
         TableEntity* Target(Scene& scene) const

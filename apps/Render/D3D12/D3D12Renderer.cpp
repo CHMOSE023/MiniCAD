@@ -98,9 +98,9 @@ namespace MiniCAD
         rs.pStaticSamplers   = &sampler;
         rs.Flags             = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> blob, errors;
-        D3D12ThrowIfFailed(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, blob.GetAddressOf(), errors.GetAddressOf()), "SerializeRootSignature(视口)");
+        D3D12ThrowIfFailed(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, blob.GetAddressOf(), errors.GetAddressOf()), "SerializeRootSignature(viewport)");
         D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
-                                                                  IID_PPV_ARGS(m_rootSignature.GetAddressOf())), "CreateRootSignature(视口)");
+                                                                  IID_PPV_ARGS(m_rootSignature.GetAddressOf())), "CreateRootSignature(viewport)");
     }
 
     D3D12Renderer::~D3D12Renderer()
@@ -159,7 +159,7 @@ namespace MiniCAD
         pd.SampleDesc.Count = 1;
 
         ComPtr<ID3D12PipelineState> pso;
-        D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(pso.GetAddressOf())), "CreateGraphicsPipelineState(视口)");
+        D3D12ThrowIfFailed(m_ctx.GetDevice()->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(pso.GetAddressOf())), "CreateGraphicsPipelineState(viewport)");
         return m_pipelines.emplace(key, std::move(pso)).first->second.Get();
     }
 

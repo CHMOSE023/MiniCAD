@@ -2,6 +2,7 @@
 #include "Core/Math/Mat4.hpp"
 #include "Core/Math/Vec3.hpp"
 #include "Solid/ISolidKernel.h"
+#include "MiniI18n/I18n.h"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -19,6 +20,13 @@ namespace MiniCAD
 
 namespace MiniCAD::Nodes
 {
+    // 节点的显示文字（名称、分类、说明、端口、参数、选项、类型名）：定义处写 NN_("…") 只做标记，显示时 TrNode 按上下文"节点"翻译。
+    // 单独一个上下文，因为与界面其他处同字不同义的很多（"网格"在这里是 Mesh，"旋转"是 Revolve）。
+    // 节点出错 / 警告的文字不在这个上下文里，直接 Tr / TrF。
+    inline constexpr const char* kNodeTextContext = "节点";    // i18n: 上下文
+    constexpr const char* NN_(const char* msgid) { return msgid; }
+    std::string TrNode(std::string_view text);   // 多行时逐行翻译（空心形体的说明另起一行）；分类按整条翻译
+
     enum class DataType : uint8_t
     {
         Any,        // 只用于端口：接受任何值
@@ -118,7 +126,7 @@ namespace MiniCAD::Nodes
 
     using DataList = std::vector<Value>;
 
-    const char* TypeName(DataType t);           // 中文名，编辑器提示用
+    std::string TypeName(DataType t);           // 按当前语言的类型名，编辑器提示用
     const char* TypeKey(DataType t);            // 存档用的英文键
     bool        TypeFromKey(const std::string& key, DataType& out);
 
@@ -128,6 +136,7 @@ namespace MiniCAD::Nodes
     bool Convert(const Value& v, DataType to, Value& out);
     // 显示用的文字（面板节点、提示）
     std::string ToDisplayString(const Value& v);
+    std::string PlaneName(const Plane& pl);      // “XY 平面”“YZ 平面”“XZ 平面”或“平面”（按当前语言），节点卡片上显示
 
     inline bool IsGeometryType(DataType t)
     {

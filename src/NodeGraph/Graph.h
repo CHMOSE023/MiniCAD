@@ -70,7 +70,8 @@ namespace MiniCAD::Nodes
         uint64_t               InnerVersion = 0;
         bool IsGroup() const { return Type && IsGroupTypeId(TypeId); }
 
-        const std::string& Title() const { return Type ? Type->Name : TypeId; }
+        const std::string& Title() const { return Type ? Type->Name : TypeId; }          // 原文（组名改名等按它）
+        std::string DisplayTitle() const { return Type ? Type->DisplayName() : TypeId; }  // 显示用，按当前语言
         size_t InputCount()  const { return Type ? Type->Inputs.size() : InputValues.size(); }
         size_t OutputCount() const { return Type ? Type->Outputs.size() : 0; }
 

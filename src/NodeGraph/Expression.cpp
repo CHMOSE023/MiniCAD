@@ -1,4 +1,5 @@
 #include "NodeGraph/Expression.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -37,10 +38,10 @@ namespace MiniCAD::Nodes
                         ++col;
                 return col;
             }
-            void Fail(const std::string& msg)
+            void Fail(const std::string& msg)   // msg 已翻译
             {
                 if (error.empty())
-                    error = "第 " + std::to_string(Column()) + " 个字符：" + msg;
+                    error = TrF("第 {0} 个字符：{1}", Column(), msg);
             }
             void SkipSpace()
             {
@@ -107,7 +108,7 @@ namespace MiniCAD::Nodes
             c.SkipSpace();
             if (c.i >= c.s.size())
             {
-                c.Fail("表达式不完整");
+                c.Fail(Tr("表达式不完整"));
                 return nullptr;
             }
             const unsigned char ch = static_cast<unsigned char>(c.s[c.i]);
@@ -117,17 +118,17 @@ namespace MiniCAD::Nodes
                 const double v = std::strtod(c.s.c_str() + c.i, &end);
                 if (end == c.s.c_str() + c.i)
                 {
-                    c.Fail("不是数值");
+                    c.Fail(Tr("不是数值"));
                     return nullptr;
                 }
                 c.i = static_cast<size_t>(end - c.s.c_str());
                 return Make(Expression::Node::Kind::Number, {}, v);
             }
-            if (c.Eat("(") || c.Eat("（"))
+            if (c.Eat("(") || c.Eat("（"))        // i18n: 数据（也认全角括号）
             {
                 NodePtr inner = ParseCompare(c, vars);
-                if (inner && !c.Eat(")") && !c.Eat("）"))
-                    c.Fail("缺少右括号");
+                if (inner && !c.Eat(")") && !c.Eat("）"))     // i18n: 数据
+                    c.Fail(Tr("缺少右括号"));
                 return c.error.empty() ? std::move(inner) : nullptr;
             }
             if (IsNameStart(c.s, c.i))
@@ -136,10 +137,10 @@ namespace MiniCAD::Nodes
                 while (c.i < c.s.size() && IsNameChar(c.s, c.i))
                     ++c.i;
                 std::string name = c.s.substr(start, c.i - start);
-                if (c.Eat("(") || c.Eat("（"))
+                if (c.Eat("(") || c.Eat("（"))        // i18n: 数据（也认全角括号）
                 {
                     NodePtr call = Make(Expression::Node::Kind::Call, name);
-                    if (!c.Eat(")") && !c.Eat("）"))
+                    if (!c.Eat(")") && !c.Eat("）"))     // i18n: 数据
                     {
                         do
                         {
@@ -147,10 +148,10 @@ namespace MiniCAD::Nodes
                             if (!arg)
                                 return nullptr;
                             call->Args.push_back(std::move(arg));
-                        } while (c.Eat(",") || c.Eat("，"));
-                        if (!c.Eat(")") && !c.Eat("）"))
+                        } while (c.Eat(",") || c.Eat("，"));     // i18n: 数据（也认全角逗号）
+                        if (!c.Eat(")") && !c.Eat("）"))     // i18n: 数据
                         {
-                            c.Fail("函数 " + name + " 缺少右括号");
+                            c.Fail(TrF("函数 {0} 缺少右括号", name));
                             return nullptr;
                         }
                     }
@@ -164,7 +165,7 @@ namespace MiniCAD::Nodes
                     vars.push_back(name);
                 return Make(Expression::Node::Kind::Variable, name);
             }
-            c.Fail(std::string("不认识的字符“") + c.s.substr(c.i, ch < 0x80 ? 1 : ch < 0xE0 ? 2 : ch < 0xF0 ? 3 : 4) + "”");
+            c.Fail(TrF("不认识的字符“{0}”", c.s.substr(c.i, ch < 0x80 ? 1 : ch < 0xE0 ? 2 : ch < 0xF0 ? 3 : 4)));
             return nullptr;
         }
 
@@ -291,7 +292,7 @@ namespace MiniCAD::Nodes
             case K::Variable:
                 if (!lookup || !lookup(n.Name, out))
                 {
-                    error = "未知变量：" + n.Name;
+                    error = TrF("未知变量：{0}", n.Name);
                     return false;
                 }
                 return true;
@@ -312,12 +313,12 @@ namespace MiniCAD::Nodes
                 else if (op == "*") out = a * b;
                 else if (op == "/")
                 {
-                    if (b == 0.0) { error = "除以 0"; return false; }
+                    if (b == 0.0) { error = Tr("除以 0"); return false; }
                     out = a / b;
                 }
                 else if (op == "%")
                 {
-                    if (b == 0.0) { error = "对 0 取余"; return false; }
+                    if (b == 0.0) { error = Tr("对 0 取余"); return false; }
                     out = a - b * std::floor(a / b);
                 }
                 else if (op == "^") out = std::pow(a, b);
@@ -338,7 +339,7 @@ namespace MiniCAD::Nodes
                 {
                     if (argc == count)
                         return true;
-                    error = "函数 " + n.Name + " 需要 " + std::to_string(count) + " 个参数";
+                    error = TrF("函数 {0} 需要 {1} 个参数", n.Name, count);
                     return false;
                 };
                 if (f == "if")
@@ -356,7 +357,7 @@ namespace MiniCAD::Nodes
                         return false;
                 if (f == "min" || f == "max")
                 {
-                    if (argc == 0) { error = "函数 " + n.Name + " 至少需要 1 个参数"; return false; }
+                    if (argc == 0) { error = TrF("函数 {0} 至少需要 1 个参数", n.Name); return false; }
                     out = f == "min" ? *std::min_element(v.begin(), v.end()) : *std::max_element(v.begin(), v.end());
                     return true;
                 }
@@ -396,7 +397,7 @@ namespace MiniCAD::Nodes
                                        : (v[0] != 0.0 || v[1] != 0.0);
                     return true;
                 }
-                error = "未知函数：" + n.Name;
+                error = TrF("未知函数：{0}", n.Name);
                 return false;
             }
             }
@@ -413,11 +414,11 @@ namespace MiniCAD::Nodes
         {
             c.SkipSpace();
             if (c.i < text.size())
-                c.Fail(text.substr(c.i).rfind(')', 0) == 0 ? "多余的右括号" : "多余的内容");
+                c.Fail(text.substr(c.i).rfind(')', 0) == 0 ? Tr("多余的右括号") : Tr("多余的内容"));
         }
         if (!root || !c.error.empty())
         {
-            error = c.error.empty() ? "表达式无效" : c.error;
+            error = c.error.empty() ? Tr("表达式无效") : c.error;
             return nullptr;
         }
         std::unique_ptr<Expression> e(new Expression());
@@ -432,7 +433,7 @@ namespace MiniCAD::Nodes
             return false;
         if (!std::isfinite(out))
         {
-            error = "结果无效（如负数开方）";
+            error = Tr("结果无效（如负数开方）");
             return false;
         }
         return true;

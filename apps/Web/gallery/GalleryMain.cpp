@@ -51,7 +51,7 @@ int main()
         app.ui      = std::make_unique<UIContext>(app.backend.get());
         app.input   = std::make_unique<WebInput>(app.ui.get(), app.host.GetCanvasSelector().c_str());
         if (!LoadWebUIFonts(app.ui->GetTextSystem()))
-            std::printf("警告：没有找到界面字体 %s，文字将无法显示\n", kWebUIFontPath);
+            std::printf("Warning: UI font %s not found, text will not show\n", kWebUIFontPath);
 
         app.ui->SetRedrawCallback([&app] { app.host.RequestFrame(); });
         app.host.SetOnResize([&app](float w, float h, float scale) { app.ui->SetDisplaySize(Vec2{ w, h }, scale); });

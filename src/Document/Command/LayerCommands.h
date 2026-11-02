@@ -35,7 +35,7 @@ namespace MiniCAD
         }
 
         // 不重名的“图层N”
-        inline std::string UniqueName(const LayerManager& lm, const std::string& prefix = "图层")
+        inline std::string UniqueName(const LayerManager& lm, const std::string& prefix = "图层")   // i18n: 数据（新图层名）
         {
             int n = static_cast<int>(lm.GetAllLayerIDs().size());
             while (NameTaken(lm, prefix + std::to_string(n)))
@@ -88,7 +88,7 @@ namespace MiniCAD
             scene.MarkDisplayDirty();
         }
 
-        std::string GetName() const override { return "新建图层"; }
+        std::string GetName() const override { return N_("新建图层"); }
         LayerID     GetLayerID() const       { return m_id; }       // Execute 成功后有效
 
     private:
@@ -145,7 +145,7 @@ namespace MiniCAD
             scene.MarkDisplayDirty();
         }
 
-        std::string GetName() const override { return "删除图层"; }
+        std::string GetName() const override { return N_("删除图层"); }
         size_t      MovedCount() const       { return m_moved.size(); }
 
     private:
@@ -225,14 +225,14 @@ namespace MiniCAD
                              + int(c.Locked.has_value()) + int(c.LineType.has_value()) + int(c.Lineweight.has_value());
             if (fields == 1)
             {
-                if (c.Name)       return "图层改名";
-                if (c.Color)      return "修改图层颜色";
-                if (c.Visible)    return (*c.Visible) ? "打开图层" : "关闭图层";
-                if (c.Locked)     return (*c.Locked) ? "锁定图层" : "解锁图层";
-                if (c.LineType)   return "修改图层线型";
-                return "修改图层线宽";
+                if (c.Name)       return N_("图层改名");
+                if (c.Color)      return N_("修改图层颜色");
+                if (c.Visible)    return (*c.Visible) ? N_("打开图层") : N_("关闭图层");
+                if (c.Locked)     return (*c.Locked) ? N_("锁定图层") : N_("解锁图层");
+                if (c.LineType)   return N_("修改图层线型");
+                return N_("修改图层线宽");
             }
-            return "修改图层特性";
+            return N_("修改图层特性");
         }
 
     private:
@@ -276,7 +276,7 @@ namespace MiniCAD
                 (*it)->Undo(scene);
         }
 
-        std::string GetName() const override { return m_commands.empty() ? "修改图层" : m_commands.front()->GetName(); }
+        std::string GetName() const override { return m_commands.empty() ? N_("修改图层") : m_commands.front()->GetName(); }
 
     private:
         std::vector<std::unique_ptr<ICommand>> m_commands;
@@ -374,7 +374,7 @@ namespace MiniCAD
             scene.MarkDisplayDirty();
         }
 
-        std::string GetName() const override { return "图层改名"; }
+        std::string GetName() const override { return N_("图层改名"); }
         size_t      RenamedCount() const     { return m_renames.size(); }
 
     private:

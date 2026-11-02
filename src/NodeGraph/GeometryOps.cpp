@@ -78,7 +78,7 @@ namespace MiniCAD::Nodes::Geo
 
     const char* ReferenceNoun(const std::string& action)
     {
-        return action == "pickPoints" ? "点" : action == "pickBodies" ? "三维实体" : "曲线";
+        return action == "pickPoints" ? NN_("点") : action == "pickBodies" ? NN_("三维实体") : NN_("曲线");
     }
 
     Math::Mat4 Xform::Matrix() const
@@ -149,7 +149,7 @@ namespace MiniCAD::Nodes::Geo
             auto nurbs = NurbsOf(curve);
             if (!nurbs)
             {
-                args.Error("这种曲线不能做该变换（转换为空间曲线失败）");
+                args.Error(Tr("这种曲线不能做该变换（转换为空间曲线失败）"));
                 return {};
             }
             nurbs->Transform(m);
@@ -170,7 +170,7 @@ namespace MiniCAD::Nodes::Geo
             const auto out = Plane::FromAxes(V(m.TransformPoint(P(p.Origin))), m.TransformVector(p.X), m.TransformVector(p.Y));
             if (!out)
             {
-                args.Error("变换后的平面退化（缩放系数为 0）");
+                args.Error(Tr("变换后的平面退化（缩放系数为 0）"));
                 return {};
             }
             return Value(*out);
@@ -183,7 +183,7 @@ namespace MiniCAD::Nodes::Geo
             Solid::BodyPtr b = k->Transform(v.AsBody(), x.Matrix());
             if (!b)
             {
-                args.Error("变换失败：" + k->LastError());
+                args.Error(TrF("变换失败：{0}", k->LastError()));
                 return {};
             }
             return Value::VoidBody(b, v.Void);   // 保留空心标记
@@ -226,7 +226,7 @@ namespace MiniCAD::Nodes::Geo
             case Xform::Kind::Scale:
                 if (!ScaleEntityInPlace(*c, x.Center, x.Factor))
                 {
-                    args.Error("曲线缩放失败（系数应为正数）");
+                    args.Error(Tr("曲线缩放失败（系数应为正数）"));
                     return {};
                 }
                 break;
@@ -237,7 +237,7 @@ namespace MiniCAD::Nodes::Geo
             return Value(CurvePtr(std::move(c)));
         }
         default:
-            args.Error("不是几何");
+            args.Error(Tr("不是几何"));
             return {};
         }
     }
@@ -489,6 +489,6 @@ namespace MiniCAD::Nodes::Geo
     void WarnManyFaces(SolveArgs& a, Solid::ISolidKernel& k, const Solid::BodyPtr& body, const std::string& what)
     {
         if (const int faces = body ? k.FaceCount(body) : 0; faces > kManyFaces)
-            a.Warning(what + "有 " + std::to_string(faces) + " 个面（多由网格转实体得到），运算很慢（可先“简化”网格）");
+            a.Warning(TrF("{0}有 {1} 个面（多由网格转实体得到），运算很慢（可先“简化”网格）", what, faces));
     }
 }

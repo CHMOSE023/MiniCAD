@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include "MiniI18n/I18n.h"
 
 namespace MiniGUI
 {
@@ -52,7 +53,7 @@ namespace MiniGUI
                 char log[1024] = {};
                 glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
                 glDeleteShader(shader);
-                throw std::runtime_error(std::string("MiniGUI GLES3: 着色器编译失败\n") + log);
+                throw std::runtime_error(Tr("MiniGUI GLES3：着色器编译失败") + "\n" + log);
             }
             return shader;
         }
@@ -92,7 +93,7 @@ namespace MiniGUI
         {
             char log[1024] = {};
             glGetProgramInfoLog(m_program, sizeof(log), nullptr, log);
-            throw std::runtime_error(std::string("MiniGUI GLES3: 着色器链接失败\n") + log);
+            throw std::runtime_error(Tr("MiniGUI GLES3：着色器链接失败") + "\n" + log);
         }
 
         m_locScale = glGetUniformLocation(m_program, "uScale");
@@ -157,7 +158,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > e.width || region.y + region.height > e.height || pitch % 4 != 0)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
 
@@ -281,7 +282,7 @@ namespace MiniGUI
                     auto it = m_textures.find(cmd.texture);
                     if (it == m_textures.end())
                     {
-                        assert(false && "DrawCmd 引用了不存在的纹理");
+                        assert(false && "DrawCmd references a missing texture");
                         continue;
                     }
                     glBindTexture(GL_TEXTURE_2D, it->second.texture);

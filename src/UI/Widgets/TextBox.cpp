@@ -1,4 +1,5 @@
 #include "Widgets/TextBox.h"
+#include "MiniI18n/I18n.h"
 #include "Widgets/AutoComplete.h"
 #include "Widgets/Menu.h"
 #include "Core/UIContext.h"
@@ -52,15 +53,15 @@ namespace MiniGUI
         const bool canPaste = editable && !ctx->GetClipboard().GetText().empty();
 
         ShowContextMenu(*ctx, {
-            MenuItem("撤销(&U)", [this] { Undo(); }, "Ctrl+Z").Enabled(editable && CanUndo()),
-            MenuItem("重做(&R)", [this] { Redo(); }, "Ctrl+Y").Enabled(editable && CanRedo()),
+            MenuItem(Tr("撤销(&U)"), [this] { Undo(); }, "Ctrl+Z").Enabled(editable && CanUndo()),
+            MenuItem(Tr("重做(&R)"), [this] { Redo(); }, "Ctrl+Y").Enabled(editable && CanRedo()),
             MenuItem::Separator(),
-            MenuItem("剪切(&T)", [this] { Cut(); },   "Ctrl+X").Enabled(editable && sel),
-            MenuItem("复制(&C)", [this] { Copy(); },  "Ctrl+C").Enabled(sel),
-            MenuItem("粘贴(&P)", [this] { Paste(); }, "Ctrl+V").Enabled(canPaste),
-            MenuItem("删除(&D)", [this] { DeleteSelection(); }, "Del").Enabled(editable && sel),
+            MenuItem(Tr("剪切(&T)"), [this] { Cut(); },   "Ctrl+X").Enabled(editable && sel),
+            MenuItem(Tr("复制(&C)"), [this] { Copy(); },  "Ctrl+C").Enabled(sel),
+            MenuItem(Tr("粘贴(&P)"), [this] { Paste(); }, "Ctrl+V").Enabled(canPaste),
+            MenuItem(Tr("删除(&D)"), [this] { DeleteSelection(); }, "Del").Enabled(editable && sel),
             MenuItem::Separator(),
-            MenuItem("全选(&A)", [this] { SelectAll(); }, "Ctrl+A").Enabled(!m_text.empty()),
+            MenuItem(Tr("全选(&A)"), [this] { SelectAll(); }, "Ctrl+A").Enabled(!m_text.empty()),
         }, windowPos);
     }
 

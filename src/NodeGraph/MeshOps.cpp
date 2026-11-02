@@ -227,12 +227,12 @@ namespace MiniCAD::Nodes::MeshOps
     {
         if (faceSize != 3 && faceSize != 4)
         {
-            error = "每个面的顶点数应为 3 或 4";
+            error = Tr("每个面的顶点数应为 3 或 4");
             return std::nullopt;
         }
         if (indices.size() % faceSize != 0)
         {
-            error = "索引个数应是 " + std::to_string(faceSize) + " 的倍数";
+            error = TrF("索引个数应是 {0} 的倍数", faceSize);
             return std::nullopt;
         }
         Mesh m;
@@ -245,7 +245,7 @@ namespace MiniCAD::Nodes::MeshOps
                 const int64_t k = indices[f + i];
                 if (k < 0 || k >= static_cast<int64_t>(vertices.size()))
                 {
-                    error = "第 " + std::to_string(f / faceSize + 1) + " 个面的索引 " + std::to_string(k) + " 超出顶点范围";
+                    error = TrF("第 {0} 个面的索引 {1} 超出顶点范围", f / faceSize + 1, k);
                     return std::nullopt;
                 }
                 idx[i] = static_cast<uint32_t>(k);

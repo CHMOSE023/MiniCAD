@@ -54,7 +54,7 @@ namespace MiniCAD
                 m_base = box.Min;      // AutoCAD 默认以复制集左下角为插入基点
             }
 
-            LOG_INFO("[PasteTool] 左键指定插入点 | 右键/ESC 取消");
+            LOG_INFO("[PasteTool] click insertion point | right-click/ESC cancels");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -99,7 +99,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定插入点 [右键/ESC 取消]:";
+            return Tr("指定插入点 [右键/ESC 取消]:");
         }
 
     private:
@@ -221,7 +221,7 @@ namespace MiniCAD
             if (m_ctx->cmdStack.Execute(std::move(cmd), scene))
             {
                 if (m_onCommitted) m_onCommitted();
-                LOG_DEBUG("[PasteTool] 粘贴 %zu 个对象 at (%.3f, %.3f)",
+                LOG_DEBUG("[PasteTool] pasted %zu objects at (%.3f, %.3f)",
                     m_clipboard->size(), target.x, target.y);
             }
         }

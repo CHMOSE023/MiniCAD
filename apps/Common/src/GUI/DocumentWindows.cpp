@@ -28,6 +28,7 @@
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "MiniI18n/I18n.h"
 #include "GUI/StatusBarView.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
@@ -206,7 +207,7 @@ namespace MiniCAD
         const bool ok    = w.layout->ApplyFile(w.uiHost, m_uiPath);
         if ((!ok && first) || (ok && !w.layout->GetTitleBar()))
         {
-            LOG_WARN("文档窗口：界面描述里没有可用的 layouts.document，使用最小布局");
+            LOG_WARN_TR("文档窗口：界面描述里没有可用的 layouts.document，使用最小布局");
             w.layout->ApplyText(w.uiHost, kFallbackDocumentLayout);
         }
         if (ok || first)
@@ -289,16 +290,16 @@ namespace MiniCAD
             Document* doc = docAt(i);
             const bool alone = pane != kMainPane && m_docManager.DocumentsIn(pane).size() <= 1;    // 已经独占一个窗口
             std::vector<MenuItem> items{
-                MenuItem("保存(&S)",    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
-                MenuItem("另存为(&A)…", [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
-                MenuItem("在新窗口中打开(&W)", [this, t, doc, pane]
+                MenuItem(Tr("保存(&S)"),    [this, doc] { ActivateDocument(doc); m_commands.Execute("file.save"); }),
+                MenuItem(Tr("另存为(&A)…"), [this, doc] { ActivateDocument(doc); m_commands.Execute("file.saveAs"); }),
+                MenuItem(Tr("在新窗口中打开(&W)"), [this, t, doc, pane]
                 {
                     const Rect r = t->GetScreenBounds();
                     FloatDocument(doc, PaneToMain(pane, Vec2{ r.min.x + 120.0f, r.max.y + 80.0f }));
                 }).Enabled(!alone),
             };
             if (pane != kMainPane)
-                items.push_back(MenuItem("移到主窗口(&M)", [this, doc] { MoveDocumentsTo({ doc }, doc, kMainPane, -1); }));
+                items.push_back(MenuItem(Tr("移到主窗口(&M)"), [this, doc] { MoveDocumentsTo({ doc }, doc, kMainPane, -1); }));
             return items;
         });
     }
@@ -343,7 +344,7 @@ namespace MiniCAD
         w->grab   = windowPos - origin;     // 标签拖出后继续拖：光标保持在标题栏的这个位置
         w->size   = size;
         if (!m_platform->LoadUiFonts(ui.GetTextSystem()))
-            LOG_WARN("文档窗口：没有找到界面字体");
+            LOG_WARN_TR("文档窗口：没有找到界面字体");
         ui.SetTheme(m_ui->GetTheme());
         // 主窗口开着对话框时整个窗口（视口、面板、功能区…）不接受指针，按下只把主窗口置前；按键与文字转给对话框
         ui.SetModalOwner(m_ui.get(), [this] { m_platform->ActivateMainWindow(); });
@@ -403,11 +404,11 @@ namespace MiniCAD
         w->layout->RegisterPanel("canvas", std::move(host));
         w->layout->RegisterPanel("documents", CreateDocumentArea(c));
         w->layout->RegisterPanel("statusbar", CreateStatusBar(c));
-        w->layout->RegisterPanel("layerbar", CreateLayerBar(c.panels->bindings, [this, w] { return m_docManager.GetShownDocument(w->pane); },
+        w->layout->RegisterPanel("layerbar", CreateLayerBar(*c.panels, [this, w] { return m_docManager.GetShownDocument(w->pane); },
                                                             &w->layerBar));
-        w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), "特性");     // 它的绑定集合的 OnChanged 在这里设好
-        w->layout->RegisterPanel("layers",     CreateLayerPanel(c), "图层");
-        w->layout->RegisterPanel("nodes",      CreateNodePanel(c), "节点");
+        w->layout->RegisterPanel("properties", CreatePropertiesPanel(c), N_("特性"));     // 它的绑定集合的 OnChanged 在这里设好
+        w->layout->RegisterPanel("layers",     CreateLayerPanel(c), N_("图层"));
+        w->layout->RegisterPanel("nodes",      CreateNodePanel(c), N_("节点"));
         ApplyDocWindowUi(*w);
 
         // 快捷键登记在这个窗口自己的界面上；主窗口开着对话框时按键都转给对话框（SetModalOwner），不会触发

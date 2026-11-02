@@ -35,6 +35,7 @@ namespace MiniCAD
         constexpr int   kDisplayLines = 8;
 
         // 标题栏颜色：先按完整分类（"实体/空心"），再按大类（docs/NodeGraph/PLAN.md 第 4.1 节）
+        // i18n: 数据（键为分类原文）
         Color32 CategoryColor(const std::string& cat)
         {
             static const std::map<std::string, Color32> kColors = {
@@ -50,10 +51,12 @@ namespace MiniCAD
             return it == kColors.end() ? RGBA(90, 90, 90) : it->second;
         }
 
+        // 分类按整条翻译（"数学/运算" → "Math/Operators"）再分大类、小类；分组、配色仍按原文
         std::string CategoryLabel(const std::string& cat)
         {
-            const std::string sub = SubCategory(cat);
-            return sub.empty() ? cat : TopCategory(cat) + " › " + sub;
+            const std::string t = TrNode(cat);
+            const std::string sub = SubCategory(t);
+            return sub.empty() ? t : TopCategory(t) + " › " + sub;
         }
 
         Color32 TypeColor(DataType t)
@@ -154,12 +157,12 @@ namespace MiniCAD
         std::string Summary(const DataList& list)
         {
             if (list.empty())
-                return "（没有数据）";
-            std::string s = std::to_string(list.size()) + " 项：";
+                return Tr("（没有数据）");
+            std::string s = TrF("{0} 项：", list.size());
             for (size_t i = 0; i < list.size() && i < 4; ++i)
-                s += (i ? "，" : "") + ToDisplayString(list[i]);
+                s += (i ? Tr("，") : "") + ToDisplayString(list[i]);
             if (list.size() > 4)
-                s += "，…";
+                s += Tr("，") + "…";
             return s;
         }
 
@@ -186,7 +189,7 @@ namespace MiniCAD
                 SetLayoutStyle(ps);
 
                 m_box = AddChild<MiniGUI::TextBox>();
-                m_box->SetPlaceholder("搜索节点（名称、分类或 ID）");
+                m_box->SetPlaceholder(Tr("搜索节点（名称、分类或 ID）"));
                 MiniGUI::LayoutStyle bs;
                 bs.width = kWidth;
                 m_box->SetLayoutStyle(bs);
@@ -213,13 +216,13 @@ namespace MiniCAD
                 for (const SearchRow& row : m_rows)
                 {
                     MiniGUI::ListItem item;
-                    item.text   = row.Type->Name;
+                    item.text   = row.Type->DisplayName();
                     item.detail = CategoryLabel(row.Type->Category) + (row.Note.empty() ? "" : "  " + row.Note) + "  " + row.Type->Id;
                     item.swatch = CategoryColor(row.Type->Category);
                     items.push_back(std::move(item));
                 }
                 if (items.empty())
-                    items.push_back(MiniGUI::ListItem{ .text = "没有匹配的节点" });
+                    items.push_back(MiniGUI::ListItem{ .text = Tr("没有匹配的节点") });
                 const int rows = std::clamp(static_cast<int>(items.size()), 1, kMaxRows);
                 m_list->SetItems(std::move(items));
                 MiniGUI::LayoutStyle ls;
@@ -656,7 +659,7 @@ namespace MiniCAD
                         list.push_back(MiniGUI::MenuItem::Separator());
                     prev = t;
                     const std::string id = t->Id;
-                    list.emplace_back(t->Name, [this, id, local] { AddNodeAt(id, local); });
+                    list.emplace_back(t->DisplayName(), [this, id, local] { AddNodeAt(id, local); });
                 }
             return list;
         };
@@ -667,6 +670,7 @@ namespace MiniCAD
         for (size_t i = 0; i < cats.size();)
         {
             const std::string top = TopCategory(cats[i]);
+            const std::string topLabel = TopCategory(TrNode(cats[i]));   // 按原文分组，显示译文
             std::vector<MiniGUI::MenuItem> sub;
             for (; i < cats.size() && TopCategory(cats[i]) == top; ++i)
             {
@@ -676,17 +680,17 @@ namespace MiniCAD
                     sub.insert(sub.end(), std::make_move_iterator(list.begin()), std::make_move_iterator(list.end()));
                 }
                 else
-                    sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(cats[i]), nodesOf(cats[i])));
+                    sub.push_back(MiniGUI::MenuItem::Sub(SubCategory(TrNode(cats[i])), nodesOf(cats[i])));
             }
-            items.push_back(MiniGUI::MenuItem::Sub(top, std::move(sub)));
+            items.push_back(MiniGUI::MenuItem::Sub(topLabel, std::move(sub)));
         }
         if (canvasItems)
         {
             // 空白处右键：节点分类（最常用）在上，画布操作在下，顺序同常见软件的编辑菜单
             const bool clip = ctx->GetClipboard().GetText().find("MiniCAD-NodeGraph") != std::string::npos;
             items.push_back(MiniGUI::MenuItem::Separator());
-            items.push_back(std::move(MiniGUI::MenuItem("粘贴", [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
-            items.push_back(std::move(MiniGUI::MenuItem("全选", [this]
+            items.push_back(std::move(MiniGUI::MenuItem(Tr("粘贴"), [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
+            items.push_back(std::move(MiniGUI::MenuItem(Tr("全选"), [this]
             {
                 std::set<NodeId> all;
                 if (const Graph* gg = G())
@@ -694,9 +698,9 @@ namespace MiniCAD
                         all.insert(n->Id);
                 SetSelection(std::move(all));
             }, "Ctrl+A").Enabled(!g->Empty())));
-            items.emplace_back("适应窗口", [this] { FrameAll(); }, "F");
+            items.emplace_back(Tr("适应窗口"), [this] { FrameAll(); }, "F");
             if (!m_path.empty())
-                items.emplace_back("返回上一层", [this] { LeaveGroup(m_path.size() - 1); }, "Esc");
+                items.emplace_back(Tr("返回上一层"), [this] { LeaveGroup(m_path.size() - 1); }, "Esc");
         }
         if (items.empty())
             return;
@@ -792,10 +796,10 @@ namespace MiniCAD
                 for (const PortCandidate& c : found)
                 {
                     const PortSpec& p = (fromOutput ? c.Type->Inputs : c.Type->Outputs)[static_cast<size_t>(c.Port)];
-                    std::string note = fromOutput ? "→ " + p.Name : p.Name + " →";
+                    std::string note = fromOutput ? "→ " + TrNode(p.Name) : TrNode(p.Name) + " →";
                     if (c.Match == PortMatch::Convert)
-                        note += fromOutput ? "（" + KindName(type, kind) + " → " + KindName(p.Type, p.Kind) + "）"
-                                           : "（" + KindName(p.Type, p.Kind) + " → " + KindName(type, kind) + "）";
+                        note += fromOutput ? TrF("（{0} → {1}）", KindName(type, kind), KindName(p.Type, p.Kind))
+                                           : TrF("（{0} → {1}）", KindName(p.Type, p.Kind), KindName(type, kind));
                     rows.push_back({ c.Type, c.Port, std::move(note) });
                 }
                 return rows;
@@ -932,7 +936,7 @@ namespace MiniCAD
         const auto& spec = n->Type->Params[param];
         for (size_t i = 0; i < spec.Choices.size(); ++i)
         {
-            MiniGUI::MenuItem item(spec.Choices[i], [this, id, param, i]
+            MiniGUI::MenuItem item(TrNode(spec.Choices[i]), [this, id, param, i]
             {
                 if (Graph* gg = G())
                 {
@@ -961,12 +965,12 @@ namespace MiniCAD
         const Plane cur = n->InputValues[port].AsPlane();
         // 标准平面（原点不变），与“标准平面”节点相同：XY 法向 +Z、YZ 法向 +X、XZ 法向 −Y
         const struct { const char* Name; Math::Vec3 X, Y; } kPlanes[] = {
-            { "XY 平面", { 1, 0, 0 }, { 0, 1, 0 } }, { "YZ 平面", { 0, 1, 0 }, { 0, 0, 1 } }, { "XZ 平面", { 1, 0, 0 }, { 0, 0, 1 } } };
+            { NN_("XY 平面"), { 1, 0, 0 }, { 0, 1, 0 } }, { NN_("YZ 平面"), { 0, 1, 0 }, { 0, 0, 1 } }, { NN_("XZ 平面"), { 1, 0, 0 }, { 0, 0, 1 } } };
         std::vector<MiniGUI::MenuItem> items;
         for (const auto& k : kPlanes)
         {
             const Plane p{ cur.Origin, k.X, k.Y };
-            MiniGUI::MenuItem item(k.Name, [this, id, port, p]
+            MiniGUI::MenuItem item(TrNode(k.Name), [this, id, port, p]
             {
                 if (Graph* gg = G())
                 {
@@ -1502,28 +1506,28 @@ namespace MiniCAD
         const bool outLinked = h.K == Hit::Kind::OutPort && g->IsOutputConnected(h.Node, h.Index);
         if (inLinked || outLinked)
         {
-            items.emplace_back(inLinked ? "断开此输入" : "断开此输出", [this, h] { CutLinksAt(h); }, "Alt+单击");
+            items.emplace_back(inLinked ? Tr("断开此输入") : Tr("断开此输出"), [this, h] { CutLinksAt(h); }, Tr("Alt+单击"));
             items.push_back(MiniGUI::MenuItem::Separator());
         }
         const bool clip = ctx->GetClipboard().GetText().find("MiniCAD-NodeGraph") != std::string::npos;
-        items.emplace_back("剪切", [this] { CutSelection(); }, "Ctrl+X");
-        items.emplace_back("复制", [this] { CopySelection(); }, "Ctrl+C");
-        items.push_back(std::move(MiniGUI::MenuItem("粘贴", [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
-        items.emplace_back("创建副本", [this] { DuplicateSelection(); }, "Ctrl+D");
-        items.emplace_back("删除", [this] { DeleteSelection(); }, "Delete");
+        items.emplace_back(Tr("剪切"), [this] { CutSelection(); }, "Ctrl+X");
+        items.emplace_back(Tr("复制"), [this] { CopySelection(); }, "Ctrl+C");
+        items.push_back(std::move(MiniGUI::MenuItem(Tr("粘贴"), [this, local] { PasteFromClipboard(local); }, "Ctrl+V").Enabled(clip)));
+        items.emplace_back(Tr("创建副本"), [this] { DuplicateSelection(); }, "Ctrl+D");
+        items.emplace_back(Tr("删除"), [this] { DeleteSelection(); }, "Delete");
         items.push_back(MiniGUI::MenuItem::Separator());
         const Nodes::Node* hitNode = g->GetNode(h.Node);
         if (hitNode && hitNode->IsGroup())
         {
             const NodeId id = h.Node;
-            items.emplace_back("进入组", [this, id] { EnterGroup(id); }, "双击");
-            items.emplace_back("重命名组…", [this, id] { BeginRenameGroup(id); });
+            items.emplace_back(Tr("进入组"), [this, id] { EnterGroup(id); }, Tr("双击"));
+            items.emplace_back(Tr("重命名组…"), [this, id] { BeginRenameGroup(id); });
         }
-        items.emplace_back("创建组", [this] { GroupSelection(); }, "Ctrl+G");
+        items.emplace_back(Tr("创建组"), [this] { GroupSelection(); }, "Ctrl+G");
         if (hitNode && hitNode->IsGroup())
-            items.emplace_back("解组", [this] { UngroupSelection(); }, "Ctrl+Shift+G");
+            items.emplace_back(Tr("解组"), [this] { UngroupSelection(); }, "Ctrl+Shift+G");
         items.push_back(MiniGUI::MenuItem::Separator());
-        items.emplace_back("预览", [this] { TogglePreviewOfSelection(); }, "P");
+        items.emplace_back(Tr("预览"), [this] { TogglePreviewOfSelection(); }, "P");
         items.back().checked = hitNode && hitNode->Preview;
         MiniGUI::ShowContextMenu(*ctx, std::move(items), windowPos);
         return true;
@@ -1643,24 +1647,29 @@ namespace MiniCAD
         if (m_hover.K == Hit::Kind::OutPort && m_hover.Index < static_cast<int>(n->Outputs.size()))
         {
             const PortSpec& p = n->Type->Outputs[m_hover.Index];
-            std::string s = p.Name + "（" + KindName(p.Type, p.Kind) + "）" + Summary(n->Outputs[m_hover.Index]);
+            std::string s = TrF("{0}（{1}）", TrNode(p.Name), KindName(p.Type, p.Kind)) + Summary(n->Outputs[m_hover.Index]);
             if (const size_t links = g->LinksFrom(n->Id, m_hover.Index).size())
-                s += "\nAlt + 单击断开 " + std::to_string(links) + " 条连线";
+                s += "\n" + TrF("Alt + 单击断开 {0} 条连线", links);
             return s;
         }
         if (m_hover.K == Hit::Kind::InPort)
         {
             const PortSpec& p = n->Type->Inputs[m_hover.Index];
-            std::string s = p.Name + "（" + KindName(p.Type, p.Kind) + (p.Acc == Access::List ? "，列表" : "") + (p.Optional ? "，可选" : "") + "）";
+            std::string kind = KindName(p.Type, p.Kind);
+            if (p.Acc == Access::List)
+                kind = TrF("{0}，列表", kind);
+            if (p.Optional)
+                kind = TrF("{0}，可选", kind);
+            std::string s = TrF("{0}（{1}）", TrNode(p.Name), kind);
             s += Summary(GatherInput(*g, *n, m_hover.Index));
             if (!p.Tip.empty())
-                s += "\n" + p.Tip;
+                s += "\n" + TrNode(p.Tip);
             if (const size_t links = g->LinksInto(n->Id, m_hover.Index).size())
-                s += "\nAlt + 单击断开 " + std::to_string(links) + " 条连线";
+                s += "\n" + TrF("Alt + 单击断开 {0} 条连线", links);
             return s;
         }
         if (m_hover.K == Hit::Kind::Header)
-            return n->Type->Description;
+            return TrNode(n->Type->Description);
         return {};
     }
 
@@ -1752,14 +1761,14 @@ namespace MiniCAD
             MiniGUI::TextParams hp = tp;
             hp.color = RGBA(245, 245, 245);
             const float right = n.OutputCount() > 0 ? 26.0f : 8.0f;
-            std::string title = n.Title();
+            std::string title = n.DisplayTitle();
             text.Draw(dl, Rect{ S(c.Box.min.x + 8, n.Y), S(c.Box.max.x - right - 34, n.Y + kHeaderH) }, title, hp);
             if (n.Dirty && m_host.evaluating && m_host.evaluating())
             {
                 hp.size   = 10.0f * z;
                 hp.color  = RGBA(235, 235, 235, 190);
                 hp.hAlign = MiniGUI::TextAlign::End;
-                text.Draw(dl, Rect{ S(c.Box.max.x - right - 60, n.Y), S(c.Box.max.x - right - 2, n.Y + kHeaderH) }, "计算中…", hp);
+                text.Draw(dl, Rect{ S(c.Box.max.x - right - 60, n.Y), S(c.Box.max.x - right - 2, n.Y + kHeaderH) }, Tr("计算中…"), hp);
             }
             else if (n.Millis >= 1.0)
             {
@@ -1824,7 +1833,7 @@ namespace MiniCAD
                 {
                     MiniGUI::TextParams op = tp;
                     op.hAlign = MiniGUI::TextAlign::End;
-                    std::string label = p.Name;
+                    std::string label = TrNode(p.Name);
                     if (i < n.Outputs.size() && n.Outputs[i].size() != 1)
                         label += "  [" + std::to_string(n.Outputs[i].size()) + "]";
                     text.Draw(dl, Rect{ S(c.Box.min.x + 8, c.OutY[i] - kRowH * 0.5f), S(c.Box.max.x - 12, c.OutY[i] + kRowH * 0.5f) }, label, op);
@@ -1845,7 +1854,7 @@ namespace MiniCAD
                 {
                     MiniGUI::TextParams lp = tp;
                     lp.color = Theme::TextDim;
-                    text.Draw(dl, Rect{ S(c.Box.min.x + 10, y - kRowH * 0.5f), S(c.Box.min.x + kNodeWidth * 0.43f, y + kRowH * 0.5f) }, spec.Name, lp);
+                    text.Draw(dl, Rect{ S(c.Box.min.x + 10, y - kRowH * 0.5f), S(c.Box.min.x + kNodeWidth * 0.43f, y + kRowH * 0.5f) }, TrNode(spec.Name), lp);
                 }
                 switch (spec.Widget)
                 {
@@ -1881,7 +1890,7 @@ namespace MiniCAD
                     if (showText)
                     {
                         MiniGUI::TextParams vp = tp;
-                        text.Draw(dl, Rect{ sw.max.x + 6, fr.min.y, fr.max.x, fr.max.y }, on ? "真" : "假", vp);
+                        text.Draw(dl, Rect{ sw.max.x + 6, fr.min.y, fr.max.x, fr.max.y }, on ? Tr("真") : Tr("假"), vp);
                     }
                     break;
                 }
@@ -1895,7 +1904,7 @@ namespace MiniCAD
                     if (showText && i < spec.Choices.size())
                     {
                         MiniGUI::TextParams vp = tp;
-                        text.Draw(dl, Rect{ fr.min.x + 6, fr.min.y, fr.max.x - 14, fr.max.y }, spec.Choices[i], vp);
+                        text.Draw(dl, Rect{ fr.min.x + 6, fr.min.y, fr.max.x - 14, fr.max.y }, TrNode(spec.Choices[i]), vp);
                         text.Draw(dl, Rect{ fr.max.x - 14, fr.min.y, fr.max.x - 2, fr.max.y }, "▾", vp);
                     }
                     break;
@@ -1925,12 +1934,12 @@ namespace MiniCAD
                 {
                     MiniGUI::TextParams bp = tp;
                     bp.hAlign = MiniGUI::TextAlign::Center;
-                    std::string label = "用选择集设置";
+                    std::string label = Tr("用选择集设置");
                     if (n.Type->Action.starts_with("pick") && !n.Params.empty() && n.Params[0].Type() == DataType::Text)
                     {
                         const std::string& ids = n.Params[0].AsText();
                         const size_t count = ids.empty() ? 0 : std::count(ids.begin(), ids.end(), ',') + 1;
-                        label += "（已引用 " + std::to_string(count) + " 个）";
+                        label = TrF("用选择集设置（已引用 {0} 个）", count);
                     }
                     text.Draw(dl, br, label, bp);
                 }
@@ -1951,7 +1960,7 @@ namespace MiniCAD
                     if (data.empty())
                     {
                         dp.color = Theme::TextDim;
-                        text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }), "（空）", dp);
+                        text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }), Tr("（空）"), dp);
                     }
                     for (size_t i = 0; i < data.size() && i < static_cast<size_t>(kDisplayLines); ++i, yy += 16)
                         text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }),
@@ -1960,7 +1969,7 @@ namespace MiniCAD
                     {
                         dp.color = Theme::TextDim;
                         text.Draw(dl, SR(Rect{ c.Box.min.x + 12, yy, c.Box.max.x - 12, yy + 16 }),
-                                  "… 共 " + std::to_string(data.size()) + " 项", dp);
+                                  TrF("… 共 {0} 项", data.size()), dp);
                     }
                 }
             }
@@ -1978,7 +1987,7 @@ namespace MiniCAD
                     MiniGUI::TextParams lp = tp;
                     lp.color = p.Optional && !connected && n.InputValues[i].IsEmpty() ? Theme::TextDim : Theme::Text;
                     text.Draw(dl, Rect{ S(c.Box.min.x + 12, y - kRowH * 0.5f), S(editable ? c.Box.min.x + kNodeWidth * 0.43f : c.Box.max.x - 8, y + kRowH * 0.5f) },
-                              p.Name, lp);
+                              TrNode(p.Name), lp);
                 }
                 if (editable)
                 {
@@ -2004,9 +2013,8 @@ namespace MiniCAD
                             MiniGUI::TextParams vp = tp;
                             vp.hAlign = MiniGUI::TextAlign::Center;
                             vp.size   = (v.Type() == DataType::Vector ? 10.5f : kFontSize) * z;
-                            std::string s = ToDisplayString(v);
-                            if (v.Type() == DataType::Plane)
-                                s = s.substr(0, s.find("（"));   // “XY 平面”，原点与法向见悬停提示
+                            // 平面只显示“XY 平面”，原点与法向见悬停提示
+                            const std::string s = v.Type() == DataType::Plane ? PlaneName(v.AsPlane()) : ToDisplayString(v);
                             text.Draw(dl, Rect{ fr.min.x + 3, fr.min.y, fr.max.x - 3, fr.max.y }, s, vp);
                         }
                     }
@@ -2042,14 +2050,14 @@ namespace MiniCAD
         tp.wrap   = true;
         if (!g)
         {
-            ctx->GetTextSystem().Draw(dl, screenRect, "没有打开的图纸", tp);
+            ctx->GetTextSystem().Draw(dl, screenRect, Tr("没有打开的图纸"), tp);
             dl.PopClipRect();
             return;
         }
         if (g->Empty())
             ctx->GetTextSystem().Draw(dl, screenRect, m_path.empty()
-                ? "按 Tab 或双击空白处搜索添加节点，右键按分类添加；从端口拖出连线。\n节点图随图纸保存，结果实时显示在绘图区，点“烘焙”加入图纸"
-                : "组内是空的：添加节点，用“组输入 / 组输出”节点作为组的接口。按 Esc 返回", tp);
+                ? Tr("按 Tab 或双击空白处搜索添加节点，右键按分类添加；从端口拖出连线。\n节点图随图纸保存，结果实时显示在绘图区，点“烘焙”加入图纸")
+                : Tr("组内是空的：添加节点，用“组输入 / 组输出”节点作为组的接口。按 Esc 返回"), tp);
 
         const Vec2 origin = screenRect.min;
         PaintLinks(dl, origin);
@@ -2230,11 +2238,11 @@ namespace MiniCAD
         if (m_path.empty() || !ctx || !g)
             return;
         // 路径栏：主图 › 组 A › 组 B（前面各层可点，返回到那一层）
-        std::vector<std::string> names{ "主图" };
+        std::vector<std::string> names{ Tr("主图") };
         for (NodeId id : m_path)
         {
             const Nodes::Node* n = g ? g->GetNode(id) : nullptr;
-            names.push_back(n ? n->Title() : "?");
+            names.push_back(n ? n->DisplayTitle() : "?");
             g = n && n->Inner ? n->Inner.get() : nullptr;
         }
         constexpr float kBarH = 26.0f;
@@ -2266,6 +2274,6 @@ namespace MiniCAD
         }
         tp.color  = Theme::TextDim;
         tp.hAlign = MiniGUI::TextAlign::End;
-        ts.Draw(dl, Rect{ x + 20.0f, bar.min.y, bar.max.x - 10.0f, bar.max.y }, "组内编辑会同步到这个组的全部实例 · Esc 返回", tp);
+        ts.Draw(dl, Rect{ x + 20.0f, bar.min.y, bar.max.x - 10.0f, bar.max.y }, Tr("组内编辑会同步到这个组的全部实例 · Esc 返回"), tp);
     }
 }

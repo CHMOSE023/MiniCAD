@@ -5,6 +5,7 @@
 #include <cctype>
 #include <set>
 #include <typeinfo>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgRead
 {
@@ -108,8 +109,8 @@ namespace MiniDWG::DwgRead
             auto* table = m_db->FindAs<CadTable>(handle);
             if (table == nullptr || table->GetObjectType() != type)
             {
-                Notify(NotificationType::Warning, "找不到符号表 " + std::string(type == CadObjectType::BLOCK_CONTROL_OBJ ? "BLOCK_RECORD" : "") +
-                                                      "（类型 " + std::to_string(static_cast<int>(type)) + "）");
+                Notify(NotificationType::Warning, TrF("找不到符号表 {0}（类型 {1}）", type == CadObjectType::BLOCK_CONTROL_OBJ ? "BLOCK_RECORD" : "",
+                                                      static_cast<int>(type)));
                 continue;
             }
             m_db->SetTable(type, handle);
@@ -453,8 +454,8 @@ namespace MiniDWG::DwgRead
             dict->EntryNames.push_back(entry->Name);
             dict->EntryHandles.push_back(entry->ObjectHandle);
             dict->DefaultEntryHandle = entry->ObjectHandle;
-            Notify(NotificationType::Info, "带默认值的字典 " + DxfValue(HandleValue{ dict->ObjectHandle }).AsString() +
-                                               " 的默认项不在条目中，已补为 " + entry->Name);
+            Notify(NotificationType::Info, TrF("带默认值的字典 {0} 的默认项不在条目中，已补为 {1}",
+                                               DxfValue(HandleValue{ dict->ObjectHandle }).AsString(), entry->Name));
         }
     }
 
@@ -627,7 +628,7 @@ namespace MiniDWG::DwgRead
             }
         }
         if (applied > 0)
-            Notify(NotificationType::Info, "已应用 R14 文件中的往返数据（名称大小写、标注样式与图层的 R2000 属性）" + std::to_string(applied) + " 处");
+            Notify(NotificationType::Info, TrF("已应用 R14 文件中的往返数据（名称大小写、标注样式与图层的 R2000 属性）{0} 处", applied));
     }
 
     // 头段中按句柄引用的当前图层、线型、样式 ……：换成名称

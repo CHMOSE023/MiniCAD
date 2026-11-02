@@ -23,10 +23,10 @@ namespace MiniCAD
     public:
         LeaderTool()
         {
-            LOG_DEBUG("[LeaderTool] 左键箭头落点 | 左键追加顶点 | 右键提交 | ESC 取消");
+            LOG_DEBUG("[LeaderTool] click arrowhead | click to add vertices | right-click commits | ESC cancels");
         }
 
-        ~LeaderTool() { LOG_DEBUG("[LeaderTool] 退出"); }
+        ~LeaderTool() { LOG_DEBUG("[LeaderTool] exit"); }
 
         // 提交后回调:newId = 新建引线 Id,tail = 末端顶点(文本锚点附近)。
         // 编辑器可挂接此回调弹出文本输入框写入注释;未挂接时引线以默认文字提交。
@@ -52,7 +52,7 @@ namespace MiniCAD
             {
                 auto pt = GetPoint(e);
                 m_points.push_back(pt);
-                LOG_INFO("[LeaderTool] 顶点 #%zu (%.3f, %.3f)", m_points.size(), pt.x, pt.y);
+                LOG_INFO("[LeaderTool] vertex #%zu (%.3f, %.3f)", m_points.size(), pt.x, pt.y);
                 RefreshOverlay();
                 return true;
             }
@@ -84,8 +84,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_points.empty()) return "指定引线箭头落点:";
-            return "指定下一点 [右键提交/ESC 取消]:";
+            if (m_points.empty()) return Tr("指定引线箭头落点:");
+            return Tr("指定下一点 [右键提交/ESC 取消]:");
         }
 
         void OnSceneChanged() override { Reset(); }
@@ -123,19 +123,19 @@ namespace MiniCAD
         {
             if (m_points.size() < 2)
             {
-                LOG_WARN("[LeaderTool] 顶点不足，放弃提交");
+                LOG_WARN("[LeaderTool] not enough vertices, nothing committed");
                 return;
             }
 
             auto id     = m_ctx->scene.NextObjectID();
             Math::Point3 tail = m_points.back();
             auto entity = std::make_unique<LeaderEntity>(id, m_points);
-            entity->SetText(m_defaultText);          // 默认注释,稍后可编辑
+            entity->SetText(m_defaultText.empty() ? Tr("说明") : m_defaultText);          // 默认注释,稍后可编辑
             m_ctx->ApplyCurrentAttr(*entity);
             auto cmd    = std::make_unique<AddEntityCommand>(std::move(entity));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[LeaderTool] 提交 Id=%d  顶点=%zu",
+            LOG_DEBUG("[LeaderTool] commit Id=%d vertices=%zu",
                    static_cast<int>(id), m_points.size());
 
             if (OnLeaderCreated) OnLeaderCreated(id, tail);
@@ -154,6 +154,6 @@ namespace MiniCAD
 
         std::vector<Math::Point3> m_points;
         Math::Point3              m_cursor{};
-        std::string               m_defaultText = "说明";   // 默认注释文字
+        std::string               m_defaultText;            // 默认注释文字；空 = "说明"（按界面语言）
     };
 }

@@ -2,6 +2,7 @@
 #include "Dxf/Read/DxfReaderImpl.h"
 #include <algorithm>
 #include <unordered_set>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DxfRead
 {
@@ -58,7 +59,7 @@ namespace MiniDWG::DxfRead
             if (h != kNullHandle && used.insert(h).second)
                 continue;
             if (h != kNullHandle)
-                Notify(NotificationType::Warning, "重复的句柄 " + DxfValue(HandleValue{ h }).AsString() + "，已重新分配");
+                Notify(NotificationType::Warning, TrF("重复的句柄 {0}，已重新分配", DxfValue(HandleValue{ h }).AsString()));
             h = next++;
             used.insert(h);
         }
@@ -96,7 +97,7 @@ namespace MiniDWG::DxfRead
                                         m_db->VPorts(), m_db->AppIds() })
             {
                 if (existing != nullptr && existing->GetObjectType() == table->GetObjectType())
-                    Notify(NotificationType::Warning, "重复的表 " + def.Name + "，以后出现的为准");
+                    Notify(NotificationType::Warning, TrF("重复的表 {0}，以后出现的为准", def.Name));
             }
             m_db->SetTable(table->GetObjectType(), table->ObjectHandle);
             for (std::size_t entry : def.Entries)
@@ -351,7 +352,7 @@ namespace MiniDWG::DxfRead
                 {
                     if (target != "BookColor")
                         NotifyOnce("ref:" + std::string(target) + ":" + ref.Name, NotificationType::Warning,
-                                   "找不到 " + std::string(target) + " \"" + ref.Name + "\"");
+                                   TrF("找不到 {0} \"{1}\"", target, ref.Name));
                     continue;
                 }
                 ref.Property->Set(*obj, ref.Property->Codes[0], DxfValue(HandleValue{ h }));

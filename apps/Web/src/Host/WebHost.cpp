@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "MiniI18n/I18n.h"
 
 namespace MiniCAD
 {
@@ -66,7 +67,7 @@ namespace MiniCAD
         m_gl = emscripten_webgl_create_context(m_selector.c_str(), &attr);
         if (m_gl <= 0)
         {
-            std::printf("MiniCAD: 浏览器不支持 WebGL2（错误 %d）\n", static_cast<int>(m_gl));
+            std::printf("%s\n", TrF("MiniCAD：浏览器不支持 WebGL2（错误 {0}）", static_cast<int>(m_gl)).c_str());
             m_gl = 0;
             return false;
         }

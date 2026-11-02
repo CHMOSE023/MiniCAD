@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Popup.h"
+#include "MiniI18n/I18n.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -58,6 +59,6 @@ namespace MiniGUI
     // 消息框：buttons 第一个是默认按钮，最后一个（多于一个时）是取消按钮。
     // onResult 收到被点击按钮的序号；Esc / × 视为点击取消按钮
     Dialog* ShowMessageBox(UIContext& ctx, std::string title, std::string message,
-                           std::vector<std::string> buttons = { "确定" },
+                           std::vector<std::string> buttons = { Tr("确定") },
                            std::function<void(int)> onResult = {});
 }

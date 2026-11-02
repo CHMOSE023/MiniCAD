@@ -4,12 +4,13 @@
 #include "Widgets/Label.h"
 #include "Widgets/NumberBox.h"
 #include "Widgets/TextBox.h"
+#include "MiniI18n/I18n.h"
 
 namespace MiniGUI
 {
     namespace
     {
-        constexpr const char* kMixed = "*多种*";
+        constexpr const char* kMixed = N_("*多种*");     // 显示时 Tr
     }
 
     struct BindingSet::Entry
@@ -73,7 +74,7 @@ namespace MiniGUI
                 shown = v ? *v : std::string();
                 if (box->GetText() != shown)
                     box->SetText(shown);
-                box->SetPlaceholder(mixed ? kMixed : placeholder);
+                box->SetPlaceholder(mixed ? Tr(kMixed) : placeholder);
             }
 
             void Commit(const std::string& text)
@@ -103,7 +104,7 @@ namespace MiniGUI
                 }
                 const auto v = get();
                 box->SetSelectedIndex(v ? *v : -1);
-                box->SetPlaceholder(v ? placeholder : std::string(kMixed));
+                box->SetPlaceholder(v ? placeholder : Tr(kMixed));
             }
         };
 

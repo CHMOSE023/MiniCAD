@@ -118,13 +118,13 @@ namespace MiniCAD
         catch (const std::exception& e)
         {
             // 兜底：路径异常不得逃出渲染路径（理由见 FromUtf8 的注释）
-            LOG_WARN("[Image] 路径无效，跳过: %s (%s)", path.c_str(), e.what());
+            LOG_WARN_TR("[Image] 路径无效，跳过: {0} ({1})", path.c_str(), e.what());
             m_cache[path] = nullptr;
             return nullptr;
         }
         if (real.empty())
         {
-            LOG_WARN("[Image] 找不到图像文件: %s", path.c_str());
+            LOG_WARN_TR("[Image] 找不到图像文件: {0}", path.c_str());
         }
         else
         {
@@ -136,7 +136,7 @@ namespace MiniCAD
                 : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &w, &h, &comp, 4);
             if (!px)
             {
-                LOG_WARN("[Image] 无法解码图像: %s", real.c_str());
+                LOG_WARN_TR("[Image] 无法解码图像: {0}", real.c_str());
             }
             else
             {

@@ -45,7 +45,7 @@ namespace
         int Version = 4;
     };
 
-    // TDbRectStair 版本 4；样例 36b（1716 位）插入点 (54375.96, 23304.78)
+    // 双跑楼梯 版本 4；样例 36b（1716 位）插入点 (54375.96, 23304.78)
     std::unique_ptr<UnknownEntity> StairObject(const StairSpec& s)
     {
         auto e = std::make_unique<UnknownEntity>();

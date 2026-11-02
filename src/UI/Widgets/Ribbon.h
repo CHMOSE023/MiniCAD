@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Node.h"
+#include "MiniI18n/I18n.h"
 #include "Data/CommandRegistry.h"
 #include <functional>
 #include <memory>
@@ -37,7 +38,7 @@ namespace MiniGUI
 
         // 命令搜索框（照 SolidCraft：选项卡行右端，获得焦点时变宽）：按命令名称、编号、提示和所在选项卡 / 组名查找，
         // 结果列出命令与位置（“绘图 › 绘制”），↑↓ 选择、Enter 执行、Esc 关闭；执行或关闭后调用 onDone（宿主把焦点还给绘图区）
-        void EnableSearch(std::string placeholder = "搜索命令");
+        void EnableSearch(std::string placeholder = Tr("搜索命令"));
         void FocusSearch();
         TextBox* GetSearchBox() const { return m_search; }
         void SetOnSearchDone(std::function<void()> cb) { m_onSearchDone = std::move(cb); }

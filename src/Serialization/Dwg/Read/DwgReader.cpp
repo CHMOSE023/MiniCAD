@@ -2,6 +2,7 @@
 #include "Dwg/Read/DwgReaderImpl.h"
 #include "Database/CadFileFormat.h"
 #include <algorithm>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG
 {
@@ -11,7 +12,7 @@ namespace MiniDWG
         if (info.format != CadFileFormat::Dwg)
         {
             if (options.Notify)
-                options.Notify(NotificationType::Error, "不是 DWG 文件");
+                options.Notify(NotificationType::Error, Tr("不是 DWG 文件"));
             return nullptr;
         }
         DwgRead::Reader reader(data, options);
@@ -49,7 +50,7 @@ namespace MiniDWG::DwgRead
     {
         if (!m_file.Open(m_data, m_options.Notify))
         {
-            Notify(NotificationType::Error, "不支持的 DWG 版本或文件头损坏");
+            Notify(NotificationType::Error, Tr("不支持的 DWG 版本或文件头损坏"));
             return nullptr;
         }
         m_version = m_file.Version();
@@ -58,13 +59,13 @@ namespace MiniDWG::DwgRead
         const std::span<const std::uint8_t> header = m_file.Section(kSectionHeader);
         if (header.empty())
         {
-            Notify(NotificationType::Error, "找不到头段（AcDb:Header）");
+            Notify(NotificationType::Error, TrF("找不到头段（{0}）", "AcDb:Header"));
             return nullptr;
         }
         m_db->Header.CodePage = std::string(Codec::CodePageName(m_file.CodePage()));
         if (!ReadHeaderSection(header, m_version, m_file.MaintenanceVersion(), m_file.CodePage(), m_db->Header,
                                m_headerHandles, m_options.Notify))
-            Notify(NotificationType::Warning, "头段读取不完整");
+            Notify(NotificationType::Warning, Tr("头段读取不完整"));
 
         // MEASUREMENT 不在头段，在 AcDb:Template 段（RS 描述长度、描述、RS 值；R2000 及以前为 4 号段）
         {
@@ -114,7 +115,7 @@ namespace MiniDWG::DwgRead
         DwgBitReader r(section, m_version, m_file.CodePage());
         if (!r.CheckSentinel(kPreviewStart))
         {
-            Notify(NotificationType::Warning, "缩略图段的开始哨兵不正确，已忽略缩略图");
+            Notify(NotificationType::Warning, Tr("缩略图段的开始哨兵不正确，已忽略缩略图"));
             return;
         }
         r.ReadRawLong();
@@ -144,7 +145,7 @@ namespace MiniDWG::DwgRead
         if (imageType == 2 || imageType == 3 || imageType == 6)
             preview.Type = static_cast<CadPreview::ImageType>(imageType);
         else if (!preview.Image.empty())
-            Notify(NotificationType::Warning, "未知的缩略图格式 " + std::to_string(imageType) + "，已忽略");
+            Notify(NotificationType::Warning, TrF("未知的缩略图格式 {0}，已忽略", imageType));
         if (preview.Type == CadPreview::ImageType::None)
             preview = CadPreview{};
     }
@@ -159,7 +160,7 @@ namespace MiniDWG::DwgRead
 
         DwgBitReader r(section, m_version, m_file.CodePage());
         if (!r.CheckSentinel(kClassesStart))
-            Notify(NotificationType::Warning, "CLASSES 段的开始哨兵不正确");
+            Notify(NotificationType::Warning, TrF("{0} 段的开始哨兵不正确", "CLASSES"));
 
         const std::int64_t size = static_cast<std::uint32_t>(r.ReadRawLong());
         std::uint64_t end = r.Position() + static_cast<std::uint64_t>(size);
@@ -215,7 +216,7 @@ namespace MiniDWG::DwgRead
                 m_db->Classes.push_back(std::move(c));
         }
         if (s.Failed())
-            Notify(NotificationType::Warning, "CLASSES 段读取不完整");
+            Notify(NotificationType::Warning, TrF("{0} 段读取不完整", "CLASSES"));
     }
 
     // ── 句柄段：句柄 → 对象位置 ────────────────────────────────────
@@ -246,7 +247,7 @@ namespace MiniDWG::DwgRead
             r.ReadByte();
         }
         if (m_map.empty())
-            Notify(NotificationType::Error, "句柄段为空或损坏");
+            Notify(NotificationType::Error, Tr("句柄段为空或损坏"));
     }
 
     // ── 对象段 ─────────────────────────────────────────────────────
@@ -257,7 +258,7 @@ namespace MiniDWG::DwgRead
         m_objectData = m_file.ObjectData();
         if (m_objectData.empty())
         {
-            Notify(NotificationType::Error, "找不到对象段");
+            Notify(NotificationType::Error, Tr("找不到对象段"));
             return;
         }
 
@@ -316,8 +317,7 @@ namespace MiniDWG::DwgRead
             if (m_s.Failed())
             {
                 NotifyOnce("failed:" + std::to_string(type), NotificationType::Warning,
-                           "读取类型 " + std::to_string(type) + " 的对象（句柄 " + DxfValue(HandleValue{ handle }).AsString() +
-                               "）时数据不完整，已跳过");
+                           TrF("读取类型 {0} 的对象（句柄 {1}）时数据不完整，已跳过", type, DxfValue(HandleValue{ handle }).AsString()));
                 continue;
             }
             if (object)

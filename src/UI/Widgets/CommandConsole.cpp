@@ -6,6 +6,7 @@
 #include "Widgets/Label.h"
 #include "Widgets/Panel.h"
 #include "Widgets/TextBox.h"
+#include "MiniI18n/I18n.h"
 #include <algorithm>
 #include <cctype>
 
@@ -61,7 +62,7 @@ namespace MiniGUI
 
     namespace
     {
-        constexpr const char* kIdlePrompt = "命令:";
+        constexpr const char* kIdlePrompt = N_("命令:");     // 显示时 Tr；宿主传来的是译文
 
         // 展开 / 收起回显：收起时尖朝上（回显在上方展开）
         class HistoryToggle : public Button
@@ -180,9 +181,9 @@ namespace MiniGUI
         rs.shrink     = 0.0f;
         row->SetLayoutStyle(rs);
 
-        m_idle = row->AddChild<IdleLabel>(kIdlePrompt, [this] { SetLogExpanded(!m_logExpanded); });
+        m_idle = row->AddChild<IdleLabel>(Tr(kIdlePrompt), [this] { SetLogExpanded(!m_logExpanded); });
         m_idle->EditLayoutStyle().shrink = 0.0f;
-        m_idle->SetTooltip("展开 / 收起命令历史");
+        m_idle->SetTooltip(Tr("展开 / 收起命令历史"));
 
         auto* field = row->AddChild<CommandField>();
         LayoutStyle fs;
@@ -207,7 +208,7 @@ namespace MiniGUI
         ts.background = ts.border = ts.borderHover = ts.borderFocus = ColorRef();
         ts.padding    = Edges::Make(4.0f, 5.0f, 8.0f, 5.0f);
         m_input->SetStyle(ts);
-        m_placeholder = "输入命令（例如 L 直线、C 圆），空格或回车执行";
+        m_placeholder = Tr("输入命令（例如 L 直线、C 圆），空格或回车执行");
         m_input->SetPlaceholder(m_placeholder);
         field->SetInput(m_input);
 
@@ -216,9 +217,18 @@ namespace MiniGUI
         m_toggle->EditLayoutStyle().width  = 22.0f;
         m_toggle->EditLayoutStyle().height = 22.0f;
         m_toggle->EditLayoutStyle().shrink = 0.0f;
-        m_toggle->SetTooltip("展开 / 收起命令历史");
+        m_toggle->SetTooltip(Tr("展开 / 收起命令历史"));
 
-        m_promptText = kIdlePrompt;
+        m_promptText = Tr(kIdlePrompt);
+    }
+
+    void CommandConsole::Retranslate()
+    {
+        m_idle->SetText(Tr(kIdlePrompt));
+        m_idle->SetTooltip(Tr("展开 / 收起命令历史"));
+        m_toggle->SetTooltip(Tr("展开 / 收起命令历史"));
+        m_placeholder = Tr("输入命令（例如 L 直线、C 圆），空格或回车执行");
+        SetPrompt(m_promptText);
     }
 
     void CommandConsole::SetLogExpanded(bool expanded)
@@ -239,7 +249,7 @@ namespace MiniGUI
     void CommandConsole::SetPrompt(std::string prompt)
     {
         // 空闲提示（"命令:"）只显示在输入框外面；工具提示放进输入框里，输入时也一直看得到
-        const bool idle = prompt.empty() || prompt == kIdlePrompt;
+        const bool idle = prompt.empty() || prompt == Tr(kIdlePrompt);
         m_prompt->SetText(idle ? std::string() : prompt);
         m_prompt->SetVisible(!idle);
         m_input->SetPlaceholder(idle ? m_placeholder : std::string());

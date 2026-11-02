@@ -71,7 +71,7 @@ namespace MiniCAD
         }
         catch (const std::exception& e)
         {
-            LOG_WARN("Vulkan 初始化失败：%s", e.what());
+            LOG_WARN_TR("Vulkan 初始化失败：{0}", e.what());
             if (m_ctx && m_ctx->GetDevice())
             {
                 vkDeviceWaitIdle(m_ctx->GetDevice());
@@ -106,7 +106,7 @@ namespace MiniCAD
         std::vector<VkSurfaceFormatKHR> formats(n);
         vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, &n, formats.data());
         if (formats.empty())
-            throw std::runtime_error("窗口表面没有可用的格式");
+            throw std::runtime_error(Tr("窗口表面没有可用的格式"));
         VkSurfaceFormatKHR chosen = formats[0];
         for (const VkSurfaceFormatKHR& f : formats)
             if ((f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
@@ -161,7 +161,7 @@ namespace MiniCAD
             vi.viewType         = VK_IMAGE_VIEW_TYPE_2D;
             vi.format           = chosen.format;
             vi.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            VulkanCheck(vkCreateImageView(device, &vi, nullptr, &img->view), "vkCreateImageView(交换链)");
+            VulkanCheck(vkCreateImageView(device, &vi, nullptr, &img->view), "vkCreateImageView(swapchain)");
             m_images.push_back(std::move(img));
 
             VkSemaphore s = VK_NULL_HANDLE;
@@ -221,7 +221,7 @@ namespace MiniCAD
             }
             if (r != VK_ERROR_OUT_OF_DATE_KHR)
             {
-                LOG_ERROR("Vulkan：取交换链图像失败（VkResult %d）", static_cast<int>(r));
+                LOG_ERROR_TR("Vulkan：取交换链图像失败（VkResult {0}）", static_cast<int>(r));
                 return false;
             }
             m_recreate = true;
@@ -268,7 +268,7 @@ namespace MiniCAD
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
             m_recreate = true;
         else if (r != VK_SUCCESS)
-            LOG_ERROR("Vulkan：呈现失败（VkResult %d）", static_cast<int>(r));
+            LOG_ERROR_TR("Vulkan：呈现失败（VkResult {0}）", static_cast<int>(r));
     }
 
     void VulkanGraphicsDevice::WaitIdle()

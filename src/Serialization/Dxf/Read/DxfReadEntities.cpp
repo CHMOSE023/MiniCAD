@@ -2,6 +2,7 @@
 #include "Database/DxfAssign.hpp"
 #include "Dxf/Read/DxfReaderImpl.h"
 #include <cmath>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DxfRead
 {
@@ -263,7 +264,7 @@ namespace MiniDWG::DxfRead
             }
             if (next->Type != "BLOCK")
             {
-                NotifyOnce("blocks:" + next->Type, NotificationType::Warning, "BLOCKS 段中出现意外的 " + next->Type);
+                NotifyOnce("blocks:" + next->Type, NotificationType::Warning, TrF("{0} 段中出现意外的 {1}", "BLOCKS", next->Type));
                 m_records.Next(r);
                 continue;
             }
@@ -441,7 +442,7 @@ namespace MiniDWG::DxfRead
         if (!object)
         {
             ++m_skipped[r.Type];
-            NotifyOnce("entity:" + r.Type, NotificationType::Info, "跳过未支持的实体 " + r.Type);
+            NotifyOnce("entity:" + r.Type, NotificationType::Info, TrF("跳过未支持的实体 {0}", r.Type));
             // 跳过它的子实体
             if (r.Type == "POLYLINE" || r.Type == "INSERT")
             {

@@ -12,10 +12,10 @@ namespace MiniCAD
     public:
         TextTool()
         {
-            LOG_DEBUG("[TextTool] 左键选择插入点 | ESC 退出");
+            LOG_DEBUG("[TextTool] click insertion point | ESC exits");
         }
 
-        ~TextTool() { LOG_DEBUG("退出文字绘制"); }
+        ~TextTool() { LOG_DEBUG("Exit text"); }
 
         std::function<void(Math::Point3)> OnInsertPointPicked;
 
@@ -48,7 +48,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return "指定文字插入点 [ESC 退出]:";
+            return Tr("指定文字插入点 [ESC 退出]:");
         }
     };
 }

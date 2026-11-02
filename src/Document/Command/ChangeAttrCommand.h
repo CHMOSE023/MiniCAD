@@ -97,15 +97,15 @@ namespace MiniCAD
                              + int(c.Transparency.has_value()) + int(c.Visible.has_value());
             if (fields == 1)
             {
-                if (c.Layer)         return "修改图层";
-                if (c.Color)         return "修改颜色";
-                if (c.LineType)      return "修改线型";
-                if (c.LinetypeScale) return "修改线型比例";
-                if (c.Lineweight)    return "修改线宽";
-                if (c.Transparency)  return "修改透明度";
-                return "修改可见性";
+                if (c.Layer)         return N_("修改图层");
+                if (c.Color)         return N_("修改颜色");
+                if (c.LineType)      return N_("修改线型");
+                if (c.LinetypeScale) return N_("修改线型比例");
+                if (c.Lineweight)    return N_("修改线宽");
+                if (c.Transparency)  return N_("修改透明度");
+                return N_("修改可见性");
             }
-            return "修改特性";
+            return N_("修改特性");
         }
 
         // 实际被修改的实体数（Execute 之后有效）

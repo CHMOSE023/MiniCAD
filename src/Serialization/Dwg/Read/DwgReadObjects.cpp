@@ -1,6 +1,7 @@
 // DWG 读取：对象的公共数据、类型分派、符号表与非图形对象（对应 ACadSharp DwgObjectReader）
 #include "Dwg/Read/DwgReaderImpl.h"
 #include <charconv>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgRead
 {
@@ -217,7 +218,7 @@ namespace MiniDWG::DwgRead
                 default:
                     data.Records.pop_back();
                     NotifyOnce("xdata:" + std::to_string(code), NotificationType::Warning,
-                               "扩展数据中未知的组码 " + std::to_string(code));
+                               TrF("扩展数据中未知的组码 {0}", code));
                     r.SetPosition(end);
                     continue;
                 }
@@ -341,7 +342,7 @@ namespace MiniDWG::DwgRead
             { 0x1F3, "ACAD_PROXY_OBJECT" }, { 0x4C, "LONG_TRANSACTION" }, { 0x51, "VBA_PROJECT" }, { 0x4B, "DUMMY" },
         };
         auto name = kNames.find(type);
-        const std::string dxfName = name != kNames.end() ? std::string(name->second) : "类型 " + std::to_string(type);
+        const std::string dxfName = name != kNames.end() ? std::string(name->second) : TrF("类型 {0}", type);
         const bool isEntity = type < 0x2A || type == 0x2B || type == 0x4A || type == 0x1F2 || type == 0x4B;
 
         // 能独立原样保留的类型（不依赖由写入器维护的子实体与链接）：三维实体、OLE、代理对象等
@@ -363,7 +364,7 @@ namespace MiniDWG::DwgRead
             ReadCommonNonEntityData(dummy);
         }
         ++m_skipped[dxfName];
-        NotifyOnce("skip:" + dxfName, NotificationType::Info, "跳过未支持的 " + dxfName);
+        NotifyOnce("skip:" + dxfName, NotificationType::Info, TrF("跳过未支持的 {0}", dxfName));
         return nullptr;
     }
 
@@ -374,7 +375,7 @@ namespace MiniDWG::DwgRead
         if (it == m_classes.end())
         {
             NotifyOnce("class:" + std::to_string(type), NotificationType::Warning,
-                       "CLASSES 段中找不到类号 " + std::to_string(type));
+                       TrF("{0} 段中找不到类号 {1}", "CLASSES", type));
             return nullptr;
         }
         const DxfClass& c = it->second;
@@ -538,7 +539,7 @@ namespace MiniDWG::DwgRead
             if (r.Failed() || m_handleReader.Failed())
             {
                 NotifyOnce("table:" + std::to_string(m_currentHandle), NotificationType::Warning,
-                           "表格 " + DxfValue(HandleValue{ m_currentHandle }).AsString() + " 的块参照数据不完整");
+                           TrF("表格 {0} 的块参照数据不完整", DxfValue(HandleValue{ m_currentHandle }).AsString()));
                 // 原始数据已保存，只放弃解析结果
                 m_objReader = DwgBitReader();
                 m_handleReader = DwgBitReader();
@@ -1358,7 +1359,7 @@ namespace MiniDWG::DwgRead
                 break;
             default:
                 NotifyOnce("xrecord:" + std::to_string(code), NotificationType::Warning,
-                           "XRECORD 中未知的组码 " + std::to_string(code));
+                           TrF("{0} 中未知的组码 {1}", "XRECORD", code));
                 r.SetPosition(end);
                 continue;
             }

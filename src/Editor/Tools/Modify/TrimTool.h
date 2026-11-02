@@ -43,8 +43,8 @@ namespace MiniCAD
     class TrimTool : public ITool
     {
     public:
-        TrimTool()  { LOG_DEBUG("[TrimTool] 点击要修剪掉的线段部分 | 右键/ESC 退出"); }
-        ~TrimTool() { LOG_DEBUG("[TrimTool] 退出"); }
+        TrimTool()  { LOG_DEBUG("[TrimTool] click the part to trim | right-click/ESC exits"); }
+        ~TrimTool() { LOG_DEBUG("[TrimTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -60,7 +60,7 @@ namespace MiniCAD
                 {
                     TrimPlan plan = ComputeTrim(ent, p);
                     if (plan.valid) Commit(ent, plan);
-                    else            LOG_WARN("[TrimTool] 该处无可修剪的交点");
+                    else            LOG_WARN("[TrimTool] no intersection to trim at");
                 }
                 return true;
             }
@@ -99,7 +99,7 @@ namespace MiniCAD
         void OnSceneChanged() override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusLost()    override { if (m_overlay) m_overlay->Clear(); }
 
-        std::string GetPrompt() const override { return "选择要修剪的对象 [右键/ESC 退出]:"; }
+        std::string GetPrompt() const override { return Tr("选择要修剪的对象 [右键/ESC 退出]:"); }
 
     private:
         // ── 编辑计划：原实体改成 modified（可空=删除），可选再新增 added ──────
@@ -425,10 +425,10 @@ namespace MiniCAD
                 items.push_back(std::move(add));
             }
 
-            auto cmd = std::make_unique<GeometryEditCommand>("修剪", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("修剪"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
-            LOG_DEBUG("[TrimTool] 已修剪");
+            LOG_DEBUG("[TrimTool] trimmed");
         }
 
     private:

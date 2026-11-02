@@ -7,15 +7,7 @@
 #include <vector>
 
 namespace MiniCAD::Tch
-{
-    // 天正文字的样式规则（由 CadExchange 按原图样式判断后传入）。
-    // 天正在文字样式上挂 _TCH 扩展数据（两个 1040：a、b）：SHX 样式的西文字高 = a × 名义字高，宽度因子 = 样式宽度 × b / a，
-    // 天正排布的西文步进随 b 等比（以 b = 0.6 时的标定值为准），汉字字高与步进不变；没有扩展数据时按 (1, 1)。
-    // 核对：_TCH_DIM (0.85, 0.6) 即原先写死的 0.85、0.6 / 0.85；139 户型图 _TCH_DIM (0.8, 0.6)、宽 0.7 → 西文字高 0.8、宽 0.525、步进 × 0.7；
-    // 同图 Standard（simplex、宽 0.7、无扩展数据）→ 字高 1.0、宽 0.7、西文步进 0.6667 × 名义字高；
-    // 总图 _TWT_SERIAL (1, 0.8)、宽 0.6 → 字高 1.0、宽 0.48；14#~16#楼 (0.7, 0.7)、宽 0.7 → 字高 0.7、宽 0.7。
-    // 汉字字高：大字体 gbcbig 为 0.96454 × 名义字高；hztxt 为 1.0（139 户型图 _TWT_PIPEDN、_TWT_DIM 的分解结果核对）。
-    // TrueType 样式不受影响：字高 × 0.75527、宽度用样式自身的
+{ 
     struct TchTextStyleRule
     {
         bool   TrueType = false;
@@ -32,7 +24,6 @@ namespace MiniCAD::Tch
         double AsciiStep() const { return AsciiWidth / 0.6; }  // 西文步进相对 b = 0.6 标定值的倍数
     };
 
-    // TCH_TEXT 天正单行文字（CADReader TDbText 读取函数 0x6f4070，版本 < 3 为明文分支）
     struct TchText
     {
         double X = 0, Y = 0;
@@ -42,21 +33,59 @@ namespace MiniCAD::Tch
         int    Attachment = 7;      // 对齐方式，同 MTEXT 附着点（1 左上 … 7 左下、8 中下、9 右下）
         std::string Value;
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
-        // TCH_MTEXT 天正多行文字（内核 TDbMText::dwgInFields：先读 TDbText，再 RC 版本 ≤ 2，版本 2 时 RC 密钥，2 个 BD）
         bool   Multiline = false;
         double BoxWidth = 0;        // 换行宽度（× 比例为图面宽度）
         double LineSpacing = 0;
     };
 
-    // 天正基类、RC 版本（1～2）、句柄流：文字样式；文字流：内容；3BD 插入点、BD 字高、BD 转角、RC 对齐、版本 ≥ 2 再一个 RC
+    namespace Detail
+    { 
+        inline int TextAttachment(int align) { return align >= 10 && align <= 13 ? (align == 13 ? 5 : align - 3) : align; } 
+        inline bool DecodeTextCipher(const MiniDWG::UnknownEntity& entity, TchText& text, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            if (entity.Raw.DxfName == "TCH_MTEXTNEW") return fail("unsupported native multiline text layout");
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 4) return fail("unsupported native text version");
+            f.ReadKey();
+            TchText t;
+            t.Scale = f.Scale;
+            t.Style = f.Handle();
+            t.Value = f.Text();
+            const auto p = f.Point3();
+            t.X = p.X; t.Y = p.Y;
+            t.Height = f.Double();
+            t.Rotation = f.Double();
+            t.Attachment = TextAttachment(f.Byte());
+            f.Byte();
+            f.Handle(); f.Handle();
+            if (entity.Raw.DxfName == "TCH_MTEXT")
+            {
+                if (f.Main.ReadByte() != 2) return fail("unsupported native multiline text version");
+                f.ReadKey();
+                t.Multiline = true;
+                t.BoxWidth = f.Double();
+                t.LineSpacing = f.Double();
+            }
+            if (!f.Exact()) return fail("native text fields do not consume the payload exactly");
+            if (!Finite(t.X) || !Finite(t.Y) || !Finite(t.Rotation) || !(t.Height > 0) || !(t.Scale > 0))
+                return fail("invalid native text settings");
+            if (t.Attachment < 1 || t.Attachment > 9) return fail("unsupported text alignment");
+            text = std::move(t);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeText(const MiniDWG::UnknownEntity& entity, TchText& text, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
-        // TCH_MTEXTNEW（天正给排水，TDbMTextNew::dwgInFields）：TDbMText 之后再 B、2 × BD，显示同 TCH_MTEXT
         const bool multilineNew = entity.Raw.DxfName == "TCH_MTEXTNEW";
         const bool multiline = entity.Raw.DxfName == "TCH_MTEXT" || multilineNew;
         if (entity.Raw.DxfName != "TCH_TEXT" && !multiline) return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeTextCipher(entity, text, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native text");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -67,7 +96,7 @@ namespace MiniCAD::Tch
         if (version < 1 || version > 2) return fail("unsupported native text version");
         TchText t;
         for (int i = 0; i < base.TextCount; ++i) stream.Next();
-        t.Value = stream.Next();                        // 正文：样式（句柄流）之后、插入点之前
+        t.Value = stream.Next();                        
         t.Scale = base.Scale;
         t.X = r.ReadBitDouble(); t.Y = r.ReadBitDouble(); r.ReadBitDouble();
         t.Height = r.ReadBitDouble();
@@ -92,12 +121,9 @@ namespace MiniCAD::Tch
             return fail("native text fields do not consume the payload exactly");
         if (!Detail::Finite(t.X) || !Detail::Finite(t.Y) || !Detail::Finite(t.Rotation) || !(t.Height > 0) || !(t.Scale > 0))
             return fail("invalid native text settings");
-        // 天正对齐枚举（内核 TGGiExplodeDrawBase::Align2Base）：1～9 同 MTEXT 附着点（7～9 以文字底部为准），
-        // 10～12 为基线左 / 中 / 右，13 为文字全高的正中。基线与底部只差下伸部分，按 7～9 显示，13 按正中（5）显示
-        if (t.Attachment >= 10 && t.Attachment <= 13) t.Attachment = t.Attachment == 13 ? 5 : t.Attachment - 3;
+        t.Attachment = Detail::TextAttachment(t.Attachment);
         if (t.Attachment < 1 || t.Attachment > 9) return fail("unsupported text alignment");
         if (stream.Reader.Failed()) return fail("native text stream is incomplete");
-        // TCH_MTEXTNEW 的正文夹有格式码 $|字高|0$（139 户型水施图的说明为 $|3.6|0$），不显示；字高变化不处理
         if (multilineNew)
             for (std::size_t at = t.Value.find("$|"); at != std::string::npos; at = t.Value.find("$|", at))
             {
@@ -114,24 +140,12 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // SHX 样式：天正 2014 分解为西文、汉字交替的 TEXT：西文字高 = 名义字高 × 比例（样式自身宽度因子），汉字 × 0.96454（随大字体），颜色随层。
-    // 混排时各段按天正步进首尾相接，画出的宽度也取天正步进（Detail::AddTextRuns）；只有纯西文或纯汉字时按附着点显示，
-    // 宽度同样取天正步进——MiniCAD 替代 GBCBIG 的 TSSDCHN 汉字宽约 37%，按字体自身宽度画会压到旁边的文字。含上标 ^U 时按分段画。
-    // TrueType 样式（trueType，如“宋体”）：字高 = 名义字高 × 0.75527，用样式宽度因子；天正排布的步进汉字 = 字高、西文 = 0.5 × 字高
-    //（宋体宽度因子 0.7 时与字形步进一致；8#楼封面目录的天正显示与分解结果核对）。
-    // 混排时各段按附着点的水平、竖直位置排布（竖直：上 / 中按字高下移）
-    // SHX 样式的西文字高、宽度因子按样式的 _TCH 扩展数据（TchTextStyleRule）；符号字体（如 _TCH_DIM、_TCH_WINDOW 的 simplex）
-    // 按注释符号的方式排布（8#楼立剖面、详图，139 户型图的分解结果核对）
+ 
     namespace Detail
     {
-        // 天正单行文字（SHX 样式）的排布步进（× 名义字高）：符号字体为西文 0.5714、汉字 0.69，均乘样式宽度因子
-        //（8#楼详图的窗号、标高说明核对）；其他字体为西文 0.604、汉字 0.69
         inline double TextAsciiStep(const TchTextStyleRule& rule) { return rule.Symbol() ? 0.5714 * rule.StyleWidth * rule.AsciiStep() : 0.604; }
         inline double TextWideStep(const TchTextStyleRule& rule) { return rule.Symbol() ? 0.69 * rule.StyleWidth : 0.69; }
-
-        // 按天正单行文字的规则分段排布：各段按天正步进首尾相接，画出的宽度也取天正的（见 AddRuns）。
-        // column：0 左对齐、1 居中、2 右对齐，(x, y) 为该对齐位置的基线点
+         
         inline void AddTextRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int column,
                                 const TchTextStyleRule& rule)
         {
@@ -154,7 +168,6 @@ namespace MiniCAD::Tch
         {
             const double height = trueType ? h : nominal * (wide ? rule.WideHeight : asciiScale);
             double width = wide ? 0.0 : asciiWidth;
-            // SHX 样式：画出的宽度取天正的步进（与混排的各段相同，见 Detail::AddRuns）
             if (!trueType)
             {
                 double tz = 0;
@@ -203,14 +216,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // TCH_MTEXT：插入点为左上角，按换行宽度（BoxWidth × 比例）与原文换行折行，左对齐。
-    // 第一行基线在插入点下一个名义字高，行距 = 名义字高 × (LineSpacing − 0.2)。
-    // 符号字体（SHX 主字体不是 gbenor / gbeitc）按天正多行文字的实际排布：西文每字步进 = simplex 字宽 × 名义字高 × 样式宽度因子 × 0.8
-    //（× b / 0.6，见 TchTextStyleRule），汉字 = 名义字高 × 样式宽度因子 × 0.70213，字高与宽度因子同单行文字；其他字体用单行文字的天正步进，每行交给 BuildText。
-    // 折行（与 8#楼平面小说明 43 行的分解结果逐行一致）：连续的西文字符为一个词，整词放得下才放；汉字只要字的中点不超出行宽就放；
-    // 避头标点（句号、逗号、右括号等）放不下时连同前一个字移到下一行；原文换行后紧跟避头标点时，该换行不生效。
-    // 天正符号 ^1（钢筋符号，形如 Φ）：宽 = 名义字高 × 宽度因子，圆半径 0.21 × 名义字高、圆心高 0.5 × 名义字高，竖线自基线到 0.95 × 名义字高
+ 
     inline TchGraphics BuildMultilineText(const TchText& t, const TchTextStyleRule& rule = {})
     {
         const bool trueType = rule.TrueType;
@@ -222,7 +228,6 @@ namespace MiniCAD::Tch
         const bool symbol = rule.Symbol();
         auto isRebar = [](const std::string& u) { return u == "^1"; };
         auto isNewline = [](const std::string& u) { return u == "\n"; };
-        // 一个字符（或控制码、符号）的步进
         auto advance = [&](const std::string& unit) {
             const unsigned char ch = static_cast<unsigned char>(unit[0]);
             if (isRebar(unit)) return styleWidth * nominal;
@@ -235,6 +240,7 @@ namespace MiniCAD::Tch
             const double wide = (trueType ? 0.75527 : 0.69) * nominal, ascii = (trueType ? 0.5 * 0.75527 : 0.604) * nominal;
             return ch >= 0x80 ? wide : (ch == '.' || ch == ',') ? 0.2 * ascii : ascii;
         };
+        // i18n: 数据（避头的标点）
         static const std::string kNoLineStart[] = {"。", "，", "、", "；", "：", "？", "！", "）", "》", "」", "』", "】", "”", "’", "…",
                                                    ",", ".", ";", ":", "?", "!", ")"};
         auto noLineStart = [&](const std::string& u) { return std::find(std::begin(kNoLineStart), std::end(kNoLineStart), u) != std::end(kNoLineStart); };

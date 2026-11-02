@@ -132,22 +132,22 @@ namespace MiniCAD::Nodes
 
     bool Graph::CanConnect(const Link& link, std::string* why) const
     {
-        auto fail = [&](const char* msg) { if (why) *why = msg; return false; };
+        auto fail = [&](const char* msg) { if (why) *why = Tr(msg); return false; };
         const Node* from = GetNode(link.FromNode);
         const Node* to   = GetNode(link.ToNode);
         if (!from || !to)
-            return fail("节点不存在");
+            return fail(N_("节点不存在"));
         if (!from->Type || !to->Type)
-            return fail("缺失的节点不能连线");
+            return fail(N_("缺失的节点不能连线"));
         if (link.FromPort < 0 || link.FromPort >= static_cast<int>(from->Type->Outputs.size()) ||
             link.ToPort < 0 || link.ToPort >= static_cast<int>(to->Type->Inputs.size()))
-            return fail("端口不存在");
+            return fail(N_("端口不存在"));
         if (!CanConvert(from->Type->Outputs[link.FromPort].Type, to->Type->Inputs[link.ToPort].Type))
-            return fail("数据类型不兼容");
+            return fail(N_("数据类型不兼容"));
         if (Reaches(link.ToNode, link.FromNode))
-            return fail("连线会形成环");
+            return fail(N_("连线会形成环"));
         if (std::find(m_links.begin(), m_links.end(), link) != m_links.end())
-            return fail("已经连接");
+            return fail(N_("已经连接"));
         return true;
     }
 
@@ -811,7 +811,7 @@ namespace MiniCAD::Nodes
         };
 
         if (!node.Type)
-            return finish(NodeState::Error, "未知的节点类型：" + node.TypeId);
+            return finish(NodeState::Error, TrF("未知的节点类型：{0}", node.TypeId));
         const NodeTypeInfo& type = *node.Type;
 
         // 收集输入并转换为端口类型
@@ -828,15 +828,15 @@ namespace MiniCAD::Nodes
                 {
                     // 实体 / 曲面连到网格端口：按默认精度网格化（需要内核）
                     if (!ctx.Kernel)
-                        return finish(NodeState::Error, "输入“" + spec.Name + "”：实体 / 曲面转网格需要实体内核");
+                        return finish(NodeState::Error, TrF("输入“{0}”：实体 / 曲面转网格需要实体内核", TrNode(spec.Name)));
                     Solid::Mesh mesh = raw[k].AsBody() ? MeshOps::FromBody(*ctx.Kernel, raw[k].AsBody()) : Solid::Mesh{};
                     if (mesh.TriangleCount() == 0)
-                        return finish(NodeState::Error, "输入“" + spec.Name + "”第 " + std::to_string(k + 1) + " 项网格化失败");
+                        return finish(NodeState::Error, TrF("输入“{0}”第 {1} 项网格化失败", TrNode(spec.Name), k + 1));
                     v = Value(std::move(mesh));
                 }
                 else if (!Convert(raw[k], spec.Type, v))
-                    return finish(NodeState::Error, "输入“" + spec.Name + "”第 " + std::to_string(k + 1) + " 项（" + TypeName(raw[k].Type()) +
-                                                    "）不能转换为" + TypeName(spec.Type));
+                    return finish(NodeState::Error, TrF("输入“{0}”第 {1} 项（{2}）不能转换为{3}", TrNode(spec.Name), k + 1,
+                                                        TypeName(raw[k].Type()), TypeName(spec.Type)));
                 inputs[i].push_back(std::move(v));
             }
         }
@@ -874,7 +874,7 @@ namespace MiniCAD::Nodes
         {
             const PortSpec& spec = type.Inputs[i];
             if (inputs[i].empty() && !spec.Optional)
-                return finish(NodeState::Warning, "输入“" + spec.Name + "”没有数据");
+                return finish(NodeState::Warning, TrF("输入“{0}”没有数据", TrNode(spec.Name)));
             if (spec.Acc == Access::Item && !inputs[i].empty())
             {
                 count   = anyItem ? std::max(count, inputs[i].size()) : inputs[i].size();
@@ -901,11 +901,11 @@ namespace MiniCAD::Nodes
             }
             catch (const std::exception& e)
             {
-                args.Error(std::string("求值异常：") + e.what());
+                args.Error(TrF("求值异常：{0}", e.what()));
             }
             catch (...)
             {
-                args.Error("求值异常");
+                args.Error(Tr("求值异常"));
             }
         }
         if (ctx.Cancelled())   // 节点自己检查了取消、提前返回：结果不完整
@@ -919,7 +919,7 @@ namespace MiniCAD::Nodes
         {
             std::string msg = args.m_error;
             if (count > 1)
-                msg += "（" + std::to_string(args.m_errorCount) + " / " + std::to_string(count) + " 项失败）";
+                msg += TrF("（{0} / {1} 项失败）", args.m_errorCount, count);
             return finish(NodeState::Error, msg);
         }
         if (!args.m_warning.empty())
@@ -931,7 +931,7 @@ namespace MiniCAD::Nodes
 
     const std::vector<std::string>& ParamCategoryNames()
     {
-        static const std::vector<std::string> kNames = { "长度", "角度", "数值", "整数", "是否" };
+        static const std::vector<std::string> kNames = { NN_("长度"), NN_("角度"), NN_("数值"), NN_("整数"), NN_("是否") };
         return kNames;
     }
 
@@ -1010,7 +1010,7 @@ namespace MiniCAD::Nodes
         if (!name.empty() && !taken(name))
             return;
         // 去掉末尾的数字再编号：“宽度2” → “宽度3”
-        std::string base = name.empty() ? std::string("参数") : name;
+        std::string base = name.empty() ? std::string("参数") : name;   // i18n: 数据（参数名在公式里引用）
         while (!base.empty() && base.back() >= '0' && base.back() <= '9')
             base.pop_back();
         for (int i = 1;; ++i)
@@ -1034,9 +1034,9 @@ namespace MiniCAD::Nodes
             if (name.empty())
                 continue;   // 没有名称：节点自己报错
             if (!IsValidParamName(name))
-                table.Errors[name] = "名称“" + name + "”不能用在公式里（不能是数值、函数名、常数，不能含运算符或空格）";
+                table.Errors[name] = TrF("名称“{0}”不能用在公式里（不能是数值、函数名、常数，不能含运算符或空格）", name);
             else if (byName.count(name))
-                table.Errors[name] = "参数名称“" + name + "”重复";
+                table.Errors[name] = TrF("参数名称“{0}”重复", name);
             byName.emplace(name, n.get());
             params.push_back(n.get());
         }
@@ -1058,7 +1058,7 @@ namespace MiniCAD::Nodes
                     path += *p + " → ";
                 path += name;
                 for (auto p = it; p != stack.end(); ++p)
-                    table.Errors[*p] = "参数之间循环引用：" + path;
+                    table.Errors[*p] = TrF("参数之间循环引用：{0}", path);
                 return;
             }
             st = 1;
@@ -1078,14 +1078,14 @@ namespace MiniCAD::Nodes
                     std::string error;
                     const auto e = Expression::Parse(formula, error);
                     if (!e)
-                        table.Errors[name] = "公式有误，" + error;
+                        table.Errors[name] = TrF("公式有误，{0}", error);
                     else
                     {
                         for (const std::string& var : e->Variables())
                         {
                             if (!byName.count(var))
                             {
-                                table.Errors[name] = "公式里的“" + var + "”不是参数";
+                                table.Errors[name] = TrF("公式里的“{0}”不是参数", var);
                                 break;
                             }
                             resolve(var);
@@ -1093,7 +1093,7 @@ namespace MiniCAD::Nodes
                                 break;   // 在环上
                             if (table.Errors.count(var))
                             {
-                                table.Errors[name] = "引用的参数“" + var + "”有错误";
+                                table.Errors[name] = TrF("引用的参数“{0}”有错误", var);
                                 break;
                             }
                         }
@@ -1639,7 +1639,7 @@ namespace MiniCAD::Nodes
         if (!def)
         {
             state   = NodeState::Error;
-            message = "组定义不存在：" + node.TypeId;
+            message = TrF("组定义不存在：{0}", node.TypeId);
             return true;
         }
         if (!node.Inner || node.InnerVersion != def->Version)
@@ -1682,7 +1682,7 @@ namespace MiniCAD::Nodes
         if (errors > 0)
         {
             state   = any ? NodeState::Warning : NodeState::Error;
-            message = "组内 " + std::to_string(errors) + " 个节点出错（双击进入查看）";
+            message = TrF("组内 {0} 个节点出错（双击进入查看）", errors);
         }
         return true;
     }

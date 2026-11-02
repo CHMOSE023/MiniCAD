@@ -2,8 +2,10 @@
 // - 导航条：竖排在视图方块下面、贴着绘图区右边的圆角浮条——平移、放大、缩小、窗口缩放、全部显示 | 标准视图、视觉样式（菜单）。
 //   按钮的可用 / 勾选状态取自命令（ToolBar 自动刷新）；环绕仍用鼠标（Shift + 中键），写在提示里。
 //   每个窗口一条（主窗口、各文档窗口）：命令作用于当前文档，按下时所在窗口的文档已成为当前文档（MainFrame::UseChrome）
-// - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号。
+// - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号；有新版本时版本号变成带红点的按钮（UpdateCheck.cpp）。
 #include "GUI/MainFrame.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "MiniCADVersion.h"
 #include "Core/UIContext.h"
 #include "Style/Theme.hpp"
@@ -19,9 +21,12 @@ namespace MiniCAD
 {
     namespace
     {
+        // 菜单项写成它时展开为"语言"子菜单：所有 ui.language.<代码> 命令
+        constexpr const char* kLanguageMenu = "@language";
+
         // 只有图标的按钮，点击弹出菜单（菜单项是命令）；placement 决定菜单在按钮的哪一侧
         MiniGUI::Button* AddMenuButton(MiniGUI::Node* parent, MiniGUI::CommandRegistry& commands,
-                                       const std::string& icon, const char* tip, std::vector<std::string> ids,
+                                       const std::string& icon, const std::string& tip, std::vector<std::string> ids,
                                        MiniGUI::PopupPlacement placement, float iconSize)
         {
             using namespace MiniGUI;
@@ -38,7 +43,18 @@ namespace MiniCAD
                     return;
                 std::vector<MenuItem> items;
                 for (const std::string& id : ids)
+                {
+                    if (id == kLanguageMenu)
+                    {
+                        std::vector<MenuItem> langs;
+                        for (const std::string& cmd : commands.GetIds())
+                            if (cmd.starts_with(kLanguageCommandPrefix))
+                                langs.push_back(CommandMenuItem(commands, cmd));
+                        items.push_back(MenuItem::Sub(Tr("语言(&L)"), std::move(langs)));
+                        continue;
+                    }
                     items.push_back(id == "-" ? MenuItem::Separator() : CommandMenuItem(commands, id));
+                }
                 auto popup = std::make_unique<MenuPopup>(std::move(items));
                 popup->SetAnchor(b->GetScreenBounds(), placement);     // 放不下时自动翻到另一侧
                 popup->SetOwner(b);
@@ -51,8 +67,6 @@ namespace MiniCAD
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateViewNavBar(ViewChrome& c)
     {
         using namespace MiniGUI;
-        const std::string icons = ResourceDir() + "/icons";
-
         // 外层与视图方块同宽（140）、紧挨在它下面，本身不接收点击；浮条靠右，贴着绘图区右边
         auto column = std::make_unique<Node>();
         {
@@ -65,6 +79,19 @@ namespace MiniCAD
             s.alignItems = Align::End;
         }
         column->SetHitTestVisible(false);
+        c.navBar = column.get();
+        BuildViewNavBar(c);
+        return column;
+    }
+
+    // 导航条的内容（切换界面语言时重建）
+    void MainFrame::BuildViewNavBar(ViewChrome& c)
+    {
+        using namespace MiniGUI;
+        const std::string icons = ResourceDir() + "/icons";
+        Node* column = c.navBar;
+        while (!column->GetChildren().empty())
+            column->RemoveChild(column->GetChildren().back().get());
 
         auto* bar = column->AddChild<Panel>(Theme::Panel);
         bar->SetRounding(Theme::RadiusLg);
@@ -94,19 +121,16 @@ namespace MiniCAD
 
         addTools({ "view.pan", "view.zoomIn", "view.zoomOut", "view.zoomWindow", "view.zoomExtents" });
         addSeparator();
-        AddMenuButton(bar, m_commands, icons + "/ViewSWIso.png", "标准视图（三维视图里按住 Shift 拖动中键环绕，拖动中键平移）",
+        AddMenuButton(bar, m_commands, icons + "/ViewSWIso.png", Tr("标准视图（三维视图里按住 Shift 拖动中键环绕，拖动中键平移）"),
                       { "view.top", "view.bottom", "view.left", "view.right", "view.front", "view.back", "-",
                         "view.swiso", "view.seiso", "view.neiso", "view.nwiso" }, PopupPlacement::Right, 18.0f);
-        AddMenuButton(bar, m_commands, icons + "/Shaded.png", "视觉样式",
+        AddMenuButton(bar, m_commands, icons + "/Shaded.png", Tr("视觉样式"),
                       { "view.style.wireframe", "view.style.shaded" }, PopupPlacement::Right, 18.0f);
-        c.navBar = column.get();
-        return column;
     }
 
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateAppBar()
     {
         using namespace MiniGUI;
-        const std::string icons = ResourceDir() + "/icons";
 
         auto row = std::make_unique<Node>();
         {
@@ -117,6 +141,19 @@ namespace MiniCAD
             s.padding    = Edges::Make(4.0f, 0.0f, 8.0f, 0.0f);
             s.shrink     = 0.0f;
         }
+        m_appBar = row.get();
+        BuildAppBar();
+        return row;
+    }
+
+    // 标题栏右侧的内容（切换界面语言时重建）
+    void MainFrame::BuildAppBar()
+    {
+        using namespace MiniGUI;
+        const std::string icons = ResourceDir() + "/icons";
+        Node* row = m_appBar;
+        while (!row->GetChildren().empty())
+            row->RemoveChild(row->GetChildren().back().get());
 
         // AI 助手：还没有接入，点击说明计划
         auto* ai = row->AddChild<Button>();
@@ -124,30 +161,53 @@ namespace MiniCAD
         ai->SetFocusable(false);
         ai->SetIcon(icons + "/AI.png", { 18.0f, 18.0f });
         ai->EditLayoutStyle().padding = Edges::All(5.0f);
-        ai->SetTooltip("AI 助手（开发中）");
+        ai->SetTooltip(Tr("AI 助手（开发中）"));
         ai->SetOnClick([this]
         {
-            auto dialog = std::make_unique<Dialog>("AI 助手");
+            auto dialog = std::make_unique<Dialog>(Tr("AI 助手"));
             Node* body = dialog->GetBody();
             body->EditLayoutStyle().padding = Edges::Symmetric(18.0f, 12.0f);
             body->EditLayoutStyle().gap     = 8.0f;
-            body->AddChild<Label>("AI 助手还在开发中。", 14.0f);
-            body->AddChild<Label>("计划：用文字描述要画的图形或要做的修改，由助手生成命令或节点图。", 13.0f, Theme::TextDim);
+            body->AddChild<Label>(Tr("AI 助手还在开发中。"), 14.0f);
+            body->AddChild<Label>(Tr("计划：用文字描述要画的图形或要做的修改，由助手生成命令或节点图。"), 13.0f, Theme::TextDim);
             Dialog* raw = dialog.get();
-            raw->AddButton("确定", [raw] { raw->Close(); }, DialogButtonRole::Default);
+            raw->AddButton(Tr("确定"), [raw] { raw->Close(); }, DialogButtonRole::Default);
             m_ui->OpenPopup(std::move(dialog));
         });
 
-        AddMenuButton(row.get(), m_commands, icons + "/Settings.png", "设置",
-                      { "ui.theme", "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
+        AddMenuButton(row, m_commands, icons + "/Settings.png", Tr("设置"),
+                      { "ui.theme", kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
                       PopupPlacement::Below, 18.0f);
-        AddMenuButton(row.get(), m_commands, icons + "/Help.png", "帮助",
-                      { "ui.search", "view.start", "-", "help.about" }, PopupPlacement::Below, 18.0f);
+        AddMenuButton(row, m_commands, icons + "/Help.png", Tr("帮助"),
+                      { "ui.search", "view.start", "-", "help.checkUpdate", "help.about" }, PopupPlacement::Below, 18.0f);
 
-        auto* version = row->AddChild<Label>("v" MINICAD_VERSION_STRING, 12.0f, Theme::TextDim);
-        version->EditLayoutStyle().margin = Edges::Make(6.0f, 0.0f, 0.0f, 0.0f);
-        version->SetTooltip("MiniCAD 版本");
-        m_appBar = row.get();
-        return row;
+        if (m_update.version.empty())
+        {
+            auto* version = row->AddChild<Label>("v" MINICAD_VERSION_STRING, 12.0f, Theme::TextDim);
+            version->EditLayoutStyle().margin = Edges::Make(6.0f, 0.0f, 0.0f, 0.0f);
+            version->SetTooltip(Tr("MiniCAD 版本"));
+            return;
+        }
+
+        // 有新版本：版本号变成按钮（文字比平时亮），右上角红点，点开更新对话框
+        auto* version = row->AddChild<Button>();
+        version->SetStyle(ButtonStyle::Flat());
+        version->SetFocusable(false);
+        version->SetText("v" MINICAD_VERSION_STRING)->SetFontSize(12.0f);
+        version->EditLayoutStyle().padding = Edges::Symmetric(5.0f, 3.0f);
+        version->EditLayoutStyle().margin  = Edges::Make(1.0f, 0.0f, 0.0f, 0.0f);
+        version->SetTooltip(TrF("有新版本 v{0}，点击查看并下载", m_update.version));
+        version->SetOnClick([this] { ShowUpdateDialog(); });
+        auto* dot = version->AddChild<Panel>(Theme::Danger);
+        dot->SetRounding(3.0f);
+        dot->SetHitTestVisible(false);
+        {
+            LayoutStyle& s = dot->EditLayoutStyle();
+            s.position = PositionType::Absolute;
+            s.right    = 0.0f;
+            s.top      = 1.0f;
+            s.width    = 6.0f;
+            s.height   = 6.0f;
+        }
     }
 }

@@ -37,11 +37,8 @@ namespace MiniCAD
     const char* CadSaveVersionName(CadSaveVersion version);
 
     // 该格式能否按该版本写出（DWG 不支持 2007）
-    bool CadSaveVersionSupported(CadFileKind kind, CadSaveVersion version);
+    bool CadSaveVersionSupported(CadFileKind kind, CadSaveVersion version); 
 
-    // 打开 DWG / DXF 时留下的原图：原始字节、格式与版本，以及场景实体与原图实体的对应关系和导入时的状态。
-    // 另存为同一格式、同一版本时以原图为底，只改写变化过的实体与表项：没改过的实体（包括天正 TCH_* 等
-    // 自定义对象）、MiniCAD 不支持而跳过的实体、图纸空间、字典等原样写回。定义在 CadExchange.cpp
     struct CadSource;
 
     // 按扩展名（不区分大小写）判断是否 DWG / DXF 文件
@@ -74,10 +71,9 @@ namespace MiniCAD
 
     // 把场景写成 DWG 或 DXF（ASCII）。失败返回空数组
     // source：场景打开时的原图。格式与版本都与原图相同时以原图为底写出（见 CadSource），否则重新生成整张图纸，
-    // 天正等自定义对象只剩恢复出的普通几何
     std::vector<std::uint8_t> ExportCad(const Scene& scene, CadFileKind kind, CadSaveVersion version = CadSaveVersion::R2018,
                                         std::string* error = nullptr, const CadSource* source = nullptr);
 
-    // 原图中模型空间的天正对象（TCH_*）个数；source 为空时为 0
+    // 原图中模型空间的TCH对象（TCH_*）个数；source 为空时为 0
     int CadSourceTchCount(const CadSource* source);
 }

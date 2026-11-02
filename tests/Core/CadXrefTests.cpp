@@ -1,14 +1,3 @@
-// 外部参照（XREF）导入测试：宿主 tests/Data/Xref.dwg 以相对路径参照 Xref-A.dwg 与 Xref-B.dwg
-// （用户图纸，不在版本库里；文件不存在时跳过）。核对：
-//   · 外部参照块带标志与路径，内容从外部文件读入
-//   · 依赖图层「参照名|图层名」复用宿主里已有的，不重复
-//   · 外部参照里的天正坐标标注按实线组装
-//   · 重新生成导出时外部参照仍是外部参照（不绑定），依赖块不写出
-// 另有不依赖用户图纸的部分（RunXrefResolveTests，在临时目录里现做宿主与参照图纸）：
-//   · 原机器上的绝对路径按后缀在宿主的上级目录里找到
-//   · 找不到的参照在插入点显示保存的路径，范围取插入点
-//   · ReloadUnresolvedXrefs 在另外指定的目录里递归找到并读入
-//   · 卸载的参照不读、不显示路径，卸载标志随 DWG 往返
 #include "Core/Entity/BlockEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
@@ -245,7 +234,7 @@ int RunCadXrefTests()
 
     // Xref-A.dwg 里的 TCH_COORD 句柄 2FB：组装成 Xref-A|*U_TCH_763，引线按实线（对象线型不是实线时也是）
     const BlockEntity* coord = blocks.Get("Xref-A|*U_TCH_763");
-    Check(coord != nullptr, "外部参照里的天正坐标标注已组装（Xref-A|*U_TCH_763）");
+    Check(coord != nullptr, "外部参照里的TCH坐标标注已组装（Xref-A|*U_TCH_763）");
     if (coord != nullptr)
         Check(AllLinesContinuous(*coord), "坐标标注的线是实线");
 

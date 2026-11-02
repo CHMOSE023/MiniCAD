@@ -15,12 +15,12 @@ namespace MiniCAD
     public:
         CircleTool()
         {
-            LOG_DEBUG("[CircleTool] 左键定圆心 | 左键确认半径 | 右键/ESC 退出");
+            LOG_DEBUG("[CircleTool] click center | click radius | right-click/ESC exits");
         }
 
         ~CircleTool()
         {
-            LOG_DEBUG("退出绘制");
+            LOG_DEBUG("Exit drawing");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -86,8 +86,8 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasCenter ? "指定半径 [右键/ESC 退出]:"
-                               : "指定圆心:";
+            return m_hasCenter ? Tr("指定半径 [右键/ESC 退出]:")
+                               : Tr("指定圆心:");
         }
 
         void OnSceneChanged() override
@@ -116,7 +116,7 @@ namespace MiniCAD
             m_ctx->ApplyCurrentAttr(*circle);
             auto cmd = std::make_unique<AddEntityCommand>(std::move(circle));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-            LOG_DEBUG("圆 Id %d  center(%.3f,%.3f)  r=%.3f",
+            LOG_DEBUG("Circle Id %d center(%.3f,%.3f) r=%.3f",
                 static_cast<int>(id), center.x, center.y, radius);
         }
 

@@ -1,8 +1,10 @@
 // ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、页面关闭提示 ─────────
 #include "Host/WebApp.h"
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "Document/Document.h"
+#include "GUI/Language.h"
 #include "Platform/Web/WebFonts.h"
 #include "Widgets/Dialog.h"
 #include "Platform/Web/WebInput.h"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 
 namespace MiniCAD
@@ -169,7 +172,7 @@ namespace MiniCAD
     EM_JS(void, MiniCADWeb_Download, (const char* pathPtr), {
         const path = UTF8ToString(pathPtr);
         let data;
-        try { data = FS.readFile(path); } catch (e) { console.error("MiniCAD: 找不到要下载的文件 " + path); return; }
+        try { data = FS.readFile(path); } catch (e) { console.error("MiniCAD: file to download not found " + path); return; }
         const blob = new Blob([data], { type: "application/octet-stream" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -190,6 +193,38 @@ namespace MiniCAD
     EM_JS(void, MiniCADWeb_ReportFailure, (const char* what), {
         if (Module["onAbort"]) Module["onAbort"](UTF8ToString(what));
     });
+
+    // 界面语言：网址的 ?lang=（优先）、浏览器语言；"设置 > 语言"存在 localStorage（网页版没有用户数据目录）。
+    // 返回的字符串由调用方 free
+    EM_JS(char*, MiniCADWeb_UrlLanguage, (), {
+        try { return stringToNewUTF8(new URLSearchParams(location.search).get("lang") || ""); } catch (e) { return stringToNewUTF8(""); }
+    });
+
+    EM_JS(char*, MiniCADWeb_BrowserLanguage, (), {
+        return stringToNewUTF8(navigator.language || "");
+    });
+
+    EM_JS(void, MiniCADWeb_SetDocumentLanguage, (const char* code), {
+        document.documentElement.lang = UTF8ToString(code);
+    });
+
+    EM_JS(char*, MiniCADWeb_ReadSetting, (const char* key), {
+        try { return stringToNewUTF8(localStorage.getItem("MiniCAD." + UTF8ToString(key)) || ""); } catch (e) { return stringToNewUTF8(""); }
+    });
+
+    EM_JS(int, MiniCADWeb_WriteSetting, (const char* key, const char* value), {
+        try { localStorage.setItem("MiniCAD." + UTF8ToString(key), UTF8ToString(value)); return 1; } catch (e) { return 0; }
+    });
+
+    namespace
+    {
+        std::string TakeJsString(char* s)
+        {
+            std::string r = s ? s : "";
+            std::free(s);
+            return r;
+        }
+    }
 
     EM_JS(void, MiniCADWeb_SetTitle, (const char* title), {
         document.title = UTF8ToString(title);
@@ -242,13 +277,34 @@ namespace MiniCAD
             g_app = nullptr;
     }
 
+    std::string WebApp::GetSystemLanguage() const
+    {
+        return TakeJsString(MiniCADWeb_BrowserLanguage());
+    }
+
+    void WebApp::OnLanguageChanged(const std::string& code)
+    {
+        MiniCADWeb_SetDocumentLanguage(code.c_str());
+    }
+
+    std::string WebApp::ReadUserSetting(const std::string& key) const
+    {
+        return TakeJsString(MiniCADWeb_ReadSetting(key.c_str()));
+    }
+
+    bool WebApp::WriteUserSetting(const std::string& key, const std::string& value)
+    {
+        return MiniCADWeb_WriteSetting(key.c_str(), value.c_str()) != 0;
+    }
+
     bool WebApp::Initialize()
     {
+        OnLanguageChanged(InitLanguage(*this, TakeJsString(MiniCADWeb_UrlLanguage())));    // 在请求图形设备之前：它的出错信息也要翻译
         if (!m_host.Initialize())
             return false;
         if (MiniCADWeb_PreferWebGL())
         {
-            LOG_INFO("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
+            LOG_INFO_TR("MiniCAD 网页版：网址带 ?webgl，使用 WebGL2");
             return InitializeWebGL();
         }
 
@@ -265,11 +321,11 @@ namespace MiniCAD
                 }
                 else
                 {
-                    LOG_INFO("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
+                    LOG_INFO_TR("MiniCAD 网页版：WebGPU 不可用，改用 WebGL2");
                     ok = InitializeWebGL();
                 }
                 if (!ok)
-                    ReportFailure("初始化失败（浏览器需要支持 WebGPU 或 WebGL2）");
+                    ReportFailure(Tr("初始化失败（浏览器需要支持 WebGPU 或 WebGL2）").c_str());
             });
         return true;
     }
@@ -286,7 +342,7 @@ namespace MiniCAD
 
     bool WebApp::OnGraphicsReady()
     {
-        LOG_INFO("MiniCAD 网页版：图形接口 %s", m_graphics->GetName());
+        LOG_INFO_TR("MiniCAD 网页版：图形接口 {0}", m_graphics->GetName());
         // 异步等待期间画布尺寸可能变了：按当前尺寸
         m_graphics->Resize(m_host.GetFramebufferWidth(), m_host.GetFramebufferHeight());
         m_viewportRT = m_graphics->CreateRenderTarget();
@@ -309,7 +365,7 @@ namespace MiniCAD
 
     void WebApp::ReportFailure(const char* what)
     {
-        std::printf("MiniCAD：%s\n", what);
+        std::printf("MiniCAD: %s\n", what);
         MiniCADWeb_ReportFailure(what);
     }
 
@@ -376,7 +432,7 @@ namespace MiniCAD
     void WebApp::Quit()
     {
         // 网页不能自己关闭标签页：未保存的修改已经处理完，什么也不做
-        LOG_INFO("MiniCAD 网页版：关闭浏览器标签页即可退出");
+        LOG_INFO_TR("MiniCAD 网页版：关闭浏览器标签页即可退出");
     }
 
     bool WebApp::OpenUrl(const std::string& url)
@@ -431,7 +487,7 @@ namespace MiniCAD
         if (request.done && !request.paths.empty())
             request.done(request.paths);
         if (error && *error)
-            MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件失败", error, { "确定" }, [](int) {});
+            MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("读取文件失败"), error, { Tr("确定") }, [](int) {});
         m_host.RequestFrame();
     }
 
@@ -458,7 +514,7 @@ namespace MiniCAD
         auto done = std::move(it->second);
         m_folderRequests.erase(it);
         if (error && *error)
-            MiniGUI::ShowMessageBox(m_main.GetUI(), "读取文件夹失败", error, { "确定" }, [](int) {});
+            MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("读取文件夹失败"), error, { Tr("确定") }, [](int) {});
         if (done && dir && *dir)
             done(dir);
         m_host.RequestFrame();
@@ -468,7 +524,7 @@ namespace MiniCAD
     {
         // 浏览器没有"另存为"对话框：保存到内存文件系统，保存完成后（OnDocumentSaved）下载。
         // 已经带 .mcad / .dwg / .dxf / .json 扩展名的按原格式保存，否则存为 .mcad
-        std::string name = suggestedName.empty() ? std::string("未命名") : suggestedName;
+        std::string name = suggestedName.empty() ? Tr("未命名") : suggestedName;
         std::replace(name.begin(), name.end(), '/', '_');
         if (!HasExtension(name, ".mcad") && !HasExtension(name, ".dwg") && !HasExtension(name, ".dxf") && !HasExtension(name, ".json"))
             name += ".mcad";
@@ -479,7 +535,7 @@ namespace MiniCAD
     std::string WebApp::ChooseExportPath(FileKind kind, const std::string& suggestedName)
     {
         // 与 ChooseSavePath 相同：写进内存文件系统，写完后 OnDocumentSaved 下载
-        std::string name = suggestedName.empty() ? std::string("未命名") : suggestedName;
+        std::string name = suggestedName.empty() ? Tr("未命名") : suggestedName;
         std::replace(name.begin(), name.end(), '/', '_');
         if (kind == FileKind::NodeGraph && !HasExtension(name, ".mcnode") && !HasExtension(name, ".json"))
             name += ".mcnode";

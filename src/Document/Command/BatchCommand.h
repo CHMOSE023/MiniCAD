@@ -40,7 +40,7 @@ namespace MiniCAD
 
         std::string GetName() const override
         {
-            return "批量修改";
+            return N_("批量修改");
         }
 
     private:

@@ -41,8 +41,8 @@ namespace MiniCAD
     class ExtendTool : public ITool
     {
     public:
-        ExtendTool()  { LOG_DEBUG("[ExtendTool] 点击要延伸的线段靠近的一端 | 右键/ESC 退出"); }
-        ~ExtendTool() { LOG_DEBUG("[ExtendTool] 退出"); }
+        ExtendTool()  { LOG_DEBUG("[ExtendTool] click near the end to extend | right-click/ESC exits"); }
+        ~ExtendTool() { LOG_DEBUG("[ExtendTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -57,7 +57,7 @@ namespace MiniCAD
                 {
                     ExtendPlan plan = ComputeExtend(ent, p);
                     if (plan.valid) Commit(ent, plan);
-                    else            LOG_WARN("[ExtendTool] 该端无可延伸到的边界");
+                    else            LOG_WARN("[ExtendTool] no boundary to extend this end to");
                 }
                 return true;
             }
@@ -96,7 +96,7 @@ namespace MiniCAD
         void OnSceneChanged() override { if (m_overlay) m_overlay->Clear(); }
         void OnFocusLost()    override { if (m_overlay) m_overlay->Clear(); }
 
-        std::string GetPrompt() const override { return "选择要延伸的对象 [右键/ESC 退出]:"; }
+        std::string GetPrompt() const override { return Tr("选择要延伸的对象 [右键/ESC 退出]:"); }
 
     private:
         struct ExtendPlan
@@ -380,10 +380,10 @@ namespace MiniCAD
             it.after  = std::move(plan.modified);
             items.push_back(std::move(it));
 
-            auto cmd = std::make_unique<GeometryEditCommand>("延伸", std::move(items));
+            auto cmd = std::make_unique<GeometryEditCommand>(N_("延伸"), std::move(items));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
             m_ctx->overlay.Clear();
-            LOG_DEBUG("[ExtendTool] 已延伸");
+            LOG_DEBUG("[ExtendTool] extended");
         }
 
     private:

@@ -50,7 +50,7 @@ namespace MiniCAD
         MLineStyleRecord std;
         std.Id          = 0;
         std.Name        = "Standard";
-        std.Description = "两条平行线";
+        std.Description = "两条平行线";   // i18n: 数据（写进图纸）
         std.Elements    = { { 0.5, false, {} }, { -0.5, false, {} } };
         m_records.push_back(std);
         m_nextId = 1;

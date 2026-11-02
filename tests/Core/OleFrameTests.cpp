@@ -3,7 +3,7 @@
 //   · Core/Ole/OleObject：OLE2FRAME 头（版本 0x5581 + 四个角点）、图像路径 "ole:<哈希>"、DIB 解码（合成数据，不依赖图纸）
 //   · DrawContext::LayPattern 的起点相位：布局页视口裁掉一段延迟虚线的前半段后，后半段从原相位接着铺
 //   · OleFrameEntity 经 JSON 往返（数据 base64）
-//   · tests/Data/0525最终改总平面图.dwg（用户图纸，不在版本库里，没有就跳过）：
+//   · 总平面样图 B（用户图纸，不在版本库里，没有就跳过）：
 //       5 个 OLE2FRAME 导入为图纸空间的 OleFrameEntity，能从复合文档取出 WMF / EMF 展示图；
 //       文字样式表没有 "_W70" 之类的派生样式、预置的 Simplex 被删、GB2312 / Standard 按图纸的参数；
 //       含形的线型 1161 保留 0 长度的形段与 1.6 的间隔（以前整条线消失）；$PSLTSCALE = 0
@@ -218,7 +218,7 @@ namespace
         }
         Document doc;
         std::string err;
-        Check(doc.LoadFromFile(Utf8Name(path), &err), "打开 0525 总平面图");
+        Check(doc.LoadFromFile(Utf8Name(path), &err), "打开总平面样图 B");
         auto& scene = doc.GetScene();
 
         std::vector<const OleFrameEntity*> oles;
@@ -302,7 +302,6 @@ namespace
         if (vp2)
             Check(vp2->GetFrozenLayers().size() == 4, "id=2 的视口冻结 4 个图层");
 
-        // TCH_COORD F656B（= 1009003）：对象线型 __DASH，天正画坐标标注不用它，引线应是实线
         if (const BlockEntity* coord = scene.GetBlockTable().Get("*U_TCH_1009003"))
         {
             bool any = false, continuous = true;

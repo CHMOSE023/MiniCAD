@@ -1,14 +1,14 @@
 # AGENTS.md
 
-本文件为 AI 编程助手在本仓库中工作时提供指引。构建命令见 `README.md`；各库的开发计划在 `docs/*/PLAN.md`，发布说明在 `docs/release-notes/`。
+本文件为 AI 编程助手在本仓库中工作时提供指引。各库的开发计划在 `docs/*/PLAN.md`，发布说明在 `docs/release-notes/`。
 
 ## 按需阅读（`.agents/`）
 
 下面的文件不会自动加载，做到相应的事时再读：
 
 - **验证改动** → skill [`.agents/skills/test`](.agents/skills/test/SKILL.md)：按改动编译并运行相关测试，只返回汇总
-- **排查图纸导入 / 显示问题**（打开后缺东西、位置或线型不对、天正对象、布局页、外部参照）→ skill [`.agents/skills/drawing-debug`](.agents/skills/drawing-debug/SKILL.md)
-- **改某一块功能之前** → [`.agents/features/INDEX.md`](.agents/features/INDEX.md)：按功能（DWG/DXF 交换、外部参照、布局视口、天正对象、三维视图、主窗口界面、显示性能）分的实现说明
+- **排查图纸导入 / 显示问题**（打开后缺东西、位置或线型不对、TCH对象、布局页、外部参照）→ skill [`.agents/skills/drawing-debug`](.agents/skills/drawing-debug/SKILL.md)
+- **改某一块功能之前** → [`.agents/features/INDEX.md`](.agents/features/INDEX.md)：按功能（DWG/DXF 交换、外部参照、布局视口、TCH对象、三维视图、主窗口界面、显示性能）分的实现说明
 - **编译、运行或改文件时报错** → [`.agents/docs/troubleshooting.md`](.agents/docs/troubleshooting.md)：按报错现象查原因和做法；遇到不在表里的新问题，解决后补一条
 
 ### 文档跟着代码走
@@ -28,6 +28,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）、`Platform/Web`（`MiniGUI_Web`）与 `Platform/SDL`（`MiniGUI_SDL`，Linux，需要 SDL3）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD，核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。`*.g.cpp` 由已归档的 MiniDWG 仓库里的脚本生成，不要手改。开发计划：`docs/MiniDWG/PLAN.md`
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
+- `src/I18n/MiniI18n/`：MiniI18n（目标 `MiniI18n`，定义在 `cmake/MiniI18n.cmake`，命名空间 `MiniI18n`）：界面文字的翻译，只用标准库，MiniCAD、MiniGUI、MiniDWG 都链接它。翻译文件 `assets/i18n/<语言>.json`，由共用应用的 `GUI/Language.cpp` 选定语言并装入。开发计划：`docs/I18n/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，各宿主共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
 - `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；Linux 默认 `VulkanGraphicsDevice`（`VulkanRenderer`、`VulkanBackend`，共用 `MiniGUI::VulkanContext`，要 Vulkan 1.3；GLSL 着色器构建时编成 SPIR-V），不行时 `GLES3GraphicsDevice`（OpenGL ES 3），窗口表面与 GL 上下文都由宿主经 SDL3 创建；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
@@ -42,12 +43,12 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 ### include 根目录（重要）
 
-每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`，Linux 版 → `apps/Linux/src`。
+每个库有自己的 include 根：MiniCAD → `src`，MiniGUI → `src/UI`，MiniDWG → `src/Serialization`，MiniI18n → `src/I18n`（`"MiniI18n/I18n.h"`），共用应用 → `apps/Common/src`，渲染后端 → `apps/Render`，桌面版 → `apps/Win32/src`，网页版 → `apps/Web/src`，Linux 版 → `apps/Linux/src`。
 `src` 和 `src/UI` 下都有 `Core/`、`Render/`、`Text/`；不要让同一个相对路径（如 `Core/<文件>.h`）同时存在于两个根下——重名时编译器按搜索顺序悄悄选中其中一个，不会报错。
 
 ### 源文件登记
 
-源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt` / `apps/Linux/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
+源文件逐个列出（不用通配），新增 `.cpp` 要加到对应位置：核心库 `cmake/MiniCAD.cmake`，MiniGUI `cmake/MiniGUI.cmake`，MiniDWG `cmake/MiniDWG.cmake`，MiniI18n `cmake/MiniI18n.cmake`，共用应用 `apps/Common/CMakeLists.txt`，渲染后端 `cmake/Render.cmake`，宿主 `apps/Win32/CMakeLists.txt` / `apps/Web/CMakeLists.txt` / `apps/Linux/CMakeLists.txt`，测试 `tests/CMakeLists.txt`。例外：`3rd/SMLib` 在 `cmake/SMLib.cmake` 里按目录通配。实体是纯头文件，一般不用改 CMake。
 
 ## 架构
 
@@ -57,7 +58,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - **编辑器**（`src/Editor/`）：输入管线 `InputResolver` → `Editor` → 工具 / 约束（对象捕捉优先：捕捉到对象上的点时不再套正交 / 极轴，同 AutoCAD）；工具 `ITool`（`src/Editor/Tools/`，修改工具在 `src/Editor/Tools/Modify/`）；拾取（空间索引）、`SnapEngine`、`GripEditor`；需要界面配合的操作通过"请求"交给宿主（`GetTextInputRequest` 等）
 - **渲染**：`Viewport`（相机、分两层绘制：缓存层 + 每帧的动态内容）；渲染器实现 `IRenderer`。CAD 视口由 CAD 渲染器绘制，界面由 MiniGUI 后端绘制，两者不是一回事。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
 - **序列化**（`src/Serialization/`）：`ISerializer`，`JsonSerializer` / `BinarySerializer`（键值树，缺少的键取默认值，可以加字段而不破坏旧文件），`EntityIO` 负责实体映射。`.mcad`（不区分大小写）→ 二进制，其余 → JSON
-- **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；天正对象的适配在 `src/Import/Tch*.h`
+- **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；TCH对象的适配在 `src/Import/Tch*.h`
 - **文字**（`src/Text/`）：`FontSystem` / `FontEngine`（SHX 与 TTF），`TextLayoutEngine`；字体先在资源目录（`AppPlatform::GetResourceDir`）的 `fonts/` 找（`MainFrame::Initialize` 设定，与启动时的当前目录无关），再到 `AppPlatform::GetSystemFontDirs()`
 - **几何内核**（`src/Core/GeomKernel/`）：`Point3`、`ICurve`、`CurveIntersect`、向量 / 矩阵。`Mat4` 为行向量约定（P' = P · M）
 
@@ -110,7 +111,18 @@ doc.GetCommandStack().Execute(std::move(cmd), scene);   // 工具里是 m_ctx->c
 路径在接口间一律传 UTF-8 `std::string`；转成 `std::filesystem::path` 用 `std::u8string`，转回用 `u8string()`。不要用 `path::string()` 或窄字符串构造 path（按系统代码页转换，英文系统遇到中文会抛异常）。
 
 ### 日志
-`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。
+`Core/Log.h` 提供 `LOG_INFO`、`LOG_WARN`、`LOG_ERROR`（桌面版输出到控制台，网页版输出到浏览器控制台）。给用户看的日志用 `LOG_INFO_TR` / `LOG_WARN_TR` / `LOG_ERROR_TR`（`{0}` 占位，不是 printf 格式串；专有名词、十六进制句柄先格式化成字符串再作参数）；工具的跟踪日志、`LOG_DEBUG`、断言、GPU 调试标签直接写英文、用 `LOG_*`，不翻译。`LOG_*` 的格式串里不能有中文（`--lint` 会报）。
+
+### 界面文字（多语言）
+源语言是简体中文，翻译表的键就是代码里的中文原文（`docs/I18n/PLAN.md`）：
+- 直接显示的文字写 `Tr("…")`；要替换数字等的写 `TrF("{0} 个…", n)`，不要拼接句子碎片（英文语序不同）；同字不同义时 `TrC("上下文", "…")`（只标记的写 `NC_("上下文", "…")`，命令名称填 `Command::labelContext`）
+- 存进数据、显示时才翻译的（命令的 `label` / `tooltip`、节点名称）写 `N_("…")`，显示处再翻译；命令文字一律经 `CommandRegistry::GetLabel` / `CommandRegistry::GetTooltip` 显示，不要直接读 `Command::label`
+- 不要按显示的文字比较或查找（翻译后就对不上），按 Id / 下标
+- 写进图纸的数据不翻译（布局名 `模型`、样式名、图层名）；新建图纸 / 布局的名字按当时的语言起（`TrF("布局{0}", n)`），建好后就是数据
+- 改了界面文字后运行 `python -X utf8 tools/i18n_extract.py` 更新翻译文件（CI 跑 `--check` 与 `--lint`）；英文日志反查原文用 `--where "<英文>"`
+- `--lint` 报出没包 `Tr` / `N_` 等的中文字面量：确实是数据或上下文的，在行尾或语句上方加注释 `// i18n: 数据`（以 `i18n:` 开头即可）
+- 运行时语言：`--lang en|zh-CN|qps`（`qps` 是伪语言，找出没走 `Tr` 的文字）或环境变量 `MINICAD_LANG`；默认按"设置 > 语言"、再按系统语言。自测与基准不读设置、不看系统语言
+- "设置 > 语言"立即生效（`MainFrame::Retranslate` 重建界面）：代码里建的界面开始显示译文时，要在 `MainFrame::Retranslate` 里重建它或重写文字；只在打开时才建的对话框、弹出菜单不用管
 
 ### 文本格式
 仓库里文本统一存为 LF（`.gitattributes`），`.bat` 为 CRLF，`.dwg` / `.dxf` 按二进制。代码注释与提交信息用简体中文。

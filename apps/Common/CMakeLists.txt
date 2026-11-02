@@ -33,6 +33,9 @@ add_library(MiniCADApp STATIC
     src/GUI/NodePanel.cpp
     src/GUI/FloatingPanelHost.cpp
     src/GUI/DocumentWindows.cpp
+    src/GUI/Language.cpp
+    src/GUI/UserSettings.cpp
+    src/GUI/UpdateCheck.cpp
 )
 
 target_include_directories(MiniCADApp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${MINICAD_VERSION_DIR})

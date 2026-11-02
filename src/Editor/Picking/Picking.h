@@ -180,7 +180,7 @@ namespace MiniCAD
         uint64_t     m_displayVersion = ~0ull;  // 拾取几何缓存对应的场景显示版本
         std::vector<ObjectID> m_candidates;   // 查询候选复用缓冲，避免每次分配
 
-        // 通用拾取回退（块参照、天正对象、标注等）的世界空间几何缓存：按实体 ID 保存其 Draw() 输出的线段与三角形，
+        // 通用拾取回退（块参照、TCH对象、标注等）的世界空间几何缓存：按实体 ID 保存其 Draw() 输出的线段与三角形，
         // 实体变化时随空间索引同步失效。大块参照每次重新绘制要十几毫秒，不缓存时鼠标移动（悬停拾取）会卡
         struct PickGeometry
         {

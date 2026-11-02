@@ -144,7 +144,7 @@ TEST(Command_ShortcutsBindOverrideAndConflicts)
     CHECK(reg.GetTooltip("file.saveAll") == "全部保存 (Ctrl+Shift+S)\n保存所有文档");
 
     const auto conflicts = reg.FindShortcutConflicts();
-    CHECK(conflicts.size() == 1 && conflicts[0] == "Ctrl+Shift+S：file.save 与 file.saveAll");
+    CHECK(conflicts.size() == 1 && conflicts[0] == "Ctrl+Shift+S：file.save, file.saveAll");
 
     t.Key(Key::S, Mods(ModifierKey::Ctrl));
     CHECK(saves == 1);                          // 旧快捷键已注销

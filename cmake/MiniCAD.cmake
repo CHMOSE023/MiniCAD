@@ -143,6 +143,7 @@ target_include_directories(MiniCAD
 
 # DWG/DXF 只在库内部的导入导出代码中使用，公开头文件不暴露 MiniDWG 类型
 target_link_libraries(MiniCAD PRIVATE MiniDWG)
+target_link_libraries(MiniCAD PUBLIC MiniI18n)
 
 if(MSVC)
     target_compile_options(MiniCAD PRIVATE /utf-8 /bigobj)   # /bigobj：Editor.cpp 在 debug 下节数超过默认上限

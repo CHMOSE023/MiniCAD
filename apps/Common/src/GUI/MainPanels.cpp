@@ -1,6 +1,8 @@
 // ── 宿主面板（文档区、特性、状态栏）与界面描述文件、用户布局的加载 ─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
+#include "MiniI18n/I18n.h"
 #include "GUI/StatusBarView.h"
 #include "GUI/Lineweights.h"
 #include "Core/Entity/Entity.hpp"
@@ -124,16 +126,16 @@ namespace MiniCAD
             return -1;
         }
 
-        // 颜色下拉项：随层、随块、ACI 1..7，最后一项"其他"表示别的 ACI / 真彩（只用于显示，选中它不做修改）
+        // 颜色下拉项：随层、随块、ACI 1..7，最后一项"其他"表示别的 ACI / 真彩（只用于显示，选中它不做修改）。名称 N_ 标记，显示时 Tr
         struct ColorItem { const char* label; EntityColor color; };
         const std::vector<ColorItem>& ColorItems()
         {
             static const std::vector<ColorItem> items =
             {
                 { "ByLayer", EntityColor::ByLayer() }, { "ByBlock", EntityColor::ByBlock() },
-                { "红", EntityColor::FromAci(1) }, { "黄", EntityColor::FromAci(2) }, { "绿", EntityColor::FromAci(3) },
-                { "青", EntityColor::FromAci(4) }, { "蓝", EntityColor::FromAci(5) }, { "品红", EntityColor::FromAci(6) },
-                { "白", EntityColor::FromAci(7) },
+                { N_("红"), EntityColor::FromAci(1) }, { N_("黄"), EntityColor::FromAci(2) }, { N_("绿"), EntityColor::FromAci(3) },
+                { N_("青"), EntityColor::FromAci(4) }, { N_("蓝"), EntityColor::FromAci(5) }, { N_("品红"), EntityColor::FromAci(6) },
+                { N_("白"), EntityColor::FromAci(7) },
             };
             return items;
         }
@@ -154,8 +156,8 @@ namespace MiniCAD
         {
             std::vector<std::string> labels;
             for (const auto& it : ColorItems())
-                labels.emplace_back(it.label);
-            labels.emplace_back("其他");
+                labels.emplace_back(Tr(it.label));
+            labels.emplace_back(Tr("其他"));
             return labels;
         }
 
@@ -163,7 +165,7 @@ namespace MiniCAD
         {
             std::vector<std::string> labels;
             for (const auto& it : kLineweightItems)
-                labels.emplace_back(it.label);
+                labels.emplace_back(Tr(it.label));
             return labels;
         }
     }
@@ -281,8 +283,8 @@ namespace MiniCAD
                 canDelete = !doc->GetScene().Layouts()[static_cast<size_t>(i)].Model &&
                             RemoveLayoutCommand::PaperCount(doc->GetScene()) > 1;
             return std::vector<MenuItem>{
-                MenuItem("新建布局(&N)", [this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); }),
-                MenuItem("删除布局(&D)", [this, pc, i] { UseChrome(*pc); DeleteLayout(i); }).Enabled(canDelete),
+                MenuItem(Tr("新建布局(&N)"), [this, pc] { UseChrome(*pc); m_commands.Execute("layout.new"); }),
+                MenuItem(Tr("删除布局(&D)"), [this, pc, i] { UseChrome(*pc); DeleteLayout(i); }).Enabled(canDelete),
             };
         });
 
@@ -376,7 +378,7 @@ namespace MiniCAD
                 CommandMenuItem(m_commands, "view.top"),   CommandMenuItem(m_commands, "view.front"),
                 CommandMenuItem(m_commands, "view.right"), CommandMenuItem(m_commands, "view.swiso"),
                 MenuItem::Separator(),
-                MenuItem("隐藏视图方块(&H)", [this] { SetViewCubeVisible(false); }),
+                MenuItem(Tr("隐藏视图方块(&H)"), [this] { SetViewCubeVisible(false); }),
             };
             auto popup = std::make_unique<MenuPopup>(std::move(items));
             popup->SetAnchor(Rect{ pos.x, pos.y, pos.x, pos.y }, PopupPlacement::Below);
@@ -483,6 +485,21 @@ namespace MiniCAD
         grid->EditLayoutStyle().grow = 1.0f;
         grid->SetNameWidth(90.0f);
 
+        // 面板只建一次：显示译文的地方经 keep 写一次，并登记到 P.retranslate，切换界面语言时再写一次
+        auto keep = [&P](std::function<void()> write) { write(); P.retranslate.push_back(std::move(write)); };
+        auto group = [&keep, grid](const char* title)
+        {
+            Expander* g = grid->AddGroup(std::string());
+            keep([g, title] { g->SetTitle(Tr(title)); });
+            return g;
+        };
+        // 编辑控件所在行的名称（PropertyGrid 的行：名称标签 + 控件）；context 非空时按上下文翻译（TrC）
+        auto rowName = [&keep](Node* editor, const char* name, const char* context = nullptr)
+        {
+            auto* label = static_cast<Label*>(editor->GetParent()->GetChildren().front().get());
+            keep([label, name, context] { label->SetText(context ? TrC(context, name) : Tr(name)); });
+        };
+
         auto doc = [this, pc]() -> Document* { return DocOf(*pc); };
         // 每个文档有自己的编辑器：绑定是长期存在的，不能保存引用，每次取这个窗口的文档的（没有文档时是空闲的编辑器）
         auto editor = [this, doc]() -> Editor& { Document* d = doc(); return d ? m_docManager.GetEditor(*d) : m_docManager.GetEditor(); };
@@ -505,8 +522,9 @@ namespace MiniCAD
         };
 
         // ── 当前设置（新建对象使用）─────────────────────────────
-        Expander* current = grid->AddGroup("当前（新建对象）");
-        auto* layer = grid->AddProperty<ComboBox>(current, "图层");
+        Expander* current = group(N_("当前（新建对象）"));
+        auto* layer = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(layer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文      // 单数（面板标题"图层"是复数）
         paintLayers(layer);
         P.bindings.BindChoice(layer,
             [doc]() -> std::optional<int>
@@ -524,7 +542,8 @@ namespace MiniCAD
             },
             layerNames);
 
-        auto* linetype = grid->AddProperty<ComboBox>(current, "线型");
+        auto* linetype = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(linetype, N_("线型"));
         P.bindings.BindChoice(linetype,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? static_cast<int>(d->GetScene().GetCurrentLineType()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineType(static_cast<LineTypeID>(i)); },
@@ -537,7 +556,8 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* textStyle = grid->AddProperty<ComboBox>(current, "文字样式");
+        auto* textStyle = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(textStyle, N_("文字样式"));
         P.bindings.BindChoice(textStyle,
             [doc]() -> std::optional<int>
             {
@@ -563,13 +583,16 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* textHeight = grid->AddProperty<NumberBox>(current, "文字高度", 2.5, 0.001, 10000.0, 0.5, 3);
-        textHeight->SetTooltip("新建文字的字高；当前文字样式设了固定字高时以样式为准");
+        auto* textHeight = grid->AddProperty<NumberBox>(current, std::string(), 2.5, 0.001, 10000.0, 0.5, 3);
+        rowName(textHeight, N_("文字高度"));
+        keep([textHeight] { textHeight->SetTooltip(Tr("新建文字的字高；当前文字样式设了固定字高时以样式为准")); });
         P.bindings.BindNumber(textHeight,
             [editor] { return std::optional<double>(editor().GetTextHeight()); },
             [editor](const double& v) { editor().SetTextHeight(v); });
 
-        auto* lineweight = grid->AddProperty<ComboBox>(current, "线宽", LineweightLabels());
+        auto* lineweight = grid->AddProperty<ComboBox>(current, std::string());
+        rowName(lineweight, N_("线宽"));
+        keep([lineweight] { lineweight->SetItems(LineweightLabels()); });
         P.bindings.BindChoice(lineweight,
             [doc]() -> std::optional<int> { Document* d = doc(); return d ? LineweightIndex(d->GetScene().GetCurrentLineweight()) : -1; },
             [doc](const int& i) { if (Document* d = doc()) d->GetScene().SetCurrentLineweight(kLineweightItems[i].lw); });
@@ -591,14 +614,16 @@ namespace MiniCAD
         //    [editor](const double& v) { editor().GetSnapEngine().SetSnapRadiusPx(v); });
 
         // ── 选择集（可编辑：多个对象取值不同时显示"*多种*"；修改走 ChangeAttrCommand，可撤销）────────────
-        Expander* sel = grid->AddGroup("选择集");
-        auto* count = grid->AddProperty<Label>(sel, "数量", std::string(), 13.0f);
+        Expander* sel = group(N_("选择集"));
+        auto* count = grid->AddProperty<Label>(sel, std::string(), std::string(), 13.0f);
+        rowName(count, N_("数量"));
         P.bindings.BindLabel(count, [this, doc]
         {
             const size_t n = doc() ? SelectionInfo(doc()).count : 0;
-            return n == 0 ? std::string("未选择") : std::to_string(n) + " 个对象";
+            return n == 0 ? Tr("未选择") : TrF("{0} 个对象", n);
         });
-        auto* selLayer = grid->AddProperty<ComboBox>(sel, "图层");
+        auto* selLayer = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selLayer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文
         selLayer->SetPlaceholder("—");
         paintLayers(selLayer);
         P.bindings.BindChoice(selLayer,
@@ -617,7 +642,9 @@ namespace MiniCAD
             },
             layerNames);
 
-        auto* selColor = grid->AddProperty<ComboBox>(sel, "颜色", ColorLabels());
+        auto* selColor = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selColor, N_("颜色"));
+        keep([selColor] { selColor->SetItems(ColorLabels()); });
         selColor->SetPlaceholder("—");
         P.bindings.BindChoice(selColor,
             [this, editor, doc]() -> std::optional<int>
@@ -632,7 +659,8 @@ namespace MiniCAD
                     editor().ChangeSelectionAttr(AttrChange{ .Color = items[static_cast<size_t>(i)].color });
             });
 
-        auto* selLinetype = grid->AddProperty<ComboBox>(sel, "线型");
+        auto* selLinetype = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selLinetype, N_("线型"));
         selLinetype->SetPlaceholder("—");
         P.bindings.BindChoice(selLinetype,
             [this, editor, doc]() -> std::optional<int>
@@ -654,7 +682,8 @@ namespace MiniCAD
                 return names;
             });
 
-        auto* selScale = grid->AddProperty<NumberBox>(sel, "线型比例", 1.0, 0.001, 10000.0, 0.1, 3);
+        auto* selScale = grid->AddProperty<NumberBox>(sel, std::string(), 1.0, 0.001, 10000.0, 0.1, 3);
+        rowName(selScale, N_("线型比例"));
         P.bindings.BindNumber(selScale,
             [this, doc]() -> std::optional<double>
             {
@@ -663,7 +692,9 @@ namespace MiniCAD
             },
             [editor](const double& v) { editor().ChangeSelectionAttr(AttrChange{ .LinetypeScale = v }); });
 
-        auto* selWeight = grid->AddProperty<ComboBox>(sel, "线宽", LineweightLabels());
+        auto* selWeight = grid->AddProperty<ComboBox>(sel, std::string());
+        rowName(selWeight, N_("线宽"));
+        keep([selWeight] { selWeight->SetItems(LineweightLabels()); });
         selWeight->SetPlaceholder("—");
         P.bindings.BindChoice(selWeight,
             [this, editor, doc]() -> std::optional<int>
@@ -680,12 +711,12 @@ namespace MiniCAD
         // ── 几何（属性描述表驱动）────────────────────────────────
         // 面板里预建固定数量的"槽"（一行 = 名称 + 编辑控件）；选择集变化时按公共特性重新分配：
         // 用到的槽显示名称并绑定对应特性，没用到的整行隐藏。没有选择 / 没有描述表时整组隐藏
-        Expander* geom = grid->AddGroup("几何");
+        Expander* geom = group(N_("几何"));
         struct Slot { std::string name; PropKind kind = PropKind::Number; bool editable = false; std::optional<PropValue> value; };
         constexpr size_t kNumberSlots = 8;          // 目前各实体最多 7 个数值特性（圆弧）
         auto slots = std::make_shared<std::vector<Slot>>(kNumberSlots + 1);     // 下标 0 是文字槽，其余是数值槽
 
-        auto* textSlot = grid->AddProperty<TextBox>(geom, "内容");
+        auto* textSlot = grid->AddProperty<TextBox>(geom, std::string());     // 槽的名称由 syncGeometryRows 按特性写
         P.bindings.BindText(textSlot,
             [slots]() -> std::optional<std::string>
             {
@@ -749,7 +780,7 @@ namespace MiniCAD
                 row->SetVisible(used);
                 if (!used) return;
                 if (auto* label = dynamic_cast<MiniGUI::Label*>(row->GetChildren().front().get()))
-                    label->SetText(s.name);
+                    label->SetText(Tr(s.name));     // s.name 是 N_ 标记的原文
                 box->SetEnabled(s.editable);
             };
             apply(textSlot, (*slots)[0]);
@@ -845,25 +876,25 @@ namespace MiniCAD
         }
         if (!ok)
         {
-            LOG_ERROR("界面描述：%s", m_layout->GetError().c_str());
+            LOG_ERROR_TR("界面描述：{0}", m_layout->GetError().c_str());
             if (firstLoad)
                 m_layout->ApplyText(m_uiHost, kFallbackLayout);     // 第一次就失败：至少显示绘图区和状态栏
-            m_uiStatus->SetText(m_layout->GetError() + "（保留当前界面）");
+            m_uiStatus->SetText(TrF("{0}（保留当前界面）", m_layout->GetError()));
             m_uiStatus->SetColor(Theme::Danger);
         }
         else
         {
             for (const std::string& w : m_layout->GetWarnings())
-                LOG_WARN("界面描述：%s", w.c_str());
+                LOG_WARN_TR("界面描述：{0}", w.c_str());
             // 界面描述文件正常时状态栏不显示它（右侧是发布版本），有警告时才显示
             const size_t n = m_layout->GetWarnings().size();
             std::string text;
             if (n > 0)
-                text = "界面：" + fileName + "，" + std::to_string(n) + " 条警告：" + m_layout->GetWarnings().front();
+                text = TrF("界面：{0}，{1} 条警告：{2}", fileName, n, m_layout->GetWarnings().front());
             m_uiStatus->SetText(text);
             m_uiStatus->SetColor(n > 0 ? Theme::Danger : Theme::TextDim);
             m_uiStatus->SetTooltip(m_uiPath);
-            LOG_INFO("界面描述已加载：%s（%zu 条警告）", m_uiPath.c_str(), n);
+            LOG_INFO_TR("界面描述已加载：{0}（{1} 条警告）", m_uiPath.c_str(), n);
         }
 
         // 标题栏是重新生成的：恢复标题和激活状态
@@ -902,6 +933,60 @@ namespace MiniCAD
         StateChanged();
     }
 
+    void MainFrame::SetLanguage(const std::string& code, bool save)
+    {
+        m_platform->OnLanguageChanged(SwitchLanguage(*m_platform, code, save));
+        Retranslate();
+    }
+
+    void MainFrame::Retranslate()
+    {
+        using namespace MiniGUI;
+        // 重新应用界面描述文件会回到文件里的默认停靠布局（浮出的面板窗口也会关掉）：先记下各窗口当前的，重建后恢复
+        std::vector<std::pair<UiLayout*, JsonValue>> docks;
+        auto remember = [&docks](UiLayout& layout)
+        {
+            if (DockSpace* dock = layout.GetDock("main"))
+                docks.emplace_back(&layout, dock->SaveLayout());
+        };
+        remember(*m_layout);
+        for (auto& w : m_docWindows)
+            remember(*w->layout);
+
+        ReloadUi();
+        for (auto& [layout, state] : docks)
+            if (DockSpace* dock = layout->GetDock("main"))
+                dock->LoadLayout(state);
+
+        // 代码里建的、显示了译文的部分
+        BuildAppBar();
+        BuildStartPage();
+        ForEachChrome([this](ViewChrome& c)
+        {
+            if (c.navBar)
+                BuildViewNavBar(c);
+            if (c.statusBar)
+                c.statusBar->Retranslate();
+            if (c.console)
+                c.console->Retranslate();
+            if (c.panels)
+            {
+                for (auto& write : c.panels->retranslate)
+                    write();
+                if (c.panels->syncGeometryRows)
+                    c.panels->syncGeometryRows();
+            }
+            if (auto* cube = dynamic_cast<ViewCube*>(c.cube))
+                cube->Retranslate();
+        });
+        SyncLayoutTabs();                // 模型页的标签名（"模型"是数据，显示时翻译）
+        SyncCommandLine();               // 空闲提示"命令:"
+        UpdateChromeVisibility();
+        UpdateTitle();
+        m_ui->Update();
+        RequestRenderAll();
+    }
+
     void MainFrame::CheckUiFileChanged()
     {
         // 目录里任何文件变化都会通知，只在本文件的修改时间变了时重新加载。
@@ -930,7 +1015,7 @@ namespace MiniCAD
         JsonError err;
         if (!ParseJson(text, saved, err) || !saved["dock"].IsObject())
         {
-            LOG_WARN("用户布局文件无法解析，使用默认布局：%s", err.ToString().c_str());
+            LOG_WARN_TR("用户布局文件无法解析，使用默认布局：{0}", err.ToString().c_str());
             return;
         }
         m_viewCubeVisible = saved["viewCube"].AsBool(true);
@@ -939,7 +1024,7 @@ namespace MiniCAD
         // 布局格式 2：绘图区铺满窗口、停靠区浮在上面、命令行不在停靠区里。更早保存的停靠布局不再适用
         if (saved["version"].AsNumber(1) < kUserLayoutVersion)
         {
-            LOG_INFO("用户布局是旧版界面保存的，使用默认布局");
+            LOG_INFO_TR("用户布局是旧版界面保存的，使用默认布局");
             return;
         }
         // 界面描述文件新增了面板（保存时还没有）：旧布局里没有它，用默认布局，免得新面板一直看不到
@@ -949,7 +1034,7 @@ namespace MiniCAD
             const auto& list = known.GetArray();
             if (std::none_of(list.begin(), list.end(), [&id](const JsonValue& v) { return v.AsString() == id; }))
             {
-                LOG_INFO("界面新增了面板 %s，使用默认布局", id.c_str());
+                LOG_INFO_TR("界面新增了面板 {0}，使用默认布局", id.c_str());
                 return;
             }
         }
@@ -959,12 +1044,12 @@ namespace MiniCAD
         // 文档区必须在布局里；文件损坏或界面描述换了面板时回到默认布局
         if (!dock->LoadLayout(saved["dock"], &warnings) || !dock->IsPanelVisible("documents"))
         {
-            LOG_WARN("用户布局与当前界面不符，使用默认布局");
+            LOG_WARN_TR("用户布局与当前界面不符，使用默认布局");
             dock->LoadLayout(defaults);
             return;
         }
         for (const std::string& w : warnings)
-            LOG_WARN("用户布局：%s", w.c_str());
+            LOG_WARN_TR("用户布局：{0}", w.c_str());
     }
 
     void MainFrame::SetViewCubeVisible(bool visible)
@@ -1000,7 +1085,7 @@ namespace MiniCAD
             return;
 
         JsonValue root = JsonValue::MakeObject();
-        root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));
+        root.Set("comment", JsonValue("MiniCAD 面板布局，由程序自动保存；删除本文件或使用“视图 > 重置面板布局”恢复默认"));    // i18n: 数据（写进文件）
         root.Set("dock", dock->SaveLayout());
         root.Set("version", JsonValue(static_cast<double>(kUserLayoutVersion)));
         root.Set("viewCube", JsonValue(m_viewCubeVisible));
@@ -1017,7 +1102,7 @@ namespace MiniCAD
         if (!out)
         {
             const std::u8string u8 = path.u8string();
-            LOG_WARN("无法保存用户布局：%s", std::string(u8.begin(), u8.end()).c_str());
+            LOG_WARN_TR("无法保存用户布局：{0}", std::string(u8.begin(), u8.end()).c_str());
         }
     }
 
@@ -1099,12 +1184,12 @@ namespace MiniCAD
         {
             // 一条记录都没有：仍返回一个（禁用的）提示项，让「最近打开」本身保持可展开——
             // 否则菜单项会被 MenuPopup 判为空而整个灰掉，看起来像没有这个功能
-            items.push_back(MenuItem("（无最近打开的文件）").Enabled(false));
+            items.push_back(MenuItem(Tr("（无最近打开的文件）")).Enabled(false));
             return items;
         }
 
         items.push_back(MenuItem::Separator());
-        items.push_back(MenuItem("清除记录(&C)", [this] { ClearRecentFiles(); }));
+        items.push_back(MenuItem(Tr("清除记录(&C)"), [this] { ClearRecentFiles(); }));
         return items;
     }
 }

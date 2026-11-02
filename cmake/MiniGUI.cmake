@@ -88,6 +88,7 @@ target_include_directories(MiniGUI
     PUBLIC  ${MINIGUI_SRC}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/3rd     # stb_truetype / stb_image 只在 Font.cpp / Image.cpp 内部使用
 )
+target_link_libraries(MiniGUI PUBLIC MiniI18n)     # 命令名称、界面描述的标题、控件自带的文字显示时翻译
 
 if(MSVC)
     target_compile_options(MiniGUI PRIVATE /utf-8 /W4)

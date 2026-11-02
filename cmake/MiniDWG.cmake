@@ -76,6 +76,7 @@ add_library(MiniDWG STATIC
 target_include_directories(MiniDWG
     PUBLIC ${MINIDWG_SRC}
 )
+target_link_libraries(MiniDWG PUBLIC MiniI18n)     # 读写诊断的文字（见 docs/I18n/PLAN.md 3.7）
 
 if(MSVC)
     target_compile_options(MiniDWG PRIVATE /utf-8 /W4)

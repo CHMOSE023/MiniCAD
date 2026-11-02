@@ -101,7 +101,11 @@ namespace MiniCAD
             m_ctx.Submit();
             const HRESULT hr = m_swapChain->Present(1, 0);     // 跟随显示器刷新率
             if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
-                LOG_ERROR("D3D12：设备已移除 (0x%08X)", static_cast<unsigned int>(m_ctx.GetDevice()->GetDeviceRemovedReason()));
+            {
+                char reason[16];
+                std::snprintf(reason, sizeof(reason), "0x%08X", static_cast<unsigned int>(m_ctx.GetDevice()->GetDeviceRemovedReason()));
+                LOG_ERROR_TR("D3D12：设备已移除 ({0})", reason);
+            }
             m_ctx.EndFrame();
         }
 
@@ -170,11 +174,11 @@ namespace MiniCAD
             m_main     = std::make_unique<D3D12WindowSurface>(*m_ctx, static_cast<HWND>(window.handle), width, height);
             m_renderer = std::make_unique<D3D12Renderer>(*m_ctx);
             m_backend  = std::make_unique<MiniGUI::D3D12Backend>(*m_ctx);
-            LOG_INFO("D3D12：%s", m_ctx->GetAdapterName().c_str());
+            LOG_INFO_TR("D3D12：{0}", m_ctx->GetAdapterName().c_str());
         }
         catch (const std::exception& e)
         {
-            LOG_ERROR("D3D12 初始化失败：%s", e.what());
+            LOG_ERROR_TR("D3D12 初始化失败：{0}", e.what());
             m_backend.reset();
             m_renderer.reset();
             m_main.reset();
@@ -192,7 +196,7 @@ namespace MiniCAD
         }
         catch (const std::exception& e)
         {
-            LOG_ERROR("D3D12 窗口表面创建失败：%s", e.what());
+            LOG_ERROR_TR("D3D12 窗口表面创建失败：{0}", e.what());
             return nullptr;
         }
     }

@@ -37,10 +37,10 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            LOG_INFO("[RotateTool] 左键旋转基点");
+            LOG_INFO("[RotateTool] click base point");
         }
 
-        ~RotateTool() { LOG_DEBUG("[RotateTool] 退出"); }
+        ~RotateTool() { LOG_DEBUG("[RotateTool] exit"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -62,7 +62,7 @@ namespace MiniCAD
                 {
                     m_pivot = GetPoint(e);
                     m_phase = Phase::AskCopy;
-                    LOG_INFO("[RotateTool] 基点 (%.3f, %.3f),是否保留源对象? [Y/N] <N>",
+                    LOG_INFO("[RotateTool] base point (%.3f, %.3f), keep source objects? [Y/N] <N>",
                            m_pivot.x, m_pivot.y);
                     return true;
                 }
@@ -133,9 +133,9 @@ namespace MiniCAD
         {
             switch (m_phase)
             {
-                case Phase::AskCopy: return "是否保留源对象? [是(Y)/否(N)]:";
-                case Phase::Angle:   return "指定旋转角度 [右键/ESC 取消]:";
-                default:             return "指定基点（旋转中心）:";
+                case Phase::AskCopy: return Tr("是否保留源对象? [是(Y)/否(N)]:");
+                case Phase::Angle:   return Tr("指定旋转角度 [右键/ESC 取消]:");
+                default:             return Tr("指定基点（旋转中心）:");
             }
         }
 
@@ -146,8 +146,8 @@ namespace MiniCAD
         {
             m_phase   = Phase::Angle;
             m_hasRef0 = false;
-            LOG_INFO("[RotateTool] 移动鼠标设定旋转角度,左键确定%s",
-                   m_keepSource ? "(保留源)" : "");
+            LOG_INFO("[RotateTool] move the mouse to set the angle, click to confirm%s",
+                   m_keepSource ? " (keep source)" : "");
         }
 
         Math::Point3 GetPoint(const InputEvent& e) const
@@ -250,7 +250,7 @@ namespace MiniCAD
         {
             if (std::fabs(angle) < 1e-9)
             {
-                LOG_WARN("[RotateTool] 旋转角为零,忽略");
+                LOG_WARN("[RotateTool] zero rotation angle, ignored");
                 Cancel();
                 return;
             }
@@ -259,14 +259,14 @@ namespace MiniCAD
             {
                 auto cmd = std::make_unique<RotateCopyCommand>(m_sourceIds, m_pivot, angle);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                LOG_DEBUG("[RotateTool] 旋转 %zu 个对象,源保留,angle=%.3f deg",
+                LOG_DEBUG("[RotateTool] rotated %zu objects, source kept, angle=%.3f deg",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
             else
             {
                 auto cmd = std::make_unique<RotateMoveCommand>(m_sourceIds, m_pivot, angle, m_ctx->scene);
                 m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
-                LOG_DEBUG("[RotateTool] 旋转 %zu 个对象,源原地修改,angle=%.3f deg",
+                LOG_DEBUG("[RotateTool] rotated %zu objects in place, angle=%.3f deg",
                        m_sourceIds.size(), angle * 180.0 / Math::PI);
             }
 

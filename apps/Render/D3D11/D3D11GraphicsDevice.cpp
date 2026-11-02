@@ -60,7 +60,7 @@ namespace MiniCAD
         }
         catch (const std::exception& e)
         {
-            LOG_ERROR("D3D11 窗口表面创建失败：%s", e.what());
+            LOG_ERROR_TR("D3D11 窗口表面创建失败：{0}", e.what());
             return nullptr;
         }
     }
@@ -84,7 +84,7 @@ namespace MiniCAD
         }
         catch (const std::exception& e)
         {
-            LOG_ERROR("D3D11 初始化失败：%s", e.what());
+            LOG_ERROR_TR("D3D11 初始化失败：{0}", e.what());
             return false;
         }
         return true;

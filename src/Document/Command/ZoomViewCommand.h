@@ -9,7 +9,7 @@ namespace MiniCAD
     class ZoomViewCommand : public ICommand
     {
     public:
-        ZoomViewCommand(Camera& camera, const CameraState& before, const CameraState& after, std::string name = "缩放")
+        ZoomViewCommand(Camera& camera, const CameraState& before, const CameraState& after, std::string name = N_("缩放视图"))
             : m_camera(camera), m_before(before), m_after(after), m_name(std::move(name))
         {
         }

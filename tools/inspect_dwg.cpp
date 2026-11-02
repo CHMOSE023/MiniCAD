@@ -357,18 +357,24 @@ int wmain(int argc, wchar_t** argv)
         return 0;
     }
     // MINICAD_FINDTEXT=内容：打印内容相同的 TEXT 的句柄、所有者、是否在模型空间实体表里
-    // MINICAD_RAWOBJ=DXF 名：导出该类型非图形未知对象（如 TCH_DBCONFIG）的主数据流与文字流（十六进制）
+    // MINICAD_RAWOBJ=DXF 名：导出该类型未知对象 / 实体（如 TCH_DBCONFIG、TCH_OPENING）的主数据流、文字流与句柄流（十六进制）
     if (const char* ro = std::getenv("MINICAD_RAWOBJ"))
         for (const auto& [handle, object] : db->Objects())
-            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get()); u && u->Raw.DxfName == ro)
-            {
-                std::printf("RAWOBJ %llx %s main_bits=%llu text_bits=%llu\n  main ", static_cast<unsigned long long>(handle), ro,
-                            static_cast<unsigned long long>(u->Raw.Dwg.MainBits), static_cast<unsigned long long>(u->Raw.Dwg.TextBits));
-                for (auto b : u->Raw.Dwg.Main) std::printf("%02x", b);
-                std::printf("\n  text ");
-                for (auto b : u->Raw.Dwg.Text) std::printf("%02x", b);
-                std::printf("\n");
-            }
+        {
+            const MiniDWG::RawObjectData* raw = nullptr;
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get())) raw = &u->Raw;
+            else if (const auto* e = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get())) raw = &e->Raw;
+            if (!raw || raw->DxfName != ro) continue;
+            std::printf("RAWOBJ %llx %s main_bits=%llu text_bits=%llu handle_bits=%llu\n  main ", static_cast<unsigned long long>(handle), ro,
+                        static_cast<unsigned long long>(raw->Dwg.MainBits), static_cast<unsigned long long>(raw->Dwg.TextBits),
+                        static_cast<unsigned long long>(raw->Dwg.HandleBits));
+            for (auto b : raw->Dwg.Main) std::printf("%02x", b);
+            std::printf("\n  text ");
+            for (auto b : raw->Dwg.Text) std::printf("%02x", b);
+            std::printf("\n  handles ");
+            for (auto b : raw->Dwg.Handles) std::printf("%02x", b);
+            std::printf("\n");
+        }
     if (const wchar_t* fw = _wgetenv(L"MINICAD_FINDTEXT"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* t = dynamic_cast<const MiniDWG::TextEntity*>(object.get()); t && t->Value == [&] { const auto u = std::filesystem::path(fw).u8string(); return std::string(u.begin(), u.end()); }())
@@ -421,7 +427,6 @@ int wmain(int argc, wchar_t** argv)
                 std::printf("WIPEOUT %llx owner=%s layer=%s clip=%d verts=%zu\n", static_cast<unsigned long long>(handle),
                             owner ? owner->Name.c_str() : "?", layer ? layer->Name.c_str() : "?", int(w->ClippingState), w->ClipBoundaryVertices.size());
             }
-    // MINICAD_WALLRAW：打印天正墙受保护几何前的标记、密钥字节与 84 字节原始数据（十六进制）、其后的字段与句柄；门窗的标志
     if (std::getenv("MINICAD_WALLRAW"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && (u->Raw.DxfName == "TCH_WALL" || u->Raw.DxfName == "TCH_CURTAIN_WALL"))
@@ -442,7 +447,7 @@ int wmain(int argc, wchar_t** argv)
                             rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
                             (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
                 for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
-                // 句柄流按顺序（含空句柄 0）：内核 TDbWall::dwgInFields 先读 6 个软指针
+                // 句柄流按顺序（含空句柄 0）：墙最先是 6 个软指针
                 std::printf("\n  handles=");
                 MiniDWG::DwgBitReader hs(u->Raw.Dwg.Handles, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
                 while (!hs.Failed() && hs.PositionInBits() < u->Raw.Dwg.HandleBits)
@@ -491,8 +496,6 @@ int wmain(int argc, wchar_t** argv)
                 for (int i = 0; i < 64 && !text.Failed() && text.PositionInBits() < u->Raw.Dwg.TextBits; ++i)
                     std::printf("  text[%d]=\"%s\"\n", i, text.ReadVariableText().c_str());
             }
-    // MINICAD_DIM：天正尺寸标注（TCH_DIMENSION2）中另行指定了文字位置（标志 0x02）的（MINICAD_DIM=all 时全部）：各段长度，
-    // 以及有位置的段的位置、该段尺寸线中点，和两者之差沿 / 垂直尺寸线方向的分量（坐标为对象所在空间的坐标）
     if (const char* dimEnv = std::getenv("MINICAD_DIM"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_DIMENSION2")
@@ -517,7 +520,6 @@ int wmain(int argc, wchar_t** argv)
                                 dx * ux + dy * uy, -dx * uy + dy * ux);
                 }
             }
-    // MINICAD_MLEADER：打印天正引出标注的解码结果与文字样式（字体、宽度、_TCH 扩展数据）
     if (std::getenv("MINICAD_MLEADER"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == "TCH_MULTILEADER")
@@ -536,7 +538,6 @@ int wmain(int argc, wchar_t** argv)
                             if (const auto* v = std::get_if<double>(&rec.Value)) std::printf(" x%d:%g", rec.Code, *v);
                 std::printf(" v3=(%g,%d,)\n", m.Gap, m.Align);
             }
-    // MINICAD_EMAP：打印天正桥架 / 桥架配件的属性表（句柄、所有者、键(类型)=值）
     if (std::getenv("MINICAD_EMAP"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && (u->Raw.DxfName == "TCH_EFITTING" || u->Raw.DxfName == "TCH_CABLETRY" || u->Raw.DxfName == "TCH_DBHVACDUCT" || u->Raw.DxfName == "TCH_DBHFITTING"))
@@ -745,7 +746,7 @@ int wmain(int argc, wchar_t** argv)
             if (const auto* ts = dynamic_cast<const MiniDWG::TextStyle*>(target))
             {
                 std::printf("    STYLE %s font=%s big=%s h=%g w=%g", ts->Name.c_str(), ts->Filename.c_str(), ts->BigFontFilename.c_str(), ts->Height, ts->Width);
-                for (const auto& x : ts->ExtendedDataList)     // 扩展数据（天正样式的附加设置）
+                for (const auto& x : ts->ExtendedDataList)      
                 {
                     const auto* app = db->FindAs<MiniDWG::AppId>(x.AppIdHandle);
                     std::printf(" xdata[%s]", app ? app->Name.c_str() : "?");
@@ -781,7 +782,6 @@ int wmain(int argc, wchar_t** argv)
         }
     }
     for (const auto& [type, count] : counts) std::printf("COUNT %s %d\n", type.c_str(), count);
-    // 模型空间的直线 / 多段线线段（与天正分解结果比对用）
     if (db->ModelSpace())
         for (MiniDWG::Handle h : db->ModelSpace()->Entities)
         {
@@ -811,7 +811,6 @@ int wmain(int argc, wchar_t** argv)
                             insert->XScale, insert->YScale, insert->ZScale, insert->Rotation,
                             insert->Normal.X, insert->Normal.Y, insert->Normal.Z);
             }
-    // 天正系统块（门窗图块等）的内容
     for (const auto& [handle, object] : db->Objects())
     {
         const auto* record = dynamic_cast<const MiniDWG::BlockRecord*>(object.get());
@@ -1113,6 +1112,15 @@ int wmain(int argc, wchar_t** argv)
                     const auto& t = static_cast<const MiniCAD::MTextEntity&>(*e);
                     std::printf("  MTEXT (%.1f,%.1f) h=%.2f [%s]\n", t.GetPosition().x, t.GetPosition().y, t.GetHeight(), t.GetText().c_str());
                 }
+                else if (e->IsKindOf<MiniCAD::PolylineEntity>())
+                {
+                    const auto& pts = static_cast<const MiniCAD::PolylineEntity&>(*e).GetPolyline().Points;
+                    const auto& a = e->GetAttr();
+                    const auto* layer = document.GetScene().GetLayerManager().GetLayer(a.LayerId);
+                    std::printf("  POLYLINE layer=%s color=%d/%d", layer ? layer->GetName().c_str() : "?", static_cast<int>(a.Color.Method), a.Color.Aci);
+                    for (const auto& p : pts) std::printf(" (%.3f,%.3f)", p.x, p.y);
+                    std::printf("\n");
+                }
                 else
                     std::printf("  %s\n", e->GetTypeInfo()->Name);
         });
@@ -1349,8 +1357,6 @@ int wmain(int argc, wchar_t** argv)
     MiniCAD::AABB bounds = MiniCAD::AABB::Empty();
     const bool extents = document.GetScene().GetExtents(bounds);
     std::printf("MiniCAD loaded=%d entities=%d extents=%d error=%s\n", loaded, document.GetScene().EntityCount(), extents, error.c_str());
-    // 天正对象生成的几何（*U_TCH_<十进制句柄> 块，嵌套块参照按 2D 变换展开）：与天正分解结果比对用
-    // MINICAD_GEOMBLOCKS：另外输出块定义里的天正对象（块内局部坐标，对应把块插在原点分解的结果）
     if (std::getenv("MINICAD_GEOM"))
     {
         auto geomOne = [](const MiniCAD::Object& object) {
@@ -1431,7 +1437,6 @@ int wmain(int argc, wchar_t** argv)
             std::printf("\n");
         }
     });
-    // 第 3 个参数：把 MiniCAD 显示的普通几何（不保留天正对象）写成 DWG，供与天正显示对比
     if (argc > 3)
     {
         const auto plain = MiniCAD::ExportCad(document.GetScene(), MiniCAD::CadFileKind::Dwg, MiniCAD::CadSaveVersion::R2013);
@@ -1449,7 +1454,7 @@ int wmain(int argc, wchar_t** argv)
         if (!imported || restored.EntityCount() != document.GetScene().EntityCount()) return 1;
     }
 
-    // 按原版本另存：未修改的天正对象应原样写回（原始位流与句柄不变）
+    // 按原版本另存：未修改的TCH对象应原样写回（原始位流与句柄不变）
     const auto savedPath = std::filesystem::temp_directory_path() / "MiniCADDwgInspect-preserve.dwg";
     const auto savedU8 = savedPath.u8string();
     if (!document.SaveToFile(std::string(savedU8.begin(), savedU8.end()))) { std::printf("PRESERVE save failed\n"); return 1; }

@@ -43,7 +43,7 @@ namespace MiniCAD
             std::reverse(m_entities.begin(), m_entities.end());
         }
 
-        std::string GetName() const override { return "批量添加实体"; }
+        std::string GetName() const override { return N_("批量添加实体"); }
 
     private:
         std::vector<std::unique_ptr<Object>> m_entities;

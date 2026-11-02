@@ -2,6 +2,7 @@
 // MainFrame 的成员函数，只在 Win32 版编译；窗口句柄由 Win32Window 提供
 #include "GUI/FloatingPanelHost.h"
 #include "GUI/MainFrame.h"
+#include "GUI/Language.h"
 #include "Host/Win32Window.h"
 #include "Host/Win32FloatingWindow.h"
 #include "Editor/Input/InputEvent.h"
@@ -3124,6 +3125,127 @@ namespace MiniCAD
             RenderFrame();
             sweep();
             check(m_layout->GetTitleBar() != nullptr, "没有文档时重新加载界面");
+        }
+
+        // ── 28.5 运行时切换界面语言 ─────────────────────────────
+        section("28.5 运行时切换界面语言：功能区、命令名称、起始页换成英文，停靠布局不变；切回简体中文");
+        {
+            auto ribbonTab = [&]
+            {
+                const MiniGUI::Ribbon* r = m_layout->GetRibbon();
+                return r && r->GetTabCount() > 0 ? r->GetTabTitle(0) : std::string();
+            };
+            std::function<bool(const MiniGUI::Node*, const std::string&)> hasLabel = [&](const MiniGUI::Node* n, const std::string& text)
+            {
+                if (const auto* l = dynamic_cast<const MiniGUI::Label*>(n); l && l->GetText() == text)
+                    return true;
+                for (const auto& child : n->GetChildren())
+                    if (hasLabel(child.get(), text))
+                        return true;
+                return false;
+            };
+            auto dockState = [&]
+            {
+                const MiniGUI::DockSpace* d = m_layout->GetDock("main");
+                return d ? d->SaveLayout().Dump() : std::string();
+            };
+            // 一个文档在主窗口，一个拖出成文档窗口：两个窗口的界面都要换
+            m_commands.Execute("file.new");
+            Document* inMain = m_docManager.GetActive();
+            m_commands.Execute("file.new");
+            Document* floated = m_docManager.GetActive();
+            check(FloatDocument(floated, MiniGUI::Vec2{ 300.0f, 300.0f }), "拖出一个文档窗口");
+            RenderFrame();
+            pump();
+            auto windowTab = [&]
+            {
+                const DocWindow* w = FindDocWindow(floated);
+                const MiniGUI::Ribbon* r = w ? w->layout->GetRibbon() : nullptr;
+                return r && r->GetTabCount() > 0 ? r->GetTabTitle(0) : std::string();
+            };
+            const std::string zhTab  = ribbonTab();
+            const std::string before = dockState();
+            SetLanguage("en", false);       // 不写用户设置
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "en" && ribbonTab() == "Home" && m_commands.GetLabel("file.new") == "New",
+                  "切到英文：功能区选项卡、命令名称是英文");
+            check(m_startPage && hasLabel(m_startPage, "Start"), "切到英文：起始页重建");
+            check(dockState() == before, "切到英文：停靠布局不变");
+            check(DocWindowCount() == 1 && windowTab() == "Home", "切到英文：文档窗口的功能区也是英文");
+            SetLanguage("zh-CN", false);
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "zh-CN" && ribbonTab() == zhTab && m_startPage && hasLabel(m_startPage, "开始"), "切回简体中文");
+            check(dockState() == before, "切回简体中文：停靠布局不变");
+            check(DocWindowCount() == 1 && windowTab() == zhTab, "切回简体中文：文档窗口");
+            for (Document* d : { floated, inMain })
+            {
+                d->MarkSaved();
+                CloseDocument(d);
+                pump();
+            }
+            RenderFrame();
+            check(DocWindowCount() == 0 && !m_docManager.GetActive(), "关掉这两个文档");
+        }
+
+        // ── 28.6 英文界面下走一遍：只看界面建得起来、命令照常执行（不逐条核对译文）──────────
+        section("28.6 英文界面：新建图纸、画直线、新建布局、撤销，命令行提示是英文");
+        {
+            auto hasChinese = [](const std::string& s)
+            {
+                // UTF-8 里汉字与全角标点的首字节在 0xE3～0xEF 之间
+                return std::any_of(s.begin(), s.end(), [](char c) { return static_cast<unsigned char>(c) >= 0xE3 && static_cast<unsigned char>(c) <= 0xEF; });
+            };
+            SetLanguage("en", false);
+            pump();
+            RenderFrame();
+            m_commands.Execute("file.new");
+            Document* doc = m_docManager.GetActive();
+            RenderFrame();
+            check(doc && m_layout->GetRibbon() && m_viewport->IsVisible(), "英文界面下新建图纸");
+            check(doc && m_main.layoutTabs->GetTabCount() >= 2 && m_main.layoutTabs->GetTabTitle(1) == "Layout1",
+                  "新图纸的布局按当前语言起名（Layout1）");
+            if (doc)
+            {
+                const MiniGUI::Rect vr = m_viewport->GetScreenBounds();
+                auto clickAt = [&](float fx, float fy)
+                {
+                    const MiniGUI::Vec2 p{ vr.min.x + (vr.max.x - vr.min.x) * fx, vr.min.y + (vr.max.y - vr.min.y) * fy };
+                    m_ui->PointerMove(p, 0);
+                    m_ui->PointerDown(p, MiniGUI::MouseButton::Left, 0);
+                    m_ui->PointerUp(p, MiniGUI::MouseButton::Left, 0);
+                    RenderFrame();
+                };
+                const int before = doc->GetScene().EntityCount();
+                m_commands.Execute("draw.line");
+                clickAt(0.4f, 0.5f);
+                const std::string prompt = m_main.console->GetPrompt();
+                std::printf("    提示 \"%s\"\n", prompt.c_str());
+                check(!prompt.empty() && !hasChinese(prompt), "直线工具的命令行提示是英文");
+                clickAt(0.6f, 0.5f);
+                m_ui->KeyDown(MiniGUI::Key::Escape, 0);
+                m_ui->KeyUp(MiniGUI::Key::Escape, 0);
+                RenderFrame();
+                check(doc->GetScene().EntityCount() == before + 1, "英文界面下画直线");
+                check(!hasChinese(m_main.console->GetPrompt()), "退出工具后的提示是英文");
+                const int tabs = m_main.layoutTabs->GetTabCount();
+                m_commands.Execute("layout.new");
+                RenderFrame();
+                check(m_main.layoutTabs->GetTabCount() == tabs + 1 && m_main.layoutTabs->GetTabTitle(tabs).rfind("Layout", 0) == 0,
+                      "新建布局按当前语言起名");
+                m_commands.Execute("edit.undo");
+                m_commands.Execute("edit.undo");
+                RenderFrame();
+                check(m_main.layoutTabs->GetTabCount() == tabs && doc->GetScene().EntityCount() == before, "撤销新建布局与直线");
+                doc->MarkSaved();
+                CloseDocument(doc);
+                pump();
+            }
+            SetLanguage("zh-CN", false);
+            pump();
+            RenderFrame();
+            check(CurrentLanguage() == "zh-CN" && !m_docManager.GetActive(), "切回简体中文，关掉文档");
         }
 
         // ── 29. 文档拖出成独立窗口：拖出、在里面平移 / 缩放 / 画线 / 选择、拖回、关闭 ──────────

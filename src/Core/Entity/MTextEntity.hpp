@@ -71,7 +71,6 @@ namespace MiniCAD
         void SetHeight(double h)                   { m_height = h; }
         void SetRotation(double r)                 { m_rotation = r; }
         void SetBoxWidth(double w)                 { m_boxWidth = w; }   // 参考矩形宽度(组码 41)
-        // 宽度因子：0 = 按文字样式；> 0 时代替样式的（天正文字按 0.7 宽显示等）。DXF 的 MTEXT 没有这个属性，
         // 导出时写成开头的内联格式码 \W0.7;
         void SetWidthFactor(double f)              { m_widthFactor = f > 0.0 ? f : 0.0; }
 
@@ -262,13 +261,17 @@ namespace MiniCAD
 
             double w = 0.0, h = 0.0;
             MeasureBlock(w, h);
-            if (w <= 0.0) w = m_height;
-            if (h <= 0.0) h = m_height;
 
             // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等),只留下划线等装饰的开关。
-            const Math::Point3 drawPos = DrawOrigin(w, h);
+            const std::string shown = StripInlineCodes(m_text, true);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
-            sink.EmitMText(drawPos, StripInlineCodes(m_text, true), m_styleId, m_height, m_rotation, m_boxWidth, color);
+            // 不限宽的居中 / 右对齐：按实际排版的宽度定起点。估算宽度不含字体的字宽与宽度因子，
+            if (m_boxWidth <= 0.0 && m_columnType == MTextColumnType::None && !IsLeftAttachment())
+                if (const double measured = sink.MeasureMTextWidth(shown, m_styleId, m_height, 0.0); measured > 0.0) w = measured;
+            if (w <= 0.0) w = m_height;
+            if (h <= 0.0) h = m_height;
+            const Math::Point3 drawPos = DrawOrigin(w, h);
+            sink.EmitMText(drawPos, shown, m_styleId, m_height, m_rotation, m_boxWidth, color);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
         }
 
@@ -373,6 +376,11 @@ namespace MiniCAD
                 w = singleW;
                 h = singleH;
             }
+        }
+
+        bool IsLeftAttachment() const
+        {
+            return m_attach == MTextAttachment::TopLeft || m_attach == MTextAttachment::MiddleLeft || m_attach == MTextAttachment::BottomLeft;
         }
 
         // 由附着点求文字块左上角(WCS,旋转前)。

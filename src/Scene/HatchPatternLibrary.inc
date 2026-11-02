@@ -1922,9 +1922,7 @@ R"PAT(
 169.939698,0.34285714,-0.7360500,4.07021039,-0.0436711,0.0822165,-17.183249
 )PAT"
 };
-
-// 与 AutoCAD 同名的标准图案（69 个，含 SOLID）：天正改了比例（ANSI31 的间距 1.5875，是 acadiso 的一半），
-// 只供天正对象的填充按名称取
+ 
 constexpr std::string_view kTianzhengStandardPatterns[] = {
 R"PAT(
 *SOLID

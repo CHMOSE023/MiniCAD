@@ -35,12 +35,12 @@ namespace MiniCAD
             for (auto* o : m_targets)
                 if (o) m_sourceIds.push_back(o->GetID());
 
-            LOG_INFO("[CopyTool] 左键基点 | 左键目标点(可重复) | 右键/ESC 结束");
+            LOG_INFO("[CopyTool] click base point | click destination (repeatable) | right-click/ESC ends");
         }
 
         ~CopyTool()
         {
-            LOG_DEBUG("[CopyTool] 退出");
+            LOG_DEBUG("[CopyTool] exit");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -57,7 +57,7 @@ namespace MiniCAD
                 {
                     m_base = pt;
                     m_hasBase = true;
-                    LOG_INFO("[CopyTool] 基点 (%.3f, %.3f)", pt.x, pt.y);
+                    LOG_INFO("[CopyTool] base point (%.3f, %.3f)", pt.x, pt.y);
                     return true;
                 }
 
@@ -101,7 +101,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasBase ? "指定目标点（可连续复制） [右键/ESC 取消]:" : "指定基点:";
+            return m_hasBase ? Tr("指定目标点（可连续复制） [右键/ESC 取消]:") : Tr("指定基点:");
         }
 
     private:
@@ -207,14 +207,14 @@ namespace MiniCAD
 
             if (std::fabs(d.x) < 1e-6 && std::fabs(d.y) < 1e-6 && std::fabs(d.z) < 1e-6)
             {
-                LOG_WARN("[CopyTool] 偏移量为零,忽略");
+                LOG_WARN("[CopyTool] zero displacement, ignored");
                 return;
             }
 
             auto cmd = std::make_unique<CopyCommand>(m_sourceIds, d);
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[CopyTool] 复制 %zu 个对象  delta=(%.3f, %.3f)",
+            LOG_DEBUG("[CopyTool] copied %zu objects delta=(%.3f, %.3f)",
                 m_sourceIds.size(), d.x, d.y);
         }
 

@@ -108,6 +108,9 @@ namespace MiniCAD
         // 还有图纸在读取、排队，或刚加入的图纸还在生成显示（分帧细分）
         bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty() || m_buildDoc; }
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
+        // 检查 GitHub 上的最新发布（UpdateCheck.cpp）：后台请求，有新版本时标题栏版本号旁出现提示；
+        // manual（帮助 > 检查更新）时结果都弹对话框。平台不支持时（网页版）什么都不做。宿主启动时调用一次，自测不调用
+        void CheckForUpdates(bool manual = false);
         bool HasUnsavedDocuments() const;       // 网页版：关闭页面前据此提示
         const std::string&  GetUiPath() const { return m_uiPath; }
         MiniGUI::UIContext& GetUI() const { return *m_ui; }
@@ -126,16 +129,20 @@ namespace MiniCAD
 
         // ── 宿主面板（MainPanels.cpp / LayerPanels.cpp）─────────────
         struct ViewChrome;      // 一个窗口里的视图方块、导航条、命令行、状态栏（见下文“每个窗口一套的绘图区界面”）
+        struct PanelSet;        // 一个窗口的特性 / 图层 / 节点面板的状态（见下文）
         std::unique_ptr<MiniGUI::Node> CreateCanvas();            // 绘图区（面板 "canvas"）：铺满标题栏以下，其余界面浮在上面
         // 透明的“洞”（主窗口的面板 "documents"，文档窗口里铺满视口）：视图方块、导航条、命令行
         std::unique_ptr<MiniGUI::Node> CreateDocumentArea(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateDocTabs();           // 文档标签条（面板 "doctabs"，放在标题栏里）
         std::unique_ptr<MiniGUI::Node> CreateViewNavBar(ViewChrome& c);   // 视图方块下面竖排的导航条（ViewNavBar.cpp）
+        void BuildViewNavBar(ViewChrome& c);                      // 导航条里的按钮（切换语言时重建）
         std::unique_ptr<MiniGUI::Node> CreateAppBar();            // 标题栏右侧：AI、设置、帮助、版本号（面板 "appbar"，ViewNavBar.cpp）
+        void BuildAppBar();                                       // 标题栏右侧的按钮（切换语言时重建）
         std::unique_ptr<MiniGUI::Node> CreateLayoutTabs(ViewChrome& c);   // 布局页签条（模型 / 图纸空间布局），放在状态栏左侧
         // 特性、图层、节点编辑器面板（面板 "properties" / "layers" / "nodes"）：每个窗口的停靠区里一套，显示、修改那个窗口里的文档
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
+        void BuildStartPage();                                    // 起始页的内容（切换语言时重建）
         void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
         void ShowStartPage(bool show);                            // 有文档时切换起始页 / 图纸
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
@@ -145,8 +152,8 @@ namespace MiniCAD
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateLayerPanel(ViewChrome& c);
-        // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 bindings
-        std::unique_ptr<MiniGUI::Node> CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> doc,
+        // 功能区里的图层 / 线型 / 线宽下拉框（面板 "layerbar"，每个窗口一份）：显示 doc() 的状态、改动作用于它，绑定加进 panels.bindings
+        std::unique_ptr<MiniGUI::Node> CreateLayerBar(PanelSet& panels, std::function<Document*()> doc,
                                                       MiniGUI::ComboBox** layerOut = nullptr);
         std::unique_ptr<MiniGUI::Node> CreateOpenProgress();      // 状态栏里的读取进度（文件名 + 进度条），只在打开图纸时显示
         std::unique_ptr<MiniGUI::Node> CreateSaveProgress();      // 状态栏里的保存进度（同读取进度的样式），只在保存时显示
@@ -202,6 +209,7 @@ namespace MiniCAD
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
+        void ShowUpdateDialog();                                 // 新版本：说明、下载、发布页
         void RefreshLayerPanel();                                 // 各窗口的图层面板（RefreshLayerPanel(ViewChrome&)）
         void RefreshLayerPanel(ViewChrome& c);
         // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
@@ -231,6 +239,11 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         std::unique_ptr<MiniGUI::Node> CreateUiHost();            // 主窗口里界面描述生成的内容放在这里
         void ReloadUi();
+        // 切换界面语言（"设置 > 语言"）：换翻译表、save 时写进用户设置（自测不写），再 Retranslate
+        void SetLanguage(const std::string& code, bool save = true);
+        // 按当前语言重建界面：界面描述生成的部分（菜单、功能区、标题栏、停靠区标签）重新应用，停靠布局保持不变；
+        // 代码里建的、显示了译文的部分（起始页、标题栏右侧、导航条）各自重建。新加的这类界面要在这里重建或重写文字
+        void Retranslate();
         void SetViewCubeVisible(bool visible);   // 显示 / 隐藏视图方块，并写进用户布局文件
         void SetCommandLineVisible(bool visible); // 显示 / 隐藏浮动命令行，并写进用户布局文件
         bool IsCommandLineShown() const { return IsCommandLineShown(m_main); }   // 主窗口的浮动命令行在界面上可见
@@ -293,6 +306,7 @@ namespace MiniCAD
         {
             MiniGUI::BindingSet      bindings;                  // 特性面板与功能区图层下拉框的绑定
             std::function<void()>    syncGeometryRows;          // 特性面板「几何」组：按选择集重新分配行
+            std::vector<std::function<void()>> retranslate;     // 特性面板里代码写的文字（组名、行名、提示）：切换界面语言时重写
             MiniGUI::ListView*       layerList   = nullptr;
             MiniGUI::TextBox*        layerSearch = nullptr;     // 图层面板的搜索框
             static constexpr uint32_t kGroupRow = 0xFFFFFFFFu;  // layerIds 里的分组行：只有 "A$B" 没有 "A" 时补出的上级 "A"
@@ -441,6 +455,15 @@ namespace MiniCAD
         MiniGUI::Node*                         m_appBar     = nullptr;   // 标题栏右侧的 AI / 设置 / 帮助 / 版本（窗口窄时隐藏）
         float                                  m_appBarWidth    = 0.0f;  // 显示时量到的宽度与它右边到标题栏右端的距离
         float                                  m_appBarRightGap = 0.0f;
+        struct UpdateInfo
+        {
+            std::string version;        // 最新发布的版本号（不带 v），比当前新时才非空
+            std::string pageUrl;        // 发布页
+            std::string downloadUrl;    // 本平台的发布包；没有时用发布页
+            std::string notes;          // 发布说明（Markdown 原文）
+        };
+        UpdateInfo                             m_update;
+        bool                                   m_updateChecking = false;
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果

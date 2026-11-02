@@ -17,7 +17,7 @@ namespace MiniCAD
     public:
         WipeoutTool()
         {
-            LOG_DEBUG("[WipeoutTool] 左键依次指定多边形顶点 | 回车/右键闭合 | ESC 取消");
+            LOG_DEBUG("[WipeoutTool] click polygon vertices | Enter/right-click closes | ESC cancels");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -73,9 +73,9 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_pts.empty()) return "指定第一点:";
-            if (m_pts.size() < 3) return "指定下一点:";
-            return "指定下一点 [回车/右键闭合]:";
+            if (m_pts.empty()) return Tr("指定第一点:");
+            if (m_pts.size() < 3) return Tr("指定下一点:");
+            return Tr("指定下一点 [回车/右键闭合]:");
         }
 
         void OnSceneChanged() override { Reset(); }
@@ -104,7 +104,7 @@ namespace MiniCAD
             auto wipe = std::make_unique<WipeoutEntity>(id, m_pts);
             m_ctx->ApplyCurrentAttr(*wipe);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(wipe)), m_ctx->scene);
-            LOG_DEBUG("[WipeoutTool] 区域覆盖 Id=%d (%zu 点)", static_cast<int>(id), m_pts.size());
+            LOG_DEBUG("[WipeoutTool] wipeout Id=%d (%zu points)", static_cast<int>(id), m_pts.size());
         }
 
         void Reset()

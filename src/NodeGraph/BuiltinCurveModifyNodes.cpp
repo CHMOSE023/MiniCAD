@@ -20,7 +20,7 @@ namespace MiniCAD::Nodes
 
     namespace
     {
-        constexpr const char* kCurveTip = "曲线或空间曲线";
+        constexpr const char* kCurveTip = NN_("曲线或空间曲线");
 
         // 曲线输入：曲线实体（水平面内的还给出多段线）或空间曲线
         struct CurveIn
@@ -40,7 +40,7 @@ namespace MiniCAD::Nodes
                     out.N = std::move(*n);
                 if (out.Flat || out.N.IsValid())
                     return true;
-                a.Error("不支持这种曲线");
+                a.Error(Tr("不支持这种曲线"));
                 return false;
             }
             if (v.Type() == DataType::Curve3D && v.AsCurve3D() && v.AsCurve3D()->IsValid())
@@ -48,7 +48,7 @@ namespace MiniCAD::Nodes
                 out.N = *v.AsCurve3D();
                 return true;
             }
-            a.Error("输入应为曲线或空间曲线");
+            a.Error(Tr("输入应为曲线或空间曲线"));
             return false;
         }
 
@@ -57,7 +57,7 @@ namespace MiniCAD::Nodes
         {
             if (c.N.IsValid())
                 return true;
-            a.Error("曲线转换为空间曲线失败");
+            a.Error(Tr("曲线转换为空间曲线失败"));
             return false;
         }
 
@@ -172,7 +172,7 @@ namespace MiniCAD::Nodes
         void OutNurbs(SolveArgs& a, int port, NurbsCurve c, const char* what)
         {
             if (!c.IsValid())
-                return a.Error(std::string(what) + "失败");
+                return a.Error(TrF("{0}失败", TrNode(what)));
             a.Out(port, Value(std::move(c)));
         }
 
@@ -193,16 +193,16 @@ namespace MiniCAD::Nodes
 
         void RegisterModify(NodeRegistry& r)
         {
-            const char* cat = "曲线/修改";
+            const char* cat = NN_("曲线/修改");
             {
-                NodeTypeInfo t{ .Id = "curve.offset", .Name = "偏移", .Category = cat,
-                                .Description = "曲线在自身平面内偏移：开放曲线距离为正时偏向前进方向的左侧，闭合曲线为正时向外。"
-                                               "水平面内的曲线实体与偏移命令结果相同（尖角延伸到交点），空间曲线经实体内核" };
+                NodeTypeInfo t{ .Id = "curve.offset", .Name = NN_("偏移"), .Category = cat,
+                                .Description = NN_("曲线在自身平面内偏移：开放曲线距离为正时偏向前进方向的左侧，闭合曲线为正时向外。"
+                                               "水平面内的曲线实体与偏移命令结果相同（尖角延伸到交点），空间曲线经实体内核") };
                 t.Keywords = "offset parallel 平行 等距";
                 t.Group    = 0;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), In("距离", DataType::Number, 1.0),
-                               Optional(In("平面", DataType::Plane, {}, "偏移所在的平面（只用它的法向，从法向正向看定左右）；不接时取曲线自身的平面，直线取 XY 平面")) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), In(NN_("距离"), DataType::Number, 1.0),
+                               Optional(In(NN_("平面"), DataType::Plane, {}, NN_("偏移所在的平面（只用它的法向，从法向正向看定左右）；不接时取曲线自身的平面，直线取 XY 平面"))) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -225,7 +225,7 @@ namespace MiniCAD::Nodes
                             dd = -d;
                         Polyline off = PolylineOps::Offset(pl, dd);
                         if (!off.IsValid())
-                            return a.Error("偏移失败：距离过大");
+                            return a.Error(Tr("偏移失败：距离过大"));
                         return a.Out(0, CurveOps::FromPolyline(std::move(off), c.E));
                     }
 
@@ -236,12 +236,12 @@ namespace MiniCAD::Nodes
                         return;
                     const auto own = CurveOps::PlaneNormal(c.N);
                     if (!own)
-                        return a.Error("曲线不在一个平面上，不能偏移");
+                        return a.Error(Tr("曲线不在一个平面上，不能偏移"));
                     Math::Vec3 n;
                     if (normal)
                     {
                         if (own->Length() > 0.5 && Math::Cross(*own, *normal).Length() > 1e-6)
-                            return a.Error("曲线不在与给定平面平行的平面上");
+                            return a.Error(Tr("曲线不在与给定平面平行的平面上"));
                         n = *normal;
                     }
                     else if (own->Length() > 0.5)
@@ -251,10 +251,10 @@ namespace MiniCAD::Nodes
                     const Math::Point3 start = c.N.PointAt(c.N.StartParam());
                     const auto frame = Plane::FromNormal(V(start), n);
                     if (!frame)
-                        return a.Error("平面无效");
+                        return a.Error(Tr("平面无效"));
                     const Math::Vec3 along = c.N.PointAt(c.N.EndParam()) - start;
                     if (own->Length() < 0.5 && Math::Cross(along, n).Length() < 1e-9 * std::max(1.0, along.Length()))
-                        return a.Error("直线与平面法向平行，不能偏移");
+                        return a.Error(Tr("直线与平面法向平行，不能偏移"));
                     const Math::Mat4 toWorld = frame->ToWorld();
                     NurbsCurve local = c.N;
                     local.Transform(Math::Mat4::Inverse(toWorld));
@@ -277,13 +277,13 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.fillet", .Name = "曲线圆角", .Category = cat,
-                                .Description = "直线段组成的曲线（多段线、矩形、一次空间曲线）的每个拐角用给定半径的圆弧过渡；"
-                                               "半径过大（圆弧超出相邻边的一半）的拐角保持尖角" };
+                NodeTypeInfo t{ .Id = "curve.fillet", .Name = NN_("曲线圆角"), .Category = cat,
+                                .Description = NN_("直线段组成的曲线（多段线、矩形、一次空间曲线）的每个拐角用给定半径的圆弧过渡；"
+                                               "半径过大（圆弧超出相邻边的一半）的拐角保持尖角") };
                 t.Keywords = "fillet round corner 倒圆 圆角";
                 t.Group    = 0;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), In("半径", DataType::Number, 1.0) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), In(NN_("半径"), DataType::Number, 1.0) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -291,17 +291,17 @@ namespace MiniCAD::Nodes
                         return;
                     const double radius = a.Number(1);
                     if (radius <= 0)
-                        return a.Error("半径应为正数");
+                        return a.Error(Tr("半径应为正数"));
                     int skipped = 0;
                     if (c.Flat)
                     {
                         const Polyline& pl = *c.Flat;
                         for (int i = 0; i < pl.SegCount(); ++i)
                             if (pl.SegIsArc(i))
-                                return a.Error("只能对直线段之间的拐角倒圆角（多段线含圆弧段）");
+                                return a.Error(Tr("只能对直线段之间的拐角倒圆角（多段线含圆弧段）"));
                         const auto pieces = CurveOps::FilletCorners(pl.Points, PolylineOps::IsRing(pl), radius, skipped);
                         if (pieces.empty())
-                            return a.Error("曲线太短");
+                            return a.Error(Tr("曲线太短"));
                         a.Out(0, CurveOps::FromPolyline(PiecesToPolyline(pieces), c.E));
                     }
                     else
@@ -309,26 +309,26 @@ namespace MiniCAD::Nodes
                         if (!NeedNurbs(a, c))
                             return;
                         if (c.N.Degree != 1)
-                            return a.Error("只能对直线段组成的曲线（多段线、一次曲线）倒圆角");
+                            return a.Error(Tr("只能对直线段组成的曲线（多段线、一次曲线）倒圆角"));
                         const auto pieces = CurveOps::FilletCorners(c.N.ControlPoints, c.N.IsClosed(), radius, skipped);
                         if (pieces.empty())
-                            return a.Error("曲线太短");
+                            return a.Error(Tr("曲线太短"));
                         a.Out(0, Value(CurveOps::FromConicPieces(pieces)));
                     }
                     if (skipped > 0)
-                        a.Warning(std::to_string(skipped) + " 个拐角半径过大或折返，保持尖角");
+                        a.Warning(TrF("{0} 个拐角半径过大或折返，保持尖角", skipped));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.split", .Name = "分割", .Category = cat,
-                                .Description = "在参数 t（0～1，同“曲线取点”）、点（投影到曲线上）、与切割曲线的交点处把曲线分成几段；"
-                                               "闭合曲线从第一个分割点起绕一圈" };
+                NodeTypeInfo t{ .Id = "curve.split", .Name = NN_("分割"), .Category = cat,
+                                .Description = NN_("在参数 t（0～1，同“曲线取点”）、点（投影到曲线上）、与切割曲线的交点处把曲线分成几段；"
+                                               "闭合曲线从第一个分割点起绕一圈") };
                 t.Keywords = "split cut break shatter 打断 分段 修剪 trim";
                 t.Group    = 1;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), InList("t", DataType::Number, true), InList("点", DataType::Vector, true),
-                               InList("切割曲线", DataType::Geometry, true, "与这些曲线的交点处分割") };
-                t.Outputs  = { Out("段", DataType::Geometry), Out("分割点", DataType::Vector) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), InList("t", DataType::Number, true), InList(NN_("点"), DataType::Vector, true),
+                               InList(NN_("切割曲线"), DataType::Geometry, true, NN_("与这些曲线的交点处分割")) };
+                t.Outputs  = { Out(NN_("段"), DataType::Geometry), Out(NN_("分割点"), DataType::Vector) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -363,17 +363,17 @@ namespace MiniCAD::Nodes
                         return;
                     }
                     for (auto& piece : SplitNurbs(c.N, us))
-                        OutNurbs(a, 0, std::move(piece), "分割");
+                        OutNurbs(a, 0, std::move(piece), NN_("分割"));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.sub", .Name = "子曲线", .Category = cat,
-                                .Description = "曲线在参数区间 [t0, t1]（0～1）上的一段；闭合曲线 t0 > t1 时绕过首尾接缝" };
+                NodeTypeInfo t{ .Id = "curve.sub", .Name = NN_("子曲线"), .Category = cat,
+                                .Description = NN_("曲线在参数区间 [t0, t1]（0～1）上的一段；闭合曲线 t0 > t1 时绕过首尾接缝") };
                 t.Keywords = "sub curve trim domain 修剪 截取 区间";
                 t.Group    = 1;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), In("区间", DataType::Domain, Domain{ 0.0, 0.5 }) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), In(NN_("区间"), DataType::Domain, Domain{ 0.0, 0.5 }) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -381,7 +381,7 @@ namespace MiniCAD::Nodes
                         return;
                     double t0 = std::clamp(a.In(1).AsDomain().Min, 0.0, 1.0), t1 = std::clamp(a.In(1).AsDomain().Max, 0.0, 1.0);
                     if (std::abs(t1 - t0) < 1e-12)
-                        return a.Error("区间为空");
+                        return a.Error(Tr("区间为空"));
                     const bool closed = c.Flat ? PolylineOps::IsRing(*c.Flat) : c.N.IsClosed();
                     if (t0 > t1 && !closed)
                         std::swap(t0, t1);
@@ -393,26 +393,26 @@ namespace MiniCAD::Nodes
                         Polyline piece = p0 < p1 ? PolylineOps::Sub(pl, p0, p1)
                                                  : PolylineOps::Join(PolylineOps::Sub(pl, p0, PolylineOps::ParamCount(pl)), PolylineOps::Sub(pl, 0.0, p1));
                         if (!piece.IsValid())
-                            return a.Error("区间太短");
+                            return a.Error(Tr("区间太短"));
                         return a.Out(0, CurveOps::FromPolyline(std::move(piece), c.E));
                     }
                     NurbsCurve piece = u0 < u1 ? CurveOps::SubCurve(c.N, u0, u1)
                                                : CurveOps::Concatenate(CurveOps::SubCurve(c.N, u0, c.N.EndParam()), CurveOps::SubCurve(c.N, c.N.StartParam(), u1));
                     if (!piece.IsValid() && u0 > u1)   // 区间的一端正好在接缝上
                         piece = u1 <= c.N.StartParam() ? CurveOps::SubCurve(c.N, u0, c.N.EndParam()) : CurveOps::SubCurve(c.N, c.N.StartParam(), u1);
-                    OutNurbs(a, 0, std::move(piece), "截取");
+                    OutNurbs(a, 0, std::move(piece), NN_("截取"));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.extend", .Name = "延伸", .Category = cat,
-                                .Description = "开放曲线的起点、终点各延伸给定长度。“自然”：直线段沿直线、圆弧段沿圆弧、空间曲线按端部的多项式光滑延伸；"
-                                               "“直线”：沿端点切线接一段直线" };
+                NodeTypeInfo t{ .Id = "curve.extend", .Name = NN_("延伸"), .Category = cat,
+                                .Description = NN_("开放曲线的起点、终点各延伸给定长度。“自然”：直线段沿直线、圆弧段沿圆弧、空间曲线按端部的多项式光滑延伸；"
+                                               "“直线”：沿端点切线接一段直线") };
                 t.Keywords = "extend lengthen 加长";
                 t.Group    = 1;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), In("起点", DataType::Number, 0.0), In("终点", DataType::Number, 5.0) };
-                t.Params   = { Choice("方式", { "自然", "直线" }, 0) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), In(NN_("起点"), DataType::Number, 0.0), In(NN_("终点"), DataType::Number, 5.0) };
+                t.Params   = { Choice(NN_("方式"), { NN_("自然"), NN_("直线") }, 0) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -421,12 +421,12 @@ namespace MiniCAD::Nodes
                     const double ls = a.Number(1), le = a.Number(2);
                     const bool straight = a.ParamInteger(0) == 1;
                     if (ls < 0 || le < 0)
-                        return a.Error("延伸长度不能为负");
+                        return a.Error(Tr("延伸长度不能为负"));
                     if (c.Flat)
                     {
                         Polyline pl = *c.Flat;
                         if (PolylineOps::IsRing(pl))
-                            return a.Error("闭合曲线不能延伸");
+                            return a.Error(Tr("闭合曲线不能延伸"));
                         // 只延伸终点：起点先反向
                         auto extendEnd = [&](Polyline p, double len, bool& ok)
                         {
@@ -460,28 +460,28 @@ namespace MiniCAD::Nodes
                         pl = extendEnd(pl, le, ok1);
                         pl = CurveOps::Reversed(extendEnd(CurveOps::Reversed(pl), ls, ok2));
                         if (!ok1 || !ok2)
-                            return a.Error("圆弧延伸后超过整圈");
+                            return a.Error(Tr("圆弧延伸后超过整圈"));
                         return a.Out(0, CurveOps::FromPolyline(std::move(pl), c.E));
                     }
                     if (!NeedNurbs(a, c))
                         return;
                     if (c.N.IsClosed())
-                        return a.Error("闭合曲线不能延伸");
+                        return a.Error(Tr("闭合曲线不能延伸"));
                     NurbsCurve r = CurveOps::Extend(c.N, le, true, !straight);
                     if (r.IsValid())
                         r = CurveOps::Extend(r, ls, false, !straight);
-                    OutNurbs(a, 0, std::move(r), "延伸");
+                    OutNurbs(a, 0, std::move(r), NN_("延伸"));
                 };
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.join", .Name = "连接", .Category = cat,
-                                .Description = "端点在容差内相接的曲线连成一条（按需要反向，可能得到几条）。"
-                                               "全是同一水平面内的曲线实体时得到多段线，否则得到空间曲线（阶数不同时经实体内核升阶）" };
+                NodeTypeInfo t{ .Id = "curve.join", .Name = NN_("连接"), .Category = cat,
+                                .Description = NN_("端点在容差内相接的曲线连成一条（按需要反向，可能得到几条）。"
+                                               "全是同一水平面内的曲线实体时得到多段线，否则得到空间曲线（阶数不同时经实体内核升阶）") };
                 t.Keywords = "join connect merge 合并 首尾相接";
                 t.Group    = 1;
-                t.Inputs   = { InList("曲线", DataType::Geometry, false, kCurveTip), In("容差", DataType::Number, 0.0, "端点相接的距离；0 为曲线尺寸的百万分之一") };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { InList(NN_("曲线"), DataType::Geometry, false, kCurveTip), In(NN_("容差"), DataType::Number, 0.0, NN_("端点相接的距离；0 为曲线尺寸的百万分之一")) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     std::vector<CurveIn> items;
@@ -581,12 +581,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.explode", .Name = "炸开", .Category = cat,
-                                .Description = "多段线拆成直线与圆弧（圆弧一律为逆时针，同炸开命令），空间曲线在切线或曲率不连续处（如直线段与圆弧的接点）拆开；同时给出各段端点" };
+                NodeTypeInfo t{ .Id = "curve.explode", .Name = NN_("炸开"), .Category = cat,
+                                .Description = NN_("多段线拆成直线与圆弧（圆弧一律为逆时针，同炸开命令），空间曲线在切线或曲率不连续处（如直线段与圆弧的接点）拆开；同时给出各段端点") };
                 t.Keywords = "explode segments 分解 拆开";
                 t.Group    = 1;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip) };
-                t.Outputs  = { Out("段", DataType::Geometry), Out("顶点", DataType::Vector) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip) };
+                t.Outputs  = { Out(NN_("段"), DataType::Geometry), Out(NN_("顶点"), DataType::Vector) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -622,7 +622,7 @@ namespace MiniCAD::Nodes
                         if (piece.Degree == 1 && piece.ControlPoints.size() == 2)
                             a.Out(0, Geo::MakeLine(piece.ControlPoints[0], piece.ControlPoints[1]));
                         else
-                            OutNurbs(a, 0, std::move(piece), "炸开");
+                            OutNurbs(a, 0, std::move(piece), NN_("炸开"));
                     }
                     a.Out(1, V(c.N.PointAt(c.N.StartParam())));
                     for (double u : kinks)
@@ -633,12 +633,12 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.reverse", .Name = "反转", .Category = cat,
-                                .Description = "方向相反的同一条曲线（圆弧、圆反向后成为顺时针的多段线）" };
+                NodeTypeInfo t{ .Id = "curve.reverse", .Name = NN_("反转"), .Category = cat,
+                                .Description = NN_("方向相反的同一条曲线（圆弧、圆反向后成为顺时针的多段线）") };
                 t.Keywords = "reverse flip direction 方向 翻转";
                 t.Group    = 2;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -652,13 +652,13 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.project", .Name = "投影", .Category = cat,
-                                .Description = "曲线沿方向平行投影到平面（精确，不需要内核）或实体 / 曲面上（经实体内核，可能得到几条）" };
+                NodeTypeInfo t{ .Id = "curve.project", .Name = NN_("投影"), .Category = cat,
+                                .Description = NN_("曲线沿方向平行投影到平面（精确，不需要内核）或实体 / 曲面上（经实体内核，可能得到几条）") };
                 t.Keywords = "project pull drape 投影到 压平 flatten";
                 t.Group    = 2;
-                t.Inputs   = { In("曲线", DataType::Geometry, {}, kCurveTip), In("目标", DataType::Geometry, Plane{}, "平面，或实体 / 曲面"),
-                               Optional(In("方向", DataType::Vector, {}, "不接时：投影到平面沿平面法向，投影到实体 / 曲面沿 −Z")) };
-                t.Outputs  = { Out("曲线", DataType::Geometry) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Geometry, {}, kCurveTip), In(NN_("目标"), DataType::Geometry, Plane{}, NN_("平面，或实体 / 曲面")),
+                               Optional(In(NN_("方向"), DataType::Vector, {}, NN_("不接时：投影到平面沿平面法向，投影到实体 / 曲面沿 −Z"))) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Geometry) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     CurveIn c;
@@ -671,7 +671,7 @@ namespace MiniCAD::Nodes
                         const Math::Vec3 n = pl.Normal();
                         const Math::Vec3 dir = a.Has(2) ? a.Vector(2) : n;
                         if (std::abs(Math::Dot(dir, n)) < 1e-9 * std::max(1.0, dir.Length()))
-                            return a.Error("投影方向与平面平行");
+                            return a.Error(Tr("投影方向与平面平行"));
                         // 水平面上的竖直投影：曲线实体只改高度
                         if (c.Flat && std::abs(std::abs(n.z) - 1.0) < 1e-12 && std::abs(dir.x) < 1e-12 && std::abs(dir.y) < 1e-12)
                         {
@@ -687,7 +687,7 @@ namespace MiniCAD::Nodes
                         return a.Out(0, Value(std::move(out)));
                     }
                     if (target.Type() != DataType::Body || !target.AsBody())
-                        return a.Error("目标应为平面或实体 / 曲面");
+                        return a.Error(Tr("目标应为平面或实体 / 曲面"));
                     if (!NeedNurbs(a, c))
                         return;
                     auto* k = a.Kernel();
@@ -699,7 +699,7 @@ namespace MiniCAD::Nodes
                     {
                         if (!k->LastError().empty())
                             return a.Error(k->LastError());
-                        return a.Warning("曲线投影不到目标上");
+                        return a.Warning(Tr("曲线投影不到目标上"));
                     }
                     for (const auto& pc : curves)
                         a.Out(0, Value(pc));
@@ -707,26 +707,26 @@ namespace MiniCAD::Nodes
                 r.Register(std::move(t));
             }
             {
-                NodeTypeInfo t{ .Id = "curve.rebuild", .Name = "重建", .Category = cat,
-                                .Description = "用给定的控制点数与阶数重新逼近曲线（两端点不变，最小二乘），给出最大偏差；曲线实体自动转换" };
+                NodeTypeInfo t{ .Id = "curve.rebuild", .Name = NN_("重建"), .Category = cat,
+                                .Description = NN_("用给定的控制点数与阶数重新逼近曲线（两端点不变，最小二乘），给出最大偏差；曲线实体自动转换") };
                 t.Keywords = "rebuild refit simplify 简化 光顺";
                 t.Group    = 2;
-                t.Inputs   = { In("曲线", DataType::Curve3D), In("控制点数", DataType::Integer, int64_t(10)), In("阶数", DataType::Integer, int64_t(3)) };
-                t.Outputs  = { Out("曲线", DataType::Curve3D), Out("偏差", DataType::Number) };
+                t.Inputs   = { In(NN_("曲线"), DataType::Curve3D), In(NN_("控制点数"), DataType::Integer, int64_t(10)), In(NN_("阶数"), DataType::Integer, int64_t(3)) };
+                t.Outputs  = { Out(NN_("曲线"), DataType::Curve3D), Out(NN_("偏差"), DataType::Number) };
                 t.Solve    = [](SolveArgs& a)
                 {
                     const Curve3DPtr& c = a.In(0).AsCurve3D();
                     if (!c || !c->IsValid())
-                        return a.Error("曲线无效");
+                        return a.Error(Tr("曲线无效"));
                     const int64_t count = a.Integer(1), degree = a.Integer(2);
                     if (degree < 1 || degree > 11)
-                        return a.Error("阶数应在 1～11 之间");
+                        return a.Error(Tr("阶数应在 1～11 之间"));
                     if (count < degree + 1 || count > 1000)
-                        return a.Error("控制点数应在 阶数 + 1 ～ 1000 之间");
+                        return a.Error(Tr("控制点数应在 阶数 + 1 ～ 1000 之间"));
                     double dev = 0.0;
                     NurbsCurve r = CurveOps::Rebuild(*c, static_cast<int>(count), static_cast<int>(degree), &dev);
                     if (!r.IsValid())
-                        return a.Error("重建失败");
+                        return a.Error(Tr("重建失败"));
                     a.Out(0, Value(std::move(r)));
                     a.Out(1, dev);
                 };

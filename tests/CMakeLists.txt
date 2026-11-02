@@ -53,6 +53,22 @@ if(MSVC)
 endif()
 add_test(NAME MiniCADTchSymbolTests COMMAND MiniCADTchSymbolTests)
 
+add_executable(MiniCADTchCipherTests "Core/TchCipherTests.cpp")
+target_link_libraries(MiniCADTchCipherTests PRIVATE MiniCAD MiniDWG)
+target_compile_definitions(MiniCADTchCipherTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
+if(MSVC)
+    target_compile_options(MiniCADTchCipherTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchCipherTests COMMAND MiniCADTchCipherTests)
+
+add_executable(MiniCADTchSheetTests "Core/TchSheetTests.cpp")
+target_link_libraries(MiniCADTchSheetTests PRIVATE MiniCAD MiniDWG)
+target_compile_definitions(MiniCADTchSheetTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
+if(MSVC)
+    target_compile_options(MiniCADTchSheetTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADTchSheetTests COMMAND MiniCADTchSheetTests)
+
 add_executable(MiniCADTchStairTests "Core/TchStairTests.cpp")
 target_link_libraries(MiniCADTchStairTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
@@ -67,7 +83,6 @@ if(MSVC)
 endif()
 add_test(NAME MiniCADTchPathArrayTests COMMAND MiniCADTchPathArrayTests)
 
-# 天正对象显示几何与天正 2014 分解结果比对（期望数据 Core/TchGeometryRef.inc 由 Core/tch_geomref.py 生成）
 add_executable(MiniCADTchGeometryTests "Core/TchGeometryTests.cpp")
 target_link_libraries(MiniCADTchGeometryTests PRIVATE MiniCAD MiniDWG)
 target_compile_definitions(MiniCADTchGeometryTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
@@ -143,6 +158,7 @@ add_executable(MiniCADTests
     "Core/MLineEditTests.cpp"
     "Core/TransformSinkTests.cpp"
     "Core/ReferenceEntityTests.cpp"
+    "Core/I18nTests.cpp"
 )
 target_link_libraries(MiniCADTests PRIVATE MiniCAD)
 target_compile_definitions(MiniCADTests PRIVATE MINIDWG_SAMPLE_DIR="${MINICAD_TEST_DATA_DIR}/Dwg")

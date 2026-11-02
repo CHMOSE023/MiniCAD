@@ -127,6 +127,12 @@ namespace NodeGraphTest
         Check(!has(toCurve3D, "list.item") && has(ids("列表项", DataType::Curve3D, BodyKind::Any, false), "list.item"),
               "port search: generic (Any) nodes are hidden until typed");
 
+        // 从“拉伸”的轮廓输入（Geometry）拖出：曲线节点能提供，数值节点不能；从圆的输出拖出也能找到拉伸
+        const auto toGeometry = ids("", DataType::Geometry, BodyKind::Any, false);
+        Check(has(toGeometry, "curve.circle") && has(toGeometry, "nurbs.interpolate") && !has(toGeometry, "math.add") && !has(toGeometry, "list.item"),
+              "port search: from a Geometry input lists geometry nodes, not generic ones");
+        Check(has(ids("", DataType::Curve, BodyKind::Any, true), "solid.extrude"), "port search: from a curve output lists extrude (Geometry input)");
+
         // 从“加厚”的曲面输入拖出：曲面节点排在实体节点前面
         const auto toSurface = ids("", DataType::Body, BodyKind::Surface, false);
         Check(has(toSurface, "surface.loft") && has(toSurface, "solid.box") && index(toSurface, "surface.loft") < index(toSurface, "solid.box"),

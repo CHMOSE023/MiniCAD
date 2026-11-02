@@ -15,11 +15,11 @@ namespace MiniCAD
     public:
         LineTool()
         {
-            LOG_DEBUG("[LineTool] 左键起点 | 左键延续 | 右键结束段 | 空格继续 | ESC 退出");
+            LOG_DEBUG("[LineTool] click start | click to continue | right-click ends | Space continues | ESC exits");
         }
         ~LineTool()
         {
-            LOG_DEBUG("退出绘制");
+            LOG_DEBUG("Exit drawing");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -75,7 +75,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasStart ? "指定下一点 [右键结束/ESC 退出]:" : "指定第一个点:";
+            return m_hasStart ? Tr("指定下一点 [右键结束/ESC 退出]:") : Tr("指定第一个点:");
         }
 
     private:
@@ -96,7 +96,7 @@ namespace MiniCAD
 
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("线段 Id %d  (%.3f,%.3f) (%.3f,%.3f)",static_cast<int>(id), a.x, a.y, b.x, b.y);
+            LOG_DEBUG("Line Id %d (%.3f,%.3f) (%.3f,%.3f)",static_cast<int>(id), a.x, a.y, b.x, b.y);
         }
 
     private:

@@ -67,6 +67,10 @@ namespace MiniCAD
         bool HasSaveDialog() const override { return false; }          // 文件名和格式由 MainFrame 的另存为对话框询问
         std::string GetResourceDir() const override { return ""; }     // 资源在虚拟文件系统根目录：/icons、/ui ...
         std::string GetUserDataDir() const override { return ""; }     // 暂不保存用户布局
+        std::string GetSystemLanguage() const override;                 // navigator.language
+        void        OnLanguageChanged(const std::string& code) override;   // <html lang>
+        std::string ReadUserSetting(const std::string& key) const override;     // localStorage 的 "MiniCAD.<key>"
+        bool        WriteUserSetting(const std::string& key, const std::string& value) override;
         bool OpenUrl(const std::string& url) override;
         void RunInBackground(std::function<void()> work, std::function<void()> done) override;
         void Post(std::function<void()> fn) override;

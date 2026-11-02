@@ -26,10 +26,10 @@ namespace MiniCAD
     public:
         MLeaderTool()
         {
-            LOG_DEBUG("[MLeaderTool] 左键放置箭头落点(可多个) | 右键结束并指定基线/文字位置 | ESC 退出");
+            LOG_DEBUG("[MLeaderTool] click arrowheads (one or more) | right-click to place landing/text | ESC exits");
         }
 
-        ~MLeaderTool() { LOG_DEBUG("[MLeaderTool] 退出"); }
+        ~MLeaderTool() { LOG_DEBUG("[MLeaderTool] exit"); }
 
         // 提交后回调:newId = 新建多重引线 Id,landing = 基线端点(文字锚点附近)。
         std::function<void(Object::ObjectID, Math::Point3)> OnMLeaderCreated;
@@ -49,7 +49,7 @@ namespace MiniCAD
                 if (m_step == 0)
                 {
                     m_arrows.push_back(pt);
-                    LOG_INFO("[MLeaderTool] 箭头落点 #%zu (%.3f, %.3f)",
+                    LOG_INFO("[MLeaderTool] arrowhead #%zu (%.3f, %.3f)",
                            m_arrows.size(), pt.x, pt.y);
                     RefreshOverlay();
                 }
@@ -68,7 +68,7 @@ namespace MiniCAD
                 if (m_step == 0 && !m_arrows.empty())
                 {
                     m_step = 1;
-                    LOG_INFO("[MLeaderTool] 箭头共 %zu 个，请指定基线/文字位置", m_arrows.size());
+                    LOG_INFO("[MLeaderTool] %zu arrowheads, specify landing/text location", m_arrows.size());
                     return true;
                 }
                 Reset();
@@ -101,9 +101,9 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            if (m_step == 1) return "指定基线/文字位置 [右键/ESC 退出]:";
-            if (m_arrows.empty()) return "指定第一个箭头落点:";
-            return "指定下一个箭头落点 [右键结束放置]:";
+            if (m_step == 1) return Tr("指定基线/文字位置 [右键/ESC 退出]:");
+            if (m_arrows.empty()) return Tr("指定第一个箭头落点:");
+            return Tr("指定下一个箭头落点 [右键结束放置]:");
         }
 
         void OnSceneChanged() override { Reset(); }
@@ -179,7 +179,7 @@ namespace MiniCAD
             ent->SetLanding(landing);
             const Math::Vec3 dir = DoglegDir(landing);
             ent->SetDoglegDir(dir);
-            ent->SetText(m_defaultText);                      // 默认注释(同时置内容为 MText)
+            ent->SetText(m_defaultText.empty() ? Tr("说明") : m_defaultText);                      // 默认注释(同时置内容为 MText)
             // 不设文字原点：绘制时按 landing 与实际文字宽推出（见 MLeaderEntity::ResolveTextOrigin）。
             // 引线在右（dir 指向 +x）时文字在左、右缘贴着基线，对应附着点 Right
             ent->SetTextAnchor(dir.x > 0.0 ? MLeaderTextAnchor::Right : MLeaderTextAnchor::Left);
@@ -188,7 +188,7 @@ namespace MiniCAD
             auto cmd = std::make_unique<AddEntityCommand>(std::move(ent));
             m_ctx->cmdStack.Execute(std::move(cmd), m_ctx->scene);
 
-            LOG_DEBUG("[MLeaderTool] 提交 Id=%d  箭头=%zu  基线(%.3f,%.3f)",
+            LOG_DEBUG("[MLeaderTool] commit Id=%d arrows=%zu landing(%.3f,%.3f)",
                    static_cast<int>(id), m_arrows.size(), landing.x, landing.y);
 
             if (OnMLeaderCreated) OnMLeaderCreated(id, landing);
@@ -210,6 +210,6 @@ namespace MiniCAD
         std::vector<Math::Point3> m_arrows;     // 各箭头落点(每个 = 一条单点引线)
         Math::Point3              m_cursor{};
         MLeaderStyle              m_style;
-        std::string               m_defaultText = "说明";   // 默认注释文字
+        std::string               m_defaultText;            // 默认注释文字；空 = "说明"（按界面语言）
     };
 }

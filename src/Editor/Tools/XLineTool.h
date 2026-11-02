@@ -29,10 +29,10 @@ namespace MiniCAD
     public:
         explicit InfiniteLineToolBase(const char* tag) : m_tag(tag)
         {
-            LOG_DEBUG("[%s] 左键定根点 | 左键定通过点 | 右键/ESC 退出", m_tag);
+            LOG_DEBUG("[%s] click root point | click through point | right-click/ESC exits", m_tag);
         }
 
-        ~InfiniteLineToolBase() override { LOG_DEBUG("退出绘制"); }
+        ~InfiniteLineToolBase() override { LOG_DEBUG("Exit drawing"); }
 
         bool OnInput(const EditorContext& ctx) override
         {
@@ -97,7 +97,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasRoot ? "指定通过点 [右键/ESC 退出]:" : "指定根点:";
+            return m_hasRoot ? Tr("指定通过点 [右键/ESC 退出]:") : Tr("指定根点:");
         }
 
         void OnSceneChanged() override { Reset(); }

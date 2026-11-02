@@ -22,7 +22,7 @@ namespace MiniCAD
         explicit TableTool(double textHeight)
             : m_th(textHeight > 0.0 ? textHeight : 2.5)
         {
-            LOG_DEBUG("[TableTool] 左键指定左上角 | 再指定对角点（回车 = 默认 4×3）| ESC 退出");
+            LOG_DEBUG("[TableTool] click upper-left corner | then opposite corner (Enter = default 4x3) | ESC exits");
         }
 
         bool OnInput(const EditorContext& ctx) override
@@ -73,7 +73,7 @@ namespace MiniCAD
 
         std::string GetPrompt() const override
         {
-            return m_hasFirst ? "指定对角点 [回车=默认 4×3]:" : "指定表格左上角:";
+            return m_hasFirst ? Tr("指定对角点 [回车=默认 4×3]:") : Tr("指定表格左上角:");
         }
 
     private:
@@ -145,7 +145,7 @@ namespace MiniCAD
                                                     m_ctx->scene.GetCurrentTextStyle());
             m_ctx->ApplyCurrentAttr(*t);
             m_ctx->cmdStack.Execute(std::make_unique<AddEntityCommand>(std::move(t)), m_ctx->scene);
-            LOG_DEBUG("[TableTool] 表格 Id=%d %zu 行 × %zu 列", static_cast<int>(id), l.rows, l.cols);
+            LOG_DEBUG("[TableTool] table Id=%d %zu rows x %zu columns", static_cast<int>(id), l.rows, l.cols);
 
             m_ctx->overlay.Clear();
             if (OnFinished) OnFinished();

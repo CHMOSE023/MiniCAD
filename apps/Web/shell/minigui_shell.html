@@ -29,7 +29,7 @@
 </head>
 <body>
 <canvas id="canvas"></canvas>
-<div id="loader" role="progressbar" aria-label="正在加载" aria-valuemin="0" aria-valuemax="100">
+<div id="loader" role="progressbar" aria-valuemin="0" aria-valuemax="100">
   <!-- 与 assets/icons/app.png 同形的 logo（圆角五边形） -->
   <svg id="loader-logo" viewBox="0 0 32 32" aria-hidden="true">
     <polygon points="9,4.5 23.5,4.5 28,17.5 16,28 4,18" fill="#58e213" stroke="#58e213"
@@ -38,12 +38,26 @@
   <div class="loader-info">
     <div id="loader-percent">0%</div>
     <div id="loader-bar"><div id="loader-fill"></div></div>
-    <div id="loader-text">正在加载…</div>
+    <div id="loader-text"></div>
   </div>
 </div>
 <script>
   // 构建后由 cmake/WebCacheBust.cmake 写入内容哈希，避免浏览器拿缓存的旧文件配新文件
   var kBuildTag = "";
+
+  // 加载画面的文字：程序和翻译表都还没读进来，先按程序选语言的顺序（网址的 ?lang=、"设置 > 语言"、浏览器语言，
+  // 见 apps/Common/src/GUI/Language.h）只分中文与英文；程序起来后由 WebApp 设定 <html lang>
+  var LoaderText = (function () {
+    var lang = "";
+    try { lang = new URLSearchParams(location.search).get("lang") || localStorage.getItem("MiniCAD.language") || ""; } catch (e) {}
+    var zh = /^zh/i.test(lang || navigator.language || "");
+    document.documentElement.lang = zh ? "zh-CN" : "en";
+    return zh
+      ? { loading: "正在加载…", downloading: "正在下载…", starting: "正在启动…", preparing: "正在准备…",
+          failed: function (what) { return "加载失败，请刷新页面重试" + (what ? "（" + what + "）" : ""); } }
+      : { loading: "Loading…", downloading: "Downloading…", starting: "Starting…", preparing: "Preparing…",
+          failed: function (what) { return "Failed to load. Refresh the page to try again." + (what ? " (" + what + ")" : ""); } };
+  })();
 
   var Loader = (function () {
     var root = document.getElementById("loader");
@@ -51,6 +65,8 @@
     var fill = document.getElementById("loader-fill");
     var text = document.getElementById("loader-text");
     var shown = 0, failed = false;
+    root.setAttribute("aria-label", LoaderText.loading);
+    text.textContent = LoaderText.loading;
     function setPercent(p) {
       p = Math.max(shown, Math.min(100, Math.floor(p)));     // 只增不减
       shown = p;
@@ -71,12 +87,12 @@
         var m = msg.match(/\(([\d.]+)\/([\d.]+)\)/);
         if (m && +m[2] > 0) {
           setPercent(+m[1] / +m[2] * 99);                     // 留 1% 给编译与启动
-          text.textContent = "正在下载…";
+          text.textContent = LoaderText.downloading;
         } else if (/^Running/.test(msg)) {
           setPercent(99);
-          text.textContent = "正在启动…";
+          text.textContent = LoaderText.starting;
         } else if (/^Preparing/.test(msg)) {
-          text.textContent = "正在准备…";
+          text.textContent = LoaderText.preparing;
         }
       },
       fail: function (what) {
@@ -84,7 +100,7 @@
         root.classList.add("failed");
         what = what ? String(what).split("\n")[0] : "";
         if (what.length > 80) what = what.slice(0, 80) + "…";
-        text.textContent = "加载失败，请刷新页面重试" + (what ? "（" + what + "）" : "");
+        text.textContent = LoaderText.failed(what);
       }
     };
   })();

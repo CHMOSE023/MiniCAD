@@ -5,6 +5,7 @@
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
 #include "Core/Log.h"
+#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "Platform/Win32/Win32Fonts.h"
 #include "Platform/Win32/Win32Frame.h"
@@ -49,27 +50,43 @@ namespace MiniCAD
             return s;
         }
 
-        // 保存对话框的筛选器（顺序与 kSaveFormats 一致）："名称\0*.ext\0" 逐项拼接，末尾再加一个 \0
-        const std::wstring& SaveFilterString()
+        // 文件对话框的筛选器："名称\0模式\0" 逐项拼接，末尾再加一个 \0。名称是 N_ 标记的原文，在这里翻译
+        //（每次打开对话框时现拼，切换语言后跟着变）
+        std::wstring FilterString(std::initializer_list<std::pair<const char*, const char*>> items)
         {
-            static const std::wstring filter = []
+            std::wstring f;
+            for (const auto& [name, pattern] : items)
             {
-                std::wstring f;
-                for (const SaveFormat& fmt : kSaveFormats)
-                {
-                    const std::wstring ext = ToWide(fmt.ext);
-                    f += ToWide(fmt.label);
-                    f += L'\0';
-                    f += L'*' + ext;
-                    f += L'\0';
-                }
+                f += ToWide(Tr(name));
                 f += L'\0';
-                return f;
-            }();
-            return filter;
+                f += ToWide(pattern);
+                f += L'\0';
+            }
+            f += L'\0';
+            return f;
         }
 
-        constexpr wchar_t kDrawingFilter[] = L"所有支持的文件\0*.mcad;*.dwg;*.dxf;*.json\0MiniCAD 文档 (*.mcad)\0*.mcad\0AutoCAD 图形 (*.dwg)\0*.dwg\0AutoCAD 交换文件 (*.dxf)\0*.dxf\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
+        // 保存对话框的筛选器（顺序与 kSaveFormats 一致）
+        std::wstring SaveFilterString()
+        {
+            std::wstring f;
+            for (const SaveFormat& fmt : kSaveFormats)
+            {
+                f += ToWide(Tr(fmt.label));
+                f += L'\0';
+                f += L'*' + ToWide(fmt.ext);
+                f += L'\0';
+            }
+            f += L'\0';
+            return f;
+        }
+
+        std::wstring DrawingFilterString()
+        {
+            return FilterString({ { N_("所有支持的文件"), "*.mcad;*.dwg;*.dxf;*.json" }, { N_("MiniCAD 文档 (*.mcad)"), "*.mcad" },
+                                  { N_("AutoCAD 图形 (*.dwg)"), "*.dwg" }, { N_("AutoCAD 交换文件 (*.dxf)"), "*.dxf" },
+                                  { N_("JSON 文件 (*.json)"), "*.json" }, { N_("所有文件 (*.*)"), "*.*" } });
+        }
 
         // 打开 / 保存文件对话框（返回 UTF-8 路径，空串 = 取消）。保存时 version 传入默认版本、返回所选版本
         std::string ShowFileDialog(HWND owner, bool save, FileKind kind, const std::string& suggestedName,
@@ -83,14 +100,16 @@ namespace MiniCAD
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner   = owner;
             // 打开：首项为全部可识别格式；保存：扩展名决定写出格式（.mcad / .dwg / .dxf / .json）
+            std::wstring filter;
             if (kind == FileKind::NodeGraph)
-                ofn.lpstrFilter = L"MiniCAD 节点图 (*.mcnode)\0*.mcnode\0JSON 文件 (*.json)\0*.json\0所有文件 (*.*)\0*.*\0";
+                filter = FilterString({ { N_("MiniCAD 节点图 (*.mcnode)"), "*.mcnode" }, { N_("JSON 文件 (*.json)"), "*.json" }, { N_("所有文件 (*.*)"), "*.*" } });
             else if (kind == FileKind::Image)
-                ofn.lpstrFilter = L"图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif\0所有文件 (*.*)\0*.*\0";
+                filter = FilterString({ { N_("图像文件 (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif)"), "*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.gif" }, { N_("所有文件 (*.*)"), "*.*" } });
             else if (save)
-                ofn.lpstrFilter = SaveFilterString().c_str();
+                filter = SaveFilterString();
             else
-                ofn.lpstrFilter = kDrawingFilter;
+                filter = DrawingFilterString();
+            ofn.lpstrFilter = filter.c_str();
             ofn.lpstrFile   = buf;
             ofn.nMaxFile    = MAX_PATH;
             ofn.lpstrDefExt = kind == FileKind::NodeGraph ? L"mcnode" : (save || kind == FileKind::Image) ? nullptr : L"mcad";   // 保存时按所选筛选器补扩展名（见下）
@@ -230,7 +249,7 @@ namespace MiniCAD
         if (m_uiWatch == INVALID_HANDLE_VALUE)
         {
             m_uiWatch = nullptr;
-            LOG_WARN("无法监视界面描述文件所在目录，修改后请按 F5 重新加载");
+            LOG_WARN_TR("无法监视界面描述文件所在目录，修改后请按 F5 重新加载");
         }
     }
 
@@ -528,14 +547,15 @@ namespace MiniCAD
         ofn.lStructSize = sizeof(ofn);
         const HWND owner = DialogOwner();
         ofn.hwndOwner = owner;
-        ofn.lpstrFilter = kDrawingFilter;
+        const std::wstring filter = DrawingFilterString();
+        ofn.lpstrFilter = filter.c_str();
         ofn.lpstrFile = buffer.data();
         ofn.nMaxFile = static_cast<DWORD>(buffer.size());
         ofn.Flags = OFN_EXPLORER | OFN_ALLOWMULTISELECT | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
         if (!GetOpenFileNameW(&ofn))
         {
             if (CommDlgExtendedError())
-                MessageBoxW(owner, L"无法读取文件选择结果，请减少所选文件数量后重试。", L"打开图纸失败", MB_OK | MB_ICONERROR);
+                MessageBoxW(owner, ToWide(Tr("无法读取文件选择结果，请减少所选文件数量后重试。")).c_str(), ToWide(Tr("打开图纸失败")).c_str(), MB_OK | MB_ICONERROR);
             return;
         }
         std::vector<std::string> paths;
@@ -562,7 +582,7 @@ namespace MiniCAD
             DWORD options = 0;
             dialog->GetOptions(&options);
             dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            dialog->SetTitle(L"选择外部参照所在的文件夹");
+            dialog->SetTitle(ToWide(Tr("选择外部参照所在的文件夹")).c_str());
             IShellItem* item = nullptr;
             if (SUCCEEDED(dialog->Show(DialogOwner())) && SUCCEEDED(dialog->GetResult(&item)))
             {
@@ -707,5 +727,17 @@ namespace MiniCAD
             return {};
         const std::u8string u8 = (std::filesystem::path(buf) / L"MiniCAD").u8string();
         return std::string(u8.begin(), u8.end());
+    }
+
+    std::string Win32Window::GetSystemLanguage() const
+    {
+        // 系统的显示语言（"设置 > 时间和语言"里选的），不是区域格式
+        wchar_t name[LOCALE_NAME_MAX_LENGTH] = L"";
+        if (LCIDToLocaleName(MAKELCID(GetUserDefaultUILanguage(), SORT_DEFAULT), name, LOCALE_NAME_MAX_LENGTH, 0) <= 0)
+            return {};
+        std::string s;
+        for (const wchar_t* p = name; *p; ++p)
+            s += static_cast<char>(*p);     // 语言名都是 ASCII（"zh-CN"、"en-US"）
+        return s;
     }
 }

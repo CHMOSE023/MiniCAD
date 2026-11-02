@@ -1,4 +1,5 @@
 #include "Data/Json.h"
+#include "MiniI18n/I18n.h"
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -160,9 +161,7 @@ namespace MiniGUI
 
     std::string JsonError::ToString() const
     {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "第 %d 行第 %d 列：", line, column);
-        return buf + message;
+        return TrF("第 {0} 行第 {1} 列：", line, column) + message;
     }
 
     // =========================================================
@@ -185,7 +184,7 @@ namespace MiniGUI
                 if (!SkipSpace() || !ParseValue(out, 0) || !SkipSpace())
                     return false;
                 if (m_pos != m_text.size())
-                    return Fail("值之后有多余的内容");
+                    return Fail(Tr("值之后有多余的内容"));
                 return true;
             }
 
@@ -229,7 +228,7 @@ namespace MiniGUI
                     {
                         const size_t end = m_text.find("*/", m_pos + 2);
                         if (end == std::string_view::npos)
-                            return Fail("注释没有结束（缺少 */）");
+                            return Fail(Tr("注释没有结束（缺少 */）"));
                         m_pos = end + 2;
                     }
                     else
@@ -243,7 +242,7 @@ namespace MiniGUI
             bool ParseValue(JsonValue& out, int depth)
             {
                 if (depth > kMaxDepth)
-                    return Fail("嵌套层数过多");
+                    return Fail(Tr("嵌套层数过多"));
 
                 switch (Peek())
                 {
@@ -260,18 +259,18 @@ namespace MiniGUI
                 case 't':  return ParseLiteral("true",  JsonValue(true),  out);
                 case 'f':  return ParseLiteral("false", JsonValue(false), out);
                 case 'n':  return ParseLiteral("null",  JsonValue(),      out);
-                case '\0': return Fail("意外的文件结尾");
+                case '\0': return Fail(Tr("意外的文件结尾"));
                 default:
                     if (Peek() == '-' || (Peek() >= '0' && Peek() <= '9'))
                         return ParseNumber(out);
-                    return Fail(std::string("无法识别的字符 '") + Peek() + "'");
+                    return Fail(TrF("无法识别的字符 '{0}'", Peek()));
                 }
             }
 
             bool ParseLiteral(std::string_view word, JsonValue value, JsonValue& out)
             {
                 if (m_text.substr(m_pos, word.size()) != word)
-                    return Fail("无法识别的单词（应为 true、false 或 null）");
+                    return Fail(Tr("无法识别的单词（应为 true、false 或 null）"));
                 m_pos += word.size();
                 out = std::move(value);
                 return true;
@@ -293,7 +292,7 @@ namespace MiniGUI
                 if (r.ec != std::errc() || r.ptr != last)
                 {
                     m_pos = start;
-                    return Fail("数字格式不正确");
+                    return Fail(Tr("数字格式不正确"));
                 }
                 out = JsonValue(v);
                 return true;
@@ -328,7 +327,7 @@ namespace MiniGUI
             bool ParseHex4(uint32_t& out)
             {
                 if (m_pos + 4 > m_text.size())
-                    return Fail("\\u 之后需要 4 位十六进制数");
+                    return Fail(Tr("\\u 之后需要 4 位十六进制数"));
                 out = 0;
                 for (int i = 0; i < 4; ++i)
                 {
@@ -340,7 +339,7 @@ namespace MiniGUI
                     else
                     {
                         --m_pos;
-                        return Fail("\\u 之后需要 4 位十六进制数");
+                        return Fail(Tr("\\u 之后需要 4 位十六进制数"));
                     }
                 }
                 return true;
@@ -352,14 +351,14 @@ namespace MiniGUI
                 while (true)
                 {
                     if (AtEnd())
-                        return Fail("字符串没有结束（缺少 \"）");
+                        return Fail(Tr("字符串没有结束（缺少 \"）"));
                     const char c = m_text[m_pos++];
                     if (c == '"')
                         return true;
                     if (c == '\n')
                     {
                         --m_pos;
-                        return Fail("字符串中不能直接换行（用 \\n）");
+                        return Fail(Tr("字符串中不能直接换行（用 \\n）"));
                     }
                     if (c != '\\')
                     {
@@ -368,7 +367,7 @@ namespace MiniGUI
                     }
 
                     if (AtEnd())
-                        return Fail("字符串没有结束（缺少 \"）");
+                        return Fail(Tr("字符串没有结束（缺少 \"）"));
                     const char e = m_text[m_pos++];
                     switch (e)
                     {
@@ -400,7 +399,7 @@ namespace MiniGUI
                     }
                     default:
                         --m_pos;
-                        return Fail(std::string("无效的转义 \\") + e);
+                        return Fail(TrF("无效的转义 \\{0}", e));
                     }
                 }
             }
@@ -431,7 +430,7 @@ namespace MiniGUI
                     }
                     if (Peek() == ']')
                         continue;
-                    return Fail("数组元素之间缺少 ','（或缺少 ']'）");
+                    return Fail(Tr("数组元素之间缺少 ','（或缺少 ']'）"));
                 }
             }
 
@@ -449,14 +448,14 @@ namespace MiniGUI
                         return true;
                     }
                     if (Peek() != '"')
-                        return Fail("对象的键必须是带双引号的字符串");
+                        return Fail(Tr("对象的键必须是带双引号的字符串"));
                     std::string key;
                     if (!ParseString(key))
                         return false;
                     if (!SkipSpace())
                         return false;
                     if (Peek() != ':')
-                        return Fail("键之后缺少 ':'");
+                        return Fail(Tr("键之后缺少 ':'"));
                     ++m_pos;
                     if (!SkipSpace())
                         return false;
@@ -473,7 +472,7 @@ namespace MiniGUI
                     }
                     if (Peek() == '}')
                         continue;
-                    return Fail("成员之间缺少 ','（或缺少 '}'）");
+                    return Fail(Tr("成员之间缺少 ','（或缺少 '}'）"));
                 }
             }
 

@@ -114,7 +114,7 @@
       "icon": "FileMenu.png",
       "items": [ "view.start", "-", "file.new", "file.open", { "title": "最近打开(&R)", "dynamic": "recent" }, "-",
                  "file.save", "file.saveAs", "file.saveAll", "-", "file.close", "doc.next", "doc.prev", "-", "xref.locate", "-",
-                 "ui.theme", "ui.reload", "help.about", "-", "app.exit" ]
+                 "ui.theme", "ui.reload", "help.checkUpdate", "help.about", "-", "app.exit" ]
     }
   ],
 

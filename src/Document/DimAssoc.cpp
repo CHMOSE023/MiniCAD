@@ -262,7 +262,7 @@ namespace MiniCAD
             {
                 for (auto it = m_items.rbegin(); it != m_items.rend(); ++it) Apply(scene, it->id, *it->before);
             }
-            std::string GetName() const override { return "关联标注更新"; }
+            std::string GetName() const override { return N_("关联标注更新"); }
 
         private:
             static void Apply(Scene& scene, Object::ObjectID id, const DimensionEntity& snap)

@@ -47,7 +47,7 @@ namespace MiniCAD
             Apply(scene, /*useAfter=*/false);
         }
 
-        std::string GetName() const override { return "拖动对象"; }
+        std::string GetName() const override { return N_("拖动对象"); }
 
     private:
         std::vector<DragEntityEntry> m_entries;

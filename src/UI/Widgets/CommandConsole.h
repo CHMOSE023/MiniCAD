@@ -48,6 +48,7 @@ namespace MiniGUI
         ListView* GetLogView() const { return m_log; }
 
         void Submit();              // 与按回车相同
+        void Retranslate();         // 切换界面语言后重写"命令:"、占位提示与按钮提示
 
     private:
         friend class CommandInput;

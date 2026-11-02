@@ -53,7 +53,7 @@ namespace MiniCAD
         void IndexName(BlockID id);
 
         std::vector<std::unique_ptr<BlockEntity>> m_blocks;   // 索引即 BlockID
-        // 小写块名 → BlockID（同名取先加入的）。导入时每个天正对象都建匿名块，线性查找是平方级，几千个块时很慢。
+        // 小写块名 → BlockID（同名取先加入的）。导入时每个TCH对象都建匿名块，线性查找是平方级，几千个块时很慢。
         // 块名只在加入块表时确定，之后没有改名的途径
         std::unordered_map<std::string, BlockID> m_byName;
     };

@@ -127,7 +127,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > img.width || region.y + region.height > img.height)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
 
@@ -176,7 +176,7 @@ namespace MiniGUI
                 auto it = m_textures.find(cmd.texture);
                 if (it == m_textures.end())
                 {
-                    assert(false && "DrawCmd 引用了不存在的纹理");
+                    assert(false && "DrawCmd references a missing texture");
                     continue;
                 }
 

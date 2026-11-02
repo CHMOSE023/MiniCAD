@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG
 {
@@ -188,12 +189,12 @@ namespace MiniDWG::DwgWrite
         if (m_version < CadVersion::AC1015)
         {
             Notify(NotificationType::Info,
-                   std::string(VersionDisplayName(m_version)) + " DWG 不支持写出，改写为 R2000（AC1015）");
+                   TrF("{0} DWG 不支持写出，改写为 {1}（{2}）", VersionDisplayName(m_version), "R2000", "AC1015"));
             m_version = CadVersion::AC1015;
         }
         else if (m_version == CadVersion::AC1021)
         {
-            Notify(NotificationType::Info, "R2007（AC1021）DWG 不支持写出，改写为 R2010（AC1024）");
+            Notify(NotificationType::Info, TrF("{0}（{1}）DWG 不支持写出，改写为 {2}（{3}）", "R2007", "AC1021", "R2010", "AC1024"));
             m_version = CadVersion::AC1024;
         }
 
@@ -212,7 +213,7 @@ namespace MiniDWG::DwgWrite
         if (m_codePage == Codec::CodePage::Unknown || !Codec::IsSupported(m_codePage) || m_codePage == Codec::CodePage::Utf8)
         {
             if (!m_db.Header.CodePage.empty() && !EqualsIgnoreCase(m_db.Header.CodePage, "ANSI_1252") && !R2007Plus())
-                Notify(NotificationType::Warning, "不支持的代码页 " + m_db.Header.CodePage + "，按 ANSI_1252 写出");
+                Notify(NotificationType::Warning, TrF("不支持的代码页 {0}，按 {1} 写出", m_db.Header.CodePage, "ANSI_1252"));
             m_codePage = Codec::CodePage::Windows1252;
         }
         m_codePageIndex = Codec::DwgIndexFromCodePage(m_codePage);
@@ -243,7 +244,7 @@ namespace MiniDWG::DwgWrite
         }
         if (m_tables.size() != std::size(tables) || m_db.ModelSpace() == nullptr || m_db.PaperSpace() == nullptr
             || m_db.RootDictionary() == nullptr)
-            Notify(NotificationType::Warning, "数据库缺少符号表、模型空间/图纸空间或根字典，写出的文件可能无法打开（先调用 CreateDefaults）");
+            Notify(NotificationType::Warning, Tr("数据库缺少符号表、模型空间/图纸空间或根字典，写出的文件可能无法打开（先调用 CreateDefaults）"));
 
         if (R2004Pre())
         {
@@ -361,7 +362,7 @@ namespace MiniDWG::DwgWrite
         if (raw == nullptr || CanWriteRawDwg(*raw, m_version))
             return true;
         NotifyOnce("raw:" + raw->DxfName, NotificationType::Info,
-                   "未建模的 " + raw->DxfName + " 只能原样写回同一版本的 DWG，未写出");
+                   TrF("未建模的 {0} 只能原样写回同一版本的 {1}，未写出", raw->DxfName, "DWG"));
         return false;
     }
 
@@ -373,7 +374,7 @@ namespace MiniDWG::DwgWrite
             if (m_db.FindAs<BlockRecord>(table->BlockHandle) == nullptr)
                 return false;
             NotifyOnce("table-insert", NotificationType::Info,
-                       "表格（ACAD_TABLE）只能原样写回同一版本的 DWG，写为引用其匿名块的块参照");
+                       TrF("表格（{0}）只能原样写回同一版本的 {1}，写为引用其匿名块的块参照", "ACAD_TABLE", "DWG"));
             m_tableInserts[entity.ObjectHandle] = MakeTableInsert(*table);
             return true;
         }
@@ -382,14 +383,14 @@ namespace MiniDWG::DwgWrite
         if (dynamic_cast<const Shape*>(&entity) != nullptr)
         {
             // 形号没有建模（与 DXF 写出一致）
-            NotifyOnce("entity:SHAPE", NotificationType::Info, "SHAPE 实体未写出");
+            NotifyOnce("entity:SHAPE", NotificationType::Info, TrF("{0} 实体未写出", "SHAPE"));
             return false;
         }
         if (const auto* insert = dynamic_cast<const Insert*>(&entity);
             insert != nullptr && m_db.FindAs<BlockRecord>(insert->BlockHandle) == nullptr)
         {
             NotifyOnce("insert:" + std::to_string(entity.ObjectHandle), NotificationType::Warning,
-                       "块参照 " + DxfValue(HandleValue{ entity.ObjectHandle }).AsString() + " 引用的块不存在，未写出");
+                       TrF("块参照 {0} 引用的块不存在，未写出", DxfValue(HandleValue{ entity.ObjectHandle }).AsString()));
             return false;
         }
         return true;
@@ -587,7 +588,7 @@ namespace MiniDWG::DwgWrite
                 ++orphans;
         }
         if (orphans > 0)
-            Notify(NotificationType::Info, std::to_string(orphans) + " 个对象不在根字典之下（也没有被引用），未写出");
+            Notify(NotificationType::Info, TrF("{0} 个对象不在根字典之下（也没有被引用），未写出", orphans));
     }
 
     // ── 引用 ───────────────────────────────────────────────────────

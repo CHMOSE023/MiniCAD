@@ -90,7 +90,7 @@ namespace MiniGUI
 
     void WebGPUBackend::CreatePipeline(WGPUTextureFormat targetFormat)
     {
-        m_shader = CreateShader(m_device, kShader, "MiniGUI 着色器");
+        m_shader = CreateShader(m_device, kShader, "MiniGUI shader");
 
         WGPUBindGroupLayoutEntry ue = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
         ue.binding    = 0;
@@ -150,7 +150,7 @@ namespace MiniGUI
         fragment.targets     = &target;
 
         WGPURenderPipelineDescriptor desc = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
-        desc.label  = Str("MiniGUI 管线");
+        desc.label  = Str("MiniGUI pipeline");
         desc.layout = m_pipelineLayout;
         desc.vertex.module      = m_shader;
         desc.vertex.entryPoint  = Str("vs");
@@ -236,7 +236,7 @@ namespace MiniGUI
         entry.height = height;
 
         WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
-        desc.label  = Str("MiniGUI 纹理");
+        desc.label  = Str("MiniGUI texture");
         desc.usage  = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
         desc.size   = WGPUExtent3D{ static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 };
         desc.format = WGPUTextureFormat_RGBA8Unorm;
@@ -261,7 +261,7 @@ namespace MiniGUI
         if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
             region.x + region.width > e.width || region.y + region.height > e.height || pitch % 4 != 0)
         {
-            assert(false && "UpdateTexture 区域越界");
+            assert(false && "UpdateTexture region out of bounds");
             return;
         }
 
@@ -388,7 +388,7 @@ namespace MiniGUI
                     auto it = m_textures.find(cmd.texture);
                     if (it == m_textures.end())
                     {
-                        assert(false && "DrawCmd 引用了不存在的纹理");
+                        assert(false && "DrawCmd references a missing texture");
                         continue;
                     }
                     wgpuRenderPassEncoderSetBindGroup(m_pass, 1, it->second.bindGroup, 0, nullptr);

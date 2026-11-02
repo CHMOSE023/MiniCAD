@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "MiniI18n/I18n.h"
 
 namespace MiniDWG::DwgWrite
 {
@@ -100,7 +101,7 @@ namespace MiniDWG::DwgWrite
         if (it == m_classNumbers.end())
         {
             NotifyOnce("class:" + std::string(object.GetDxfName()), NotificationType::Warning,
-                       "找不到 " + std::string(object.GetDxfName()) + " 的类定义，未写出");
+                       TrF("找不到 {0} 的类定义，未写出", object.GetDxfName()));
             return -1;
         }
         return it->second;
@@ -225,7 +226,7 @@ namespace MiniDWG::DwgWrite
         {
             if (!Written(data.AppIdHandle) || FindAs<AppId>(data.AppIdHandle) == nullptr)
             {
-                NotifyOnce("xdata-app", NotificationType::Warning, "扩展数据的应用程序（APPID）不存在，已跳过");
+                NotifyOnce("xdata-app", NotificationType::Warning, TrF("扩展数据的应用程序（{0}）不存在，已跳过", "APPID"));
                 continue;
             }
             // 记录写到字节缓冲：字符串用位流写入器编码（R2007 起 UTF-16）
@@ -235,7 +236,7 @@ namespace MiniDWG::DwgWrite
                 const int code = record.Code;
                 if (code >= 1020 && code <= 1033)
                 {
-                    NotifyOnce("xdata:lone", NotificationType::Info, "扩展数据中单独的 Y/Z 坐标分量（1020～1033）未写出");
+                    NotifyOnce("xdata:lone", NotificationType::Info, Tr("扩展数据中单独的 Y/Z 坐标分量（1020～1033）未写出"));
                     continue;
                 }
                 std::vector<std::uint8_t> raw;
@@ -333,7 +334,7 @@ namespace MiniDWG::DwgWrite
                 if (!ok)
                 {
                     NotifyOnce("xdata:" + std::to_string(code), NotificationType::Warning,
-                               "扩展数据中无法写出的组码 " + std::to_string(code));
+                               TrF("扩展数据中无法写出的组码 {0}", code));
                     continue;
                 }
                 bytes.WriteByte(static_cast<std::uint8_t>(code - 1000));
@@ -988,7 +989,7 @@ namespace MiniDWG::DwgWrite
         else
         {
             NotifyOnce("object:" + std::string(object.GetDxfName()), NotificationType::Warning,
-                       "未实现写出的对象 " + std::string(object.GetDxfName()));
+                       TrF("未实现写出的对象 {0}", object.GetDxfName()));
         }
         EndObject(object.ObjectHandle);
     }
@@ -1120,7 +1121,7 @@ namespace MiniDWG::DwgWrite
             if (type == GroupCodeType::None || type == GroupCodeType::Comment)
             {
                 NotifyOnce("xrecord:" + std::to_string(code), NotificationType::Warning,
-                           "XRECORD 中无法写出的组码 " + std::to_string(code));
+                           TrF("{0} 中无法写出的组码 {1}", "XRECORD", code));
                 continue;
             }
             data.WriteRawShort(static_cast<std::int16_t>(code));

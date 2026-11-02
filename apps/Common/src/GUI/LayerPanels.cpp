@@ -90,7 +90,7 @@ namespace MiniCAD
                 x += 44.0f;
             }
             if (ctx)
-                ctx->GetTextSystem().Draw(dl, Rect{ x, box.min.y, box.max.x, box.max.y }, LineweightLabel(lw), CellText());
+                ctx->GetTextSystem().Draw(dl, Rect{ x, box.min.y, box.max.x, box.max.y }, Tr(LineweightLabel(lw)), CellText());
         }
 
         void DrawLinetype(MiniGUI::UIContext* ctx, MiniGUI::DrawList& dl, const Rect& box, const LineTypeRecord& rec)
@@ -388,7 +388,7 @@ namespace MiniCAD
             Document* doc = DocOf(*pc);
             if (!doc || (!parent.empty() && !LayerPath::IsValidRelative(parent)))
                 return;
-            const std::string name = LayerOps::UniqueName(doc->GetLayerManager(), LayerPath::Join(parent, "图层"));
+            const std::string name = LayerOps::UniqueName(doc->GetLayerManager(), LayerPath::Join(parent, "图层"));   // i18n: 数据（新图层名）
             if (!RunLayerCommand(*doc, std::make_unique<AddLayerCommand>(name, /*makeCurrent=*/true)))
                 return;
             const auto parts = LayerPath::Split(name);
@@ -431,27 +431,29 @@ namespace MiniCAD
             RefreshLayerPanel(*pc);
         };
 
-        auto addTool = [&](const char* text, const char* tip, std::function<void()> fn)
+        // 面板只建一次：显示译文的地方经 keep 写一次，并登记到 pp->retranslate，切换界面语言时再写一次
+        auto keep = [pp](std::function<void()> write) { write(); pp->retranslate.push_back(std::move(write)); };
+        auto addTool = [&](const char* text, const char* tip, std::function<void()> fn)     // text / tip：N_ 标记的原文
         {
-            Button* b = tools->AddChild<Button>(text, std::move(fn));
+            Button* b = tools->AddChild<Button>(std::string(), std::move(fn));
             b->SetStyle(ButtonStyle::Flat());
             b->SetFocusable(false);
-            b->SetTooltip(tip);
+            keep([b, text, tip] { b->SetText(Tr(text)); b->SetTooltip(Tr(tip)); });
             b->EditLayoutStyle().padding = Edges::Symmetric(8.0f, 3.0f);
             return b;
         };
-        addTool("新建", "新建图层并置为当前", [this] { m_commands.Execute("layer.new"); });
-        addTool("子图层", "在选中的图层下新建子图层（层级写在图层名里，用 $ 分隔，同 Rhino 导出的 DWG）", [pp, newSublayer, selectedRow]
+        addTool(N_("新建"), N_("新建图层并置为当前"), [this] { m_commands.Execute("layer.new"); });
+        addTool(N_("子图层"), N_("在选中的图层下新建子图层（层级写在图层名里，用 $ 分隔，同 Rhino 导出的 DWG）"), [pp, newSublayer, selectedRow]
         {
             const int row = selectedRow();
             newSublayer(row >= 0 ? pp->layerPaths[static_cast<size_t>(row)] : std::string{});
         });
-        addTool("删除", "删除选中的图层，连同它的下级图层（其上的对象移到 0 层）", [pp, deleteLayer, selectedRow]
+        addTool(N_("删除"), N_("删除选中的图层，连同它的下级图层（其上的对象移到 0 层）"), [pp, deleteLayer, selectedRow]
         {
             if (const int row = selectedRow(); row >= 0)
                 deleteLayer(pp->layerIds[static_cast<size_t>(row)], pp->layerPaths[static_cast<size_t>(row)]);
         });
-        addTool("置为当前", "把选中的图层设为当前图层（也可双击行）", [pp, setCurrent, selectedRow]
+        addTool(N_("置为当前"), N_("把选中的图层设为当前图层（也可双击行）"), [pp, setCurrent, selectedRow]
         {
             if (const int row = selectedRow(); row >= 0)
                 setCurrent(pp->layerIds[static_cast<size_t>(row)]);
@@ -460,7 +462,7 @@ namespace MiniCAD
         // 搜索框：只显示名称含这段文字的图层；Esc 清空，再按一次把焦点交回绘图区
         auto* search = tools->AddChild<TextBox>();
         pp->layerSearch = search;
-        search->SetPlaceholder("搜索图层");
+        keep([search] { search->SetPlaceholder(Tr("搜索图层")); });
         TextBoxStyle ss;
         ss.fontSize = 13.0f;
         ss.padding  = Edges::Symmetric(8.0f, 4.0f);
@@ -495,12 +497,21 @@ namespace MiniCAD
         list->EditLayoutStyle().grow = 1.0f;
         list->SetColumns({
             { "",     24.0f,  TextAlign::Center },
-            { "名称", 160.0f, TextAlign::Start, true },     // 下级逐级缩进，留宽一些
-            { "开",   32.0f,  TextAlign::Center },
-            { "锁",   32.0f,  TextAlign::Center },
-            { "颜色", 64.0f },
-            { "线型", 130.0f },
-            { "线宽", 110.0f },
+            { "",     160.0f, TextAlign::Start, true },     // 名称：下级逐级缩进，留宽一些
+            { "",     40.0f,  TextAlign::Center },          // 开（英文 On）
+            { "",     48.0f,  TextAlign::Center },          // 锁（英文 Lock）
+            { "",     64.0f },                              // 颜色
+            { "",     130.0f },                             // 线型
+            { "",     110.0f },                             // 线宽
+        });
+        // 表头按界面语言写；切换语言时只改标题，保留拖动过的列宽
+        keep([list]
+        {
+            static const char* kTitles[] = { "", N_("名称"), NC_("图层表头", "开"), NC_("图层表头", "锁"), N_("颜色"), N_("线型"), N_("线宽") };
+            std::vector<ListColumn> cols = list->GetColumns();
+            for (size_t i = 0; i < cols.size() && i < std::size(kTitles); ++i)
+                cols[i].title = i == 2 || i == 3 ? TrC("图层表头", kTitles[i]) : Tr(kTitles[i]);
+            list->SetColumns(std::move(cols));
         });
         // 名称列按层级缩进（Scene/LayerPath.h："A$B" 显示为 A 下面的 B），点箭头展开 / 折叠
         list->SetTreeColumn(ColName);
@@ -642,7 +653,7 @@ namespace MiniCAD
                     if (it.lw == Lineweight::ByLayer || it.lw == Lineweight::ByBlock)
                         continue;
                     const Lineweight lw = it.lw;
-                    items.push_back(MenuItem(it.label, [this, pc, pp, id, lw]
+                    items.push_back(MenuItem(Tr(it.label), [this, pc, pp, id, lw]
                     {
                         if (Document* d = DocOf(*pc))
                         {
@@ -707,7 +718,7 @@ namespace MiniCAD
 
         list->SetRowContextMenu([this, pc, pp, list, setCurrent, deleteLayer, newSublayer, collapseAll](int row) -> std::vector<MenuItem>
         {
-            std::vector<MenuItem> items{ MenuItem("新建图层(&N)", [this] { m_commands.Execute("layer.new"); }) };
+            std::vector<MenuItem> items{ MenuItem(Tr("新建图层(&N)"), [this] { m_commands.Execute("layer.new"); }) };
             if (row >= 0 && row < static_cast<int>(pp->layerIds.size()))
             {
                 const LayerID     id    = pp->layerIds[static_cast<size_t>(row)];
@@ -717,15 +728,15 @@ namespace MiniCAD
                 bool              tree  = group;
                 if (Document* doc = DocOf(*pc); doc && !group)
                     tree = LayerOps::Subtree(doc->GetLayerManager(), path).size() > 1;
-                items.push_back(MenuItem("新建子图层(&S)", [newSublayer, path] { newSublayer(path); }).Enabled(LayerPath::IsValidRelative(path)));
-                items.push_back(MenuItem("置为当前(&C)", [setCurrent, id] { setCurrent(id); }).Enabled(!group));
-                items.push_back(MenuItem("重命名(&M)", [list, row] { list->BeginEdit(row, ColName); }, "F2").Enabled(!def));
+                items.push_back(MenuItem(Tr("新建子图层(&S)"), [newSublayer, path] { newSublayer(path); }).Enabled(LayerPath::IsValidRelative(path)));
+                items.push_back(MenuItem(Tr("置为当前(&C)"), [setCurrent, id] { setCurrent(id); }).Enabled(!group));
+                items.push_back(MenuItem(Tr("重命名(&M)"), [list, row] { list->BeginEdit(row, ColName); }, "F2").Enabled(!def));
                 items.push_back(MenuItem::Separator());
-                items.push_back(MenuItem(tree ? "删除图层及下级(&D)" : "删除图层(&D)", [deleteLayer, id, path] { deleteLayer(id, path); }).Enabled(!def));
+                items.push_back(MenuItem(tree ? Tr("删除图层及下级(&D)") : Tr("删除图层(&D)"), [deleteLayer, id, path] { deleteLayer(id, path); }).Enabled(!def));
             }
             items.push_back(MenuItem::Separator());
-            items.push_back(MenuItem("全部展开(&E)", [collapseAll] { collapseAll(false); }));
-            items.push_back(MenuItem("全部折叠(&L)", [collapseAll] { collapseAll(true); }));
+            items.push_back(MenuItem(Tr("全部展开(&E)"), [collapseAll] { collapseAll(false); }));
+            items.push_back(MenuItem(Tr("全部折叠(&L)"), [collapseAll] { collapseAll(true); }));
             return items;
         });
 
@@ -857,10 +868,13 @@ namespace MiniCAD
     // 没有选择时显示并设置当前值（作用于新建对象）；有选择时显示选中对象的值（不同时为"*多种*"），选择即修改选中对象。
     // 每个窗口的功能区各有一份，显示、修改的是那个窗口里显示的文档
     // =========================================================
-    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerBar(MiniGUI::BindingSet& bindings, std::function<Document*()> windowDoc,
+    std::unique_ptr<MiniGUI::Node> MainFrame::CreateLayerBar(PanelSet& panels, std::function<Document*()> windowDoc,
                                                              MiniGUI::ComboBox** layerOut)
     {
         using namespace MiniGUI;
+        BindingSet& bindings = panels.bindings;
+        // 只建一次：提示等译文经 keep 写一次，并登记到 panels.retranslate，切换界面语言时再写一次
+        auto keep = [&panels](std::function<void()> write) { write(); panels.retranslate.push_back(std::move(write)); };
         DocumentManager& dm = m_docManager;
         // 这个窗口显示的文档（已关闭的当作没有）
         auto doc = [&dm, windowDoc]() -> Document* { Document* d = windowDoc(); return d && dm.Contains(d) ? d : nullptr; };
@@ -888,13 +902,13 @@ namespace MiniCAD
             row->SetLayoutStyle(rs);
         }
 
-        auto styleCombo = [](ComboBox* c, float width, const char* tip)
+        auto styleCombo = [&keep](ComboBox* c, float width, const char* tip)    // tip：N_ 标记的原文
         {
             c->EditLayoutStyle().width  = width;
             c->EditLayoutStyle().height = 26.0f;
             c->EditLayoutStyle().shrink = 0.0f;
             c->SetFocusable(false);         // 选完后键盘仍在绘图区
-            c->SetTooltip(tip);
+            keep([c, tip] { c->SetTooltip(Tr(tip)); });
             c->SetMaxVisibleItems(14);
         };
 
@@ -902,7 +916,7 @@ namespace MiniCAD
         auto* layer = rows[0]->AddChild<ComboBox>();
         if (layerOut)
             *layerOut = layer;
-        styleCombo(layer, 244.0f, "图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层");
+        styleCombo(layer, 244.0f, N_("图层：没有选择时为当前图层（新建对象所在的图层），有选择时为选中对象的图层"));
         layer->SetDropDownWidth(230.0f);
         layer->SetItemPainter([layer, doc](DrawList& dl, const Rect& box, int index, bool inList)
         {
@@ -947,7 +961,7 @@ namespace MiniCAD
 
         // ── 线型 ─────────────────────────────────────────────────
         auto* linetype = rows[1]->AddChild<ComboBox>();
-        styleCombo(linetype, 130.0f, "线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型");
+        styleCombo(linetype, 130.0f, N_("线型：没有选择时为当前线型（新建对象），有选择时为选中对象的线型"));
         linetype->SetDropDownWidth(220.0f);
         linetype->SetItemPainter([linetype, doc](DrawList& dl, const Rect& box, int index, bool)
         {
@@ -986,11 +1000,15 @@ namespace MiniCAD
             });
 
         // ── 线宽 ─────────────────────────────────────────────────
-        std::vector<std::string> lwLabels;
-        for (const auto& it : kLineweightItems)
-            lwLabels.emplace_back(it.label);
-        auto* lineweight = rows[1]->AddChild<ComboBox>(lwLabels);
-        styleCombo(lineweight, 110.0f, "线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽");
+        auto* lineweight = rows[1]->AddChild<ComboBox>();
+        keep([lineweight]
+        {
+            std::vector<std::string> labels;
+            for (const auto& it : kLineweightItems)
+                labels.emplace_back(Tr(it.label));
+            lineweight->SetItems(std::move(labels));
+        });
+        styleCombo(lineweight, 110.0f, N_("线宽：没有选择时为当前线宽（新建对象），有选择时为选中对象的线宽"));
         lineweight->SetItemPainter([lineweight](DrawList& dl, const Rect& box, int index, bool)
         {
             if (index >= 0 && index < static_cast<int>(std::size(kLineweightItems)))
