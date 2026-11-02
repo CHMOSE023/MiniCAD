@@ -723,7 +723,7 @@ namespace MiniCAD
     bool LinuxApp::HttpGet(const std::string& url, std::string& body)
     {
         // 不链接 libcurl：调用系统的 curl 命令；网址只来自程序自己（不含单引号）
-        if (url.empty() || url.find(''') != std::string::npos)
+        if (url.empty() || url.find('\'') != std::string::npos)
             return false;
         const std::string cmd = "curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' '" + url + "' 2>/dev/null";
         FILE* pipe = popen(cmd.c_str(), "r");

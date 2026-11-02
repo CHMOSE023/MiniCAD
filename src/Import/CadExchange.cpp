@@ -2907,7 +2907,7 @@ namespace MiniCAD
                 const auto* layer = m_db.FindAs<Dwg::Layer>(src.LayerHandle);
                 if (!layer) return {Dwg::kNullHandle, Dwg::kNullHandle};
                 std::string base = layer->Name;
-                if (const std::string tail = "管"; base.ends_with(tail)) base.erase(base.size() - tail.size());
+                if (const std::string tail = "管"; base.ends_with(tail)) base.erase(base.size() - tail.size());    // i18n: 数据
                 return {LayerByName(base + "中心线"), LayerByName(base + "管端线")};    // i18n: 数据
             }
 
