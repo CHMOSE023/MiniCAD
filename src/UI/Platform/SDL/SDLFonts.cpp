@@ -34,6 +34,11 @@ namespace MiniGUI
         text.AddFont(std::move(main));
         if (fallback)
             text.AddFallbackFont(std::move(fallback));
+        // 系统没有中日韩字体时，韩文用随程序携带的 NotoSansKR-UI.otf（与主字体同目录）
+        const size_t slash = bundledFont.find_last_of('/');
+        const std::string dir = slash == std::string::npos ? std::string() : bundledFont.substr(0, slash + 1);
+        if (auto hangul = Font::LoadFromFile(dir + "NotoSansKR-UI.otf", 0))
+            text.AddFallbackFont(std::move(hangul));
         return true;
     }
 }

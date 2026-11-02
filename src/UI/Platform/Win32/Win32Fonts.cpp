@@ -40,6 +40,9 @@ namespace MiniGUI
         text.AddFont(std::move(main));
         if (auto symbol = LoadSystemSymbolFont())
             text.AddFallbackFont(std::move(symbol));
+        // 微软雅黑没有韩文
+        if (auto hangul = Font::LoadFromFile(GetSystemFontPath("malgun.ttf"), 0))
+            text.AddFallbackFont(std::move(hangul));
         return true;
     }
 }

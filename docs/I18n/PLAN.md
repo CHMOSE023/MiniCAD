@@ -42,7 +42,7 @@
 
 | | 第一版 | 以后 |
 |---|---|---|
-| 语言 | 简体中文（源语言）、English | 繁體中文、日本語等，加一个翻译文件即可（字体覆盖见 5.6） |
+| 语言 | 简体中文（源语言）、English；繁體中文、日本語、한국어（已加） | 其他语言加一个翻译文件即可（字体覆盖见 5.6） |
 | 切换 | "设置 > 语言"，**立即生效**（阶段 6，已做）；首次启动跟随系统语言 | |
 | 覆盖 | 主窗口、命令行、对话框、特性 / 图层面板、节点编辑器、宿主的系统对话框、诊断信息与日志 | 文档 |
 | 命令行 | 提示与回显翻译；命令名、别名、选项字母不变（中英文用户输入完全一样） | |
@@ -154,7 +154,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 
 - 优先级：命令行参数 `--lang <语言>` / 环境变量 `MINICAD_LANG`（测试、截图用）→ 用户设置 → 系统语言 → 中文
 - 系统语言：新的 `AppPlatform::GetSystemLanguage()`——Win32 用 `GetUserDefaultUILanguage`，网页版用 `navigator.language`，
-  Linux 用 `LC_ALL` / `LC_MESSAGES` / `LANG`。`zh*` → 简体中文（繁体翻译出来之前 `zh-TW` 也用简体），没有对应翻译文件的 → English
+  Linux 用 `LC_ALL` / `LC_MESSAGES` / `LANG`。`zh-TW`、`zh-HK`、`zh-MO`、`zh-Hant-*` → 繁體中文，其余 `zh*` → 简体中文，没有对应翻译文件的 → English
 - 用户设置：用户数据目录（`AppPlatform::GetUserDataDir`）下新建 `settings.json`，`{ "language": "en" }`；以后主题等设置也放这里。
   网页版的用户数据目录是空的，改存浏览器的 `localStorage`（`WebApp` 里经 JS 读写），网址带 `?lang=en` 时优先
 - 界面：标题栏右侧"设置"菜单（`ViewNavBar.cpp` 的 `AddMenuButton`）加"语言"子菜单，列出 `assets/i18n/` 里的语言（显示各自的 `name`），
@@ -377,7 +377,11 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 
 - 英文：现有字体都覆盖，不用改。可以评估英文下桌面版主字体换 Segoe UI、微软雅黑作后备（拉丁字形更好看），不是必需
 - 中文界面文字（图层名、文件名）在英文界面下照样要显示，所以中文字体不能去掉
-- 以后加繁体 / 日文：网页字体子集要扩充（GB2312 不含大部分繁体字），或另带一个字体；韩文微软雅黑不覆盖，要加后备字体（如 Malgun Gothic）
+- 繁体 / 日文：微软雅黑与 Noto Sans SC 都有假名和繁体字（字形按简体中文的写法）；网页字体子集收进了翻译文件里出现的字和全部假名（`tools/make_web_font.py`）
+- 韩文：微软雅黑与 Noto Sans SC 都没有。桌面版加 Malgun Gothic（`malgun.ttf`）作后备（`src/UI/Platform/Win32/Win32Fonts.cpp`）；
+  网页版与 Linux 版带 `assets/fonts/NotoSansKR-UI.otf`（`tools/make_web_font.py` 从 Noto Sans CJK KR 取 KS X 1001 的韩文音节与翻译里的韩文），
+  放在主字体旁边由 `LoadWebUIFonts` / `LoadSDLUIFonts` 作后备加载
+- 以后可以按界面语言换主字体（日文用 Yu Gothic UI、繁体用微软正黑），让汉字按当地写法显示
 
 ### 5.7 其他
 

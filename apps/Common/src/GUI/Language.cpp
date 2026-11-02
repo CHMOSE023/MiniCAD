@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 
 namespace MiniCAD
@@ -50,7 +51,7 @@ namespace MiniCAD
         }
 
         // 语言标签对应的语言代码：先找完全相同的翻译文件，再找主标签（"en-US" → "en"）；
-        // "zh*" 没有专门的翻译文件时是源语言；都没有返回空串
+        // 繁体（zh-HK、zh-MO、zh-Hant）先找 zh-TW；"zh*" 没有专门的翻译文件时是源语言；都没有返回空串
         std::string Match(const std::vector<LanguageInfo>& available, const std::string& rawTag)
         {
             const std::string tag = Lower(NormalizeTag(rawTag));
@@ -59,7 +60,9 @@ namespace MiniCAD
             if (tag == kPseudoLanguage)
                 return kPseudoLanguage;
             const std::string primary = tag.substr(0, tag.find('-'));
-            for (const std::string& want : { tag, primary })
+            // 繁体中文：zh-HK、zh-MO、zh-Hant-* 都用 zh-TW 的翻译
+            const bool traditional = primary == "zh" && (tag.find("-hant") != std::string::npos || tag == "zh-hk" || tag == "zh-mo");
+            for (const std::string& want : { tag, traditional ? std::string("zh-tw") : tag, primary })
                 for (const LanguageInfo& l : available)
                     if (Lower(l.code) == want)
                         return l.code;
@@ -121,7 +124,18 @@ namespace MiniCAD
                 name = c.GetName();
             found.push_back({ code, name });
         }
-        std::sort(found.begin(), found.end(), [](const LanguageInfo& a, const LanguageInfo& b) { return a.code < b.code; });
+        // 固定顺序：繁體中文、English、日本語、한국어，其余按文件名排在后面
+        static const char* const kOrder[] = { "zh-TW", "en", "ja", "ko" };
+        const auto rank = [](const std::string& code)
+        {
+            const auto it = std::find(std::begin(kOrder), std::end(kOrder), code);
+            return static_cast<size_t>(it - std::begin(kOrder));
+        };
+        std::sort(found.begin(), found.end(), [&](const LanguageInfo& a, const LanguageInfo& b)
+        {
+            const size_t ra = rank(a.code), rb = rank(b.code);
+            return ra != rb ? ra < rb : a.code < b.code;
+        });
         list.insert(list.end(), found.begin(), found.end());
         return list;
     }

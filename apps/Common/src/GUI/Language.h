@@ -18,7 +18,7 @@ namespace MiniCAD
         std::string name;       // "English"：该语言自己的写法，"设置 > 语言"里显示
     };
 
-    // 可选的语言：简体中文排第一，其余是 i18n/ 下的翻译文件（按文件名）
+    // 可选的语言：简体中文、繁體中文、English、日本語、한국어，其余 i18n/ 下的翻译文件按文件名排在后面
     std::vector<LanguageInfo> ListLanguages(const std::string& resourceDir);
 
     // 启动时调用，宿主在创建图形设备之前（图形设备的出错信息也要翻译）：选定语言并装好翻译表，返回实际使用的语言代码。
