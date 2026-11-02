@@ -2024,7 +2024,9 @@ namespace MiniCAD
                     {
                         // 起点（end 0）/ 终点（end 1）接着的墙里有材料不同的：天正在两种材料之间画分界线，这一端画端线；
                         // 同材料的墙在节点处连成一体，不画（tianzheng.dwg 钢筋混凝土墙与砖墙的夹角、建筑样图墙与玻璃幕墙的丁字接头，天正 2014 显示核对）
-                        auto otherMaterialAt = [&](int end) {
+                        // 两个连接都为空的自由端也画端线
+                        auto endLineAt = [&](int end) {
+                            if (wall.HasConnections && !wall.Connections[end * 2] && !wall.Connections[end * 2 + 1]) return true;
                             for (int k : {0, 1})
                                 if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]); m && *m != wall.Material) return true;
                             return false;
@@ -2095,7 +2097,7 @@ namespace MiniCAD
                             }
                             if (leftR > 0 && rightR > 0)
                                 for (const int end : {0, 1})
-                                    if (otherMaterialAt(end))
+                                    if (endLineAt(end))
                                         arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, end * span), arcPoint(rightR, end * span)));
                             countWall();
                             return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
@@ -2172,8 +2174,8 @@ namespace MiniCAD
                         };
                         addSide(points[0], points[1], wall.Joins[0], length - wall.Joins[1]);
                         addSide(points[3], points[2], wall.Joins[2], length - wall.Joins[3]);
-                        if (otherMaterialAt(0)) block->AddEntity(Make<LineEntity>(src, nullptr, points[0], points[3]));
-                        if (otherMaterialAt(1)) block->AddEntity(Make<LineEntity>(src, nullptr, points[1], points[2]));
+                        if (endLineAt(0)) block->AddEntity(Make<LineEntity>(src, nullptr, points[0], points[3]));
+                        if (endLineAt(1)) block->AddEntity(Make<LineEntity>(src, nullptr, points[1], points[2]));
                         countWall();
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }

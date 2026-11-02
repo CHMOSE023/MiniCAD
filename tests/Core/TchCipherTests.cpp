@@ -1,12 +1,20 @@
 #include "TchCipherWriter.h"
 #include "Import/TchAnnotation.h"
+#include "Import/TchColumn.h"
+#include "Import/TchShape.h"
 #include "Import/TchSheet.h"
 #include "Import/TchStair.h"
 #include "Import/TchWall.h"
 #include "Dwg/Read/DwgReader.h"
+#include "Dwg/Write/DwgWriter.h"
+#include "Import/CadExchange.h"
+#include "Scene/Scene.h"
+#include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -98,6 +106,91 @@ namespace
         return w.Take("TCH_SYMB_SECTION");
     }
 
+    std::unique_ptr<UnknownEntity> ColumnObject(int version, int key, int flags = 0, bool extraBit = false, double oy = 0)
+    {
+        CipherWriter w;
+        w.Base(key, 94, 100, 94);
+        w.Main.WriteByte(static_cast<std::uint8_t>(version));
+        w.Main.WriteByte(static_cast<std::uint8_t>(key));
+        w.Key = key;
+        w.Point3(1300, 2300 + oy, 0);
+        w.Main.WriteByte(1);
+        w.Main.WriteBitShort(4);
+        const double pts[4][2] = {{1000, 2000 + oy}, {1600, 2000 + oy}, {1600, 2600 + oy}, {1000, 2600 + oy}};
+        for (const auto& p : pts) { w.Main.WriteRawDouble(p[0]); w.Main.WriteRawDouble(p[1]); w.Main.WriteBitDouble(0); }
+        w.Double(3000);
+        w.Byte(1);
+        w.Byte(1); w.Handle(0);
+        w.Byte(60);
+        w.Short(flags);
+        w.Handle(0);
+        if (flags & 8) { w.Text.WriteVariableText("Z1"); w.Point2(1300, 2300 + oy); w.Handle(0); w.Handle(0); w.Double(3.5); }
+        w.Byte(0);
+        w.Double(80);
+        w.Handle(0);
+        if (version >= 8) { w.Double(0); w.Text.WriteVariableText(""); w.Text.WriteVariableText(""); }
+        if (version >= 9) w.Double(50);
+        if (version >= 10) for (int i = 0; i < 7; ++i) w.Double(i);
+        if (extraBit) w.Main.WriteBit(true);
+        return w.Take("TCH_COLUMN");
+    }
+
+    std::unique_ptr<UnknownEntity> RectObject(int key, int flag, bool extraBit = false, double oy = 0)
+    {
+        CipherWriter w;
+        w.Base(key, 94, 100, 94);
+        w.Main.WriteByte(3);
+        w.Main.WriteByte(static_cast<std::uint8_t>(key));
+        w.Key = key;
+        w.Short(flag);
+        w.Point3(500, 700 + oy, 0);
+        w.Double(0.5); w.Double(400); w.Double(200); w.Double(0);
+        w.Point3(0, 0, 1);
+        w.Byte(0);
+        if (extraBit) w.Main.WriteBit(true);
+        return w.Take("TCH_RECT");
+    }
+
+    std::unique_ptr<UnknownEntity> WallObject(bool curtain, int flags, int key = 0x12, double oy = 0)
+    {
+        CipherWriter w;
+        w.Base(key, 94, 100, 94);
+        w.Main.WriteByte(12);
+        w.Main.WriteByte(static_cast<std::uint8_t>(key));
+        w.Key = key;
+        w.Point3(0, oy, 0); w.Point3(6000, oy, 0);
+        w.Double(0);
+        w.Number(std::to_string(flags), [](MiniDWG::DwgBitWriter& o, const std::string& t) { o.WriteBitLong(std::stoi(t)); });
+        w.Double(100); w.Double(100); w.Double(3000);
+        w.Handle(0); w.Handle(0);
+        for (int i = 0; i < 4; ++i) w.Handle(0);
+        w.Byte(0);
+        w.Short(0);
+        w.Byte(curtain ? 20 : 40);
+        w.Byte(0);
+        w.Double(0);
+        for (int i = 0; i < 4; ++i) w.Double(0);
+        for (int i = 0; i < 6; ++i) w.Handle(0);
+        w.Byte(0);
+        w.Number("0", [](MiniDWG::DwgBitWriter& o, const std::string& t) { o.WriteBit(t != "0"); });
+        w.Text.WriteVariableText("");
+        w.Double(0);
+        w.Handle(0); w.Handle(0);
+        w.Byte(0);
+        if (curtain)
+        {
+            w.Main.WriteByte(3);
+            w.Main.WriteByte(static_cast<std::uint8_t>(key));
+            w.Byte(1);
+            for (int i = 0; i < 6; ++i) w.Double(10 * i);
+            w.Byte(2); w.Byte(3);
+            if (!(flags & 0x100)) { w.Double(1000); w.Double(2000); }
+            if (!(flags & 0x10000)) { w.Double(500); w.Double(1500); w.Double(2500); }
+            w.Handle(0); w.Handle(0); w.Handle(0);
+        }
+        return w.Take(curtain ? "TCH_CURTAIN_WALL" : "TCH_WALL");
+    }
+
     bool NearPoint(const Tch::TchGraphics::Point& p, double x, double y, double tol = 1e-6) { return Near(p.X, x, tol) && Near(p.Y, y, tol); }
 
     std::vector<std::uint8_t> ReadFile(const std::string& path)
@@ -113,7 +206,10 @@ namespace
         const std::string& n = e.Raw.DxfName;
         auto run = [&](auto decode, auto out) { return decode(e, out, &why) ? 1 : 0; };
         if (n == "TCH_WALL") return run(Tch::DecodeWall, Tch::TchWall{});
+        if (n == "TCH_CURTAIN_WALL") return run(Tch::DecodeCurtainWall, Tch::TchWall{});
+        if (n == "TCH_RECT") return run(Tch::DecodeRect, Tch::TchRect{});
         if (n == "TCH_OPENING") return run(Tch::DecodeOpening, Tch::TchOpening{});
+        if (n == "TCH_COLUMN") return run(Tch::DecodeColumn, Tch::TchColumn{});
         if (n == "TCH_TEXT" || n == "TCH_MTEXT") return run(Tch::DecodeText, Tch::TchText{});
         if (n == "TCH_AXIS_LABEL") return run(Tch::DecodeAxisLabel, Tch::TchAxisLabel{});
         if (n == "TCH_DIMENSION2") return run(Tch::DecodeDimension, Tch::TchDimension{});
@@ -234,6 +330,112 @@ int main()
         g = Tch::BuildInSight(s, 0.6, 0, width);
         Check(g.Fills.size() == 1 && g.Lines.empty() && g.Texts.size() == 1 && g.Texts[0].Value == "3" && NearPoint(g.Texts[0].Center, cx, cy),
               "one-way insight symbol: a single solid pointer and the number at the center");
+    }
+
+    {
+        Tch::TchColumn c;
+        std::string why;
+        const bool ok = Tch::DecodeColumn(*ColumnObject(10, 0x12, 8), c, &why);
+        Check(ok && c.Outline.size() == 4 && Near(c.Outline[2].X, 1600) && Near(c.Outline[2].Y, 2600) && Near(c.Height, 3000) &&
+              c.Material == 60 && Near(c.Scale, 50) && Near(c.Position.X, 1300),
+              ("encrypted column version 10 with a label decodes" + (ok ? std::string() : ": " + why)).c_str());
+        why.clear();
+        Check(Tch::DecodeColumn(*ColumnObject(7, 0x0c), c, &why) && Near(c.Scale, 100) && Near(c.Height, 3000) && c.Outline.size() == 4,
+              ("column version 7 with plain numbers takes the base scale" + (why.empty() ? std::string() : ": " + why)).c_str());
+        Check(Tch::DecodeColumn(*ColumnObject(8, 0x13), c) && Tch::DecodeColumn(*ColumnObject(9, 0x14), c) && Near(c.Scale, 50),
+              "column versions 8 and 9 decode");
+        Check(!Tch::DecodeColumn(*ColumnObject(10, 0x12, 0, true), c), "an encrypted column with a leftover bit is rejected");
+    }
+
+    {
+        Tch::TchRect t;
+        std::string why;
+        const bool ok = Tch::DecodeRect(*RectObject(0x12, 3), t, &why);
+        Check(ok && t.Flag == 3 && Near(t.X, 500) && Near(t.Y, 700) && Near(t.Rotation, 0.5) && Near(t.Length, 400) && Near(t.Width, 200),
+              ("encrypted rectangle decodes" + (ok ? std::string() : ": " + why)).c_str());
+        Check(Tch::DecodeRect(*RectObject(0x0c, 0), t) && Tch::BuildRect(t).Paths.size() == 1, "rectangle with plain numbers decodes");
+        Check(!Tch::DecodeRect(*RectObject(0x12, 0, true), t), "an encrypted rectangle with a leftover bit is rejected");
+    }
+
+    {
+        Tch::TchWall w;
+        std::string why;
+        bool ok = Tch::DecodeWall(*WallObject(false, 0), w, &why);
+        Check(ok && Near(w.End.X, 6000) && Near(w.LeftWidth, 100) && w.Material == 40, ("encrypted wall decodes" + (ok ? std::string() : ": " + why)).c_str());
+        ok = Tch::DecodeCurtainWall(*WallObject(true, 0x4), w, &why);
+        Check(ok && (w.Flags & 0x4) && w.Material == 20 && Near(w.RightWidth, 100), ("encrypted glass curtain wall decodes" + (ok ? std::string() : ": " + why)).c_str());
+        Check(Tch::DecodeCurtainWall(*WallObject(true, 0x4 | 0x100 | 0x10000), w) && Tch::DecodeCurtainWall(*WallObject(true, 0, 0x0c), w),
+              "curtain wall division lists follow the wall flags");
+        Check(!Tch::DecodeWall(*WallObject(true, 0x4), w) && !Tch::DecodeCurtainWall(*WallObject(false, 0x4), w),
+              "wall and curtain wall layouts are not mixed up");
+    }
+
+    {
+        CadDatabase db;
+        db.SetVersion(CadVersion::AC1024);
+        db.CreateDefaults();
+        db.Header.ModelSpaceExtMin = {-500, -500, 0};
+        db.Header.ModelSpaceExtMax = {6500, 7200, 0};
+        if (auto* vport = db.FindTableEntry<VPort>(db.VPorts(), "*Active"))
+        {
+            vport->Center = {3000, 3350};
+            vport->ViewHeight = 8000;
+            vport->AspectRatio = 1.8;
+        }
+        std::int16_t number = 500;
+        for (const auto& [dxf, cpp] : {std::pair{"TCH_WALL", "TDbWall"}, {"TCH_CURTAIN_WALL", "TDbCurtainWall"}, {"TCH_COLUMN", "TDbColumn"},
+                                       {"TCH_RECT", "TDbRect"}})
+        {
+            DxfClass c;
+            c.DxfName = dxf; c.CppClassName = cpp; c.ApplicationName = "TCH_KERNAL";
+            c.ClassNumber = number++; c.IsAnEntity = true; c.ProxyFlags = 1; c.ItemClassId = 0x1f2;
+            db.Classes.push_back(c);
+        }
+        std::vector<std::unique_ptr<UnknownEntity>> samples;
+        samples.push_back(WallObject(false, 0, 0x12, 0));
+        samples.push_back(WallObject(true, 0x4, 0x12, 1500));
+        samples.push_back(WallObject(true, 0x100 | 0x10000, 0x13, 3000));
+        samples.push_back(ColumnObject(10, 0x12, 8, false, 4000));
+        samples.push_back(ColumnObject(7, 0x0c, 0, false, 4000));
+        samples.push_back(RectObject(0x12, 3, false, 6000));
+        const std::size_t count = samples.size();
+        std::vector<Handle> handles;
+        for (auto& e : samples)
+        {
+            e->Raw.Dwg.Version = CadVersion::AC1024;
+            handles.push_back(db.AddEntity(db.ModelSpace(), std::move(e))->ObjectHandle);
+        }
+        DwgWriteOptions options;
+        options.Version = CadVersion::AC1024;
+        const auto bytes = WriteDwg(db, options);
+        MiniCAD::Scene scene;
+        std::size_t wallLines = 0;
+        if (MiniCAD::ImportCad(bytes, scene))
+            scene.ForEachObject([&](const MiniCAD::Object& object) {
+                const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&object);
+                if (!insert || !insert->GetBlock() || insert->GetBlock()->GetName() != "*U_TCH_" + std::to_string(handles[0])) return;
+                for (const auto& entity : insert->GetBlock()->GetEntities())
+                    if (dynamic_cast<const MiniCAD::LineEntity*>(entity.get())) ++wallLines;
+            });
+        Check(wallLines == 4, ("a wall with no connected walls gets end lines at both free ends: " + std::to_string(wallLines) + " lines").c_str());
+        if (const char* path = std::getenv("MINICAD_TCH_SAMPLE"))
+        {
+            const std::string p(path);
+            std::ofstream(std::filesystem::path(std::u8string(p.begin(), p.end())), std::ios::binary)
+                .write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        std::size_t decoded = 0, found = 0;
+        if (const auto back = ReadDwg(bytes))
+            for (const auto& [handle, object] : back->Objects())
+                if (const auto* e = dynamic_cast<const UnknownEntity*>(object.get()); e && e->Raw.DxfName.starts_with("TCH_"))
+                {
+                    std::string why;
+                    ++found;
+                    if (DecodeByType(*e, why) == 1) ++decoded;
+                    else std::printf("  %s: %s\n", e->Raw.DxfName.c_str(), why.c_str());
+                }
+        Check(found == count && decoded == count, ("synthetic encrypted objects survive a DWG write and read: " + std::to_string(decoded) + " of " +
+              std::to_string(found) + " decode, " + std::to_string(count) + " written").c_str());
     }
 
     // 剖切符号的新国标样式与旧样式的兼容

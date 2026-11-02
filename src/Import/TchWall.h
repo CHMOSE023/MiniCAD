@@ -27,6 +27,7 @@ namespace MiniCAD::Tch
         // 两端相接的墙：墙最先的 6 个软指针里的后 4 个（句柄流第 3～6 个），起点两个、终点两个；
         // 空句柄为没有（tianzheng.dwg 的钢筋混凝土墙 3B1：起点 3B3 / 3B2，终点 3B0 / 3B0）
         std::array<MiniDWG::Handle, 4> Connections{};
+        bool HasConnections = false;
 
         // 弧墙的圆心与轴线半径
         bool ArcCenter(double& cx, double& cy, double& radius) const
@@ -122,11 +123,10 @@ namespace MiniCAD::Tch
         // 新版天正（基类版本 9～14，见 TchCipher.h）的墙版本 12：RC 版本、RC 密钥；
         // 起点、终点（三维点）、圆心角、标志、左宽、右宽、高；6 个句柄（后 4 个为两端相接的墙）；数值；标志含 0x10 时一段多段线
         //（未核对，不支持）；门窗数与门窗句柄；材料码；墙体造型数与句柄；保温层厚与 4 个连接量；6 个句柄；个数与句柄；
-        // 布尔、字符串、数值、2 个句柄、个数与句柄。幕墙自己的字段未核对，不支持
+        // 布尔、字符串、数值、2 个句柄、个数与句柄。幕墙：T30 TDbCurtainWall::dwgInFields v3
         inline bool DecodeWallCipher(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic, bool curtain)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-            if (curtain) return fail("unsupported native curtain wall layout");
             CipherReader f(entity);
             if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
             if (f.Main.ReadByte() != 12) return fail("unsupported native wall version");
@@ -141,6 +141,7 @@ namespace MiniCAD::Tch
             const double height = f.Double();
             f.Handle(); f.Handle();
             for (auto& h : result.Connections) h = f.Handle();
+            result.HasConnections = true;
             f.Byte();
             if (result.Flags & 0x10) return fail("walls with a profile polyline are not supported");
             result.OpeningCount = f.Short();
@@ -154,6 +155,17 @@ namespace MiniCAD::Tch
             f.Bool(); f.Text(); f.Double();
             f.Handle(); f.Handle();
             for (int i = 0, n = f.Byte(); i < n && f.Ok(); ++i) f.Handle();
+            if (curtain)
+            {
+                if (f.Main.ReadByte() != 3) return fail("unsupported native curtain wall version");
+                f.ReadKey();
+                f.Byte();
+                for (int i = 0; i < 6; ++i) f.Double();
+                const int rows = f.Byte(), columns = f.Byte();
+                if (!(result.Flags & 0x100)) for (int i = 0; i < rows && f.Ok(); ++i) f.Double();
+                if (!(result.Flags & 0x10000)) for (int i = 0; i < columns && f.Ok(); ++i) f.Double();
+                f.Handle(); f.Handle(); f.Handle();
+            }
             if (!f.Exact()) return fail("native wall fields do not consume the payload exactly");
             result.Scale = f.Scale;
             if (const char* why = CheckWall(result, height, insulation)) return fail(why);
@@ -245,7 +257,10 @@ namespace MiniCAD::Tch
             std::array<Handle, 6> soft{};
             for (auto& h : soft) h = handles.ReadHandle(entity.ObjectHandle);
             if (!handles.Failed() && handles.PositionInBits() <= data.HandleBits)
+            {
                 std::copy(soft.begin() + 2, soft.end(), result.Connections.begin());
+                result.HasConnections = true;
+            }
             wall = result;
             if (diagnostic) diagnostic->clear();
             return true;

@@ -48,6 +48,36 @@ namespace MiniCAD::Tch
         int Flag = 0;
     };
 
+    namespace Detail
+    {
+        // T30 TDbRect::dwgInFields v3
+        inline bool DecodeRectCipher(const MiniDWG::UnknownEntity& entity, TchRect& rect, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native rectangle version");
+            f.ReadKey();
+            TchRect t;
+            t.Flag = f.Short();
+            const auto center = f.Point3();
+            t.X = center.X; t.Y = center.Y;
+            t.Rotation = f.Double();
+            t.Length = f.Double();
+            t.Width = f.Double();
+            f.Double();
+            const auto normal = f.Point3();
+            f.Byte();
+            if (!f.Exact()) return fail("native rectangle fields do not consume the payload exactly");
+            if (std::abs(normal.X) > 1e-9 || std::abs(normal.Y) > 1e-9 || normal.Z <= 0) return fail("rectangle is not in the XY plane");
+            for (double v : {t.X, t.Y, t.Rotation, t.Length, t.Width})
+                if (!Finite(v)) return fail("invalid native rectangle settings");
+            rect = t;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 天正基类、RC 版本、BS 矩形标志、3BD 中心、转角、长、宽、高（自定义编码 BD）、3BD 法向；版本 ≥ 2：RC 基点位置（GetBaseFlag）
     inline bool DecodeRect(const MiniDWG::UnknownEntity& entity, TchRect& rect, std::string* diagnostic = nullptr)
     {
@@ -55,6 +85,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_RECT") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeRectCipher(entity, rect, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!Detail::ShapeHead(entity, "TCH_RECT", r, base)) return fail("unsupported Tianzheng base layout");

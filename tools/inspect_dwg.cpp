@@ -1119,6 +1119,15 @@ int wmain(int argc, wchar_t** argv)
                     const auto& t = static_cast<const MiniCAD::MTextEntity&>(*e);
                     std::printf("  MTEXT (%.1f,%.1f) h=%.2f [%s]\n", t.GetPosition().x, t.GetPosition().y, t.GetHeight(), t.GetText().c_str());
                 }
+                else if (e->IsKindOf<MiniCAD::PolylineEntity>())
+                {
+                    const auto& pts = static_cast<const MiniCAD::PolylineEntity&>(*e).GetPolyline().Points;
+                    const auto& a = e->GetAttr();
+                    const auto* layer = document.GetScene().GetLayerManager().GetLayer(a.LayerId);
+                    std::printf("  POLYLINE layer=%s color=%d/%d", layer ? layer->GetName().c_str() : "?", static_cast<int>(a.Color.Method), a.Color.Aci);
+                    for (const auto& p : pts) std::printf(" (%.3f,%.3f)", p.x, p.y);
+                    std::printf("\n");
+                }
                 else
                     std::printf("  %s\n", e->GetTypeInfo()->Name);
         });
