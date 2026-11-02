@@ -357,18 +357,24 @@ int wmain(int argc, wchar_t** argv)
         return 0;
     }
     // MINICAD_FINDTEXT=内容：打印内容相同的 TEXT 的句柄、所有者、是否在模型空间实体表里
-    // MINICAD_RAWOBJ=DXF 名：导出该类型非图形未知对象（如 TCH_DBCONFIG）的主数据流与文字流（十六进制）
+    // MINICAD_RAWOBJ=DXF 名：导出该类型未知对象 / 实体（如 TCH_DBCONFIG、TCH_OPENING）的主数据流、文字流与句柄流（十六进制）
     if (const char* ro = std::getenv("MINICAD_RAWOBJ"))
         for (const auto& [handle, object] : db->Objects())
-            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get()); u && u->Raw.DxfName == ro)
-            {
-                std::printf("RAWOBJ %llx %s main_bits=%llu text_bits=%llu\n  main ", static_cast<unsigned long long>(handle), ro,
-                            static_cast<unsigned long long>(u->Raw.Dwg.MainBits), static_cast<unsigned long long>(u->Raw.Dwg.TextBits));
-                for (auto b : u->Raw.Dwg.Main) std::printf("%02x", b);
-                std::printf("\n  text ");
-                for (auto b : u->Raw.Dwg.Text) std::printf("%02x", b);
-                std::printf("\n");
-            }
+        {
+            const MiniDWG::RawObjectData* raw = nullptr;
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownObject*>(object.get())) raw = &u->Raw;
+            else if (const auto* e = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get())) raw = &e->Raw;
+            if (!raw || raw->DxfName != ro) continue;
+            std::printf("RAWOBJ %llx %s main_bits=%llu text_bits=%llu handle_bits=%llu\n  main ", static_cast<unsigned long long>(handle), ro,
+                        static_cast<unsigned long long>(raw->Dwg.MainBits), static_cast<unsigned long long>(raw->Dwg.TextBits),
+                        static_cast<unsigned long long>(raw->Dwg.HandleBits));
+            for (auto b : raw->Dwg.Main) std::printf("%02x", b);
+            std::printf("\n  text ");
+            for (auto b : raw->Dwg.Text) std::printf("%02x", b);
+            std::printf("\n  handles ");
+            for (auto b : raw->Dwg.Handles) std::printf("%02x", b);
+            std::printf("\n");
+        }
     if (const wchar_t* fw = _wgetenv(L"MINICAD_FINDTEXT"))
         for (const auto& [handle, object] : db->Objects())
             if (const auto* t = dynamic_cast<const MiniDWG::TextEntity*>(object.get()); t && t->Value == [&] { const auto u = std::filesystem::path(fw).u8string(); return std::string(u.begin(), u.end()); }())
@@ -442,7 +448,7 @@ int wmain(int argc, wchar_t** argv)
                             rc0, openings, material, patches, insulation, joins[0], joins[1], joins[2], joins[3], sig0, sig1,
                             (unsigned long long)r.PositionInBits(), (unsigned long long)u->Raw.Dwg.MainBits);
                 for (MiniDWG::Handle ref : u->Raw.Dwg.References) std::printf("%llx ", (unsigned long long)ref);
-                // 句柄流按顺序（含空句柄 0）：内核 TDbWall::dwgInFields 先读 6 个软指针
+                // 句柄流按顺序（含空句柄 0）：墙最先是 6 个软指针
                 std::printf("\n  handles=");
                 MiniDWG::DwgBitReader hs(u->Raw.Dwg.Handles, u->Raw.Dwg.Version, MiniDWG::Codec::CodePage::Gbk);
                 while (!hs.Failed() && hs.PositionInBits() < u->Raw.Dwg.HandleBits)

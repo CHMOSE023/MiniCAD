@@ -62,7 +62,7 @@ namespace
     struct EmptyObject { const char* File; unsigned long long Handle; const char* Why; };
     const EmptyObject kEmptyObjects[] = {
         {"TchArch/8#\xe6\xa5\xbc-B\xe7\xab\x8b\xe5\x89\x96\xe9\x9d\xa2.dwg", 0x5dee65, "TCH_PATH_ARRAY whose segments are all shorter than one pattern unit"},
-        {"TchArch/8#\xe6\xa5\xbc-B\xe7\xab\x8b\xe5\x89\x96\xe9\x9d\xa2.dwg", 0x6b5d62, "TCH_ARROW without vertices (kernel TDbSymbArrow::IsValid is false)"},
+        {"TchArch/8#\xe6\xa5\xbc-B\xe7\xab\x8b\xe5\x89\x96\xe9\x9d\xa2.dwg", 0x6b5d62, "TCH_ARROW without vertices (Tianzheng does not display it)"},
     };
 
     int g_failed = 0;

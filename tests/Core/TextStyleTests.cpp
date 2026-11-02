@@ -230,7 +230,7 @@ int RunTextStyleTests()
         Check(ok, "镜像：字形与下划线沿基线上下翻转，翻回后照常");
     }
 
-    // ── 4c. 旋转的多行文字：附着点的偏移随文字旋转。管综.dwg 车位块里转 180° 的 "A"（左上附着）
+    // ── 4c. 旋转的多行文字：附着点的偏移随文字旋转。管综样图 车位块里转 180° 的 "A"（左上附着）
     //        以前首行基线落在插入点下方一个字高，画到了 "电动车" 上，差出两个字高 ─────────
     {
         struct PosSink : IDrawSink
@@ -254,6 +254,35 @@ int RunTextStyleTests()
         const bool quarter = Near(sink.pos.x, 100.0) && Near(sink.pos.y, 200.0);   // 单行左下附着：原点就是插入点
         Check(flipped && quarter && box.Min.y > 199.9 && box.Max.y < 220.1,
               "旋转的多行文字：附着点偏移随文字旋转，转 180° 的左上附着画在插入点上方");
+    }
+
+    // ── 4d. 不限宽的居中 / 右对齐多行文字按实际排版宽度定起点（天正表格的居中文字以前按估算宽度整行偏左）─────────
+    {
+        struct MeasureSink : IDrawSink
+        {
+            Math::Point3 pos{};
+            double widthFactor = 0.0, measuredFactor = 0.0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void SetTextWidthFactor(double f) override { widthFactor = f; }
+            double MeasureMTextWidth(const std::string&, uint32_t, double height, double) override { measuredFactor = widthFactor; return 2.0 * height; }
+            void EmitMText(const Math::Point3& p, const std::string&, uint32_t, double, double, double, const Math::Color4&) override { pos = p; }
+            Math::Color4 GetLayerColor(LayerID) const override { return Math::Color4::White(); }
+            bool IsLayerVisible(LayerID) const override { return true; }
+        };
+        MeasureSink sink;
+        MTextEntity center(1, 0, "ABCDEF", Math::Point3(100, 200, 0), 10.0, 0.0, 0.0);
+        center.SetAttachment(MTextAttachment::BottomCenter);
+        center.SetWidthFactor(0.7);
+        center.Draw(sink, false, false);
+        const bool centered = Near(sink.pos.x, 90.0) && Near(sink.measuredFactor, 0.7);    // 量得宽 20：起点在插入点左 10，量时已按自身宽度因子
+        MTextEntity right(2, 0, "ABCDEF", Math::Point3(100, 200, 0), 10.0, 0.0, 0.0);
+        right.SetAttachment(MTextAttachment::BottomRight);
+        right.Draw(sink, false, false);
+        const bool flush = Near(sink.pos.x, 80.0);
+        MTextEntity boxed(3, 0, "ABCDEF", Math::Point3(100, 200, 0), 10.0, 0.0, 50.0);    // 有框宽：仍按框宽对齐
+        boxed.SetAttachment(MTextAttachment::BottomCenter);
+        boxed.Draw(sink, false, false);
+        Check(centered && flush && Near(sink.pos.x, 75.0), "不限宽的居中 / 右对齐多行文字按量得的宽度定起点，有框宽时按框宽");
     }
 
 #ifdef MINICAD_ASSET_DIR
@@ -355,7 +384,7 @@ int RunTextStyleTests()
         Check(ok, "只有一个曲线外的点的轮廓：字形只剩这个点上的零长度线段，不再越界读出随机的起点");
     }
 
-    // ── 8. \U+XXXX（代码页外字符）：管综.dwg 的 MTEXT 存成 "\L\U+8D1F\U+4E00..."，
+    // ── 8. \U+XXXX（代码页外字符）：管综样图的 MTEXT 存成 "\L\U+8D1F\U+4E00..."，
     //       以前去格式码时把 "\U" 当未知转义丢掉，画出 "+8D1F+4E00..." ───────────
     {
         Check(MTextEntity::StripInlineCodes("\\L\\U+8D1F\\u+4e00层\\P\\U+00B0") == "负一层\n°",
@@ -368,7 +397,7 @@ int RunTextStyleTests()
               "单行文字：\\U+XXXX 还原为码点，%% 控制码照旧，不完整的转义原样显示");
     }
 
-    // ── 9. 下划线 / 上划线 / 删除线：管综.dwg 的图名是 "\L\U+8D1F..."，以前 \L 直接丢掉。
+    // ── 9. 下划线 / 上划线 / 删除线：管综样图的图名是 "\L\U+8D1F..."，以前 \L 直接丢掉。
     //       位置按 AutoCAD 2020 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高 ─────────
     {
         const std::string U(1, kUnderlineToggle), O(1, kOverlineToggle), K(1, kStrikeToggle);
@@ -406,7 +435,7 @@ int RunTextStyleTests()
     }
 
 #ifdef MINICAD_ASSET_DIR
-    // ── 10. TrueType 缺字：管综.dwg 的 Arial_5（arial.ttf）样式写中文，以前画成 .notdef 方块；
+    // ── 10. TrueType 缺字：管综样图的 Arial_5（arial.ttf）样式写中文，以前画成 .notdef 方块；
     //        AutoCAD 经 Windows 字体链接照样显示汉字。现在缺的字用自带的 GB2312.ttf 补上 ─────────
     {
         const std::string dir = std::string(MINICAD_ASSET_DIR) + "/fonts/";

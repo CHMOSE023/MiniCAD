@@ -11,13 +11,13 @@ namespace MiniCAD::Tch
         MiniDWG::XYZ        Position;   // 柱的插入点（Z 为底标高）
         std::vector<Vertex> Outline;    // 闭合轮廓，世界坐标；Bulge 为该顶点到下一顶点的凸度
         double              Height = 0;
-        // 材料码（内核 TDbColumn::dwgInFields 的 this+0x104，版本 2 时 0 / 1 / 2 换算为 60 / 70 / 40）：
+        // 材料码（版本 2 时 0 / 1 / 2 换算为 60 / 70 / 40）：
         // 40 砖、60 钢筋混凝土、70 钢；填充规则与墙相同（Tch::MaterialHatch）。版本 1 没有材料，按 0 不填充
         int                 Material = 0;
         double              Scale = 100;    // 出图比例
     };
 
-    // TCH_COLUMN 柱：按 TDbColumn 的私有布局
+    // TCH_COLUMN 柱：按柱的私有布局
     // 版本 < 7 的明文分支解析，必须恰好读完主数据流。轮廓顶点为 2RD（filer 的二维点）加 BD 凸度，
     // 坐标即世界坐标；真实样例为 600×600 方柱，与天正 2014 显示及分解出的轮廓一致
     inline bool DecodeColumn(const MiniDWG::UnknownEntity& entity, TchColumn& column, std::string* diagnostic = nullptr)

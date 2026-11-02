@@ -262,13 +262,18 @@ namespace MiniCAD
 
             double w = 0.0, h = 0.0;
             MeasureBlock(w, h);
-            if (w <= 0.0) w = m_height;
-            if (h <= 0.0) h = m_height;
 
             // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等),只留下划线等装饰的开关。
-            const Math::Point3 drawPos = DrawOrigin(w, h);
+            const std::string shown = StripInlineCodes(m_text, true);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
-            sink.EmitMText(drawPos, StripInlineCodes(m_text, true), m_styleId, m_height, m_rotation, m_boxWidth, color);
+            // 不限宽的居中 / 右对齐：按实际排版的宽度定起点。估算宽度不含字体的字宽与宽度因子，
+            // 天正表格里窄宽度因子的居中汉字整行偏左、越长偏得越多。量不到（返回 0）时仍按估算
+            if (m_boxWidth <= 0.0 && m_columnType == MTextColumnType::None && !IsLeftAttachment())
+                if (const double measured = sink.MeasureMTextWidth(shown, m_styleId, m_height, 0.0); measured > 0.0) w = measured;
+            if (w <= 0.0) w = m_height;
+            if (h <= 0.0) h = m_height;
+            const Math::Point3 drawPos = DrawOrigin(w, h);
+            sink.EmitMText(drawPos, shown, m_styleId, m_height, m_rotation, m_boxWidth, color);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
         }
 
@@ -373,6 +378,11 @@ namespace MiniCAD
                 w = singleW;
                 h = singleH;
             }
+        }
+
+        bool IsLeftAttachment() const
+        {
+            return m_attach == MTextAttachment::TopLeft || m_attach == MTextAttachment::MiddleLeft || m_attach == MTextAttachment::BottomLeft;
         }
 
         // 由附着点求文字块左上角(WCS,旋转前)。

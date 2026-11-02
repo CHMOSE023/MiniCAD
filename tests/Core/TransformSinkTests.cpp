@@ -153,7 +153,7 @@ int RunTransformSinkTests()
           "变换 sink：MarkViewDependent 转发（缩放时需要重建视口内实体）");
 
     // ══ ④ 镜像的块参照：文字基线方向经变换，转发前后各翻转一次 ══════════════
-    // 管综.dwg 右侧车位的"A""2600X6000"在镜像块里，AutoCAD 画成倒的；以前只取块的缩放与转角，画成正的
+    // 管综样图 右侧车位的"A""2600X6000"在镜像块里，AutoCAD 画成倒的；以前只取块的缩放与转角，画成正的
     {
         const double pi = 3.14159265358979323846;
         auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };

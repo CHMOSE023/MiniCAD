@@ -8,7 +8,7 @@
 
 namespace MiniCAD::Tch
 {
-    // TCH_RECTSTAIR 双跑楼梯（CADReader TDbRectStair 读取函数 0x6e8170，版本 < 7 为明文分支）。
+    // TCH_RECTSTAIR 双跑楼梯（版本 < 7 为明文分支）。
     // 局部坐标：插入点为休息平台靠第一跑一侧的外角，楼梯沿 -Y 方向展开；绕插入点转 Rotation
     struct TchRectStair
     {
@@ -36,8 +36,93 @@ namespace MiniCAD::Tch
         MiniDWG::Handle ArrowLayer = MiniDWG::kNullHandle;   // 箭头与文字所在图层（样例为 DIM_SYMB）
     };
 
-    // 按 TDbRectStair 版本 4 的明文分支解析，必须恰好读完主数据流。
-    // 楼梯基类（0x6e6cb0）：天正基类、RC 版本；版本 < 3 时句柄流有一个句柄（版本 3 另有编码分支，不支持）。
+    namespace Detail
+    {
+        // 按标志与镜像方式补全显示选项，检查参数；不支持或不合理时返回原因
+        inline const char* FinishRectStair(TchRectStair& s, std::uint32_t flags, int mirror)
+        {
+            constexpr std::uint32_t unsupported = (1u << 1) | (1u << 3) | (1u << 13) | (1u << 20) | (1u << 21) | 0xff000000u;
+            if (flags & unsupported) return "unsupported stair options";
+            if (s.Floor < 0 || s.Floor > 2) return "unsupported stair floor type";
+            if (mirror != 0 && mirror != 1) return "unsupported stair mirror mode";
+            s.Mirror = mirror == 1;
+            s.ShowArrows = (flags >> 10) & 1;
+            s.LinkedRails = (flags >> 17) & 1;
+            s.ShowLanding = (flags >> 18) & 1;
+            const double values[] = {s.X, s.Y, s.Rotation, s.Scale, s.StepHeight, s.TreadWidth, s.FlightWidth, s.LandingWidth, s.TotalWidth,
+                                     s.RailWidth, s.RailOffset, s.RailExtTop, s.RailExtBottom, s.CutHeight, s.CutAngle, s.TextHeight};
+            for (double v : values)
+                if (!Finite(v)) return "nonfinite stair settings";
+            if (s.Scale <= 0 || s.StepHeight <= 0 || s.TreadWidth <= 0 || s.FlightWidth <= 0 || s.LandingWidth < 0 ||
+                s.TotalWidth < 2 * s.FlightWidth - 1e-9 || s.Steps1 < 2 || s.Steps2 < 2 || s.RailWidth < 0 || s.RailOffset < 0 ||
+                s.RailWidth + s.RailOffset > s.FlightWidth || s.TextHeight <= 0)
+                return "invalid stair settings";
+            if (s.Floor != 2)
+            {
+                if (!(s.CutAngle > 0 && s.CutAngle < std::numbers::pi / 2)) return "unsupported stair cut angle";
+                const double cut = s.CutHeight / s.StepHeight * s.TreadWidth;
+                if (cut < s.TreadWidth / 2 - 1e-6 || cut > (s.Steps1 - 1.5) * s.TreadWidth + 1e-6)
+                    return "stair cut position is outside the first flight";
+            }
+            return nullptr;
+        }
+
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的双跑楼梯：楼梯基类（路径基类）版本 3（RC 版本、RC 密钥、
+        // 路径句柄），双跑楼梯 版本 7：RC 版本、RC 密钥；插入点（三维点）、转角、踏步高、踏步宽、梯段宽、平台宽、两跑踏步数、
+        // 梯间宽、扶手高、层类型、镜像、数值、扶手宽、扶手偏移、标志、3 个数值；4 个句柄；2 个数值与一个字节；扶手伸出（平台端、
+        // 起步端）、剖切高度、剖切角、字高、平台的 4 个长度；3 个句柄（第 2、3 个为文字样式、箭头图层）；数据里还有时再一个数值
+        inline bool DecodeRectStairCipher(const MiniDWG::UnknownEntity& entity, TchRectStair& stair, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported stair base version");
+            f.ReadKey();
+            f.Handle();
+            if (f.Main.ReadByte() != 7) return fail("unsupported native stair version");
+            f.ReadKey();
+            TchRectStair s;
+            s.Scale = f.Scale;
+            const auto p = f.Point3();
+            s.X = p.X; s.Y = p.Y;
+            s.Rotation = f.Double();
+            s.StepHeight = f.Double();
+            s.TreadWidth = f.Double();
+            s.FlightWidth = f.Double();
+            s.LandingWidth = f.Double();
+            s.Steps1 = f.Byte();
+            s.Steps2 = f.Byte();
+            s.TotalWidth = f.Double();
+            f.Double();                                         // 扶手高
+            s.Floor = f.Byte();
+            const int mirror = f.Byte();
+            f.Byte();
+            s.RailWidth = f.Double();
+            s.RailOffset = f.Double();
+            const auto flags = static_cast<std::uint32_t>(f.Long());
+            for (int i = 0; i < 3; ++i) f.Double();
+            for (int i = 0; i < 4; ++i) f.Handle();
+            f.Double(); f.Double(); f.Byte();
+            s.RailExtTop = f.Double();
+            s.RailExtBottom = f.Double();
+            s.CutHeight = f.Double();
+            s.CutAngle = f.Double();
+            s.TextHeight = f.Double();
+            for (int i = 0; i < 4; ++i) f.Double();
+            f.Handle();
+            s.TextStyle = f.Handle();
+            s.ArrowLayer = f.Handle();
+            if (f.HasMoreValues()) f.Short();
+            if (!f.Exact()) return fail("native stair fields do not consume the payload exactly");
+            if (const char* why = FinishRectStair(s, flags, mirror)) return fail(why);
+            stair = s;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
+    // 按 双跑楼梯 版本 4 的明文分支解析，必须恰好读完主数据流。
+    // 楼梯基类：天正基类、RC 版本；版本 < 3 时句柄流有一个句柄（版本 3 另有编码分支，不支持）。
     // 天正 2014 分解核对过的标志位：1、3、13、20、21 会改变图形（起步多一级、圆弧平台、梯边梁等），未实现，遇到即拒绝；
     // 层类型 3 也未实现。剖断中心超出第一跑 [T/2, 跑长 − T/2] 时天正会重算位置与角度，规律未明，同样拒绝
     inline bool DecodeRectStair(const MiniDWG::UnknownEntity& entity, TchRectStair& stair, std::string* diagnostic = nullptr)
@@ -45,6 +130,7 @@ namespace MiniCAD::Tch
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_RECTSTAIR") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeRectStairCipher(entity, stair, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data))
             return fail("unsupported DWG version for native stair");
@@ -83,30 +169,7 @@ namespace MiniCAD::Tch
         for (int i = 0; i < 4; ++i) r.ReadBitDouble();      // 平台相关的 4 个长度，矩形平台下不影响显示
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native stair fields do not consume the payload exactly");
-
-        constexpr std::uint32_t unsupported = (1u << 1) | (1u << 3) | (1u << 13) | (1u << 20) | (1u << 21) | 0xff000000u;
-        if (flags & unsupported) return fail("unsupported stair options");
-        if (s.Floor < 0 || s.Floor > 2) return fail("unsupported stair floor type");
-        if (mirror != 0 && mirror != 1) return fail("unsupported stair mirror mode");
-        s.Mirror = mirror == 1;
-        s.ShowArrows = (flags >> 10) & 1;
-        s.LinkedRails = (flags >> 17) & 1;
-        s.ShowLanding = (flags >> 18) & 1;
-        const double values[] = {s.X, s.Y, s.Rotation, s.Scale, s.StepHeight, s.TreadWidth, s.FlightWidth, s.LandingWidth, s.TotalWidth,
-                                 s.RailWidth, s.RailOffset, s.RailExtTop, s.RailExtBottom, s.CutHeight, s.CutAngle, s.TextHeight};
-        for (double v : values)
-            if (!Detail::Finite(v)) return fail("nonfinite stair settings");
-        if (s.Scale <= 0 || s.StepHeight <= 0 || s.TreadWidth <= 0 || s.FlightWidth <= 0 || s.LandingWidth < 0 ||
-            s.TotalWidth < 2 * s.FlightWidth - 1e-9 || s.Steps1 < 2 || s.Steps2 < 2 || s.RailWidth < 0 || s.RailOffset < 0 ||
-            s.RailWidth + s.RailOffset > s.FlightWidth || s.TextHeight <= 0)
-            return fail("invalid stair settings");
-        if (s.Floor != 2)
-        {
-            if (!(s.CutAngle > 0 && s.CutAngle < std::numbers::pi / 2)) return fail("unsupported stair cut angle");
-            const double cut = s.CutHeight / s.StepHeight * s.TreadWidth;
-            if (cut < s.TreadWidth / 2 - 1e-6 || cut > (s.Steps1 - 1.5) * s.TreadWidth + 1e-6)
-                return fail("stair cut position is outside the first flight");
-        }
+        if (const char* why = Detail::FinishRectStair(s, flags, mirror)) return fail(why);
 
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount + 1 + 4 + 1; ++i) handles.ReadHandle(entity.ObjectHandle);   // 楼梯基类、扶手与栏杆图层等、文字图层

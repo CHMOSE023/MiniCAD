@@ -210,7 +210,7 @@ int main()
           Near(g.Texts[0].Height, 297.5) && Near(g.Texts[0].Rotation, 0),
           "text is centred DIMTXT/2 + DIMGAP above the dimension line");
     {
-        // 文字颜色取标注样式的 DIMCLRT（8#楼-A平面图 的 _TCH_ARCH 为随层：尺寸数字与尺寸线同色，不是白色）
+        // 文字颜色取标注样式的 DIMCLRT（建筑平面样图的 _TCH_ARCH 为随层：尺寸数字与尺寸线同色，不是白色）
         TchDimStyle byLayer;
         byLayer.TextColor = 256;
         Check(g.Texts[0].Color == 7 && BuildDimension(d, byLayer).Texts[0].Color == 256,
@@ -244,7 +244,7 @@ int main()
     Check(g.Texts.size() == 1 && g.Texts[0].Value == "100.55\xC2\xB0" && Near(g.Texts[0].Center, 55102.8, 25161.6) &&
           Near(g.Texts[0].Rotation, 0.230803, 1e-5), "angle text uses two decimals and a degree sign");
     {
-        // DIMAZIN 2 去掉小数末尾的零（8#楼 的 90.00° 在天正 + AutoCAD 里显示为 90°）
+        // DIMAZIN 2 去掉小数末尾的零（建筑样图的 90.00° 在天正 + AutoCAD 里显示为 90°）
         TchDimStyle trailing = style;
         trailing.AngularZeros = 2;
         trailing.AngularDecimals = 4;
@@ -260,14 +260,14 @@ int main()
     Check(DecodeDimension(*DimObject(withText), d) && d.TextOverrides.size() == 1 &&
           BuildDimension(d, style).Texts[0].Value == "轴距", "text overrides come from the text stream");
 
-    // ── 另行指定的文字位置（标志 0x02，8#楼-A平面图 电梯井 93DEE5 的数值）：两端的 100 挤不下，文字移到界线外侧，以该点为中心；
+    // ── 另行指定的文字位置（标志 0x02，建筑平面样图电梯井 93DEE5 的数值）：两端的 100 挤不下，文字移到界线外侧，以该点为中心；
     // 中间一段没有指定，仍在尺寸线上方 ──
     DimSpec moved{{54802.5, 127676.5, 0}, std::numbers::pi, -270.61 / 50, {100, 900, 100}, 0x82};
     moved.Positions = {{0, 54915.0, 128059.61}, {2, 53590.0, 128059.61}};
     Check(DecodeDimension(*DimObject(moved), d) && d.TextPositions.size() == 2 && Near(d.TextPositions[2].first, 53590.0),
           "text positions are decoded per span");
     {
-        const TchDimStyle style25{3, 2.5, 1, 2.5, 1};   // 8#楼 的标注样式：DIMTXT 2.5
+        const TchDimStyle style25{3, 2.5, 1, 2.5, 1};   // 建筑样图的标注样式：DIMTXT 2.5
         d.Scale = 50;
         g = BuildDimension(d, style25);
         Check(g.Texts.size() == 3 && Near(g.Texts[0].Center, 54915.0, 128059.61) && Near(g.Texts[2].Center, 53590.0, 128059.61) &&
@@ -275,7 +275,7 @@ int main()
               "moved span texts are centred on their stored points; the others stay DIMTXT/2 + DIMGAP above the line");
     }
 
-    // ── 竖向标注的方向比 π/2 略大（8#楼 93F105 大 2e-9）：文字仍自下而上读、在尺寸线左侧，不翻到右侧 ──
+    // ── 竖向标注的方向比 π/2 略大（建筑样图 93F105 大 2e-9）：文字仍自下而上读、在尺寸线左侧，不翻到右侧 ──
     DimSpec vertical{{0, 0, 0}, std::numbers::pi / 2 + 2e-9, -2.0, {1000}};
     Check(DecodeDimension(*DimObject(vertical), d) && (g = BuildDimension(d, style)).Texts.size() == 1 &&
               Near(g.Texts[0].Rotation, std::numbers::pi / 2, 1e-6) && Near(g.Texts[0].Center, 200 - 275, 500),

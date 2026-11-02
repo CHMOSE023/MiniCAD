@@ -11,6 +11,7 @@
 #include "Import/TchPathArray.h"
 #include "Import/TchText.h"
 #include "Import/TchAnnotation.h"
+#include "Import/TchSheet.h"
 #include "Import/TchShape.h"
 #include "Import/TchMultiStair.h"
 #include "Import/TchSymbol.h"
@@ -645,7 +646,7 @@ namespace MiniCAD
             }
 
             // $PSLTSCALE：布局页视口里的虚线按图纸单位铺（1，默认）还是跟着视口比例缩（0）。
-            // 读前者的图纸不受影响；后者的图纸（本仓库 0525 总平面图 = 0）里 1:500 视口内的 DASH 应当细到接近实线，
+            // 读前者的图纸不受影响；后者的图纸（总平面样图 B = 0）里 1:500 视口内的 DASH 应当细到接近实线，
             // 而不是按图纸单位铺出与纸面虚线一样疏的段
             void ImportPaperSpaceLineTypeScaling()
             {
@@ -1607,7 +1608,14 @@ namespace MiniCAD
                     if (Tch::DecodeSection(*unknown, section, &nativeReason))
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
-                        return MakeTchSymbol(src, Tch::BuildSection(section), WidthVariant(LookupStyle(section.TextStyle), 0.6 / 0.85));
+                        if (!section.NewStyle)
+                            return MakeTchSymbol(src, Tch::BuildSection(section), WidthVariant(LookupStyle(section.TextStyle), 0.6 / 0.85));
+                        // 新国标样式两端是内视符号，编号同样按显示字体求 Fit 的宽度因子
+                        const TextStyleID style = LookupStyle(section.TextStyle);
+                        const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(style);
+                        auto width = [&](const std::string& text) { return Tch::Detail::DisplayExtent(rec.FontFile, text).Width; };
+                        return MakeTchSymbol(src, Tch::BuildSectionNewStyle(section, m_tchConfig.IndexTextRatio, m_tchConfig.IndexTextMode,
+                                                                            width, rec.WidthFactor > 0 ? rec.WidthFactor : 1.0), style);
                     }
                     Tch::TchIndexPointer indexPointer;
                     if (Tch::DecodeIndexPointer(*unknown, indexPointer, &nativeReason))
@@ -1632,6 +1640,17 @@ namespace MiniCAD
                         const bool nameTtf = !m_scene.GetTextStyleTable().Resolve(nameStyle).IsShx();
                         const bool scaleTtf = !m_scene.GetTextStyleTable().Resolve(scaleStyle).IsShx();
                         return MakeTchSymbol(src, Tch::BuildDrawingName(drawingName, extent, nameTtf, scaleTtf), nameStyle, scaleStyle);
+                    }
+                    Tch::TchInSight inSight;
+                    if (Tch::DecodeInSight(*unknown, inSight, &nativeReason))
+                    {
+                        // 编号是 Fit 对齐的文字：按 MiniCAD 实际显示的字体量宽度求宽度因子，排出来与天正同宽
+                        const TextStyleID style = LookupStyle(inSight.TextStyle);
+                        const TextStyleRecord& rec = m_scene.GetTextStyleTable().Resolve(style);
+                        auto width = [&](const std::string& text) { return Tch::Detail::DisplayExtent(rec.FontFile, text).Width; };
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchSymbol(src, Tch::BuildInSight(inSight, m_tchConfig.IndexTextRatio, m_tchConfig.IndexTextMode, width,
+                                                                    rec.WidthFactor > 0 ? rec.WidthFactor : 1.0), style);
                     }
                     Tch::TchRectStair stair;
                     if (Tch::DecodeRectStair(*unknown, stair, &nativeReason))
@@ -1876,6 +1895,16 @@ namespace MiniCAD
                         return MakeTchGraphics(src, tchText.Multiline ? Tch::BuildMultilineText(tchText, rules)
                                                                       : Tch::BuildText(tchText, rules), textStyle);
                     }
+                    // 天正表格：格线随对象的线型（天正画格线用对象自身的属性），文字主样式为表格的、第二样式为标题的
+                    Tch::TchSheet sheet;
+                    if (Tch::DecodeSheet(*unknown, sheet, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        const TextStyleID mainStyle = LookupStyle(sheet.Style.TextStyle), titleStyle = LookupStyle(sheet.Title.Style.TextStyle);
+                        return MakeTchGraphics(src, Tch::BuildSheet(sheet, TchTextRules(sheet.Style.TextStyle, mainStyle),
+                                                                    TchTextRules(sheet.Title.Style.TextStyle, titleStyle)),
+                                               mainStyle, TchTextStyle(titleStyle));
+                    }
                     // 天正给排水：管线、管件、设备、阀门、井（代理图形都是空的，按私有布局与天正给排水的分解结果显示）
                     Tch::TchPipe pipe;
                     if (Tch::DecodePipe(*unknown, pipe, &nativeReason))
@@ -1986,7 +2015,7 @@ namespace MiniCAD
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(columnBlockId), columnName, Math::Point3{0, 0, 0});
                     }
                     Tch::TchWall wall;
-                    // 非玻璃幕墙与墙画法相同（连接量、按材料填充、门窗处封口）：8#楼-A平面图 玻璃幕墙与墙转角之间的填充墙段是这种幕墙
+                    // 非玻璃幕墙与墙画法相同（连接量、按材料填充、门窗处封口）：建筑平面样图 玻璃幕墙与墙转角之间的填充墙段是这种幕墙
                     const bool curtainWall = unknown->Raw.DxfName == "TCH_CURTAIN_WALL";
                     const bool curtainFields = curtainWall && Tch::DecodeCurtainWall(*unknown, wall);
                     const bool plainCurtain = curtainFields && (wall.Flags & 0x4) == 0;
@@ -1994,7 +2023,7 @@ namespace MiniCAD
                     if (plainCurtain || Tch::DecodeWall(*unknown, wall, &nativeReason))
                     {
                         // 起点（end 0）/ 终点（end 1）接着的墙里有材料不同的：天正在两种材料之间画分界线，这一端画端线；
-                        // 同材料的墙在节点处连成一体，不画（tianzheng.dwg 钢筋混凝土墙与砖墙的夹角、8#楼 墙与玻璃幕墙的丁字接头，天正 2014 显示核对）
+                        // 同材料的墙在节点处连成一体，不画（tianzheng.dwg 钢筋混凝土墙与砖墙的夹角、建筑样图墙与玻璃幕墙的丁字接头，天正 2014 显示核对）
                         auto otherMaterialAt = [&](int end) {
                             for (int k : {0, 1})
                                 if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]); m && *m != wall.Material) return true;
@@ -2097,7 +2126,7 @@ namespace MiniCAD
                         cuts = MergeIntervals(std::move(cuts));
                         const double leftFrom = wall.Joins[0], leftTo = length - wall.Joins[1];
                         const double rightFrom = wall.Joins[2], rightTo = length - wall.Joins[3];
-                        // 比较断口与墙线端点的容差：门窗宽度带浮点误差（8#楼-A平面图 通风井百叶宽 1999.9999999963，
+                        // 比较断口与墙线端点的容差：门窗宽度带浮点误差（建筑平面样图通风井百叶宽 1999.9999999963，
                         // 断口恰到斜接后的墙线端点），按 1e-9 会多出横穿墙厚的封口线和零长的墙线
                         constexpr double tol = 1e-6;
                         // 一侧墙线上轴线参数 t 处的点：超出该侧范围时取端点，该侧退化为点时就是那个点
@@ -2152,7 +2181,7 @@ namespace MiniCAD
                     {
                         // 幕墙（代理图形为空，按天正 2014 分解结果近似）：墙标志含 0x4 时为玻璃幕墙，沿墙厚三等分画 4 条线、方头的一端封口；
                         // 否则（读不出墙的字段时）按普通墙画两条侧边线。都在门窗处断开。直幕墙两端按连接量缩进或伸出，
-                        // 各线在左右两侧的连接量之间按偏移插值，端线与相邻墙的斜接线重合（8#楼-A平面图 与天正 2014 显示核对）；
+                        // 各线在左右两侧的连接量之间按偏移插值，端线与相邻墙的斜接线重合（建筑平面样图与天正 2014 显示核对）；
                         // 弧幕墙不用连接量（样例均为 0）
                         const bool glass = (curtain.Flags & 0x4) != 0;
                         const double width = curtain.LeftWidth + curtain.RightWidth;
@@ -2232,7 +2261,7 @@ namespace MiniCAD
                             if (cursor < to) addPiece(off, cursor, to);
                         }
                         // 玻璃幕墙的端线：只在方头的一端画；两侧连接量不同（与相邻幕墙斜接）的一端不画，
-                        // 各线在斜接线上与相邻幕墙的线相接（8#楼-A平面图 两段玻璃幕墙的转角，天正 2014 显示核对）
+                        // 各线在斜接线上与相邻幕墙的线相接（建筑平面样图 两段玻璃幕墙的转角，天正 2014 显示核对）
                         if (glass)
                         {
                             const double left = curtain.LeftWidth, right = -curtain.RightWidth;
@@ -2571,7 +2600,7 @@ namespace MiniCAD
                     //    （实测 `01-曲陵路.dwg` 5 个 Twist=95.7° 的浮动视口）。
                     // ⚠ DCS 的原点是视图目标点（组码 17/27/37），要加回去。
                     //    多数视口目标点是原点；经 DVIEW / 动态观察过的视口目标点在模型上、
-                    //    12/22 只是相对它的小偏移（实测 0525 总平面图的视口 effb9：
+                    //    12/22 只是相对它的小偏移（实测总平面样图 B 的视口 effb9：
                     //    目标 (64093,86195)、12/22=(-80.7,-5.2)，不加目标点就对到了世界原点附近，
                     //    视口里只剩零星几笔）。
                     vp->SetTwist(e->TwistAngle);
@@ -2750,7 +2779,7 @@ namespace MiniCAD
                 const double z = 0;
                 auto pt = [&](const Tch::TchGraphics::Point& p) { return Math::Point3{p.X, p.Y, z}; };
                 // 符号标注（坐标、箭头、剖切符号、引出标注等）：天正画它们时不用对象自身的线型，线一律是实线
-                //（实测 0525 总平面图的 TCH_COORD F656B：对象线型 __DASH，AutoCAD 里引线是实线）
+                //（实测总平面样图 B 的 TCH_COORD F656B：对象线型 __DASH，AutoCAD 里引线是实线）
                 auto continuous = [&](Entity& e) {
                     if (!m_tchContinuous) return;
                     EntityAttr attr = e.GetAttr();
@@ -2762,6 +2791,15 @@ namespace MiniCAD
                 const auto blockId = m_scene.GetBlockTable().Create(name);
                 auto* block = m_scene.GetBlockTable().Find(blockId);
                 block->SetFlags(BlockEntity::Anonymous);
+                for (const auto& f : g.Fills)
+                {
+                    std::vector<Math::Point3> pts;
+                    std::vector<double> bulges;
+                    for (const auto& p : f.Points) { pts.push_back(pt(p.P)); bulges.push_back(p.Bulge); }
+                    auto hatch = Make<HatchEntity>(src, nullptr, Polyline(std::move(pts), std::move(bulges)));
+                    onLayer(*hatch, f.Layer);
+                    block->AddEntity(std::move(hatch));
+                }
                 for (const auto& l : g.Lines)
                 {
                     auto line = Make<LineEntity>(src, nullptr, pt(l.A), pt(l.B));
@@ -3048,7 +3086,7 @@ namespace MiniCAD
                 const AABB box = def->GetBoundingBox();
                 if (!(box.Max.x > box.Min.x && box.Max.y > box.Min.y)) { reason = "path array pattern block is empty"; return nullptr; }
                 const auto units = Tch::BuildPathArray(a, box.Min.x, box.Min.y, box.Max.x, box.Max.y);
-                // 每段都短于一个单元时天正不显示任何内容（8#楼各图中的挡土墙线图案，天正 2014 分解结果为空），生成空块
+                // 每段都短于一个单元时天正不显示任何内容（各张建筑样图中的挡土墙线图案，天正 2014 分解结果为空），生成空块
                 std::string name = "*U_TCH_" + std::to_string(src.ObjectHandle);
                 while (m_scene.GetBlockTable().Get(name)) name += "_";
                 const auto blockId = m_scene.GetBlockTable().Create(name);
@@ -3110,13 +3148,13 @@ namespace MiniCAD
                 const auto* host = m_db.FindAs<Dwg::UnknownEntity>(o.Wall);
                 Tch::TchWall wall;
                 const bool hasWall = host != nullptr && Tch::DecodeWall(*host, wall);
-                // 幕墙上的门窗：幕墙与墙共用前缀，从中取墙厚（8#楼平面图、详图的幕墙窗与天正 2014 分解结果核对）
+                // 幕墙上的门窗：幕墙与墙共用前缀，从中取墙厚（建筑平面样图、详图的幕墙窗与天正 2014 分解结果核对）
                 Tch::TchWall curtain;
                 const bool hasCurtain = !hasWall && host != nullptr && Tch::DecodeWallPrefix(*host, curtain);
                 const Tch::TchWall* sides = hasWall ? &wall : hasCurtain ? &curtain : nullptr;
                 if (o.Type == Tch::TchOpening::Kind::Hole)
                 {
-                    // 洞口（8#楼详图的分解结果核对）：门洞两端各一条横穿墙厚的线；没有所在墙时按门窗自身的厚度居中
+                    // 洞口（建筑详图样图的分解结果核对）：门洞两端各一条横穿墙厚的线；没有所在墙时按门窗自身的厚度居中
                     const double ux = std::cos(o.Angle), uy = std::sin(o.Angle);
                     double nx = -uy, ny = ux, left = o.Thickness / 2, right = o.Thickness / 2;
                     if (sides != nullptr)
@@ -3142,7 +3180,7 @@ namespace MiniCAD
                 double depth = o.Width;
                 if (o.Type == Tch::TchOpening::Kind::Window)
                 {
-                    // 窗的 Y 缩放为墙厚；没有所在墙（句柄为空）时为门窗自身的厚度（8#楼平面图独立窗的分解结果核对）
+                    // 窗的 Y 缩放为墙厚；没有所在墙（句柄为空）时为门窗自身的厚度（建筑平面样图独立窗的分解结果核对）
                     if (sides != nullptr) depth = sides->LeftWidth + sides->RightWidth;
                     else if (o.Wall == Dwg::kNullHandle && o.Thickness > 0) depth = o.Thickness;
                     else
@@ -3161,7 +3199,7 @@ namespace MiniCAD
                 if (o.Type != Tch::TchOpening::Kind::Door || !hasWall || o.InGroup || (o.Flags & 0x600) == 0)
                     return result;
 
-                // 门槛线（天正内核 TDbOpening::DrawDoorLine）：门窗标志 0x200 画在门扇一侧的墙面上，0x400 画在门扇对面，
+                // 门槛线：门窗标志 0x200 画在门扇一侧的墙面上，0x400 画在门扇对面，
                 // 两位都有时两侧都画；横跨门洞，长度等于门宽。tianzheng.dwg 同一墙上两扇门（0x400 / 0）及改了标志、镜像的变体
                 // 在天正 2014 里核对：线随门扇翻到哪一侧与镜像无关。天正分解门时不出这条线
                 const double ux = std::cos(o.Angle), uy = std::sin(o.Angle);

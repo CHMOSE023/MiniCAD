@@ -12,7 +12,7 @@ namespace MiniCAD
 {
     namespace
     {
-        // 图案数据：内置的公制图案、天正自带的图案（同 CADReader 的做法编进程序，不用另放天正的 acad.pat）
+        // 图案数据：内置的公制图案、天正自带的图案（编进程序，不用另放天正的 acad.pat）
 #include "Scene/HatchPatternLibrary.inc"
 
         std::string Upper(std::string_view s)

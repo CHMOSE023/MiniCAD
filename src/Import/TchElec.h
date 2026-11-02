@@ -8,12 +8,12 @@
 #include <string>
 #include <vector>
 
-// 天正电气的桥架（TCH_CABLETRY）、桥架配件（TCH_EFITTING）与天正内核的折断线（TCH_RUPTURE）。
-// 布局依据 tch_PipeBase.arx（天正给排水 / 电气共用，带符号）与 tch_kernal.arx 的 dwgInFields，
-// 显示与天正给排水（AutoCAD 2014）分解天正电气 1#楼平面图、CK-06 照明平面图的结果核对。这些对象都不写代理图形
+// 天正电气的桥架（TCH_CABLETRY）、桥架配件（TCH_EFITTING）与折断线（TCH_RUPTURE）。
+// 布局按天正给排水 / 电气共用的管线基类整理，
+// 显示与天正给排水（AutoCAD 2014）分解电气平面样图、电气照明样图的结果核对。这些对象都不写代理图形
 namespace MiniCAD::Tch
 {
-    // TDbXDataMap：字符串键的属性表。先是若干字符串直到 "TDBXDATAMAP_BLOCK_BEGIN_"，之后每项为键（字符串）、
+    // 属性表：字符串键的属性表。先是若干字符串直到 "TDBXDATAMAP_BLOCK_BEGIN_"，之后每项为键（字符串）、
     // BL 类型、按类型读值，直到键为 "TDBXDATAMAP_BLOCK_END_"。类型 3 BL，5 BD，8 / 0x4009 字符串，
     // 0x13 软指针、0x15 硬指针（在句柄流），0x4005 / 0x4006 点（3BD），0x4007 / 0x4008 向量（3BD，键带 "$vector3d" 后缀）
     struct TchXDataMap
@@ -72,7 +72,7 @@ namespace MiniCAD::Tch
             return !r.Failed() && !text.Reader.Failed();
         }
 
-        // TDbCurveEntity（天正基类）→ TDbInterfacesObj：BS 版本，版本 1 时句柄流中 2 个硬指针
+        // 天正曲线基类（天正基类）→ 接口基类：BS 版本，版本 1 时句柄流中 2 个硬指针
         inline bool ReadInterfacesObj(const MiniDWG::RawDwgData& data, MiniDWG::DwgBitReader& r, TextStream*& text,
                                       std::optional<TextStream>& storage, TchBase& base, int& handles)
         {
@@ -131,10 +131,10 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_CABLETRY 桥架（TDbECabletry → TDbPipeBase → TDbInterfacesObj）──
-    // TDbPipeBase：BS 版本；版本 1：属性表、BL 边界数（每条：软指针、BL 段数、每段 3 × 3BD、BS、BL、BD）、BL 软指针数；
-    // 之后 TDbECabletry 的 BS 版本。显示用属性表：Start / End 中心线端点，B 宽度；边线在对象自身的图层
-    // （Cabletray_Layer 不决定显示：CK-06 块内桥架配件的 Cabletray_Layer 为 CABLETRAY_OTHER，分解结果仍在自身图层）
+    // ── TCH_CABLETRY 桥架（桥架 → 管线基类 → 接口基类）──
+    // 管线基类：BS 版本；版本 1：属性表、BL 边界数（每条：软指针、BL 段数、每段 3 × 3BD、BS、BL、BD）、BL 软指针数；
+    // 之后 桥架 的BS版本。显示用属性表：Start / End 中心线端点，B 宽度；边线在对象自身的图层
+    // （Cabletray_Layer 不决定显示：电气照明样图 块内桥架配件的 Cabletray_Layer 为 CABLETRAY_OTHER，分解结果仍在自身图层）
     struct TchCableTray
     {
         MiniDWG::XYZ Start, End;
@@ -142,7 +142,7 @@ namespace MiniCAD::Tch
         TchCableStroke Stroke;
     };
 
-    // 只读出属性表；天正暖通风管 TCH_DBHVACDUCT（TDbHvacDuct）同属 TDbPipeBase，布局相同（三张暖通图 539 个全部读通），显示规则未核对
+    // 只读出属性表；天正暖通风管 TCH_DBHVACDUCT（风管）同属管线基类，布局相同（三张暖通图 539 个全部读通），显示规则未核对
     inline bool ReadCableTrayMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
@@ -212,8 +212,8 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_EFITTING 桥架配件（TDbEFitting → TDbFittingBase → TDbInterfacesObj）──
-    // TDbFittingBase：BS 版本；版本 1：软指针、属性表、两个 BL 列表计数（元素在句柄流）；之后 TDbEFitting 的 BS 版本。
+    // ── TCH_EFITTING 桥架配件（桥架配件 → 管件基类 → 接口基类）──
+    // 管件基类：BS 版本；版本 1：软指针、属性表、两个 BL 列表计数（元素在句柄流）；之后 桥架配件 的BS版本。
     // 属性表：Mid 中心线交点，B 宽度，Corner 非 0 时内角为圆弧（90° 弯通、三通、四通），IdCNT1～4 所接桥架；按类型：
     // 弯通（有 Elbow）：MajBr / MinBr 两支方向，L 每支长度，Elbow 1 为 90° 弯通、2 为 45° 弯通；
     // 三通（有 Tee）：MajBr 主路方向，MinBr 支路方向，L1 主路全长，L2 / 2 为内角切点到 Mid 的距离；
@@ -231,7 +231,7 @@ namespace MiniCAD::Tch
         MiniDWG::Handle Connected[2] = {MiniDWG::kNullHandle, MiniDWG::kNullHandle};
     };
 
-    // 只读出属性表（诊断工具也用它打印属性）；天正暖通风管管件 TCH_DBHFITTING（TDbHvacFitting）同属 TDbFittingBase
+    // 只读出属性表（诊断工具也用它打印属性）；天正暖通风管管件 TCH_DBHFITTING（风管管件）同属管件基类
     inline bool ReadCableFittingMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
@@ -248,7 +248,7 @@ namespace MiniCAD::Tch
         if (r.ReadBitShort() != 1) return fail("unsupported cable tray fitting version");
         ++handles;                                                  // 软指针
         if (!Detail::ReadXDataMap(r, *text, map, handles)) return fail("invalid cable tray fitting property map");
-        // 两个列表的元素都在句柄流中（排在属性表的句柄之后），主数据流只有计数（CK-T 暖通平面图 10 个风管管件核对：计数非 0 时也恰好读完）
+        // 两个列表的元素都在句柄流中（排在属性表的句柄之后），主数据流只有计数（暖通大样图 10 个风管管件核对：计数非 0 时也恰好读完）
         const int list1 = r.ReadBitLong(), list2 = r.ReadBitLong();
         if (r.ReadBitShort() > 1) return fail("unsupported cable tray fitting class version");
         if (r.Failed() || r.PositionInBits() != data.MainBits)
@@ -358,14 +358,14 @@ namespace MiniCAD::Tch
         auto orient = [&](P d, double fallback) {
             const P plus{f.Mid.X + d.X * arm, f.Mid.Y + d.Y * arm}, minus{f.Mid.X - d.X * arm, f.Mid.Y - d.Y * arm};
             double best = 1e300, sign = fallback;
-            for (const auto& s : trays)       // 只认末端贴着的桥架：另一支所接的桥架不能决定这一支（CK-06 只有一支接桥架的弯通）
+            for (const auto& s : trays)       // 只认末端贴着的桥架：另一支所接的桥架不能决定这一支（电气照明样图 只有一支接桥架的弯通）
             {
                 const double a = distance(plus, s), b = distance(minus, s);
                 if (std::min(a, b) < best && std::min(a, b) < f.Width) { best = std::min(a, b); sign = a <= b ? 1.0 : -1.0; }
             }
             return P{d.X * sign, d.Y * sign};
         };
-        // 没有所接桥架时：1#楼平面图的样例中 90° 弯通的主路方向指向 Mid，45° 弯通背离 Mid，支路方向都背离 Mid
+        // 没有所接桥架时：电气平面样图的样例中 90° 弯通的主路方向指向 Mid，45° 弯通背离 Mid，支路方向都背离 Mid
         const P u = orient(unit(f.Major), f.Elbow == 1 ? -1.0 : 1.0), v = orient(unit(f.Minor), 1.0);
         const double cosine = u.X * v.X + u.Y * v.Y;
         if (std::abs(cosine) > 1 - 1e-6) return g;
@@ -465,7 +465,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_RUPTURE 折断线（TDbSymbRupture）──
+    // ── TCH_RUPTURE 折断线（折断线）──
     // 天正基类、RC 版本（1～2；版本 2 再 RC 密钥，密钥 < 16 为明文）、2RD 起点、2RD 终点、RC
     struct TchRupture
     {

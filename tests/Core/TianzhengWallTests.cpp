@@ -40,8 +40,8 @@ namespace {
         return e;
     }
 
-    // 幕墙：墙的字段（两侧各 100）之后是 TDbCurtainWall::dwgInFields 的 RC 版本、RC、6 个 BD、2 个 RC；
-    // 数值按 8#楼-A平面图 的幕墙（4 个 BD 非 0、1，这一段共 300 位）。flags 0x1810c 为玻璃幕墙，0x1c100 为普通
+    // 幕墙：墙的字段（两侧各 100）之后是幕墙自己的 RC 版本、RC、6 个 BD、2 个 RC；
+    // 数值按建筑平面样图的幕墙（4 个 BD 非 0、1，这一段共 300 位）。flags 0x1810c 为玻璃幕墙，0x1c100 为普通
     std::unique_ptr<UnknownEntity> CurtainFixture(XYZ start, XYZ end, std::array<double, 4> joins, int material, std::uint32_t flags,
                                                   int curtainVersion = 2)
     {
@@ -156,11 +156,11 @@ int main()
             "converted wall geometry survives export and reimport");
     }
 
-    // ── 幕墙（8#楼-A平面图 外窗所在的墙）：玻璃幕墙 (0,0)→(0,5200) 起点两侧缩进 100（丁字接到墙上），
+    // ── 幕墙（建筑平面样图外窗所在的墙）：玻璃幕墙 (0,0)→(0,5200) 起点两侧缩进 100（丁字接到墙上），
     // 普通幕墙 (0,5500)→(0,5200) 是转角处的填充墙段，起点斜接（一侧缩进 100、一侧伸出 100）──
     const auto plain = CurtainFixture({0, 5500, 0}, {0, 5200, 0}, {100, 0, -100, 0}, 30, 0x1c100);
     const auto glass = CurtainFixture({0, 0, 0}, {0, 5200, 0}, {100, 0, 100, 0}, 20, 0x1810c);
-    check(plain->Raw.Dwg.MainBits == 1029 + 300, "synthetic curtain wall reproduces the 8#楼 layout (1029 wall bits + 300 curtain bits)");
+    check(plain->Raw.Dwg.MainBits == 1029 + 300, "synthetic curtain wall reproduces the 建筑样图 layout (1029 wall bits + 300 curtain bits)");
     check(MiniCAD::Tch::DecodeCurtainWall(*plain, wall) && wall.Start.Y == 5500 && wall.Joins[0] == 100 && wall.Joins[2] == -100 &&
         wall.Material == 30 && wall.Flags == 0x1c100 && !MiniCAD::Tch::DecodeWall(*plain, wall),
         "curtain wall decodes the wall fields (joins, material, flags); DecodeWall still rejects curtain walls");

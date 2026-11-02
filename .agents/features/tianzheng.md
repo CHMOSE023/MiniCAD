@@ -16,11 +16,13 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | 文件 | 对象 |
 |---|---|
 | `TchOpening.h` | 天正基类（`TCH_Base`）的私有布局（R2007 起字符串在文字流，R2004 及更早嵌在主数据流）、门窗 |
+| `TchCipher.h` | `Tch::Detail::CipherReader`：新版对象的读取；各类的头文件有 `Decode*Cipher` 分支。也能读旧版明文对象 |
+| `TchSheet.h` | 天正表格（`TCH_SHEET`）：`Tch::DecodeSheet` 读出行、列、合并区、单元格与标题，`Tch::BuildSheet` 画格线与文字 |
 | `TchWall.h` | 墙、幕墙（`Tch::DecodeCurtainWall` 读出与墙相同的字段；读不出时 `Tch::DecodeWallPrefix` 只取轴线与墙厚） |
 | `TchColumn.h` | 柱 |
 | `TchStair.h`、`TchMultiStair.h` | 双跑楼梯；双分、交叉、剪刀、三角、矩形转角等楼梯 |
 | `TchDimension.h` | 尺寸标注（逐点、角度 / 弧长）、轴号 |
-| `TchSymbol.h`、`TchAnnotation.h` | 符号：坐标、箭头、剖切、索引、图名、引出标注、标高、指北针等 |
+| `TchSymbol.h`、`TchAnnotation.h` | 符号：坐标、箭头、剖切、索引、图名、内视符号、引出标注、标高、指北针等 |
 | `TchText.h` | 天正文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | 天正矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管与管件 |
@@ -28,22 +30,24 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 
 ## 约束
 
-- 布局按版本分支解析，必须**恰好读完主数据流**；遇到未核对的版本按不支持处理（跳过并 `LOG_WARN`），不要猜字段
-- 符号类（坐标、箭头、剖切、引出标注、标高等）的线按实线组装，不用对象自身的线型（原图对象线型可能是 `__DASH`，天正显示仍是实线）
-- 天正文字的显示宽度因子写在多行文字实体上（`MTextEntity::SetWidthFactor`），不派生文字样式
-- 天正的中西文混排文字拆成西文、汉字段（`Tch::Detail::AddRuns`）：各段起点按天正步进排，**画出的宽度也取天正步进**——按 MiniCAD 实际显示的字体（西文 simplex、汉字 TSSDCHN，`Detail::DisplayExtent`）反算每段的宽度因子。原图常用的大字体 GBCBIG 程序不带，替代的 TSSDCHN 汉字宽约 37%，按字体自身宽度画会压到下一段、长句冲出表格（8#楼平面的平面小说明）。天正单行文字（含纯西文 / 纯汉字）、天正多行文字的符号字体分段、引出标注都按这条规则；引出标注的注释符号字宽乘样式宽度因子（`_TCH_DIM` 宽 0.7 时以前中间空出一截）
-- 天正上标 `^U…^U`（`m^U2^U` 为 m²）：字高为本段的一半、抬高 0.5 × 名义字高，每字步进 0.35 × 西文步进（8#楼平面房间面积的分解结果核对）；TrueType 样式的上标未核对，原样显示
-- 墙：门窗断口两侧的墙端各画一条横穿墙厚的封口线；墙与同材料的墙相接处不封口（每段墙各画端线会在节点处多出接缝），接着的墙（`TchWall::Connections`，句柄流里起点、终点各两个）有材料不同的，这一端画端线——天正在两种材料之间画分界线（tianzheng.dwg 钢筋混凝土墙与砖墙的夹角、8#楼 墙与玻璃幕墙的丁字接头）。断口与墙线端点比较用 1e-6 的容差：门窗宽度带浮点误差（8#楼 通风井百叶宽 1999.9999999963），断口恰到斜接后的墙线端点时按 1e-9 会多出封口线
-- 幕墙（`TCH_CURTAIN_WALL`）：内核 `TDbCurtainWall::dwgInFields` 先读墙的全部字段（连接量、材料码等），其后是幕墙自己的 RC 版本、RC、6 个 BD、2 个 RC。非玻璃幕墙（标志不含 0x4）与墙画法相同：按连接量斜接、按材料填充、门窗处封口（8#楼-A平面图 外窗上方转角处的填充墙段）。玻璃幕墙沿墙厚三等分画 4 条线，两端按连接量缩进或伸出，各线的缩进量在左右两侧之间按偏移插值（端点落在与相邻墙的斜接线上）；方头的一端封口，两侧连接量不同（与相邻幕墙斜接）的一端不封口。天正分解块内对象时先分解的邻墙会断开连接，分解结果的幕墙端部不缩进、斜接处成了方头，这些以天正 2014 的显示截图为准（几何回归数据里相应的线段记为 Known）
-- 墙柱填充（`Importer::MakeTchHatch`）：图纸设置 `TCH_DBCONFIG`（`Tch::DecodeConfig`）里的“填充”开关打开时才填；按材料码（墙 `TchWall::Material`、柱 `TchColumn::Material`：10 轻质隔墙、30 / 31 / 32 填充墙、40 砖、50 石、60 钢筋混凝土、70 钢）取设置里的图案名，出图比例小于详图比例（默认 100）时用详图图案。天正的默认值是钢筋混凝土标准填充实心、砖详图“普通砖”、钢筋混凝土详图“钢筋混凝土”，其余不填；8#楼-A平面图 把轻质隔墙等改成了卵石砌体、加气混凝土等。填充放在 `PUB_HATCH` 图层、颜色随层，图案比例为出图比例；图案按名称经 `HatchPatternLibrary::FindTianzheng` 取：天正自带的 acad.pat（T20 电气 V9 的 183 个，天正建筑 2014、T20、暖通的同名图案定义相同）转写在 `src/Scene/HatchPatternLibrary.inc`（与内置的公制图案放在一起），像 CADReader 那样编进程序，不用另放文件；与 AutoCAD 同名的标准图案（ANSI31 等）天正改成了 acadiso 的一半，只在这里用，图案库里的标准图案不变。天正表里没有的再找图案库（`patterns` 目录另加的），都没有就不画。天正自己的 114 个图案也在图案库里，填充对话框可选，网页版同样有
-- 尺寸标注：标志 0x02 的各段文字位置（`TchDimension::TextPositions`，天正里拖动过的文字）是文字中心，有就用（8#楼 电梯井：挤不下的移到界线外侧、上一行或尺寸线下方）。文字方向竖直带浮点误差时按自下而上读（`Detail::Upright` 容差 1e-6）
-- 文字颜色：尺寸、半径标注的数字取对象引用的标注样式的 DIMCLRT（`TchDimStyle::TextColor`；8#楼 各图的 `_TCH_ARCH` 为随层，天正 + AutoCAD 里数字与尺寸线同色；电气 CK、1#楼 的多为 7 号色，个别为随块）。轴号编号放在对象另行引用的文字图层上、随层（`TchAxisLabel::TextLayer`，内核 `TDbAxisLabelSet::GetTextLayerId`，天正默认 `AXIS_TEXT`；句柄流里文字样式之后，版本 > 1 才有）。索引符号、引出标注、箭头引注、剖切符号、指北针、楼梯的文字固定 7 号色，图名按对象里存的颜色（样例为 7）：这些对象也另行引用文字图层（多为 `PUB_TEXT`），但天正显示时不用它——在天正 2014 里把 `PUB_TEXT` 改红、对象图层改蓝后截图，这些文字仍是白色（8#楼-A平面图，2026-10-29）。天正单行 / 多行文字随块。角度标注按 DIMAZIN 去零（8#楼 为 2：`90.00°` 显示为 `90°`，`TchDimStyle::AngularZeros`）。`MiniCADDwgInspect` 的 `DIMSTYLE` 行打印 `azin`、`clrt` / `clrd` / `clre`
-- 与天正显示对照颜色的办法：脚本里 `_.OPEN` 副本后用 `-LAYER C <颜色> <图层，可用 * 通配>` 把相关图层改成好认的颜色，再 `ZOOM W` + `PNGOUT`（天正 2014 一次运行只截一张），按像素取色；MiniCAD 用 AutoCAD 另存的改色副本加 `MINICAD_BENCH_VIEWS` 同窗口渲染对比。AutoCAD 缩放后不重生成时圆弧显示成折线，不是几何差别
-- 天正矩形：矩形标志（`TchRect::Flag`，内核 `TDbRect::ExplodeOrDraw2d`）1 加左下—右上的对角线、2 加左上—右下的、3 两条都加（8#楼-A平面图 暖通套管规格表的套管图例）
-- 门槛线：门窗标志（`TchOpening::Flags`）0x200 画在门扇一侧的墙面上、0x400 画在门扇对面，都没有时不画（天正内核 `TDbOpening::DrawDoorLine`；tianzheng.dwg 改了标志、镜像的变体在天正里核对过，线随门扇翻转）。天正分解门时不出这条线
-- 几何以天正（AutoCAD 2014 + 对应天正版本）分解出的结果为准核对；显示宽度、遮挡等分解结果看不出的以天正的显示截图为准。脚本里核对时先用天正样板启动（`acad.exe /nologo /p TArch9 /t <TArch2014\sys19x64\ACAD.DWT> /b 脚本`）、在脚本里 `_.OPEN` 图纸：把图纸作为启动参数时图纸先于插件读入，天正对象成了代理，分解不出东西
+- **解析**：按版本分支，必须恰好读完主数据流；未核对的版本按不支持处理（跳过并 `LOG_WARN`），不要猜字段。新版对象经 `Tch::Detail::CipherReader` 读，旧版明文对象也走它
+- **天正表格**：`Tch::DecodeSheet` / `Tch::BuildSheet`；读完子对象要恢复外层状态（`Tch::Detail::SheetLayer`）；文字放不放得下按天正步进估宽（`Tch::Detail::SheetTextWidth`）。未处理：格线的颜色与线型、单元格里的图块、主样式与标题样式以外的单元格文字样式、多行单元格里的上标
+- **内视符号**：`Tch::DecodeInSight` / `Tch::BuildInSight`；编号大小取对象的比例，为 0 时取 `TchConfig::IndexTextRatio` / `TchConfig::IndexTextMode`；实心区域经 `TchGraphics::Fills` 画成 SOLID 填充（`Importer::MakeTchGraphics`）。未做：遮罩、视图翻转时上下文字对调
+- **剖切符号**：旧样式 `Tch::BuildSection`，新国标样式 `Tch::BuildSectionNewStyle`；样式开关在 `Tch::Detail::CipherReader::XData` 里，旧版明文对象一律旧样式
+- **对称轴**：`Tch::BuildSymmetry`，两端各两条横线，距端点 Gap、Gap + Spacing（乘比例）
+- **符号类**（坐标、箭头、剖切、引出标注、标高等）的线一律按实线组装，不用对象自身的线型
+- **天正文字**：显示宽度因子写在多行文字上（`MTextEntity::SetWidthFactor`），不派生文字样式；不限宽的居中 / 右对齐按实际排版宽度（`IDrawSink::MeasureMTextWidth`）定起点。中西文混排拆段（`Tch::Detail::AddRuns`），各段起点与画出的宽度都取天正步进，按实际显示的字体（`Detail::DisplayExtent`）反算宽度因子
+- **上标** `^U…^U`：字高为本段一半、抬高 0.5 × 名义字高、每字步进 0.35 × 西文步进；TrueType 样式未核对
+- **墙**（`TchWall::Connections`）：门窗断口两侧封口；同材料相接处不封口，材料不同的一端画分界线；断口与墙线端点比较用 1e-6 容差
+- **幕墙**：非玻璃幕墙画法同墙；玻璃幕墙沿墙厚三等分画 4 条线，两端按连接量缩进或伸出，方头一端封口、与相邻幕墙斜接的一端不封口
+- **墙柱填充**（`Importer::MakeTchHatch`）：图纸设置（`Tch::DecodeConfig`）的填充开关打开时才填；按材料码（`TchWall::Material`、`TchColumn::Material`）取图案，出图比例小于详图比例时用详图图案；图案经 `HatchPatternLibrary::FindTianzheng` 取，找不到就不画；填充放 `PUB_HATCH` 图层、随层
+- **尺寸标注**：有拖动过的文字位置（`TchDimension::TextPositions`，文字中心）就用；竖直方向带误差时按自下而上读（`Detail::Upright`）
+- **文字颜色**：尺寸数字取标注样式的 DIMCLRT（`TchDimStyle::TextColor`）；轴号放在对象引用的文字图层上、随层（`TchAxisLabel::TextLayer`）；索引、引出标注、箭头引注、剖切、指北针、楼梯的文字固定 7 号色，图名按对象存的颜色；天正单行 / 多行文字随块；角度标注按 DIMAZIN 去零（`TchDimStyle::AngularZeros`）
+- **天正矩形**（`TchRect::Flag`）：1、2、3 分别加一条或两条对角线
+- **门槛线**（`TchOpening::Flags`）：0x200 画在门扇一侧、0x400 画在对面，都没有时不画
+- **核对基准**：几何以天正分解结果为准，显示宽度、遮挡等以天正的显示截图为准。脚本核对时先用天正的样板启动，再在脚本里 `_.OPEN` 图纸：把图纸作为启动参数时图纸先于天正插件读入，天正对象成了代理，分解不出东西
 
 ## 测试与排查
 
-- 按对象分的测试程序：`MiniCADTianzhengTests`（墙）、`MiniCADTchImportTests`、`MiniCADTchOpeningTests`、`MiniCADTchDimensionTests`、`MiniCADTchSymbolTests`、`MiniCADTchStairTests`、`MiniCADTchPathArrayTests`、`MiniCADTchGeometryTests`；样例图纸多在本机 `tests/Data`，不存在时跳过
-- `MiniCADDwgInspect` 加 `MINICAD_GEOM=1` 输出天正对象生成的几何（与天正分解结果比对），`MINICAD_RAWOBJ=<DXF 名>` 导出某类对象的原始数据流，`MINICAD_H=<句柄>` 查看指定对象；详见 skill `drawing-debug`
+- 按对象分的测试程序：`MiniCADTianzhengTests`（墙）、`MiniCADTchImportTests`、`MiniCADTchOpeningTests`、`MiniCADTchDimensionTests`、`MiniCADTchSymbolTests`、`MiniCADTchCipherTests`（新版对象：合成对象往返、内视符号与剖切符号新国标样式、图纸设置）、`MiniCADTchSheetTests`（天正表格：合成的新旧版表格、格线与文字位置）、`MiniCADTchStairTests`、`MiniCADTchPathArrayTests`、`MiniCADTchGeometryTests`；样例图纸多在本机 `tests/Data`，不存在时跳过
+- `MiniCADDwgInspect` 加 `MINICAD_GEOM=1` 输出天正对象生成的几何（与天正分解结果比对），`MINICAD_RAWOBJ=<DXF 名>` 导出某类对象的原始数据流，`MINICAD_H=<句柄>` 查看指定对象，`DIMSTYLE` 行打印 `azin`、`clrt` / `clrd` / `clre`；详见 skill `drawing-debug`

@@ -100,7 +100,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
 2. 渲染代码移到 `apps/Render`，加 `cmake/Render.cmake`（目标 `MiniCADRender`、`MiniGUI_D3D11`、`MiniGUI_GLES3`、`MiniGUI_Software`）；网页版同样改用 `GLES3GraphicsDevice`
 3. 验收结果：
    - 桌面版 `--selftest` 0 失败；`MiniGUIGolden` 47 个场景、`MiniGUITests` 165 个用例全部通过
-   - `--bench`（总平面图1008、0525 总平面图）模型页、布局页截图与改动前逐字节相同；帧时间、内存不变。OLE 对象截图同一个 exe 连跑几次就不同，是原有的不确定性，与本次改动无关
+   - `--bench`（总平面样图 A、总平面样图 B）模型页、布局页截图与改动前逐字节相同；帧时间、内存不变。OLE 对象截图同一个 exe 连跑几次就不同，是原有的不确定性，与本次改动无关
    - 网页版构建通过，浏览器里打开起始页与三维实体示例，视口与界面显示正常，控制台无错误
 
 ### 阶段 1：Windows D3D12——已完成
@@ -182,7 +182,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
 7. 验收结果（Windows 11、GTX 1060、Claude 桌面版的内置浏览器，即 Chromium）：
    - `build_wasm.bat` 构建通过
    - 默认走 WebGPU（控制台 `图形接口 WebGPU (nvidia pascal)`，关于对话框同样显示）；`?webgl` 强制 WebGL2；页面里把 `navigator.gpu` 藏掉时自动退回 WebGL2
-   - 起始页示例"曲线：圆角、偏移与等分"（二维）与"实体：法兰座"（三维着色、深度、轮廓线，西南等轴测）：同样操作下视口区域与 WebGL2 截图对比，三维逐像素相同，二维 0.07% 的像素不同（线的光栅化）；`总平面图1008.dwg`（大量文字、填充）模型页 0.58% 的像素不同（细线的抗锯齿与十字光标差 1 像素，内容一致），布局页正常；画直线时的橡皮筋、动态输入、十字光标（缓存层复制 + 动态层）正常
+   - 起始页示例"曲线：圆角、偏移与等分"（二维）与"实体：法兰座"（三维着色、深度、轮廓线，西南等轴测）：同样操作下视口区域与 WebGL2 截图对比，三维逐像素相同，二维 0.07% 的像素不同（线的光栅化）；总平面样图 A（大量文字、填充）模型页 0.58% 的像素不同（细线的抗锯齿与十字光标差 1 像素，内容一致），布局页正常；画直线时的橡皮筋、动态输入、十字光标（缓存层复制 + 动态层）正常
    - 全程控制台没有 WebGPU 校验错误（只有 Chrome 自己的提示：Windows 上忽略 `powerPreference`）
    - 体积：`index.wasm` 10,821,269 → 10,906,078 字节（+84,809，+0.8%），`index.js` 122,616 → 166,842 字节（+44,226）。增加很少，不需要按需加载
    - **没测**：Firefox / Safari（本机测不了）、Edge（同为 Chromium，应与 Chrome 相同）、触屏设备。Firefox 141 起在 Windows 上默认开启 WebGPU，Safari 26 起默认开启；不支持的版本会自动走 WebGL2

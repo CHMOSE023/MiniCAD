@@ -32,7 +32,7 @@ namespace MiniCAD
 		double      MaxY = 297.0;
 		uint64_t    OwnerKey = 0;      // LAYOUT 组码 330
 		// 保存的图纸空间视图（AutoCAD 布局的主视口：中心与高度，纸面单位）。打开布局时 AutoCAD 显示的是它，
-		// 不是纸张范围 —— 内容画在纸张外的图纸（实测 0525 总平面图）按纸张范围框住是一页空白。0 = 没有，按纸张范围
+		// 不是纸张范围 —— 内容画在纸张外的图纸（实测总平面样图 B）按纸张范围框住是一页空白。0 = 没有，按纸张范围
 		double      ViewCenterX = 0.0;
 		double      ViewCenterY = 0.0;
 		double      ViewHeight  = 0.0;

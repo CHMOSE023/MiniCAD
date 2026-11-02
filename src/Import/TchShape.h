@@ -14,7 +14,7 @@ namespace MiniCAD::Tch
 {
     namespace Detail
     {
-        // 天正自定义的双精度编码（读取函数 0x6c8760）：两位标志 00 为 RD、01 为 1、10 为 0
+        // 天正自定义的双精度编码：两位标志 00 为 RD、01 为 1、10 为 0
         inline double ReadTchDouble(MiniDWG::DwgBitReader& r)
         {
             const int code = (r.ReadBit() ? 2 : 0) + (r.ReadBit() ? 1 : 0);
@@ -37,14 +37,14 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_RECT 天正矩形（CADReader TDbRect 读取函数 0x6e7c80，版本 < 3 为明文分支）──
+    // ── TCH_RECT 天正矩形（版本 < 3 为明文分支）──
     struct TchRect
     {
         double X = 0, Y = 0;            // 中心
         double Rotation = 0;
         double Length = 0, Width = 0;
-        // 矩形标志（内核 TDbRect::GetRectFlag，this+0xa0）：TDbRect::ExplodeOrDraw2d 在矩形之外，1 画左下—右上的对角线，
-        // 2 画左上—右下的对角线，3 两条都画（8#楼-A平面图 暖通套管规格表的套管图例）；其他值只画矩形
+        // 矩形标志：天正在矩形之外，1 画左下—右上的对角线，
+        // 2 画左上—右下的对角线，3 两条都画（建筑平面样图 暖通套管规格表的套管图例）；其他值只画矩形
         int Flag = 0;
     };
 
@@ -78,7 +78,7 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解为一条闭合多段线（2 个变体核对），按矩形标志再加对角线（内核 TDbRect::ExplodeOrDraw2d）
+    // 天正 2014 分解为一条闭合多段线（2 个变体核对），按矩形标志再加对角线
     inline TchGraphics BuildRect(const TchRect& t)
     {
         TchGraphics g;
@@ -169,7 +169,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_SLAB 平板 / 楼板（CADReader TDbSlab 读取函数 0x6eb010，版本 < 3 为明文分支）──
+    // ── TCH_SLAB 平板 / 楼板（版本 < 3 为明文分支）──
     struct TchSlab
     {
         std::vector<Detail::PathVertex> Outline;
@@ -230,7 +230,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_HANDRAIL 扶手（CADReader TDbHandRail 读取函数 0x6cfe70，楼梯基类 0x6e6cb0，版本 < 3 为明文分支）──
+    // ── TCH_HANDRAIL 扶手（版本 < 3 为明文分支）──
     struct TchHandRail
     {
         std::vector<Detail::PathVertex> Path;
@@ -286,7 +286,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_APRON 散水（CADReader TDbApron 读取函数 0x6c3b30，路径基类 0x6e64d0，版本 < 2 为明文分支）──
+    // ── TCH_APRON 散水（版本 < 2 为明文分支）──
     struct TchApron
     {
         std::vector<Detail::PathVertex> Path;      // 散水内侧（外墙外皮）
@@ -347,7 +347,7 @@ namespace MiniCAD::Tch
             g.Lines.push_back({{a.Path[i].X, a.Path[i].Y}, {outer[i].X, outer[i].Y}});
         return g;
     }
-    // ── TCH_CORNER_WINDOW 转角窗（CADReader TDbCornerWin 读取函数 0x6cb740，版本 < 5 为明文分支）──
+    // ── TCH_CORNER_WINDOW 转角窗（版本 < 5 为明文分支）──
     struct TchCornerWindow
     {
         double Scale = 100;
@@ -587,7 +587,7 @@ namespace MiniCAD::Tch
             }
         };
 
-        // 梯段基类（0x6ece20）：天正基类、RC 版本（< 4 为明文分支）、BS 踏步数、BD 踏步高、RC 剖断方式；
+        // 梯段基类：天正基类、RC 版本（< 4 为明文分支）、BS 踏步数、BD 踏步高、RC 剖断方式；
         // 版本 ≥ 2：BD、BD 剖断线两端位置（占梯段长的比例）；版本 ≥ 3：BL、3 个 BD、两个句柄
         struct TchFlightBase
         {
@@ -620,7 +620,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_LINESTAIR 直线梯段（CADReader TDbLineStair 读取函数 0x6d0210，版本 < 3 为明文分支）──
+    // ── TCH_LINESTAIR 直线梯段（版本 < 3 为明文分支）──
     struct TchLineStair
     {
         Detail::TchFlightBase Flight;
@@ -680,7 +680,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_ARCSTAIR 圆弧梯段（CADReader TDbArcStair 读取函数 0x6c3fc0，版本 < 3 为明文分支）──
+    // ── TCH_ARCSTAIR 圆弧梯段（版本 < 3 为明文分支）──
     struct TchArcStair
     {
         Detail::TchFlightBase Flight;
@@ -755,7 +755,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_ASCENT 坡道（CADReader TDbAscent 读取函数 0x6c44d0，版本 < 2 为明文分支）──
+    // ── TCH_ASCENT 坡道（版本 < 2 为明文分支）──
     struct TchAscent
     {
         double X = 0, Y = 0, Rotation = 0;      // 坡顶边中点；坡道沿局部 −Y 方向
@@ -811,7 +811,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-    // ── TCH_BALCONY 阳台（CADReader 无此类；按样例与天正 2014 分解结果确定）──
+    // ── TCH_BALCONY 阳台（按样例与天正 2014 分解结果确定）──
     struct TchBalcony
     {
         std::vector<Detail::PathVertex> Outline;    // 阳台外缘（开口两端在墙上）
@@ -863,7 +863,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-    // ── TCH_CURVESTAIR 任意梯段（CADReader 无此类；按样例与天正 2014 分解结果确定）──
+    // ── TCH_CURVESTAIR 任意梯段（按样例与天正 2014 分解结果确定）──
     struct TchCurveStair
     {
         Detail::TchFlightBase Flight;
@@ -1006,7 +1006,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_STEP 台阶（CADReader TDbStep 读取函数 0x6ed690，版本 1 为明文分支）──
+    // ── TCH_STEP 台阶（版本 1 为明文分支）──
     struct TchStep
     {
         std::vector<Detail::PathVertex> Outline;    // 平台轮廓（踏步自轮廓边向外排）
@@ -1121,7 +1121,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_WALL_PATCH 墙体造型（CADReader TDbWallPatch 读取函数 0x6f7ad0，版本 ≤ 4）──
+    // ── TCH_WALL_PATCH 墙体造型（版本 ≤ 4）──
     struct TchWallPatch
     {
         std::vector<Detail::PathVertex> Outline;
@@ -1265,7 +1265,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_AUTOSTAIR 自动扶梯（CADReader TDbAutoStair 读取函数 0x6c4a50，版本 0 为明文分支）──
+    // ── TCH_AUTOSTAIR 自动扶梯（版本 0 为明文分支）──
     struct TchAutoStair
     {
         double X = 0, Y = 0, Rotation = 0;      // 上端外角点；扶梯沿局部 −Y 方向（向下端）展开
@@ -1405,8 +1405,8 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 屋顶共用的头部（天正内核 TDbPolyPathEnt::dwgInFields 与 TRoofBase::Read）：天正基类、RC 路径版本（> 2 时另有 RC 密钥）、
-        // RC 屋顶版本（由调用方读）之前的部分；TRoofBase：RC 版本，< 2 时 3 个 BD、RC、2 个 B，≥ 1 时 BL 轮廓数与各轮廓
+        // 屋顶共用的头部（路径基类与屋顶基类）：天正基类、RC 路径版本（> 2 时另有 RC 密钥）、
+        // RC 屋顶版本（由调用方读）之前的部分；屋顶基类：RC 版本，< 2 时 3 个 BD、RC、2 个 B，≥ 1 时 BL 轮廓数与各轮廓
         // （RC 闭合、BS 点数、各点 2RD + BD 凸度）、BL 句柄数；≥ 2 时先读 RC 密钥（只支持明文，即密钥 < 16），没有 2 个 B
         inline bool ReadRoofBase(MiniDWG::DwgBitReader& r)
         {
@@ -1444,7 +1444,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_MOUNTROOF 矩形屋顶（歇山）（天正内核 TDbMountRoof::dwgInFields，版本 ≤ 2）──
+    // ── TCH_MOUNTROOF 矩形屋顶（歇山）（版本 ≤ 2）──
     struct TchMountRoof
     {
         double X = 0, Y = 0, Rotation = 0;     // 墙外皮矩形的第一个角点；长度方向为转角方向
@@ -1512,7 +1512,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_CUSPROOF 攒尖屋顶（天正内核 TDbCuspRoof::dwgInFields，版本 ≤ 3）──
+    // ── TCH_CUSPROOF 攒尖屋顶（版本 ≤ 3）──
     struct TchCuspRoof
     {
         double X = 0, Y = 0, Rotation = 0;     // 中心、第一个顶点的方向
@@ -1566,7 +1566,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_SLOPEROOF 任意坡顶（天正内核 TDbSlopeRoof::dwgInFields，版本 < 3 为明文分支）──
+    // ── TCH_SLOPEROOF 任意坡顶（版本 < 3 为明文分支）──
     struct TchSlopeRoof
     {
         struct Edge { double X = 0, Y = 0, Slope = 0; };    // 轮廓顶点（边的起点）与该边的坡角
@@ -1682,7 +1682,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_DUALROOF 人字坡顶（天正内核 TDbDualSlopeRoof::dwgInFields，版本 < 3 为明文分支）──
+    // ── TCH_DUALROOF 人字坡顶（版本 < 3 为明文分支）──
     struct TchDualRoof
     {
         std::vector<Detail::PathVertex> Outline;
@@ -1736,7 +1736,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_OPENINGSLOT 门窗套（天正内核 TDbOpeningSlot::dwgInFields，版本 < 3 为明文分支）──
+    // ── TCH_OPENINGSLOT 门窗套（版本 < 3 为明文分支）──
     struct TchOpeningSlot
     {
         MiniDWG::Handle Opening = MiniDWG::kNullHandle;   // 所属门窗

@@ -43,7 +43,7 @@ namespace
         int Version = 2;
     };
 
-    // TDbPolyPathArray：样例 3a3（611 位）、39b（747 位）
+    // 线图案：样例 3a3（611 位）、39b（747 位）
     std::unique_ptr<UnknownEntity> PathObject(const PathSpec& s, Handle block = 0x39c)
     {
         auto e = std::make_unique<UnknownEntity>();
@@ -234,7 +234,7 @@ int main()
         Check(!DecodePathArray(*PathObject(zero), a), "zero pattern width is rejected");
     }
 
-    // ── 天正矩形的对角线（内核 TDbRect::ExplodeOrDraw2d）：标志 1 左下—右上，2 左上—右下，3 两条都画（8#楼 套管图例），0 只有矩形 ──
+    // ── 天正矩形的对角线：标志 1 左下—右上，2 左上—右下，3 两条都画（建筑样图 套管图例），0 只有矩形 ──
     {
         // 矩形之外的线段（两点的路径），端点按 x 排序
         auto diagonals = [](const TchGraphics& g) {

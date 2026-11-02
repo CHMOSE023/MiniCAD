@@ -6,7 +6,7 @@
 
 namespace MiniCAD::Tch
 {
-    // TCH_PATH_ARRAY 线图案（CADReader TDbPolyPathArray 读取函数 0x6e6840，路径基类 0x6e64d0）：
+    // TCH_PATH_ARRAY 线图案（基于路径基类）：
     // 沿多段线路径重复排列一个图案块（样例为 $LinePat$45度线、$LinePat$波浪线）
     struct TchPathArray
     {

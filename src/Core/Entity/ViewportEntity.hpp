@@ -76,7 +76,7 @@ namespace MiniCAD
         // ⚠ DCS 的原点是**视图目标点**，不是世界原点（ObjectARX 对 DCS 的定义：
         //    「原点为 TARGET，Z 轴为视线方向」）。多数视口目标点是 (0,0,0)，加不加都一样；
         //    但经 DVIEW / 三维动态观察过的视口目标点落在模型上、12/22 只是相对目标点的
-        //    小偏移（实测 0525 总平面图的视口 effb9：目标 (64093,86195)、12/22 = (-80.7,-5.2)），
+        //    小偏移（实测总平面样图 B 的视口 effb9：目标 (64093,86195)、12/22 = (-80.7,-5.2)），
         //    不加目标点就把视口对到世界原点附近 —— 表现为「这个视口里只有零星几笔」。
         void SetViewCenterDcs(const Math::Point3& dcsCenter, double twist,
                               const Math::Point3& target = Math::Point3{ 0.0, 0.0, 0.0 })
@@ -111,7 +111,7 @@ namespace MiniCAD
         //
         // AutoCAD 的 VPLAYER：同一个图层可以在这个视口里冻结、在别的视口里显示，
         // 与图层表的开关 / 冻结无关。合成模型内容时这些图层的实体（含块里的子实体）跳过。
-        // 不处理时每个视口都显示全部图层（实测 0525 总平面图：各视口分别冻结了绿化、
+        // 不处理时每个视口都显示全部图层（实测总平面样图 B：各视口分别冻结了绿化、
         // 消防环线、文字说明等图层，布局页与 AutoCAD 对不上）。
         const std::vector<LayerID>& GetFrozenLayers() const { return m_frozenLayers; }
         void SetFrozenLayers(std::vector<LayerID> layers)
@@ -129,7 +129,7 @@ namespace MiniCAD
         //
         // 判据用**几何特征**而不是视口 id，因为实测 id 不可靠：
         //   · `test0.dxf`：主视口 id=1、浮动视口 id=2 —— 符合规范
-        //   · `1#楼-结构-202104.dxf`：45 个视口里 44 个 **id=0**、1 个 id=1，
+        //   · 一张结构样图（DXF）：45 个视口里 44 个 **id=0**、1 个 id=1，
         //     但那些 id=0 的视图中心在模型坐标（如 (285989, 67673)）、
         //     视图高 59400 —— 显然是**真正显示模型内容**的浮动视口。
         //     若按「id > 1」判断会把这 44 个全部排除，布局依然空白。

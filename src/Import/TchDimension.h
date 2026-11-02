@@ -30,7 +30,7 @@ namespace MiniCAD::Tch
     // TCH_AXIS_LABEL 轴号：一组平行轴线两端的引出线、圆圈和编号
     struct TchAxisLabel
     {
-        // 每根轴的标志（内核 TDbAxisLabelSet::ExplodeOrDraw2d / GetAxis / GetLabelCenter）：
+        // 每根轴的标志：
         // 0x02 / 0x04 不标起点端 / 终点端；0x08 / 0x10 起点端轴号圆斜向错开（+135° / −135°），0x20 / 0x40 终点端同样；
         // 0x80 / 0x100 起点端 / 终点端引出长度另设（图面单位）；0x400 / 0x800 起点 / 终点沿轴线向内缩进（世界单位）
         struct Axis
@@ -57,15 +57,71 @@ namespace MiniCAD::Tch
     namespace Detail
     {
         inline bool Finite(double v) { return std::isfinite(v) && std::abs(v) < 1e12; }
+
+        inline const char* CheckDimension(const TchDimension& d)
+        {
+            const double values[] = {d.Position.X, d.Position.Y, d.Position.Z, d.Angle, d.Offset, d.Scale, d.ArcRadius, d.MeasuredRadius};
+            for (double v : values)
+                if (!Finite(v)) return "nonfinite dimension geometry";
+            for (double v : d.Spans)
+                if (!Finite(v)) return "nonfinite dimension span";
+            if (d.Scale <= 0) return "invalid dimension scale";
+            if (d.IsArc() && (d.ArcRadius <= 0 || d.MeasuredRadius <= 0)) return "invalid arc dimension radius";
+            return nullptr;
+        }
+
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的尺寸标注版本 2：RC 版本、RC 密钥；
+        // 第一个点（三维点）、方向、偏移、标注样式（句柄）、段数与各段长度、标志；之后按标志与明文分支相同（文字位置为二维点）
+        inline bool DecodeDimensionCipher(const MiniDWG::UnknownEntity& entity, TchDimension& dimension, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native dimension version");
+            f.ReadKey();
+            TchDimension d;
+            d.Scale = f.Scale;
+            d.Position = f.Point3();
+            d.Angle = f.Double();
+            d.Offset = f.Double();
+            d.DimStyle = f.Handle();
+            const int spans = f.Short();
+            if (spans < 1 || spans > 4096) return fail("invalid dimension span count");
+            for (int i = 0; i < spans && f.Ok(); ++i) d.Spans.push_back(f.Double());
+            d.Flags = f.Short();
+            if (d.Flags & 2)
+                for (int i = 0, n = f.Short(); i < n && f.Ok(); ++i)
+                {
+                    const int index = f.Short();
+                    const auto p = f.Point2();
+                    d.TextPositions[index] = {p.X, p.Y};
+                }
+            if (d.Flags & 4)
+                for (int i = 0, n = f.Short(); i < n && f.Ok(); ++i)
+                {
+                    const int index = f.Short();
+                    d.TextOverrides[index] = f.Text();
+                }
+            if (d.Flags & 1) f.Handle();
+            if (d.Flags & 0x10) { d.ArcRadius = f.Double(); d.MeasuredRadius = f.Double(); }
+            if (d.Flags & 0x80)
+                for (int i = 0, n = f.Short(); i < n && f.Ok(); ++i) f.Double();
+            if (!f.Exact()) return fail("native dimension fields do not consume the payload exactly");
+            if (const char* why = CheckDimension(d)) return fail(why);
+            dimension = std::move(d);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
     }
 
-    // 按 TDbDimension2 的私有布局版本 1 的明文分支解析，
+    // 按尺寸标注的私有布局版本 1 的明文分支解析，
     // 必须恰好读完主数据流。版本 2 起数值以编码形式存放，按不支持处理
     inline bool DecodeDimension(const MiniDWG::UnknownEntity& entity, TchDimension& dimension, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_DIMENSION2") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeDimensionCipher(entity, dimension, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -121,14 +177,7 @@ namespace MiniCAD::Tch
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native dimension fields do not consume the payload exactly");
-
-        const double values[] = {d.Position.X, d.Position.Y, d.Position.Z, d.Angle, d.Offset, d.Scale, d.ArcRadius, d.MeasuredRadius};
-        for (double v : values)
-            if (!Detail::Finite(v)) return fail("nonfinite dimension geometry");
-        for (double v : d.Spans)
-            if (!Detail::Finite(v)) return fail("nonfinite dimension span");
-        if (d.Scale <= 0) return fail("invalid dimension scale");
-        if (d.IsArc() && (d.ArcRadius <= 0 || d.MeasuredRadius <= 0)) return fail("invalid arc dimension radius");
+        if (const char* why = Detail::CheckDimension(d)) return fail(why);
 
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
@@ -140,13 +189,77 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 按 TDbAxisLabelSet 的私有布局版本 < 7 解析（CADReader 0x6c5af0，内核 TDbAxisLabelSet::dwgInFields），
+    namespace Detail
+    {
+        inline const char* CheckAxisLabel(const TchAxisLabel& a, double bulge)
+        {
+            if (a.Mode & 1) return "arc axis net labels are not supported";
+            if (a.Mode & ~0xcc) return "unsupported axis label mode";
+            if (std::abs(bulge) >= 1e-6) return "arc axis labels are not supported";
+            const double values[] = {a.Start.X, a.Start.Y, a.End.X, a.End.Y, a.StartExtension, a.EndExtension, a.Radius, a.Scale};
+            for (double v : values)
+                if (!Finite(v)) return "nonfinite axis label geometry";
+            for (const auto& axis : a.Axes)
+                if (!Finite(axis.Spacing) || !Finite(axis.StartLeader) || !Finite(axis.EndLeader) || !Finite(axis.StartTrim) || !Finite(axis.EndTrim))
+                    return "nonfinite axis spacing";
+            if (a.Scale <= 0 || a.Radius < 0 || std::hypot(a.End.X - a.Start.X, a.End.Y - a.Start.Y) < 1e-9) return "invalid axis label geometry";
+            return nullptr;
+        }
+
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的轴号版本 7：RC 版本、
+        // 明文 BS 模式、RC 密钥；文字样式（句柄）、第一根轴线两端（二维点）、凸度、轴数；每根轴为标志、编号、间距与按标志另设的
+        // 引出长度 / 缩进；数值、起点端与终点端引出长度、圆半径；文字图层（句柄）；数值；显示标志（位 0 为显示编号）
+        inline bool DecodeAxisLabelCipher(const MiniDWG::UnknownEntity& entity, TchAxisLabel& label, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 7) return fail("unsupported native axis label version");
+            TchAxisLabel a;
+            a.Mode = f.Main.ReadBitShort();
+            f.ReadKey();
+            a.Scale = f.Scale;
+            a.TextStyle = f.Handle();
+            const auto p0 = f.Point2(), p1 = f.Point2();
+            a.Start = {p0.X, p0.Y, 0};
+            a.End = {p1.X, p1.Y, 0};
+            const double bulge = f.Double();
+            const int count = f.Short();
+            if (count < 1 || count > 4096) return fail("invalid axis count");
+            a.Axes.resize(static_cast<std::size_t>(count));
+            for (auto& axis : a.Axes)
+            {
+                axis.Flags = f.Short();
+                axis.Label = f.Text();
+                axis.Spacing = f.Double();
+                if (axis.Flags & 0x80) axis.StartLeader = f.Double();
+                if (axis.Flags & 0x100) axis.EndLeader = f.Double();
+                if (axis.Flags & 0x400) axis.StartTrim = f.Double();
+                if (axis.Flags & 0x800) axis.EndTrim = f.Double();
+            }
+            f.Double();
+            a.StartExtension = f.Double();
+            a.EndExtension = f.Double();
+            a.Radius = f.Double();
+            a.TextLayer = f.Handle();
+            f.Short();
+            a.ShowText = (f.Short() & 1) != 0;
+            if (!f.Exact()) return fail("native axis label fields do not consume the payload exactly");
+            if (const char* why = CheckAxisLabel(a, bulge)) return fail(why);
+            label = std::move(a);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
+    // 按轴号的私有布局版本 < 7 解析，
     // 必须恰好读完主数据流。模式位 0x01（弧形轴网）与第一根轴为圆弧（凸度不为 0）的情况不支持
     inline bool DecodeAxisLabel(const MiniDWG::UnknownEntity& entity, TchAxisLabel& label, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_AXIS_LABEL") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeAxisLabelCipher(entity, label, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native axis label");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -198,24 +311,13 @@ namespace MiniCAD::Tch
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native axis label fields do not consume the payload exactly");
         a.Mode = mode;
-        if (mode & 1) return fail("arc axis net labels are not supported");
-        if (mode & ~0xcc) return fail("unsupported axis label mode");
-        if (std::abs(bulge) >= 1e-6) return fail("arc axis labels are not supported");
-
-        const double values[] = {x0, y0, x1, y1, a.StartExtension, a.EndExtension, a.Radius, a.Scale};
-        for (double v : values)
-            if (!Detail::Finite(v)) return fail("nonfinite axis label geometry");
-        for (const auto& axis : a.Axes)
-            if (!Detail::Finite(axis.Spacing) || !Detail::Finite(axis.StartLeader) || !Detail::Finite(axis.EndLeader) ||
-                !Detail::Finite(axis.StartTrim) || !Detail::Finite(axis.EndTrim))
-                return fail("nonfinite axis spacing");
-        if (a.Scale <= 0 || a.Radius < 0 || std::hypot(x1 - x0, y1 - y0) < 1e-9) return fail("invalid axis label geometry");
+        if (const char* why = Detail::CheckAxisLabel(a, bulge)) return fail(why);
 
         if (text.Reader.Failed()) return fail("axis label text stream is incomplete");
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         a.TextStyle = handles.ReadHandle(entity.ObjectHandle);
-        // 编号文字的图层（内核 TDbAxisLabelSet::GetTextLayerId；版本 < 2 时为默认的 AXIS_TEXT 图层，不存句柄）
+        // 编号文字的图层（版本 < 2 时为默认的 AXIS_TEXT 图层，不存句柄）
         if (version > 1) a.TextLayer = handles.ReadHandle(entity.ObjectHandle);
         if (handles.Failed() || handles.PositionInBits() > data.HandleBits)
             return fail("axis label handle stream is incomplete");
@@ -238,7 +340,7 @@ namespace MiniCAD::Tch
         MiniDWG::Handle DimStyle = MiniDWG::kNullHandle;
     };
 
-    // 按 TDbRadiusDim 的私有布局版本 1 的明文分支解析，
+    // 按半径标注的私有布局版本 1 的明文分支解析，
     // 必须恰好读完主数据流。版本 2 为编码分支，按不支持处理
     inline bool DecodeRadiusDim(const MiniDWG::UnknownEntity& entity, TchRadiusDim& dimension, std::string* diagnostic = nullptr)
     {
@@ -294,9 +396,9 @@ namespace MiniCAD::Tch
     {
         double ExtOffset = 3, ExtExtension = 2.5, ArrowSize = 1, TextHeight = 3.5, Gap = 1;
         int    Decimals = 0, AngularDecimals = 2;
-        // 文字颜色 DIMCLRT（ACI；0 随块、256 随层）：8#楼-A平面图 的 _TCH_ARCH 为随层，天正 + AutoCAD 里尺寸数字与尺寸线同色
+        // 文字颜色 DIMCLRT（ACI；0 随块、256 随层）：建筑平面样图的 _TCH_ARCH 为随层，天正 + AutoCAD 里尺寸数字与尺寸线同色
         int    TextColor = 7;
-        // 角度去零 DIMAZIN：1 去掉整数部分的 0，2 去掉小数末尾的零（8#楼 为 2：90.00° 显示为 90°，100.55° 不变）
+        // 角度去零 DIMAZIN：1 去掉整数部分的 0，2 去掉小数末尾的零（建筑样图为 2：90.00° 显示为 90°，100.55° 不变）
         int    AngularZeros = 0;
     };
 
@@ -314,7 +416,7 @@ namespace MiniCAD::Tch
         // Center 为对齐点；Attachment 同 MTEXT 的附着点（5 正中、4 左中、6 右中）
         // Style：0 为对象的主文字样式，1 为第二文字样式（如索引符号旁注用的标注文字样式）
         // Color 为 ACI 颜色号（0 随块、256 随层；默认 7 号色）。尺寸标注的取标注样式的 DIMCLRT，轴号编号随文字图层；
-        // 索引、引出、箭头、剖切、指北针、楼梯的文字在天正里就是 7 号色（改了它们的文字图层颜色也不变，8#楼-A平面图 核对）
+        // 索引、引出、箭头、剖切、指北针、楼梯的文字在天正里就是 7 号色（改了它们的文字图层颜色也不变，建筑平面样图 核对）
         // WidthFactor：大于 0 时按此宽度因子显示（天正把混排文字拆成西文、汉字两段，西文宽度因子 0.6 / 0.85）
         struct Text { Point Center; double Height = 0, Rotation = 0; std::string Value; int Attachment = 5; int Style = 0; int Color = 7; int Layer = 0; double WidthFactor = 0; };
 
@@ -324,8 +426,9 @@ namespace MiniCAD::Tch
         std::vector<Circle>   Circles;
         std::vector<Triangle> Arrows;
         std::vector<Path>     Paths;
+        std::vector<Path>     Fills;        // 实心填充（SOLID 图案）的边界：闭合，末点与首点重合；先于其他图元画
         std::vector<Text>     Texts;
-        int LineColor = 256;        // Lines 的 ACI 颜色，256 为随层（天正给排水井标注的引线固定为 6 号色）
+        int LineColor = 256;       // Lines 的 ACI 颜色，256 为随层（天正给排水井标注的引线固定为 6 号色）
     };
 
     namespace Detail
@@ -354,7 +457,7 @@ namespace MiniCAD::Tch
         {
             constexpr double pi = std::numbers::pi;
             rotation = std::remainder(rotation, 2 * pi);
-            // 竖直方向带浮点误差时一律按自下而上读（8#楼-A平面图 的竖向尺寸 93F105 方向比 π/2 大 2e-9，天正仍自下而上，文字在左侧）
+            // 竖直方向带浮点误差时一律按自下而上读（建筑平面样图的竖向尺寸 93F105 方向比 π/2 大 2e-9，天正仍自下而上，文字在左侧）
             if (rotation > pi / 2 + 1e-6 || rotation <= -pi / 2 + 1e-6)
             {
                 rotation = std::remainder(rotation + pi, 2 * pi);
@@ -365,7 +468,7 @@ namespace MiniCAD::Tch
     }
 
     // 第 i 段文字的中心：标志 0x02 另行指定了位置（天正里拖动过的文字，如挤不下时移到尺寸线外侧、上一行或下方）时取该点，
-    // 否则为按样式算出的 fallback（8#楼-A平面图 的电梯井尺寸：未移动的文字恰在尺寸线上方 (DIMTXT / 2 + DIMGAP) × 比例处，
+    // 否则为按样式算出的 fallback（建筑平面样图的电梯井尺寸：未移动的文字恰在尺寸线上方 (DIMTXT / 2 + DIMGAP) × 比例处，
     // 移动过的在其上一行、尺寸线下方对称处或界线外侧）
     inline TchGraphics::Point TextCenter(const TchDimension& d, std::size_t i, TchGraphics::Point fallback)
     {
@@ -481,10 +584,10 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 轴号（内核 TDbAxisLabelSet::ExplodeOrDraw2d）：第 i 根轴为第一根轴向右法线平移前 i 个间距之和，标志 0x400 / 0x800 再把两端向内缩进；
+    // 轴号：第 i 根轴为第一根轴向右法线平移前 i 个间距之和，标志 0x400 / 0x800 再把两端向内缩进；
     // 每个标注端从轴线端点向外引出（引出长度 × 比例），轴号圆在引出线外侧相切、编号居中；
     // 斜向错开时圆心在引出线末端沿“向内方向 ± 135°”的 √2 × 半径处，另画从圆边到引出线末端的短线（起点端引出长度为 0 时不画）。
-    // 8#楼立剖面、墙身大样共 16 个轴号（含模式 0x08、0x88，标志 0x800 等）的线与圆和天正 2014 分解结果一致
+    // 立剖面样图、墙身大样共 16 个轴号（含模式 0x08、0x88，标志 0x800 等）的线与圆和天正 2014 分解结果一致
     inline TchGraphics BuildAxisLabel(const TchAxisLabel& a)
     {
         using P = TchGraphics::Point;
@@ -527,9 +630,9 @@ namespace MiniCAD::Tch
                 }
                 g.Circles.push_back({c, radius});
                 if (!a.ShowText || axis.Label.empty()) continue;
-                // 附加轴号“分子/分母”（内核按 '/' 拆成上下两段）：圆内画水平直径，两段居中在圆心上下 0.457 × 半径，
-                // 字高约 0.62 × 半径（8#楼墙身大样的分解结果核对）
-                // 编号放在文字图层（图层 2：TchAxisLabel::TextLayer）上、随层（8#楼-A平面图 在天正 + AutoCAD 里与轴号圆同色，不是白色）
+                // 附加轴号“分子/分母”（天正按 '/' 拆成上下两段）：圆内画水平直径，两段居中在圆心上下 0.457 × 半径，
+                // 字高约 0.62 × 半径（墙身大样样图的分解结果核对）
+                // 编号放在文字图层（图层 2：TchAxisLabel::TextLayer）上、随层（建筑平面样图在天正 + AutoCAD 里与轴号圆同色，不是白色）
                 if (const auto slash = axis.Label.find('/'); slash != std::string::npos)
                 {
                     g.Lines.push_back({{c.X - radius, c.Y}, {c.X + radius, c.Y}});
@@ -538,7 +641,7 @@ namespace MiniCAD::Tch
                 }
                 else
                 {
-                    // 天正用 Fit 对齐，字高随字数变化（8#楼各图的分解结果：单字约 1.24 × 半径，两字约 0.97 × 半径）
+                    // 天正用 Fit 对齐，字高随字数变化（各张建筑样图的分解结果：单字约 1.24 × 半径，两字约 0.97 × 半径）
                     std::size_t chars = 0;
                     for (unsigned char ch : axis.Label) chars += (ch & 0xc0) != 0x80;
                     const double height = chars <= 1 ? 1.24 * radius : 1.94 * radius / static_cast<double>(chars);

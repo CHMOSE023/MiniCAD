@@ -26,7 +26,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_ELEVATION 标高（CADReader TDbSymbElevation 读取函数 0x6efce0，版本 < 5 为明文分支）──
+    // ── TCH_ELEVATION 标高（版本 < 5 为明文分支）──
     struct TchElevation
     {
         double Scale = 100, TextHeight = 3.5;
@@ -36,6 +36,40 @@ namespace MiniCAD::Tch
         std::string Value;              // 标高值文字（如 "2.00000"），按精度取整显示
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
     };
+
+    namespace Detail
+    {
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的标高版本 5：符号基类后 RC 版本、RC 密钥；标志、
+        // 标高点（二维点）、文字、线长；标志位 2、3 各多一个数值；数值、字节、2 个二维点、字符串、字节
+        inline bool DecodeElevationCipher(const MiniDWG::UnknownEntity& entity, TchElevation& elevation, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchSymbolBase symbol;
+            TchElevation e;
+            if (!ReadCipherSymbolBase(f, symbol, e.Style)) return fail("unsupported Tianzheng symbol base layout");
+            if (f.Main.ReadByte() != 5) return fail("unsupported native elevation version");
+            f.ReadKey();
+            e.Scale = symbol.Base.Scale; e.TextHeight = symbol.TextHeight;
+            e.Flags = f.Byte();
+            const auto p = f.Point2();
+            e.X = p.X; e.Y = p.Y;
+            e.Value = f.Text();
+            e.LineLength = f.Double();
+            if (e.Flags & 4) f.Double();
+            if (e.Flags & 8) f.Double();
+            f.Double(); f.Byte();
+            f.Point2(); f.Point2();
+            f.Text();
+            f.Byte();
+            if (!f.Exact()) return fail("native elevation fields do not consume the payload exactly");
+            if (!Finite(e.X) || !Finite(e.Y) || !Finite(e.LineLength) || !(e.Scale > 0) || !(e.TextHeight > 0))
+                return fail("invalid native elevation settings");
+            elevation = std::move(e);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
 
     // 符号基类、RC 版本、RC 标志、2RD 标高点、文字（文字流）、BD 线长；标志位 2、3 各多一个 BD；
     // 版本 ≥ 2：BD、RC、2RD、2RD、文字；版本 ≥ 4：RC
@@ -47,6 +81,7 @@ namespace MiniCAD::Tch
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (entity.Raw.DxfName != "TCH_ELEVATION") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeElevationCipher(entity, elevation, diagnostic);
         if (!Detail::ReadSymbolHead(entity, "TCH_ELEVATION", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 4) return fail("unsupported native elevation version");
@@ -104,7 +139,7 @@ namespace MiniCAD::Tch
         Detail::AddRuns(g, value, nominal, far - side * 0.3 * s, baseline, 0, side > 0 ? 2 : 0);
         return g;
     }
-    // ── TCH_MULTILEADER 引出标注（CADReader TDbSymbMultiLeader 读取函数 0x6f1d90，版本 < 7 为明文分支）──
+    // ── TCH_MULTILEADER 引出标注（版本 < 7 为明文分支）──
     struct TchMultiLeader
     {
         double Scale = 100, TextHeight = 3.5;
@@ -120,6 +155,54 @@ namespace MiniCAD::Tch
         int    Align = 3;                   // 文字对齐：3 对齐水平线远端，1 对齐转折点一侧，2 居中（未核对）
     };
 
+    namespace Detail
+    {
+        inline const char* CheckMultiLeader(const TchMultiLeader& m)
+        {
+            if (!Finite(m.ElbowX) || !Finite(m.ElbowY) || !Finite(m.LineLength) || !Finite(m.ArrowSize) || !(m.Scale > 0) || !(m.TextHeight > 0))
+                return "invalid native leader settings";
+            for (const auto& p : m.Targets)
+                if (!Finite(p.X) || !Finite(p.Y)) return "invalid native leader point";
+            return nullptr;
+        }
+
+        // 新版天正的引出标注版本 7：符号基类后 RC 版本、RC 密钥；箭头样式、转折点（二维点）、线长、方向、
+        // 线上 / 线下文字、点数与各点；箭头长、文字间距、文字对齐、数值、字节、二维点、2 个三维点
+        inline bool DecodeMultiLeaderCipher(const MiniDWG::UnknownEntity& entity, TchMultiLeader& leader, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchSymbolBase symbol;
+            TchMultiLeader m;
+            if (!ReadCipherSymbolBase(f, symbol, m.Style)) return fail("unsupported Tianzheng symbol base layout");
+            if (f.Main.ReadByte() != 7) return fail("unsupported native leader version");
+            f.ReadKey();
+            m.Scale = symbol.Base.Scale; m.TextHeight = symbol.TextHeight;
+            m.Arrow = f.Byte();
+            const auto elbow = f.Point2();
+            m.ElbowX = elbow.X; m.ElbowY = elbow.Y;
+            m.LineLength = f.Double();
+            m.Side = f.Byte();
+            m.Upper = f.Text(); m.Lower = f.Text();
+            for (int i = 0, n = f.Byte(); i < n && f.Ok(); ++i)
+            {
+                const auto p = f.Point2();
+                m.Targets.push_back({p.X, p.Y});
+            }
+            m.ArrowSize = f.Double();
+            m.Gap = f.Double();
+            m.Align = f.Byte();
+            f.Double();
+            f.Byte(); f.Point2();
+            f.Point3(); f.Point3();
+            if (!f.Exact()) return fail("native leader fields do not consume the payload exactly");
+            if (const char* why = CheckMultiLeader(m)) return fail(why);
+            leader = std::move(m);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 符号基类、RC 版本、RC 箭头样式、2RD 转折点、BD 线长、RC 方向、线上 / 线下文字（文字流）、RC 点数与各点 2RD；
     // 版本 ≥ 2：BD 箭头长；≥ 3：BD 文字间距、RC 文字对齐、BD；≥ 4：RC、2RD；≥ 5：两个 3BD；= 6：两段文字
     inline bool DecodeMultiLeader(const MiniDWG::UnknownEntity& entity, TchMultiLeader& leader, std::string* diagnostic = nullptr)
@@ -128,6 +211,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_MULTILEADER") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeMultiLeaderCipher(entity, leader, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!Detail::ReadSymbolHead(entity, "TCH_MULTILEADER", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
@@ -152,11 +236,7 @@ namespace MiniCAD::Tch
         if (version > 3) { r.ReadByte(); r.ReadRawDouble(); r.ReadRawDouble(); }
         if (version > 4) for (int i = 0; i < 6; ++i) r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native leader fields do not consume the payload exactly");
-        if (!Detail::Finite(m.ElbowX) || !Detail::Finite(m.ElbowY) || !Detail::Finite(m.LineLength) || !Detail::Finite(m.ArrowSize) ||
-            !(m.Scale > 0) || !(m.TextHeight > 0))
-            return fail("invalid native leader settings");
-        for (const auto& p : m.Targets)
-            if (!Detail::Finite(p.X) || !Detail::Finite(p.Y)) return fail("invalid native leader point");
+        if (const char* why = Detail::CheckMultiLeader(m)) return fail(why);
         if (!Detail::ReadSymbolHandles(entity, symbol, m.Style)) return fail("leader handle stream is incomplete");
         leader = std::move(m);
         if (diagnostic) diagnostic->clear();
@@ -191,7 +271,7 @@ namespace MiniCAD::Tch
 
     // 与天正 2014 分解结果核对（3 个变体）：各被标注点连线到转折点，转折点起水平线长 LineLength × 比例（可为负，即朝反方向）；
     // 文字间距 Gap（× 名义字高 n，默认 0.3）：线上文字基线高 Gap × n，线下文字基线低 (1 + Gap) × n。
-    // 水平方向按 Align 对齐在水平线远端（3）或转折点一侧（1），内缩 0.3 × n，朝线内对齐（1#楼平面图 127 个、139 户型大样的分解结果核对）。
+    // 水平方向按 Align 对齐在水平线远端（3）或转折点一侧（1），内缩 0.3 × n，朝线内对齐（两张建筑样图的分解结果核对）。
     // SHX 样式用天正注释符号的字宽排布；TrueType 样式（如“宋体”）同 TCH_TEXT：字高 = n × 0.75527、样式宽度因子
     inline TchGraphics BuildMultiLeader(const TchMultiLeader& m, const TchTextStyleRule& rule = {})
     {
@@ -225,14 +305,14 @@ namespace MiniCAD::Tch
             }
             return g;
         }
-        // 注释符号的字宽乘样式宽度因子，按天正步进排布、画出的宽度也取天正的（8#楼平面 _TCH_DIM 宽 0.7：
+        // 注释符号的字宽乘样式宽度因子，按天正步进排布、画出的宽度也取天正的（建筑平面样图 _TCH_DIM 宽 0.7：
         // 天正显示“预留DN100钢套管”长约 0.69 × 0.7 × 5 + 0.5714 × 0.7 × 5 名义字高，以前汉字段按 1.0 留位置又按 0.7 宽画，中间空出一截）
         const double width = rule.StyleWidth;
         for (const auto& [value, y] : {std::pair{m.Upper, upper}, std::pair{m.Lower, lower}})
             Detail::AddRuns(g, value, nominal, anchor, y, 0, column, 7, 0, 0, 0.85, 0.6 / 0.85 * width, 0.5714 * width, 0.69 * width, true, rule.WideHeight);
         return g;
     }
-    // ── TCH_COMPOSING 做法标注（CADReader TDbSymbComposing 读取函数 0x6ee920，版本 < 4 为明文分支）──
+    // ── TCH_COMPOSING 做法标注（版本 < 4 为明文分支）──
     struct TchComposing
     {
         double Scale = 100, TextHeight = 3.5;
@@ -244,6 +324,44 @@ namespace MiniCAD::Tch
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
     };
 
+    namespace Detail
+    {
+        inline const char* CheckComposing(const TchComposing& c)
+        {
+            if (!Finite(c.StartX) || !Finite(c.StartY) || !Finite(c.ElbowX) || !Finite(c.ElbowY) || !Finite(c.LineLength) ||
+                !(c.Scale > 0) || !(c.TextHeight > 0))
+                return "invalid native composing settings";
+            return nullptr;
+        }
+
+        // 新版天正的做法标注版本 4：符号基类后 RC 版本、RC 密钥；文字位置、线长、起点、转折点（二维点）、
+        // 文字；5 个数值、2 个字节
+        inline bool DecodeComposingCipher(const MiniDWG::UnknownEntity& entity, TchComposing& composing, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchSymbolBase symbol;
+            TchComposing c;
+            if (!ReadCipherSymbolBase(f, symbol, c.Style)) return fail("unsupported Tianzheng symbol base layout");
+            if (f.Main.ReadByte() != 4) return fail("unsupported native composing version");
+            f.ReadKey();
+            c.Scale = symbol.Base.Scale; c.TextHeight = symbol.TextHeight;
+            c.TextSide = f.Byte();
+            c.LineLength = f.Double();
+            const auto start = f.Point2(), elbow = f.Point2();
+            c.StartX = start.X; c.StartY = start.Y;
+            c.ElbowX = elbow.X; c.ElbowY = elbow.Y;
+            c.Text = f.Text();
+            for (int i = 0; i < 5; ++i) f.Double();
+            f.Byte(); f.Byte();
+            if (!f.Exact()) return fail("native composing fields do not consume the payload exactly");
+            if (const char* why = CheckComposing(c)) return fail(why);
+            composing = std::move(c);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 符号基类、RC 版本、RC 文字位置、BD 线长（自定义编码：00 为 RD、01 为 1、10 为 0）、2RD 起点、2RD 转折点、文字；
     // 版本 ≥ 2：5 个 BD（行距、段距等）与 RC；版本 ≥ 3：RC
     inline bool DecodeComposing(const MiniDWG::UnknownEntity& entity, TchComposing& composing, std::string* diagnostic = nullptr)
@@ -252,6 +370,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_COMPOSING") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeComposingCipher(entity, composing, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!Detail::ReadSymbolHead(entity, "TCH_COMPOSING", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
@@ -269,9 +388,7 @@ namespace MiniCAD::Tch
         if (version > 1) { for (int i = 0; i < 5; ++i) r.ReadBitDouble(); r.ReadByte(); }
         if (version > 2) r.ReadByte();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native composing fields do not consume the payload exactly");
-        if (!Detail::Finite(c.StartX) || !Detail::Finite(c.StartY) || !Detail::Finite(c.ElbowX) || !Detail::Finite(c.ElbowY) ||
-            !Detail::Finite(c.LineLength) || !(c.Scale > 0) || !(c.TextHeight > 0))
-            return fail("invalid native composing settings");
+        if (const char* why = Detail::CheckComposing(c)) return fail(why);
         if (!Detail::ReadSymbolHandles(entity, symbol, c.Style)) return fail("composing handle stream is incomplete");
         composing = std::move(c);
         if (diagnostic) diagnostic->clear();
@@ -318,7 +435,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-    // ── TCH_DRAWINGINDEX 索引图名（CADReader TDbSymbDrawingIndex 读取函数 0x6ef620，版本 < 3 为明文分支）──
+    // ── TCH_DRAWINGINDEX 索引图名（版本 < 3 为明文分支）──
     struct TchDrawingIndex
     {
         double Scale = 100, TextHeight = 3.5;
@@ -331,6 +448,46 @@ namespace MiniCAD::Tch
         MiniDWG::Handle Style = MiniDWG::kNullHandle, ScaleStyle = MiniDWG::kNullHandle;
     };
 
+    namespace Detail
+    {
+        inline const char* CheckDrawingIndex(const TchDrawingIndex& d)
+        {
+            if (!Finite(d.X) || !Finite(d.Y) || !(d.Radius > 0) || !Finite(d.Radius) || !Finite(d.LineWidth) || !(d.Scale > 0) || !(d.ScaleHeight > 0))
+                return "invalid native drawing index settings";
+            return nullptr;
+        }
+
+        // 新版天正的索引图名版本 3：符号基类后 RC 版本、RC 密钥；圆心（二维点）、半径、线宽、编号、图号、
+        // 比例文字、比例文字样式（句柄）、比例字高、数值、显示比例、字节、2 个数值
+        inline bool DecodeDrawingIndexCipher(const MiniDWG::UnknownEntity& entity, TchDrawingIndex& index, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchSymbolBase symbol;
+            TchDrawingIndex d;
+            if (!ReadCipherSymbolBase(f, symbol, d.Style)) return fail("unsupported Tianzheng symbol base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native drawing index version");
+            f.ReadKey();
+            d.Scale = symbol.Base.Scale; d.TextHeight = symbol.TextHeight;
+            const auto p = f.Point2();
+            d.X = p.X; d.Y = p.Y;
+            d.Radius = f.Double();
+            d.LineWidth = f.Double();
+            d.Number = f.Text(); d.Sheet = f.Text(); d.ScaleText = f.Text();
+            d.ScaleStyle = f.Handle();
+            d.ScaleHeight = f.Double();
+            f.Double();
+            d.ShowScale = f.Byte() != 0;
+            f.Byte();
+            f.Double(); f.Double();
+            if (!f.Exact()) return fail("native drawing index fields do not consume the payload exactly");
+            if (const char* why = CheckDrawingIndex(d)) return fail(why);
+            index = std::move(d);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 符号基类、RC 版本、2RD 圆心、BD 半径、BD 线宽、编号与图号（文字流）；版本 ≥ 2：比例文字、句柄（文字图层）、
     // BD 比例字高、BD、RC 显示比例、RC、BD；句柄流：编号文字样式、文字图层、比例文字样式
     inline bool DecodeDrawingIndex(const MiniDWG::UnknownEntity& entity, TchDrawingIndex& index, std::string* diagnostic = nullptr)
@@ -339,6 +496,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_DRAWINGINDEX") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeDrawingIndexCipher(entity, index, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!Detail::ReadSymbolHead(entity, "TCH_DRAWINGINDEX", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
@@ -361,9 +519,7 @@ namespace MiniCAD::Tch
             r.ReadBitDouble();
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native drawing index fields do not consume the payload exactly");
-        if (!Detail::Finite(d.X) || !Detail::Finite(d.Y) || !(d.Radius > 0) || !Detail::Finite(d.Radius) || !Detail::Finite(d.LineWidth) ||
-            !(d.Scale > 0) || !(d.ScaleHeight > 0))
-            return fail("invalid native drawing index settings");
+        if (const char* why = Detail::CheckDrawingIndex(d)) return fail(why);
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < symbol.Base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
         d.Style = handles.ReadHandle(entity.ObjectHandle);
@@ -401,7 +557,7 @@ namespace MiniCAD::Tch
             Detail::AddRuns(g, d.ScaleText, d.ScaleHeight * s, d.X + r + 2 * s, d.Y - r, 0, 0, 7, 0, 1);
         return g;
     }
-    // ── TCH_NORTHTHUMB 指北针（CADReader TDbSymbNorthThumb 读取函数 0x6f22f0，版本 < 3 为明文分支）──
+    // ── TCH_NORTHTHUMB 指北针（版本 < 3 为明文分支）──
     struct TchNorthThumb
     {
         double Scale = 100;
@@ -414,6 +570,43 @@ namespace MiniCAD::Tch
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
     };
 
+    namespace Detail
+    {
+        inline const char* CheckNorthThumb(const TchNorthThumb& n)
+        {
+            if (!Finite(n.X) || !Finite(n.Y) || !(n.Radius > 0) || !Finite(n.Radius) || !Finite(n.Rotation) || !(n.Scale > 0) || !(n.TextHeight >= 0))
+                return "invalid native north thumb settings";
+            return nullptr;
+        }
+
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的指北针版本 3（基类是天正曲线基类，没有符号基类）：
+        // RC 版本、RC 密钥；圆心（二维点）、半径、指向、文字样式（句柄）、字高、颜色、文字、二维点
+        inline bool DecodeNorthThumbCipher(const MiniDWG::UnknownEntity& entity, TchNorthThumb& north, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native north thumb version");
+            f.ReadKey();
+            TchNorthThumb n;
+            n.Scale = f.Scale;
+            const auto p = f.Point2();
+            n.X = p.X; n.Y = p.Y;
+            n.Radius = f.Double();
+            n.Rotation = f.Double();
+            n.Style = f.Handle();
+            n.TextHeight = f.Double();
+            n.Color = f.Short();
+            n.Text = f.Text();
+            f.Point2();
+            if (!f.Exact()) return fail("native north thumb fields do not consume the payload exactly");
+            if (const char* why = CheckNorthThumb(n)) return fail(why);
+            north = std::move(n);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 天正基类、RC 版本、2RD 圆心、BD 半径、BD 指向；版本 ≥ 2：句柄（文字样式）、BD 字高（自定义编码）、BS 颜色、文字、2RD
     inline bool DecodeNorthThumb(const MiniDWG::UnknownEntity& entity, TchNorthThumb& north, std::string* diagnostic = nullptr)
     {
@@ -421,6 +614,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_NORTHTHUMB") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeNorthThumbCipher(entity, north, diagnostic);
         if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
@@ -440,9 +634,7 @@ namespace MiniCAD::Tch
             r.ReadRawDouble(); r.ReadRawDouble();
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native north thumb fields do not consume the payload exactly");
-        if (!Detail::Finite(n.X) || !Detail::Finite(n.Y) || !(n.Radius > 0) || !Detail::Finite(n.Radius) || !Detail::Finite(n.Rotation) ||
-            !(n.Scale > 0) || !(n.TextHeight >= 0))
-            return fail("invalid native north thumb settings");
+        if (const char* why = Detail::CheckNorthThumb(n)) return fail(why);
         if (version > 1)
         {
             Detail::TextStream stream(data, r);
@@ -473,7 +665,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_CUT 折断线（CADReader 无此类；按样例与天正 2014 分解结果确定）──
+    // ── TCH_CUT 折断线（按样例与天正 2014 分解结果确定）──
     struct TchCut
     {
         double Scale = 100;
@@ -548,13 +740,39 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_SYMMETRY 对称轴（CADReader TDbSymbSymmetry 读取函数 0x6f35a0，版本 < 2 为明文分支）──
+    // ── TCH_SYMMETRY 对称轴（版本 < 2 为明文分支）──
     struct TchSymmetry
     {
         double Scale = 100;
         double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0;
-        double TickLength = 8, Gap = 2, Spacing = 2.5;     // 对称符号的横线长、（未用）、两横线间距（× 比例）
+        double TickLength = 8, Gap = 2, Spacing = 2.5;     // 对称符号的横线长、第一条横线距端点、两横线间距（× 比例）
     };
+
+    namespace Detail
+    {
+        // 新版天正（基类版本 9～14，见 TchCipher.h）的对称轴版本 2：RC 版本、RC 密钥；两端（二维点）、
+        // 与明文分支同序的 3 个数值
+        inline bool DecodeSymmetryCipher(const MiniDWG::UnknownEntity& entity, TchSymmetry& symmetry, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native symmetry version");
+            f.ReadKey();
+            TchSymmetry m;
+            m.Scale = f.Scale;
+            const auto a = f.Point2(), b = f.Point2();
+            m.X1 = a.X; m.Y1 = a.Y; m.X2 = b.X; m.Y2 = b.Y;
+            m.TickLength = f.Double(); m.Gap = f.Double(); m.Spacing = f.Double();
+            if (!f.Exact()) return fail("native symmetry fields do not consume the payload exactly");
+            for (double v : {m.X1, m.Y1, m.X2, m.Y2, m.TickLength, m.Gap, m.Spacing})
+                if (!Finite(v)) return fail("invalid native symmetry settings");
+            if (!(m.Scale > 0)) return fail("invalid native symmetry scale");
+            symmetry = m;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
 
     inline bool DecodeSymmetry(const MiniDWG::UnknownEntity& entity, TchSymmetry& symmetry, std::string* diagnostic = nullptr)
     {
@@ -562,6 +780,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_SYMMETRY") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeSymmetryCipher(entity, symmetry, diagnostic);
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for symmetry");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
@@ -581,7 +800,8 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 与天正 2014 分解结果核对（1 个样例）：轴线；中点两侧各两条横线，内侧距中点 0.5 × 比例、外侧再加间距 × 比例，长 TickLength × 比例
+    // 天正的画法：轴线；两端各两条横线，从端点向内 Gap × 比例一条、再向内 Spacing × 比例一条，
+    // 长 TickLength × 比例。天正 2014 分解的样例（轴长 10 × 比例）横线恰在中点两侧 0.5、3 × 比例处，与此相同；tianzheng2.dwg 与其他看图软件的显示一致
     inline TchGraphics BuildSymmetry(const TchSymmetry& m)
     {
         TchGraphics g;
@@ -589,15 +809,14 @@ namespace MiniCAD::Tch
         g.Lines.push_back({{m.X1, m.Y1}, {m.X2, m.Y2}});
         if (L < 1e-9) return g;
         const double ux = (m.X2 - m.X1) / L, uy = (m.Y2 - m.Y1) / L, half = m.TickLength * s / 2;
-        const double cx = (m.X1 + m.X2) / 2, cy = (m.Y1 + m.Y2) / 2;
-        for (double t : {-0.5 * s - m.Spacing * s, -0.5 * s, 0.5 * s, 0.5 * s + m.Spacing * s})
+        for (double t : {m.Gap * s, (m.Gap + m.Spacing) * s, L - m.Gap * s, L - (m.Gap + m.Spacing) * s})
         {
-            const double px = cx + ux * t, py = cy + uy * t;
+            const double px = m.X1 + ux * t, py = m.Y1 + uy * t;
             g.Lines.push_back({{px - uy * half, py + ux * half}, {px + uy * half, py - ux * half}});
         }
         return g;
     }
-    // ── TCH_MODI 修订云线（CADReader TDbSymbModi 读取函数 0x6f13e0，版本 1 的明文分支）──
+    // ── TCH_MODI 修订云线（版本 1 的明文分支）──
     struct TchModi
     {
         std::vector<TchGraphics::Point> Points;     // 云线各弧的端点

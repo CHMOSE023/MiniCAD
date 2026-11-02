@@ -107,7 +107,7 @@ namespace
         return e;
     }
 
-    // CADReader 0x6f2fa0（版本 2）；样例 376（1166 位），字高 5
+    // 版本 2；样例 376（1166 位），字高 5
     std::unique_ptr<UnknownEntity> SectionObject(std::vector<std::pair<double, double>> pts, int kind = 1, double height = 5,
                                                  double view = 4.671538513534203, const std::string& label = "1")
     {
@@ -141,7 +141,7 @@ namespace
         std::string Number = "1", Sheet = "-", Above, Below;
     };
 
-    // CADReader 0x6f07a0（版本 3）；样例 375（782 位）。基类属性包含一个 RC 与一个句柄（旁注文字样式 0x294）
+    // 版本 3；样例 375（782 位）。基类属性包含一个 RC 与一个句柄（旁注文字样式 0x294）
     std::unique_ptr<UnknownEntity> IndexObject(const IndexSpec& s)
     {
         auto e = std::make_unique<UnknownEntity>();
@@ -176,7 +176,7 @@ namespace
         std::string Name = "天正图名标注输入", ScaleText = "1:100";
     };
 
-    // CADReader 0x6ce8c0（版本 3）；样例 378（523 位），插入点 (56674.67, 16918.89)
+    // 版本 3；样例 378（523 位），插入点 (56674.67, 16918.89)
     std::unique_ptr<UnknownEntity> NameObject(const NameSpec& s)
     {
         auto e = std::make_unique<UnknownEntity>();
@@ -349,7 +349,7 @@ int main()
               "mode 2: both texts above and below the middle of the first segment");
         ArrowSpec noSecond; noSecond.Mode = 2; noSecond.HasText2 = false;
         Check(DecodeArrow(*ArrowObject(noSecond), a) && BuildArrow(a).Texts.size() == 1,
-              "mode 2 without the second-text flag draws only the first text (kernel TDbSymbArrow::ExplodeOrDraw2d)");
+              "mode 2 without the second-text flag draws only the first text (same as Tianzheng)");
         ArrowSpec mode0; mode0.Mode = 0;
         Check(!DecodeArrow(*ArrowObject(mode0), a), "unverified arrow text mode 0 is not drawn");
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeArrow(e, o, w); }, a) == 0,
@@ -509,7 +509,7 @@ int main()
         NameSpec byBlock; byBlock.Color = 0;
         Check(DecodeDrawingName(*NameObject(byBlock), dn) && BuildDrawingName(dn, GbenorText).Texts[0].Color == 0,
               "the last short is the text colour (0 = ByBlock)");
-        // 双线（8#楼详图 10 个图名的分解结果）：粗线下 1.4 × 比例再画一条细线，显示比例时两条线都画到比例文字末端外 0.2 × 比例字高，
+        // 双线（建筑详图样图 10 个图名的分解结果）：粗线下 1.4 × 比例再画一条细线，显示比例时两条线都画到比例文字末端外 0.2 × 比例字高，
         // 居中用的总长也含这段外伸
         NameSpec doubleLine; doubleLine.LineMode = 0;
         if (DecodeDrawingName(*NameObject(doubleLine), dn))

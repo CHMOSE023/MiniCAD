@@ -10,17 +10,17 @@
 #include <string>
 #include <vector>
 
-// 天正给排水（TWT）管线类对象。布局来自天正给排水 tch_pipewire.arx 的 dwgInFields（带符号），
-// 显示规则与天正给排水 + AutoCAD 2014 的分解结果核对（139 户型水施图）。这些对象都不写代理图形。
-// 继承关系：TDbPipe → TDbPipePrototype → TDbCurveEntity；TDbPipeFitting / TDbEquipment → TDbPipeNode → TDbEntity；
-// TDbPipeValve → TDbPipeAttachment → TDbEntity；TDbWell → TDbEquipment。TDbCurveEntity / TDbEntity 即天正基类（ReadTchBase）。
+// 天正给排水（TWT）管线类对象。布局按天正给排水管线类的字段顺序整理，
+// 显示规则与天正给排水 + AutoCAD 2014 的分解结果核对（给排水样图）。这些对象都不写代理图形。
+// 继承关系：管线 → 管线原型基类 → 天正曲线基类；管件 / 设备 → 管线节点基类 → 天正基类；
+// 阀门 → 管线附件基类 → 天正基类；井 → 设备。天正曲线基类与天正基类都按天正基类读（ReadTchBase）。
 namespace MiniCAD::Tch
 {
     // TCH_PIPE 管线：直管为 LINE，弧管为 ARC，立管（起终点平面位置相同）为圆；带标注时另有管径文字
     struct TchPipe
     {
         MiniDWG::XYZ Start, End;
-        double Sweep = 0;           // 弧管的圆心角（弧度，正为逆时针；字段在内核里叫 Bulge，实际存的是角度），0 为直管
+        double Sweep = 0;           // 弧管的圆心角（弧度，正为逆时针；字段名像凸度，实际存的是角度），0 为直管
         double RiserRadius = 0;     // 立管圆的图面半径（× 比例为世界半径）
         double Diameter = 0;        // 管径（如 100）
         double Scale = 100;
@@ -62,7 +62,7 @@ namespace MiniCAD::Tch
 
         inline MiniDWG::XYZ Read3(MiniDWG::DwgBitReader& r) { return {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()}; }
 
-        // TDbPipeNode：RC 版本（< 2）、RC、RC 接口数，每个接口（TPipeInterface::DwgInFields）为 RC 版本、4 × RC、
+        // 管线节点基类：RC 版本（< 2）、RC、RC 接口数，每个接口为 RC 版本、4 × RC、
         // 字符串（文字流）、软指针（句柄流）、3BD 位置、3BD 方向；最后一个字符串（文字流）
         inline bool ReadPipeNode(MiniDWG::DwgBitReader& r, int& handles, int& texts)
         {
@@ -80,7 +80,7 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // TDbEquipment 的私有段（版本 < 4）：两个硬指针（图块），字符串，3BD 插入点、3BD、3BD 方向，BD 比例，B，
+        // 设备 的私有段（版本 < 4）：两个硬指针（图块），字符串，3BD 插入点、3BD、3BD 方向，BD 比例，B，
         // RC 镜像（位 0：Y 向镜像，位 1：X 向镜像），2 × BD；版本 ≥ 2 再 4 × BD，≥ 3 再一个 B
         // well：井的图块是单位尺寸（如半径 0.5 的圆），比例 = 设备比例 × 出图比例，不除以 100（3 个检查井与分解结果核对）
         inline bool ReadEquipment(MiniDWG::DwgBitReader& r, const TchBase& base, TchPipeBlock& b, int& handles, int& texts, bool well)
@@ -119,9 +119,9 @@ namespace MiniCAD::Tch
         }
     }
 
-    // TDbPipePrototype（版本 < 2）：RC × 3，3BD 起点、3BD 终点、BD 圆心角，字符串，软指针、RC、软指针、RC，
+    // 管线原型基类（版本 < 2）：RC × 3，3BD 起点、3BD 终点、BD 圆心角，字符串，软指针、RC、软指针、RC，
     // RC 个数 + 软指针若干，RC，RC 个数 + 软指针若干，硬指针（标注文字样式）、硬指针（标注图层），BD 标注字高、3BD 标注位置、B 显示标注。
-    // TDbPipe（版本 < 3）：BD 立管半径、BD、BD 管径、BD、BS、字符串（标注前缀）、BD、BD，版本 ≥ 2 再 BD 与字符串（标注后缀）
+    // 管线（版本 < 3）：BD 立管半径、BD、BD 管径、BD、BS、字符串（标注前缀）、BD、BD，版本 ≥ 2 再 BD 与字符串（标注后缀）
     inline bool DecodePipe(const MiniDWG::UnknownEntity& entity, TchPipe& pipe, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -162,7 +162,7 @@ namespace MiniCAD::Tch
         int doubleVersion = 0;
         if (doubleLine)
         {
-            // TDbDoubleLinePipe（版本 < 3）：BD 管宽、BD 弯头半径与管宽之比、BS、3 × BD，版本 ≥ 2 再硬指针（中心线图层）
+            // 双线管（版本 < 3）：BD 管宽、BD 弯头半径与管宽之比、BS、3 × BD，版本 ≥ 2 再硬指针（中心线图层）
             doubleVersion = r.ReadByte();
             if (doubleVersion >= 3) return fail("unsupported native double-line pipe version");
             p.Width = r.ReadBitDouble();
@@ -240,7 +240,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_PIPEFITTING 管件（弯头、三通等）：只校验布局，天正分解结果为空、不显示。TDbPipeNode 之后为 RC 版本（< 2）、3BD 位置
+    // TCH_PIPEFITTING 管件（弯头、三通等）：只校验布局，天正分解结果为空、不显示。管线节点基类 之后为 RC 版本（< 2）、3BD 位置
     inline bool DecodePipeFitting(const MiniDWG::UnknownEntity& entity, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -263,7 +263,7 @@ namespace MiniCAD::Tch
 
     // TCH_EQUIPMENT 设备（洁具、地漏、雨水斗等）与 TCH_WELL 井：引用图块的块参照。
     // 插入点 = 设备插入点，转角 = 方向向量的角度，比例 = 设备比例 × 出图比例 / 100（井不除以 100），镜像位取负对应方向的比例。
-    // TDbWell 在设备之后另有标注样式（TLabelStyle：RC 版本、硬指针、2 × BD）与 RC、字符串、3BD、3 × BD、B、硬指针，标注不显示
+    // 井在设备之后另有标注样式（RC 版本、硬指针、2 × BD）与 RC、字符串、3BD、3 × BD、B、硬指针，标注不显示
     inline bool DecodeEquipment(const MiniDWG::UnknownEntity& entity, TchPipeBlock& block, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -291,7 +291,7 @@ namespace MiniCAD::Tch
         }
         if (pump)
         {
-            // TDbPump：RC、4 个字符串（文字流）、6 × BD（0x1e0、0x1e8、0x1f0、0x1f8 长、0x200 宽、0x230；样例为 0、0、165、700、700、165）。
+            // 水泵：RC、4 个字符串（文字流）、6 × BD（0x1e0、0x1e8、0x1f0、0x1f8 长、0x200 宽、0x230；样例为 0、0、165、700、700、165）。
             // 水泵图块是 1 × 1 的单位块，按长、宽缩放（不乘设备比例），镜像与转角同设备（4 台水泵与分解结果核对）
             r.ReadByte();
             double size[6];
@@ -311,7 +311,7 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // TCH_PIPEVALVE 阀门：TDbPipeAttachment（RC 版本 < 2、RC、3BD 位置、3BD 方向、软指针）之后为 RC 版本（< 3）、
+    // TCH_PIPEVALVE 阀门：管线附件基类（RC 版本 < 2、RC、3BD 位置、3BD 方向、软指针）之后为 RC 版本（< 3）、
     // 两个硬指针（图块）、字符串、BD 比例、BD、B、RC，版本 ≥ 2 再 4 × BD 与 B。比例 = 阀门比例 × 出图比例 / 100
     inline bool DecodePipeValve(const MiniDWG::UnknownEntity& entity, TchPipeBlock& block, std::string* diagnostic = nullptr)
     {
@@ -355,7 +355,7 @@ namespace MiniCAD::Tch
     }
 
     // ---- 天正给排水的标注类：管线文字、立管标注、井标注、多管标注；以及双线管与法兰（弯头） ----
-    // 显示规则与天正给排水的分解结果核对（总图、14#~16#楼调规两张图）。文字的字高、宽度因子按分解出的 TEXT 取：
+    // 显示规则与天正给排水的分解结果核对（两张给排水样图）。文字的字高、宽度因子按分解出的 TEXT 取：
     // 字高与宽度因子由文字样式的 _TCH 扩展数据决定（见 TchTextStyleRule）
 
     namespace Detail
@@ -412,7 +412,7 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // 天正符号基类 TDbSymbWithText（版本 1～3，同 ReadTchSymbolBase）：句柄流依次为文字样式、（版本 ≥ 2）图层；版本 > 2 时 BS 文字颜色
+        // 天正符号基类（版本 1～3，同 ReadTchSymbolBase）：句柄流依次为文字样式、（版本 ≥ 2）图层；版本 > 2 时 BS 文字颜色
         struct PipeSymbol
         {
             TchBase Base;
@@ -450,7 +450,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // TCH_PIPETEXT 管线文字：TDbPipeAttachment（位置、方向）、TLabelStyle（RC 版本、硬指针文字样式、BD 字高、BD）、RC 版本（< 2）、字符串
+    // TCH_PIPETEXT 管线文字：管线附件基类（位置、方向）、标注样式（RC 版本、硬指针文字样式、BD 字高、BD）、RC 版本（< 2）、字符串
     struct TchPipeText
     {
         double X = 0, Y = 0, Rotation = 0, Height = 3, Scale = 100;
@@ -503,7 +503,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_VPIPEDIM 立管标注：TDbSymbWithText 之后为 RC 版本（< 2）、2 × BS、3BD 立管点、3BD 转折点、3BD 方向、BD 水平段长、BD，
+    // TCH_VPIPEDIM 立管标注：符号基类 之后为 RC 版本（< 2）、2 × BS、3BD 立管点、3BD 转折点、3BD 方向、BD 水平段长、BD，
     // 软指针（立管），字符串（立管编号前缀）。显示文字 = 属性包 VPIPE_DIM_FLOOR + VPIPE_DIM_TEXT（如“8”+“JL-1”）
     struct TchVPipeDim
     {
@@ -563,7 +563,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_WELLDIM 井标注：TDbSymbWithText 之后为 RC 版本（< 2）、BS、BD 水平段长（带方向）、2RD 井点、2RD 转折点、软指针（井）。
+    // TCH_WELLDIM 井标注：符号基类 之后为 RC 版本（< 2）、BS、BD 水平段长（带方向）、2RD 井点、2RD 转折点、软指针（井）。
     // 上行显示井面标高、下行显示井底标高（取自所引用的 TCH_WELL，三位小数）
     struct TchWellDim
     {
@@ -621,7 +621,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_PIPEMULTDIM 多管标注：TDbSymbWithText 之后为 RC 版本（< 3）、RC 个数 + 软指针（被标注的管线）、BD 水平段长、
+    // TCH_PIPEMULTDIM 多管标注：符号基类 之后为 RC 版本（< 3）、RC 个数 + 软指针（被标注的管线）、BD 水平段长、
     // 2RD 基线起点、2RD 基线终点，版本 ≥ 2 再 BS 与字符串。文字方向为天正基类的第二个 BD；行距 = (字高 + 属性包“多管标注基线距离”) × 比例
     struct TchPipeMultDim
     {
@@ -756,7 +756,7 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_FLANGE 法兰（双线管的管件）：TDbPipeNode（各接口的位置、方向、软指针）+ RC 版本 + 3BD，再 RC 版本（< 3），版本 ≥ 2 再硬指针。
+    // TCH_FLANGE 法兰（双线管的管件）：管线节点基类（各接口的位置、方向、软指针）+ RC 版本 + 3BD，再 RC 版本（< 3），版本 ≥ 2 再硬指针。
     // 节点的最后一个字符串为弯头中心半径与管宽之比（如“1.0”）
     struct TchFlange
     {
