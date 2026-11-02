@@ -6,12 +6,9 @@
 #include <vector>
 
 namespace MiniCAD::Tch
-{
-    // ── TCH_SHEET 天正表格（新版字段顺序与画法）──
-    // 尺寸都是图面尺寸（× 比例为世界尺寸）。单元格的文字样式逐项继承：单元格设了的用单元格的，否则用所在列的，再否则用表格的
+{ 
     struct TchSheet
     {
-        // 表格样式：Flags 的位表示设了哪一项（位 0 水平对齐、1 竖直对齐、2 文字样式、3 颜色、4 自动换行、5 边距、6 字高）
         struct GridStyle
         {
             int    Flags = 0;
@@ -49,33 +46,10 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 表格的子对象（样式、格线、行、列、单元格、合并区）各层自带 RC 版本、按版本读 RC 密钥，第二个密钥为 0
-        // 读完恢复外层的两个密钥
-        class SheetLayer
-        {
-        public:
-            explicit SheetLayer(CipherReader& f) : m_f(f), m_key(f.Key), m_key2(f.Key2) { f.Key2 = 0; }
-            ~SheetLayer() { m_f.Key = m_key; m_f.Key2 = m_key2; }
-            SheetLayer(const SheetLayer&) = delete;
-            SheetLayer& operator=(const SheetLayer&) = delete;
-            // RC 版本（大于 maxVersion 为不支持，返回 −1）；版本 ≥ keyFrom 时 RC 密钥，否则按明文
-            int Version(int maxVersion, int keyFrom)
-            {
-                const int version = m_f.Main.ReadByte();
-                if (version > maxVersion) return -1;
-                m_f.Key = version >= keyFrom ? m_f.Main.ReadByte() : 0;
-                return version;
-            }
-
-        private:
-            CipherReader& m_f;
-            int m_key, m_key2;
-        };
-
         // 表格样式（版本 ≤ 4，≥ 3 有密钥）：标志，按标志读各项，版本 ≥ 2 再一个字节
         inline bool ReadGridStyle(CipherReader& f, TchSheet::GridStyle& s)
         {
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             const int version = layer.Version(4, 3);
             if (version < 0) return false;
             s.Flags = f.Byte();
@@ -93,7 +67,7 @@ namespace MiniCAD::Tch
         // 格线样式（版本 ≤ 3，≥ 2 有密钥）：种类；种类 1 时颜色、线型（句柄）、线宽
         inline bool ReadDivider(CipherReader& f, TchSheet::Divider& d)
         {
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             if (layer.Version(3, 2) < 0) return false;
             d.Kind = f.Byte();
             if (d.Kind == 1) { d.Color = f.Short(); f.Handle(); d.Width = f.Double(); }
@@ -104,7 +78,7 @@ namespace MiniCAD::Tch
         // 不在合并区时文字样式、内容（明文字符串）；版本 ≥ 2 再一个句柄
         inline bool ReadCell(CipherReader& f, TchSheet::Cell& c, std::size_t ranges, bool inRangeList)
         {
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             const int version = layer.Version(4, 3);
             if (version < 0) return false;
             const int range = f.Short();
@@ -125,7 +99,7 @@ namespace MiniCAD::Tch
         // 行（版本 ≤ 3）：格线，之后（≥ 2 有密钥）行高方式、行高、竖直对齐
         inline bool ReadRow(CipherReader& f, TchSheet::Row& r)
         {
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             const int version = f.Main.ReadByte();
             if (version > 3 || !ReadDivider(f, r.Line)) return false;
             f.Key = version >= 2 ? f.Main.ReadByte() : 0;
@@ -138,7 +112,7 @@ namespace MiniCAD::Tch
         // 列（版本 ≤ 3，≥ 2 有密钥）：文字样式、格线、字节、列宽
         inline bool ReadColumn(CipherReader& f, TchSheet::Column& c)
         {
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             if (layer.Version(3, 2) < 0) return false;
             if (!ReadGridStyle(f, c.Style) || !ReadDivider(f, c.Line)) return false;
             f.Byte();
@@ -150,7 +124,7 @@ namespace MiniCAD::Tch
         inline bool ReadTitle(CipherReader& f, TchSheet& t)
         {
             if (!ReadRow(f, t.TitleRow) || !ReadCell(f, t.Title, 0, true)) return false;
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             if (layer.Version(3, 2) < 0) return false;
             t.TitleVisible = f.Byte() != 0;
             return f.Ok();
@@ -160,7 +134,7 @@ namespace MiniCAD::Tch
         inline bool ReadRange(CipherReader& f, TchSheet::Range& r)
         {
             if (!ReadCell(f, r.Content, 0, true)) return false;
-            SheetLayer layer(f);
+            CipherLayer layer(f);
             const int version = layer.Version(4, 3);
             if (version < 0) return false;
             int v[4];
@@ -184,11 +158,7 @@ namespace MiniCAD::Tch
             return nullptr;
         }
     }
-
-    // 天正表格：天正基类后 RC 版本（≤ 5）；表格样式、外框 / 横线 / 竖线的默认格线（版本 ≤ 1 没有竖线）、标题；
-    // 版本 5 起 RC 密钥（之前为明文）；列数、各列，行数、各行（版本 < 3 个数为 RC），合并区数、各合并区，行数 × 列数个单元格；
-    // 默认行高、插入点的位置、插入点（三维点）、转角，版本 ≥ 4 再行高方式。
-    // 新版（基类版本 9～14，见 TchCipher.h）与旧版明文对象（R2004 起）同一布局
+ 
     inline bool DecodeSheet(const MiniDWG::UnknownEntity& entity, TchSheet& sheet, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -246,9 +216,7 @@ namespace MiniCAD::Tch
     }
 
     namespace Detail
-    {
-        // 天正单行文字的大致宽度（按 BuildText 的天正步进），用来判断单元格要不要换行。
-        // SHX 样式的上标 ^U…^U 不占宽、上标字每字 0.35 个步进（同 AddRuns）
+    { 
         inline double SheetTextWidth(const std::string& value, double nominal, const TchTextStyleRule& rule)
         {
             double w = 0;
@@ -264,17 +232,7 @@ namespace MiniCAD::Tch
             return w * nominal;
         }
     }
-
-    // 天正的画法：
-    // - 插入点按 Anchor 落在表格（含显示的标题）外包矩形上；表身左上角往下逐行、往右逐列，行高、列宽 × 比例
-    // - 外框（Border）：标题行的线 Kind 不为 0 时框住标题与表身，否则只框表身、标题浮在表身上方
-    // - 标题：标题行高的框内放标题文字；标题与表身之间画标题行的线
-    // - 横线：第 i 行下方，用该行的格线（Kind 2 时用 RowLine）；竖线：第 j 列右侧，用该列的格线（Kind 2 时用 ColumnLine）；
-    //   合并区内部不画（HasRowDivider / HasColumnDivider）
-    // - 文字：水平左 / 右对齐时内缩边距、居中在格子中线；竖直底 / 基线对齐时离底边一个边距、居中在格子中线、
-    //   顶对齐离顶边一个边距。边距 = Margin × 字高 × 比例。含换行或打开自动换行且放不下时按多行文字，行宽为格宽减两侧边距
-    // 文字样式：主样式为表格的（Style.TextStyle），第二样式为标题的；单元格用标题的样式时 Text::Style 为 1，其余按主样式画。
-    // 未处理：格线的颜色、线型；单元格里的图块（以 "^B{" 开头的内容，不画）
+     
     inline TchGraphics BuildSheet(const TchSheet& t, const TchTextStyleRule& rule = {}, const TchTextStyleRule& titleRule = {})
     {
         TchGraphics g;
@@ -290,9 +248,7 @@ namespace MiniCAD::Tch
         const double width = xs.back(), height = ys.back();
         const double titleHeight = t.TitleVisible ? t.TitleRow.Height * s : 0.0;
         const bool framedTitle = t.TitleVisible && t.TitleRow.Line.Kind != 0;
-
-        // 局部坐标：x 沿表格向右、y 向上，原点为表身左上角；外包矩形 x ∈ [0, 宽]、y ∈ [−表身高, 标题行高]。
-        // 插入点是外包矩形上 Anchor 所指的点（ax, ay），绕它按转角转到世界坐标
+ 
         const int anchor = Detail::TextAttachment(t.Anchor);
         const int column = anchor >= 1 && anchor <= 9 ? (anchor - 1) % 3 : 0, row = anchor >= 1 && anchor <= 9 ? (anchor - 1) / 3 : 0;
         const double ax = column * width / 2, ay = row == 0 ? titleHeight : row == 1 ? (titleHeight - height) / 2 : -height;
@@ -300,8 +256,7 @@ namespace MiniCAD::Tch
             const double lx = x - ax, ly = y - ay;
             return TchGraphics::Point{t.X + lx * c - ly * sn, t.Y + lx * sn + ly * c};
         };
-
-        // 格线：Kind 0 不画；1 用自身线宽；2 用默认格线（默认格线也按这三种）
+         
         auto resolve = [](const TchSheet::Divider& own, const TchSheet::Divider& fallback) -> const TchSheet::Divider* {
             if (own.Kind == 0) return nullptr;
             const TchSheet::Divider& d = own.Kind == 1 ? own : fallback;

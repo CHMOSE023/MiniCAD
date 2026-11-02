@@ -7,45 +7,10 @@
 #include <optional>
 #include <string>
 #include <vector>
-
-// 天正电气的桥架（TCH_CABLETRY）、桥架配件（TCH_EFITTING）与折断线（TCH_RUPTURE）。
-// 布局按天正给排水 / 电气共用的管线基类整理，
-// 显示与天正给排水（AutoCAD 2014）分解电气平面样图、电气照明样图的结果核对。这些对象都不写代理图形
 namespace MiniCAD::Tch
 {
-    // 属性表：字符串键的属性表。先是若干字符串直到 "TDBXDATAMAP_BLOCK_BEGIN_"，之后每项为键（字符串）、
-    // BL 类型、按类型读值，直到键为 "TDBXDATAMAP_BLOCK_END_"。类型 3 BL，5 BD，8 / 0x4009 字符串，
-    // 0x13 软指针、0x15 硬指针（在句柄流），0x4005 / 0x4006 点（3BD），0x4007 / 0x4008 向量（3BD，键带 "$vector3d" 后缀）
-    struct TchXDataMap
-    {
-        struct Value { int Type = 0; double Number = 0; MiniDWG::XYZ Point; std::string Text; int HandleIndex = -1; };
-        std::map<std::string, Value> Items;
-
-        const Value* Find(const std::string& key) const
-        {
-            const auto it = Items.find(key);
-            return it == Items.end() ? nullptr : &it->second;
-        }
-        std::optional<double> Number(const std::string& key) const
-        {
-            const auto* v = Find(key);
-            return v && (v->Type == 3 || v->Type == 5) ? std::optional<double>(v->Number) : std::nullopt;
-        }
-        std::optional<MiniDWG::XYZ> Point(const std::string& key) const
-        {
-            const auto* v = Find(key);
-            return v && v->Type >= 0x4005 && v->Type <= 0x4008 ? std::optional<MiniDWG::XYZ>(v->Point) : std::nullopt;
-        }
-        std::string Text(const std::string& key) const
-        {
-            const auto* v = Find(key);
-            return v && (v->Type == 8 || v->Type == 0x4009) ? v->Text : std::string();
-        }
-    };
-
     namespace Detail
-    {
-        // handles：句柄流中已占用的句柄数，属性表中的句柄依次排在其后（记录在 HandleIndex）
+    { 
         inline bool ReadXDataMap(MiniDWG::DwgBitReader& r, TextStream& text, TchXDataMap& map, int& handles)
         {
             int guard = 0;
@@ -71,8 +36,7 @@ namespace MiniCAD::Tch
             }
             return !r.Failed() && !text.Reader.Failed();
         }
-
-        // 天正曲线基类（天正基类）→ 接口基类：BS 版本，版本 1 时句柄流中 2 个硬指针
+         
         inline bool ReadInterfacesObj(const MiniDWG::RawDwgData& data, MiniDWG::DwgBitReader& r, TextStream*& text,
                                       std::optional<TextStream>& storage, TchBase& base, int& handles)
         {
@@ -97,11 +61,81 @@ namespace MiniCAD::Tch
             return handles.Failed() ? kNullHandle : h;
         }
 
+        inline MiniDWG::Handle HandleAt(const MiniDWG::UnknownEntity& entity, const TchXDataMap::Value& v)
+        {
+            return v.HandleIndex < 0 ? v.Ref : HandleAt(entity, v.HandleIndex);
+        }
+
         inline bool FinitePoint(const MiniDWG::XYZ& p) { return Finite(p.X) && Finite(p.Y); }
+
+        // 新版管线接口列表 版本 2～3（版本为 BS）
+        inline bool ReadCipherInterfacesObj(CipherReader& f)
+        {
+            if (!f.ReadBase()) return false;
+            const int version = f.Main.ReadBitShort();
+            if (version < 2 || version > 3) return false;
+            f.ReadKey();
+            f.Handle(); f.Handle();
+            if (version > 2) { f.Byte(); f.Short(); }
+            return f.Ok();
+        }
+
+        // 边界与连接列表新旧版相同（明文）
+        inline bool ReadCipherEdgesAndLinks(CipherReader& f)
+        {
+            const int edges = f.Long();
+            if (edges < 0 || edges > 1024) return false;
+            for (int i = 0; i < edges && f.Ok(); ++i)
+            {
+                f.Handle();
+                const int segments = f.Main.ReadBitLong();
+                if (segments < 0 || segments > 4096) return false;
+                for (int k = 0; k < segments && f.Ok(); ++k)
+                {
+                    for (int j = 0; j < 3; ++j) f.Main.Read3BitDouble();
+                    f.Main.ReadBitShort(); f.Main.ReadBitLong(); f.Main.ReadBitDouble();
+                }
+            }
+            const int links = f.Long();
+            if (links < 0 || links > 4096) return false;
+            for (int i = 0; i < links && f.Ok(); ++i) f.Handle();
+            return f.Ok();
+        }
+         
+        inline bool ReadCipherPipeBase(CipherReader& f, TchXDataMap& map)
+        {
+            if (!ReadCipherInterfacesObj(f)) return false;
+            const int version = f.Main.ReadBitShort();
+            if (version < 3 || version > 4) return false;
+            f.ReadKey();
+            if (!ReadCipherEdgesAndLinks(f)) return false;
+            map = f.XData;
+            if (version > 3)
+                for (const char* key : {"Start", "End"})
+                {
+                    TchXDataMap::Value v;
+                    v.Type = 0x4005;
+                    v.Point = f.Point3();
+                    map.Items[key] = v;
+                }
+            if (version > 3) { f.Point3(); f.Double(); f.Short(); }
+            return f.Ok();
+        }
+         
+        inline bool ReadCipherFittingBase(CipherReader& f, TchXDataMap& map)
+        {
+            if (!ReadCipherInterfacesObj(f) || f.Main.ReadBitShort() != 3) return false;
+            f.ReadKey();
+            f.Handle();
+            CipherLayer layer(f);
+            f.ReadKey();
+            if (!ReadCipherEdgesAndLinks(f)) return false;
+            map = f.XData;
+            return f.Ok();
+        }
     }
 
-    // 桥架与配件共用的显示属性：EdageWidth / CenLineWidth 为图面线宽（乘出图比例得到多段线全程线宽），
-    // HasCenLine 为 1 时另画中心线（在 CABLETRAY_DOTE 图层，即 TchGraphics 的 Layer 1）
+     
     struct TchCableStroke
     {
         double EdgeWidth = 0, CenterWidth = 0;
@@ -130,19 +164,14 @@ namespace MiniCAD::Tch
             g.Paths.push_back(std::move(p));
         }
     }
-
-    // ── TCH_CABLETRY 桥架（桥架 → 管线基类 → 接口基类）──
-    // 管线基类：BS 版本；版本 1：属性表、BL 边界数（每条：软指针、BL 段数、每段 3 × 3BD、BS、BL、BD）、BL 软指针数；
-    // 之后 桥架 的BS版本。显示用属性表：Start / End 中心线端点，B 宽度；边线在对象自身的图层
-    // （Cabletray_Layer 不决定显示：电气照明样图 块内桥架配件的 Cabletray_Layer 为 CABLETRAY_OTHER，分解结果仍在自身图层）
+     
     struct TchCableTray
     {
         MiniDWG::XYZ Start, End;
         double Width = 0;
         TchCableStroke Stroke;
     };
-
-    // 只读出属性表；天正暖通风管 TCH_DBHVACDUCT（风管）同属管线基类，布局相同（三张暖通图 539 个全部读通），显示规则未核对
+     
     inline bool ReadCableTrayMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
@@ -150,6 +179,15 @@ namespace MiniCAD::Tch
         if (entity.Raw.DxfName != "TCH_CABLETRY" && entity.Raw.DxfName != "TCH_DBHVACDUCT") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cable tray");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeBase(f, map)) return fail("unsupported cable tray base layout");
+            if (f.Main.ReadBitShort() > (entity.Raw.DxfName == "TCH_DBHVACDUCT" ? 4 : 1)) return fail("unsupported cable tray version");
+            if (!f.Exact()) return fail("native cable tray fields do not consume the payload exactly");
+            if (baseOut) { *baseOut = {}; baseOut->Scale = f.Scale; }
+            return true;
+        }
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         Detail::TextStream* text = nullptr;
@@ -193,8 +231,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 分解为沿中心线、宽 B 的矩形（边线带线宽时为多段线），有中心线时另加一条
+     
     inline TchGraphics BuildCableTray(const TchCableTray& t)
     {
         TchGraphics g;
@@ -211,14 +248,7 @@ namespace MiniCAD::Tch
         Detail::AddCableCenterLine(g, t.Stroke, {t.Start.X, t.Start.Y}, {t.End.X, t.End.Y});
         return g;
     }
-
-    // ── TCH_EFITTING 桥架配件（桥架配件 → 管件基类 → 接口基类）──
-    // 管件基类：BS 版本；版本 1：软指针、属性表、两个 BL 列表计数（元素在句柄流）；之后 桥架配件 的BS版本。
-    // 属性表：Mid 中心线交点，B 宽度，Corner 非 0 时内角为圆弧（90° 弯通、三通、四通），IdCNT1～4 所接桥架；按类型：
-    // 弯通（有 Elbow）：MajBr / MinBr 两支方向，L 每支长度，Elbow 1 为 90° 弯通、2 为 45° 弯通；
-    // 三通（有 Tee）：MajBr 主路方向，MinBr 支路方向，L1 主路全长，L2 / 2 为内角切点到 Mid 的距离；
-    // 四通（有 Cross）：Mndir 一路方向（另一路与之垂直），L 每路全长。
-    // 变径三通、四通（bTransFit 为 1，MajBrB / MinBrB 为各路宽度）只有 10 个样例、规律未定，不解析
+     
     struct TchCableFitting
     {
         enum class Kind { Elbow, Tee, Cross };
@@ -230,8 +260,7 @@ namespace MiniCAD::Tch
         TchCableStroke Stroke;
         MiniDWG::Handle Connected[2] = {MiniDWG::kNullHandle, MiniDWG::kNullHandle};
     };
-
-    // 只读出属性表（诊断工具也用它打印属性）；天正暖通风管管件 TCH_DBHFITTING（风管管件）同属管件基类
+     
     inline bool ReadCableFittingMap(const MiniDWG::UnknownEntity& entity, TchXDataMap& map, std::string* diagnostic = nullptr, TchBase* baseOut = nullptr)
     {
         using namespace MiniDWG;
@@ -239,6 +268,15 @@ namespace MiniCAD::Tch
         if (entity.Raw.DxfName != "TCH_EFITTING" && entity.Raw.DxfName != "TCH_DBHFITTING") return false;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cable tray fitting");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherFittingBase(f, map)) return fail("unsupported cable tray fitting base layout");
+            if (f.Main.ReadBitShort() > (entity.Raw.DxfName == "TCH_DBHFITTING" ? 2 : 1)) return fail("unsupported cable tray fitting class version");
+            if (!f.Exact()) return fail("native cable tray fitting fields do not consume the payload exactly");
+            if (baseOut) { *baseOut = {}; baseOut->Scale = f.Scale; }
+            return true;
+        }
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         Detail::TextStream* text = nullptr;
@@ -246,9 +284,8 @@ namespace MiniCAD::Tch
         int handles = 0;
         if (!Detail::ReadInterfacesObj(data, r, text, storage, base, handles)) return fail("unsupported cable tray fitting base layout");
         if (r.ReadBitShort() != 1) return fail("unsupported cable tray fitting version");
-        ++handles;                                                  // 软指针
-        if (!Detail::ReadXDataMap(r, *text, map, handles)) return fail("invalid cable tray fitting property map");
-        // 两个列表的元素都在句柄流中（排在属性表的句柄之后），主数据流只有计数（暖通大样图 10 个风管管件核对：计数非 0 时也恰好读完）
+        ++handles;                                                 
+        if (!Detail::ReadXDataMap(r, *text, map, handles)) return fail("invalid cable tray fitting property map"); 
         const int list1 = r.ReadBitLong(), list2 = r.ReadBitLong();
         if (r.ReadBitShort() > 1) return fail("unsupported cable tray fitting class version");
         if (r.Failed() || r.PositionInBits() != data.MainBits)
@@ -287,7 +324,7 @@ namespace MiniCAD::Tch
             if (f.Elbow != 1 && f.Elbow != 2) return fail("only 90 and 45 degree cable tray elbows are supported");
             const char* keys[] = {"IdCNT1", "IdCNT2"};
             for (int i = 0; i < 2; ++i)
-                if (const auto* v = map.Find(keys[i])) f.Connected[i] = Detail::HandleAt(entity, v->HandleIndex);
+                if (const auto* v = map.Find(keys[i])) f.Connected[i] = Detail::HandleAt(entity, *v);
         }
         else if (map.Find("Tee"))
         {
@@ -317,7 +354,7 @@ namespace MiniCAD::Tch
         if (f.Type != TchCableFitting::Kind::Elbow)
         {
             const double cosine = (f.Major.X * f.Minor.X + f.Major.Y * f.Minor.Y) / std::hypot(f.Major.X, f.Major.Y) / std::hypot(f.Minor.X, f.Minor.Y);
-            if (std::abs(cosine) > 1e-3) return fail("only right-angle cable tray tees and crosses are supported");   // 样例中有 1e-5 量级的误差
+            if (std::abs(cosine) > 1e-3) return fail("only right-angle cable tray tees and crosses are supported");   
         }
         fitting = f;
         if (diagnostic) diagnostic->clear();
@@ -325,24 +362,20 @@ namespace MiniCAD::Tch
     }
 
     namespace Detail
-    {
-        // 配件内角：A → B 两切点之间为直线（倒角），round 时为圆弧——凸向 Mid、与两侧边线相切（turn 为边线转过的角度）
+    {  
         inline void AddFittingCorner(TchGraphics::Path& p, TchGraphics::Point a, TchGraphics::Point b, TchGraphics::Point mid, bool round, double turn)
         {
             double bulge = 0;
             if (round)
             {
                 const double side = (b.X - a.X) * (mid.Y - a.Y) - (b.Y - a.Y) * (mid.X - a.X);
-                bulge = std::tan(turn / 4) * (side < 0 ? 1 : -1);    // Mid 在 A → B 右侧时逆时针
+                bulge = std::tan(turn / 4) * (side < 0 ? 1 : -1);    
             }
             p.Points.push_back({a, bulge});
             p.Points.push_back({b});
         }
     }
-
-    // 弯通：两支自 Mid 沿各自方向伸出，外侧边线相交成尖角；
-    // 90° 弯通（Elbow 1）每支长 L − B/2，内侧在距 Mid 为 L/2 处切角（Corner 非 0 时为圆弧）；45° 弯通（Elbow 2）每支长 L + B/2 × tan 22.5°，内侧直接相交。
-    // 属性表中的方向是所接桥架的走向，可能指向 Mid：每支取朝向所接桥架（trays：所接桥架的中心线）的一侧
+     
     inline TchGraphics BuildCableElbow(const TchCableFitting& f, const std::vector<TchGraphics::Segment>& trays)
     {
         using P = TchGraphics::Point;
@@ -358,18 +391,18 @@ namespace MiniCAD::Tch
         auto orient = [&](P d, double fallback) {
             const P plus{f.Mid.X + d.X * arm, f.Mid.Y + d.Y * arm}, minus{f.Mid.X - d.X * arm, f.Mid.Y - d.Y * arm};
             double best = 1e300, sign = fallback;
-            for (const auto& s : trays)       // 只认末端贴着的桥架：另一支所接的桥架不能决定这一支（电气照明样图 只有一支接桥架的弯通）
+            for (const auto& s : trays)       
             {
                 const double a = distance(plus, s), b = distance(minus, s);
                 if (std::min(a, b) < best && std::min(a, b) < f.Width) { best = std::min(a, b); sign = a <= b ? 1.0 : -1.0; }
             }
             return P{d.X * sign, d.Y * sign};
         };
-        // 没有所接桥架时：电气平面样图的样例中 90° 弯通的主路方向指向 Mid，45° 弯通背离 Mid，支路方向都背离 Mid
+        
         const P u = orient(unit(f.Major), f.Elbow == 1 ? -1.0 : 1.0), v = orient(unit(f.Minor), 1.0);
         const double cosine = u.X * v.X + u.Y * v.Y;
         if (std::abs(cosine) > 1 - 1e-6) return g;
-        auto normal = [](P a, P b) {         // a 的法向，朝 b 一侧
+        auto normal = [](P a, P b) {         
             const double d = b.X * a.X + b.Y * a.Y;
             const double nx = b.X - d * a.X, ny = b.Y - d * a.Y, n = std::hypot(nx, ny);
             return P{nx / n, ny / n};
@@ -377,7 +410,7 @@ namespace MiniCAD::Tch
         const P nu = normal(u, v), nv = normal(v, u);
         const P m{f.Mid.X, f.Mid.Y};
         auto at = [&](P d, double t, P n, double s) { return P{m.X + d.X * t + n.X * s, m.Y + d.Y * t + n.Y * s}; };
-        auto meet = [&](double s) {          // 两支偏移 s 的边线交点
+        auto meet = [&](double s) {          
             const P a = at(u, 0, nu, s), b = at(v, 0, nv, s);
             const double den = u.X * v.Y - u.Y * v.X;
             const double t = ((b.X - a.X) * v.Y - (b.Y - a.Y) * v.X) / den;
@@ -398,7 +431,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 三通：主路沿 MajBr 两侧各伸出 L1/2，支路沿 MinBr 伸出 L1/2；支路两侧的内角切点距 Mid 为 L2/2（Corner 非 0 时为圆弧）
     inline TchGraphics BuildCableTee(const TchCableFitting& f)
     {
         using P = TchGraphics::Point;
@@ -465,18 +497,46 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_RUPTURE 折断线（折断线）──
-    // 天正基类、RC 版本（1～2；版本 2 再 RC 密钥，密钥 < 16 为明文）、2RD 起点、2RD 终点、RC
+    
     struct TchRupture
     {
         double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0, Scale = 100;
+        int Count = 1;
     };
+
+    namespace Detail
+    {
+        inline bool CheckRupture(const TchRupture& t)
+        {
+            return Finite(t.X1) && Finite(t.Y1) && Finite(t.X2) && Finite(t.Y2) && t.Scale > 0 && std::hypot(t.X2 - t.X1, t.Y2 - t.Y1) >= 1e-9;
+        }
+         
+        inline bool DecodeRuptureCipher(const MiniDWG::UnknownEntity& entity, TchRupture& rupture, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native rupture line version");
+            f.ReadKey();
+            TchRupture t;
+            t.Scale = f.Scale;
+            const auto a = f.Point2(), b = f.Point2();
+            t.X1 = a.X; t.Y1 = a.Y; t.X2 = b.X; t.Y2 = b.Y;
+            t.Count = f.Byte();
+            if (!f.Exact()) return fail("native rupture line fields do not consume the payload exactly");
+            if (!CheckRupture(t)) return fail("invalid native rupture line geometry");
+            rupture = t;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
 
     inline bool DecodeRupture(const MiniDWG::UnknownEntity& entity, TchRupture& rupture, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_RUPTURE") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeRuptureCipher(entity, rupture, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for rupture line");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -489,30 +549,36 @@ namespace MiniCAD::Tch
         t.Scale = base.Scale;
         t.X1 = r.ReadRawDouble(); t.Y1 = r.ReadRawDouble();
         t.X2 = r.ReadRawDouble(); t.Y2 = r.ReadRawDouble();
-        r.ReadByte();
+        t.Count = r.ReadByte();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native rupture line fields do not consume the payload exactly");
-        if (!Detail::Finite(t.X1) || !Detail::Finite(t.Y1) || !Detail::Finite(t.X2) || !Detail::Finite(t.Y2) || !(t.Scale > 0) ||
-            std::hypot(t.X2 - t.X1, t.Y2 - t.Y1) < 1e-9)
-            return fail("invalid native rupture line geometry");
+        if (!Detail::CheckRupture(t)) return fail("invalid native rupture line geometry");
         rupture = t;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 分解为一条 6 点多段线（9 个样例核对，比例 s）：两端为直线，中点两侧 1.125 × s 之间为锯齿——
-    // 自左侧点以 70° 升到线左侧 2.1 × s，再以 −80° 降到右侧 2.1 × s，然后接右侧点
+ 
     inline TchGraphics BuildRupture(const TchRupture& t)
     {
         TchGraphics g;
-        const double dx = t.X2 - t.X1, dy = t.Y2 - t.Y1, len = std::hypot(dx, dy);
-        const double ux = dx / len, uy = dy / len, nx = -uy, ny = ux, s = t.Scale, h = 2.1 * s;
-        auto at = [&](double along, double side) { return TchGraphics::Point{t.X1 + ux * along + nx * side, t.Y1 + uy * along + ny * side}; };
-        const double a = len / 2 - 1.125 * s;
-        const double peak = a + h / std::tan(70 * std::numbers::pi / 180);
-        const double valley = peak + 2 * h / std::tan(80 * std::numbers::pi / 180);
-        TchGraphics::Path p;
-        for (const auto& q : {at(0, 0), at(a, 0), at(peak, h), at(valley, -h), at(len / 2 + 1.125 * s, 0), at(len, 0)}) p.Points.push_back({q});
-        g.Paths.push_back(std::move(p));
+        const double dx = t.X2 - t.X1, dy = t.Y2 - t.Y1, total = std::hypot(dx, dy);
+        const double ux = dx / total, uy = dy / total, nx = -uy, ny = ux, s = t.Scale, h = 2.1 * s;
+        const double len = total / std::max(t.Count, 1);
+        for (int i = 0; i < t.Count; ++i)
+        {
+            const double x0 = t.X1 + ux * len * i, y0 = t.Y1 + uy * len * i;
+            auto at = [&](double along, double side) { return TchGraphics::Point{x0 + ux * along + nx * side, y0 + uy * along + ny * side}; };
+            const double a = len / 2 - 1.125 * s;
+            if (a < 0)
+            {
+                g.Lines.push_back({at(0, 0), at(len, 0)});
+                continue;
+            }
+            const double peak = a + h / std::tan(70 * std::numbers::pi / 180);
+            const double valley = peak + 2 * h / std::tan(80 * std::numbers::pi / 180);
+            TchGraphics::Path p;
+            for (const auto& q : {at(0, 0), at(a, 0), at(peak, h), at(valley, -h), at(len / 2 + 1.125 * s, 0), at(len, 0)}) p.Points.push_back({q});
+            g.Paths.push_back(std::move(p));
+        }
         return g;
     }
 }

@@ -114,12 +114,11 @@ int RunHatchPatternTests()
         Check(all, "内置图案齐全（18 个）");
     }
 
-    // ── 天正自带的图案（HatchPatternLibrary.inc）：天正自己的进图案库，同名标准图案按天正的比例只给天正填充用 ──
     {
         const char* own[] = { "钢筋混凝土", "普通砖", "加气混凝土", "卵石砌体", "天然石材", "金属", "空心砖", "隔热材料03", "AN31C", "COBBLE" };
         bool all = true;
         for (const char* n : own) all = all && lib.Find(n) && !lib.Find(n)->Families.empty();
-        Check(all, "天正自己的图案编进了图案库（不用另放天正的 acad.pat）");
+        Check(all, "TCH图案编进了图案库");
         const HatchPattern* brick = lib.Find("普通砖");
         Check(brick && brick->Families.size() == 1 && brick->Families[0].AngleDeg == 45.0 && std::abs(brick->Families[0].Spacing - 2.5) < 1e-5
                     && brick->Description.empty(),
@@ -129,11 +128,11 @@ int RunHatchPatternTests()
         const HatchPattern* ansi = lib.Find("ANSI31");
         const HatchPattern* tchAnsi = lib.FindTianzheng("ansi31");
         Check(ansi && tchAnsi && ansi->Families[0].Spacing == 3.175 && tchAnsi->Families[0].Spacing == 1.5875,
-              "ANSI31：图案库里按 acadiso（间距 3.175），天正填充按天正的（1.5875）");
+              "ANSI31：图案库里按 acadiso（间距 3.175）");
         Check(lib.FindTianzheng("AR-CONC") && !lib.Find("AR-CONC") && lib.FindTianzheng("普通砖") && lib.FindTianzheng("SOLID")->Solid,
-              "天正的标准图案只给天正填充；天正自己的、SOLID 也从这里取");
+              "TCH的标准图案只给TCH填充；SOLID 也从这里取");
         lib.LoadText("*TCH_EXTRA_PROBE\n0,0,0,0,1\n");
-        Check(lib.FindTianzheng("tch_extra_probe") != nullptr, "天正表里没有的再找图案库（patterns 目录另加的）");
+        Check(lib.FindTianzheng("tch_extra_probe") != nullptr, "TCH表里没有的再找图案库（patterns 目录另加的）");
     }
 
     // ── 实心填充：面积正确（含孔岛），相邻条带的梯形合并，三角形数与边数同阶 ──
@@ -215,7 +214,6 @@ int RunHatchPatternTests()
         Check(!bad && out.size() == 2 && err.find("第 3 行") != std::string::npos, "错误行报告行号，其余图案仍载入");
     }
 
-    // ── 外部 .pat 的编码：中文版 AutoCAD、天正的文件是 GBK，读入后名称与说明是 UTF-8 ──
     {
         const std::string gbk  = "*GBK_PROBE, \xBB\xEC\xC4\xFD\xCD\xC1\r\n45, 0,0, 0,3.175\r\n";                 // 说明"混凝土"（GBK）
         const std::string utf8 = "*GBK_PROBE, \xE6\xB7\xB7\xE5\x87\x9D\xE5\x9C\x9F\r\n45, 0,0, 0,3.175\r\n";     // 同一段（UTF-8）

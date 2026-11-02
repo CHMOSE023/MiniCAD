@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>开源 2D/3D CAD 应用，使用C++20开发。</strong><br />
-  在windows和浏览器内运行CAD，内核使用SMLib, 支持三维Node节点建模，<strong>兼容dwg、天正</strong>。
+  在windows和浏览器内运行CAD，内核使用SMLib, 支持三维Node节点建模，<strong>兼容dwg</strong>。
 </p>
 
 <p align="center">

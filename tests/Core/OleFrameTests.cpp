@@ -302,7 +302,6 @@ namespace
         if (vp2)
             Check(vp2->GetFrozenLayers().size() == 4, "id=2 的视口冻结 4 个图层");
 
-        // TCH_COORD F656B（= 1009003）：对象线型 __DASH，天正画坐标标注不用它，引线应是实线
         if (const BlockEntity* coord = scene.GetBlockTable().Get("*U_TCH_1009003"))
         {
             bool any = false, continuous = true;

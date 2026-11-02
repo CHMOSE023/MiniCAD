@@ -1,4 +1,4 @@
-// 测试用：合成新版天正（基类版本 9～14）与旧版明文天正对象的三个数据流（TchCipherTests、TchSheetTests 共用）
+// 测试用：合成新版天正（基类版本 9～14）与旧版明文TCH对象的三个数据流（TchCipherTests、TchSheetTests 共用）
 #pragma once
 #include "Import/TchCipher.h"
 #include "Dwg/Write/DwgBitWriter.h"
@@ -47,6 +47,8 @@ namespace TchTest
         }
         void Byte(int v) { Number(std::to_string(v), [](MiniDWG::DwgBitWriter& w, const std::string& t) { w.WriteByte(static_cast<std::uint8_t>(std::stoi(t))); }); }
         void Short(int v) { Number(std::to_string(v), [](MiniDWG::DwgBitWriter& w, const std::string& t) { w.WriteBitShort(static_cast<std::int16_t>(std::stoi(t))); }); }
+        void Long(int v) { Number(std::to_string(v), [](MiniDWG::DwgBitWriter& w, const std::string& t) { w.WriteBitLong(std::stoi(t)); }); }
+        void Bool(bool v) { Number(v ? "1" : "0", [](MiniDWG::DwgBitWriter& w, const std::string& t) { w.WriteBit(t != "0"); }); }
         void Point2(double x, double y)
         {
             if (Key < 17) { Main.WriteRawDouble(x); Main.WriteRawDouble(y); }
@@ -62,6 +64,15 @@ namespace TchTest
         // 天正基类版本 11：伪 GUID 第 4、16、30 个字符为第二个密钥的三位数字；xdata 为扩展数据表里的整数项（类型 3）
         void Base(int key, int key2, double scale, int guidKey2, std::initializer_list<std::pair<const char*, int>> xdata = {})
         {
+            BaseBegin(key, key2, scale, guidKey2, 0, 0);
+            MapBegin();
+            for (const auto& [name, value] : xdata) MapInt(name, value);
+            BaseEnd();
+        }
+
+        // 分段写天正基类：BaseBegin（到属性包项数）、FieldText / FieldNumber、MapBegin、Map*、BaseEnd
+        void BaseBegin(int key, int key2, double scale, int guidKey2, double angle, int fields)
+        {
             Key = key; Key2 = key2;
             Main.WriteByte(11);
             Main.WriteByte(static_cast<std::uint8_t>(key));
@@ -71,19 +82,51 @@ namespace TchTest
             guid[30] = static_cast<char>('0' + guidKey2 % 10);
             Text.WriteVariableText(guid);
             Double(scale);
-            Double(0);
+            Double(angle);
             Byte(0);                                            // 标志：没有基类句柄
-            Main.WriteBitLong(0);                               // 属性包
-            Text.WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_");
-            for (const auto& [name, value] : xdata)
-            {
-                Text.WriteVariableText(name);
-                Main.WriteBitLong(3);
-                Main.WriteBitLong(value);
-            }
+            Main.WriteBitLong(fields);
+        }
+        void FieldText(const char* name, const std::string& value) { Text.WriteVariableText(name); Main.WriteBitLong(0x65); Text.WriteVariableText(value); }
+        void FieldNumber(const char* name, double value) { Text.WriteVariableText(name); Main.WriteBitLong(200); Main.WriteBitDouble(value); }
+        void MapBegin() { Text.WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_"); }
+        void MapInt(const char* name, int value) { Text.WriteVariableText(name); Main.WriteBitLong(3); Main.WriteBitLong(value); }
+        void MapNumber(const char* name, double value) { Text.WriteVariableText(name); Main.WriteBitLong(5); Main.WriteBitDouble(value); }
+        void MapPoint(const char* name, double x, double y, double z = 0)
+        {
+            Text.WriteVariableText(name);
+            Main.WriteBitLong(0x4005);
+            Main.WriteBitDouble(x); Main.WriteBitDouble(y); Main.WriteBitDouble(z);
+        }
+        void MapHandle(const char* name, MiniDWG::Handle h) { Text.WriteVariableText(name); Main.WriteBitLong(0x13); Handle(h); }
+        void BaseEnd()
+        {
             Text.WriteVariableText("TDBXDATAMAP_BLOCK_END_");
             Text.WriteVariableText("");
             Byte(0);
+        }
+
+        // 路径基类版本 3：RC 版本、RC 密钥、句柄
+        void PathHead(int key, int key2 = 94)
+        {
+            Base(key, key2, 100, key2);
+            Main.WriteByte(3);
+            Main.WriteByte(static_cast<std::uint8_t>(key));
+            Handle(0);
+        }
+
+        // 版本 + 密钥（之后的数值按这个密钥）
+        void Layer(int version, int key)
+        {
+            Main.WriteByte(static_cast<std::uint8_t>(version));
+            Main.WriteByte(static_cast<std::uint8_t>(key));
+            Key = key;
+        }
+
+        void PlainPoly(std::initializer_list<std::pair<double, double>> points, bool closed = true)
+        {
+            Main.WriteByte(closed ? 1 : 0);
+            Main.WriteBitShort(static_cast<std::int16_t>(points.size()));
+            for (const auto& [x, y] : points) { Main.WriteRawDouble(x); Main.WriteRawDouble(y); Main.WriteBitDouble(0); }
         }
 
         // 旧版天正基类版本 5（明文）：比例、数值、标志 0、空属性包

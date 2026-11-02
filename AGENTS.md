@@ -7,8 +7,8 @@
 下面的文件不会自动加载，做到相应的事时再读：
 
 - **验证改动** → skill [`.agents/skills/test`](.agents/skills/test/SKILL.md)：按改动编译并运行相关测试，只返回汇总
-- **排查图纸导入 / 显示问题**（打开后缺东西、位置或线型不对、天正对象、布局页、外部参照）→ skill [`.agents/skills/drawing-debug`](.agents/skills/drawing-debug/SKILL.md)
-- **改某一块功能之前** → [`.agents/features/INDEX.md`](.agents/features/INDEX.md)：按功能（DWG/DXF 交换、外部参照、布局视口、天正对象、三维视图、主窗口界面、显示性能）分的实现说明
+- **排查图纸导入 / 显示问题**（打开后缺东西、位置或线型不对、TCH对象、布局页、外部参照）→ skill [`.agents/skills/drawing-debug`](.agents/skills/drawing-debug/SKILL.md)
+- **改某一块功能之前** → [`.agents/features/INDEX.md`](.agents/features/INDEX.md)：按功能（DWG/DXF 交换、外部参照、布局视口、TCH对象、三维视图、主窗口界面、显示性能）分的实现说明
 - **编译、运行或改文件时报错** → [`.agents/docs/troubleshooting.md`](.agents/docs/troubleshooting.md)：按报错现象查原因和做法；遇到不在表里的新问题，解决后补一条
 
 ### 文档跟着代码走
@@ -58,7 +58,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - **编辑器**（`src/Editor/`）：输入管线 `InputResolver` → `Editor` → 工具 / 约束（对象捕捉优先：捕捉到对象上的点时不再套正交 / 极轴，同 AutoCAD）；工具 `ITool`（`src/Editor/Tools/`，修改工具在 `src/Editor/Tools/Modify/`）；拾取（空间索引）、`SnapEngine`、`GripEditor`；需要界面配合的操作通过"请求"交给宿主（`GetTextInputRequest` 等）
 - **渲染**：`Viewport`（相机、分两层绘制：缓存层 + 每帧的动态内容）；渲染器实现 `IRenderer`。CAD 视口由 CAD 渲染器绘制，界面由 MiniGUI 后端绘制，两者不是一回事。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
 - **序列化**（`src/Serialization/`）：`ISerializer`，`JsonSerializer` / `BinarySerializer`（键值树，缺少的键取默认值，可以加字段而不破坏旧文件），`EntityIO` 负责实体映射。`.mcad`（不区分大小写）→ 二进制，其余 → JSON
-- **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；天正对象的适配在 `src/Import/Tch*.h`
+- **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；TCH对象的适配在 `src/Import/Tch*.h`
 - **文字**（`src/Text/`）：`FontSystem` / `FontEngine`（SHX 与 TTF），`TextLayoutEngine`；字体先在资源目录（`AppPlatform::GetResourceDir`）的 `fonts/` 找（`MainFrame::Initialize` 设定，与启动时的当前目录无关），再到 `AppPlatform::GetSystemFontDirs()`
 - **几何内核**（`src/Core/GeomKernel/`）：`Point3`、`ICurve`、`CurveIntersect`、向量 / 矩阵。`Mat4` 为行向量约定（P' = P · M）
 

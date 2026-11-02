@@ -31,7 +31,7 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // T30 TDbColumn::dwgInFields v7-10
+        // 新版 TCH_COLUMN 版本 7-10
         inline bool DecodeColumnCipher(const MiniDWG::UnknownEntity& entity, TchColumn& column, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -79,10 +79,7 @@ namespace MiniCAD::Tch
             return true;
         }
     }
-
-    // TCH_COLUMN 柱：新版见 Detail::DecodeColumnCipher；旧版按柱的私有布局
-    // 版本 < 7 的明文分支解析，必须恰好读完主数据流。轮廓顶点为 2RD（filer 的二维点）加 BD 凸度，
-    // 坐标即世界坐标；真实样例为 600×600 方柱，与天正 2014 显示及分解出的轮廓一致
+     
     inline bool DecodeColumn(const MiniDWG::UnknownEntity& entity, TchColumn& column, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;

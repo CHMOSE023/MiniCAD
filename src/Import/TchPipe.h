@@ -9,14 +9,9 @@
 #include <numbers>
 #include <string>
 #include <vector>
-
-// 天正给排水（TWT）管线类对象。布局按天正给排水管线类的字段顺序整理，
-// 显示规则与天正给排水 + AutoCAD 2014 的分解结果核对（给排水样图）。这些对象都不写代理图形。
-// 继承关系：管线 → 管线原型基类 → 天正曲线基类；管件 / 设备 → 管线节点基类 → 天正基类；
-// 阀门 → 管线附件基类 → 天正基类；井 → 设备。天正曲线基类与天正基类都按天正基类读（ReadTchBase）。
+ 
 namespace MiniCAD::Tch
 {
-    // TCH_PIPE 管线：直管为 LINE，弧管为 ARC，立管（起终点平面位置相同）为圆；带标注时另有管径文字
     struct TchPipe
     {
         MiniDWG::XYZ Start, End;
@@ -38,7 +33,6 @@ namespace MiniCAD::Tch
         bool IsRiser() const { return std::abs(Start.X - End.X) < 1e-6 && std::abs(Start.Y - End.Y) < 1e-6; }
     };
 
-    // 设备（TCH_EQUIPMENT、TCH_WELL）与阀门（TCH_PIPEVALVE）：显示为所引用图块的一个块参照
     struct TchPipeBlock
     {
         double X = 0, Y = 0, Rotation = 0, ScaleX = 1, ScaleY = 1;
@@ -62,8 +56,6 @@ namespace MiniCAD::Tch
 
         inline MiniDWG::XYZ Read3(MiniDWG::DwgBitReader& r) { return {r.ReadBitDouble(), r.ReadBitDouble(), r.ReadBitDouble()}; }
 
-        // 管线节点基类：RC 版本（< 2）、RC、RC 接口数，每个接口为 RC 版本、4 × RC、
-        // 字符串（文字流）、软指针（句柄流）、3BD 位置、3BD 方向；最后一个字符串（文字流）
         inline bool ReadPipeNode(MiniDWG::DwgBitReader& r, int& handles, int& texts)
         {
             if (r.ReadByte() >= 2) return false;
@@ -79,10 +71,17 @@ namespace MiniCAD::Tch
             ++texts;
             return !r.Failed();
         }
+         
+        inline bool PlaceEquipment(TchPipeBlock& b, const MiniDWG::XYZ& at, const MiniDWG::XYZ& dir, double s, double sy, int mirror)
+        {
+            if (!(std::abs(sy) >= 1e-3) || !Finite(sy)) sy = s;
+            b.X = at.X; b.Y = at.Y;
+            b.Rotation = std::atan2(dir.Y, dir.X);
+            b.ScaleX = mirror & 2 ? -s : s;
+            b.ScaleY = mirror & 1 ? -sy : sy;
+            return Finite(b.X) && Finite(b.Y) && Finite(b.Rotation) && std::abs(s) > 1e-9 && Finite(s);
+        }
 
-        // 设备 的私有段（版本 < 4）：两个硬指针（图块），字符串，3BD 插入点、3BD、3BD 方向，BD 比例，B，
-        // RC 镜像（位 0：Y 向镜像，位 1：X 向镜像），2 × BD；版本 ≥ 2 再 4 × BD，≥ 3 再一个 B
-        // well：井的图块是单位尺寸（如半径 0.5 的圆），比例 = 设备比例 × 出图比例，不除以 100（3 个检查井与分解结果核对）
         inline bool ReadEquipment(MiniDWG::DwgBitReader& r, const TchBase& base, TchPipeBlock& b, int& handles, int& texts, bool well)
         {
             if (!ReadPipeNode(r, handles, texts)) return false;
@@ -96,15 +95,12 @@ namespace MiniCAD::Tch
             r.ReadBit();
             const int mirror = r.ReadByte();
             r.ReadBitDouble(); r.ReadBitDouble();
+            double scaleY = 0;
             if (version > 1)
-                for (int i = 0; i < 4; ++i) r.ReadBitDouble();
+                for (int i = 0; i < 4; ++i) { const double v = r.ReadBitDouble(); if (i == 1) scaleY = v; }
             if (version > 2) r.ReadBit();
-            const double s = scale * base.Scale / (well ? 1 : 100);
-            b.X = at.X; b.Y = at.Y;
-            b.Rotation = std::atan2(dir.Y, dir.X);
-            b.ScaleX = mirror & 2 ? -s : s;
-            b.ScaleY = mirror & 1 ? -s : s;
-            return !r.Failed() && Finite(b.X) && Finite(b.Y) && Finite(b.Rotation) && std::abs(s) > 1e-9 && Finite(s);
+            const double k = base.Scale / (well ? 1 : 100);
+            return !r.Failed() && PlaceEquipment(b, at, dir, scale * k, scaleY * k, mirror);
         }
 
         inline std::vector<MiniDWG::Handle> ReadBlockHandles(const MiniDWG::UnknownEntity& entity, int skip, int count)
@@ -117,11 +113,140 @@ namespace MiniCAD::Tch
             if (handles.Failed()) result.clear();
             return result;
         }
-    }
 
-    // 管线原型基类（版本 < 2）：RC × 3，3BD 起点、3BD 终点、BD 圆心角，字符串，软指针、RC、软指针、RC，
-    // RC 个数 + 软指针若干，RC，RC 个数 + 软指针若干，硬指针（标注文字样式）、硬指针（标注图层），BD 标注字高、3BD 标注位置、B 显示标注。
-    // 管线（版本 < 3）：BD 立管半径、BD、BD 管径、BD、BS、字符串（标注前缀）、BD、BD，版本 ≥ 2 再 BD 与字符串（标注后缀）
+        struct CipherPipeNode
+        {
+            std::vector<MiniDWG::Handle> Pipes;
+            std::vector<TchGraphics::Point> Directions;
+            std::string Last;
+        };
+
+        // 新版管线节点基类 版本 1 无加密层；管线接口版本 3 起自带 RC 密钥（第二个密钥为 0）
+        inline bool ReadCipherPipeNode(CipherReader& f, CipherPipeNode& node)
+        {
+            if (!f.ReadBase() || f.Main.ReadByte() >= 2) return false;
+            f.Main.ReadByte();
+            const int count = f.Main.ReadByte();
+            for (int i = 0; i < count && f.Ok(); ++i)
+            {
+                CipherLayer layer(f);
+                const int version = layer.Version(4, 3);
+                if (version < 0) return false;
+                for (int k = 0; k < 4; ++k) f.Byte();
+                f.Text();
+                node.Pipes.push_back(f.Handle());
+                f.Point3();
+                const auto dir = f.Point3();
+                node.Directions.push_back({dir.X, dir.Y});
+                if (version > 1) f.Text();
+            }
+            node.Last = f.Text();
+            return f.Ok();
+        }
+
+        // 新版 TCH_EQUIPMENT 版本 4～5
+        inline bool ReadCipherEquipment(CipherReader& f, TchPipeBlock& b, bool well)
+        {
+            CipherPipeNode node;
+            if (!ReadCipherPipeNode(f, node)) return false;
+            const int version = f.Main.ReadByte();
+            if (version < 4 || version > 5) return false;
+            f.ReadKey();
+            b.Blocks.push_back(f.Handle());
+            b.Blocks.push_back(f.Handle());
+            f.Text();
+            const auto at = f.Point3();
+            f.Point3();
+            const auto dir = f.Point3();
+            const double scale = f.Double();
+            f.Bool();
+            const int mirror = f.Byte();
+            double scaleY = 0;
+            for (int i = 0; i < 6; ++i) { const double v = f.Double(); if (i == 3) scaleY = v; }
+            f.Bool();
+            if (version > 4) { f.Byte(); f.Byte(); f.Handle(); f.Byte(); }
+            const double k = f.Scale / (well ? 1 : 100);
+            return f.Ok() && PlaceEquipment(b, at, dir, scale * k, scaleY * k, mirror);
+        }
+
+        // 新版管线附件 版本 2
+        inline bool ReadCipherPipeAttachment(CipherReader& f, MiniDWG::XYZ& at, MiniDWG::XYZ& dir)
+        {
+            if (!f.ReadBase() || f.Main.ReadByte() != 2) return false;
+            f.ReadKey();
+            f.Byte();
+            at = f.Point3();
+            dir = f.Point3();
+            f.Handle();
+            return f.Ok();
+        }
+
+        // 新版标注样式 版本 2～3：自带 RC 密钥
+        inline bool ReadCipherLabelStyle(CipherReader& f, MiniDWG::Handle& style, double& height)
+        {
+            CipherLayer layer(f);
+            if (layer.Version(3, 2) < 0) return false;
+            style = f.Handle();
+            height = f.Double();
+            f.Double();
+            return f.Ok();
+        }
+
+        // 新版管线原型 版本 2、TCH_PIPE 版本 3～4、TCH_DOUBLELINEPIPE 版本 3：字段与明文版本相同
+        inline const char* ReadCipherPipe(CipherReader& f, TchPipe& p, bool doubleLine)
+        {
+            if (!f.ReadBase()) return "unsupported Tianzheng base layout";
+            if (f.Main.ReadByte() != 2) return "unsupported native pipe prototype version";
+            f.ReadKey();
+            p.Scale = f.Scale;
+            f.Byte(); f.Byte(); f.Byte();
+            p.Start = f.Point3();
+            p.End = f.Point3();
+            p.Sweep = f.Double();
+            f.Text();
+            f.Handle(); f.Byte(); f.Handle(); f.Byte();
+            auto handles = [&] { for (int i = 0, n = f.Byte(); i < n && f.Ok(); ++i) f.Handle(); };
+            handles();
+            f.Byte();
+            handles();
+            p.LabelStyle = f.Handle();
+            p.LabelLayer = f.Handle();
+            p.LabelHeight = f.Double();
+            const auto label = f.Point3();
+            p.LabelX = label.X; p.LabelY = label.Y;
+            p.Label = f.Bool();
+            const int version = f.Main.ReadByte();
+            if (version < 3 || version > 4) return "unsupported native pipe version";
+            f.ReadKey();
+            p.RiserRadius = f.Double();
+            f.Double();
+            p.Diameter = f.Double();
+            f.Double();
+            f.Short();
+            p.LabelPrefix = f.Text();
+            p.VisibleMiddle = f.Double();
+            p.VisibleLength = f.Double();
+            f.Double();
+            p.LabelSuffix = f.Text();
+            if (version > 3)
+            {
+                f.Text();
+                for (int i = 0, n = f.Byte(); i < n && f.Ok(); ++i) { f.Text(); f.Byte(); }
+            }
+            if (doubleLine)
+            {
+                if (f.Main.ReadByte() != 3) return "unsupported native double-line pipe version";
+                f.ReadKey();
+                p.Width = f.Double();
+                p.BendRatio = f.Double();
+                f.Short();
+                f.Double(); f.Double(); f.Double();
+                p.CenterLayer = f.Handle();
+            }
+            return f.Exact() ? nullptr : "native pipe fields do not consume the payload exactly";
+        }
+    }
+     
     inline bool DecodePipe(const MiniDWG::UnknownEntity& entity, TchPipe& pipe, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -130,72 +255,79 @@ namespace MiniCAD::Tch
         const bool doubleLine = entity.Raw.DxfName == "TCH_DOUBLELINEPIPE";
         if (!Detail::CheckPayload(entity, doubleLine ? "TCH_DOUBLELINEPIPE" : "TCH_PIPE", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe prototype version");
         TchPipe p;
-        p.Scale = base.Scale;
-        r.ReadByte(); r.ReadByte(); r.ReadByte();
-        p.Start = Detail::Read3(r);
-        p.End = Detail::Read3(r);
-        p.Sweep = r.ReadBitDouble();
-        int handles = 2;                                    // 两端连接的管件
-        r.ReadByte(); r.ReadByte();
-        handles += r.ReadByte();
-        r.ReadByte();
-        handles += r.ReadByte();
-        p.LabelHeight = r.ReadBitDouble();
-        const auto label = Detail::Read3(r);
-        p.LabelX = label.X; p.LabelY = label.Y;
-        p.Label = r.ReadBit() != 0;
-        const int version = r.ReadByte();
-        if (version >= 3) return fail("unsupported native pipe version");
-        p.RiserRadius = r.ReadBitDouble();
-        r.ReadBitDouble();
-        p.Diameter = r.ReadBitDouble();
-        r.ReadBitDouble();
-        r.ReadBitShort();
-        p.VisibleMiddle = r.ReadBitDouble();
-        p.VisibleLength = r.ReadBitDouble();
-        if (version > 1) r.ReadBitDouble();
-        int doubleVersion = 0;
-        if (doubleLine)
+        if (Detail::IsCipherObject(data))
         {
-            // 双线管（版本 < 3）：BD 管宽、BD 弯头半径与管宽之比、BS、3 × BD，版本 ≥ 2 再硬指针（中心线图层）
-            doubleVersion = r.ReadByte();
-            if (doubleVersion >= 3) return fail("unsupported native double-line pipe version");
-            p.Width = r.ReadBitDouble();
-            p.BendRatio = r.ReadBitDouble();
-            r.ReadBitShort();
-            r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
-            if (!(p.Width > 0) || !Detail::Finite(p.Width)) return fail("invalid native double-line pipe width");
+            Detail::CipherReader f(entity);
+            if (const char* w = Detail::ReadCipherPipe(f, p, doubleLine)) return fail(w);
+            if (doubleLine && (!(p.Width > 0) || !Detail::Finite(p.Width))) return fail("invalid native double-line pipe width");
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native pipe fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe prototype version");
+            p.Scale = base.Scale;
+            r.ReadByte(); r.ReadByte(); r.ReadByte();
+            p.Start = Detail::Read3(r);
+            p.End = Detail::Read3(r);
+            p.Sweep = r.ReadBitDouble();
+            int handles = 2;                                    // 两端连接的管件
+            r.ReadByte(); r.ReadByte();
+            handles += r.ReadByte();
+            r.ReadByte();
+            handles += r.ReadByte();
+            p.LabelHeight = r.ReadBitDouble();
+            const auto label = Detail::Read3(r);
+            p.LabelX = label.X; p.LabelY = label.Y;
+            p.Label = r.ReadBit() != 0;
+            const int version = r.ReadByte();
+            if (version >= 3) return fail("unsupported native pipe version");
+            p.RiserRadius = r.ReadBitDouble();
+            r.ReadBitDouble();
+            p.Diameter = r.ReadBitDouble();
+            r.ReadBitDouble();
+            r.ReadBitShort();
+            p.VisibleMiddle = r.ReadBitDouble();
+            p.VisibleLength = r.ReadBitDouble();
+            if (version > 1) r.ReadBitDouble();
+            int doubleVersion = 0;
+            if (doubleLine)
+            {
+                // 双线管（版本 < 3）：BD 管宽、BD 弯头半径与管宽之比、BS、3 × BD，版本 ≥ 2 再硬指针（中心线图层）
+                doubleVersion = r.ReadByte();
+                if (doubleVersion >= 3) return fail("unsupported native double-line pipe version");
+                p.Width = r.ReadBitDouble();
+                p.BendRatio = r.ReadBitDouble();
+                r.ReadBitShort();
+                r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
+                if (!(p.Width > 0) || !Detail::Finite(p.Width)) return fail("invalid native double-line pipe width");
+            }
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native pipe fields do not consume the payload exactly");
+
+            // 文字流：基类之后为原型的字符串、管线的标注前缀，版本 ≥ 2 时还有后缀
+            Detail::TextStream stream(data, r);
+            for (int i = 0; i < base.TextCount + 1; ++i) stream.Next();
+            p.LabelPrefix = stream.Next();
+            if (version > 1) p.LabelSuffix = stream.Next();
+            if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + handles, doubleVersion >= 2 ? 3 : 2);
+            if (hs.size() < 2) return fail("native pipe handle stream is incomplete");
+            p.LabelStyle = hs[0];
+            p.LabelLayer = hs[1];
+            if (hs.size() > 2) p.CenterLayer = hs[2];
+        }
         if (!Detail::Finite(p.Start.X) || !Detail::Finite(p.Start.Y) || !Detail::Finite(p.End.X) || !Detail::Finite(p.End.Y) ||
             !Detail::Finite(p.Sweep) || std::abs(p.Sweep) >= 2 * std::numbers::pi || !Detail::Finite(p.RiserRadius) || !(p.Scale > 0))
             return fail("invalid native pipe geometry");
-
-        // 文字流：基类之后为原型的字符串、管线的标注前缀，版本 ≥ 2 时还有后缀
-        Detail::TextStream stream(data, r);
-        for (int i = 0; i < base.TextCount + 1; ++i) stream.Next();
-        p.LabelPrefix = stream.Next();
-        if (version > 1) p.LabelSuffix = stream.Next();
-        if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
-        const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + handles, doubleVersion >= 2 ? 3 : 2);
-        if (hs.size() < 2) return fail("native pipe handle stream is incomplete");
-        p.LabelStyle = hs[0];
-        p.LabelLayer = hs[1];
-        if (hs.size() > 2) p.CenterLayer = hs[2];
         if (p.Label && !(p.LabelHeight > 0 && Detail::Finite(p.LabelX) && Detail::Finite(p.LabelY))) p.Label = false;
         pipe = std::move(p);
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 管线显示：线、弧随对象图层；标注文字放到标注图层（TchGraphics 的 Layer 1），颜色随层，正中对齐，
-    // 方向沿管线并保持字头朝上，字体规则同 TCH_TEXT
+     
     inline TchGraphics BuildPipe(const TchPipe& p, const TchTextStyleRule& rule = {})
     {
         TchGraphics g;
@@ -205,7 +337,6 @@ namespace MiniCAD::Tch
         }
         else if (std::abs(p.Sweep) > 1e-9)
         {
-            // 由弦与圆心角求圆心：圆心在弦中点的左侧（逆时针）或右侧（顺时针）
             const double dx = p.End.X - p.Start.X, dy = p.End.Y - p.Start.Y, chord = std::hypot(dx, dy);
             const double half = std::abs(p.Sweep) / 2, radius = chord / 2 / std::sin(half);
             const double toCenter = chord / 2 / std::tan(half) * (p.Sweep > 0 ? 1 : -1);
@@ -240,7 +371,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_PIPEFITTING 管件（弯头、三通等）：只校验布局，天正分解结果为空、不显示。管线节点基类 之后为 RC 版本（< 2）、3BD 位置
     inline bool DecodePipeFitting(const MiniDWG::UnknownEntity& entity, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -248,6 +378,18 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_PIPEFITTING", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            Detail::CipherPipeNode node;
+            if (!Detail::ReadCipherPipeNode(f, node)) return fail("unsupported native pipe node layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native pipe fitting version");
+            f.ReadKey();
+            f.Point3();
+            if (!f.Exact()) return fail("native pipe fitting fields do not consume the payload exactly");
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
@@ -261,9 +403,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // TCH_EQUIPMENT 设备（洁具、地漏、雨水斗等）与 TCH_WELL 井：引用图块的块参照。
-    // 插入点 = 设备插入点，转角 = 方向向量的角度，比例 = 设备比例 × 出图比例 / 100（井不除以 100），镜像位取负对应方向的比例。
-    // 井在设备之后另有标注样式（RC 版本、硬指针、2 × BD）与 RC、字符串、3BD、3 × BD、B、硬指针，标注不显示
     inline bool DecodeEquipment(const MiniDWG::UnknownEntity& entity, TchPipeBlock& block, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -272,47 +411,76 @@ namespace MiniCAD::Tch
         const bool well = entity.Raw.DxfName == "TCH_WELL", pump = entity.Raw.DxfName == "TCH_PUMP";
         if (!Detail::CheckPayload(entity, well ? "TCH_WELL" : pump ? "TCH_PUMP" : "TCH_EQUIPMENT", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         TchPipeBlock b;
-        int handles = 0, texts = 0;
-        if (!Detail::ReadEquipment(r, base, b, handles, texts, well)) return fail("unsupported native equipment layout");
-        if (well)
+        double size[6] = {};
+        if (Detail::IsCipherObject(data))
         {
-            if (r.ReadByte() >= 2) return fail("unsupported native well label style");
-            r.ReadBitDouble(); r.ReadBitDouble();
-            r.ReadByte();
-            Detail::Read3(r);
-            b.WellInvert = r.ReadBitDouble();               // 井底标高、井面标高（井标注 TCH_WELLDIM 显示这两个值）
-            b.WellGround = r.ReadBitDouble();
-            r.ReadBitDouble();
-            r.ReadBit();
-        }
-        if (pump)
-        {
-            // 水泵：RC、4 个字符串（文字流）、6 × BD（0x1e0、0x1e8、0x1f0、0x1f8 长、0x200 宽、0x230；样例为 0、0、165、700、700、165）。
-            // 水泵图块是 1 × 1 的单位块，按长、宽缩放（不乘设备比例），镜像与转角同设备（4 台水泵与分解结果核对）
-            r.ReadByte();
-            double size[6];
-            for (double& v : size) v = r.ReadBitDouble();
-            if (size[3] > 0 && size[4] > 0 && Detail::Finite(size[3]) && Detail::Finite(size[4]))
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherEquipment(f, b, well)) return fail("unsupported native equipment layout");
+            if (well)
             {
-                b.ScaleX = b.ScaleX < 0 ? -size[3] : size[3];
-                b.ScaleY = b.ScaleY < 0 ? -size[4] : size[4];
+                MiniDWG::Handle style;
+                double height = 0;
+                if (!Detail::ReadCipherLabelStyle(f, style, height)) return fail("unsupported native well label style");
+                if (f.Main.ReadByte() != 3) return fail("unsupported native well version");
+                f.ReadKey();
+                f.Text();
+                f.Point3();
+                b.WellInvert = f.Double();
+                b.WellGround = f.Double();
+                f.Double();
+                f.Bool();
+                f.Handle();
             }
+            if (pump)
+            {
+                const int version = f.Main.ReadByte();
+                if (version < 3 || version > 4) return fail("unsupported native pump version");
+                f.ReadKey();
+                for (int i = 0; i < 4; ++i) f.Text();
+                for (double& v : size) v = f.Double();
+                if (version > 3) f.Double();
+            }
+            if (!f.Exact()) return fail("native equipment fields do not consume the payload exactly");
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native equipment fields do not consume the payload exactly");
-        b.Blocks = Detail::ReadBlockHandles(entity, base.HandleCount + handles, 2);
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            int handles = 0, texts = 0;
+            if (!Detail::ReadEquipment(r, base, b, handles, texts, well)) return fail("unsupported native equipment layout");
+            if (well)
+            {
+                if (r.ReadByte() >= 2) return fail("unsupported native well label style");
+                r.ReadBitDouble(); r.ReadBitDouble();
+                r.ReadByte();
+                Detail::Read3(r);
+                b.WellInvert = r.ReadBitDouble();               // 井底标高、井面标高（井标注 TCH_WELLDIM 显示这两个值）
+                b.WellGround = r.ReadBitDouble();
+                r.ReadBitDouble();
+                r.ReadBit();
+            }
+            if (pump)
+            {
+                r.ReadByte();
+                for (double& v : size) v = r.ReadBitDouble();
+            }
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native equipment fields do not consume the payload exactly");
+            b.Blocks = Detail::ReadBlockHandles(entity, base.HandleCount + handles, 2);
+        }
+        if (pump && size[3] > 0 && size[4] > 0 && Detail::Finite(size[3]) && Detail::Finite(size[4]))
+        {
+            b.ScaleX = b.ScaleX < 0 ? -size[3] : size[3];
+            b.ScaleY = b.ScaleY < 0 ? -size[4] : size[4];
+        }
         if (b.Blocks.empty()) return fail("native equipment handle stream is incomplete");
         block = std::move(b);
         if (diagnostic) diagnostic->clear();
         return true;
-    }
+    } 
 
-    // TCH_PIPEVALVE 阀门：管线附件基类（RC 版本 < 2、RC、3BD 位置、3BD 方向、软指针）之后为 RC 版本（< 3）、
-    // 两个硬指针（图块）、字符串、BD 比例、BD、B、RC，版本 ≥ 2 再 4 × BD 与 B。比例 = 阀门比例 × 出图比例 / 100
     inline bool DecodePipeValve(const MiniDWG::UnknownEntity& entity, TchPipeBlock& block, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -320,47 +488,74 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_PIPEVALVE", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
-        r.ReadByte();
-        const auto at = Detail::Read3(r);
-        const auto dir = Detail::Read3(r);
-        const int version = r.ReadByte();
-        if (version >= 3) return fail("unsupported native valve version");
-        const double scale = r.ReadBitDouble();
-        r.ReadBitDouble();
-        r.ReadBit();
-        r.ReadByte();
-        if (version >= 2)
+        XYZ at, dir;
+        double scale = 0, scaleY = 0, baseScale = 100;
+        int quadrant = 0;
+        std::vector<Handle> blocks;
+        if (Detail::IsCipherObject(data))
         {
-            for (int i = 0; i < 4; ++i) r.ReadBitDouble();
-            r.ReadBit();
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeAttachment(f, at, dir)) return fail("unsupported native pipe attachment version");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native valve version");
+            f.ReadKey();
+            blocks.push_back(f.Handle());
+            blocks.push_back(f.Handle());
+            f.Text();
+            scale = f.Double();
+            f.Double();
+            f.Bool();
+            quadrant = f.Byte();
+            scaleY = f.Double();
+            for (int i = 0; i < 3; ++i) f.Double();
+            f.Bool();
+            if (!f.Exact()) return fail("native valve fields do not consume the payload exactly");
+            baseScale = f.Scale;
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native valve fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
+            r.ReadByte();
+            at = Detail::Read3(r);
+            dir = Detail::Read3(r);
+            const int version = r.ReadByte();
+            if (version >= 3) return fail("unsupported native valve version");
+            scale = r.ReadBitDouble();
+            r.ReadBitDouble();
+            r.ReadBit();
+            quadrant = r.ReadByte();
+            if (version >= 2)
+            {
+                scaleY = r.ReadBitDouble();
+                for (int i = 0; i < 3; ++i) r.ReadBitDouble();
+                r.ReadBit();
+            }
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native valve fields do not consume the payload exactly");
+            baseScale = base.Scale;
+            blocks = Detail::ReadBlockHandles(entity, base.HandleCount + 1, 2);
+        }
         TchPipeBlock b;
-        const double s = scale * base.Scale / 100;
+        const double s = scale * baseScale / 100;
+        if (!(std::abs(scaleY) >= 1e-3) || !Detail::Finite(scaleY)) scaleY = scale;
         b.X = at.X; b.Y = at.Y;
         b.Rotation = std::atan2(dir.Y, dir.X);
-        b.ScaleX = b.ScaleY = s;
+        b.ScaleX = quadrant == 1 || quadrant == 2 ? -s : s;
+        b.ScaleY = (quadrant == 2 || quadrant == 3 ? -scaleY : scaleY) * baseScale / 100;
         if (!Detail::Finite(b.X) || !Detail::Finite(b.Y) || !Detail::Finite(b.Rotation) || !Detail::Finite(s) || std::abs(s) < 1e-9)
             return fail("invalid native valve placement");
-        b.Blocks = Detail::ReadBlockHandles(entity, base.HandleCount + 1, 2);
+        b.Blocks = std::move(blocks);
         if (b.Blocks.empty()) return fail("native valve handle stream is incomplete");
         block = std::move(b);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // ---- 天正给排水的标注类：管线文字、立管标注、井标注、多管标注；以及双线管与法兰（弯头） ----
-    // 显示规则与天正给排水的分解结果核对（两张给排水样图）。文字的字高、宽度因子按分解出的 TEXT 取：
-    // 字高与宽度因子由文字样式的 _TCH 扩展数据决定（见 TchTextStyleRule）
 
     namespace Detail
     {
-        // 天正基类的属性包，记下字符串与实数值（名字与字符串值依次在文字流中）
         struct PropertyValues
         {
             std::map<std::string, std::string> Strings;
@@ -393,7 +588,6 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // 同 ReadTchBase，另外取出第二个 BD（多管标注的文字方向）与属性包的值
         inline bool ReadTchBaseValues(MiniDWG::DwgBitReader& r, TchBase& base, TextStream& text, PropertyValues& values, double& angle)
         {
             base = {};
@@ -412,7 +606,6 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // 天正符号基类（版本 1～3，同 ReadTchSymbolBase）：句柄流依次为文字样式、（版本 ≥ 2）图层；版本 > 2 时 BS 文字颜色
         struct PipeSymbol
         {
             TchBase Base;
@@ -438,9 +631,21 @@ namespace MiniCAD::Tch
             return !r.Failed() && s.TextHeight > 0 && Finite(s.TextHeight) && s.Base.Scale > 0;
         }
 
+        inline bool ReadCipherPipeSymbol(CipherReader& f, PipeSymbol& s)
+        {
+            TchSymbolBase symbol;
+            if (!ReadCipherSymbolBase(f, symbol, s.Style)) return false;
+            s.Base = symbol.Base;
+            s.TextHeight = symbol.TextHeight;
+            s.Color = symbol.Color < 0 || symbol.Color > 256 ? 7 : symbol.Color;
+            s.Angle = f.Angle;
+            s.Values.Strings = f.FieldStrings;
+            s.Values.Numbers = f.FieldNumbers;
+            return s.TextHeight > 0 && Finite(s.TextHeight) && s.Base.Scale > 0;
+        }
+
         inline TchGraphics::Point P2(MiniDWG::DwgBitReader& r) { const double x = r.ReadRawDouble(); return {x, r.ReadRawDouble()}; }
 
-        // 文字方向保持字头朝上：角度落在 (-90°, 90°]
         inline double Upright(double a)
         {
             a = std::remainder(a, 2 * std::numbers::pi);
@@ -450,7 +655,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // TCH_PIPETEXT 管线文字：管线附件基类（位置、方向）、标注样式（RC 版本、硬指针文字样式、BD 字高、BD）、RC 版本（< 2）、字符串
     struct TchPipeText
     {
         double X = 0, Y = 0, Rotation = 0, Height = 3, Scale = 100;
@@ -465,36 +669,52 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_PIPETEXT", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
-        r.ReadByte();
-        const auto at = Detail::Read3(r);
-        const auto dir = Detail::Read3(r);
-        if (r.ReadByte() >= 2) return fail("unsupported native label style version");
         TchPipeText t;
-        t.Height = r.ReadBitDouble();
-        r.ReadBitDouble();
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe text version");
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native pipe text fields do not consume the payload exactly");
-        t.X = at.X; t.Y = at.Y; t.Scale = base.Scale;
+        XYZ at, dir;
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeAttachment(f, at, dir)) return fail("unsupported native pipe attachment version");
+            if (!Detail::ReadCipherLabelStyle(f, t.Style, t.Height)) return fail("unsupported native label style version");
+            const int version = f.Main.ReadByte();
+            if (version > 2) return fail("unsupported native pipe text version");
+            if (version > 1) f.Main.ReadByte();
+            t.Value = f.Text();
+            if (!f.Exact()) return fail("native pipe text fields do not consume the payload exactly");
+            t.Scale = f.Scale;
+        }
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
+            r.ReadByte();
+            at = Detail::Read3(r);
+            dir = Detail::Read3(r);
+            if (r.ReadByte() >= 2) return fail("unsupported native label style version");
+            t.Height = r.ReadBitDouble();
+            r.ReadBitDouble();
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe text version");
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native pipe text fields do not consume the payload exactly");
+            t.Scale = base.Scale;
+            Detail::TextStream stream(data, r);
+            for (int i = 0; i < base.TextCount; ++i) stream.Next();
+            t.Value = stream.Next();
+            if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + 1, 1);
+            if (hs.empty()) return fail("native pipe text handle stream is incomplete");
+            t.Style = hs[0];
+        }
+        t.X = at.X; t.Y = at.Y;
         t.Rotation = Detail::Upright(std::atan2(dir.Y, dir.X));
         if (!Detail::Finite(t.X) || !Detail::Finite(t.Y) || !(t.Height > 0) || !(t.Scale > 0)) return fail("invalid native pipe text settings");
-        Detail::TextStream stream(data, r);
-        for (int i = 0; i < base.TextCount; ++i) stream.Next();
-        t.Value = stream.Next();
-        if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
-        const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + 1, 1);
-        if (hs.empty()) return fail("native pipe text handle stream is incomplete");
-        t.Style = hs[0];
         text = std::move(t);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 文字以插入点为正中，沿管线方向，字高 = 字高 × 比例（颜色随层）
     inline TchGraphics BuildPipeText(const TchPipeText& t, const TchTextStyleRule& rule)
     {
         TchGraphics g;
@@ -503,8 +723,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_VPIPEDIM 立管标注：符号基类 之后为 RC 版本（< 2）、2 × BS、3BD 立管点、3BD 转折点、3BD 方向、BD 水平段长、BD，
-    // 软指针（立管），字符串（立管编号前缀）。显示文字 = 属性包 VPIPE_DIM_FLOOR + VPIPE_DIM_TEXT（如“8”+“JL-1”）
     struct TchVPipeDim
     {
         double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0;  // 立管点、转折点
@@ -522,23 +740,43 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_VPIPEDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
-        if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
-        if (r.ReadByte() >= 2) return fail("unsupported native riser dimension version");
-        r.ReadBitShort(); r.ReadBitShort();
-        const auto a = Detail::Read3(r), b = Detail::Read3(r), dir = Detail::Read3(r);
-        const double run = r.ReadBitDouble();
-        r.ReadBitDouble();
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native riser dimension fields do not consume the payload exactly");
+        XYZ a, b, dir;
+        double run = 0;
+        std::string own;
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeSymbol(f, s)) return fail("unsupported native symbol base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native riser dimension version");
+            f.ReadKey();
+            f.Short(); f.Short();
+            a = f.Point3(); b = f.Point3(); dir = f.Point3();
+            run = f.Double();
+            f.Double();
+            f.Handle();
+            own = f.Text();
+            if (!f.Exact()) return fail("native riser dimension fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            Detail::TextStream stream(data, r);
+            if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native riser dimension version");
+            r.ReadBitShort(); r.ReadBitShort();
+            a = Detail::Read3(r); b = Detail::Read3(r); dir = Detail::Read3(r);
+            run = r.ReadBitDouble();
+            r.ReadBitDouble();
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native riser dimension fields do not consume the payload exactly");
+            own = stream.Next();
+            if (stream.Reader.Failed()) return fail("native riser dimension text stream is incomplete");
+        }
         TchVPipeDim d;
         d.X1 = a.X; d.Y1 = a.Y; d.X2 = b.X; d.Y2 = b.Y;
         d.Scale = s.Base.Scale; d.TextHeight = s.TextHeight; d.Color = s.Color; d.Style = s.Style;
         d.Run = run * d.Scale * (dir.X < 0 ? -1 : 1);
-        const std::string own = stream.Next();
-        if (stream.Reader.Failed()) return fail("native riser dimension text stream is incomplete");
         const auto text = s.Values.Strings.find("VPIPE_DIM_TEXT");
         const auto floor = s.Values.Strings.find("VPIPE_DIM_FLOOR");
         d.Value = (floor != s.Values.Strings.end() ? floor->second : std::string()) + (text != s.Values.Strings.end() ? text->second : own);
@@ -549,8 +787,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 引线：立管点 → 转折点 → 水平段末端（自由端）；文字在水平段上方 0.05 × 字高，贴自由端、内缩 0.3 × 字高
-    //（75 个立管标注的分解结果全部如此）
     inline TchGraphics BuildVPipeDim(const TchVPipeDim& d, const TchTextStyleRule& rule)
     {
         TchGraphics g;
@@ -563,8 +799,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_WELLDIM 井标注：符号基类 之后为 RC 版本（< 2）、BS、BD 水平段长（带方向）、2RD 井点、2RD 转折点、软指针（井）。
-    // 上行显示井面标高、下行显示井底标高（取自所引用的 TCH_WELL，三位小数）
     struct TchWellDim
     {
         double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0, Run = 0;
@@ -580,23 +814,43 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_WELLDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
-        if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
-        if (r.ReadByte() >= 2) return fail("unsupported native well dimension version");
-        r.ReadBitShort();
-        const double run = r.ReadBitDouble();
-        const auto a = Detail::P2(r), b = Detail::P2(r);
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native well dimension fields do not consume the payload exactly");
+        TchGraphics::Point a, b;
+        double run = 0;
+        Handle well = kNullHandle;
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeSymbol(f, s)) return fail("unsupported native symbol base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native well dimension version");
+            f.ReadKey();
+            f.Short();
+            run = f.Double();
+            const auto p = f.Point2(), q = f.Point2();
+            a = {p.X, p.Y}; b = {q.X, q.Y};
+            well = f.Handle();
+            if (!f.Exact()) return fail("native well dimension fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            Detail::TextStream stream(data, r);
+            if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native well dimension version");
+            r.ReadBitShort();
+            run = r.ReadBitDouble();
+            a = Detail::P2(r); b = Detail::P2(r);
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native well dimension fields do not consume the payload exactly");
+            const auto hs = Detail::ReadBlockHandles(entity, s.HandleCount, 1);
+            if (hs.empty()) return fail("native well dimension handle stream is incomplete");
+            well = hs[0];
+        }
         TchWellDim d;
         d.X1 = a.X; d.Y1 = a.Y; d.X2 = b.X; d.Y2 = b.Y;
         d.Scale = s.Base.Scale; d.TextHeight = s.TextHeight; d.Color = s.Color; d.Style = s.Style;
         d.Run = run * d.Scale;
-        const auto hs = Detail::ReadBlockHandles(entity, s.HandleCount, 1);
-        if (hs.empty()) return fail("native well dimension handle stream is incomplete");
-        d.Well = hs[0];
+        d.Well = well;
         if (!Detail::Finite(d.X1) || !Detail::Finite(d.Y1) || !Detail::Finite(d.X2) || !Detail::Finite(d.Y2) || !Detail::Finite(d.Run))
             return fail("invalid native well dimension geometry");
         dim = std::move(d);
@@ -604,7 +858,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 两段引线为 6 号色；两行标高在水平段上下各留 0.5 × 字高，按水平段居中（分解结果中文字左端距自由端约 0.26 × 字高，差别在字宽内）
     inline TchGraphics BuildWellDim(const TchWellDim& d, double ground, double invert, const TchTextStyleRule& rule)
     {
         TchGraphics g;
@@ -621,8 +874,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_PIPEMULTDIM 多管标注：符号基类 之后为 RC 版本（< 3）、RC 个数 + 软指针（被标注的管线）、BD 水平段长、
-    // 2RD 基线起点、2RD 基线终点，版本 ≥ 2 再 BS 与字符串。文字方向为天正基类的第二个 BD；行距 = (字高 + 属性包“多管标注基线距离”) × 比例
     struct TchPipeMultDim
     {
         TchGraphics::Point P1, P2;
@@ -639,20 +890,39 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_PIPEMULTDIM", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        Detail::TextStream stream(data, r);
         Detail::PipeSymbol s;
-        if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
-        const int version = r.ReadByte();
-        if (version >= 3) return fail("unsupported native multi-pipe dimension version");
-        const int count = r.ReadByte();
         TchPipeMultDim d;
-        d.Run = r.ReadBitDouble();
-        d.P1 = Detail::P2(r);
-        d.P2 = Detail::P2(r);
-        if (version > 1) r.ReadBitShort();
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native multi-pipe dimension fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPipeSymbol(f, s)) return fail("unsupported native symbol base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native multi-pipe dimension version");
+            f.ReadKey();
+            for (int i = 0, n = f.Byte(); i < n && f.Ok(); ++i) d.Pipes.push_back(f.Handle());
+            d.Run = f.Double();
+            const auto p = f.Point2(), q = f.Point2();
+            d.P1 = {p.X, p.Y}; d.P2 = {q.X, q.Y};
+            f.Short();
+            f.Text();
+            if (!f.Exact()) return fail("native multi-pipe dimension fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            Detail::TextStream stream(data, r);
+            if (!Detail::ReadPipeSymbol(entity, r, stream, s)) return fail("unsupported native symbol base layout");
+            const int version = r.ReadByte();
+            if (version >= 3) return fail("unsupported native multi-pipe dimension version");
+            const int count = r.ReadByte();
+            d.Run = r.ReadBitDouble();
+            d.P1 = Detail::P2(r);
+            d.P2 = Detail::P2(r);
+            if (version > 1) r.ReadBitShort();
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native multi-pipe dimension fields do not consume the payload exactly");
+            d.Pipes = Detail::ReadBlockHandles(entity, s.HandleCount, count);
+            if (static_cast<int>(d.Pipes.size()) != count) return fail("native multi-pipe dimension handle stream is incomplete");
+        }
         d.Scale = s.Base.Scale; d.TextHeight = s.TextHeight; d.Color = s.Color; d.Style = s.Style; d.Angle = s.Angle;
         d.Run *= d.Scale;
         double gap = 0.5;
@@ -660,8 +930,6 @@ namespace MiniCAD::Tch
             it != s.Values.Numbers.end() && Detail::Finite(it->second))
             gap = it->second;                                   // “多管标注基线距离”
         d.Spacing = (d.TextHeight + gap) * d.Scale;
-        d.Pipes = Detail::ReadBlockHandles(entity, s.HandleCount, count);
-        if (static_cast<int>(d.Pipes.size()) != count) return fail("native multi-pipe dimension handle stream is incomplete");
         if (!Detail::Finite(d.P1.X) || !Detail::Finite(d.P1.Y) || !Detail::Finite(d.P2.X) || !Detail::Finite(d.P2.Y) ||
             !Detail::Finite(d.Run) || !Detail::Finite(d.Angle) || std::hypot(d.P2.X - d.P1.X, d.P2.Y - d.P1.Y) < 1e-9)
             return fail("invalid native multi-pipe dimension geometry");
@@ -670,10 +938,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 基线 P1 → P2；每根管线与基线的交点处画一条斜线（基线方向转 45°，长 = 字高 × 比例）；
-    // 从 P2 起沿基线方向每隔一个行距一条下划线（沿文字方向，长 Run），其上为该管线的管径文字（按管线的存储顺序，
-    // 字高按样式规则，左下角距下划线起点沿文字方向 1/24、向上 1/12 × 字高 × 比例）；基线延长到最后一条下划线。
-    // labels[i] 为第 i 根管线的文字，crossings[i] 为交点（没有交点时不画斜线）
     inline TchGraphics BuildPipeMultDim(const TchPipeMultDim& d, const std::vector<std::string>& labels,
                                         const std::vector<std::optional<TchGraphics::Point>>& crossings, const TchTextStyleRule& rule)
     {
@@ -700,7 +964,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 管线与无限长直线 a + t·(ux, uy) 的交点（只算直管）
     inline std::optional<TchGraphics::Point> PipeCrossing(const TchPipe& p, TchGraphics::Point a, double ux, double uy)
     {
         if (std::abs(p.Sweep) > 1e-9 || p.IsRiser()) return std::nullopt;
@@ -712,7 +975,6 @@ namespace MiniCAD::Tch
         return TchGraphics::Point{p.Start.X + dx * s, p.Start.Y + dy * s};
     }
 
-    // 双线管：可见段内画中心线（中心线图层，TchGraphics 的 Layer 1）与两侧边线（± 管宽 / 2，对象图层）；弧形双线管画同心圆弧
     inline TchGraphics BuildDoubleLinePipe(const TchPipe& p)
     {
         TchGraphics g;
@@ -756,8 +1018,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // TCH_FLANGE 法兰（双线管的管件）：管线节点基类（各接口的位置、方向、软指针）+ RC 版本 + 3BD，再 RC 版本（< 3），版本 ≥ 2 再硬指针。
-    // 节点的最后一个字符串为弯头中心半径与管宽之比（如“1.0”）
     struct TchFlange
     {
         double X = 0, Y = 0, BendRatio = 1;
@@ -772,36 +1032,57 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         if (!Detail::CheckPayload(entity, "TCH_FLANGE", why)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
         TchFlange f;
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe node layout");
-        r.ReadByte();
-        const int count = r.ReadByte();
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        std::string ratio;
+        if (Detail::IsCipherObject(data))
         {
-            if (r.ReadByte() >= 2) return fail("unsupported native pipe interface version");
-            for (int k = 0; k < 4; ++k) r.ReadByte();
-            Detail::Read3(r);
-            const auto dir = Detail::Read3(r);
-            f.Directions.push_back({dir.X, dir.Y});
+            Detail::CipherReader c(entity);
+            Detail::CipherPipeNode node;
+            if (!Detail::ReadCipherPipeNode(c, node)) return fail("unsupported native pipe node layout");
+            if (c.Main.ReadByte() != 2) return fail("unsupported native pipe fitting version");
+            c.ReadKey();
+            const auto at = c.Point3();
+            if (c.Main.ReadByte() != 3) return fail("unsupported native flange version");
+            c.ReadKey();
+            c.Handle();
+            if (!c.Exact()) return fail("native flange fields do not consume the payload exactly");
+            f.X = at.X; f.Y = at.Y;
+            f.Directions = std::move(node.Directions);
+            f.Pipes = std::move(node.Pipes);
+            ratio = std::move(node.Last);
         }
-        if (r.ReadByte() >= 2) return fail("unsupported native pipe fitting version");
-        const auto at = Detail::Read3(r);
-        if (r.ReadByte() >= 3) return fail("unsupported native flange version");
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native flange fields do not consume the payload exactly");
-        f.X = at.X; f.Y = at.Y;
-        Detail::TextStream stream(data, r);
-        for (int i = 0; i < base.TextCount + count; ++i) stream.Next();
-        const std::string ratio = stream.Next();
-        if (stream.Reader.Failed()) return fail("native flange text stream is incomplete");
+        else
+        {
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe node layout");
+            r.ReadByte();
+            const int count = r.ReadByte();
+            for (int i = 0; i < count && !r.Failed(); ++i)
+            {
+                if (r.ReadByte() >= 2) return fail("unsupported native pipe interface version");
+                for (int k = 0; k < 4; ++k) r.ReadByte();
+                Detail::Read3(r);
+                const auto dir = Detail::Read3(r);
+                f.Directions.push_back({dir.X, dir.Y});
+            }
+            if (r.ReadByte() >= 2) return fail("unsupported native pipe fitting version");
+            const auto at = Detail::Read3(r);
+            if (r.ReadByte() >= 3) return fail("unsupported native flange version");
+            if (r.Failed() || r.PositionInBits() != data.MainBits)
+                return fail("native flange fields do not consume the payload exactly");
+            f.X = at.X; f.Y = at.Y;
+            Detail::TextStream stream(data, r);
+            for (int i = 0; i < base.TextCount + count; ++i) stream.Next();
+            ratio = stream.Next();
+            if (stream.Reader.Failed()) return fail("native flange text stream is incomplete");
+            f.Pipes = Detail::ReadBlockHandles(entity, base.HandleCount, count);
+            if (static_cast<int>(f.Pipes.size()) != count) return fail("native flange handle stream is incomplete");
+        }
         char* end = nullptr;
         const double v = std::strtod(ratio.c_str(), &end);
         if (end != ratio.c_str() && v > 0 && Detail::Finite(v)) f.BendRatio = v;
-        f.Pipes = Detail::ReadBlockHandles(entity, base.HandleCount, count);
-        if (static_cast<int>(f.Pipes.size()) != count) return fail("native flange handle stream is incomplete");
         flange = std::move(f);
         if (diagnostic) diagnostic->clear();
         return true;

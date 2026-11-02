@@ -449,9 +449,7 @@ int RunCadExchangeTests()
     }
 
 #ifdef MINICAD_TCH_SAMPLE_DIR
-    // 天正 2014 用脚本画出的样例图（tests/Data/Tch）：每个天正对象都恢复为一个顶层实体（实体数 = 原图模型空间实体数），
-    // 以原图为底另存后再读回实体数不变。样例覆盖墙（直墙、弧墙、带造型）、门窗（门、带形窗、组合门窗、门窗套）、
-    // 各类楼梯与扶梯、台阶、坡道、阳台、散水、屋顶与注释符号
+ 
     struct TchSample { const char* Name; int Entities; int Tch; };
     const TchSample tchSamples[] = {
         {"p1.dwg", 14, 14}, {"p2.dwg", 15, 13}, {"p3.dwg", 15, 11}, {"p5.dwg", 11, 11}, {"q6.dwg", 13, 11},
@@ -463,7 +461,7 @@ int RunCadExchangeTests()
         const auto data = ReadFile(std::string(MINICAD_TCH_SAMPLE_DIR) + "/" + sample.Name);
         if (data.empty())
         {
-            std::printf("[跳过] 没有找到天正样例 %s\n", sample.Name);
+            std::printf("[跳过] 没有找到TCH样例 %s\n", sample.Name);
             continue;
         }
         Scene scene;
@@ -471,14 +469,14 @@ int RunCadExchangeTests()
         std::shared_ptr<const CadSource> source;
         const bool ok = ImportCad(data, scene, nullptr, &version, &source);
         Check(ok && CountAll(scene) == sample.Entities && CadSourceTchCount(source.get()) == sample.Tch,
-              (std::string("天正样例 ") + sample.Name + "：每个天正对象都恢复显示").c_str());
+              (std::string("TCH样例 ") + sample.Name + "：每个TCH对象都恢复显示").c_str());
         if (!ok) continue;
         const auto out = ExportCad(scene, CadFileKind::Dwg, version, nullptr, source.get());
         Scene again;
         std::shared_ptr<const CadSource> againSource;
         Check(!out.empty() && ImportCad(out, again, nullptr, nullptr, &againSource) && CountAll(again) == sample.Entities &&
               CadSourceTchCount(againSource.get()) == sample.Tch,
-              (std::string("天正样例 ") + sample.Name + " 以原图为底另存后再读回不变").c_str());
+              (std::string("TCH样例 ") + sample.Name + " 以原图为底另存后再读回不变").c_str());
     }
 #endif
 

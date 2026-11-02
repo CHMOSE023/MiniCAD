@@ -100,17 +100,13 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 墙的几何是否合理；不合理时返回原因
         inline const char* CheckWall(const TchWall& w, double height, double insulation)
         {
             const std::array<double, 10> values{w.Start.X, w.Start.Y, w.Start.Z, w.End.X, w.End.Y, w.End.Z, w.LeftWidth, w.RightWidth, height, insulation};
             for (double value : values)
                 if (!std::isfinite(value) || std::abs(value) > 1e12) return "nonfinite native wall geometry";
             const double length = std::hypot(w.End.X - w.Start.X, w.End.Y - w.Start.Y);
-            // 曲线参数为弧墙的圆心角（天正 2014 生成的弧墙样例核对：弦长 6000、拱高 1500 时为 1.8546）
-            if (!std::isfinite(w.Angle) || std::abs(w.Angle) >= 2 * 3.14159265358979 - 1e-6) return "invalid native wall arc angle";
-            // 一侧宽度可以为 0（轴线贴墙边）；短墙（墙垛、门垛）的长度可以小于墙厚，端部连接量也可以超过墙长，
-            // 一侧连接量之和不小于墙长时该侧边退化为点（建筑平面样图均有此类墙）
+            if (!std::isfinite(w.Angle) || std::abs(w.Angle) >= 2 * 3.14159265358979 - 1e-6) return "invalid native wall arc angle"; 
             if (length < 1e-6 || w.Start.Z != w.End.Z || w.LeftWidth < 0 || w.RightWidth < 0 ||
                 w.LeftWidth + w.RightWidth <= 0 || height <= 0 || insulation < 0)
                 return "invalid native wall geometry";
@@ -120,10 +116,7 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的墙版本 12：RC 版本、RC 密钥；
-        // 起点、终点（三维点）、圆心角、标志、左宽、右宽、高；6 个句柄（后 4 个为两端相接的墙）；数值；标志含 0x10 时一段多段线
-        //（未核对，不支持）；门窗数与门窗句柄；材料码；墙体造型数与句柄；保温层厚与 4 个连接量；6 个句柄；个数与句柄；
-        // 布尔、字符串、数值、2 个句柄、个数与句柄。幕墙：T30 TDbCurtainWall::dwgInFields v3
+        
         inline bool DecodeWallCipher(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic, bool curtain)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -174,22 +167,19 @@ namespace MiniCAD::Tch
             return true;
         }
 
-        // 墙的字段；幕墙（curtain）的这些字段之后还有幕墙自己的字段
         inline bool DecodeWallFields(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic, bool curtain)
         {
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
             if (IsCipherObject(data)) return DecodeWallCipher(entity, wall, diagnostic, curtain);
             if (diagnostic) *diagnostic = "native wall fields do not match verified schema-5 straight-wall layout";
-            // 门窗数为 0 时 BS 占 2 位（1157 位），1～255 时占 10 位（1165 位），更多时占 18 位；幕墙自己的字段至多 4 个 RC + 6 个 BD
-            const std::uint64_t maxBits = 1173 + (curtain ? 4 * 8 + 6 * 66 : 0);
+            const std::uint64_t maxBits = 1173 + (curtain ? 4 * 8 + (6 + 2 * 255) * 66 : 0);
             if (data.MainBits < 773 || data.MainBits > maxBits)
             {
                 if (diagnostic) *diagnostic = "unsupported native wall layout: " + std::to_string(data.MainBits) +
                     " bits; verified range is 773.." + std::to_string(maxBits);
                 return false;
             }
-            // AC1018（2004 格式，电气平面样图）、AC1024（2010 格式，建筑平面样图）与 AC1027 的这段位流布局相同；其他版本未核对
             if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
                 return false;
             auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };
@@ -206,16 +196,13 @@ namespace MiniCAD::Tch
             DwgBitReader geometry(decoded, data.Version, Codec::CodePage::Gbk);
             TchWall result;
             result.Start = geometry.Read3RawDouble();
-            result.End = geometry.Read3RawDouble();
+            result.End   = geometry.Read3RawDouble();
             const double curveParameter = geometry.ReadRawDouble();
-            const auto flags = geometry.ReadRawLong();
-            result.LeftWidth = geometry.ReadRawDouble();
-            result.RightWidth = geometry.ReadRawDouble();
+            const auto flags    = geometry.ReadRawLong();
+            result.LeftWidth    = geometry.ReadRawDouble();
+            result.RightWidth   = geometry.ReadRawDouble();
             const double height = geometry.ReadRawDouble();
-            // 受保护数据之后：RC 0、门窗数 BS（门窗句柄在句柄流）、材料码 RC、墙体造型数 RC
-            //（造型 TCH_WALL_PATCH 的句柄在句柄流）。门窗数为 0 的墙这一段在 tianzheng.dwg 里恰好是字节 00 8A 00 加 2 位 0；
-            // 有门窗的墙多出的位数与句柄流中多出的 TCH_OPENING 引用一致（两份真实样例：各 1 个门窗，1165 位）。
-            // 建筑平面样图的材料码有 10 / 30 / 31 / 32 / 40 / 60；造型数只见过 0 和 1
+          
             if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
             const int openings = r.ReadBitShort();
             if (openings < 0 || openings > 1024) return fail("invalid native wall opening count");
@@ -227,32 +214,26 @@ namespace MiniCAD::Tch
             result.Scale = scale;
             const double insulation = r.ReadBitDouble();
             for (auto& join : result.Joins) join = r.ReadBitDouble();
-            // The remaining 11-bit signature is 00000000 010.
             const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
-            // 最后是一个字符串（R2007 起在文字流）；R2004 就地在主数据流（电气平面样图的墙均为空串，占 2 位）
             if (data.Version < CadVersion::AC1021) r.ReadVariableText();
             if (!signature) return fail("native wall trailing signature mismatch");
             if (curtain)
             {
-                // 幕墙自己的字段：RC 版本（≤ 2）、RC、6 个 BD、2 个 RC（按其值新建对象，不再读数据）；3 个硬指针在句柄流
-                // （建筑平面样图的 38 个幕墙这一段都是 300 位）
                 const int version = r.ReadByte();
                 r.ReadByte();
                 for (int i = 0; i < 6; ++i) r.ReadBitDouble();
-                r.ReadByte();
-                r.ReadByte();
+                const int rows = r.ReadByte(), columns = r.ReadByte();
+                if (!(flags & 0x100)) for (int i = 0; i < rows && !r.Failed(); ++i) r.ReadBitDouble();
+                if (!(flags & 0x10000)) for (int i = 0; i < columns && !r.Failed(); ++i) r.ReadBitDouble();
                 if (version > 2) return fail("unsupported native curtain wall version " + std::to_string(version));
             }
             if (r.Failed() || geometry.Failed() || r.PositionInBits() != data.MainBits)
                 return fail("native wall fields end at bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits));
-            // 标志低位：识别为外墙等（散水样例为 1）；建筑样图还有 0x400 / 0x2000 / 0x4000 等高位。
-            // 幕墙另有 0x8000 以上的位（建筑样图为 0x18100 / 0x1c100 / 0x1810c 等），0x4 为玻璃幕墙
             if ((flags & (curtain ? ~0x3FFFF : ~0x7FFF)) != 0)
                 return fail("unsupported native wall flags " + std::to_string(flags));
             result.Flags = static_cast<std::uint32_t>(flags);
             result.Angle = curveParameter;
             if (const char* why = CheckWall(result, height, insulation)) return fail(why);
-            // 相接的墙在句柄流里；没有句柄流（或不足 6 个）时按两端都没有相接的墙
             DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
             std::array<Handle, 6> soft{};
             for (auto& h : soft) h = handles.ReadHandle(entity.ObjectHandle);
@@ -266,42 +247,30 @@ namespace MiniCAD::Tch
             return true;
         }
     }
-
-    // Read-only compatibility adapter for the schema-5 straight-wall layout
-    // observed in tianzheng.dwg. Unidentified fields are checked as signatures,
-    // not assigned speculative meanings. Other layouts remain unknown entities.
-    // See docs/Tianzheng-wall-compatibility.md for evidence and limitations.
+     
     inline bool DecodeWall(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic = nullptr)
     {
         if (entity.Raw.DxfName != "TCH_WALL") return false;
         return Detail::DecodeWallFields(entity, wall, diagnostic, false);
     }
-
-    // 幕墙（TCH_CURTAIN_WALL）：先是墙的全部字段（连接量、材料码等）
-    // 与墙相同，其后是幕墙自己的字段（只核对，不取值）。读不出时退回 DecodeWallPrefix（只有轴线与左右宽）
+     
     inline bool DecodeCurtainWall(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic = nullptr)
     {
         if (entity.Raw.DxfName != "TCH_CURTAIN_WALL") return false;
         return Detail::DecodeWallFields(entity, wall, diagnostic, true);
     }
 
-    // 图纸的天正设置（非图形对象 TCH_DBCONFIG）里与墙柱填充有关的部分。缺省为天正 2014 的默认值（sys\TOptionsDef.xml“墙柱加粗填充”）
     struct TchConfig
     {
-        bool   Fill = false;        // 天正选项“墙柱填充”（状态栏的“填充”开关）；天正的默认值为否
-        double DetailScale = 100;   // 详图比例：对象的出图比例小于它时用详图图案
-        // 各材料的标准、详图填充图案名（序号见 MaterialSlot；空串为不填充）
+        bool   Fill = false;         
+        double DetailScale = 100;    
         std::array<std::string, 8> Standard{"", "", "", "", "", "", "SOLID", ""};
         std::array<std::string, 8> Detail{"", "", "", "", "普通砖", "天然石材", "钢筋混凝土", "金属"};   // i18n: 数据
-        // 内视符号编号的大小（对象自己没设时取图纸设置里的这两项）：
-        // 编号与半径之比、大小算法。没有设置对象时为默认值 0.6、0；设置版本 < 7 时天正
-        // 读完把比例置为 0.8
+       
         double IndexTextRatio = 0.6;
         int    IndexTextMode = 0;
     };
-
-    // 材料码 → 图案序号：轻质隔墙、填充墙、填充墙1、填充墙2、砖、石、钢筋混凝土、钢（天正按同样的顺序
-    // 取设置里的标志）；-1 为不填充（如玻璃幕墙 20）
+ 
     inline int MaterialSlot(int material)
     {
         switch (material)
@@ -317,14 +286,7 @@ namespace MiniCAD::Tch
         default: return -1;
         }
     }
-
-    // 按版本 4～9 读：RC 版本、BD、BD、BS、RC 填充、3 个 RC、BD、BD、2 个 RC、
-    // BL、BD、BD 详图比例；12 个字符串依次为轻质隔墙、填充墙、砖、石、钢筋混凝土、钢的标准图案与同序的详图图案，
-    // 12 个 BD；版本 6 起 2 个字符串后为填充墙1 的标准、详图图案，2 个 BD，再是填充墙2 的。字符串 R2007 起在文字流，之前就地
-    // 在主数据流。tianzheng.dwg 把“填充”这一位清掉后，天正 2014 里所有墙柱的填充都不见了；建筑平面样图改过轻质隔墙等的详图图案
-    //（轻质隔墙为卵石砌体，天正里显示成圆圈）。图案名读不出时保留默认值。
-    // 版本 10、11（新版，tianzheng2.dwg 为 11）前面的布局相同；版本 6 起图案之后还有 8 个 B、8 个 BS（句柄在句柄流），
-    // 版本 7 起再是 BD、RC、BD 内视符号编号比例、RC 编号大小算法
+ 
     inline bool DecodeConfig(const MiniDWG::UnknownObject& object, TchConfig& config)
     {
         using namespace MiniDWG;
@@ -366,7 +328,6 @@ namespace MiniCAD::Tch
         if (!r.Failed() && !text.Failed() && r.PositionInBits() <= data.MainBits && namesOk)
             config = std::move(patterns);
 
-        // 内视符号编号的设置在图案之后，单独判断：读不出时保留默认值，不影响前面的图案
         if (version >= 6)
         {
             r.ReadBitDouble(); r.ReadBitDouble();
@@ -389,7 +350,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 墙、柱的填充图案名：出图比例小于详图比例时取详图图案；空为不填充
     inline std::string_view MaterialHatch(const TchConfig& config, int material, bool detail)
     {
         const int slot = MaterialSlot(material);

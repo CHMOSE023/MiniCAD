@@ -247,7 +247,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 - 特性面板、图层面板、功能区的图层条只建一次：建的时候把"写译文"的回调登记到 `PanelSet::retranslate`，`MainFrame::Retranslate` 逐个再调；命令行加 `CommandConsole::Retranslate`；动态输入框的字段名每次刷新时翻译
 - 图层表"开 / 锁"两列加宽（40 / 48），放得下英文表头
 - 实体类型名在应用里只出现在节点图的值显示（`src/NodeGraph/Value.cpp`），归阶段 3
-- 数据不翻、加 `// i18n: 数据` 注明：新图层 / 样式的默认名、示例图纸内容、天正的图层名与材料名、标注样式与多线样式、TrueType 字体名映射、字体预览的中文样例
+- 数据不翻、加 `// i18n: 数据` 注明：新图层 / 样式的默认名、示例图纸内容、TCH的图层名与材料名、标注样式与多线样式、TrueType 字体名映射、字体预览的中文样例
 - 留到阶段 4：日志的续行（`EllipseTool.h`、`SplineTool.h`、`RotateTool.h`）、填充图案文件的解析错误（`HatchPatternLibrary.cpp`）、MiniDWG 传上来的出错信息（`firstError`）
 - 验收只做了一部分：英文下截图看了命令行（圆角、多线的提示）、特性面板、图层面板，`--lang qps` 下这几处都带方括号；没有逐个命令在英文下跑一遍；网页版只编译过；Linux 版没编译
 
@@ -293,7 +293,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 - 网页宿主 `MiniCADWebHost` 的出错信息也按界面语言，`apps/Web/CMakeLists.txt` 给它链接 `MiniI18n`
 - `I18nTests` 加"装上英文表后打开失败的原因是英文"（用一段坏的 DWG 头）
 - 做阶段 4 时顺带改了：新图纸与新建布局的布局名按当前语言起名（5.3）
-- 验收：`--lang en --gpu foo --bench tests/Data/Tch/p1.dwg` 的控制台全是英文（退回默认图形接口的提示、天正的警告）；`--lang qps` 打开 `sample_AC1014.dwg` 时含中文的日志都带方括号；
+- 验收：`--lang en --gpu foo --bench tests/Data/Tch/p1.dwg` 的控制台全是英文（退回默认图形接口的提示、TCH的警告）；`--lang qps` 打开 `sample_AC1014.dwg` 时含中文的日志都带方括号；
   `MiniDWGTests`、`MiniCADTests`、`NodeGraphTests` 照常通过
 
 原计划：
@@ -303,7 +303,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 - 实体内核 `SMLibKernel.cpp` 的出错信息（节点上、命令行里显示）
 - 图形设备：`apps/Render` 各后端与 `GraphicsDevice.cpp` 的出错信息；创建失败时给用户看的提示
 - 其他：填充图案文件的解析错误（`HatchPatternLibrary.cpp`）、字体加载失败等
-- 验收：`--lang en` 打开 `tests/Data` 里会产生警告的样图（版本较老的 DWG、天正图纸），控制台与状态栏是英文；
+- 验收：`--lang en` 打开 `tests/Data` 里会产生警告的样图（版本较老的 DWG、TCH图纸），控制台与状态栏是英文；
   `--lang qps` 下控制台没有不带方括号的中文；`--gpu` 指定一个不可用的后端，退回时的提示是英文；`MiniDWGTests` 照常通过
 
 ### 阶段 5：收尾与发布（小）——已完成（2026-11-02）
@@ -418,7 +418,7 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 | 俯视 / 前视 / 右视 / 西南等轴测 | Top / Front / Right / SW Isometric | 视图方块 | ViewCube |
 | 着色 / 线框 | Shaded / Wireframe | 实体 / 曲面 / 网格 | Solid / Surface / Mesh |
 | 拉伸（实体） / 旋转（实体） | Extrude / Revolve | 并集 / 差集 / 交集 | Union / Subtract / Intersect |
-| 节点编辑器 / 烘焙 | Node Editor / Bake | 天正对象 | Tianzheng (TArch) Object |
+| 节点编辑器 / 烘焙 | Node Editor / Bake | TCH对象 | Tianzheng (TArch) Object |
 
 翻译时先查这张表，新术语定下来后补进来；"拉伸"在二维修改（Stretch）与实体（Extrude）里不同，靠上下文区分（3.1）。
 

@@ -14,7 +14,6 @@ namespace MiniCAD::Tch
 {
     namespace Detail
     {
-        // 天正自定义的双精度编码：两位标志 00 为 RD、01 为 1、10 为 0
         inline double ReadTchDouble(MiniDWG::DwgBitReader& r)
         {
             const int code = (r.ReadBit() ? 2 : 0) + (r.ReadBit() ? 1 : 0);
@@ -37,20 +36,16 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_RECT 天正矩形（版本 < 3 为明文分支）──
     struct TchRect
     {
         double X = 0, Y = 0;            // 中心
         double Rotation = 0;
         double Length = 0, Width = 0;
-        // 矩形标志：天正在矩形之外，1 画左下—右上的对角线，
-        // 2 画左上—右下的对角线，3 两条都画（建筑平面样图 暖通套管规格表的套管图例）；其他值只画矩形
-        int Flag = 0;
+        int    Flag = 0;
     };
 
     namespace Detail
     {
-        // T30 TDbRect::dwgInFields v3
         inline bool DecodeRectCipher(const MiniDWG::UnknownEntity& entity, TchRect& rect, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -78,7 +73,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 天正基类、RC 版本、BS 矩形标志、3BD 中心、转角、长、宽、高（自定义编码 BD）、3BD 法向；版本 ≥ 2：RC 基点位置（GetBaseFlag）
     inline bool DecodeRect(const MiniDWG::UnknownEntity& entity, TchRect& rect, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -109,7 +103,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解为一条闭合多段线（2 个变体核对），按矩形标志再加对角线
     inline TchGraphics BuildRect(const TchRect& t)
     {
         TchGraphics g;
@@ -131,7 +124,6 @@ namespace MiniCAD::Tch
     {
         struct PathVertex { double X = 0, Y = 0, Bulge = 0; };
 
-        // 多段线（只按直线段处理凸度为 0 的段；圆弧段的偏移保持凸度）向左偏移 d（负值向右），转角取两段偏移线的交点
         inline std::vector<PathVertex> OffsetPath(const std::vector<PathVertex>& pts, bool closed, double d)
         {
             const std::size_t n = pts.size();
@@ -146,7 +138,6 @@ namespace MiniCAD::Tch
                 dx /= L; dy /= L;
                 if (std::abs(a.Bulge) > 1e-12)
                 {
-                    // 圆弧在起点 / 终点的切线：弦方向转 ±2·atan(bulge)
                     const double t = 2 * std::atan(a.Bulge) * (atStart ? 1 : -1);
                     const double c = std::cos(t), s = std::sin(t);
                     return std::pair{dx * c - dy * s, dx * s + dy * c};
@@ -178,6 +169,47 @@ namespace MiniCAD::Tch
             return out;
         }
 
+        inline std::vector<PathVertex> OffsetPathEdges(const std::vector<PathVertex>& pts, bool closed, const std::vector<double>& d)
+        {
+            const std::size_t n = pts.size(), segs = closed ? n : n - 1;
+            std::vector<PathVertex> out;
+            if (n < 2 || d.size() < segs) return out;
+            auto dir = [&](std::size_t i, bool atStart) {
+                const auto& a = pts[i];
+                const auto& b = pts[(i + 1) % n];
+                double dx = b.X - a.X, dy = b.Y - a.Y;
+                const double L = std::hypot(dx, dy);
+                if (L < 1e-12) return std::pair{1.0, 0.0};
+                dx /= L; dy /= L;
+                if (std::abs(a.Bulge) > 1e-12)
+                {
+                    const double t = 2 * std::atan(a.Bulge) * (atStart ? 1 : -1);
+                    const double c = std::cos(t), s = std::sin(t);
+                    return std::pair{dx * c - dy * s, dx * s + dy * c};
+                }
+                return std::pair{dx, dy};
+            };
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const bool hasPrev = closed || i > 0, hasNext = closed || i + 1 < n;
+                const std::size_t prev = (i + n - 1) % n;
+                auto t1 = hasPrev ? dir(prev, false) : dir(i, true);
+                auto t2 = hasNext ? dir(i, true) : t1;
+                const double d1 = hasPrev ? d[prev] : d[i], d2 = hasNext ? d[i] : d1;
+                const double ax = pts[i].X - t1.second * d1, ay = pts[i].Y + t1.first * d1;
+                const double bx = pts[i].X - t2.second * d2, by = pts[i].Y + t2.first * d2;
+                const double cross = t1.first * t2.second - t1.second * t2.first;
+                if (std::abs(cross) < 0.05)
+                {
+                    out.push_back({bx, by, pts[i].Bulge});
+                    continue;
+                }
+                const double s = ((bx - ax) * t2.second - (by - ay) * t2.first) / cross;
+                out.push_back({ax + t1.first * s, ay + t1.second * s, pts[i].Bulge});
+            }
+            return out;
+        }
+
         inline TchGraphics::Path ToPath(const std::vector<PathVertex>& pts, bool closed)
         {
             TchGraphics::Path p;
@@ -198,60 +230,83 @@ namespace MiniCAD::Tch
             }
             return a / 2;
         }
+
+        inline bool ReadPathPoly(MiniDWG::DwgBitReader& r, std::vector<PathVertex>& out, bool& closed)
+        {
+            closed = r.ReadByte() != 0;
+            const int count = r.ReadBitShort();
+            if (count < 0 || count > 100000) return false;
+            for (int i = 0; i < count && !r.Failed(); ++i)
+            {
+                PathVertex v;
+                v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
+                if (!Finite(v.X) || !Finite(v.Y) || !Finite(v.Bulge)) return false;
+                out.push_back(v);
+            }
+            return !r.Failed();
+        }
     }
 
-    // ── TCH_SLAB 平板 / 楼板（版本 < 3 为明文分支）──
     struct TchSlab
     {
         std::vector<Detail::PathVertex> Outline;
         std::vector<std::vector<Detail::PathVertex>> Holes;
     };
 
-    // 天正基类、RC 版本、BD 板厚、BL、BD、RC、BS 点数与各点 2RD + BD 凸度（外轮廓）、BS 洞数、
-    // 每个洞 RC、BS 点数与各点 2RD + BD；版本 ≥ 2：3BD 法向
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadSlabFields(R& r, TchSlab& s, int version)
+        {
+            r.D(); r.BL(); r.D();
+            bool closed = false;
+            if (!ReadPathPoly(r.Main(), s.Outline, closed)) return "invalid slab outline";
+            const int holes = r.BS();
+            if (holes < 0 || holes > 10000) return "invalid slab hole count";
+            for (int i = 0; i < holes && r.Ok(); ++i)
+            {
+                s.Holes.emplace_back();
+                if (!ReadPathPoly(r.Main(), s.Holes.back(), closed)) return "invalid slab hole";
+            }
+            if (version > 1) r.P3();
+            return nullptr;
+        }
+    }
+
     inline bool DecodeSlab(const MiniDWG::UnknownEntity& entity, TchSlab& slab, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_SLAB") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_SLAB", r, base)) return fail("unsupported Tianzheng base layout");
-        const int version = r.ReadByte();
-        if (version < 1 || version > 2) return fail("unsupported native slab version");
-        r.ReadBitDouble(); r.ReadBitLong(); r.ReadBitDouble(); r.ReadByte();
-        auto ring = [&](std::vector<Detail::PathVertex>& out) {
-            const int count = r.ReadBitShort();
-            if (count < 0 || count > 100000) return false;
-            for (int i = 0; i < count && !r.Failed(); ++i)
-            {
-                Detail::PathVertex v;
-                v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
-                if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return false;
-                out.push_back(v);
-            }
-            return true;
-        };
         TchSlab s;
-        if (!ring(s.Outline)) return fail("invalid slab outline");
-        const int holes = r.ReadBitShort();
-        if (holes < 0 || holes > 10000) return fail("invalid slab hole count");
-        for (int i = 0; i < holes && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            r.ReadByte();
-            s.Holes.emplace_back();
-            if (!ring(s.Holes.back())) return fail("invalid slab hole");
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native slab version");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadSlabFields(r, s, 3)) return fail(why);
+            if (!f.Exact()) return fail("native slab fields do not consume the payload exactly");
         }
-        if (version > 1) { r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble(); }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native slab fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_SLAB", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int version = rr.ReadByte();
+            if (version < 1 || version > 2) return fail("unsupported native slab version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadSlabFields(r, s, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native slab fields do not consume the payload exactly");
+        }
         if (s.Outline.size() < 3) return fail("slab outline is degenerate");
         slab = std::move(s);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解为外轮廓（与洞口）的线段（2 个样例核对）
     inline TchGraphics BuildSlab(const TchSlab& s)
     {
         TchGraphics g;
@@ -261,55 +316,83 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_HANDRAIL 扶手（版本 < 3 为明文分支）──
     struct TchHandRail
     {
         std::vector<Detail::PathVertex> Path;
         double Width = 60;
+        int Align = 0;                              // 0 居中，1 路径在左侧，2 路径在右侧
+        bool Draw2d = true;
     };
 
-    // 天正基类、楼梯基类 RC 版本（1～2）、RC 版本、RC 方式（100 时句柄流多一个句柄）、RC、BS 点数与各点 3BD + BD 凸度、
-    // BD 宽；版本 ≥ 2：BD；BD 顶面高、RC、RC
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadHandRailFields(R& r, TchHandRail& h, int version)
+        {
+            if (r.RC() == 100) r.H();
+            r.RC();
+            const int count = r.BS();
+            if (count < 2 || count > 100000) return "invalid handrail vertex count";
+            for (int i = 0; i < count && r.Ok(); ++i)
+            {
+                PathVertex v;
+                const auto p = r.P3();
+                v.X = p.X; v.Y = p.Y;
+                v.Bulge = r.D();
+                if (!Finite(v.X) || !Finite(v.Y) || !Finite(v.Bulge)) return "invalid handrail vertex";
+                h.Path.push_back(v);
+            }
+            h.Width = r.D();
+            if (version > 1) r.D();
+            r.D();
+            h.Align = r.RC();
+            h.Draw2d = (r.RC() & 1) != 0;
+            return nullptr;
+        }
+    }
+
     inline bool DecodeHandRail(const MiniDWG::UnknownEntity& entity, TchHandRail& rail, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_HANDRAIL") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_HANDRAIL", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        const int version = r.ReadByte();
-        if (version < 1 || version > 2) return fail("unsupported native handrail version");
-        r.ReadByte(); r.ReadByte();
-        const int count = r.ReadBitShort();
-        if (count < 2 || count > 100000) return fail("invalid handrail vertex count");
         TchHandRail h;
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            Detail::PathVertex v;
-            v.X = r.ReadBitDouble(); v.Y = r.ReadBitDouble(); r.ReadBitDouble();
-            v.Bulge = r.ReadBitDouble();
-            if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return fail("invalid handrail vertex");
-            h.Path.push_back(v);
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native handrail version");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadHandRailFields(r, h, 3)) return fail(why);
+            if (!f.Exact()) return fail("native handrail fields do not consume the payload exactly");
         }
-        h.Width = r.ReadBitDouble();
-        if (version > 1) r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadByte(); r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native handrail fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_HANDRAIL", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            const int version = rr.ReadByte();
+            if (version < 1 || version > 2) return fail("unsupported native handrail version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadHandRailFields(r, h, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native handrail fields do not consume the payload exactly");
+        }
         if (!(h.Width > 0) || !Detail::Finite(h.Width)) return fail("invalid handrail width");
         rail = std::move(h);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解为路径两侧各偏移半宽的线与两端封口（1 个样例核对）
     inline TchGraphics BuildHandRail(const TchHandRail& h)
     {
         TchGraphics g;
-        const auto left = Detail::OffsetPath(h.Path, false, h.Width / 2), right = Detail::OffsetPath(h.Path, false, -h.Width / 2);
+        if (!h.Draw2d) return g;
+        const double l = h.Align == 1 ? 0 : h.Align == 2 ? h.Width : h.Width / 2;
+        const auto left = Detail::OffsetPath(h.Path, false, l), right = Detail::OffsetPath(h.Path, false, l - h.Width);
         g.Paths.push_back(Detail::ToPath(left, false));
         g.Paths.push_back(Detail::ToPath(right, false));
         g.Lines.push_back({{left.front().X, left.front().Y}, {right.front().X, right.front().Y}});
@@ -317,7 +400,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_APRON 散水（版本 < 2 为明文分支）──
     struct TchApron
     {
         std::vector<Detail::PathVertex> Path;      // 散水内侧（外墙外皮）
@@ -325,13 +407,45 @@ namespace MiniCAD::Tch
         std::vector<double> Widths;                 // 各段散水宽
     };
 
-    // 路径基类（同线图案）、RC 版本、BD、BD、BS 段数与各段 BD 宽、BL
+    namespace Detail
+    {
+        inline bool DecodeApronCipher(const MiniDWG::UnknownEntity& entity, TchApron& apron, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            std::vector<CipherPathVertex> path;
+            TchApron a;
+            MiniDWG::XYZ normal;
+            if (!ReadCipherPolyCurve(f, path, a.Closed, normal)) return fail("unsupported path base layout");
+            if (path.size() < 2) return fail("invalid apron vertex count");
+            for (const auto& v : path)
+            {
+                if (!Finite(v.Point.X) || !Finite(v.Point.Y) || !Finite(v.Value)) return fail("invalid apron vertex");
+                a.Path.push_back({v.Point.X, v.Point.Y, v.Value});
+            }
+            if (f.Main.ReadByte() != 2) return fail("unsupported native apron version");
+            f.ReadKey();
+            f.Double(); f.Double();
+            const int widths = f.Short();
+            for (int i = 0; i < widths && f.Ok(); ++i) a.Widths.push_back(f.Double());
+            f.Long();
+            if (!f.Exact()) return fail("native apron fields do not consume the payload exactly");
+            for (double w : a.Widths)
+                if (!Finite(w) || w < 0) return fail("invalid apron width");
+            apron = std::move(a);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeApron(const MiniDWG::UnknownEntity& entity, TchApron& apron, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_APRON") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeApronCipher(entity, apron, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!Detail::ShapeHead(entity, "TCH_APRON", r, base)) return fail("unsupported Tianzheng base layout");
@@ -363,7 +477,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：内侧轮廓、向外偏移散水宽的外轮廓、两者对应顶点间的斜线
     inline TchGraphics BuildApron(const TchApron& a)
     {
         TchGraphics g;
@@ -378,95 +491,122 @@ namespace MiniCAD::Tch
             g.Lines.push_back({{a.Path[i].X, a.Path[i].Y}, {outer[i].X, outer[i].Y}});
         return g;
     }
-    // ── TCH_CORNER_WINDOW 转角窗（版本 < 5 为明文分支）──
     struct TchCornerWindow
     {
         double Scale = 100;
         double X = 0, Y = 0;                    // 墙内侧的转角点
         double Length1 = 0, Length2 = 0;        // 两段窗长
         double Angle1 = 0, Angle2 = 0;          // 两段自转角点出发的方向
-        double Thickness = 240;                 // 墙厚（窗线自内侧向外排 4 条）
+        double Thickness = 240;                 // 第一段墙厚：向第一段方向的右侧偏移（窗线自内侧向外排 4 条）
+        double Thickness2 = -240;               // 第二段墙厚：向第二段方向的右侧偏移（第二段在逆时针侧时为负）
         double LabelX = 0, LabelY = 0, LabelHeight = 3.5;
         std::string Label;
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
     };
 
-    // 天正基类、RC 版本、BL 标志、3BD 转角点、两个句柄（墙）、9 个 BD（两段长、窗高、两个方向、墙厚、−墙厚、两个偏移）、
-    // 编号文字、2RD 编号位置、两个句柄（文字样式等）、BD、BD 编号字高；标志位 0：4 个 BD；BS、3 个句柄、3 个 BD；
-    // 标志位 2：BS 段数与各段 2RD、2RD、BD；版本 ≥ 2：BS、B、文字、4 个 BD；版本 ≥ 3：BD
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadCornerWindowFields(R& r, TchCornerWindow& w, int version)
+        {
+            const int flags = r.BL();
+            const auto p = r.P3(); w.X = p.X; w.Y = p.Y;
+            r.H(); r.H();
+            w.Length1 = r.D(); w.Length2 = r.D();
+            r.D();
+            w.Angle1 = r.D(); w.Angle2 = r.D();
+            w.Thickness = r.D();
+            w.Thickness2 = r.D();
+            for (int i = 0; i < 2; ++i) r.D();
+            w.Label = r.T();
+            const auto l = r.P2(); w.LabelX = l.X; w.LabelY = l.Y;
+            w.Style = r.H(); r.H();
+            r.D();
+            w.LabelHeight = r.D();
+            if (flags & 1) for (int i = 0; i < 4; ++i) r.D();
+            r.BS();
+            r.H(); r.H(); r.H();
+            for (int i = 0; i < 3; ++i) r.D();
+            if (flags & 4)
+            {
+                const int segs = r.BS();
+                if (segs < 0 || segs > 10000) return "invalid corner window segment count";
+                for (int i = 0; i < segs && r.Ok(); ++i) { r.P2(); r.P2(); r.D(); }
+            }
+            if (version > 1) { r.BS(); r.B(); r.T(); for (int i = 0; i < 4; ++i) r.D(); }
+            if (version > 2) r.D();
+            if (version > 3 && (flags & 1)) r.D();
+            return nullptr;
+        }
+    }
+     
     inline bool DecodeCornerWindow(const MiniDWG::UnknownEntity& entity, TchCornerWindow& window, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CORNER_WINDOW") return false;
-        // 编号在主数据流中的位置未核对：R2004 及更早（字符串嵌在主数据流）不支持
-        if (data.Version < CadVersion::AC1021) return fail("unsupported DWG version for corner window");
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_CORNER_WINDOW", r, base)) return fail("unsupported Tianzheng base layout");
-        const int version = r.ReadByte();
-        if (version < 1 || version > 4) return fail("unsupported native corner window version");
         TchCornerWindow w;
-        w.Scale = base.Scale;
-        const int flags = r.ReadBitLong();
-        w.X = r.ReadBitDouble(); w.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        w.Length1 = r.ReadBitDouble(); w.Length2 = r.ReadBitDouble();
-        r.ReadBitDouble();                                  // 窗高
-        w.Angle1 = r.ReadBitDouble(); w.Angle2 = r.ReadBitDouble();
-        w.Thickness = r.ReadBitDouble();
-        for (int i = 0; i < 3; ++i) r.ReadBitDouble();
-        w.LabelX = r.ReadRawDouble(); w.LabelY = r.ReadRawDouble();
-        r.ReadBitDouble();
-        w.LabelHeight = r.ReadBitDouble();
-        if (flags & 1) for (int i = 0; i < 4; ++i) r.ReadBitDouble();
-        r.ReadBitShort();
-        for (int i = 0; i < 3; ++i) r.ReadBitDouble();
-        if (flags & 4)
+        if (Detail::IsCipherObject(data))
         {
-            const int segs = r.ReadBitShort();
-            if (segs < 0 || segs > 10000) return fail("invalid corner window segment count");
-            for (int i = 0; i < segs && !r.Failed(); ++i) { for (int k = 0; k < 4; ++k) r.ReadRawDouble(); r.ReadBitDouble(); }
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 5) return fail("unsupported native corner window version");
+            f.ReadKey();
+            w.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadCornerWindowFields(r, w, 5)) return fail(why);
+            if (!f.Exact()) return fail("native corner window fields do not consume the payload exactly");
         }
-        int texts = 1;
-        if (version > 1) { r.ReadBitShort(); r.ReadBit(); ++texts; for (int i = 0; i < 4; ++i) r.ReadBitDouble(); }
-        if (version > 2) r.ReadBitDouble();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native corner window fields do not consume the payload exactly");
-        for (double v : {w.X, w.Y, w.Length1, w.Length2, w.Angle1, w.Angle2, w.Thickness, w.LabelX, w.LabelY, w.LabelHeight})
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            // 编号在主数据流中的位置未核对：R2004 及更早（字符串嵌在主数据流）不支持
+            if (data.Version < CadVersion::AC1021) return fail("unsupported DWG version for corner window");
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_CORNER_WINDOW", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int version = rr.ReadByte();
+            if (version < 1 || version > 4) return fail("unsupported native corner window version");
+            w.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadCornerWindowFields(r, w, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native corner window fields do not consume the payload exactly");
+            Detail::TextStream stream(data, rr);
+            for (int i = 0; i < base.TextCount; ++i) stream.Next();
+            w.Label = stream.Next();
+            DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < base.HandleCount + 2; ++i) handles.ReadHandle(entity.ObjectHandle);   // 两道墙
+            w.Style = handles.ReadHandle(entity.ObjectHandle);
+        }
+        for (double v : {w.X, w.Y, w.Length1, w.Length2, w.Angle1, w.Angle2, w.Thickness, w.Thickness2, w.LabelX, w.LabelY, w.LabelHeight})
             if (!Detail::Finite(v)) return fail("invalid native corner window settings");
-        Detail::TextStream stream(data, r);
-        for (int i = 0; i < base.TextCount; ++i) stream.Next();
-        w.Label = stream.Next();
-        (void)texts;
-        DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount + 2; ++i) handles.ReadHandle(entity.ObjectHandle);   // 两道墙
-        w.Style = handles.ReadHandle(entity.ObjectHandle);
         window = std::move(w);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：自内侧转角点起 4 条窗线（间距墙厚 / 3），每条依次为第一段端点、转角、第二段端点，
-    // 每段向另一段的反方向平移；两端封口；编号文字以编号位置为中心
     inline TchGraphics BuildCornerWindow(const TchCornerWindow& w)
     {
         TchGraphics g;
         const double d1x = std::cos(w.Angle1), d1y = std::sin(w.Angle1), d2x = std::cos(w.Angle2), d2y = std::sin(w.Angle2);
-        auto at = [&](double t, int which) -> TchGraphics::Point {
-            const double ox = -(d1x + d2x) * t, oy = -(d1y + d2y) * t;
-            if (which == 1) return {w.X + d1x * w.Length1 - d2x * t, w.Y + d1y * w.Length1 - d2y * t};
-            if (which == 2) return {w.X + d2x * w.Length2 - d1x * t, w.Y + d2y * w.Length2 - d1y * t};
-            return {w.X + ox, w.Y + oy};
+        const double cross = d1x * d2y - d1y * d2x;
+        auto at = [&](double f, int which) -> TchGraphics::Point {
+            const double a = w.Thickness * f, b = w.Thickness2 * f;
+            const double ax = w.X + d1y * a, ay = w.Y - d1x * a, bx = w.X + d2y * b, by = w.Y - d2x * b;
+            if (which == 1) return {ax + d1x * w.Length1, ay + d1y * w.Length1};
+            if (which == 2) return {bx + d2x * w.Length2, by + d2y * w.Length2};
+            if (std::abs(cross) < 1e-9) return {ax, ay};
+            const double s = ((bx - ax) * d2y - (by - ay) * d2x) / cross;
+            return {ax + d1x * s, ay + d1y * s};
         };
         for (int k = 0; k <= 3; ++k)
         {
-            const double t = w.Thickness * k / 3;
             TchGraphics::Path p;
-            p.Points = {{at(t, 1)}, {at(t, 0)}, {at(t, 2)}};
+            p.Points = {{at(k / 3.0, 1)}, {at(k / 3.0, 0)}, {at(k / 3.0, 2)}};
             g.Paths.push_back(std::move(p));
         }
-        g.Lines.push_back({at(0, 1), at(w.Thickness, 1)});
-        g.Lines.push_back({at(0, 2), at(w.Thickness, 2)});
+        g.Lines.push_back({at(0, 1), at(1, 1)});
+        g.Lines.push_back({at(0, 2), at(1, 2)});
         if (!w.Label.empty())
         {
             const double nominal = w.LabelHeight * w.Scale;
@@ -476,9 +616,6 @@ namespace MiniCAD::Tch
     }
     namespace Detail
     {
-        // 梯段剖断线（与双跑楼梯中间层相同的画法，按天正 2014 分解结果核对）：剖断中线自 a 到 b，
-        // 双线时两侧各偏 50；锯齿两尖点在中点为圆心、半径 135 的圆上（中线方向坐标系 115° 与 −75°），两侧斜段方向 75°。
-        // kind：2 双剖断（剪掉两线之间的部分），1 下剖断（保留中线靠 a→b 右侧的部分），3 上剖断（保留左侧）
         struct FlightBreak
         {
             using P = TchGraphics::Point;
@@ -618,8 +755,6 @@ namespace MiniCAD::Tch
             }
         };
 
-        // 梯段基类：天正基类、RC 版本（< 4 为明文分支）、BS 踏步数、BD 踏步高、RC 剖断方式；
-        // 版本 ≥ 2：BD、BD 剖断线两端位置（占梯段长的比例）；版本 ≥ 3：BL、3 个 BD、两个句柄
         struct TchFlightBase
         {
             TchBase Base;
@@ -644,14 +779,27 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // 剖断方式（4 个变体核对）：低 4 位 1 无剖断、2 下剖断、3 双剖断、4 上剖断（高位 16 含义未明）
+        inline bool ReadCipherFlightBase(CipherReader& f, TchFlightBase& b)
+        {
+            if (!f.ReadBase() || f.Main.ReadByte() != 4) return false;
+            f.ReadKey();
+            b.Base.Scale = f.Scale;
+            b.Steps = f.Short();
+            b.StepHeight = f.Double();
+            b.BreakMode = f.Byte();
+            b.BreakStart = f.Double();
+            b.BreakEnd = f.Double();
+            f.Long(); f.Double(); f.Double(); f.Double();
+            f.Handle(); f.Handle();
+            return f.Ok();
+        }
+
         inline int BreakKind(int mode)
         {
             switch (mode & 15) { case 2: return 1; case 3: return 2; case 4: return 3; default: return 0; }
         }
     }
 
-    // ── TCH_LINESTAIR 直线梯段（版本 < 3 为明文分支）──
     struct TchLineStair
     {
         Detail::TchFlightBase Flight;
@@ -659,12 +807,45 @@ namespace MiniCAD::Tch
         double X = 0, Y = 0, Rotation = 0;      // 起步边左端点；梯段沿局部 +Y 展开
     };
 
+    namespace Detail
+    {
+        inline const char* CheckLineStair(const TchLineStair& s)
+        {
+            for (double v : {s.Tread, s.Width, s.X, s.Y, s.Rotation, s.Flight.BreakStart, s.Flight.BreakEnd})
+                if (!Finite(v)) return "invalid native line stair settings";
+            if (s.Flight.Steps < 2 || s.Flight.Steps > 1000 || !(s.Tread > 0) || !(s.Width > 0)) return "invalid native line stair size";
+            return nullptr;
+        }
+
+        // 新版 TCH_LINESTAIR 版本 3
+        inline bool DecodeLineStairCipher(const MiniDWG::UnknownEntity& entity, TchLineStair& stair, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchLineStair s;
+            if (!ReadCipherFlightBase(f, s.Flight)) return fail("unsupported stair flight base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native line stair version");
+            f.ReadKey();
+            s.Tread = f.Double(); s.Width = f.Double();
+            const auto p = f.Point3();
+            s.X = p.X; s.Y = p.Y;
+            s.Rotation = f.Double();
+            f.Double();
+            if (!f.Exact()) return fail("native line stair fields do not consume the payload exactly");
+            if (const char* why = CheckLineStair(s)) return fail(why);
+            stair = s;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeLineStair(const MiniDWG::UnknownEntity& entity, TchLineStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_LINESTAIR") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeLineStairCipher(entity, stair, diagnostic);
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for line stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchLineStair s;
@@ -676,16 +857,12 @@ namespace MiniCAD::Tch
         s.Rotation = r.ReadBitDouble();
         if (version > 1) r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native line stair fields do not consume the payload exactly");
-        for (double v : {s.Tread, s.Width, s.X, s.Y, s.Rotation, s.Flight.BreakStart, s.Flight.BreakEnd})
-            if (!Detail::Finite(v)) return fail("invalid native line stair settings");
-        if (s.Flight.Steps < 2 || s.Flight.Steps > 1000 || !(s.Tread > 0) || !(s.Width > 0)) return fail("invalid native line stair size");
+        if (const char* why = Detail::CheckLineStair(s)) return fail(why);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：两侧边、踏步线（踏步数个，间距踏步宽）；剖断线自起步端 BreakStart × 梯段长的左边
-    // 到 BreakEnd × 梯段长的右边
     inline TchGraphics BuildLineStair(const TchLineStair& s)
     {
         using P = TchGraphics::Point;
@@ -711,7 +888,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_ARCSTAIR 圆弧梯段（版本 < 3 为明文分支）──
     struct TchArcStair
     {
         Detail::TchFlightBase Flight;
@@ -720,13 +896,52 @@ namespace MiniCAD::Tch
         double StartAngle = 0, Sweep = std::numbers::pi;
     };
 
-    // 梯段基类、RC 版本、3BD 圆心、BD 内径、BD 外径、BD 起始角、BD 圆心角；版本 ≥ 2：RC、BS 点数与各点 2RD + BD、RC、BS 点数与各点 2RD + BD
+    namespace Detail
+    {
+        inline const char* CheckArcStair(const TchArcStair& s)
+        {
+            for (double v : {s.X, s.Y, s.InnerRadius, s.OuterRadius, s.StartAngle, s.Sweep})
+                if (!Finite(v)) return "invalid native arc stair settings";
+            if (s.Flight.Steps < 2 || s.Flight.Steps > 1000 || !(s.InnerRadius >= 0) || !(s.OuterRadius > s.InnerRadius) || s.Sweep == 0)
+                return "invalid native arc stair size";
+            return nullptr;
+        }
+
+        // 新版 TCH_ARCSTAIR 版本 3
+        inline bool DecodeArcStairCipher(const MiniDWG::UnknownEntity& entity, TchArcStair& stair, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchArcStair s;
+            if (!ReadCipherFlightBase(f, s.Flight)) return fail("unsupported stair flight base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native arc stair version");
+            f.ReadKey();
+            const auto c = f.Point3();
+            s.X = c.X; s.Y = c.Y;
+            s.InnerRadius = f.Double(); s.OuterRadius = f.Double();
+            s.StartAngle = f.Double(); s.Sweep = f.Double();
+            for (int k = 0; k < 2; ++k)
+            {
+                f.Main.ReadByte();
+                const int n = f.Main.ReadBitShort();
+                if (n < 0 || n > 100000) return fail("invalid arc stair outline");
+                for (int i = 0; i < n && f.Ok(); ++i) { f.Main.ReadRawDouble(); f.Main.ReadRawDouble(); f.Main.ReadBitDouble(); }
+            }
+            if (!f.Exact()) return fail("native arc stair fields do not consume the payload exactly");
+            if (const char* why = CheckArcStair(s)) return fail(why);
+            stair = s;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeArcStair(const MiniDWG::UnknownEntity& entity, TchArcStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_ARCSTAIR") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeArcStairCipher(entity, stair, diagnostic);
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for arc stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchArcStair s;
@@ -745,17 +960,12 @@ namespace MiniCAD::Tch
                 for (int i = 0; i < n && !r.Failed(); ++i) { r.ReadRawDouble(); r.ReadRawDouble(); r.ReadBitDouble(); }
             }
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native arc stair fields do not consume the payload exactly");
-        for (double v : {s.X, s.Y, s.InnerRadius, s.OuterRadius, s.StartAngle, s.Sweep})
-            if (!Detail::Finite(v)) return fail("invalid native arc stair settings");
-        if (s.Flight.Steps < 2 || s.Flight.Steps > 1000 || !(s.InnerRadius >= 0) || !(s.OuterRadius > s.InnerRadius) || s.Sweep == 0)
-            return fail("invalid native arc stair size");
+        if (const char* why = Detail::CheckArcStair(s)) return fail(why);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：内外圆弧、均分圆心角的径向踏步线（踏步数个）；剖断线自内弧 BreakStart × 圆心角处
-    // 到外弧 BreakEnd × 圆心角处
     inline TchGraphics BuildArcStair(const TchArcStair& s)
     {
         TchGraphics g;
@@ -786,7 +996,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_ASCENT 坡道（版本 < 2 为明文分支）──
     struct TchAscent
     {
         double X = 0, Y = 0, Rotation = 0;      // 坡顶边中点；坡道沿局部 −Y 方向
@@ -795,24 +1004,48 @@ namespace MiniCAD::Tch
         double Scale = 100;
     };
 
-    // 天正基类、RC 版本、3BD 坡顶中点、BD 转角、RC 边坡、BD 长、BD 宽、BD 高、BD 边坡宽
+    namespace Detail
+    {
+        template <class R>
+        void ReadAscentFields(R& r, TchAscent& a)
+        {
+            const auto p = r.P3(); a.X = p.X; a.Y = p.Y;
+            a.Rotation = r.D();
+            a.Slant = r.RC() != 0;
+            a.Length = r.D(); a.Width = r.D(); a.Height = r.D(); a.Indent = r.D();
+        }
+    }
+
+  
     inline bool DecodeAscent(const MiniDWG::UnknownEntity& entity, TchAscent& ascent, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_ASCENT") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_ASCENT", r, base)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() != 1) return fail("unsupported native ascent version");
         TchAscent a;
-        a.Scale = base.Scale;
-        a.X = r.ReadBitDouble(); a.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        a.Rotation = r.ReadBitDouble();
-        a.Slant = r.ReadByte() != 0;
-        a.Length = r.ReadBitDouble(); a.Width = r.ReadBitDouble(); a.Height = r.ReadBitDouble(); a.Indent = r.ReadBitDouble();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native ascent fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native ascent version");
+            f.ReadKey();
+            a.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadAscentFields(r, a);
+            if (!f.Exact()) return fail("native ascent fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_ASCENT", rr, base)) return fail("unsupported Tianzheng base layout");
+            if (rr.ReadByte() != 1) return fail("unsupported native ascent version");
+            a.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadAscentFields(r, a);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native ascent fields do not consume the payload exactly");
+        }
         for (double v : {a.X, a.Y, a.Rotation, a.Length, a.Width, a.Indent})
             if (!Detail::Finite(v)) return fail("invalid native ascent settings");
         if (!(a.Length > 0) || !(a.Width > 0) || !(a.Scale > 0)) return fail("invalid native ascent size");
@@ -821,7 +1054,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解结果（3 个变体核对）：矩形外框；边坡斜线自坡顶内缩边坡宽处到坡底角点；有示坡线时斜线之间每隔 1 × 比例一条横线
     inline TchGraphics BuildAscent(const TchAscent& a)
     {
         TchGraphics g;
@@ -842,35 +1074,66 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-    // ── TCH_BALCONY 阳台（按样例与天正 2014 分解结果确定）──
+
     struct TchBalcony
     {
         std::vector<Detail::PathVertex> Outline;    // 阳台外缘（开口两端在墙上）
+        bool Closed = false;
         double RailWidth = 100;                     // 栏板宽
+        std::uint32_t NoRailEdges = 0;              // 位 i：第 i 段没有栏板（靠墙）
     };
 
-    // 天正基类、RC 版本（2）、RC、BS、BD 标高、RC、BS 点数与各点 2RD + BD 凸度、8 个 BD（梁高、栏板高、栏板宽、板厚等）、5 位
+    namespace Detail
+    {
+        inline bool DecodeBalconyCipher(const MiniDWG::UnknownEntity& entity, TchBalcony& balcony, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 5) return fail("unsupported native balcony version");
+            f.ReadKey();
+            TchBalcony b;
+            b.NoRailEdges = static_cast<std::uint32_t>(f.Long());
+            f.Double();
+            if (!ReadPathPoly(f.Main, b.Outline, b.Closed) || b.Outline.size() < 2) return fail("invalid balcony vertex count");
+            b.RailWidth = f.Double();
+            f.Double(); f.Double(); f.Double();
+            f.Handle();
+            f.Long();
+            f.Handle(); f.Handle();
+            f.Double(); f.Double(); f.Double();
+            f.Bool();
+            for (int k = 0; k < 2; ++k)
+            {
+                const int n = f.Long();
+                if (n < 0 || n > 100000) return fail("invalid balcony handle count");
+                for (int i = 0; i < n && f.Ok(); ++i) f.Handle();
+                if (k == 0) f.Handle();
+            }
+            if (!f.Exact()) return fail("native balcony fields do not consume the payload exactly");
+            if (!Finite(b.RailWidth) || b.RailWidth < 0) return fail("invalid balcony rail width");
+            balcony = std::move(b);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeBalcony(const MiniDWG::UnknownEntity& entity, TchBalcony& balcony, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_BALCONY") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeBalconyCipher(entity, balcony, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!Detail::ShapeHead(entity, "TCH_BALCONY", r, base)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 2) return fail("unsupported native balcony version");
-        r.ReadByte(); r.ReadBitShort(); r.ReadBitDouble(); r.ReadByte();
-        const int count = r.ReadBitShort();
-        if (count < 2 || count > 100000) return fail("invalid balcony vertex count");
+        r.ReadByte();
         TchBalcony b;
-        for (int i = 0; i < count && !r.Failed(); ++i)
-        {
-            Detail::PathVertex v;
-            v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
-            if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return fail("invalid balcony vertex");
-            b.Outline.push_back(v);
-        }
+        b.NoRailEdges = static_cast<std::uint32_t>(r.ReadBitLong());
+        r.ReadBitDouble();
+        if (!Detail::ReadPathPoly(r, b.Outline, b.Closed) || b.Outline.size() < 2) return fail("invalid balcony vertex count");
         double values[8];
         for (double& v : values) v = r.ReadBitDouble();
         b.RailWidth = values[2];
@@ -882,19 +1145,51 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：外缘线与向内偏移栏板宽的内缘线（开口端不封口）
     inline TchGraphics BuildBalcony(const TchBalcony& b)
     {
         TchGraphics g;
-        g.Paths.push_back(Detail::ToPath(b.Outline, false));
-        if (b.RailWidth > 0)
+        const std::size_t n = b.Outline.size(), segs = b.Closed ? n : n - 1;
+        auto rail = [&](std::size_t i) { return i >= 32 || (b.NoRailEdges >> i & 1) == 0; };
+        const double inward = Detail::SignedArea(b.Outline) > 0 ? 1.0 : -1.0;     // 逆时针时内侧在左
+        std::vector<double> d(segs);
+        std::size_t start = 0;
+        bool all = true;
+        for (std::size_t i = 0; i < segs; ++i)
         {
-            const double inward = Detail::SignedArea(b.Outline) > 0 ? 1.0 : -1.0;     // 逆时针时内侧在左
-            g.Paths.push_back(Detail::ToPath(Detail::OffsetPath(b.Outline, false, inward * b.RailWidth), false));
+            d[i] = rail(i) ? inward * b.RailWidth : 0;
+            if (!rail(i) && all) { all = false; start = b.Closed ? i + 1 : 0; }
         }
+        if (all && b.Closed)
+        {
+            g.Paths.push_back(Detail::ToPath(b.Outline, true));
+            if (b.RailWidth > 0) g.Paths.push_back(Detail::ToPath(Detail::OffsetPath(b.Outline, true, inward * b.RailWidth), true));
+            return g;
+        }
+        const auto inner = Detail::OffsetPathEdges(b.Outline, b.Closed, d);
+        std::vector<std::size_t> run;
+        auto flush = [&] {
+            if (run.size() >= 2)
+                for (const auto* pts : {&b.Outline, &inner})
+                {
+                    if (pts == &inner && !(b.RailWidth > 0)) continue;
+                    TchGraphics::Path p;
+                    for (std::size_t k = 0; k < run.size(); ++k)
+                        p.Points.push_back({{(*pts)[run[k]].X, (*pts)[run[k]].Y}, k + 1 < run.size() ? (*pts)[run[k]].Bulge : 0});
+                    g.Paths.push_back(std::move(p));
+                }
+            run.clear();
+        };
+        for (std::size_t k = 0; k < segs; ++k)
+        {
+            const std::size_t i = (start + k) % n;
+            if (!rail(i)) { flush(); continue; }
+            if (run.empty()) run.push_back(i);
+            run.push_back((i + 1) % n);
+        }
+        flush();
         return g;
     }
-    // ── TCH_CURVESTAIR 任意梯段（按样例与天正 2014 分解结果确定）──
+
     struct TchCurveStair
     {
         Detail::TchFlightBase Flight;
@@ -902,13 +1197,47 @@ namespace MiniCAD::Tch
         Edge Left, Right;                       // 两侧边（起步端 → 末端）
     };
 
-    // 梯段基类、RC 版本（1）、BD、两侧边：每条 4RD（起点、终点）与 BD 凸度（样例均为直线，凸度位置未核对）
+    namespace Detail
+    {
+        inline const char* CheckCurveStair(const TchCurveStair& s)
+        {
+            for (const auto* e : {&s.Left, &s.Right})
+                for (double v : {e->X1, e->Y1, e->X2, e->Y2, e->Bulge})
+                    if (!Finite(v)) return "invalid native curve stair edge";
+            if (s.Flight.Steps < 2 || s.Flight.Steps > 1000) return "invalid native curve stair steps";
+            return nullptr;
+        }
+
+        inline bool DecodeCurveStairCipher(const MiniDWG::UnknownEntity& entity, TchCurveStair& stair, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            TchCurveStair s;
+            if (!ReadCipherFlightBase(f, s.Flight)) return fail("unsupported stair flight base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native curve stair version");
+            f.ReadKey();
+            f.Double();
+            for (auto* e : {&s.Left, &s.Right})
+            {
+                const auto a = f.Point2(), b = f.Point2();
+                e->X1 = a.X; e->Y1 = a.Y; e->X2 = b.X; e->Y2 = b.Y;
+                e->Bulge = f.Double();
+            }
+            if (!f.Exact()) return fail("native curve stair fields do not consume the payload exactly");
+            if (const char* why = CheckCurveStair(s)) return fail(why);
+            stair = s;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeCurveStair(const MiniDWG::UnknownEntity& entity, TchCurveStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CURVESTAIR") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeCurveStairCipher(entity, stair, diagnostic);
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for curve stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchCurveStair s;
@@ -921,10 +1250,7 @@ namespace MiniCAD::Tch
             e->Bulge = r.ReadBitDouble();
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native curve stair fields do not consume the payload exactly");
-        for (const auto* e : {&s.Left, &s.Right})
-            for (double v : {e->X1, e->Y1, e->X2, e->Y2, e->Bulge})
-                if (!Detail::Finite(v)) return fail("invalid native curve stair edge");
-        if (s.Flight.Steps < 2 || s.Flight.Steps > 1000) return fail("invalid native curve stair steps");
+        if (const char* why = Detail::CheckCurveStair(s)) return fail(why);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
@@ -932,7 +1258,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 边上参数 t（0～1，按弧长均分）处的点
         inline TchGraphics::Point EdgePoint(const TchCurveStair::Edge& e, double t)
         {
             if (std::abs(e.Bulge) < 1e-12) return {e.X1 + (e.X2 - e.X1) * t, e.Y1 + (e.Y2 - e.Y1) * t};
@@ -944,13 +1269,10 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：两侧边；踏步线连接两侧边上同一参数的点（踏步数个）；
-    // 剖断线自左边 BreakStart 处到右边 BreakEnd 处
     inline TchGraphics BuildCurveStair(const TchCurveStair& s)
     {
         using P = TchGraphics::Point;
         TchGraphics g;
-        // 梯段范围：两侧边折线围成的多边形（每边取 16 段）
         std::vector<P> ring;
         for (int i = 0; i <= 16; ++i) ring.push_back(Detail::EdgePoint(s.Left, i / 16.0));
         for (int i = 16; i >= 0; --i) ring.push_back(Detail::EdgePoint(s.Right, i / 16.0));
@@ -963,7 +1285,6 @@ namespace MiniCAD::Tch
                 if ((a.Y > p.Y) != (b.Y > p.Y) && p.X < a.X + (p.Y - a.Y) * (b.X - a.X) / (b.Y - a.Y)) c = !c;
             }
             if (c) return true;
-            // 边上的点也算在内
             for (std::size_t i = 0; i < ring.size(); ++i)
             {
                 const P& a = ring[i];
@@ -975,7 +1296,6 @@ namespace MiniCAD::Tch
             }
             return false;
         };
-        // 进度：投影到两边起点中点 → 终点中点的连线上
         const P m0{(s.Left.X1 + s.Right.X1) / 2, (s.Left.Y1 + s.Right.Y1) / 2}, m1{(s.Left.X2 + s.Right.X2) / 2, (s.Left.Y2 + s.Right.Y2) / 2};
         const double mx = m1.X - m0.X, my = m1.Y - m0.Y, ml2 = mx * mx + my * my;
         auto progress = [&](const P& p) { return ml2 > 0 ? ((p.X - m0.X) * mx + (p.Y - m0.Y) * my) / ml2 : 0.0; };
@@ -998,7 +1318,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 把带凸度的轮廓展开为折线：圆弧段按 segs 等分（直线段保持一段）；Owner 记录每段来自原轮廓的第几条边
         struct FlatEdge { TchGraphics::Point A, B; int Owner = 0; };
         inline std::vector<FlatEdge> Flatten(const std::vector<PathVertex>& pts, bool closed, int segs = 16)
         {
@@ -1047,42 +1366,55 @@ namespace MiniCAD::Tch
         double   Tread = 300, Riser = 150;
     };
 
-    // 天正基类、RC 版本（1）、BL 无踏步边掩码、BD 标高、RC 闭合、BS 点数与各点 2RD + BD 凸度、BS 踏步线数、BD 踏步宽、BD 踏步高
+    namespace Detail
+    {
+        // 新版 TCH_STEP 版本 2 与明文版本 1 字段相同（轮廓为明文）
+        template <class R>
+        const char* ReadStepFields(R& r, TchStep& s)
+        {
+            s.NoStepMask = static_cast<unsigned>(r.BL());
+            r.D();
+            if (!ReadPathPoly(r.Main(), s.Outline, s.Closed) || s.Outline.size() < 2 || s.Outline.size() > 10000) return "invalid step outline";
+            s.Lines = r.BS();
+            s.Tread = r.D();
+            s.Riser = r.D();
+            return nullptr;
+        }
+    }
+
     inline bool DecodeStep(const MiniDWG::UnknownEntity& entity, TchStep& step, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_STEP") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_STEP", r, base)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() != 1) return fail("unsupported native step version");
         TchStep s;
-        s.NoStepMask = static_cast<unsigned>(r.ReadBitLong());
-        r.ReadBitDouble();
-        s.Closed = r.ReadByte() != 0;
-        const int count = r.ReadBitShort();
-        if (count < 2 || count > 10000) return fail("invalid step vertex count");
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            Detail::PathVertex v;
-            v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
-            if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return fail("invalid step vertex");
-            s.Outline.push_back(v);
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native step version");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadStepFields(r, s)) return fail(why);
+            if (!f.Exact()) return fail("native step fields do not consume the payload exactly");
         }
-        s.Lines = r.ReadBitShort();
-        s.Tread = r.ReadBitDouble();
-        s.Riser = r.ReadBitDouble();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native step fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_STEP", rr, base)) return fail("unsupported Tianzheng base layout");
+            if (rr.ReadByte() != 1) return fail("unsupported native step version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadStepFields(r, s)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native step fields do not consume the payload exactly");
+        }
         if (s.Lines < 1 || s.Lines > 1000 || !Detail::Finite(s.Tread) || s.Tread <= 0) return fail("invalid native step settings");
         step = std::move(s);
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（1 个样例核对）：有踏步的边每隔踏步宽向外偏移一次，共 Lines 条（第 0 条即平台边）；
-    // 相邻有踏步边的偏移线在转角处相交，一串有踏步边的两端延长到相邻无踏步边（靠墙边）所在直线为止；无踏步边不画
+     
     inline TchGraphics BuildStep(const TchStep& s)
     {
         using P = TchGraphics::Point;
@@ -1160,56 +1492,66 @@ namespace MiniCAD::Tch
         std::vector<MiniDWG::Handle> Walls;         // 所附着的墙
     };
 
-    // 天正基类、RC 版本、BS 段数与各段 2 个 3BD + BD、BD、RC 闭合、BS 点数与各点 2RD + BD 凸度、BD 高、
-    // RC 墙数（句柄流）、RC；版本 ≥ 3：RC 句柄数、RC；版本 ≥ 4：BL、BD。
-    // 句柄流：基类句柄、各墙；版本 ≥ 2 一个句柄；版本 ≥ 3 若干句柄；版本 ≥ 4 一个句柄
+    namespace Detail
+    {
+        // 新版 TCH_WALL_PATCH 版本 1-4 不加密，字段与明文相同
+        inline const char* ReadWallPatchFields(MiniDWG::DwgBitReader& r, TchWallPatch& w, int version, int& walls)
+        {
+            const int segs = r.ReadBitShort();
+            if (segs < 0 || segs > 10000) return "invalid wall patch segment count";
+            for (int i = 0; i < segs && !r.Failed(); ++i) for (int k = 0; k < 7; ++k) r.ReadBitDouble();
+            r.ReadBitDouble();
+            if (!ReadPathPoly(r, w.Outline, w.Closed) || w.Outline.size() < 2 || w.Outline.size() > 10000) return "invalid wall patch outline";
+            r.ReadBitDouble();
+            walls = r.ReadByte();
+            r.ReadByte();
+            if (version > 2) { r.ReadByte(); r.ReadByte(); }
+            if (version > 3) { r.ReadBitLong(); r.ReadBitDouble(); }
+            return nullptr;
+        }
+    }
+     
     inline bool DecodeWallPatch(const MiniDWG::UnknownEntity& entity, TchWallPatch& patch, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_WALL_PATCH") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_WALL_PATCH", r, base)) return fail("unsupported Tianzheng base layout");
-        const int version = r.ReadByte();
-        if (version < 1 || version > 4) return fail("unsupported native wall patch version");
-        const int segs = r.ReadBitShort();
-        if (segs < 0 || segs > 10000) return fail("invalid wall patch segment count");
-        for (int i = 0; i < segs && !r.Failed(); ++i) for (int k = 0; k < 7; ++k) r.ReadBitDouble();
-        r.ReadBitDouble();
         TchWallPatch w;
-        w.Closed = r.ReadByte() != 0;
-        const int count = r.ReadBitShort();
-        if (count < 2 || count > 10000) return fail("invalid wall patch vertex count");
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            Detail::PathVertex v;
-            v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
-            if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return fail("invalid wall patch vertex");
-            w.Outline.push_back(v);
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            const int version = f.Main.ReadByte();
+            if (version < 1 || version > 4) return fail("unsupported native wall patch version");
+            int walls = 0;
+            if (const char* why = Detail::ReadWallPatchFields(f.Main, w, version, walls)) return fail(why);
+            if (!f.Exact()) return fail("native wall patch fields do not consume the payload exactly");
+            for (int i = 0; i < walls && f.Ok(); ++i) w.Walls.push_back(f.Handle());
         }
-        r.ReadBitDouble();
-        const int walls = r.ReadByte();
-        r.ReadByte();
-        if (version > 2) { r.ReadByte(); r.ReadByte(); }
-        if (version > 3) { r.ReadBitLong(); r.ReadBitDouble(); }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native wall patch fields do not consume the payload exactly");
-        DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
-        for (int i = 0; i < walls && !handles.Failed(); ++i) w.Walls.push_back(handles.ReadHandle(entity.ObjectHandle));
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_WALL_PATCH", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int version = rr.ReadByte();
+            if (version < 1 || version > 4) return fail("unsupported native wall patch version");
+            int walls = 0;
+            if (const char* why = Detail::ReadWallPatchFields(rr, w, version, walls)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native wall patch fields do not consume the payload exactly");
+            DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
+            for (int i = 0; i < walls && !handles.Failed(); ++i) w.Walls.push_back(handles.ReadHandle(entity.ObjectHandle));
+        }
         patch = std::move(w);
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（1 个样例核对）：轮廓线去掉落在所附着墙体内部的部分（墙边上的部分保留）。
-    // wallBodies：各墙的四边形（墙线两侧边围成），由调用方按墙的解码结果给出
+     
     inline TchGraphics BuildWallPatch(const TchWallPatch& w, const std::vector<std::array<TchGraphics::Point, 4>>& wallBodies)
     {
         using P = TchGraphics::Point;
-        TchGraphics g;
-        // 线段 a→b 落在凸四边形内部的参数区间（Cyrus–Beck；只算严格内部，贴边的线段不剪）
+        TchGraphics g; 
         auto inside = [](const std::array<P, 4>& q, P a, P b, double& t0, double& t1) {
             double area = 0;
             for (int i = 0; i < 4; ++i) area += q[i].X * q[(i + 1) % 4].Y - q[(i + 1) % 4].X * q[i].Y;
@@ -1220,8 +1562,7 @@ namespace MiniCAD::Tch
                 const P& e0 = q[i];
                 const P& e1 = q[(i + 1) % 4];
                 const double ex = e1.X - e0.X, ey = e1.Y - e0.Y, el = std::hypot(ex, ey);
-                if (el < 1e-9) continue;
-                // 内侧距离 f(t) = f0 + t·df，需 > eps
+                if (el < 1e-9) continue; 
                 const double f0 = sgn * (ex * (a.Y - e0.Y) - ey * (a.X - e0.X)) / el;
                 const double df = sgn * (ex * (b.Y - a.Y) - ey * (b.X - a.X)) / el;
                 constexpr double eps = 1e-6;
@@ -1251,10 +1592,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // ── 带形窗（TCH_OPENING 类型 5）──
-    // 天正 2014 分解结果（1 个样例核对）：沿墙 4 条窗线（墙两侧面及其间三等分处），不封口；
-    // 编号文字以编号位置为中心。left / right 为所在墙在窗位置处左、右两侧的宽度（按墙的方向 wallAngle）
+ 
     inline TchGraphics BuildBandWindow(const TchOpening& o, double wallAngle, double left, double right)
     {
         using P = TchGraphics::Point;
@@ -1269,7 +1607,6 @@ namespace MiniCAD::Tch
                     g.Lines.push_back({{a.X + nx * t, a.Y + ny * t}, {b.X + nx * t, b.Y + ny * t}});
                     continue;
                 }
-                // 圆弧段：同心偏移（偏移方向按弦的左侧近似）
                 const double dx = b.X - a.X, dy = b.Y - a.Y, L = std::hypot(dx, dy);
                 if (L < 1e-9) continue;
                 const double th = 4 * std::atan(bulge), r = L / 2 / std::sin(th / 2), h = r * std::cos(th / 2);
@@ -1295,8 +1632,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // ── TCH_AUTOSTAIR 自动扶梯（版本 0 为明文分支）──
+     
     struct TchAutoStair
     {
         double X = 0, Y = 0, Rotation = 0;      // 上端外角点；扶梯沿局部 −Y 方向（向下端）展开
@@ -1306,65 +1642,86 @@ namespace MiniCAD::Tch
         double Rise = 3000, AngleDeg = 30;      // 提升高度、倾角
         double BreakStart = 0.4, BreakEnd = 0.6;
         int    Floor = 1;                       // StairFlag：0 首层、1 中间层、2 顶层
+        std::uint32_t Flags = 0x400;            // 位 10：画箭头
         double TextHeight = 3.5, Scale = 100;
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle, ArrowLayer = MiniDWG::kNullHandle;
     };
+ 
+    namespace Detail
+    {
+        template <class R>
+        void ReadAutoStairFields(R& r, TchAutoStair& s)
+        {
+            const auto p = r.P3(); s.X = p.X; s.Y = p.Y;
+            s.Rotation = r.D();
+            r.D();
+            s.Tread = r.D();
+            s.StepWidth = r.D();
+            s.Landing = r.D();
+            r.D(); r.D();
+            s.Floor = r.RC();
+            r.D();
+            s.BreakStart = r.D();
+            s.BreakEnd = r.D();
+            s.CombOffset = r.D();
+            s.TextHeight = r.D();
+            s.Rise = r.D();
+            s.AngleDeg = r.D();
+            r.D(); r.D();
+            r.RC();
+            s.Flags = static_cast<std::uint32_t>(r.BL());
+            r.D();
+            r.H(); r.H();
+            s.TextStyle = r.H();
+            s.ArrowLayer = r.H();
+            r.RC();
+        }
+    }
 
-    // 天正基类、楼梯基类 RC（1～2）、RC 版本（0）、3BD 角点、BD 转角、BD、BD 踏步宽、BD 梯级宽、BD 平台长、BD、BD、RC 楼层、BD、
-    // BD 剖断起、BD 剖断止、BD 梳齿板距、BD 字高、BD 提升高度、BD 倾角、BD、BD、RC、BL 标志、BD；
-    // 句柄流：楼梯基类一个、四个（第 3 个为文字样式，第 4 个为箭头图层）；末尾 RC
     inline bool DecodeAutoStair(const MiniDWG::UnknownEntity& entity, TchAutoStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_AUTOSTAIR") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_AUTOSTAIR", r, base)) return fail("unsupported Tianzheng base layout");
-        const int stairBase = r.ReadByte();
-        if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
-        if (r.ReadByte() != 0) return fail("unsupported native escalator version");
         TchAutoStair s;
-        s.Scale = base.Scale;
-        s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        s.Rotation = r.ReadBitDouble();
-        r.ReadBitDouble();
-        s.Tread = r.ReadBitDouble();
-        s.StepWidth = r.ReadBitDouble();
-        s.Landing = r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadBitDouble();
-        s.Floor = r.ReadByte();
-        r.ReadBitDouble();
-        s.BreakStart = r.ReadBitDouble();
-        s.BreakEnd = r.ReadBitDouble();
-        s.CombOffset = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        s.Rise = r.ReadBitDouble();
-        s.AngleDeg = r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadByte();
-        r.ReadBitLong();
-        r.ReadBitDouble();
-        r.ReadByte();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native escalator fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 1) return fail("unsupported native escalator version");
+            f.ReadKey();
+            s.Scale = f.Scale;
+            Detail::CipherFields r{f};
+            Detail::ReadAutoStairFields(r, s);
+            if (!f.Exact()) return fail("native escalator fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_AUTOSTAIR", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int stairBase = rr.ReadByte();
+            if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
+            if (rr.ReadByte() != 0) return fail("unsupported native escalator version");
+            s.Scale = base.Scale;
+            Detail::PlainFields r{rr};
+            Detail::ReadAutoStairFields(r, s);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native escalator fields do not consume the payload exactly");
+            DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < base.HandleCount + 1 + 2; ++i) handles.ReadHandle(entity.ObjectHandle);
+            s.TextStyle = handles.ReadHandle(entity.ObjectHandle);
+            s.ArrowLayer = handles.ReadHandle(entity.ObjectHandle);
+        }
         for (double v : {s.X, s.Y, s.Rotation, s.Tread, s.StepWidth, s.Landing, s.CombOffset, s.Rise, s.AngleDeg, s.TextHeight})
             if (!Detail::Finite(v)) return fail("invalid native escalator settings");
         if (s.Tread <= 0 || s.StepWidth <= 0 || s.Landing < 0 || s.Rise <= 0 || s.AngleDeg <= 1 || s.AngleDeg >= 89)
             return fail("invalid native escalator settings");
-        DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount + 1 + 2; ++i) handles.ReadHandle(entity.ObjectHandle);
-        s.TextStyle = handles.ReadHandle(entity.ObjectHandle);
-        s.ArrowLayer = handles.ReadHandle(entity.ObjectHandle);
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（中间层 / 首层 / 顶层与属性取不同值共 4 个样例核对；扶手各线距外边的横向偏移取样例值，沿长度方向的位置相对梳齿板线）：
-    // 总长 = 2 × 平台长 + ⌊提升高度 / tan(倾角) / 踏步宽⌋ × 踏步宽，总宽 = 梯级宽 + 2 × 274；
-    // 外框、两侧扶手带与裙板线、梳齿板线、踏步线；斜向双剖断线两端在踏步段（自下端起）的 BreakStart / BreakEnd 处；
-    // 上、下两个箭头自两端扶手端头指向中部，文字在箭头起点外侧
+     
     inline TchGraphics BuildAutoStair(const TchAutoStair& s)
     {
         using P = TchGraphics::Point;
@@ -1410,6 +1767,7 @@ namespace MiniCAD::Tch
         const double cr = std::cos(s.Rotation), sr = std::sin(s.Rotation);
         auto world = [&](const P& q) { return P{s.X + q.X * cr - q.Y * sr, s.Y + q.X * sr + q.Y * cr}; };
         for (auto& l : g.Lines) { l.A = world(l.A); l.B = world(l.B); }
+        if (!(s.Flags & 0x400)) return g;
         // 箭头与文字（箭头线宽 0.8 × 比例渐变为 0，画为实心三角形）
         const double hn = s.TextHeight * s.Scale, half = 0.4 * s.Scale, head = 3 * s.Scale;
         struct Arrow { double From, To; const char* Text; bool Up; };
@@ -1435,10 +1793,7 @@ namespace MiniCAD::Tch
     }
 
     namespace Detail
-    {
-        // 屋顶共用的头部（路径基类与屋顶基类）：天正基类、RC 路径版本（> 2 时另有 RC 密钥）、
-        // RC 屋顶版本（由调用方读）之前的部分；屋顶基类：RC 版本，< 2 时 3 个 BD、RC、2 个 B，≥ 1 时 BL 轮廓数与各轮廓
-        // （RC 闭合、BS 点数、各点 2RD + BD 凸度）、BL 句柄数；≥ 2 时先读 RC 密钥（只支持明文，即密钥 < 16），没有 2 个 B
+    { 
         inline bool ReadRoofBase(MiniDWG::DwgBitReader& r)
         {
             const int version = r.ReadByte();
@@ -1463,6 +1818,31 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
+        inline bool ReadCipherRoofBase(CipherReader& f)
+        {
+            CipherLayer layer(f);
+            if (layer.Version(3, 2) < 2) return false;
+            for (int i = 0; i < 4; ++i) f.Handle();
+            f.Double(); f.Double(); f.Double();
+            f.Byte();
+            const int polys = f.Long();
+            if (polys < 0 || polys > 10000) return false;
+            for (int i = 0; i < polys && f.Ok(); ++i)
+            {
+                f.Main.ReadByte();
+                const int n = f.Main.ReadBitShort();
+                if (n < 0 || n > 100000) return false;
+                for (int j = 0; j < n && f.Ok(); ++j) { f.Main.ReadRawDouble(); f.Main.ReadRawDouble(); f.Main.ReadBitDouble(); }
+            }
+            const int handles = f.Long();
+            if (handles < 0 || handles > 100000) return false;
+            for (int i = 0; i < handles && f.Ok(); ++i) f.Handle();
+            return f.Ok();
+        }
+
+        inline bool ReadRoofBase(PlainFields& r) { return ReadRoofBase(r.R); }
+        inline bool ReadRoofBase(CipherFields& r) { return ReadCipherRoofBase(r.F); }
+
         inline bool RoofHead(const MiniDWG::UnknownEntity& entity, const char* dxf, MiniDWG::DwgBitReader& r, int& version)
         {
             TchBase base;
@@ -1475,7 +1855,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // ── TCH_MOUNTROOF 矩形屋顶（歇山）（版本 ≤ 2）──
     struct TchMountRoof
     {
         double X = 0, Y = 0, Rotation = 0;     // 墙外皮矩形的第一个角点；长度方向为转角方向
@@ -1485,30 +1864,53 @@ namespace MiniCAD::Tch
         double RoofHeight = 3000, MountHeight = 1100;
     };
 
-    // 屋顶头部、RC 版本（2 时另有 RC 密钥）、3BD 基点、BD 转角、BD 长、BD 宽、BD 端坡角、BD 出檐、BD、BD 屋顶高、BD 歇山高、B
+    namespace Detail
+    {
+        template <class R>
+        void ReadMountRoofFields(R& r, TchMountRoof& m)
+        {
+            const auto p = r.P3(); m.X = p.X; m.Y = p.Y;
+            m.Rotation = r.D();
+            m.Length = r.D();
+            m.Width = r.D();
+            m.EndSlope = r.D();
+            m.Eaves = r.D();
+            r.D();
+            m.RoofHeight = r.D();
+            m.MountHeight = r.D();
+            r.B();
+        }
+    }
+
     inline bool DecodeMountRoof(const MiniDWG::UnknownEntity& entity, TchMountRoof& roof, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_MOUNTROOF") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        int version = 0;
-        if (!Detail::RoofHead(entity, "TCH_MOUNTROOF", r, version)) return fail("unsupported Tianzheng roof base layout");
-        if (version > 2) return fail("unsupported native mount roof version");
-        if (version > 1 && r.ReadByte() >= 16) return fail("encrypted native mount roof is not supported");
         TchMountRoof m;
-        m.X = r.ReadBitDouble(); m.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        m.Rotation = r.ReadBitDouble();
-        m.Length = r.ReadBitDouble();
-        m.Width = r.ReadBitDouble();
-        m.EndSlope = r.ReadBitDouble();
-        m.Eaves = r.ReadBitDouble();
-        r.ReadBitDouble();
-        m.RoofHeight = r.ReadBitDouble();
-        m.MountHeight = r.ReadBitDouble();
-        r.ReadBit();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native mount roof fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native mount roof version");
+            if (!Detail::ReadCipherRoofBase(f)) return fail("unsupported Tianzheng roof base layout");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            Detail::ReadMountRoofFields(r, m);
+            if (!f.Exact()) return fail("native mount roof fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            int version = 0;
+            if (!Detail::RoofHead(entity, "TCH_MOUNTROOF", rr, version)) return fail("unsupported Tianzheng roof base layout");
+            if (version > 2) return fail("unsupported native mount roof version");
+            if (version > 1 && rr.ReadByte() >= 16) return fail("encrypted native mount roof is not supported");
+            Detail::PlainFields r{rr};
+            Detail::ReadMountRoofFields(r, m);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native mount roof fields do not consume the payload exactly");
+        }
         for (double v : {m.X, m.Y, m.Rotation, m.Length, m.Width, m.EndSlope, m.Eaves, m.RoofHeight, m.MountHeight})
             if (!Detail::Finite(v)) return fail("invalid native mount roof settings");
         if (m.Length <= 0 || m.Width <= 0 || m.RoofHeight <= 0 || m.EndSlope <= 0.01 || m.EndSlope >= std::numbers::pi / 2 - 0.01)
@@ -1517,9 +1919,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（5 个样例核对）：主坡 tan = 屋顶高 / (宽 / 2)；长边出檐 Eaves，两端出檐 = Eaves·tan(主坡) / tan(端坡)；
-    // 歇山山面距墙 (屋顶高 − 歇山高) / tan(端坡)、半宽 歇山高 / tan(主坡)；画外轮廓、屋脊、两个山面线与四条斜脊
+ 
     inline TchGraphics BuildMountRoof(const TchMountRoof& m)
     {
         using P = TchGraphics::Point;
@@ -1543,7 +1943,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_CUSPROOF 攒尖屋顶（版本 ≤ 3）──
     struct TchCuspRoof
     {
         double X = 0, Y = 0, Rotation = 0;     // 中心、第一个顶点的方向
@@ -1551,26 +1950,49 @@ namespace MiniCAD::Tch
         int    Sides = 6;
     };
 
-    // 屋顶头部、RC 版本（3 时另有 RC 密钥）、3BD 中心、BD 转角、BD 高、BD 半径（墙多边形外接圆）、RC 边数；版本 ≥ 2：BD 出檐
+    namespace Detail
+    {
+        template <class R>
+        void ReadCuspRoofFields(R& r, TchCuspRoof& c, int version)
+        {
+            const auto p = r.P3(); c.X = p.X; c.Y = p.Y;
+            c.Rotation = r.D();
+            c.Height = r.D();
+            c.Radius = r.D();
+            c.Sides = r.RC();
+            c.Eaves = version > 1 ? r.D() : 0.0;
+        }
+    }
+
     inline bool DecodeCuspRoof(const MiniDWG::UnknownEntity& entity, TchCuspRoof& roof, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CUSPROOF") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        int version = 0;
-        if (!Detail::RoofHead(entity, "TCH_CUSPROOF", r, version)) return fail("unsupported Tianzheng roof base layout");
-        if (version > 3) return fail("unsupported native cusp roof version");
-        if (version > 2 && r.ReadByte() >= 16) return fail("encrypted native cusp roof is not supported");
         TchCuspRoof c;
-        c.X = r.ReadBitDouble(); c.Y = r.ReadBitDouble(); r.ReadBitDouble();
-        c.Rotation = r.ReadBitDouble();
-        c.Height = r.ReadBitDouble();
-        c.Radius = r.ReadBitDouble();
-        c.Sides = r.ReadByte();
-        c.Eaves = version > 1 ? r.ReadBitDouble() : 0.0;
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native cusp roof fields do not consume the payload exactly");
+        if (Detail::IsCipherObject(data))
+        {
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native cusp roof version");
+            if (!Detail::ReadCipherRoofBase(f)) return fail("unsupported Tianzheng roof base layout");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            Detail::ReadCuspRoofFields(r, c, 3);
+            if (!f.Exact()) return fail("native cusp roof fields do not consume the payload exactly");
+        }
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            int version = 0;
+            if (!Detail::RoofHead(entity, "TCH_CUSPROOF", rr, version)) return fail("unsupported Tianzheng roof base layout");
+            if (version > 3) return fail("unsupported native cusp roof version");
+            if (version > 2 && rr.ReadByte() >= 16) return fail("encrypted native cusp roof is not supported");
+            Detail::PlainFields r{rr};
+            Detail::ReadCuspRoofFields(r, c, version);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native cusp roof fields do not consume the payload exactly");
+        }
         for (double v : {c.X, c.Y, c.Rotation, c.Height, c.Radius, c.Eaves})
             if (!Detail::Finite(v)) return fail("invalid native cusp roof settings");
         if (c.Sides < 3 || c.Sides > 64 || c.Radius <= 0) return fail("invalid native cusp roof settings");
@@ -1578,9 +2000,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（2 个样例核对）：正多边形外轮廓（顶点半径 = 半径 + 出檐 / cos(π / 边数)，第一个顶点在转角方向），
-    // 中心到各顶点的脊线
+     
     inline TchGraphics BuildCuspRoof(const TchCuspRoof& c)
     {
         TchGraphics g;
@@ -1597,53 +2017,72 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_SLOPEROOF 任意坡顶（版本 < 3 为明文分支）──
     struct TchSlopeRoof
     {
         struct Edge { double X = 0, Y = 0, Slope = 0; };    // 轮廓顶点（边的起点）与该边的坡角
         std::vector<Edge> Edges;
     };
 
-    // 路径基类、RC 版本、BD 檐口标高、BS 边数与各边 3BD 起点 + BD 坡角；版本 ≥ 2：屋顶基类、BD
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadSlopeRoofFields(R& r, TchSlopeRoof& s, int version)
+        {
+            r.D();
+            const int count = r.BS();
+            if (count < 3 || count > 10000) return "invalid slope roof edge count";
+            for (int i = 0; i < count && r.Ok(); ++i)
+            {
+                TchSlopeRoof::Edge e;
+                const auto p = r.P3(); e.X = p.X; e.Y = p.Y;
+                e.Slope = r.D();
+                if (!Finite(e.X) || !Finite(e.Y) || !Finite(e.Slope)) return "invalid slope roof edge";
+                s.Edges.push_back(e);
+            }
+            if (version > 1)
+            {
+                if (!ReadRoofBase(r)) return "unsupported Tianzheng roof base layout";
+                r.D();
+            }
+            return nullptr;
+        }
+    }
+
     inline bool DecodeSlopeRoof(const MiniDWG::UnknownEntity& entity, TchSlopeRoof& roof, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_SLOPEROOF") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_SLOPEROOF", r, base)) return fail("unsupported Tianzheng base layout");
-        const int pathVersion = r.ReadByte();
-        if (pathVersion > 2) return fail("unsupported Tianzheng path base layout");
-        const int version = r.ReadByte();
-        if (version > 2) return fail("unsupported native slope roof version");
         TchSlopeRoof s;
-        r.ReadBitDouble();
-        const int count = r.ReadBitShort();
-        if (count < 3 || count > 10000) return fail("invalid slope roof edge count");
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            TchSlopeRoof::Edge e;
-            e.X = r.ReadBitDouble(); e.Y = r.ReadBitDouble(); r.ReadBitDouble();
-            e.Slope = r.ReadBitDouble();
-            if (!Detail::Finite(e.X) || !Detail::Finite(e.Y) || !Detail::Finite(e.Slope)) return fail("invalid slope roof edge");
-            s.Edges.push_back(e);
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native slope roof version");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadSlopeRoofFields(r, s, 3)) return fail(why);
+            if (!f.Exact()) return fail("native slope roof fields do not consume the payload exactly");
         }
-        if (version > 1)
+        else
         {
-            if (!Detail::ReadRoofBase(r)) return fail("unsupported Tianzheng roof base layout");
-            r.ReadBitDouble();
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_SLOPEROOF", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int pathVersion = rr.ReadByte();
+            if (pathVersion > 2) return fail("unsupported Tianzheng path base layout");
+            const int version = rr.ReadByte();
+            if (version > 2) return fail("unsupported native slope roof version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadSlopeRoofFields(r, s, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native slope roof fields do not consume the payload exactly");
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native slope roof fields do not consume the payload exactly");
         roof = std::move(s);
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 天正 2014 分解结果（1 个样例核对：矩形、四边同坡）：轮廓各边与屋脊、斜脊。
-    // 凸轮廓时坡屋面即各边坡面的下包络：每条边的坡面范围 = 轮廓内满足“本边坡面不高于其他各边坡面”的凸区域，
-    // 画出这些区域的边界（凹轮廓的屋脊推算未实现，只画轮廓）
+     
     inline TchGraphics BuildSlopeRoof(const TchSlopeRoof& s)
     {
         using P = TchGraphics::Point;
@@ -1668,7 +2107,6 @@ namespace MiniCAD::Tch
             g.Paths.push_back(std::move(p));
             return g;
         }
-        // 第 i 边坡面高度 h_i(p) = tan(坡角)·(p 到该边的内侧距离)，写成 A·x + B·y + C
         struct Plane { double A, B, C; };
         std::vector<Plane> planes(n);
         for (std::size_t i = 0; i < n; ++i)
@@ -1678,7 +2116,6 @@ namespace MiniCAD::Tch
             const double inx = -dy / len * orient, iny = dx / len * orient, t = std::tan(s.Edges[i].Slope);
             planes[i] = {inx * t, iny * t, -(inx * a.X + iny * a.Y) * t};
         }
-        // 凸多边形被半平面 A·x + B·y + C ≤ 0 裁剪
         auto clip = [](const std::vector<P>& in, double A, double B, double C) {
             std::vector<P> out;
             for (std::size_t i = 0; i < in.size(); ++i)
@@ -1713,42 +2150,65 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // ── TCH_DUALROOF 人字坡顶（版本 < 3 为明文分支）──
     struct TchDualRoof
     {
         std::vector<Detail::PathVertex> Outline;
         double X1 = 0, Y1 = 0, X2 = 0, Y2 = 0;            // 屋脊两端
     };
 
-    // 路径基类、RC 版本、屋顶基类、BD 标高、轮廓（RC 闭合、BS 点数、各点 2RD + BD 凸度）、2RD 屋脊起点、2RD 屋脊终点、
-    // BD、BD 两侧坡角、B；版本 ≥ 2：B、BD
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadDualRoofFields(R& r, TchDualRoof& d, int version)
+        {
+            r.D();
+            auto& m = r.Main();
+            m.ReadByte();
+            const int count = m.ReadBitShort();
+            if (count < 2 || count > 100000) return "invalid dual-slope roof outline";
+            for (int i = 0; i < count && !m.Failed(); ++i)
+            {
+                PathVertex v;
+                v.X = m.ReadRawDouble(); v.Y = m.ReadRawDouble(); v.Bulge = m.ReadBitDouble();
+                d.Outline.push_back(v);
+            }
+            const auto a = r.P2(), b = r.P2();
+            d.X1 = a.X; d.Y1 = a.Y; d.X2 = b.X; d.Y2 = b.Y;
+            r.D(); r.D();
+            r.B();
+            if (version > 1) { r.B(); r.D(); }
+            return nullptr;
+        }
+    }
+     
     inline bool DecodeDualRoof(const MiniDWG::UnknownEntity& entity, TchDualRoof& roof, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_DUALROOF") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        int version = 0;
-        if (!Detail::RoofHead(entity, "TCH_DUALROOF", r, version)) return fail("unsupported Tianzheng roof base layout");
-        if (version > 2) return fail("unsupported native dual-slope roof version");
         TchDualRoof d;
-        r.ReadBitDouble();
-        r.ReadByte();
-        const int count = r.ReadBitShort();
-        if (count < 2 || count > 100000) return fail("invalid dual-slope roof outline");
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            Detail::PathVertex v;
-            v.X = r.ReadRawDouble(); v.Y = r.ReadRawDouble(); v.Bulge = r.ReadBitDouble();
-            d.Outline.push_back(v);
+            Detail::CipherReader f(entity);
+            if (!Detail::ReadCipherPathHead(f)) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native dual-slope roof version");
+            if (!Detail::ReadCipherRoofBase(f)) return fail("unsupported Tianzheng roof base layout");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadDualRoofFields(r, d, 3)) return fail(why);
+            if (!f.Exact()) return fail("native dual-slope roof fields do not consume the payload exactly");
         }
-        d.X1 = r.ReadRawDouble(); d.Y1 = r.ReadRawDouble();
-        d.X2 = r.ReadRawDouble(); d.Y2 = r.ReadRawDouble();
-        r.ReadBitDouble(); r.ReadBitDouble();
-        r.ReadBit();
-        if (version > 1) { r.ReadBit(); r.ReadBitDouble(); }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native dual-slope roof fields do not consume the payload exactly");
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            int version = 0;
+            if (!Detail::RoofHead(entity, "TCH_DUALROOF", rr, version)) return fail("unsupported Tianzheng roof base layout");
+            if (version > 2) return fail("unsupported native dual-slope roof version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadDualRoofFields(r, d, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native dual-slope roof fields do not consume the payload exactly");
+        }
         for (const auto& v : d.Outline)
             if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Bulge)) return fail("invalid dual-slope roof outline");
         for (double v : {d.X1, d.Y1, d.X2, d.Y2})
@@ -1758,7 +2218,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：闭合轮廓多段线与屋脊线
     inline TchGraphics BuildDualRoof(const TchDualRoof& d)
     {
         TchGraphics g;
@@ -1775,52 +2234,75 @@ namespace MiniCAD::Tch
         double ProfileWidth = 60, ProfileDepth = 15;       // 门窗套截面：沿墙方向宽、伸出墙面厚
     };
 
-    // 天正基类、RC 版本、BS、（句柄流：所属门窗）、B、3 个 BS（类型、样式、位置）、截面轮廓（BS 闭合、BS 点数、各点 3BD + BD）、
-    // 11 个 BD、BS；版本 ≥ 2：句柄流 2 个句柄
+    namespace Detail
+    {
+        template <class R>
+        const char* ReadOpeningSlotFields(R& r, TchOpeningSlot& s, int version)
+        {
+            r.BS();
+            s.Opening = r.H();
+            r.B();
+            s.Sides = r.BS();
+            r.BS(); r.BS();
+            r.BS();
+            const int count = r.BS();
+            if (count < 0 || count > 10000) return "invalid opening slot profile";
+            double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+            for (int i = 0; i < count && r.Ok(); ++i)
+            {
+                const auto p = r.P3();
+                r.D();
+                if (i == 0) { x0 = x1 = p.X; y0 = y1 = p.Y; }
+                x0 = std::min(x0, p.X); x1 = std::max(x1, p.X); y0 = std::min(y0, p.Y); y1 = std::max(y1, p.Y);
+            }
+            for (int i = 0; i < 11; ++i) r.D();
+            r.BS();
+            if (version > 1) { r.H(); r.H(); }
+            s.ProfileWidth = x1 - x0;
+            s.ProfileDepth = y1 - y0;
+            return nullptr;
+        }
+    }
+
     inline bool DecodeOpeningSlot(const MiniDWG::UnknownEntity& entity, TchOpeningSlot& slot, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_OPENINGSLOT") return false;
-        DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-        TchBase base;
-        if (!Detail::ShapeHead(entity, "TCH_OPENINGSLOT", r, base)) return fail("unsupported Tianzheng base layout");
-        const int version = r.ReadByte();
-        if (version > 2) return fail("unsupported native opening slot version");
         TchOpeningSlot s;
-        r.ReadBitShort();
-        r.ReadBit();
-        s.Sides = r.ReadBitShort();
-        r.ReadBitShort(); r.ReadBitShort();
-        r.ReadBitShort();
-        const int count = r.ReadBitShort();
-        if (count < 0 || count > 10000) return fail("invalid opening slot profile");
-        double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
-        for (int i = 0; i < count && !r.Failed(); ++i)
+        if (Detail::IsCipherObject(data))
         {
-            const double x = r.ReadBitDouble(), y = r.ReadBitDouble();
-            r.ReadBitDouble(); r.ReadBitDouble();
-            if (i == 0) { x0 = x1 = x; y0 = y1 = y; }
-            x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y);
+            Detail::CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 3) return fail("unsupported native opening slot version");
+            f.ReadKey();
+            Detail::CipherFields r{f};
+            if (const char* why = Detail::ReadOpeningSlotFields(r, s, 3)) return fail(why);
+            if (!f.Exact()) return fail("native opening slot fields do not consume the payload exactly");
         }
-        for (int i = 0; i < 11; ++i) r.ReadBitDouble();
-        r.ReadBitShort();
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native opening slot fields do not consume the payload exactly");
-        s.ProfileWidth = x1 - x0;
-        s.ProfileDepth = y1 - y0;
+        else
+        {
+            DwgBitReader rr(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!Detail::ShapeHead(entity, "TCH_OPENINGSLOT", rr, base)) return fail("unsupported Tianzheng base layout");
+            const int version = rr.ReadByte();
+            if (version > 2) return fail("unsupported native opening slot version");
+            Detail::PlainFields r{rr};
+            if (const char* why = Detail::ReadOpeningSlotFields(r, s, version)) return fail(why);
+            if (rr.Failed() || rr.PositionInBits() != data.MainBits) return fail("native opening slot fields do not consume the payload exactly");
+            DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
+            s.Opening = handles.ReadHandle(entity.ObjectHandle);
+            if (handles.Failed()) return fail("opening slot owner is missing");
+        }
         if (!Detail::Finite(s.ProfileWidth) || !Detail::Finite(s.ProfileDepth)) return fail("invalid opening slot profile");
-        DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
-        s.Opening = handles.ReadHandle(entity.ObjectHandle);
-        if (handles.Failed() || s.Opening == kNullHandle) return fail("opening slot owner is missing");
+        if (s.Opening == MiniDWG::kNullHandle) return fail("opening slot owner is missing");
         slot = s;
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 天正 2014 分解结果（1 个样例核对）：门窗两端外侧、所选墙面上各一个截面矩形（沿墙宽 ProfileWidth、伸出墙面 ProfileDepth）。
-    // faceLeft / faceRight 为门窗方向左、右两侧墙面到门窗中线的距离
     inline TchGraphics BuildOpeningSlot(const TchOpeningSlot& s, const TchOpening& o, double faceLeft, double faceRight)
     {
         TchGraphics g;

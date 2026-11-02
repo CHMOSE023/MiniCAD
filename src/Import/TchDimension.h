@@ -12,13 +12,13 @@ namespace MiniCAD::Tch
     // TCH_DIMENSION2 尺寸标注（逐点标注、角度 / 弧长标注共用）
     struct TchDimension
     {
-        MiniDWG::XYZ        Position;           // 第一个被标注点
-        double              Angle = 0;          // 标注方向（弧度）；弧形标注时为第一个点处的切线方向
-        double              Offset = 0;         // 尺寸线偏移（图面单位，乘以 Scale），正值在方向的左侧
-        std::vector<double> Spans;              // 各段长度；弧形标注时为各段圆心角（弧度）
-        int                 Flags = 0;
-        double              ArcRadius = 0;      // 标志 0x10：尺寸线圆弧半径
-        double              MeasuredRadius = 0; // 标志 0x10：被标注点所在半径（Position 在此半径上）
+        MiniDWG::XYZ        Position;               // 第一个被标注点
+        double              Angle = 0;              // 标注方向（弧度）；弧形标注时为第一个点处的切线方向
+        double              Offset = 0;             // 尺寸线偏移（图面单位，乘以 Scale），正值在方向的左侧
+        std::vector<double> Spans;                  // 各段长度；弧形标注时为各段圆心角（弧度）
+        int                 Flags = 0;              
+        double              ArcRadius = 0;          // 标志 0x10：尺寸线圆弧半径
+        double              MeasuredRadius = 0;     // 标志 0x10：被标注点所在半径（Position 在此半径上）
         std::map<int, std::string> TextOverrides;   // 标志 0x04：段号 → 替代文字
         std::map<int, std::pair<double, double>> TextPositions;   // 标志 0x02：段号 → 文字另行指定的位置
         double              Scale = 1;
@@ -69,9 +69,7 @@ namespace MiniCAD::Tch
             if (d.IsArc() && (d.ArcRadius <= 0 || d.MeasuredRadius <= 0)) return "invalid arc dimension radius";
             return nullptr;
         }
-
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的尺寸标注版本 2：RC 版本、RC 密钥；
-        // 第一个点（三维点）、方向、偏移、标注样式（句柄）、段数与各段长度、标志；之后按标志与明文分支相同（文字位置为二维点）
+         
         inline bool DecodeDimensionCipher(const MiniDWG::UnknownEntity& entity, TchDimension& dimension, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -113,9 +111,7 @@ namespace MiniCAD::Tch
             return true;
         }
     }
-
-    // 按尺寸标注的私有布局版本 1 的明文分支解析，
-    // 必须恰好读完主数据流。版本 2 起数值以编码形式存放，按不支持处理
+ 
     inline bool DecodeDimension(const MiniDWG::UnknownEntity& entity, TchDimension& dimension, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -205,10 +201,7 @@ namespace MiniCAD::Tch
             if (a.Scale <= 0 || a.Radius < 0 || std::hypot(a.End.X - a.Start.X, a.End.Y - a.Start.Y) < 1e-9) return "invalid axis label geometry";
             return nullptr;
         }
-
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的轴号版本 7：RC 版本、
-        // 明文 BS 模式、RC 密钥；文字样式（句柄）、第一根轴线两端（二维点）、凸度、轴数；每根轴为标志、编号、间距与按标志另设的
-        // 引出长度 / 缩进；数值、起点端与终点端引出长度、圆半径；文字图层（句柄）；数值；显示标志（位 0 为显示编号）
+         
         inline bool DecodeAxisLabelCipher(const MiniDWG::UnknownEntity& entity, TchAxisLabel& label, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -340,13 +333,55 @@ namespace MiniCAD::Tch
         MiniDWG::Handle DimStyle = MiniDWG::kNullHandle;
     };
 
-    // 按半径标注的私有布局版本 1 的明文分支解析，
-    // 必须恰好读完主数据流。版本 2 为编码分支，按不支持处理
+    namespace Detail
+    {
+        inline const char* CheckRadiusDim(const TchRadiusDim& d)
+        {
+            const double values[] = {d.Center.X, d.Center.Y, d.Center.Z, d.TipX, d.TipY, d.Leader, d.Scale, d.TextX, d.TextY};
+            for (double v : values)
+                if (!Finite(v)) return "nonfinite radius dimension geometry";
+            if (d.Scale <= 0 || std::hypot(d.TipX - d.Center.X, d.TipY - d.Center.Y) < 1e-9) return "invalid radius dimension geometry";
+            return nullptr;
+        }
+
+        // 新版 TCH_RADIUSDIM 版本 2
+        inline bool DecodeRadiusDimCipher(const MiniDWG::UnknownEntity& entity, TchRadiusDim& dimension, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native radius dimension version");
+            f.ReadKey();
+            TchRadiusDim d;
+            d.Scale = f.Scale;
+            d.Flags = f.Short();
+            d.DimStyle = f.Handle();
+            d.Leader = f.Double();
+            d.Center = f.Point3();
+            const auto tip = f.Point2();
+            d.TipX = tip.X; d.TipY = tip.Y;
+            if (d.Flags & 4) d.TextOverride = f.Text();
+            if (d.Flags & 2)
+            {
+                d.HasTextPosition = true;
+                const auto t = f.Point2();
+                d.TextX = t.X; d.TextY = t.Y;
+            }
+            if (!f.Exact()) return fail("native radius dimension fields do not consume the payload exactly");
+            if (const char* why = CheckRadiusDim(d)) return fail(why);
+            dimension = std::move(d);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
+    // 按半径标注的私有布局版本 1 的明文分支解析，必须恰好读完主数据流；新版见 Detail::DecodeRadiusDimCipher
     inline bool DecodeRadiusDim(const MiniDWG::UnknownEntity& entity, TchRadiusDim& dimension, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_RADIUSDIM") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeRadiusDimCipher(entity, dimension, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native radius dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -373,11 +408,7 @@ namespace MiniCAD::Tch
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native radius dimension fields do not consume the payload exactly");
-        const double values[] = {d.Center.X, d.Center.Y, d.Center.Z, d.TipX, d.TipY, d.Leader, d.Scale, d.TextX, d.TextY};
-        for (double v : values)
-            if (!Detail::Finite(v)) return fail("nonfinite radius dimension geometry");
-        if (d.Scale <= 0 || std::hypot(d.TipX - d.Center.X, d.TipY - d.Center.Y) < 1e-9)
-            return fail("invalid radius dimension geometry");
+        if (const char* why = Detail::CheckRadiusDim(d)) return fail(why);
         if (text.Reader.Failed()) return fail("radius dimension text stream is incomplete");
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount; ++i) handles.ReadHandle(entity.ObjectHandle);
@@ -388,15 +419,13 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // ── 显示 ─────────────────────────────────────────────────────────────
-    // 生成的图元都是世界坐标，与天正 2014 分解结果逐项核对（docs/Tch-compatibility.md）
+     
 
     struct TchDimStyle      // 标注样式中用到的值（图面单位）
     {
         double ExtOffset = 3, ExtExtension = 2.5, ArrowSize = 1, TextHeight = 3.5, Gap = 1;
         int    Decimals = 0, AngularDecimals = 2;
-        // 文字颜色 DIMCLRT（ACI；0 随块、256 随层）：建筑平面样图的 _TCH_ARCH 为随层，天正 + AutoCAD 里尺寸数字与尺寸线同色
+        // 文字颜色 DIMCLRT（ACI；0 随块、256 随层）：建筑平面样图的 _TCH_ARCH 为随层，  AutoCAD 里尺寸数字与尺寸线同色
         int    TextColor = 7;
         // 角度去零 DIMAZIN：1 去掉整数部分的 0，2 去掉小数末尾的零（建筑样图为 2：90.00° 显示为 90°，100.55° 不变）
         int    AngularZeros = 0;
@@ -408,16 +437,11 @@ namespace MiniCAD::Tch
         struct Segment { Point A, B; };
         struct Tick { Point A, B; double Width = 0; };                         // 有宽度的斜线
         struct Arc { Point Center; double Radius = 0, Start = 0, End = 0; };
-        struct Circle { Point Center; double Radius = 0; };
-        // Layer：0 为对象自身的图层，1 为对象另行引用的符号图层（如楼梯箭头所在的 DIM_SYMB）
+        struct Circle { Point Center; double Radius = 0; }; 
         struct Triangle { Point A, B, C; int Layer = 0; };                      // 实心箭头
         struct PathPoint { Point P; double Bulge = 0; };                        // Bulge：到下一点的凸度
-        struct Path { std::vector<PathPoint> Points; double Width = 0; int Layer = 0; };   // 开放多段线，Width 为全程线宽
-        // Center 为对齐点；Attachment 同 MTEXT 的附着点（5 正中、4 左中、6 右中）
-        // Style：0 为对象的主文字样式，1 为第二文字样式（如索引符号旁注用的标注文字样式）
-        // Color 为 ACI 颜色号（0 随块、256 随层；默认 7 号色）。尺寸标注的取标注样式的 DIMCLRT，轴号编号随文字图层；
-        // 索引、引出、箭头、剖切、指北针、楼梯的文字在天正里就是 7 号色（改了它们的文字图层颜色也不变，建筑平面样图 核对）
-        // WidthFactor：大于 0 时按此宽度因子显示（天正把混排文字拆成西文、汉字两段，西文宽度因子 0.6 / 0.85）
+        struct Path { std::vector<PathPoint> Points; double Width = 0; int Layer = 0; };   // 开放多段线，Width 为全程线宽 
+       
         struct Text { Point Center; double Height = 0, Rotation = 0; std::string Value; int Attachment = 5; int Style = 0; int Color = 7; int Layer = 0; double WidthFactor = 0; };
 
         std::vector<Segment>  Lines;
@@ -428,7 +452,7 @@ namespace MiniCAD::Tch
         std::vector<Path>     Paths;
         std::vector<Path>     Fills;        // 实心填充（SOLID 图案）的边界：闭合，末点与首点重合；先于其他图元画
         std::vector<Text>     Texts;
-        int LineColor = 256;       // Lines 的 ACI 颜色，256 为随层（天正给排水井标注的引线固定为 6 号色）
+        int LineColor = 256;                // Lines 的 ACI 颜色，256 为随层（天正给排水井标注的引线固定为 6 号色）
     };
 
     namespace Detail
@@ -439,8 +463,7 @@ namespace MiniCAD::Tch
             std::snprintf(buf, sizeof buf, "%.*f", std::clamp(decimals, 0, 8), v);
             return buf;
         }
-
-        // 按 DIMAZIN / DIMZIN 的位去零：2 去掉小数末尾的零（全是零时连小数点一起），1 去掉整数部分的 0（"0.50" → ".50"）
+         
         inline std::string SuppressZeros(std::string s, int zeros)
         {
             if ((zeros & 2) && s.find('.') != std::string::npos)
@@ -466,10 +489,7 @@ namespace MiniCAD::Tch
             return false;
         }
     }
-
-    // 第 i 段文字的中心：标志 0x02 另行指定了位置（天正里拖动过的文字，如挤不下时移到尺寸线外侧、上一行或下方）时取该点，
-    // 否则为按样式算出的 fallback（建筑平面样图的电梯井尺寸：未移动的文字恰在尺寸线上方 (DIMTXT / 2 + DIMGAP) × 比例处，
-    // 移动过的在其上一行、尺寸线下方对称处或界线外侧）
+     
     inline TchGraphics::Point TextCenter(const TchDimension& d, std::size_t i, TchGraphics::Point fallback)
     {
         const auto it = d.TextPositions.find(static_cast<int>(i));
@@ -550,10 +570,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // 半径标注（与天正 2014 对 7 个变体的分解结果核对）：引线从箭头尖沿半径方向画 |Leader| × 比例；
-    // 箭头长 2 × DIMASZ × 比例、底宽为其 0.33；文字在读者上方 (DIMTXT / 2 + DIMGAP) × 比例，
-    // 读者方向的末端距引线末端 DIMGAP × 比例；有文字位置（标志 0x02）时文字以该点为中心
+ 
     inline TchGraphics BuildRadiusDim(const TchRadiusDim& d, const TchDimStyle& style)
     {
         using P = TchGraphics::Point;
@@ -583,11 +600,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // 轴号：第 i 根轴为第一根轴向右法线平移前 i 个间距之和，标志 0x400 / 0x800 再把两端向内缩进；
-    // 每个标注端从轴线端点向外引出（引出长度 × 比例），轴号圆在引出线外侧相切、编号居中；
-    // 斜向错开时圆心在引出线末端沿“向内方向 ± 135°”的 √2 × 半径处，另画从圆边到引出线末端的短线（起点端引出长度为 0 时不画）。
-    // 立剖面样图、墙身大样共 16 个轴号（含模式 0x08、0x88，标志 0x800 等）的线与圆和天正 2014 分解结果一致
+     
     inline TchGraphics BuildAxisLabel(const TchAxisLabel& a)
     {
         using P = TchGraphics::Point;
@@ -595,7 +608,7 @@ namespace MiniCAD::Tch
         const double s = a.Scale;
         const double len = std::hypot(a.End.X - a.Start.X, a.End.Y - a.Start.Y);
         const double dx = (a.End.X - a.Start.X) / len, dy = (a.End.Y - a.Start.Y) / len;
-        const double rx = dy, ry = -dx;                     // 右法线：轴线依次排列的方向
+        const double rx = dy, ry = -dx;                     
         const double radius = a.Radius * s;
         constexpr double diagonal = 3 * std::numbers::pi / 4;
         double offset = 0;
@@ -630,9 +643,7 @@ namespace MiniCAD::Tch
                 }
                 g.Circles.push_back({c, radius});
                 if (!a.ShowText || axis.Label.empty()) continue;
-                // 附加轴号“分子/分母”（天正按 '/' 拆成上下两段）：圆内画水平直径，两段居中在圆心上下 0.457 × 半径，
-                // 字高约 0.62 × 半径（墙身大样样图的分解结果核对）
-                // 编号放在文字图层（图层 2：TchAxisLabel::TextLayer）上、随层（建筑平面样图在天正 + AutoCAD 里与轴号圆同色，不是白色）
+                 
                 if (const auto slash = axis.Label.find('/'); slash != std::string::npos)
                 {
                     g.Lines.push_back({{c.X - radius, c.Y}, {c.X + radius, c.Y}});
@@ -640,8 +651,7 @@ namespace MiniCAD::Tch
                     g.Texts.push_back({{c.X, c.Y - 0.457 * radius}, 0.62 * radius, 0, axis.Label.substr(slash + 1), 5, 0, 256, 2});
                 }
                 else
-                {
-                    // 天正用 Fit 对齐，字高随字数变化（各张建筑样图的分解结果：单字约 1.24 × 半径，两字约 0.97 × 半径）
+                { 
                     std::size_t chars = 0;
                     for (unsigned char ch : axis.Label) chars += (ch & 0xc0) != 0x80;
                     const double height = chars <= 1 ? 1.24 * radius : 1.94 * radius / static_cast<double>(chars);

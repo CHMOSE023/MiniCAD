@@ -6,8 +6,7 @@
 
 namespace MiniCAD::Tch
 {
-    // TCH_PATH_ARRAY 线图案（基于路径基类）：
-    // 沿多段线路径重复排列一个图案块（样例为 $LinePat$45度线、$LinePat$波浪线）
+     
     struct TchPathArray
     {
         struct Vertex { double X = 0, Y = 0, Angle = 0; };   // Angle：到下一点的圆弧圆心角（弧度，正为逆时针），不是凸度
@@ -18,14 +17,50 @@ namespace MiniCAD::Tch
         int    Flags = 8;                   // 位 0：单元不拉伸、居中排布；位 2：块底边在路径上；位 3：块居中；位 4：块上下翻转
         MiniDWG::Handle Block = MiniDWG::kNullHandle;
     };
+     
+    namespace Detail
+    {
+        inline const char* CheckPathArray(const TchPathArray& a, double nx, double ny, double nz)
+        {
+            if (a.Vertices.size() < 2) return "invalid path vertex count";
+            if (std::abs(nx) > 1e-9 || std::abs(ny) > 1e-9 || nz <= 0) return "path array is not in the XY plane";
+            for (const auto& v : a.Vertices)
+                if (!Finite(v.X) || !Finite(v.Y) || !Finite(v.Angle) || std::abs(v.Angle) >= 2 * std::numbers::pi) return "invalid path vertex";
+            if (!Finite(a.Width) || !Finite(a.PatternScale) || a.Width <= 0 || a.PatternScale <= 0) return "invalid path array settings";
+            if (a.Block == MiniDWG::kNullHandle) return "path array has no pattern block";
+            return nullptr;
+        }
 
-    // 路径基类：天正基类、RC 版本（只有 0 为明文分支）、BS 顶点数、每点 3BD + BD 圆心角、B 闭合、3BD 法向；句柄流一个句柄。
-    // 阵列：RC 版本（< 3 为明文分支）、BD 宽度、RC 标志、版本 ≥ 2 时 BD 图案缩放；句柄流为图案块。必须恰好读完主数据流
+        inline bool DecodePathArrayCipher(const MiniDWG::UnknownEntity& entity, TchPathArray& array, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            std::vector<CipherPathVertex> path;
+            TchPathArray a;
+            MiniDWG::XYZ normal;
+            if (!ReadCipherPolyCurve(f, path, a.Closed, normal)) return fail("unsupported path base layout");
+            for (const auto& v : path) a.Vertices.push_back({v.Point.X, v.Point.Y, v.Value});
+            if (f.Main.ReadByte() != 3) return fail("unsupported native path array version");
+            f.ReadKey();
+            a.Block = f.Handle();
+            a.Width = f.Double();
+            a.Flags = f.Byte();
+            a.PatternScale = f.Double();
+            if (!f.Exact()) return fail("native path array fields do not consume the payload exactly");
+            if (const char* why = CheckPathArray(a, normal.X, normal.Y, normal.Z)) return fail(why);
+            array = std::move(a);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodePathArray(const MiniDWG::UnknownEntity& entity, TchPathArray& array, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_PATH_ARRAY") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodePathArrayCipher(entity, array, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data))
             return fail("unsupported DWG version for native path array");
@@ -52,31 +87,18 @@ namespace MiniCAD::Tch
         if (version >= 2) a.PatternScale = r.ReadBitDouble();
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native path array fields do not consume the payload exactly");
-        if (std::abs(nx) > 1e-9 || std::abs(ny) > 1e-9 || nz <= 0) return fail("path array is not in the XY plane");
-        for (const auto& v : a.Vertices)
-            if (!Detail::Finite(v.X) || !Detail::Finite(v.Y) || !Detail::Finite(v.Angle) || std::abs(v.Angle) >= 2 * std::numbers::pi)
-                return fail("invalid path vertex");
-        if (!Detail::Finite(a.Width) || !Detail::Finite(a.PatternScale) || a.Width <= 0 || a.PatternScale <= 0)
-            return fail("invalid path array settings");
-
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
         for (int i = 0; i < base.HandleCount + 1; ++i) handles.ReadHandle(entity.ObjectHandle);
         a.Block = handles.ReadHandle(entity.ObjectHandle);
-        if (handles.Failed() || handles.PositionInBits() > data.HandleBits || a.Block == kNullHandle)
-            return fail("path array handle stream is incomplete");
+        if (handles.Failed() || handles.PositionInBits() > data.HandleBits) return fail("path array handle stream is incomplete");
+        if (const char* why = Detail::CheckPathArray(a, nx, ny, nz)) return fail(why);
         array = std::move(a);
         if (diagnostic) diagnostic->clear();
         return true;
     }
 
-    // 一个图案单元：图案块按 (ScaleX, ScaleY) 缩放、转 Rotation 后插入到 (X, Y)
     struct TchPathArrayUnit { double X = 0, Y = 0, Rotation = 0, ScaleX = 1, ScaleY = 1; };
-
-    // 按天正 2014 分解结果核对出的排布（块包围盒 [x0, x1] × [y0, y1]）：
-    // - 横向缩放 sy = 宽度 × 图案缩放 / 块高，名义单元长 u = 块宽 × sy；
-    // - 每段单元数 n = ⌊段长 / u⌋（不足一个单元的段不画），单元沿段拉伸为段长 / n；位 0 时不拉伸，n 个名义单元在段内居中；
-    // - 圆弧段：段长与拉伸取路径左侧边（半径 R − 圆心角符号 × 半宽）的弧长与子弧弦长，单元中心在路径子弧中点、方向沿切线；
-    // - 块的横向对齐：位 2 底边、位 3 中线、否则顶边在路径上；位 4 块在包围盒内上下翻转
+     
     inline std::vector<TchPathArrayUnit> BuildPathArray(const TchPathArray& a, double x0, double y0, double x1, double y1)
     {
         std::vector<TchPathArrayUnit> units;

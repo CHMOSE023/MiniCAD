@@ -8,8 +8,7 @@
 
 namespace MiniCAD::Tch
 {
-    // TCH_RECTSTAIR 双跑楼梯（版本 < 7 为明文分支）。
-    // 局部坐标：插入点为休息平台靠第一跑一侧的外角，楼梯沿 -Y 方向展开；绕插入点转 Rotation
+     
     struct TchRectStair
     {
         double X = 0, Y = 0, Rotation = 0;
@@ -38,7 +37,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 按标志与镜像方式补全显示选项，检查参数；不支持或不合理时返回原因
         inline const char* FinishRectStair(TchRectStair& s, std::uint32_t flags, int mirror)
         {
             constexpr std::uint32_t unsupported = (1u << 1) | (1u << 3) | (1u << 13) | (1u << 20) | (1u << 21) | 0xff000000u;
@@ -66,11 +64,7 @@ namespace MiniCAD::Tch
             }
             return nullptr;
         }
-
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的双跑楼梯：楼梯基类（路径基类）版本 3（RC 版本、RC 密钥、
-        // 路径句柄），双跑楼梯 版本 7：RC 版本、RC 密钥；插入点（三维点）、转角、踏步高、踏步宽、梯段宽、平台宽、两跑踏步数、
-        // 梯间宽、扶手高、层类型、镜像、数值、扶手宽、扶手偏移、标志、3 个数值；4 个句柄；2 个数值与一个字节；扶手伸出（平台端、
-        // 起步端）、剖切高度、剖切角、字高、平台的 4 个长度；3 个句柄（第 2、3 个为文字样式、箭头图层）；数据里还有时再一个数值
+ 
         inline bool DecodeRectStairCipher(const MiniDWG::UnknownEntity& entity, TchRectStair& stair, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -120,11 +114,7 @@ namespace MiniCAD::Tch
             return true;
         }
     }
-
-    // 按 双跑楼梯 版本 4 的明文分支解析，必须恰好读完主数据流。
-    // 楼梯基类：天正基类、RC 版本；版本 < 3 时句柄流有一个句柄（版本 3 另有编码分支，不支持）。
-    // 天正 2014 分解核对过的标志位：1、3、13、20、21 会改变图形（起步多一级、圆弧平台、梯边梁等），未实现，遇到即拒绝；
-    // 层类型 3 也未实现。剖断中心超出第一跑 [T/2, 跑长 − T/2] 时天正会重算位置与角度，规律未明，同样拒绝
+ 
     inline bool DecodeRectStair(const MiniDWG::UnknownEntity& entity, TchRectStair& stair, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -207,8 +197,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 双跑楼梯（与天正 2014 对 110 余个构造变体的分解结果核对，见 docs/Tch-compatibility.md）。
-    // 线条在对象图层；箭头与文字 Layer = 1（ArrowLayer）。“上”“下”按 GBCBIG 的墨迹宽度摆放（天正按 textbox 计算）
+    
     inline TchGraphics BuildRectStair(const TchRectStair& s)
     {
         using P = TchGraphics::Point;
@@ -342,7 +331,7 @@ namespace MiniCAD::Tch
                 }
                 return c;
             };
-            // 扶手：天正显示只画第一跑一侧，同样被折断线截断（分解结果是完整的 U 形，与显示不同，以截图为准）
+            // 扶手：显示只画第一跑一侧，同样被折断线截断（分解结果是完整的 U 形，与显示不同，以截图为准）
             const double yb = yo + (linked ? rw / 2 : 0);
             for (const Seg& r : {Seg{{o1, yb}, {o1, railTop}}, Seg{{i1, yb}, {i1, railTop}}, Seg{{o1, yb}, {i1, yb}}, Seg{{o1, railTop}, {i1, railTop}}})
                 flight.push_back({0, r});

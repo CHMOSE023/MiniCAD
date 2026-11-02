@@ -9,13 +9,13 @@
 
 namespace MiniCAD::Tch
 {
-    // 天正符号类（坐标、箭头、索引等）的公共基类。
-    // 天正基类之后：RC 版本；句柄（文字样式）；BD 文字高度（图面单位）；版本 ≥ 2：BD、句柄（图层）；版本 > 2：BS。只支持版本 1～3
+    
     struct TchSymbolBase
     {
         TchBase Base;
         double  TextHeight = 3.5;
-        int     HandleCount = 0;    // 天正基类与符号基类在句柄流中的句柄数
+        int     HandleCount = 0;    
+        int     Color = 7;
     };
 
     inline bool ReadTchSymbolBase(MiniDWG::DwgBitReader& r, TchSymbolBase& symbol)
@@ -31,7 +31,6 @@ namespace MiniCAD::Tch
         return !r.Failed();
     }
 
-    // TCH_COORD 坐标标注：引线 + 水平线 + 上下两行坐标文字
     struct TchCoord
     {
         double Scale = 1, TextHeight = 3.5;
@@ -44,8 +43,7 @@ namespace MiniCAD::Tch
         double LineLength = 100000; // 水平线长度（× 比例）；100000 为自动（按文字宽度）
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle;
     };
-
-    // TCH_ARROW 箭头：多段线，最后一段末端为实心箭头，尾端或首段旁标注文字
+     
     struct TchArrow
     {
         struct Vertex { double X = 0, Y = 0, Bulge = 0; };
@@ -59,8 +57,7 @@ namespace MiniCAD::Tch
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle;
     };
 
-    // TCH_SYMB_SECTION 剖切符号。旧样式：剖切线各转折点处的粗短线、两端的投射方向线与编号；
-    // 新国标样式（GB/T 50001-2017）：细剖切线，两端各一个内视符号（圆、朝投射方向的实心三角、圆内编号）
+     
     struct TchSection
     {
         double Scale = 1, TextHeight = 5;
@@ -70,7 +67,6 @@ namespace MiniCAD::Tch
         std::vector<TchGraphics::Point> Points;
         std::string Label;          // 两端都用这个编号
         MiniDWG::Handle TextStyle = MiniDWG::kNullHandle;
-        // 以下只有新版（T30 加密对象）有
         bool   NewStyle = false;    // 基类扩展数据表里的样式开关：非 0 为新国标样式
         std::string Label2;         // 索引图号：新样式且 IndexFlags 含 2 或 4 时写在圆内水平线下
         int    IndexFlags = 0;      // 位 1、2：起点 / 终点有索引图号；位 3：两端不垂直
@@ -79,7 +75,7 @@ namespace MiniCAD::Tch
         int    TextMode = 2;        // 新样式编号大小的算法，2 取图纸设置（同内视符号）
     };
 
-    // TCH_INDEXPOINTER 索引符号：引线、圆圈（编号 / 图号）与可选的上下旁注
+  
     struct TchIndexPointer
     {
         double Scale = 1, TextHeight = 3.5;
@@ -94,7 +90,6 @@ namespace MiniCAD::Tch
         MiniDWG::Handle NoteStyle = MiniDWG::kNullHandle;   // 上下旁注（属性包中的“标注文字样式ID”）
     };
 
-    // TCH_DRAWINGNAME 图名：图名文字、比例文字与图名下划线，整体以插入点居中
     struct TchDrawingName
     {
         double Scale = 1;
@@ -109,7 +104,6 @@ namespace MiniCAD::Tch
         MiniDWG::Handle NameStyle = MiniDWG::kNullHandle, ScaleStyle = MiniDWG::kNullHandle;
     };
 
-    // TCH_TDBINSIGHT 内视符号：圆、外切于圆的实心三角（编号多于一个时为菱形）、分隔线与圆内的编号
     struct TchInSight
     {
         double Scale = 1;
@@ -125,9 +119,7 @@ namespace MiniCAD::Tch
     };
 
     namespace Detail
-    {
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的符号基类版本 4：RC 版本、RC 密钥；
-        // 文字样式（句柄）、字高、数值、图层（句柄）、颜色
+    { 
         inline bool ReadCipherSymbolBase(CipherReader& f, TchSymbolBase& symbol, MiniDWG::Handle& style)
         {
             symbol = {};
@@ -139,11 +131,10 @@ namespace MiniCAD::Tch
             symbol.TextHeight = f.Double();
             f.Double();
             f.Handle();
-            f.Short();
+            symbol.Color = f.Short();
             return f.Ok();
         }
 
-        // 明文多段线：RC 闭合、BS 顶点数，每个顶点 2RD + BD 凸度
         template <class Vertex>
         inline bool ReadPoly2D(MiniDWG::DwgBitReader& r, bool& closed, std::vector<Vertex>* vertices)
         {
@@ -168,8 +159,6 @@ namespace MiniCAD::Tch
             return !handles.Failed() && handles.PositionInBits() <= data.HandleBits;
         }
 
-        // 天正 _TCH_DIM（SIMPLEX）字符宽度，单位为字高的 1/21：除最后一个字符取前进量外，最后一个取墨迹宽度。
-        // 数值由 AutoCAD textbox 逐字符测得，坐标文字 14 个变体的分解结果全部吻合；表外字符按数字估计
         inline double SimplexWidth(const std::string& text)
         {
             struct Metric { char C; int Advance, Ink; };
@@ -188,8 +177,6 @@ namespace MiniCAD::Tch
             return units / 21.0;
         }
 
-        // AutoCAD txt.shx 的字符宽度，单位为字高的 1/6（前进量、墨迹宽度）；txt 不含汉字，汉字按“?”显示与计宽。
-        // 由 AutoCAD textbox 测得，图名 11 个变体的文字宽度全部吻合
         inline double TxtWidth(const std::string& text)
         {
             double units = 0;
@@ -217,8 +204,6 @@ namespace MiniCAD::Tch
             return false;
         }
 
-        // GBENOR（西文）+ GBCBIG（汉字）的 textbox：宽度为墨迹右缘减左缘，Bottom 为墨迹最低点（相对基线），单位为字高。
-        // 由 AutoCAD 逐字符测得（前进量、墨迹左右缘）；汉字取实测平均值，个别字形会差约 0.01 字高
         inline void GbenorExtent(const std::string& text, double& width, double& bottom)
         {
             struct Metric { char C; double Advance, Left, Right; };
@@ -251,7 +236,6 @@ namespace MiniCAD::Tch
             bottom = wide ? -0.06618 : 0.0;
         }
 
-        // 按字体估算 textbox（字高 1、宽度因子 1）：txt、simplex、gbenor 用实测表，其余按每字 0.8、汉字 1.0 粗估
         struct TextExtent { double Width = 0, Bottom = 0; };
         inline TextExtent EstimateExtent(const std::string& fontFile, const std::string& text)
         {
@@ -271,9 +255,6 @@ namespace MiniCAD::Tch
             return e;
         }
 
-        // MiniCAD 自己显示时的文字宽度（字高 1，按字形步进累加，与 TextLayoutEngine 相同）：
-        // 程序只带 simplex、tssdeng、TSSDCHN，其余 SHX 主字体显示为 simplex，大字体显示为 TSSDCHN（FontEngine 的替代规则）。
-        // tssdeng 与 simplex 字形相同、单位高 33 / 28；TSSDCHN 汉字步进为 1
         inline TextExtent DisplayExtent(const std::string& fontFile, const std::string& text)
         {
             static constexpr double simplex[95] = {
@@ -312,8 +293,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的坐标标注版本 7：符号基类后 RC 版本、RC 密钥；格式、方向、被标注点、坐标值、引线末端（二维点）、
-        // 字节、文字间距、水平线长、字节、二维点、字符串
         inline bool DecodeCoordCipher(const MiniDWG::UnknownEntity& entity, TchCoord& coord, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -345,8 +324,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 按坐标标注的私有布局版本 < 7 的明文分支解析，
-    // 必须恰好读完主数据流。只接受版本 4～5（之后的版本多一段文字与点，未核对）
     inline bool DecodeCoord(const MiniDWG::UnknownEntity& entity, TchCoord& coord, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -382,7 +359,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 闭合或少于 2 个顶点时天正不显示；文字模式 0、4 与箭头样式 2、3 没有样例
         inline const char* FinishArrow(TchArrow& a, bool closed)
         {
             if (a.Vertices.size() < 2 || closed) a.Vertices.clear();
@@ -397,8 +373,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的箭头引注版本 6：符号基类后 RC 版本、RC 密钥；文字模式、第一个文字、三维点、明文多段线、
-        // 箭头长、箭头样式、数值、是否有第二个文字、第二个文字、三维点
         inline bool DecodeArrowCipher(const MiniDWG::UnknownEntity& entity, TchArrow& arrow, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -429,8 +403,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 按箭头引注的私有布局版本 < 6 的明文分支解析，
-    // 多段线布局（RC 闭合、BS 顶点数、每顶点 2RD + BD 凸度）。只接受版本 4～5、文字模式 1～3（模式 0、4 没有样例）
     inline bool DecodeArrow(const MiniDWG::UnknownEntity& entity, TchArrow& arrow, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -451,7 +423,6 @@ namespace MiniCAD::Tch
         a.TextHeight = symbol.TextHeight;
         a.Mode = r.ReadByte();
         a.Text1 = text.Next();
-        // 3BD 为文字位置（相对于按模式确定的局部坐标，空箭头中可能为 NaN），显示按模式的规则排布
         r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
         bool closed = false;
         if (!Detail::ReadPoly2D(r, closed, &a.Vertices)) return fail("invalid arrow vertex count");
@@ -485,9 +456,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的剖切符号版本 3：符号基类后 RC 版本、RC 密钥；类型、投射方向、点数与各点（二维点）、
-        // 编号、2 个编号位置、索引图号、2 个索引位置、索引字高、索引标志、索引文字样式（句柄）、数值、终点投射方向、
-        // 转角文字的点数与各点、数值、剖切线比例、圆直径、编号大小算法、编号比例
         inline bool DecodeSectionCipher(const MiniDWG::UnknownEntity& entity, TchSection& section, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -521,8 +489,8 @@ namespace MiniCAD::Tch
             s.Diameter = f.Double();
             s.TextMode = f.Byte();
             s.TextRatio = f.Double();
-            const auto style = f.XData.find("T20d37");
-            s.NewStyle = style != f.XData.end() && style->second != 0;
+            const auto style = f.XData.Number("T20d37");
+            s.NewStyle = style && *style != 0;
             if (!f.Exact()) return fail("native section symbol fields do not consume the payload exactly");
             if (const char* why = CheckSection(s)) return fail(why);
             section = std::move(s);
@@ -531,7 +499,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 按版本 < 3 的明文分支解析，必须恰好读完主数据流
     inline bool DecodeSection(const MiniDWG::UnknownEntity& entity, TchSection& section, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -590,9 +557,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的索引符号版本 5：符号基类后 RC 版本、RC 密钥；类型、索引点、转折点（二维点）、圆半径、
-        // 水平段长、索引点标记；编号、图号、上旁注、下旁注；两组个数与字符串；2 个数值、字节、明文多段线、数值、字符串、句柄。
-        // 旁注样式同明文分支：基类属性包里的最后一个句柄，没有时与圆圈文字相同
         inline bool DecodeIndexPointerCipher(const MiniDWG::UnknownEntity& entity, TchIndexPointer& pointer, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -629,8 +593,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 按版本 < 5 的明文分支解析，必须恰好读完主数据流。
-    // 只接受版本 3～4（版本 2 及以前缺少后段，未核对）
     inline bool DecodeIndexPointer(const MiniDWG::UnknownEntity& entity, TchIndexPointer& pointer, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -699,8 +661,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的图名版本 4：BS 版本、RC 密钥；三维点、图名、比例文字、数值、图名字高、比例字高、
-        // 下划线宽、间距系数；两个文字样式（句柄）；显示比例、下划线方式、文字颜色；插入点（三维点，以它为准）
         inline bool DecodeDrawingNameCipher(const MiniDWG::UnknownEntity& entity, TchDrawingName& name, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -733,9 +693,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 按版本 < 4 的明文分支解析，必须恰好读完主数据流。
-    // 天正基类后：BS 版本、3BD 插入点（版本 ≥ 2 时以末尾的 3BD 为准）、图名与比例（文字流）、BD、BD 图名字高、BD 比例字高、BD 下划线宽、
-    // BD 间距系数、两个文字样式句柄、B 显示比例、BS 下划线方式、BS 文字颜色、版本 ≥ 2 的 3BD 插入点
     inline bool DecodeDrawingName(const MiniDWG::UnknownEntity& entity, TchDrawingName& name, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -778,17 +735,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 图名（与天正 2014 对 11 个变体的分解结果核对）：图名字高 NameHeight × 比例，比例字高 ScaleHeight × 比例，两者间隔 Gap × 图名字高；
-    // 显示比例时“图名 + 间隔 + 比例”整体以插入点水平居中，否则“图名 + 0.2 × 图名字高”居中；文字基线在插入点。
-    // 下划线线宽 LineWidth × 比例，位于图名墨迹最低点下 2 × 线宽，从图名起点画到图名末端外 0.2 × 图名字高。
-    // 下划线方式 0（双线）：粗线下 1.4 × 比例
-    // 再画一条细线；显示比例时两条线都画到比例文字末端外 0.2 × 比例字高。
-    // 含汉字的文字天正把字高乘以 0.96454（大字体 GBCBIG 下实测）；宽度与最低点取 textbox，间隔与下划线外伸仍按名义字高。
-    // extent(文字, 实际字高, 是否比例文字) 返回 textbox 宽度与最低点（世界单位）
-    // TrueType 样式（nameTrueType / scaleTrueType，建筑详图样图“宋体”图名的分解结果核对）：字高 = 名义字高 × 0.75527，
-    // 文字按中西文分段排布，步进汉字 = 字高、西文 = 0.5 × 字高（与天正单行文字相同）；排布用的宽度为墨迹宽度（步进之和减去首尾留白），
-    // 含汉字时墨迹最低点为 −0.145 × 字高
+     
     inline TchGraphics BuildDrawingName(const TchDrawingName& d,
                                         const std::function<Detail::TextExtent(const std::string&, double, bool)>& extent,
                                         bool nameTrueType = false, bool scaleTrueType = false)
@@ -798,7 +745,6 @@ namespace MiniCAD::Tch
         const double a1 = nameTrueType ? 0.75527 * h1 : Detail::HasWideChar(d.Name) ? 0.96454 * h1 : h1;
         const double a2 = scaleTrueType ? 0.75527 * h2 : Detail::HasWideChar(d.ScaleText) ? 0.96454 * h2 : h2;
         const bool scale = d.ShowScale && !d.ScaleText.empty();
-        // TrueType：按天正步进分段，返回总宽
         auto runs = [&](const std::string& text, double h, double x, int style, bool emit) {
             double cursor = 0;
             std::string run;
@@ -823,12 +769,9 @@ namespace MiniCAD::Tch
             flush();
             return cursor;
         };
-        // 图名同样取墨迹宽度（建筑详图样图实测比步进之和少约 0.12 × 字高）
         Detail::TextExtent e1 = nameTrueType ? Detail::TextExtent{runs(d.Name, a1, 0, 0, false) - 0.12 * a1, Detail::HasWideChar(d.Name) ? -0.145 * a1 : 0.0}
                                              : extent(d.Name, a1, false);
-        // 比例文字取墨迹宽度：TrueType 时为步进之和减去首尾字形留白（“1:50” 实测 0.162 × 字高）
         const double w2 = !scale ? 0.0 : scaleTrueType ? runs(d.ScaleText, a2, 0, 1, false) - 0.162 * a2 : extent(d.ScaleText, a2, true).Width;
-        // 居中用的总长：双线方式且显示比例时也含比例文字末端外伸的 0.2 × 比例字高
         const double total = scale ? e1.Width + d.Gap * h1 + w2 + (d.LineMode == 0 ? 0.2 * h2 : 0.0) : e1.Width + 0.2 * h1;
         const double left = d.X - total / 2;
         if (!d.Name.empty())
@@ -852,9 +795,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 剖切符号的旧样式（与天正 2014 对 6 个变体的分解结果核对；新国标样式见 BuildSectionNewStyle）：每个点画线宽 0.5 × 比例的粗线，
-    // 沿相邻段各 10 × 比例；剖面（类型 1）两端再沿投射方向（终点用 EndViewAngle）画 6 × 比例；编号中心在端点沿投射方向
-    // （6 × 比例 + 名义字高）处，字高 0.85 × 名义字高
     inline TchGraphics BuildSection(const TchSection& s)
     {
         using P = TchGraphics::Point;
@@ -899,15 +839,11 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 索引符号（与天正 2014 对 10 个变体的分解结果核对）：引线从索引点到转折点，水平段长 Run × 比例到圆圈，圆圈半径 Radius × 比例，
-    // 横穿圆心画直径。类型 0 在索引点画直径 Mark 的小圆（引线从圆边起）；类型 1 在引线一侧 1.5 × 比例处画长 |Mark| × 比例、
-    // 线宽 0.5 × 比例的粗线。上下旁注与圆圈边缘对齐，距水平段 0.3 × 名义字高。圆圈内编号 / 图号天正用 Fit 对齐，这里取正中近似
     inline TchGraphics BuildIndexPointer(const TchIndexPointer& p)
     {
         using P = TchGraphics::Point;
         TchGraphics g;
         const double s = p.Scale, radius = p.Radius * s, nominal = p.TextHeight * s;
-        // 圆圈在转折点哪一侧与引线方向无关（引线朝左时圆圈仍在右侧）；这里按水平段长度的符号取，负值未核对
         const double dir = p.Run >= 0 ? 1.0 : -1.0;
         const P point{p.PointX, p.PointY}, corner{p.CornerX, p.CornerY};
         const P edge{corner.X + p.Run * s, corner.Y}, center{edge.X + dir * radius, edge.Y};
@@ -947,8 +883,6 @@ namespace MiniCAD::Tch
         return g;
     }
 
-    // 坐标标注（与天正 2014 对 14 个变体的分解结果核对）：字高 = 0.85 × 名义字高（TextHeight × 比例），宽高比 0.706；
-    // 水平线自动长度 = 1.1 × 较宽一行文字，至少 11 × 比例；两行文字与水平线末端对齐，X 行在上、Y 行在下，距水平线 0.3 × 名义字高
     inline TchGraphics BuildCoord(const TchCoord& c)
     {
         using P = TchGraphics::Point;
@@ -974,17 +908,7 @@ namespace MiniCAD::Tch
     }
 
     namespace Detail
-    {
-        // 天正注释文字的显示：西文与汉字分段，西文字高 0.85 × 名义字高、宽度因子 0.6 / 0.85，汉字字高 0.96454 × 名义字高
-        //（天正 2014 分解出的 TEXT 与此相同）。各段按 MiniCAD 实际显示的字宽（simplex / TSSDCHN）首尾相接，
-        // align：0 左对齐、1 居中、2 右对齐，(x, y) 为该对齐位置的基线点
-        // asciiScale / asciiWidth / tzAscii：西文段的字高系数、宽度因子（0 为样式自身）、天正排布用的每字宽度（× 名义字高）；
-        // 注释符号为 0.85、0.6 / 0.85、0.5714，天正单行文字为 1、0（样式）、0.604
-        // tianzhengAdvance：各段也按天正步进排布，每段画出的宽度同样取天正的——按 MiniCAD 实际显示的字体（simplex / TSSDCHN）
-        // 反算宽度因子。天正的大字体 GBCBIG 汉字步进约 0.728 × 字高，替代的 TSSDCHN 为 1，不反算时汉字段压到下一段上、
-        // 长句冲出表格（建筑平面样图的引出标注、平面小说明）；天正的显示也是各段占满自己的步进（DN100 每字 0.4 × 名义字高）。
-        // 天正上标 ^U…^U（m^U2^U 为 m²）：字高为本段的一半、抬高 0.5 × 名义字高，每字步进 0.35 × 西文步进
-        //（建筑平面样图“公卫（4.56m²）”“厨房（8.58m²）”的天正 2014 分解结果核对）
+    { 
         inline void AddRuns(TchGraphics& g, const std::string& text, double nominal, double x, double y, double rotation, int align,
                             int color = 7, int layer = 0, int style = 0, double asciiScale = 0.85, double asciiWidth = 0.6 / 0.85,
                             double tzAscii = 0.5714, double tzWide = 0.69, bool tianzhengAdvance = false, double wideScale = 0.96454)
@@ -997,10 +921,7 @@ namespace MiniCAD::Tch
                 if (text.compare(i, 2, "^U") == 0) { sup = !sup; i += 2; continue; }
                 const unsigned char c = static_cast<unsigned char>(text[i]);
                 std::size_t len = c < 0x80 ? 1 : c < 0xe0 ? 2 : c < 0xf0 ? 3 : 4;
-                // 对齐按天正自己的字宽定起点（分解结果核对：西文每字 0.5714、句点 0.114、汉字约 0.69 × 名义字高），
-                // 这样文字起点与天正一致，不会因 MiniCAD 字体宽窄不同越过引线转折点等
                 double tz = c >= 0x80 ? tzWide : (c == '.' || c == ',') ? 0.2 * tzAscii : tzAscii;
-                // AutoCAD 控制码 %%%、%%c / %%d / %%p、%%nnn 显示为一个字符
                 if (c == '%' && i + 2 < text.size() && text[i + 1] == '%')
                 {
                     len = 3;
@@ -1039,11 +960,7 @@ namespace MiniCAD::Tch
             }
         }
     }
-
-    // 箭头（与天正 2014 对 8 个变体的分解结果核对）：最后一段末端为长 ArrowLength × 比例、底宽为其 1/3.75 的实心箭头；
-    // 文字高 0.9645 × 名义字高。模式 1：第一个文字在尾端外侧 0.3 × 名义字高处、垂直居中；模式 2：两个文字沿首段、在首段中点上下，
-    // 距线 0.3 × 名义字高；模式 3（墙身大样样图的分解结果核对）：第一个文字沿首段方向（朝左时转 180°），在线的上方 0.3 × 名义字高，
-    // 从尾端起写（转 180° 时文字末端对齐尾端），字高 0.85 × 名义字高、宽度因子 0.6 / 0.85
+     
     inline TchGraphics BuildArrow(const TchArrow& a)
     {
         using P = TchGraphics::Point;
@@ -1073,8 +990,6 @@ namespace MiniCAD::Tch
         }
         else if (a.Mode == 2)
         {
-            // 文字沿首段方向（朝左时转 180°）居中于首段中点：第一个文字基线在线上方 0.3 × 名义字高，第二个文字顶部在线下方同样距离
-            //（墙身大样样图 62 个坡度箭头的分解结果核对：西文字高 0.85 × 名义字高、宽度因子 0.6 / 0.85）
             const P mid{(v[0].X + v[1].X) / 2, (v[0].Y + v[1].Y) / 2};
             double rotation = std::atan2(v[1].Y - v[0].Y, v[1].X - v[0].X);
             Detail::Upright(rotation);
@@ -1105,10 +1020,7 @@ namespace MiniCAD::Tch
             if (!Finite(s.X) || !Finite(s.Y)) return "nonfinite insight symbol center";
             return nullptr;
         }
-
-        // 内视符号在符号基类之后全是明文字段：BS 类型、2 个字符串（类型非 0 的第二段文字、编号）、
-        // BD3 圆心、BD 半径、BD 角度、BD、BL（为 1 时后面有另外三个编号）、RC 编号大小算法、BD 编号比例；
-        // BL 为 1 时 RC 版本（≤ 1）与下、左、右三个编号。这一层没有自己的版本号
+         
         template <class NextText>
         inline bool ReadInSightFields(MiniDWG::DwgBitReader& r, NextText&& next, TchInSight& s)
         {
@@ -1134,7 +1046,6 @@ namespace MiniCAD::Tch
             return !r.Failed();
         }
 
-        // 新版天正（基类版本 9～14）：加密的符号基类之后同上
         inline bool DecodeInSightCipher(const MiniDWG::UnknownEntity& entity, TchInSight& inSight, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -1152,7 +1063,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // TCH_TDBINSIGHT：新版加密对象见 DecodeInSightCipher；旧版为明文符号基类加同样的字段（没有旧版样图核对），必须恰好读完主数据流
     inline bool DecodeInSight(const MiniDWG::UnknownEntity& entity, TchInSight& inSight, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -1177,14 +1087,7 @@ namespace MiniCAD::Tch
         if (diagnostic) diagnostic->clear();
         return true;
     }
-
-    // 内视符号（tianzheng2.dwg 的四向符号与其他看图软件的显示对照）。
-    // R = 半径 × 比例，局部轴 x、y 为世界轴转 Angle。实心区域：P − Rx 经朝 +y 的半圆（凸度 −1）到 P + Rx，再到 P + √2R·x、
-    // P + √2R·y、P − √2R·x 闭合（外切于圆的三角减去半圆）；类型 0 且编号多于一个时再加关于 x 轴对称的一块，合成菱形。
-    // 分隔线（编号类型按非空编号算）：2（只有上、下）沿 y 轴，3（只有左、右）沿 x 轴，其余多个编号为
-    // y 轴转 45°、135° 的两条；类型非 0 为水平直径。
-    // 编号是 Fit 对齐的单行文字：先在不转的局部框里按编号大小算法定宽高与位置，类型 0 再把框中心绕圆心转 Angle + π/2，
-    // 文字保持水平。textWidth 为字高 1、宽度因子 1 时的显示宽度，styleWidth 为文字样式的宽度因子（天正按它量宽高比）
+ 
     inline TchGraphics BuildInSight(const TchInSight& s, double configRatio, int configMode,
                                     const std::function<double(const std::string&)>& textWidth, double styleWidth = 1.0)
     {
@@ -1216,10 +1119,7 @@ namespace MiniCAD::Tch
                 const P dir{y.X * std::cos(a) - y.Y * std::sin(a), y.X * std::sin(a) + y.Y * std::cos(a)};
                 g.Lines.push_back({at(dir, -r), at(dir, r)});
             }
-
-        // 编号大小：base = 比例 × R。算法 0 按 textbox 宽高比 a（SHX 大写字母墨迹高 = 字高）把文字框的半对角线放进
-        // base（类型非 0 或编号类型 2 另有系数），编号类型 4 固定宽 2·base / (2√2 + 1)；其他算法字高 2·base（编号类型 4 乘 0.8，
-        // 类型非 0 或编号类型 2～4 再乘 0.5），宽按字形量，编号类型 1 宽高都减半（画时字高再加倍）
+         
         const double ratio = std::abs(s.TextRatio) >= 0.001 ? s.TextRatio : configRatio;
         const int mode = s.TextMode == 2 ? configMode : s.TextMode;
         const double base = ratio * r;
@@ -1242,7 +1142,6 @@ namespace MiniCAD::Tch
             }
             return b;
         };
-        // 编号的局部框：中心相对圆心的偏移（未转）与宽高；Fit 对齐按显示宽度求宽度因子
         const double turn = s.Angle + std::numbers::pi / 2, ct = std::cos(turn), st = std::sin(turn);
         auto put = [&](const std::string& t, double dx, double dy, const Box& b, bool rotate) {
             if (t.empty() || b.W <= 0 || b.H <= 0) return;
@@ -1250,7 +1149,6 @@ namespace MiniCAD::Tch
             const double natural = textWidth(t) * b.H;
             g.Texts.push_back({center, b.H, 0, t, 5, 0, 7, 0, natural > 0 ? b.W / natural : 0.0});
         };
-        // 编号到分隔线的距离：圆在文字宽度处余下的高度（算法 0；其他算法取 R）减去字高后的 0.4；比例大于 1.01 时为字高的 0.2
         auto gap = [&](const Box& b) {
             const double room = mode == 0 ? std::sqrt(std::max(0.0, r * r - b.W * b.W * 0.25)) : r;
             return ratio > 1.01 ? b.H / 5 : (room - b.H) * 0.4;
@@ -1286,12 +1184,7 @@ namespace MiniCAD::Tch
         }
         return g;
     }
-
-    // 剖切符号的新国标样式（tianzheng2.dwg 与其他看图软件的显示对照）：
-    // 零宽多段线连起各点，终点、以及剖面（类型 1）的起点在圆边截断；两端各画一个内视符号，圆心在端点，半径 = 直径 × 0.5，
-    // 三角朝投射方向（内视符号的 Angle = 投射方向 − π/2），编号与比例、大小算法照搬，有索引图号（IndexFlags 含 2 或 4）时
-    // 为内视符号类型 1（水平线上编号、下索引图号）。断面（类型 0）的起点不画圆，改画沿投射方向长 7 × 比例、线宽 2 × 比例的粗线。
-    // 没有编号时只画剖切线。参数同 BuildInSight
+ 
     inline TchGraphics BuildSectionNewStyle(const TchSection& s, double configRatio, int configMode,
                                             const std::function<double(const std::string&)>& textWidth, double styleWidth = 1.0)
     {

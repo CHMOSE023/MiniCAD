@@ -14,17 +14,7 @@
 
 namespace MiniCAD
 {
-    // ── 块定义级细分缓存（DrawContext::BeginBlockInstance）────────────────
-    //
-    // 天正图里作为块插入的建筑底图，同一个块定义（门窗、家具、线图案）插入几十到几千次，以前每次插入都克隆一遍块内容、
-    // 重新细分一遍。现在同一块定义只细分一次，记下细分结果，之后的插入把它经平移、旋转接上，不再逐个画块内子实体。
-    //
-    // 能复用的前提是两次插入的输出只差一个平移 + 旋转：
-    //   · 线型在插入变换之后按世界长度铺（DrawContext::EmitStyled），所以缩放、镜像不同的插入不能共用——
-    //     插入变换去掉旋转后剩下的部分（缩放、镜像、错切）进键；
-    //   · 块内 ByBlock 的颜色 / 线型 / 线宽与 0 层上的子实体随插入（InsertEntity::EnsureResolved），这几项也进键。
-    // 记下的是插入变换去掉旋转、平移后的坐标（双精度），接上时再换到新位置：与直接细分只差双精度的舍入，
-    // 落成 float 顶点后相同。按像素烘焙的（线宽、相对尺寸的点）、纹理文字、图像、绝对角度的线型符号不记
+    // ── 块定义级细分缓存（DrawContext::BeginBlockInstance）──────────────── 
     struct BlockTessKey
     {
         const void* block       = nullptr;
@@ -133,7 +123,7 @@ namespace MiniCAD
 
         bool Full() const { return m_vertices >= kMaxVertices; }
 
-        // 这个块值得记下来：展开不止一次。统计里没有的块（天正对象、标注等实体里面引用的块）第二次遇到才记
+        // 这个块值得记下来：展开不止一次。统计里没有的块（TCH对象、标注等实体里面引用的块）第二次遇到才记
         bool Worth(const void* block)
         {
             if (!m_counted)

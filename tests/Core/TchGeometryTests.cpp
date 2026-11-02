@@ -1,4 +1,4 @@
-// 天正对象显示几何的回归测试：以天正建筑 2014 + AutoCAD 2014 对样例图逐个分解（EXPLODE）的结果为基准。
+// TCH对象显示几何的回归测试：以天正建筑 2014 + AutoCAD 2014 对样例图逐个分解（EXPLODE）的结果为基准。
 // 期望数据由 tests/Core/tch_geomref.py 从分解日志生成（TchGeometryRef.inc）：
 //   线段：分解出的 LINE / LWPOLYLINE 直线段按共线合并后的区间；圆、圆弧：圆心、半径与起止角；
 //   文字：内容（UTF-8）、字高与 TEXTBOX 得到的文字框（中心、半宽、半高、转角）。
@@ -79,7 +79,7 @@ namespace
         bool Found = false;
     };
 
-    // *U_TCH_<十进制句柄>（后缀 _ 为重名）：天正对象生成的显示块
+    // *U_TCH_<十进制句柄>（后缀 _ 为重名）：TCH对象生成的显示块
     unsigned long long TchHandle(const std::string& name)
     {
         if (!name.starts_with("*U_TCH_")) return 0;

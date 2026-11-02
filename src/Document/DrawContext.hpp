@@ -221,7 +221,7 @@ namespace MiniCAD
         // ── 分段细分大块参照（Editor 分帧细分用）──────────────────
         // 之后画的块参照从 resume 处（空 = 从头）接着画块内子实体，到 deadline 就停（至少画一个）。位置是一条路径：
         // 每层块参照里第几个子实体（BeginBlockChild 的调用序），路径之前的子实体整个跳过、不进嵌套块参照，
-        // 所以接着画的开销与已画了多少无关。画着的子实体里面（天正对象、标注里再套的块）不分段、不计序号
+        // 所以接着画的开销与已画了多少无关。画着的子实体里面（TCH对象、标注里再套的块）不分段、不计序号
         void BeginChunk(std::vector<size_t> resume, std::chrono::steady_clock::time_point deadline)
         {
             m_chunk          = {};
@@ -247,7 +247,7 @@ namespace MiniCAD
         {
             if (!m_blockRecords.empty() && m_blockRecords.back().depth == m_childDepth)
                 ++m_blockRecords.back().direct;
-            if (m_leafDepth > 0)    // 画着的子实体里面（天正对象、标注里再套的块）：不分段、不计数
+            if (m_leafDepth > 0)    // 画着的子实体里面（TCH对象、标注里再套的块）：不分段、不计数
             {
                 ++m_leafDepth;
                 ++m_childDepth;

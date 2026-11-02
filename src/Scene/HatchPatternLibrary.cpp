@@ -12,7 +12,6 @@ namespace MiniCAD
 {
     namespace
     {
-        // 图案数据：内置的公制图案、天正自带的图案（编进程序，不用另放天正的 acad.pat）
 #include "Scene/HatchPatternLibrary.inc"
 
         std::string Upper(std::string_view s)
@@ -161,7 +160,7 @@ namespace MiniCAD
         }
         std::ostringstream ss;
         ss << in.rdbuf();
-        return LoadText(CadTextToUtf8(ss.str()), error);     // 中文版 AutoCAD、天正的 .pat 是 GBK
+        return LoadText(CadTextToUtf8(ss.str()), error);      
     }
 
     const HatchPattern* HatchPatternLibrary::Find(std::string_view name) const

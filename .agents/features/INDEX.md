@@ -11,7 +11,7 @@ covers: .agents/features/*.md
 | [cad-exchange](cad-exchange.md) | DWG/DXF 读写：写出版本、已映射的实体、以原图为底另存、文字样式与线型、OLE 对象 | `src/Import/CadExchange.*`、`src/Serialization/Dwg|Dxf` | `MiniCADTests`、`MiniCADCadPreserveTests`、`MiniDWGTests` |
 | [xref](xref.md) | 外部参照：读入、查找文件、未加载时显示路径、选文件夹再找（含网页版） | `CadExchange.cpp` 的 `Importer::LoadXref` / `ResolveXrefPath`、`MainFrame::LocateXrefs` | `MiniCADTests`（`CadXrefTests.cpp`）、`tests/Web/FolderPickerTests.cjs` |
 | [layout-viewport](layout-viewport.md) | 布局页与图纸空间视口：视图中心换算、冻结图层、模型内容合成、`$PSLTSCALE` | `ViewportEntity`、`Editor::ComposeModelIntoViewport` | `MiniCADTests`（`LayoutTests.cpp`、`OleFrameTests.cpp`） |
-| [tianzheng](tianzheng.md) | 天正对象（`TCH_*`）的解析与显示适配 | `src/Import/Tch*.h` | `MiniCADTch*Tests`、`MiniCADTianzhengTests` |
+| [tch](tch.md) | `TCH_*`的解析与显示适配 | `src/Import/Tch*.h` | `MiniCADTch*Tests`、`MiniCADTianzhengTests` |
 | [view3d](view3d.md) | 三维视图、着色与轮廓线、视图方块、背景深浅 | `Camera`、`Editor`、`GUI/ViewCube` | `SolidViewTests` |
 | [main-window](main-window.md) | 主窗口界面：布局、功能区、面板（含浮出成独立窗口，浮动窗口里合并标签、最大化；图层面板按名字里的 `$` 分级显示成树）、文档拖出成独立窗口（对等多窗口：各有标题栏、功能区、快捷键）、命令行、界面语言的选择与运行时切换、桌面 / 网页 / Linux 宿主| `apps/Common/src/GUI`、`apps/Win32`、`apps/Web`、`apps/Linux` | `MiniCADWin --selftest`、`MiniGUITests` |
 | [display-performance](display-performance.md) | 显示性能：静态 / 动态流、虚线延迟铺设、字形实例化、选择集与夹点缓存、打开图纸后分帧细分、块定义级细分缓存、锁定图层淡显、大坐标的渲染原点（测绘坐标放大后线画偏、夹点不在线上）、深度放大的局部显示与曲线加密 | `Editor`、`Viewport`、`DrawContext`、`BlockTessCache`、渲染器 | `MiniCADWin --bench` |

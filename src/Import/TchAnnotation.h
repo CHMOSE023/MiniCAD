@@ -39,7 +39,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的标高版本 5：符号基类后 RC 版本、RC 密钥；标志、
         // 标高点（二维点）、文字、线长；标志位 2、3 各多一个数值；数值、字节、2 个二维点、字符串、字节
         inline bool DecodeElevationCipher(const MiniDWG::UnknownEntity& entity, TchElevation& elevation, std::string* diagnostic)
         {
@@ -110,7 +109,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 与天正 2014 分解结果核对（3 个变体）：三角高 3 × 比例、尖在标高点；水平线从三角另一侧顶点外伸线长 × 比例；
     // 文字在线上 0.3 × 名义字高（线下时基线在线下 1.3 × 名义字高），朝右时右端距线端 0.3 × 比例，朝左时左端距线端 0.3 × 比例
     inline TchGraphics BuildElevation(const TchElevation& e)
     {
@@ -166,7 +164,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的引出标注版本 7：符号基类后 RC 版本、RC 密钥；箭头样式、转折点（二维点）、线长、方向、
         // 线上 / 线下文字、点数与各点；箭头长、文字间距、文字对齐、数值、字节、二维点、2 个三维点
         inline bool DecodeMultiLeaderCipher(const MiniDWG::UnknownEntity& entity, TchMultiLeader& leader, std::string* diagnostic)
         {
@@ -245,8 +242,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 引线端点符号（与天正 2014 分解结果核对）：圆点为半径 0.2 × 比例、线宽 0.4 × 比例的闭合多段线；
-        // 实心箭头长 ArrowSize × 比例、尾宽 0.8 × 比例
         inline void AddLeaderEnd(TchGraphics& g, int kind, TchGraphics::Point tip, TchGraphics::Point toward, double scale, double size)
         {
             if (kind == 1)
@@ -269,10 +264,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 与天正 2014 分解结果核对（3 个变体）：各被标注点连线到转折点，转折点起水平线长 LineLength × 比例（可为负，即朝反方向）；
-    // 文字间距 Gap（× 名义字高 n，默认 0.3）：线上文字基线高 Gap × n，线下文字基线低 (1 + Gap) × n。
-    // 水平方向按 Align 对齐在水平线远端（3）或转折点一侧（1），内缩 0.3 × n，朝线内对齐（两张建筑样图的分解结果核对）。
-    // SHX 样式用天正注释符号的字宽排布；TrueType 样式（如“宋体”）同 TCH_TEXT：字高 = n × 0.75527、样式宽度因子
     inline TchGraphics BuildMultiLeader(const TchMultiLeader& m, const TchTextStyleRule& rule = {})
     {
         TchGraphics g;
@@ -305,8 +296,6 @@ namespace MiniCAD::Tch
             }
             return g;
         }
-        // 注释符号的字宽乘样式宽度因子，按天正步进排布、画出的宽度也取天正的（建筑平面样图 _TCH_DIM 宽 0.7：
-        // 天正显示“预留DN100钢套管”长约 0.69 × 0.7 × 5 + 0.5714 × 0.7 × 5 名义字高，以前汉字段按 1.0 留位置又按 0.7 宽画，中间空出一截）
         const double width = rule.StyleWidth;
         for (const auto& [value, y] : {std::pair{m.Upper, upper}, std::pair{m.Lower, lower}})
             Detail::AddRuns(g, value, nominal, anchor, y, 0, column, 7, 0, 0, 0.85, 0.6 / 0.85 * width, 0.5714 * width, 0.69 * width, true, rule.WideHeight);
@@ -334,8 +323,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的做法标注版本 4：符号基类后 RC 版本、RC 密钥；文字位置、线长、起点、转折点（二维点）、
-        // 文字；5 个数值、2 个字节
         inline bool DecodeComposingCipher(const MiniDWG::UnknownEntity& entity, TchComposing& composing, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -410,8 +397,6 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 与天正 2014 分解结果核对（文字在线端 1 个变体）：引线 + 水平线；文字在线端外 0.57 × 名义字高、与线居中。
-    // 文字在线上时从转折点外 0.57 × 名义字高起、基线高 0.3 × 名义字高（1 个变体核对；多行行距 1.4 × 名义字高未核对）
     inline TchGraphics BuildComposing(const TchComposing& c)
     {
         TchGraphics g;
@@ -457,8 +442,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正的索引图名版本 3：符号基类后 RC 版本、RC 密钥；圆心（二维点）、半径、线宽、编号、图号、
-        // 比例文字、比例文字样式（句柄）、比例字高、数值、显示比例、字节、2 个数值
         inline bool DecodeDrawingIndexCipher(const MiniDWG::UnknownEntity& entity, TchDrawingIndex& index, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -530,9 +513,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 与天正 2014 分解结果核对（2 个变体）：圆为宽 LineWidth × 比例的闭合多段线；只有编号时编号字高约 0.55 × 直径、上下居中；
-    // 有图号时画水平直径，编号、图号字高约 0.26 × 直径，分别在上半、下半居中（天正按字形填满，字高为近似值）；
-    // 比例文字在圆右侧 2 × 比例处、基线与圆底平齐
     inline TchGraphics BuildDrawingIndex(const TchDrawingIndex& d)
     {
         TchGraphics g;
@@ -579,8 +559,6 @@ namespace MiniCAD::Tch
             return nullptr;
         }
 
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的指北针版本 3（基类是天正曲线基类，没有符号基类）：
-        // RC 版本、RC 密钥；圆心（二维点）、半径、指向、文字样式（句柄）、字高、颜色、文字、二维点
         inline bool DecodeNorthThumbCipher(const MiniDWG::UnknownEntity& entity, TchNorthThumb& north, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -607,7 +585,7 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 天正基类、RC 版本、2RD 圆心、BD 半径、BD 指向；版本 ≥ 2：句柄（文字样式）、BD 字高（自定义编码）、BS 颜色、文字、2RD
+    // TCH基类、RC 版本、2RD 圆心、BD 半径、BD 指向；版本 ≥ 2：句柄（文字样式）、BD 字高（自定义编码）、BS 颜色、文字、2RD
     inline bool DecodeNorthThumb(const MiniDWG::UnknownEntity& entity, TchNorthThumb& north, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
@@ -649,7 +627,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 与天正 2014 分解结果核对（2 个变体）：圆；沿指向从圆底到圆顶的锥形多段线（尾宽 3 × 比例）；文字中心在指向上距圆心约半径 + 字高
     inline TchGraphics BuildNorthThumb(const TchNorthThumb& n)
     {
         TchGraphics g;
@@ -673,13 +650,47 @@ namespace MiniCAD::Tch
         std::vector<Vertex> Vertices;
     };
 
-    // 天正基类、RC 版本（1）、RC、BS 点数、每点 2RD 与 BD 折断数、RC、4 位（切除方式等，不影响折断线本身）
+    namespace Detail
+    {
+        // 新版 TCH_CUT 版本 2
+        inline bool DecodeCutCipher(const MiniDWG::UnknownEntity& entity, TchCut& cut, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            CipherReader f(entity);
+            if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
+            if (f.Main.ReadByte() != 2) return fail("unsupported native cut line version");
+            f.ReadKey();
+            f.Main.ReadByte();
+            const int count = f.Main.ReadBitShort();
+            if (count < 2 || count > 10000) return fail("invalid cut line vertex count");
+            TchCut c;
+            c.Scale = f.Scale;
+            for (int i = 0; i < count && f.Ok(); ++i)
+            {
+                TchCut::Vertex v;
+                v.X = f.Main.ReadRawDouble(); v.Y = f.Main.ReadRawDouble();
+                const double breaks = f.Main.ReadBitDouble();
+                if (!Finite(v.X) || !Finite(v.Y) || !(breaks >= 0 && breaks <= 100)) return fail("invalid cut line vertex");
+                v.Breaks = static_cast<int>(std::lround(breaks));
+                c.Vertices.push_back(v);
+            }
+            f.Byte();
+            for (int i = 0; i < count; ++i) f.Bool();
+            if (!f.Exact()) return fail("native cut line fields do not consume the payload exactly");
+            if (!(c.Scale > 0)) return fail("invalid native cut line scale");
+            cut = std::move(c);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     inline bool DecodeCut(const MiniDWG::UnknownEntity& entity, TchCut& cut, std::string* diagnostic = nullptr)
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_CUT") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeCutCipher(entity, cut, diagnostic);
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cut line");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
@@ -700,7 +711,7 @@ namespace MiniCAD::Tch
             c.Vertices.push_back(v);
         }
         r.ReadByte();
-        for (int i = 0; i < 4; ++i) r.ReadBit();
+        for (int i = 0; i < count; ++i) r.ReadBit();
         if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native cut line fields do not consume the payload exactly");
         if (!(c.Scale > 0)) return fail("invalid native cut line scale");
         cut = std::move(c);
@@ -708,8 +719,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 与天正 2014 分解结果核对（1 个样例）：只画有折断的段；每个折断在段上均匀分布，
-    // 折断处为 ±1.125 × 比例范围内的锯齿，齿尖距中点 −0.3607、+0.3799 × 比例、高 ±2.1 × 比例；其余段为遮挡范围边界，不画
     inline TchGraphics BuildCut(const TchCut& c)
     {
         TchGraphics g;
@@ -750,8 +759,6 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        // 新版天正（基类版本 9～14，见 TchCipher.h）的对称轴版本 2：RC 版本、RC 密钥；两端（二维点）、
-        // 与明文分支同序的 3 个数值
         inline bool DecodeSymmetryCipher(const MiniDWG::UnknownEntity& entity, TchSymmetry& symmetry, std::string* diagnostic)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -800,8 +807,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正的画法：轴线；两端各两条横线，从端点向内 Gap × 比例一条、再向内 Spacing × 比例一条，
-    // 长 TickLength × 比例。天正 2014 分解的样例（轴长 10 × 比例）横线恰在中点两侧 0.5、3 × 比例处，与此相同；tianzheng2.dwg 与其他看图软件的显示一致
     inline TchGraphics BuildSymmetry(const TchSymmetry& m)
     {
         TchGraphics g;
@@ -824,6 +829,67 @@ namespace MiniCAD::Tch
         double Bulge = 0.5;                         // 每段圆弧的凸度
     };
 
+    namespace Detail
+    {
+        // 新版 TCH_MODI 版本 2-5；版本 ≥ 3 的附加多段线未画
+        inline bool DecodeModiCipher(const MiniDWG::UnknownEntity& entity, TchModi& modi, std::string* diagnostic)
+        {
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            struct V { double X = 0, Y = 0, Bulge = 0; };
+            CipherReader f(entity);
+            TchSymbolBase symbol;
+            MiniDWG::Handle style = MiniDWG::kNullHandle;
+            if (!ReadCipherSymbolBase(f, symbol, style)) return fail("unsupported Tianzheng symbol base layout");
+            const int version = f.Main.ReadByte();
+            if (version < 2 || version > 5) return fail("unsupported native revision cloud version");
+            f.ReadKey();
+            TchModi m;
+            std::vector<V> vertices;
+            if (!ReadPoly2D(f.Main, m.Closed, &vertices) || vertices.size() < 2) return fail("invalid revision cloud vertex count");
+            for (const auto& v : vertices)
+            {
+                if (!Finite(v.X) || !Finite(v.Y)) return fail("invalid revision cloud vertex");
+                m.Points.push_back({v.X, v.Y});
+            }
+            f.Double();
+            m.Bulge = f.Double();
+            f.Byte();
+            f.Text();
+            f.Point3();
+            int kind = 0;
+            if (version >= 3)
+            {
+                kind = f.Byte();
+                if (kind == 1)
+                {
+                    f.Short(); f.Byte(); f.Double(); f.Double();
+                    for (int i = 0; i < 8; ++i) f.Text();
+                }
+                const int extra = f.Short();
+                for (int i = 0; i < extra && f.Ok(); ++i)
+                {
+                    bool closed = false;
+                    if (!ReadPoly2D<V>(f.Main, closed, nullptr)) return fail("invalid revision cloud polyline");
+                }
+            }
+            if (version >= 4)
+            {
+                for (int i = 0; i < 5; ++i) f.Text();
+                f.Byte();
+            }
+            if (version >= 5)
+            {
+                f.Byte();
+                if (kind == 1) f.Text();
+            }
+            if (!f.Exact()) return fail("native revision cloud fields do not consume the payload exactly");
+            if (!Finite(m.Bulge) || std::abs(m.Bulge) > 10) return fail("invalid revision cloud bulge");
+            modi = std::move(m);
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+    }
+
     // 符号基类、RC 版本（1）、RC 闭合、BS 点数与各点 2RD + BD、BD 弧长系数、BD 凸度、RC、编号（文字）、3BD 编号位置
     inline bool DecodeModi(const MiniDWG::UnknownEntity& entity, TchModi& modi, std::string* diagnostic = nullptr)
     {
@@ -831,6 +897,7 @@ namespace MiniCAD::Tch
         const auto& data = entity.Raw.Dwg;
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_MODI") return false;
+        if (Detail::IsCipherObject(data)) return Detail::DecodeModiCipher(entity, modi, diagnostic);
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!Detail::ReadSymbolHead(entity, "TCH_MODI", r, symbol)) return fail("unsupported Tianzheng symbol base layout");
@@ -859,7 +926,6 @@ namespace MiniCAD::Tch
         return true;
     }
 
-    // 天正 2014 分解为一条闭合多段线，每段为凸度 Bulge 的圆弧（线宽从 0 渐变到 1.5 × 比例，MiniCAD 画为细线；2 个样例核对）
     inline TchGraphics BuildModi(const TchModi& m)
     {
         TchGraphics g;

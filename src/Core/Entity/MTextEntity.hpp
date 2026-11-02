@@ -71,7 +71,6 @@ namespace MiniCAD
         void SetHeight(double h)                   { m_height = h; }
         void SetRotation(double r)                 { m_rotation = r; }
         void SetBoxWidth(double w)                 { m_boxWidth = w; }   // 参考矩形宽度(组码 41)
-        // 宽度因子：0 = 按文字样式；> 0 时代替样式的（天正文字按 0.7 宽显示等）。DXF 的 MTEXT 没有这个属性，
         // 导出时写成开头的内联格式码 \W0.7;
         void SetWidthFactor(double f)              { m_widthFactor = f > 0.0 ? f : 0.0; }
 
@@ -267,7 +266,6 @@ namespace MiniCAD
             const std::string shown = StripInlineCodes(m_text, true);
             if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
             // 不限宽的居中 / 右对齐：按实际排版的宽度定起点。估算宽度不含字体的字宽与宽度因子，
-            // 天正表格里窄宽度因子的居中汉字整行偏左、越长偏得越多。量不到（返回 0）时仍按估算
             if (m_boxWidth <= 0.0 && m_columnType == MTextColumnType::None && !IsLeftAttachment())
                 if (const double measured = sink.MeasureMTextWidth(shown, m_styleId, m_height, 0.0); measured > 0.0) w = measured;
             if (w <= 0.0) w = m_height;

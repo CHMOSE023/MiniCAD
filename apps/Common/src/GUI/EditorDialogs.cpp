@@ -856,7 +856,7 @@ namespace MiniCAD
         auto* combo = AddRow<ComboBox>(body, Tr("图案"), names, selected);
         combo->EditLayoutStyle().width = 220.0f;
         // 下拉层按最长一项定宽：样例与内边距之外加上文字宽度，限制在 320～560。
-        // 外部 .pat（如天正的）说明较长，固定 320 时后半截被切掉
+        // 外部 .pat说明较长，固定 320 时后半截被切掉
         float textWidth = 0.0f;
         for (const HatchPattern& p : patterns)
             textWidth = std::max(textWidth, m_ui->GetTextSystem().Measure(itemText(p, true), itemParams).x);
