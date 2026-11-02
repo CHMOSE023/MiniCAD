@@ -2,7 +2,7 @@
 // - 导航条：竖排在视图方块下面、贴着绘图区右边的圆角浮条——平移、放大、缩小、窗口缩放、全部显示 | 标准视图、视觉样式（菜单）。
 //   按钮的可用 / 勾选状态取自命令（ToolBar 自动刷新）；环绕仍用鼠标（Shift + 中键），写在提示里。
 //   每个窗口一条（主窗口、各文档窗口）：命令作用于当前文档，按下时所在窗口的文档已成为当前文档（MainFrame::UseChrome）
-// - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号。
+// - 标题栏右侧（面板 "appbar"）：AI 助手、设置、帮助、版本号；有新版本时版本号变成带红点的按钮（UpdateCheck.cpp）。
 #include "GUI/MainFrame.h"
 #include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
@@ -179,10 +179,35 @@ namespace MiniCAD
                       { "ui.theme", kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
                       PopupPlacement::Below, 18.0f);
         AddMenuButton(row, m_commands, icons + "/Help.png", Tr("帮助"),
-                      { "ui.search", "view.start", "-", "help.about" }, PopupPlacement::Below, 18.0f);
+                      { "ui.search", "view.start", "-", "help.checkUpdate", "help.about" }, PopupPlacement::Below, 18.0f);
 
-        auto* version = row->AddChild<Label>("v" MINICAD_VERSION_STRING, 12.0f, Theme::TextDim);
-        version->EditLayoutStyle().margin = Edges::Make(6.0f, 0.0f, 0.0f, 0.0f);
-        version->SetTooltip(Tr("MiniCAD 版本"));
+        if (m_update.version.empty())
+        {
+            auto* version = row->AddChild<Label>("v" MINICAD_VERSION_STRING, 12.0f, Theme::TextDim);
+            version->EditLayoutStyle().margin = Edges::Make(6.0f, 0.0f, 0.0f, 0.0f);
+            version->SetTooltip(Tr("MiniCAD 版本"));
+            return;
+        }
+
+        // 有新版本：版本号变成按钮（文字比平时亮），右上角红点，点开更新对话框
+        auto* version = row->AddChild<Button>();
+        version->SetStyle(ButtonStyle::Flat());
+        version->SetFocusable(false);
+        version->SetText("v" MINICAD_VERSION_STRING)->SetFontSize(12.0f);
+        version->EditLayoutStyle().padding = Edges::Symmetric(5.0f, 3.0f);
+        version->EditLayoutStyle().margin  = Edges::Make(1.0f, 0.0f, 0.0f, 0.0f);
+        version->SetTooltip(TrF("有新版本 v{0}，点击查看并下载", m_update.version));
+        version->SetOnClick([this] { ShowUpdateDialog(); });
+        auto* dot = version->AddChild<Panel>(Theme::Danger);
+        dot->SetRounding(3.0f);
+        dot->SetHitTestVisible(false);
+        {
+            LayoutStyle& s = dot->EditLayoutStyle();
+            s.position = PositionType::Absolute;
+            s.right    = 0.0f;
+            s.top      = 1.0f;
+            s.width    = 6.0f;
+            s.height   = 6.0f;
+        }
     }
 }

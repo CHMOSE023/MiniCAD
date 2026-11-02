@@ -355,7 +355,7 @@
     "文件已损坏或版本不受支持": "The file is damaged or its version is not supported",
     "DWG/DXF 导入：读取 {0} ms，转换 {1} ms": "DWG/DXF import: read {0} ms, convert {1} ms",
     "DWG/DXF 导出：{0} 格式的 DWG 不支持写出，改写为 2010 格式": "DWG/DXF export: writing {0} DWG is not supported, writing 2010 format instead",
-    "DWG/DXF 导出：格式或版本与原图不同，TCH对象 × {0} 不能原样写回，只写出显示用的普通几何": "DWG/DXF export: format or version differs from the original, Tianzheng objects × {0} cannot be written back as is, writing their display geometry only",
+    "DWG/DXF 导出：格式或版本与原图不同，TCH对象 TCH对象 不能原样写回，只写出显示用的普通几何": "",
     "写出失败": "Failed to write the file",
     "DWG/DXF 导出失败：{0}": "DWG/DXF export failed: {0}",
     "不支持这种曲线": "This kind of curve is not supported",
@@ -1125,6 +1125,7 @@
     "重新加载界面(&R)": "Reload Interface",
     "重新读取界面描述文件（保存文件时也会自动重新加载）": "Reread the interface description file (also reloaded automatically when the file is saved)",
     "浅色主题(&T)": "Light Theme",
+    "检查更新(&U)…": "Check for Updates…",
     "关于(&A)…": "About…",
     "MainFrame: 字体系统初始化失败": "MainFrame: font system initialization failed",
     "MainFrame: 没有找到界面字体": "MainFrame: UI font not found",
@@ -1316,6 +1317,15 @@
     "全部选择": "Select All",
     "全部清除": "Clear All",
     "捕捉孔径": "Aperture Size",
+    "检查更新": "Check for Updates",
+    "无法获取最新版本信息，请检查网络连接后重试。": "Could not get the latest version information. Check your network connection and try again.",
+    "已是最新版本（v{0}）。": "You are using the latest version (v{0}).",
+    "发现新版本": "New Version Available",
+    "MiniCAD v{0} 已发布": "MiniCAD v{0} is available",
+    "当前版本 v{0}": "Current version v{0}",
+    "下载": "Download",
+    "发布页": "Release Page",
+    "稍后": "Later",
     "视图方块：点面、棱、角或东南西北切换视图，拖动环绕": "ViewCube: click a face, edge, corner or compass direction to change the view; drag to orbit",
     "语言(&L)": "Language",
     "标准视图（三维视图里按住 Shift 拖动中键环绕，拖动中键平移）": "Standard views (in 3D views, Shift + middle-drag to orbit, middle-drag to pan)",
@@ -1327,6 +1337,7 @@
     "设置": "Settings",
     "帮助": "Help",
     "MiniCAD 版本": "MiniCAD version",
+    "有新版本 v{0}，点击查看并下载": "New version v{0} available. Click to see what's new and download",
     "所有支持的文件": "All Supported Files",
     "AutoCAD 图形 (*.dwg)": "AutoCAD Drawing (*.dwg)",
     "AutoCAD 交换文件 (*.dxf)": "AutoCAD DXF (*.dxf)",
@@ -2119,6 +2130,7 @@
   "obsolete": {
     "语言": "Language",
     "无法保存设置（没有用户数据目录）。可以在命令行上用 --lang 指定界面语言。": "Cannot save the setting (no user data folder). Use --lang on the command line to choose the interface language.",
-    "重新打开 MiniCAD 后界面切换为 {0}。": "The interface will switch to {0} the next time MiniCAD starts."
+    "重新打开 MiniCAD 后界面切换为 {0}。": "The interface will switch to {0} the next time MiniCAD starts.",
+    "DWG/DXF 导出：格式或版本与原图不同，TCH对象 × {0} 不能原样写回，只写出显示用的普通几何": "DWG/DXF export: format or version differs from the original, Tianzheng objects × {0} cannot be written back as is, writing their display geometry only"
   }
 }

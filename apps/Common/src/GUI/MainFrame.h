@@ -108,6 +108,9 @@ namespace MiniCAD
         // 还有图纸在读取、排队，或刚加入的图纸还在生成显示（分帧细分）
         bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty() || m_buildDoc; }
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
+        // 检查 GitHub 上的最新发布（UpdateCheck.cpp）：后台请求，有新版本时标题栏版本号旁出现提示；
+        // manual（帮助 > 检查更新）时结果都弹对话框。平台不支持时（网页版）什么都不做。宿主启动时调用一次，自测不调用
+        void CheckForUpdates(bool manual = false);
         bool HasUnsavedDocuments() const;       // 网页版：关闭页面前据此提示
         const std::string&  GetUiPath() const { return m_uiPath; }
         MiniGUI::UIContext& GetUI() const { return *m_ui; }
@@ -206,6 +209,7 @@ namespace MiniCAD
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
+        void ShowUpdateDialog();                                 // 新版本：说明、下载、发布页
         void RefreshLayerPanel();                                 // 各窗口的图层面板（RefreshLayerPanel(ViewChrome&)）
         void RefreshLayerPanel(ViewChrome& c);
         // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
@@ -451,6 +455,15 @@ namespace MiniCAD
         MiniGUI::Node*                         m_appBar     = nullptr;   // 标题栏右侧的 AI / 设置 / 帮助 / 版本（窗口窄时隐藏）
         float                                  m_appBarWidth    = 0.0f;  // 显示时量到的宽度与它右边到标题栏右端的距离
         float                                  m_appBarRightGap = 0.0f;
+        struct UpdateInfo
+        {
+            std::string version;        // 最新发布的版本号（不带 v），比当前新时才非空
+            std::string pageUrl;        // 发布页
+            std::string downloadUrl;    // 本平台的发布包；没有时用发布页
+            std::string notes;          // 发布说明（Markdown 原文）
+        };
+        UpdateInfo                             m_update;
+        bool                                   m_updateChecking = false;
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果

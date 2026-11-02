@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
@@ -717,6 +718,22 @@ namespace MiniCAD
     bool LinuxApp::OpenUrl(const std::string& url)
     {
         return !url.empty() && SDL_OpenURL(url.c_str());   // xdg-open
+    }
+
+    bool LinuxApp::HttpGet(const std::string& url, std::string& body)
+    {
+        // 不链接 libcurl：调用系统的 curl 命令；网址只来自程序自己（不含单引号）
+        if (url.empty() || url.find(''') != std::string::npos)
+            return false;
+        const std::string cmd = "curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' '" + url + "' 2>/dev/null";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe)
+            return false;
+        body.clear();
+        char buf[4096];
+        for (size_t n; (n = fread(buf, 1, sizeof(buf), pipe)) > 0;)
+            body.append(buf, n);
+        return pclose(pipe) == 0;
     }
 
     // =========================================================

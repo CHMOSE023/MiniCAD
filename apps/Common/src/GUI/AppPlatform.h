@@ -219,6 +219,11 @@ namespace MiniCAD
         // ── 系统 ─────────────────────────────────────────────────
         // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
         virtual bool OpenUrl(const std::string& url) { (void)url; return false; }
+        // HTTPS GET，阻塞，只在 RunInBackground 的 work 里调用；成功（HTTP 200）时 body 为响应内容。
+        // 桌面版：WinHTTP；Linux：curl 命令；网页版没有（部署的总是最新版），返回 false
+        virtual bool HttpGet(const std::string& url, std::string& body) { (void)url; (void)body; return false; }
+        // 发布包文件名的结尾（GitHub Release 的附件，如 "-windows-x64.zip"），检查更新时据此找下载链接；空 = 不检查更新
+        virtual std::string GetReleaseAssetSuffix() const { return {}; }
 
         // ── 后台任务 ─────────────────────────────────────────────
         // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。

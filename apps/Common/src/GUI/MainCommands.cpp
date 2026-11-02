@@ -416,6 +416,8 @@ namespace MiniCAD
 RequestRenderAll();      // 视口背景随主题反转白色内容（RenderFrame 同步）
                               },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
+        m_commands.Register({ .id = "help.checkUpdate", .label = N_("检查更新(&U)…"), .execute = [this] { CheckForUpdates(true); },
+                              .canExecute = [this] { return !m_platform->GetReleaseAssetSuffix().empty() && !m_updateChecking; } });
         m_commands.Register({ .id = "help.about", .label = N_("关于(&A)…"), .shortcut = "F1", .execute = [this] { ShowAbout(); } });
 
         // ── 界面语言（"设置 > 语言"）：每种语言一条命令 ui.language.<代码>，选了立即切换并写进用户设置 ──

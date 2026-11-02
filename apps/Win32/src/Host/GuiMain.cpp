@@ -102,6 +102,8 @@ namespace
 
         if (!selfTest && !drawingPaths.empty())
             frame.OpenDrawings(drawingPaths);
+        if (!selfTest)
+            frame.CheckForUpdates();
 
         if (!benchPath.empty())
             return frame.RunBenchmark(benchPath);
