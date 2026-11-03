@@ -35,6 +35,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`）；自测 `Host/SelfTest.cpp`
 - `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`）；`MiniGUIWebGallery` 是浏览器里的控件展示
 - `apps/Linux/`：Linux 宿主 `LinuxApp`（目标 `MiniCADLinux`）：SDL3 窗口与事件 + Vulkan，不行时 EGL / OpenGL ES 3；缺 SDL3 或 GLES3 开发文件时不编译，核心库与测试照常（Vulkan 开发文件与 glslangValidator 可选）
+- `apps/Android/`：安卓宿主 `AndroidApp`（目标 `MiniCADAndroid`，NativeActivity + Vulkan / GLES3），Gradle 工程经 externalNativeBuild 调仓库根的 CMake；手机上用只浏览的紧凑布局。开发计划：`docs/Android/PLAN.md`
 - `wasm/`：旧版 C 接口 WASM，只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译（此时核心库定义 `MINICAD_WEB`，不编译 `apps/Web`）
 - `tests/`：`Core/`、`UI/` + `UI/Golden/`、`Serialization/`、`NodeGraph/`、`Solid/`、`Web/`（Node 运行的 JS 测试）、`Data/`（样例图纸）
 - `tools/`：`make_icons.py`（功能区图标）、`make_web_font.py`（网页版界面字体子集）、`inspect_dwg.cpp`（`MiniCADDwgInspect`，检查 DWG 内容）
@@ -75,11 +76,11 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 ## 验证改动
 
-用 `.agents/skills/test` 只编译、运行与改动相关的测试，不要每次跑 `run_tests.bat` 全量；全量测试交给 CI（到 main 的 PR 自动跑 Windows、网页、Linux 三个任务，要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项通过才能合并，`Linux (Vulkan / GLES3)` 不是必需的；CI 不跑 `MiniGUIGolden`）。改了界面要实际运行桌面版看；涉及网页版时用 `build_wasm.bat serve` 在浏览器里看。
+用 `.agents/skills/test` 只编译、运行与改动相关的测试，不要每次跑 `run_tests.bat` 全量；全量测试交给 CI（到 main 的 PR 自动跑 Windows、网页、Linux、安卓四个任务，要求 `Windows (D3D11)` 与 `Web (WebAssembly)` 两项通过才能合并，`Linux (Vulkan / GLES3)` 与 `Android (arm64)` 不是必需的；CI 不跑 `MiniGUIGolden`）。改了界面要实际运行桌面版看；涉及网页版时用 `build_wasm.bat serve` 在浏览器里看。
 
 ## 发布
 
-推送 `v*` 标签后 CI 自动编译桌面版、网页版与 Linux 版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip` / `MiniCAD-<标签>-linux-x64.tar.gz`、创建 GitHub Release，网页版部署到 Cloudflare Pages。Linux 版在 Ubuntu 24.04 上编译，SDL3 由 CI 从源码编成静态库链入（版本与校验和在 `.github/workflows/build.yml` 的 `SDL3_VERSION` / `SDL3_SHA256`）。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
+推送 `v*` 标签后 CI 自动编译桌面版、网页版、Linux 版与安卓版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip` / `MiniCAD-<标签>-linux-x64.tar.gz` / `MiniCAD-<标签>-android-arm64.apk`、创建 GitHub Release，网页版部署到 Cloudflare Pages。安卓版的 SDK 组件版本在 `.github/workflows/build.yml` 的 `ANDROID_*` 变量（与 `apps/Android/app/build.gradle.kts` 一致）；仓库 secrets 有 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 时用正式密钥签名，否则用 CI 机器的调试密钥（每次不同，装过的设备要先卸载）。Linux 版在 Ubuntu 24.04 上编译，SDL3 由 CI 从源码编成静态库链入（版本与校验和在 `.github/workflows/build.yml` 的 `SDL3_VERSION` / `SDL3_SHA256`）。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
 
 ## 约定
 

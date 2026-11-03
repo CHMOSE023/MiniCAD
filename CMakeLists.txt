@@ -66,7 +66,9 @@ if(WIN32 AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Win32")
 endif()
 
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+if(ANDROID)
+    add_subdirectory("apps/Android")    # GameActivity 宿主，由 apps/Android 的 Gradle 工程调用（docs/Android/PLAN.md）
+elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Linux")  # SDL3 宿主 + OpenGL ES 3（docs/Render/PLAN.md 阶段 2）
 endif()
 
@@ -80,7 +82,7 @@ endif()
 
 # ── 测试（桌面端）：tests/Core、tests/UI、tests/Serialization ─────────
 option(MINICAD_BUILD_TESTS "Build MiniCAD tests" ON)
-if(MINICAD_BUILD_TESTS AND NOT EMSCRIPTEN)
+if(MINICAD_BUILD_TESTS AND NOT EMSCRIPTEN AND NOT ANDROID)
     enable_testing()
     add_subdirectory(tests)
 endif()

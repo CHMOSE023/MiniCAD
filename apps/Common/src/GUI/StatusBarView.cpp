@@ -154,8 +154,9 @@ namespace MiniCAD
     {
         // 没有文档时只隐藏开关：宿主附加项（读取进度）在打开第一张图纸时也要显示
         Editor* editor = CurrentEditor();
-        for (StatusToggle* t : { m_snap, m_ortho, m_hover, m_thin })
-            t->SetVisible(editor != nullptr);
+        for (StatusToggle* t : { m_snap, m_ortho, m_hover })
+            t->SetVisible(editor != nullptr && !m_viewOnly);
+        m_thin->SetVisible(editor != nullptr);
         if (!editor)
             return;
 

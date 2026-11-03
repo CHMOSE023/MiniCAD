@@ -7,10 +7,15 @@
 
 set(MINICAD_RENDER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/apps/Render")
 
-# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主
+# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主。
+# 安卓也走这一段（NDK 自带头文件与库；ES 3 的函数在 libGLESv3 里，Linux 的 libGLESv2 则都有）
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     find_path(MINICAD_GLES3_INCLUDE_DIR GLES3/gl3.h)
-    find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    if(ANDROID)
+        find_library(MINICAD_GLESV2_LIBRARY GLESv3)
+    else()
+        find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    endif()
     if(MINICAD_GLES3_INCLUDE_DIR AND MINICAD_GLESV2_LIBRARY)
         set(MINICAD_LINUX_GLES3 ON)
     else()

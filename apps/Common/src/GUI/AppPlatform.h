@@ -158,6 +158,13 @@ namespace MiniCAD
         // ── 窗口 ─────────────────────────────────────────────────
         virtual void SetTitle(const std::string& utf8) = 0;
         virtual bool HasWindowControls() const = 0;         // 标题栏是否显示最小化 / 最大化 / 关闭
+        // 屏幕小时（手机）改用只浏览的紧凑布局（minicad_ui.json 的 layouts.compact，docs/Android/PLAN.md §4.5）；
+        // 桌面窗口拉窄不切换
+        virtual bool SupportsCompactLayout() const { return false; }
+        // 全屏：隐藏系统的状态栏、导航栏（安卓；返回手势先退出全屏）。不支持的平台命令 view.fullScreen 不可用
+        virtual bool SupportsFullScreen() const { return false; }
+        virtual bool IsFullScreen() const { return false; }
+        virtual void SetFullScreen(bool) {}
         virtual bool IsWindowActive()    const { return true; }
         virtual bool IsWindowMaximized() const { return false; }
         virtual void MinimizeWindow()       {}
@@ -220,10 +227,12 @@ namespace MiniCAD
         // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
         virtual bool OpenUrl(const std::string& url) { (void)url; return false; }
         // HTTPS GET，阻塞，只在 RunInBackground 的 work 里调用；成功（HTTP 200）时 body 为响应内容。
-        // 桌面版：WinHTTP；Linux：curl 命令；网页版没有（部署的总是最新版），返回 false
+        // 桌面版：WinHTTP；Linux：curl 命令；安卓：Java 的 HttpURLConnection；网页版没有（部署的总是最新版），返回 false
         virtual bool HttpGet(const std::string& url, std::string& body) { (void)url; (void)body; return false; }
         // 发布包文件名的结尾（GitHub Release 的附件，如 "-windows-x64.zip"），检查更新时据此找下载链接；空 = 不检查更新
         virtual std::string GetReleaseAssetSuffix() const { return {}; }
+        // 启动时查到新版本就弹出提示（下载 / 忽略此版本）；否则只在标题栏的版本号上加红点（安卓手机上看不到标题栏右侧）
+        virtual bool PromptsForUpdates() const { return false; }
 
         // ── 后台任务 ─────────────────────────────────────────────
         // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。

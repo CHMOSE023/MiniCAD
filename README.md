@@ -10,12 +10,13 @@
 
 <p align="center">
   <strong>An open-source 2D/3D CAD application written in C++20.</strong><br />
-  Runs on Windows, Linux and in the browser. Built on the SMLib solid kernel, with node-based 3D modeling, <strong>compatible with DWG and TCH drawings</strong>.
+  Runs on Windows, Linux, Android and in the browser. Built on the SMLib solid kernel, with node-based 3D modeling, <strong>compatible with DWG and TCH drawings</strong>.
 </p>
 
 <p align="center">
   <a href="https://minicad.bimhub.top">Web app</a> ·
-  <a href="https://github.com/CHMOSE023/MiniCAD/releases">Desktop downloads</a>
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases">Desktop downloads</a> ·
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases/latest">Android</a>
 </p>
 
 <p align="center">
@@ -99,6 +100,19 @@ out/linux/MiniCADLinux/MiniCADLinux [drawing ...]
 ```
 
 Without SDL3 or OpenGL ES 3 only the core libraries and tests are built (`ctest --test-dir out/linux`); without the Vulkan development files or glslangValidator only OpenGL ES 3 is used. At run time, `--gpu vulkan` / `--gpu gl` (or the `MINICAD_GPU` environment variable) selects the graphics backend. The open / save dialogs need xdg-desktop-portal or zenity; without them, drag drawings into the window or pass them on the command line.
+
+## Android
+
+The releases page has a prebuilt `MiniCAD-<version>-android-arm64.apk` for arm64 devices running Android 10 (API 29) or later; download and install it (allow "Install unknown apps"). Phones get a simplified view-only interface: open DWG / DXF drawings (from Files or another app), drag to pan, zoom, and view full screen; annotations will come later. Tablets and devices with a mouse and keyboard get the full interface.
+
+To build it yourself you need JDK 17+ (21 recommended) and these Android SDK packages (install them with Android Studio's SDK Manager or the command-line tools' `sdkmanager`): Platform API 36, Build-Tools 36.1.0, NDK 29.0.14206865, CMake 3.31.6. Set the `ANDROID_HOME` environment variable (or write `sdk.dir=<SDK path>` in `apps/Android/local.properties`), then:
+
+```bat
+cd apps\Android
+gradlew assembleDebug
+```
+
+The APK is written to `out/android/app/outputs/apk/debug/` (debug builds also include x86_64 for the emulator). `gradlew installDebug` builds and installs it on a connected device (enable USB debugging on the phone); view the log with `adb logcat -s MiniCAD`. For a release build run `gradlew assembleRelease` (arm64 only); point the `MINICAD_KEYSTORE`, `MINICAD_KEYSTORE_PASSWORD`, `MINICAD_KEY_ALIAS` and `MINICAD_KEY_PASSWORD` environment variables at your keystore, otherwise the local debug key is used.
 
 ## Tests
 

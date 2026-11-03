@@ -11,7 +11,6 @@ namespace MiniGUI
 {
     namespace
     {
-        constexpr float kTabMin    = 120.0f;    // 缩窄的下限；再放不下就滚动标签条
         constexpr float kTabMax    = 220.0f;
         constexpr float kTabPad    = 14.0f;
         constexpr float kCloseW    = 20.0f;
@@ -220,7 +219,7 @@ namespace MiniGUI
             float tw = kTabPad * 2.0f + 4.0f + (t.closable ? kCloseW : 0.0f);
             if (ctx)
                 tw += ctx->GetTextSystem().Measure(t.title, TabText(Theme::Text)).x;
-            w += std::clamp(tw, std::min(kTabMin, tw), kTabMax);
+            w += std::clamp(tw, std::min(m_minTabWidth, tw), kTabMax);
         }
         return std::ceil(w);
     }
@@ -239,7 +238,7 @@ namespace MiniGUI
             float w = kTabPad * 2.0f + 4.0f + (t.closable ? kCloseW : 0.0f);
             if (ctx)
                 w += ctx->GetTextSystem().Measure(t.title, TabText(Theme::Text)).x;
-            w = std::clamp(w, std::min(kTabMin, w), kTabMax);
+            w = std::clamp(w, std::min(m_minTabWidth, w), kTabMax);
             widths.push_back(w);
             total += w;
         }
@@ -248,8 +247,8 @@ namespace MiniGUI
         float avail = width - 8.0f - (m_showNewButton ? kButtonW + 4.0f : 0.0f);
         float minTotal = 0.0f;
         for (float w : widths)
-            minTotal += std::min(w, kTabMin);
-        m_overflow = minTotal > avail;
+            minTotal += std::min(w, m_minTabWidth);
+        m_overflow = minTotal > avail || (m_alwaysListButton && m_tabs.size() > 1);
         if (m_overflow)
             avail -= kButtonW + 4.0f;
 
@@ -261,7 +260,7 @@ namespace MiniGUI
         for (size_t i = 0; i < m_tabs.size(); ++i)
         {
             float w = std::floor(widths[i] * scale);
-            w = std::max(w, std::min(kTabMin, widths[i]));
+            w = std::max(w, std::min(m_minTabWidth, widths[i]));
             m_tabs[i].x0 = x;
             m_tabs[i].x1 = x + w;
             x += w;

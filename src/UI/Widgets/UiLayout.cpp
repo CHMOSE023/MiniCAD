@@ -228,7 +228,7 @@ namespace MiniGUI
         }
 
         // ── 命令覆盖（只由生成默认布局的那个负责）───────────────────
-        if (m_layoutName.empty())
+        if (m_ownsCommands)
         {
             RestoreCommandDefaults();
             m_commands.ApplyOverrides(doc["commands"], m_warnings);

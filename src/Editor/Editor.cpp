@@ -5070,8 +5070,8 @@ namespace MiniCAD
             m_currentSnap = {};
         }
 
-        vs.ShowCurrorBox = !IsActiveTool();
-        vs.ShowCrosshair = !HidesCrosshair();
+        vs.ShowCurrorBox = !IsActiveTool() && !m_cursorHidden;
+        vs.ShowCrosshair = !HidesCrosshair() && !m_cursorHidden;
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

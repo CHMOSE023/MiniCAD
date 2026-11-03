@@ -127,7 +127,7 @@ endif()
 
 # ── SDL3 平台层（Linux）：输入、剪贴板、界面字体 ─────────────────────
 # SDL3 用发行版的 libsdl3-dev，或自己编译安装后用 CMAKE_PREFIX_PATH 指定；找不到时不编译 Linux 宿主
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT ANDROID)
     find_package(SDL3 CONFIG QUIET)
     if(SDL3_FOUND)
         add_library(MiniGUI_SDL STATIC

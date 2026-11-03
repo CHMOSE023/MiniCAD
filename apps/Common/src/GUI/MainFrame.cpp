@@ -212,6 +212,7 @@ namespace MiniCAD
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))
             return false;
 
+        m_compact = WantsCompactLayout(width, height);
         InitUI();
         OnResize(width, height, pixelScale);
         return true;
@@ -279,6 +280,8 @@ namespace MiniCAD
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
+        if (m_compact)
+            m_layout->SetLayoutName("compact", true);
         m_layout->RegisterPanel("canvas",     CreateCanvas());
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
@@ -289,6 +292,8 @@ namespace MiniCAD
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
         m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), N_("节点"));
         m_layout->RegisterPanel("start",      CreateStartPage(), N_("起始页"));
+        if (m_compact)
+            ApplyCompactChrome(m_main);
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
@@ -342,6 +347,8 @@ namespace MiniCAD
             return;
         m_dpiScale = pixelScale;
         m_ui->SetDisplaySize({ width, height }, pixelScale);
+        if (const bool compact = WantsCompactLayout(width, height); compact != m_compact)
+            SetCompactLayout(compact);
 
         // 立即布局并同步相机尺寸：下一次输入就按新的视口尺寸换算坐标
         m_ui->Update();
@@ -354,6 +361,92 @@ namespace MiniCAD
                 vp.Resize(static_cast<float>(pw), static_cast<float>(ph));
         }
         m_commands.NotifyStateChanged();    // 最大化按钮切换"还原"图标
+    }
+
+    bool MainFrame::WantsCompactLayout(float width, float height) const
+    {
+        if (!m_platform || !m_platform->SupportsCompactLayout())
+            return false;
+        // 进出的阈值不同：在临界尺寸上旋转、调整时不来回切换
+        if (m_compact)
+            return width < 680.0f || height < 540.0f;
+        return width < 600.0f || height < 480.0f;
+    }
+
+    void MainFrame::SetCompactLayout(bool compact)
+    {
+        m_compact = compact;
+        if (compact && m_docManager.GetActive())
+        {
+            // 只浏览：结束进行中的命令（等同按 Esc），清空选择（不显示夹点）
+            Editor& editor = m_docManager.GetEditor();
+            InputEvent esc = {};
+            esc.Type = InputEventType::KeyDown;
+            esc.Key  = KeyCode::Escape;
+            editor.OnInput(esc);
+            esc.Type = InputEventType::KeyUp;
+            editor.OnInput(esc);
+            editor.SetSelection({});
+        }
+        m_layout->SetLayoutName(compact ? "compact" : "", true);
+        ForEachChrome([this](ViewChrome& c) { ApplyCompactChrome(c); });
+        BuildStartPage();
+        ReloadUi();
+        if (!compact)
+            LoadUserLayout();       // 回到完整布局：恢复用户的停靠布局（ReloadUi 只在第一次加载时恢复）
+        UpdateChromeVisibility();
+    }
+
+    bool MainFrame::ToViewerPointer(MiniGUI::ViewportPointerEvent& e) const
+    {
+        using MiniGUI::MouseButton;
+        using MiniGUI::MouseButtonMask;
+        if (e.button == MouseButton::Right)
+            return false;
+        if (e.button == MouseButton::Left)
+            e.button = MouseButton::Middle;
+        const uint8_t left = static_cast<uint8_t>(MouseButtonMask::Left);
+        if (e.buttons & left)
+            e.buttons = static_cast<uint8_t>((e.buttons & ~left) | static_cast<uint8_t>(MouseButtonMask::Middle));
+        e.buttons &= static_cast<uint8_t>(~static_cast<uint8_t>(MouseButtonMask::Right));
+        return true;
+    }
+
+    void MainFrame::ApplyCompactChrome(ViewChrome& c)
+    {
+        const float cube = m_compact ? kCompactCubeSize : kCubeSize;
+        if (c.cube)
+        {
+            c.cube->EditLayoutStyle().width  = cube;
+            c.cube->EditLayoutStyle().height = cube;
+        }
+        if (c.navBar)
+        {
+            // 紧凑布局：在视图方块以下的高度里垂直居中（拇指够得着）；完整布局紧挨在方块下面
+            MiniGUI::LayoutStyle& s = c.navBar->EditLayoutStyle();
+            s.top     = 6.0f + cube + 6.0f;
+            s.bottom  = m_compact ? 6.0f : MiniGUI::kAuto;
+            s.justify = m_compact ? MiniGUI::Justify::Center : MiniGUI::Justify::Start;
+            s.width   = cube;
+            c.navHeight = 0.0f;
+            BuildViewNavBar(c);
+        }
+        if (c.statusBar)
+            c.statusBar->SetViewOnly(m_compact);
+        if (c.layoutTabs)
+            c.layoutTabs->SetShowNewTabButton(!m_compact);
+        if (c.main && m_docTabs)
+        {
+            m_docTabs->SetShowNewTabButton(!m_compact);
+            m_docTabs->SetMinTabWidth(m_compact ? 96.0f : 120.0f);      // 竖屏标题栏里能并排两个文档
+            m_docTabs->SetAlwaysShowListButton(m_compact);
+        }
+        // 状态栏放不下"正在打开 文件名"：只留进度条
+        if (c.main && m_openLabel)
+        {
+            m_openLabel->SetVisible(!m_compact);
+            m_openProgress->EditLayoutStyle().width = m_compact ? 100.0f : 140.0f;
+        }
     }
 
     // =========================================================
@@ -377,6 +470,9 @@ namespace MiniCAD
             {
                 m_docManager.SetActive(d);
                 m_openedAny = true;
+                // 起始页上点的是当前文档：当前文档没变，SyncDocuments 不会收起起始页
+                if (m_startShown && d == m_docManager.GetMainDocument())
+                    ShowStartPage(false);
                 continue;
             }
             const bool queued = std::find(m_openQueue.begin(), m_openQueue.end(), path) != m_openQueue.end()
@@ -1221,10 +1317,13 @@ namespace MiniCAD
     }
 
     // 一个视口（主窗口的，或某个文档窗口的）里的指针事件交给那个文档的编辑器；按下 / 滚轮即成为当前文档
-    void MainFrame::RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host)
+    void MainFrame::RouteViewportPointer(const MiniGUI::ViewportPointerEvent& original, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host)
     {
         using T = MiniGUI::PointerEventType;
         if (!doc)
+            return;
+        MiniGUI::ViewportPointerEvent e = original;
+        if (m_compact && !ToViewerPointer(e))
             return;
         Editor& editor = m_docManager.GetEditor(*doc);
 
@@ -1308,8 +1407,8 @@ namespace MiniCAD
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
 const KeyCode code = ToKeyCode(e.key);
-        if (code == KeyCode::Unknown || !m_docManager.GetActive())
-            return false;
+        if (code == KeyCode::Unknown || !m_docManager.GetActive() || m_compact)
+            return false;       // 只浏览：键盘不进命令行、不执行快捷键
         // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
         const bool tab = code == KeyCode::Tab;
         if (tab && !m_docManager.GetEditor().IsActiveTool())
@@ -1358,6 +1457,7 @@ const KeyCode code = ToKeyCode(e.key);
             Editor&    editor   = m_docManager.GetMainEditor();
             IRenderer& renderer = m_platform->GetRenderer();
             editor.EnsureSceneCached(renderer);     // 场景缓冲被文档窗口顶掉了就重新拼接
+            editor.SetCursorHidden(m_compact);
             editor.Render();
             const ViewState vs = editor.BuildViewState();
             vp.Render(renderer, target, vs);

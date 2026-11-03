@@ -88,6 +88,10 @@ void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged =
 
         // 自然宽度取各标签的理想宽度之和（只用标签条、放在一行里和别的控件并排时用，例如状态栏左侧的模型 / 布局标签）
         void  SetFitToTabs(bool fit) { m_fitToTabs = fit; InvalidateLayout(); }
+        // 标签缩窄的下限（默认 120）；所有标签缩到下限还放不下才滚动、出现"⌄"。窄屏上调小，多放几个标签
+        void  SetMinTabWidth(float w) { m_minTabWidth = w; InvalidateLayout(); }
+        // 有两个以上标签时总是显示"⌄"（标签列表），不论放不放得下
+        void  SetAlwaysShowListButton(bool on) { m_alwaysListButton = on; InvalidateLayout(); }
         float IdealStripWidth() const;
 
     protected:
@@ -141,7 +145,9 @@ void SetOnSelectionChanged(std::function<void(int)> cb) { m_onSelectionChanged =
 
         bool                     m_barStyle = false;
         bool                     m_fitToTabs = false;
-        int                      m_dropIndicator = -1;
+        float                    m_minTabWidth = 120.0f;
+        bool                     m_alwaysListButton = false;
+        int                     m_dropIndicator = -1;
         std::function<void(int)> m_onSelectionChanged;
         std::function<bool(int, Vec2)> m_onTabDragOut;
         std::function<void(TornDragPhase, Vec2)> m_onTornTabDrag;

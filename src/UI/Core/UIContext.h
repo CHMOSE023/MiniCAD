@@ -99,6 +99,9 @@ namespace MiniGUI
 
         // ── 显示区域 ────────────────────────────────────────────
         void  SetDisplaySize(Vec2 logicalSize, float pixelScale);
+        // 显示区域里被系统占用的边（手机、平板的状态栏、手势条、软键盘，逻辑像素）：主界面只排在其余的范围里，弹层与悬浮提示仍用整个显示区域
+        void  SetSafeArea(const Edges& insets);
+        const Edges& GetSafeArea() const { return m_safeArea; }
         // ── 主题：控件的颜色引用主题槽位，切换后整棵树在下一帧按新颜色绘制 ──
         void               SetTheme(const ThemeColors& theme);
         const ThemeColors& GetTheme() const { return m_theme; }
@@ -266,6 +269,7 @@ namespace MiniGUI
         DrawList              m_drawList;
 
         Vec2  m_displaySize;
+        Edges m_safeArea;
         float m_pixelScale = 1.0f;
 
         Node*   m_hovered       = nullptr;

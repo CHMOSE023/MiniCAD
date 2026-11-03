@@ -32,6 +32,9 @@ namespace MiniCAD
         // 宿主的附加项（如读取进度），放在开关的左边
         MiniGUI::Node* AddRightItem(std::unique_ptr<MiniGUI::Node> item);
 
+        // 只浏览（紧凑布局）：不显示捕捉 / 正交 / 悬停，只留细线
+        void SetViewOnly(bool viewOnly) { m_viewOnly = viewOnly; }
+
     private:
         void    OpenSnapSettings();
         void    ApplyTexts();
@@ -46,5 +49,6 @@ namespace MiniCAD
         StatusToggle*    m_ortho    = nullptr;
         StatusToggle*    m_hover    = nullptr;
         StatusToggle*    m_thin     = nullptr;
+        bool             m_viewOnly = false;
     };
 }

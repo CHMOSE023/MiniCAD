@@ -113,6 +113,7 @@ namespace MiniCAD
         ConstraintEngine&  GetConstraintEngine() { return m_constraintEngine; }
         bool               IsActiveTool() const  { return m_tool != nullptr; }
         bool               HidesCrosshair() const { return m_tool && m_tool->HidesCrosshair(); }   // 当前工具不画十字光标（平移）
+        void               SetCursorHidden(bool hidden) { m_cursorHidden = hidden; }              // 不画十字光标与拾取框（只浏览）
         // 工具是否还在进行：工具刚结束（等下一次输入事件才释放）的收尾期不算
         bool               IsToolRunning() const { return m_tool != nullptr && !m_pendingToolReset; }
         // 最近启动的工具 ID（"Line"、"Move"…）；IsActiveTool 为 true 时即当前工具
@@ -494,6 +495,7 @@ namespace MiniCAD
         std::unique_ptr<ITool> m_tool;
         bool                   m_toolSuspended    = false;
         bool                   m_pendingToolReset = false;
+        bool                   m_cursorHidden = false;
         Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
         VisualStyle            m_visualStyle = VisualStyle::Shaded;
         struct ViewTransition

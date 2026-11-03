@@ -67,8 +67,14 @@ namespace MiniGUI
         void SetDynamicMenuItems(const std::string& name, std::function<std::vector<MenuItem>()> build);
 
         // 生成哪一段布局：空（默认）为顶层的 "layout"，否则为 "layouts" 里的同名一段（例如第二种窗口用的布局）。
-        // 选了命名布局时不应用 "commands"：命令表是共用的，由生成默认布局的那个 UiLayout 负责（免得互相把对方的覆盖当成默认值）
-        void SetLayoutName(std::string name) { m_layoutName = std::move(name); }
+        // 选了命名布局时不应用 "commands"：命令表是共用的，由生成默认布局的那个 UiLayout 负责（免得互相把对方的覆盖当成默认值）；
+        // 同一个窗口在默认布局与命名布局之间切换（如主窗口的紧凑布局）时传 ownsCommands = true，照常应用
+        void SetLayoutName(std::string name, bool ownsCommands = false)
+        {
+            m_ownsCommands = name.empty() || ownsCommands;
+            m_layoutName   = std::move(name);
+        }
+        const std::string& GetLayoutName() const { return m_layoutName; }
 
         // 解析并应用：清空 parent 原有内容（推迟销毁，在事件回调里调用也安全）后按描述重建。
         // JSON 语法错误时返回 false，界面保持不变
@@ -97,6 +103,7 @@ namespace MiniGUI
         CommandRegistry& m_commands;
         std::string      m_iconDir;
         std::string      m_layoutName;
+        bool             m_ownsCommands = true;     // 应用 "commands"（见 SetLayoutName）
 
         struct PanelSlot
         {

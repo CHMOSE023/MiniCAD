@@ -367,8 +367,8 @@ namespace MiniCAD
         cs.position = PositionType::Absolute;
         cs.right    = 6.0f;
         cs.top      = 6.0f;
-        cs.width    = 140.0f;
-        cs.height   = 140.0f;
+        cs.width    = kCubeSize;
+        cs.height   = kCubeSize;
         cube->SetLayoutStyle(cs);
         cube->SetVisible(m_viewCubeVisible);
         // 右键：常用视图与隐藏（隐藏后经“视图 > 显示视图方块”或命令 NAVVCUBE 再显示）
@@ -421,7 +421,7 @@ namespace MiniCAD
             // 卡片高度随内容：平时只有一行输入，展开历史时回显区向上长出
             c.console->GetLogView()->EditLayoutStyle().height = 96.0f;
             c.console->SetLogExpanded(false);
-            card->SetVisible(m_commandLineVisible);
+            card->SetVisible(m_commandLineVisible && !m_compact);
             c.cmdCard = card;
         }
 
@@ -1073,7 +1073,7 @@ namespace MiniCAD
         if (c.navBar)
             c.navBar->SetVisible(doc != nullptr && c.navFits);
         if (c.cmdCard)
-            c.cmdCard->SetVisible(m_commandLineVisible && doc);
+            c.cmdCard->SetVisible(m_commandLineVisible && doc && !m_compact);    // 只浏览没有命令行
     }
 
     void MainFrame::SaveUserLayout()

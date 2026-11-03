@@ -170,8 +170,16 @@ namespace MiniGUI
             hasSub |= !item.submenu.empty();
         }
         (void)hasSub;
-        const float width = kPad * 2.0f + kCheckCol + textW + (shortcutW > 0.0f ? kShortcutGap + shortcutW : 0.0f) + kArrowCol;
-        return { std::max(width, 160.0f), height };
+        float width = std::max(kPad * 2.0f + kCheckCol + textW + (shortcutW > 0.0f ? kShortcutGap + shortcutW : 0.0f) + kArrowCol, 160.0f);
+        // 不超出屏幕（手机竖屏放不下长文件名）：文字在 OnPaint 里截断加"…"
+        if (ctx)
+        {
+            const Edges& safe = ctx->GetSafeArea();
+            const float  room = ctx->GetDisplaySize().x - safe.left - safe.right - 16.0f;
+            if (room > 0.0f)
+                width = std::min(width, room);
+        }
+        return { width, height };
     }
 
     void MenuPopup::OnPaint(DrawList& dl, const Rect& r)
@@ -202,8 +210,10 @@ namespace MiniGUI
             if (item.checked)
                 DrawCheck(dl, { row.min.x + kCheckCol * 0.5f, row.Center().y }, color);
 
+            TextParams itemText = ItemText(color);
+            itemText.ellipsis = true;
             DrawMnemonicText(*ctx, dl, Rect{ row.min.x + kCheckCol, row.min.y, row.max.x - kArrowCol, row.max.y },
-                             ParseMnemonic(item.text), ItemText(color));
+                             ParseMnemonic(item.text), itemText);
             if (!item.shortcut.empty())
                 text.Draw(dl, Rect{ row.min.x, row.min.y, row.max.x - kArrowCol, row.max.y }, item.shortcut,
                           ItemText(hot ? Theme::Text : Theme::TextDim, TextAlign::End));

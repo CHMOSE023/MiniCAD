@@ -1,5 +1,5 @@
 # MiniCAD 持续集成与发布
-#   - 推送 v* 标签（例如 v0.2.1.1）时：编译桌面版、网页版与 Linux 版、运行单元测试、打包 zip / tar.gz、
+#   - 推送 v* 标签（例如 v0.2.1.1）时：编译桌面版、网页版、Linux 版与安卓版、运行单元测试、打包 zip / tar.gz / apk、
 #     创建 GitHub Release 并上传，网页版部署到 Cloudflare Pages；
 #     发布说明取自 docs/release-notes/<标签>.md（没有该文件时只写一行默认说明）
 #   - 到 main 的 PR（开启、推送新提交）时：只编译、测试、打包。main 的规则集要求
@@ -24,6 +24,11 @@ env:
   # Linux 版的窗口与输入库（Ubuntu 24.04 的 apt 里没有 SDL3，自己编译成静态库）；改版本时同时改校验和
   SDL3_VERSION: "3.4.18"
   SDL3_SHA256: "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3"
+  # 安卓 SDK 组件（与 apps/Android/app/build.gradle.kts 一致）
+  ANDROID_COMPILE_SDK: "36"
+  ANDROID_BUILD_TOOLS: "36.1.0"
+  ANDROID_NDK_VERSION: "29.0.14206865"
+  ANDROID_CMAKE_VERSION: "3.31.6"
   # 打包文件名里的版本：标签构建用标签名，其余用 dev
   PACKAGE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
 
@@ -186,11 +191,70 @@ jobs:
           path: dist/*.tar.gz
           retention-days: 7
 
+  # ── 安卓版：NativeActivity + Vulkan / GLES3（docs/Android/PLAN.md）────────────
+  # 不是 main 规则集要求的检查，标签构建时发布要等它。只编 arm64 的 release APK
+  android:
+    name: Android (arm64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle 9 / AGP 9 要 JDK 17+；本机用 21
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      # 版本与 apps/Android/app/build.gradle.kts 的 compileSdk / ndkVersion / cmake.version 一致
+      - name: Install SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}" "cmake;${ANDROID_CMAKE_VERSION}" > /dev/null
+
+      # 正式签名：仓库 secrets 里有 ANDROID_KEYSTORE_BASE64（密钥库的 base64）时用它，否则用这台机器的调试密钥
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "MINICAD_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::没有 ANDROID_KEYSTORE_BASE64，APK 用调试密钥签名"
+          fi
+
+      # wrapper 在 Windows 上生成，仓库里可能没有可执行位
+      - name: Build
+        working-directory: apps/Android
+        env:
+          MINICAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MINICAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MINICAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --console=plain --no-daemon
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp out/android/app/outputs/apk/release/app-release.apk "dist/MiniCAD-$PACKAGE_VERSION-android-arm64.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniCAD-Android
+          path: dist/*.apk
+          retention-days: 7
+
   # ── 发布：推送 v* 标签时创建 GitHub Release ────────────────────────────────
   release:
     name: Release
     if: github.ref_type == 'tag'
-    needs: [windows, web, linux]
+    needs: [windows, web, linux, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -216,3 +280,4 @@ jobs:
           files: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.apk

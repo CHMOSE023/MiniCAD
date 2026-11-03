@@ -96,6 +96,11 @@ namespace MiniCAD
                               .execute    = [this] { ShowStartPage(!m_startShown); },
                               .canExecute = hasDoc,
                               .isChecked  = [this] { return m_startShown || !m_docManager.GetMainDocument(); } });
+        m_commands.Register({ .id = "view.fullScreen", .label = N_("全屏(&F)"),
+                              .tooltip = N_("隐藏系统的状态栏和导航栏（返回手势退出）"), .icon = "FullScreen.png",
+                              .execute    = [this] { m_platform->SetFullScreen(!m_platform->IsFullScreen()); StateChanged(); },
+                              .canExecute = [this] { return m_platform->SupportsFullScreen(); },
+                              .isChecked  = [this] { return m_platform->IsFullScreen(); } });
         m_commands.Register({ .id = "ui.search", .label = N_("搜索命令(&K)"),
                               .tooltip = N_("在功能区右上角的搜索框里按名称或所在选项卡查找命令，Enter 执行"), .shortcut = "Ctrl+K",
                               .execute    = [this] { if (MiniGUI::Ribbon* r = CurrentRibbon()) r->FocusSearch(); },

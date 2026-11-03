@@ -10,12 +10,13 @@
 
 <p align="center">
   <strong>开源 2D/3D CAD 应用，使用C++20开发。</strong><br />
-  在windows和浏览器内运行CAD，内核使用SMLib, 支持三维Node节点建模，<strong>兼容dwg</strong>。
+  在 Windows、Linux、安卓和浏览器内运行CAD，内核使用SMLib, 支持三维Node节点建模，<strong>兼容dwg</strong>。
 </p>
 
 <p align="center">
   <a href="https://minicad.bimhub.top">网页版</a> ·
-  <a href="https://github.com/CHMOSE023/MiniCAD/releases">桌面版</a>     
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases">桌面版</a> ·
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases/latest">安卓版</a>     
 </p>
  
 <p align="center">
@@ -99,6 +100,19 @@ out/linux/MiniCADLinux/MiniCADLinux [图纸路径 ...]
 ```
 
 找不到 SDL3 或 OpenGL ES 3 时只编译核心库与测试（`ctest --test-dir out/linux`）；找不到 Vulkan 开发文件或 glslangValidator 时只用 OpenGL ES 3。运行时 `--gpu vulkan` / `--gpu gl`（或环境变量 `MINICAD_GPU`）指定图形后端。打开、保存文件的对话框需要 xdg-desktop-portal 或 zenity，没有时可以把图纸拖进窗口或在命令行上给出。
+
+## 安卓版
+
+发布页有编译好的 `MiniCAD-<版本>-android-arm64.apk`：Android 10（API 29）及以上的 arm64 设备，下载后安装（要允许"安装未知应用"）。手机上是只浏览的简化界面：打开 DWG / DXF（从"文件"或其他应用打开）、拖动平移、缩放、全屏查看，之后会加批注；平板与接了鼠标键盘的设备用完整界面。
+
+自己编译需要 JDK 17+（推荐 21）与 Android SDK 的以下组件（用 Android Studio 的 SDK Manager 或 command-line tools 的 `sdkmanager` 安装）：Platform API 36、Build-Tools 36.1.0、NDK 29.0.14206865、CMake 3.31.6。设好环境变量 `ANDROID_HOME`（或在 `apps/Android/local.properties` 里写 `sdk.dir=<SDK 路径>`），然后：
+
+```bat
+cd apps\Android
+gradlew assembleDebug
+```
+
+APK 在 `out/android/app/outputs/apk/debug/`（调试版另带 x86_64，可在模拟器上运行）。`gradlew installDebug` 编完直接装到连着的设备（手机要打开 USB 调试），看日志用 `adb logcat -s MiniCAD`。发布版用 `gradlew assembleRelease`（只编 arm64）；签名用环境变量 `MINICAD_KEYSTORE`、`MINICAD_KEYSTORE_PASSWORD`、`MINICAD_KEY_ALIAS`、`MINICAD_KEY_PASSWORD` 指定密钥库，没设时用本机的调试密钥。
 
 ## 测试
 

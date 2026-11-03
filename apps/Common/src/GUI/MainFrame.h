@@ -142,7 +142,8 @@ namespace MiniCAD
         // 特性、图层、节点编辑器面板（面板 "properties" / "layers" / "nodes"）：每个窗口的停靠区里一套，显示、修改那个窗口里的文档
         std::unique_ptr<MiniGUI::Node> CreatePropertiesPanel(ViewChrome& c);
         std::unique_ptr<MiniGUI::Node> CreateStartPage();         // 没有文档时的起始页（StartPage.cpp）
-        void BuildStartPage();                                    // 起始页的内容（切换语言时重建）
+        void BuildStartPage();                                    // 起始页的内容（切换语言、切换紧凑布局时重建）
+        void BuildCompactStartPage(const std::string& icons);     // 紧凑布局（只浏览）的起始页
         void RefreshStartPage();                                  // 按最近打开列表重建起始页的"最近"区
         void ShowStartPage(bool show);                            // 有文档时切换起始页 / 图纸
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
@@ -209,7 +210,7 @@ namespace MiniCAD
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
-        void ShowUpdateDialog();                                 // 新版本：说明、下载、发布页
+        void ShowUpdateDialog(bool prompt = false);              // 新版本：说明、下载、发布页；prompt 为启动时的提示（下载 / 忽略此版本）
         void RefreshLayerPanel();                                 // 各窗口的图层面板（RefreshLayerPanel(ViewChrome&)）
         void RefreshLayerPanel(ViewChrome& c);
         // 图层按名称的自然顺序排列（0 层最前），下拉框、特性面板和图层面板都用这个顺序；
@@ -239,6 +240,13 @@ namespace MiniCAD
         // ── 界面描述文件与用户布局（MainPanels.cpp）────────────────
         std::unique_ptr<MiniGUI::Node> CreateUiHost();            // 主窗口里界面描述生成的内容放在这里
         void ReloadUi();
+        // 紧凑布局（layouts.compact，docs/Android/PLAN.md §4.5）：平台允许且屏幕小时用，只浏览
+        bool WantsCompactLayout(float width, float height) const;
+        void SetCompactLayout(bool compact);
+        // 只浏览时视口指针事件的改写：左键（单指）当中键（拖动平移、双击缩放全图），右键（长按）不用；返回 false 表示丢掉
+        bool ToViewerPointer(MiniGUI::ViewportPointerEvent& e) const;
+        // 绘图区界面按 m_compact 调整：视图方块缩小、导航条只留缩放、状态栏不显示绘图开关与读取进度的文件名、文档 / 布局标签条不显示"+"
+        void ApplyCompactChrome(ViewChrome& c);
         // 切换界面语言（"设置 > 语言"）：换翻译表、save 时写进用户设置（自测不写），再 Retranslate
         void SetLanguage(const std::string& code, bool save = true);
         // 按当前语言重建界面：界面描述生成的部分（菜单、功能区、标题栏、停靠区标签）重新应用，停靠布局保持不变；
@@ -466,6 +474,9 @@ namespace MiniCAD
         bool                                   m_updateChecking = false;
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
+        bool                                   m_compact = false;        // 用的是紧凑布局：只浏览
+        static constexpr float                 kCubeSize        = 140.0f;   // 视图方块边长（导航条在它下面，同宽）
+        static constexpr float                 kCompactCubeSize = 88.0f;
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
         MiniGUI::ComboBox*                     m_layerBarLayer = nullptr;  // 工具栏的图层下拉框（自测用）
         MiniGUI::Popup*                        m_textPopup  = nullptr;   // 文字 / 多行文字原位编辑

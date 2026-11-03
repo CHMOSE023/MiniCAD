@@ -73,8 +73,8 @@ namespace MiniCAD
             LayoutStyle& s = column->EditLayoutStyle();
             s.position   = PositionType::Absolute;
             s.right      = 6.0f;
-            s.top        = 6.0f + 140.0f + 6.0f;
-            s.width      = 140.0f;
+            s.top        = 6.0f + kCubeSize + 6.0f;
+            s.width      = kCubeSize;
             s.direction  = FlexDirection::Column;
             s.alignItems = Align::End;
         }
@@ -119,6 +119,17 @@ namespace MiniCAD
             sep->EditLayoutStyle().margin = Edges::Symmetric(0.0f, 3.0f);
         };
 
+        // 只浏览：单指拖动就是平移，平移 / 窗口缩放 / 三维视图这些靠左键的工具用不了
+        if (m_compact)
+        {
+            addTools({ "view.zoomIn", "view.zoomOut", "view.zoomExtents" });
+            if (m_platform->SupportsFullScreen())
+            {
+                addSeparator();
+                addTools({ "view.fullScreen" });
+            }
+            return;
+        }
         addTools({ "view.pan", "view.zoomIn", "view.zoomOut", "view.zoomWindow", "view.zoomExtents" });
         addSeparator();
         AddMenuButton(bar, m_commands, icons + "/ViewSWIso.png", Tr("标准视图（三维视图里按住 Shift 拖动中键环绕，拖动中键平移）"),

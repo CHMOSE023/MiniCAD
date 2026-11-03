@@ -144,7 +144,7 @@ namespace MiniCAD
         class BackRow : public PaintedButton
         {
         public:
-            explicit BackRow(std::function<void()> onClick) : PaintedButton(std::move(onClick))
+            explicit BackRow(std::function<void()> onClick, bool showKey = true) : PaintedButton(std::move(onClick)), m_showKey(showKey)
             {
                 SetFocusable(false);
                 LayoutStyle& s = EditLayoutStyle();
@@ -166,17 +166,23 @@ namespace MiniCAD
                 const Vec2 c{ inner.min.x + 5.0f, inner.Center().y };
                 dl.AddLine({ c.x + 3.0f, c.y - 5.0f }, { c.x - 2.0f, c.y }, Theme::RailInk, 1.6f);
                 dl.AddLine({ c.x - 2.0f, c.y }, { c.x + 3.0f, c.y + 5.0f }, Theme::RailInk, 1.6f);
-                // 右侧键帽
-                const float kw = ctx->GetTextSystem().Measure("Esc", Text(11.0f, Theme::RailInk)).x + 10.0f;
-                const Rect key{ inner.max.x - kw, inner.Center().y - 9.0f, inner.max.x, inner.Center().y + 9.0f };
-                dl.AddRect(key, ColorRef(ThemeColor::RailInk, 128), Theme::RadiusSm, 1.0f);
-                ctx->GetTextSystem().Draw(dl, key, "Esc", Text(11.0f, Theme::RailInk, TextAlign::Center));
-                ctx->GetTextSystem().Draw(dl, Rect{ inner.min.x + 20.0f, inner.min.y, key.min.x - 8.0f, inner.max.y },
+                // 右侧键帽（触摸屏上没有 Esc 键，不画）
+                float textRight = inner.max.x;
+                if (m_showKey)
+                {
+                    const float kw = ctx->GetTextSystem().Measure("Esc", Text(11.0f, Theme::RailInk)).x + 10.0f;
+                    const Rect key{ inner.max.x - kw, inner.Center().y - 9.0f, inner.max.x, inner.Center().y + 9.0f };
+                    dl.AddRect(key, ColorRef(ThemeColor::RailInk, 128), Theme::RadiusSm, 1.0f);
+                    ctx->GetTextSystem().Draw(dl, key, "Esc", Text(11.0f, Theme::RailInk, TextAlign::Center));
+                    textRight = key.min.x - 8.0f;
+                }
+                ctx->GetTextSystem().Draw(dl, Rect{ inner.min.x + 20.0f, inner.min.y, textRight, inner.max.y },
                                           TrF("返回 {0}", m_doc), Text(13.5f, Theme::RailInk));
             }
 
         private:
             std::string m_doc;
+            bool        m_showKey;
         };
 
         // 操作卡片（新建 / 打开…）：左侧 44 的图标，右侧标题 + 两行以内的说明；primary 为强调样式
@@ -413,6 +419,16 @@ namespace MiniCAD
         while (!view->GetChildren().empty())
             view->RemoveChild(view->GetChildren().back().get());
 
+        m_startNav.clear();
+        m_startBack = nullptr;
+        if (m_compact)
+        {
+            BuildCompactStartPage(icons);
+            if (hadFocus)
+                view->Focus();
+            return;
+        }
+
         // ── 左侧导航列 ─────────────────────────────────────────
         auto* nav = view->AddChild<Panel>(Theme::Rail);
         {
@@ -423,7 +439,6 @@ namespace MiniCAD
             ns.padding   = Edges::Symmetric(10.0f, 14.0f);
             ns.gap       = 2.0f;
         }
-        m_startNav.clear();
         m_startBack = nav->AddChild<BackRow>([this] { ShowStartPage(false); });
         nav->AddChild<NavRow>(Tr("开始"), "", true, std::function<void()>{});
         // action 为空时执行命令本身；可用状态总是跟随命令
@@ -508,6 +523,35 @@ namespace MiniCAD
             view->Focus();
     }
 
+    // 紧凑布局（手机，只浏览）的起始页：单列，返回行、打开、最近；没有导航列、新建和示例
+    void MainFrame::BuildCompactStartPage(const std::string& icons)
+    {
+        auto* scroll = m_startPage->AddChild<ScrollView>();
+        scroll->SetScrollAxes(false, true);
+        scroll->EditLayoutStyle().grow = 1.0f;
+        auto* col = scroll->SetContent<Node>();
+        {
+            LayoutStyle& cs = col->EditLayoutStyle();
+            cs.direction = FlexDirection::Column;
+            cs.padding   = Edges::Symmetric(16.0f, 16.0f);
+        }
+        m_startBack = col->AddChild<BackRow>([this] { ShowStartPage(false); }, false);
+        col->AddChild<Label>(Tr("开始"), 28.0f, Theme::Text);
+        auto* hint = col->AddChild<Label>(Tr("打开图纸浏览，或从最近的图纸继续。"), 14.0f, Theme::TextDim);
+        hint->EditLayoutStyle().margin.top = 6.0f;
+
+        auto* tiles = col->AddChild<TileGrid>(kTileMinW, kTileH);
+        tiles->EditLayoutStyle().margin.top = kSectionGap;
+        tiles->AddChild<ActionTile>(icons + "Open.png", Tr("打开…"), Tr("DWG、DXF 或 MCAD 图纸"), true,
+                                    [this] { m_commands.Execute("file.open"); });
+
+        AddSectionTitle(col, Tr("最近"));
+        m_startRecent = col->AddChild<Node>();
+
+        RefreshStartPage();
+        RefreshStartNav();
+    }
+
     void MainFrame::RefreshStartPage()
     {
         if (!m_startRecent)
@@ -531,8 +575,12 @@ namespace MiniCAD
         for (size_t i = 0; i < list.size(); ++i)
         {
             const std::string path = list[i];
-            auto* row = list_->AddChild<RecentRow>(icon, m_recentFiles.DisplayName(i), ParentDir(path), ModifiedText(path), i == 0,
-                                                   [this, path] { OpenDrawings({ path }); });
+            // 紧凑布局（手机）：文件是复制到应用缓存里的副本，目录对用户没有意义，第二行改成修改时间
+            auto* row = m_compact
+                ? list_->AddChild<RecentRow>(icon, m_recentFiles.DisplayName(i), ModifiedText(path), std::string(), i == 0,
+                                             [this, path] { OpenDrawings({ path }); })
+                : list_->AddChild<RecentRow>(icon, m_recentFiles.DisplayName(i), ParentDir(path), ModifiedText(path), i == 0,
+                                             [this, path] { OpenDrawings({ path }); });
             row->SetTooltip(path);
         }
         m_startRecent->Invalidate();

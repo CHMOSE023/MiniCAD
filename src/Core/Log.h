@@ -13,6 +13,9 @@ extern "C" {
     __declspec(dllimport) void  __stdcall OutputDebugStringA(const char*);
 }
 #endif
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 
 namespace MiniCAD {
 
@@ -93,6 +96,19 @@ inline void LogWrite(LogLevel level, const char* file, int line, const char* fmt
     else
         std::snprintf(plain, sizeof(plain), "[%s] %s\n", kLabels[idx], msg);
     OutputDebugStringA(plain);
+#endif
+#ifdef __ANDROID__
+    // 安卓没有控制台：写到 Logcat（标签 MiniCAD，adb logcat -s MiniCAD）
+    static constexpr int kPriority[] = { ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO, ANDROID_LOG_WARN, ANDROID_LOG_ERROR };
+    if (hasLoc)
+    {
+        char tagged[2048];
+        std::snprintf(tagged, sizeof(tagged), "%s | %s", loc, msg);
+        __android_log_write(kPriority[idx], "MiniCAD", tagged);
+    }
+    else
+        __android_log_write(kPriority[idx], "MiniCAD", msg);
+    return;
 #endif
 
     // Replace embedded newlines with newline + indent so wrapped lines stay aligned.
