@@ -594,6 +594,18 @@ namespace MiniCAD
             PutFill(b, vc);
             PutFill(c, vc);
         }
+        // 逐顶点着色的三角形（渐变填充）：顶点格式本来就有逐顶点颜色，
+        // TRIANGLELIST 缓冲按顶点插值，所以不必新增顶点流，只是不再三顶点同色
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            NoteInput(a);
+            NoteInput(b);
+            NoteInput(c);
+            PutFill(a, ToColor(ca));
+            PutFill(b, ToColor(cb));
+            PutFill(c, ToColor(cc));
+        }
 
         // --- 纹理文字（WebFontAtlas 路径）---
 

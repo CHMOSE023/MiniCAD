@@ -60,6 +60,14 @@ namespace MiniCAD
             m_target.FillTriangle(m_xform * a, m_xform * b, m_xform * c, color);
         }
 
+        // 块内的渐变填充：位置经插入变换，**颜色不随变换改变**
+        //（不转发的话块里的渐变会被压成单色实心）
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            m_target.FillTriangleColored(m_xform * a, m_xform * b, m_xform * c, ca, cb, cc);
+        }
+
         // 块内的区域覆盖：边界同样经插入变换
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {

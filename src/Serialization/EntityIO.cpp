@@ -46,6 +46,38 @@ namespace MiniCAD::EntityIO
         using Math::Vec3;
 
         // ── Hatch 边界 / 图案 ────────────────────────────────────────────────
+        // 渐变填充（ACAD 的 GRADIENT）：只在启用时写，旧文件读不到这一段即按普通填充处理
+        void HatchGradientObj(ISerializer& s, const char* key, HatchGradient& g)
+        {
+            if (!s.BeginObject(key)) return;
+            s.Value("enabled", g.Enabled);
+            if (g.Enabled)
+            {
+                s.Value("name", g.Name);
+                s.Value("angle", g.Angle);
+                s.Value("shift", g.Shift);
+                s.Value("singleColor", g.SingleColor);
+                s.Value("colorTint", g.ColorTint);
+                size_t n = g.Stops.size();
+                if (s.BeginArray("stops", n))
+                {
+                    if (s.IsLoading()) g.Stops.resize(n);
+                    for (size_t i = 0; i < n; ++i)
+                    {
+                        if (!s.BeginElement(i)) continue;
+                        GradientStop& stop = g.Stops[i];
+                        s.Value("value", stop.Value);
+                        Ser::Value(s, "color", stop.Color);
+                        s.EndElement();
+                    }
+                    s.EndArray();
+                }
+                if (s.IsLoading())
+                    g.Type = HatchGradient::ParseType(g.Name);
+            }
+            s.EndObject();
+        }
+
         void HatchPatternObj(ISerializer& s, const char* key, HatchPattern& pat)
         {
             if (!s.BeginObject(key)) return;
@@ -934,6 +966,8 @@ namespace MiniCAD::EntityIO
             HatchPatternObj(s, "pattern", pat);
             double sc = e.GetScale();  s.Value("scale", sc);
             double an = e.GetAngle();  s.Value("angle", an);
+            HatchGradient grad = e.GetGradient();
+            HatchGradientObj(s, "gradient", grad);
         }
         std::unique_ptr<Entity> ReadHatch(ISerializer& s, Object::ObjectID id)
         {
@@ -947,6 +981,10 @@ namespace MiniCAD::EntityIO
             auto e = std::make_unique<HatchEntity>(id, std::move(loops), std::move(pat));
             e->SetScale(sc);
             e->SetAngle(an);
+            HatchGradient grad;
+            HatchGradientObj(s, "gradient", grad);
+            if (grad.Enabled)
+                e->SetGradient(std::move(grad));
             return e;
         }
 
