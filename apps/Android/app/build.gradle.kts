@@ -74,7 +74,8 @@ android {
             }
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true      // 去掉 AGP 自动加的 Kotlin 标准库（Activity 是 Java 写的，用不上）；保留规则见 proguard-rules.pro
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
         }
     }
@@ -95,7 +96,8 @@ android {
         }
     }
 
-    androidResources {
-        noCompress += listOf("ttf", "otf", "shx", "json")
+    // 原生库压缩存放（下载小一半，安装时系统解出一份）；assets 按流读出再解到私有目录，也照常压缩
+    packaging {
+        jniLibs.useLegacyPackaging = true
     }
 }

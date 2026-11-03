@@ -34,6 +34,11 @@ target_link_libraries(MiniCADAndroid PRIVATE
 # NativeActivity 按名字找 ANativeActivity_onCreate（在静态库里，不显式引用的话链接器会把它丢掉）
 target_link_options(MiniCADAndroid PRIVATE "-Wl,--undefined=ANativeActivity_onCreate")
 
+# 只导出 NativeActivity 与 JNI 要找的入口，其余符号（静态库里两万多个）隐藏，库小 2～3 MB
+set(MINICAD_ANDROID_EXPORTS "${CMAKE_CURRENT_SOURCE_DIR}/exports.map")
+target_link_options(MiniCADAndroid PRIVATE "-Wl,--version-script=${MINICAD_ANDROID_EXPORTS}" "-Wl,--gc-sections")
+set_target_properties(MiniCADAndroid PROPERTIES LINK_DEPENDS "${MINICAD_ANDROID_EXPORTS}")
+
 # 三维实体内核（SMLib，见 docs/Solid/PLAN.md）
 if(MINICAD_WITH_SOLID)
     target_link_libraries(MiniCADAndroid PRIVATE MiniCADSolid)
