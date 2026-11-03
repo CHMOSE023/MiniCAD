@@ -8,35 +8,63 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace TchTest
 { 
-    inline void WriteEncrypted(MiniDWG::DwgBitWriter& text, std::string t, int key, int key2)
+    inline std::vector<int> EncryptUnits(std::string t, int key, int key2)
     {
         if (key > 0x10) { t.insert(1, "7"); t.insert(0, "3"); }
         if (key == 0x12 || key == 0x13) t.insert(0, "5");
         if (key >= 0x14) std::reverse(t.begin(), t.end());
         const auto [seed, base] = MiniCAD::Tch::Detail::CipherParams(key, key2);
         const int mask = (seed >> 8) & 0xff;
-        text.WriteBitShort(static_cast<std::int16_t>(t.size() * 2));
+        std::vector<int> units;
         for (unsigned char c : t)
         {
             const int v = (c ^ mask) & 0xff;
-            text.WriteRawShort(static_cast<std::int16_t>(base + v / 26));
-            text.WriteRawShort(static_cast<std::int16_t>(base + v % 26));
+            units.push_back(base + v / 26);
+            units.push_back(base + v % 26);
         }
-    } 
+        return units;
+    }
+
+    // 2007 起：文字流里的 UTF-16
+    inline void WriteEncrypted(MiniDWG::DwgBitWriter& text, const std::string& t, int key, int key2)
+    {
+        const std::vector<int> units = EncryptUnits(t, key, key2);
+        text.WriteBitShort(static_cast<std::int16_t>(units.size()));
+        for (int u : units)
+            text.WriteRawShort(static_cast<std::int16_t>(u));
+    }
+
+    // 2004：主数据流里的代码页文字（代码页外的字符写成 \U+XXXX）
+    inline void WriteEncryptedInline(MiniDWG::DwgBitWriter& main, const std::string& t, int key, int key2)
+    {
+        std::string utf8;
+        for (int u : EncryptUnits(t, key, key2))
+            MiniDWG::Codec::AppendUtf8(utf8, static_cast<char32_t>(u));
+        main.WriteVariableText(utf8);
+    }
 
     struct CipherWriter
     {
-        MiniDWG::DwgBitWriter Main{MiniDWG::CadVersion::AC1021, MiniDWG::Codec::CodePage::Gbk};
+        // r2004：DWG 2004 格式，文字与密文都内嵌在主数据流里
+        explicit CipherWriter(bool r2004 = false)
+            : Main(r2004 ? MiniDWG::CadVersion::AC1018 : MiniDWG::CadVersion::AC1021, MiniDWG::Codec::CodePage::Gbk), Inline(r2004) {}
+
+        MiniDWG::DwgBitWriter Main;
         MiniDWG::DwgBitWriter Text{MiniDWG::CadVersion::AC1021, MiniDWG::Codec::CodePage::Gbk};
         MiniDWG::DwgBitWriter Handles{MiniDWG::CadVersion::AC1021, MiniDWG::Codec::CodePage::Gbk};
+        bool Inline = false;
         int Key = 0, Key2 = 0;
+
+        MiniDWG::DwgBitWriter& Strings() { return Inline ? Main : Text; }
 
         void Number(const std::string& value, void (*plain)(MiniDWG::DwgBitWriter&, const std::string&))
         {
             if (Key < 16) plain(Main, value);
+            else if (Inline) WriteEncryptedInline(Main, value, Key, Key2);
             else WriteEncrypted(Text, value, Key, Key2);
         }
         void Double(double v)
@@ -80,28 +108,28 @@ namespace TchTest
             guid[4] = static_cast<char>('0' + guidKey2 / 100);
             guid[16] = static_cast<char>('0' + guidKey2 / 10 % 10);
             guid[30] = static_cast<char>('0' + guidKey2 % 10);
-            Text.WriteVariableText(guid);
+            Strings().WriteVariableText(guid);
             Double(scale);
             Double(angle);
             Byte(0);                                            // 标志：没有基类句柄
             Main.WriteBitLong(fields);
         }
-        void FieldText(const char* name, const std::string& value) { Text.WriteVariableText(name); Main.WriteBitLong(0x65); Text.WriteVariableText(value); }
-        void FieldNumber(const char* name, double value) { Text.WriteVariableText(name); Main.WriteBitLong(200); Main.WriteBitDouble(value); }
-        void MapBegin() { Text.WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_"); }
-        void MapInt(const char* name, int value) { Text.WriteVariableText(name); Main.WriteBitLong(3); Main.WriteBitLong(value); }
-        void MapNumber(const char* name, double value) { Text.WriteVariableText(name); Main.WriteBitLong(5); Main.WriteBitDouble(value); }
+        void FieldText(const char* name, const std::string& value) { Strings().WriteVariableText(name); Main.WriteBitLong(0x65); Strings().WriteVariableText(value); }
+        void FieldNumber(const char* name, double value) { Strings().WriteVariableText(name); Main.WriteBitLong(200); Main.WriteBitDouble(value); }
+        void MapBegin() { Strings().WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_"); }
+        void MapInt(const char* name, int value) { Strings().WriteVariableText(name); Main.WriteBitLong(3); Main.WriteBitLong(value); }
+        void MapNumber(const char* name, double value) { Strings().WriteVariableText(name); Main.WriteBitLong(5); Main.WriteBitDouble(value); }
         void MapPoint(const char* name, double x, double y, double z = 0)
         {
-            Text.WriteVariableText(name);
+            Strings().WriteVariableText(name);
             Main.WriteBitLong(0x4005);
             Main.WriteBitDouble(x); Main.WriteBitDouble(y); Main.WriteBitDouble(z);
         }
-        void MapHandle(const char* name, MiniDWG::Handle h) { Text.WriteVariableText(name); Main.WriteBitLong(0x13); Handle(h); }
+        void MapHandle(const char* name, MiniDWG::Handle h) { Strings().WriteVariableText(name); Main.WriteBitLong(0x13); Handle(h); }
         void BaseEnd()
         {
-            Text.WriteVariableText("TDBXDATAMAP_BLOCK_END_");
-            Text.WriteVariableText("");
+            Strings().WriteVariableText("TDBXDATAMAP_BLOCK_END_");
+            Strings().WriteVariableText("");
             Byte(0);
         }
 
@@ -145,7 +173,7 @@ namespace TchTest
             auto e = std::make_unique<MiniDWG::UnknownEntity>();
             e->Raw.DxfName = dxf;
             auto& raw = e->Raw.Dwg;
-            raw.Version = MiniDWG::CadVersion::AC1021;
+            raw.Version = Inline ? MiniDWG::CadVersion::AC1018 : MiniDWG::CadVersion::AC1021;
             raw.MainBits = Main.PositionInBits(); raw.Main = Main.Take();
             raw.TextBits = Text.PositionInBits(); raw.Text = Text.Take();
             raw.HandleBits = Handles.PositionInBits(); raw.Handles = Handles.Take();
