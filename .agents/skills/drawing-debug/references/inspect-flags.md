@@ -2,7 +2,7 @@
 
 `out/debug/tests/MiniCADDwgInspect.exe 图纸`（源文件 `tools/inspect_dwg.cpp`）。不设环境变量时打印原图的实体统计与未支持的对象；设了下面的变量再打印对应细节。坐标都是世界坐标，句柄是十六进制。
 
-另有 `MiniCADDwgInspect.exe --advances 字体文件`：打印 MiniCAD 排版用的字符步进（字高 1）。
+另有 `MiniCADDwgInspect.exe --advances 字体文件`：打印 MiniCAD 排版用的字符步进（字高 1）。`MiniCADDwgInspect.exe --convert 输入 输出`：按 MiniCAD 打开再另存（DWG 存 2004 版；输出写在 `out/` 下，写不进 `assets/` 时先写 `out/tmp` 再复制）。
 
 ## 定位
 

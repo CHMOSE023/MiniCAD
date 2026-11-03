@@ -151,6 +151,7 @@ namespace MiniCAD
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
         void RefreshStartNav();                                   // 起始页导航列的可用状态、“返回”行的文档名
         void OpenNodeExample(const std::string& path, const std::string& name, const std::string& description);
+        void OpenDrawingSample(const std::string& path);          // 打开示例图纸（assets/samples）的副本：没有路径，保存时另存
         void OpenNodeEditorFromStart(bool newDocument);           // 离开起始页并显示节点编辑器（没有文档时新建）
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
@@ -552,6 +553,7 @@ namespace MiniCAD
         std::shared_ptr<OpenJob>               m_openDone;               // 已读完、等本帧画完后加入的图纸
         bool                                   m_openAddPosted = false;  // 已投递"加入 m_openDone"（AppPlatform::Post）
         std::vector<std::string>               m_openQueue;              // 排队等待读取的路径
+        std::vector<std::string>               m_sampleOpens;            // 其中按示例打开的（读完去掉路径，不记入"最近"）
         DocumentManager::PaneId                m_openPane = DocumentManager::kMainPane;   // 读完的图纸加进哪个窗口（发起打开时的）
         std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
         std::vector<Document*>                 m_xrefMissingDocs;        // 本批打开的、有找不到的外部参照的图纸

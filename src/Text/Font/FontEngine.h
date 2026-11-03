@@ -8,6 +8,7 @@
 #include "IFont.h"
 #include "SHXFont.h"
 #include "TTFFont.h"
+#include "SHXCompositeFont.h"
 
 namespace MiniCAD
 {
@@ -22,6 +23,7 @@ namespace MiniCAD
         std::string bigFontFile;   // SHX 大字体（中文等双字节字符）；非空时与主字体组成 SHXCompositeFont
 
         bool  isShx       = false;
+        bool  shapesOnly  = false;   // 线型用的形文件：缺形不到单线回退字体里找（那里同号的形是钢筋符号等）
         float widthFactor = 1.0f;
         float oblique     = 0.0f;
     };
@@ -57,11 +59,13 @@ namespace MiniCAD
         std::string FindPath(const std::string& fontFile, const char* substitute, bool* found = nullptr) const;
         std::string FindExisting(const std::string& fontFile) const;
         std::shared_ptr<TTFFallbackChain> FallbackChain(CjkScript script);
+        std::shared_ptr<SHXFallbackChain> ShxFallbackChain(CjkScript script);
         std::string SubstituteTrueType(CjkScript script, int& face) const;
 
     private:
         std::unordered_map<std::string, std::shared_ptr<IFont>> m_cache;
         std::shared_ptr<TTFFallbackChain> m_chains[4];   // 按 CjkScript，TrueType 缺字时依次找的字体
+        std::shared_ptr<SHXFallbackChain> m_shxChains[4];   // 按 CjkScript，SHX 缺字时依次找的单线字体
         uint64_t    m_nextRuntimeFontId = 1;
         std::string m_fontDir           = "fonts/";
         std::vector<std::string> m_extraDirs;   // 额外的搜索目录，都以分隔符结尾

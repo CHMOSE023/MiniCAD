@@ -1495,7 +1495,9 @@
     "网格化导出": "Meshing for export",
     "长方体与球求交 → 网格化 → 网格截面等高线；烘焙后网格可导出为 DWG / DXF 多面网格": "Box intersected with a sphere → meshed → mesh section contours; after baking the mesh can be exported as a DWG / DXF polyface mesh",
     "网格截面与求交": "Mesh sections and intersections",
-    "网格球与网格长方体的交线、球的等高线、长方体的轮廓线": "Intersection of a mesh sphere and a mesh box, contours of the sphere, and the box silhouette"
+    "网格球与网格长方体的交线、球的等高线、长方体的轮廓线": "Intersection of a mesh sphere and a mesh box, contours of the sphere, and the box silhouette",
+    "字体与符号": "Fonts and Symbols",
+    "随程序提供的 SHX 单线字体，钢筋符号 %%130～%%133、控制码与常用工程符号，以及简、繁、日、韩单线字体的全部字表": "Bundled single-line SHX fonts, rebar symbols %%130–%%133, control codes and common engineering symbols, plus full character charts of the Simplified Chinese, Traditional Chinese, Japanese and Korean single-line fonts"
   },
   "contexts": {
     "多线对正": {

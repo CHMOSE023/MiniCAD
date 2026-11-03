@@ -66,13 +66,14 @@ if(MINICAD_WITH_SOLID)
     target_link_options(MiniCADWeb PRIVATE -sSTACK_SIZE=8388608)
 endif()
 minicad_web_executable(MiniCADWeb)
-# 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui、/nodes（示例节点图）、/i18n（翻译文件）
+# 资源打包到虚拟文件系统根目录：/fonts（CAD 字体 + 界面字体）、/icons、/patterns、/ui、/nodes（示例节点图）、/samples（示例图纸）、/i18n（翻译文件）
 target_link_options(MiniCADWeb PRIVATE
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/fonts@/fonts"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/icons@/icons"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/patterns@/patterns"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/ui@/ui"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/nodes@/nodes"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/samples@/samples"
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/i18n@/i18n"
 )
 set_target_properties(MiniCADWeb PROPERTIES OUTPUT_NAME "index")

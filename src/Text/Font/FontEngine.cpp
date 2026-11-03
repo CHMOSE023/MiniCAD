@@ -169,6 +169,35 @@ namespace MiniCAD
         return chain;
     }
 
+    // SHX 缺字只找单线字体：本文字的在前，再按繁、简、日、韩（汉字的繁体字形与日文旧字形接近）
+    std::shared_ptr<SHXFallbackChain> FontEngine::ShxFallbackChain(CjkScript script)
+    {
+        auto& chain = m_shxChains[static_cast<int>(script)];
+        if (chain)
+            return chain;
+        static const char* const kOrder[4][4] = {
+            { "minicad_sc.shx", "minicad_tc.shx", "minicad_jp.shx", "minicad_kr.shx" },
+            { "minicad_tc.shx", "minicad_sc.shx", "minicad_jp.shx", "minicad_kr.shx" },
+            { "minicad_jp.shx", "minicad_tc.shx", "minicad_sc.shx", "minicad_kr.shx" },
+            { "minicad_kr.shx", "minicad_tc.shx", "minicad_sc.shx", "minicad_jp.shx" },
+        };
+        const char* const* files = kOrder[static_cast<int>(script)];
+        chain = std::make_shared<SHXFallbackChain>(4, [this, files](size_t i) -> std::shared_ptr<SHXFont>
+        {
+            std::string path;
+            uint64_t    id = 0;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                path = FindExisting(files[i]);
+                if (path.empty())
+                    return nullptr;
+                id = m_nextRuntimeFontId++;
+            }
+            return std::make_shared<SHXFont>(files[i], path, id);
+        });
+        return chain;
+    }
+
     void FontEngine::AddSearchDir(std::string dir)
     {
         if (dir.empty()) return;
@@ -179,7 +208,7 @@ namespace MiniCAD
 
     std::string FontEngine::BuildKey(const FontStyle& style) const
     {
-        return style.name + "|" + style.fontFile + "|" + style.bigFontFile + "|" + (style.isShx ? "shx" : "ttf");
+        return style.name + "|" + style.fontFile + "|" + style.bigFontFile + "|" + (style.isShx ? (style.shapesOnly ? "shp" : "shx") : "ttf");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -226,16 +255,17 @@ namespace MiniCAD
             const std::string big = style.bigFontFile.empty() ? ResolvePath("TSSDCHN.SHX") : FindPath(style.bigFontFile, "TSSDCHN.SHX");
             auto mainFont = std::make_shared<SHXFont>(style.fontFile, path, m_nextRuntimeFontId++);
             auto bigFont  = std::make_shared<SHXFont>(style.bigFontFile.empty() ? std::string("TSSDCHN.SHX") : style.bigFontFile, big, m_nextRuntimeFontId++);
-            // 大字体缺的字（简体大字体里的繁体字等）按原大字体的文字找 TrueType 字体
+            // 大字体缺的字（简体大字体里的繁体字等）按原大字体的文字找单线字体
             uint16_t codePage = SHXFont::DetectBigFontCodePage(style.bigFontFile.empty() ? style.fontFile : style.bigFontFile, {});
             if (codePage == 936)
                 codePage = bigFont->GetCodePage();
-            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, bigFont, m_nextRuntimeFontId++, FallbackChain(ScriptOfCodePage(codePage)));
+            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, bigFont, m_nextRuntimeFontId++, ShxFallbackChain(ScriptOfCodePage(codePage)));
         }
         else if (style.isShx)
         {
             auto mainFont = std::make_shared<SHXFont>(style.name, path, m_nextRuntimeFontId++);
-            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, nullptr, m_nextRuntimeFontId++, FallbackChain(ScriptOfFont(style.fontFile)));
+            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, nullptr, m_nextRuntimeFontId++,
+                                                      style.shapesOnly ? nullptr : ShxFallbackChain(ScriptOfFont(style.fontFile)));
         }
         else
         {
@@ -254,6 +284,8 @@ namespace MiniCAD
         std::lock_guard<std::mutex> lock(m_mutex);
         m_cache.clear();
         for (auto& chain : m_chains)
+            chain.reset();
+        for (auto& chain : m_shxChains)
             chain.reset();
     }
 

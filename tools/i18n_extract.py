@@ -14,7 +14,7 @@
   节点的显示文字 NN_("…") / TrNode("…") 归上下文"节点"（显示时 Nodes::TrNode）；
   相邻的字面量（"甲" "乙"，可以跨行）按 C++ 的规则连成一条
 - 界面描述文件 assets/ui/minicad_ui.json 的 title / label / tooltip / text / search（只取含非 ASCII 字符的）
-- 节点示例索引 assets/nodes/examples/examples.json 的 name / description
+- 节点示例索引 assets/nodes/examples/examples.json、示例图纸索引 assets/samples/samples.json 的 name / description
 不提取：自测（apps/Win32/src/Host/SelfTest.cpp）、tests/、tools/。
 
 漏网检查（--lint）跳过：
@@ -35,7 +35,8 @@ CODE_DIRS = [ROOT / "src", ROOT / "apps"]
 CODE_EXCLUDE = {ROOT / "apps" / "Win32" / "src" / "Host" / "SelfTest.cpp"}
 UI_TEXT_FIELDS = {"title", "label", "tooltip", "text", "search"}
 # 其他要翻译的资源文件：文件 → 要取的字段（节点示例的名称与说明，节点面板“示例”菜单里显示）
-TEXT_FILES = {ROOT / "assets" / "nodes" / "examples" / "examples.json": {"name", "description"}}
+TEXT_FILES = {ROOT / "assets" / "nodes" / "examples" / "examples.json": {"name", "description"},
+              ROOT / "assets" / "samples" / "samples.json": {"name", "description"}}
 
 LITERAL = r'"(?:[^"\\\n]|\\.)*"'
 STRING = r'((?:' + LITERAL + r'\s*)+)'          # 一个或几个相邻的字面量（"甲" "乙"，可以跨行），按 C++ 的规则连成一条

@@ -97,6 +97,8 @@ namespace MiniCAD
 
         if (m_parser->GetKind() == SHXParser::Kind::BigFont)
         {
+            // 代码页里没有的字（简体大字体里的韩文等）不能拿 Unicode 码点当形号查：어 U+C5B4 会查到 GB 编码 C5B4 的"糯"
+            key = 0xFFFFFFFFu;
             std::string utf8;
             MiniDWG::Codec::AppendUtf8(utf8, static_cast<char32_t>(cp));
             const std::string bytes = MiniDWG::Codec::FromUtf8(utf8, static_cast<MiniDWG::Codec::CodePage>(m_codePage));

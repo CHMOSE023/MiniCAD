@@ -42,6 +42,7 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
   - 关闭的窗口推迟到下一帧开头销毁（`MainFrame::PurgeDocWindows`）；用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时拖出不做什么。自测第 30 节覆盖多窗口（一个窗口几个文档、标签在窗口之间拖动、只有一个标签的窗口拖标签即拖窗口、拖标题栏合并全部文档、窗口让开标签条、主窗口空着时显示起始页、关闭窗口关掉里面的文档）；第 29 节覆盖拖出（拖动中窗口已出现并跟随光标、同一次拖动拖回标签条）、文档窗口自己的一套界面（命令行与提示、布局标签各自绑定）、标题栏（系统标题区域、最大化 / 最小化、激活即成为当前文档、系统移动循环拖回标签条）、平移 / 缩放 / 画线 / 选择、绘图区底色、窗口自己的功能区 / "文件"菜单 / 图层下拉框 / 特性与图层面板 / 快捷键 / 动态输入框、点哪个窗口的功能区哪个文档成为当前文档、重新加载界面描述与切换主题时文档窗口一起、拖回、关闭（对话框开着时不接受编辑、点停靠区的面板焦点不进去、Esc 给对话框）。第 30 节的文档窗口没建出来时跳过本节其余部分（只报失败、不崩溃，后面的节照常跑）
 - 功能区（`MiniGUI::Ribbon`，描述文件顶层 `ribbons`）：选项卡行右端是收起按钮和命令搜索框（Ctrl+K）；图标由 `tools/make_icons.py` 生成
 - 起始页 `GUI/StartPage.cpp`（面板 `start`，显示时隐藏标题栏以下的其余界面；首页键 `view.start`）
+  - "示例"区：先是示例图纸（`assets/samples/samples.json` 列出文件、名称、说明、卡片图标；网页版打包到 `/samples`），点击经 `MainFrame::OpenDrawingSample` 打开副本——读完去掉路径（保存时另存，不覆盖随程序安装的文件）、不记入"最近"；再是节点图示例（`assets/nodes/examples/examples.json`）。"字体与符号"示例由 `tools/make_font_sample.py` 生成（字表从 `assets/fonts/minicad_*.shx` 读出收录的字，字体重新生成后要重跑它）
 - 状态栏左侧是模型 / 布局标签
 
 ## 主要文件
@@ -68,7 +69,7 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 - 界面语言（`docs/I18n/PLAN.md`）：宿主解析完命令行、**创建图形设备之前**调用 `InitLanguage`（`apps/Common/src/GUI/Language.cpp`）——依次看 `--lang` / `MINICAD_LANG`（网页版是网址的 `?lang=`）、用户设置（`AppPlatform::ReadUserSetting`，键 `language`）、系统语言（`AppPlatform::GetSystemLanguage`；`zh-HK` / `zh-MO` / `zh-Hant-*` 归到 `zh-TW`），读 `i18n/<语言>.json` 装进 `MiniI18n`；自测、基准传 `useUserSetting = false`，只认指定的。"设置"菜单（`ViewNavBar.cpp` 的 `@language`）列出 `ui.language.<代码>` 命令，选了立即切换（经 `AppPlatform::Post` 放到菜单关掉之后：`MainFrame::SetLanguage` → `SwitchLanguage` 换表 → `MainFrame::Retranslate` 重建界面、停靠布局不变）并写进用户设置（桌面版、Linux 版是用户数据目录下的 `settings.json`，`GUI/UserSettings.cpp`；网页版 `localStorage`）。
   代码里建的界面开始显示译文时，要在 `MainFrame::Retranslate` 里重建或重写文字（现在重建的是起始页、标题栏右侧、各窗口的导航条与模型 / 布局标签，重写状态栏 `StatusBarView::Retranslate`、视图方块的提示 `ViewCube::Retranslate`、命令行的"命令:"与占位文字 `CommandConsole::Retranslate`；
   特性面板、图层面板、节点面板的工具行与功能区的图层条只建一次，建的时候把"写译文"的回调登记到 `PanelSet::retranslate`（`MainFrame::CreateLayerBar` 因此收整个 `PanelSet`），切换时逐个再调一次；
-  节点编辑器每帧画，节点文字显示时经 `Nodes::TrNode` / `NodeTypeInfo::DisplayName` 翻译；起始页与节点面板"示例"菜单的示例名称、说明（`examples.json`，提取工具也扫它）经 `Tr`；
+  节点编辑器每帧画，节点文字显示时经 `Nodes::TrNode` / `NodeTypeInfo::DisplayName` 翻译；起始页与节点面板"示例"菜单的示例名称、说明（`examples.json`、`samples.json`，提取工具也扫它们）经 `Tr`；
   动态输入框的字段名、特性面板「几何」组的行名（属性表里是 `N_` 原文，`PropertyDesc::name` 同时是多选求交集的键）每次刷新时翻译）；
   换语言后调 `AppPlatform::OnLanguageChanged`（网页版据此设 `<html lang>`，并下载该语言的界面字体）。文件对话框的类型名称（`kSaveFormats` 等）用 `N_` 存原文，各宿主每次打开对话框时翻译
 - 界面字体按语言：`AppPlatform::LoadLanguageUiFonts` 给出当前语言优先用的字体（日文界面的汉字用日文字形等），`ApplyLanguageFonts`（`GUI/Language.cpp`）设进每个 `UIContext` 的 `MiniGUI::TextSystem::SetPreferredFonts`——主窗口 `InitUI`、`MainFrame::Retranslate`、新建的浮动窗口与文档窗口都调；换下来的字体留在 `TextSystem` 里（字形图集按 `Font*` 缓存）。

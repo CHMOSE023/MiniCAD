@@ -127,6 +127,7 @@ run_tests.bat
 - 图像加载使用 [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h)
 - 字体处理使用 [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h)
 - 网页界面字体 [Noto Sans SC](https://github.com/notofonts/noto-cjk)  
+- 单线字体 `minicad_*.shx` 的笔画：[Make Me a Hanzi](https://github.com/skishore/makemeahanzi)（Arphic PL）、[KanjiVG](https://kanjivg.tagaini.net)（CC BY-SA 3.0）  
 - Linux 版窗口与输入使用 [SDL3](https://github.com/libsdl-org/SDL)（zlib 许可，动态链接）
 - 测试字体  `GB2312.ttf` `simplex.shx`  `TSSDCHN.SHX` `tssdeng.shx`
 

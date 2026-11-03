@@ -493,8 +493,21 @@ int RunTextStyleTests()
         FontStyle shx;
         shx.name = "Standard"; shx.fontFile = "tssdeng.shx"; shx.bigFontFile = "TSSDCHN.SHX"; shx.isShx = true;
         IFont& big = engine.Resolve(shx);
-        Check(!big.GetGlyph(0x4E2D).Lines.empty() && !big.GetGlyph(kTi).Lines.empty() && big.GetGlyph(kRawShapeFlag | 0x7FFF).Lines.empty(),
-              "简体大字体：GBK 里的字照旧，缺的繁体字改用 TrueType；形号不走回退");
+        const Glyph& ti = big.GetGlyph(kTi);
+        const Glyph& missing = big.GetGlyph(0x9F00);
+        Check(!big.GetGlyph(0x4E2D).Lines.empty() && !ti.Lines.empty() && ti.Triangles.empty() && Near(big.GetAdvance(kTi), big.GetAdvance(0x4E2D))
+              && !big.GetGlyph(0xD55C).Lines.empty() && !big.GetGlyph(0x3042).Lines.empty()
+              && big.GetGlyph(0xC5B4).Lines.size() != big.GetGlyph(0x7CEF).Lines.size()   // 어 不是 GB 编码同为 C5B4 的"糯"
+              && missing.Lines.size() == big.GetGlyph('?').Lines.size() && !missing.Lines.empty()
+              && big.GetGlyph(kRawShapeFlag | 0x7FFF).Lines.empty(),
+              "SHX 缺的繁体字、韩文、假名从单线字体 minicad_*.shx 取（不用 TrueType 填充字），都没有时画 ?；没有的形号不画");
+
+        FontStyle simplex;
+        simplex.name = "Simplex"; simplex.fontFile = "simplex.shx"; simplex.bigFontFile = "TSSDCHN.SHX"; simplex.isShx = true;
+        FontStyle shapes;
+        shapes.name = "simplex.shx"; shapes.fontFile = "simplex.shx"; shapes.isShx = true; shapes.shapesOnly = true;
+        Check(!engine.Resolve(simplex).GetGlyph(kRawShapeFlag | 0x82).Lines.empty() && engine.Resolve(shapes).GetGlyph(kRawShapeFlag | 0x82).Lines.empty(),
+              "钢筋符号 %%130：字体里没有时从单线字体取；线型的形文件缺形不回退");
     }
 #endif
 

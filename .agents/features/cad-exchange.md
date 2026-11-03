@@ -46,7 +46,8 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 字体族名换算（`TrueTypeFontFile`）含简体、繁体（PMingLiU、DFKai-SB、Microsoft JhengHei 等，中文名同）、日文（MS Gothic / ＭＳ ゴシック、Meiryo、Yu Gothic 等，日文名的 ＭＳ 是全角）、韩文（Gulim / 굴림、Batang、Malgun Gothic 等）
 - 找不到的 TrueType 字体按名字判断文字体系（`FontEngine::ScriptOfFont`：简体 / 繁体 / 日文 / 韩文），用同体系里第一个存在的字体代替（`mingliu.ttc` 没有时用 `msjh.ttc` 或 Noto Sans CJK TC），都没有才用 `GB2312.ttf`
 - 缺字回退链（`TTFFallbackChain`，相当于 Windows 的字体链接）：TrueType 字体里缺的字（`arial.ttf` 写的汉字、`GB2312.ttf` 里没有的繁体字与韩文）按该字体所属体系的字体表依次找，再找其他体系的，最后 `DroidSansFallbackFull.ttf`；每个体系一条链、各字体共用，链里的字体用到时才加载，按码点缓存走哪个字体。字体表在 `src/Text/Font/FontEngine.cpp` 的 `ScriptFonts`（系统字体、Noto Sans CJK 的 `.ttc` 按面序号取、自带的界面字体子集）。网页版下载了新字体后 `FontEngine::RescanFallbacks` 重新找，以前缺的字补上
-- SHX 大字体按自己的代码页查字：`SHXFont::DetectBigFontCodePage` 先按文件名（chineset / big5 → 950，extfont / bigfont → 932，whgtxt 等 → 949），再按大字体里的编码范围判断，默认 936；码点经 `MiniDWG::Codec::FromUtf8` 转成该代码页的编码。大字体里没有的非 ASCII 字符经同一套回退链用 TrueType 画（`SHXCompositeFont::PickFontFor`），只有英文 SHX 字体时也一样。`%%d` 等控制码在 TrueType 里按 Unicode 码点查。`MINICAD_GLYPHS` 报的缺字已算上回退链
+- SHX 大字体按自己的代码页查字：`SHXFont::DetectBigFontCodePage` 先按文件名（chineset / big5 → 950，extfont / bigfont → 932，whgtxt 等 → 949），再按大字体里的编码范围判断，默认 936；码点经 `MiniDWG::Codec::FromUtf8` 转成该代码页的编码。代码页里没有的字不查大字体（不能拿 Unicode 码点当形号，否则韩文会查到同编码的汉字）。`%%d` 等控制码在 TrueType 里按 Unicode 码点查
+- SHX 缺字只回退到单线字体，不混用 TrueType 填充字：主字体、大字体都没有的字（含 `%%130`～`%%133` 钢筋符号等形号）经 `SHXFallbackChain` 依次在随程序带的 `assets/fonts/minicad_sc.shx`、`minicad_tc.shx`、`minicad_jp.shx`、`minicad_kr.shx` 里找，按大字体的代码页（没有大字体时按主字体名）定先找哪个（`FontEngine::ShxFallbackChain`），都没有时画主字体的 "?"（同 AutoCAD）。线型的形文件（`FontStyle::shapesOnly`）缺形不回退。这四个字体是 Unicode 编码的 unifont，由 `tools/make_shx_cjk.py` 从 Make Me a Hanzi / KanjiVG 的笔画中线生成，韩文音节由字母部件子形（私用区 U+F000 起）拼成；简繁共用的字只在 `minicad_sc.shx` 里。`MINICAD_GLYPHS` 只报 TrueType 的缺字（`SHXCompositeFont::HasGlyph` 总是 true）
 
 ## 测试与排查
 
