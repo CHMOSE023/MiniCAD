@@ -1,6 +1,7 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
@@ -244,6 +245,7 @@ namespace MiniCAD
         m_ui = std::make_unique<MiniGUI::UIContext>(&m_platform->GetUiBackend());
         if (!m_platform->LoadUiFonts(m_ui->GetTextSystem()))
             LOG_ERROR_TR("MainFrame: 没有找到界面字体");
+        ApplyLanguageFonts(*m_platform, m_ui->GetTextSystem());
 
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });

@@ -536,7 +536,7 @@ namespace MiniCAD
                 return;
             ListItem item;
             item.text     = b.GetName();
-            item.detail   = TrF("{0} 个对象", b.EntityCount());
+            item.detail   = TrNF("{0} 个对象", b.EntityCount(), b.EntityCount());
             item.userData = id;
             items.push_back(std::move(item));
         });

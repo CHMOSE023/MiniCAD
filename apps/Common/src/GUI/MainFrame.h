@@ -108,6 +108,8 @@ namespace MiniCAD
         // 还有图纸在读取、排队，或刚加入的图纸还在生成显示（分帧细分）
         bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty() || m_buildDoc; }
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
+        // 字体目录里新加了字体（网页版启动后下载的繁体、日文字体）：界面补上后备字体，图纸文字的缺字回退重新找
+        void OnFontsAdded();
         // 检查 GitHub 上的最新发布（UpdateCheck.cpp）：后台请求，有新版本时标题栏版本号旁出现提示；
         // manual（帮助 > 检查更新）时结果都弹对话框。平台不支持时（网页版）什么都不做。宿主启动时调用一次，自测不调用
         void CheckForUpdates(bool manual = false);

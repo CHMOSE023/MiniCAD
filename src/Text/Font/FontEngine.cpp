@@ -2,6 +2,7 @@
 #include "SHXCompositeFont.h"
 #include "Core/Log.h"
 #include "Core/PathUtils.h"
+#include "Utf8Iterator.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -21,24 +22,90 @@ namespace MiniCAD
         return m_fontDir + fontFile;
     }
 
-    // 字体文件不在字体目录中时（图纸引用了 gbenor、complex、gbcbig 等未随程序提供的字体），
-    // 依次试原名、全小写、全大写（网页版的虚拟文件系统区分大小写），都没有就换成程序自带的替代字体
-    // （与 AutoCAD 的 FONTALT 类似）：SHX 主字体 → simplex.shx，SHX 大字体 → TSSDCHN.SHX，TTF → GB2312.ttf
-    std::string FontEngine::FindPath(const std::string& fontFile, const char* substitute, bool* found) const
+    namespace
     {
-        if (found) *found = true;
-        std::string lower = fontFile, upper = fontFile;
-        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        struct FallbackFont { const char* file; int face; };
+
+        // 各文字缺字时依次找的字体：Windows 自带、Linux / 安卓的 Noto Sans CJK（.ttc 里 0 日 1 韩 2 简 3 繁）、随程序带的界面字体
+        const std::vector<FallbackFont>& ScriptFonts(CjkScript script)
+        {
+            static const std::vector<FallbackFont> kFonts[4] = {
+                { { "GB2312.ttf", 0 }, { "msyh.ttc", 0 }, { "simsun.ttc", 0 }, { "NotoSansCJK-Regular.ttc", 2 },
+                  { "NotoSansCJKsc-Regular.otf", 0 }, { "wqy-microhei.ttc", 0 }, { "NotoSansSC-UI.ttf", 0 } },
+                { { "msjh.ttc", 0 }, { "mingliu.ttc", 0 }, { "NotoSansCJK-Regular.ttc", 3 },
+                  { "NotoSansCJKtc-Regular.otf", 0 }, { "NotoSansTC-UI.otf", 0 } },
+                { { "msgothic.ttc", 0 }, { "YuGothM.ttc", 0 }, { "meiryo.ttc", 0 }, { "NotoSansCJK-Regular.ttc", 0 },
+                  { "NotoSansCJKjp-Regular.otf", 0 }, { "NotoSansJP-UI.otf", 0 } },
+                { { "malgun.ttf", 0 }, { "gulim.ttc", 0 }, { "NotoSansCJK-Regular.ttc", 1 },
+                  { "NotoSansCJKkr-Regular.otf", 0 }, { "NotoSansKR-UI.otf", 0 } },
+            };
+            return kFonts[static_cast<int>(script)];
+        }
+
+        CjkScript ScriptOfCodePage(uint16_t codePage)
+        {
+            switch (codePage)
+            {
+            case 950: return CjkScript::Traditional;
+            case 932: return CjkScript::Japanese;
+            case 949: return CjkScript::Korean;
+            default:  return CjkScript::Simplified;
+            }
+        }
+
+        std::string LowerAscii(std::string s)
+        {
+            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return s;
+        }
+    }
+
+    CjkScript FontEngine::ScriptOfFont(const std::string& fontFile)
+    {
+        std::string name = fontFile;
+        if (const size_t slash = name.find_last_of("/\\"); slash != std::string::npos)
+            name = name.substr(slash + 1);
+        name = LowerAscii(name);
+        auto has = [&name](std::initializer_list<const char*> parts)
+        {
+            return std::any_of(parts.begin(), parts.end(), [&name](const char* p) { return name.find(p) != std::string::npos; });
+        };
+        Utf8Iterator it(name);
+        while (it.HasNext())
+        {
+            const uint32_t cp = it.Next();
+            if ((cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F) || (cp >= 0xAC00 && cp <= 0xD7A3))
+                return CjkScript::Korean;
+            if ((cp >= 0x3040 && cp <= 0x30FF) || (cp >= 0xFF66 && cp <= 0xFF9F))
+                return CjkScript::Japanese;
+        }
+        // i18n: 数据（字体名）
+        if (has({ "mingliu", "kaiu", "dfkai", "msjh", "jhenghei", "細明", "標楷", "正黑", "華康", "cjktc", "sanstc", "hant" }))
+            return CjkScript::Traditional;
+        if (has({ "msgothic", "msmincho", "ms gothic", "ms mincho", "ms pgothic", "ms pmincho", "ms ui gothic", "meiryo",
+                  "yugoth", "yumin", "yu gothic", "yu mincho", "cjkjp", "sansjp" }) || name.rfind("hg", 0) == 0)
+            return CjkScript::Japanese;
+        if (has({ "malgun", "gulim", "batang", "dotum", "gungsuh", "cjkkr", "sanskr" }))
+            return CjkScript::Korean;
+        return CjkScript::Simplified;
+    }
+
+    // 依次试原名、全小写、全大写（网页版的虚拟文件系统区分大小写），先在字体目录、再到额外目录（系统字体目录）找；没有返回空串
+    std::string FontEngine::FindExisting(const std::string& fontFile) const
+    {
+        if (fontFile.empty())
+            return {};
+        std::string lower = LowerAscii(fontFile), upper = fontFile;
         std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         std::error_code ec;
         for (const std::string& name : {fontFile, lower, upper})
         {
             const std::string path = ResolvePath(name);
-            if (!name.empty() && std::filesystem::is_regular_file(Utf8ToPath(path), ec))
+            if (std::filesystem::is_regular_file(Utf8ToPath(path), ec))
                 return path;
         }
-        // 再到额外目录（系统字体目录）找：只按文件名，带路径的名字上面已经判过
-        if (!fontFile.empty() && fontFile.find('/') == std::string::npos && fontFile.find('\\') == std::string::npos)
+        // 额外目录只按文件名找，带路径的名字上面已经判过
+        if (fontFile.find('/') == std::string::npos && fontFile.find('\\') == std::string::npos)
             for (const std::string& dir : m_extraDirs)
                 for (const std::string& name : {fontFile, lower, upper})
                 {
@@ -46,9 +113,60 @@ namespace MiniCAD
                     if (std::filesystem::is_regular_file(Utf8ToPath(path), ec))
                         return path;
                 }
+        return {};
+    }
+
+    // 字体文件不在字体目录中时（图纸引用了 gbenor、complex、gbcbig 等未随程序提供的字体），
+    // 换成程序自带的替代字体（与 AutoCAD 的 FONTALT 类似）：SHX 主字体 → simplex.shx，SHX 大字体 → TSSDCHN.SHX
+    std::string FontEngine::FindPath(const std::string& fontFile, const char* substitute, bool* found) const
+    {
+        if (found) *found = true;
+        if (std::string path = FindExisting(fontFile); !path.empty())
+            return path;
         if (found) *found = false;
         LOG_WARN_TR("字体 {0} 不存在，以 {1} 代替", fontFile.c_str(), substitute);
         return ResolvePath(substitute);
+    }
+
+    // 缺失的 TrueType 字体换成同一种文字的字体（新細明體 → 微软正黑体等），都没有时用自带的 GB2312.ttf
+    std::string FontEngine::SubstituteTrueType(CjkScript script, int& face) const
+    {
+        for (const FallbackFont& f : ScriptFonts(script))
+            if (std::string path = FindExisting(f.file); !path.empty())
+            {
+                face = f.face;
+                return path;
+            }
+        face = 0;
+        return ResolvePath("GB2312.ttf");
+    }
+
+    std::shared_ptr<TTFFallbackChain> FontEngine::FallbackChain(CjkScript script)
+    {
+        auto& chain = m_chains[static_cast<int>(script)];
+        if (chain)
+            return chain;
+        // 本文字的字体在前，其余按简、繁、日、韩，最后是 Droid Sans Fallback
+        std::vector<FallbackFont> fonts = ScriptFonts(script);
+        for (CjkScript other : { CjkScript::Simplified, CjkScript::Traditional, CjkScript::Japanese, CjkScript::Korean })
+            if (other != script)
+                for (const FallbackFont& f : ScriptFonts(other))
+                    fonts.push_back(f);
+        fonts.push_back({ "DroidSansFallbackFull.ttf", 0 });
+        chain = std::make_shared<TTFFallbackChain>(fonts.size(), [this, fonts](size_t i) -> std::shared_ptr<TTFFont>
+        {
+            std::string path;
+            uint64_t    id = 0;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                path = FindExisting(fonts[i].file);
+                if (path.empty())
+                    return nullptr;
+                id = m_nextRuntimeFontId++;
+            }
+            return std::make_shared<TTFFont>(fonts[i].file, path, id, fonts[i].face);
+        });
+        return chain;
     }
 
     void FontEngine::AddSearchDir(std::string dir)
@@ -90,7 +208,16 @@ namespace MiniCAD
         }
 
         bool found = true;
-        const std::string path = FindPath(style.fontFile, style.isShx ? "simplex.shx" : "GB2312.ttf", &found);
+        int face = 0;
+        std::string path;
+        if (style.isShx)
+            path = FindPath(style.fontFile, "simplex.shx", &found);
+        else if (path = FindExisting(style.fontFile); path.empty())
+        {
+            found = false;
+            path  = SubstituteTrueType(ScriptOfFont(style.fontFile.empty() ? style.name : style.fontFile), face);
+            LOG_WARN_TR("字体 {0} 不存在，以 {1} 代替", style.fontFile.c_str(), path);
+        }
 
         std::shared_ptr<IFont> font;
         // 缺失的 SHX 主字体可能本身含汉字（如 hztxt.shx），替代时同时配上中文大字体
@@ -99,21 +226,22 @@ namespace MiniCAD
             const std::string big = style.bigFontFile.empty() ? ResolvePath("TSSDCHN.SHX") : FindPath(style.bigFontFile, "TSSDCHN.SHX");
             auto mainFont = std::make_shared<SHXFont>(style.fontFile, path, m_nextRuntimeFontId++);
             auto bigFont  = std::make_shared<SHXFont>(style.bigFontFile.empty() ? std::string("TSSDCHN.SHX") : style.bigFontFile, big, m_nextRuntimeFontId++);
-            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, bigFont, m_nextRuntimeFontId++);
+            // 大字体缺的字（简体大字体里的繁体字等）按原大字体的文字找 TrueType 字体
+            uint16_t codePage = SHXFont::DetectBigFontCodePage(style.bigFontFile.empty() ? style.fontFile : style.bigFontFile, {});
+            if (codePage == 936)
+                codePage = bigFont->GetCodePage();
+            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, bigFont, m_nextRuntimeFontId++, FallbackChain(ScriptOfCodePage(codePage)));
         }
         else if (style.isShx)
-            font = std::make_shared<SHXFont>(style.name, path, m_nextRuntimeFontId++);
+        {
+            auto mainFont = std::make_shared<SHXFont>(style.name, path, m_nextRuntimeFontId++);
+            font = std::make_shared<SHXCompositeFont>(style.name, mainFont, nullptr, m_nextRuntimeFontId++, FallbackChain(ScriptOfFont(style.fontFile)));
+        }
         else
         {
-            auto ttf = std::make_shared<TTFFont>(style.name, path, m_nextRuntimeFontId++);
-            // 缺字（Arial 等西文字体里的汉字）用自带的 GB2312.ttf 补上，不画成方块；字体本身就换成了它时不用
-            if (found)
-            {
-                if (!m_ttfFallback)
-                    m_ttfFallback = std::make_shared<TTFFont>("GB2312", ResolvePath("GB2312.ttf"), m_nextRuntimeFontId++);
-                if (m_ttfFallback->IsLoaded())
-                    ttf->SetFallback(m_ttfFallback);
-            }
+            auto ttf = std::make_shared<TTFFont>(style.name, path, m_nextRuntimeFontId++, face);
+            // 缺字（Arial 等西文字体里的汉字、宋体里的韩文）按字体的文字找回退字体，不画成方块
+            ttf->SetFallback(FallbackChain(ScriptOfFont(style.fontFile.empty() ? style.name : style.fontFile)));
             font = std::move(ttf);
         }
 
@@ -125,6 +253,19 @@ namespace MiniCAD
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_cache.clear();
-        m_ttfFallback.reset();
+        for (auto& chain : m_chains)
+            chain.reset();
+    }
+
+    void FontEngine::RescanFallbacks()
+    {
+        std::vector<std::shared_ptr<TTFFallbackChain>> chains;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            chains.assign(std::begin(m_chains), std::end(m_chains));
+        }
+        for (auto& chain : chains)
+            if (chain)
+                chain->Rescan();
     }
 }

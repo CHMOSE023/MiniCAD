@@ -463,6 +463,39 @@ int RunTextStyleTests()
         std::filesystem::remove(path, ec);
         Check(ok, "TrueType 缺字（西文字体里的汉字）用自带 GB2312.ttf 的字形与步进，本字体有的字照旧");
     }
+
+    // ── 11. 繁体、日文、韩文：缺字回退按字体的文字找，缺失的字体换成同一种文字的字体，SHX 大字体缺的字改用 TrueType ─────────
+    {
+        const std::string dir = std::string(MINICAD_ASSET_DIR) + "/fonts/";
+        Check(FontEngine::ScriptOfFont("mingliu.ttc") == CjkScript::Traditional && FontEngine::ScriptOfFont("標楷體.ttf") == CjkScript::Traditional
+              && FontEngine::ScriptOfFont("ＭＳ ゴシック.ttf") == CjkScript::Japanese && FontEngine::ScriptOfFont("C:/Windows/Fonts/msgothic.ttc") == CjkScript::Japanese
+              && FontEngine::ScriptOfFont("굴림.ttf") == CjkScript::Korean && FontEngine::ScriptOfFont("malgun.ttf") == CjkScript::Korean
+              && FontEngine::ScriptOfFont("simsun.ttc") == CjkScript::Simplified && FontEngine::ScriptOfFont("arial.ttf") == CjkScript::Simplified,
+              "按字体名认出繁体、日文、韩文字体");
+
+        Check(SHXFont::DetectBigFontCodePage("chineset.shx", {}) == 950 && SHXFont::DetectBigFontCodePage("extfont2.shx", {}) == 932
+              && SHXFont::DetectBigFontCodePage("whgtxt.shx", {}) == 949 && SHXFont::DetectBigFontCodePage("gbcbig.shx", { 0xB0A1, 0xD6D0 }) == 936
+              && SHXFont::DetectBigFontCodePage("x.shx", { 0x889F, 0x9A40, 0xE040 }) == 932 && SHXFont::DetectBigFontCodePage("x.shx", { 0xA440, 0xC57B }) == 950,
+              "大字体的代码页：按文件名，认不出时按形编码的区间");
+
+        constexpr uint32_t kTi = 0x9AD4;     // 體：GB2312.ttf 里没有
+        FontEngine engine;
+        engine.SetFontDir(dir);
+        FontStyle arial;
+        arial.name = "Arial"; arial.fontFile = dir + "GB2312.ttf"; arial.isShx = false;
+        IFont& gb = engine.Resolve(arial);
+        FontStyle ming;
+        ming.name = "TC"; ming.fontFile = "mingliu.ttc"; ming.isShx = false;
+        IFont& tc = engine.Resolve(ming);
+        Check(gb.HasGlyph(kTi) && !gb.GetGlyph(kTi).Lines.empty() && tc.HasGlyph(kTi) && !tc.GetGlyph(kTi).Lines.empty(),
+              "GB2312.ttf 没有的繁体字从回退字体取；缺失的繁体字体换成同一种文字的字体");
+
+        FontStyle shx;
+        shx.name = "Standard"; shx.fontFile = "tssdeng.shx"; shx.bigFontFile = "TSSDCHN.SHX"; shx.isShx = true;
+        IFont& big = engine.Resolve(shx);
+        Check(!big.GetGlyph(0x4E2D).Lines.empty() && !big.GetGlyph(kTi).Lines.empty() && big.GetGlyph(kRawShapeFlag | 0x7FFF).Lines.empty(),
+              "简体大字体：GBK 里的字照旧，缺的繁体字改用 TrueType；形号不走回退");
+    }
 #endif
 
     return g_failures;

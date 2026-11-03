@@ -110,6 +110,7 @@ jobs:
           name="MiniCAD-$PACKAGE_VERSION-web"
           mkdir -p "dist/$name"
           cp out/web/MiniCADWeb/index.* "dist/$name/"
+          cp -r out/web/MiniCADWeb/fonts "dist/$name/"
           cp README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
           (cd dist && zip -r "$name.zip" "$name")
 

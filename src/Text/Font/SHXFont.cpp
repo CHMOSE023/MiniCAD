@@ -1,13 +1,49 @@
 #include "SHXFont.h"
-#include "EncodingGBK.h"
 #include "Core/Log.h"
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
+#include "Codec/CodePage.h"
+#include <algorithm>
+#include <cctype>
+
 namespace MiniCAD
 {
+    uint16_t SHXFont::DetectBigFontCodePage(const std::string& fileName, const std::vector<uint32_t>& codes)
+    {
+        std::string name = fileName;
+        if (const size_t slash = name.find_last_of("/\\"); slash != std::string::npos)
+            name = name.substr(slash + 1);
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        auto has = [&name](std::initializer_list<const char*> parts)
+        {
+            return std::any_of(parts.begin(), parts.end(), [&name](const char* p) { return name.find(p) != std::string::npos; });
+        };
+        if (has({ "chineset", "big5" }))
+            return 950;
+        if (has({ "extfont", "bigfont", "jis" }))
+            return 932;
+        if (has({ "whgtxt", "whgdtxt", "whtgtxt", "whtmtxt", "kor" }))
+            return 949;
+
+        size_t lowLead = 0, midLead = 0, lowTrail = 0;
+        for (uint32_t code : codes)
+        {
+            if (code < 0x8000 || code > 0xFFFF)
+                continue;
+            const uint32_t lead = code >> 8, trail = code & 0xFF;
+            if (lead < 0xA1)
+                ++lowLead;
+            else if (lead <= 0xDF)
+                ++midLead;
+            if (trail < 0xA1)
+                ++lowTrail;
+        }
+        // Shift-JIS 的首字节在 0x81～0x9F、0xE0～0xFC，不用 0xA1～0xDF；Big5 首字节从 0xA1 起、尾字节有 0x40～0x7E
+        if (lowLead > 0 && midLead == 0)
+            return 932;
+        if (lowLead == 0 && lowTrail > 0)
+            return 950;
+        return 936;
+    }
+
     SHXFont::SHXFont(const std::string& name, const std::string& filePath, uint64_t fontId)
         : m_name(name)
         , m_filePath(filePath)
@@ -31,6 +67,8 @@ namespace MiniCAD
             return;
 
         m_loaded = true;
+        if (m_parser->GetKind() == SHXParser::Kind::BigFont)
+            m_codePage = DetectBigFontCodePage(filePath, m_parser->GetCodes());
 
         // 拿 parser 真实解出来的 height,而不是硬编码 1.0
         double h = m_parser->GetFontHeight();
@@ -59,20 +97,13 @@ namespace MiniCAD
 
         if (m_parser->GetKind() == SHXParser::Kind::BigFont)
         {
-#ifdef _WIN32
-            wchar_t wc = (wchar_t)cp;
-            unsigned char mb[4] = {};
-            int n = ::WideCharToMultiByte(936, 0, &wc, 1,
-                (char*)mb, sizeof(mb),
-                nullptr, nullptr);
-            if (n == 2) key = ((uint32_t)mb[0] << 8) | mb[1];
-            else if (n == 1) key = mb[0];
-#else
-            // 非 Windows:调用统一的 Unicode → GBK 转换
-            // 实现见下文(EncodingGBK.cpp)
-            uint16_t gbk = 0;
-            if (UnicodeToGBK(cp, gbk)) key = gbk;
-#endif
+            std::string utf8;
+            MiniDWG::Codec::AppendUtf8(utf8, static_cast<char32_t>(cp));
+            const std::string bytes = MiniDWG::Codec::FromUtf8(utf8, static_cast<MiniDWG::Codec::CodePage>(m_codePage));
+            if (bytes.size() == 2 && static_cast<unsigned char>(bytes[0]) >= 0x80)
+                key = (static_cast<uint32_t>(static_cast<unsigned char>(bytes[0])) << 8) | static_cast<unsigned char>(bytes[1]);
+            else if (bytes.size() == 1)
+                key = static_cast<unsigned char>(bytes[0]);
         }
 
         m_codeMap[cp] = key;

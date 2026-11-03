@@ -7,6 +7,8 @@
 
 namespace MiniCAD
 {
+    class TTFFallbackChain;
+
     // SHX "主字体 + 大字体" 组合(AutoCAD 标准 STYLE 模式)
     //
     //   ASCII / 西文符号 (cp < 0x80)   → 主字体(如 txt.shx)
@@ -17,7 +19,9 @@ namespace MiniCAD
     class SHXCompositeFont : public IFont
     {
     public:
-        SHXCompositeFont(const std::string& name, std::shared_ptr<IFont> mainFont, std::shared_ptr<IFont> bigFont, uint64_t fontId);
+        // fallback：两个 SHX 字体都没有的字（繁体字配简体大字体等）改用 TrueType 字体
+        SHXCompositeFont(const std::string& name, std::shared_ptr<IFont> mainFont, std::shared_ptr<IFont> bigFont, uint64_t fontId,
+                         std::shared_ptr<TTFFallbackChain> fallback = nullptr);
 
         const Glyph& GetGlyph (uint32_t codepoint) override;
         double      GetAdvance(uint32_t codepoint) override;
@@ -44,6 +48,7 @@ namespace MiniCAD
 
         std::shared_ptr<IFont> m_mainFont;   // 西文(txt.shx 等)
         std::shared_ptr<IFont> m_bigFont;    // 中文(tssdchn.shx 等)
+        std::shared_ptr<TTFFallbackChain> m_fallback;
 
         // 路由缓存:避免每次都把两个字体都试一遍
         std::unordered_map<uint32_t, IFont*> m_routeCache;

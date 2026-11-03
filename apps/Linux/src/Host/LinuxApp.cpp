@@ -461,6 +461,11 @@ namespace MiniCAD
         return MiniGUI::LoadSDLUIFonts(text, GetResourceDir() + "/fonts/NotoSansSC-UI.ttf");
     }
 
+    std::vector<std::shared_ptr<MiniGUI::Font>> LinuxApp::LoadLanguageUiFonts(const std::string& language)
+    {
+        return MiniGUI::LoadSDLLanguageFonts(GetResourceDir() + "/fonts/", language);
+    }
+
     void LinuxApp::RequestRedraw()
     {
         // 线程安全：后台任务里也可调用。已经有未处理的请求时不再推事件

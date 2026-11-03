@@ -64,6 +64,11 @@ namespace MiniGUI
         size_t LineHitTest(size_t line, float x) const;
     };
 
+    // 界面语言（BCP 47）对应的中日韩字体：Noto Sans CJK 的 .ttc 里的字体序号（0 日 1 韩 2 简 3 繁，不是中日韩时 -1），
+    // 随程序带的子集字体文件名（繁体、日文、韩文，与 NotoSansSC-UI.ttf 同目录；简体与其他语言为空串）
+    int         NotoCjkFaceForLanguage(const std::string& language);
+    std::string BundledUiFontForLanguage(const std::string& language);
+
     // 文字系统：字体、字形图集、排版、测量缓存。由 UIContext 持有。
     // 排版在物理像素下进行，字形原点对齐到物理像素，任何 DPI 缩放下文字都清晰
     class TextSystem
@@ -76,6 +81,9 @@ namespace MiniGUI
         Font* AddFont(std::shared_ptr<Font> font);
         void  AddFallbackFont(std::shared_ptr<Font> font);
         Font* GetDefaultFont() const { return m_fonts.empty() ? nullptr : m_fonts.front().get(); }
+        // 界面语言的字体：默认字体排的中日韩字符（汉字、假名、谚文、全角标点）先在这里找，日文汉字用日文字形。
+        // 换掉的字体仍然留着（字形图集按 Font* 缓存）
+        void  SetPreferredFonts(std::vector<std::shared_ptr<Font>> fonts);
         bool  HasFont() const { return !m_fonts.empty(); }
 
         void  SetPixelScale(float scale);
@@ -125,6 +133,8 @@ namespace MiniGUI
     private:
         GlyphAtlas                         m_atlas;
         std::vector<std::shared_ptr<Font>> m_fonts;       // [0] 为默认字体，其余为后备
+        std::vector<std::shared_ptr<Font>> m_preferred;
+        std::vector<std::shared_ptr<Font>> m_retired;
         float                              m_pixelScale = 1.0f;
 
         std::vector<ShapedGlyph> m_glyphs;

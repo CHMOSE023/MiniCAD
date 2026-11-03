@@ -76,3 +76,8 @@ target_link_options(MiniCADWeb PRIVATE
     "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets/i18n@/i18n"
 )
 set_target_properties(MiniCADWeb PROPERTIES OUTPUT_NAME "index")
+# 繁体、日文界面字体（tools/make_web_font.py 生成）不进 .data：放在网页旁的 fonts/ 下，启动后按需下载（WebApp::FetchLazyFont）
+add_custom_command(TARGET MiniCADWeb POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:MiniCADWeb>/fonts"
+    VERBATIM
+)

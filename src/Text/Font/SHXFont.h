@@ -2,6 +2,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <vector>
 
 #include "IFont.h"
 #include "../Parser/SHXParser.h"
@@ -34,6 +35,10 @@ namespace MiniCAD
         void LoadFont(const std::string& filePath);
 
         uint32_t ResolveShxKey(uint32_t codepoint) const;
+    public:
+        // 大字体按哪种代码页排字（936 / 950 / 932 / 949）：先看文件名，再看形编码落在哪些区
+        static uint16_t DetectBigFontCodePage(const std::string& fileName, const std::vector<uint32_t>& codes);
+        uint16_t GetCodePage() const { return m_codePage; }
     private:
         std::string m_name;
         std::string m_filePath;
@@ -42,6 +47,7 @@ namespace MiniCAD
         double      m_height = 1.0;
         double      m_defaultAdvance = 0.6;
         bool        m_loaded = false;
+        uint16_t    m_codePage = 936;
 
         std::unique_ptr<SHXParser> m_parser;
 

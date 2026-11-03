@@ -1,14 +1,17 @@
 #include "SHXCompositeFont.h"
 #include "SHXFont.h"        // IsLoaded() 要对内层 SHXFont 做 dynamic_cast，需要完整类型
+#include "TTFFont.h"
 #include "Core/Log.h"
 
 namespace MiniCAD
 {
-    SHXCompositeFont::SHXCompositeFont(const std::string& name, std::shared_ptr<IFont> mainFont, std::shared_ptr<IFont> bigFont, uint64_t fontId)
+    SHXCompositeFont::SHXCompositeFont(const std::string& name, std::shared_ptr<IFont> mainFont, std::shared_ptr<IFont> bigFont, uint64_t fontId,
+                                       std::shared_ptr<TTFFallbackChain> fallback)
         : m_name(name)
         , m_fontId(fontId)
         , m_mainFont(std::move(mainFont))
         , m_bigFont(std::move(bigFont))
+        , m_fallback(std::move(fallback))
     {
         LOG_DEBUG("[Composite] '%s'  main=%s  big=%s", m_name.c_str(),
             m_mainFont ? m_mainFont->GetName() : "(none)",
@@ -29,7 +32,9 @@ namespace MiniCAD
         IFont* picked = nullptr;
         if (primary && primary->HasGlyph(cp))  picked = primary;
         else if (fallback && fallback->HasGlyph(cp)) picked = fallback;
+        else if (m_fallback && cp >= 0x80 && !(cp & kRawShapeFlag)) picked = m_fallback->Find(cp);
 
+        if (!picked) return nullptr;    // 不缓存：回退字体后来才有时（网页版）还能找到
         m_routeCache[cp] = picked;
         LOG_TRACE("[Composite] U+%04X -> %s", cp, picked ? picked->GetName() : "(none)");
         return picked;

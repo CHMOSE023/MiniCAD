@@ -1,6 +1,7 @@
 {
   "language": "en",
   "name": "English",
+  "plural": "n != 1",
   "messages": {
     "[Image] 路径无效，跳过: {0} ({1})": "[Image] invalid path, skipped: {0} ({1})",
     "[Image] 找不到图像文件: {0}": "[Image] image file not found: {0}",
@@ -71,7 +72,6 @@
     "Region: 需要先选择封闭的对象（圆、椭圆、矩形、封闭多段线，或首尾相接的直线 / 圆弧）": "Region: select closed objects first (circles, ellipses, rectangles, closed polylines, or lines / arcs joined end to end)",
     "Region: 选中的对象里没有封闭的边界（已忽略 {0} 个）": "Region: the selected objects do not form a closed boundary ({0} ignored)",
     "已创建 {0} 个面域，面积 = {1}，周长 = {2}": "{0} region(s) created, area = {1}, perimeter = {2}",
-    "（忽略 {0} 个对象）": " ({0} object(s) ignored)",
     "原对象已保留；不再需要时请自行删除": "The original objects were kept; delete them if you no longer need them",
     "布局中不能切换三维视图": "3D views cannot be used in a layout",
     "视图": "View",
@@ -99,7 +99,6 @@
     "{0}: 结果为空（这些区域没有公共部分），未做修改": "{0}: the result is empty (these regions have no common area); nothing was changed",
     "{0}: 结果为空，未做修改": "{0}: the result is empty; nothing was changed",
     "{0}：已生成面域（{1} 个环），面积 = {2}，周长 = {3}": "{0}: region created ({1} loop(s)), area = {2}, perimeter = {3}",
-    "有 {0} 个对象不能围成区域，已忽略": "{0} object(s) that do not enclose an area were ignored",
     "对象 {0}：面积 = {1}，周长 = {2}": "Object {0}: area = {1}, perimeter = {2}",
     "Area: 需要先选择能围成区域的对象（面域、填充、圆、椭圆、矩形、封闭多段线或首尾相接的线段）": "Area: select objects that enclose an area first (regions, hatches, circles, ellipses, rectangles, closed polylines, or segments joined end to end)",
     "共 {0} 个对象，总面积 = {1}": "{0} objects, total area = {1}",
@@ -115,9 +114,7 @@
     "已分解 {0} 个对象，生成 {1} 个对象": "{0} object(s) exploded into {1} object(s)",
     "；{0} 个对象不能分解，保持不变": "; {0} object(s) could not be exploded and were left unchanged",
     "没有可选择的对象": "There are no objects to select",
-    "已选择 {0} 个对象": "{0} object(s) selected",
     "所选对象都在锁定的图层上，不能修改": "All selected objects are on locked layers and cannot be modified",
-    "已跳过 {0} 个锁定图层上的对象": "{0} object(s) on locked layers skipped",
     "ZOOM 选项 [全部(A)/范围(E)]:": "Enter a ZOOM option [All(A)/Extents(E)]:",
     "OLE 对象没有可显示的展示数据，只画边框": "OLE object has no presentation data to show, drawing its frame only",
     "OLE 对象快照：{0} {1} 字节 → {2}×{3} 像素，{4} ms": "OLE object snapshot: {0} {1} bytes → {2}×{3} pixels, {4} ms",
@@ -262,7 +259,6 @@
     "指定第三点:": "Specify third point:",
     "指定第四点或 [回车/右键=三角形]:": "Specify fourth point or [Enter/Right-click = triangle]:",
     "{0}：创建失败（{1}）": "{0}: creation failed ({1})",
-    "{0}：已创建 {1} 个实体": "{0}: {1} solid(s) created",
     "，{0} 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略": ", {0} object(s) that are not closed planar objects (circles, closed polylines, rectangles) ignored",
     "，{0} 个失败（{1}）": ", {0} failed ({1})",
     "长方体 指定第一个角点:": "Box: specify first corner:",
@@ -276,7 +272,6 @@
     "截面 键入水平截面的高度 Z，或指定铅垂截切线的第一点:": "Section: type the Z height of a horizontal section, or specify the first point of a vertical cutting line:",
     "指定截切线的第二点:": "Specify second point of the cutting line:",
     "指定剖面图的放置点（对应第一点、Z = 0）:": "Specify placement point of the section (matches the first point at Z = 0):",
-    "截面：生成 {0} 条曲线": "Section: {0} curve(s) created",
     "截面：截平面与所选实体不相交": "Section: the cutting plane does not intersect the selected solids",
     "，{0} 个对象不是三维实体，已忽略": ", {0} object(s) that are not 3D solids ignored",
     "，{0} 个实体失败（{1}）": ", {0} solid(s) failed ({1})",
@@ -328,6 +323,7 @@
     "无法识别的转义 \\{0}": "Unknown escape \\{0}",
     "文件意外结束": "Unexpected end of file",
     "无法识别的字符 '{0}'": "Unrecognized character '{0}'",
+    "复数规则 \"{0}\" 无法识别": "Unrecognized plural rule \"{0}\"",
     "对象结束后还有多余的内容": "Extra content after the object",
     "外部参照 {0}：不支持的实体 {1} × {2} 已跳过": "Xref {0}: unsupported entity {1} × {2} skipped",
     "DWG/DXF 导入：不支持的实体 {0} × {1} 已跳过": "DWG/DXF import: unsupported entity {0} × {1} skipped",
@@ -905,7 +901,6 @@
     "AutoCAD 2013～2017 共用 2013 格式；DWG 不支持 2007 格式": "AutoCAD 2013–2017 share the 2013 format; DWG does not support the 2007 format",
     "保存后由浏览器下载到本机": "After saving, the browser downloads the file to this computer",
     "保存": "Save",
-    "{0} 个对象": "{0} object(s)",
     "插入块": "Insert Block",
     "选择要插入的块（双击直接插入），然后在绘图区指定插入点：": "Select the block to insert (double-click to insert it), then specify the insertion point in the drawing area:",
     "插入": "Insert",
@@ -2135,6 +2130,39 @@
       "西": "W",
       "北": "N"
     }
+  },
+  "plurals": {
+    "（忽略 {0} 个对象）": [
+      " ({0} object ignored)",
+      " ({0} objects ignored)"
+    ],
+    "有 {0} 个对象不能围成区域，已忽略": [
+      "{0} object that does not enclose an area was ignored",
+      "{0} objects that do not enclose an area were ignored"
+    ],
+    "已选择 {0} 个对象": [
+      "{0} object selected",
+      "{0} objects selected"
+    ],
+    "已跳过 {0} 个锁定图层上的对象": [
+      "{0} object on a locked layer skipped",
+      "{0} objects on locked layers skipped"
+    ],
+    "{0}：已创建 {1} 个实体": [
+      "{0}: {1} solid created",
+      "{0}: {1} solids created"
+    ],
+    "截面：生成 {0} 条曲线": [
+      "Section: {0} curve created",
+      "Section: {0} curves created"
+    ],
+    "{0} 个对象": [
+      "{0} object",
+      "{0} objects"
+    ]
+  },
+  "fuzzy": {
+    "DWG/DXF 导出：格式或版本与原图不同，TCH对象 TCH对象 不能原样写回，只写出显示用的普通几何": "DWG/DXF export: format or version differs from the original, Tianzheng objects × {0} cannot be written back as is, writing their display geometry only"
   },
   "obsolete": {
     "语言": "Language",

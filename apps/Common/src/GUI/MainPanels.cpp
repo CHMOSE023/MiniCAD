@@ -620,7 +620,7 @@ namespace MiniCAD
         P.bindings.BindLabel(count, [this, doc]
         {
             const size_t n = doc() ? SelectionInfo(doc()).count : 0;
-            return n == 0 ? Tr("未选择") : TrF("{0} 个对象", n);
+            return n == 0 ? Tr("未选择") : TrNF("{0} 个对象", n, n);
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, std::string());
         rowName(selLayer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文
@@ -939,9 +939,35 @@ namespace MiniCAD
         Retranslate();
     }
 
+    void MainFrame::OnFontsAdded()
+    {
+        auto reload = [this](MiniGUI::UIContext& ui)
+        {
+            m_platform->LoadUiFonts(ui.GetTextSystem());
+            ApplyLanguageFonts(*m_platform, ui.GetTextSystem());
+        };
+        reload(*m_ui);
+        for (auto& w : m_docWindows)
+            reload(w->window->GetUI());
+        if (m_floatHost)
+            m_floatHost->ForEachUi(reload);
+        m_fontSystem.GetFontEngine().RescanFallbacks();
+        for (auto& doc : m_docManager.GetAll())
+            doc->GetScene().MarkDirty();        // 已经画成方块的字重新细分
+        m_ui->Update();
+        RequestRenderAll();
+    }
+
     void MainFrame::Retranslate()
     {
         using namespace MiniGUI;
+        auto applyFonts = [this](UIContext& ui) { ApplyLanguageFonts(*m_platform, ui.GetTextSystem()); };
+        applyFonts(*m_ui);
+        for (auto& w : m_docWindows)
+            applyFonts(w->window->GetUI());
+        if (m_floatHost)
+            m_floatHost->ForEachUi(applyFonts);
+
         // 重新应用界面描述文件会回到文件里的默认停靠布局（浮出的面板窗口也会关掉）：先记下各窗口当前的，重建后恢复
         std::vector<std::pair<UiLayout*, JsonValue>> docks;
         auto remember = [&docks](UiLayout& layout)

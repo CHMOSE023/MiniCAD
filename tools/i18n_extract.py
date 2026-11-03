@@ -1,14 +1,16 @@
 """界面文字的提取与检查（见 docs/I18n/PLAN.md 3.5）。
 
 用法：
-    python tools/i18n_extract.py              # 提取：更新 assets/i18n/*.json（新条目值为空，代码里没有了的移进 "obsolete"），输出完成度
-    python tools/i18n_extract.py --check      # 检查（不改文件，CI 用）：翻译文件格式、占位符、命令行选项字母、菜单助记符；
-                                              #   翻译文件与代码不同步（有新条目或过时条目）只提示，不算失败
+    python tools/i18n_extract.py              # 提取：更新 assets/i18n/*.json（新条目值为空，代码里没有了的移进 "obsolete"；
+                                              #   新条目与某条过时条目相近时，把旧译文放进 "fuzzy" 待复核，同 gettext 的 msgmerge），输出完成度
+    python tools/i18n_extract.py --check      # 检查（不改文件，CI 用）：翻译文件格式、占位符、命令行选项字母、菜单助记符、复数规则；
+                                              #   翻译文件与代码不同步（有新条目或过时条目）、有待复核的译文只提示，不算失败
     python tools/i18n_extract.py --where TEXT # 反查：译文或原文里含 TEXT 的条目，列出原文与代码位置（英文日志、截图定位用）
     python tools/i18n_extract.py --lint       # 漏网检查（CI 用）：没有包 Tr / N_ 的中文字面量、格式串含中文的 LOG_*
 
 提取的来源：
 - 代码（src/、apps/ 的 .h / .hpp / .cpp）里 Tr / TrF / N_ / LOG_*_TR 的第一个字符串字面量，TrC / TrCF / NC_ 的上下文与原文；
+  TrN / TrNF 的原文进 "plurals"（译文是数组，按文件的 "plural" 表达式选第几个，同 gettext 的 Plural-Forms）；
   节点的显示文字 NN_("…") / TrNode("…") 归上下文"节点"（显示时 Nodes::TrNode）；
   相邻的字面量（"甲" "乙"，可以跨行）按 C++ 的规则连成一条
 - 界面描述文件 assets/ui/minicad_ui.json 的 title / label / tooltip / text / search（只取含非 ASCII 字符的）
@@ -20,6 +22,7 @@
 - 节点的搜索关键字（Keywords = "…"，中英文都写，不翻）
 """
 import argparse
+import difflib
 import json
 import pathlib
 import re
@@ -39,11 +42,16 @@ STRING = r'((?:' + LITERAL + r'\s*)+)'          # 一个或几个相邻的字面
 CALL1 = re.compile(r'\b(?:Tr|TrF|N_|LOG_INFO_TR|LOG_WARN_TR|LOG_ERROR_TR)\s*\(\s*' + STRING)
 CALL2 = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING + r'\s*,\s*' + STRING)
 NODE_CALL = re.compile(r'\b(?:NN_|TrNode)\s*\(\s*' + STRING)     # 节点的显示文字（src/NodeGraph/Value.h），上下文固定
+PLURAL_CALL = re.compile(r'\b(?:TrN|TrNF)\s*\(\s*' + STRING)      # 数量相关的句子，进 "plurals"
 CONTEXT_ARG = re.compile(r'\b(?:TrC|TrCF|NC_)\s*\(\s*' + STRING)   # 上下文（原文是变量时只有上下文是字面量）
 PLAIN_LOG = re.compile(r'\bLOG_(?:TRACE|DEBUG|INFO|WARN|ERROR)\s*\(\s*' + STRING)
 CJK = re.compile(r'[　-〿㐀-鿿＀-￯]')     # 汉字与全角标点
 KEYWORDS = re.compile(r'\bKeywords\s*=')
 NODE_CONTEXT = "节点"
+PLURAL = "#plural"          # Messages 里复数条目的"上下文"；obsolete / fuzzy 的键前缀
+# 各语言默认的复数规则（gettext 的 Plural-Forms）；翻译文件里写了 "plural" 时用文件的
+DEFAULT_PLURAL = {"en": "n != 1", "ja": "0", "ko": "0", "zh-TW": "0", "zh-CN": "0"}
+FUZZY_RATIO = 0.75          # 新原文与过时原文的相似度达到它时，旧译文进 "fuzzy"
 PLACEHOLDER = re.compile(r'(?<!\{)\{(\d+)\}')
 OPTION_LETTER = re.compile(r'\(([A-Za-z0-9])\)')     # 命令行选项 [闭合(C)/放弃(U)]；助记符 (&S) 不算
 MNEMONIC = re.compile(r'&([^&])')
@@ -167,6 +175,9 @@ def extract_code(msgs):
         for m in NODE_CALL.finditer(text):
             line = text.count("\n", 0, m.start()) + 1
             msgs.add(NODE_CONTEXT, unescape(m.group(1)), f"{rel(path)}:{line}")
+        for m in PLURAL_CALL.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            msgs.add(PLURAL, unescape(m.group(1)), f"{rel(path)}:{line}")
 
 
 def extract_ui(msgs):
@@ -202,16 +213,124 @@ def catalogs():
     return sorted(I18N_DIR.glob("*.json")) if I18N_DIR.exists() else []
 
 
+class PluralError(Exception):
+    pass
+
+
+def eval_plural(expr, n):
+    """gettext 的 Plural-Forms 表达式（C 语法，变量 n）在 n 时的值；与 MiniI18n::EvalPlural 一致"""
+    m = re.search(r"plural\s*=\s*([^;]*)", expr) if "nplurals" in expr else None
+    expr = m.group(1) if m else expr
+    tokens = re.findall(r"\s*(\d+|n|\|\||&&|==|!=|<=|>=|[-+*/%<>!?:()])", expr)
+    if "".join(tokens).replace(" ", "") != re.sub(r"\s+", "", expr) or not tokens:
+        raise PluralError(expr)
+    tokens = [t.strip() for t in tokens]
+    pos = [0]
+
+    def peek():
+        return tokens[pos[0]] if pos[0] < len(tokens) else None
+
+    def eat(t):
+        if peek() == t:
+            pos[0] += 1
+            return True
+        return False
+
+    def binary(sub, ops):
+        def parse():
+            v = sub()
+            while peek() in ops:
+                op = tokens[pos[0]]
+                pos[0] += 1
+                r = sub()
+                v = {"||": lambda a, b: int(bool(a or b)), "&&": lambda a, b: int(bool(a and b)),
+                     "==": lambda a, b: int(a == b), "!=": lambda a, b: int(a != b),
+                     "<": lambda a, b: int(a < b), "<=": lambda a, b: int(a <= b),
+                     ">": lambda a, b: int(a > b), ">=": lambda a, b: int(a >= b),
+                     "+": lambda a, b: a + b, "-": lambda a, b: a - b, "*": lambda a, b: a * b,
+                     "/": lambda a, b: a // b if b else 0, "%": lambda a, b: a % b if b else 0}[op](v, r)
+            return v
+        return parse
+
+    def primary():
+        if eat("("):
+            v = ternary()
+            if not eat(")"):
+                raise PluralError(expr)
+            return v
+        if eat("n"):
+            return n
+        t = peek()
+        if t is None or not t.isdigit():
+            raise PluralError(expr)
+        pos[0] += 1
+        return int(t)
+
+    def unary():
+        if eat("!"):
+            return int(not unary())
+        return primary()
+
+    mul = binary(unary, ("*", "/", "%"))
+    add = binary(mul, ("+", "-"))
+    relational = binary(add, ("<", "<=", ">", ">="))
+    eq = binary(relational, ("==", "!="))
+    land = binary(eq, ("&&",))
+    lor = binary(land, ("||",))
+
+    def ternary():
+        c = lor()
+        if eat("?"):
+            a = ternary()
+            if not eat(":"):
+                raise PluralError(expr)
+            b = ternary()
+            return a if c else b
+        return c
+
+    v = ternary()
+    if pos[0] != len(tokens):
+        raise PluralError(expr)
+    return v
+
+
+def plural_count(rule):
+    """复数规则一共有几种形式（看 n = 0～1000 时出现过的最大下标）"""
+    return max(eval_plural(rule, n) for n in range(1001)) + 1
+
+
+def nonempty(v):
+    return any(v) if isinstance(v, list) else bool(v)
+
+
+def fuzzy_match(msgid, pool):
+    """pool 里与 msgid 最相近、相似度够的原文；没有时返回 None"""
+    best, best_ratio = None, FUZZY_RATIO
+    for old in pool:
+        ratio = difflib.SequenceMatcher(None, msgid, old).ratio()
+        if ratio >= best_ratio:
+            best, best_ratio = old, ratio
+    return best
+
+
 def update_catalog(path, msgs):
     data = load_json(path)
     messages = data.get("messages", {}) or {}
     contexts = data.get("contexts", {}) or {}
+    plurals = data.get("plurals", {}) or {}
+    fuzzy = data.get("fuzzy", {}) or {}
     obsolete = data.get("obsolete", {}) or {}
+    rule = data.get("plural") or DEFAULT_PLURAL.get(data.get("language", path.stem), "n != 1")
+    forms = plural_count(rule)
 
-    new_messages, new_contexts = {}, {}
+    new_messages, new_contexts, new_plurals = {}, {}, {}
     for (ctx, msgid) in msgs.where:
         if ctx is None:
             new_messages[msgid] = messages.get(msgid, obsolete.get(msgid, ""))
+        elif ctx == PLURAL:
+            # 从 TrF 改成 TrNF 的：原来的译文先填进每种形式
+            single = messages.get(msgid) or obsolete.get(msgid) or ""
+            new_plurals[msgid] = plurals.get(msgid, obsolete.get(PLURAL + "|" + msgid, [single] * forms))
         else:
             new_contexts.setdefault(ctx, {})[msgid] = contexts.get(ctx, {}).get(msgid, "")
     for msgid, t in messages.items():
@@ -221,20 +340,46 @@ def update_catalog(path, msgs):
         for msgid, t in table.items():
             if msgid not in new_contexts.get(ctx, {}) and t:
                 obsolete[ctx + "|" + msgid] = t
+    for msgid, t in plurals.items():
+        if msgid not in new_plurals and nonempty(t):
+            obsolete[PLURAL + "|" + msgid] = t
     for msgid in new_messages:
         obsolete.pop(msgid, None)
+    for msgid in new_plurals:
+        obsolete.pop(PLURAL + "|" + msgid, None)
+        obsolete.pop(msgid, None)
+
+    # 待复核：新条目还没译文、又有相近的过时条目时，旧译文放进 fuzzy（运行时不显示，确认后移进 messages / contexts）
+    keys = {msgid: msgid for msgid, t in new_messages.items() if not t}
+    keys.update({ctx + "|" + msgid: msgid for ctx, table in new_contexts.items() for msgid, t in table.items() if not t})
+    fuzzy = {k: v for k, v in fuzzy.items() if k in keys}
+    for key, msgid in keys.items():
+        if key in fuzzy:
+            continue
+        prefix = key[:len(key) - len(msgid)]
+        pool = [k[len(prefix):] for k, v in obsolete.items() if isinstance(v, str) and k.startswith(prefix)
+                and (prefix or "|" not in k)]
+        old = fuzzy_match(msgid, pool)
+        if old is not None:
+            fuzzy[key] = obsolete[prefix + old]
 
     out = {
         "language": data.get("language", path.stem),
         "name": data.get("name", path.stem),
+        "plural": rule,
         "messages": new_messages,
         "contexts": new_contexts,
-        "obsolete": obsolete,
     }
+    if new_plurals:
+        out["plurals"] = new_plurals
+    if fuzzy:
+        out["fuzzy"] = fuzzy
+    out["obsolete"] = obsolete
     path.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     done = sum(1 for v in new_messages.values() if v) + sum(1 for t in new_contexts.values() for v in t.values() if v)
-    total = len(new_messages) + sum(len(t) for t in new_contexts.values())
-    return done, total
+    done += sum(1 for v in new_plurals.values() if nonempty(v))
+    total = len(new_messages) + sum(len(t) for t in new_contexts.values()) + len(new_plurals)
+    return done, total, len(fuzzy)
 
 
 def command_labels():
@@ -267,6 +412,26 @@ def check(msgs):
             continue
         entries = [(None, k, v) for k, v in (data.get("messages") or {}).items()]
         entries += [(c, k, v) for c, t in (data.get("contexts") or {}).items() for k, v in t.items()]
+        rule = data.get("plural") or DEFAULT_PLURAL.get(data.get("language", path.stem), "n != 1")
+        try:
+            forms = plural_count(rule)
+        except PluralError:
+            errors.append(f"{name}：复数规则 \"{rule}\" 无法识别")
+            forms = 1
+        for msgid, v in (data.get("plurals") or {}).items():
+            loc = (msgs.where.get((PLURAL, msgid)) or ["?"])[0]
+            values = v if isinstance(v, list) else [v]
+            if not all(isinstance(x, str) for x in values):
+                errors.append(f"{name}：\"{msgid}\" 的复数译文不是字符串数组")
+                continue
+            if isinstance(v, list) and any(values) and len(values) != forms:
+                warnings.append(f"{name}：\"{msgid}\" 有 {len(values)} 个复数译文，复数规则要 {forms} 个（{loc}）")
+            for x in values:
+                if x and not set(PLACEHOLDER.findall(x)) <= set(PLACEHOLDER.findall(msgid)):
+                    errors.append(f"{name}：占位符不一致（{loc}）\n    原文：{msgid}\n    译文：{x}")
+        entries += [(PLURAL, k, "") for k in (data.get("plurals") or {})]
+        if data.get("fuzzy"):
+            warnings.append(f"{name}：{len(data['fuzzy'])} 条译文待复核（\"fuzzy\"：原文改过，旧译文核对后移进 messages / contexts）")
         known = set(msgs.where)
         missing = [k for k in msgs.where if not any(e[0] == k[0] and e[1] == k[1] for e in entries)]
         stale = [(c, k) for c, k, _ in entries if (c, k) not in known]
@@ -348,7 +513,7 @@ def lint():
         text = strip_cpp_comments(raw)
         lines = raw.split("\n")
         covered = []
-        for rx in (CALL1, NODE_CALL, CONTEXT_ARG):
+        for rx in (CALL1, NODE_CALL, CONTEXT_ARG, PLURAL_CALL):
             covered += [m.span(1) for m in rx.finditer(text)]
         for m in CALL2.finditer(text):
             covered += [m.span(1), m.span(2)]
@@ -386,8 +551,13 @@ def where(msgs, text):
         for (ctx, msgid) in msgs.where:
             if want in norm(msgid):
                 hits.append(("zh-CN", ctx, msgid, ""))
+    for path in catalogs():
+        for msgid, t in (load_json(path).get("plurals") or {}).items():
+            text_t = " / ".join(t) if isinstance(t, list) else t
+            if want in norm(text_t) or want in norm(msgid):
+                hits.append((path.stem, PLURAL, msgid, text_t))
     for lang, ctx, msgid, t in hits:
-        print(f"[{lang}]{' (' + ctx + ')' if ctx else ''} {msgid}")
+        print(f"[{lang}]{' (' + ('复数' if ctx == PLURAL else ctx) + ')' if ctx else ''} {msgid}")
         if t:
             print(f"    译文：{t}")
         for loc in msgs.where.get((ctx, msgid), ["（代码里已经没有）"]):
@@ -425,8 +595,8 @@ def main():
     I18N_DIR.mkdir(parents=True, exist_ok=True)
     print(f"{len(msgs.where)} 条原文")
     for path in catalogs():
-        done, total = update_catalog(path, msgs)
-        print(f"{rel(path)}：已翻译 {done} / {total}")
+        done, total, fuzzy = update_catalog(path, msgs)
+        print(f"{rel(path)}：已翻译 {done} / {total}" + (f"，{fuzzy} 条待复核（fuzzy）" if fuzzy else ""))
     return 0
 
 

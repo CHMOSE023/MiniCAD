@@ -68,7 +68,9 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
   特性面板、图层面板、节点面板的工具行与功能区的图层条只建一次，建的时候把"写译文"的回调登记到 `PanelSet::retranslate`（`MainFrame::CreateLayerBar` 因此收整个 `PanelSet`），切换时逐个再调一次；
   节点编辑器每帧画，节点文字显示时经 `Nodes::TrNode` / `NodeTypeInfo::DisplayName` 翻译；起始页与节点面板"示例"菜单的示例名称、说明（`examples.json`，提取工具也扫它）经 `Tr`；
   动态输入框的字段名、特性面板「几何」组的行名（属性表里是 `N_` 原文，`PropertyDesc::name` 同时是多选求交集的键）每次刷新时翻译）；
-  换语言后调 `AppPlatform::OnLanguageChanged`（网页版据此设 `<html lang>`）。文件对话框的类型名称（`kSaveFormats` 等）用 `N_` 存原文，各宿主每次打开对话框时翻译
+  换语言后调 `AppPlatform::OnLanguageChanged`（网页版据此设 `<html lang>`，并下载该语言的界面字体）。文件对话框的类型名称（`kSaveFormats` 等）用 `N_` 存原文，各宿主每次打开对话框时翻译
+- 界面字体按语言：`AppPlatform::LoadLanguageUiFonts` 给出当前语言优先用的字体（日文界面的汉字用日文字形等），`ApplyLanguageFonts`（`GUI/Language.cpp`）设进每个 `UIContext` 的 `MiniGUI::TextSystem::SetPreferredFonts`——主窗口 `InitUI`、`MainFrame::Retranslate`、新建的浮动窗口与文档窗口都调；换下来的字体留在 `TextSystem` 里（字形图集按 `Font*` 缓存）。
+  网页版的繁体 / 日文字体子集在页面旁的 `fonts/` 按需下载（`WebApp::FetchLazyFont`，`apps/Web/CMakeLists.txt` 构建后复制、发布包里带上），到了调 `MainFrame::OnFontsAdded`：各界面重新 `LoadUiFonts`（只加新出现的字体）与 `ApplyLanguageFonts`，CAD 文字的回退链重新找（`FontEngine::RescanFallbacks`），各文档 `Scene::MarkDirty` 重新细分
 - 网页版输入：键盘按 `KeyboardEvent.keyCode` 映射（与 Windows 虚拟键码相同）；文本框获得焦点时，文字与输入法从跟随光标的隐藏 textarea 送来；Ctrl+V 等 `paste` 事件带着文字到达后再交给界面
 
 ## 测试与排查

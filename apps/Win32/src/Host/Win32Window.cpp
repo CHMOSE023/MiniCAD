@@ -401,6 +401,11 @@ namespace MiniCAD
         return MiniGUI::LoadSystemUIFonts(text);    // 微软雅黑 UI + Segoe UI Symbol
     }
 
+    std::vector<std::shared_ptr<MiniGUI::Font>> Win32Window::LoadLanguageUiFonts(const std::string& language)
+    {
+        return MiniGUI::LoadSystemLanguageFonts(language);
+    }
+
     void Win32Window::RequestRedraw()
     {
         InvalidateRect(m_hwnd, nullptr, FALSE);     // 线程安全：后台任务里也可调用

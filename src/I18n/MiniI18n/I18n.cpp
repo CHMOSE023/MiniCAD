@@ -1,4 +1,5 @@
 #include "MiniI18n/I18n.h"
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdio>
@@ -233,6 +234,121 @@ namespace MiniI18n
             }
         };
 
+        // gettext 的 Plural-Forms 表达式：?:、||、&&、== != < <= > >=、+ - * / %、!、括号、整数与 n
+        struct PluralParser
+        {
+            std::string_view s;
+            uint64_t         n;
+            size_t           pos = 0;
+            bool             ok  = true;
+
+            void Space() { while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) ++pos; }
+            bool Eat(std::string_view tok)
+            {
+                Space();
+                if (s.substr(pos, tok.size()) != tok)
+                    return false;
+                pos += tok.size();
+                return true;
+            }
+            uint64_t Fail() { ok = false; return 0; }
+
+            uint64_t Ternary()
+            {
+                const uint64_t c = Or();
+                if (!Eat("?"))
+                    return c;
+                const uint64_t a = Ternary();
+                if (!Eat(":"))
+                    return Fail();
+                const uint64_t b = Ternary();
+                return c ? a : b;
+            }
+            uint64_t Or()  { uint64_t v = And(); while (Eat("||")) { const uint64_t r = And(); v = (v || r) ? 1 : 0; } return v; }
+            uint64_t And() { uint64_t v = Eq();  while (Eat("&&")) { const uint64_t r = Eq();  v = (v && r) ? 1 : 0; } return v; }
+            uint64_t Eq()
+            {
+                uint64_t v = Rel();
+                while (true)
+                {
+                    if (Eat("=="))      v = v == Rel() ? 1 : 0;
+                    else if (Eat("!=")) v = v != Rel() ? 1 : 0;
+                    else return v;
+                }
+            }
+            uint64_t Rel()
+            {
+                uint64_t v = Add();
+                while (true)
+                {
+                    if (Eat("<="))     v = v <= Add() ? 1 : 0;
+                    else if (Eat(">=")) v = v >= Add() ? 1 : 0;
+                    else if (Eat("<"))  v = v <  Add() ? 1 : 0;
+                    else if (Eat(">"))  v = v >  Add() ? 1 : 0;
+                    else return v;
+                }
+            }
+            uint64_t Add()
+            {
+                uint64_t v = Mul();
+                while (true)
+                {
+                    if (Eat("+"))      v += Mul();
+                    else if (Eat("-")) v -= Mul();
+                    else return v;
+                }
+            }
+            uint64_t Mul()
+            {
+                uint64_t v = Unary();
+                while (true)
+                {
+                    if (Eat("*")) v *= Unary();
+                    else if (Eat("/")) { const uint64_t d = Unary(); v = d ? v / d : 0; }
+                    else if (Eat("%")) { const uint64_t d = Unary(); v = d ? v % d : 0; }
+                    else return v;
+                }
+            }
+            uint64_t Unary()
+            {
+                Space();
+                if (pos < s.size() && s[pos] == '!' && (pos + 1 >= s.size() || s[pos + 1] != '='))
+                {
+                    ++pos;
+                    return Unary() ? 0 : 1;
+                }
+                return Primary();
+            }
+            uint64_t Primary()
+            {
+                if (Eat("("))
+                {
+                    const uint64_t v = Ternary();
+                    return Eat(")") ? v : Fail();
+                }
+                if (Eat("n"))
+                    return n;
+                Space();
+                const size_t start = pos;
+                uint64_t v = 0;
+                while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9')
+                    v = v * 10 + static_cast<uint64_t>(s[pos++] - '0');
+                return pos > start ? v : Fail();
+            }
+        };
+
+        // "nplurals=2; plural=n != 1;" → "n != 1"；只有表达式时原样返回
+        std::string_view PluralExpression(std::string_view rule)
+        {
+            if (const size_t at = rule.find("plural="); at != std::string_view::npos && rule.find("nplurals") != std::string_view::npos)
+            {
+                rule.remove_prefix(at + 7);
+                if (const size_t end = rule.find(';'); end != std::string_view::npos)
+                    rule = rule.substr(0, end);
+            }
+            return rule;
+        }
+
         size_t CodepointCount(std::string_view s)
         {
             size_t n = 0;
@@ -246,11 +362,54 @@ namespace MiniI18n
     bool Catalog::Parse(std::string_view json, std::string* error)
     {
         m_messages.clear();
+        m_plurals.clear();
         Reader r{ json };
         if (json.size() >= 3 && json.substr(0, 3) == "\xEF\xBB\xBF")
             r.pos = 3;      // UTF-8 BOM
         const bool ok = r.Object([&](const std::string& key)
         {
+            if (key == "plural")
+            {
+                if (!r.Peek('"'))
+                    return r.SkipValue();
+                std::string v;
+                if (!r.String(v))
+                    return false;
+                return SetPluralRule(v) ? true : r.Fail(TrF("复数规则 \"{0}\" 无法识别", v));
+            }
+            if (key == "plurals")
+            {
+                return r.Object([&](const std::string& msgid)
+                {
+                    std::vector<std::string> forms;
+                    if (r.Peek('"'))
+                    {
+                        std::string v;
+                        if (!r.String(v))
+                            return false;
+                        forms.push_back(std::move(v));
+                    }
+                    else if (r.Peek('['))
+                    {
+                        ++r.pos;
+                        while (!r.Peek(']'))
+                        {
+                            std::string v;
+                            if (!r.String(v))
+                                return false;
+                            forms.push_back(std::move(v));
+                            if (r.Peek(','))
+                                ++r.pos;
+                        }
+                        ++r.pos;
+                    }
+                    else
+                        return r.SkipValue();
+                    if (std::any_of(forms.begin(), forms.end(), [](const std::string& f) { return !f.empty(); }))
+                        AddPlural(msgid, std::move(forms));
+                    return true;
+                });
+            }
             if (key == "language" || key == "name")
             {
                 if (!r.Peek('"'))
@@ -270,7 +429,7 @@ namespace MiniI18n
                     return r.StringTable([&](const std::string& msgid, std::string v) { Add(context, msgid, std::move(v)); });
                 });
             }
-            return r.SkipValue();      // "obsolete" 与其他字段
+            return r.SkipValue();      // "fuzzy"、"obsolete" 与其他字段
         });
         r.SkipSpace();
         if (ok && r.pos < json.size())
@@ -278,6 +437,7 @@ namespace MiniI18n
         if (!r.error.empty())
         {
             m_messages.clear();
+            m_plurals.clear();
             if (error)
                 *error = r.error;
             return false;
@@ -293,6 +453,39 @@ namespace MiniI18n
     void Catalog::Add(std::string_view context, std::string_view msgid, std::string translation)
     {
         m_messages.insert_or_assign(ContextKey(context, msgid), std::move(translation));
+    }
+
+    void Catalog::AddPlural(std::string_view msgid, std::vector<std::string> forms)
+    {
+        m_plurals.insert_or_assign(std::string(msgid), std::move(forms));
+    }
+
+    bool Catalog::SetPluralRule(std::string_view expression)
+    {
+        const std::string_view expr = PluralExpression(expression);
+        bool ok = false;
+        EvalPlural(expr, 1, &ok);
+        if (ok)
+            m_pluralRule = std::string(expr);
+        return ok;
+    }
+
+    size_t Catalog::PluralIndex(uint64_t n) const
+    {
+        return static_cast<size_t>(EvalPlural(m_pluralRule, n));
+    }
+
+    const std::string* Catalog::FindPlural(std::string_view msgid, uint64_t n) const
+    {
+        if (const auto it = m_plurals.find(msgid); it != m_plurals.end())
+        {
+            const std::vector<std::string>& forms = it->second;
+            const std::string& form = forms[std::min(PluralIndex(n), forms.size() - 1)];
+            if (!form.empty())
+                return &form;
+            return &*std::find_if(forms.begin(), forms.end(), [](const std::string& f) { return !f.empty(); });
+        }
+        return Find(msgid);
     }
 
     const std::string* Catalog::Find(std::string_view msgid) const
@@ -341,6 +534,27 @@ namespace MiniI18n
         if (const std::string* t = c->Find(context, msgid))
             return c->IsPseudo() ? Pseudo(*t) : *t;
         return Tr(msgid);       // 上下文里没有时用不带上下文的译文
+    }
+
+    std::string TrN(std::string_view msgid, uint64_t n)
+    {
+        const Catalog* c = GetCatalog();
+        if (!c || msgid.empty())
+            return std::string(msgid);
+        if (const std::string* t = c->FindPlural(msgid, n))
+            return c->IsPseudo() ? Pseudo(*t) : *t;
+        return c->IsPseudo() ? Pseudo(msgid) : std::string(msgid);
+    }
+
+    uint64_t EvalPlural(std::string_view expression, uint64_t n, bool* ok)
+    {
+        PluralParser p{ expression, n };
+        const uint64_t v = p.Ternary();
+        p.Space();
+        const bool good = p.ok && p.pos == expression.size() && !expression.empty();
+        if (ok)
+            *ok = good;
+        return good ? v : 0;
     }
 
     std::string Pseudo(std::string_view text)

@@ -28,6 +28,7 @@
 //   - 用户布局文件不保存文档窗口；平台给不出窗口或渲染目标（网页版、Linux 版）时标签拖出不做什么
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
 #include "GUI/StatusBarView.h"
 #include "Core/Log.h"
@@ -345,6 +346,7 @@ namespace MiniCAD
         w->size   = size;
         if (!m_platform->LoadUiFonts(ui.GetTextSystem()))
             LOG_WARN_TR("文档窗口：没有找到界面字体");
+        ApplyLanguageFonts(*m_platform, ui.GetTextSystem());
         ui.SetTheme(m_ui->GetTheme());
         // 主窗口开着对话框时整个窗口（视口、面板、功能区…）不接受指针，按下只把主窗口置前；按键与文字转给对话框
         ui.SetModalOwner(m_ui.get(), [this] { m_platform->ActivateMainWindow(); });
