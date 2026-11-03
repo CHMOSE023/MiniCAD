@@ -107,6 +107,7 @@
     "aux.polar": { "icon": "Polar.png" },
     "aux.hover": { "icon": "Hover.png" },
     "ui.theme": { "icon": "Theme.png" },
+    "ui.cursor": { "icon": "CursorSettings.png" },
     "ui.reload": { "icon": "Reload.png" },
     "help.about": { "icon": "Help.png" }
   },
@@ -193,7 +194,7 @@
           "panels": [
             { "title": "格式", "items": [ "layer.new", "format.textStyle", "format.mlineStyle", "format.pointStyle", "format.lineTypeScale" ] },
             { "title": "绘图辅助", "items": [ "aux.snap", "aux.ortho", "aux.polar", "aux.hover" ] },
-            { "title": "界面", "items": [ "ui.theme", "ui.reload" ] }
+            { "title": "界面", "items": [ "ui.theme", "ui.cursor", "ui.reload" ] }
           ]
         }
       ]

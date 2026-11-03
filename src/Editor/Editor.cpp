@@ -289,6 +289,14 @@ namespace MiniCAD
         m_constraintEngine.EnableOrtho(o.m_constraintEngine.IsOrthoEnabled());
         m_constraintEngine.EnablePolar(o.m_constraintEngine.IsPolarEnabled());
         m_picking.SetHoverEnabled(o.m_picking.IsHoverEnabled());
+        SetCursorStyle(o.m_cursorSize, o.m_pickBox);
+    }
+
+    void Editor::SetCursorStyle(float cursorSize, float pickBox)
+    {
+        m_cursorSize = std::clamp(cursorSize, 0.0f, 100.0f);
+        m_pickBox    = std::clamp(pickBox, 0.0f, 50.0f);
+        m_picking.SetPickBox(m_pickBox);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -5072,6 +5080,8 @@ namespace MiniCAD
 
         vs.ShowCurrorBox = !IsActiveTool() && !m_cursorHidden;
         vs.ShowCrosshair = !HidesCrosshair() && !m_cursorHidden;
+        vs.CursorSize    = m_cursorSize;
+        vs.PickBox       = m_pickBox;
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

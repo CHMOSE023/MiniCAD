@@ -1344,7 +1344,7 @@ namespace MiniCAD
         }
 
         Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
-        ObjectID id = HitTest(pt, HOVER_THRESH);
+        ObjectID id = HitTest(pt, m_hoverThresh);
 
         // 注意：悬停变化不再 MarkDirty —— 悬停高亮改由 Editor 每帧以 overlay 重建，
         // 不触发整场景顶点重建（鼠标移动驱动的重绘已足够刷新高亮）。
@@ -1369,7 +1369,7 @@ namespace MiniCAD
 
         // 复用悬停结果：悬停启用时，UpdateHovered 已在最近一次鼠标移动算出光标下实体，
         // 直接拿来作为命中对象（“看到高亮的就是点中的”），省掉这里再做一次全场景命中测试。
-        // 悬停的 HOVER_THRESH ≥ PICK_THRESH，故无悬停即光标下无可选实体。
+        // 悬停的 m_hoverThresh ≥ m_pickThresh，故无悬停即光标下无可选实体。
         // 悬停禁用时才回退到即时 HitTest。
         ObjectID id;
         if (m_hoverEnabled)
@@ -1377,7 +1377,7 @@ namespace MiniCAD
         else
         {
             Math::Point2 pt{ (double)e.MouseX, (double)e.MouseY };
-            id = HitTest(pt, PICK_THRESH);
+            id = HitTest(pt, m_pickThresh);
         }
 
         std::unordered_set<ObjectID> newSel = m_selection;

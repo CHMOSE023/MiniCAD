@@ -210,6 +210,8 @@ namespace MiniCAD
         void OpenMLineStyleDialog();                              // 多线样式（MLSTYLE）
         void OpenPointStyleDialog();                             // 格式 → 点样式…（$PDMODE/$PDSIZE）
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
+        void OpenCursorDialog();                                 // 管理 → 设置光标…（十字光标大小、拾取框大小）
+        void LoadCursorStyle();                                  // 启动时从用户设置读光标大小（自测不读）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
         void ShowUpdateDialog(bool prompt = false);              // 新版本：说明、下载、发布页；prompt 为启动时的提示（下载 / 忽略此版本）

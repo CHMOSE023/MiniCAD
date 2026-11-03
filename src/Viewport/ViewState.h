@@ -138,6 +138,8 @@ namespace MiniCAD
         bool ShowAxis       = true;    // 坐标轴
         bool ShowCurrorBox  = true;    // 鼠标中间方框
         bool ShowCrosshair  = true;    // 十字光标（平移工具改用系统的手形光标）
+        float CursorSize    = 5.0f;    // 十字光标长度：占视口长边的百分比（0～100，100 铺满视口；同 AutoCAD 的 CURSORSIZE）
+        float PickBox       = 6.0f;    // 拾取框半边长（像素，0 不画；同 AutoCAD 的 PICKBOX），点选的命中半径随它
 
         // ===== 最近点 ===== 
         SnapDraw Snap    = {};

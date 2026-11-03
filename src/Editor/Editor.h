@@ -114,6 +114,12 @@ namespace MiniCAD
         bool               IsActiveTool() const  { return m_tool != nullptr; }
         bool               HidesCrosshair() const { return m_tool && m_tool->HidesCrosshair(); }   // 当前工具不画十字光标（平移）
         void               SetCursorHidden(bool hidden) { m_cursorHidden = hidden; }              // 不画十字光标与拾取框（只浏览）
+        // 十字光标大小（占视口长边的百分比，0～100）与拾取框半边长（像素，0～50），见 ViewState::CursorSize / PickBox
+        static constexpr float kDefaultCursorSize = 5.0f;
+        static constexpr float kDefaultPickBox    = 6.0f;
+        void               SetCursorStyle(float cursorSize, float pickBox);
+        float              GetCursorSize() const { return m_cursorSize; }
+        float              GetPickBox() const { return m_pickBox; }
         // 工具是否还在进行：工具刚结束（等下一次输入事件才释放）的收尾期不算
         bool               IsToolRunning() const { return m_tool != nullptr && !m_pendingToolReset; }
         // 最近启动的工具 ID（"Line"、"Move"…）；IsActiveTool 为 true 时即当前工具
@@ -496,6 +502,8 @@ namespace MiniCAD
         bool                   m_toolSuspended    = false;
         bool                   m_pendingToolReset = false;
         bool                   m_cursorHidden = false;
+        float                  m_cursorSize = kDefaultCursorSize;
+        float                  m_pickBox    = kDefaultPickBox;
         Solid::ISolidKernel*   m_solidKernel = nullptr;        // 三维实体内核（宿主提供，可空）
         VisualStyle            m_visualStyle = VisualStyle::Shaded;
         struct ViewTransition
