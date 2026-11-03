@@ -137,6 +137,65 @@ namespace
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         return e;
     }
+     
+    void Base7(DwgBitWriter& r, DwgBitWriter& text, bool endMarker = true)
+    {
+        r.WriteByte(7); r.WriteBitDouble(100); r.WriteBitDouble(0); r.WriteByte(3); r.WriteByte(5); r.WriteByte(3);
+        r.WriteBitLong(0);
+        text.WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_");
+        text.WriteVariableText("T20b0"); r.WriteBitLong(3); r.WriteBitLong(0);
+        text.WriteVariableText("T20s1"); r.WriteBitLong(8); text.WriteVariableText("C30");
+        text.WriteVariableText("T20s4"); r.WriteBitLong(5); r.WriteBitDouble(100);
+        if (endMarker) text.WriteVariableText("TDBXDATAMAP_BLOCK_END_");
+    }
+
+    std::unique_ptr<UnknownEntity> Column7(bool endMarker = true)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_COLUMN";
+        auto& raw = e->Raw.Dwg;
+        raw.Version = CadVersion::AC1032;
+        DwgBitWriter r(raw.Version, Codec::CodePage::Gbk), text(raw.Version, Codec::CodePage::Gbk);
+        Base7(r, text, endMarker);
+        r.WriteByte(6);
+        r.WriteBitDouble(1300); r.WriteBitDouble(1300); r.WriteBitDouble(0);
+        r.WriteByte(1);
+        r.WriteBitShort(4);
+        const double pts[4][2] = {{1000, 1000}, {1600, 1000}, {1600, 1600}, {1000, 1600}};
+        for (const auto& p : pts) { r.WriteRawDouble(p[0]); r.WriteRawDouble(p[1]); r.WriteBitDouble(0); }
+        r.WriteBitDouble(3000); r.WriteByte(1); r.WriteByte(2); r.WriteByte(60);
+        r.WriteBitShort(0); r.WriteByte(0); r.WriteBitDouble(80);
+        raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+        raw.TextBits = text.PositionInBits(); raw.Text = text.Take();
+        return e;
+    }
+     
+    std::unique_ptr<UnknownEntity> Wall10(bool tailBit = false)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_WALL";
+        auto& raw = e->Raw.Dwg;
+        raw.Version = CadVersion::AC1032;
+        DwgBitWriter g(raw.Version, Codec::CodePage::Gbk);
+        g.Write3RawDouble({1000, 2000, 0}); g.Write3RawDouble({5000, 2000, 0});
+        g.WriteRawDouble(0); g.WriteRawLong(0);
+        g.WriteRawDouble(3000); g.WriteRawDouble(100); g.WriteRawDouble(140);
+        auto protectedData = g.Take();
+        for (auto& b : protectedData) { b ^= 0x2a; b = static_cast<std::uint8_t>((b << 4) | (b >> 4)); }
+        DwgBitWriter r(raw.Version, Codec::CodePage::Gbk), text(raw.Version, Codec::CodePage::Gbk);
+        Base7(r, text);
+        r.WriteByte(10); r.WriteByte(0x2a);
+        r.WriteBytes(protectedData);
+        r.WriteByte(0); r.WriteBitShort(0);
+        r.WriteByte(40); r.WriteByte(0);
+        r.WriteBitDouble(0);
+        for (int i = 0; i < 4; ++i) r.WriteBitDouble(0);
+        r.WriteByte(0); r.Write3Bits(2);
+        for (int i = 0; i < 13; ++i) r.WriteBit(tailBit && i == 12);
+        raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+        raw.TextBits = text.PositionInBits(); raw.Text = text.Take();
+        return e;
+    }
 
     // 图纸设置（TCH_DBCONFIG，非图形对象）：按版本 9 写到填充墙2 的图案为止；
     // names 为空时没有文字流（图案名取默认值），否则是文字流里依次的字符串
@@ -262,6 +321,17 @@ int main()
         accepted += MiniCAD::Tch::DecodeColumn(*cut, col) ? 1 : 0;
     }
     Check(accepted == 0, "every truncated column payload is rejected");
+    Check(MiniCAD::Tch::DecodeColumn(*Column7(), col, &why) && col.Outline.size() == 4 && Near(col.Height, 3000) &&
+          Near(col.Outline[2].X - col.Outline[0].X, 600) && Near(col.Scale, 100) && col.Material == 60,
+          "base version 7 (xdata map keys in the text stream) is followed by the plain column fields");
+    Check(!MiniCAD::Tch::DecodeColumn(*Column7(false), col), "base version 7 without the xdata end marker is rejected");
+
+    // ── 墙版本 10 ──
+    MiniCAD::Tch::TchWall wall10;
+    Check(MiniCAD::Tch::DecodeWall(*Wall10(), wall10, &why) && Near(wall10.Start.X, 1000) && Near(wall10.End.X, 5000) &&
+          Near(wall10.LeftWidth, 100) && Near(wall10.RightWidth, 140) && wall10.Material == 40,
+          "wall version 10 unprotects with swapped nibbles and reads height before the widths");
+    Check(!MiniCAD::Tch::DecodeWall(*Wall10(true), wall10), "wall version 10 with a nonzero tail bit is rejected");
 
     // ── 端到端：墙 + 门 + 门图块 → DWG → Scene ──
     CadDatabase db;
@@ -339,14 +409,11 @@ int main()
               "displayed wall, door and column survive plain export and reimport");
     }
 
-    // ── 门槛线：门窗标志 0x200 在门扇一侧、0x400 在门扇对面，都没有时不画（tianzheng.dwg 的门及其变体在天正 2014 里核对）──
     Check(ThresholdLines(0).empty(), "a door without door-line flags has no threshold line");
     Check(ThresholdLines(0x200) == std::vector<double>{1880}, "flag 0x200 puts the threshold line on the leaf side");
     Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
     Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
 
-    // ── 门窗占满两端斜接之间的墙段（建筑平面样图通风井的百叶，宽 1999.9999999963）：墙两端左侧伸出、右侧缩进 120，
-    // 门窗宽度比右侧墙线短 3.7e-9。断口恰到右侧墙线的两端，不画横穿墙厚的封口线，也不留零长的墙线 ──
     {
         CadDatabase ndb;
         ndb.SetVersion(CadVersion::AC1027);

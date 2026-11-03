@@ -91,7 +91,7 @@ namespace MiniCAD::Tch
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         Detail::TextStream stream(data, r);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native text version");
         TchText t;

@@ -91,7 +91,7 @@ namespace MiniCAD::Tch
             return fail("unsupported DWG version for native column");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 6) return fail("unsupported native column version");
 
