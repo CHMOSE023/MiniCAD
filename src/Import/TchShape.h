@@ -25,7 +25,7 @@ namespace MiniCAD::Tch
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
             if (entity.Raw.DxfName != dxf || !SupportedVersion(data)) return false;
-            return ReadTchBase(r, base);
+            return ReadTchBase(r, base, &data);
         }
 
         // 以 (cx, cy) 为中心、转 rot 的局部坐标点
@@ -765,9 +765,9 @@ namespace MiniCAD::Tch
             int    HandleCount = 0;
         };
 
-        inline bool ReadFlightBase(MiniDWG::DwgBitReader& r, TchFlightBase& f)
+        inline bool ReadFlightBase(MiniDWG::DwgBitReader& r, TchFlightBase& f, const MiniDWG::RawDwgData* data = nullptr)
         {
-            if (!ReadTchBase(r, f.Base)) return false;
+            if (!ReadTchBase(r, f.Base, data)) return false;
             const int version = r.ReadByte();
             if (version < 1 || version > 3) return false;
             f.Steps = r.ReadBitShort();
@@ -849,7 +849,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for line stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchLineStair s;
-        if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");
+        if (!Detail::ReadFlightBase(r, s.Flight, &data)) return fail("unsupported stair flight base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native line stair version");
         s.Tread = r.ReadBitDouble(); s.Width = r.ReadBitDouble();
@@ -945,7 +945,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for arc stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchArcStair s;
-        if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");
+        if (!Detail::ReadFlightBase(r, s.Flight, &data)) return fail("unsupported stair flight base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native arc stair version");
         s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
@@ -1241,7 +1241,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for curve stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchCurveStair s;
-        if (!Detail::ReadFlightBase(r, s.Flight)) return fail("unsupported stair flight base layout");
+        if (!Detail::ReadFlightBase(r, s.Flight, &data)) return fail("unsupported stair flight base layout");
         if (r.ReadByte() != 1) return fail("unsupported native curve stair version");
         r.ReadBitDouble();
         for (auto* e : {&s.Left, &s.Right})

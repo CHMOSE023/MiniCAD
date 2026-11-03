@@ -18,10 +18,10 @@ namespace MiniCAD::Tch
         int     Color = 7;
     };
 
-    inline bool ReadTchSymbolBase(MiniDWG::DwgBitReader& r, TchSymbolBase& symbol)
+    inline bool ReadTchSymbolBase(MiniDWG::DwgBitReader& r, TchSymbolBase& symbol, const MiniDWG::RawDwgData* data = nullptr)
     {
         symbol = {};
-        if (!ReadTchBase(r, symbol.Base)) return false;
+        if (!ReadTchBase(r, symbol.Base, data)) return false;
         const int version = r.ReadByte();
         if (version < 1 || version > 3) return false;
         symbol.TextHeight = r.ReadBitDouble();
@@ -334,7 +334,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native coordinate");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
-        if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         const int version = r.ReadByte();
         if (version < 4 || version > 5) return fail("unsupported native coordinate version");
         TchCoord c;
@@ -413,7 +413,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native arrow");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
-        if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         const int version = r.ReadByte();
@@ -509,7 +509,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native section symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
-        if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         const int version = r.ReadByte();
@@ -604,7 +604,7 @@ namespace MiniCAD::Tch
             return fail("unsupported DWG version for native index symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
-        if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         const int version = r.ReadByte();
         if (version < 3 || version > 4) return fail("unsupported native index symbol version");
         TchIndexPointer p;
@@ -703,7 +703,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native drawing name");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         Detail::TextStream text(data, r);
         for (int i = 0; i < base.TextCount; ++i) text.Next();
         const int version = r.ReadBitShort();
@@ -1073,7 +1073,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native insight symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
-        if (!ReadTchSymbolBase(r, symbol)) return fail("unsupported Tianzheng symbol base layout");
+        if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         TchInSight s;

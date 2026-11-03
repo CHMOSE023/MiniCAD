@@ -66,7 +66,7 @@ namespace MiniCAD::Tch
             return fail("unsupported DWG version for native path array");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 0) return fail("unsupported path base version");
         const int count = r.ReadBitShort();
         if (count < 2 || count > 100000) return fail("invalid path vertex count");

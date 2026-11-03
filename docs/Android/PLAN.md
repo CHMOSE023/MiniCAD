@@ -131,6 +131,7 @@ apps/Android/
 - SMLib（`3rd/SMLib`）与 MiniDWG 第一次用 NDK 的 clang 编译，可能要修一些 GCC / MSVC 才接受的写法；其他库已经在 GCC 13 和 Emscripten 的 clang 上编过，问题应该不多
 - 资源：`app/build.gradle.kts` 直接把仓库的 `assets/` 作为 APK 的 assets 目录；`preBuild` 前的任务 `minicadAssetList` 生成清单 `minicad-assets.lst`
 - native_app_glue：`apps/Android/CMakeLists.txt` 从 `${ANDROID_NDK}/sources/android/native_app_glue` 编成静态库，链接时 `-Wl,--undefined=ANativeActivity_onCreate` 保住入口（NativeActivity 按名字找它）
+- 包的大小：`apps/Android/exports.map` 只导出 `ANativeActivity_onCreate` 与 `Java_io_github_minicad_*`，其余符号隐藏——新增 JNI 函数照这个前缀命名，否则 Java 找不到；发布版开 R8（`app/proguard-rules.pro` 保留 `io.github.minicad` 下的类，原生代码按名字调用它们的方法），去掉 AGP 自动加的 Kotlin 标准库；原生库压缩存放（`jniLibs.useLegacyPackaging`），assets 照常压缩
 - 签名：调试版用本机的调试密钥；发布版见 §6
 - 输出目录：都在仓库的 `out/android`（与 `out/debug`、`out/release` 并列）——APK 在 `out/android/app/outputs/apk/<debug|release>/`，CMake 的中间文件在并列的 `out/android/cxx`（不能放进 app 的构建目录，`clean` 会删掉），根工程的在 `out/android/root`；源码目录里只剩 Gradle 自己的缓存 `.gradle/`
 - 命令行构建：`apps/Android` 里 `gradlew assembleDebug`（或 `gradlew installDebug` 编完直接装到连着的设备），手动装 `adb install -r out/android/app/outputs/apk/debug/app-debug.apk`（在仓库根运行），看日志 `adb logcat -s MiniCAD`（`Core/Log.h` 在安卓下输出到 `__android_log_write`）

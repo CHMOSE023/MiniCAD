@@ -64,21 +64,56 @@ namespace MiniCAD::Tch
         }
     }
 
-    inline bool ReadTchBase(MiniDWG::DwgBitReader& r, TchBase& base)
+    namespace Detail
+    {
+        // 版本 7 的属性表：键在文字流，值在主数据流；data 用来从头读文字流（只适用于对象自身的基类）
+        inline bool SkipXDataMap(MiniDWG::DwgBitReader& r, const MiniDWG::RawDwgData& data, TchBase& base)
+        {
+            TextStream text(data, r);
+            const bool inlineText = text.Main != nullptr;
+            for (int i = 0; i < base.TextCount; ++i) text.Next();
+            int texts = 0, guard = 0;
+            auto next = [&] { ++texts; return text.Next(); };
+            for (std::string s = next(); s != "TDBXDATAMAP_BLOCK_BEGIN_"; s = next())
+                if (++guard > 64 || r.Failed() || text.Reader.Failed()) return false;
+            for (std::string key = next(); key != "TDBXDATAMAP_BLOCK_END_"; key = next())
+            {
+                if (++guard > 4096 || r.Failed() || text.Reader.Failed()) return false;
+                switch (r.ReadBitLong())
+                {
+                case 3: r.ReadBitLong(); break;
+                case 5: r.ReadBitDouble(); break;
+                case 8: case 0x4009: next(); break;
+                case 0x13: case 0x15: ++base.HandleCount; break;
+                case 0x4005: case 0x4006: case 0x4007: case 0x4008: r.Read3BitDouble(); break;
+                default: return false;
+                }
+            }
+            if (!inlineText) base.TextCount += texts;
+            return !r.Failed() && !text.Reader.Failed();
+        }
+    }
+
+    // 版本 1～5 为旧版明文；版本 7（中望看图另存的 2018 格式）在版本 5 之后加了属性表，句柄个数分别多存了 5、3，要传 data
+    inline bool ReadTchBase(MiniDWG::DwgBitReader& r, TchBase& base, const MiniDWG::RawDwgData* data = nullptr)
     {
         base = {};
         base.Version = r.ReadByte();
-        if (base.Version < 1 || base.Version > 5)
+        if (base.Version < 1 || base.Version > 7 || base.Version == 6 || (base.Version == 7 && !data))
             return false;
         if (base.Version > 1) base.Scale = r.ReadBitDouble();
         if (base.Version > 2) r.ReadBitDouble();
         if (base.Version > 3)
         {
             const int flags = r.ReadByte();
-            if (flags & 1) base.HandleCount += r.ReadByte();
-            if (flags & 2) base.HandleCount += r.ReadByte();
+            const int bias = base.Version == 7 ? 5 : 0;
+            if (flags & 1) base.HandleCount += r.ReadByte() - bias;
+            if (flags & 2) base.HandleCount += r.ReadByte() - (bias ? 3 : 0);
+            if (base.HandleCount < 0) return false;
         }
         if (base.Version > 4 && !Detail::SkipPropertyBag(r, base.TextCount, base.HandleCount))
+            return false;
+        if (base.Version == 7 && !Detail::SkipXDataMap(r, *data, base))
             return false;
         return !r.Failed();
     }
@@ -239,7 +274,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native opening");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         Detail::TextStream text(data, r);
         for (int i = 0; i < base.TextCount; ++i) text.Next();
         TchOpening o;

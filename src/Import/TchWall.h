@@ -1,7 +1,7 @@
 #pragma once
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
-#include "Import/TchCipher.h"
+#include "Import/TchOpening.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -50,7 +50,7 @@ namespace MiniCAD::Tch
         {
             for (auto& b : bytes)
             {
-                if (mark == 7) b = static_cast<std::uint8_t>((b << 4) | (b >> 4));
+                if (mark == 7 || mark == 10) b = static_cast<std::uint8_t>((b << 4) | (b >> 4));
                 b ^= key;
             }
         }
@@ -173,23 +173,41 @@ namespace MiniCAD::Tch
             const auto& data = entity.Raw.Dwg;
             if (IsCipherObject(data)) return DecodeWallCipher(entity, wall, diagnostic, curtain);
             if (diagnostic) *diagnostic = "native wall fields do not match verified schema-5 straight-wall layout";
+            const bool base7 = !data.Main.empty() && data.Main[0] == 7;
             const std::uint64_t maxBits = 1173 + (curtain ? 4 * 8 + (6 + 2 * 255) * 66 : 0);
-            if (data.MainBits < 773 || data.MainBits > maxBits)
+            if (!base7 && (data.MainBits < 773 || data.MainBits > maxBits))
             {
                 if (diagnostic) *diagnostic = "unsupported native wall layout: " + std::to_string(data.MainBits) +
                     " bits; verified range is 773.." + std::to_string(maxBits);
                 return false;
             }
-            if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8)
+            if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027 &&
+                 !(base7 && data.Version == CadVersion::AC1032)) || data.Main.size() < (data.MainBits + 7) / 8)
                 return false;
             auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
-            if (const int v = r.ReadByte(); v != 5) return fail("unsupported native wall base version " + std::to_string(v));
-            const double scale = r.ReadBitDouble();
-            const int bs = r.ReadBitShort(), rc = r.ReadByte(), b2 = r.Read2Bits(), raw = r.ReadRawShort(), rc8 = r.ReadByte();
-            if (!std::isfinite(scale) || scale <= 0 || bs != 0 || rc != 3 || b2 != 0 || raw != 512 || (rc8 != 8 && rc8 != 7))
-                return fail("native wall header mismatch: scale=" + std::to_string(scale) + " bs=" + std::to_string(bs) + " rc=" + std::to_string(rc) +
-                            " bits=" + std::to_string(b2) + " raw=" + std::to_string(raw) + " rc8=" + std::to_string(rc8));
+            double scale = 0;
+            int rc8 = 0, baseHandles = 0;
+            if (base7)
+            {
+                TchBase base;
+                if (!ReadTchBase(r, base, &data)) return fail("unsupported native wall base layout");
+                scale = base.Scale;
+                baseHandles = base.HandleCount;
+                rc8 = r.ReadByte();
+                if (!std::isfinite(scale) || scale <= 0 || rc8 != 10)
+                    return fail("native wall header mismatch: scale=" + std::to_string(scale) + " rc8=" + std::to_string(rc8));
+            }
+            else
+            {
+                if (const int v = r.ReadByte(); v != 5) return fail("unsupported native wall base version " + std::to_string(v));
+                scale = r.ReadBitDouble();
+                const int bs = r.ReadBitShort(), rc = r.ReadByte(), b2 = r.Read2Bits(), raw = r.ReadRawShort();
+                rc8 = r.ReadByte();
+                if (!std::isfinite(scale) || scale <= 0 || bs != 0 || rc != 3 || b2 != 0 || raw != 512 || (rc8 != 8 && rc8 != 7))
+                    return fail("native wall header mismatch: scale=" + std::to_string(scale) + " bs=" + std::to_string(bs) + " rc=" + std::to_string(rc) +
+                                " bits=" + std::to_string(b2) + " raw=" + std::to_string(raw) + " rc8=" + std::to_string(rc8));
+            }
             const auto protectionKey = r.ReadByte();
             auto decoded = r.ReadBytes(84);
             Detail::Unprotect(decoded, rc8, protectionKey);
@@ -199,9 +217,10 @@ namespace MiniCAD::Tch
             result.End   = geometry.Read3RawDouble();
             const double curveParameter = geometry.ReadRawDouble();
             const auto flags    = geometry.ReadRawLong();
+            double height       = rc8 == 10 ? geometry.ReadRawDouble() : 0;
             result.LeftWidth    = geometry.ReadRawDouble();
             result.RightWidth   = geometry.ReadRawDouble();
-            const double height = geometry.ReadRawDouble();
+            if (rc8 != 10) height = geometry.ReadRawDouble();
           
             if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
             const int openings = r.ReadBitShort();
@@ -217,6 +236,14 @@ namespace MiniCAD::Tch
             const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
             if (data.Version < CadVersion::AC1021) r.ReadVariableText();
             if (!signature) return fail("native wall trailing signature mismatch");
+            if (rc8 == 10 && !curtain)
+            {
+                // 墙版本 10 在结尾标记后多出的位：样例为 13 个 0，含义未核对
+                const auto tail = data.MainBits - r.PositionInBits();
+                if (tail > 16) return fail("unsupported native wall version 10 tail");
+                for (std::uint64_t i = 0; i < tail; ++i)
+                    if (r.ReadBit()) return fail("unsupported native wall version 10 tail");
+            }
             if (curtain)
             {
                 const int version = r.ReadByte();
@@ -235,6 +262,7 @@ namespace MiniCAD::Tch
             result.Angle = curveParameter;
             if (const char* why = CheckWall(result, height, insulation)) return fail(why);
             DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
+            for (int i = 0; i < baseHandles; ++i) handles.ReadHandle(entity.ObjectHandle);
             std::array<Handle, 6> soft{};
             for (auto& h : soft) h = handles.ReadHandle(entity.ObjectHandle);
             if (!handles.Failed() && handles.PositionInBits() <= data.HandleBits)
