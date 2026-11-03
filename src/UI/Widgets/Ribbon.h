@@ -59,6 +59,10 @@ namespace MiniGUI
         bool IsCollapsed() const { return m_collapsed; }
         Button* GetCollapseButton() const { return m_collapseButton; }   // 选项卡行右端的 ⌃ / ⌄
 
+        // 卡片（默认）：圆角、四周有边框，浮在绘图区上；否则方角贴边，只在底边画一条分隔线（紧凑布局）
+        void SetCard(bool card) { m_card = card; Invalidate(); }
+        bool IsCard() const { return m_card; }
+
         void RefreshState();    // 按命令状态更新按钮；一般不需要手动调用
 
         static constexpr float kTabRowH    = 30.0f;
@@ -128,6 +132,7 @@ namespace MiniGUI
         const Panel*                m_menuPanel  = nullptr;
         std::function<void()>       m_onSearchDone;
         bool                        m_collapsed  = false;
+        bool                        m_card       = true;
         bool                        m_expandedByClick = false;   // 上一次单击把收起的功能区展开了（随后的双击不再收起）
     };
 }

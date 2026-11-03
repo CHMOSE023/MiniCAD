@@ -398,7 +398,7 @@ namespace MiniCAD
             rs.position  = PositionType::Absolute;
             rs.left      = 0.0f;
             rs.right     = 0.0f;
-            rs.bottom    = 0.0f;
+            rs.bottom    = CommandLineBottom();
             rs.direction = FlexDirection::Row;
             rs.justify   = Justify::Center;
             rs.padding   = Edges::Make(8.0f, 0.0f, 8.0f, 0.0f);
@@ -937,6 +937,26 @@ namespace MiniCAD
     {
         m_platform->OnLanguageChanged(SwitchLanguage(*m_platform, code, save));
         Retranslate();
+    }
+
+    void MainFrame::SetFlushLayout(bool flush)
+    {
+        if (flush == m_flushLayout)
+            return;
+        m_flushLayout = flush;
+        if (m_useUserLayout && !m_platform->WriteUserSetting(kLayoutSettingKey, flush ? "compact" : "floating"))
+            LOG_WARN_TR("无法保存界面布局的设置");
+        const std::string variant = flush ? "flush" : "";
+        m_layout->SetVariant(variant);
+        for (auto& w : m_docWindows)
+            w->layout->SetVariant(variant);
+        // 代码里建的命令行卡片不在界面描述里：直接改它离状态栏的距离
+        ForEachChrome([this](ViewChrome& c)
+        {
+            if (MiniGUI::Node* row = c.cmdCard ? c.cmdCard->GetParent() : nullptr)
+                row->EditLayoutStyle().bottom = CommandLineBottom();
+        });
+        Retranslate();      // 按变体整体重建界面描述生成的部分，停靠布局照旧
     }
 
     void MainFrame::OnFontsAdded()

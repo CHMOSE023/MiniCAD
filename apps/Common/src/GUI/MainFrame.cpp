@@ -284,7 +284,9 @@ namespace MiniCAD
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
         if (m_compact)
             m_layout->SetLayoutName("compact", true);
-        m_layout->RegisterPanel("canvas",     CreateCanvas());
+        m_flushLayout = m_useUserLayout && m_platform->ReadUserSetting(kLayoutSettingKey) == "compact";   // 自测不读
+        m_layout->SetVariant(m_flushLayout ? "flush" : "");
+        m_layout->RegisterPanel("canvas",    CreateCanvas());
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());

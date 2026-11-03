@@ -251,6 +251,11 @@ namespace MiniCAD
         void ApplyCompactChrome(ViewChrome& c);
         // 切换界面语言（"设置 > 语言"）：换翻译表、save 时写进用户设置（自测不写），再 Retranslate
         void SetLanguage(const std::string& code, bool save = true);
+        // "设置 > 布局"：浮动（默认，功能区、面板、状态栏是浮在绘图区上的卡片）/ 紧凑（贴边、没有缝，界面描述文件里的变体 flush）。
+        // 写进用户设置的 "layout"，按变体重建各窗口的界面（同 Retranslate，停靠布局保持不变）
+        void SetFlushLayout(bool flush);
+        // 命令行卡片离文档区底边的距离：浮动时停靠区与状态栏之间已有缝，紧凑时没有缝，自己留出来，不紧贴状态栏
+        float CommandLineBottom() const { return m_flushLayout ? 6.0f : 0.0f; }
         // 按当前语言重建界面：界面描述生成的部分（菜单、功能区、标题栏、停靠区标签）重新应用，停靠布局保持不变；
         // 代码里建的、显示了译文的部分（起始页、标题栏右侧、导航条）各自重建。新加的这类界面要在这里重建或重写文字
         void Retranslate();
@@ -477,6 +482,8 @@ namespace MiniCAD
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         bool                                   m_compact = false;        // 用的是紧凑布局：只浏览
+        bool                                   m_flushLayout = false;    // "设置 > 布局"选了紧凑（贴边）；与只浏览的 m_compact 无关
+        static constexpr const char*           kLayoutSettingKey = "layout";   // 用户设置里的值："floating" / "compact"
         static constexpr float                 kCubeSize        = 140.0f;   // 视图方块边长（导航条在它下面，同宽）
         static constexpr float                 kCompactCubeSize = 88.0f;
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果

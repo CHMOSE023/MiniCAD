@@ -373,6 +373,7 @@ namespace MiniCAD
         // 界面描述里引用的宿主面板：文档标签、视口、文档区（视图方块、导航条、命令行）、状态栏、功能区里的图层下拉框
         w->layout = std::make_unique<UiLayout>(m_commands, ResourceDir() + "/icons");
         w->layout->SetLayoutName("document");
+        w->layout->SetVariant(m_flushLayout ? "flush" : "");
         w->layout->SetDynamicMenuItems("recent", [this] { return BuildRecentMenuItems(); });
 
         auto tabs = std::make_unique<TabView>();

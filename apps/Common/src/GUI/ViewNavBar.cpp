@@ -23,6 +23,8 @@ namespace MiniCAD
     {
         // 菜单项写成它时展开为"语言"子菜单：所有 ui.language.<代码> 命令
         constexpr const char* kLanguageMenu = "@language";
+        // 菜单项写成它时展开为"布局"子菜单：浮动、紧凑
+        constexpr const char* kLayoutMenu = "@layout";
 
         // 只有图标的按钮，点击弹出菜单（菜单项是命令）；placement 决定菜单在按钮的哪一侧
         MiniGUI::Button* AddMenuButton(MiniGUI::Node* parent, MiniGUI::CommandRegistry& commands,
@@ -51,6 +53,12 @@ namespace MiniCAD
                             if (cmd.starts_with(kLanguageCommandPrefix))
                                 langs.push_back(CommandMenuItem(commands, cmd));
                         items.push_back(MenuItem::Sub(Tr("语言(&L)"), std::move(langs)));
+                        continue;
+                    }
+                    if (id == kLayoutMenu)
+                    {
+                        items.push_back(MenuItem::Sub(Tr("布局(&Y)"), { CommandMenuItem(commands, "ui.layout.floating"),
+                                                                        CommandMenuItem(commands, "ui.layout.compact") }));
                         continue;
                     }
                     items.push_back(id == "-" ? MenuItem::Separator() : CommandMenuItem(commands, id));
@@ -187,7 +195,7 @@ namespace MiniCAD
         });
 
         AddMenuButton(row, m_commands, icons + "/Settings.png", Tr("设置"),
-                      { "ui.theme", kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
+                      { "ui.theme", kLayoutMenu, kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
                       PopupPlacement::Below, 18.0f);
         AddMenuButton(row, m_commands, icons + "/Help.png", Tr("帮助"),
                       { "ui.search", "view.start", "-", "help.checkUpdate", "help.about" }, PopupPlacement::Below, 18.0f);

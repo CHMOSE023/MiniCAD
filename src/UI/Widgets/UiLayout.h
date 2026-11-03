@@ -47,7 +47,10 @@ namespace MiniGUI
     // - layouts：另外几段命名的布局（例如程序的第二种窗口），格式同 layout；宿主用 SetLayoutName 选用其中一段
     // - 通用布局属性：width、height、minWidth、maxWidth、minHeight、maxHeight、grow、shrink、gap、
     //   padding（数字、[水平, 竖直] 或 [左, 上, 右, 下]）、align（start/center/end/stretch）、
-    //   justify（start/center/end/space-between）、background（主题颜色名如 "Panel"，或 "#RRGGBB"）、visible
+    //   justify（start/center/end/space-between）、background（主题颜色名如 "Panel"，或 "#RRGGBB"）、visible、
+    //   card（true：row / column / 宿主面板画成圆角带边框的卡片；false：方角、无边框；功能区默认是卡片，false 时方角贴边）
+    // - variants：{ "变体名": { 属性… } }，宿主用 SetVariant 选了这个变体时覆盖节点自己的同名属性
+    //   （例如紧凑布局里去掉卡片之间的缝：{ "padding": 6, "variants": { "compact": { "padding": 0 } } }）
     // - 错误不中断：未知的命令 ID、面板名、类型、属性都记入警告，界面照常生成；JSON 语法错误时保留原界面
     class UiLayout
     {
@@ -75,6 +78,8 @@ namespace MiniGUI
             m_layoutName   = std::move(name);
         }
         const std::string& GetLayoutName() const { return m_layoutName; }
+        // 选用的变体：布局节点 "variants" 里同名的一段覆盖节点的属性；空（默认）为不用变体。下次 Apply 时生效
+        void SetVariant(std::string name) { m_variant = std::move(name); }
 
         // 解析并应用：清空 parent 原有内容（推迟销毁，在事件回调里调用也安全）后按描述重建。
         // JSON 语法错误时返回 false，界面保持不变
@@ -103,7 +108,8 @@ namespace MiniGUI
         CommandRegistry& m_commands;
         std::string      m_iconDir;
         std::string      m_layoutName;
-        bool             m_ownsCommands = true;     // 应用 "commands"（见 SetLayoutName）
+        std::string      m_variant;
+        bool            m_ownsCommands = true;     // 应用 "commands"（见 SetLayoutName）
 
         struct PanelSlot
         {

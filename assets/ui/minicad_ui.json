@@ -18,6 +18,8 @@
 //   （都是这个窗口自己的一份，显示它的文档），没有起始页；停靠区的布局不保存
 // - layouts.compact：手机等小屏幕（安卓版，宽 < 600 或高 < 480 逻辑像素）的主窗口，只浏览：没有功能区、命令行和停靠面板，
 //   能用的宿主面板同 layout；命令覆盖仍取 commands（docs/Android/PLAN.md §4.5）
+// - variants：节点的 { "flush": { 属性… } } 在"设置 > 布局 > 紧凑"时覆盖节点自己的属性：去掉卡片之间的缝（padding、gap 为 0）、
+//   功能区和状态栏改成方角贴边（card: false）；默认的"浮动"不用变体。与上面只浏览的 layouts.compact 无关
 {
   "commands": {
     "draw.line": { "tooltip": "指定两点绘制直线段，Esc 结束" },
@@ -242,9 +244,10 @@
             "padding": 6,
             "gap": 6,
             "passThrough": true,
+            "variants": { "flush": { "padding": 0, "gap": 0 } },
             "children": [
               // 功能区（选项卡行右端：收起按钮、命令搜索框）
-              { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1 } ] },
+              { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1, "variants": { "flush": { "card": false } } } ] },
               // 停靠区（"floating"：透明、卡片之间露出绘图区）。documents 是透明的“洞”，里面是视图方块、导航条和底部居中的命令行；
               // 右侧上下排列特性和图层；拖动面板标签可以停靠到其他位置或合并为标签
               {
@@ -254,6 +257,7 @@
                 "grow": 1,
                 "gap": 6,
                 "floating": true,
+                "variants": { "flush": { "gap": 0 } },
                 "root": {
                   "split": "row",
                   "children": [
@@ -270,7 +274,7 @@
                 }
               },
               // 状态栏：左侧是模型 / 布局标签
-              { "type": "panel", "name": "statusbar", "shrink": 0 }
+              { "type": "panel", "name": "statusbar", "shrink": 0, "card": true, "variants": { "flush": { "card": false } } }
             ]
           }
         ]
@@ -306,9 +310,10 @@
               "padding": 6,
               "gap": 6,
               "passThrough": true,
+              "variants": { "flush": { "padding": 0, "gap": 0 } },
               "children": [
                 { "type": "panel", "name": "documents", "grow": 1, "passThrough": true },
-                { "type": "panel", "name": "statusbar", "shrink": 0 }
+                { "type": "panel", "name": "statusbar", "shrink": 0, "card": true, "variants": { "flush": { "card": false } } }
               ]
             }
           ]
@@ -340,8 +345,9 @@
               "padding": 6,
               "gap": 6,
               "passThrough": true,
+              "variants": { "flush": { "padding": 0, "gap": 0 } },
               "children": [
-                { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1 } ] },
+                { "type": "row", "shrink": 0, "passThrough": true, "children": [ { "type": "ribbon", "id": "main", "grow": 1, "variants": { "flush": { "card": false } } } ] },
                 // 停靠区：同主窗口，documents 是透明的“洞”（视图方块、导航条、底部居中的命令行），右侧是这个窗口自己的特性、图层
                 {
                   "type": "dock",
@@ -350,6 +356,7 @@
                   "grow": 1,
                   "gap": 6,
                   "floating": true,
+                  "variants": { "flush": { "gap": 0 } },
                   "root": {
                     "split": "row",
                     "children": [
@@ -365,7 +372,7 @@
                     ]
                   }
                 },
-                { "type": "panel", "name": "statusbar", "shrink": 0 }
+                { "type": "panel", "name": "statusbar", "shrink": 0, "card": true, "variants": { "flush": { "card": false } } }
               ]
             }
           ]
