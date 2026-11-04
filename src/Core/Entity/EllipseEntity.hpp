@@ -64,9 +64,17 @@ namespace MiniCAD
             const double sweep    = m_ellipse.SweepParam();
             const int    segments = std::max(4, static_cast<int>(std::ceil(64.0 * sweep / Math::TwoPI)));
 
+            // 曲线走 DrawPath：虚线相位跨段连续（见 IDrawSink::DrawPath）；整椭圆按闭合处理
+            std::vector<Math::Point3> pts;
+            pts.reserve(static_cast<size_t>(segments) + 1);
             SampleCurve(sink, t0, sweep, segments, std::max(std::abs(m_ellipse.RadiusX), std::abs(m_ellipse.RadiusY)),
                         [&](double t) { return m_ellipse.PointAt(t); },
-                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
+                        [&](const Math::Point3& p0, const Math::Point3& p1)
+                        {
+                            if (pts.empty()) pts.push_back(p0);
+                            pts.push_back(p1);
+                        });
+            sink.DrawPath(pts, color, m_ellipse.IsFull());
         }
 
         DECLARE_RUNTIME_TYPE(EllipseEntity, Entity)

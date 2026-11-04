@@ -582,6 +582,147 @@ namespace MiniCAD
             return rec != nullptr && !rec->IsContinuous();
         }
 
+        // 曲线离散段的连续虚线（见 IDrawSink::DrawPath）：相位跨段累计，
+        // dash / gap 在整条曲线上连续铺开，不会在小段边界重置。
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            DrawPathImpl(points, nullptr, color, closed);
+        }
+
+        // 有宽度的曲线（粗多段线）：逐点宽度，段内按两端线性插值（锥形段）。
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            DrawPathImpl(points, (widths.size() == points.size()) ? &widths : nullptr, color, closed);
+        }
+
+    private:
+        // widths 为 nullptr：宽度取图层线宽（细线/等宽实体）；非空：逐点宽度（模型单位）
+        void DrawPathImpl(const std::vector<Math::Point3>& points, const std::vector<double>* widths,
+                          const Math::Color4& color, bool closed)
+        {
+            if (points.size() < 2) return;
+            for (const auto& q : points) NoteInput(q);
+
+            if (!m_curAttr)   // 无实体上下文：1px 实线，同 DrawLine
+            {
+                const VertexColor c = ToColor(color);
+                for (size_t i = 0; i + 1 < points.size(); ++i)
+                { PutLine(points[i], c); PutLine(points[i + 1], c); }
+                return;
+            }
+
+            const LineTypeRecord* rec = CurrentLineType();
+            const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
+            // 逐点宽度（粗多段线）优先；否则用图层/实体线宽
+            const double width = widths ? 0.0 : ResolveWidthWorld(layer);
+            // 细线显示模式（"隐藏线宽"）下所有线宽归零 —— 逐点宽度也要一起失效，
+            // 否则粗多段线在该模式下仍画成粗带（ResolveWidthWorld 里的 m_thinLines 只管图层线宽）
+            const std::vector<double>* effWidths =
+                (widths && m_thinLines) ? nullptr : widths;
+            auto widthAt = [&](size_t i)
+            {
+                if (!effWidths) return width;
+                return (*effWidths)[i];
+            };
+            // 有线宽（几何宽度或图层线宽）时输出的是加宽几何，不能记进块定义级缓存
+            //（宽度按像素烘焙，随缩放变化）。细线曲线照旧可以记。
+            bool anyWidth = width > 0.0;
+            if (effWidths)
+            {
+                anyWidth = false;
+                for (double w : *effWidths)
+                    if (w > 0.0) { anyWidth = true; break; }
+            }
+            if (anyWidth) DropBlockRecords();
+            const double entityScale = (m_curAttr->LinetypeScale > 0.0) ? m_curAttr->LinetypeScale : 1.0;
+            const double scale = entityScale * m_lineTypeScale;
+
+            const bool continuous = !rec || rec->IsContinuous() || rec->PatternLength * scale <= 1e-12;
+            auto dist = [](const Math::Point3& a, const Math::Point3& b)
+            { return std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) + (b.z - a.z) * (b.z - a.z)); };
+            double total = 0.0;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+                total += dist(points[i], points[i + 1]);
+            if (closed && points.size() >= 2)
+                total += dist(points.back(), points.front());
+            const double cycle = rec ? rec->PatternLength * scale : 0.0;
+
+            // 与 EmitStyled 完全相同的取舍：只有「整条曲线的周期数超过 kStaticMaxDashes」这种
+            // 长虚线才按像素退化（一个周期不足 4px 时显式画出已是实线）与延迟铺设。
+            //
+            // ⚠ 4px 判断**不能**放在无条件位置：那样任何一个周期在当前缩放下不足 4px 的曲线
+            // 都被整条画成实线，与直线（只在 >200 个周期时才退化）行为不一致 —— 用户报的
+            // 「曲线要放大很多才看得见虚线、直线没这问题、新建的也没这问题」就是这条。
+            // test0.dwg 的 DASH 圆弧周期 350 单位，缩小到一屏时 350 单位只有一两个像素，
+            // 无条件按像素取舍会把整条弧画成实线。
+            //
+            // 但「周期数 > kStaticMaxDashes」时也不能像以前那样逐段 EmitStyled：
+            //   逐段调用时每段只有 total/段数 个周期（本图 293 → 每段约 50），远不到
+            //   kStaticMaxDashes，EmitStyled 内部的 4px 退化判断永远不生效，于是每段都
+            //   铺满密集 dash —— 缩小时周期只有 3.5px、dash/gap 都不到 1 像素，
+            //   光栅化随机丢弃三角形，整条看起来「一段一段的空缺」（用户报的现象）。
+            // 所以这里按**整条**的像素尺寸判断：周期不足 4px 时整条画实线。
+            const bool tooManyCycles = (cycle > 1e-12) && (total / cycle > kStaticMaxDashes);
+            const bool cycleTooSmallPx = tooManyCycles && m_worldPerPixel > 0.0 && cycle / m_worldPerPixel < 4.0;
+            if (continuous || total / cycle > kMaxDashes || cycleTooSmallPx)
+            {
+                if (!effWidths)
+                {
+                    for (size_t i = 0; i + 1 < points.size(); ++i)
+                        EmitStyled(points[i], points[i + 1], color, rec, width);
+                }
+                else
+                {
+                    // 有逐点宽度时不能走 EmitStyled（它只认单一 width）：按实线铺成加宽段
+                    for (size_t i = 0; i + 1 < points.size(); ++i)
+                        EmitSolidTapered(points[i], points[i + 1], color, widthAt(i), widthAt(i + 1));
+                }
+                return;
+            }
+            if (tooManyCycles)
+                MarkViewDependent();   // 按像素取舍了，缩放时要重铺
+
+            const bool dotAsSegment = (effWidths ? anyWidth : (width > 0.0)) || m_dotsAsSegments;
+            double dotLen = effWidths ? 0.0 : width;
+            if (dotAsSegment && dotLen <= 0.0)
+            {
+                dotLen = m_worldPerPixel > 0.0 ? m_worldPerPixel * 1.5 : 0.0;
+                MarkViewDependent();
+            }
+
+            // 相位沿曲线累计：每小段用「该段起点落在图案里的相位」铺设，铺完的长度即下一段相位
+            double phase = 0.0;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double segLen = dist(a, b);
+                // 段内宽度：把铺出的点按沿线比例投影回本段，做线性插值（锥形段）
+                const double wa = widthAt(i), wb = widthAt(i + 1);
+                auto emit = [&](const Math::Point3& p, const Math::Point3& q)
+                {
+                    if (!effWidths) { EmitSolid(p, q, color, width); return; }
+                    if (segLen < 1e-12) { EmitSolidTapered(p, q, color, wa, wb); return; }
+                    const double t0 = std::clamp(dist(a, p) / segLen, 0.0, 1.0);
+                    const double t1 = std::clamp(dist(a, q) / segLen, 0.0, 1.0);
+                    EmitSolidTapered(p, q, color, wa + (wb - wa) * t0, wa + (wb - wa) * t1);
+                };
+                LayPattern(a, b, *rec, scale, dotAsSegment ? dotLen : 0.0, emit,
+                           [&](const Math::Point3& p)
+                           {
+                               if (!effWidths) { PutPoint(p, ToColor(color)); return; }
+                               const double t = segLen < 1e-12 ? 0.0 : std::clamp(dist(a, p) / segLen, 0.0, 1.0);
+                               EmitSolidTapered(p, p, color, wa + (wb - wa) * t, wa + (wb - wa) * t);
+                           },
+                           phase,
+                           [&](size_t, double) {});
+                phase = std::fmod(phase + segLen, cycle);
+            }
+        }
+
+    public:
+
         // --- 填充三角形（线宽 > 1 的实体）---
 
         void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) override
@@ -1165,6 +1306,51 @@ namespace MiniCAD
         double GetLineTypeScale() const { return m_lineTypeScale; }
 
     private:
+
+        // 锥形段：两端宽度不同的加宽线段（DXF 顶点组码 40/41 的逐段宽度）。
+        // 两半宽相同时退化为矩形，与 EmitSolid 的几何完全一致。
+        void EmitSolidTapered(const Math::Point3& a, const Math::Point3& b,
+                              const Math::Color4& color, double wa, double wb)
+        {
+            const VertexColor c = ToColor(color);
+            if (wa <= 0.0 && wb <= 0.0)
+            {
+                PutLine(a, c);
+                PutLine(b, c);
+                return;
+            }
+
+            double dx = b.x - a.x, dy = b.y - a.y;
+            double len = std::sqrt(dx * dx + dy * dy);
+            if (len < 1e-12)
+            {
+                // 零长度段（点笔划）：按较宽者画一个小方/线段
+                const double d = std::max(wa, wb);
+                Math::Point3 p0{ a.x - d * 0.5, a.y, a.z };
+                Math::Point3 p1{ a.x + d * 0.5, a.y, a.z };
+                PutLine(p0, c);
+                PutLine(p1, c);
+                return;
+            }
+            const double ux = dx / len, uy = dy / len;
+            const double nx = -uy, ny = ux;          // 单位法向
+            const double ha = wa * 0.5, hb = wb * 0.5;
+
+            const Math::Point3 p0{ a.x + nx * ha, a.y + ny * ha, a.z };
+            const Math::Point3 p1{ b.x + nx * hb, b.y + ny * hb, b.z };
+            const Math::Point3 p2{ b.x - nx * hb, b.y - ny * hb, b.z };
+            const Math::Point3 p3{ a.x - nx * ha, a.y - ny * ha, a.z };
+
+            PutFill(p0, c);
+            PutFill(p1, c);
+            PutFill(p2, c);
+            PutFill(p0, c);
+            PutFill(p2, c);
+            PutFill(p3, c);
+
+            m_viewDependent = true;
+            ++m_wideCount;
+        }
 
         void EmitSolid(const Math::Point3& a, const Math::Point3& b,
                        const Math::Color4& color, double width)

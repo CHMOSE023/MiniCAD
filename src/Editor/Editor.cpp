@@ -4017,7 +4017,22 @@ namespace MiniCAD
             // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
             if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-            return !layer || layer->IsVisible();
+            const bool layerOn = !layer || layer->IsVisible();
+            if (layerOn) return true;
+            // 块参照所在图层关闭时**不能整块跳过**：AutoCAD 里块参照的图层只决定块内
+            // 落在 0 层上的实体（它们随插入图层，见 InsertEntity::EnsureResolved），
+            // 块内**具名图层**上的实体仍按自己的图层开关显示 / 隐藏。
+            // 实测 `1清表后至室外道路面下0.07m处-土方初步方案.dwg` 的 INSERT 960
+            // （A1 图签模板）在**关闭的图层 0** 上，块内唯一成员是 `_WHADI_LAYER`
+            // 上的嵌套块（该层打开）：AutoCAD 显示整张图框，此前这里整块被跳过 ⇒「图元未显示」。
+            if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity))
+                return ins->HasVisibleContentOnAnyLayer(
+                    [&layerMgr](LayerID id)
+                    {
+                        const Layer* l = layerMgr.GetLayer(id);
+                        return !l || l->IsVisible();
+                    });
+            return false;
         };
 
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；

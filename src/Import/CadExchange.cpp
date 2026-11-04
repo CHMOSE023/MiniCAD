@@ -1514,14 +1514,18 @@ namespace MiniCAD
             }
 
             // 属性定义 / 属性实例（ATTDEF / ATTRIB）的公共取值。
-            // 属性文字不跟随样式，Core 侧固定用 Standard（与 V0.1.0 的显示一致）
+            // 文字样式按属性自己的组码 7（`a.StyleHandle`）解析，与 TEXT / MTEXT 同一条路。
+            // ⚠ 以前固定用 Standard：实测 `0土方清表初步方案.dwg` 的块 `GPTFBZW`，
+            //   块内「W=」与属性「VW=120.00」的样式都是 `GPCADFGD`（`txt.shx`，宽度因子 0.70），
+            //   属性却按 Standard 画 ⇒ 细 SHX 单线旁边冒出粗 TTF、字宽与间距全不对。
             template <class T>
             std::unique_ptr<Entity> MakeAttrib(const Dwg::AttributeBase& a, std::string text)
             {
                 const TextPlacement pl = ResolveTextPlacement(a.InsertPoint, a.AlignmentPoint,
                                                              a.HorizontalAlignment, a.VerticalAlignment);
                 auto e = Make<T>(a, &a.Normal, a.Tag, std::move(text), pl.pos,
-                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation));
+                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation),
+                                 LookupStyle(a.StyleHandle));
                 auto& attrib = static_cast<T&>(*e);
                 attrib.SetFlags(static_cast<std::uint16_t>(static_cast<int>(a.Flags)));
                 attrib.SetAlign(pl.hAlign, pl.vAlign);
@@ -2307,7 +2311,34 @@ namespace MiniCAD
                     return Make<LineEntity>(src, &e->Normal, ToPoint(e->StartPoint), ToPoint(e->EndPoint));
 
                 if (auto* e = dynamic_cast<const Dwg::Arc*>(&src))   // Arc 派生自 Circle，须先判断
-                    return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+                {
+                    // ARC 的圆心(10) 是 **OCS 坐标**：法向(210) 与 +Z 反向时必须换算到 WCS，
+                    // 否则整条弧会画到镜像的一侧（x 符号相反）。
+                    //
+                    // 实测 test0.dwg 块 A$C685D2D0A：9 条 ARC 的 210=(0,0,-1)、圆心 x 为负
+                    //（如组码 5=342DB 那条 c=(-2525.0, 33031.2) r=731.25），
+                    // 而块内其它 6744 个参考点全在正 x 侧 —— 原样位置附近 0 个邻居，
+                    // 翻转后附近 18~47 个邻居，确定需要换算。
+                    //
+                    // 注意：只有 ARC 需要这一步。同块的 LINE / ELLIPSE 虽然也有 210=-Z，
+                    // 但它们的坐标本来就是 WCS（实测翻转后邻居数从 189/30 掉到 0），
+                    // 不能一并对它们做变换。
+                    if (IsDefaultNormal(e->Normal))
+                        return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    const Math::Point3 center = map.Point(e->Center.X, e->Center.Y);
+                    double s = e->StartAngle, t = e->EndAngle;
+                    if (map.Mirrored())
+                    {
+                        // 反射后弧的走向反转：等效逆时针区间取 (π−end, π−start)，
+                        // 点集与扫角都不变（与椭圆的参数镜像同一套推导）
+                        const double s0 = s, t0 = t;
+                        s = kPi - t0;
+                        t = kPi - s0;
+                    }
+                    return Make<ArcEntity>(src, &e->Normal, center, e->Radius, s, t);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Circle*>(&src))
                     return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
@@ -2318,9 +2349,27 @@ namespace MiniCAD
                     const double a  = std::hypot(mx, my);
                     if (a < 1e-12)
                         return nullptr;
-                    return Make<EllipseEntity>(src, nullptr,
-                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx),
-                                e->StartParameter, e->EndParameter));
+                    // 椭圆弧的参数区间：法向(210)与 +Z 反向时必须把 (s,e) 镜像成
+                    // (−e,−s)，否则弧段会画到长轴的另一侧。
+                    //
+                    // 实测 test0.dwg（天正导出）块 A$C685D2D0A 的镜像对
+                    // 10EE7(+Z)/10EF1(-Z)：中心(10)与长轴(11)已是 WCS（保持原值），
+                    // 但 -Z 时短半轴方向 = n×m̂ = (my,−mx)/a，与默认的 (−my,mx)/a 相反。
+                    // 把参数区间镜像后，两条弧关于对称轴 x=87100 完全重合（偏差 0）；
+                    // 不镜像时弧落到长轴另一侧（偏差约 2×b·sin(sweep/2)）。
+                    // 用户报的 34354/34362（r=900/585 的 45°/88.5° 弧）吃的都是这一条。
+                    //
+                    // ⚠ 与 ARC 不同：ARC 的圆心(10)是 OCS（须翻转中心，见上）；
+                    //   而这份图纸里 ELLIPSE 的中心已是 WCS，翻了反而错 —— 两者分开处理。
+                    double s = e->StartParameter, t = e->EndParameter;
+                    if (OcsMap(e->Normal, e->Center.Z).Mirrored())
+                    {
+                        const double s0 = s, t0 = t;
+                        s = -t0;
+                        t = -s0;
+                    }
+                    return Make<EllipseEntity>(src, &e->Normal,
+                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx), s, t));
                 }
 
                 if (auto* e = dynamic_cast<const Dwg::Point*>(&src))
@@ -3196,10 +3245,21 @@ namespace MiniCAD
                 // 此前只取 `ConstantWidth`（组码 43）⇒ 这些宽度整批丢失，整条多段线画成等宽。
                 std::vector<double>       startW;
                 std::vector<double>       endW;
+                // 顶点坐标是 **OCS**：法向(210) 与 +Z 反向时要换算到 WCS，
+                // 否则整条多段线画到镜像的另一侧（x 符号相反）。
+                //
+                // 实测 test0.dwg 块 A$C685D2D0A：2 条 2 点多段线的 210=(0,0,-1)、
+                // 起点 x=-147075，原样位置附近 0 个邻居、翻转到 +147075 后 1~4 个邻居。
+                //
+                // ⚠ 只有镜像(OcsMap::Mirrored)时才需要动；法向绕 Z 旋转（如 (0.6,0.8,0)）
+                //   由 Vector 的旋转部分处理，这里与 Hatch 用同一套 OcsMap。
+                const OcsMap map(e.Normal, e.Elevation);
                 for (const auto& v : e.Vertices)
                 {
-                    pts.push_back({ v.Location.X, v.Location.Y, e.Elevation });
-                    bulges.push_back(v.Bulge);
+                    const Math::Point3 q = map.Point(v.Location.X, v.Location.Y);
+                    pts.push_back(q);
+                    // 镜像时圆弧转向相反：凸度取反，否则每段圆弧会朝反方向鼓出
+                    bulges.push_back(map.Mirrored() ? -v.Bulge : v.Bulge);
                     startW.push_back(v.StartWidth);
                     endW.push_back(v.EndWidth);
                 }
@@ -4926,7 +4986,7 @@ namespace MiniCAD
                     d->Tag    = s->GetTag();
                     d->Prompt = s->GetPrompt();
                     d->Flags  = static_cast<Dwg::AttributeFlags>(s->GetFlags());
-                    d->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                    d->StyleHandle = StyleHandle(s->GetStyleId());   // 与 ATTRIB 同理：跟实体样式走
                     d->Normal = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
@@ -5003,7 +5063,9 @@ namespace MiniCAD
                         att->Value = a->GetValue();
                         att->Tag   = a->GetTag();
                         att->Flags = static_cast<Dwg::AttributeFlags>(a->GetFlags());
-                        att->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                        // 文字样式跟着实体走（与导入同一条：组码 7）。固定 Standard 会让
+                        // 另存后的属性字体与块内文字不一致（SHX 细线 ↔ TTF 粗体）
+                        att->StyleHandle = StyleHandle(a->GetStyleId());
                         att->Normal = NormalOf(*a);
                         ApplyAttr(*a, *att);
                         if (Dwg::AttributeEntity* added = m_db.Add(std::move(att)))

@@ -41,6 +41,9 @@
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/AttribEntity.hpp"
 #include "Core/Entity/CircleEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
+#include "Scene/LayerManager.h"
+#include "Scene/Layer.h"
 #include "Core/Entity/Entity.hpp"
 #include "Core/Draw/IDrawSink.hpp"
 #include <cmath>
@@ -414,6 +417,225 @@ int RunAttribAxisTests()
             Check(bi->GetAttribs()[0]->GetText() == "7",
                   (std::string(label) + " 往返后属性取值保留（「7」）").c_str());
         }
+    }
+
+    // ── 图层 0 关闭时，属性文字仍要画（块内 0 层随插入图层）──────────────
+    //
+    // 用户报「只显示了 W=，没有显示出实际应该显示的 W=120」（`0土方清表初步方案.dwg`
+    // 的 INSERT 22569 / 块 GPTFBZW，属性 VW=120.00）。实测根因：
+    //   · 图纸里图层 "0" 是**关闭**的（73 个图层里 28 个 IsOn=0，含 "0"）
+    //   · 块内实体在 0 层时会随插入所在图层（EnsureResolved 里已有这条），
+    //     所以块内 `W=`（插入层 tf-wtf1，可见）正常显示
+    //   · 属性 ATTRIB 也在 0 层，但 InsertEntity::Draw 直接用它的 LayerId 判可见性
+    //     ⇒ 属性被整批跳过，`120.00` 消失，只剩 `W=`
+    // 修法：属性同样按「0 层 → 插入所在图层」解析后再判可见性。
+    {
+        // 构造：图层 0 关闭、图层 "INS" 可见；块内一条线在 0 层；属性在 0 层
+        Scene s2;
+        LayerManager& layers = s2.GetLayerManager();
+        layers.GetLayer(Layer::DefaultLayerID)->SetVisible(false);      // 图层 "0" 关闭
+        const LayerID insLayer = layers.AddLayer("ATTR_INS");
+        layers.GetLayer(insLayer)->SetVisible(true);
+
+        BlockTable& blocks = s2.GetBlockTable();
+        BlockEntity* blk = blocks.Find(blocks.Create("ATTR_BLK", Math::Point3{ 0, 0, 0 }));
+        auto member = std::make_unique<LineEntity>(s2.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 10, 0, 0 });
+        EntityAttr ma = member->GetAttr();
+        ma.LayerId = Layer::DefaultLayerID;      // 块内 0 层
+        member->SetAttr(ma);
+        blk->AddEntity(std::move(member));
+
+        auto ins2 = std::make_unique<InsertEntity>(s2.NextObjectID(), blk->GetID(), blk->GetName(), Math::Point3{ 0, 0, 0 });
+        ins2->SetBlock(blk);
+        EntityAttr ha = ins2->GetAttr();
+        ha.LayerId = insLayer;                   // 插入在可见图层
+        ins2->SetAttr(ha);
+
+        auto att = std::make_unique<AttribEntity>(s2.NextObjectID(), "VW", "120.00", Math::Point3{ 1, 1, 0 }, 2.5, 0.0);
+        EntityAttr aa = att->GetAttr();
+        aa.LayerId = Layer::DefaultLayerID;      // 属性在 0 层（关键）
+        att->SetAttr(aa);
+        ins2->AddAttrib(std::move(att));
+
+        // 记录型 sink：只让插入层可见，图层 0 不可见（模拟图纸状态）
+        struct LayerAwareSink : IDrawSink
+        {
+            LayerID visibleLayer;
+            std::vector<std::string> texts;
+            int lines = 0;
+            bool IsLayerVisible(LayerID id) const override { return id == visibleLayer; }
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override { ++lines; }
+            void EmitMText(const Math::Point3&, const std::string& t, uint32_t, double, double, double, const Math::Color4&) override
+            { texts.push_back(t); }
+            void EmitAlignedText(const Math::Point3&, const std::string& t, uint32_t, double, double, int, int, double, const Math::Color4&) override
+            { texts.push_back(t); }
+        } ls;
+        ls.visibleLayer = insLayer;
+        ins2->Draw(ls, false, false);
+
+        std::printf("    图层0关闭时：块内线 %d 条，文字 %zu 段", ls.lines, ls.texts.size());
+        for (const auto& t : ls.texts) std::printf(" [%s]", t.c_str());
+        std::printf("\n");
+        Check(ls.lines == 1, "块内 0 层实体随插入图层 ⇒ 插入层可见时照常画");
+        Check(ls.texts.size() == 1 && ls.texts[0] == "120.00",
+              "**属性在 0 层时同样随插入图层 ⇒ 图层 0 关闭也能显示属性值（修前为空）**");
+    }
+
+    // ── 属性文字要跟随自己的文字样式（组码 7），不能用 Standard ──────────
+    //
+    // 用户报「换了字体，怎么字体相差这么大」并给了截图：块内「W=」是细的 SHX 单线，
+    // 属性「120.00」却是粗的 TTF 且字宽偏大。实测 `0土方清表初步方案.dwg` 的块
+    // `GPTFBZW`：块内 TEXT「W=」与属性「VW=120.00」的 StyleHandle 都是 b7b9
+    // = `GPCADFGD`（`txt.shx`，宽度因子 0.70）。但 `AttribBase::Draw` 把 styleId
+    // 硬编码成 0（Standard → `simsun.ttc` 这类 TTF）⇒ 属性字体与块内文字不一致，
+    // 宽度因子 0.70 也整个丢掉。
+    // 修法：`AttribBase` 带 `m_styleId`（组码 7），导入 / 序列化 / 导出都带上。
+    {
+        Scene s3;
+        auto att2 = std::make_unique<AttribEntity>(s3.NextObjectID(), "TAG", "VAL",
+                                                   Math::Point3{ 0, 0, 0 }, 2.5, 0.0, 7u);
+        Check(att2->GetStyleId() == 7u, "AttribEntity 记录传入的文字样式 ID");
+
+        auto cl = att2->Clone(s3.NextObjectID());
+        const auto* cla = dynamic_cast<const AttribEntity*>(cl.get());
+        Check(cla && cla->GetStyleId() == 7u, "AttribEntity 克隆后文字样式不丢");
+
+        // Draw 要把 styleId 传给 sink（以前硬编码 0）
+        struct StyleSink : RecordSink
+        {
+            uint32_t seen = 0xFFFFFFFFu;
+            bool IsLayerVisible(LayerID) const override { return true; }
+            void EmitMText(const Math::Point3& p, const std::string& t, uint32_t styleId, double h, double r,
+                           double bw, const Math::Color4& c) override
+            { seen = styleId; RecordSink::EmitMText(p, t, styleId, h, r, bw, c); }
+            void EmitAlignedText(const Math::Point3& p, const std::string& t, uint32_t styleId, double h, double r,
+                                 int ha, int va, double wf, const Math::Color4& c) override
+            { seen = styleId; RecordSink::EmitAlignedText(p, t, styleId, h, r, ha, va, wf, c); }
+        } ss;
+        att2->Draw(ss, false, false);
+        std::printf("    属性 Draw 传给 sink 的 styleId = %u（期望 7）\n", ss.seen);
+        Check(ss.seen == 7u, "**属性绘制用实体自己的文字样式（修前硬编码 0=Standard）**");
+    }
+
+    // ── 属性的 ByBlock 颜色要继承块参照（与块内实体同一条规则）──────────
+    //
+    // 用户报「这个的颜色需要修复」，给的是 `0土方清表初步方案.dwg` 的 INSERT 209CA
+    // （块 `GPCADFGD`、图层 tf-fgd1、组码 62=61）。实测：
+    //   · INSERT 自身 Color = ACI 61（青），图层 tf-fgd1 是 ACI 1（红）
+    //   · 块内 2 条线 + 6 个 ATTDEF + 6 个 ATTRIB 全部 Color = ByBlock
+    //   · 修复前：块内线条正确画出 (223,255,127)（EnsureResolved 解析了 ByBlock），
+    //     属性文字却是 (255,255,255) 纯白 —— 属性没走 ByBlock 解析
+    // 修法：`InsertEntity::Draw` 画属性前把 ByBlock 换成插入的颜色 / 线宽 / 线型（画完还原）。
+    {
+        Scene s4;
+        BlockTable& blk4 = s4.GetBlockTable();
+        BlockEntity* b4 = blk4.Find(blk4.Create("CB_BLK", Math::Point3{ 0, 0, 0 }));
+        b4->AddEntity(std::make_unique<LineEntity>(s4.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 }));
+
+        auto ins4 = std::make_unique<InsertEntity>(s4.NextObjectID(), b4->GetID(), b4->GetName(), Math::Point3{ 0, 0, 0 });
+        ins4->SetBlock(b4);
+        EntityAttr h4 = ins4->GetAttr();
+        h4.Color = EntityColor::FromAci(61);          // 插入：ACI 61 青
+        ins4->SetAttr(h4);
+
+        auto at4 = std::make_unique<AttribEntity>(s4.NextObjectID(), "T", "V", Math::Point3{ 0, 0, 0 }, 2.5, 0.0);
+        EntityAttr a4 = at4->GetAttr();
+        a4.Color = EntityColor::ByBlock();            // 属性：ByBlock
+        at4->SetAttr(a4);
+        ins4->AddAttrib(std::move(at4));
+
+        // 记录文字颜色的 sink
+        struct ColorSink : RecordSink
+        {
+            Math::Color4 lastColor{};
+            int textCount = 0;
+            bool IsLayerVisible(LayerID) const override { return true; }
+            void EmitMText(const Math::Point3& p, const std::string& t, uint32_t sid, double h, double r,
+                           double bw, const Math::Color4& c) override
+            { ++textCount; lastColor = c; RecordSink::EmitMText(p, t, sid, h, r, bw, c); }
+            void EmitAlignedText(const Math::Point3& p, const std::string& t, uint32_t sid, double h, double r,
+                                 int ha, int va, double wf, const Math::Color4& c) override
+            { ++textCount; lastColor = c; RecordSink::EmitAlignedText(p, t, sid, h, r, ha, va, wf, c); }
+        } cs;
+        ins4->Draw(cs, false, false);
+
+        // ACI 61 -> RGB (223,255,127) 约 (0.875,1.0,0.498)
+        const bool nearAci61 = std::abs(cs.lastColor.r - 0.875) < 0.02 &&
+                               std::abs(cs.lastColor.g - 1.000) < 0.02 &&
+                               std::abs(cs.lastColor.b - 0.498) < 0.02;
+        std::printf("    属性 ByBlock 解析后颜色 = (%.3f,%.3f,%.3f)（期望 ACI61 ≈ .875,1.0,.498）\n",
+                    cs.lastColor.r, cs.lastColor.g, cs.lastColor.b);
+        Check(cs.textCount == 1 && nearAci61,
+              "**属性 ByBlock 颜色继承块参照（修前画成纯白 255,255,255）**");
+
+        // 绘制后属性自身的颜色必须还原成 ByBlock（不能把解析结果写死进实体）
+        Check(ins4->GetAttribs()[0]->GetAttr().Color.Method == ColorMethod::ByBlock,
+              "属性绘制后颜色还原为 ByBlock（解析只在绘制期间生效）");
+    }
+
+    // ── 块参照所在图层关闭时，块内具名图层上的内容仍要画 ─────────────────
+    //
+    // 用户报 `1清表后至室外道路面下0.07m处-土方初步方案.dwg` 的 INSERT 960
+    // （块：A1 图签模板）「图元未显示」。实测（DWG 原始层）：
+    //   · 图层 "0" 在图纸里是**关闭**的（74 个图层里 20 个 IsOn=0，含 "0"）
+    //   · INSERT 960 恰好在图层 0 上
+    //   · 块内唯一成员是 `_WHADI_LAYER` 上的**嵌套块参照**（该图层打开）
+    // AutoCAD 显示整张图框（已由用户确认）——因为块参照的图层只决定块内 **0 层**
+    // 实体的归属，块内具名图层上的实体按自己的图层开关。
+    // 旧实现 `Editor::isShown` 直接看顶层实体的 LayerId，整块被跳过。
+    {
+        Scene s5;
+        LayerManager& lm5 = s5.GetLayerManager();
+        lm5.GetLayer(Layer::DefaultLayerID)->SetVisible(false);        // 图层 0 关闭
+        const LayerID namedLayer = lm5.AddLayer("WHADI_LIKE");
+        lm5.GetLayer(namedLayer)->SetVisible(true);                    // 具名图层打开
+
+        BlockTable& bt5 = s5.GetBlockTable();
+        BlockEntity* inner = bt5.Find(bt5.Create("HAS_ON_NAMED", Math::Point3{ 0, 0, 0 }));
+        inner->AddEntity(std::make_unique<LineEntity>(s5.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 10, 0, 0 }));
+
+        BlockEntity* outer = bt5.Find(bt5.Create("TPL_CONTAINER", Math::Point3{ 0, 0, 0 }));
+        auto nested = std::make_unique<InsertEntity>(s5.NextObjectID(), inner->GetID(), inner->GetName(), Math::Point3{ 0, 0, 0 });
+        nested->SetBlock(inner);
+        EntityAttr subAttr = nested->GetAttr();
+        subAttr.LayerId = namedLayer;
+        nested->SetAttr(subAttr);
+        outer->AddEntity(std::move(nested));
+
+        auto outerIns = std::make_unique<InsertEntity>(s5.NextObjectID(), outer->GetID(), outer->GetName(), Math::Point3{ 0, 0, 0 });
+        outerIns->SetBlock(outer);
+        EntityAttr oa5 = outerIns->GetAttr();
+        oa5.LayerId = Layer::DefaultLayerID;      // 外层块参照在**关闭的图层 0** 上
+        outerIns->SetAttr(oa5);
+
+        auto layerOn = [&lm5](LayerID id)
+        {
+            const Layer* l = lm5.GetLayer(id);
+            return !l || l->IsVisible();
+        };
+        Check(!layerOn(Layer::DefaultLayerID), "图层 0 已设为关闭（前提成立）");
+        Check(outerIns->HasVisibleContentOnAnyLayer(layerOn),
+              "**块参照在关闭图层上、块内具名图层打开 ⇒ 仍要画（修前整块被跳过）**");
+
+        // 反例：块内全在关闭的图层 0 上时不应画
+        Scene s6;
+        LayerManager& lm6 = s6.GetLayerManager();
+        lm6.GetLayer(Layer::DefaultLayerID)->SetVisible(false);
+        BlockTable& bt6 = s6.GetBlockTable();
+        BlockEntity* b6 = bt6.Find(bt6.Create("ALL_ON_ZERO", Math::Point3{ 0, 0, 0 }));
+        b6->AddEntity(std::make_unique<LineEntity>(s6.NextObjectID(), Math::Point3{ 0, 0, 0 }, Math::Point3{ 1, 0, 0 }));
+        auto ins6 = std::make_unique<InsertEntity>(s6.NextObjectID(), b6->GetID(), b6->GetName(), Math::Point3{ 0, 0, 0 });
+        ins6->SetBlock(b6);
+        EntityAttr a6 = ins6->GetAttr();
+        a6.LayerId = Layer::DefaultLayerID;       // 插入与块内都在图层 0
+        ins6->SetAttr(a6);
+        auto layerOn6 = [&lm6](LayerID id)
+        {
+            const Layer* l = lm6.GetLayer(id);
+            return !l || l->IsVisible();
+        };
+        Check(!ins6->HasVisibleContentOnAnyLayer(layerOn6),
+              "块内全在关闭的图层 0 上 ⇒ 不画（图层开关仍然生效）");
     }
 
     std::printf("轴号用例失败：%d\n", g_fail);

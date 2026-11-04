@@ -155,6 +155,7 @@ namespace MiniCAD::EntityIO
             double      height = 2.5, rotation = 0.0;
             uint32_t    flags = 0;
             int32_t     hAlign = 0, vAlign = 0;     // 组码 72 / 73(ATTRIB 为 74)
+            uint32_t    styleId = 0;                // 组码 7：文字样式表 ID
         };
 
         void WriteAttribBase(ISerializer& s, const AttribBase& a)
@@ -168,6 +169,8 @@ namespace MiniCAD::EntityIO
             // 对齐码必须存：锚点已按对齐换算过，渲染还要据此整体平移字形（V54 的轴号）
             int32_t ha = a.GetHAlign();        s.Value("hAlign", ha);
             int32_t va = a.GetVAlign();        s.Value("vAlign", va);
+            // 文字样式同理：属性用自己的组码 7，丢了就退回 Standard，字体会与块内文字不一致
+            uint32_t style = a.GetStyleId();   s.Value("styleId", style);
         }
 
         AttribFields ReadAttribFields(ISerializer& s)
@@ -181,6 +184,7 @@ namespace MiniCAD::EntityIO
             s.Value("flags", f.flags);
             s.Value("hAlign", f.hAlign);        // 旧文件无此项：左对齐基线
             s.Value("vAlign", f.vAlign);
+            s.Value("styleId", f.styleId);      // 旧文件无此项：Standard
             return f;
         }
 
@@ -1245,7 +1249,7 @@ namespace MiniCAD::EntityIO
         std::unique_ptr<Entity> ReadAttDef(ISerializer& s, Object::ObjectID id)
         {
             AttribFields f = ReadAttribFields(s);
-            auto e = std::make_unique<AttDefEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation);
+            auto e = std::make_unique<AttDefEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation, f.styleId);
             e->SetFlags(static_cast<uint16_t>(f.flags));
             e->SetAlign(f.hAlign, f.vAlign);
             std::string prompt;
@@ -1261,7 +1265,7 @@ namespace MiniCAD::EntityIO
         std::unique_ptr<AttribEntity> ReadAttribTyped(ISerializer& s, Object::ObjectID id)
         {
             AttribFields f = ReadAttribFields(s);
-            auto e = std::make_unique<AttribEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation);
+            auto e = std::make_unique<AttribEntity>(id, std::move(f.tag), std::move(f.text), f.pos, f.height, f.rotation, f.styleId);
             e->SetFlags(static_cast<uint16_t>(f.flags));
             e->SetAlign(f.hAlign, f.vAlign);
             return e;

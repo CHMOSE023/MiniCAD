@@ -212,30 +212,60 @@ namespace MiniCAD
             // 宽度为 0：直接绘制直线，开销最低。
             if (DrawsAsBand())
             {
-                // 虚线必须逐段按线型铺设，不能整体填充 —— 否则线型被完全忽略。
+                // 虚线必须按线型铺设，不能整体填充 —— 否则线型被完全忽略。
                 // 连续线仍走整体填充，以保留折点处的斜接尖角。
                 if (sink.IsCurrentLinetypeDashed())
                 {
+                    // 整条多段线（直线段 + 圆弧段）作为一条**带逐点宽度**的路径交给 DrawPath：
+                    // 虚线相位跨段连续，段内宽度按两端线性插值（锥形段）。
+                    //
+                    // 逐段 DrawStyledLine 会让每小段都从图案相位 0 重铺，$LTSCALE 大到一个
+                    // 周期超过小段长度时每段只画得出第一个 dash 片、gap 走不到，整条粗
+                    // 多段线显示成实线（与细线版本同一个根因，见下面的细线分支）。
+                    std::vector<Math::Point3> path;
+                    std::vector<double>       pathW;
+                    auto push = [&](const Math::Point3& p, double w)
+                    {
+                        if (!path.empty())
+                        {
+                            const Math::Point3& q = path.back();
+                            if (std::abs(p.x - q.x) < 1e-9 && std::abs(p.y - q.y) < 1e-9 &&
+                                std::abs(p.z - q.z) < 1e-9)
+                            {
+                                pathW.back() = std::max(pathW.back(), w);   // 折点：取较大者，缓和尖角
+                                return;
+                            }
+                        }
+                        path.push_back(p);
+                        pathW.push_back(w);
+                    };
+
                     for (int i = 0; i < m_polyline.SegCount(); ++i)
                     {
                         const auto& A = m_polyline.SegStart(i);
                         const auto& B = m_polyline.SegEnd(i);
+                        const double ws = SegmentStartWidth(i), we = SegmentEndWidth(i);
                         if (m_polyline.SegIsLine(i))
                         {
-                            sink.DrawStyledLine(A, B, color, std::max(SegmentStartWidth(i), SegmentEndWidth(i)));
+                            push(A, ws);
+                            push(B, we);
                         }
                         else
                         {
                             // 圆弧细分点上宽度按弧长线性插值，端点用本段的起止宽度
-                            const double ws = SegmentStartWidth(i), we = SegmentEndWidth(i);
                             if (!SampleArcSegment(sink, A, B, m_polyline.SegBulge(i), kAngleTol,
                                                   [&](const Math::Point3& p, const Math::Point3& q, double t0, double t1)
                                                   {
-                                                      sink.DrawStyledLine(p, q, color, std::max(ws + (we - ws) * t0, ws + (we - ws) * t1));
+                                                      push(p, ws + (we - ws) * t0);
+                                                      push(q, ws + (we - ws) * t1);
                                                   }, 0.5 * std::max(ws, we)))
-                                sink.DrawStyledLine(A, B, color, std::max(ws, we));
+                            {
+                                push(A, ws);
+                                push(B, we);
+                            }
                         }
                     }
+                    sink.DrawPath(path, pathW, color, false);
                     return;
                 }
 
@@ -244,6 +274,25 @@ namespace MiniCAD
                 return;
             }
 
+            // 整条多段线（直线段 + 圆弧段）作为一条路径交给 DrawPath：虚线相位跨段连续。
+            // 逐段 DrawLine 会让每条小段都从图案相位 0 重铺，$LTSCALE 大到一个周期超过
+            // 小段长度时每段只画得出第一个 dash 片、gap 走不到，整条多段线显示成实线
+            // （实测块内 LWPOLYLINE 句柄 2DA8E：凸度 0.414214 的 90° 圆弧 r=1350 按 5°
+            //  分成 19 段、每段 111.6 单位，而 DASH 周期 = 0.35 × $LTSCALE 1000 = 350）。
+            std::vector<Math::Point3> path;
+            path.reserve(static_cast<size_t>(m_polyline.SegCount()) + 1);
+            auto push = [&](const Math::Point3& p)
+            {
+                // 段与段的连接处是同一个顶点，不重复收进路径
+                if (!path.empty())
+                {
+                    const Math::Point3& q = path.back();
+                    if (std::abs(p.x - q.x) < 1e-9 && std::abs(p.y - q.y) < 1e-9 && std::abs(p.z - q.z) < 1e-9)
+                        return;
+                }
+                path.push_back(p);
+            };
+
             for (int i = 0; i < m_polyline.SegCount(); ++i)
             {
                 const auto& A = m_polyline.SegStart(i);
@@ -251,14 +300,18 @@ namespace MiniCAD
 
                 if (m_polyline.SegIsLine(i))
                 {
-                    sink.DrawLine(A, B, color, false);
+                    push(A);
+                    push(B);
                 }
                 else if (!SampleArcSegment(sink, A, B, m_polyline.SegBulge(i), kAngleTol,
-                                           [&](const Math::Point3& p, const Math::Point3& q, double, double) { sink.DrawLine(p, q, color, false); }))
+                                           [&](const Math::Point3& p, const Math::Point3& q, double, double)
+                                           { push(p); push(q); }))
                 {
-                    sink.DrawLine(A, B, color, false);
+                    push(A);
+                    push(B);
                 }
             }
+            sink.DrawPath(path, color, false);
         }
 
         DECLARE_RUNTIME_TYPE(PolylineEntity, Entity)

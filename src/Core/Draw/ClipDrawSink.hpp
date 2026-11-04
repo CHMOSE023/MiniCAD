@@ -221,6 +221,98 @@ namespace MiniCAD
             FillSubdivided(a, b, c, avg, 5);
         }
 
+        // 曲线的连续虚线（见 IDrawSink::DrawPath）：把路径切成「整体在框内的连续子路径」
+        // 转发（子路径内的虚线相位保持连续；跨界处按段中点取舍，与 DrawLine 的逐段
+        // 裁剪同精度）。不转发的话块内被裁剪的曲线虚线会退化成逐段实线。
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const size_t n = points.size();
+            // 快速整体外/内判定
+            bool allOut = true, allIn = true;
+            for (const auto& q : points)
+            {
+                const bool in = Contains(q.x, q.y);
+                if (in) allOut = false; else allIn = false;
+            }
+            if (allOut) { NoteAltered(); return; }
+            if (allIn)  { m_target.DrawPath(points, color, closed); return; }
+
+            NoteAltered();
+            // 混合：按段中点取舍，切出连续保留的子路径（子路径 >= 2 点才转发）。
+            // 段级取舍与 DrawLine 对整段线的处理精度一致；裁剪边缘的虚线相位
+            // 与完整曲线略有偏差（未按交点精确截断），可接受 —— 边界处本来就
+            // 是视觉关注点之外的区域。
+            std::vector<Math::Point3> run;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2)
+                    m_target.DrawPath(run, color, false);
+                run.clear();
+            };
+            for (size_t i = 0; i + 1 < n; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+                if (Contains(mx, my))
+                {
+                    if (run.empty()) run.push_back(a);
+                    run.push_back(b);
+                }
+                else
+                    flush();
+            }
+            flush();
+        }
+
+        // 有逐点宽度的曲线（粗多段线）：裁剪取舍同上，宽度随点一起切出去
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const bool hasW = (widths.size() == points.size());
+            const size_t n = points.size();
+            bool allOut = true, allIn = true;
+            for (const auto& q : points)
+            {
+                const bool in = Contains(q.x, q.y);
+                if (in) allOut = false; else allIn = false;
+            }
+            if (allOut) { NoteAltered(); return; }
+            if (allIn)  { m_target.DrawPath(points, widths, color, closed); return; }
+
+            NoteAltered();
+            std::vector<Math::Point3> run;
+            std::vector<double>       runW;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2)
+                    m_target.DrawPath(run, runW, color, false);
+                run.clear();
+                runW.clear();
+            };
+            auto pushPt = [&](size_t idx)
+            {
+                run.push_back(points[idx]);
+                if (hasW) runW.push_back(widths[idx]);
+            };
+            for (size_t i = 0; i + 1 < n; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+                if (Contains(mx, my))
+                {
+                    if (run.empty()) pushPt(i);
+                    pushPt(i + 1);
+                }
+                else
+                    flush();
+            }
+            flush();
+        }
+
         // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
         void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
                             const Math::Color4& color, double width) override

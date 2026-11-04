@@ -255,12 +255,41 @@ namespace MiniCAD
             // 由于坐标已是世界坐标，属性**不能**按阵列单元重复画，所以放在单元循环之外。
             // 也不套本块的 XCLIP：`m_clip` 是**块坐标系**里的（与块内实体同系，见 GetClipBoundary），
             // 拿来判世界坐标的属性会把内外判反；宁可少裁，也不要错裁。
+            //
+            // ⚠ 属性在 0 层上时同样**随插入所在图层**（与块内实体在 EnsureResolved 里的 0 层解析同一条
+            //   AutoCAD 规则）。此前这里直接用 `a->GetAttr().LayerId` 判可见性 ⇒ 属性留在图层 0；
+            //   而图纸里图层 "0" 常被关闭（实测 `0土方清表初步方案.dwg` 73 个图层里 28 个 IsOn=0，
+            //   含图层 "0"），于是块内 `W=`（0 层已被解析成插入层，可见）画得出来、属性 `VW=120.00`
+            //   却被整批跳过 —— 用户报的「只显示 W=，没有 120」。
+            //
+            // ⚠ ByBlock 也要在这里解析（与 EnsureResolved 对块成员做的是同一套）：属性的颜色 / 线宽 /
+            //   线型为 ByBlock 时继承本 INSERT 的有效值。漏掉这一步 ⇒ 属性全画成默认白（DrawContext 拿不到
+            //   有效的块参照颜色，`EntityColor` 又是 ByBlock），实测 `0土方清表初步方案.dwg` 的
+            //   INSERT 209CA（块 `GPCADFGD`：块内线条与 6 个属性全是 ByBlock、插入色 ACI 61 青）：
+            //   线条正确画出 (223,255,127)，属性文字却是 (255,255,255) —— 用户报「这个的颜色需要修复」。
+            const EntityAttr& host = GetAttr();
+            const LayerID hostLayer = host.LayerId;
             for (const auto& a : m_attribs)
-                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId) && sink.BeginBlockChild(false))
-                {
-                    a->Draw(sink, isSelected, isHovered);
-                    sink.EndBlockChild(false);
-                }
+            {
+                const EntityAttr& aAttr = a->GetAttr();
+                const LayerID aLayer = (aAttr.LayerId == DefaultLayer_ID) ? hostLayer : aAttr.LayerId;
+                if (!aAttr.Visible || !sink.IsLayerVisible(aLayer) || !sink.BeginBlockChild(false))
+                    continue;
+                // `AttribBase::Draw` 的颜色来自实体自己的 `m_attr`（`ResolveDrawColor(sink)`），
+                // 光设 sink 的上下文没用 ⇒ 临时把解析后的属性写回实体，画完再还原。
+                // 解析规则与 EnsureResolved 对块成员做的完全一致：ByBlock 继承插入、0 层继承插入图层。
+                auto* mutableA = const_cast<AttribEntity*>(a.get());
+                const EntityAttr saved = aAttr;
+                EntityAttr eff = saved;
+                if (eff.Color.Method == ColorMethod::ByBlock) eff.Color = host.Color;
+                if (eff.Lineweight == Lineweight::ByBlock)    eff.Lineweight = host.Lineweight;
+                if (eff.LineType == LineTypeTable_ByBlockID)  eff.LineType = host.LineType;
+                eff.LayerId = aLayer;
+                mutableA->SetAttr(eff);
+                a->Draw(sink, isSelected, isHovered);
+                mutableA->SetAttr(saved);
+                sink.EndBlockChild(false);
+            }
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
@@ -284,6 +313,37 @@ namespace MiniCAD
         }
 
         DECLARE_RUNTIME_TYPE(InsertEntity, Entity)
+
+        // 块参照自身所在图层关闭时，块内是否还有**落在可见图层上**的内容。
+        //
+        // AutoCAD 里块参照的图层只决定块内 0 层实体的归属（随插入图层），块内位于
+        // 具名图层上的实体仍按自己的图层开关显示 / 隐藏 —— 所以「插入在关闭图层上」
+        // 并不等于整块不画。撤销这一判断会让整张图框消失（实测 A1 图签模板块在
+        // 关闭的图层 0 上、块内嵌套块在打开的 `_WHADI_LAYER` 上）。
+        // 递归查询嵌套块；属性同样按「0 层随插入图层」解析后再判。
+        // layerVisible(LayerID) -> bool：由调用方给（Core 侧不引入 Layer / LayerManager 依赖）。
+        template <class LayerVisibleFn>
+        bool HasVisibleContentOnAnyLayer(LayerVisibleFn&& layerVisible, int depth = 0) const
+        {
+            if (depth > 8) return false;   // 防御自引用的块定义
+            const LayerID hostLayer = GetAttr().LayerId;
+            for (const auto& a : m_attribs)
+            {
+                if (!a || !a->GetAttr().Visible) continue;
+                const LayerID id = (a->GetAttr().LayerId == DefaultLayer_ID) ? hostLayer : a->GetAttr().LayerId;
+                if (layerVisible(id)) return true;
+            }
+            EnsureResolved();
+            for (const auto& e : m_resolved)
+            {
+                if (!e || !e->GetAttr().Visible) continue;
+                // 0 层已在 EnsureResolved 里换成插入图层；具名图层按自己判断
+                if (layerVisible(e->GetAttr().LayerId)) return true;
+                if (const auto* nested = dynamic_cast<const InsertEntity*>(e.get()))
+                    if (nested->HasVisibleContentOnAnyLayer(layerVisible, depth + 1)) return true;
+            }
+            return false;
+        }
 
     private:
         // OCS 基 → WCS 的旋转矩阵(列为 Ux/Uy/Uz)。

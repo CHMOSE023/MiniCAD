@@ -68,6 +68,35 @@ namespace MiniCAD
             m_target.FillTriangleColored(m_xform * a, m_xform * b, m_xform * c, ca, cb, cc);
         }
 
+        // 块内的曲线（连续虚线，见 IDrawSink::DrawPath）：整条路径先经插入变换再转发，
+        // 不转发的话落到默认实现=逐段 DrawLine，虚线相位在每个小段边界重置，
+        // 大 $LTSCALE 的曲线虚线会显示成实线（块内 DASH 圆弧实测）。
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            std::vector<Math::Point3> out;
+            out.reserve(points.size());
+            for (const auto& q : points) out.push_back(m_xform * q);
+            m_target.DrawPath(out, color, closed);
+        }
+
+        // 块内的粗曲线（有逐点宽度）：位置经插入变换，宽度按插入缩放放大
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            std::vector<Math::Point3> out;
+            out.reserve(points.size());
+            for (const auto& q : points) out.push_back(m_xform * q);
+            if (widths.size() != points.size())
+            {
+                m_target.DrawPath(out, color, closed);
+                return;
+            }
+            std::vector<double> outW;
+            outW.reserve(widths.size());
+            for (double w : widths) outW.push_back(w * m_scale);
+            m_target.DrawPath(out, outW, color, closed);
+        }
+
         // 块内的区域覆盖：边界同样经插入变换
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {
