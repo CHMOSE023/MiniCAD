@@ -275,3 +275,38 @@ TEST(Atlas_GrowsOnDemandAndKeepsWhitePixel)
     f.text.Draw(dl, Rect{ 0, 0, 2000, 2000 }, CJKRun(0x4E00, 1200), f.params);
     CHECK(!atlas.Changed());
 }
+
+// ── 中日韩：界面语言的字体 ──────────────────────────────────────
+
+TEST(Font_LanguageFontsForCjk)
+{
+    CHECK(NotoCjkFaceForLanguage("ja") == 0 && NotoCjkFaceForLanguage("ko-KR") == 1);
+    CHECK(NotoCjkFaceForLanguage("zh-CN") == 2 && NotoCjkFaceForLanguage("zh-TW") == 3 && NotoCjkFaceForLanguage("zh-Hant-HK") == 3);
+    CHECK(NotoCjkFaceForLanguage("en") == -1 && BundledUiFontForLanguage("en").empty() && BundledUiFontForLanguage("zh-CN").empty());
+    CHECK(BundledUiFontForLanguage("zh-TW") == "NotoSansTC-UI.otf" && BundledUiFontForLanguage("ja") == "NotoSansJP-UI.otf"
+          && BundledUiFontForLanguage("ko") == "NotoSansKR-UI.otf");
+}
+
+TEST(Font_SharedFontIsLoadedOnce)
+{
+    REQUIRE_FONT();
+#ifdef _WIN32
+    char* windir = nullptr;
+    size_t len = 0;
+    if (_dupenv_s(&windir, &len, "WINDIR") != 0 || !windir)
+        return;
+    const std::string path = std::string(windir) + "\\Fonts\\msyh.ttc";
+    std::free(windir);
+    auto a = Font::LoadShared(path, 1);
+    auto b = Font::LoadShared(path, 1);
+    CHECK(a && a == b && Font::LoadShared(path, 0) != a);
+
+    NullBackend backend;
+    TextSystem  text{ &backend };
+    text.AddFont(a);
+    text.AddFallbackFont(b);
+    text.SetPreferredFonts({ Font::LoadShared(path, 0), nullptr });
+    TextParams params;
+    CHECK(text.Measure("A\xE4\xB8\xAD", params).x > 0.0f);
+#endif
+}

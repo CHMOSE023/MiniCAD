@@ -1,0 +1,11 @@
+{
+  "format": "MiniCAD-DrawingSamples",
+  "samples": [
+    {
+      "file": "fonts-and-symbols.dwg",
+      "name": "字体与符号",
+      "icon": "TextStyle.png",
+      "description": "随程序提供的 SHX 单线字体，钢筋符号 %%130～%%133、控制码与常用工程符号，以及简、繁、日、韩单线字体的全部字表"
+    }
+  ]
+}

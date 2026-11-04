@@ -108,6 +108,8 @@ namespace MiniCAD
         // 还有图纸在读取、排队，或刚加入的图纸还在生成显示（分帧细分）
         bool IsOpeningDrawings() const { return m_openJob || m_openDone || !m_openQueue.empty() || m_buildDoc; }
         void CheckUiFileChanged();              // 界面描述文件变了就重新加载（宿主监视文件所在目录）
+        // 字体目录里新加了字体（网页版启动后下载的繁体、日文字体）：界面补上后备字体，图纸文字的缺字回退重新找
+        void OnFontsAdded();
         // 检查 GitHub 上的最新发布（UpdateCheck.cpp）：后台请求，有新版本时标题栏版本号旁出现提示；
         // manual（帮助 > 检查更新）时结果都弹对话框。平台不支持时（网页版）什么都不做。宿主启动时调用一次，自测不调用
         void CheckForUpdates(bool manual = false);
@@ -149,6 +151,7 @@ namespace MiniCAD
         void ApplyStartPage(bool show);                           // 显示起始页时隐藏标题栏以下的其余界面
         void RefreshStartNav();                                   // 起始页导航列的可用状态、“返回”行的文档名
         void OpenNodeExample(const std::string& path, const std::string& name, const std::string& description);
+        void OpenDrawingSample(const std::string& path);          // 打开示例图纸（assets/samples）的副本：没有路径，保存时另存
         void OpenNodeEditorFromStart(bool newDocument);           // 离开起始页并显示节点编辑器（没有文档时新建）
         // 状态栏（主窗口的面板 "statusbar"，文档窗口底部）：布局标签 + 捕捉 / 正交等开关；主窗口的还有读写进度与界面描述的加载结果
         std::unique_ptr<MiniGUI::Node> CreateStatusBar(ViewChrome& c);
@@ -208,6 +211,8 @@ namespace MiniCAD
         void OpenMLineStyleDialog();                              // 多线样式（MLSTYLE）
         void OpenPointStyleDialog();                             // 格式 → 点样式…（$PDMODE/$PDSIZE）
         void OpenLineTypeScaleDialog();                          // 格式 → 线型比例…（$LTSCALE）
+        void OpenCursorDialog();                                 // 管理 → 设置光标…（十字光标大小、拾取框大小）
+        void LoadCursorStyle();                                  // 启动时从用户设置读光标大小（自测不读）
         void LoadHatchPatterns();                                 // 载入 patterns/ 目录下的 .pat 文件（内置图案之外）
         void ShowAbout();
         void ShowUpdateDialog(bool prompt = false);              // 新版本：说明、下载、发布页；prompt 为启动时的提示（下载 / 忽略此版本）
@@ -249,6 +254,11 @@ namespace MiniCAD
         void ApplyCompactChrome(ViewChrome& c);
         // 切换界面语言（"设置 > 语言"）：换翻译表、save 时写进用户设置（自测不写），再 Retranslate
         void SetLanguage(const std::string& code, bool save = true);
+        // "设置 > 布局"：浮动（默认，功能区、面板、状态栏是浮在绘图区上的卡片）/ 紧凑（贴边、没有缝，界面描述文件里的变体 flush）。
+        // 写进用户设置的 "layout"，按变体重建各窗口的界面（同 Retranslate，停靠布局保持不变）
+        void SetFlushLayout(bool flush);
+        // 命令行卡片离文档区底边的距离：浮动时停靠区与状态栏之间已有缝，紧凑时没有缝，自己留出来，不紧贴状态栏
+        float CommandLineBottom() const { return m_flushLayout ? 6.0f : 0.0f; }
         // 按当前语言重建界面：界面描述生成的部分（菜单、功能区、标题栏、停靠区标签）重新应用，停靠布局保持不变；
         // 代码里建的、显示了译文的部分（起始页、标题栏右侧、导航条）各自重建。新加的这类界面要在这里重建或重写文字
         void Retranslate();
@@ -475,6 +485,8 @@ namespace MiniCAD
         bool                                   m_commandLineVisible = true; // 命令行的显示开关（各窗口共用，保存在用户布局文件里）
         bool                                   m_viewCubeVisible = true; // 视图方块的显示开关（同上）
         bool                                   m_compact = false;        // 用的是紧凑布局：只浏览
+        bool                                   m_flushLayout = false;    // "设置 > 布局"选了紧凑（贴边）；与只浏览的 m_compact 无关
+        static constexpr const char*           kLayoutSettingKey = "layout";   // 用户设置里的值："floating" / "compact"
         static constexpr float                 kCubeSize        = 140.0f;   // 视图方块边长（导航条在它下面，同宽）
         static constexpr float                 kCompactCubeSize = 88.0f;
         MiniGUI::Label*                        m_uiStatus   = nullptr;   // 界面描述文件的加载结果
@@ -541,6 +553,7 @@ namespace MiniCAD
         std::shared_ptr<OpenJob>               m_openDone;               // 已读完、等本帧画完后加入的图纸
         bool                                   m_openAddPosted = false;  // 已投递"加入 m_openDone"（AppPlatform::Post）
         std::vector<std::string>               m_openQueue;              // 排队等待读取的路径
+        std::vector<std::string>               m_sampleOpens;            // 其中按示例打开的（读完去掉路径，不记入"最近"）
         DocumentManager::PaneId                m_openPane = DocumentManager::kMainPane;   // 读完的图纸加进哪个窗口（发起打开时的）
         std::string                            m_openFailures;           // 本批打开失败的汇总，全部读完后显示
         std::vector<Document*>                 m_xrefMissingDocs;        // 本批打开的、有找不到的外部参照的图纸

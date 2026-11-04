@@ -51,6 +51,7 @@ namespace MiniCAD
             fs.name     = fontFile;      // 缓存键：同一形文件共用一份
             fs.fontFile = fontFile;
             fs.isShx    = true;
+            fs.shapesOnly = true;
             return &fontSystem->ResolveFont(fs);
         };
     }

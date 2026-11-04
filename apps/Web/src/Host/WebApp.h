@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace MiniGUI
 {
@@ -40,6 +41,7 @@ namespace MiniCAD
         void OnFilePicked(int requestId, const char* path);
         void OnFilePickCompleted(int requestId, const char* error);
         void OnFolderPicked(int requestId, const char* dir, const char* error);
+        void OnFontFetched(const char* name);
         bool HasUnsavedDocuments() const;
 
         // ── AppPlatform ─────────────────────────────────────────
@@ -48,6 +50,7 @@ namespace MiniCAD
         IRenderTarget&           GetViewportTarget() override;
         MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) override;
         bool LoadUiFonts(MiniGUI::TextSystem& text) override;
+        std::vector<std::shared_ptr<MiniGUI::Font>> LoadLanguageUiFonts(const std::string& language) override;
         void RequestRedraw() override { m_host.RequestFrame(); }
         void BeginUiPass() override;
         void EndUiPass() override;
@@ -80,6 +83,7 @@ namespace MiniCAD
         bool InitializeWebGL();     // 建 WebGL2 上下文与 GLES3 图形设备
         bool OnGraphicsReady();     // 图形设备就绪：建视口渲染目标、界面、输入，开始画帧
         void ReportFailure(const char* what);
+        void FetchLazyFont(const std::string& name);     // 下载网页旁 fonts/ 下的字体（每个只下一次），完成后 OnFontFetched
 
     private:
         // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → 画布（WebGL 上下文）
@@ -98,5 +102,7 @@ namespace MiniCAD
         std::unordered_map<int, PickRequest> m_pickRequests;
         std::unordered_map<int, std::function<void(const std::string&)>> m_folderRequests;   // PickFolder
         int m_nextPickId = 1;
+        std::unordered_set<std::string> m_fontRequests;
+        bool m_uiReady = false;
     };
 }

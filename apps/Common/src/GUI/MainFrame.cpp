@@ -1,6 +1,7 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
@@ -244,6 +245,7 @@ namespace MiniCAD
         m_ui = std::make_unique<MiniGUI::UIContext>(&m_platform->GetUiBackend());
         if (!m_platform->LoadUiFonts(m_ui->GetTextSystem()))
             LOG_ERROR_TR("MainFrame: 没有找到界面字体");
+        ApplyLanguageFonts(*m_platform, m_ui->GetTextSystem());
 
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });
@@ -277,12 +279,15 @@ namespace MiniCAD
         // 三维实体内核；关闭内核的构建里命令提示不可用
         m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
         m_docManager.GetEditor().SetViewTransitionSeconds(0.3);   // 视图方块、标准视图切换时平缓过渡
+        LoadCursorStyle();
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
         if (m_compact)
             m_layout->SetLayoutName("compact", true);
-        m_layout->RegisterPanel("canvas",     CreateCanvas());
+        m_flushLayout = m_useUserLayout && m_platform->ReadUserSetting(kLayoutSettingKey) == "compact";   // 自测不读
+        m_layout->SetVariant(m_flushLayout ? "flush" : "");
+        m_layout->RegisterPanel("canvas",    CreateCanvas());
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());
@@ -554,6 +559,10 @@ namespace MiniCAD
     {
         auto job = std::move(m_openDone);
         m_openAddPosted = false;
+        const auto sampleIt = std::find(m_sampleOpens.begin(), m_sampleOpens.end(), job->path);
+        const bool sample = sampleIt != m_sampleOpens.end();
+        if (sample)
+            m_sampleOpens.erase(sampleIt);
         if (job->doc)
         {
             Document* opened = nullptr;
@@ -567,6 +576,13 @@ namespace MiniCAD
                 if (m_docManager.HasPane(m_openPane))
                     m_docManager.SetNewDocumentPane(m_openPane);
                 opened = m_docManager.Add(std::move(job->doc));
+                // 示例随程序安装，不能被保存覆盖：加入（按扩展名全部显示）后当作没保存过的新图纸，保存时另存
+                if (opened && sample)
+                {
+                    const std::string name = opened->GetName();
+                    opened->SetPath("");
+                    opened->SetName(name);
+                }
                 // 显示数据每帧细分一批，先细分好的先画出来；大图纸不再在一帧里细分完整张图（窗口"未响应"）
                 if (opened)
                 {
@@ -580,7 +596,8 @@ namespace MiniCAD
                 && std::find(m_xrefMissingDocs.begin(), m_xrefMissingDocs.end(), opened) == m_xrefMissingDocs.end())
                 m_xrefMissingDocs.push_back(opened);
             // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
-            RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
+            if (!sample)
+                RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
             if (opened && HostOf(opened).IsVisible())
                 HostOf(opened).Focus();         // 它所在窗口的绘图区（可能是次窗口）
@@ -588,7 +605,8 @@ namespace MiniCAD
         else
         {
             // 打不开的多半已被删掉 / 移走：从「最近打开」里去掉，避免下次还点它
-            ForgetRecentFile(job->path);
+            if (!sample)
+                ForgetRecentFile(job->path);
             if (!m_openFailures.empty()) m_openFailures += "\n\n";
             m_openFailures += job->path + "\n" + (job->error.empty() ? Tr("无法打开图纸") : job->error);
         }

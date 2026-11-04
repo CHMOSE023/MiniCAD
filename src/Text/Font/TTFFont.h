@@ -1,5 +1,7 @@
 #pragma once
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,14 +11,33 @@
 
 namespace MiniCAD
 {
-   
+    class TTFFont;
+
+    // 缺字时依次查找的字体，用到时才加载；FontEngine 按语言建好，同一语言的 TrueType 字体共用
+    class TTFFallbackChain
+    {
+    public:
+        using Loader = std::function<std::shared_ptr<TTFFont>(size_t index)>;   // 第 index 个候选，没有时返回空
+        TTFFallbackChain(size_t count, Loader loader);
+
+        TTFFont* Find(uint32_t codepoint);
+        void     Rescan();      // 之前没找到的候选重新找（网页版的字体后到）
+
+    private:
+        std::mutex                            m_mutex;
+        Loader                                m_loader;
+        std::vector<std::shared_ptr<TTFFont>> m_fonts;
+        std::vector<bool>                     m_probed;
+        std::unordered_map<uint32_t, TTFFont*> m_route;
+    };
+
     // TrueType 矢量字体，使用 stb_truetype 解析 outline → 折线段。
     // stbtt_fontinfo 通过 void* 隐藏，避免将大型头文件暴露给使用方。
     // Web 端（MINICAD_WEB）不使用本类，全部走 WebFontAtlas 纹理路径。
     class TTFFont : public IFont
     {
     public:
-        TTFFont(const std::string& name, const std::string& filePath, uint64_t fontId);
+        TTFFont(const std::string& name, const std::string& filePath, uint64_t fontId, int faceIndex = 0);
         ~TTFFont();
 
         const Glyph& GetGlyph (uint32_t codepoint) override;
@@ -26,15 +47,16 @@ namespace MiniCAD
         const char* GetName   ()   const override { return m_name.c_str(); }
         bool        IsLoaded  ()   const          { return m_stbFont != nullptr; }
 
-        bool        HasGlyph(uint32_t codepoint) override { return Covers(codepoint) || (m_fallback && m_fallback->Covers(codepoint)); }
+        bool        HasGlyph(uint32_t codepoint) override { return Covers(codepoint) || Fallback(codepoint); }
 
         // 字体文件里有这个字符（缺字时 stb_truetype 给的是 .notdef 方块，不算）
         bool        Covers(uint32_t codepoint) const;
-        // 本字体缺的字改用这个字体的字形，与 Windows 的字体链接一样（AutoCAD 里 Arial 等西文字体的汉字照样显示）。
-        // 两者都按大写字母高归一化，字形可以直接拿来用。FontEngine 设为自带的 GB2312.ttf
-        void        SetFallback(std::shared_ptr<TTFFont> fallback) { m_fallback = std::move(fallback); }
+        // 本字体缺的字改用回退串里字体的字形，与 Windows 的字体链接一样（AutoCAD 里 Arial 等西文字体的汉字照样显示）。
+        // 都按大写字母高归一化，字形可以直接拿来用
+        void        SetFallback(std::shared_ptr<TTFFallbackChain> fallback) { m_fallback = std::move(fallback); }
     private:
-        void  Load(const std::string& filePath);
+        void  Load(const std::string& filePath, int faceIndex);
+        TTFFont* Fallback(uint32_t codepoint);
         Glyph BuildGlyph(uint32_t codepoint);
 
         void  BuildFill(Glyph& g);
@@ -69,6 +91,6 @@ namespace MiniCAD
 
         std::unordered_map<uint32_t, Glyph>  m_glyphCache;
         std::unordered_map<uint32_t, double> m_advanceCache;
-        std::shared_ptr<TTFFont>             m_fallback;
+        std::shared_ptr<TTFFallbackChain>    m_fallback;
     };
 }

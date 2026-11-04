@@ -57,6 +57,19 @@ int CountSceneFaces(const MiniCAD::Scene& scene)
 int wmain(int argc, wchar_t** argv)
 {
     if (argc < 2) { std::fprintf(stderr, "Usage: MiniCADDwgInspect <dwg> [dump-directory]\n"); return 2; }
+    // --convert 输入 输出：按 MiniCAD 打开再另存（格式按输出的扩展名，DWG 存 2004 版），tools/make_font_sample.py 用它把 DXF 存成 DWG
+    if (argc >= 4 && std::wstring(argv[1]) == L"--convert")
+    {
+        const auto in = std::filesystem::path(argv[2]).u8string();
+        const auto outPath = std::filesystem::path(argv[3]).u8string();
+        MiniCAD::Document doc;
+        std::string error;
+        if (!doc.LoadFromFile(std::string(in.begin(), in.end()), &error)) { std::printf("load failed: %s\n", error.c_str()); return 1; }
+        doc.SetCadSaveVersion(MiniCAD::CadSaveVersion::R2004);
+        const bool saved = doc.SaveToFile(std::string(outPath.begin(), outPath.end()));
+        std::printf("%s: %d entities\n", saved ? "saved" : "save failed", doc.GetScene().EntityCount());
+        return saved ? 0 : 1;
+    }
     // --advances 字体文件：打印 MiniCAD 排版用的字符步进（字高 1）
     if (argc >= 3 && std::wstring(argv[1]) == L"--advances")
     {

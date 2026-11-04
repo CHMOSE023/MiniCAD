@@ -421,6 +421,18 @@ namespace MiniCAD
 RequestRenderAll();      // 视口背景随主题反转白色内容（RenderFrame 同步）
                               },
                               .isChecked = [this] { return !m_ui->GetTheme().IsDark(); } });
+        m_commands.Register({ .id = "ui.cursor", .label = N_("设置光标(&U)…"),
+                              .tooltip = N_("十字光标与拾取框的大小，拖动滑块实时预览"),
+                              .execute = [this] { OpenCursorDialog(); } });
+        // 布局（"设置 > 布局"）：重建界面，而菜单还开着，放到这一帧之后
+        m_commands.Register({ .id = "ui.layout.floating", .label = N_("浮动(&F)"),
+                              .tooltip = N_("功能区、面板和状态栏是浮在绘图区上的卡片"),
+                              .execute = [this] { m_platform->Post([this] { SetFlushLayout(false); }); },
+                              .isChecked = [this] { return !m_flushLayout; } });
+        m_commands.Register({ .id = "ui.layout.compact", .label = N_("紧凑(&C)"),
+                              .tooltip = N_("功能区、面板和状态栏贴着窗口边缘，之间没有缝"),
+                              .execute = [this] { m_platform->Post([this] { SetFlushLayout(true); }); },
+                              .isChecked = [this] { return m_flushLayout; } });
         m_commands.Register({ .id = "help.checkUpdate", .label = N_("检查更新(&U)…"), .execute = [this] { CheckForUpdates(true); },
                               .canExecute = [this] { return !m_platform->GetReleaseAssetSuffix().empty() && !m_updateChecking; } });
         m_commands.Register({ .id = "help.about", .label = N_("关于(&A)…"), .shortcut = "F1", .execute = [this] { ShowAbout(); } });

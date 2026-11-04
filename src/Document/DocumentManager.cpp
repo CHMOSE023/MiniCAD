@@ -679,6 +679,13 @@ namespace MiniCAD
             editor->SetOleRasterizer(rasterizer);
     }
 
+    void DocumentManager::SetCursorStyle(float cursorSize, float pickBox)
+    {
+        m_idleEditor.SetCursorStyle(cursorSize, pickBox);
+        for (auto& [doc, editor] : m_editors)
+            editor->SetCursorStyle(cursorSize, pickBox);
+    }
+
     FontStyle::FontStyleId DocumentManager::RegisterFontStyle(FontStyle style)
     {
         if (!m_fontSystem) return 0;

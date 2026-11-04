@@ -41,6 +41,22 @@ SOFTWARE.
 - 来源：Google Noto Fonts（https://github.com/notofonts/noto-cjk）
 - 许可证：SIL Open Font License 1.1（https://openfontlicense.org），字体文件的 name 表里附有版权与许可声明
 
+## 单线 SHX 字体的笔画数据
+
+SHX 文字缺字时回退用的单线字体 `assets/fonts/minicad_sc.shx`、`minicad_tc.shx`、`minicad_jp.shx`、`minicad_kr.shx`
+由 `tools/make_shx_cjk.py` 生成：读入下面两份数据里每一笔的中线坐标，整理后写成 SHX 的画线指令。
+韩文音节、标点、常用符号与钢筋符号是脚本里自绘的。
+
+### Make Me a Hanzi（minicad_sc.shx、minicad_tc.shx）
+
+- 来源：https://github.com/skishore/makemeahanzi 的 `graphics.txt`，它取自 Arphic PL KaitiM GB 与 Arphic PL UKai
+- 许可证：Arphic Public License，原文随字体放在 `assets/fonts/ARPHICPL.TXT`；生成的两个字体同样按 Arphic Public License 发布
+
+### KanjiVG（minicad_jp.shx）
+
+- 来源：KanjiVG（https://kanjivg.tagaini.net），Copyright (C) 2009-2013 Ulrich Apel
+- 许可证：Creative Commons Attribution-Share Alike 3.0（https://creativecommons.org/licenses/by-sa/3.0/）；
+  生成的 `minicad_jp.shx` 同样按 CC BY-SA 3.0 发布，字体信息里注明了来源
 
 ## SDL3
 

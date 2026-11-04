@@ -5,6 +5,7 @@
 //   Tr("指定第一个点:")                        → 当前语言的译文；没有翻译表、没有这一条、译文为空时返回原文
 //   TrC("窗口", "关闭(&C)")                    → 同字不同义时加上下文
 //   TrF("{0} 个外部参照没有找到", n)           → 先翻译再替换 {0}、{1}（译文里可以换顺序）
+//   TrNF("已选择 {0} 个对象", n, n)            → 数量相关的句子：按 n 选单复数的译文（gettext 的 ngettext），再替换占位符
 //   N_("保存(&S)")                             → 原样返回，只给提取工具（tools/i18n_extract.py）做标记：
 //                                                存进数据、显示时才翻译的字符串用它（命令名称、节点名称……）
 //   NC_("视图方块", "上")                      → 同上，带上下文：显示时 TrC("视图方块", 变量)
@@ -24,16 +25,26 @@ namespace MiniI18n
     {
     public:
         // 读翻译文件（UTF-8 JSON，允许 // 注释）：
-        //   { "language": "en", "name": "English", "messages": { 原文: 译文 }, "contexts": { 上下文: { 原文: 译文 } }, "obsolete": { … } }
-        // 译文为空的条目当作没有翻译；"obsolete" 不读。失败时返回 false，error 为"第 n 行：原因"，已读入的内容清空
+        //   { "language": "en", "name": "English", "plural": "n != 1", "messages": { 原文: 译文 }, "contexts": { 上下文: { 原文: 译文 } },
+        //     "plurals": { 原文: [单数, 复数 …] }, "fuzzy": { … }, "obsolete": { … } }
+        // "plural" 是 gettext 的 Plural-Forms 表达式（也接受 "nplurals=2; plural=n != 1;"），算出 "plurals" 里用第几个译文。
+        // 译文为空的条目当作没有翻译；"fuzzy"（原文改过、待复核的旧译文）与 "obsolete" 不读。
+        // 失败时返回 false，error 为"第 n 行：原因"，已读入的内容清空
         bool Parse(std::string_view json, std::string* error = nullptr);
 
         void Add(std::string_view msgid, std::string translation);
         void Add(std::string_view context, std::string_view msgid, std::string translation);
+        void AddPlural(std::string_view msgid, std::vector<std::string> forms);
+
+        // 复数规则；表达式写错时返回 false，规则不变（默认所有数量都用第一个译文）
+        bool SetPluralRule(std::string_view expression);
+        size_t PluralIndex(uint64_t n) const;
 
         // 没有这一条时返回 nullptr
         const std::string* Find(std::string_view msgid) const;
         const std::string* Find(std::string_view context, std::string_view msgid) const;
+        // 数量为 n 时的译文：先找 "plurals"，没有时用 "messages" 里的（各数量同一个译文）
+        const std::string* FindPlural(std::string_view msgid, uint64_t n) const;
 
         const std::string& GetLanguage() const { return m_language; }    // "en"
         const std::string& GetName()     const { return m_name; }        // "English"
@@ -51,6 +62,8 @@ namespace MiniI18n
             size_t operator()(std::string_view s) const { return std::hash<std::string_view>{}(s); }
         };
         std::unordered_map<std::string, std::string, Hash, std::equal_to<>> m_messages;   // 有上下文时键为 上下文 + '\x04' + 原文
+        std::unordered_map<std::string, std::vector<std::string>, Hash, std::equal_to<>> m_plurals;
+        std::string m_pluralRule = "0";
         std::string m_language;
         std::string m_name;
         bool        m_pseudo = false;
@@ -63,6 +76,10 @@ namespace MiniI18n
 
     std::string Tr(std::string_view msgid);
     std::string TrC(std::string_view context, std::string_view msgid);
+    std::string TrN(std::string_view msgid, uint64_t n);
+
+    // gettext 的 Plural-Forms 表达式（C 语法，变量 n）在 n 时的值；写错时 ok 为 false
+    uint64_t EvalPlural(std::string_view expression, uint64_t n, bool* ok = nullptr);
 
     // 伪语言的变换：[原文~~~]（Catalog::SetPseudo）
     std::string Pseudo(std::string_view text);
@@ -95,6 +112,12 @@ namespace MiniI18n
         return Format(TrC(context, msgid), { Detail::ToArg(args)... });
     }
 
+    template <class... Args>
+    std::string TrNF(std::string_view msgid, uint64_t n, const Args&... args)
+    {
+        return Format(TrN(msgid, n), { Detail::ToArg(args)... });
+    }
+
     constexpr const char* N_(const char* msgid) { return msgid; }
     constexpr const char* NC_(const char* /*context*/, const char* msgid) { return msgid; }
 }
@@ -104,5 +127,7 @@ using MiniI18n::Tr;
 using MiniI18n::TrC;
 using MiniI18n::TrF;
 using MiniI18n::TrCF;
+using MiniI18n::TrN;
+using MiniI18n::TrNF;
 using MiniI18n::N_;
 using MiniI18n::NC_;

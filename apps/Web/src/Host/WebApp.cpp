@@ -231,6 +231,21 @@ namespace MiniCAD
     });
 
     // 有未保存的文档时，关闭或刷新页面前让浏览器询问
+    // 下载网页旁 fonts/ 下的字体，写进虚拟文件系统的 /fonts/
+    EM_JS(void, MiniCADWeb_FetchFont, (const char* namePtr), {
+        const name = UTF8ToString(namePtr);
+        fetch("fonts/" + name)
+            .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+            .then(buf => {
+                FS.mkdirTree("/fonts");
+                FS.writeFile("/fonts/" + name, new Uint8Array(buf));
+                const p = stringToNewUTF8(name);
+                _MiniCADWeb_OnFontFetched(p);
+                _free(p);
+            })
+            .catch(err => console.warn("MiniCAD: font " + name + ": " + err));
+    });
+
     EM_JS(void, MiniCADWeb_InstallUnloadGuard, (), {
         window.addEventListener("beforeunload", (e) => {
             if (_MiniCADWeb_HasUnsaved()) { e.preventDefault(); e.returnValue = ""; }
@@ -255,6 +270,12 @@ namespace MiniCAD
         {
             if (g_app)
                 g_app->OnFolderPicked(requestId, dir, error);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnFontFetched(const char* name)
+        {
+            if (g_app)
+                g_app->OnFontFetched(name);
         }
 
         EMSCRIPTEN_KEEPALIVE int MiniCADWeb_HasUnsaved()
@@ -285,6 +306,23 @@ namespace MiniCAD
     void WebApp::OnLanguageChanged(const std::string& code)
     {
         MiniCADWeb_SetDocumentLanguage(code.c_str());
+        const std::string font = MiniGUI::BundledUiFontForLanguage(code);
+        for (const char* name : MiniGUI::kWebLazyFontNames)
+            if (font == name)
+                FetchLazyFont(font);
+    }
+
+    void WebApp::FetchLazyFont(const std::string& name)
+    {
+        if (m_fontRequests.insert(name).second)
+            MiniCADWeb_FetchFont(name.c_str());
+    }
+
+    void WebApp::OnFontFetched(const char* name)
+    {
+        LOG_INFO("MiniCAD web: font %s loaded", name);
+        if (m_uiReady)
+            m_main.OnFontsAdded();
     }
 
     std::string WebApp::ReadUserSetting(const std::string& key) const
@@ -359,6 +397,7 @@ namespace MiniCAD
         });
         m_host.SetOnFrame ([this] { m_main.RenderFrame(); });
         MiniCADWeb_InstallUnloadGuard();
+        m_uiReady = true;
         m_host.RequestFrame();
         return true;
     }
@@ -402,6 +441,11 @@ namespace MiniCAD
     bool WebApp::LoadUiFonts(MiniGUI::TextSystem& text)
     {
         return MiniGUI::LoadWebUIFonts(text);
+    }
+
+    std::vector<std::shared_ptr<MiniGUI::Font>> WebApp::LoadLanguageUiFonts(const std::string& language)
+    {
+        return MiniGUI::LoadWebLanguageFonts(language);
     }
 
     void WebApp::BeginUiPass()
@@ -464,6 +508,9 @@ namespace MiniCAD
 
     void WebApp::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
     {
+        // 图纸里可能有繁体、日文：选文件、读图纸的同时下载
+        for (const char* name : MiniGUI::kWebLazyFontNames)
+            FetchLazyFont(name);
         const int id = m_nextPickId++;
         m_pickRequests[id] = { std::move(done), {} };
         MiniCADWeb_PickFile(id, ".mcad,.dwg,.dxf,.json", 1);

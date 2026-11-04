@@ -14,7 +14,7 @@ covers: tools/inspect_dwg.cpp, apps/Win32/src/Host/SelfTest.cpp, .agents/skills/
 cmd /c '"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1 && cmake --build out/debug --target MiniCADDwgInspect MiniCADWin 2>&1' | Select-String "error|FAILED"
 ```
 
-- `out/debug/tests/MiniCADDwgInspect.exe 图纸`：只读地列出原图内容（按类型统计实体、未支持的对象），再按环境变量打印细节，见 [references/inspect-flags.md](references/inspect-flags.md)
+- `out/debug/tests/MiniCADDwgInspect.exe 图纸`：只读地列出原图内容（按类型统计实体、未支持的对象），再按环境变量打印细节，见 [references/inspect-flags.md](references/inspect-flags.md)；`--convert 输入 输出` 按 MiniCAD 打开再另存（DXF 转 DWG 等）
 - `out/debug/MiniCADWin/MiniCADWin.exe --bench 图纸`：按真实程序的流程打开、全部显示（同样分帧生成显示，画全后再截图、计时），可以离屏截图
 
 ## 2. 看原图里有什么

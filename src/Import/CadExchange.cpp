@@ -885,6 +885,19 @@ namespace MiniCAD
                     { "sthupo", "STHUPO.TTF" }, { "stkaiti", "STKAITI.TTF" }, { "stsong", "STSONG.TTF" }, { "stfangsong", "STFANGSO.TTF" },
                     { "stxihei", "STXIHEI.TTF" }, { "stzhongsong", "STZHONGS.TTF" }, { "stxingkai", "STXINGKA.TTF" }, { "stliti", "STLITI.TTF" },
                     { "fzshuti", "FZSTK.TTF" }, { "fzyaoti", "FZYTK.TTF" },
+                    { "pmingliu", "mingliu.ttc" }, { "mingliu", "mingliu.ttc" }, { "新細明體", "mingliu.ttc" }, { "細明體", "mingliu.ttc" },
+                    { "dfkai-sb", "kaiu.ttf" }, { "標楷體", "kaiu.ttf" },
+                    { "microsoft jhenghei", "msjh.ttc" }, { "microsoft jhenghei ui", "msjh.ttc" }, { "微軟正黑體", "msjh.ttc" },
+                    { "ms gothic", "msgothic.ttc" }, { "ms pgothic", "msgothic.ttc" }, { "ms ui gothic", "msgothic.ttc" },
+                    { "ＭＳ ゴシック", "msgothic.ttc" }, { "ＭＳ Ｐゴシック", "msgothic.ttc" },
+                    { "ms mincho", "msmincho.ttc" }, { "ms pmincho", "msmincho.ttc" }, { "ＭＳ 明朝", "msmincho.ttc" }, { "ＭＳ Ｐ明朝", "msmincho.ttc" },
+                    { "meiryo", "meiryo.ttc" }, { "メイリオ", "meiryo.ttc" }, { "meiryo ui", "meiryo.ttc" },
+                    { "yu gothic", "YuGothM.ttc" }, { "游ゴシック", "YuGothM.ttc" }, { "yu mincho", "yumin.ttf" }, { "游明朝", "yumin.ttf" },
+                    { "gulim", "gulim.ttc" }, { "굴림", "gulim.ttc" }, { "gulimche", "gulim.ttc" }, { "굴림체", "gulim.ttc" },
+                    { "dotum", "gulim.ttc" }, { "돋움", "gulim.ttc" }, { "dotumche", "gulim.ttc" }, { "돋움체", "gulim.ttc" },
+                    { "batang", "batang.ttc" }, { "바탕", "batang.ttc" }, { "batangche", "batang.ttc" }, { "바탕체", "batang.ttc" },
+                    { "gungsuh", "batang.ttc" }, { "궁서", "batang.ttc" },
+                    { "malgun gothic", "malgun.ttf" }, { "맑은 고딕", "malgun.ttf" },
                 };
                 if (typeface.empty()) return {};
                 const std::string key = Lower(typeface);

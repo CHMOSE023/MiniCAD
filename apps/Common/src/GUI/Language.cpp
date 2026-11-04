@@ -3,6 +3,7 @@
 #include "Core/Log.h"
 #include "Data/Json.h"
 #include "MiniI18n/I18n.h"
+#include "Text/TextSystem.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -171,6 +172,11 @@ namespace MiniCAD
     }
 
     const std::string& CurrentLanguage() { return g_current; }
+
+    void ApplyLanguageFonts(AppPlatform& platform, MiniGUI::TextSystem& text)
+    {
+        text.SetPreferredFonts(platform.LoadLanguageUiFonts(g_current));
+    }
 
     std::string SwitchLanguage(AppPlatform& platform, const std::string& code, bool save)
     {

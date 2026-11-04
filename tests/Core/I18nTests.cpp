@@ -121,6 +121,41 @@ int RunI18nTests()
     MiniI18n::SetCatalog(nullptr);
     Check(Tr("保存(&S)") == "保存(&S)", "卸下翻译表后回到原文");
 
+    // ── 复数形式（gettext 的 Plural-Forms）与待复核的译文 ─────────────────
+    {
+        bool ok = false;
+        Check(MiniI18n::EvalPlural("n != 1", 1, &ok) == 0 && ok && MiniI18n::EvalPlural("n != 1", 5) == 1, "复数表达式：英文");
+        const char* ru = "n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2";
+        Check(MiniI18n::EvalPlural(ru, 1) == 0 && MiniI18n::EvalPlural(ru, 3) == 1 && MiniI18n::EvalPlural(ru, 11) == 2
+              && MiniI18n::EvalPlural(ru, 22) == 1 && MiniI18n::EvalPlural(ru, 25) == 2, "复数表达式：三种形式（?:、%、&&、||、括号）");
+        MiniI18n::EvalPlural("n !=", 1, &ok);
+        Check(!ok, "写错的复数表达式");
+
+        error.clear();
+        const std::string json = R"({
+  "language": "en",
+  "plural": "nplurals=2; plural=(n != 1);",
+  "messages": { "已选择 {0} 个对象": "{0} object(s) selected" },
+  "plurals": { "{0} 个文件": ["{0} file", "{0} files"], "还没翻译": ["", ""] },
+  "fuzzy": { "改过的原文": "Old translation" }
+})";
+        auto catalog = ParseCatalog(json.c_str(), &error);
+        Check(catalog != nullptr, ("读入带 plural / plurals / fuzzy 的翻译文件" + error).c_str());
+        if (catalog)
+        {
+            Check(catalog->PluralIndex(1) == 0 && catalog->PluralIndex(0) == 1, "nplurals=…; plural=…; 的写法");
+            Check(catalog->Find("改过的原文") == nullptr, "fuzzy 不读：待复核的译文不显示");
+            MiniI18n::SetCatalog(std::move(catalog));
+            Check(TrNF("{0} 个文件", 1, 1) == "1 file" && TrNF("{0} 个文件", 3, 3) == "3 files", "TrNF 按数量选单复数");
+            Check(TrNF("已选择 {0} 个对象", 2, 2) == "2 object(s) selected", "plurals 里没有时用 messages 的译文");
+            Check(TrN("还没翻译", 2) == "还没翻译", "译文都为空时返回原文");
+            Check(Tr("改过的原文") == "改过的原文", "fuzzy 的条目显示原文");
+        }
+        Check(ParseCatalog(R"({ "plural": "n !=" })") == nullptr, "复数规则写错时解析失败");
+        MiniI18n::SetCatalog(nullptr);
+        Check(TrNF("{0} 个文件", 2, 2) == "2 个文件", "没有翻译表时 TrNF 返回原文");
+    }
+
     // ── 诊断信息（阶段 4）：装上英文表后 MiniDWG 的通知（打开失败的原因）是英文 ──────────
     {
         auto hasChinese = [](const std::string& s)

@@ -15,6 +15,7 @@
 
 namespace MiniGUI
 {
+    class Font;
     class TextSystem;
     class UIContext;
 }
@@ -147,7 +148,9 @@ namespace MiniCAD
         virtual std::unique_ptr<IRenderTarget> CreateViewportTarget() { return nullptr; }
 // 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
         virtual MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) = 0;
-        virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;
+        virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;     // 再次调用时只补上之后才有的字体（网页版后下载的）
+        // 界面语言的字体（MiniGUI::TextSystem::SetPreferredFonts）：日文界面的汉字用日文字形等；简体等语言为空
+        virtual std::vector<std::shared_ptr<MiniGUI::Font>> LoadLanguageUiFonts(const std::string& language) { (void)language; return {}; }
         virtual void RequestRedraw() = 0;       // 安排一次重绘（Win32：InvalidateRect；网页：requestAnimationFrame）
         virtual void BeginUiPass()   = 0;       // 绑定窗口的帧缓冲并清屏
         virtual void EndUiPass()     = 0;       // 呈现，并同步输入法位置等平台输入状态
