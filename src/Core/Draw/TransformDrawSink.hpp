@@ -60,17 +60,12 @@ namespace MiniCAD
             m_target.FillTriangle(m_xform * a, m_xform * b, m_xform * c, color);
         }
 
-        // 块内的渐变填充：位置经插入变换，**颜色不随变换改变**
-        //（不转发的话块里的渐变会被压成单色实心）
         void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
                                  const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
         {
             m_target.FillTriangleColored(m_xform * a, m_xform * b, m_xform * c, ca, cb, cc);
         }
 
-        // 块内的曲线（连续虚线，见 IDrawSink::DrawPath）：整条路径先经插入变换再转发，
-        // 不转发的话落到默认实现=逐段 DrawLine，虚线相位在每个小段边界重置，
-        // 大 $LTSCALE 的曲线虚线会显示成实线（块内 DASH 圆弧实测）。
         void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
         {
             std::vector<Math::Point3> out;
@@ -79,7 +74,6 @@ namespace MiniCAD
             m_target.DrawPath(out, color, closed);
         }
 
-        // 块内的粗曲线（有逐点宽度）：位置经插入变换，宽度按插入缩放放大
         void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
                       const Math::Color4& color, bool closed) override
         {

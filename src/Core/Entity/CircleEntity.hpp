@@ -50,7 +50,6 @@ namespace MiniCAD
             const auto& center = m_circle.Center;
             const double r    = m_circle.Radius;
 
-            // 圆是闭合曲线：DrawPath 相位跨段连续（虚线在段边界不重置，见 IDrawSink::DrawPath）
             std::vector<Math::Point3> pts;
             pts.reserve(kSegments + 1);
             SampleCurve(sink, 0.0, Math::TwoPI, kSegments, r,

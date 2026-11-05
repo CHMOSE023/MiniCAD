@@ -216,12 +216,7 @@ namespace MiniCAD
                 // 连续线仍走整体填充，以保留折点处的斜接尖角。
                 if (sink.IsCurrentLinetypeDashed())
                 {
-                    // 整条多段线（直线段 + 圆弧段）作为一条**带逐点宽度**的路径交给 DrawPath：
-                    // 虚线相位跨段连续，段内宽度按两端线性插值（锥形段）。
-                    //
-                    // 逐段 DrawStyledLine 会让每小段都从图案相位 0 重铺，$LTSCALE 大到一个
-                    // 周期超过小段长度时每段只画得出第一个 dash 片、gap 走不到，整条粗
-                    // 多段线显示成实线（与细线版本同一个根因，见下面的细线分支）。
+                    // 整条串成带逐点宽度的路径，虚线相位跨段连续
                     std::vector<Math::Point3> path;
                     std::vector<double>       pathW;
                     auto push = [&](const Math::Point3& p, double w)
@@ -274,11 +269,7 @@ namespace MiniCAD
                 return;
             }
 
-            // 整条多段线（直线段 + 圆弧段）作为一条路径交给 DrawPath：虚线相位跨段连续。
-            // 逐段 DrawLine 会让每条小段都从图案相位 0 重铺，$LTSCALE 大到一个周期超过
-            // 小段长度时每段只画得出第一个 dash 片、gap 走不到，整条多段线显示成实线
-            // （实测块内 LWPOLYLINE 句柄 2DA8E：凸度 0.414214 的 90° 圆弧 r=1350 按 5°
-            //  分成 19 段、每段 111.6 单位，而 DASH 周期 = 0.35 × $LTSCALE 1000 = 350）。
+            // 整条串成一条路径，虚线相位跨段连续
             std::vector<Math::Point3> path;
             path.reserve(static_cast<size_t>(m_polyline.SegCount()) + 1);
             auto push = [&](const Math::Point3& p)

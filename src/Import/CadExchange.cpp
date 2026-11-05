@@ -122,6 +122,7 @@ namespace MiniCAD
         Dwg::XYZ     ToXYZ(const Math::Vec3& v)   { return { v.x, v.y, v.z }; }
 
         bool IsDefaultNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z > 0.0; }
+        bool IsFlippedNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z < 0.0; }
 
         Math::Color4 RgbToColor4(std::uint32_t rgb)
         {
@@ -1527,10 +1528,7 @@ namespace MiniCAD
             }
 
             // 属性定义 / 属性实例（ATTDEF / ATTRIB）的公共取值。
-            // 文字样式按属性自己的组码 7（`a.StyleHandle`）解析，与 TEXT / MTEXT 同一条路。
-            // ⚠ 以前固定用 Standard：实测 `0土方清表初步方案.dwg` 的块 `GPTFBZW`，
-            //   块内「W=」与属性「VW=120.00」的样式都是 `GPCADFGD`（`txt.shx`，宽度因子 0.70），
-            //   属性却按 Standard 画 ⇒ 细 SHX 单线旁边冒出粗 TTF、字宽与间距全不对。
+            // 文字样式按属性自己的组码 7
             template <class T>
             std::unique_ptr<Entity> MakeAttrib(const Dwg::AttributeBase& a, std::string text)
             {
@@ -2325,36 +2323,21 @@ namespace MiniCAD
 
                 if (auto* e = dynamic_cast<const Dwg::Arc*>(&src))   // Arc 派生自 Circle，须先判断
                 {
-                    // ARC 的圆心(10) 是 **OCS 坐标**：法向(210) 与 +Z 反向时必须换算到 WCS，
-                    // 否则整条弧会画到镜像的一侧（x 符号相反）。
-                    //
-                    // 实测 test0.dwg 块 A$C685D2D0A：9 条 ARC 的 210=(0,0,-1)、圆心 x 为负
-                    //（如组码 5=342DB 那条 c=(-2525.0, 33031.2) r=731.25），
-                    // 而块内其它 6744 个参考点全在正 x 侧 —— 原样位置附近 0 个邻居，
-                    // 翻转后附近 18~47 个邻居，确定需要换算。
-                    //
-                    // 注意：只有 ARC 需要这一步。同块的 LINE / ELLIPSE 虽然也有 210=-Z，
-                    // 但它们的坐标本来就是 WCS（实测翻转后邻居数从 189/30 掉到 0），
-                    // 不能一并对它们做变换。
-                    if (IsDefaultNormal(e->Normal))
+                    // 法向 -Z：圆心是 OCS，换到 WCS 后按 +Z 存（不留法向，导出才不会再镜像一次）
+                    if (!IsFlippedNormal(e->Normal))
                         return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
-
                     const OcsMap map(e->Normal, e->Center.Z);
-                    const Math::Point3 center = map.Point(e->Center.X, e->Center.Y);
-                    double s = e->StartAngle, t = e->EndAngle;
-                    if (map.Mirrored())
-                    {
-                        // 反射后弧的走向反转：等效逆时针区间取 (π−end, π−start)，
-                        // 点集与扫角都不变（与椭圆的参数镜像同一套推导）
-                        const double s0 = s, t0 = t;
-                        s = kPi - t0;
-                        t = kPi - s0;
-                    }
-                    return Make<ArcEntity>(src, &e->Normal, center, e->Radius, s, t);
+                    return Make<ArcEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius,
+                                           kPi - e->EndAngle, kPi - e->StartAngle);
                 }
 
                 if (auto* e = dynamic_cast<const Dwg::Circle*>(&src))
-                    return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                {
+                    if (!IsFlippedNormal(e->Normal))
+                        return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    return Make<CircleEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Ellipse*>(&src))
                 {
@@ -2362,26 +2345,11 @@ namespace MiniCAD
                     const double a  = std::hypot(mx, my);
                     if (a < 1e-12)
                         return nullptr;
-                    // 椭圆弧的参数区间：法向(210)与 +Z 反向时必须把 (s,e) 镜像成
-                    // (−e,−s)，否则弧段会画到长轴的另一侧。
-                    //
-                    // 实测 test0.dwg（天正导出）块 A$C685D2D0A 的镜像对
-                    // 10EE7(+Z)/10EF1(-Z)：中心(10)与长轴(11)已是 WCS（保持原值），
-                    // 但 -Z 时短半轴方向 = n×m̂ = (my,−mx)/a，与默认的 (−my,mx)/a 相反。
-                    // 把参数区间镜像后，两条弧关于对称轴 x=87100 完全重合（偏差 0）；
-                    // 不镜像时弧落到长轴另一侧（偏差约 2×b·sin(sweep/2)）。
-                    // 用户报的 34354/34362（r=900/585 的 45°/88.5° 弧）吃的都是这一条。
-                    //
-                    // ⚠ 与 ARC 不同：ARC 的圆心(10)是 OCS（须翻转中心，见上）；
-                    //   而这份图纸里 ELLIPSE 的中心已是 WCS，翻了反而错 —— 两者分开处理。
-                    double s = e->StartParameter, t = e->EndParameter;
-                    if (OcsMap(e->Normal, e->Center.Z).Mirrored())
-                    {
-                        const double s0 = s, t0 = t;
-                        s = -t0;
-                        t = -s0;
-                    }
-                    return Make<EllipseEntity>(src, &e->Normal,
+                    // 中心与长轴本来是 WCS；法向 -Z 时短轴反向，参数区间镜像成 (−e, −s)
+                    const bool flipped = IsFlippedNormal(e->Normal);
+                    const double s = flipped ? -e->EndParameter : e->StartParameter;
+                    const double t = flipped ? -e->StartParameter : e->EndParameter;
+                    return Make<EllipseEntity>(src, nullptr,
                         Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx), s, t));
                 }
 
@@ -3258,21 +3226,14 @@ namespace MiniCAD
                 // 此前只取 `ConstantWidth`（组码 43）⇒ 这些宽度整批丢失，整条多段线画成等宽。
                 std::vector<double>       startW;
                 std::vector<double>       endW;
-                // 顶点坐标是 **OCS**：法向(210) 与 +Z 反向时要换算到 WCS，
-                // 否则整条多段线画到镜像的另一侧（x 符号相反）。
-                //
-                // 实测 test0.dwg 块 A$C685D2D0A：2 条 2 点多段线的 210=(0,0,-1)、
-                // 起点 x=-147075，原样位置附近 0 个邻居、翻转到 +147075 后 1~4 个邻居。
-                //
-                // ⚠ 只有镜像(OcsMap::Mirrored)时才需要动；法向绕 Z 旋转（如 (0.6,0.8,0)）
-                //   由 Vector 的旋转部分处理，这里与 Hatch 用同一套 OcsMap。
+                // 法向 -Z：顶点 OCS → WCS、凸度取反，按 +Z 存（同 ARC）
+                const bool flipped = IsFlippedNormal(e.Normal);
                 const OcsMap map(e.Normal, e.Elevation);
                 for (const auto& v : e.Vertices)
                 {
-                    const Math::Point3 q = map.Point(v.Location.X, v.Location.Y);
-                    pts.push_back(q);
-                    // 镜像时圆弧转向相反：凸度取反，否则每段圆弧会朝反方向鼓出
-                    bulges.push_back(map.Mirrored() ? -v.Bulge : v.Bulge);
+                    pts.push_back(flipped ? map.Point(v.Location.X, v.Location.Y)
+                                          : Math::Point3{ v.Location.X, v.Location.Y, e.Elevation });
+                    bulges.push_back(flipped ? -v.Bulge : v.Bulge);
                     startW.push_back(v.StartWidth);
                     endW.push_back(v.EndWidth);
                 }
@@ -3281,7 +3242,7 @@ namespace MiniCAD
                     pts.push_back(pts.front());   // 闭合：末点回到起点，最后一个 bulge 属于闭合段
                 else
                     bulges.pop_back();
-                auto ent = Make<PolylineEntity>(e, &e.Normal, std::move(pts), std::move(bulges));
+                auto ent = Make<PolylineEntity>(e, flipped ? nullptr : &e.Normal, std::move(pts), std::move(bulges));
                 auto& pl = static_cast<PolylineEntity&>(*ent);
                 pl.SetWidth(e.ConstantWidth);
 
@@ -3329,9 +3290,7 @@ namespace MiniCAD
                 hatch.SetScale(scale);
                 hatch.SetAngle(angleDeg);
 
-                // 渐变填充（ACAD 的 GRADIENT）：组码 450～470 在 MiniDWG 里已解好，
-                // 这里映射成核心层的 HatchGradient。以前整条降级成「单色实心」，
-                // 图上只看到一片纯色（用户报的 sample_AC1032.dwg 蓝→黄渐变）
+                // 渐变填充（组码 450～470）
                 if (h.GradientColor.Enabled)
                 {
                     HatchGradient grad;
@@ -5076,8 +5035,6 @@ namespace MiniCAD
                         att->Value = a->GetValue();
                         att->Tag   = a->GetTag();
                         att->Flags = static_cast<Dwg::AttributeFlags>(a->GetFlags());
-                        // 文字样式跟着实体走（与导入同一条：组码 7）。固定 Standard 会让
-                        // 另存后的属性字体与块内文字不一致（SHX 细线 ↔ TTF 粗体）
                         att->StyleHandle = StyleHandle(a->GetStyleId());
                         att->Normal = NormalOf(*a);
                         ApplyAttr(*a, *att);

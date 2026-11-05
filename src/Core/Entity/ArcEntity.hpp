@@ -73,8 +73,6 @@ namespace MiniCAD
             const double sweep     = m_arc.SweepAngle();
             const int    kSegments = std::max(4, static_cast<int>(std::ceil(std::abs(sweep) / (Math::TwoPI / 64.0))));
 
-            // 曲线走 DrawPath：虚线相位跨段连续（大 $LTSCALE 时逐段 DrawLine 会让每段
-            // 只画得出第一个 dash 片，整条弧显示成实线，见 IDrawSink::DrawPath 的说明）
             std::vector<Math::Point3> pts;
             pts.reserve(static_cast<size_t>(kSegments) + 1);
             SampleCurve(sink, m_arc.StartAngle, sweep, kSegments, m_arc.Radius,

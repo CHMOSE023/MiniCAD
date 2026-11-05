@@ -13,8 +13,6 @@ namespace MiniCAD
     class ClipDrawSink : public IDrawSink
     {
     public:
-
-        // 带颜色的顶点（渐变填充的裁剪用）：裁剪产生的新顶点颜色按同一参数插值
         struct ColoredVertex { Math::Point3 p; Math::Color4 c; };
         ClipDrawSink(IDrawSink& target, const std::vector<Math::Point3>& polygon)
             : m_target(target)
@@ -195,8 +193,6 @@ namespace MiniCAD
             FillSubdivided(a, b, c, color, 5);
         }
 
-        // 渐变填充的三角形：位置裁剪与 FillTriangle 相同，颜色**随裁剪顶点一起插值**。
-        // 不转发的话，块里的渐变会被压成平均色的实心块。
         void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
                                  const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
         {
@@ -214,21 +210,17 @@ namespace MiniCAD
                                                  out[0].c, out[i].c, out[i + 1].c);
                 return;
             }
-            // 凹多边形：按重心取舍，颜色取三顶点平均（细分到这一级已足够小，
-            // 渐变在那块小三角里本就接近单一颜色）
+            // 凹多边形：按重心取舍，取平均色
             const Math::Color4 avg{ (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
                                     (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 };
             FillSubdivided(a, b, c, avg, 5);
         }
 
-        // 曲线的连续虚线（见 IDrawSink::DrawPath）：把路径切成「整体在框内的连续子路径」
-        // 转发（子路径内的虚线相位保持连续；跨界处按段中点取舍，与 DrawLine 的逐段
-        // 裁剪同精度）。不转发的话块内被裁剪的曲线虚线会退化成逐段实线。
+        // 按段中点切成框内的连续子路径再转发，子路径的相位各自从 0 起
         void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
         {
             if (points.size() < 2) return;
             const size_t n = points.size();
-            // 快速整体外/内判定
             bool allOut = true, allIn = true;
             for (const auto& q : points)
             {
@@ -239,10 +231,6 @@ namespace MiniCAD
             if (allIn)  { m_target.DrawPath(points, color, closed); return; }
 
             NoteAltered();
-            // 混合：按段中点取舍，切出连续保留的子路径（子路径 >= 2 点才转发）。
-            // 段级取舍与 DrawLine 对整段线的处理精度一致；裁剪边缘的虚线相位
-            // 与完整曲线略有偏差（未按交点精确截断），可接受 —— 边界处本来就
-            // 是视觉关注点之外的区域。
             std::vector<Math::Point3> run;
             auto flush = [&]()
             {
@@ -266,7 +254,6 @@ namespace MiniCAD
             flush();
         }
 
-        // 有逐点宽度的曲线（粗多段线）：裁剪取舍同上，宽度随点一起切出去
         void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
                       const Math::Color4& color, bool closed) override
         {
@@ -427,8 +414,7 @@ namespace MiniCAD
             return true;
         }
 
-        // Sutherland–Hodgman：subject 按逆时针凸多边形 clipper 裁剪（z 线性插值）
-        // 同上，但顶点带颜色：裁剪产生的新顶点颜色按同一参数 t 线性插值（渐变裁剪后仍然连续）
+        // 同 ClipConvex，颜色随顶点插值
         static std::vector<ColoredVertex> ClipConvexColored(std::vector<ColoredVertex> subject, const std::vector<Math::Point3>& clipper)
         {
             const size_t m = clipper.size();
@@ -464,6 +450,7 @@ namespace MiniCAD
             return subject;
         }
 
+        // Sutherland–Hodgman：subject 按逆时针凸多边形 clipper 裁剪（z 线性插值）
         static std::vector<Math::Point3> ClipConvex(std::vector<Math::Point3> subject, const std::vector<Math::Point3>& clipper)
         {
             const size_t m = clipper.size();

@@ -64,7 +64,6 @@ namespace MiniCAD
             const double sweep    = m_ellipse.SweepParam();
             const int    segments = std::max(4, static_cast<int>(std::ceil(64.0 * sweep / Math::TwoPI)));
 
-            // 曲线走 DrawPath：虚线相位跨段连续（见 IDrawSink::DrawPath）；整椭圆按闭合处理
             std::vector<Math::Point3> pts;
             pts.reserve(static_cast<size_t>(segments) + 1);
             SampleCurve(sink, t0, sweep, segments, std::max(std::abs(m_ellipse.RadiusX), std::abs(m_ellipse.RadiusY)),

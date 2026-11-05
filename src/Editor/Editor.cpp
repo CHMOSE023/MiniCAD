@@ -4027,12 +4027,7 @@ namespace MiniCAD
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
             const bool layerOn = !layer || layer->IsVisible();
             if (layerOn) return true;
-            // 块参照所在图层关闭时**不能整块跳过**：AutoCAD 里块参照的图层只决定块内
-            // 落在 0 层上的实体（它们随插入图层，见 InsertEntity::EnsureResolved），
-            // 块内**具名图层**上的实体仍按自己的图层开关显示 / 隐藏。
-            // 实测 `1清表后至室外道路面下0.07m处-土方初步方案.dwg` 的 INSERT 960
-            // （A1 图签模板）在**关闭的图层 0** 上，块内唯一成员是 `_WHADI_LAYER`
-            // 上的嵌套块（该层打开）：AutoCAD 显示整张图框，此前这里整块被跳过 ⇒「图元未显示」。
+            // 块参照所在图层关闭时不整块跳过：块内具名图层上的实体按自己的开关
             if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity))
                 return ins->HasVisibleContentOnAnyLayer(
                     [&layerMgr](LayerID id)

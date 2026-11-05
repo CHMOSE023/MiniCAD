@@ -13,6 +13,7 @@
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
+#include "Core/GeomKernel/PolylineOps.hpp"
 #include "Import/CadExchange.h"
 #include "Scene/Scene.h"
 #include "Core/PathUtils.h"
@@ -331,12 +332,69 @@ namespace
         const MeasureSink m = Measure(*img);
         Check(m.lines == 6, (std::string(label) + "：图像不可用时画占位框与对角线").c_str());
     }
+
+    bool NearPt(const Math::Point3& p, double x, double y) { return std::abs(p.x - x) < 1e-4 && std::abs(p.y - y) < 1e-4; }
+
+    void CheckFlippedNormalGeometry(const Scene& scene, const std::string& label)
+    {
+        const auto* arc = FindOne<ArcEntity>(scene);
+        Check(arc && NearPt(arc->GetArc().Center, 20, 10) && NearPt(arc->GetArc().MidPoint(), 20 - 2.5 * std::sqrt(2.0), 10 + 2.5 * std::sqrt(2.0)),
+              (label + "：法向 -Z 的 ARC 在 WCS 的位置").c_str());
+        const auto* circle = FindOne<CircleEntity>(scene);
+        Check(circle && NearPt(circle->GetCircle().Center, 30, 5), (label + "：法向 -Z 的 CIRCLE 在 WCS 的位置").c_str());
+        const auto* pl = FindOne<PolylineEntity>(scene);
+        Check(pl && NearPt(pl->GetPolyline().SegStart(0), 40, 0) && NearPt(PolylineOps::PointAt(pl->GetPolyline(), 0.5), 45, 5),
+              (label + "：法向 -Z 的 LWPOLYLINE 在 WCS 的位置与鼓向").c_str());
+        const auto* el = FindOne<EllipseEntity>(scene);
+        bool elOk = false;
+        if (el)
+        {
+            const Ellipse& e = el->GetEllipse();
+            const Math::Point3 mid = e.PointAt(e.StartParam + e.SweepParam() * 0.5);
+            elOk = NearPt(mid, 10 * std::sqrt(0.5), -20 - 5 * std::sqrt(0.5));
+        }
+        Check(elOk, (label + "：法向 -Z 的 ELLIPSE 弧段在长轴的哪一侧").c_str());
+    }
+
+    void CheckFlippedNormalRoundTrip()
+    {
+        const std::string normal = "210\n0.0\n220\n0.0\n230\n-1.0\n";
+        const std::string dxf =
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n"
+            "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n1\n"
+            "0\nLAYER\n2\n0\n70\n0\n62\n7\n6\nCONTINUOUS\n0\nENDTAB\n0\nENDSEC\n"
+            "0\nSECTION\n2\nENTITIES\n"
+            "0\nARC\n5\nA1\n100\nAcDbEntity\n8\n0\n100\nAcDbCircle\n10\n-20.0\n20\n10.0\n30\n0.0\n40\n5.0\n" + normal +
+            "100\nAcDbArc\n50\n0.0\n51\n90.0\n"
+            "0\nCIRCLE\n5\nA2\n100\nAcDbEntity\n8\n0\n100\nAcDbCircle\n10\n-30.0\n20\n5.0\n30\n0.0\n40\n2.0\n" + normal +
+            "0\nLWPOLYLINE\n5\nA3\n100\nAcDbEntity\n8\n0\n100\nAcDbPolyline\n90\n2\n70\n0\n"
+            "10\n-40.0\n20\n0.0\n42\n1.0\n10\n-50.0\n20\n0.0\n42\n0.0\n" + normal +
+            "0\nELLIPSE\n5\nA4\n100\nAcDbEntity\n8\n0\n100\nAcDbEllipse\n10\n0.0\n20\n-20.0\n30\n0.0\n"
+            "11\n10.0\n21\n0.0\n31\n0.0\n" + normal + "40\n0.5\n41\n0.0\n42\n1.5707963267948966\n"
+            "0\nENDSEC\n0\nEOF\n";
+
+        Scene scene;
+        const bool ok = ImportCad(std::vector<std::uint8_t>(dxf.begin(), dxf.end()), scene);
+        Check(ok, "法向 -Z 的 DXF 能导入");
+        if (!ok) return;
+        CheckFlippedNormalGeometry(scene, "导入");
+
+        for (CadFileKind kind : { CadFileKind::Dxf, CadFileKind::Dwg })
+        {
+            const std::string label = kind == CadFileKind::Dxf ? "另存 DXF 再读回" : "另存 DWG 再读回";
+            const auto out = ExportCad(scene, kind);
+            Scene again;
+            Check(!out.empty() && ImportCad(out, again), (label + "：读回成功").c_str());
+            CheckFlippedNormalGeometry(again, label);
+        }
+    }
 }
 
 int RunCadExchangeTests()
 {
     g_failures = 0;
 
+    CheckFlippedNormalRoundTrip();
     CheckRoundTrip(CadFileKind::Dxf, "DXF");
     CheckRoundTrip(CadFileKind::Dwg, "DWG");
     CheckRoundTrip(CadFileKind::Dxf, "DXF 2013", CadSaveVersion::R2013);

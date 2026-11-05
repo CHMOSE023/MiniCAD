@@ -134,27 +134,16 @@ namespace MiniCAD
         // 填充三角形（线宽 > 1 的实体由三角形拼接而成，走 TRIANGLELIST 场景缓冲）
         virtual void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) {}
 
-        // 逐顶点着色的填充三角形（渐变填充用）：三个角各自一个颜色，由 GPU 在三角形内插值。
-        //
-        // 为什么单独一条：FillTriangle 三顶点同色，表达不了渐变。顶点格式 Vertex_P3_C4
-        // 本来就有逐顶点颜色，TRIANGLELIST 缓冲天然按顶点插值，所以后端不需要新管线，
-        // 只是这条路径不再预先决定「整片一个色」。
-        // 默认实现退化为按三顶点平均色实心填充 —— 不会画错的图元，只是没有渐变。
+        // 逐顶点着色（渐变填充）；默认退化为三顶点平均色
         virtual void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
                                          const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc)
         {
-            (void)cb; (void)cc;
-            FillTriangle(a, b, c, ca);
+            FillTriangle(a, b, c, { (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
+                                    (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 });
         }
 
-        // 按序铺设的一串连线（曲线离散后的各小段）。虚线沿线型周期**跨段连续**：
-        // 上一小段铺完的位置就是下一段的相位，虚线不会在每个小段边界从头开始。
-        // 曲线（圆 / 弧 / 椭圆 / 多段线圆弧段）默认按 64 段一圈离散成小段，逐段 DrawLine
-        // 会把每段都从图案相位 0 重铺 —— 大线型比例（$LTSCALE × 周期超过小段长度）时
-        // 每段只画得出第一个 dash 片、gap 走不到，整条曲线被画成实线（实测 $LTSCALE=1000
-        // 的 DASH 圆弧 16 段每段 132.5 单位 < 周期 350：全部 dash 首尾相接 = 实线）。
-        // 默认实现退化为逐段 DrawLine，行为与以前一致；DrawContext 重载做真正的跨段相位累计。
-        // closed：末点与首点相接（圆），相位绕回
+        // 曲线离散后的折线：虚线相位跨段累计（逐段 DrawLine 每段从相位 0 起，大线型比例下画成实线）。
+        // 默认退化为逐段 DrawLine，DrawContext 重载
         virtual void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed)
         {
             (void)closed;
@@ -163,10 +152,7 @@ namespace MiniCAD
                 DrawLine(points[i], points[i + 1], color, false);
         }
 
-        // 同上，但每点带一个**模型单位宽度**：段内按两端线性插值（锥形段，DXF 组码 40/41）。
-        // widths 与 points 等长；为空或长度不足时按无线宽（细线）处理。
-        // 有宽度的多段线（`PolylineEntity::DrawsAsBand()`）走这里 —— 逐段 DrawStyledLine
-        // 同样会把虚线相位在每段重置，粗虚线多段线的圆弧段会显示成实线。
+        // 同上，逐点模型单位宽度（段内线性插值）；widths 与 points 不等长时按细线
         virtual void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
                               const Math::Color4& color, bool closed)
         {

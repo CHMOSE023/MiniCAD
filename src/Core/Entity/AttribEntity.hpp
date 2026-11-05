@@ -33,15 +33,7 @@ namespace MiniCAD
         const std::string& GetText() const { return m_text; }   // 组码 1,显示文本
         void               SetText(std::string v) { m_text = std::move(v); }
 
-        // ── 文字样式（组码 7）────────────────────────────────────────────────
-        //
-        // ⚠ 以前这里没有样式字段，`Draw` 里把 styleId **硬编码成 0（Standard）**：
-        //   属性的字体因此永远走 Standard（`simsun.ttc` 之类的 TTF），而块内同一段
-        //   文字用的是它自己的样式。实测 `0土方清表初步方案.dwg` 的块 `GPTFBZW`：
-        //   块内 TEXT「W=」与属性「VW=120.00」的 StyleHandle 都是 b7b9
-        //   = `GPCADFGD`（`txt.shx`，宽度因子 0.70），但属性硬用 Standard ⇒
-        //   `W=` 是细的 SHX 单线、`120.00` 却成了粗的 TTF，字宽也对不上
-        //   （宽度因子 0.70 整个丢失）。用户报「换了字体，怎么字体相差这么大」。
+        // 文字样式（组码 7）
         uint32_t GetStyleId() const { return m_styleId; }
         void     SetStyleId(uint32_t id) { m_styleId = id; }
 

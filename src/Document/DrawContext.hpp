@@ -616,8 +616,7 @@ namespace MiniCAD
             const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
             // 逐点宽度（粗多段线）优先；否则用图层/实体线宽
             const double width = widths ? 0.0 : ResolveWidthWorld(layer);
-            // 细线显示模式（"隐藏线宽"）下所有线宽归零 —— 逐点宽度也要一起失效，
-            // 否则粗多段线在该模式下仍画成粗带（ResolveWidthWorld 里的 m_thinLines 只管图层线宽）
+            // 隐藏线宽时逐点宽度一并归零
             const std::vector<double>* effWidths =
                 (widths && m_thinLines) ? nullptr : widths;
             auto widthAt = [&](size_t i)
@@ -648,21 +647,7 @@ namespace MiniCAD
                 total += dist(points.back(), points.front());
             const double cycle = rec ? rec->PatternLength * scale : 0.0;
 
-            // 与 EmitStyled 完全相同的取舍：只有「整条曲线的周期数超过 kStaticMaxDashes」这种
-            // 长虚线才按像素退化（一个周期不足 4px 时显式画出已是实线）与延迟铺设。
-            //
-            // ⚠ 4px 判断**不能**放在无条件位置：那样任何一个周期在当前缩放下不足 4px 的曲线
-            // 都被整条画成实线，与直线（只在 >200 个周期时才退化）行为不一致 —— 用户报的
-            // 「曲线要放大很多才看得见虚线、直线没这问题、新建的也没这问题」就是这条。
-            // test0.dwg 的 DASH 圆弧周期 350 单位，缩小到一屏时 350 单位只有一两个像素，
-            // 无条件按像素取舍会把整条弧画成实线。
-            //
-            // 但「周期数 > kStaticMaxDashes」时也不能像以前那样逐段 EmitStyled：
-            //   逐段调用时每段只有 total/段数 个周期（本图 293 → 每段约 50），远不到
-            //   kStaticMaxDashes，EmitStyled 内部的 4px 退化判断永远不生效，于是每段都
-            //   铺满密集 dash —— 缩小时周期只有 3.5px、dash/gap 都不到 1 像素，
-            //   光栅化随机丢弃三角形，整条看起来「一段一段的空缺」（用户报的现象）。
-            // 所以这里按**整条**的像素尺寸判断：周期不足 4px 时整条画实线。
+            // 同 EmitStyled：只有整条超过 kStaticMaxDashes 个周期才按像素退化（4px 按整条判断）
             const bool tooManyCycles = (cycle > 1e-12) && (total / cycle > kStaticMaxDashes);
             const bool cycleTooSmallPx = tooManyCycles && m_worldPerPixel > 0.0 && cycle / m_worldPerPixel < 4.0;
             if (continuous || total / cycle > kMaxDashes || cycleTooSmallPx)

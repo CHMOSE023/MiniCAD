@@ -419,16 +419,7 @@ int RunAttribAxisTests()
         }
     }
 
-    // ── 图层 0 关闭时，属性文字仍要画（块内 0 层随插入图层）──────────────
-    //
-    // 用户报「只显示了 W=，没有显示出实际应该显示的 W=120」（`0土方清表初步方案.dwg`
-    // 的 INSERT 22569 / 块 GPTFBZW，属性 VW=120.00）。实测根因：
-    //   · 图纸里图层 "0" 是**关闭**的（73 个图层里 28 个 IsOn=0，含 "0"）
-    //   · 块内实体在 0 层时会随插入所在图层（EnsureResolved 里已有这条），
-    //     所以块内 `W=`（插入层 tf-wtf1，可见）正常显示
-    //   · 属性 ATTRIB 也在 0 层，但 InsertEntity::Draw 直接用它的 LayerId 判可见性
-    //     ⇒ 属性被整批跳过，`120.00` 消失，只剩 `W=`
-    // 修法：属性同样按「0 层 → 插入所在图层」解析后再判可见性。
+    // ── 图层 0 关闭时，0 层上的属性随插入图层仍要画 ──
     {
         // 构造：图层 0 关闭、图层 "INS" 可见；块内一条线在 0 层；属性在 0 层
         Scene s2;
@@ -481,15 +472,7 @@ int RunAttribAxisTests()
               "**属性在 0 层时同样随插入图层 ⇒ 图层 0 关闭也能显示属性值（修前为空）**");
     }
 
-    // ── 属性文字要跟随自己的文字样式（组码 7），不能用 Standard ──────────
-    //
-    // 用户报「换了字体，怎么字体相差这么大」并给了截图：块内「W=」是细的 SHX 单线，
-    // 属性「120.00」却是粗的 TTF 且字宽偏大。实测 `0土方清表初步方案.dwg` 的块
-    // `GPTFBZW`：块内 TEXT「W=」与属性「VW=120.00」的 StyleHandle 都是 b7b9
-    // = `GPCADFGD`（`txt.shx`，宽度因子 0.70）。但 `AttribBase::Draw` 把 styleId
-    // 硬编码成 0（Standard → `simsun.ttc` 这类 TTF）⇒ 属性字体与块内文字不一致，
-    // 宽度因子 0.70 也整个丢掉。
-    // 修法：`AttribBase` 带 `m_styleId`（组码 7），导入 / 序列化 / 导出都带上。
+    // ── 属性用自己的文字样式（组码 7） ──
     {
         Scene s3;
         auto att2 = std::make_unique<AttribEntity>(s3.NextObjectID(), "TAG", "VAL",
@@ -517,15 +500,7 @@ int RunAttribAxisTests()
         Check(ss.seen == 7u, "**属性绘制用实体自己的文字样式（修前硬编码 0=Standard）**");
     }
 
-    // ── 属性的 ByBlock 颜色要继承块参照（与块内实体同一条规则）──────────
-    //
-    // 用户报「这个的颜色需要修复」，给的是 `0土方清表初步方案.dwg` 的 INSERT 209CA
-    // （块 `GPCADFGD`、图层 tf-fgd1、组码 62=61）。实测：
-    //   · INSERT 自身 Color = ACI 61（青），图层 tf-fgd1 是 ACI 1（红）
-    //   · 块内 2 条线 + 6 个 ATTDEF + 6 个 ATTRIB 全部 Color = ByBlock
-    //   · 修复前：块内线条正确画出 (223,255,127)（EnsureResolved 解析了 ByBlock），
-    //     属性文字却是 (255,255,255) 纯白 —— 属性没走 ByBlock 解析
-    // 修法：`InsertEntity::Draw` 画属性前把 ByBlock 换成插入的颜色 / 线宽 / 线型（画完还原）。
+    // ── 属性的 ByBlock 颜色随块参照 ──
     {
         Scene s4;
         BlockTable& blk4 = s4.GetBlockTable();
@@ -573,16 +548,7 @@ int RunAttribAxisTests()
               "属性绘制后颜色还原为 ByBlock（解析只在绘制期间生效）");
     }
 
-    // ── 块参照所在图层关闭时，块内具名图层上的内容仍要画 ─────────────────
-    //
-    // 用户报 `1清表后至室外道路面下0.07m处-土方初步方案.dwg` 的 INSERT 960
-    // （块：A1 图签模板）「图元未显示」。实测（DWG 原始层）：
-    //   · 图层 "0" 在图纸里是**关闭**的（74 个图层里 20 个 IsOn=0，含 "0"）
-    //   · INSERT 960 恰好在图层 0 上
-    //   · 块内唯一成员是 `_WHADI_LAYER` 上的**嵌套块参照**（该图层打开）
-    // AutoCAD 显示整张图框（已由用户确认）——因为块参照的图层只决定块内 **0 层**
-    // 实体的归属，块内具名图层上的实体按自己的图层开关。
-    // 旧实现 `Editor::isShown` 直接看顶层实体的 LayerId，整块被跳过。
+    // ── 块参照所在图层关闭时，块内具名图层上的内容仍要画 ──
     {
         Scene s5;
         LayerManager& lm5 = s5.GetLayerManager();
