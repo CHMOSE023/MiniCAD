@@ -122,6 +122,7 @@ namespace MiniCAD
         Dwg::XYZ     ToXYZ(const Math::Vec3& v)   { return { v.x, v.y, v.z }; }
 
         bool IsDefaultNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z > 0.0; }
+        bool IsFlippedNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z < 0.0; }
 
         Math::Color4 RgbToColor4(std::uint32_t rgb)
         {
@@ -1527,14 +1528,15 @@ namespace MiniCAD
             }
 
             // 属性定义 / 属性实例（ATTDEF / ATTRIB）的公共取值。
-            // 属性文字不跟随样式，Core 侧固定用 Standard（与 V0.1.0 的显示一致）
+            // 文字样式按属性自己的组码 7
             template <class T>
             std::unique_ptr<Entity> MakeAttrib(const Dwg::AttributeBase& a, std::string text)
             {
                 const TextPlacement pl = ResolveTextPlacement(a.InsertPoint, a.AlignmentPoint,
                                                              a.HorizontalAlignment, a.VerticalAlignment);
                 auto e = Make<T>(a, &a.Normal, a.Tag, std::move(text), pl.pos,
-                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation));
+                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation),
+                                 LookupStyle(a.StyleHandle));
                 auto& attrib = static_cast<T&>(*e);
                 attrib.SetFlags(static_cast<std::uint16_t>(static_cast<int>(a.Flags)));
                 attrib.SetAlign(pl.hAlign, pl.vAlign);
@@ -2320,10 +2322,22 @@ namespace MiniCAD
                     return Make<LineEntity>(src, &e->Normal, ToPoint(e->StartPoint), ToPoint(e->EndPoint));
 
                 if (auto* e = dynamic_cast<const Dwg::Arc*>(&src))   // Arc 派生自 Circle，须先判断
-                    return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+                {
+                    // 法向 -Z：圆心是 OCS，换到 WCS 后按 +Z 存（不留法向，导出才不会再镜像一次）
+                    if (!IsFlippedNormal(e->Normal))
+                        return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    return Make<ArcEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius,
+                                           kPi - e->EndAngle, kPi - e->StartAngle);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Circle*>(&src))
-                    return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                {
+                    if (!IsFlippedNormal(e->Normal))
+                        return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    return Make<CircleEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Ellipse*>(&src))
                 {
@@ -2331,9 +2345,12 @@ namespace MiniCAD
                     const double a  = std::hypot(mx, my);
                     if (a < 1e-12)
                         return nullptr;
+                    // 中心与长轴本来是 WCS；法向 -Z 时短轴反向，参数区间镜像成 (−e, −s)
+                    const bool flipped = IsFlippedNormal(e->Normal);
+                    const double s = flipped ? -e->EndParameter : e->StartParameter;
+                    const double t = flipped ? -e->StartParameter : e->EndParameter;
                     return Make<EllipseEntity>(src, nullptr,
-                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx),
-                                e->StartParameter, e->EndParameter));
+                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx), s, t));
                 }
 
                 if (auto* e = dynamic_cast<const Dwg::Point*>(&src))
@@ -3209,10 +3226,14 @@ namespace MiniCAD
                 // 此前只取 `ConstantWidth`（组码 43）⇒ 这些宽度整批丢失，整条多段线画成等宽。
                 std::vector<double>       startW;
                 std::vector<double>       endW;
+                // 法向 -Z：顶点 OCS → WCS、凸度取反，按 +Z 存（同 ARC）
+                const bool flipped = IsFlippedNormal(e.Normal);
+                const OcsMap map(e.Normal, e.Elevation);
                 for (const auto& v : e.Vertices)
                 {
-                    pts.push_back({ v.Location.X, v.Location.Y, e.Elevation });
-                    bulges.push_back(v.Bulge);
+                    pts.push_back(flipped ? map.Point(v.Location.X, v.Location.Y)
+                                          : Math::Point3{ v.Location.X, v.Location.Y, e.Elevation });
+                    bulges.push_back(flipped ? -v.Bulge : v.Bulge);
                     startW.push_back(v.StartWidth);
                     endW.push_back(v.EndWidth);
                 }
@@ -3221,7 +3242,7 @@ namespace MiniCAD
                     pts.push_back(pts.front());   // 闭合：末点回到起点，最后一个 bulge 属于闭合段
                 else
                     bulges.pop_back();
-                auto ent = Make<PolylineEntity>(e, &e.Normal, std::move(pts), std::move(bulges));
+                auto ent = Make<PolylineEntity>(e, flipped ? nullptr : &e.Normal, std::move(pts), std::move(bulges));
                 auto& pl = static_cast<PolylineEntity&>(*ent);
                 pl.SetWidth(e.ConstantWidth);
 
@@ -3268,6 +3289,28 @@ namespace MiniCAD
                 auto& hatch = static_cast<HatchEntity&>(*ent);
                 hatch.SetScale(scale);
                 hatch.SetAngle(angleDeg);
+
+                // 渐变填充（组码 450～470）
+                if (h.GradientColor.Enabled)
+                {
+                    HatchGradient grad;
+                    grad.Enabled    = true;
+                    grad.Name       = h.GradientColor.Name.empty() ? std::string("LINEAR") : h.GradientColor.Name;
+                    grad.Type       = HatchGradient::ParseType(grad.Name);
+                    grad.Angle      = h.GradientColor.Angle;
+                    grad.Shift      = h.GradientColor.Shift;
+                    grad.SingleColor = h.GradientColor.IsSingleColorGradient;
+                    grad.ColorTint  = h.GradientColor.ColorTint;
+                    for (const auto& c : h.GradientColor.Colors)
+                        grad.Stops.push_back({ c.Value, LayerColorToColor4(c.Color) });
+                    // 停靠点必须按 Value 升序，Sample 的区间查找依赖这个顺序
+                    std::sort(grad.Stops.begin(), grad.Stops.end(),
+                              [](const GradientStop& a, const GradientStop& b) { return a.Value < b.Value; });
+                    if (grad.Stops.empty())
+                        grad.Enabled = false;   // 没有颜色信息的渐变按普通实心填充走
+                    else
+                        hatch.SetGradient(std::move(grad));
+                }
                 return ent;
             }
 
@@ -4915,7 +4958,7 @@ namespace MiniCAD
                     d->Tag    = s->GetTag();
                     d->Prompt = s->GetPrompt();
                     d->Flags  = static_cast<Dwg::AttributeFlags>(s->GetFlags());
-                    d->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                    d->StyleHandle = StyleHandle(s->GetStyleId());   // 与 ATTRIB 同理：跟实体样式走
                     d->Normal = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
@@ -4992,7 +5035,7 @@ namespace MiniCAD
                         att->Value = a->GetValue();
                         att->Tag   = a->GetTag();
                         att->Flags = static_cast<Dwg::AttributeFlags>(a->GetFlags());
-                        att->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                        att->StyleHandle = StyleHandle(a->GetStyleId());
                         att->Normal = NormalOf(*a);
                         ApplyAttr(*a, *att);
                         if (Dwg::AttributeEntity* added = m_db.Add(std::move(att)))
@@ -5525,6 +5568,25 @@ namespace MiniCAD
                         for (double dash : f.Dashes)
                             line.DashLengths.push_back(dash * scale);
                         d->Pattern.Lines.push_back(std::move(line));
+                    }
+                }
+
+                // 渐变填充：把 HatchGradient 写回组码 450～470，另存为 DWG / DXF 后仍能读回来
+                if (const HatchGradient& grad = h.GetGradient(); grad.Enabled && !grad.Stops.empty())
+                {
+                    Dwg::HatchGradientPattern& g = d->GradientColor;
+                    g.Enabled    = true;
+                    g.Name       = grad.Name.empty() ? std::string(HatchGradient::TypeName(grad.Type)) : grad.Name;
+                    g.Angle      = grad.Angle;
+                    g.Shift      = grad.Shift;
+                    g.ColorTint  = grad.ColorTint;
+                    g.IsSingleColorGradient = grad.SingleColor;
+                    for (const GradientStop& stop : grad.Stops)
+                    {
+                        Dwg::GradientColor c;
+                        c.Value = stop.Value;
+                        c.Color = FromColor4(stop.Color);
+                        g.Colors.push_back(c);
                     }
                 }
                 return Finish(e, std::move(d));

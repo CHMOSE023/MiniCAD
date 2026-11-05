@@ -17,9 +17,13 @@
 #include "Document/DrawContext.hpp"
 #include "Core/Draw/IDrawSink.hpp"
 #include "Core/Entity/EntityAttr.hpp"
+#include "Core/Entity/PolylineEntity.hpp"
+#include "Editor/Overlay/Overlay.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 using namespace MiniCAD;
@@ -329,6 +333,173 @@ int RunLineTypeScaleTests()
         Check(doc.IsDirty(), "SetDrawingVarsCommand 执行后文档标记为已修改");
         doc.GetCommandStack().Undo(s);
         Check(DrawingVars::From(s) == orig, "撤销后图纸变量还原");
+    }
+
+    // ── 多段线的圆弧段：虚线相位跨段连续（r=1350 的 90° 弧，细分小段远短于周期 750）──
+    {
+        const Math::Point3 A{ 0.0, 0.0, 0.0 };
+        const Math::Point3 B{ 1350.0, 1350.0, 0.0 };
+        Polyline pl({ A, B }, { 0.414214 });
+
+        Scene s;
+        s.SetLineTypeScale(1000.0);
+        auto& lt = s.GetLineTypeTable();
+        const auto dashId = lt.FindByName("DASHED");
+        const LineTypeRecord* rec = lt.Find(dashId);
+        if (rec && !rec->IsContinuous())
+        {
+            std::vector<Vertex_P3_C4>    verts;
+            std::vector<Vertex_P3_C4>    fills;
+            std::vector<Vertex_P3_C4_UV> texts;
+            Overlay                       overlay;
+            DrawContext ctx(verts, fills, texts, overlay,
+                            s.GetLayerManager(), lt, 0.01, nullptr, nullptr);
+            ctx.SetLineTypeScale(s.GetLineTypeScale());
+            EntityAttr a;
+            a.LayerId  = 0;
+            a.LineType = dashId;
+            ctx.BeginEntity(&a);
+            PolylineEntity ent(1, std::move(pl));
+            // 零宽度走细线路径（默认 m_width = 1.0 走填充）
+            ent.SetWidth(0.0);
+            ent.SetSegmentWidths({ 0.0 }, { 0.0 });
+            ent.Draw(ctx, false, false);
+            ctx.BeginEntity(nullptr);
+
+            // 逐段累加输出的实段长度（顶点流是两两成段的 TRIANGLELIST 风格点对）
+            const double arcLen = 1350.0 * Math::PI * 0.5;
+            auto measure = [&](double wpp)
+            {
+                std::vector<Vertex_P3_C4>    v2;
+                std::vector<Vertex_P3_C4>    f2;
+                std::vector<Vertex_P3_C4_UV> t2;
+                Overlay                       ov2;
+                DrawContext c2(v2, f2, t2, ov2, s.GetLayerManager(), lt, wpp, nullptr, nullptr);
+                c2.SetLineTypeScale(s.GetLineTypeScale());
+                c2.BeginEntity(&a);
+                ent.Draw(c2, false, false);
+                c2.BeginEntity(nullptr);
+                double solid = 0.0;
+                for (size_t i = 0; i + 1 < v2.size(); i += 2)
+                {
+                    const auto& p0 = v2[i].pos;
+                    const auto& p1 = v2[i + 1].pos;
+                    solid += std::sqrt((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y));
+                }
+                return std::make_pair(solid, v2.size());
+            };
+
+            // ── 周期数不超过 kStaticMaxDashes 时与缩放无关，同直线 ──
+            {
+                const double wpps[] = { 2222.0, 555.0, 111.1, 22.2, 5.56, 1.0 };   // 整图一屏 → 放大看清
+                int dashedAt = 0;
+                for (double wpp : wpps)
+                {
+                    const auto [solid, count] = measure(wpp);
+                    const double r = solid / arcLen;
+                    std::printf("    wpp=%-8.1f 周期 %.2fpx 实线 %.1f%%（%zu 段）\n", wpp, 0.75 * 1000.0 / wpp, r * 100.0, count / 2);
+                    if (!count || r > 0.92) continue;
+                    ++dashedAt;
+                }
+                Check(dashedAt == static_cast<int>(sizeof(wpps) / sizeof(wpps[0])), "多段线圆弧段的虚线不随缩放退化（各缩放级别都是虚线）");
+            }
+
+            const auto [solidLen, segCount] = measure(0.01);
+            (void)segCount;
+            const double ratio = solidLen / arcLen;
+            std::printf("    多段线圆弧段：实线 %.1f / 弧长 %.1f = %.1f%%\n", solidLen, arcLen, ratio * 100.0);
+            // 逐段 DrawLine 时为 100%（整条实线）；跨段累计后必须留出 gap
+            Check(ratio > 0.0 && ratio < 0.92, "多段线圆弧段：虚线相位跨段累计，不是整条实线");
+
+            // ── 带宽度的多段线：虚线同样铺开（逐点宽度的 DrawPath）──
+            {
+                auto coverage = [&](double width)
+                {
+                    Polyline seg({ { 0.0, 0.0, 0.0 }, { 4000.0, 0.0, 0.0 } }, { 0.0 });
+                    PolylineEntity e2(1, std::move(seg));
+                    e2.SetWidth(width);
+                    std::vector<Vertex_P3_C4>    v2;
+                    std::vector<Vertex_P3_C4>    f2;
+                    std::vector<Vertex_P3_C4_UV> t2;
+                    Overlay                       ov2;
+                    DrawContext c2(v2, f2, t2, ov2, s.GetLayerManager(), lt, 0.01, nullptr, nullptr);
+                    c2.SetLineTypeScale(s.GetLineTypeScale());
+                    c2.BeginEntity(&a);
+                    e2.Draw(c2, false, false);
+                    c2.BeginEntity(nullptr);
+                    // 每个三角形在中心线(x 轴)上的跨度，合并后即覆盖长度
+                    std::vector<std::pair<double, double>> tris;
+                    for (size_t i = 0; i + 2 < f2.size(); i += 3)
+                    {
+                        const double lo = std::min({ f2[i].pos.x, f2[i + 1].pos.x, f2[i + 2].pos.x });
+                        const double hi = std::max({ f2[i].pos.x, f2[i + 1].pos.x, f2[i + 2].pos.x });
+                        tris.push_back({ lo, hi });
+                    }
+                    if (tris.empty()) return 0.0;
+                    std::sort(tris.begin(), tris.end());
+                    double covered = 0.0, curL = 0.0, curR = -1.0;
+                    for (const auto& tr : tris)
+                    {
+                        if (tr.first > curR) { if (curR >= curL) covered += curR - curL; curL = tr.first; curR = tr.second; }
+                        else curR = std::max(curR, tr.second);
+                    }
+                    if (curR >= curL) covered += curR - curL;
+                    return covered / 4000.0;
+                };
+                const double covWide  = coverage(20.0);
+                const double covThin  = coverage(5.0);
+                std::printf("    粗多段线（宽 20）沿中心线覆盖 %.1f%%，（宽 5）%.1f%%\n", covWide * 100.0, covThin * 100.0);
+                Check(covWide > 0.0 && covWide < 0.92, "带宽度的多段线：虚线铺开（不是整条实线）");
+                Check(covThin > 0.0 && covThin < 0.92, "窄带宽度的多段线：虚线铺开（不是整条实线）");
+            }
+
+            // ── 长虚线多段线（整条超过 kStaticMaxDashes 个周期、每段不足）：4px 按整条判断 ──
+            {
+                const Math::Point3 rp[] = {
+                    { 0.0, 0.0, 0.0 }, { 18000.0, 0.0, 0.0 }, { 30000.0, -5000.0, 0.0 },
+                    { 22000.0, -12000.0, 0.0 }, { 6000.0, -13000.0, 0.0 }, { -13000.0, -13000.0, 0.0 },
+                    { 0.0, 0.0, 0.0 },
+                };
+                const double rb[] = { 0.0, -0.2, -0.96, 0.42, 0.0, 0.0 };
+
+                Scene s2;
+                s2.SetLineTypeScale(100.0);            // 周期 350
+                auto& lt2 = s2.GetLineTypeTable();
+                LineTypeRecord dr;
+                dr.Name = "DASH"; dr.Description = "Dashed";
+                dr.Pattern = { 0.25, -0.1 }; dr.PatternLength = 0.35;
+                const LineTypeID did = lt2.Add(dr);
+
+                PolylineEntity e(1, std::vector<Math::Point3>(rp, rp + 7), std::vector<double>(rb, rb + 6));
+                e.SetWidth(100.0);
+                EntityAttr ea;
+                ea.LayerId = 0;
+                ea.LineType = did;
+                ea.LinetypeScale = 10.0;           // (48 . 10.0)
+                e.SetAttr(ea);
+
+                // 同一缩放下输出几何量应当是「整条一种状态」，不能在 4px 边界处忽多忽少
+                auto fillCount = [&](double wpp)
+                {
+                    std::vector<Vertex_P3_C4>    v3;
+                    std::vector<Vertex_P3_C4>    f3;
+                    std::vector<Vertex_P3_C4_UV> t3;
+                    Overlay                       o3;
+                    DrawContext c3(v3, f3, t3, o3, s2.GetLayerManager(), lt2, wpp, nullptr, nullptr);
+                    c3.SetLineTypeScale(s2.GetLineTypeScale());
+                    c3.BeginEntity(&ea);
+                    e.Draw(c3, false, false);
+                    c3.BeginEntity(nullptr);
+                    return f3.size();
+                };
+                // wpp=100 ⇒ 周期 3.5px（不足 4px，整条应退化为实线）；wpp=50 ⇒ 7px（正常铺 dash）
+                const size_t coarse = fillCount(100.0);
+                const size_t fine   = fillCount(50.0);
+                std::printf("    长虚线多段线：周期3.5px 顶点 %zu，周期7px 顶点 %zu\n", coarse, fine);
+                Check(fine > coarse, "长虚线多段线：周期不足 4px 时整条退化为实线（不是逐段密集铺）");
+                Check(coarse > 0, "长虚线多段线：缩小时仍有几何输出（不是整条消失）");
+            }
+        }
     }
 
     const int n = g_failures - before;

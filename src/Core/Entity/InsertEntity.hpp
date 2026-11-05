@@ -255,12 +255,28 @@ namespace MiniCAD
             // 由于坐标已是世界坐标，属性**不能**按阵列单元重复画，所以放在单元循环之外。
             // 也不套本块的 XCLIP：`m_clip` 是**块坐标系**里的（与块内实体同系，见 GetClipBoundary），
             // 拿来判世界坐标的属性会把内外判反；宁可少裁，也不要错裁。
+            // 属性的 0 层与 ByBlock 同 EnsureResolved 一样随插入解析
+            const EntityAttr& host = GetAttr();
+            const LayerID hostLayer = host.LayerId;
             for (const auto& a : m_attribs)
-                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId) && sink.BeginBlockChild(false))
-                {
-                    a->Draw(sink, isSelected, isHovered);
-                    sink.EndBlockChild(false);
-                }
+            {
+                const EntityAttr& aAttr = a->GetAttr();
+                const LayerID aLayer = (aAttr.LayerId == DefaultLayer_ID) ? hostLayer : aAttr.LayerId;
+                if (!aAttr.Visible || !sink.IsLayerVisible(aLayer) || !sink.BeginBlockChild(false))
+                    continue;
+                // AttribBase::Draw 取色走自己的 m_attr：临时写回解析后的属性（细分是单线程的）
+                auto* mutableA = const_cast<AttribEntity*>(a.get());
+                const EntityAttr saved = aAttr;
+                EntityAttr eff = saved;
+                if (eff.Color.Method == ColorMethod::ByBlock) eff.Color = host.Color;
+                if (eff.Lineweight == Lineweight::ByBlock)    eff.Lineweight = host.Lineweight;
+                if (eff.LineType == LineTypeTable_ByBlockID)  eff.LineType = host.LineType;
+                eff.LayerId = aLayer;
+                mutableA->SetAttr(eff);
+                a->Draw(sink, isSelected, isHovered);
+                mutableA->SetAttr(saved);
+                sink.EndBlockChild(false);
+            }
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
@@ -284,6 +300,30 @@ namespace MiniCAD
         }
 
         DECLARE_RUNTIME_TYPE(InsertEntity, Entity)
+
+        // 块参照所在图层关闭时，块内具名图层上的实体仍按自己的开关显示；递归查嵌套块与属性
+        template <class LayerVisibleFn>
+        bool HasVisibleContentOnAnyLayer(LayerVisibleFn&& layerVisible, int depth = 0) const
+        {
+            if (depth > 8) return false;   // 防御自引用的块定义
+            const LayerID hostLayer = GetAttr().LayerId;
+            for (const auto& a : m_attribs)
+            {
+                if (!a || !a->GetAttr().Visible) continue;
+                const LayerID id = (a->GetAttr().LayerId == DefaultLayer_ID) ? hostLayer : a->GetAttr().LayerId;
+                if (layerVisible(id)) return true;
+            }
+            EnsureResolved();
+            for (const auto& e : m_resolved)
+            {
+                if (!e || !e->GetAttr().Visible) continue;
+                // 0 层已在 EnsureResolved 里换成插入图层；具名图层按自己判断
+                if (layerVisible(e->GetAttr().LayerId)) return true;
+                if (const auto* nested = dynamic_cast<const InsertEntity*>(e.get()))
+                    if (nested->HasVisibleContentOnAnyLayer(layerVisible, depth + 1)) return true;
+            }
+            return false;
+        }
 
     private:
         // OCS 基 → WCS 的旋转矩阵(列为 Ux/Uy/Uz)。

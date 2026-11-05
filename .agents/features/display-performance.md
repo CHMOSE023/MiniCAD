@@ -19,6 +19,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - 随视图变化的实体（按像素等宽的线宽、按像素画的点样式、按屏幕大小的文字）绘制时调用 `IDrawSink::MarkViewDependent()`，线与填充进**动态流**；其余进**静态流**
 - 滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传
 - 虚线的几何在世界坐标里（线型的"点"笔划走点流，恒定 1 像素）；不超过 200 个周期的虚线不随缩放重建。更长的（`DrawContext::kStaticMaxDashes`）"延迟铺设"（`DeferredDash`：细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放铺进动态流，一个周期不足 4px 时画成实线）。带文字 / 形符号的复杂线型不延迟也不按像素取舍（符号是世界坐标的字形实例，`Editor::RebuildDynamicStream` 不动字形实例流），超过 `DrawContext::kMaxDashes` 个周期时画成实线、不画符号
+- 曲线（圆 / 圆弧 / 椭圆 / 多段线）的虚线走 `IDrawSink::DrawPath`，`DrawContext::DrawPath` 按整条路径累计相位（逐段 `DrawLine` 每段从相位 0 起，周期大于小段长度时画成实线）；带宽度的多段线走逐点宽度的重载（`DrawContext::EmitSolidTapered`），隐藏线宽时一并归零。`ClipDrawSink` / `TransformDrawSink` 要转发 `DrawPath`；裁剪后的各段相位各自从 0 起。按像素退化与 `DrawContext::EmitStyled` 一致：只有整条超过 `DrawContext::kStaticMaxDashes` 个周期时才在一个周期不足 4px 时画实线，且按整条判断（逐段判断时每段周期数达不到阈值，缩小后 dash 不到 1 像素、显示成断续）
 - 拼接后的静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`、修改 / 删除实体）从缓存重新拼接，不重新细分
 - 拼接流释放后的增量更新（`Editor::UpdateSceneIncremental`）：后端能接追加段、原地改写（`IRenderer::SupportsCachedAppend`，D3D11 / D3D12 支持；宿主在 `MainFrame::InitDocument` 里 `Editor::SetSceneAppendOnGpu`）时，脏实体只细分自己，不从逐实体缓存重新拼接整张图
   - 新实体：静态顶点放进追加段（`ViewState::SceneAppendActive`），`Viewport::Render` 经 `IRenderer::AppendCached` 接到 (slot, 基础版本) 缓冲末尾并升级版本——放得下就写到末尾，放不下就新建多留 1/8 容量的缓冲在 GPU 内复制
@@ -65,6 +66,8 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 
 - 同一块定义插入多次时只细分一次（`BlockTessCache`，`src/Document/BlockTessCache.hpp`）：`InsertEntity::Draw` 画每个阵列单元前问 `IDrawSink::BeginBlockInstance`（`TransformDrawSink` 把自己的变换接上再转发），`DrawContext` 命中就把记下的结果经平移、旋转接上，不再逐个画块内子实体，也不再为它克隆块内容（`InsertEntity::EnsureResolved`）
 - 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）；外层的顶层实体是否在锁定图层上（整块淡显，`BlockTessKey::faded`）。只缓存 XY 平面里的变换
+- 块内实体与属性 ATTRIB 在图层 0 上时随插入所在图层、ByBlock 的颜色 / 线宽 / 线型随块参照：块成员在 `InsertEntity::EnsureResolved`，属性在 `InsertEntity::Draw`（画前把解析后的属性临时写回实体，画完还原；细分须保持单线程）
+- 块参照所在图层关闭时不整块跳过：`Editor::isShown` 对 `InsertEntity` 走 `InsertEntity::HasVisibleContentOnAnyLayer`（递归查嵌套块与属性），块内具名图层上的实体按自己的开关
 - 记录：记录期间 `DrawContext` 的输出（`DrawContext::PutLine` 等）同时按世界坐标双精度记一份，画完按这次插入的旋转、平移换回去存下；接上时换到新位置再落成 float，与逐个细分只差双精度的舍入。区域覆盖记下出现时各流的位置，接上时在同一位置调用 `Wipe`，裁剪范围不变。电气大样图 / 暖通大样图的截图与不缓存时逐字节相同；线顶点只差几个（线长正好是线型周期的整数倍时末尾那段零长度的虚线有没有，取决于舍入），另有 Z 的 ±0 之差
 - 不记：按像素烘焙的（像素线宽、`MarkViewDependent`）、纹理文字、图像、绝对角度的线型符号、分段细分停在块中间的、一次超过 `DrawContext::kMaxBlockRecord` 个顶点的；只展开一次的块（如整张底图作为一个块插入）不记——第一次要判断时由 `Editor::CountBlockUses` 数一遍，数不到的块（天正对象、标注里引用的）第二次遇到才记；总量超过 `BlockTessCache::kMaxVertices` 后不再记新的
 - 裁剪框（XCLIP，`ClipDrawSink`）里：`BeginBlockInstance` 经过时加上本层裁剪框（`BlockClipChain`）。条目记着块内输入（线端点、三角形顶点、文字锚点等）在块坐标里的范围，`ClipDrawSink::Classify` 判断它整个在框内、整个在框外还是跨边：

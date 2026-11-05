@@ -73,9 +73,16 @@ namespace MiniCAD
             const double sweep     = m_arc.SweepAngle();
             const int    kSegments = std::max(4, static_cast<int>(std::ceil(std::abs(sweep) / (Math::TwoPI / 64.0))));
 
+            std::vector<Math::Point3> pts;
+            pts.reserve(static_cast<size_t>(kSegments) + 1);
             SampleCurve(sink, m_arc.StartAngle, sweep, kSegments, m_arc.Radius,
                         [&](double a) { return m_arc.PointAt(a); },
-                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
+                        [&](const Math::Point3& p0, const Math::Point3& p1)
+                        {
+                            if (pts.empty()) pts.push_back(p0);
+                            pts.push_back(p1);
+                        });
+            sink.DrawPath(pts, color, false);
         }
 
         DECLARE_RUNTIME_TYPE(ArcEntity, Entity)

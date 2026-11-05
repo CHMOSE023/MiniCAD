@@ -134,6 +134,35 @@ namespace MiniCAD
         // 填充三角形（线宽 > 1 的实体由三角形拼接而成，走 TRIANGLELIST 场景缓冲）
         virtual void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) {}
 
+        // 逐顶点着色（渐变填充）；默认退化为三顶点平均色
+        virtual void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                         const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc)
+        {
+            FillTriangle(a, b, c, { (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
+                                    (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 });
+        }
+
+        // 曲线离散后的折线：虚线相位跨段累计（逐段 DrawLine 每段从相位 0 起，大线型比例下画成实线）。
+        // 默认退化为逐段 DrawLine，DrawContext 重载
+        virtual void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed)
+        {
+            (void)closed;
+            if (points.size() < 2) return;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+                DrawLine(points[i], points[i + 1], color, false);
+        }
+
+        // 同上，逐点模型单位宽度（段内线性插值）；widths 与 points 不等长时按细线
+        virtual void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                              const Math::Color4& color, bool closed)
+        {
+            (void)widths;
+            (void)closed;
+            if (points.size() < 2) return;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+                DrawLine(points[i], points[i + 1], color, false);
+        }
+
         // 区域覆盖（WIPEOUT）：声明一个闭合多边形，之前绘制的内容在其内部不可见。
         // 只有生成场景顶点流的 sink 需要处理，默认忽略。
         virtual void Wipe(const std::vector<Math::Point3>& polygon) {}

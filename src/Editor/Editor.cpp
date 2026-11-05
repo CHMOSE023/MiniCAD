@@ -4025,7 +4025,17 @@ namespace MiniCAD
             // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
             if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-            return !layer || layer->IsVisible();
+            const bool layerOn = !layer || layer->IsVisible();
+            if (layerOn) return true;
+            // 块参照所在图层关闭时不整块跳过：块内具名图层上的实体按自己的开关
+            if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity))
+                return ins->HasVisibleContentOnAnyLayer(
+                    [&layerMgr](LayerID id)
+                    {
+                        const Layer* l = layerMgr.GetLayer(id);
+                        return !l || l->IsVisible();
+                    });
+            return false;
         };
 
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；

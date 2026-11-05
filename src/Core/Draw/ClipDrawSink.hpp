@@ -13,6 +13,7 @@ namespace MiniCAD
     class ClipDrawSink : public IDrawSink
     {
     public:
+        struct ColoredVertex { Math::Point3 p; Math::Color4 c; };
         ClipDrawSink(IDrawSink& target, const std::vector<Math::Point3>& polygon)
             : m_target(target)
             , m_poly(polygon)
@@ -192,6 +193,113 @@ namespace MiniCAD
             FillSubdivided(a, b, c, color, 5);
         }
 
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            if (std::max({a.x, b.x, c.x}) < m_minX || std::min({a.x, b.x, c.x}) > m_maxX ||
+                std::max({a.y, b.y, c.y}) < m_minY || std::min({a.y, b.y, c.y}) > m_maxY)
+            {
+                NoteAltered();
+                return;
+            }
+            if (m_convex)
+            {
+                const auto out = ClipConvexColored({ { a, ca }, { b, cb }, { c, cc } }, m_poly);
+                for (size_t i = 1; i + 1 < out.size(); ++i)
+                    m_target.FillTriangleColored(out[0].p, out[i].p, out[i + 1].p,
+                                                 out[0].c, out[i].c, out[i + 1].c);
+                return;
+            }
+            // 凹多边形：按重心取舍，取平均色
+            const Math::Color4 avg{ (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
+                                    (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 };
+            FillSubdivided(a, b, c, avg, 5);
+        }
+
+        // 按段中点切成框内的连续子路径再转发，子路径的相位各自从 0 起
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const size_t n = points.size();
+            bool allOut = true, allIn = true;
+            for (const auto& q : points)
+            {
+                const bool in = Contains(q.x, q.y);
+                if (in) allOut = false; else allIn = false;
+            }
+            if (allOut) { NoteAltered(); return; }
+            if (allIn)  { m_target.DrawPath(points, color, closed); return; }
+
+            NoteAltered();
+            std::vector<Math::Point3> run;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2)
+                    m_target.DrawPath(run, color, false);
+                run.clear();
+            };
+            for (size_t i = 0; i + 1 < n; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+                if (Contains(mx, my))
+                {
+                    if (run.empty()) run.push_back(a);
+                    run.push_back(b);
+                }
+                else
+                    flush();
+            }
+            flush();
+        }
+
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const bool hasW = (widths.size() == points.size());
+            const size_t n = points.size();
+            bool allOut = true, allIn = true;
+            for (const auto& q : points)
+            {
+                const bool in = Contains(q.x, q.y);
+                if (in) allOut = false; else allIn = false;
+            }
+            if (allOut) { NoteAltered(); return; }
+            if (allIn)  { m_target.DrawPath(points, widths, color, closed); return; }
+
+            NoteAltered();
+            std::vector<Math::Point3> run;
+            std::vector<double>       runW;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2)
+                    m_target.DrawPath(run, runW, color, false);
+                run.clear();
+                runW.clear();
+            };
+            auto pushPt = [&](size_t idx)
+            {
+                run.push_back(points[idx]);
+                if (hasW) runW.push_back(widths[idx]);
+            };
+            for (size_t i = 0; i + 1 < n; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+                if (Contains(mx, my))
+                {
+                    if (run.empty()) pushPt(i);
+                    pushPt(i + 1);
+                }
+                else
+                    flush();
+            }
+            flush();
+        }
+
         // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
         void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
                             const Math::Color4& color, double width) override
@@ -304,6 +412,42 @@ namespace MiniCAD
                 else if (s != sign) return false;
             }
             return true;
+        }
+
+        // 同 ClipConvex，颜色随顶点插值
+        static std::vector<ColoredVertex> ClipConvexColored(std::vector<ColoredVertex> subject, const std::vector<Math::Point3>& clipper)
+        {
+            const size_t m = clipper.size();
+            std::vector<ColoredVertex> input;
+            for (size_t i = 0; i < m && !subject.empty(); ++i)
+            {
+                const auto& p = clipper[i];
+                const auto& q = clipper[(i + 1) % m];
+                auto side = [&](const Math::Point3& v) { return (q.x - p.x) * (v.y - p.y) - (q.y - p.y) * (v.x - p.x); };
+                input.swap(subject);
+                subject.clear();
+                for (size_t k = 0, n = input.size(); k < n; ++k)
+                {
+                    const ColoredVertex& cur = input[k];
+                    const ColoredVertex& prev = input[(k + n - 1) % n];
+                    const double sc = side(cur.p), sp = side(prev.p);
+                    if ((sc >= 0) != (sp >= 0))
+                    {
+                        const double t = sp / (sp - sc);
+                        ColoredVertex nv;
+                        nv.p = { prev.p.x + (cur.p.x - prev.p.x) * t,
+                                 prev.p.y + (cur.p.y - prev.p.y) * t,
+                                 prev.p.z + (cur.p.z - prev.p.z) * t };
+                        nv.c = { prev.c.r + (cur.c.r - prev.c.r) * t,
+                                 prev.c.g + (cur.c.g - prev.c.g) * t,
+                                 prev.c.b + (cur.c.b - prev.c.b) * t,
+                                 prev.c.a + (cur.c.a - prev.c.a) * t };
+                        subject.push_back(nv);
+                    }
+                    if (sc >= 0) subject.push_back(cur);
+                }
+            }
+            return subject;
         }
 
         // Sutherland–Hodgman：subject 按逆时针凸多边形 clipper 裁剪（z 线性插值）

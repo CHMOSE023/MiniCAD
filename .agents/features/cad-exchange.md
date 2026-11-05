@@ -22,6 +22,8 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 表：图层、线型、文字样式、多线样式、块（含外部参照块）、布局（标注样式只在组装标注时查参数，不导入成表）。图层的冻结（标志位 1）当作关闭；锁定（标志位 4）读成 `Layer::SetLocked`，导出时写回同一位——锁定图层上的对象淡显、选不中（见 [display-performance](display-performance.md) 的"锁定图层"）
 - 实体：Line / Circle / Arc / Ellipse / Point / Polyline / LwPolyline / Spline / Text / MText / Insert（含属性 ATTRIB 与属性定义 ATTDEF）/ Solid / 3DFace / Hatch（直线、圆弧、椭圆弧、样条、多段线边界）/ MultiLeader / MLine / Wipeout / Viewport / Ray / XLine / Leader / Tolerance / RasterImage（`ImageEntity`，读写）；PolyfaceMesh 与 Mesh 读成 `MeshEntity`；ACAD_TABLE 按其匿名块还原为 Insert（`Importer::ConvertTable`）；SHAPE 读成 `ShapeEntity`，形号未建模，只画占位框，导出时 DWG / DXF 写出器都不写
 - 填充边界（`Importer::ConvertHatchPath`）：相邻边之间的小缺口用直线接上（AutoCAD 的间隙容差 HPGAPTOL）；缺口超过该路径范围对角线的 10% 时整条路径丢弃——这是编辑后残留的"未闭合"路径（标志 32），各段散落在图纸各处，AutoCAD 不画，硬接会画出横跨图纸的大块实心。用 `MINICAD_HATCHPATHS` 看各段是否相接
+- 渐变填充（GRADIENT，组码 450～470）：`Importer::ConvertHatch` 映射成 `HatchGradient`（类型、角度、位移、单色色调、颜色停靠点），导出写回同一组码。绘制走 `IDrawSink::FillTriangleColored` 逐顶点着色，柱面 / 球面 / 半球按网格细分
+- 法向 -Z 的 ARC / CIRCLE / LWPOLYLINE：圆心、顶点是 OCS，导入时换到 WCS（ARC 角度取 (π−end, π−start)，凸度取反）并**不保留法向**，导出按 +Z 写，往返不再镜像；ELLIPSE 的中心与长轴本来是 WCS，只把参数区间镜像成 (−end, −start)。其他非默认法向原样保留 OCS 坐标与法向
 - 标注用其匿名块还原为 Insert；绘制次序按 SortEntitiesTable
 - 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型
@@ -37,6 +39,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - TrueType 样式的文件名为空时，按扩展数据里的字体族名换算成文件名（SimSun → simsun.ttc 等）
 - 与预置样式（Standard、GB2312）同名的按图纸参数更新字高、宽度因子、倾斜；图纸没有的预置样式删掉（不再写进 DWG）
 - 天正文字的显示宽度因子写在 `MTextEntity::SetWidthFactor`（导出写成开头的 `\W0.7;`），不派生文字样式
+- 属性 ATTDEF / ATTRIB 的文字样式按自己的组码 7（`AttribBase::GetStyleId`），导入、序列化、导出都带上
 - 文字内容里的 `\U+XXXX`（代码页外的字符，旧版 DXF 或其他软件转出的图纸里整段中文都可能这样存）读入时保留原文、另存原样写回，显示时还原（`src/Core/TextCodes.h`）：多行文字在 `MTextEntity::StripInlineCodes`，单行文字与属性在 `TextLayoutEngine::DecodeLine`。漏掉会画出 `+8D1F+4E00…`（`\U` 被当作未知格式码丢掉）
 - 镜像的块参照（负比例、法向朝 -Z，插入变换在 XY 平面的行列式为负）里的文字与 AutoCAD 一样画成镜像：`TransformDrawSink` 按变换求文字基线的真实方向（`TextRotation`，沿 X 轴镜像时 30° 画成 -30°），转发文字前后各调一次 `IDrawSink::ToggleTextMirror`，`DrawContext` 据此把字形、下划线沿基线上下翻转；两层镜像相互抵消。新写的转发型 sink 要转发它（`ClipDrawSink` 已转发），否则镜像块里的字画成正的。块定义级缓存的键已含镜像，镜像与不镜像的插入不共用
 - 下划线 / 上划线 / 删除线：多行文字的 `\L` `\O` `\K`（按 `{}` 分组恢复）由 `StripInlineCodes(text, true)` 换成排版流里的开关字符，单行文字的 `%%u` `%%o` 由 `DecodeLine` 解析成同样的开关；`TextLayoutEngine::Layout` 输出 `DecorationLine`，`DrawContext` 画成直线。位置按 AutoCAD 2020 用 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高（TrueType 与 SHX、单行与多行相同），横向从开处的步进位置到关处。`GetPlainText` 与度量不含开关
