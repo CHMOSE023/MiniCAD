@@ -25,16 +25,16 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 ### 目录
 
 - `src/`：核心库（目标 `MiniCAD`，定义在 `cmake/MiniCAD.cmake`，命名空间 `MiniCAD`）
-- `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）、`Platform/Web`（`MiniGUI_Web`）与 `Platform/SDL`（`MiniGUI_SDL`，Linux，需要 SDL3）。开发计划：`docs/MiniGUI/PLAN.md`
+- `src/UI/`：MiniGUI（目标 `MiniGUI`，定义在 `cmake/MiniGUI.cmake`，命名空间 `MiniGUI`）。平台层 `Platform/Win32`（`MiniGUI_Win32`）、`Platform/Web`（`MiniGUI_Web`）与 `Platform/Linux`（`MiniGUI_Linux`：`LinuxInput` 把 X11 / Wayland 的原始事件译成界面输入，不依赖窗口系统的库）。开发计划：`docs/MiniGUI/PLAN.md`
 - `src/Serialization/Codec|Database|Dwg|Dxf/`：MiniDWG（移植自 ACadSharp，MIT；目标 `MiniDWG`，定义在 `cmake/MiniDWG.cmake`，命名空间 `MiniDWG`）。`PRIVATE` 链接进 MiniCAD，核心库的公开头文件不能暴露 MiniDWG 类型；它不依赖 MiniCAD，`CadDatabase` ↔ `Scene` 的映射放在 `src/Import/`。`*.g.cpp` 由已归档的 MiniDWG 仓库里的脚本生成，不要手改。开发计划：`docs/MiniDWG/PLAN.md`
 - `src/NodeGraph/`：节点式参数化建模（命名空间 `MiniCAD::Nodes`），编辑器在 `apps/Common/src/GUI/NodeEditor`。开发计划：`docs/NodeGraph/PLAN.md`
 - `src/I18n/MiniI18n/`：MiniI18n（目标 `MiniI18n`，定义在 `cmake/MiniI18n.cmake`，命名空间 `MiniI18n`）：界面文字的翻译，只用标准库，MiniCAD、MiniGUI、MiniDWG 都链接它。翻译文件 `assets/i18n/<语言>.json`，由共用应用的 `GUI/Language.cpp` 选定语言并装入。开发计划：`docs/I18n/PLAN.md`
 - `src/Solid/`：三维实体内核接口 `ISolidKernel.h`（只用 MiniCAD 类型）；SMLib 实现在 `src/Solid/SMLib/`（目标 `MiniCADSolid`，唯一包含 SMLib 头文件的地方）。开发计划：`docs/Solid/PLAN.md`
 - `apps/Common/`：主窗口的界面与逻辑，各宿主共用（目标 `MiniCADApp`）。平台服务经 `AppPlatform`（`apps/Common/src/GUI/AppPlatform.h`）
-- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；Linux 默认 `VulkanGraphicsDevice`（`VulkanRenderer`、`VulkanBackend`，共用 `MiniGUI::VulkanContext`，要 Vulkan 1.3；GLSL 着色器构建时编成 SPIR-V），不行时 `GLES3GraphicsDevice`（OpenGL ES 3），窗口表面与 GL 上下文都由宿主经 SDL3 创建；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
+- `apps/Render/`：渲染后端，定义在 `cmake/Render.cmake`，每个平台只编译自己的图形接口。宿主经 `IGraphicsDevice`（`apps/Render/IGraphicsDevice.h`，`CreateGraphicsDevice` 按平台的默认顺序创建，桌面版可用 `--gpu` / `MINICAD_GPU` 指定）使用：Windows 为 `D3D12GraphicsDevice`（渲染器 `D3D12Renderer`、界面后端 `D3D12Backend`，共用 `MiniGUI::D3D12Context`）与 `D3D11GraphicsDevice`（`D3D11Renderer`、`D3D11Backend`），两者的 HLSL 共用 `apps/Render/Hlsl/`；网页默认 `WebGPUGraphicsDevice`（`WebGPURenderer`、`WebGPUBackend`，浏览器的 WebGPU 经 Emscripten 的 emdawnwebgpu 绑定），不支持或网址带 `?webgl` 时 `GLES3GraphicsDevice`（`GLES3Renderer`、`GLES3Backend`，WebGL2）；Linux 默认 `VulkanGraphicsDevice`（`VulkanRenderer`、`VulkanBackend`，共用 `MiniGUI::VulkanContext`，要 Vulkan 1.3；GLSL 着色器构建时编成 SPIR-V），不行时 `GLES3GraphicsDevice`（OpenGL ES 3），窗口表面与 GL 上下文都由宿主创建（Vulkan 表面经 `NativeWindow::createVulkanSurface`，EGL 在 `apps/Linux/src/Host/EglContext.cpp`）；`SoftwareBackend` 是截图对比测试用的软件光栅界面后端。开发计划：`docs/Render/PLAN.md`
 - `apps/Win32/`：桌面版宿主 `Win32Window`（目标 `MiniCADWin`）；自测 `Host/SelfTest.cpp`
 - `apps/Web/`：网页版宿主 `WebApp`（目标 `MiniCADWeb`）；`MiniGUIWebGallery` 是浏览器里的控件展示
-- `apps/Linux/`：Linux 宿主 `LinuxApp`（目标 `MiniCADLinux`）：SDL3 窗口与事件 + Vulkan，不行时 EGL / OpenGL ES 3；缺 SDL3 或 GLES3 开发文件时不编译，核心库与测试照常（Vulkan 开发文件与 glslangValidator 可选）
+- `apps/Linux/`：Linux 宿主 `LinuxApp`（目标 `MiniCADLinux`）：窗口系统 `WindowSystem`（`X11Window.cpp` 用 Xlib，`WaylandWindow.cpp` 用 wayland-client + xkbcommon，协议代码构建时由 wayland-scanner 生成；有 `WAYLAND_DISPLAY` 时先试 Wayland，环境变量 `MINICAD_WINDOWING=x11|wayland` 可指定）+ Vulkan，不行时 EGL / OpenGL ES 3；缺 EGL / GLES3 或 X11、Wayland 两套开发文件都没有时不编译，核心库与测试照常（Vulkan 开发文件与 glslangValidator 可选）
 - `apps/Android/`：安卓宿主 `AndroidApp`（目标 `MiniCADAndroid`，NativeActivity + Vulkan / GLES3），Gradle 工程经 externalNativeBuild 调仓库根的 CMake；手机上用只浏览的紧凑布局。开发计划：`docs/Android/PLAN.md`
 - `wasm/`：旧版 C 接口 WASM，只在 `-DMINICAD_BUILD_LEGACY_WASM=ON` 时编译（此时核心库定义 `MINICAD_WEB`，不编译 `apps/Web`）
 - `tests/`：`Core/`、`UI/` + `UI/Golden/`、`Serialization/`、`NodeGraph/`、`Solid/`、`Web/`（Node 运行的 JS 测试）、`Data/`（样例图纸）
@@ -70,9 +70,9 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）；打开图纸经 `OpenDrawings` 在后台读取（`DocumentManager::Load` 可在其他线程调用），读完在界面线程 `DocumentManager::Add`
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。命令行输入经 `GUI/CommandLine.cpp`（界面层命令）再交给 `Editor::RunCommand`
 - 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`，保存后下载；图形设备异步就绪（先试 WebGPU，再退 WebGL2）之后才初始化界面
-- Linux 版：系统标题栏（没有窗口按钮）；文件对话框用 SDL3 的接口（xdg-desktop-portal，没有时 zenity），打不开时提示改用拖放或命令行；没有自测 / `--bench`（`RunSelfTest` 只在桌面版里）
+- Linux 版：X11 与不给服务端装饰的 Wayland 合成器（GNOME 等）由界面画标题栏和窗口按钮（`WindowSystem::HasClientDecorations`；拖动 / 缩放边框 X11 经 `_NET_WM_MOVERESIZE`，Wayland 经 `xdg_toplevel_move` / `resize`），KDE 等给装饰的 Wayland 合成器用系统标题栏；停靠面板与文档能拖出成独立窗口只在 X11 上有（`LinuxFloatingWindow`，Wayland 不能定位窗口，面板在主窗口里浮动）；文件对话框走 xdg-desktop-portal（D-Bus，`apps/Linux/src/Host/FileDialog.cpp`），没有时 zenity，打不开时提示改用拖放或命令行；没有自测 / `--bench`（`RunSelfTest` 只在桌面版里）
 
-输入流程：Win32 消息 / DOM 事件 / SDL 事件 → `MiniGUI::Win32Input` / `WebInput` / `SDLInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
+输入流程：Win32 消息 / DOM 事件 / X11、Wayland 事件 → `MiniGUI::Win32Input` / `WebInput` / `LinuxInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
 
 ## 验证改动
 
@@ -80,7 +80,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 ## 发布
 
-推送 `v*` 标签后 CI 自动编译桌面版、网页版、Linux 版与安卓版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip` / `MiniCAD-<标签>-linux-x64.tar.gz` / `MiniCAD-<标签>-android-arm64.apk`、创建 GitHub Release，网页版部署到 Cloudflare Pages。安卓版的 SDK 组件版本在 `.github/workflows/build.yml` 的 `ANDROID_*` 变量（与 `apps/Android/app/build.gradle.kts` 一致）；仓库 secrets 有 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 时用正式密钥签名，否则用 CI 机器的调试密钥（每次不同，装过的设备要先卸载）。Linux 版在 Ubuntu 24.04 上编译，SDL3 由 CI 从源码编成静态库链入（版本与校验和在 `.github/workflows/build.yml` 的 `SDL3_VERSION` / `SDL3_SHA256`）。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
+推送 `v*` 标签后 CI 自动编译桌面版、网页版、Linux 版与安卓版、运行测试、打包 `MiniCAD-<标签>-windows-x64.zip` / `MiniCAD-<标签>-web.zip` / `MiniCAD-<标签>-linux-x64.tar.gz` / `MiniCAD-<标签>-android-arm64.apk`、创建 GitHub Release，网页版部署到 Cloudflare Pages。安卓版的 SDK 组件版本在 `.github/workflows/build.yml` 的 `ANDROID_*` 变量（与 `apps/Android/app/build.gradle.kts` 一致）；仓库 secrets 有 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 时用正式密钥签名，否则用 CI 机器的调试密钥（每次不同，装过的设备要先卸载）。Linux 版在 Ubuntu 24.04 上编译，只动态链接系统自带的库（X11、Wayland、xkbcommon、EGL、Vulkan 加载器、libdbus）。版本号只改根 `CMakeLists.txt` 的 `MINICAD_VERSION`（三段或四段）。发布说明取自 `docs/release-notes/<标签>.md`，打标签前先写好。
 
 ## 约定
 

@@ -65,7 +65,7 @@ namespace MiniGUI
 
         struct Options
         {
-            std::vector<const char*> instanceExtensions;            // 窗口系统要的实例扩展（Linux 由 SDL3 给出）
+            std::vector<const char*> instanceExtensions;            // 窗口系统要的实例扩展（Linux 由宿主按 X11 / Wayland 给出）
             std::function<bool(VkInstance, VkSurfaceKHR*)> createSurface;   // 建窗口表面；为空时不建（离屏）
             bool validation = false;                                // 打开校验层（系统装有 vulkan-validationlayers 时）
         };
@@ -83,6 +83,7 @@ namespace MiniGUI
         VkPhysicalDevice   GetPhysicalDevice() const { return m_physical; }
         VkDevice           GetDevice()         const { return m_device; }
         VkQueue            GetQueue()          const { return m_queue; }
+        uint32_t           GetQueueFamily()    const { return m_queueFamily; }
         VkSurfaceKHR       GetSurface()        const { return m_surface; }
         VkCommandBuffer    GetCommandBuffer()  const { return m_frames[m_frameIndex].cmd; }
         uint32_t           GetFrameIndex()     const { return m_frameIndex; }

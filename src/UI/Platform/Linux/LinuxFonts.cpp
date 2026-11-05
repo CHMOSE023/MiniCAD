@@ -1,4 +1,4 @@
-#include "Platform/SDL/SDLFonts.h"
+#include "Platform/Linux/LinuxFonts.h"
 #include "Text/Font.h"
 #include "Text/TextSystem.h"
 
@@ -35,7 +35,7 @@ namespace MiniGUI
         return nullptr;
     }
 
-    std::vector<std::shared_ptr<Font>> LoadSDLLanguageFonts(const std::string& fontDir, const std::string& language)
+    std::vector<std::shared_ptr<Font>> LoadLinuxLanguageFonts(const std::string& fontDir, const std::string& language)
     {
         const std::string bundled = BundledUiFontForLanguage(language);
         if (bundled.empty())
@@ -47,7 +47,7 @@ namespace MiniGUI
         return {};
     }
 
-    bool LoadSDLUIFonts(TextSystem& text, const std::string& bundledFont)
+    bool LoadLinuxUIFonts(TextSystem& text, const std::string& bundledFont)
     {
         auto main     = Font::LoadShared(bundledFont, 0);
         auto fallback = LoadSystemCjkFont();

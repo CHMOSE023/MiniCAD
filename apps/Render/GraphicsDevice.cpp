@@ -50,7 +50,7 @@ namespace MiniCAD
             { "vulkan", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<VulkanGraphicsDevice>()); } },
 #endif
 #if defined(MINICAD_RENDER_GLES3)
-            // 使用宿主经 SDL3 创建的当前 GLES3 上下文
+            // 使用宿主创建的当前 GLES3 上下文（Linux 经 EGL）
             { "gl", true, [] { return std::unique_ptr<IGraphicsDevice>(std::make_unique<GLES3GraphicsDevice>()); } },
 #endif
 #endif

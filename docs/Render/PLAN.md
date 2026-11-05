@@ -124,6 +124,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - 上面这一项经确认接受（稳定帧持平或更快、内存达标，慢的只是换图纸、全选这类少见的帧），默认顺序已改成 D3D12 → D3D11 → WARP；改后不带 `--gpu` 的 `--selftest` 0 失败（用的是 D3D12），`--gpu warp` 用 D3D12 的 WARP 跑完 `--bench`
 
 ### 阶段 2：Linux 宿主 + OpenGL——已完成（2026-10-26），CI 未加
+> 2026-11-05 起 Linux 宿主不再用 SDL3，窗口、输入、剪贴板、拖放、文件对话框直接用 X11 / Wayland / D-Bus（`docs/Linux/PLAN.md`）；下面是当时的记录。
 1. 宿主 `apps/Linux`（目标 `MiniCADLinux`，`LinuxApp` 实现 `AppPlatform`）：SDL3 开窗口、收事件、建 EGL / GLES3 上下文（X11 上也强制 EGL），只做这些，渲染仍走 `GLES3GraphicsDevice`
    - 窗口用系统标题栏（`HasWindowControls()` 为 false，与网页版一样不显示自绘的窗口按钮）；按需重绘：`RequestRedraw` 置标志并推一个 SDL 自定义事件，空闲时阻塞在 `SDL_WaitEvent`
    - 后台线程 `std::thread`，完成回调与 `Post` 经 SDL 自定义事件交回界面线程；资源目录 = 可执行文件目录（构建后复制 `assets`），用户数据 `$XDG_DATA_HOME/MiniCAD`（默认 `~/.local/share/MiniCAD`），系统字体目录逐级列出 `/usr/share/fonts` 等（`FontEngine` 不进子目录），打开链接 `SDL_OpenURL`
@@ -148,7 +149,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
    - 设备支持 `VK_EXT_line_rasterization` 的 Bresenham 线时，线按 Bresenham 光栅化：Vulkan 默认的线规则与 GL / D3D 不同，斜线差几个像素
    - 着色器写成 GLSL 450（`apps/Render/Vulkan/Shaders/`），构建时用 glslangValidator 编成 SPIR-V 头文件（`generated/Spirv/<文件>.h`）
 2. 选设备：要 Vulkan 1.3 + 动态渲染 + 能呈现到窗口表面；独立显卡 > 集成显卡 > 虚拟 > CPU（lavapipe）
-3. 窗口表面不在 `apps/Render` 里建：`NativeWindow` 带上实例扩展和建表面的回调（`NativeWindow::createVulkanSurface`），Linux 由 SDL3 提供；`NativeWindow::glContext` 说明宿主是否已建好 GL 上下文
+3. 窗口表面不在 `apps/Render` 里建：`NativeWindow` 带上实例扩展和建表面的回调（`NativeWindow::createVulkanSurface`），Linux 由宿主提供（当时经 SDL3，现在是 `WindowSystem::GetVulkanWindow`）；`NativeWindow::glContext` 说明宿主是否已建好 GL 上下文
 4. Linux 宿主：默认先建带 `SDL_WINDOW_VULKAN` 的窗口试 Vulkan；任何一步失败（没有驱动、没有 1.3、建表面失败）就销毁窗口，重建带 `SDL_WINDOW_OPENGL` 的窗口用 OpenGL ES 3。`--gpu vulkan|gl` 或 `MINICAD_GPU` 指定；`MINICAD_VULKAN_VALIDATION=1` 打开校验层（调试版默认开），警告与错误以 `[Vulkan]` 开头打到 stderr
 5. CMake：`cmake/Render.cmake` 的 Linux 段 `find_package(Vulkan)` + 找 `glslangValidator`，都有时定义 `MINICAD_RENDER_VULKAN`、编 `MiniGUI_Vulkan`；缺一个就只用 GLES3
 6. 验收结果（qmlinux：Ubuntu 24.04，Mesa 25.2 的 lavapipe / llvmpipe，都是 CPU 软件渲染；Xvfb）：
@@ -189,7 +190,7 @@ void CreateWebGPUGraphicsDeviceAsync(const NativeWindow& window, int width, int 
 
 ## 6. 待定
 
-- ~~Linux 的窗口系统~~：已定（阶段 2）用 SDL3，只用它开窗口、收事件、建 EGL / GLES3 上下文，渲染仍是自己的后端；一份代码覆盖 X11 / Wayland，macOS 也能用来先跑起来。Vulkan（阶段 3）同样由 SDL3 建表面（`SDL_Vulkan_CreateSurface`）
+- ~~Linux 的窗口系统~~：已定（阶段 2）用 SDL3，只用它开窗口、收事件、建 EGL / GLES3 上下文，渲染仍是自己的后端；一份代码覆盖 X11 / Wayland，macOS 也能用来先跑起来。Vulkan（阶段 3）同样由 SDL3 建表面（`SDL_Vulkan_CreateSurface`）。2026-11 改为直接用 X11 / Wayland（`docs/Linux/PLAN.md`）
 - 阶段 1、阶段 2、阶段 5 可以并行：阶段 0 完成后三者不碰同一批文件
 - ~~网页版同时编 WebGPU 和 WebGL2 两个后端，wasm 会变大~~：实测只多约 83 KB（阶段 5），不需要按需加载
-- ~~文件对话框在 Linux 上用 xdg-desktop-portal 还是 GTK~~：已定（阶段 2）用 SDL3 的对话框接口，它走 xdg-desktop-portal，没有时用 zenity；不引入 GTK
+- ~~文件对话框在 Linux 上用 xdg-desktop-portal 还是 GTK~~：已定（阶段 2）用 SDL3 的对话框接口，它走 xdg-desktop-portal，没有时用 zenity；不引入 GTK。去掉 SDL3 后宿主自己经 libdbus 调 portal，没有时 zenity

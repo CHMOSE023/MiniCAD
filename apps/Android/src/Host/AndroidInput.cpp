@@ -29,7 +29,7 @@ namespace MiniCAD
             return m;
         }
 
-        // 映射规则与 Win32Input / SDLInput 一致：字母、数字、F1～F12 与常用控制键；小键盘按文字处理
+        // 映射规则与 Win32Input / LinuxInput 一致：字母、数字、F1～F12 与常用控制键；小键盘按文字处理
         // 返回键不在这里：它走 OnBackInvokedCallback（MiniCADActivity → OnBack），两条路都发会变成两次 Esc
         Key KeyFromKeyCode(int32_t k)
         {

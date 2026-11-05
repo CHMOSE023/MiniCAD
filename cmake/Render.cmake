@@ -1,7 +1,7 @@
 # ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
 # 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
 #   Windows → D3D12 + D3D11    网页（Emscripten）→ WebGPU（浏览器支持时）+ GLES3（WebGL2，回退）
-#   Linux → Vulkan（默认）+ GLES3（EGL，回退；两者的窗口与上下文都由宿主经 SDL3 创建）
+#   Linux → Vulkan（默认）+ GLES3（EGL，回退；窗口表面与 EGL 上下文都由宿主 apps/Linux 经 X11 / Wayland 创建）
 # 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
 # MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
 
@@ -204,6 +204,7 @@ if(MINICAD_LINUX_VULKAN)
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanGraphicsDevice.cpp"
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderer.cpp"
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderTarget.cpp"
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanSwapchain.cpp"
     )
     target_include_directories(MiniCADRender PRIVATE ${MINICAD_SPIRV_ROOT})
     target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_VULKAN)

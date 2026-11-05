@@ -69,7 +69,7 @@ endif()
 if(ANDROID)
     add_subdirectory("apps/Android")    # GameActivity 宿主，由 apps/Android 的 Gradle 工程调用（docs/Android/PLAN.md）
 elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    add_subdirectory("apps/Linux")  # SDL3 宿主 + OpenGL ES 3（docs/Render/PLAN.md 阶段 2）
+    add_subdirectory("apps/Linux")  # X11 / Wayland 宿主 + Vulkan / OpenGL ES 3（docs/Render/PLAN.md）
 endif()
 
 if(EMSCRIPTEN)

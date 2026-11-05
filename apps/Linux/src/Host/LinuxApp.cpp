@@ -1,22 +1,34 @@
-// ── MiniCAD Linux 版宿主：SDL3 窗口、图形设备（Vulkan 或 EGL / GLES3）、事件循环与平台服务 ─────────
+// ── MiniCAD Linux 版宿主：X11 / Wayland 窗口、图形设备（Vulkan 或 EGL / GLES3）、事件循环与平台服务 ─────────
 #include "Host/LinuxApp.h"
+#include "Host/EglContext.h"
+#include "Host/FileDialog.h"
+#include "Host/LinuxFloatingWindow.h"
+#include "Host/WindowSystem.h"
 #ifdef MINICAD_WITH_SOLID
 #include "Solid/SMLib/SMLibKernel.h"
 #endif
 #include "Core/Log.h"
-#include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
+#include "MiniI18n/I18n.h"
 #include "Paint/Image.h"
-#include "Platform/SDL/SDLFonts.h"
-#include "Platform/SDL/SDLInput.h"
+#include "Platform/Linux/LinuxFonts.h"
+#include "Platform/Linux/LinuxInput.h"
 #include "Widgets/Dialog.h"
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
+#include "Widgets/TitleBar.h"
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <iterator>
+#include <mutex>
 #include <thread>
 #include <utility>
 #ifdef __GLIBC__
@@ -25,16 +37,79 @@
 
 namespace MiniCAD
 {
+    struct LinuxApp::UiQueue
+    {
+        std::mutex mutex;
+        std::deque<std::function<void()>> tasks;
+        int  fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        bool closed = false;
+
+        ~UiQueue()
+        {
+            if (fd >= 0)
+                close(fd);
+        }
+
+        void Wake()
+        {
+            const uint64_t one = 1;
+            [[maybe_unused]] const ssize_t n = write(fd, &one, sizeof(one));
+        }
+
+        void Push(std::function<void()> fn)
+        {
+            {
+                std::lock_guard lock(mutex);
+                if (closed)
+                    return;
+                tasks.push_back(std::move(fn));
+            }
+            Wake();
+        }
+
+        std::deque<std::function<void()>> Take()
+        {
+            std::lock_guard lock(mutex);
+            return std::exchange(tasks, {});
+        }
+
+        bool Empty()
+        {
+            std::lock_guard lock(mutex);
+            return tasks.empty();
+        }
+
+        void Drain()
+        {
+            uint64_t v = 0;
+            while (read(fd, &v, sizeof(v)) > 0) {}
+        }
+
+        void Close()
+        {
+            std::deque<std::function<void()>> dropped;
+            {
+                std::lock_guard lock(mutex);
+                closed = true;
+                dropped.swap(tasks);
+            }
+        }
+    };
+
     namespace
     {
-        // 推一个界面线程事件；失败（SDL 已退出、队列满）时就地释放，不再调用
-        void PushUiEvent(uint32_t type, std::function<void()>* fn)
+        std::atomic<int>  g_signalFd{ -1 };
+        std::atomic<bool> g_interrupted{ false };
+
+        void OnSignal(int)
         {
-            SDL_Event e{};
-            e.type       = type;
-            e.user.data1 = fn;
-            if (!SDL_PushEvent(&e))
-                delete fn;
+            g_interrupted = true;
+            const int fd = g_signalFd;
+            if (fd >= 0)
+            {
+                const uint64_t one = 1;
+                [[maybe_unused]] const ssize_t n = write(fd, &one, sizeof(one));
+            }
         }
 
         std::filesystem::path ToPath(const std::string& utf8)
@@ -54,7 +129,6 @@ namespace MiniCAD
             return v ? v : "";
         }
 
-        // ── 文件对话框（SDL3：xdg-desktop-portal，没有时 zenity）────────────
         struct FilterSpec
         {
             const char* name;       // N_ 标记的原文，打开对话框时翻译
@@ -81,46 +155,27 @@ namespace MiniCAD
             { N_("所有文件"),                  "*" },
         };
 
-        // 翻译后的筛选器。SDL 要求筛选器在回调之前一直有效：异步对话框随请求保存（只移动、不复制，
-        // 移动 vector 时元素不搬家，items 里指向 names 的指针仍然有效）
-        struct DialogFilters
-        {
-            std::vector<std::string>          names;
-            std::vector<SDL_DialogFileFilter> items;
-
-            DialogFilters() = default;
-            DialogFilters(DialogFilters&&) = default;
-            DialogFilters& operator=(DialogFilters&&) = default;
-            DialogFilters(const DialogFilters&) = delete;
-            DialogFilters& operator=(const DialogFilters&) = delete;
-
-            const SDL_DialogFileFilter* data() const { return items.data(); }
-            int count() const { return static_cast<int>(items.size()); }
-        };
-
         template <size_t N>
-        DialogFilters TranslateFilters(const FilterSpec (&specs)[N])
+        std::vector<FileDialogFilter> TranslateFilters(const FilterSpec (&specs)[N])
         {
-            DialogFilters f;
+            std::vector<FileDialogFilter> filters;
             for (const FilterSpec& s : specs)
-                f.names.push_back(Tr(s.name));
-            for (size_t i = 0; i < N; ++i)
-                f.items.push_back({ f.names[i].c_str(), specs[i].pattern });
-            return f;
+            {
+                FileDialogFilter f{ Tr(s.name), {} };
+                std::string pattern = s.pattern;
+                for (size_t pos = 0; pos <= pattern.size();)
+                {
+                    const size_t end = std::min(pattern.find(';', pos), pattern.size());
+                    if (end > pos)
+                        f.extensions.push_back(pattern.substr(pos, end - pos));
+                    pos = end + 1;
+                }
+                filters.push_back(std::move(f));
+            }
+            return filters;
         }
 
-        // 另存为的筛选器（顺序与 kSaveFormats 一致，所选下标即格式与版本）
-        DialogFilters SaveFilters()
-        {
-            DialogFilters f;
-            for (const SaveFormat& fmt : kSaveFormats)
-                f.names.push_back(Tr(fmt.label));
-            for (size_t i = 0; i < std::size(kSaveFormats); ++i)
-                f.items.push_back({ f.names[i].c_str(), kSaveFormats[i].ext + 1 });    // 扩展名去掉点
-            return f;
-        }
-
-        DialogFilters FiltersFor(FileKind kind)
+        std::vector<FileDialogFilter> FiltersFor(FileKind kind)
         {
             switch (kind)
             {
@@ -130,64 +185,6 @@ namespace MiniCAD
             }
         }
 
-        // 对话框结果：paths 为空 = 取消；error 不为空 = 对话框打不开（没有 portal / zenity 等）
-        using DialogResult = std::function<void(std::vector<std::string> paths, int filter, std::string error)>;
-
-        struct DialogRequest
-        {
-            uint32_t     uiEvent = 0;
-            DialogResult result;
-            DialogFilters filters;      // 回调之前 SDL 一直用着
-        };
-
-        // SDL 的回调可能在其他线程上：整理好结果后交回界面线程
-        void SDLCALL OnDialogDone(void* userdata, const char* const* filelist, int filter)
-        {
-            std::unique_ptr<DialogRequest> request(static_cast<DialogRequest*>(userdata));
-            std::vector<std::string> paths;
-            std::string error;
-            if (!filelist)
-            {
-                const char* e = SDL_GetError();
-                error = e && *e ? std::string(e) : Tr("未知错误");
-            }
-            else
-            {
-                for (const char* const* p = filelist; *p; ++p)
-                    paths.emplace_back(*p);
-            }
-            PushUiEvent(request->uiEvent, new std::function<void()>(
-                [result = std::move(request->result), paths = std::move(paths), filter, error = std::move(error)]() mutable
-                {
-                    result(std::move(paths), filter, std::move(error));
-                }));
-        }
-
-        // 同步等待的对话框（另存为：AppPlatform 要求当场返回路径）
-        struct SyncDialog
-        {
-            std::atomic<bool> done{ false };
-            std::string       path;
-            int               filter = -1;
-            std::string       error;
-        };
-
-        void SDLCALL OnSyncDialogDone(void* userdata, const char* const* filelist, int filter)
-        {
-            auto* d = static_cast<SyncDialog*>(userdata);
-            if (!filelist)
-            {
-                const char* e = SDL_GetError();
-                d->error = e && *e ? std::string(e) : Tr("未知错误");
-            }
-            else if (*filelist)
-            {
-                d->path = *filelist;
-            }
-            d->filter = filter;
-            d->done   = true;
-        }
-
         bool HasDot(const std::string& path)
         {
             const size_t slash = path.find_last_of('/');
@@ -195,257 +192,226 @@ namespace MiniCAD
         }
     }
 
-    LinuxApp::SdlWindow::~SdlWindow()
-    {
-        if (context)
-            SDL_GL_DestroyContext(context);
-        if (window)
-            SDL_DestroyWindow(window);
-        SDL_Quit();
-    }
-
     LinuxApp::LinuxApp() = default;
 
     LinuxApp::~LinuxApp()
     {
-        // 成员按声明的相反顺序销毁：输入层、界面先于图形设备，GL 上下文最后（SdlWindow）
+        if (m_window)
+            m_window->SetInput(nullptr);
+        if (m_queue)
+            m_queue->Close();
+        g_signalFd = -1;
     }
 
     // =========================================================
     // 初始化
     // =========================================================
-    bool LinuxApp::Initialize(const char* title, int width, int height, const std::string& gpu)
+    bool LinuxApp::Initialize(const char* title, int width, int height, const std::string& gpu, const std::string& windowing)
     {
-        SDL_SetAppMetadata("MiniCAD", nullptr, "io.github.minicad.MiniCAD");
-        SDL_SetHint(SDL_HINT_VIDEO_FORCE_EGL, "1");                 // X11 上也用 EGL 建上下文（与 Wayland 相同）
-        SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");       // 关闭按钮只发 CLOSE_REQUESTED，由 MainFrame 询问未保存的文档
-        if (!SDL_Init(SDL_INIT_VIDEO))
+        m_queue = std::make_shared<UiQueue>();
+        g_signalFd = m_queue->fd;
+        struct sigaction sa{};
+        sa.sa_handler = OnSignal;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGINT, &sa, nullptr);
+        sigaction(SIGTERM, &sa, nullptr);
+        std::signal(SIGPIPE, SIG_IGN);
+
+        m_window = CreateWindowSystem(windowing);
+        if (!m_window)
         {
-            LOG_ERROR_TR("SDL_Init 失败：{0}", SDL_GetError());
+            LOG_ERROR_TR("连接不上显示服务器（X11 或 Wayland）：检查 DISPLAY / WAYLAND_DISPLAY");
             return false;
         }
-        m_uiEvent = SDL_RegisterEvents(1);
+        LOG_INFO_TR("窗口系统：{0}", m_window->GetName());
 
-        // 按系统缩放放大初始尺寸
-        const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-        const float s     = scale > 0.0f ? scale : 1.0f;
-        const int   ww    = static_cast<int>(width * s);
-        const int   wh    = static_cast<int>(height * s);
+        WindowCallbacks cb;
+        cb.resized = [this] { UpdateDisplaySize(); RequestRedraw(); };
+        cb.exposed = [this] { RequestRedraw(); };
+        cb.activeChanged = [this](bool active)
+        {
+            if (!m_input)
+                return;
+            if (active)
+                m_main.CheckUiFileChanged();
+            if (m_window->HasClientDecorations())
+                if (MiniGUI::TitleBar* bar = m_main.GetTitleBar())
+                    bar->SetWindowActive(active || AnyFloatingActive());
+            RequestRedraw();
+        };
+        cb.stateChanged = [this]
+        {
+            if (!m_input)
+                return;
+            if (MiniGUI::TitleBar* bar = m_main.GetTitleBar())
+                bar->RefreshState();
+            RequestRedraw();
+        };
+        cb.closeRequested = [this]
+        {
+            if (m_input && !m_modal)
+                m_main.RequestExit();
+        };
+        cb.filesDropped = [this](std::vector<std::string> paths)
+        {
+            if (m_input && !m_modal)
+                m_main.OpenDrawings(paths);
+        };
+        cb.captionTest = [this](MiniGUI::Vec2 p)
+        {
+            MiniGUI::TitleBar* bar = m_input ? m_main.GetTitleBar() : nullptr;
+            return bar && bar->IsCaptionAt(p);
+        };
+        m_window->SetCallbacks(std::move(cb));
 
-        // 图形后端：默认先试 Vulkan，不行再用 OpenGL ES 3（--gpu gl 直接用它）。
-        // 窗口要按后端带 SDL_WINDOW_VULKAN 或 SDL_WINDOW_OPENGL，二者不能兼得：换后端就重建窗口（还没显示，看不出来）
-        if (gpu.empty() || gpu == "vulkan")
-        {
-            if (CreateSdlWindow(title, ww, wh, SDL_WINDOW_VULKAN))
-                m_graphics = CreateGraphicsDevice(VulkanWindow(), PixelWidth(), PixelHeight(), "vulkan");
-            if (!m_graphics)
-            {
-                LOG_WARN_TR("Vulkan 不可用，改用 OpenGL ES 3");
-                SDL_DestroyWindow(m_sdl.window);
-                m_sdl.window = nullptr;
-            }
-        }
-        if (!m_graphics)
-        {
-            if (!CreateSdlWindow(title, ww, wh, SDL_WINDOW_OPENGL) || !CreateGlContext())
-                return false;
-            NativeWindow window;
-            window.glContext = true;
-            m_graphics = CreateGraphicsDevice(window, PixelWidth(), PixelHeight(), "gl");
-        }
-        if (!m_graphics)
+        if (!CreateGraphics(title, width, height, gpu))
             return false;
-        SDL_SetWindowMinimumSize(m_sdl.window, static_cast<int>(640 * s), static_cast<int>(420 * s));
         LOG_INFO_TR("图形后端：{0}", m_graphics->GetName());
 
-        const int pw = PixelWidth();
-        const int ph = PixelHeight();
+        const int pw = m_window->PixelWidth();
+        const int ph = m_window->PixelHeight();
         m_viewportRT = m_graphics->CreateRenderTarget();
         m_viewportRT->Create(pw, ph);
 
-        const float ds = DisplayScale();
+        const float ds = m_window->GetScale();
         if (!m_main.Initialize(*this, static_cast<float>(pw) / ds, static_cast<float>(ph) / ds, ds))
             return false;
-        m_input = std::make_unique<MiniGUI::SDLInput>(&m_main.GetUI(), m_sdl.window);
 
-        // 窗口图标（任务栏、Alt+Tab）
+        MiniGUI::LinuxInput::Hooks hooks;
+        hooks.setCursor    = [this](MiniGUI::CursorShape s) { m_window->SetCursor(s); };
+        hooks.setTextInput = [this](bool enabled) { m_window->SetTextInput(enabled); };
+        hooks.setTextCaret = [this](const MiniGUI::Rect& r) { m_window->SetTextCaret(r); };
+        m_input = std::make_unique<MiniGUI::LinuxInput>(&m_main.GetUI(), m_window.get(), std::move(hooks));
+        m_input->SetPointScale(m_window->GetPointScale());
+        m_window->SetInput(m_input.get());
+        if (m_window->HasClientDecorations())
+            if (MiniGUI::TitleBar* bar = m_main.GetTitleBar())
+                bar->SetWindowActive(m_window->IsActive());
+
         MiniGUI::Image icon;
         if (MiniGUI::LoadImageFromFile(GetResourceDir() + "/icons/app.png", icon) && !icon.Empty())
-            if (SDL_Surface* surface = SDL_CreateSurfaceFrom(icon.width, icon.height, SDL_PIXELFORMAT_RGBA32, icon.pixels.data(), icon.width * 4))
-            {
-                SDL_SetWindowIcon(m_sdl.window, surface);
-                SDL_DestroySurface(surface);
-            }
+            m_window->SetIcon(icon.width, icon.height, reinterpret_cast<const uint8_t*>(icon.pixels.data()));
 
-        SDL_ShowWindow(m_sdl.window);
+        m_window->Show();
         m_running = true;
         return true;
     }
 
-    bool LinuxApp::CreateSdlWindow(const char* title, int width, int height, SDL_WindowFlags api)
+    bool LinuxApp::CreateGraphics(const char* title, int width, int height, const std::string& gpu)
     {
-        m_sdl.window = SDL_CreateWindow(title, width, height, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
-        if (!m_sdl.window)
-        {
-            if (api == SDL_WINDOW_VULKAN)
-                LOG_WARN_TR("创建 Vulkan 窗口失败：{0}", SDL_GetError());      // 之后改用 OpenGL ES 3
-            else
-                LOG_ERROR_TR("创建窗口失败：{0}", SDL_GetError());
-        }
-        return m_sdl.window != nullptr;
-    }
-
-    bool LinuxApp::CreateGlContext()
-    {
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);      // 窗口只画界面；CAD 视口画在自己的离屏目标里（带深度）
-        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-        m_sdl.context = SDL_GL_CreateContext(m_sdl.window);
-        if (!m_sdl.context)
-        {
-            LOG_ERROR_TR("创建 OpenGL ES 3 上下文失败：{0}", SDL_GetError());
+        constexpr int kMinWidth = 640, kMinHeight = 420;
+        if (!m_window->Open(title, width, height, kMinWidth, kMinHeight))
             return false;
-        }
-        SDL_GL_MakeCurrent(m_sdl.window, m_sdl.context);
-        SDL_GL_SetSwapInterval(1);
-        return true;
-    }
 
-    NativeWindow LinuxApp::VulkanWindow() const
-    {
-        // 实例扩展与建表面都交给 SDL3：图形设备（apps/Render）不依赖窗口库
-        NativeWindow window;
-        Uint32 count = 0;
-        if (const char* const* exts = SDL_Vulkan_GetInstanceExtensions(&count))
-            window.vulkanInstanceExtensions.assign(exts, exts + count);
-        window.createVulkanSurface = [w = m_sdl.window](void* instance, uint64_t* surface)
+        if (gpu.empty() || gpu == "vulkan")
         {
-            VkSurfaceKHR s{};   // SDL_vulkan.h 自带句柄类型的定义，没有 vulkan.h 的 VK_NULL_HANDLE
-            if (!SDL_Vulkan_CreateSurface(w, static_cast<VkInstance>(instance), nullptr, &s))
+            const NativeWindow vulkan = m_window->GetVulkanWindow();
+            if (vulkan.createVulkanSurface)
             {
-                LOG_WARN_TR("SDL_Vulkan_CreateSurface 失败：{0}", SDL_GetError());
-                return false;
+                m_graphics = CreateGraphicsDevice(vulkan, m_window->PixelWidth(), m_window->PixelHeight(), "vulkan");
+                if (!m_graphics)
+                {
+                    LOG_WARN_TR("Vulkan 不可用，改用 OpenGL ES 3");
+                    m_window->Close();
+                    if (!m_window->Open(title, width, height, kMinWidth, kMinHeight))
+                        return false;
+                }
             }
-            *surface = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(s));
-            return true;
-        };
-        return window;
-    }
-
-    int LinuxApp::PixelWidth() const
-    {
-        int pw = 0, ph = 0;
-        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
-        return pw;
-    }
-
-    int LinuxApp::PixelHeight() const
-    {
-        int pw = 0, ph = 0;
-        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
-        return ph;
-    }
-
-    float LinuxApp::DisplayScale() const
-    {
-        const float s = SDL_GetWindowDisplayScale(m_sdl.window);
-        return s > 0.0f ? s : 1.0f;
+        }
+        if (!m_graphics)
+        {
+            m_egl = std::make_unique<EglContext>();
+            if (!m_egl->Create(m_window->GetEglPlatform(), m_window->GetEglDisplay(), m_window->GetEglWindow(),
+                               m_window->GetEglVisualId(), m_window->EglVsync()))
+                return false;
+            NativeWindow window;
+            window.glContext     = true;
+            window.glMakeCurrent = [egl = m_egl.get()] { egl->MakeCurrent(nullptr); };
+            m_graphics = CreateGraphicsDevice(window, m_window->PixelWidth(), m_window->PixelHeight(), "gl");
+        }
+        return m_graphics != nullptr;
     }
 
     void LinuxApp::UpdateDisplaySize()
     {
-        int pw = 0, ph = 0;
-        SDL_GetWindowSizeInPixels(m_sdl.window, &pw, &ph);
+        if (!m_graphics)
+            return;
+        const int pw = m_window->PixelWidth();
+        const int ph = m_window->PixelHeight();
         if (pw <= 0 || ph <= 0)
             return;
         m_graphics->Resize(pw, ph);
-        const float ds = DisplayScale();
+        if (!m_input)
+            return;
+        m_input->SetPointScale(m_window->GetPointScale());
+        const float ds = m_window->GetScale();
         m_main.OnResize(static_cast<float>(pw) / ds, static_cast<float>(ph) / ds, ds);
     }
 
     // =========================================================
     // 事件循环
     // =========================================================
-    int LinuxApp::Run()
+    bool LinuxApp::WaitEvents(int timeoutMs)
     {
-        // 空闲时阻塞等待事件，CPU 占用为 0；有重绘请求时取完队列里的事件再画一帧（本帧之前的输入已全部交给 Editor）
-        while (m_running)
-        {
-            SDL_Event e;
-            const bool got = m_redraw ? SDL_PollEvent(&e) : SDL_WaitEvent(&e);
-            if (got)
-            {
-                HandleEvent(e);
-                while (m_running && SDL_PollEvent(&e))
-                    HandleEvent(e);
-            }
-            if (m_running && m_redraw.exchange(false))
-                m_main.RenderFrame();       // 绘制期间提出的重绘请求留到下一轮（与网页版相同）
-        }
-
-        // 退出前释放还在队列里的界面线程任务（不再执行）
-        SDL_Event e;
-        while (SDL_PeepEvents(&e, 1, SDL_GETEVENT, m_uiEvent, m_uiEvent) > 0)
-            delete static_cast<std::function<void()>*>(e.user.data1);
-        return 0;
+        if (m_window->PrepareWait())
+            timeoutMs = 0;
+        pollfd fds[2] = { { m_window->GetFd(), POLLIN, 0 }, { m_queue->fd, POLLIN, 0 } };
+        if (poll(fds, 2, timeoutMs) < 0)
+            fds[0].revents = fds[1].revents = 0;
+        m_window->Dispatch((fds[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0);
+        if (fds[1].revents & POLLIN)
+            m_queue->Drain();
+        return m_window->IsAlive();
     }
 
-    void LinuxApp::HandleEvent(const SDL_Event& e)
+    void LinuxApp::RunTasks()
     {
-        if (e.type == m_uiEvent)
+        for (auto& fn : m_queue->Take())
         {
-            // RunInBackground 的完成回调、Post、对话框结果；data1 为空时只是唤醒（RequestRedraw）
-            std::unique_ptr<std::function<void()>> fn(static_cast<std::function<void()>*>(e.user.data1));
-            if (fn && *fn)
-                (*fn)();
-            return;
+            if (!m_running)
+                break;
+            if (fn)
+                fn();
         }
-        if (m_input)
-            m_input->HandleEvent(e);
+    }
 
-        switch (e.type)
+    int LinuxApp::Run()
+    {
+        while (m_running)
         {
-        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-            UpdateDisplaySize();
-            RequestRedraw();
-            break;
+            int timeout = -1;
+            const bool floatingDirty = std::any_of(m_floating.begin(), m_floating.end(), [](const LinuxFloatingWindow* w) { return w->NeedsRender(); });
+            if (!m_queue->Empty() || g_interrupted || (m_redraw && m_window->CanRender()) || floatingDirty)
+                timeout = 0;
+            else
+            {
+                std::vector<int> timers{ m_input->TimerTimeoutMs(), m_window->TimeoutMs() };
+                for (const LinuxFloatingWindow* w : m_floating)
+                    timers.push_back(w->TimerTimeoutMs());
+                for (const int t : timers)
+                    if (t >= 0)
+                        timeout = timeout < 0 ? t : std::min(timeout, t);
+            }
 
-        case SDL_EVENT_WINDOW_EXPOSED:
-            RequestRedraw();
-            break;
-
-        case SDL_EVENT_WINDOW_FOCUS_GAINED:
-            // 没有监视目录：切回窗口时检查界面描述文件是否改过（在编辑器里改完切回来即可看到）
-            m_main.CheckUiFileChanged();
-            RequestRedraw();
-            break;
-
-        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-        case SDL_EVENT_QUIT:                // 终端里 Ctrl+C、kill
-            m_main.RequestExit();           // 有未保存的文档时先询问
-            break;
-
-        case SDL_EVENT_DROP_BEGIN:
-            m_drops.clear();
-            break;
-
-        case SDL_EVENT_DROP_FILE:
-            if (e.drop.data)
-                m_drops.emplace_back(e.drop.data);
-            break;
-
-        case SDL_EVENT_DROP_COMPLETE:
-            if (!m_drops.empty())
-                m_main.OpenDrawings(std::exchange(m_drops, {}));
-            break;
-
-        default:
-            break;
+            if (!WaitEvents(timeout))
+                break;
+            if (g_interrupted.exchange(false))
+                m_main.RequestExit();
+            RunTasks();
+            m_input->ProcessTimers();
+            for (LinuxFloatingWindow* w : std::vector(m_floating))
+                w->ProcessTimers();
+            m_window->ProcessTimers();
+            if (m_running && m_redraw && m_window->CanRender())
+            {
+                m_redraw = false;
+                m_main.RenderFrame();
+            }
+            if (m_running)
+                RenderFloatingWindows();
         }
+        m_queue->Close();
+        return 0;
     }
 
     // =========================================================
@@ -458,19 +424,33 @@ namespace MiniCAD
 
     bool LinuxApp::LoadUiFonts(MiniGUI::TextSystem& text)
     {
-        return MiniGUI::LoadSDLUIFonts(text, GetResourceDir() + "/fonts/NotoSansSC-UI.ttf");
+        return MiniGUI::LoadLinuxUIFonts(text, GetResourceDir() + "/fonts/NotoSansSC-UI.ttf");
     }
 
     std::vector<std::shared_ptr<MiniGUI::Font>> LinuxApp::LoadLanguageUiFonts(const std::string& language)
     {
-        return MiniGUI::LoadSDLLanguageFonts(GetResourceDir() + "/fonts/", language);
+        return MiniGUI::LoadLinuxLanguageFonts(GetResourceDir() + "/fonts/", language);
+    }
+
+    void LinuxApp::RenderFloatingWindows()
+    {
+        // 逐个画：画的过程中宿主可能关掉窗口（推迟到下一帧销毁），按副本遍历、画之前确认还登记着
+        const std::vector<LinuxFloatingWindow*> windows = m_floating;
+        for (LinuxFloatingWindow* w : windows)
+            if (std::find(m_floating.begin(), m_floating.end(), w) != m_floating.end() && w->NeedsRender())
+                w->Render();
+    }
+
+    void LinuxApp::WakeLoop()
+    {
+        if (m_queue)
+            m_queue->Wake();
     }
 
     void LinuxApp::RequestRedraw()
     {
-        // 线程安全：后台任务里也可调用。已经有未处理的请求时不再推事件
-        if (!m_redraw.exchange(true) && m_uiEvent)
-            PushUiEvent(m_uiEvent, nullptr);
+        if (!m_redraw.exchange(true) && m_queue)
+            m_queue->Wake();
     }
 
     void LinuxApp::BeginUiPass()
@@ -480,11 +460,12 @@ namespace MiniCAD
 
     void LinuxApp::EndUiPass()
     {
-        m_graphics->Present();          // Vulkan 在这里呈现
-        if (m_sdl.context)
-            SDL_GL_SwapWindow(m_sdl.window);    // OpenGL ES 3 交换缓冲
+        m_window->BeforePresent();
+        m_graphics->Present();
+        if (m_egl)
+            m_egl->Swap();
         if (m_input)
-            m_input->Sync();        // 按焦点开关文字输入，候选窗跟随光标
+            m_input->Sync();
     }
 
     void LinuxApp::WaitForGpu()
@@ -496,7 +477,7 @@ namespace MiniCAD
     {
         m_graphics->ReleaseFreeMemory();
 #ifdef __GLIBC__
-        malloc_trim(0);     // 把堆里整页空闲的内存归还系统
+        malloc_trim(0);
 #endif
     }
 
@@ -512,26 +493,16 @@ namespace MiniCAD
     // =========================================================
     // AppPlatform：窗口
     // =========================================================
-    void LinuxApp::SetTitle(const std::string& utf8)
-    {
-        SDL_SetWindowTitle(m_sdl.window, utf8.c_str());
-    }
-
-    bool LinuxApp::IsWindowActive() const    { return (SDL_GetWindowFlags(m_sdl.window) & SDL_WINDOW_INPUT_FOCUS) != 0; }
-    bool LinuxApp::IsWindowMaximized() const { return (SDL_GetWindowFlags(m_sdl.window) & SDL_WINDOW_MAXIMIZED) != 0; }
-    void LinuxApp::MinimizeWindow()          { SDL_MinimizeWindow(m_sdl.window); }
-
-    void LinuxApp::ToggleMaximizeWindow()
-    {
-        if (IsWindowMaximized())
-            SDL_RestoreWindow(m_sdl.window);
-        else
-            SDL_MaximizeWindow(m_sdl.window);
-    }
+    void LinuxApp::SetTitle(const std::string& utf8)       { m_window->SetTitle(utf8); }
+    bool LinuxApp::HasWindowControls() const               { return m_window && m_window->HasClientDecorations(); }
+    bool LinuxApp::IsWindowActive() const                  { return m_window->IsActive() || AnyFloatingActive(); }
+    bool LinuxApp::IsWindowMaximized() const               { return m_window->IsMaximized(); }
+    void LinuxApp::MinimizeWindow()                        { m_window->Minimize(); }
+    void LinuxApp::ToggleMaximizeWindow()                  { m_window->ToggleMaximize(); }
 
     void LinuxApp::CloseWindow()
     {
-        Post([this] { m_main.RequestExit(); });     // 与 Win32 的 WM_CLOSE 相同：当前事件处理完再询问
+        Post([this] { m_main.RequestExit(); });
     }
 
     void LinuxApp::Quit()
@@ -540,90 +511,183 @@ namespace MiniCAD
     }
 
     // =========================================================
+    // 浮动窗口（只有 X11：WindowSystem::CreateSubWindow）
+    // =========================================================
+    std::unique_ptr<IFloatingWindow> LinuxApp::CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document,
+                                                                    IFloatingWindow* owner)
+    {
+        WindowSystem* ownerWindow = owner ? static_cast<LinuxFloatingWindow*>(owner)->GetWindowSystem() : nullptr;
+        auto window = std::make_unique<LinuxFloatingWindow>(*this, title, rect, document, ownerWindow);
+        if (!window->IsValid())
+            return nullptr;
+        return window;
+    }
+
+    void LinuxApp::ActivateMainWindow()
+    {
+        m_window->Activate();
+    }
+
+    void LinuxApp::RegisterFloatingWindow(LinuxFloatingWindow* w)
+    {
+        m_floating.push_back(w);
+    }
+
+    void LinuxApp::UnregisterFloatingWindow(LinuxFloatingWindow* w)
+    {
+        m_floating.erase(std::remove(m_floating.begin(), m_floating.end(), w), m_floating.end());
+    }
+
+    bool LinuxApp::AnyFloatingActive() const
+    {
+        return std::any_of(m_floating.begin(), m_floating.end(), [](const LinuxFloatingWindow* w) { return w->IsActive(); });
+    }
+
+    void LinuxApp::OnFloatingWindowActive(bool active)
+    {
+        if (!m_input || !m_window->HasClientDecorations())
+            return;
+        if (MiniGUI::TitleBar* bar = m_main.GetTitleBar())
+            bar->SetWindowActive(active || m_window->IsActive() || AnyFloatingActive());
+        RequestRedraw();
+    }
+
+    MiniGUI::Vec2 LinuxApp::RootToMain(int x, int y) const
+    {
+        int ox = 0, oy = 0;
+        m_window->GetRootPosition(ox, oy);
+        const float s = m_window->GetScale();
+        return { static_cast<float>(x - ox) / s, static_cast<float>(y - oy) / s };
+    }
+
+    void LinuxApp::MainToRoot(MiniGUI::Vec2 p, int& x, int& y) const
+    {
+        int ox = 0, oy = 0;
+        m_window->GetRootPosition(ox, oy);
+        const float s = m_window->GetScale();
+        x = ox + static_cast<int>(std::lround(p.x * s));
+        y = oy + static_cast<int>(std::lround(p.y * s));
+    }
+
+    // =========================================================
     // AppPlatform：文件
     // =========================================================
-    void LinuxApp::ShowDialogError(const char* what)
+    FileDialogRequest LinuxApp::MakeRequest(FileDialogRequest::Mode mode, const std::string& title) const
+    {
+        FileDialogRequest r;
+        r.mode   = mode;
+        r.title  = title;
+        r.parent = m_window->GetDialogParent();
+        return r;
+    }
+
+    void LinuxApp::ShowDialogError(const std::string& what)
     {
         LOG_ERROR_TR("文件对话框打不开：{0}", what);
         MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("无法打开文件对话框"),
-                                std::string(what) + "\n\n" + Tr("需要 xdg-desktop-portal 或 zenity。也可以把文件拖进窗口，或在命令行上给出图纸路径。"),
+                                what + "\n\n" + Tr("需要 xdg-desktop-portal 或 zenity。也可以把文件拖进窗口，或在命令行上给出图纸路径。"),
                                 { Tr("确定") }, [](int) {});
         RequestRedraw();
     }
 
+    void LinuxApp::ShowDialog(FileDialogRequest request, std::function<void(FileDialogResult)> done)
+    {
+        std::thread([queue = m_queue, request = std::move(request), done = std::move(done)]() mutable
+        {
+            FileDialogResult result = RunFileDialog(request);
+            queue->Push([done = std::move(done), result = std::move(result)]() mutable { done(std::move(result)); });
+        }).detach();
+    }
+
+    FileDialogResult LinuxApp::ShowDialogModal(FileDialogRequest request)
+    {
+        struct State
+        {
+            std::atomic<bool> done{ false };
+            FileDialogResult  result;
+        };
+        auto state = std::make_shared<State>();
+        std::thread([state, queue = m_queue, request = std::move(request)]
+        {
+            state->result = RunFileDialog(request);
+            state->done   = true;
+            queue->Wake();
+        }).detach();
+
+        m_modal = true;
+        m_window->SetInput(nullptr);
+        for (LinuxFloatingWindow* w : m_floating)
+            w->SetInputEnabled(false);
+        while (!state->done && WaitEvents(100)) {}
+        m_window->SetInput(m_input.get());
+        for (LinuxFloatingWindow* w : m_floating)
+            w->SetInputEnabled(true);
+        m_modal = false;
+        RequestRedraw();
+        return state->done ? state->result : FileDialogResult{};
+    }
+
     void LinuxApp::PickFile(FileKind kind, std::function<void(const std::string& path)> done)
     {
-        auto* request = new DialogRequest{ m_uiEvent, [this, done = std::move(done)](std::vector<std::string> paths, int, std::string error)
+        FileDialogRequest r = MakeRequest(FileDialogRequest::Mode::Open, Tr("打开"));
+        r.filters = FiltersFor(kind);
+        ShowDialog(std::move(r), [this, done = std::move(done)](FileDialogResult result)
         {
-            if (!error.empty())
-                ShowDialogError(error.c_str());
-            else if (!paths.empty() && done)
-                done(paths.front());
-        } };
-        request->filters = FiltersFor(kind);
-        const DialogFilters& f = request->filters;     // 回调里会删掉 request：调用之后不再碰它
-        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, f.data(), f.count(), nullptr, false);
+            if (!result.error.empty())
+                ShowDialogError(result.error);
+            else if (!result.paths.empty() && done)
+                done(result.paths.front());
+        });
     }
 
     void LinuxApp::PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done)
     {
-        auto* request = new DialogRequest{ m_uiEvent, [this, done = std::move(done)](std::vector<std::string> paths, int, std::string error)
+        FileDialogRequest r = MakeRequest(FileDialogRequest::Mode::OpenMultiple, Tr("打开"));
+        r.filters = TranslateFilters(kDrawingFilters);
+        ShowDialog(std::move(r), [this, done = std::move(done)](FileDialogResult result)
         {
-            if (!error.empty())
-                ShowDialogError(error.c_str());
-            else if (!paths.empty() && done)
-                done(paths);
-        } };
-        request->filters = TranslateFilters(kDrawingFilters);
-        const DialogFilters& f = request->filters;
-        SDL_ShowOpenFileDialog(OnDialogDone, request, m_sdl.window, f.data(), f.count(), nullptr, true);
+            if (!result.error.empty())
+                ShowDialogError(result.error);
+            else if (!result.paths.empty() && done)
+                done(result.paths);
+        });
     }
 
     bool LinuxApp::PickFolder(const std::vector<std::string>&, std::function<void(const std::string& dir)> done)
     {
-        // 与桌面版相同：直接在本机目录里找，不需要按文件名筛选
-        auto* request = new DialogRequest{ m_uiEvent, [this, done = std::move(done)](std::vector<std::string> paths, int, std::string error)
+        ShowDialog(MakeRequest(FileDialogRequest::Mode::Folder, Tr("选择文件夹")), [this, done = std::move(done)](FileDialogResult result)
         {
-            if (!error.empty())
-                ShowDialogError(error.c_str());
-            else if (!paths.empty() && done)
-                done(paths.front());
-        } };
-        SDL_ShowOpenFolderDialog(OnDialogDone, request, m_sdl.window, nullptr, false);
+            if (!result.error.empty())
+                ShowDialogError(result.error);
+            else if (!result.paths.empty() && done)
+                done(result.paths.front());
+        });
         return true;
     }
 
     std::string LinuxApp::ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version)
     {
-        // AppPlatform 要求当场返回路径：在界面线程上等对话框关闭（期间只取系统事件，不画界面）
-        const DialogFilters filters = SaveFilters();
-        SyncDialog dialog;
-        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, filters.data(), filters.count(),
-                               suggestedName.empty() ? nullptr : suggestedName.c_str());
-        while (!dialog.done)
+        FileDialogRequest r = MakeRequest(FileDialogRequest::Mode::Save, Tr("另存为"));
+        r.currentName = suggestedName;
+        for (const SaveFormat& fmt : kSaveFormats)
+            r.filters.push_back({ Tr(fmt.label), { fmt.ext + 1 } });
+        const FileDialogResult result = ShowDialogModal(std::move(r));
+        if (!result.error.empty())
         {
-            SDL_PumpEvents();
-            SDL_Delay(10);
-        }
-        SDL_FlushEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_MOUSE_REMOVED);   // 对话框打开期间在主窗口上的按键、点击作废
-        if (!dialog.error.empty())
-        {
-            ShowDialogError(dialog.error.c_str());
+            ShowDialogError(result.error);
             return {};
         }
-        std::string path = dialog.path;
-        if (path.empty())
+        if (result.paths.empty())
             return {};
-        if (dialog.filter >= 0 && dialog.filter < static_cast<int>(std::size(kSaveFormats)))
+        std::string path = result.paths.front();
+        if (result.filter >= 0 && result.filter < static_cast<int>(std::size(kSaveFormats)))
         {
-            // 所选筛选器决定格式与版本；没写扩展名时按筛选器补上
             if (!HasDot(path))
-                path += kSaveFormats[dialog.filter].ext;
-            version = kSaveFormats[dialog.filter].version;
+                path += kSaveFormats[result.filter].ext;
+            version = kSaveFormats[result.filter].version;
         }
         else
         {
-            // 对话框不报告所选筛选器（zenity 等）：按扩展名，认不出时存为 .mcad
             const int i = FindSaveFormat(path, version);
             if (i < 0)
                 path += ".mcad";
@@ -635,22 +699,16 @@ namespace MiniCAD
 
     std::string LinuxApp::ChooseExportPath(FileKind kind, const std::string& suggestedName)
     {
-        const DialogFilters f = FiltersFor(kind);
-        SyncDialog dialog;
-        SDL_ShowSaveFileDialog(OnSyncDialogDone, &dialog, m_sdl.window, f.data(), f.count(),
-                               suggestedName.empty() ? nullptr : suggestedName.c_str());
-        while (!dialog.done)
+        FileDialogRequest r = MakeRequest(FileDialogRequest::Mode::Save, Tr("导出"));
+        r.currentName = suggestedName;
+        r.filters     = FiltersFor(kind);
+        const FileDialogResult result = ShowDialogModal(std::move(r));
+        if (!result.error.empty())
         {
-            SDL_PumpEvents();
-            SDL_Delay(10);
-        }
-        SDL_FlushEvents(SDL_EVENT_KEY_DOWN, SDL_EVENT_MOUSE_REMOVED);
-        if (!dialog.error.empty())
-        {
-            ShowDialogError(dialog.error.c_str());
+            ShowDialogError(result.error);
             return {};
         }
-        std::string path = dialog.path;
+        std::string path = result.paths.empty() ? std::string() : result.paths.front();
         if (!path.empty() && kind == FileKind::NodeGraph && !HasDot(path))
             path += ".mcnode";
         return path;
@@ -658,16 +716,13 @@ namespace MiniCAD
 
     std::string LinuxApp::GetResourceDir() const
     {
-        // 可执行文件所在目录（资源在构建后复制到它旁边）；SDL 返回的路径以 / 结尾
-        std::string dir = SDL_GetBasePath() ? SDL_GetBasePath() : "";
-        while (dir.size() > 1 && dir.back() == '/')
-            dir.pop_back();
-        return dir;
+        std::error_code ec;
+        const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        return ec ? std::string(".") : ToUtf8(exe.parent_path());
     }
 
     std::string LinuxApp::GetUserDataDir() const
     {
-        // $XDG_DATA_HOME/MiniCAD，默认 ~/.local/share/MiniCAD
         std::string base = GetEnv("XDG_DATA_HOME");
         if (base.empty())
         {
@@ -681,7 +736,6 @@ namespace MiniCAD
 
     std::string LinuxApp::GetSystemLanguage() const
     {
-        // 同 gettext 的优先级；"zh_CN.UTF-8" 由 InitLanguage 规范成 "zh-CN"，"C" / "POSIX" 当作不知道
         for (const char* name : { "LC_ALL", "LC_MESSAGES", "LANG" })
             if (std::string v = GetEnv(name); !v.empty())
                 return v;
@@ -690,7 +744,7 @@ namespace MiniCAD
 
     std::vector<std::string> LinuxApp::GetSystemFontDirs() const
     {
-        // FontEngine 只按文件名在目录里找、不进子目录，而 Linux 的字体按包分在子目录里（truetype/dejavu/ ……）：逐级列出
+        // FontEngine 不进子目录，而 Linux 的字体按包分在子目录里：逐级列出
         std::vector<std::filesystem::path> roots;
         const std::string home     = GetEnv("HOME");
         const std::string dataHome = GetEnv("XDG_DATA_HOME");
@@ -722,7 +776,7 @@ namespace MiniCAD
 
     bool LinuxApp::OpenUrl(const std::string& url)
     {
-        return !url.empty() && SDL_OpenURL(url.c_str());   // xdg-open
+        return !url.empty() && LaunchDetached({ "xdg-open", url });
     }
 
     bool LinuxApp::HttpGet(const std::string& url, std::string& body)
@@ -746,18 +800,15 @@ namespace MiniCAD
     // =========================================================
     void LinuxApp::RunInBackground(std::function<void()> work, std::function<void()> done)
     {
-        // done 经 SDL 事件交回界面线程；只捕获事件类型，宿主先于线程结束时事件推不进去就地释放
-        auto* pending = new std::function<void()>(std::move(done));
-        const uint32_t uiEvent = m_uiEvent;
-        std::thread([uiEvent, work = std::move(work), pending]
+        std::thread([queue = m_queue, work = std::move(work), done = std::move(done)]() mutable
         {
             work();
-            PushUiEvent(uiEvent, pending);
+            queue->Push(std::move(done));
         }).detach();
     }
 
     void LinuxApp::Post(std::function<void()> fn)
     {
-        PushUiEvent(m_uiEvent, new std::function<void()>(std::move(fn)));
+        m_queue->Push(std::move(fn));
     }
 }

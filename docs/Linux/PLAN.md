@@ -1,6 +1,6 @@
 # Linux 版：去掉 SDL3，直接用 X11 / Wayland
 
-> 状态：计划
+> 状态：全部完成（2026-11-05）；实际做法与本计划不同之处见 §10
 > 定位：Linux 版的窗口、输入、剪贴板、拖放、文件对话框都改用系统原生接口，不再依赖 SDL3；同时补齐与 Windows 版的差距：
 > 自绘标题栏（`HasWindowControls()` 为 true）、停靠面板与文档能拖出成独立窗口（`AppPlatform::CreateFloatingWindow`）。
 > 已定：X11 与原生 Wayland 都做，运行时按会话自动选；渲染仍是现有的 `VulkanGraphicsDevice` / `GLES3GraphicsDevice`。
@@ -31,6 +31,7 @@ SDL3 能做到自绘标题栏（无边框窗口 + `SDL_SetWindowHitTest`）和�
 |---|---|---|
 | X11 窗口、事件、XIM 输入法、选择区（剪贴板、拖放） | Xlib | `libx11-dev` |
 | X11 光标主题 | Xcursor | `libxcursor-dev` |
+| X11 自绘标题栏窗口的圆角（可选，没有时方角） | Xext（Shape 扩展） | `libxext-dev` |
 | Wayland 客户端、光标主题、EGL 窗口 | wayland-client / wayland-cursor / wayland-egl | `libwayland-dev` |
 | Wayland 协议 XML（构建时由 `wayland-scanner` 生成代码） | xdg-shell、xdg-decoration、fractional-scale-v1、viewporter、cursor-shape-v1、text-input-unstable-v3 | `wayland-protocols`（≥ 1.32，Ubuntu 24.04 有 1.45） |
 | 键盘布局（Wayland 必需；X11 只用它的 keysym 转 UTF-8） | xkbcommon | `libxkbcommon-dev` |
@@ -149,7 +150,7 @@ namespace MiniGUI
 | 输入法 | XIM：优先 on-the-spot（`XIMPreeditCallbacks`，组合串画在我们的文本框里），不支持时 over-the-spot（`XIMPreeditPosition`，`XNSpotLocation` 跟随文字光标），再不行 root；不在文本框时 `XUnsetICFocus` | `zwp_text_input_v3`：进文本框 enable + `set_cursor_rectangle` + commit，preedit / commit_string 在 `done` 时一起交给 `UIContext::Composition*` / `TextInput`；没有该协议时只有 xkbcommon 的按键文字（没有输入法） |
 | 剪贴板 | `CLIPBOARD` 选择区，提供 `UTF8_STRING` / `text/plain;charset=utf-8` / `STRING`；读取时 `XConvertSelection` 后在事件里等最多 500 ms；不支持 INCR（超大文本） | `wl_data_device`：写 = 建 data_source、`set_selection`（用最近一次输入的 serial）；读 = 当前 offer 的 `receive` 到管道，限时读完；自己是源时直接返回自己的文字 |
 | 拖放文件 | XDND v5：`XdndAware`，只接受 `text/uri-list`，`file://` 解码成 UTF-8 路径 | `wl_data_device` 的 enter / drop，接受 `text/uri-list` |
-| 光标 | Xcursor 按主题名加载（`default`、`text`、`pointer`、`ew-resize` …，旧主题回退到 `left_ptr`、`xterm` 等）；隐藏用空白光标 | 有 `wp_cursor_shape_v1` 就按形状设，没有时 wayland-cursor 读 `XCURSOR_THEME` / `XCURSOR_SIZE` 主题 |
+| 光标 | Xcursor 按主题名加载（`default`、`text`、`pointer`、`ew-resize` …，旧主题回退到 `left_ptr`、`xterm` 等）；隐藏用 32×32 ARGB 光标、只留一个 alpha=1 的像素（全透明的光标经 xrdp 到 mstsc 会显示成默认箭头） | 有 `wp_cursor_shape_v1` 就按形状设，没有时 wayland-cursor 读 `XCURSOR_THEME` / `XCURSOR_SIZE` 主题 |
 | 双击间隔 | 500 ms（与 SDL 版相同） | 同左 |
 | 按键重复 | 服务器发 | 客户端自己按 `wl_keyboard.repeat_info` 定时重复 |
 
@@ -206,3 +207,30 @@ namespace MiniGUI
 
 阶段 1 到 3 只动 X11，做完就能替换 SDL 版发布（Wayland 会话经 XWayland 运行，这时已经有自绘标题栏，原来 GNOME Wayland 没有标题栏的问题也就没了）；阶段 4 可以晚一些。
 
+## 10. 实施结果（2026-11-05）
+
+阶段 1、2、4、5 一起做完，SDL3 已删除；随后做了阶段 3（X11 浮动窗口）。与上面的计划不同的地方：
+
+| 计划 | 实际 | 原因 |
+|---|---|---|
+| 平台层 `LinuxDisplay` / `LinuxWindow` 放在 MiniGUI，支持多个窗口 | 窗口系统放在宿主：`apps/Linux/src/Host/WindowSystem.h`（抽象）、`X11Window.cpp`、`WaylandWindow.cpp`；主窗口负责连接与事件分发，浮动窗口由主窗口的 `WindowSystem::CreateSubWindow` 建（只有 X11 实现，共用连接，事件按窗口转发）。MiniGUI_Linux 只有与窗口系统无关的 `MiniGUI::LinuxInput`（keysym / 文字 / 预编辑 → `UIContext`）和 `LoadLinuxUIFonts` | MiniGUI_Linux 不用链接 X11 / Wayland；Wayland 不做浮动窗口，抽象只需容下 X11 的子窗口 |
+| 窗口表面经宿主的 `LinuxGraphics` 建 | 宿主经 `WindowSystem::GetVulkanWindow` 给 `NativeWindow`；EGL 由 `apps/Linux/src/Host/EglContext.cpp` 管，浮动窗口各建一个 EGLSurface（`EglContext::CreateSurface`，交换间隔 0），经 `NativeWindow::glMakeCurrent` / `glSwapBuffers` 交给 `GLES3GraphicsDevice::CreateWindowSurface`；浮动窗口呈现后切回主窗口的表面 | 少一层 |
+| `clientMove`：抓指针、自己 `XMoveWindow` | 文档窗口拖标题栏时自己移动（按下时的隐式抓取就够，不另外 `XGrabPointer`），经 `WindowCallbacks::moving` 上报；改大小仍交给窗口管理器（`_NET_WM_MOVERESIZE`），停靠面板没有标题区域，由 `FloatingPanel` 拖动、宿主 `SetRect` | 合并只需要移动时的光标 |
+| 按键按 evdev 码映射 | 先按当前布局的 keysym 映射（AZERTY、Dvorak 下快捷键跟着键帽走），keysym 不是拉丁字母（俄文等布局）时才按 evdev 码取美式键位 | 与 Windows 的虚拟键行为一致 |
+| 文件对话框只用 zenity / kdialog，不引入 libdbus | 有 `dbus-1` 开发包时先经 libdbus 调 xdg-desktop-portal 的 FileChooser（`apps/Linux/src/Host/FileDialog.cpp`，后台线程上用私有连接等 `Request.Response`），没有 portal 时 zenity；没做 kdialog | portal 跟随桌面（GNOME / KDE 各用自己的对话框），也能在沙盒里用；libdbus 是桌面系统都有的运行库 |
+| Wayland 光标优先 `wp_cursor_shape_v1` | 只用 wayland-cursor 读主题（`XCURSOR_THEME` / `XCURSOR_SIZE`） | 够用；cursor-shape 以后再加 |
+| X11 监视 `RESOURCE_MANAGER` 跟随缩放变化 | 只在启动时读 `Xft.dpi` | 改缩放的情况少，重启即可 |
+| XIM 优先 on-the-spot | over-the-spot（`XIMPreeditPosition`，候选窗跟随文字光标），不支持时 root | on-the-spot 要自己画组合串的回调，先不做 |
+| 发布包带 `.desktop` 文件与图标 | 没做；X11 窗口图标经 `_NET_WM_ICON`，Wayland 只设了 `app_id`（`io.github.minicad.MiniCAD`），任务栏图标要等装了 `.desktop` 才有 | 先不做安装步骤 |
+
+其余按计划：Wayland 的 xdg-shell、xdg-decoration（合成器给服务端装饰就用，GNOME 不给时自绘）、fractional-scale-v1 + viewporter（没有时 preferred_buffer_scale / 输出的整数缩放）、text-input-v3、`wl_data_device` 剪贴板与拖放、客户端按键重复、帧回调节流；X11 的 XIM、`CLIPBOARD`（读取最多等 1 秒，不支持 INCR）、XDND v5、`_NET_WM_STATE`、`_NET_WM_PING`、`_MOTIF_WM_HINTS` 去装饰 + `_NET_WM_MOVERESIZE`（窗口管理器不支持时自己移动 / 缩放）。
+标题栏拖过 4 像素才交给窗口管理器 / 合成器移动：按下就交出去的话，第二次按下会被窗口管理器的移动循环吃掉，双击最大化认不出来（xfwm4 上实测）。
+`MINICAD_X11_DECORATIONS=system` 在 X11 上改用窗口管理器的标题栏。
+浮动窗口（`apps/Linux/src/Host/LinuxFloatingWindow.cpp`）：界面要重绘时置脏，`LinuxApp::Run` 画完主窗口后逐个画；子窗口的位置在 `SetRootRect` 时立即记下，之后只认那次请求之后的 ConfigureNotify（按 serial），指针坐标按它换算，宿主边拖边挪窗口时不抖。映射前把 `_NET_WM_USER_TIME` 设为 0：否则 xfwm4 把焦点给新窗口，主窗口失焦（`LinuxInput::FocusLost`）会取消正在进行的标签拖动；要激活的随后经 `_NET_ACTIVE_WINDOW`。
+
+验证（qmlinux：Ubuntu 24.04，Mesa llvmpipe / lavapipe）：
+- X11（Xvfb）：Vulkan 与 GLES3 都能画；单击、键入命令、画直线（橡皮筋）、从外部粘贴与复制给外部（xclip 核对）；没有窗口管理器时拖动标题栏、拖右边框缩放；xfwm4 下标题栏无系统装饰、拖动移动、双击最大化 / 再双击还原、最大化按钮、拖边框缩放
+- Wayland（weston，headless 与套在 Xvfb 里的 X11 后端）：Vulkan 与 GLES3 都能画；自绘标题栏与三个按钮、拖动移动、双击最大化 / 还原、拖左边框缩放、画直线、键入与内部复制粘贴；`--scale=2` 下文字按两倍像素绘制、十字光标与鼠标位置一致
+- 文件对话框：portal 请求发出后 `xdg-desktop-portal-gtk` 被拉起（对话框开在机器自己的桌面会话上）；后端中途退出时对话框线程自己结束，不卡住
+- 浮动窗口（Xvfb + xfwm4，Vulkan 与 `--gpu gl` 各一遍）：停靠面板拖出成工具窗口、拖标题移动（位置与光标一致）、拖左边框改大小、Ctrl+N 从面板转给主窗口、关闭按钮、拖回主窗口停靠；文档标签拖出成文档窗口并跟着光标走、在里面画直线、拖标题栏到主窗口标签条上合并（移动中窗口让到标签条下面）；主窗口弹出退出确认时置前；开着浮动窗口退出，进程返回 0。Wayland（weston）下拖出标签不建窗口，与以前相同
+- **没验证**：真实的 GNOME / KDE 会话、输入法（IBus / Fcitx 的组合串与候选窗位置）、拖放文件、X11 的高 DPI、zenity、真实显卡

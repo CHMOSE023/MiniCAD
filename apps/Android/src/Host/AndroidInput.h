@@ -16,7 +16,7 @@ namespace MiniGUI
 namespace MiniCAD
 {
     // 安卓的输入（NativeActivity 输入队列里的触摸 / 鼠标 / 按键，以及 Java 端 MiniCADInputView 转来的输入法事件）→ UIContext，
-    // 与 Win32Input / SDLInput 对应：
+    // 与 Win32Input / LinuxInput 对应：
     //   - 单指：移动超过点按距离后才发左键按下（之后是拖动），没移动就抬起是点按；按住不动 kLongPressMs 换成右键（右键菜单）
     //   - 双指：两指中点处缩放（捏合的比例换成滚轮格数）、平移（换成中键拖动）；进入双指时取消单指已发出的左键
     //   - 鼠标：按真实的按键与悬停；鼠标滚轮
