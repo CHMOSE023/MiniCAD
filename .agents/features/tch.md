@@ -26,7 +26,7 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | `TchText.h` | TCH文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | TCH矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管与管件 |
-| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`） |
+| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理） |
 
 ## 约束
 
@@ -45,8 +45,8 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **TCH文字**：显示宽度因子写在多行文字上（`MTextEntity::SetWidthFactor`），不派生文字样式；不限宽的居中 / 右对齐按实际排版宽度（`IDrawSink::MeasureMTextWidth`）定起点。中西文混排拆段（`Tch::Detail::AddRuns`），各段起点与画出的宽度都取TCH步进，按实际显示的字体（`Detail::DisplayExtent`）反算宽度因子
 - **上标** `^U…^U`：字高为本段一半、抬高 0.5 × 名义字高、每字步进 0.35 × 西文步进；TrueType 样式未核对
 - **墙**（`TchWall::Connections`）：门窗断口两侧封口；一端相接的墙里有同材料的就不封口（十字交叉处两段钢筋混凝土墙斜接、砖墙接上，三者之间都不画线），全是别的材料时画分界线；两端连接句柄都为空的自由端画端线（只在读到了连接时，`TchWall::HasConnections`）；断口与墙线端点比较用 1e-6 容差
-- **连接量**（`TchWall::Joins`：左起、左终、右起、右终，正为缩进、负为伸出）：直墙沿墙线方向；弧墙是沿该侧圆弧的弧长（TestWall1 弧墙与直墙、弧墙、十字交叉处按交点反算，误差 < 0.04）
-- **门窗编号**（`TchOpening::Label`）：普通门窗与组合门窗、带形窗一样画编号；文字中心在 `TchOpening::LabelX` / `TchOpening::LabelY`，字高按 `TchOpening::LabelHeight` × 出图比例，沿门窗方向并转成正读（-90°～90°），放在对象引用的编号图层（`TchOpening::LabelLayer`）上、随层（TestWall1 与天正显示核对）。组合门窗的子门窗不画
+- **连接量**（`TchWall::Joins`：左起、左终、右起、右终，正为缩进、负为伸出）：直墙沿墙线方向；弧墙是沿该侧圆弧的弧长（与天正显示核对）
+- **门窗编号**（`TchOpening::Label`）：普通门窗与组合门窗、带形窗一样画编号；文字中心在 `TchOpening::LabelX` / `TchOpening::LabelY`，字高按 `TchOpening::LabelHeight` × 出图比例，沿门窗方向并转成正读（-90°～90°），放在对象引用的编号图层（`TchOpening::LabelLayer`）上、随层（与天正显示核对）。组合门窗的子门窗不画
 - **幕墙**：非玻璃幕墙画法同墙；玻璃幕墙沿墙厚三等分画 4 条线，两端按连接量缩进或伸出，方头一端封口、与相邻幕墙斜接的一端不封口
 - **墙柱填充**（`Importer::MakeTchHatch`）：图纸设置（`Tch::DecodeConfig`）的填充开关打开时才填；按材料码（`TchWall::Material`、`TchColumn::Material`）取图案，出图比例小于详图比例时用详图图案；图案经 `HatchPatternLibrary::FindTianzheng` 取，找不到就不画；填充放 `PUB_HATCH` 图层、随层
 - **尺寸标注**：有拖动过的文字位置（`TchDimension::TextPositions`，文字中心）就用；竖直方向带误差时按自下而上读（`Detail::Upright`）

@@ -127,6 +127,14 @@ int RunTchProxyGraphicsTests()
         check(ok && result.Entities[1]->LayerHandle == 13 && result.Entities[1]->LineTypeHandle == 21,"linetype ByLayer index and layer persist to later records");
         source.ProxyGraphics.assign(8,0); value.clear(); U32(value,3); Record(source.ProxyGraphics,16,value); Record(source.ProxyGraphics,2,CircleBytes());
         check(!DecodeProxyGraphics(source,result,&error,&context),"layer index outside the table is rejected");
+        source.ProxyGraphics.assign(8,0);
+        value.clear(); U32(value,2); Record(source.ProxyGraphics,16,value);
+        value.clear(); U32(value,1); Record(source.ProxyGraphics,18,value);
+        value.clear(); U32(value,0xFFFFFFFFu); Record(source.ProxyGraphics,16,value); Record(source.ProxyGraphics,18,value);
+        Record(source.ProxyGraphics,2,CircleBytes());
+        const bool reset = DecodeProxyGraphics(source,result,&error,&context) && result.Entities.size() == 1;
+        check(reset && result.Entities[0]->LayerHandle == source.LayerHandle && result.Entities[0]->LineTypeHandle == source.LineTypeHandle,
+            "layer and linetype index -1 fall back to the object's own");
     }
     source.ProxyGraphics.assign(8,0); value.clear(); U32(value,212); Record(source.ProxyGraphics,23,value); Record(source.ProxyGraphics,2,CircleBytes());
     check(!DecodeProxyGraphics(source,result,&error),"invalid lineweight rejected");

@@ -454,7 +454,7 @@ int main()
     Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
     Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
 
-    // ── 门窗编号（TestWall1 与天正显示核对）：文字中心在编号位置，沿门窗方向、转成正读（-90°～90°）──
+    // ── 门窗编号：文字中心在编号位置，沿门窗方向、转成正读（-90°～90°）──
     OpeningSpec labelled; labelled.Label = "M1";
     Check(MiniCAD::Tch::DecodeOpening(*Opening(labelled), o) && o.Label == "M1" && Near(o.LabelX, 47744.78) && Near(o.Scale, 100),
           "an ordinary door keeps its label, label position and drawing scale");

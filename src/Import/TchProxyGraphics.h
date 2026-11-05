@@ -388,15 +388,17 @@ namespace MiniCAD::Tch
             {
                 if (r.Bytes.size() != 4 || !context) return fail(where + "layer index without layer table");
                 const auto index = r.Long();
-                if (index >= context->Layers.size()) return fail(where + "layer index out of range");
-                layer = context->Layers[index];
+                if (index == 0xFFFFFFFFu) layer = source.LayerHandle;
+                else if (index >= context->Layers.size()) return fail(where + "layer index out of range");
+                else layer = context->Layers[index];
                 break;
             }
             case 18:
             {
                 if (r.Bytes.size() != 4 || !context) return fail(where + "linetype index without linetype table");
                 const auto index = r.Long();
-                if (index == 32767) lineType = context->ByLayerLineType;
+                if (index == 0xFFFFFFFFu) lineType = source.LineTypeHandle;
+                else if (index == 32767) lineType = context->ByLayerLineType;
                 else if (index == 32766) lineType = context->ByBlockLineType;
                 else if (index < context->LineTypes.size()) lineType = context->LineTypes[index];
                 else return fail(where + "linetype index out of range");

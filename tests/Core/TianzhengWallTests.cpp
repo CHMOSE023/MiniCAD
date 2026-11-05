@@ -249,7 +249,7 @@ int main()
                                          {2033.3, -33.3, 2033.3, 5200}, {2100, -100, 2100, 5200}};
     check(segs[miterHandle] == miterExpected, "glass curtain lines meet the miter line at a mitered end, which gets no end line");
 
-    // ── 墙与墙相接（TestWall1 核对）：弧墙两侧的连接量是沿该侧圆弧的弧长；
+    // ── 墙与墙相接：弧墙两侧的连接量是沿该侧圆弧的弧长；
     // 钢筋混凝土墙 W1、W2 在 (0,0) 相接、砖墙 W3 丁字接上，W1、W2 之间不封口，W3 两侧都是别的材料，封口 ──
     CadDatabase jdb;
     jdb.SetVersion(CadVersion::AC1027); jdb.CreateDefaults();
