@@ -3,6 +3,7 @@
 #include "Dwg/Write/DwgWriter.h"
 #include "Import/CadExchange.h"
 #include "Scene/Scene.h"
+#include "Core/Entity/ArcEntity.hpp"
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include <algorithm>
@@ -67,6 +68,38 @@ namespace {
         r.WriteByte(0); r.WriteByte(0);
         e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
         return e;
+    }
+
+    // 任意轴线（angle 为弧墙圆心角）、材料与连接量的墙，两侧各 120；connections 为句柄流里起点两个、终点两个相接的墙
+    std::unique_ptr<UnknownEntity> JoinedWall(XYZ start, XYZ end, double angle, int material, std::array<double, 4> joins)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_WALL";
+        e->Raw.Dwg.Version = CadVersion::AC1027;
+        DwgBitWriter g(CadVersion::AC1027, Codec::CodePage::Gbk);
+        g.Write3RawDouble(start); g.Write3RawDouble(end);
+        g.WriteRawDouble(angle); g.WriteRawLong(0);
+        g.WriteRawDouble(120); g.WriteRawDouble(120); g.WriteRawDouble(3000);
+        auto protectedData = g.Take();
+        for (auto& byte : protectedData) byte ^= 0xeb;
+        DwgBitWriter r(CadVersion::AC1027, Codec::CodePage::Gbk);
+        r.WriteByte(5); r.WriteBitDouble(100); r.WriteBitShort(0); r.WriteByte(3);
+        r.Write2Bits(0); r.WriteRawShort(512); r.WriteByte(8); r.WriteByte(0xeb);
+        r.WriteBytes(protectedData);
+        r.WriteByte(0); r.WriteBitShort(0); r.WriteByte(static_cast<std::uint8_t>(material)); r.WriteByte(0);
+        r.WriteBitDouble(0);
+        for (double join : joins) r.WriteBitDouble(join);
+        r.WriteByte(0); r.Write3Bits(2);
+        e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
+        return e;
+    }
+
+    void SetConnections(UnknownEntity& wall, std::array<Handle, 4> connections)
+    {
+        DwgBitWriter h(wall.Raw.Dwg.Version, Codec::CodePage::Gbk);
+        h.WriteHandle(DwgRef::SoftPointer, 0); h.WriteHandle(DwgRef::SoftPointer, 0);
+        for (Handle c : connections) h.WriteHandle(DwgRef::SoftPointer, c);
+        wall.Raw.Dwg.HandleBits = h.PositionInBits(); wall.Raw.Dwg.Handles = h.Take();
     }
 
     DxfClass TchClass(const char* dxf, const char* cpp, std::int16_t number)
@@ -215,5 +248,59 @@ int main()
     const std::vector<Seg> miterExpected{{1900, 100, 1900, 5200}, {1900, 5200, 2100, 5200}, {1966.7, 33.3, 1966.7, 5200},
                                          {2033.3, -33.3, 2033.3, 5200}, {2100, -100, 2100, 5200}};
     check(segs[miterHandle] == miterExpected, "glass curtain lines meet the miter line at a mitered end, which gets no end line");
+
+    // ── 墙与墙相接（TestWall1 核对）：弧墙两侧的连接量是沿该侧圆弧的弧长；
+    // 钢筋混凝土墙 W1、W2 在 (0,0) 相接、砖墙 W3 丁字接上，W1、W2 之间不封口，W3 两侧都是别的材料，封口 ──
+    CadDatabase jdb;
+    jdb.SetVersion(CadVersion::AC1027); jdb.CreateDefaults();
+    jdb.Classes.push_back(TchClass("TCH_WALL", "TDbWall", 500));
+    constexpr double pi = 3.14159265358979323846;
+    const Handle arcHandle = jdb.AddEntity(jdb.ModelSpace(), JoinedWall({10000, 0, 0}, {12000, 0, 0}, pi / 2, 40, {100, -50, -100, 50}))->ObjectHandle;
+    auto* w1 = jdb.AddEntity(jdb.ModelSpace(), JoinedWall({-3000, 0, 0}, {0, 0, 0}, 0, 60, {}));
+    auto* w2 = jdb.AddEntity(jdb.ModelSpace(), JoinedWall({0, 0, 0}, {3000, 0, 0}, 0, 60, {}));
+    auto* w3 = jdb.AddEntity(jdb.ModelSpace(), JoinedWall({0, 0, 0}, {0, 3000, 0}, 0, 40, {120, 0, 120, 0}));
+    SetConnections(*w1, {0, 0, w2->ObjectHandle, w3->ObjectHandle});
+    SetConnections(*w2, {w1->ObjectHandle, w3->ObjectHandle, 0, 0});
+    SetConnections(*w3, {w1->ObjectHandle, w2->ObjectHandle, 0, 0});
+    MiniCAD::Scene jscene;
+    check(MiniCAD::ImportCad(WriteDwg(jdb, options), jscene) && jscene.EntityCount() == 4, "joined walls are imported");
+    std::map<Handle, std::vector<std::array<double, 4>>> jsegs;
+    std::vector<std::array<double, 5>> arcs;   // 半径、起点、终点
+    jscene.ForEachObject([&](const MiniCAD::Object& object) {
+        const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&object);
+        if (!insert || !insert->GetBlock() || !insert->GetBlock()->GetName().starts_with("*U_TCH_")) return;
+        const Handle h = std::stoull(insert->GetBlock()->GetName().substr(7));
+        for (const auto& entity : insert->GetBlock()->GetEntities())
+        {
+            if (const auto* line = dynamic_cast<const MiniCAD::LineEntity*>(entity.get()))
+                jsegs[h].push_back({line->GetLine().Start.x, line->GetLine().Start.y, line->GetLine().End.x, line->GetLine().End.y});
+            else if (const auto* arc = dynamic_cast<const MiniCAD::ArcEntity*>(entity.get()); arc && h == arcHandle)
+            {
+                const auto& a = arc->GetArc();
+                arcs.push_back({a.Radius, a.Center.x + a.Radius * std::cos(a.StartAngle), a.Center.y + a.Radius * std::sin(a.StartAngle),
+                                a.Center.x + a.Radius * std::cos(a.EndAngle), a.Center.y + a.Radius * std::sin(a.EndAngle)});
+            }
+        }
+    });
+    // 圆心 (11000,1000)、轴线半径 1000√2，起点在 -135°；左侧（内）缩进 100、伸出 50，右侧（外）伸出 100、缩进 50
+    const double axisR = 1000 * std::sqrt(2.0);
+    auto arcAt = [&](double radius, double from, double to) {
+        const double a0 = -3 * pi / 4 + from / radius, a1 = -3 * pi / 4 + pi / 2 - to / radius;
+        return std::ranges::any_of(arcs, [&](const auto& a) {
+            return std::abs(a[0] - radius) < 1e-6 && std::abs(a[1] - (11000 + radius * std::cos(a0))) < 1e-6 &&
+                   std::abs(a[2] - (1000 + radius * std::sin(a0))) < 1e-6 && std::abs(a[3] - (11000 + radius * std::cos(a1))) < 1e-6 &&
+                   std::abs(a[4] - (1000 + radius * std::sin(a1))) < 1e-6;
+        });
+    };
+    check(arcs.size() == 2 && arcAt(axisR - 120, 100, -50) && arcAt(axisR + 120, -100, 50),
+          "arc wall sides are trimmed or extended by their joins measured along each side arc");
+    auto crossesAxisAt = [&](Handle h, double x) {
+        return std::ranges::any_of(jsegs[h], [&](const auto& s) { return std::abs(s[0] - x) < 1e-6 && std::abs(s[2] - x) < 1e-6; });
+    };
+    check(!crossesAxisAt(w1->ObjectHandle, 0) && !crossesAxisAt(w2->ObjectHandle, 0),
+          "walls of the same material meeting at a junction get no seam, even when another material joins there too");
+    check(std::ranges::any_of(jsegs[w3->ObjectHandle], [](const auto& s) {
+              return std::abs(s[1] - 120) < 1e-6 && std::abs(s[3] - 120) < 1e-6 && std::abs(std::abs(s[2] - s[0]) - 240) < 1e-6; }),
+          "a wall meeting only walls of another material is closed by a boundary line");
     return failed ? 1 : 0;
 }

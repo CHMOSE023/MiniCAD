@@ -497,6 +497,9 @@ int wmain(int argc, wchar_t** argv)
                     std::printf("OPENING %llx type=%d width=%.17g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.17g,%.17g angle=%.4f\n", (unsigned long long)handle,
                                 static_cast<int>(o.Type), o.Width, o.Mirror, (unsigned long long)o.Wall, o.Flags, static_cast<unsigned>(o.DisplayFlags),
                                 o.Position.X, o.Position.Y, o.Angle);
+                if (!o.Label.empty())
+                    std::printf("  label=\"%s\" at=%.6f,%.6f height=%g scale=%g style=%llx\n", o.Label.c_str(), o.LabelX, o.LabelY,
+                                o.LabelHeight, o.Scale, (unsigned long long)o.Style);
                 // 门扇在所在墙的哪一侧（+1 左侧、-1 右侧）：门图块的 +Y 为门扇，Y 镜像时翻到另一侧
                 MiniCAD::Tch::TchWall w;
                 if (const auto* host = db->FindAs<MiniDWG::UnknownEntity>(o.Wall); host && MiniCAD::Tch::DecodeWall(*host, w))

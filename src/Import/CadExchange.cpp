@@ -2112,14 +2112,19 @@ namespace MiniCAD
                     {
                         auto endLineAt = [&](int end) {
                             if (wall.HasConnections && !wall.Connections[end * 2] && !wall.Connections[end * 2 + 1]) return true;
+                            bool differs = false;
                             for (int k : {0, 1})
-                                if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]); m && *m != wall.Material) return true;
-                            return false;
+                                if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]))
+                                {
+                                    if (*m == wall.Material) return false;
+                                    differs = true;
+                                }
+                            return differs;
                         };
                         double arcX = 0, arcY = 0, arcR = 0;
                         if (wall.ArcCenter(arcX, arcY, arcR))
                         {
-                            // 弧墙：两侧为同心圆弧（逆时针弧左侧在内），门窗处按轴线弧长断开；端部连接量未用（样例为 0）
+                            // 弧墙：两侧为同心圆弧（逆时针弧左侧在内），门窗处按轴线弧长断开；端部连接量是沿该侧圆弧的弧长
                             std::string arcName = "*U_TCH_" + std::to_string(src.ObjectHandle);
                             while (m_scene.GetBlockTable().Get(arcName)) arcName += "_";
                             const auto arcBlockId = m_scene.GetBlockTable().Create(arcName);
@@ -2143,27 +2148,31 @@ namespace MiniCAD
                                 const double a = a0 + ccw * t;
                                 return Math::Point3{arcX + radius * std::cos(a), arcY + radius * std::sin(a), wall.Start.Z};
                             };
+                            // 两侧圆弧各自的范围（轴线上自起点的角度）
+                            const double leftFrom = leftR > 0 ? wall.Joins[0] / leftR : 0, leftTo = span - (leftR > 0 ? wall.Joins[1] / leftR : 0);
+                            const double rightFrom = rightR > 0 ? wall.Joins[2] / rightR : 0, rightTo = span - (rightR > 0 ? wall.Joins[3] / rightR : 0);
+                            constexpr double tol = 1e-9;
                             if (leftR > 0 && rightR > 0)
                             {
-                                // 填充：门窗之间各一块，两段同心圆弧围成，放在墙线下面
+                                // 填充：门窗之间各一块，两段同心圆弧围成，墙端按连接量（与墙线一致），放在墙线下面
                                 auto addPiece = [&](double t0, double t1) {
-                                    t0 = std::max(t0, 0.0); t1 = std::min(t1, span);
-                                    if (t1 - t0 < 1e-9) return;
-                                    const double bulge = std::tan(ccw * (t1 - t0) / 4);
-                                    Polyline piece({arcPoint(leftR, t0), arcPoint(leftR, t1), arcPoint(rightR, t1), arcPoint(rightR, t0), arcPoint(leftR, t0)},
-                                                   {bulge, 0.0, -bulge, 0.0});
+                                    const double l0 = std::max(t0, leftFrom), l1 = std::max(l0, std::min(t1, leftTo));
+                                    const double r0 = std::max(t0, rightFrom), r1 = std::max(r0, std::min(t1, rightTo));
+                                    if (l1 - l0 < tol && r1 - r0 < tol) return;
+                                    Polyline piece({arcPoint(leftR, l0), arcPoint(leftR, l1), arcPoint(rightR, r1), arcPoint(rightR, r0), arcPoint(leftR, l0)},
+                                                   {std::tan(ccw * (l1 - l0) / 4), 0.0, -std::tan(ccw * (r1 - r0) / 4), 0.0});
                                     if (auto hatch = MakeTchHatch(*unknown, wall.Material, wall.Scale, std::move(piece))) arcBlock->AddEntity(std::move(hatch));
                                 };
-                                double lo = 0;
+                                double lo = -std::numeric_limits<double>::infinity();
                                 for (const auto& [c0, c1] : arcCuts) { addPiece(lo, c0); lo = std::max(lo, c1); }
-                                addPiece(lo, span);
+                                addPiece(lo, std::numeric_limits<double>::infinity());
                                 // 门窗两侧的墙端：沿半径横穿墙厚（与直墙相同，未用弧墙样例核对）
                                 for (const auto& [c0, c1] : arcCuts)
                                     for (const double t : {c0, c1})
-                                        if (t > 1e-9 && t < span - 1e-9)
+                                        if (t > std::max(leftFrom, rightFrom) + tol && t < std::min(leftTo, rightTo) - tol)
                                             arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, t), arcPoint(rightR, t)));
                             }
-                            for (const double radius : {leftR, rightR})
+                            for (const auto [radius, from, to] : {std::tuple{leftR, leftFrom, leftTo}, std::tuple{rightR, rightFrom, rightTo}})
                             {
                                 if (radius <= 0) continue;
                                 auto addArc = [&](double t0, double t1) {
@@ -2171,19 +2180,20 @@ namespace MiniCAD
                                     if (ccw < 0) std::swap(s0, s1);
                                     arcBlock->AddEntity(Make<ArcEntity>(src, nullptr, Math::Point3{arcX, arcY, wall.Start.Z}, radius, s0, s1));
                                 };
-                                double cursor = 0;
+                                double cursor = from;
                                 for (const auto& [c0, c1] : arcCuts)
                                 {
-                                    if (c1 <= cursor || c0 >= span) continue;
-                                    if (c0 > cursor) addArc(cursor, c0);
+                                    if (c1 <= cursor || c0 >= to) continue;
+                                    if (c0 > cursor + tol) addArc(cursor, c0);
                                     cursor = std::max(cursor, c1);
                                 }
-                                if (cursor < span) addArc(cursor, span);
+                                if (cursor < to - tol) addArc(cursor, to);
                             }
                             if (leftR > 0 && rightR > 0)
-                                for (const int end : {0, 1})
-                                    if (endLineAt(end))
-                                        arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, end * span), arcPoint(rightR, end * span)));
+                            {
+                                if (endLineAt(0)) arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, leftFrom), arcPoint(rightR, rightFrom)));
+                                if (endLineAt(1)) arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, leftTo), arcPoint(rightR, rightTo)));
+                            }
                             countWall();
                             return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
                         }
@@ -3265,12 +3275,12 @@ namespace MiniCAD
                 const double yScale = o.MirrorY() ? -depth : depth;
                 insert.SetScale({o.MirrorX() ? -o.Width : o.Width, yScale, o.Width});
                 insert.SetRotation(o.Angle);
-                if (o.Type != Tch::TchOpening::Kind::Door || !hasWall || o.InGroup || (o.Flags & 0x600) == 0)
+                const bool sill = o.Type == Tch::TchOpening::Kind::Door && hasWall && !o.InGroup && (o.Flags & 0x600) != 0;
+                const bool labelled = !o.InGroup && !o.Label.empty();
+                if (!sill && !labelled)
                     return result;
 
                 const double ux = std::cos(o.Angle), uy = std::sin(o.Angle);
-                const double wl = std::hypot(wall.End.X - wall.Start.X, wall.End.Y - wall.Start.Y);
-                const double wallLeftX = -(wall.End.Y - wall.Start.Y) / wl, wallLeftY = (wall.End.X - wall.Start.X) / wl;
                 const double hw = o.Width / 2;
                 std::string name = "*U_TCH_OPENING_" + std::to_string(src.ObjectHandle);
                 while (m_scene.GetBlockTable().Get(name)) name += "_";
@@ -3279,9 +3289,26 @@ namespace MiniCAD
                 group->SetFlags(BlockEntity::Anonymous);
                 m_scene.ResolveInsert(insert);
                 group->AddEntity(std::move(result));
+                if (labelled)
+                {
+                    double angle = std::remainder(o.Angle, 2 * std::numbers::pi);
+                    if (angle > std::numbers::pi / 2 + 1e-6) angle -= std::numbers::pi;
+                    else if (angle <= -std::numbers::pi / 2 + 1e-6) angle += std::numbers::pi;
+                    const double nominal = o.LabelHeight * o.Scale;
+                    Tch::TchGraphics label;
+                    Tch::Detail::AddRuns(label, o.Label, nominal, o.LabelX + std::sin(angle) * 0.425 * nominal,
+                                         o.LabelY - std::cos(angle) * 0.425 * nominal, angle, 1, 256, 1);
+                    if (auto text = MakeTchGraphics(src, label, LookupStyle(o.Style), std::nullopt, o.LabelLayer))
+                    {
+                        m_scene.ResolveInsert(static_cast<InsertEntity&>(*text));
+                        group->AddEntity(std::move(text));
+                    }
+                }
                 for (const auto [flag, leaf] : {std::pair{0x200, 1.0}, std::pair{0x400, -1.0}})
                 {
-                    if ((o.Flags & flag) == 0) continue;
+                    if (!sill || (o.Flags & flag) == 0) continue;
+                    const double wl = std::hypot(wall.End.X - wall.Start.X, wall.End.Y - wall.Start.Y);
+                    const double wallLeftX = -(wall.End.Y - wall.Start.Y) / wl, wallLeftY = (wall.End.X - wall.Start.X) / wl;
                     const double side = (yScale > 0 ? 1.0 : -1.0) * leaf;     // 门图块 +y 为门扇
                     const double ox = -uy * side, oy = ux * side;              // 门槛线所在一侧的法向
                     const double face = (ox * wallLeftX + oy * wallLeftY) > 0 ? wall.LeftWidth : wall.RightWidth;

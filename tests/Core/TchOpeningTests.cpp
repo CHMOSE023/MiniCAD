@@ -10,10 +10,12 @@
 #include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/LineEntity.hpp"
 #include "Core/Entity/HatchEntity.hpp"
+#include "Core/Entity/MTextEntity.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,7 @@ namespace
         int    Flags = 0x400;                       // 门窗标志：0x400 门槛线在门扇对面（样例 321），0x200 在门扇一侧
         bool   NestedBag = false;
         Handle Block2D = 0x2b1, Block3D = 0x2bc, Wall = 0x2ab;
+        std::string Label;                          // 编号：非空时写文字流（基类属性包的 3 个字符串之后，其后还有 1 个）
     };
 
     // 按版本 < 6 布局写出；数值取自真实样例句柄 321
@@ -76,6 +79,14 @@ namespace
         r.WriteHandle(DwgRef::SoftPointer, s.Wall);
         for (int i = 0; i < 5; ++i) r.WriteHandle(DwgRef::HardPointer, 0x25c);
         raw.HandleBits = r.PositionInBits(); raw.Handles = r.Take();
+        if (!s.Label.empty() && !s.NestedBag)
+        {
+            DwgBitWriter text(raw.Version, Codec::CodePage::Gbk);
+            for (const char* t : {"a", "b", "c"}) text.WriteVariableText(t);
+            text.WriteVariableText(s.Label);
+            text.WriteVariableText("d");
+            raw.TextBits = text.PositionInBits(); raw.Text = text.Take();
+        }
         return e;
     }
 
@@ -251,6 +262,35 @@ namespace
         std::sort(ys.begin(), ys.end());
         return ys;
     }
+
+    // 带编号 M1 的门（门窗角度 angle）导入后，门窗块里的编号文字
+    std::vector<const MiniCAD::MTextEntity*> LabelTexts(double angle, MiniCAD::Scene& scene)
+    {
+        CadDatabase db;
+        db.SetVersion(CadVersion::AC1027);
+        db.CreateDefaults();
+        db.Classes.push_back(Class("TCH_OPENING", "TDbOpening", 501));
+        BlockRecord* doorBlock = db.CreateBlockRecord("$TCHSYS$DOOR2D");
+        auto leaf = std::make_unique<Line>(); leaf->StartPoint = {0.45, 0, 0}; leaf->EndPoint = {0.45, 0.975, 0};
+        db.AddEntity(doorBlock, std::move(leaf));
+        OpeningSpec spec;
+        spec.Angle = angle; spec.Flags = 0; spec.Label = "M1";
+        spec.Block2D = doorBlock->ObjectHandle; spec.Block3D = 0; spec.Wall = 0;
+        db.AddEntity(db.ModelSpace(), Opening(spec));
+        DwgWriteOptions options; options.Version = CadVersion::AC1027;
+        std::vector<const MiniCAD::MTextEntity*> texts;
+        if (!MiniCAD::ImportCad(WriteDwg(db, options), scene)) return texts;
+        std::function<void(const MiniCAD::InsertEntity&)> visit = [&](const MiniCAD::InsertEntity& insert) {
+            if (!insert.GetBlock()) return;
+            for (const auto& e : insert.GetBlock()->GetEntities())
+                if (const auto* t = dynamic_cast<const MiniCAD::MTextEntity*>(e.get())) texts.push_back(t);
+                else if (const auto* nested = dynamic_cast<const MiniCAD::InsertEntity*>(e.get())) visit(*nested);
+        };
+        scene.ForEachObject([&](const MiniCAD::Object& obj) {
+            if (const auto* insert = dynamic_cast<const MiniCAD::InsertEntity*>(&obj)) visit(*insert);
+        });
+        return texts;
+    }
 }
 
 int main()
@@ -413,6 +453,27 @@ int main()
     Check(ThresholdLines(0x200) == std::vector<double>{1880}, "flag 0x200 puts the threshold line on the leaf side");
     Check(ThresholdLines(0x400) == std::vector<double>{2120}, "flag 0x400 puts the threshold line opposite the leaf");
     Check(ThresholdLines(0x600) == (std::vector<double>{1880, 2120}), "both flags draw threshold lines on both wall faces");
+
+    // ── 门窗编号（TestWall1 与天正显示核对）：文字中心在编号位置，沿门窗方向、转成正读（-90°～90°）──
+    OpeningSpec labelled; labelled.Label = "M1";
+    Check(MiniCAD::Tch::DecodeOpening(*Opening(labelled), o) && o.Label == "M1" && Near(o.LabelX, 47744.78) && Near(o.Scale, 100),
+          "an ordinary door keeps its label, label position and drawing scale");
+    constexpr double pi = 3.14159265358979323846;
+    for (const auto [angle, expected] : {std::pair{0.0, 0.0}, std::pair{pi, 0.0}, std::pair{1.5 * pi, 0.5 * pi}, std::pair{1.8 * pi, -0.2 * pi}})
+    {
+        MiniCAD::Scene ls;
+        const auto texts = LabelTexts(angle, ls);
+        bool ok = texts.size() == 1;
+        for (const auto* t : texts)
+        {
+            // 文字基线在编号位置下方 0.425 × 名义字高（350），起点在它沿文字方向的前面（居中）
+            const double dx = t->GetPosition().x - 47744.78, dy = t->GetPosition().y - 25207.91;
+            const double along = dx * std::cos(expected) + dy * std::sin(expected), up = -dx * std::sin(expected) + dy * std::cos(expected);
+            ok = ok && t->GetPlainText() == "M1" && std::abs(std::remainder(t->GetRotation() - expected, 2 * pi)) < 1e-9 &&
+                 std::abs(up + 0.425 * 350) < 1e-6 && along < 0;
+        }
+        Check(ok, ("door label is drawn upright along the opening at angle " + std::to_string(angle)).c_str());
+    }
 
     {
         CadDatabase ndb;

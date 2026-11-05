@@ -134,6 +134,7 @@ namespace MiniCAD::Tch
         std::string Label;
         double LabelX = 0, LabelY = 0, LabelHeight = 3.5, Scale = 100;
         MiniDWG::Handle Style = MiniDWG::kNullHandle;
+        MiniDWG::Handle LabelLayer = MiniDWG::kNullHandle;
         std::vector<Segment> Segments;
         std::vector<TchOpening> Parts;                   // 组合门窗的子门窗（各自按门、窗显示）
         bool   InGroup = false;                          // 组合门窗的子门窗：不画门槛线
@@ -211,7 +212,8 @@ namespace MiniCAD::Tch
             handles.ReadHandle(owner);
             o.Wall = handles.ReadHandle(owner);
             o.Style = handles.ReadHandle(owner);
-            for (int i = 0; i < 4; ++i) handles.ReadHandle(owner);
+            o.LabelLayer = handles.ReadHandle(owner);
+            for (int i = 0; i < 3; ++i) handles.ReadHandle(owner);
         }
          
         inline bool DecodeOpeningCipher(const MiniDWG::UnknownEntity& entity, TchOpening& opening, std::string* diagnostic)
@@ -238,7 +240,8 @@ namespace MiniCAD::Tch
             if (kind == 4 || kind == 8) return fail("bay and group openings are not supported");
             if (kind == 6 || kind == 7 || kind == 10) { f.Double(); if (kind != 7) f.Double(); }
             o.Style = f.Handle();
-            for (int i = 0; i < 4; ++i) f.Handle();
+            o.LabelLayer = f.Handle();
+            for (int i = 0; i < 3; ++i) f.Handle();
             o.LabelHeight = f.Double(); f.Double(); f.Double(); f.Double();
             const int segments = f.Short();
             if (segments > 1024) return fail("invalid opening segment count");
@@ -256,8 +259,7 @@ namespace MiniCAD::Tch
             o.Type = static_cast<TchOpening::Kind>(kind);
             if (o.Block2D == MiniDWG::kNullHandle && o.Type != TchOpening::Kind::Band && o.Type != TchOpening::Kind::Hole)
                 return fail("opening handle stream is incomplete");
-            if (o.Type == TchOpening::Kind::Band) o.Scale = f.Scale;
-            else o.Label.clear();
+            o.Scale = f.Scale;
             opening = std::move(o);
             if (diagnostic) diagnostic->clear();
             return true;
@@ -327,9 +329,8 @@ namespace MiniCAD::Tch
         if (handles.Failed() || handles.PositionInBits() > data.HandleBits ||
             (o.Block2D == kNullHandle && !labelled && o.Type != TchOpening::Kind::Hole))
             return fail("opening handle stream is incomplete");
-        // 编号只用于带形窗、组合门窗（普通门窗的编号由图块显示）
-        if (labelled) o.Scale = base.Scale;
-        if (!labelled || text.Reader.Failed()) o.Label.clear();
+        o.Scale = base.Scale;
+        if (text.Reader.Failed()) o.Label.clear();
         opening = o;
         if (diagnostic) diagnostic->clear();
         return true;
