@@ -287,8 +287,12 @@ namespace MiniCAD
         void AddOpened();                       // 帧尾：把读完的图纸加入文档列表（之后每帧细分一批，见 Editor::BeginProgressiveBuild），继续下一张
         void EndOpenBatch();                    // 队列读完：同步界面，显示失败汇总
         void SyncOpenProgress();                // 每帧：把后台读取进度同步到状态栏
-        // 外部参照（XREF）：本批打开的图纸有找不到的参照时提示，可选一个文件夹再找（网页版经浏览器授权读本地文件夹）
+        // 外部参照（XREF）：本批打开的图纸有找不到的参照时，先让平台自动找（AppPlatform::FindXrefsForDrawing，
+        // 如网页版到图纸所在的网站找），还缺的再提示，可选一个文件夹再找（网页版经浏览器授权读本地文件夹）
         void PromptMissingXrefs();
+        void AutoLocateXrefs(std::vector<Document*> docs);
+        void ShowMissingXrefs(std::vector<Document*> docs);      // 提示还缺的参照，可"选择文件夹…"
+        void OnXrefsLoaded(const std::vector<Document*>& docs, int loaded);   // 读入后重新缩放、命令行回显
         void LocateXrefs(std::vector<Document*> docs);   // 选文件夹，在里面找这些图纸没读进来的参照并读入
         void UpdateTitle();
         void ActivateDocument(Document* doc);

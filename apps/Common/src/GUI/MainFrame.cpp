@@ -672,6 +672,74 @@ namespace MiniCAD
         std::erase_if(docs, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
         if (docs.empty() || !m_ui)
             return;
+        AutoLocateXrefs(std::move(docs));
+    }
+
+    void MainFrame::AutoLocateXrefs(std::vector<Document*> docs)
+    {
+        // 先让平台自己找（例如网页版从网址打开的图纸，到图纸所在的网站找），全部回调后还缺的再提示用户选文件夹。
+        // 平台可能同步回调：计数多加 1，请求全部发出后再减掉，避免第一张就提前收尾
+        struct Batch
+        {
+            std::vector<Document*> docs;
+            size_t pending = 0;
+            int    loaded  = 0;
+        };
+        auto batch = std::make_shared<Batch>();
+        batch->docs    = std::move(docs);
+        batch->pending = batch->docs.size() + 1;
+        auto finishOne = [this, batch]
+        {
+            if (--batch->pending > 0)
+                return;
+            if (batch->loaded > 0)
+                OnXrefsLoaded(batch->docs, batch->loaded);
+            std::vector<Document*> remaining = batch->docs;
+            std::erase_if(remaining, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
+            ShowMissingXrefs(std::move(remaining));
+        };
+
+        const std::vector<Document*> list = batch->docs;
+        for (Document* doc : list)
+        {
+            std::vector<std::string> names;
+            for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                if (std::string name = XrefFileName(x.Path); !name.empty())
+                    names.push_back(std::move(name));
+            const bool started = !names.empty() && m_platform
+                && m_platform->FindXrefsForDrawing(doc->GetPath(), names, [this, batch, doc, finishOne](const std::string& dir)
+                   {
+                       if (!dir.empty() && IsOpenDocument(m_docManager, doc))
+                       {
+                           const int n = ReloadUnresolvedXrefs(doc->GetScene(), doc->GetPath(), { dir });
+                           batch->loaded += n;
+                           if (n > 0)
+                               LOG_INFO_TR("外部参照：{0} 从 {1} 读入 {2} 个", doc->GetName().c_str(), dir.c_str(), n);
+                       }
+                       finishOne();
+                   });
+            if (!started)
+                finishOne();
+        }
+        finishOne();
+    }
+
+    void MainFrame::OnXrefsLoaded(const std::vector<Document*>& docs, int loaded)
+    {
+        // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
+        if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
+            m_docManager.ZoomAll(false);
+        if (m_docManager.GetActive())
+            m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
+        if (m_viewport) m_viewport->RequestRender();
+        StateChanged();
+        if (m_platform) m_platform->RequestRedraw();
+    }
+
+    void MainFrame::ShowMissingXrefs(std::vector<Document*> docs)
+    {
+        if (docs.empty() || !m_ui)
+            return;
         size_t count = 0;
         for (Document* d : docs)
             count += FindUnresolvedXrefs(d->GetScene()).size();
@@ -709,15 +777,7 @@ namespace MiniCAD
                     remaining.push_back(doc);
             }
             if (loaded > 0)
-            {
-                // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
-                if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
-                    m_docManager.ZoomAll(false);
-                if (m_docManager.GetActive())
-                    m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
-                if (m_viewport) m_viewport->RequestRender();
-                StateChanged();
-            }
+                OnXrefsLoaded(docs, loaded);
             if (!remaining.empty() && m_ui)
                 MiniGUI::ShowMessageBox(*m_ui, Tr("外部参照未找到"),
                                         (loaded > 0 ? TrF("已读入 {0} 个，仍有以下外部参照没有找到：", loaded)

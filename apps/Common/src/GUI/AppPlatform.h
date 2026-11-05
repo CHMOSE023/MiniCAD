@@ -195,6 +195,16 @@ namespace MiniCAD
             (void)fileNames; (void)done;
             return false;
         }
+        // 打开图纸后、提示"外部参照未找到"之前，平台自动找参照（不问用户）：例如网页版从网址打开的图纸，
+        // 交给嵌入它的网页（宿主）到图纸所在的网站去找。drawingPath 是图纸的路径（Document::GetPath），
+        // fileNames 同 PickFolder。返回 true 表示受理，之后 done 恰好调用一次：找到的文件所在目录（UTF-8），
+        // 一个也没找到或出错时为空串；返回 false（默认）时不调用 done，直接提示用户
+        virtual bool FindXrefsForDrawing(const std::string& drawingPath, const std::vector<std::string>& fileNames,
+                                         std::function<void(const std::string& dir)> done)
+        {
+            (void)drawingPath; (void)fileNames; (void)done;
+            return false;
+        }
         // 另存为：返回保存路径（UTF-8，空串 = 取消）。
         // 有系统对话框时（HasSaveDialog）suggestedName 为文档名，由用户在对话框里选位置、格式和 DWG / DXF 版本
         // （version 传入当前版本作为默认值，返回所选版本）；
