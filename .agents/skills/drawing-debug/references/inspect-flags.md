@@ -50,6 +50,7 @@
 | `MINICAD_WIPECHECK` | 按 Editor 的方式逐实体细分并用区域覆盖裁剪，统计遮罩内残留的线段 |
 | `MINICAD_XCLIP` | 带 XCLIP 裁剪的块参照，解码裁剪边界 |
 | `MINICAD_OLEDIR=目录` | 把每个 OLE2FRAME 的原始数据流写成 `<句柄>.ole` |
+| `MINICAD_DUMP_SECTIONS=目录` | 把原样保留的段（如 R2013 起存 ACIS 的 `AcDb:AcDsPrototype_1b`）写成 `<段名>.bin`（冒号换成下划线） |
 | `MINICAD_MEM` | 块参照展开与细分各占多少内存 |
 
 源文件里还有少数未列出的变量（如 `MINICAD_ALLBLOCKS`、`MINICAD_LEAFTYPE`、`MINICAD_QUIT`），用到时看 `tools/inspect_dwg.cpp` 里 `getenv` 附近的注释。

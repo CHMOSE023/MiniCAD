@@ -41,6 +41,12 @@ namespace MiniCAD
 
     struct CadSource;
 
+    namespace Solid { class ISolidKernel; }
+
+    // 读 3DSOLID / REGION / BODY / 曲面（ACIS 数据）时建实体用的内核，宿主启动时设一次；为空时这些实体只显示边线。
+    // 内核内部加锁，后台线程读图也可以用
+    void SetCadImportSolidKernel(Solid::ISolidKernel* kernel);
+
     // 按扩展名（不区分大小写）判断是否 DWG / DXF 文件
     CadFileKind CadKindFromPath(const std::string& path);
 

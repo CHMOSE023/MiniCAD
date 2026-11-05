@@ -23,7 +23,7 @@
 
 // 三维实体建模工具（开发计划 docs/Solid/PLAN.md）：长方体、圆柱、球、拉伸（M3）；截面、平面投影（M4）；
 // 旋转、扫掠、圆角边、倒角边（M5）。
-// 内核由宿主经 Editor::SetSolidKernel 提供；没有内核（网页版）时这些命令不启动。
+// 内核由宿主经 Editor::SetSolidKernel 提供；没有内核（-DMINICAD_WITH_SOLID=OFF）时这些命令不启动。
 // 视图是俯视的二维视图：底面在光标点所在的水平面上，高度沿 +Z（负数沿 −Z），键入数值或用两点距离给出。
 namespace MiniCAD
 {

@@ -36,6 +36,7 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 | 布局页 / 视口 | `MINICAD_VIEWPORTS=1`、`MINICAD_LAYERS=子串`（冻结 / 关闭的图层） |
 | 遮挡 / 裁剪 | `MINICAD_WIPEOUT`、`MINICAD_WIPECHECK`、`MINICAD_XCLIP` |
 | OLE 对象 | `MINICAD_OLEDIR=目录`（导出原始数据） |
+| 三维实体 / 曲面只有边线或缺面 | 看导入日志的"只显示边线" / "缺面"统计；`MINICAD_DUMP_SECTIONS=目录`（R2013 起的 ACIS 数据存储段）；`AcisImportTests` 带 `MINICAD_ACIS_DIR=目录`、`MINICAD_ACIS_FACES=1` 列出建不出的面（见 `docs/Solid/PLAN.md` 第 16 节） |
 
 ## 3. 看 MiniCAD 画成了什么
 

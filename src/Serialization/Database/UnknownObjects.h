@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace MiniDWG
@@ -116,6 +117,15 @@ namespace MiniDWG
         std::vector<std::uint8_t> Data;
     };
     bool DecodeOle2Frame(const UnknownEntity& entity, Ole2FrameData& out);
+
+    // 3DSOLID / REGION / BODY / *SURFACE 的 ACIS 数据（SAT 文本或 SAB 二进制，原样交给调用方解析）。
+    // R2013 前在实体自己的数据里（SAT 逐字节加密 / SAB）；R2013 起在 AcDb:AcDsPrototype_1b 段里按句柄存放：
+    // 先 ReadAcisDataStore 一次，再逐个 DecodeAcisData。数据存储的大对象分页（blob）暂不支持
+    using AcisDataStore = std::unordered_map<Handle, std::vector<std::uint8_t>>;
+    class CadDatabase;
+    AcisDataStore ReadAcisDataStore(const CadDatabase& db);
+    bool IsAcisEntity(std::string_view dxfName);
+    bool DecodeAcisData(const UnknownEntity& entity, const AcisDataStore& store, std::vector<std::uint8_t>& out);
 
     // 标注关联的第 i 个点引用（0～3，对应关联标志的 1、2、4、8 位）
     inline DimensionAssociationOsnapPointRef& PointRefAt(DimensionAssociation& assoc, int i)

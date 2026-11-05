@@ -55,6 +55,7 @@ set(MINICAD_SERIALIZATION_SOURCES
 set(MINICAD_IMPORT_SOURCES
     "${MINICAD_SRC}/Import/CadExchange.cpp"
     "${MINICAD_SRC}/Import/CadTextFile.cpp"
+    "${MINICAD_SRC}/Import/AcisReader.cpp"
 )
 
 # ── Editor ──────────────────────────────────────────────────────────

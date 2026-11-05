@@ -27,6 +27,10 @@ covers: cmake/ClShowIncludes.cpp, build_wasm.bat, run_tests.bat, CMakePresets.js
 - 原因：`Copy-Item`、`cp -p`、解压都保留备份文件的修改时间，还原后的源文件比对象文件旧，Ninja 认为不用重编（编译"通过"只用几秒）
 - 做法：还原后更新时间戳 `(Get-Item <文件>).LastWriteTime = Get-Date` 再编；`git checkout` / `git stash pop` 写出的文件是当前时间，没有这个问题
 
+### 在 worktree 里编译报 `fatal error C1041: cannot open program database ... vc140.pdb`
+- 原因：另一份检出（主仓库或别的 worktree）同时在编译，cl 连上了对方启动的 `mspdbsrv`，写不了本目录的 PDB
+- 做法：编译前给本检出单独的端点名，例如 `$env:_MSPDBSRV_ENDPOINT_ = '<worktree 名>'`，再跑 `.agents/skills/test/run.ps1` 或 `cmake --build`
+
 ### 编译到一半 exe 或 `rules.ninja` 不见了
 - 原因：用户在 Visual Studio 里打开了项目，VS 正在重新配置 `out/debug`
 - 做法：等它配置完再编，不要同时编译

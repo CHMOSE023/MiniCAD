@@ -199,7 +199,7 @@ std::vector<std::uint8_t> dxfBytes = WriteDxf(db, dxf);
 
 已知限制：
 
-- 不解析 ACIS 几何（3DSOLID、REGION、BODY）、动态块参数与动作、AEC/ACM 对象。
+- 不解析 ACIS 几何（3DSOLID、REGION、BODY）、动态块参数与动作、AEC/ACM 对象；ACIS 数据可经 `DecodeAcisData`（`Database/UnknownObjects.h`）取出解密后的 SAT / SAB，R2013 起先 `ReadAcisDataStore` 读数据存储段。
 - `CreateDefaults` 不创建表格样式与材质的默认对象（两者都没有建模）。
 - 带多行文字的属性写为单行；`Insert.SpatialFilter`、`Viewport.Scale` 没有建模。
 - 库不做几何运算，只负责数据。

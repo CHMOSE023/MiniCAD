@@ -10,6 +10,7 @@
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/ShapeEntity.hpp"
 #include "Core/Entity/SolidEntity.hpp"
+#include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
 #include "Core/Entity/WipeoutEntity.hpp"
@@ -56,11 +57,15 @@ namespace
         return n;
     }
 
-    // SHAPE 读得进来但不写出（形号未建模），往返比较实体数时扣掉
+    // SHAPE（形号未建模）与没有网格的三维实体（没有内核时 3DSOLID 只读成边线）读得进来但不写出，往返比较实体数时扣掉
     int CountShapes(const Scene& scene)
     {
         int n = 0;
-        scene.ForEachObject([&](const Object& o) { if (o.IsKindOf<ShapeEntity>()) ++n; });
+        scene.ForEachObject([&](const Object& o)
+        {
+            if (o.IsKindOf<ShapeEntity>() || (o.IsKindOf<Solid3DEntity>() && static_cast<const Solid3DEntity&>(o).GetLocalMesh().Empty()))
+                ++n;
+        });
         return n;
     }
 
@@ -503,7 +508,7 @@ int RunCadExchangeTests()
         const auto out = ExportCad(scene, CadFileKind::Dwg);
         Scene again;
         Check(!out.empty() && ImportCad(out, again, nullptr) && CountAll(again) == CountAll(scene) - CountShapes(scene),
-              (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变（SHAPE 不写出）").c_str());
+              (std::string("样例 ") + name + " 导出 DWG 后再读回，实体数不变（SHAPE 与没有网格的三维实体不写出）").c_str());
     }
 
 #ifdef MINICAD_TCH_SAMPLE_DIR

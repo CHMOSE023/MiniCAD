@@ -47,7 +47,7 @@ covers: assets/ui/minicad_ui.json, apps/Common/src/GUI/MainFrame.*, apps/Common/
 
 ## 主要文件
 
-- `MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染 `RenderFrame`（主视口只画主视口里的文档，`DocumentManager::GetMainEditor`；文档改了要重绘所有视口用 `MainFrame::RequestRenderAll`）、尺寸变化 `OnResize`（由宿主调用）；后台打开图纸 `OpenDrawings` → `DocumentManager::Load`（其他线程）→ 界面线程 `DocumentManager::Add`，状态栏显示进度；`RunSelfTest` 只在桌面版里定义
+- `MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染 `RenderFrame`（主视口只画主视口里的文档，`DocumentManager::GetMainEditor`；文档改了要重绘所有视口用 `MainFrame::RequestRenderAll`）、尺寸变化 `OnResize`（由宿主调用）；后台打开图纸 `OpenDrawings` → `DocumentManager::Load`（其他线程）→ 界面线程 `DocumentManager::Add`，状态栏显示进度（图纸里的 ACIS 三维实体用 `MainFrame::InitDocument` 里 `SetCadImportSolidKernel` 设的平台内核建体，见 [cad-exchange](cad-exchange.md)）；`RunSelfTest` 只在桌面版里定义
 - `MainCommands.cpp`：所有操作注册为 MiniGUI 命令（id、标签、图标、快捷键、执行、可用条件）
 - `CommandLine.cpp`：命令行；界面层命令（`NODES`、`NAVVCUBE`、`XREF` 等）在这里处理，其余交给 `Editor::RunCommand`
 - `MainPanels.cpp`、`LayerPanels.cpp`、`DynamicInput.cpp`、`EditorDialogs.cpp`、`StatusBarView`、`ViewCube`：特性 / 图层面板、动态输入、对话框、状态栏、视图方块
