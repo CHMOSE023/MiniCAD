@@ -154,6 +154,7 @@ namespace MiniGUI
         // 停靠区叠在绘图区上（SolidCraft 的浮动布局）、卡片样式：只对停靠区本身；浮动窗口里是紧贴的面板
         bool Overlay()   const { return !m_view && m_dock->IsFloating(); }
         bool CardStyle() const { return !m_view && m_dock->IsCardStyle(); }
+        bool FloatCard() const { return Overlay() && CardStyle(); }     // 叠在绘图区上的圆角卡片（四角下面是绘图区）
 
         // 浮动停靠区里没有标题栏的组（文档区）：透明、点击穿透，露出下面的绘图区
         bool IsHole() const { return Overlay() && !HasHeader(); }
@@ -183,7 +184,7 @@ namespace MiniGUI
                 total += w;
             }
             const float scale = total > avail && total > 0.0f ? avail / total : 1.0f;     // 放不下时等比缩窄
-            float x = Overlay() ? 0.0f : 2.0f;      // 浮动卡片：第一个标签贴着卡片的圆角
+            float x = FloatCard() ? 0.0f : 2.0f;    // 浮动卡片：第一个标签贴着卡片的圆角
             for (size_t i = 0; i < widths.size(); ++i)
             {
                 const float w  = std::floor(widths[i] * scale);
@@ -214,7 +215,7 @@ namespace MiniGUI
             const Vec2 size = GetSize();
             SetHitTestVisible(!IsHole());
             Rect content{ 0.0f, HeaderHeight(), size.x, std::max(size.y, HeaderHeight()) };
-            if (Overlay() && !IsHole())
+            if (FloatCard() && !IsHole())
                 content = Rect{ kFloatInset, content.min.y, std::max(kFloatInset, size.x - kFloatInset), std::max(content.min.y, size.y - kFloatInset) };
             for (const auto& c : GetChildren())
                 c->SetBounds(content);
@@ -233,7 +234,7 @@ namespace MiniGUI
         {
             if (IsHole())
                 return;
-            const bool     floating = Overlay();
+            const bool     floating = FloatCard();
             const ColorRef body     = BodyColor();
             dl.AddRectFilled(r, body, floating ? Theme::RadiusLg : 0.0f);
             if (!HasHeader())

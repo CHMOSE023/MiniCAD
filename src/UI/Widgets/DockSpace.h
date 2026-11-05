@@ -141,9 +141,9 @@ namespace MiniGUI
         // 卡片样式（照 SolidCraft 的浮动布局）：布局样式的 gap > 0 时，每个标签组画成圆角卡片（RadiusLg，细边框），
         // 卡片之间留 gap 宽的缝（缝就是分隔条，悬停时显示强调色），外圈按 padding 留边，缝里露出 Background。
         // gap 为 0（默认）时是紧贴的停靠面板，相邻面板之间一条分界线。浮动窗口里总是紧贴的
-        bool  IsCardStyle() const { return GetLayoutStyle().gap > 0.0f || m_floating; }
+        bool  IsCardStyle() const { return GetLayoutStyle().gap > 0.0f; }
         // 浮动：停靠区叠在绘图区上面（照 SolidCraft，绘图区铺满窗口）。停靠区自己和缝都是透明的、点击穿透，
-        // 没有标题栏的标签组（文档区）是透明的“洞”，只画其余面板的卡片。隐含卡片样式
+        // 没有标题栏的标签组（文档区）是透明的“洞”，只画其余面板：gap > 0 时是圆角卡片，gap 为 0 时是紧贴的方角面板
         void  SetFloating(bool floating);
         bool  IsFloating() const { return m_floating; }
         float SplitterSize() const { return IsCardStyle() ? std::max(GetLayoutStyle().gap, 1.0f) : kSplitterSize; }

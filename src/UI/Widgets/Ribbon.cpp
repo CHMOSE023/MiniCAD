@@ -785,8 +785,16 @@ namespace MiniGUI
     // =========================================================
     void Ribbon::OnPaint(DrawList& dl, const Rect& r)
     {
-        dl.AddRectFilled(r, Theme::Panel, Theme::RadiusLg);
-        dl.AddRect(r, Theme::BorderSubtle, Theme::RadiusLg, 1.0f);
+        if (m_card)
+        {
+            dl.AddRectFilled(r, Theme::Panel, Theme::RadiusLg);
+            dl.AddRect(r, Theme::BorderSubtle, Theme::RadiusLg, 1.0f);
+        }
+        else
+        {
+            dl.AddRectFilled(r, Theme::Panel);
+            dl.AddRectFilled(Rect{ r.min.x, r.max.y - 1.0f, r.max.x, r.max.y }, Theme::BorderSubtle);
+        }
 
         UIContext* ctx = GetContext();
         if (!ctx)

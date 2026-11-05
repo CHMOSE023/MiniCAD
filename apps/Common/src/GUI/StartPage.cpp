@@ -10,6 +10,7 @@
 #include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
 #include "NodeGraph/Examples.h"
+#include "Serialization/JsonSerializer.h"
 #include "Style/Theme.hpp"
 #include "Text/TextSystem.h"
 #include "Widgets/Button.h"
@@ -18,6 +19,7 @@
 #include "Widgets/ScrollView.h"
 #include "Widgets/TitleBar.h"
 #include "Widgets/ViewportHost.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -47,6 +49,43 @@ namespace MiniCAD
         constexpr float kSectionGap     = 28.0f;    // file_section_gap
         constexpr float kRadiusLg       = 8.0f;     // radius_lg（导航行、最近行）
         constexpr float kRadiusXl       = 10.0f;    // radius_xl（卡片、最近列表）
+
+        struct DrawingSample
+        {
+            std::string Path, Name, Description, Icon;
+        };
+
+        // 示例图纸：dir/samples.json 列出顺序、文件、名称、说明与卡片图标（assets/samples）
+        std::vector<DrawingSample> ReadDrawingSamples(const std::string& dir)
+        {
+            std::vector<DrawingSample> list;
+            JsonSerializer s;
+            std::string format;
+            size_t n = 0;
+            if (!s.Parse(Nodes::ReadTextFile(dir + "/samples.json")) || (s.Value("format", format), format != "MiniCAD-DrawingSamples")
+                || !s.BeginArray("samples", n))
+                return list;
+            for (size_t i = 0; i < n; ++i)
+            {
+                if (!s.BeginElement(i))
+                    continue;
+                DrawingSample e;
+                std::string file;
+                s.Value("file", file);
+                s.Value("name", e.Name);
+                s.Value("description", e.Description);
+                s.Value("icon", e.Icon);
+                s.EndElement();
+                if (file.empty())
+                    continue;
+                e.Path = dir + "/" + file;
+                if (e.Name.empty())
+                    e.Name = file;
+                list.push_back(std::move(e));
+            }
+            s.EndArray();
+            return list;
+        }
 
         std::string ParentDir(const std::string& utf8)
         {
@@ -499,14 +538,19 @@ namespace MiniCAD
         AddSectionTitle(col, Tr("最近"));
         m_startRecent = col->AddChild<Node>();
 
-        // 示例：随程序发布的节点图（assets/nodes/examples，顺序与名称来自 examples.json）。
-        // 点击后新建图纸、打开节点编辑器并插入示例；没有实体内核时需要内核的示例禁用
+        // 示例：随程序发布的图纸（assets/samples，samples.json）在前，点击后打开它的副本；
+        // 再是节点图（assets/nodes/examples，顺序与名称来自 examples.json），点击后新建图纸、打开节点编辑器并插入示例；
+        // 没有实体内核时需要内核的示例禁用
+        const auto drawings = ReadDrawingSamples(ResourceDir() + "/samples");
         const auto examples = Nodes::ReadExampleIndex(ResourceDir() + "/nodes/examples");
-        if (!examples.empty())
+        if (!drawings.empty() || !examples.empty())
         {
             AddSectionTitle(col, Tr("示例"));
             const bool kernel = m_platform->GetSolidKernel() != nullptr;
             auto* grid = col->AddChild<TileGrid>(kSampleMinW, kSampleCardH);
+            for (const DrawingSample& d : drawings)
+                grid->AddChild<SampleCard>(icons + (d.Icon.empty() ? std::string("Drawing.png") : d.Icon), Tr(d.Name), Tr(d.Description),
+                                           [this, path = d.Path] { OpenDrawingSample(path); });
             for (const Nodes::ExampleFile& e : examples)
             {
                 const bool usable = kernel || !e.NeedsKernel;
@@ -646,6 +690,13 @@ namespace MiniCAD
         else if (m_viewport->IsVisible())
             m_viewport->Focus();
         m_platform->RequestRedraw();
+    }
+
+    void MainFrame::OpenDrawingSample(const std::string& path)
+    {
+        if (std::find(m_sampleOpens.begin(), m_sampleOpens.end(), path) == m_sampleOpens.end())
+            m_sampleOpens.push_back(path);
+        OpenDrawings({ path });
     }
 
     void MainFrame::OpenNodeExample(const std::string& path, const std::string& name, const std::string& description)

@@ -127,6 +127,7 @@ run_tests.bat
 - Image loading: [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h)
 - Font rendering: [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h)
 - Web UI font: [Noto Sans SC](https://github.com/notofonts/noto-cjk)
+- Strokes of the single-line `minicad_*.shx` fonts: [Make Me a Hanzi](https://github.com/skishore/makemeahanzi) (Arphic PL), [KanjiVG](https://kanjivg.tagaini.net) (CC BY-SA 3.0)
 - Linux windowing and input: [SDL3](https://github.com/libsdl-org/SDL) (zlib license)
 - Test fonts: `GB2312.ttf` `simplex.shx` `TSSDCHN.SHX` `tssdeng.shx`
 

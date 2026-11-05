@@ -389,8 +389,8 @@ namespace MiniCAD
     bool AndroidApp::LoadUiFonts(MiniGUI::TextSystem& text)
     {
         // 随程序带的界面字体；系统的 Noto Sans CJK 作中日韩后备（.ttc 里第 3 个字形是简体中文），没有时用随带的韩文字体
-        auto main     = MiniGUI::Font::LoadFromFile(m_resourceDir + "/fonts/NotoSansSC-UI.ttf", 0);
-        auto fallback = MiniGUI::Font::LoadFromFile("/system/fonts/NotoSansCJK-Regular.ttc", 2);
+        auto main     = MiniGUI::Font::LoadShared(m_resourceDir + "/fonts/NotoSansSC-UI.ttf", 0);
+        auto fallback = MiniGUI::Font::LoadShared("/system/fonts/NotoSansCJK-Regular.ttc", 2);
         if (!main)
             main = std::move(fallback);
         if (!main)
@@ -398,9 +398,21 @@ namespace MiniCAD
         text.AddFont(std::move(main));
         if (fallback)
             text.AddFallbackFont(std::move(fallback));
-        if (auto hangul = MiniGUI::Font::LoadFromFile(m_resourceDir + "/fonts/NotoSansKR-UI.otf", 0))
+        if (auto hangul = MiniGUI::Font::LoadShared(m_resourceDir + "/fonts/NotoSansKR-UI.otf", 0))
             text.AddFallbackFont(std::move(hangul));
         return true;
+    }
+
+    std::vector<std::shared_ptr<MiniGUI::Font>> AndroidApp::LoadLanguageUiFonts(const std::string& language)
+    {
+        const int face = MiniGUI::NotoCjkFaceForLanguage(language);
+        if (MiniGUI::BundledUiFontForLanguage(language).empty())
+            return {};
+        if (auto f = MiniGUI::Font::LoadShared("/system/fonts/NotoSansCJK-Regular.ttc", face))
+            return { f };
+        if (auto f = MiniGUI::Font::LoadShared(m_resourceDir + "/fonts/" + MiniGUI::BundledUiFontForLanguage(language), 0))
+            return { f };
+        return {};
     }
 
     void AndroidApp::RequestRedraw()

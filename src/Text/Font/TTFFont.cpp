@@ -18,11 +18,49 @@
 
 namespace MiniCAD
 {
-    TTFFont::TTFFont(const std::string& name, const std::string& filePath, uint64_t fontId)
+    TTFFallbackChain::TTFFallbackChain(size_t count, Loader loader)
+        : m_loader(std::move(loader))
+        , m_fonts(count)
+        , m_probed(count, false)
+    {}
+
+    TTFFont* TTFFallbackChain::Find(uint32_t codepoint)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (auto it = m_route.find(codepoint); it != m_route.end())
+            return it->second;
+        TTFFont* found = nullptr;
+        for (size_t i = 0; i < m_fonts.size() && !found; ++i)
+        {
+            if (!m_probed[i])
+            {
+                m_probed[i] = true;
+                m_fonts[i]  = m_loader(i);
+                if (m_fonts[i] && !m_fonts[i]->IsLoaded())
+                    m_fonts[i].reset();
+            }
+            if (m_fonts[i] && m_fonts[i]->Covers(codepoint))
+                found = m_fonts[i].get();
+        }
+        m_route.emplace(codepoint, found);
+        return found;
+    }
+
+    void TTFFallbackChain::Rescan()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (size_t i = 0; i < m_fonts.size(); ++i)
+            if (!m_fonts[i])
+                m_probed[i] = false;
+        for (auto it = m_route.begin(); it != m_route.end();)
+            it = it->second ? std::next(it) : m_route.erase(it);
+    }
+
+    TTFFont::TTFFont(const std::string& name, const std::string& filePath, uint64_t fontId, int faceIndex)
         : m_name(name)
         , m_fontId(fontId)
     {
-        Load(filePath);
+        Load(filePath, faceIndex);
     }
 
     TTFFont::~TTFFont()
@@ -37,10 +75,10 @@ namespace MiniCAD
     // 字体加载
     // ──────────────────────────────────────────────────────────────────────
 
-    void TTFFont::Load(const std::string& filePath)
+    void TTFFont::Load(const std::string& filePath, int faceIndex)
     {
 #ifdef MINICAD_WEB
-        (void)filePath; // Web 端不走此路径
+        (void)filePath; (void)faceIndex; // Web 端不走此路径
         return;
 #else
         std::ifstream f(Utf8ToPath(filePath), std::ios::binary);
@@ -53,7 +91,7 @@ namespace MiniCAD
         if (m_fileData.empty()) return;
 
         auto* info = new stbtt_fontinfo;
-        int offset = stbtt_GetFontOffsetForIndex(m_fileData.data(), 0);
+        int offset = stbtt_GetFontOffsetForIndex(m_fileData.data(), faceIndex);
         if (offset < 0 || !stbtt_InitFont(info, m_fileData.data(), offset))
         {
             delete info;
@@ -96,9 +134,10 @@ namespace MiniCAD
     // IFont 接口
     // ──────────────────────────────────────────────────────────────────────
 
-#ifndef MINICAD_WEB
     // %%d / %%p / %%c 等控制码带 kRawShapeFlag（SHX 按形号查），TrueType 里就是 Unicode 码点
-    static int TtfCodepoint(uint32_t codepoint) { return static_cast<int>(codepoint & ~kRawShapeFlag); }
+    static uint32_t TtfCodepointOf(uint32_t codepoint) { return codepoint & ~kRawShapeFlag; }
+#ifndef MINICAD_WEB
+    static int TtfCodepoint(uint32_t codepoint) { return static_cast<int>(TtfCodepointOf(codepoint)); }
 #endif
 
     bool TTFFont::Covers(uint32_t codepoint) const
@@ -111,27 +150,32 @@ namespace MiniCAD
 #endif
     }
 
+    TTFFont* TTFFont::Fallback(uint32_t codepoint)
+    {
+        return m_fallback && !Covers(codepoint) ? m_fallback->Find(TtfCodepointOf(codepoint)) : nullptr;
+    }
+
     const Glyph& TTFFont::GetGlyph(uint32_t codepoint)
     {
+        // 缺字：直接用回退字体缓存里的字形（引用一直有效），同一个汉字在各西文字体里共用一份。
+        // 缺字的结果不进缓存：回退串后来找到字体（网页版）时还能换上
+        if (TTFFont* f = Fallback(codepoint))
+            return f->GetGlyph(codepoint);
         auto it = m_glyphCache.find(codepoint);
         if (it != m_glyphCache.end()) return it->second;
-
-        // 缺字：直接用替代字体缓存里的字形（引用一直有效），同一个汉字在各西文字体里共用一份
-        if (m_fallback && !Covers(codepoint) && m_fallback->Covers(codepoint))
-            return m_fallback->GetGlyph(codepoint);
         return m_glyphCache.emplace(codepoint, BuildGlyph(codepoint)).first->second;
     }
 
     double TTFFont::GetAdvance(uint32_t codepoint)
     {
+        if (TTFFont* f = Fallback(codepoint))
+            return f->GetAdvance(codepoint);
         auto it = m_advanceCache.find(codepoint);
         if (it != m_advanceCache.end()) return it->second;
 
         double adv = 0.6;
 #ifndef MINICAD_WEB
-        if (m_fallback && !Covers(codepoint) && m_fallback->Covers(codepoint))
-            adv = m_fallback->GetAdvance(codepoint);
-        else if (m_stbFont)
+        if (m_stbFont)
         {
             auto* info = static_cast<stbtt_fontinfo*>(m_stbFont);
             int advance = 0, lsb = 0;

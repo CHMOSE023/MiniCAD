@@ -289,6 +289,14 @@ namespace MiniCAD
         m_constraintEngine.EnableOrtho(o.m_constraintEngine.IsOrthoEnabled());
         m_constraintEngine.EnablePolar(o.m_constraintEngine.IsPolarEnabled());
         m_picking.SetHoverEnabled(o.m_picking.IsHoverEnabled());
+        SetCursorStyle(o.m_cursorSize, o.m_pickBox);
+    }
+
+    void Editor::SetCursorStyle(float cursorSize, float pickBox)
+    {
+        m_cursorSize = std::clamp(cursorSize, 0.0f, 100.0f);
+        m_pickBox    = std::clamp(pickBox, 0.0f, 50.0f);
+        m_picking.SetPickBox(m_pickBox);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1533,7 +1541,7 @@ namespace MiniCAD
 
         std::string msg = TrF("已创建 {0} 个面域，面积 = {1}，周长 = {2}", regionCount, Fixed4(totalArea), Fixed4(totalPerimeter));
         if (built.Skipped > 0)
-            msg += TrF("（忽略 {0} 个对象）", built.Skipped);
+            msg += TrNF("（忽略 {0} 个对象）", built.Skipped, built.Skipped);
         m_commandLine.Echo(msg);
         m_commandLine.Echo(Tr("原对象已保留；不再需要时请自行删除"));
     }
@@ -2009,7 +2017,7 @@ namespace MiniCAD
 
         m_commandLine.Echo(TrF("{0}：已生成面域（{1} 个环），面积 = {2}，周长 = {3}", Tr(kLabel[opi]), result.size(), Fixed4(area), Fixed4(perimeter)));
         if (ignored > 0)
-            m_commandLine.Echo(TrF("有 {0} 个对象不能围成区域，已忽略", ignored));
+            m_commandLine.Echo(TrNF("有 {0} 个对象不能围成区域，已忽略", ignored, ignored));
     }
 
     void Editor::ReportArea()
@@ -2868,7 +2876,7 @@ namespace MiniCAD
         });
         const size_t n = ids.size();
         SetSelection(std::move(ids));
-        m_commandLine.Echo(n == 0 ? Tr("没有可选择的对象") : TrF("已选择 {0} 个对象", n));
+        m_commandLine.Echo(n == 0 ? Tr("没有可选择的对象") : TrNF("已选择 {0} 个对象", n, n));
         return n;
     }
 
@@ -2907,7 +2915,7 @@ namespace MiniCAD
         std::sort(ids.begin(), ids.end());              // 顺序确定，撤销 / 重做结果一致
         if (announce && locked > 0)
             m_commandLine.Echo(ids.empty() ? Tr("所选对象都在锁定的图层上，不能修改")
-                                           : TrF("已跳过 {0} 个锁定图层上的对象", locked));
+                                           : TrNF("已跳过 {0} 个锁定图层上的对象", locked, locked));
         return ids;
     }
 
@@ -5087,6 +5095,8 @@ namespace MiniCAD
 
         vs.ShowCurrorBox = !IsActiveTool() && !m_cursorHidden;
         vs.ShowCrosshair = !HidesCrosshair() && !m_cursorHidden;
+        vs.CursorSize    = m_cursorSize;
+        vs.PickBox       = m_pickBox;
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

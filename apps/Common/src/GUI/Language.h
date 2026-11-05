@@ -4,6 +4,11 @@
 #include <string>
 #include <vector>
 
+namespace MiniGUI
+{
+    class TextSystem;
+}
+
 namespace MiniCAD
 {
     class AppPlatform;
@@ -32,4 +37,7 @@ namespace MiniCAD
     // "设置 > 语言"：换上 code 的翻译表（在界面线程调用），save 时写进用户设置；返回实际使用的语言代码
     // （翻译文件读不出时是简体中文）。只换表，界面的重建由调用方负责（MainFrame::SetLanguage）
     std::string SwitchLanguage(AppPlatform& platform, const std::string& code, bool save = true);
+
+    // 按当前语言设定界面的优先字体（日文界面用日文字形）：建 UIContext 加载字体后、切换语言后调用
+    void ApplyLanguageFonts(AppPlatform& platform, MiniGUI::TextSystem& text);
 }

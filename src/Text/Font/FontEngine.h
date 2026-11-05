@@ -8,6 +8,7 @@
 #include "IFont.h"
 #include "SHXFont.h"
 #include "TTFFont.h"
+#include "SHXCompositeFont.h"
 
 namespace MiniCAD
 {
@@ -22,9 +23,13 @@ namespace MiniCAD
         std::string bigFontFile;   // SHX 大字体（中文等双字节字符）；非空时与主字体组成 SHXCompositeFont
 
         bool  isShx       = false;
+        bool  shapesOnly  = false;   // 线型用的形文件：缺形不到单线回退字体里找（那里同号的形是钢筋符号等）
         float widthFactor = 1.0f;
         float oblique     = 0.0f;
     };
+
+    // 字体所属的中日韩文字：决定缺字时先找哪种字体（日文汉字用日文字形）
+    enum class CjkScript { Simplified, Traditional, Japanese, Korean };
 
     class FontEngine
     {
@@ -42,14 +47,25 @@ namespace MiniCAD
         // 清空缓存（换字体目录后调用）
         void Clear();
 
+        // 字体目录里新加了字体（网页版后下载的字体）：缺字回退重新找之前没找到的字体
+        void RescanFallbacks();
+
+        // 按字体文件名或族名猜它是哪种文字（新細明體、MS Gothic、Gulim ……）；看不出来时是简体
+        static CjkScript ScriptOfFont(const std::string& fontFile);
+
     private:
         std::string BuildKey(const FontStyle& style) const;
         std::string ResolvePath(const std::string& fontFile) const;
         std::string FindPath(const std::string& fontFile, const char* substitute, bool* found = nullptr) const;
+        std::string FindExisting(const std::string& fontFile) const;
+        std::shared_ptr<TTFFallbackChain> FallbackChain(CjkScript script);
+        std::shared_ptr<SHXFallbackChain> ShxFallbackChain(CjkScript script);
+        std::string SubstituteTrueType(CjkScript script, int& face) const;
 
     private:
         std::unordered_map<std::string, std::shared_ptr<IFont>> m_cache;
-        std::shared_ptr<TTFFont> m_ttfFallback;   // TrueType 缺字时的替代字体（自带 GB2312.ttf），各 TrueType 字体共用
+        std::shared_ptr<TTFFallbackChain> m_chains[4];   // 按 CjkScript，TrueType 缺字时依次找的字体
+        std::shared_ptr<SHXFallbackChain> m_shxChains[4];   // 按 CjkScript，SHX 缺字时依次找的单线字体
         uint64_t    m_nextRuntimeFontId = 1;
         std::string m_fontDir           = "fonts/";
         std::vector<std::string> m_extraDirs;   // 额外的搜索目录，都以分隔符结尾

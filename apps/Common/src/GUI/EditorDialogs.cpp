@@ -28,11 +28,15 @@
 #include "Widgets/Panel.h"
 #include "Widgets/TextBox.h"
 #include "Widgets/ViewportHost.h"
+#include "Viewport/Cursor.h"
+#include "Core/Log.h"
 #include "Paint/DrawList.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <tuple>
 
 
 namespace MiniCAD
@@ -536,7 +540,7 @@ namespace MiniCAD
                 return;
             ListItem item;
             item.text     = b.GetName();
-            item.detail   = TrF("{0} 个对象", b.EntityCount());
+            item.detail   = TrNF("{0} 个对象", b.EntityCount(), b.EntityCount());
             item.userData = id;
             items.push_back(std::move(item));
         });
@@ -2042,5 +2046,165 @@ namespace MiniCAD
         });
         m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
         m_mlineStyleDialog = raw;
+    }
+
+    // =========================================================
+    // 管理 → 设置光标…：十字光标大小（0～100）与拾取框大小（0～50），拖动滑块时预览与绘图区一起变；
+    // 所有文档共用一套（DocumentManager::SetCursorStyle），「确定」写进用户设置，「取消」还原
+    // =========================================================
+    namespace
+    {
+        constexpr const char* kCursorSizeKey = "cursorSize";
+        constexpr const char* kPickBoxKey    = "pickBox";
+
+        // 预览：缩小的一块绘图区。十字线按百分比占它的长边（与绘图区同一个比例），拾取框按屏幕上的实际大小
+        class CursorPreview : public MiniGUI::Node
+        {
+        public:
+            float cursorSize = Editor::kDefaultCursorSize;
+            float pickBox    = Editor::kDefaultPickBox;     // 物理像素，同绘图区
+            float dpiScale   = 1.0f;
+
+        protected:
+            void OnPaint(MiniGUI::DrawList& dl, const MiniGUI::Rect& r) override
+            {
+                using namespace MiniGUI;
+                dl.AddRectFilled(r, Theme::Background, 3.0f);
+                dl.AddRect(r, Theme::Border, 3.0f);
+                const Vec2  c    = r.Center();
+                const float half = pickBox / std::max(dpiScale, 0.01f);
+                const float arm  = Cursor::CrossArm(cursorSize, r.max.x - r.min.x, r.max.y - r.min.y);
+                const float x0 = arm < 0.0f ? r.min.x : std::max(r.min.x, c.x - arm);
+                const float x1 = arm < 0.0f ? r.max.x : std::min(r.max.x, c.x + arm);
+                const float y0 = arm < 0.0f ? r.min.y : std::max(r.min.y, c.y - arm);
+                const float y1 = arm < 0.0f ? r.max.y : std::min(r.max.y, c.y + arm);
+                if (x0 < c.x - half) dl.AddLine({ x0, c.y }, { c.x - half, c.y }, Theme::Text);
+                if (x1 > c.x + half) dl.AddLine({ c.x + half, c.y }, { x1, c.y }, Theme::Text);
+                if (y0 < c.y - half) dl.AddLine({ c.x, y0 }, { c.x, c.y - half }, Theme::Text);
+                if (y1 > c.y + half) dl.AddLine({ c.x, c.y + half }, { c.x, y1 }, Theme::Text);
+                if (half > 0.0f)
+                    dl.AddRect(Rect{ c.x - half, c.y - half, c.x + half, c.y + half }, Theme::Text);
+            }
+        };
+
+        class CursorDialog : public MiniGUI::Dialog
+        {
+        public:
+            CursorDialog() : MiniGUI::Dialog(Tr("设置光标")) {}
+
+            float origSize = Editor::kDefaultCursorSize;
+            float origBox  = Editor::kDefaultPickBox;
+            bool  accept   = false;
+
+            MiniGUI::Slider*    sizeSlider = nullptr;
+            MiniGUI::NumberBox* sizeBox    = nullptr;
+            MiniGUI::Slider*    boxSlider  = nullptr;
+            MiniGUI::NumberBox* boxBox     = nullptr;
+            CursorPreview*      preview    = nullptr;
+
+            std::function<void()> onApply;
+        };
+
+        // 一行："名称 [滑块] [数值]"，在数值框里输入时滑块跟着动（滑块的回调再刷新数值框）
+        std::pair<MiniGUI::Slider*, MiniGUI::NumberBox*> AddSliderRow(MiniGUI::Node* parent, const std::string& name,
+                                                                      float minValue, float maxValue, float value, const std::string& tip)
+        {
+            using namespace MiniGUI;
+            Node* row = parent->AddChild<Node>();
+            LayoutStyle s;
+            s.direction  = FlexDirection::Row;
+            s.alignItems = Align::Center;
+            s.gap        = 8.0f;
+            row->SetLayoutStyle(s);
+            Label* l = row->AddChild<Label>(name, 13.0f, Theme::TextDim);
+            l->EditLayoutStyle().width = 84.0f;
+            auto* slider = row->AddChild<Slider>(minValue, maxValue, value);
+            slider->SetStep(1.0f);
+            slider->EditLayoutStyle().width = 220.0f;
+            slider->SetTooltip(tip);
+            auto* box = row->AddChild<NumberBox>(value, minValue, maxValue, 1.0, 0);
+            box->EditLayoutStyle().width = 64.0f;
+            box->SetOnChanged([slider](double v) { slider->SetValue(static_cast<float>(v)); });
+            return { slider, box };
+        }
+    }
+
+    void MainFrame::LoadCursorStyle()
+    {
+        if (!m_useUserLayout)
+            return;     // 自测不读本机设置
+        auto read = [this](const char* key, float fallback)
+        {
+            const std::string text = m_platform->ReadUserSetting(key);
+            char* end = nullptr;
+            const float v = text.empty() ? fallback : std::strtof(text.c_str(), &end);
+            return end && *end != '\0' ? fallback : v;
+        };
+        m_docManager.SetCursorStyle(read(kCursorSizeKey, Editor::kDefaultCursorSize), read(kPickBoxKey, Editor::kDefaultPickBox));
+    }
+
+    void MainFrame::OpenCursorDialog()
+    {
+        using namespace MiniGUI;
+        auto dialog = std::make_unique<CursorDialog>();
+        CursorDialog* raw = dialog.get();
+        Node* body = raw->GetBody();
+        LayoutStyle bs = ColumnStyle(8.0f);
+        bs.padding = Edges::Symmetric(14.0f, 6.0f);
+        body->SetLayoutStyle(bs);
+
+        const Editor& editor = m_docManager.GetEditor();
+        raw->origSize = editor.GetCursorSize();
+        raw->origBox  = editor.GetPickBox();
+
+        std::tie(raw->sizeSlider, raw->sizeBox) = AddSliderRow(body, Tr("十字光标大小"), 0.0f, 100.0f, raw->origSize,
+                                                               Tr("十字线占绘图区的百分比：0 只有拾取框，100 铺满绘图区"));
+        std::tie(raw->boxSlider, raw->boxBox) = AddSliderRow(body, Tr("拾取框大小"), 0.0f, 50.0f, raw->origBox,
+                                                             Tr("拾取框半边长（像素）：点选、悬停时离光标多近的对象算选中"));
+
+        auto* preview = body->AddChild<CursorPreview>();
+        preview->EditLayoutStyle().width  = 384.0f;
+        preview->EditLayoutStyle().height = 200.0f;
+        preview->cursorSize = raw->origSize;
+        preview->pickBox    = raw->origBox;
+        preview->dpiScale   = m_dpiScale;
+        raw->preview = preview;
+
+        // 只捕获对话框本身：回调在对话框存活期间随时触发
+        raw->onApply = [this, raw]
+        {
+            const float size = raw->sizeSlider->GetValue();
+            const float box  = raw->boxSlider->GetValue();
+            raw->sizeBox->SetValue(size);
+            raw->boxBox->SetValue(box);
+            raw->preview->cursorSize = size;
+            raw->preview->pickBox    = box;
+            raw->preview->Invalidate();
+            m_docManager.SetCursorStyle(size, box);
+            RequestRenderAll();
+        };
+        raw->sizeSlider->SetOnChanged([raw](float) { raw->onApply(); });
+        raw->boxSlider->SetOnChanged([raw](float) { raw->onApply(); });
+
+        raw->AddButton(Tr("恢复默认"), [raw]
+        {
+            raw->sizeSlider->SetValue(Editor::kDefaultCursorSize);
+            raw->boxSlider->SetValue(Editor::kDefaultPickBox);
+        });
+        raw->AddButton(Tr("确定"), [raw] { raw->accept = true; raw->Close(); }, DialogButtonRole::Default);
+        raw->AddButton(Tr("取消"), [raw] { raw->Close(); }, DialogButtonRole::Cancel);
+        raw->SetOnClosed([this, raw]
+        {
+            const Editor& e = m_docManager.GetEditor();
+            if (!raw->accept)
+                m_docManager.SetCursorStyle(raw->origSize, raw->origBox);
+            else if (m_useUserLayout && (!m_platform->WriteUserSetting(kCursorSizeKey, std::to_string(static_cast<int>(e.GetCursorSize())))
+                                         || !m_platform->WriteUserSetting(kPickBoxKey, std::to_string(static_cast<int>(e.GetPickBox())))))
+                LOG_WARN_TR("无法保存光标的设置");
+            RequestRenderAll();
+            if (m_viewport->IsVisible())
+                m_viewport->Focus();
+        });
+        m_ui->OpenPopup(std::unique_ptr<Popup>(dialog.release()));
     }
 }
