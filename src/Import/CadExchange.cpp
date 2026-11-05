@@ -590,6 +590,8 @@ namespace MiniCAD
                     LOG_WARN_TR("TCH_WALL × {0} 显示为普通轮廓；不修改时另存为原格式原版本可保留TCH对象", m_tianzhengWalls);
                 for (const auto& [name, count] : m_tchConverted)
                     LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留TCH对象", name.c_str(), count);
+                for (const auto& [name, count] : m_proxyConverted)
+                    LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留原对象", name.c_str(), count);
                 for (const auto& [name, reasons] : m_tchFailures)
                     for (const auto& [reason, handles] : reasons)
                     {
@@ -905,6 +907,38 @@ namespace MiniCAD
                 for (const auto& [name, file] : kFiles)
                     if (key == name) return file;
                 return typeface + ".ttf";
+            }
+
+            const Tch::ProxyGraphicsContext& ProxyContext()
+            {
+                if (m_proxyContext) return *m_proxyContext;
+                auto& c = m_proxyContext.emplace();
+                if (const auto* layers = m_db.Layers()) c.Layers = layers->Entries;
+                ForEachEntry<Dwg::LineType>(m_db.LineTypes(), [&](const Dwg::LineType& lt) {
+                    c.LineTypes.push_back(lt.ObjectHandle);
+                    if (EqualsNoCase(lt.Name, "ByLayer")) c.ByLayerLineType = lt.ObjectHandle;
+                    else if (EqualsNoCase(lt.Name, "ByBlock")) c.ByBlockLineType = lt.ObjectHandle;
+                });
+                if (const auto cp = Dwg::Codec::CodePageFromName(m_db.Header.CodePage); cp != Dwg::Codec::CodePage::Unknown)
+                    c.CodePage = cp;
+                auto stem = [](std::string_view file) {
+                    if (const auto slash = file.find_last_of("/\\"); slash != std::string_view::npos) file.remove_prefix(slash + 1);
+                    if (const auto dot = file.rfind('.'); dot != std::string_view::npos) file = file.substr(0, dot);
+                    return Lower(std::string(file));
+                };
+                std::vector<const Dwg::TextStyle*> styles;
+                ForEachEntry<Dwg::TextStyle>(m_db.TextStyles(), [&](const Dwg::TextStyle& s) { styles.push_back(&s); });
+                c.StyleForFont = [styles, stem](std::string_view font, std::string_view bigFont) {
+                    const Dwg::TextStyle* best = nullptr;
+                    for (const auto* s : styles)
+                        if (stem(s->Filename) == stem(font))
+                        {
+                            if (stem(s->BigFontFilename) == stem(bigFont)) return s->ObjectHandle;
+                            if (!best) best = s;
+                        }
+                    return best ? best->ObjectHandle : Dwg::kNullHandle;
+                };
+                return c;
             }
 
             TextStyleID LookupStyle(Dwg::Handle h) const
@@ -1577,7 +1611,7 @@ namespace MiniCAD
                             auto& geometry = static_cast<InsertEntity&>(*result);
                             geometry.SetScale({insert.XScale, insert.YScale, insert.ZScale});
                             geometry.SetRotation(insert.Rotation);
-                            ++m_tchConverted[unknown->Raw.DxfName];
+                            ++(unknown->Raw.DxfName.starts_with("TCH_") ? m_tchConverted : m_proxyConverted)[unknown->Raw.DxfName];
                             return result;
                         }
                     }
@@ -2271,11 +2305,11 @@ namespace MiniCAD
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }
-                    if (unknown->Raw.DxfName.starts_with("TCH_"))
+                    if (unknown->Raw.DxfName.starts_with("TCH_") || !unknown->ProxyGraphics.empty())
                     {
                         Tch::TchProxyGraphics proxy;
                         std::string reason;
-                        if (Tch::DecodeProxyGraphics(*unknown, proxy, &reason))
+                        if (Tch::DecodeProxyGraphics(*unknown, proxy, &reason, &ProxyContext()))
                         {
                             std::vector<std::unique_ptr<Entity>> geometry;
                             for (const auto& primitive : proxy.Entities)
@@ -2288,7 +2322,7 @@ namespace MiniCAD
                                 auto* block = m_scene.GetBlockTable().Find(blockId);
                                 block->SetFlags(BlockEntity::Anonymous);
                                 for (auto& primitive : geometry) block->AddEntity(std::move(primitive));
-                                ++m_tchConverted[unknown->Raw.DxfName];
+                                ++(unknown->Raw.DxfName.starts_with("TCH_") ? m_tchConverted : m_proxyConverted)[unknown->Raw.DxfName];
                                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                             }
                             reason = "proxy primitive cannot be mapped to Scene";
@@ -3860,6 +3894,7 @@ namespace MiniCAD
             std::map<Dwg::Handle, LayerID>     m_layers;
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
+            std::optional<Tch::ProxyGraphicsContext> m_proxyContext;
             std::map<Dwg::Handle, MLineStyleID> m_mlineStyles;   // MLINESTYLE 句柄 → 样式表 ID
             std::map<Dwg::Handle, BlockID>     m_blocks;
             // 转换进度：已转换 / 全部块与模型空间的实体数
@@ -3881,6 +3916,7 @@ namespace MiniCAD
             int m_tianzhengWalls = 0;
             Tch::TchConfig m_tchConfig;                     
             std::map<std::string, int> m_tchConverted;
+            std::map<std::string, int> m_proxyConverted;
             std::map<std::string, std::map<std::string, std::set<Dwg::Handle>>> m_tchFailures;   // 类型 → 原因 → 句柄
             bool m_tchContinuous = false;                  // MakeTchGraphics 组装符号标注时线按实线（MakeTchSymbol 设）
             std::string                  m_namePrefix;

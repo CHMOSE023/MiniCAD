@@ -39,7 +39,7 @@ $rules = @(
     @('^tests/Core/TianzhengWallTests',                   'MiniCADTianzhengTests'),
     @('^tests/Core/(TchBlockInsert|TchProxyGraphics)Tests', 'MiniCADTchImportTests'),
     @('^tests/Core/TchCipherWriter',                    'MiniCADTchCipherTests','MiniCADTchSheetTests'),
-    @('^tests/Core/(Tch\w+|CadPreserve|DrawingOpen|Face3D)Tests\.cpp$', 'MiniCAD$1Tests'),
+    @('^tests/Core/(?!TchBlockInsertTests|TchProxyGraphicsTests)(Tch\w+|CadPreserve|DrawingOpen|Face3D)Tests\.cpp$', 'MiniCAD$1Tests'),
     @('^tests/Core/(?!Tch|Tianzheng|CadPreserve|DrawingOpen|Face3D)', 'MiniCADTests'),
     @('^src/Serialization/(Codec|Database|Dwg|Dxf)/',     'MiniDWGTests','MiniCADTests'),
     @('^src/Import/Tch',                                  ($tch + 'MiniCADTests')),

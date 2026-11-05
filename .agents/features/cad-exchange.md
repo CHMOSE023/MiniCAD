@@ -28,6 +28,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型
 - OLE2FRAME（嵌入的 Word / Excel 等）只导入显示：MiniDWG 原样保留，`Dwg::DecodeOle2Frame` 解出数据，`src/Core/Ole/OleObject` 解析 AutoCAD 头与 OLE 复合文档里的展示图（WMF / EMF / DIB），显示为 `OleFrameEntity`；图元文件经 `AppPlatform::RasterizeOle` 光栅化（桌面版 GDI，网页版只画边框）
+- 其他软件的自定义实体（`SWR_*`）没有专门适配：带代理图形的经 `Tch::DecodeProxyGraphics` 按代理图形显示（图层 / 线型序号与文字字体经 `Importer::ProxyContext` 映射，格式与支持的记录见 `docs/evidence/Tch-proxy-graphics.md`），结束时按类型 `LOG_WARN` "显示为普通几何"；`SWR_BLOCK_INSERT` 的代理为空，按块参照前缀解（`Tch::DecodeBlockInsert`）。代理图形里有不支持的记录时整个对象不显示，看 `m_tchFailures` 打出的原因；`MINICAD_PROXYEXT=SWR_*` 列出各对象用到的记录类型
 - 天正对象见 [tianzheng](tianzheng.md)，外部参照见 [xref](xref.md)，图纸空间视口见 [layout-viewport](layout-viewport.md)
 
 ## 以原图为底另存（`CadSource`）
