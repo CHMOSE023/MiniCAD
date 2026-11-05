@@ -114,6 +114,9 @@ namespace MiniCAD
         // 块/继承属性变更后需重建展开缓存时调用(SetBlock 已自动置位)。
         void MarkResolveDirty() { m_resolvedDirty = true; }
 
+        // 已按本插入解析属性的块子实体（块坐标系，经 CellMatrix 到世界）
+        const std::vector<std::unique_ptr<Entity>>& GetResolvedChildren() const { EnsureResolved(); return m_resolved; }
+
         // ── 单元(行 r / 列 c)的块坐标 → WCS 变换矩阵 ──────────────────────────
         Math::Mat4 CellMatrix(int col, int row) const
         {
@@ -340,11 +343,18 @@ namespace MiniCAD
         // 变换不在此烘焙(由 TransformDrawSink 在绘制时施加),故平移/旋转/缩放变化无需重建。
         void EnsureResolved() const
         {
-            if (!m_resolvedDirty) return;
+            const EntityAttr& host = GetAttr();
+            // 插入自己的图层 / 颜色 / 线型 / 线宽改了（ChangeAttrCommand 只调 SetAttr）也要重新解析
+            const bool hostChanged = host.LayerId != m_resolvedHost.LayerId || host.LineType != m_resolvedHost.LineType
+                                  || host.Lineweight != m_resolvedHost.Lineweight || host.Color.Method != m_resolvedHost.Color.Method
+                                  || host.Color.Aci != m_resolvedHost.Color.Aci
+                                  || host.Color.Rgba.r != m_resolvedHost.Color.Rgba.r || host.Color.Rgba.g != m_resolvedHost.Color.Rgba.g
+                                  || host.Color.Rgba.b != m_resolvedHost.Color.Rgba.b || host.Color.Rgba.a != m_resolvedHost.Color.Rgba.a;
+            if (!m_resolvedDirty && !hostChanged) return;
+            m_resolvedHost = host;
             m_resolved.clear();
             if (m_block)
             {
-                const EntityAttr& host = GetAttr();
                 for (const auto& src : m_block->GetEntities())
                 {
                     auto clone = src->Clone(src->GetID());
@@ -408,5 +418,6 @@ namespace MiniCAD
         // 展开缓存(仅随块/继承属性变化重建)。
         mutable std::vector<std::unique_ptr<Entity>> m_resolved;
         mutable bool                                 m_resolvedDirty = true;
+        mutable EntityAttr                           m_resolvedHost;
     };
 }

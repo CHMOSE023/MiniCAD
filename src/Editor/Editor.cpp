@@ -99,6 +99,7 @@
 #include "Editor/Tools/SolidTools.h"
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/MeshEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
 #include "Core/Draw/TransformDrawSink.hpp"
@@ -1742,12 +1743,12 @@ namespace MiniCAD
         const Scene& scene = m_doc->GetScene();
         const LayerManager& layers = scene.GetLayerManager();
         std::vector<double> facing;
-        auto addSolid = [&](const Solid3DEntity& solid, const Math::Color4& base)
+        auto addSolid = [&](const Solid3DEntity& solid, const Math::Color4& base, const Math::Mat4* outer)
         {
             const auto& mesh = solid.GetLocalMesh();
             if (mesh.Empty())
                 return;
-            const Math::Mat4& m = solid.GetTransform();
+            const Math::Mat4 m = outer ? solid.GetTransform() * *outer : solid.GetTransform();
 
             if (shaded)
             {
@@ -1786,19 +1787,70 @@ namespace MiniCAD
                     m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.B])), lineColor });
                 }
         };
+        auto solidColor = [&](const EntityAttr& attr, const Layer* layer)
+        {
+            return attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color);
+        };
+        // 块里的实体（DWG 的 3DSOLID 常在块里）：按块定义记下是否含实体，不含的不展开
+        std::unordered_map<const BlockEntity*, bool> blockHasSolid;
+        std::function<bool(const BlockEntity*, int)> hasSolid = [&](const BlockEntity* block, int depth) -> bool
+        {
+            if (!block || depth > 8)
+                return false;
+            if (auto it = blockHasSolid.find(block); it != blockHasSolid.end())
+                return it->second;
+            blockHasSolid[block] = false;
+            bool found = false;
+            for (const auto& e : block->GetEntities())
+            {
+                if (e->IsKindOf<Solid3DEntity>())
+                    found = true;
+                else if (const auto* ins = dynamic_cast<const InsertEntity*>(e.get()))
+                    found = hasSolid(ins->GetBlock(), depth + 1);
+                if (found)
+                    break;
+            }
+            return blockHasSolid[block] = found;
+        };
+        std::function<void(const InsertEntity&, const Math::Mat4*, int)> addInsert = [&](const InsertEntity& ins, const Math::Mat4* outer, int depth)
+        {
+            const BlockEntity* block = ins.GetBlock();
+            if (depth > 8 || !block || block->IsUnresolvedXRef() || !hasSolid(block, depth))
+                return;
+            for (int r = 0; r < ins.GetRowCount(); ++r)
+                for (int c = 0; c < ins.GetColumnCount(); ++c)
+                {
+                    const Math::Mat4 cell = outer ? ins.CellMatrix(c, r) * *outer : ins.CellMatrix(c, r);
+                    for (const auto& e : ins.GetResolvedChildren())
+                    {
+                        const auto& attr = e->GetAttr();
+                        const Layer* layer = layers.GetLayer(attr.LayerId);
+                        if (!attr.Visible || (layer && !layer->IsVisible()))
+                            continue;
+                        if (e->IsKindOf<Solid3DEntity>())
+                            addSolid(static_cast<const Solid3DEntity&>(*e), solidColor(attr, layer), &cell);
+                        else if (const auto* nested = dynamic_cast<const InsertEntity*>(e.get()))
+                            addInsert(*nested, &cell, depth + 1);
+                    }
+                }
+        };
         scene.ForEachObject([&](const Object& o)
         {
-            if (!o.IsKindOf<Solid3DEntity>())
+            const bool isSolid = o.IsKindOf<Solid3DEntity>();
+            const auto* ins = isSolid ? nullptr : dynamic_cast<const InsertEntity*>(&o);
+            if (!isSolid && !ins)
                 return;
-            const auto& solid = static_cast<const Solid3DEntity&>(o);
-            const auto& attr  = solid.GetAttr();
+            const auto& attr  = static_cast<const Entity&>(o).GetAttr();
             const Layer* layer = layers.GetLayer(attr.LayerId);
             if (!attr.Visible || (layer && !layer->IsVisible()))
                 return;
             // 与场景流同一个布局过滤：布局页上模型空间的实体只经视口显示（视口里画的是它的边）
             if (!m_doc->IsVisibleInActiveLayout(attr))
                 return;
-            addSolid(solid, attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color));
+            if (isSolid)
+                addSolid(static_cast<const Solid3DEntity&>(o), solidColor(attr, layer), nullptr);
+            else
+                addInsert(*ins, nullptr, 0);
         });
 
         // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试。
@@ -1808,7 +1860,7 @@ namespace MiniCAD
             for (const auto& e : m_previewEntities)
             {
                 if (e->IsKindOf<Solid3DEntity>())
-                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
+                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color), nullptr);
                 PreviewLineSink sink(m_silhouetteVertices, m_renderOrigin);
                 e->Draw(sink, false, false);
             }

@@ -278,6 +278,7 @@ namespace MiniCAD
 
         // 三维实体内核；关闭内核的构建里命令提示不可用
         m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
+        SetCadImportSolidKernel(m_platform->GetSolidKernel());
         m_docManager.GetEditor().SetViewTransitionSeconds(0.3);   // 视图方块、标准视图切换时平缓过渡
         LoadCursorStyle();
 

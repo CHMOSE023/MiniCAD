@@ -134,6 +134,19 @@ int wmain(int argc, wchar_t** argv)
     std::printf("TIME ReadDwg %.1f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tRead0).count());
     if (!db) { std::printf("DWG parse failed\n"); return 1; }
     std::printf("Classes: %zu; objects: %zu; model entities: %zu\n", db->Classes.size(), db->Objects().size(), db->ModelSpace() ? db->ModelSpace()->Entities.size() : 0);
+    if (const char* dir = std::getenv("MINICAD_DUMP_SECTIONS"))
+        for (const auto& s : db->RawSections)
+        {
+            std::string name = s.Name;
+            std::replace(name.begin(), name.end(), ':', '_');
+            const std::filesystem::path out = std::filesystem::path(dir) / (name + ".bin");
+            std::error_code ec;
+            std::filesystem::create_directories(out.parent_path(), ec);
+            std::ofstream file(out, std::ios::binary);
+            file.write(reinterpret_cast<const char*>(s.Data.data()), static_cast<std::streamsize>(s.Data.size()));
+            file.close();
+            std::printf("SECTION %s %zu bytes%s\n", s.Name.c_str(), s.Data.size(), file ? "" : " (write failed)");
+        }
     // MINICAD_TABLES=1：打印 DWG 的 STYLE / LTYPE 表、布局与图纸空间块记录（导入后再打印场景里的两张表）
     if (std::getenv("MINICAD_TABLES"))
     {

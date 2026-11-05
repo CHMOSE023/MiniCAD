@@ -1,5 +1,5 @@
 ---
-covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf/*, src/Serialization/Database/*, src/Core/Ole/*, src/Document/Document.*
+covers: src/Import/CadExchange.*, src/Import/AcisReader.*, src/Serialization/Dwg/*, src/Serialization/Dxf/*, src/Serialization/Database/*, src/Core/Ole/*, src/Document/Document.*
 ---
 
 # DWG/DXF 交换
@@ -25,7 +25,7 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 - 渐变填充（GRADIENT，组码 450～470）：`Importer::ConvertHatch` 映射成 `HatchGradient`（类型、角度、位移、单色色调、颜色停靠点），导出写回同一组码。绘制走 `IDrawSink::FillTriangleColored` 逐顶点着色，柱面 / 球面 / 半球按网格细分
 - 法向 -Z 的 ARC / CIRCLE / LWPOLYLINE：圆心、顶点是 OCS，导入时换到 WCS（ARC 角度取 (π−end, π−start)，凸度取反）并**不保留法向**，导出按 +Z 写，往返不再镜像；ELLIPSE 的中心与长轴本来是 WCS，只把参数区间镜像成 (−end, −start)。其他非默认法向原样保留 OCS 坐标与法向
 - 标注用其匿名块还原为 Insert；绘制次序按 SortEntitiesTable
-- 三维实体 `Solid3DEntity` 只导出（写成多面网格，见 `docs/Solid/PLAN.md`）
+- 3DSOLID / REGION / BODY / 各类曲面（`Dwg::IsAcisEntity`）：`Importer::ConvertAcis` 经 `Dwg::DecodeAcisData` 取出 ACIS（R2013 起查 `Dwg::ReadAcisDataStore`），`Import::ReadAcis` 读成 B-rep，用 `SetCadImportSolidKernel` 设的内核 `FromBrep` 建成 `Solid3DEntity`；没有内核或建不出时只显示边线框，结束时按类型 `LOG_WARN`。格式与限制见 `docs/Solid/PLAN.md` 第 16 节。导出：`Solid3DEntity` 写成多面网格（只有边线、没有网格的跳过并提示）；原图未改动的实体在同格式同版本另存时原样写回
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型
 - OLE2FRAME（嵌入的 Word / Excel 等）只导入显示：MiniDWG 原样保留，`Dwg::DecodeOle2Frame` 解出数据，`src/Core/Ole/OleObject` 解析 AutoCAD 头与 OLE 复合文档里的展示图（WMF / EMF / DIB），显示为 `OleFrameEntity`；图元文件经 `AppPlatform::RasterizeOle` 光栅化（桌面版 GDI，网页版只画边框）
 - 其他软件的自定义实体（`SWR_*`）没有专门适配：带代理图形的经 `Tch::DecodeProxyGraphics` 按代理图形显示（图层 / 线型序号与文字字体经 `Importer::ProxyContext` 映射，格式与支持的记录见 `docs/evidence/Tch-proxy-graphics.md`），结束时按类型 `LOG_WARN` "显示为普通几何"；`SWR_BLOCK_INSERT` 的代理为空，按块参照前缀解（`Tch::DecodeBlockInsert`）。代理图形里有不支持的记录时整个对象不显示，看 `m_tchFailures` 打出的原因；`MINICAD_PROXYEXT=SWR_*` 列出各对象用到的记录类型
@@ -55,5 +55,5 @@ covers: src/Import/CadExchange.*, src/Serialization/Dwg/*, src/Serialization/Dxf
 
 ## 测试与排查
 
-- `MiniCADTests`（`CadExchangeTests.cpp` 等）、`MiniCADCadPreserveTests`、`MiniDWGTests`
+- `MiniCADTests`（`CadExchangeTests.cpp` 等）、`MiniCADCadPreserveTests`、`MiniDWGTests`；ACIS 读取在 `AcisImportTests`（`MINICAD_ACIS_DIR` 可批量读一个目录的图纸看建体统计）
 - 打开后显示不对：用 skill `drawing-debug`（`MiniCADDwgInspect` 检查原图内容，`--bench` 离屏截图）

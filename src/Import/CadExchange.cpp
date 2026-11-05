@@ -18,6 +18,7 @@
 #include "Import/TchPipe.h"
 #include "Import/TchElec.h"
 #include "Import/TchHvac.h"
+#include "Import/AcisReader.h"
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
@@ -65,6 +66,7 @@
 #include "Dxf/Read/DxfReader.h"
 #include "Dxf/Write/DxfWriter.h"
 
+#include <atomic>
 #include <chrono>
 #include <algorithm>
 #include <cctype>
@@ -103,6 +105,8 @@ namespace MiniCAD
     {
         constexpr double kPi    = 3.14159265358979323846;
         constexpr double kTwoPi = 2.0 * kPi;
+
+        std::atomic<Solid::ISolidKernel*> g_importKernel{ nullptr };
 
         std::string Lower(std::string s)
         {
@@ -592,6 +596,10 @@ namespace MiniCAD
                     LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留TCH对象", name.c_str(), count);
                 for (const auto& [name, count] : m_proxyConverted)
                     LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留原对象", name.c_str(), count);
+                for (const auto& [name, count] : m_acisWireOnly)
+                    LOG_WARN_TR("{0} × {1} 只显示边线（没有三维内核或曲面建不出来）", name.c_str(), count);
+                for (const auto& [name, count] : m_acisPartial)
+                    LOG_WARN_TR("{0} × {1} 有曲面不支持，显示时缺面", name.c_str(), count);
                 for (const auto& [name, reasons] : m_tchFailures)
                     for (const auto& [reason, handles] : reasons)
                     {
@@ -1593,12 +1601,53 @@ namespace MiniCAD
                 return ent;
             }
 
+            // 3DSOLID / REGION / BODY / 曲面：ACIS 数据 → B-rep → 内核实体（着色、可编辑）；没有内核或建不出来时只有边线框。
+            // 原数据由 MiniDWG 原样保留，没改动时另存为原格式原版本照样写回
+            std::unique_ptr<Entity> ConvertAcis(const Dwg::Entity& src, const Dwg::UnknownEntity& unknown)
+            {
+                if (!m_acisStore)
+                    m_acisStore = Dwg::ReadAcisDataStore(m_db);
+                std::vector<std::uint8_t> data;
+                Import::AcisResult acis;
+                if (!Dwg::DecodeAcisData(unknown, *m_acisStore, data) || !Import::ReadAcis(data.data(), data.size(), acis))
+                    return nullptr;
+                if (Solid::ISolidKernel* kernel = g_importKernel.load(); kernel && !acis.Brep.Faces.empty())
+                {
+                    AABB box = AABB::Empty();
+                    for (const auto& line : acis.Wire)
+                        for (const auto& p : line)
+                            box.Expand(p);
+                    const double size = box.Min.x <= box.Max.x ? (box.Max - box.Min).Length() : 1.0;
+                    const double tol  = std::max(acis.Resolution * 10.0, size * 1e-7);
+                    int skipped = 0;
+                    if (auto body = kernel->FromBrep(acis.Brep, tol, &skipped))
+                        if (auto e = Solid3DEntity::Create(m_scene.NextObjectID(), *kernel, body))
+                        {
+                            e->SetAttr(MakeAttr(src));
+                            if (skipped + acis.FailedFaces > 0)
+                                ++m_acisPartial[unknown.Raw.DxfName];
+                            return e;
+                        }
+                }
+                if (acis.Wire.empty())
+                    return nullptr;
+                AABB bounds = AABB::Empty();
+                for (const auto& line : acis.Wire)
+                    for (const auto& p : line)
+                        bounds.Expand(p);
+                ++m_acisWireOnly[unknown.Raw.DxfName];
+                return Make<Solid3DEntity>(src, nullptr, std::vector<std::uint8_t>{}, std::move(acis.Wire), Math::Mat4::Identity(), bounds);
+            }
+
             std::unique_ptr<Entity> Convert(const Dwg::Entity& src)
             {
                 if (const auto* unknown = dynamic_cast<const Dwg::UnknownEntity*>(&src))
                 {
                     if (unknown->Raw.DxfName == "OLE2FRAME")
                         return ConvertOleFrame(src, *unknown);
+                    if (Dwg::IsAcisEntity(unknown->Raw.DxfName))
+                        if (auto solid = ConvertAcis(src, *unknown))
+                            return solid;
                     Tch::TchBlockInsert insert;
                     if (Tch::DecodeBlockInsert(*unknown, insert))
                     {
@@ -3895,6 +3944,7 @@ namespace MiniCAD
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
             std::optional<Tch::ProxyGraphicsContext> m_proxyContext;
+            std::optional<Dwg::AcisDataStore>  m_acisStore;
             std::map<Dwg::Handle, MLineStyleID> m_mlineStyles;   // MLINESTYLE 句柄 → 样式表 ID
             std::map<Dwg::Handle, BlockID>     m_blocks;
             // 转换进度：已转换 / 全部块与模型空间的实体数
@@ -3917,6 +3967,8 @@ namespace MiniCAD
             Tch::TchConfig m_tchConfig;                     
             std::map<std::string, int> m_tchConverted;
             std::map<std::string, int> m_proxyConverted;
+            std::map<std::string, int> m_acisWireOnly;
+            std::map<std::string, int> m_acisPartial;
             std::map<std::string, std::map<std::string, std::set<Dwg::Handle>>> m_tchFailures;   // 类型 → 原因 → 句柄
             bool m_tchContinuous = false;                  // MakeTchGraphics 组装符号标注时线按实线（MakeTchSymbol 设）
             std::string                  m_namePrefix;
@@ -4013,7 +4065,7 @@ namespace MiniCAD
                 for (const auto& [name, count] : m_skipped)
                     LOG_WARN_TR("DWG/DXF 导出：不支持的实体 {0} × {1} 已跳过", name.c_str(), count);
                 if (m_solidNoMesh > 0)
-                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体没有网格数据（早期版本保存），已跳过", m_solidNoMesh);
+                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体没有网格数据（早期版本保存，或导入时只建出边线），已跳过", m_solidNoMesh);
                 if (m_solidTooLarge > 0)
                     LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体的网格超过 32767 个顶点或面，已跳过", m_solidTooLarge);
             }
@@ -5848,6 +5900,8 @@ namespace MiniCAD
         if (ext == ".dxf") return CadFileKind::Dxf;
         return CadFileKind::None;
     }
+
+    void SetCadImportSolidKernel(Solid::ISolidKernel* kernel) { g_importKernel.store(kernel); }
 
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error, CadSaveVersion* version,
                    std::shared_ptr<const CadSource>* source, const ImportProgress& progress, const std::string& sourcePath)

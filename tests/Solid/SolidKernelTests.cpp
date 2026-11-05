@@ -646,6 +646,212 @@ namespace
     }
 }
 
+namespace
+{
+    NurbsCurve Segment(const Point3& a, const Point3& b)
+    {
+        NurbsCurve c;
+        c.Degree        = 1;
+        c.ControlPoints = { a, b };
+        c.Knots         = { 0, 0, 1, 1 };
+        return c;
+    }
+
+    NurbsCurve Arc(const Point3& c, const Vec3& x, const Vec3& y, double r, double a0, double a1)
+    {
+        NurbsCurve out;
+        out.Degree        = 2;
+        const int    n    = std::max(1, static_cast<int>(std::ceil(std::abs(a1 - a0) / (kPi / 2) - 1e-9)));
+        const double step = (a1 - a0) / n;
+        auto at = [&](double a, double rr) { return c + x * (rr * std::cos(a)) + y * (rr * std::sin(a)); };
+        out.ControlPoints.push_back(at(a0, r));
+        out.Weights.push_back(1.0);
+        out.Knots = { 0, 0, 0 };
+        for (int i = 0; i < n; ++i)
+        {
+            const double m = a0 + step * (i + 0.5);
+            out.ControlPoints.push_back(at(m, r / std::cos(step / 2)));
+            out.Weights.push_back(std::cos(step / 2));
+            out.ControlPoints.push_back(at(a0 + step * (i + 1), r));
+            out.Weights.push_back(1.0);
+            if (i + 1 < n)
+                out.Knots.insert(out.Knots.end(), 2, double(i + 1));
+        }
+        out.Knots.insert(out.Knots.end(), 3, double(n));
+        return out;
+    }
+
+    BrepFace PlaneFace(std::vector<Point3> poly)
+    {
+        BrepFace f;
+        f.Surface.Type = BrepSurfaceType::Plane;
+        std::vector<NurbsCurve> loop;
+        for (size_t i = 0; i < poly.size(); ++i)
+            loop.push_back(Segment(poly[i], poly[(i + 1) % poly.size()]));
+        f.Loops.push_back(std::move(loop));
+        return f;
+    }
+
+    BrepModel BoxModel(double s)
+    {
+        const Point3 p[8] = { { 0, 0, 0 }, { s, 0, 0 }, { s, s, 0 }, { 0, s, 0 }, { 0, 0, s }, { s, 0, s }, { s, s, s }, { 0, s, s } };
+        BrepModel m;
+        m.Faces.push_back(PlaneFace({ p[0], p[3], p[2], p[1] }));
+        m.Faces.push_back(PlaneFace({ p[4], p[5], p[6], p[7] }));
+        m.Faces.push_back(PlaneFace({ p[0], p[1], p[5], p[4] }));
+        m.Faces.push_back(PlaneFace({ p[1], p[2], p[6], p[5] }));
+        m.Faces.push_back(PlaneFace({ p[2], p[3], p[7], p[6] }));
+        m.Faces.push_back(PlaneFace({ p[3], p[0], p[4], p[7] }));
+        return m;
+    }
+
+    BrepFace ConeFace(const Point3& origin, double r, double sinA, double cosA)
+    {
+        BrepFace f;
+        f.Surface.Type         = BrepSurfaceType::Cone;
+        f.Surface.Origin       = origin;
+        f.Surface.Normal       = { 0, 0, 1 };
+        f.Surface.XAxis        = { 1, 0, 0 };
+        f.Surface.Radius       = r;
+        f.Surface.SinHalfAngle = sinA;
+        f.Surface.CosHalfAngle = cosA;
+        return f;
+    }
+
+    BrepFace DiskFace(const Point3& c, double r, bool up)
+    {
+        BrepFace f;
+        f.Surface.Type = BrepSurfaceType::Plane;
+        f.Loops.push_back({ up ? Arc(c, { 1, 0, 0 }, { 0, 1, 0 }, r, 0, 2 * kPi) : Arc(c, { 1, 0, 0 }, { 0, -1, 0 }, r, 0, 2 * kPi) });
+        return f;
+    }
+
+    void TestFromBrep(ISolidKernel& k)
+    {
+        std::printf("\n-- FromBrep\n");
+        const Vec3 X{ 1, 0, 0 }, Y{ 0, 1, 0 }, NY{ 0, -1, 0 };
+        {
+            int skipped = -1;
+            auto box = k.FromBrep(BoxModel(10), 1e-6, &skipped);
+            Check(box && skipped == 0 && k.IsSolid(box) && NearRel(k.Volume(box), 1000, 1e-6), "six planar faces -> solid box");
+            if (box)
+                Check(NearRel(MeshVolume(k.Tessellate(box)), 1000, 1e-6), "box tessellation volume");
+            if (!box || skipped)
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            BrepModel m;
+            BrepFace side = ConeFace({ 0, 0, 0 }, 3, 0, 1);
+            side.Loops.push_back({ Arc({ 0, 0, 0 }, X, Y, 3, 0, 2 * kPi) });
+            side.Loops.push_back({ Arc({ 0, 0, 10 }, X, NY, 3, 0, 2 * kPi) });
+            m.Faces.push_back(side);
+            m.Faces.push_back(DiskFace({ 0, 0, 0 }, 3, false));
+            m.Faces.push_back(DiskFace({ 0, 0, 10 }, 3, true));
+            int skipped = -1;
+            auto cyl = k.FromBrep(m, 1e-6, &skipped);
+            Check(cyl && skipped == 0 && k.IsSolid(cyl) && NearRel(k.Volume(cyl), 90 * kPi, 1e-4), "cylinder: band face bounded by two circles");
+            if (cyl)
+                std::printf("  volume %.6f (expect %.6f) faces %d solid %d err %s\n", k.Volume(cyl), 90 * kPi, k.FaceCount(cyl), k.IsSolid(cyl), k.LastError().c_str());
+            else
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            // 整圆从接缝对面起始（中途跨过接缝）：内核在接缝处切开；端面与侧面共用同一条边（方向相反）
+            BrepModel m;
+            BrepFace side = ConeFace({ 0, 0, 0 }, 3, 0, 1);
+            side.Loops.push_back({ Arc({ 0, 0, 0 }, X, Y, 3, kPi, 3 * kPi) });
+            side.Loops.push_back({ Arc({ 0, 0, 10 }, X, NY, 3, 0.5, 0.5 + 2 * kPi) });
+            m.Faces.push_back(side);
+            BrepFace bottom, top;
+            bottom.Surface.Type = top.Surface.Type = BrepSurfaceType::Plane;
+            bottom.Loops.push_back({ Arc({ 0, 0, 0 }, X, NY, 3, kPi, 3 * kPi) });
+            top.Loops.push_back({ Arc({ 0, 0, 10 }, X, Y, 3, -0.5, -0.5 + 2 * kPi) });
+            m.Faces.push_back(bottom);
+            m.Faces.push_back(top);
+            int skipped = -1;
+            auto cyl = k.FromBrep(m, 1e-6, &skipped);
+            Check(cyl && skipped == 0 && k.IsSolid(cyl) && NearRel(k.Volume(cyl), 90 * kPi, 1e-4), "cylinder: circles crossing the seam");
+            if (cyl)
+                std::printf("  volume %.6f faces %d solid %d skipped %d\n", k.Volume(cyl), k.FaceCount(cyl), k.IsSolid(cyl), skipped);
+            else
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            BrepModel m;
+            const double len = std::sqrt(9.0 + 64.0);
+            BrepFace side = ConeFace({ 0, 0, 0 }, 3, -3 / len, 8 / len);
+            side.Loops.push_back({ Arc({ 0, 0, 0 }, X, Y, 3, 0, 2 * kPi) });
+            side.PointLoops.push_back({ 0, 0, 8 });
+            m.Faces.push_back(side);
+            m.Faces.push_back(DiskFace({ 0, 0, 0 }, 3, false));
+            int skipped = -1;
+            auto cone = k.FromBrep(m, 1e-6, &skipped);
+            Check(cone && skipped == 0 && k.IsSolid(cone) && NearRel(k.Volume(cone), 24 * kPi, 1e-4), "cone with apex point loop");
+            if (cone)
+                std::printf("  volume %.6f (expect %.6f) solid %d err %s\n", k.Volume(cone), 24 * kPi, k.IsSolid(cone), k.LastError().c_str());
+            else
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            BrepModel m;
+            BrepFace f;
+            f.Surface.Type   = BrepSurfaceType::Sphere;
+            f.Surface.Origin = { 1, 2, 3 };
+            f.Surface.Radius = 5;
+            m.Faces.push_back(f);
+            auto sphere = k.FromBrep(m, 1e-6);
+            Check(sphere && k.IsSolid(sphere) && NearRel(k.Volume(sphere), 500.0 / 3 * kPi, 1e-4), "full sphere face without loops");
+            if (!sphere)
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            BrepModel m;
+            BrepFace top = PlaneFace({ { 0, 0, 2 }, { 10, 0, 2 }, { 10, 10, 2 }, { 0, 10, 2 } });
+            top.Loops.push_back({ Arc({ 5, 5, 2 }, X, NY, 2, 0, 2 * kPi) });
+            BrepFace bottom = PlaneFace({ { 0, 0, 0 }, { 0, 10, 0 }, { 10, 10, 0 }, { 10, 0, 0 } });
+            bottom.Loops.push_back({ Arc({ 5, 5, 0 }, X, Y, 2, 0, 2 * kPi) });
+            m.Faces.push_back(top);
+            m.Faces.push_back(bottom);
+            const Point3 p[8] = { { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 2 }, { 10, 0, 2 }, { 10, 10, 2 }, { 0, 10, 2 } };
+            m.Faces.push_back(PlaneFace({ p[0], p[1], p[5], p[4] }));
+            m.Faces.push_back(PlaneFace({ p[1], p[2], p[6], p[5] }));
+            m.Faces.push_back(PlaneFace({ p[2], p[3], p[7], p[6] }));
+            m.Faces.push_back(PlaneFace({ p[3], p[0], p[4], p[7] }));
+            BrepFace hole = ConeFace({ 5, 5, 0 }, 2, 0, 1);
+            hole.Reversed = true;
+            hole.Loops.push_back({ Arc({ 5, 5, 0 }, X, NY, 2, 0, 2 * kPi) });
+            hole.Loops.push_back({ Arc({ 5, 5, 2 }, X, Y, 2, 0, 2 * kPi) });
+            m.Faces.push_back(hole);
+            int skipped = -1;
+            auto plate = k.FromBrep(m, 1e-6, &skipped);
+            Check(plate && skipped == 0 && k.IsSolid(plate) && NearRel(k.Volume(plate), 200 - 8 * kPi, 1e-4), "plate with a round hole (reversed cylinder)");
+            if (plate)
+                std::printf("  volume %.6f (expect %.6f) solid %d err %s\n", k.Volume(plate), 200 - 8 * kPi, k.IsSolid(plate), k.LastError().c_str());
+            else
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+        {
+            BrepModel m = BoxModel(10);
+            BrepFace& top = m.Faces[1];
+            top.Surface.Type  = BrepSurfaceType::Nurbs;
+            auto& n           = top.Surface.Nurbs;
+            n.DegreeU         = 1;
+            n.DegreeV         = 1;
+            n.CountU          = 2;
+            n.CountV          = 2;
+            n.KnotsU          = { 0, 0, 1, 1 };
+            n.KnotsV          = { 0, 0, 1, 1 };
+            n.ControlPoints   = { { -1, -1, 10 }, { -1, 11, 10 }, { 11, -1, 10 }, { 11, 11, 10 } };
+            Check(NearPoint(n.PointAt(0.5, 0.5), { 5, 5, 10 }) && NearPoint(n.PointAt(1, 0), { 11, -1, 10 }), "NurbsSurface::PointAt (u * CountV + v)");
+            int skipped = -1;
+            auto box = k.FromBrep(m, 1e-6, &skipped);
+            Check(box && skipped == 0 && k.IsSolid(box) && NearRel(k.Volume(box), 1000, 1e-5), "box with a trimmed NURBS top face");
+            if (!box || skipped)
+                std::printf("  %s\n", k.LastError().c_str());
+        }
+    }
+}
+
 int main()
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已经跑过的检查
@@ -668,6 +874,7 @@ int main()
     TestNurbsCurve();
     TestSpaceCurves(*kernel);
     TestSurfaces(*kernel);
+    TestFromBrep(*kernel);
 
     std::printf("\n%d failed\n", g_failed);
     return g_failed;
