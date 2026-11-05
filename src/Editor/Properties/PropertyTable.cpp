@@ -356,7 +356,7 @@ namespace MiniCAD
                     // 图案：渐变填充时显示成「渐变（LINEAR）」，否则只看得到 SOLID，看不出区别
                     if (!e.IsGradient())
                         return e.GetPattern().Name;
-                    return std::string("渐变（") + HatchGradient::TypeName(e.GetGradient().Type) + "）";
+                    return TrF("渐变（{0}）", HatchGradient::TypeName(e.GetGradient().Type));
                 }),
                 // 渐变参数：不是渐变填充时显示「—」/ 0，避免面板上多出无意义的行
                 ReadOnly<T>(N_("渐变类型"), PropKind::String, [](const T& e) {
