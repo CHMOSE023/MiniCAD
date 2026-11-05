@@ -1,4 +1,4 @@
-// ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、页面关闭提示 ─────────
+// ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、从网址打开、页面关闭提示 ─────────
 #include "Host/WebApp.h"
 #include "Core/Log.h"
 #include "MiniI18n/I18n.h"
@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 
 namespace MiniCAD
@@ -168,6 +169,117 @@ namespace MiniCAD
         input.click();
     });
 
+    // 网址的 ?open=<URL>（可重复）：逐个取回，写进 /remote/<请求号>/<序号>/<文件名>，每个回调一次，最后回调完成。
+    // 返回网址个数（0 = 没有 ?open=，不回调）。
+    // 默认只取本网站的网址（带 Cookie，same-origin）；嵌入它的网页提供了 window.MiniCADHost.fetch(url) 时由它取，
+    // 可以加请求头、取别处的文件。文件名依次取：Content-Disposition、网址路径的最后一段（是图纸扩展名时）、
+    // 值是图纸路径的查询参数（如 ?path=项目/一层平面.dwg）。失败时 status 为 HTTP 状态码，-1 为不是本网站的网址，0 为网络错误。
+    // EM_JS 的代码经 C 预处理器变成 C 字符串再编译：字符串引号以外不能写反斜杠转义（\\ 会变成 \，\. 变成 .），
+    // 引号要成对。所以正则不用反斜杠（用 [.] [*]），里面的引号写成 \x22 / \x27（编译后正好是引号）。
+    EM_JS(int, MiniCADWeb_OpenUrls, (int requestId), {
+        let urls;
+        try { urls = new URLSearchParams(location.search).getAll("open").filter(s => s.length > 0); } catch (e) { urls = []; }
+        if (urls.length === 0) return 0;
+        const host = window.MiniCADHost;
+        const hostFetch = !!host && typeof host.fetch === "function";
+        const QUOTE = String.fromCharCode(34), BACKSLASH = String.fromCharCode(92);
+        const isDrawing = s => /[.](dwg|dxf|mcad|json)$/i.test(s);
+        const lastSegment = s => s.split(BACKSLASH).join("/").split("/").filter(p => p.length > 0).pop() || "";
+        const decode = s => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+        const guessName = (url) => {
+            const seg = lastSegment(decode(url.pathname));
+            if (isDrawing(seg)) return seg;
+            for (const [, v] of url.searchParams)
+                if (isDrawing(v)) return lastSegment(v);
+            return seg;
+        };
+        const nameOf = (url, response) => {
+            const cd = response.headers.get("Content-Disposition") || "";
+            let m = /filename[*] *= *UTF-8\x27\x27([^;]+)/i.exec(cd);
+            if (m) return lastSegment(decode(m[1].trim()));
+            m = /filename *= *\x22?([^\x22;]+)\x22?/i.exec(cd);
+            if (m) return lastSegment(m[1].trim());
+            return guessName(url);
+        };
+        const safeName = s => {
+            const n = Array.from(s, c => ("/:*?<>|".includes(c) || c === QUOTE || c === BACKSLASH ? "_" : c)).join("");
+            return n && n !== "." && n !== ".." ? n : "drawing.dwg";
+        };
+        const fetched = (path, url) => {
+            const p = stringToNewUTF8(path), u = stringToNewUTF8(url);
+            _MiniCADWeb_OnRemoteFetched(requestId, p, u);
+            _free(p); _free(u);
+        };
+        const failed = (name, status, message) => {
+            const n = stringToNewUTF8(name), m = stringToNewUTF8(message || "");
+            _MiniCADWeb_OnRemoteFailed(requestId, n, status, m);
+            _free(n); _free(m);
+        };
+        (async () => {
+            for (let i = 0; i < urls.length; ++i) {
+                let url;
+                try { url = new URL(urls[i], location.href); } catch (e) { failed(urls[i], 0, String(e)); continue; }
+                const display = guessName(url) || url.href;
+                if (!hostFetch && url.origin !== location.origin) { failed(display, -1, ""); continue; }
+                try {
+                    const response = hostFetch ? await host.fetch(url.href) : await fetch(url.href, { credentials: "same-origin" });
+                    if (!response.ok) { failed(display, response.status, response.statusText); continue; }
+                    const buf = await response.arrayBuffer();
+                    const directory = "/remote/" + requestId + "/" + i;
+                    FS.mkdirTree(directory);
+                    const path = directory + "/" + safeName(nameOf(url, response));
+                    FS.writeFile(path, new Uint8Array(buf));
+                    fetched(path, url.href);
+                } catch (err) {
+                    failed(display, 0, String(err));
+                }
+            }
+            _MiniCADWeb_OnRemoteCompleted(requestId);
+        })();
+        return urls.length;
+    });
+
+    // 从网址打开的图纸缺外部参照时，交给嵌入它的网页找：
+    //   window.MiniCADHost.findXrefs({ drawingUrl, names }) → Promise<[{ name, url }]>（只列找到的）
+    // 取回的文件写进 /xref/<请求号>/<name>，完成后回调目录（一个也没取到时为空串）与出错信息。
+    // 网页没有提供 findXrefs 时返回 0（不回调），由用户选文件夹
+    EM_JS(int, MiniCADWeb_FindXrefs, (int requestId, const char* urlPtr, const char* namesPtr), {
+        const host = window.MiniCADHost;
+        if (!host || typeof host.findXrefs !== "function") return 0;
+        const drawingUrl = UTF8ToString(urlPtr);
+        const names = UTF8ToString(namesPtr).split("\n").filter(s => s.length > 0);
+        const root = "/xref/" + requestId;
+        const finish = (dir, error) => {
+            const d = stringToNewUTF8(dir), e = stringToNewUTF8(error || "");
+            _MiniCADWeb_OnXrefsFetched(requestId, d, e);
+            _free(d); _free(e);
+        };
+        (async () => {
+            let found;
+            try { found = await host.findXrefs({ drawingUrl, names }); }
+            catch (err) { finish("", String(err)); return; }
+            const errors = [];
+            let count = 0;
+            for (const f of Array.isArray(found) ? found : []) {
+                if (!f || !f.url || !f.name) continue;
+                const name = Array.from(String(f.name), c => ("/:*?<>|".includes(c) || c.charCodeAt(0) === 34 || c.charCodeAt(0) === 92 ? "_" : c)).join("");
+                if (name === "." || name === "..") continue;
+                try {
+                    const response = typeof host.fetch === "function" ? await host.fetch(f.url) : await fetch(f.url, { credentials: "same-origin" });
+                    if (!response.ok) throw new Error("HTTP " + response.status);
+                    const buf = await response.arrayBuffer();
+                    FS.mkdirTree(root);
+                    FS.writeFile(root + "/" + name, new Uint8Array(buf));
+                    ++count;
+                } catch (err) {
+                    errors.push(name + ": " + String(err));
+                }
+            }
+            finish(count > 0 ? root : "", errors.join("\n"));
+        })();
+        return 1;
+    });
+
     // 把虚拟文件系统里的文件下载到本机
     EM_JS(void, MiniCADWeb_Download, (const char* pathPtr), {
         const path = UTF8ToString(pathPtr);
@@ -276,6 +388,30 @@ namespace MiniCAD
         {
             if (g_app)
                 g_app->OnFontFetched(name);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnRemoteFetched(int requestId, const char* path, const char* url)
+        {
+            if (g_app)
+                g_app->OnRemoteFetched(requestId, path, url);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnRemoteFailed(int requestId, const char* name, int status, const char* message)
+        {
+            if (g_app)
+                g_app->OnRemoteFailed(requestId, name, status, message);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnRemoteCompleted(int requestId)
+        {
+            if (g_app)
+                g_app->OnRemoteCompleted(requestId);
+        }
+
+        EMSCRIPTEN_KEEPALIVE void MiniCADWeb_OnXrefsFetched(int requestId, const char* dir, const char* error)
+        {
+            if (g_app)
+                g_app->OnXrefsFetched(requestId, dir, error);
         }
 
         EMSCRIPTEN_KEEPALIVE int MiniCADWeb_HasUnsaved()
@@ -399,6 +535,7 @@ namespace MiniCAD
         MiniCADWeb_InstallUnloadGuard();
         m_uiReady = true;
         m_host.RequestFrame();
+        OpenStartupUrls();
         return true;
     }
 
@@ -564,6 +701,113 @@ namespace MiniCAD
             MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("读取文件夹失败"), error, { Tr("确定") }, [](int) {});
         if (done && dir && *dir)
             done(dir);
+        m_host.RequestFrame();
+    }
+
+    // =========================================================
+    // 从网址打开（?open=）与到图纸所在的网站找外部参照
+    // =========================================================
+    namespace
+    {
+        // OpenDrawings 后文档路径可能被规范化：存、查都用规范化后的路径
+        std::string RemoteKey(const std::string& path)
+        {
+            return std::filesystem::path(path).lexically_normal().generic_string();
+        }
+    }
+
+    void WebApp::OpenStartupUrls()
+    {
+        const int id = m_nextPickId++;
+        m_remoteRequests[id] = {};
+        if (MiniCADWeb_OpenUrls(id) == 0)
+        {
+            m_remoteRequests.erase(id);
+            return;
+        }
+        // 图纸里可能有繁体、日文：取文件、读图纸的同时下载（同 PickDrawingFiles）
+        for (const char* name : MiniGUI::kWebLazyFontNames)
+            FetchLazyFont(name);
+    }
+
+    void WebApp::OnRemoteFetched(int requestId, const char* path, const char* url)
+    {
+        auto it = m_remoteRequests.find(requestId);
+        if (it == m_remoteRequests.end() || !path || !*path)
+            return;
+        it->second.paths.emplace_back(path);
+        m_remoteSources[RemoteKey(path)] = url ? url : "";
+    }
+
+    void WebApp::OnRemoteFailed(int requestId, const char* name, int status, const char* message)
+    {
+        auto it = m_remoteRequests.find(requestId);
+        if (it == m_remoteRequests.end())
+            return;
+        std::string reason;
+        switch (status)
+        {
+        case -1:  reason = Tr("只能打开本网站上的文件"); break;
+        case 0:   reason = message && *message ? std::string(message) : Tr("网络错误"); break;
+        case 401: reason = Tr("需要登录，或登录已过期：请重新登录后再打开"); break;
+        case 403: reason = Tr("没有权限访问这个文件"); break;
+        case 404: reason = Tr("文件不存在"); break;
+        default:  reason = TrF("服务器返回 {0}", status); break;
+        }
+        std::string& errors = it->second.errors;
+        if (!errors.empty()) errors += "\n\n";
+        errors += std::string(name ? name : "") + "\n" + reason;
+    }
+
+    void WebApp::OnRemoteCompleted(int requestId)
+    {
+        auto it = m_remoteRequests.find(requestId);
+        if (it == m_remoteRequests.end())
+            return;
+        RemoteRequest request = std::move(it->second);
+        m_remoteRequests.erase(it);
+        if (!request.paths.empty())
+            m_main.OpenDrawings(request.paths);
+        if (!request.errors.empty())
+            MiniGUI::ShowMessageBox(m_main.GetUI(), Tr("打开图纸失败"), request.errors, { Tr("确定") }, [](int) {});
+        m_host.RequestFrame();
+    }
+
+    bool WebApp::FindXrefsForDrawing(const std::string& drawingPath, const std::vector<std::string>& fileNames,
+                                     std::function<void(const std::string& dir)> done)
+    {
+        // 只管从网址打开的图纸；本机选的图纸照旧由用户选文件夹
+        auto source = m_remoteSources.find(RemoteKey(drawingPath));
+        if (source == m_remoteSources.end() || source->second.empty() || fileNames.empty())
+            return false;
+        std::string names;
+        for (const std::string& n : fileNames)
+        {
+            names += n;
+            names += '\n';
+        }
+        const int id = m_nextPickId++;
+        m_xrefRequests[id] = std::move(done);
+        if (MiniCADWeb_FindXrefs(id, source->second.c_str(), names.c_str()) == 0)
+        {
+            m_xrefRequests.erase(id);       // 网页没有提供 findXrefs
+            return false;
+        }
+        return true;
+    }
+
+    void WebApp::OnXrefsFetched(int requestId, const char* dir, const char* error)
+    {
+        auto it = m_xrefRequests.find(requestId);
+        if (it == m_xrefRequests.end())
+            return;
+        auto done = std::move(it->second);
+        m_xrefRequests.erase(it);
+        // 不单独弹框：还缺的参照随后由 MainFrame 一并提示，可再选本地文件夹
+        if (error && *error)
+            LOG_WARN("MiniCAD web: xref lookup by host page: %s", error);
+        if (done)
+            done(dir ? dir : "");
         m_host.RequestFrame();
     }
 

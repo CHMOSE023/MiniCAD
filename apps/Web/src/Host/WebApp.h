@@ -21,7 +21,10 @@ namespace MiniCAD
     //   - 图形接口：先异步试 WebGPU（浏览器有 navigator.gpu 且取到适配器和设备），否则或网址带 ?webgl 时用 WebGL2；
     //     同一个画布只能有一种上下文，所以确定不用 WebGPU 后才建 WebGL2 上下文。设备就绪之前不建界面、不画帧
     //   - 打开文件：浏览器的文件选择框，选中的文件读进内存文件系统 /upload 后打开
-    //   - 外部参照：用户选的本地文件夹（浏览器授权）里需要的文件读进 /xref 后查找（PickFolder）
+    //   - 从网址打开：网址带 ?open=<URL>（可重复）时，界面就绪后取回这些文件读进 /remote 再打开；
+    //     只取本网站的网址，除非嵌入它的网页提供了 window.MiniCADHost.fetch（由它负责取文件）
+    //   - 外部参照：从网址打开的图纸，先交给 window.MiniCADHost.findXrefs 到它所在的网站找（FindXrefsForDrawing）；
+    //     其他情况或仍没找到时，用户选的本地文件夹（浏览器授权）里需要的文件读进 /xref 后查找（PickFolder）
     //   - 保存：写到内存文件系统后由浏览器下载到本机（另存为默认 .mcad，打开的 .dwg / .dxf 按原格式保存）
     //   - 资源（字体、图标、填充图案、界面描述文件）打包在虚拟文件系统根目录下
     //   - 有未保存的文档时，关闭或刷新页面前浏览器会询问
@@ -42,6 +45,10 @@ namespace MiniCAD
         void OnFilePickCompleted(int requestId, const char* error);
         void OnFolderPicked(int requestId, const char* dir, const char* error);
         void OnFontFetched(const char* name);
+        void OnRemoteFetched(int requestId, const char* path, const char* url);
+        void OnRemoteFailed(int requestId, const char* name, int status, const char* message);
+        void OnRemoteCompleted(int requestId);
+        void OnXrefsFetched(int requestId, const char* dir, const char* error);
         bool HasUnsavedDocuments() const;
 
         // ── AppPlatform ─────────────────────────────────────────
@@ -65,6 +72,8 @@ namespace MiniCAD
         std::string ChooseExportPath(FileKind kind, const std::string& suggestedName) override;
         void PickDrawingFiles(std::function<void(const std::vector<std::string>&)> done) override;
         bool PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done) override;
+        bool FindXrefsForDrawing(const std::string& drawingPath, const std::vector<std::string>& fileNames,
+                                 std::function<void(const std::string& dir)> done) override;
         std::string ChooseSavePath(const std::string& suggestedName, CadSaveVersion& version) override;
         void OnDocumentSaved(const std::string& path) override;
         bool HasSaveDialog() const override { return false; }          // 文件名和格式由 MainFrame 的另存为对话框询问
@@ -84,6 +93,7 @@ namespace MiniCAD
         bool OnGraphicsReady();     // 图形设备就绪：建视口渲染目标、界面、输入，开始画帧
         void ReportFailure(const char* what);
         void FetchLazyFont(const std::string& name);     // 下载网页旁 fonts/ 下的字体（每个只下一次），完成后 OnFontFetched
+        void OpenStartupUrls();                          // 网址的 ?open=：取回后 OpenDrawings
 
     private:
         // 声明顺序即构造顺序，销毁时相反：输入层 → 界面（MainFrame）→ 内核 → 视口渲染目标 → 图形设备 → 画布（WebGL 上下文）
@@ -101,6 +111,14 @@ namespace MiniCAD
         };
         std::unordered_map<int, PickRequest> m_pickRequests;
         std::unordered_map<int, std::function<void(const std::string&)>> m_folderRequests;   // PickFolder
+        struct RemoteRequest
+        {
+            std::vector<std::string> paths;
+            std::string errors;
+        };
+        std::unordered_map<int, RemoteRequest> m_remoteRequests;                              // ?open=
+        std::unordered_map<std::string, std::string> m_remoteSources;                         // /remote/... → 来源网址
+        std::unordered_map<int, std::function<void(const std::string&)>> m_xrefRequests;     // FindXrefsForDrawing
         int m_nextPickId = 1;
         std::unordered_set<std::string> m_fontRequests;
         bool m_uiReady = false;

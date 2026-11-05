@@ -69,7 +69,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 
 - `GUI/MainFrame`：文档标签、视口输入 → `Editor`、逐帧渲染（`RenderFrame`）；打开图纸经 `OpenDrawings` 在后台读取（`DocumentManager::Load` 可在其他线程调用），读完在界面线程 `DocumentManager::Add`
 - `GUI/MainCommands.cpp`：所有操作注册为 MiniGUI 命令；菜单、功能区、停靠布局来自 `assets/ui/minicad_ui.json`（保存后自动重新加载）。命令行输入经 `GUI/CommandLine.cpp`（界面层命令）再交给 `Editor::RunCommand`
-- 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`，保存后下载；图形设备异步就绪（先试 WebGPU，再退 WebGL2）之后才初始化界面
+- 网页版：没有后台线程（`RunInBackground` 先画一帧再同步执行）、没有窗口按钮、没有另存为对话框（`HasSaveDialog()` 为 false）；打开的文件写进内存文件系统 `/upload`（网址 `?open=` 取回的写进 `/remote`），保存后下载；嵌入它的网页可以定义 `window.MiniCADHost`（`fetch`、`findXrefs`）接管取文件与找外部参照；图形设备异步就绪（先试 WebGPU，再退 WebGL2）之后才初始化界面
 - Linux 版：系统标题栏（没有窗口按钮）；文件对话框用 SDL3 的接口（xdg-desktop-portal，没有时 zenity），打不开时提示改用拖放或命令行；没有自测 / `--bench`（`RunSelfTest` 只在桌面版里）
 
 输入流程：Win32 消息 / DOM 事件 / SDL 事件 → `MiniGUI::Win32Input` / `WebInput` / `SDLInput` → `UIContext` → `ViewportHost` → `MainFrame::OnViewportPointer/Key` → `Editor::OnInput`，在同一帧内完成。
