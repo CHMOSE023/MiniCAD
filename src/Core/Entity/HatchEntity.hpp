@@ -899,6 +899,32 @@ namespace MiniCAD
             if (pureDots)
                 period = dy;
 
+            // 线段是否整段落在某一条填充边界边上（两端都在那条边上）。
+            // 用于识别退化扫描线：扫描线恰好压在边界的极值 v 上、族又只有一条
+            // 扫描线时，求交会把「沿整条边界」当成图案线段（实测句柄 3539
+            // 的窄长条：一条线正好是整条左边界）。CAD 不会画它。
+            auto segmentOnBoundary = [&](const Math::Point3& p, const Math::Point3& q)
+            {
+                for (const auto& poly : polys)
+                    for (size_t i = 0; i + 1 < poly.size(); ++i)
+                    {
+                        const auto& a = poly[i];
+                        const auto& b = poly[i + 1];
+                        const double ex = b.x - a.x, ey = b.y - a.y;
+                        const double len2 = ex * ex + ey * ey;
+                        if (len2 < 1e-18) continue;
+                        auto onSeg = [&](const Math::Point3& p2)
+                        {
+                            const double t = ((p2.x - a.x) * ex + (p2.y - a.y) * ey) / len2;
+                            if (t < 0.0 || t > 1.0) return false;
+                            const double dx = p2.x - (a.x + t * ex), dy = p2.y - (a.y + t * ey);
+                            return dx * dx + dy * dy < 1e-12;
+                        };
+                        if (onSeg(p) && onSeg(q)) return true;
+                    }
+                return false;
+            };
+
             auto emit = [&](double u0, double u1, double v)
             {
                 if (budget == 0) return;
@@ -971,6 +997,9 @@ namespace MiniCAD
             std::vector<size_t> active;
             size_t nextEdge = 0;
             std::vector<double> us;
+            // 多族交叉图案（ANSI37 等）在边界极值处的退化求交会画出沿整条边界的
+            // 线；单族图案的「v=0 撞底边」是合法图案线，保持出图（见 HatchDotsTests）。
+            const bool multiFamily = (m_pattern.Families.size() >= 2);
             for (double n = nFirst; n <= nLast && budget > 0; n += 1.0)
             {
                 const double v = vO + n * dy;
@@ -995,6 +1024,10 @@ namespace MiniCAD
                 for (size_t k = 0; k + 1 < us.size() && budget > 0; k += 2)
                 {
                     const double a = us[k], b = us[k + 1];
+                    // 多族图案里整段贴着 HATCH 自己边界环的线 ⇒ 边界极值处的
+                    // 退化求交，不是穿过填充区域内部的图案线，跳过。
+                    if (multiFamily && segmentOnBoundary(toWorld(a, v), toWorld(b, v)))
+                        continue;
                     if (!dashed) { emit(a, b, v); continue; }
 
                     // 从覆盖 a 的那个周期开始，逐项输出落在 [a, b] 内的实线 / 点

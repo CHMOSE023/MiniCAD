@@ -137,9 +137,9 @@ int RunTchProxyImportTests()
             }
             check(preserved, "opaque native data and proxy stream survive DWG reader/writer");
             MiniCAD::Scene scene;
-            check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) &&
-                scene.EntityCount() == (unsupported ? 0 : 1),
-                unsupported ? "unknown proxy record rejects complete scene preview" :
+            // 未识别的记录（type 99）现在只跳过、不整份放弃：几何（type 2 圆）照样导入
+            check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) && scene.EntityCount() >= 1,
+                unsupported ? "unknown proxy record is skipped, geometry still imported" :
                     "TCH class without native decoder imports proxy through full DWG path");
             if (unsupported) continue;
             int matches = 0;

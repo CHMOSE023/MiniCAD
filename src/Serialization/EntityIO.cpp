@@ -1335,6 +1335,14 @@ namespace MiniCAD::EntityIO
             if (e.HasClipBoundary())
             {
                 auto clip = e.GetClipBoundary();  Ser::Value(s, "clip", clip);
+                // WCS 固定取景窗口（方案 A）：块移动后边界世界坐标不变，必须一并存下，
+                // 否则读回时会按当前块位置重算，框就随块跑了。旧文档没有这个字段时
+                // SetClipBoundary 会按当时的插入状态重算，行为与以前一致。
+                if (e.HasClipFrameWorld())
+                {
+                    auto cw = e.ClipFrameWorld();
+                    Ser::Value(s, "clipWorld", cw);
+                }
                 // 裁剪边框开关（$XCLIPFRAME）也是块的状态，不存就会在保存/打开后丢失，
                 // 表现为"裁剪还在、框不见了"。序列化层没有 bool 重载，按 0/1 存整数。
                 int32_t frame = e.IsClipFrameVisible() ? 1 : 0;
@@ -1380,6 +1388,11 @@ namespace MiniCAD::EntityIO
             {
                 std::vector<Point3> clip;         Ser::Value(s, "clip", clip);
                 e->SetClipBoundary(std::move(clip));
+                if (s.Has("clipWorld"))
+                {
+                    std::vector<Point3> cw;       Ser::Value(s, "clipWorld", cw);
+                    e->SetClipBoundaryWorld(std::move(cw));   // 恢复 WCS 固定窗口（方案 A）
+                }
                 int32_t frame = 0;                s.Value("clipFrame", frame);
                 e->SetClipFrameVisible(frame != 0);
             }

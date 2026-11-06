@@ -3325,18 +3325,20 @@ namespace MiniCAD
         if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
             ins && ins->HasClipBoundary() && ins->IsClipFrameVisible() && !ctx.ChunkStopped())
         {
-            const auto& poly = ins->GetClipBoundary();
+            // XCLIP 边界是 WCS 固定的取景窗口：有 WCS 记录时直接用世界坐标，
+            // 块移动后框不跟着走；旧路径才按块坐标经插入变换。
+            const std::vector<Math::Point3> poly = ins->HasClipFrameWorld()
+                ? ins->ClipFrameWorld() : ins->GetClipBoundary();
             if (poly.size() >= 2)
             {
-                // 边界是**块坐标系**里的，要经本块的插入变换才落到世界坐标
                 const Math::Mat4 m = ins->CellMatrix(0, 0);
                 Math::Color4 color = ins->ResolveDrawColor(ctx);
                 if (m_doc->GetScene().IsEntityLocked(*ins))
                     color.a *= DrawContext::kLockedFade;
                 for (size_t i = 0; i < poly.size(); ++i)
                 {
-                    const Math::Point3 a = m * poly[i];
-                    const Math::Point3 b = m * poly[(i + 1) % poly.size()];
+                    const Math::Point3 a = ins->HasClipFrameWorld() ? poly[i] : m * poly[i];
+                    const Math::Point3 b = ins->HasClipFrameWorld() ? poly[(i + 1) % poly.size()] : m * poly[(i + 1) % poly.size()];
                     m_scratchLines.push_back({ ToRenderFloat3(a, ctx.GetRenderOrigin()),
                                                { static_cast<float>(color.r), static_cast<float>(color.g),
                                                  static_cast<float>(color.b), static_cast<float>(color.a) } });
@@ -3468,7 +3470,7 @@ namespace MiniCAD
                * Mat4::Scale(Vec3{ s, s, 1.0 });
         // ⚠ 内容旋转用 **R(+Twist)**，不是 R(-Twist)。
         //
-        // 依据（实测 `01-曲陵路.dwg`，5 个 Twist=95.69° 的浮动视口）：
+        // 依据（实测 5 个 Twist=95.69° 的浮动视口）：
         //   这 5 个视口在纸面上并排一行（Center.x 步长 +420），各看模型里
         //   195 宽的一条带（scale=2，195×2=390=框宽）。把 ViewCenter 按
         //   DCS→WCS 的 R(-Twist) 转过之后，相邻 WCS 位移单位向量恒等于
@@ -4947,16 +4949,22 @@ namespace MiniCAD
                 ctx.BeginEntity(nullptr);
 
                 if (ins)
-                    ins->SetShowWholeWhileDraggingBase(false);
+                    ins->SetShowWholeWhileDraggingBase(false);   // 保留接口兼容；Draw 已不再据此忽略裁剪
 
                 // 裁剪边框线：$XCLIPFRAME 允许显示时才画，用选中高亮色。
                 // 边框画在**裁剪之后**，否则它自己会被裁掉。
+                // XCLIP 边界是 WCS 固定窗口，直接用世界坐标画（块移动时框不动）。
                 if (ins && ins->HasClipBoundary() && ins->IsClipFrameVisible())
                 {
-                    const auto& poly = ins->GetClipBoundary();
+                    const std::vector<Math::Point3> poly = ins->HasClipFrameWorld()
+                        ? ins->ClipFrameWorld() : ins->EffectiveClipBoundary();
+                    const Math::Mat4 m = ins->CellMatrix(0, 0);
                     for (size_t i = 0; i < poly.size(); ++i)
-                        ctx.DrawLine(poly[i], poly[(i + 1) % poly.size()],
-                                     IDrawSink::kSelectionColor, false);
+                    {
+                        const Math::Point3 a = ins->HasClipFrameWorld() ? poly[i] : m * poly[i];
+                        const Math::Point3 b = ins->HasClipFrameWorld() ? poly[(i + 1) % poly.size()] : m * poly[(i + 1) % poly.size()];
+                        ctx.DrawLine(a, b, IDrawSink::kSelectionColor, false);
+                    }
                 }
             };
 

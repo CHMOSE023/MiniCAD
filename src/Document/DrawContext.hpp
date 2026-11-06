@@ -197,6 +197,7 @@ namespace MiniCAD
         {
             FlushWipes();
             m_curAttr = attr;
+            m_colorIsAci7 = attr && IsAci7Color(attr->Color);
             m_lockedTop = m_locked = OnLockedLayer(attr);   // 块参照在锁定图层上时整块淡显
             if (attr)
             {
@@ -215,6 +216,7 @@ namespace MiniCAD
         void SetEntityContext(const EntityAttr* attr) override
         {
             m_curAttr = attr;
+            m_colorIsAci7 = attr && IsAci7Color(attr->Color);
             m_locked  = m_lockedTop || OnLockedLayer(attr);     // 块里锁定图层上的子实体同样淡显
         }
 
@@ -1393,12 +1395,27 @@ namespace MiniCAD
         {
             return { ToRenderFloat3(pt, origin), ToVertexColor(col) };
         }
+        // 7 号色（白/黑自适应）的顶点标记：编码在 alpha 低位，见 ToColor。
+        // 只有「颜色语义是 ACI 7」的实体才打标记；真彩 RGB（如代理图形的黑底框）不打，
+        // 否则 shader 的 MapColor 会把纯黑/纯白真彩误当成 7 号色反转。
+        static constexpr float kAci7Tag = 253.0f / 255.0f;
+        // 只有「颜色语义是 7 号色」才打标记，真彩 RGB（如代理图形的纯黑底框）不打。
+        // 判定放在 EntityColor.hpp 的自由函数 IsAci7Color()，供渲染与测试共用。
         static VertexColor ToVertexColor(const Math::Color4& c)
         {
             return { static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), static_cast<float>(c.a) };
         }
-        // 当前画的部分的顶点颜色：在锁定图层上时淡显
-        VertexColor ToColor(const Math::Color4& c) const { return ToVertexColor(Faded(c)); }
+        // 当前画的部分的顶点颜色：在锁定图层上时淡显；7 号色顶点打标记供 shader 反色。
+        // 标记只在颜色是纯黑或纯白时才有意义（7 号色只会呈现这两种），其它颜色即使打了
+        // 标记 shader 也不会反转，所以直接按 m_colorIsAci7 编码即可。
+        VertexColor ToColor(const Math::Color4& c) const
+        {
+            Math::Color4 f = Faded(c);
+            // 7 号色顶点打标记（未被淡显时）：shader 的 MapColor 只反转带标记的顶点，
+            // 这样真彩的纯黑/纯白（如代理图形的黑底框）不会再被误反转成背景色。
+            if (m_colorIsAci7 && !m_locked) f.a = kAci7Tag;
+            return ToVertexColor(f);
+        }
         Math::Color4 Faded(const Math::Color4& c) const
         {
             if (!m_locked) return c;
@@ -1595,7 +1612,10 @@ namespace MiniCAD
         {
             // 逐个画时每个子实体画完都清掉实体上下文（InsertEntity::Draw）
             if (e.direct > 0)
+            {
                 m_curAttr = nullptr;
+                m_colorIsAci7 = false;
+            }
             // 分段细分：序号与进度跳过这个块里的子实体
             if (m_leafDepth == 0)
             {
@@ -1645,6 +1665,7 @@ namespace MiniCAD
         Math::Point3                   m_origin;               // 渲染原点（SetRenderOrigin）
         CurveRefinement                m_refine;               // 曲线加密（SetCurveRefinement）
         const EntityAttr*              m_curAttr       = nullptr;
+        bool                           m_colorIsAci7   = false;    // 当前实体是否 7 号色（供顶点打标记）
         bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
         bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）
         bool                           m_viewDependent = false;

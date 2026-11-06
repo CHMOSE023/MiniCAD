@@ -11,13 +11,19 @@ namespace MiniCAD::Hlsl
                     float4x4 vp;
                     float4   options;
                 };
-
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白。
+                // 只反转「7 号色」顶点：DrawContext 把这类顶点的 alpha 编成 253/255 作标记，
+                // 真彩 RGB（如代理图形的纯黑底框）alpha 为 1.0，不参与反转——否则纯黑/纯白
+                // 真彩会被误当成 7 号色翻成背景色，出现白底白字。
                 float4 MapColor(float4 c)
                 {
-                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                    if (max(d.x, max(d.y, d.z)) < 0.004f)
-                        c.rgb = 1.0f - c.rgb;
+                    bool isAci7 = c.a > 0.988f && c.a < 0.999f;   // ≈ 253/255
+                    if (isAci7)
+                    {
+                        float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                        if (max(d.x, max(d.y, d.z)) < 0.004f)
+                            c.rgb = 1.0f - c.rgb;
+                    }
                     return c;
                 }
 
@@ -53,13 +59,19 @@ namespace MiniCAD::Hlsl
                     float4x4 vp;
                     float4   options;
                 };
-
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白（同线着色器）
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白。
+                // 只反转「7 号色」顶点：DrawContext 把这类顶点的 alpha 编成 253/255 作标记，
+                // 真彩 RGB（如代理图形的纯黑底框）alpha 为 1.0，不参与反转——否则纯黑/纯白
+                // 真彩会被误当成 7 号色翻成背景色，出现白底白字。
                 float4 MapColor(float4 c)
                 {
-                    float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                    if (max(d.x, max(d.y, d.z)) < 0.004f)
-                        c.rgb = 1.0f - c.rgb;
+                    bool isAci7 = c.a > 0.988f && c.a < 0.999f;   // ≈ 253/255
+                    if (isAci7)
+                    {
+                        float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                        if (max(d.x, max(d.y, d.z)) < 0.004f)
+                            c.rgb = 1.0f - c.rgb;
+                    }
                     return c;
                 }
 
@@ -99,15 +111,21 @@ namespace MiniCAD::Hlsl
                   float4x4 vp;
                   float4   options;
               };
-
-              // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
-              float4 MapColor(float4 c)
-              {
-                  float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
-                  if (max(d.x, max(d.y, d.z)) < 0.004f)
-                      c.rgb = 1.0f - c.rgb;
-                  return c;
-              }
+                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白。
+                // 只反转「7 号色」顶点：DrawContext 把这类顶点的 alpha 编成 253/255 作标记，
+                // 真彩 RGB（如代理图形的纯黑底框）alpha 为 1.0，不参与反转——否则纯黑/纯白
+                // 真彩会被误当成 7 号色翻成背景色，出现白底白字。
+                float4 MapColor(float4 c)
+                {
+                    bool isAci7 = c.a > 0.988f && c.a < 0.999f;   // ≈ 253/255
+                    if (isAci7)
+                    {
+                        float3 d = abs(c.rgb - (options.x > 0.5f ? 1.0f : 0.0f));
+                        if (max(d.x, max(d.y, d.z)) < 0.004f)
+                            c.rgb = 1.0f - c.rgb;
+                    }
+                    return c;
+                }
               
               Texture2D<float4> gFont : register(t0);
               SamplerState      gSamp : register(s0);

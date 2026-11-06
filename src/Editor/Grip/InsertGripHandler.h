@@ -46,13 +46,13 @@ namespace MiniCAD
             if (!e->HasClipBoundary())
                 return;
 
-            // ⚠ 裁剪边界存的是**块坐标**，而夹点的 WorldPos 要**世界坐标**
-            //   （GripEditor 的命中测试拿它跟鼠标的世界点比）。不换算的话，
-            //   块一旦有平移 / 旋转 / 缩放，夹点就会画在错误的位置、也拖不动。
-            const auto& poly = e->GetClipBoundary();
+            // XCLIP 边界是 WCS 固定的取景窗口：有 WCS 记录时直接用世界坐标，
+            // 否则（旧路径）退回块坐标经插入变换。块移动时夹点停在世界原位。
+            const std::vector<Math::Point3> poly = e->HasClipFrameWorld()
+                ? e->ClipFrameWorld() : e->GetClipBoundary();
             const int n = static_cast<int>(poly.size());
             const Math::Mat4 m = e->CellMatrix(0, 0);
-            auto world = [&](const Math::Point3& p) { return m * p; };
+            auto world = [&](const Math::Point3& p) { return e->HasClipFrameWorld() ? p : m * p; };
 
             // 顶点夹点
             for (int i = 0; i < n; ++i)
@@ -85,16 +85,25 @@ namespace MiniCAD
 
             // ── 裁剪边界：顶点 或 边中点 ──────────────────────────
             //
-            // 鼠标给的是**世界坐标**，而边界存在**块坐标**里（见 BuildGrips 的说明），
-            // 所以要先经插入变换的逆变换换算回块坐标，再写回边界。
+            // 鼠标给的是世界坐标，XCLIP 边界是 WCS 固定的取景窗口，直接用世界坐标编辑
             if (activeGrip.GripType == Grip::Type::Corner ||
                 activeGrip.GripType == Grip::Type::Mid)
             {
-                const Math::Point3 local = WorldToBlock(*e, worldPos);
-                if (activeGrip.GripType == Grip::Type::Corner)
-                    e->MoveClipBoundaryPoint(activeGrip.SubIndex, local);
+                if (e->HasClipFrameWorld())
+                {
+                    if (activeGrip.GripType == Grip::Type::Corner)
+                        e->MoveClipBoundaryPointWorld(activeGrip.SubIndex, worldPos);
+                    else
+                        e->MoveClipBoundaryEdgeWorld(activeGrip.SubIndex, worldPos);
+                }
                 else
-                    e->MoveClipBoundaryEdge(activeGrip.SubIndex, local);
+                {
+                    const Math::Point3 local = WorldToBlock(*e, worldPos);
+                    if (activeGrip.GripType == Grip::Type::Corner)
+                        e->MoveClipBoundaryPoint(activeGrip.SubIndex, local);
+                    else
+                        e->MoveClipBoundaryEdge(activeGrip.SubIndex, local);
+                }
                 SyncClipGripsToWorld(grips, *e);
                 return;
             }
@@ -171,18 +180,20 @@ namespace MiniCAD
             auto* e = static_cast<InsertEntity*>(entity);
             if (!e || !e->HasClipBoundary()) return;
 
-            const auto& poly = e->GetClipBoundary();
+            const std::vector<Math::Point3> poly = e->HasClipFrameWorld()
+                ? e->ClipFrameWorld() : e->GetClipBoundary();
             if (poly.size() < 2) return;
 
-            // 边界是**块坐标**，Overlay 要**世界坐标**，中间必须经插入变换
+            // 有 WCS 记录时点已是世界坐标；旧路径才需要经插入变换
             const Math::Mat4 m = e->CellMatrix(0, 0);
+            auto world = [&](const Math::Point3& p) { return e->HasClipFrameWorld() ? p : m * p; };
 
             // 正在调边界时用活动色（橙），否则用常规色
             const bool editing = (activeGrip.GripType == Grip::Type::Corner ||
                                   activeGrip.GripType == Grip::Type::Mid);
             const Math::Color4 color = editing ? GripColors{}.Active : GripColors{}.Normal;
             for (size_t i = 0; i < poly.size(); ++i)
-                overlay.AddLine(m * poly[i], m * poly[(i + 1) % poly.size()], color);
+                overlay.AddLine(world(poly[i]), world(poly[(i + 1) % poly.size()]), color);
         }
 
     private:
@@ -198,14 +209,17 @@ namespace MiniCAD
             return Math::Mat4::Inverse(m) * w;
         }
 
-        // 同步裁剪边界夹点到**世界坐标**（边界本身是块坐标，要经插入变换）
+        // 同步裁剪边界夹点：XCLIP 边界是 WCS 固定的取景窗口，块移动时夹点也停在原世界位置。
         static void SyncClipGripsToWorld(std::vector<Grip>& grips, const InsertEntity& e)
         {
-            const auto& poly = e.GetClipBoundary();
+            const std::vector<Math::Point3> poly = e.HasClipFrameWorld()
+                ? e.ClipFrameWorld() : e.EffectiveClipBoundary();
             const int n = static_cast<int>(poly.size());
             const Math::Mat4 m = e.CellMatrix(0, 0);
             const Object::ObjectID ownerId = e.GetID();
-            auto world = [&](const Math::Point3& p) { return m * p; };
+            auto world = [&](const Math::Point3& p) {
+                return e.HasClipFrameWorld() ? p : m * p;   // 有 WCS 记录时点已是世界坐标
+            };
 
             for (auto& grip : grips)
             {

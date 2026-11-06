@@ -26,7 +26,8 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | `TchText.h` | TCH文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | TCH矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管与管件 |
-| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理） |
+| `TchBlockInsert.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同） |
+| `TchProxyGraphics.h` | 天正这一侧的代理图形入口：`Tch::DecodeProxyGraphics` 是通用解码器 `Proxy::Decode`（`src/Import/ProxyGraphics.h`）的薄封装，只做类型别名与转发。代理图形本身与厂商无关（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理） |
 
 ## 约束
 
