@@ -15,6 +15,7 @@
 
 namespace MiniGUI
 {
+    class Font;
     class TextSystem;
     class UIContext;
 }
@@ -127,7 +128,7 @@ namespace MiniCAD
     public:
         virtual ~AppPlatform() = default;
 
-        // 为浮出的停靠面板或拖出的文档建独立的系统窗口（Win32）；给不出时返回 nullptr（网页版、Linux 版），面板在主窗口里浮动。
+        // 为浮出的停靠面板或拖出的文档建独立的系统窗口（Win32、Linux 的 X11）；给不出时返回 nullptr（网页版、Linux 的 Wayland），面板在主窗口里浮动。
         // document = false：工具窗口（总在拥有它的窗口之上、随它最小化），owner 为空时归主窗口所有，否则归 owner（文档窗口的浮动面板）；
         // true：文档窗口，与主窗口平级（可以在主窗口之下，主窗口弹出对话框时把主窗口置前就不会被挡住），在任务栏里有自己的按钮
         virtual std::unique_ptr<IFloatingWindow> CreateFloatingWindow(const std::string& title, const MiniGUI::Rect& rect, bool document = false,
@@ -147,7 +148,9 @@ namespace MiniCAD
         virtual std::unique_ptr<IRenderTarget> CreateViewportTarget() { return nullptr; }
 // 把视口渲染目标的着色器资源（IRenderTarget::GetNativeShaderResource）登记为界面纹理
         virtual MiniGUI::TextureId RegisterViewportTexture(void* nativeShaderResource) = 0;
-        virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;
+        virtual bool LoadUiFonts(MiniGUI::TextSystem& text) = 0;     // 再次调用时只补上之后才有的字体（网页版后下载的）
+        // 界面语言的字体（MiniGUI::TextSystem::SetPreferredFonts）：日文界面的汉字用日文字形等；简体等语言为空
+        virtual std::vector<std::shared_ptr<MiniGUI::Font>> LoadLanguageUiFonts(const std::string& language) { (void)language; return {}; }
         virtual void RequestRedraw() = 0;       // 安排一次重绘（Win32：InvalidateRect；网页：requestAnimationFrame）
         virtual void BeginUiPass()   = 0;       // 绑定窗口的帧缓冲并清屏
         virtual void EndUiPass()     = 0;       // 呈现，并同步输入法位置等平台输入状态
@@ -158,6 +161,13 @@ namespace MiniCAD
         // ── 窗口 ─────────────────────────────────────────────────
         virtual void SetTitle(const std::string& utf8) = 0;
         virtual bool HasWindowControls() const = 0;         // 标题栏是否显示最小化 / 最大化 / 关闭
+        // 屏幕小时（手机）改用只浏览的紧凑布局（minicad_ui.json 的 layouts.compact，docs/Android/PLAN.md §4.5）；
+        // 桌面窗口拉窄不切换
+        virtual bool SupportsCompactLayout() const { return false; }
+        // 全屏：隐藏系统的状态栏、导航栏（安卓；返回手势先退出全屏）。不支持的平台命令 view.fullScreen 不可用
+        virtual bool SupportsFullScreen() const { return false; }
+        virtual bool IsFullScreen() const { return false; }
+        virtual void SetFullScreen(bool) {}
         virtual bool IsWindowActive()    const { return true; }
         virtual bool IsWindowMaximized() const { return false; }
         virtual void MinimizeWindow()       {}
@@ -183,6 +193,16 @@ namespace MiniCAD
         virtual bool PickFolder(const std::vector<std::string>& fileNames, std::function<void(const std::string& dir)> done)
         {
             (void)fileNames; (void)done;
+            return false;
+        }
+        // 打开图纸后、提示"外部参照未找到"之前，平台自动找参照（不问用户）：例如网页版从网址打开的图纸，
+        // 交给嵌入它的网页（宿主）到图纸所在的网站去找。drawingPath 是图纸的路径（Document::GetPath），
+        // fileNames 同 PickFolder。返回 true 表示受理，之后 done 恰好调用一次：找到的文件所在目录（UTF-8），
+        // 一个也没找到或出错时为空串；返回 false（默认）时不调用 done，直接提示用户
+        virtual bool FindXrefsForDrawing(const std::string& drawingPath, const std::vector<std::string>& fileNames,
+                                         std::function<void(const std::string& dir)> done)
+        {
+            (void)drawingPath; (void)fileNames; (void)done;
             return false;
         }
         // 另存为：返回保存路径（UTF-8，空串 = 取消）。
@@ -220,10 +240,12 @@ namespace MiniCAD
         // 用系统默认程序打开链接（网页版在新标签页打开）；平台不支持或不认识时返回 false
         virtual bool OpenUrl(const std::string& url) { (void)url; return false; }
         // HTTPS GET，阻塞，只在 RunInBackground 的 work 里调用；成功（HTTP 200）时 body 为响应内容。
-        // 桌面版：WinHTTP；Linux：curl 命令；网页版没有（部署的总是最新版），返回 false
+        // 桌面版：WinHTTP；Linux：curl 命令；安卓：Java 的 HttpURLConnection；网页版没有（部署的总是最新版），返回 false
         virtual bool HttpGet(const std::string& url, std::string& body) { (void)url; (void)body; return false; }
         // 发布包文件名的结尾（GitHub Release 的附件，如 "-windows-x64.zip"），检查更新时据此找下载链接；空 = 不检查更新
         virtual std::string GetReleaseAssetSuffix() const { return {}; }
+        // 启动时查到新版本就弹出提示（下载 / 忽略此版本）；否则只在标题栏的版本号上加红点（安卓手机上看不到标题栏右侧）
+        virtual bool PromptsForUpdates() const { return false; }
 
         // ── 后台任务 ─────────────────────────────────────────────
         // 在后台线程执行 work，完成后在界面线程调用 done（读取大图纸时界面不冻结）。

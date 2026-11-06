@@ -14,7 +14,7 @@ covers: tools/inspect_dwg.cpp, apps/Win32/src/Host/SelfTest.cpp, .agents/skills/
 cmd /c '"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1 && cmake --build out/debug --target MiniCADDwgInspect MiniCADWin 2>&1' | Select-String "error|FAILED"
 ```
 
-- `out/debug/tests/MiniCADDwgInspect.exe 图纸`：只读地列出原图内容（按类型统计实体、未支持的对象），再按环境变量打印细节，见 [references/inspect-flags.md](references/inspect-flags.md)
+- `out/debug/tests/MiniCADDwgInspect.exe 图纸`：只读地列出原图内容（按类型统计实体、未支持的对象），再按环境变量打印细节，见 [references/inspect-flags.md](references/inspect-flags.md)；`--convert 输入 输出` 按 MiniCAD 打开再另存（DXF 转 DWG 等）
 - `out/debug/MiniCADWin/MiniCADWin.exe --bench 图纸`：按真实程序的流程打开、全部显示（同样分帧生成显示，画全后再截图、计时），可以离屏截图
 
 ## 2. 看原图里有什么
@@ -32,10 +32,11 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 | 某个对象 | `MINICAD_H=句柄,…`（类型、所有者、是否在模型空间、不可见标志） |
 | 对象在块定义里（`MINICAD_H` 的所有者是块记录） | `MINICAD_ALLBLOCKS=1`（块记录名、模型空间里插入它的块参照）、`MINICAD_XCLIP=1`（块参照的裁剪框与块基点：对象在裁剪框外时原图也不显示）、`MINICAD_GEOMBLOCKS`（块内天正对象生成的几何） |
 | 文字 / 字体 | `MINICAD_GREPTEXT=子串`（按原文找 TEXT / MTEXT，看格式码与转义）、`MINICAD_FINDTEXT=内容`、`MINICAD_BLOCK=块名子串`、`MINICAD_GLYPHS`（字体缺哪些字形）、`MINICAD_TABLES=1`（文字样式 / 线型表） |
-| 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW`（墙的材料码、门窗标志、图纸的墙柱填充设置） |
+| 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW`（墙的材料码与连接量、门窗标志与编号、图纸的墙柱填充设置） |
 | 布局页 / 视口 | `MINICAD_VIEWPORTS=1`、`MINICAD_LAYERS=子串`（冻结 / 关闭的图层） |
 | 遮挡 / 裁剪 | `MINICAD_WIPEOUT`、`MINICAD_WIPECHECK`、`MINICAD_XCLIP` |
 | OLE 对象 | `MINICAD_OLEDIR=目录`（导出原始数据） |
+| 三维实体 / 曲面只有边线或缺面 | 看导入日志的"只显示边线" / "缺面"统计；`MINICAD_DUMP_SECTIONS=目录`（R2013 起的 ACIS 数据存储段）；`AcisImportTests` 带 `MINICAD_ACIS_DIR=目录`、`MINICAD_ACIS_FACES=1` 列出建不出的面（见 `docs/Solid/PLAN.md` 第 16 节） |
 
 ## 3. 看 MiniCAD 画成了什么
 

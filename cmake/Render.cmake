@@ -1,16 +1,21 @@
 # ── 渲染后端（源码在 apps/Render，头文件以它为根："D3D11/D3D11Backend.h"、"IGraphicsDevice.h"）──
 # 每个平台只编译自己的图形接口（见 docs/Render/PLAN.md）：
 #   Windows → D3D12 + D3D11    网页（Emscripten）→ WebGPU（浏览器支持时）+ GLES3（WebGL2，回退）
-#   Linux → Vulkan（默认）+ GLES3（EGL，回退；两者的窗口与上下文都由宿主经 SDL3 创建）
+#   Linux → Vulkan（默认）+ GLES3（EGL，回退；窗口表面与 EGL 上下文都由宿主 apps/Linux 经 X11 / Wayland 创建）
 # 界面后端（MiniGUI::IRenderBackend）各是一个小静态库，截图对比测试和控件展示也单独链接它们；
 # MiniCADRender = CAD 视口渲染器 + 宿主用的图形设备（IGraphicsDevice），按平台选源文件。
 
 set(MINICAD_RENDER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/apps/Render")
 
-# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主
+# Linux：OpenGL ES 3 的头文件与库（Debian / Ubuntu 的 libgles-dev）；找不到时不编译 GLES3 后端与 Linux 宿主。
+# 安卓也走这一段（NDK 自带头文件与库；ES 3 的函数在 libGLESv3 里，Linux 的 libGLESv2 则都有）
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     find_path(MINICAD_GLES3_INCLUDE_DIR GLES3/gl3.h)
-    find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    if(ANDROID)
+        find_library(MINICAD_GLESV2_LIBRARY GLESv3)
+    else()
+        find_library(MINICAD_GLESV2_LIBRARY GLESv2)
+    endif()
     if(MINICAD_GLES3_INCLUDE_DIR AND MINICAD_GLESV2_LIBRARY)
         set(MINICAD_LINUX_GLES3 ON)
     else()
@@ -199,6 +204,7 @@ if(MINICAD_LINUX_VULKAN)
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanGraphicsDevice.cpp"
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderer.cpp"
         "${MINICAD_RENDER_SRC}/Vulkan/VulkanRenderTarget.cpp"
+        "${MINICAD_RENDER_SRC}/Vulkan/VulkanSwapchain.cpp"
     )
     target_include_directories(MiniCADRender PRIVATE ${MINICAD_SPIRV_ROOT})
     target_compile_definitions(MiniCADRender PRIVATE MINICAD_RENDER_VULKAN)

@@ -24,6 +24,7 @@ namespace MiniCAD
         const std::string& GetVersion()     const { return m_version; }      // NEW
         double             GetFontHeight()  const { return m_fontHeight; }   // NEW
         size_t             GetGlyphCount()  const { return m_shapes.size(); }
+        std::vector<uint32_t> GetCodes()    const;
 
     private:
         struct RawShape { const uint8_t* data = nullptr; size_t len = 0; };

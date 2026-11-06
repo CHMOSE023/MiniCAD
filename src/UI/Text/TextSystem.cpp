@@ -15,6 +15,43 @@ namespace MiniGUI
 
         bool IsSpace(uint32_t cp) { return cp == ' ' || cp == '\t' || cp == 0x3000; }
 
+        bool UsesLanguageFont(uint32_t cp)
+        {
+            return (cp >= 0x2E80 && cp <= 0x9FFF) || (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0xF900 && cp <= 0xFAFF)
+                || (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFFEF) || cp >= 0x20000;
+        }
+
+        // "zh-TW" / "zh-Hant-HK" → "tc"，"ja-JP" → "ja"，"ko" → "ko"，"zh-CN" → "sc"；其余为空串
+        std::string CjkOf(const std::string& language)
+        {
+            std::string tag = language;
+            std::transform(tag.begin(), tag.end(), tag.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            std::replace(tag.begin(), tag.end(), '_', '-');
+            const std::string primary = tag.substr(0, tag.find('-'));
+            if (primary == "ja" || primary == "ko")
+                return primary;
+            if (primary == "zh")
+                return tag.find("-tw") != std::string::npos || tag.find("-hk") != std::string::npos
+                    || tag.find("-mo") != std::string::npos || tag.find("-hant") != std::string::npos ? "tc" : "sc";
+            return {};
+        }
+    }
+
+    int NotoCjkFaceForLanguage(const std::string& language)
+    {
+        const std::string cjk = CjkOf(language);
+        return cjk == "ja" ? 0 : cjk == "ko" ? 1 : cjk == "sc" ? 2 : cjk == "tc" ? 3 : -1;
+    }
+
+    std::string BundledUiFontForLanguage(const std::string& language)
+    {
+        const std::string cjk = CjkOf(language);
+        return cjk == "ja" ? "NotoSansJP-UI.otf" : cjk == "ko" ? "NotoSansKR-UI.otf" : cjk == "tc" ? "NotoSansTC-UI.otf" : "";
+    }
+
+    namespace
+    {
+
         template<typename T>
         void AppendBytes(std::string& s, const T& v)
         {
@@ -32,6 +69,8 @@ namespace MiniGUI
     {
         if (!font)
             return nullptr;
+        if (auto it = std::find(m_fonts.begin(), m_fonts.end(), font); it != m_fonts.end())
+            return it->get();
         m_fonts.push_back(std::move(font));
         m_measureCache.clear();
         return m_fonts.back().get();
@@ -40,6 +79,14 @@ namespace MiniGUI
     void TextSystem::AddFallbackFont(std::shared_ptr<Font> font)
     {
         AddFont(std::move(font));
+    }
+
+    void TextSystem::SetPreferredFonts(std::vector<std::shared_ptr<Font>> fonts)
+    {
+        fonts.erase(std::remove(fonts.begin(), fonts.end(), nullptr), fonts.end());
+        m_retired.insert(m_retired.end(), m_preferred.begin(), m_preferred.end());
+        m_preferred = std::move(fonts);
+        m_measureCache.clear();
     }
 
     void TextSystem::SetPixelScale(float scale)
@@ -65,6 +112,13 @@ namespace MiniGUI
     // =========================================================
     bool TextSystem::ResolveGlyph(uint32_t cp, Font* primary, const Font*& font, int& glyph) const
     {
+        if (!m_preferred.empty() && primary == GetDefaultFont() && UsesLanguageFont(cp))
+            for (const auto& f : m_preferred)
+                if ((glyph = f->FindGlyph(cp)) != 0)
+                {
+                    font = f.get();
+                    return true;
+                }
         glyph = primary->FindGlyph(cp);
         if (glyph != 0)
         {

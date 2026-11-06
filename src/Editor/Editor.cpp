@@ -99,6 +99,7 @@
 #include "Editor/Tools/SolidTools.h"
 #include "Core/Entity/Solid3DEntity.hpp"
 #include "Core/Entity/MeshEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
 #include "Core/Entity/ViewportEntity.hpp"
 #include "Core/Entity/MLineEntity.hpp"
 #include "Core/Draw/TransformDrawSink.hpp"
@@ -289,6 +290,14 @@ namespace MiniCAD
         m_constraintEngine.EnableOrtho(o.m_constraintEngine.IsOrthoEnabled());
         m_constraintEngine.EnablePolar(o.m_constraintEngine.IsPolarEnabled());
         m_picking.SetHoverEnabled(o.m_picking.IsHoverEnabled());
+        SetCursorStyle(o.m_cursorSize, o.m_pickBox);
+    }
+
+    void Editor::SetCursorStyle(float cursorSize, float pickBox)
+    {
+        m_cursorSize = std::clamp(cursorSize, 0.0f, 100.0f);
+        m_pickBox    = std::clamp(pickBox, 0.0f, 50.0f);
+        m_picking.SetPickBox(m_pickBox);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1533,7 +1542,7 @@ namespace MiniCAD
 
         std::string msg = TrF("已创建 {0} 个面域，面积 = {1}，周长 = {2}", regionCount, Fixed4(totalArea), Fixed4(totalPerimeter));
         if (built.Skipped > 0)
-            msg += TrF("（忽略 {0} 个对象）", built.Skipped);
+            msg += TrNF("（忽略 {0} 个对象）", built.Skipped, built.Skipped);
         m_commandLine.Echo(msg);
         m_commandLine.Echo(Tr("原对象已保留；不再需要时请自行删除"));
     }
@@ -1734,12 +1743,12 @@ namespace MiniCAD
         const Scene& scene = m_doc->GetScene();
         const LayerManager& layers = scene.GetLayerManager();
         std::vector<double> facing;
-        auto addSolid = [&](const Solid3DEntity& solid, const Math::Color4& base)
+        auto addSolid = [&](const Solid3DEntity& solid, const Math::Color4& base, const Math::Mat4* outer)
         {
             const auto& mesh = solid.GetLocalMesh();
             if (mesh.Empty())
                 return;
-            const Math::Mat4& m = solid.GetTransform();
+            const Math::Mat4 m = outer ? solid.GetTransform() * *outer : solid.GetTransform();
 
             if (shaded)
             {
@@ -1778,19 +1787,70 @@ namespace MiniCAD
                     m_silhouetteVertices.push_back({ toFloat3(m.TransformPoint(mesh.Positions[e.B])), lineColor });
                 }
         };
+        auto solidColor = [&](const EntityAttr& attr, const Layer* layer)
+        {
+            return attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color);
+        };
+        // 块里的实体（DWG 的 3DSOLID 常在块里）：按块定义记下是否含实体，不含的不展开
+        std::unordered_map<const BlockEntity*, bool> blockHasSolid;
+        std::function<bool(const BlockEntity*, int)> hasSolid = [&](const BlockEntity* block, int depth) -> bool
+        {
+            if (!block || depth > 8)
+                return false;
+            if (auto it = blockHasSolid.find(block); it != blockHasSolid.end())
+                return it->second;
+            blockHasSolid[block] = false;
+            bool found = false;
+            for (const auto& e : block->GetEntities())
+            {
+                if (e->IsKindOf<Solid3DEntity>())
+                    found = true;
+                else if (const auto* ins = dynamic_cast<const InsertEntity*>(e.get()))
+                    found = hasSolid(ins->GetBlock(), depth + 1);
+                if (found)
+                    break;
+            }
+            return blockHasSolid[block] = found;
+        };
+        std::function<void(const InsertEntity&, const Math::Mat4*, int)> addInsert = [&](const InsertEntity& ins, const Math::Mat4* outer, int depth)
+        {
+            const BlockEntity* block = ins.GetBlock();
+            if (depth > 8 || !block || block->IsUnresolvedXRef() || !hasSolid(block, depth))
+                return;
+            for (int r = 0; r < ins.GetRowCount(); ++r)
+                for (int c = 0; c < ins.GetColumnCount(); ++c)
+                {
+                    const Math::Mat4 cell = outer ? ins.CellMatrix(c, r) * *outer : ins.CellMatrix(c, r);
+                    for (const auto& e : ins.GetResolvedChildren())
+                    {
+                        const auto& attr = e->GetAttr();
+                        const Layer* layer = layers.GetLayer(attr.LayerId);
+                        if (!attr.Visible || (layer && !layer->IsVisible()))
+                            continue;
+                        if (e->IsKindOf<Solid3DEntity>())
+                            addSolid(static_cast<const Solid3DEntity&>(*e), solidColor(attr, layer), &cell);
+                        else if (const auto* nested = dynamic_cast<const InsertEntity*>(e.get()))
+                            addInsert(*nested, &cell, depth + 1);
+                    }
+                }
+        };
         scene.ForEachObject([&](const Object& o)
         {
-            if (!o.IsKindOf<Solid3DEntity>())
+            const bool isSolid = o.IsKindOf<Solid3DEntity>();
+            const auto* ins = isSolid ? nullptr : dynamic_cast<const InsertEntity*>(&o);
+            if (!isSolid && !ins)
                 return;
-            const auto& solid = static_cast<const Solid3DEntity&>(o);
-            const auto& attr  = solid.GetAttr();
+            const auto& attr  = static_cast<const Entity&>(o).GetAttr();
             const Layer* layer = layers.GetLayer(attr.LayerId);
             if (!attr.Visible || (layer && !layer->IsVisible()))
                 return;
             // 与场景流同一个布局过滤：布局页上模型空间的实体只经视口显示（视口里画的是它的边）
             if (!m_doc->IsVisibleInActiveLayout(attr))
                 return;
-            addSolid(solid, attr.Color.Method == ColorMethod::ByLayer && layer ? layer->GetColor() : static_cast<Math::Color4>(attr.Color));
+            if (isSolid)
+                addSolid(static_cast<const Solid3DEntity&>(o), solidColor(attr, layer), nullptr);
+            else
+                addInsert(*ins, nullptr, 0);
         });
 
         // 节点图预览：实体的面与轮廓线同上；所有预览实体的线（曲线、实体的边）进轮廓线流，三维视图里按深度测试。
@@ -1800,7 +1860,7 @@ namespace MiniCAD
             for (const auto& e : m_previewEntities)
             {
                 if (e->IsKindOf<Solid3DEntity>())
-                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color));
+                    addSolid(static_cast<const Solid3DEntity&>(*e), static_cast<Math::Color4>(e->GetAttr().Color), nullptr);
                 PreviewLineSink sink(m_silhouetteVertices, m_renderOrigin);
                 e->Draw(sink, false, false);
             }
@@ -2009,7 +2069,7 @@ namespace MiniCAD
 
         m_commandLine.Echo(TrF("{0}：已生成面域（{1} 个环），面积 = {2}，周长 = {3}", Tr(kLabel[opi]), result.size(), Fixed4(area), Fixed4(perimeter)));
         if (ignored > 0)
-            m_commandLine.Echo(TrF("有 {0} 个对象不能围成区域，已忽略", ignored));
+            m_commandLine.Echo(TrNF("有 {0} 个对象不能围成区域，已忽略", ignored, ignored));
     }
 
     void Editor::ReportArea()
@@ -2868,7 +2928,7 @@ namespace MiniCAD
         });
         const size_t n = ids.size();
         SetSelection(std::move(ids));
-        m_commandLine.Echo(n == 0 ? Tr("没有可选择的对象") : TrF("已选择 {0} 个对象", n));
+        m_commandLine.Echo(n == 0 ? Tr("没有可选择的对象") : TrNF("已选择 {0} 个对象", n, n));
         return n;
     }
 
@@ -2907,7 +2967,7 @@ namespace MiniCAD
         std::sort(ids.begin(), ids.end());              // 顺序确定，撤销 / 重做结果一致
         if (announce && locked > 0)
             m_commandLine.Echo(ids.empty() ? Tr("所选对象都在锁定的图层上，不能修改")
-                                           : TrF("已跳过 {0} 个锁定图层上的对象", locked));
+                                           : TrNF("已跳过 {0} 个锁定图层上的对象", locked, locked));
         return ids;
     }
 
@@ -3265,18 +3325,20 @@ namespace MiniCAD
         if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity);
             ins && ins->HasClipBoundary() && ins->IsClipFrameVisible() && !ctx.ChunkStopped())
         {
-            const auto& poly = ins->GetClipBoundary();
+            // XCLIP 边界是 WCS 固定的取景窗口：有 WCS 记录时直接用世界坐标，
+            // 块移动后框不跟着走；旧路径才按块坐标经插入变换。
+            const std::vector<Math::Point3> poly = ins->HasClipFrameWorld()
+                ? ins->ClipFrameWorld() : ins->GetClipBoundary();
             if (poly.size() >= 2)
             {
-                // 边界是**块坐标系**里的，要经本块的插入变换才落到世界坐标
                 const Math::Mat4 m = ins->CellMatrix(0, 0);
                 Math::Color4 color = ins->ResolveDrawColor(ctx);
                 if (m_doc->GetScene().IsEntityLocked(*ins))
                     color.a *= DrawContext::kLockedFade;
                 for (size_t i = 0; i < poly.size(); ++i)
                 {
-                    const Math::Point3 a = m * poly[i];
-                    const Math::Point3 b = m * poly[(i + 1) % poly.size()];
+                    const Math::Point3 a = ins->HasClipFrameWorld() ? poly[i] : m * poly[i];
+                    const Math::Point3 b = ins->HasClipFrameWorld() ? poly[(i + 1) % poly.size()] : m * poly[(i + 1) % poly.size()];
                     m_scratchLines.push_back({ ToRenderFloat3(a, ctx.GetRenderOrigin()),
                                                { static_cast<float>(color.r), static_cast<float>(color.g),
                                                  static_cast<float>(color.b), static_cast<float>(color.a) } });
@@ -3408,7 +3470,7 @@ namespace MiniCAD
                * Mat4::Scale(Vec3{ s, s, 1.0 });
         // ⚠ 内容旋转用 **R(+Twist)**，不是 R(-Twist)。
         //
-        // 依据（实测 `01-曲陵路.dwg`，5 个 Twist=95.69° 的浮动视口）：
+        // 依据（实测 5 个 Twist=95.69° 的浮动视口）：
         //   这 5 个视口在纸面上并排一行（Center.x 步长 +420），各看模型里
         //   195 宽的一条带（scale=2，195×2=390=框宽）。把 ViewCenter 按
         //   DCS→WCS 的 R(-Twist) 转过之后，相邻 WCS 位移单位向量恒等于
@@ -4017,7 +4079,17 @@ namespace MiniCAD
             // 没有这一项，切换布局只能改相机、改不了画什么（每张布局都显示同一批内容）。
             if (!m_doc->IsVisibleInActiveLayout(attr)) return false;
             const Layer* layer = layerMgr.GetLayer(attr.LayerId);
-            return !layer || layer->IsVisible();
+            const bool layerOn = !layer || layer->IsVisible();
+            if (layerOn) return true;
+            // 块参照所在图层关闭时不整块跳过：块内具名图层上的实体按自己的开关
+            if (const auto* ins = dynamic_cast<const InsertEntity*>(&entity))
+                return ins->HasVisibleContentOnAnyLayer(
+                    [&layerMgr](LayerID id)
+                    {
+                        const Layer* l = layerMgr.GetLayer(id);
+                        return !l || l->IsVisible();
+                    });
+            return false;
         };
 
         // 全局脏（图层颜色/线型表等影响所有实体）或细线开关切换时所有实体缓存整体失效；
@@ -4877,16 +4949,22 @@ namespace MiniCAD
                 ctx.BeginEntity(nullptr);
 
                 if (ins)
-                    ins->SetShowWholeWhileDraggingBase(false);
+                    ins->SetShowWholeWhileDraggingBase(false);   // 保留接口兼容；Draw 已不再据此忽略裁剪
 
                 // 裁剪边框线：$XCLIPFRAME 允许显示时才画，用选中高亮色。
                 // 边框画在**裁剪之后**，否则它自己会被裁掉。
+                // XCLIP 边界是 WCS 固定窗口，直接用世界坐标画（块移动时框不动）。
                 if (ins && ins->HasClipBoundary() && ins->IsClipFrameVisible())
                 {
-                    const auto& poly = ins->GetClipBoundary();
+                    const std::vector<Math::Point3> poly = ins->HasClipFrameWorld()
+                        ? ins->ClipFrameWorld() : ins->EffectiveClipBoundary();
+                    const Math::Mat4 m = ins->CellMatrix(0, 0);
                     for (size_t i = 0; i < poly.size(); ++i)
-                        ctx.DrawLine(poly[i], poly[(i + 1) % poly.size()],
-                                     IDrawSink::kSelectionColor, false);
+                    {
+                        const Math::Point3 a = ins->HasClipFrameWorld() ? poly[i] : m * poly[i];
+                        const Math::Point3 b = ins->HasClipFrameWorld() ? poly[(i + 1) % poly.size()] : m * poly[(i + 1) % poly.size()];
+                        ctx.DrawLine(a, b, IDrawSink::kSelectionColor, false);
+                    }
                 }
             };
 
@@ -5070,8 +5148,10 @@ namespace MiniCAD
             m_currentSnap = {};
         }
 
-        vs.ShowCurrorBox = !IsActiveTool();
-        vs.ShowCrosshair = !HidesCrosshair();
+        vs.ShowCurrorBox = !IsActiveTool() && !m_cursorHidden;
+        vs.ShowCrosshair = !HidesCrosshair() && !m_cursorHidden;
+        vs.CursorSize    = m_cursorSize;
+        vs.PickBox       = m_pickBox;
 
         vs.ShowGizmo = true;
         m_gripVertices.clear();

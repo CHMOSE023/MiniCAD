@@ -1,6 +1,7 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
 #include "Editor/Input/InputEvent.h"
 #include "Document/Document.h"
@@ -212,6 +213,7 @@ namespace MiniCAD
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))
             return false;
 
+        m_compact = WantsCompactLayout(width, height);
         InitUI();
         OnResize(width, height, pixelScale);
         return true;
@@ -243,6 +245,7 @@ namespace MiniCAD
         m_ui = std::make_unique<MiniGUI::UIContext>(&m_platform->GetUiBackend());
         if (!m_platform->LoadUiFonts(m_ui->GetTextSystem()))
             LOG_ERROR_TR("MainFrame: 没有找到界面字体");
+        ApplyLanguageFonts(*m_platform, m_ui->GetTextSystem());
 
         AppPlatform* platform = m_platform;
         m_ui->SetRedrawCallback([platform] { platform->RequestRedraw(); });
@@ -275,11 +278,17 @@ namespace MiniCAD
 
         // 三维实体内核；关闭内核的构建里命令提示不可用
         m_docManager.GetEditor().SetSolidKernel(m_platform->GetSolidKernel());
+        SetCadImportSolidKernel(m_platform->GetSolidKernel());
         m_docManager.GetEditor().SetViewTransitionSeconds(0.3);   // 视图方块、标准视图切换时平缓过渡
+        LoadCursorStyle();
 
         // ── 宿主面板，交给界面描述文件摆放 ─────────────────────────
         m_layout = std::make_unique<MiniGUI::UiLayout>(m_commands, ResourceDir() + "/icons");
-        m_layout->RegisterPanel("canvas",     CreateCanvas());
+        if (m_compact)
+            m_layout->SetLayoutName("compact", true);
+        m_flushLayout = m_useUserLayout && m_platform->ReadUserSetting(kLayoutSettingKey) == "compact";   // 自测不读
+        m_layout->SetVariant(m_flushLayout ? "flush" : "");
+        m_layout->RegisterPanel("canvas",    CreateCanvas());
         m_layout->RegisterPanel("documents",  CreateDocumentArea(m_main));    // 内含视图方块、导航条与浮动命令行
         m_layout->RegisterPanel("doctabs",    CreateDocTabs());
         m_layout->RegisterPanel("appbar",     CreateAppBar());
@@ -289,6 +298,8 @@ namespace MiniCAD
         m_layout->RegisterPanel("statusbar",  CreateStatusBar(m_main));
         m_layout->RegisterPanel("nodes",      CreateNodePanel(m_main), N_("节点"));
         m_layout->RegisterPanel("start",      CreateStartPage(), N_("起始页"));
+        if (m_compact)
+            ApplyCompactChrome(m_main);
 
         // 「文件 > 最近打开」的内容：菜单项写 { "title": "最近打开", "dynamic": "recent" }，
         // 每次打开菜单（以及重新加载界面描述文件）时按当前列表重新生成
@@ -342,6 +353,8 @@ namespace MiniCAD
             return;
         m_dpiScale = pixelScale;
         m_ui->SetDisplaySize({ width, height }, pixelScale);
+        if (const bool compact = WantsCompactLayout(width, height); compact != m_compact)
+            SetCompactLayout(compact);
 
         // 立即布局并同步相机尺寸：下一次输入就按新的视口尺寸换算坐标
         m_ui->Update();
@@ -354,6 +367,92 @@ namespace MiniCAD
                 vp.Resize(static_cast<float>(pw), static_cast<float>(ph));
         }
         m_commands.NotifyStateChanged();    // 最大化按钮切换"还原"图标
+    }
+
+    bool MainFrame::WantsCompactLayout(float width, float height) const
+    {
+        if (!m_platform || !m_platform->SupportsCompactLayout())
+            return false;
+        // 进出的阈值不同：在临界尺寸上旋转、调整时不来回切换
+        if (m_compact)
+            return width < 680.0f || height < 540.0f;
+        return width < 600.0f || height < 480.0f;
+    }
+
+    void MainFrame::SetCompactLayout(bool compact)
+    {
+        m_compact = compact;
+        if (compact && m_docManager.GetActive())
+        {
+            // 只浏览：结束进行中的命令（等同按 Esc），清空选择（不显示夹点）
+            Editor& editor = m_docManager.GetEditor();
+            InputEvent esc = {};
+            esc.Type = InputEventType::KeyDown;
+            esc.Key  = KeyCode::Escape;
+            editor.OnInput(esc);
+            esc.Type = InputEventType::KeyUp;
+            editor.OnInput(esc);
+            editor.SetSelection({});
+        }
+        m_layout->SetLayoutName(compact ? "compact" : "", true);
+        ForEachChrome([this](ViewChrome& c) { ApplyCompactChrome(c); });
+        BuildStartPage();
+        ReloadUi();
+        if (!compact)
+            LoadUserLayout();       // 回到完整布局：恢复用户的停靠布局（ReloadUi 只在第一次加载时恢复）
+        UpdateChromeVisibility();
+    }
+
+    bool MainFrame::ToViewerPointer(MiniGUI::ViewportPointerEvent& e) const
+    {
+        using MiniGUI::MouseButton;
+        using MiniGUI::MouseButtonMask;
+        if (e.button == MouseButton::Right)
+            return false;
+        if (e.button == MouseButton::Left)
+            e.button = MouseButton::Middle;
+        const uint8_t left = static_cast<uint8_t>(MouseButtonMask::Left);
+        if (e.buttons & left)
+            e.buttons = static_cast<uint8_t>((e.buttons & ~left) | static_cast<uint8_t>(MouseButtonMask::Middle));
+        e.buttons &= static_cast<uint8_t>(~static_cast<uint8_t>(MouseButtonMask::Right));
+        return true;
+    }
+
+    void MainFrame::ApplyCompactChrome(ViewChrome& c)
+    {
+        const float cube = m_compact ? kCompactCubeSize : kCubeSize;
+        if (c.cube)
+        {
+            c.cube->EditLayoutStyle().width  = cube;
+            c.cube->EditLayoutStyle().height = cube;
+        }
+        if (c.navBar)
+        {
+            // 紧凑布局：在视图方块以下的高度里垂直居中（拇指够得着）；完整布局紧挨在方块下面
+            MiniGUI::LayoutStyle& s = c.navBar->EditLayoutStyle();
+            s.top     = 6.0f + cube + 6.0f;
+            s.bottom  = m_compact ? 6.0f : MiniGUI::kAuto;
+            s.justify = m_compact ? MiniGUI::Justify::Center : MiniGUI::Justify::Start;
+            s.width   = cube;
+            c.navHeight = 0.0f;
+            BuildViewNavBar(c);
+        }
+        if (c.statusBar)
+            c.statusBar->SetViewOnly(m_compact);
+        if (c.layoutTabs)
+            c.layoutTabs->SetShowNewTabButton(!m_compact);
+        if (c.main && m_docTabs)
+        {
+            m_docTabs->SetShowNewTabButton(!m_compact);
+            m_docTabs->SetMinTabWidth(m_compact ? 96.0f : 120.0f);      // 竖屏标题栏里能并排两个文档
+            m_docTabs->SetAlwaysShowListButton(m_compact);
+        }
+        // 状态栏放不下"正在打开 文件名"：只留进度条
+        if (c.main && m_openLabel)
+        {
+            m_openLabel->SetVisible(!m_compact);
+            m_openProgress->EditLayoutStyle().width = m_compact ? 100.0f : 140.0f;
+        }
     }
 
     // =========================================================
@@ -377,6 +476,9 @@ namespace MiniCAD
             {
                 m_docManager.SetActive(d);
                 m_openedAny = true;
+                // 起始页上点的是当前文档：当前文档没变，SyncDocuments 不会收起起始页
+                if (m_startShown && d == m_docManager.GetMainDocument())
+                    ShowStartPage(false);
                 continue;
             }
             const bool queued = std::find(m_openQueue.begin(), m_openQueue.end(), path) != m_openQueue.end()
@@ -458,6 +560,10 @@ namespace MiniCAD
     {
         auto job = std::move(m_openDone);
         m_openAddPosted = false;
+        const auto sampleIt = std::find(m_sampleOpens.begin(), m_sampleOpens.end(), job->path);
+        const bool sample = sampleIt != m_sampleOpens.end();
+        if (sample)
+            m_sampleOpens.erase(sampleIt);
         if (job->doc)
         {
             Document* opened = nullptr;
@@ -471,6 +577,13 @@ namespace MiniCAD
                 if (m_docManager.HasPane(m_openPane))
                     m_docManager.SetNewDocumentPane(m_openPane);
                 opened = m_docManager.Add(std::move(job->doc));
+                // 示例随程序安装，不能被保存覆盖：加入（按扩展名全部显示）后当作没保存过的新图纸，保存时另存
+                if (opened && sample)
+                {
+                    const std::string name = opened->GetName();
+                    opened->SetPath("");
+                    opened->SetName(name);
+                }
                 // 显示数据每帧细分一批，先细分好的先画出来；大图纸不再在一帧里细分完整张图（窗口"未响应"）
                 if (opened)
                 {
@@ -484,7 +597,8 @@ namespace MiniCAD
                 && std::find(m_xrefMissingDocs.begin(), m_xrefMissingDocs.end(), opened) == m_xrefMissingDocs.end())
                 m_xrefMissingDocs.push_back(opened);
             // 读成功才记入「最近打开」：优先用文档自己的路径（打开时可能已被规范化）
-            RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
+            if (!sample)
+                RememberRecentFile(opened && !opened->GetPath().empty() ? opened->GetPath() : job->path);
             StateChanged();     // 标签马上出现
             if (opened && HostOf(opened).IsVisible())
                 HostOf(opened).Focus();         // 它所在窗口的绘图区（可能是次窗口）
@@ -492,7 +606,8 @@ namespace MiniCAD
         else
         {
             // 打不开的多半已被删掉 / 移走：从「最近打开」里去掉，避免下次还点它
-            ForgetRecentFile(job->path);
+            if (!sample)
+                ForgetRecentFile(job->path);
             if (!m_openFailures.empty()) m_openFailures += "\n\n";
             m_openFailures += job->path + "\n" + (job->error.empty() ? Tr("无法打开图纸") : job->error);
         }
@@ -558,6 +673,74 @@ namespace MiniCAD
         std::erase_if(docs, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
         if (docs.empty() || !m_ui)
             return;
+        AutoLocateXrefs(std::move(docs));
+    }
+
+    void MainFrame::AutoLocateXrefs(std::vector<Document*> docs)
+    {
+        // 先让平台自己找（例如网页版从网址打开的图纸，到图纸所在的网站找），全部回调后还缺的再提示用户选文件夹。
+        // 平台可能同步回调：计数多加 1，请求全部发出后再减掉，避免第一张就提前收尾
+        struct Batch
+        {
+            std::vector<Document*> docs;
+            size_t pending = 0;
+            int    loaded  = 0;
+        };
+        auto batch = std::make_shared<Batch>();
+        batch->docs    = std::move(docs);
+        batch->pending = batch->docs.size() + 1;
+        auto finishOne = [this, batch]
+        {
+            if (--batch->pending > 0)
+                return;
+            if (batch->loaded > 0)
+                OnXrefsLoaded(batch->docs, batch->loaded);
+            std::vector<Document*> remaining = batch->docs;
+            std::erase_if(remaining, [this](Document* d) { return !IsOpenDocument(m_docManager, d) || FindUnresolvedXrefs(d->GetScene()).empty(); });
+            ShowMissingXrefs(std::move(remaining));
+        };
+
+        const std::vector<Document*> list = batch->docs;
+        for (Document* doc : list)
+        {
+            std::vector<std::string> names;
+            for (const UnresolvedXref& x : FindUnresolvedXrefs(doc->GetScene()))
+                if (std::string name = XrefFileName(x.Path); !name.empty())
+                    names.push_back(std::move(name));
+            const bool started = !names.empty() && m_platform
+                && m_platform->FindXrefsForDrawing(doc->GetPath(), names, [this, batch, doc, finishOne](const std::string& dir)
+                   {
+                       if (!dir.empty() && IsOpenDocument(m_docManager, doc))
+                       {
+                           const int n = ReloadUnresolvedXrefs(doc->GetScene(), doc->GetPath(), { dir });
+                           batch->loaded += n;
+                           if (n > 0)
+                               LOG_INFO_TR("外部参照：{0} 从 {1} 读入 {2} 个", doc->GetName().c_str(), dir.c_str(), n);
+                       }
+                       finishOne();
+                   });
+            if (!started)
+                finishOne();
+        }
+        finishOne();
+    }
+
+    void MainFrame::OnXrefsLoaded(const std::vector<Document*>& docs, int loaded)
+    {
+        // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
+        if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
+            m_docManager.ZoomAll(false);
+        if (m_docManager.GetActive())
+            m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
+        if (m_viewport) m_viewport->RequestRender();
+        StateChanged();
+        if (m_platform) m_platform->RequestRedraw();
+    }
+
+    void MainFrame::ShowMissingXrefs(std::vector<Document*> docs)
+    {
+        if (docs.empty() || !m_ui)
+            return;
         size_t count = 0;
         for (Document* d : docs)
             count += FindUnresolvedXrefs(d->GetScene()).size();
@@ -595,15 +778,7 @@ namespace MiniCAD
                     remaining.push_back(doc);
             }
             if (loaded > 0)
-            {
-                // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
-                if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
-                    m_docManager.ZoomAll(false);
-                if (m_docManager.GetActive())
-                    m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
-                if (m_viewport) m_viewport->RequestRender();
-                StateChanged();
-            }
+                OnXrefsLoaded(docs, loaded);
             if (!remaining.empty() && m_ui)
                 MiniGUI::ShowMessageBox(*m_ui, Tr("外部参照未找到"),
                                         (loaded > 0 ? TrF("已读入 {0} 个，仍有以下外部参照没有找到：", loaded)
@@ -1221,10 +1396,13 @@ namespace MiniCAD
     }
 
     // 一个视口（主窗口的，或某个文档窗口的）里的指针事件交给那个文档的编辑器；按下 / 滚轮即成为当前文档
-    void MainFrame::RouteViewportPointer(const MiniGUI::ViewportPointerEvent& e, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host)
+    void MainFrame::RouteViewportPointer(const MiniGUI::ViewportPointerEvent& original, Document* doc, ViewInput& in, MiniGUI::ViewportHost& host)
     {
         using T = MiniGUI::PointerEventType;
         if (!doc)
+            return;
+        MiniGUI::ViewportPointerEvent e = original;
+        if (m_compact && !ToViewerPointer(e))
             return;
         Editor& editor = m_docManager.GetEditor(*doc);
 
@@ -1308,8 +1486,8 @@ namespace MiniCAD
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
 const KeyCode code = ToKeyCode(e.key);
-        if (code == KeyCode::Unknown || !m_docManager.GetActive())
-            return false;
+        if (code == KeyCode::Unknown || !m_docManager.GetActive() || m_compact)
+            return false;       // 只浏览：键盘不进命令行、不执行快捷键
         // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
         const bool tab = code == KeyCode::Tab;
         if (tab && !m_docManager.GetEditor().IsActiveTool())
@@ -1358,6 +1536,7 @@ const KeyCode code = ToKeyCode(e.key);
             Editor&    editor   = m_docManager.GetMainEditor();
             IRenderer& renderer = m_platform->GetRenderer();
             editor.EnsureSceneCached(renderer);     // 场景缓冲被文档窗口顶掉了就重新拼接
+            editor.SetCursorHidden(m_compact);
             editor.Render();
             const ViewState vs = editor.BuildViewState();
             vp.Render(renderer, target, vs);

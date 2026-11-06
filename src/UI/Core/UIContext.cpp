@@ -25,6 +25,25 @@ namespace MiniGUI
             }
         };
 
+        // 根节点：主界面让开安全区（UIContext::SetSafeArea），弹层与悬浮提示铺满
+        class RootNode : public StretchNode
+        {
+        public:
+            Edges safeArea;
+
+        protected:
+            void OnLayout() override
+            {
+                StretchNode::OnLayout();
+                if (GetChildren().empty())
+                    return;
+                const Vec2 size = GetSize();
+                const Vec2 min{ safeArea.left, safeArea.top };
+                const Vec2 max{ std::max(min.x, size.x - safeArea.right), std::max(min.y, size.y - safeArea.bottom) };
+                GetChildren().front()->SetBounds(Rect{ min, max });
+            }
+        };
+
         // 悬浮提示：自动换行，最宽 360
         class TooltipNode : public Node
         {
@@ -107,7 +126,7 @@ namespace MiniGUI
         m_drawShared.palette      = m_theme.Data();
 
         // 图层：主界面 → 弹层 → 悬浮提示，后面的盖在前面上面
-        m_root = std::make_unique<StretchNode>();
+        m_root = std::make_unique<RootNode>();
         m_root->m_context = this;
         m_mainLayer    = m_root->AddChild<StretchNode>();
         m_popupLayer   = m_root->AddChild<PopupLayer>();
@@ -187,6 +206,16 @@ namespace MiniGUI
     {
         auto it = m_textureSizes.find(id);
         return it != m_textureSizes.end() ? it->second : Vec2{};
+    }
+
+    void UIContext::SetSafeArea(const Edges& insets)
+    {
+        if (insets.left == m_safeArea.left && insets.top == m_safeArea.top && insets.right == m_safeArea.right && insets.bottom == m_safeArea.bottom)
+            return;
+        m_safeArea = insets;
+        static_cast<RootNode*>(m_root.get())->safeArea = insets;
+        m_root->InvalidateLayout();
+        RequestRedraw();
     }
 
     void UIContext::SetDisplaySize(Vec2 logicalSize, float pixelScale)

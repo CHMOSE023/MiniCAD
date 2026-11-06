@@ -235,6 +235,13 @@ int RunBulgeDirectionTests()
         Check(Near(tool, grip, 1e-12),
               "**PolylineGripHandler 与 PolylineTool 的三点求凸度结果一致**");
     }
+    {
+        // 两个重合顶点之间带凸度（云线里常见）：没有圆弧，范围不能被拉到原点
+        const Polyline pl({ { 100, 200, 0 }, { 110, 200, 0 }, { 110, 200, 0 }, { 120, 205, 0 } }, { 0.0, 0.5, 0.0, 0.0 });
+        const AABB box = pl.GetBounds();
+        Check(Near(box.Min.x, 100) && Near(box.Min.y, 200) && Near(box.Max.x, 120) && Near(box.Max.y, 205),
+              "重合顶点之间的凸度段不把原点并进范围");
+    }
 
     std::printf("凸度方向用例失败：%d\n", g_fail);
     return g_fail;

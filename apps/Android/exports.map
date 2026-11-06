@@ -1,0 +1,7 @@
+{
+    global:
+        ANativeActivity_onCreate;
+        Java_io_github_minicad_*;
+    local:
+        *;
+};

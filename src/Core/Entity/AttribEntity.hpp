@@ -33,6 +33,10 @@ namespace MiniCAD
         const std::string& GetText() const { return m_text; }   // 组码 1,显示文本
         void               SetText(std::string v) { m_text = std::move(v); }
 
+        // 文字样式（组码 7）
+        uint32_t GetStyleId() const { return m_styleId; }
+        void     SetStyleId(uint32_t id) { m_styleId = id; }
+
         // ── 几何/排版(同 TEXT)────────────────────────────────────────────────
         const Math::Point3& GetPosition() const { return m_position; } // 组码 10
         void                SetPosition(const Math::Point3& p) { m_position = p; }
@@ -86,9 +90,9 @@ namespace MiniCAD
                                     : isHovered  ? IDrawSink::kHoverColor
                                                  : ResolveDrawColor(sink);
             if (m_hAlign == 0 && m_vAlign == 0)
-                sink.EmitMText(m_position, shown, 0, m_height, m_rotation, 0.0, col);
+                sink.EmitMText(m_position, shown, m_styleId, m_height, m_rotation, 0.0, col);
             else
-                sink.EmitAlignedText(m_position, shown, 0, m_height, m_rotation, m_hAlign, m_vAlign, 0.0, col);
+                sink.EmitAlignedText(m_position, shown, m_styleId, m_height, m_rotation, m_hAlign, m_vAlign, 0.0, col);
         }
 
     protected:
@@ -109,9 +113,10 @@ namespace MiniCAD
         void CopyCommonTo(AttribBase& dst) const
         {
             dst.SetAttr(GetAttr());
-            dst.m_flags  = m_flags;
-            dst.m_hAlign = m_hAlign;
-            dst.m_vAlign = m_vAlign;
+            dst.m_flags   = m_flags;
+            dst.m_hAlign  = m_hAlign;
+            dst.m_vAlign  = m_vAlign;
+            dst.m_styleId = m_styleId;
         }
 
         std::string  m_tag;
@@ -122,6 +127,7 @@ namespace MiniCAD
         uint16_t     m_flags    = static_cast<uint16_t>(AttribFlags::None);
         int          m_hAlign   = 0;    // 组码 72：0=左 1=中 2=右 3=Aligned 5=Fit
         int          m_vAlign   = 0;    // 组码 73/74：0=基线 1=下 2=中 3=上
+        uint32_t     m_styleId  = 0;    // 组码 7：文字样式表 ID（0 = Standard）
 
         DECLARE_RUNTIME_TYPE(AttribBase, Entity)
     };
@@ -131,9 +137,12 @@ namespace MiniCAD
     {
     public:
         AttDefEntity(ObjectID id, std::string tag, std::string defaultValue,
-                     const Math::Point3& pos, double height = 2.5, double rotation = 0.0)
+                     const Math::Point3& pos, double height = 2.5, double rotation = 0.0,
+                     uint32_t styleId = 0)
             : AttribBase(id, std::move(tag), std::move(defaultValue), pos, height, rotation)
-        {}
+        {
+            m_styleId = styleId;
+        }
 
         // 提示语(组码 3),仅 ATTDEF 拥有。
         const std::string& GetPrompt() const { return m_prompt; }
@@ -154,7 +163,7 @@ namespace MiniCAD
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
         {
-            auto e = std::make_unique<AttDefEntity>(newId, m_tag, m_text, m_position, m_height, m_rotation);
+            auto e = std::make_unique<AttDefEntity>(newId, m_tag, m_text, m_position, m_height, m_rotation, m_styleId);
             CopyCommonTo(*e);
             e->m_prompt = m_prompt;
             return e;
@@ -175,9 +184,12 @@ namespace MiniCAD
     {
     public:
         AttribEntity(ObjectID id, std::string tag, std::string value,
-                     const Math::Point3& pos, double height = 2.5, double rotation = 0.0)
+                     const Math::Point3& pos, double height = 2.5, double rotation = 0.0,
+                     uint32_t styleId = 0)
             : AttribBase(id, std::move(tag), std::move(value), pos, height, rotation)
-        {}
+        {
+            m_styleId = styleId;
+        }
 
         // 取值即基类 m_text。
         const std::string& GetValue() const { return m_text; }
@@ -185,7 +197,7 @@ namespace MiniCAD
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
         {
-            auto e = std::make_unique<AttribEntity>(newId, m_tag, m_text, m_position, m_height, m_rotation);
+            auto e = std::make_unique<AttribEntity>(newId, m_tag, m_text, m_position, m_height, m_rotation, m_styleId);
             CopyCommonTo(*e);
             return e;
         }

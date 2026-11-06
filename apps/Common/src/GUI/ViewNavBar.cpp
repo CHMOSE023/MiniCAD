@@ -23,6 +23,8 @@ namespace MiniCAD
     {
         // 菜单项写成它时展开为"语言"子菜单：所有 ui.language.<代码> 命令
         constexpr const char* kLanguageMenu = "@language";
+        // 菜单项写成它时展开为"布局"子菜单：浮动、紧凑
+        constexpr const char* kLayoutMenu = "@layout";
 
         // 只有图标的按钮，点击弹出菜单（菜单项是命令）；placement 决定菜单在按钮的哪一侧
         MiniGUI::Button* AddMenuButton(MiniGUI::Node* parent, MiniGUI::CommandRegistry& commands,
@@ -53,6 +55,12 @@ namespace MiniCAD
                         items.push_back(MenuItem::Sub(Tr("语言(&L)"), std::move(langs)));
                         continue;
                     }
+                    if (id == kLayoutMenu)
+                    {
+                        items.push_back(MenuItem::Sub(Tr("布局(&Y)"), { CommandMenuItem(commands, "ui.layout.floating"),
+                                                                        CommandMenuItem(commands, "ui.layout.compact") }));
+                        continue;
+                    }
                     items.push_back(id == "-" ? MenuItem::Separator() : CommandMenuItem(commands, id));
                 }
                 auto popup = std::make_unique<MenuPopup>(std::move(items));
@@ -73,8 +81,8 @@ namespace MiniCAD
             LayoutStyle& s = column->EditLayoutStyle();
             s.position   = PositionType::Absolute;
             s.right      = 6.0f;
-            s.top        = 6.0f + 140.0f + 6.0f;
-            s.width      = 140.0f;
+            s.top        = 6.0f + kCubeSize + 6.0f;
+            s.width      = kCubeSize;
             s.direction  = FlexDirection::Column;
             s.alignItems = Align::End;
         }
@@ -119,6 +127,17 @@ namespace MiniCAD
             sep->EditLayoutStyle().margin = Edges::Symmetric(0.0f, 3.0f);
         };
 
+        // 只浏览：单指拖动就是平移，平移 / 窗口缩放 / 三维视图这些靠左键的工具用不了
+        if (m_compact)
+        {
+            addTools({ "view.zoomIn", "view.zoomOut", "view.zoomExtents" });
+            if (m_platform->SupportsFullScreen())
+            {
+                addSeparator();
+                addTools({ "view.fullScreen" });
+            }
+            return;
+        }
         addTools({ "view.pan", "view.zoomIn", "view.zoomOut", "view.zoomWindow", "view.zoomExtents" });
         addSeparator();
         AddMenuButton(bar, m_commands, icons + "/ViewSWIso.png", Tr("标准视图（三维视图里按住 Shift 拖动中键环绕，拖动中键平移）"),
@@ -176,7 +195,7 @@ namespace MiniCAD
         });
 
         AddMenuButton(row, m_commands, icons + "/Settings.png", Tr("设置"),
-                      { "ui.theme", kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
+                      { "ui.theme", kLayoutMenu, kLanguageMenu, "-", "view.viewcube", "view.panel.commandline", "-", "view.resetLayout", "ui.reload" },
                       PopupPlacement::Below, 18.0f);
         AddMenuButton(row, m_commands, icons + "/Help.png", Tr("帮助"),
                       { "ui.search", "view.start", "-", "help.checkUpdate", "help.about" }, PopupPlacement::Below, 18.0f);

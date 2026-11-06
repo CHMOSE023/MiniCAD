@@ -1,4 +1,5 @@
 #pragma once
+#include "Codec/CodePage.h"
 #include "Database/UnknownObjects.h"
 #include "Dwg/Read/DwgBitReader.h"
 #include <charconv>
@@ -44,7 +45,7 @@ namespace MiniCAD::Tch::Detail
 { 
     inline bool IsCipherObject(const MiniDWG::RawDwgData& data)
     {
-        return data.Version >= MiniDWG::CadVersion::AC1021 && data.MainBits >= 16 && data.Main.size() >= (data.MainBits + 7) / 8 &&
+        return data.Version >= MiniDWG::CadVersion::AC1018 && data.MainBits >= 16 && data.Main.size() >= (data.MainBits + 7) / 8 &&
                data.Main[0] >= 9 && data.Main[0] <= 14;
     }
      
@@ -144,7 +145,7 @@ namespace MiniCAD::Tch::Detail
          
         bool HasMoreValues() const
         {
-            return Key < 16 ? Main.PositionInBits() < m_data.MainBits : m_text.PositionInBits() + 2 <= m_data.TextBits;
+            return Key < 16 || m_inline ? Main.PositionInBits() < m_data.MainBits : m_text.PositionInBits() + 2 <= m_data.TextBits;
         }
         bool Ok() const { return !m_bad && !Main.Failed() && !m_text.Failed() && !m_handles.Failed(); } 
 
@@ -239,18 +240,26 @@ namespace MiniCAD::Tch::Detail
         std::string Decrypt()
         {
             std::string s;
-            if (m_inline) { m_bad = true; return s; }
-            const int length = m_text.ReadBitShort();
-            if (length < 0 || length > 4096) { m_bad = true; return s; }
+            std::vector<int> units;    
+            if (m_inline)
+            {
+                // 2004 及更早：代码页外的字符写成 \U+XXXX
+                const std::string utf8 = MiniDWG::Codec::DecodeUnicodeEscapes(Main.ReadVariableText());
+                for (std::size_t i = 0; i < utf8.size();)
+                    units.push_back(static_cast<int>(NextCodePoint(utf8, i) & 0xff));
+            }
+            else
+            {
+                const int length = m_text.ReadBitShort();
+                if (length < 0 || length > 4096) { m_bad = true; return s; }
+                for (int i = 0; i < length; ++i)
+                    units.push_back(static_cast<std::uint16_t>(m_text.ReadRawShort()) & 0xff);
+            }
+            if (units.size() > 4096) { m_bad = true; return s; }
             const auto [seed, base] = CipherParams(Key, Key2);
             const int mask = (seed >> 8) & 0xff;
-            for (int i = 0; i + 1 < length; i += 2)
-            {
-                const int a = static_cast<std::uint16_t>(m_text.ReadRawShort()) & 0xff;
-                const int b = static_cast<std::uint16_t>(m_text.ReadRawShort()) & 0xff;
-                s += static_cast<char>((((a - base) * 26 + (b - base)) & 0xff) ^ mask);
-            }
-            if (length & 1) m_text.ReadRawShort();
+            for (std::size_t i = 0; i + 1 < units.size(); i += 2)
+                s += static_cast<char>((((units[i] - base) * 26 + (units[i + 1] - base)) & 0xff) ^ mask);
             auto erase = [&](std::size_t at) { if (at < s.size()) s.erase(at, 1); };
             if (Key >= 0x14) s.assign(s.rbegin(), s.rend());
             if (Key == 0x12 || Key == 0x13) erase(0);
@@ -258,6 +267,16 @@ namespace MiniCAD::Tch::Detail
             return s;
         }
          
+        static char32_t NextCodePoint(const std::string& s, std::size_t& i)
+        {
+            const auto c = static_cast<unsigned char>(s[i++]);
+            const int extra = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : c >= 0xc0 ? 1 : 0;
+            char32_t cp = extra ? c & (0x3f >> extra) : c;
+            for (int k = 0; k < extra && i < s.size(); ++k)
+                cp = (cp << 6) | (static_cast<unsigned char>(s[i++]) & 0x3f);
+            return cp;
+        }
+
         static std::string_view Trim(std::string_view s)
         {
             while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);

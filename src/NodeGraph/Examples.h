@@ -13,7 +13,7 @@ namespace MiniCAD::Nodes
         std::string Name;           // 菜单里的名称
         std::string Description;    // 菜单提示
         std::string Group;          // 菜单分组：相邻两项分组不同时中间加分隔线
-        bool        NeedsKernel = true;   // 用到三维实体 / 曲面（网页版没有内核，菜单里禁用）
+        bool        NeedsKernel = true;   // 用到三维实体 / 曲面（没有内核时菜单里禁用）
     };
 
     // 读 dir/examples.json；目录或索引不存在、格式不对时返回空

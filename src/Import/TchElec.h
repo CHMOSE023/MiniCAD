@@ -40,7 +40,7 @@ namespace MiniCAD::Tch
         inline bool ReadInterfacesObj(const MiniDWG::RawDwgData& data, MiniDWG::DwgBitReader& r, TextStream*& text,
                                       std::optional<TextStream>& storage, TchBase& base, int& handles)
         {
-            if (!ReadTchBase(r, base)) return false;
+            if (!ReadTchBase(r, base, &data)) return false;
             storage.emplace(data, r);
             text = &*storage;
             for (int i = 0; i < base.TextCount; ++i) text->Next();
@@ -541,7 +541,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for rupture line");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native rupture line version");
         if (version == 2 && r.ReadByte() >= 16) return fail("encrypted native rupture line");

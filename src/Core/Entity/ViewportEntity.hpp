@@ -62,7 +62,7 @@ namespace MiniCAD
         //        DCS → WCS 必须反向旋转 -Twist
         //    导入时用 SetViewCenterDcs() 一次性转正；导出时反向转回。
         //
-        //    实测 `01-曲陵路.dwg`：布局上有 5 个浮动视口 Twist=1.6701 rad(95.7°)，
+        //    实测某图纸：布局上有 5 个浮动视口 Twist=1.6701 rad(95.7°)，
         //    ViewCenter 原始值 (-457894..-457114, 725685.4) —— 离模型 45 万单位。
         //    按 R(-Twist) 转过之后是 (767492..767415, 383720..382944)，
         //    正好落在模型包围盒内。之前把原始值当 WCS 用，这 5 个视口的内容
@@ -169,7 +169,7 @@ namespace MiniCAD
         // 预剔除只会多保留实体、不会漏内容（漏了就又是「视口空白」）。
         //
         // 不旋转（直接按 viewCenter ± hw/hh）时，Twist≠0 的外接盒偏小，
-        // 会把本该显示的实体挡掉；实测 01-曲陵路.dwg 的 Twist=95.69°
+        // 会把本该显示的实体挡掉；实测某图纸的 Twist=95.69°
         // 视口就差在这里。
         AABB ModelVisibleBox() const
         {
@@ -205,7 +205,7 @@ namespace MiniCAD
         //
         // 旋转方向依据见 Editor.cpp 同一处的说明：
         //   R(+Twist) 才把视口的 UcsXAxis 映射到纸面 +X；用 R(-Twist)
-        //   会让内容整体转错约 90°（实测 01-曲陵路.dwg 5 个 Twist=95.69° 视口）。
+        //   会让内容整体转错约 90°（实测 5 个 Twist=95.69° 视口）。
         Math::Point3 ModelToPaper(const Math::Point3& p) const
         {
             const double s = ModelToPaperScale();

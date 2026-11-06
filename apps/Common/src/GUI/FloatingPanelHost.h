@@ -46,6 +46,7 @@ namespace MiniCAD
         MiniGUI::Vec2 FromDock(const std::string& id, MiniGUI::Vec2 dockPos) const override;
 
         void SetTheme(const MiniGUI::ThemeColors& theme);   // 主题切换时同步到所有浮动窗口
+        void ForEachUi(const std::function<void(MiniGUI::UIContext&)>& f);
         void SetHidden(bool hidden);                        // 起始页显示期间藏起所有浮动窗口（新开的也不显示）
         void SetOnActivate(std::function<void()> cb) { m_onActivate = std::move(cb); }   // 在浮动面板里按下（宿主据此切换当前文档）
         void Purge();                                       // 销毁已关闭的窗口（每帧开头调用）

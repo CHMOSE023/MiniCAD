@@ -1,6 +1,6 @@
 # ── MiniGUI（保留模式界面库，源码在 src/UI）─────────────────────────────
 # 头文件以 src/UI 为根（"Core/UIContext.h"、"Widgets/Button.h"），命名空间 MiniGUI。
-# 平台层在 src/UI/Platform：Win32、Web（Emscripten）、SDL（Linux）。渲染后端在 apps/Render（cmake/Render.cmake）。
+# 平台层在 src/UI/Platform：Win32、Web（Emscripten）、Linux。渲染后端在 apps/Render（cmake/Render.cmake）。
 
 set(MINIGUI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/UI")
 
@@ -125,17 +125,11 @@ if(EMSCRIPTEN)
     target_link_libraries(MiniGUI_Web PUBLIC MiniGUI)
 endif()
 
-# ── SDL3 平台层（Linux）：输入、剪贴板、界面字体 ─────────────────────
-# SDL3 用发行版的 libsdl3-dev，或自己编译安装后用 CMAKE_PREFIX_PATH 指定；找不到时不编译 Linux 宿主
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    find_package(SDL3 CONFIG QUIET)
-    if(SDL3_FOUND)
-        add_library(MiniGUI_SDL STATIC
-            "${MINIGUI_SRC}/Platform/SDL/SDLInput.cpp"
-            "${MINIGUI_SRC}/Platform/SDL/SDLFonts.cpp"
-        )
-        target_link_libraries(MiniGUI_SDL PUBLIC MiniGUI SDL3::SDL3)
-    else()
-        message(STATUS "没有找到 SDL3，不编译 MiniGUI_SDL 与 Linux 宿主（MiniCADLinux）")
-    endif()
+# ── Linux 平台层：输入翻译（keysym → 按键）、界面字体；不依赖窗口库，X11 / Wayland 由宿主 apps/Linux 处理 ──
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT ANDROID)
+    add_library(MiniGUI_Linux STATIC
+        "${MINIGUI_SRC}/Platform/Linux/LinuxInput.cpp"
+        "${MINIGUI_SRC}/Platform/Linux/LinuxFonts.cpp"
+    )
+    target_link_libraries(MiniGUI_Linux PUBLIC MiniGUI)
 endif()

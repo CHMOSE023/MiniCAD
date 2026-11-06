@@ -28,8 +28,10 @@ namespace MiniCAD
             uniform float uLight;       // 1 浅色背景，0 深色背景，-1 不换色（光栅图像）
             vec4 MapColor(vec4 c)
             {
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
-                if (uLight >= 0.0)
+                // 7 号色语义：只反转带标记的顶点（DrawContext 把 alpha 编成 253/255），
+                // 真彩 RGB 不反转；uLight < 0 表示光栅图像不换色
+                bool isAci7 = c.a > 0.988 && c.a < 0.999;
+                if (uLight >= 0.0 && isAci7)
                 {
                     vec3 d = abs(c.rgb - vec3(uLight));
                     if (max(d.x, max(d.y, d.z)) < 0.004)
@@ -52,8 +54,10 @@ namespace MiniCAD
             uniform float uLight;       // 1 浅色背景，0 深色背景，-1 不换色（光栅图像）
             vec4 MapColor(vec4 c)
             {
-                // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
-                if (uLight >= 0.0)
+                // 7 号色语义：只反转带标记的顶点（DrawContext 把 alpha 编成 253/255），
+                // 真彩 RGB 不反转；uLight < 0 表示光栅图像不换色
+                bool isAci7 = c.a > 0.988 && c.a < 0.999;
+                if (uLight >= 0.0 && isAci7)
                 {
                     vec3 d = abs(c.rgb - vec3(uLight));
                     if (max(d.x, max(d.y, d.z)) < 0.004)
@@ -79,7 +83,10 @@ namespace MiniCAD
             uniform float uLight;
             vec4 MapColor(vec4 c)
             {
-                if (uLight >= 0.0)
+                // 7 号色语义：只反转带标记的顶点（DrawContext 把 alpha 编成 253/255），
+                // 真彩 RGB 不反转；uLight < 0 表示光栅图像不换色
+                bool isAci7 = c.a > 0.988 && c.a < 0.999;
+                if (uLight >= 0.0 && isAci7)
                 {
                     vec3 d = abs(c.rgb - vec3(uLight));
                     if (max(d.x, max(d.y, d.z)) < 0.004)

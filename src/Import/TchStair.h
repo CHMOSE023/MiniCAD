@@ -126,7 +126,7 @@ namespace MiniCAD::Tch
             return fail("unsupported DWG version for native stair");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int stairBase = r.ReadByte();
         if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
         const int version = r.ReadByte();

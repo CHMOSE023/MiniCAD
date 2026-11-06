@@ -196,10 +196,10 @@ SHXVM 执行上下文（SHXContext）：
 `SHXFont::ResolveShxKey(codepoint)` 把 Unicode 码点映射到 SHX shape code：
 
 - 英文字体（Shapes）：ASCII 范围内直接用码点作 shape code
-- 大字体（BigFont）：`codepoint → GBK 编码 → shape code`（通过 `EncodingGBK` 查表）
+- 大字体（BigFont）：`codepoint → 大字体代码页的编码 → shape code`（代码页由 `SHXFont::DetectBigFontCodePage` 按文件名与编码范围判断，GBK / Big5 / Shift-JIS / KS C 5601，经 `MiniDWG::Codec::FromUtf8` 转换）
 - Unifont：直接用 Unicode 码点
 
-这就是为什么 `SHXCompositeFont` 按 `cp < 0x80` / `cp >= 0x80` 路由：ASCII 字符只有英文字体有，非 ASCII 字符（中文）只有大字体有。
+这就是为什么 `SHXCompositeFont` 按 `cp < 0x80` / `cp >= 0x80` 路由：ASCII 字符只有英文字体有，非 ASCII 字符（中文）只有大字体有。大字体里也没有的字（如 GBK 大字体遇到繁体字）交给 TrueType 回退链（`TTFFallbackChain`）。
 
 ---
 

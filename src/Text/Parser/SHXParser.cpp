@@ -10,6 +10,15 @@
 
 namespace MiniCAD
 {
+    std::vector<uint32_t> SHXParser::GetCodes() const
+    {
+        std::vector<uint32_t> codes;
+        codes.reserve(m_shapes.size());
+        for (const auto& [code, shape] : m_shapes)
+            codes.push_back(code);
+        return codes;
+    }
+
     //==================================================================
     // Low-level helpers
     //==================================================================

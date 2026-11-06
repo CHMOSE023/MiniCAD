@@ -67,13 +67,98 @@ namespace MiniCAD
         const std::vector<std::unique_ptr<AttribEntity>>& GetAttribs() const { return m_attribs; }
 
         // ── 裁剪边界（XCLIP）────────────────────────────────────────────────
-        // 块坐标系（与块内实体相同，未减基点）中的闭合多边形，只显示块内落在其中的部分；空 = 不裁剪
-        void SetClipBoundary(std::vector<Math::Point3> polygon) { m_clip = std::move(polygon); }
+        // 块坐标系（与块内实体相同，未减基点）中的闭合多边形。公开语义保持不变
+        // （序列化 / 夹点 / 导出都按块坐标用），但绘制时以 EffectiveClipBoundary() 为准。
+        // 设置时同时把边界换算一份 WCS 坐标存下来，作为固定取景窗口。
+        void SetClipBoundary(std::vector<Math::Point3> polygon)
+        {
+            m_clip = std::move(polygon);
+            RecomputeClipWorld();
+        }
         const std::vector<Math::Point3>& GetClipBoundary() const { return m_clip; }
         bool HasClipBoundary() const { return m_clip.size() >= 3; }
 
         // 直接替换整条边界（撤销 / 拖拽取消时还原用）
-        void SetClipBoundaryRaw(std::vector<Math::Point3> polygon) { m_clip = std::move(polygon); }
+        void SetClipBoundaryRaw(std::vector<Math::Point3> polygon)
+        {
+            m_clip = std::move(polygon);
+            RecomputeClipWorld();
+        }
+
+        // 边界的世界坐标（固定取景窗口）。夹点编辑完边界顶点后调用，把新边界
+        // 在当前插入状态下重新定死到 WCS。
+        void RecomputeClipWorld()
+        {
+            m_clipWorld.clear();
+            m_clipWorldValid = false;
+            if (m_clip.size() < 3) return;
+            const Math::Mat4 m = CellMatrix(0, 0);
+            m_clipWorld.reserve(m_clip.size());
+            for (const auto& p : m_clip)
+                m_clipWorld.push_back(m * p);
+            m_clipWorldValid = true;
+        }
+
+        // 绘制 / 求包围盒用的**当前块坐标系**下的裁剪边界：
+        // 把固定的 WCS 边界经当前插入矩阵的逆变换回来。块移动后 m_clipWorld 不变，
+        // 但当前矩阵变了 ⇒ 换算出的块坐标边界随之变化，裁剪框在世界里保持不动。
+        // 无 WCS 记录（旧文档 / 未走 SetClipBoundary 的构造）时退回 m_clip。
+        std::vector<Math::Point3> EffectiveClipBoundary() const
+        {
+            if (!m_clipWorldValid || m_clipWorld.size() < 3) return m_clip;
+            const Math::Mat4 inv = Math::Mat4::Inverse(CellMatrix(0, 0));
+            // 奇异（如 scale=0）时 Inverse 返回零矩阵，退回原块坐标边界
+            if (inv.m[0] == 0.0 && inv.m[5] == 0.0 && inv.m[10] == 0.0 && inv.m[15] == 0.0)
+                return m_clip;
+            std::vector<Math::Point3> out;
+            out.reserve(m_clipWorld.size());
+            for (const auto& w : m_clipWorld)
+                out.push_back(inv * w);
+            return out;
+        }
+
+        // 裁剪边框线（画在 WCS 里，固定不随块移动）
+        const std::vector<Math::Point3>& ClipFrameWorld() const { return m_clipWorld; }
+        bool HasClipFrameWorld() const { return m_clipWorldValid && m_clipWorld.size() >= 3; }
+
+        // 序列化读回：直接恢复 WCS 固定边界（不再按当前插入状态重算）
+        void SetClipBoundaryWorld(std::vector<Math::Point3> world)
+        {
+            m_clipWorld = std::move(world);
+            m_clipWorldValid = m_clipWorld.size() >= 3;
+            if (m_clipWorldValid) SyncClipFromWorld();
+        }
+
+        // 夹点直接编辑 **WCS 固定边界**（XCLIP 取景窗口）：写世界坐标，再反算块坐标 m_clip
+        // 保持公开语义一致。块移动后框不动，夹点也停在世界原位，所以编辑必须走世界坐标。
+        void MoveClipBoundaryPointWorld(int index, const Math::Point3& world)
+        {
+            if (!m_clipWorldValid || index < 0 || index >= static_cast<int>(m_clipWorld.size())) return;
+            m_clipWorld[index] = world;
+            SyncClipFromWorld();
+        }
+        void MoveClipBoundaryEdgeWorld(int edgeIndex, const Math::Point3& world)
+        {
+            const int n = static_cast<int>(m_clipWorld.size());
+            if (!m_clipWorldValid || n < 3 || edgeIndex < 0 || edgeIndex >= n) return;
+            const int i0 = edgeIndex, i1 = (edgeIndex + 1) % n;
+            const double mx = (m_clipWorld[i0].x + m_clipWorld[i1].x) * 0.5;
+            const double my = (m_clipWorld[i0].y + m_clipWorld[i1].y) * 0.5;
+            const double dx = world.x - mx, dy = world.y - my;
+            m_clipWorld[i0].x += dx; m_clipWorld[i0].y += dy;
+            m_clipWorld[i1].x += dx; m_clipWorld[i1].y += dy;
+            SyncClipFromWorld();
+        }
+        // 把 WCS 固定边界反算成当前块坐标，写回 m_clip（序列化 / 夹点快照用）
+        void SyncClipFromWorld()
+        {
+            if (!m_clipWorldValid) return;
+            const Math::Mat4 inv = Math::Mat4::Inverse(CellMatrix(0, 0));
+            if (inv.m[0] == 0.0 && inv.m[5] == 0.0 && inv.m[10] == 0.0 && inv.m[15] == 0.0) return;
+            m_clip.clear();
+            m_clip.reserve(m_clipWorld.size());
+            for (const auto& w : m_clipWorld) m_clip.push_back(inv * w);
+        }
 
         // ── 裁剪边界的夹点编辑 ──────────────────────────────────────────────
         // 拖**顶点**：只移动被拖的那一个，其余顶点一律不动（4 点边界因此可变成任意四边形）。
@@ -83,6 +168,7 @@ namespace MiniCAD
             if (index < 0 || index >= static_cast<int>(m_clip.size()))
                 return;
             m_clip[index] = p;
+            RecomputeClipWorld();   // 边界被编辑后，把新边界重新定死到 WCS
         }
 
         // 拖**边**（边 i 连接顶点 i 与 (i+1)%n）：整条边平移，两端点按边中点的位移一起移动。
@@ -98,6 +184,7 @@ namespace MiniCAD
             const double dx = p.x - mx, dy = p.y - my;
             m_clip[i0].x += dx; m_clip[i0].y += dy;
             m_clip[i1].x += dx; m_clip[i1].y += dy;
+            RecomputeClipWorld();
         }
 
         // 是否**绘制**裁剪边框线（头变量 $XCLIPFRAME 与块自身状态共同决定）。
@@ -113,6 +200,9 @@ namespace MiniCAD
 
         // 块/继承属性变更后需重建展开缓存时调用(SetBlock 已自动置位)。
         void MarkResolveDirty() { m_resolvedDirty = true; }
+
+        // 已按本插入解析属性的块子实体（块坐标系，经 CellMatrix 到世界）
+        const std::vector<std::unique_ptr<Entity>>& GetResolvedChildren() const { EnsureResolved(); return m_resolved; }
 
         // ── 单元(行 r / 列 c)的块坐标 → WCS 变换矩阵 ──────────────────────────
         Math::Mat4 CellMatrix(int col, int row) const
@@ -160,9 +250,10 @@ namespace MiniCAD
             if (local.Min.x > local.Max.x) return box;   // 空块：变换 ±∞ 角点会得到 NaN
             if (HasClipBoundary())
             {
-                // 与裁剪边界的外包框求交
-                double x0 = m_clip[0].x, y0 = m_clip[0].y, x1 = x0, y1 = y0;
-                for (const auto& p : m_clip)
+                // 与裁剪边界的外包框求交。边界用当前块坐标下的等效值（WCS 固定窗口换算回来）
+                const std::vector<Math::Point3> clip = EffectiveClipBoundary();
+                double x0 = clip[0].x, y0 = clip[0].y, x1 = x0, y1 = y0;
+                for (const auto& p : clip)
                 {
                     x0 = std::min(x0, p.x); x1 = std::max(x1, p.x);
                     y0 = std::min(y0, p.y); y1 = std::max(y1, p.y);
@@ -206,8 +297,9 @@ namespace MiniCAD
                     // 有裁剪边界时子实体先在块坐标系中裁剪，再施加插入变换。
                     // 例外：正在拖**基点**期间按完整图块绘制（临时忽略裁剪）——
                     // 只画框内那一小块会让人以为图块缺了图元，也看不清要放到哪儿。
-                    ClipDrawSink csink(tsink, m_clip);
-                    const bool clipped = csink.Valid() && !m_showWhole;
+                    const std::vector<Math::Point3> clip = EffectiveClipBoundary();
+                    ClipDrawSink csink(tsink, clip);
+                    const bool clipped = csink.Valid();
                     IDrawSink& xsink = clipped ? static_cast<IDrawSink&>(csink) : tsink;
                     // 块定义级细分缓存（IDrawSink::BeginBlockInstance）：同一块定义此前细分过时由 sink 直接接上。
                     // 有裁剪边界的不走缓存（子实体先在块坐标系里裁剪）
@@ -255,12 +347,28 @@ namespace MiniCAD
             // 由于坐标已是世界坐标，属性**不能**按阵列单元重复画，所以放在单元循环之外。
             // 也不套本块的 XCLIP：`m_clip` 是**块坐标系**里的（与块内实体同系，见 GetClipBoundary），
             // 拿来判世界坐标的属性会把内外判反；宁可少裁，也不要错裁。
+            // 属性的 0 层与 ByBlock 同 EnsureResolved 一样随插入解析
+            const EntityAttr& host = GetAttr();
+            const LayerID hostLayer = host.LayerId;
             for (const auto& a : m_attribs)
-                if (a->GetAttr().Visible && sink.IsLayerVisible(a->GetAttr().LayerId) && sink.BeginBlockChild(false))
-                {
-                    a->Draw(sink, isSelected, isHovered);
-                    sink.EndBlockChild(false);
-                }
+            {
+                const EntityAttr& aAttr = a->GetAttr();
+                const LayerID aLayer = (aAttr.LayerId == DefaultLayer_ID) ? hostLayer : aAttr.LayerId;
+                if (!aAttr.Visible || !sink.IsLayerVisible(aLayer) || !sink.BeginBlockChild(false))
+                    continue;
+                // AttribBase::Draw 取色走自己的 m_attr：临时写回解析后的属性（细分是单线程的）
+                auto* mutableA = const_cast<AttribEntity*>(a.get());
+                const EntityAttr saved = aAttr;
+                EntityAttr eff = saved;
+                if (eff.Color.Method == ColorMethod::ByBlock) eff.Color = host.Color;
+                if (eff.Lineweight == Lineweight::ByBlock)    eff.Lineweight = host.Lineweight;
+                if (eff.LineType == LineTypeTable_ByBlockID)  eff.LineType = host.LineType;
+                eff.LayerId = aLayer;
+                mutableA->SetAttr(eff);
+                a->Draw(sink, isSelected, isHovered);
+                mutableA->SetAttr(saved);
+                sink.EndBlockChild(false);
+            }
         }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
@@ -275,6 +383,8 @@ namespace MiniCAD
             e->m_colSpacing = m_colSpacing;
             e->m_rowSpacing = m_rowSpacing;
             e->m_clip       = m_clip;
+            e->m_clipWorld  = m_clipWorld;   // WCS 固定取景窗口一并复制
+            e->m_clipWorldValid = m_clipWorldValid;
             // 裁剪边框开关一并复制，否则复制/镜像后的块会丢掉边框显示设置
             e->m_clipFrameVisible = m_clipFrameVisible;
             for (const auto& a : m_attribs)
@@ -284,6 +394,30 @@ namespace MiniCAD
         }
 
         DECLARE_RUNTIME_TYPE(InsertEntity, Entity)
+
+        // 块参照所在图层关闭时，块内具名图层上的实体仍按自己的开关显示；递归查嵌套块与属性
+        template <class LayerVisibleFn>
+        bool HasVisibleContentOnAnyLayer(LayerVisibleFn&& layerVisible, int depth = 0) const
+        {
+            if (depth > 8) return false;   // 防御自引用的块定义
+            const LayerID hostLayer = GetAttr().LayerId;
+            for (const auto& a : m_attribs)
+            {
+                if (!a || !a->GetAttr().Visible) continue;
+                const LayerID id = (a->GetAttr().LayerId == DefaultLayer_ID) ? hostLayer : a->GetAttr().LayerId;
+                if (layerVisible(id)) return true;
+            }
+            EnsureResolved();
+            for (const auto& e : m_resolved)
+            {
+                if (!e || !e->GetAttr().Visible) continue;
+                // 0 层已在 EnsureResolved 里换成插入图层；具名图层按自己判断
+                if (layerVisible(e->GetAttr().LayerId)) return true;
+                if (const auto* nested = dynamic_cast<const InsertEntity*>(e.get()))
+                    if (nested->HasVisibleContentOnAnyLayer(layerVisible, depth + 1)) return true;
+            }
+            return false;
+        }
 
     private:
         // OCS 基 → WCS 的旋转矩阵(列为 Ux/Uy/Uz)。
@@ -300,11 +434,18 @@ namespace MiniCAD
         // 变换不在此烘焙(由 TransformDrawSink 在绘制时施加),故平移/旋转/缩放变化无需重建。
         void EnsureResolved() const
         {
-            if (!m_resolvedDirty) return;
+            const EntityAttr& host = GetAttr();
+            // 插入自己的图层 / 颜色 / 线型 / 线宽改了（ChangeAttrCommand 只调 SetAttr）也要重新解析
+            const bool hostChanged = host.LayerId != m_resolvedHost.LayerId || host.LineType != m_resolvedHost.LineType
+                                  || host.Lineweight != m_resolvedHost.Lineweight || host.Color.Method != m_resolvedHost.Color.Method
+                                  || host.Color.Aci != m_resolvedHost.Color.Aci
+                                  || host.Color.Rgba.r != m_resolvedHost.Color.Rgba.r || host.Color.Rgba.g != m_resolvedHost.Color.Rgba.g
+                                  || host.Color.Rgba.b != m_resolvedHost.Color.Rgba.b || host.Color.Rgba.a != m_resolvedHost.Color.Rgba.a;
+            if (!m_resolvedDirty && !hostChanged) return;
+            m_resolvedHost = host;
             m_resolved.clear();
             if (m_block)
             {
-                const EntityAttr& host = GetAttr();
                 for (const auto& src : m_block->GetEntities())
                 {
                     auto clone = src->Clone(src->GetID());
@@ -362,11 +503,18 @@ namespace MiniCAD
 
         std::vector<std::unique_ptr<AttribEntity>> m_attribs;
         std::vector<Math::Point3>                  m_clip;     // 裁剪边界（块坐标系），空 = 不裁剪
+        // XCLIP 边界在 **WCS 里是固定的取景窗口**（AutoCAD 语义）：移动 / 旋转 / 缩放块参照时
+        // 框在世界里不动，只换框里的内容。m_clip 是"设置边界那一刻"的块坐标表示（公开语义、
+        // 序列化、夹点编辑都用它）；m_clipWorld 记下同一条边界的世界坐标，绘制时再按当前
+        // 插入矩阵逆变换回当前块坐标，这样块移动后裁剪框仍停在原来的世界位置。
+        std::vector<Math::Point3>                  m_clipWorld;
+        bool                                      m_clipWorldValid = false;
         bool                                      m_clipFrameVisible = false;  // $XCLIPFRAME：是否画边框
         mutable bool                              m_showWhole        = false;  // 拖基点期间临时忽略裁剪
 
         // 展开缓存(仅随块/继承属性变化重建)。
         mutable std::vector<std::unique_ptr<Entity>> m_resolved;
         mutable bool                                 m_resolvedDirty = true;
+        mutable EntityAttr                           m_resolvedHost;
     };
 }

@@ -45,9 +45,9 @@ namespace
     bool Near(double a, double b, double tol = 1e-9) { return std::abs(a - b) <= tol; }
 
     // 对称轴 版本 2：两端（二维点）、横线长、距端点、间距。guidKey2 ≥ 0 时伪 GUID 写成与加密所用不同的第二个密钥
-    std::unique_ptr<UnknownEntity> SymmetryObject(int baseKey, int classKey, int key2, bool extraBit = false, int guidKey2 = -1)
+    std::unique_ptr<UnknownEntity> SymmetryObject(int baseKey, int classKey, int key2, bool extraBit = false, int guidKey2 = -1, bool r2004 = false)
     {
-        CipherWriter w;
+        CipherWriter w(r2004);
         w.Base(baseKey, key2, 100, guidKey2 >= 0 ? guidKey2 : key2);
         w.Main.WriteByte(2);
         w.Main.WriteByte(static_cast<std::uint8_t>(classKey));
@@ -973,11 +973,22 @@ int main()
             Check(ok && Near(m.X1, 1000) && Near(m.Y1, 2000) && Near(m.X2, 11000) && Near(m.Y2, 2000) && Near(m.Scale, 100) &&
                   Near(m.TickLength, 8) && Near(m.Gap, 2) && Near(m.Spacing, 2.5), (label + (ok ? "" : ": " + why)).c_str());
         }
+        // DWG 2004：GBK 里有的字符存为双字节，没有的存为 \U+XXXX
+        for (const auto& k : keys)
+        {
+            Tch::TchSymmetry m;
+            std::string why;
+            const std::string label = "synthetic encrypted symmetry in a DWG 2004 file decodes (base key " + std::to_string(k[0]) +
+                                      ", class key " + std::to_string(k[1]) + ", second key " + std::to_string(k[2]) + ")";
+            const bool ok = Tch::DecodeSymmetry(*SymmetryObject(k[0], k[1], k[2], false, -1, true), m, &why);
+            Check(ok && Near(m.X1, 1000) && Near(m.Y1, 2000) && Near(m.X2, 11000) && Near(m.Y2, 2000) && Near(m.Scale, 100) &&
+                  Near(m.TickLength, 8) && Near(m.Gap, 2) && Near(m.Spacing, 2.5), (label + (ok ? "" : ": " + why)).c_str());
+        }
         Tch::TchSymmetry m;
         Check(!Tch::DecodeSymmetry(*SymmetryObject(0x12, 0x12, 94, true), m), "an encrypted object with a leftover bit is rejected");
+        Check(!Tch::DecodeSymmetry(*SymmetryObject(0x12, 0x12, 94, true, -1, true), m), "an encrypted DWG 2004 object with a leftover bit is rejected");
         Check(!Tch::DecodeSymmetry(*SymmetryObject(0x12, 0x12, 94, false, 93), m) || !Near(m.TickLength, 8), "a wrong second key does not restore the values");
-
-        // 天正的画法：两端各两条横线，距端点 2 × 比例与 4.5 × 比例，长 8 × 比例
+                
         Tch::DecodeSymmetry(*SymmetryObject(0x12, 0x12, 94), m);
         const auto g = Tch::BuildSymmetry(m);
         std::vector<double> ticks;

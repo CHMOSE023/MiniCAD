@@ -3,12 +3,13 @@
 #include "Core/Math/Point3.hpp"
 #include "Core/Math/Vec3.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <vector>
 
 // 空间 NURBS 曲线（docs/Solid/PLAN.md 第 11 节）：MiniCAD 自己的数据，不依赖内核——
-// 求值、采样、变换在这里完成（网页版没有内核也能显示、变换）；插值、螺旋线、放样等由 ISolidKernel 完成。
+// 求值、采样、变换在这里完成（没有内核也能显示、变换）；插值、螺旋线、放样等由 ISolidKernel 完成。
 namespace MiniCAD::Solid
 {
     // 节点矢量完整写出（长度 = 控制点数 + 阶数 + 1，与 DXF SPLINE、MiniCAD 的 Spline 相同），一般两端各重复 阶数 + 1 次。
@@ -143,6 +144,87 @@ namespace MiniCAD::Solid
             return r;
         }
 
+        // 曲线上离 p 最近的点的参数（均匀采样后三分细化，曲线离 p 很远、有多个近点时取其一）
+        double ClosestParam(const Math::Point3& p) const
+        {
+            const double a = StartParam(), b = EndParam();
+            const int    N = 256;
+            double best = a, bestD = 1e300;
+            for (int i = 0; i <= N; ++i)
+            {
+                const double t = a + (b - a) * i / N;
+                const double d = (PointAt(t) - p).LengthSq();
+                if (d < bestD)
+                {
+                    bestD = d;
+                    best  = t;
+                }
+            }
+            double lo = std::max(a, best - (b - a) / N), hi = std::min(b, best + (b - a) / N);
+            for (int it = 0; it < 60; ++it)
+            {
+                const double m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+                if ((PointAt(m1) - p).LengthSq() < (PointAt(m2) - p).LengthSq())
+                    hi = m2;
+                else
+                    lo = m1;
+            }
+            return (lo + hi) / 2;
+        }
+
+        // 参数区间 [a, b] 的一段（插入节点，两端夹持）；区间超出曲线时截到曲线范围，太短返回无效曲线
+        NurbsCurve Sub(double a, double b) const
+        {
+            if (!IsValid())
+                return {};
+            const int    p   = Degree;
+            const double s   = StartParam(), e = EndParam();
+            const double eps = 1e-10 * std::max(1.0, std::abs(e - s) + std::abs(s));
+            a = std::max(a, s);
+            b = std::min(b, e);
+            if (b - a <= eps)
+                return {};
+            std::vector<double> U = Knots;
+            for (double* x : { &a, &b })
+                for (double k : U)
+                    if (std::abs(k - *x) <= eps)
+                        *x = k;
+            std::vector<std::array<double, 4>> P;
+            for (size_t i = 0; i < ControlPoints.size(); ++i)
+            {
+                const double w = IsRational() ? Weights[i] : 1.0;
+                P.push_back({ ControlPoints[i].x * w, ControlPoints[i].y * w, ControlPoints[i].z * w, w });
+            }
+            auto mult = [&](double u) { return static_cast<int>(std::count(U.begin(), U.end(), u)); };
+            for (double u : { a, b })
+                for (int guard = 0; mult(u) < p && guard < p; ++guard)
+                    InsertKnot(p, U, P, u);
+            auto lastIndex = [&](double u) {
+                int k = -1;
+                for (int i = 0; i < static_cast<int>(U.size()); ++i)
+                    if (U[i] == u)
+                        k = i;
+                return std::min(k, static_cast<int>(U.size()) - 2);
+            };
+            const int kl = lastIndex(a), kh = lastIndex(b);
+            if (kl < p || kh <= kl)
+                return {};
+            NurbsCurve r;
+            r.Degree = p;
+            r.Knots.push_back(a);
+            r.Knots.insert(r.Knots.end(), U.begin() + (kl - p + 1), U.begin() + kh + 1);
+            r.Knots.push_back(b);
+            for (int i = kl - p; i <= kh - p; ++i)
+            {
+                const auto& q = P[i];
+                const double w = q[3] != 0.0 ? q[3] : 1.0;
+                r.ControlPoints.push_back({ q[0] / w, q[1] / w, q[2] / w });
+                if (IsRational())
+                    r.Weights.push_back(q[3]);
+            }
+            return r.IsValid() ? r : NurbsCurve{};
+        }
+
         // ── 构造 ─────────────────────────────────────────────────────
 
         // 控制点 + 阶数，两端夹持的均匀节点矢量；控制点不够时阶数自动降低
@@ -233,6 +315,39 @@ namespace MiniCAD::Solid
             if (!rational)
                 c.Weights.clear();
             return c;
+        }
+
+    private:
+        // 插入一次节点 u（Boehm，齐次坐标）
+        static void InsertKnot(int p, std::vector<double>& U, std::vector<std::array<double, 4>>& P, double u)
+        {
+            const int n = static_cast<int>(P.size()) - 1;
+            int k = 0, s = 0;
+            for (int i = 0; i < static_cast<int>(U.size()); ++i)
+            {
+                if (U[i] <= u)
+                    k = i;
+                if (U[i] == u)
+                    ++s;
+            }
+            k = std::min(k, static_cast<int>(U.size()) - 2);
+            std::vector<std::array<double, 4>> Q(n + 2);
+            for (int i = 0; i <= n + 1; ++i)
+            {
+                if (i <= k - p)
+                    Q[i] = P[i];
+                else if (i >= k - s + 1)
+                    Q[i] = P[i - 1];
+                else
+                {
+                    const double den = U[i + p] - U[i];
+                    const double al  = den > 0.0 ? (u - U[i]) / den : 0.0;
+                    for (int c = 0; c < 4; ++c)
+                        Q[i][c] = al * P[i][c] + (1 - al) * P[i - 1][c];
+                }
+            }
+            U.insert(U.begin() + k + 1, u);
+            P = std::move(Q);
         }
     };
 }

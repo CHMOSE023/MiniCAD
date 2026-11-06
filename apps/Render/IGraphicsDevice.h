@@ -17,11 +17,15 @@ namespace MiniCAD
     {
         void* handle = nullptr;
 
-        // 宿主已建好 GL / GLES 上下文并设为当前（网页的 WebGL2、Linux 经 SDL3 的 EGL）；否则 GLES3 不可用
+        // 宿主已建好 GL / GLES 上下文并设为当前（网页的 WebGL2、Linux 的 EGL）；否则 GLES3 不可用
         bool glContext = false;
+        // 多窗口共用一个 GL 上下文（Linux 的 EGL）：把这个窗口的表面设为当前 / 交换它的缓冲。主窗口的 glMakeCurrent 在 BeginUiPass 时调用；
+        // 浮动窗口两个都要有，CreateWindowSurface 才给得出（没有时返回空）
+        std::function<void()> glMakeCurrent;
+        std::function<void()> glSwapBuffers;
 
         // Vulkan：建实例要加的扩展，以及在实例（VkInstance）上建窗口表面、把 VkSurfaceKHR 写进 surface。
-        // 不依赖窗口库（Linux 由 SDL3 实现）；createVulkanSurface 为空时 Vulkan 不可用
+        // 不依赖窗口库（Linux 由宿主按 X11 / Wayland 实现）；createVulkanSurface 为空时 Vulkan 不可用
         std::vector<const char*> vulkanInstanceExtensions;
         std::function<bool(void* instance, uint64_t* surface)> createVulkanSurface;
     };
@@ -52,7 +56,7 @@ namespace MiniCAD
         virtual void WaitIdle() {}                          // 等 GPU 执行完已提交的命令（自测计时用）
         virtual void ReleaseFreeMemory() {}                 // 让驱动真正销毁已释放的缓冲（关闭文档后）
 
-        // 为另一个系统窗口建窗口表面（D3D11 / D3D12 支持）；不支持的后端返回 nullptr，宿主就不提供独立的浮动窗口
+        // 为另一个系统窗口建窗口表面（D3D11 / D3D12 / Vulkan，以及宿主给了 glMakeCurrent / glSwapBuffers 的 GLES3）；不支持时返回 nullptr，宿主就不提供独立的浮动窗口
         virtual std::unique_ptr<IWindowSurface> CreateWindowSurface(const NativeWindow& window, int width, int height)
         {
             (void)window; (void)width; (void)height;

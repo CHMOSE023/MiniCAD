@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
 
 #pragma warning(push, 0)
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -39,6 +41,19 @@ namespace MiniGUI
             return nullptr;
 
         return LoadFromMemory(std::move(data), faceIndex);
+    }
+
+    std::shared_ptr<Font> Font::LoadShared(const std::string& utf8Path, int faceIndex)
+    {
+        static std::mutex mutex;
+        static std::map<std::pair<std::string, int>, std::weak_ptr<Font>> cache;
+        std::lock_guard<std::mutex> lock(mutex);
+        std::weak_ptr<Font>& slot = cache[{ utf8Path, faceIndex }];
+        if (auto font = slot.lock())
+            return font;
+        auto font = LoadFromFile(utf8Path, faceIndex);
+        slot = font;
+        return font;
     }
 
     std::shared_ptr<Font> Font::LoadFromMemory(std::vector<uint8_t> data, int faceIndex)

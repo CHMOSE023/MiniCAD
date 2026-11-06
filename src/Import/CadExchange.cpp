@@ -18,6 +18,7 @@
 #include "Import/TchPipe.h"
 #include "Import/TchElec.h"
 #include "Import/TchHvac.h"
+#include "Import/AcisReader.h"
 
 #include "Core/Log.h"
 #include "Core/Entity/ArcEntity.hpp"
@@ -65,6 +66,7 @@
 #include "Dxf/Read/DxfReader.h"
 #include "Dxf/Write/DxfWriter.h"
 
+#include <atomic>
 #include <chrono>
 #include <algorithm>
 #include <cctype>
@@ -104,6 +106,8 @@ namespace MiniCAD
         constexpr double kPi    = 3.14159265358979323846;
         constexpr double kTwoPi = 2.0 * kPi;
 
+        std::atomic<Solid::ISolidKernel*> g_importKernel{ nullptr };
+
         std::string Lower(std::string s)
         {
             std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -122,6 +126,7 @@ namespace MiniCAD
         Dwg::XYZ     ToXYZ(const Math::Vec3& v)   { return { v.x, v.y, v.z }; }
 
         bool IsDefaultNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z > 0.0; }
+        bool IsFlippedNormal(const Dwg::XYZ& n) { return std::abs(n.X) < 1e-12 && std::abs(n.Y) < 1e-12 && n.Z < 0.0; }
 
         Math::Color4 RgbToColor4(std::uint32_t rgb)
         {
@@ -589,6 +594,12 @@ namespace MiniCAD
                     LOG_WARN_TR("TCH_WALL × {0} 显示为普通轮廓；不修改时另存为原格式原版本可保留TCH对象", m_tianzhengWalls);
                 for (const auto& [name, count] : m_tchConverted)
                     LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留TCH对象", name.c_str(), count);
+                for (const auto& [name, count] : m_proxyConverted)
+                    LOG_WARN_TR("{0} × {1} 显示为普通几何；不修改时另存为原格式原版本可保留原对象", name.c_str(), count);
+                for (const auto& [name, count] : m_acisWireOnly)
+                    LOG_WARN_TR("{0} × {1} 只显示边线（没有三维内核或曲面建不出来）", name.c_str(), count);
+                for (const auto& [name, count] : m_acisPartial)
+                    LOG_WARN_TR("{0} × {1} 有曲面不支持，显示时缺面", name.c_str(), count);
                 for (const auto& [name, reasons] : m_tchFailures)
                     for (const auto& [reason, handles] : reasons)
                     {
@@ -885,12 +896,57 @@ namespace MiniCAD
                     { "sthupo", "STHUPO.TTF" }, { "stkaiti", "STKAITI.TTF" }, { "stsong", "STSONG.TTF" }, { "stfangsong", "STFANGSO.TTF" },
                     { "stxihei", "STXIHEI.TTF" }, { "stzhongsong", "STZHONGS.TTF" }, { "stxingkai", "STXINGKA.TTF" }, { "stliti", "STLITI.TTF" },
                     { "fzshuti", "FZSTK.TTF" }, { "fzyaoti", "FZYTK.TTF" },
+                    { "pmingliu", "mingliu.ttc" }, { "mingliu", "mingliu.ttc" }, { "新細明體", "mingliu.ttc" }, { "細明體", "mingliu.ttc" },
+                    { "dfkai-sb", "kaiu.ttf" }, { "標楷體", "kaiu.ttf" },
+                    { "microsoft jhenghei", "msjh.ttc" }, { "microsoft jhenghei ui", "msjh.ttc" }, { "微軟正黑體", "msjh.ttc" },
+                    { "ms gothic", "msgothic.ttc" }, { "ms pgothic", "msgothic.ttc" }, { "ms ui gothic", "msgothic.ttc" },
+                    { "ＭＳ ゴシック", "msgothic.ttc" }, { "ＭＳ Ｐゴシック", "msgothic.ttc" },
+                    { "ms mincho", "msmincho.ttc" }, { "ms pmincho", "msmincho.ttc" }, { "ＭＳ 明朝", "msmincho.ttc" }, { "ＭＳ Ｐ明朝", "msmincho.ttc" },
+                    { "meiryo", "meiryo.ttc" }, { "メイリオ", "meiryo.ttc" }, { "meiryo ui", "meiryo.ttc" },
+                    { "yu gothic", "YuGothM.ttc" }, { "游ゴシック", "YuGothM.ttc" }, { "yu mincho", "yumin.ttf" }, { "游明朝", "yumin.ttf" },
+                    { "gulim", "gulim.ttc" }, { "굴림", "gulim.ttc" }, { "gulimche", "gulim.ttc" }, { "굴림체", "gulim.ttc" },
+                    { "dotum", "gulim.ttc" }, { "돋움", "gulim.ttc" }, { "dotumche", "gulim.ttc" }, { "돋움체", "gulim.ttc" },
+                    { "batang", "batang.ttc" }, { "바탕", "batang.ttc" }, { "batangche", "batang.ttc" }, { "바탕체", "batang.ttc" },
+                    { "gungsuh", "batang.ttc" }, { "궁서", "batang.ttc" },
+                    { "malgun gothic", "malgun.ttf" }, { "맑은 고딕", "malgun.ttf" },
                 };
                 if (typeface.empty()) return {};
                 const std::string key = Lower(typeface);
                 for (const auto& [name, file] : kFiles)
                     if (key == name) return file;
                 return typeface + ".ttf";
+            }
+
+            const Tch::ProxyGraphicsContext& ProxyContext()
+            {
+                if (m_proxyContext) return *m_proxyContext;
+                auto& c = m_proxyContext.emplace();
+                if (const auto* layers = m_db.Layers()) c.Layers = layers->Entries;
+                ForEachEntry<Dwg::LineType>(m_db.LineTypes(), [&](const Dwg::LineType& lt) {
+                    c.LineTypes.push_back(lt.ObjectHandle);
+                    if (EqualsNoCase(lt.Name, "ByLayer")) c.ByLayerLineType = lt.ObjectHandle;
+                    else if (EqualsNoCase(lt.Name, "ByBlock")) c.ByBlockLineType = lt.ObjectHandle;
+                });
+                if (const auto cp = Dwg::Codec::CodePageFromName(m_db.Header.CodePage); cp != Dwg::Codec::CodePage::Unknown)
+                    c.CodePage = cp;
+                auto stem = [](std::string_view file) {
+                    if (const auto slash = file.find_last_of("/\\"); slash != std::string_view::npos) file.remove_prefix(slash + 1);
+                    if (const auto dot = file.rfind('.'); dot != std::string_view::npos) file = file.substr(0, dot);
+                    return Lower(std::string(file));
+                };
+                std::vector<const Dwg::TextStyle*> styles;
+                ForEachEntry<Dwg::TextStyle>(m_db.TextStyles(), [&](const Dwg::TextStyle& s) { styles.push_back(&s); });
+                c.StyleForFont = [styles, stem](std::string_view font, std::string_view bigFont) {
+                    const Dwg::TextStyle* best = nullptr;
+                    for (const auto* s : styles)
+                        if (stem(s->Filename) == stem(font))
+                        {
+                            if (stem(s->BigFontFilename) == stem(bigFont)) return s->ObjectHandle;
+                            if (!best) best = s;
+                        }
+                    return best ? best->ObjectHandle : Dwg::kNullHandle;
+                };
+                return c;
             }
 
             TextStyleID LookupStyle(Dwg::Handle h) const
@@ -1514,14 +1570,15 @@ namespace MiniCAD
             }
 
             // 属性定义 / 属性实例（ATTDEF / ATTRIB）的公共取值。
-            // 属性文字不跟随样式，Core 侧固定用 Standard（与 V0.1.0 的显示一致）
+            // 文字样式按属性自己的组码 7
             template <class T>
             std::unique_ptr<Entity> MakeAttrib(const Dwg::AttributeBase& a, std::string text)
             {
                 const TextPlacement pl = ResolveTextPlacement(a.InsertPoint, a.AlignmentPoint,
                                                              a.HorizontalAlignment, a.VerticalAlignment);
                 auto e = Make<T>(a, &a.Normal, a.Tag, std::move(text), pl.pos,
-                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation));
+                                 static_cast<double>(a.Height), static_cast<double>(a.Rotation),
+                                 LookupStyle(a.StyleHandle));
                 auto& attrib = static_cast<T&>(*e);
                 attrib.SetFlags(static_cast<std::uint16_t>(static_cast<int>(a.Flags)));
                 attrib.SetAlign(pl.hAlign, pl.vAlign);
@@ -1544,12 +1601,53 @@ namespace MiniCAD
                 return ent;
             }
 
+            // 3DSOLID / REGION / BODY / 曲面：ACIS 数据 → B-rep → 内核实体（着色、可编辑）；没有内核或建不出来时只有边线框。
+            // 原数据由 MiniDWG 原样保留，没改动时另存为原格式原版本照样写回
+            std::unique_ptr<Entity> ConvertAcis(const Dwg::Entity& src, const Dwg::UnknownEntity& unknown)
+            {
+                if (!m_acisStore)
+                    m_acisStore = Dwg::ReadAcisDataStore(m_db);
+                std::vector<std::uint8_t> data;
+                Import::AcisResult acis;
+                if (!Dwg::DecodeAcisData(unknown, *m_acisStore, data) || !Import::ReadAcis(data.data(), data.size(), acis))
+                    return nullptr;
+                if (Solid::ISolidKernel* kernel = g_importKernel.load(); kernel && !acis.Brep.Faces.empty())
+                {
+                    AABB box = AABB::Empty();
+                    for (const auto& line : acis.Wire)
+                        for (const auto& p : line)
+                            box.Expand(p);
+                    const double size = box.Min.x <= box.Max.x ? (box.Max - box.Min).Length() : 1.0;
+                    const double tol  = std::max(acis.Resolution * 10.0, size * 1e-7);
+                    int skipped = 0;
+                    if (auto body = kernel->FromBrep(acis.Brep, tol, &skipped))
+                        if (auto e = Solid3DEntity::Create(m_scene.NextObjectID(), *kernel, body))
+                        {
+                            e->SetAttr(MakeAttr(src));
+                            if (skipped + acis.FailedFaces > 0)
+                                ++m_acisPartial[unknown.Raw.DxfName];
+                            return e;
+                        }
+                }
+                if (acis.Wire.empty())
+                    return nullptr;
+                AABB bounds = AABB::Empty();
+                for (const auto& line : acis.Wire)
+                    for (const auto& p : line)
+                        bounds.Expand(p);
+                ++m_acisWireOnly[unknown.Raw.DxfName];
+                return Make<Solid3DEntity>(src, nullptr, std::vector<std::uint8_t>{}, std::move(acis.Wire), Math::Mat4::Identity(), bounds);
+            }
+
             std::unique_ptr<Entity> Convert(const Dwg::Entity& src)
             {
                 if (const auto* unknown = dynamic_cast<const Dwg::UnknownEntity*>(&src))
                 {
                     if (unknown->Raw.DxfName == "OLE2FRAME")
                         return ConvertOleFrame(src, *unknown);
+                    if (Dwg::IsAcisEntity(unknown->Raw.DxfName))
+                        if (auto solid = ConvertAcis(src, *unknown))
+                            return solid;
                     Tch::TchBlockInsert insert;
                     if (Tch::DecodeBlockInsert(*unknown, insert))
                     {
@@ -1562,7 +1660,7 @@ namespace MiniCAD
                             auto& geometry = static_cast<InsertEntity&>(*result);
                             geometry.SetScale({insert.XScale, insert.YScale, insert.ZScale});
                             geometry.SetRotation(insert.Rotation);
-                            ++m_tchConverted[unknown->Raw.DxfName];
+                            ++(unknown->Raw.DxfName.starts_with("TCH_") ? m_tchConverted : m_proxyConverted)[unknown->Raw.DxfName];
                             return result;
                         }
                     }
@@ -2014,14 +2112,19 @@ namespace MiniCAD
                     {
                         auto endLineAt = [&](int end) {
                             if (wall.HasConnections && !wall.Connections[end * 2] && !wall.Connections[end * 2 + 1]) return true;
+                            bool differs = false;
                             for (int k : {0, 1})
-                                if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]); m && *m != wall.Material) return true;
-                            return false;
+                                if (const auto m = TchWallMaterial(wall.Connections[end * 2 + k]))
+                                {
+                                    if (*m == wall.Material) return false;
+                                    differs = true;
+                                }
+                            return differs;
                         };
                         double arcX = 0, arcY = 0, arcR = 0;
                         if (wall.ArcCenter(arcX, arcY, arcR))
                         {
-                            // 弧墙：两侧为同心圆弧（逆时针弧左侧在内），门窗处按轴线弧长断开；端部连接量未用（样例为 0）
+                            // 弧墙：两侧为同心圆弧（逆时针弧左侧在内），门窗处按轴线弧长断开；端部连接量是沿该侧圆弧的弧长
                             std::string arcName = "*U_TCH_" + std::to_string(src.ObjectHandle);
                             while (m_scene.GetBlockTable().Get(arcName)) arcName += "_";
                             const auto arcBlockId = m_scene.GetBlockTable().Create(arcName);
@@ -2045,27 +2148,31 @@ namespace MiniCAD
                                 const double a = a0 + ccw * t;
                                 return Math::Point3{arcX + radius * std::cos(a), arcY + radius * std::sin(a), wall.Start.Z};
                             };
+                            // 两侧圆弧各自的范围（轴线上自起点的角度）
+                            const double leftFrom = leftR > 0 ? wall.Joins[0] / leftR : 0, leftTo = span - (leftR > 0 ? wall.Joins[1] / leftR : 0);
+                            const double rightFrom = rightR > 0 ? wall.Joins[2] / rightR : 0, rightTo = span - (rightR > 0 ? wall.Joins[3] / rightR : 0);
+                            constexpr double tol = 1e-9;
                             if (leftR > 0 && rightR > 0)
                             {
-                                // 填充：门窗之间各一块，两段同心圆弧围成，放在墙线下面
+                                // 填充：门窗之间各一块，两段同心圆弧围成，墙端按连接量（与墙线一致），放在墙线下面
                                 auto addPiece = [&](double t0, double t1) {
-                                    t0 = std::max(t0, 0.0); t1 = std::min(t1, span);
-                                    if (t1 - t0 < 1e-9) return;
-                                    const double bulge = std::tan(ccw * (t1 - t0) / 4);
-                                    Polyline piece({arcPoint(leftR, t0), arcPoint(leftR, t1), arcPoint(rightR, t1), arcPoint(rightR, t0), arcPoint(leftR, t0)},
-                                                   {bulge, 0.0, -bulge, 0.0});
+                                    const double l0 = std::max(t0, leftFrom), l1 = std::max(l0, std::min(t1, leftTo));
+                                    const double r0 = std::max(t0, rightFrom), r1 = std::max(r0, std::min(t1, rightTo));
+                                    if (l1 - l0 < tol && r1 - r0 < tol) return;
+                                    Polyline piece({arcPoint(leftR, l0), arcPoint(leftR, l1), arcPoint(rightR, r1), arcPoint(rightR, r0), arcPoint(leftR, l0)},
+                                                   {std::tan(ccw * (l1 - l0) / 4), 0.0, -std::tan(ccw * (r1 - r0) / 4), 0.0});
                                     if (auto hatch = MakeTchHatch(*unknown, wall.Material, wall.Scale, std::move(piece))) arcBlock->AddEntity(std::move(hatch));
                                 };
-                                double lo = 0;
+                                double lo = -std::numeric_limits<double>::infinity();
                                 for (const auto& [c0, c1] : arcCuts) { addPiece(lo, c0); lo = std::max(lo, c1); }
-                                addPiece(lo, span);
+                                addPiece(lo, std::numeric_limits<double>::infinity());
                                 // 门窗两侧的墙端：沿半径横穿墙厚（与直墙相同，未用弧墙样例核对）
                                 for (const auto& [c0, c1] : arcCuts)
                                     for (const double t : {c0, c1})
-                                        if (t > 1e-9 && t < span - 1e-9)
+                                        if (t > std::max(leftFrom, rightFrom) + tol && t < std::min(leftTo, rightTo) - tol)
                                             arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, t), arcPoint(rightR, t)));
                             }
-                            for (const double radius : {leftR, rightR})
+                            for (const auto [radius, from, to] : {std::tuple{leftR, leftFrom, leftTo}, std::tuple{rightR, rightFrom, rightTo}})
                             {
                                 if (radius <= 0) continue;
                                 auto addArc = [&](double t0, double t1) {
@@ -2073,19 +2180,20 @@ namespace MiniCAD
                                     if (ccw < 0) std::swap(s0, s1);
                                     arcBlock->AddEntity(Make<ArcEntity>(src, nullptr, Math::Point3{arcX, arcY, wall.Start.Z}, radius, s0, s1));
                                 };
-                                double cursor = 0;
+                                double cursor = from;
                                 for (const auto& [c0, c1] : arcCuts)
                                 {
-                                    if (c1 <= cursor || c0 >= span) continue;
-                                    if (c0 > cursor) addArc(cursor, c0);
+                                    if (c1 <= cursor || c0 >= to) continue;
+                                    if (c0 > cursor + tol) addArc(cursor, c0);
                                     cursor = std::max(cursor, c1);
                                 }
-                                if (cursor < span) addArc(cursor, span);
+                                if (cursor < to - tol) addArc(cursor, to);
                             }
                             if (leftR > 0 && rightR > 0)
-                                for (const int end : {0, 1})
-                                    if (endLineAt(end))
-                                        arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, end * span), arcPoint(rightR, end * span)));
+                            {
+                                if (endLineAt(0)) arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, leftFrom), arcPoint(rightR, rightFrom)));
+                                if (endLineAt(1)) arcBlock->AddEntity(Make<LineEntity>(src, nullptr, arcPoint(leftR, leftTo), arcPoint(rightR, rightTo)));
+                            }
                             countWall();
                             return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(arcBlockId), arcName, Math::Point3{0, 0, 0});
                         }
@@ -2256,11 +2364,11 @@ namespace MiniCAD
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                     }
-                    if (unknown->Raw.DxfName.starts_with("TCH_"))
+                    if (unknown->Raw.DxfName.starts_with("TCH_") || !unknown->ProxyGraphics.empty())
                     {
                         Tch::TchProxyGraphics proxy;
                         std::string reason;
-                        if (Tch::DecodeProxyGraphics(*unknown, proxy, &reason))
+                        if (Tch::DecodeProxyGraphics(*unknown, proxy, &reason, &ProxyContext()))
                         {
                             std::vector<std::unique_ptr<Entity>> geometry;
                             for (const auto& primitive : proxy.Entities)
@@ -2273,7 +2381,7 @@ namespace MiniCAD
                                 auto* block = m_scene.GetBlockTable().Find(blockId);
                                 block->SetFlags(BlockEntity::Anonymous);
                                 for (auto& primitive : geometry) block->AddEntity(std::move(primitive));
-                                ++m_tchConverted[unknown->Raw.DxfName];
+                                ++(unknown->Raw.DxfName.starts_with("TCH_") ? m_tchConverted : m_proxyConverted)[unknown->Raw.DxfName];
                                 return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(blockId), name, Math::Point3{0, 0, 0});
                             }
                             reason = "proxy primitive cannot be mapped to Scene";
@@ -2307,10 +2415,22 @@ namespace MiniCAD
                     return Make<LineEntity>(src, &e->Normal, ToPoint(e->StartPoint), ToPoint(e->EndPoint));
 
                 if (auto* e = dynamic_cast<const Dwg::Arc*>(&src))   // Arc 派生自 Circle，须先判断
-                    return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+                {
+                    // 法向 -Z：圆心是 OCS，换到 WCS 后按 +Z 存（不留法向，导出才不会再镜像一次）
+                    if (!IsFlippedNormal(e->Normal))
+                        return Make<ArcEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius, e->StartAngle, e->EndAngle);
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    return Make<ArcEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius,
+                                           kPi - e->EndAngle, kPi - e->StartAngle);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Circle*>(&src))
-                    return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                {
+                    if (!IsFlippedNormal(e->Normal))
+                        return Make<CircleEntity>(src, &e->Normal, ToPoint(e->Center), e->Radius);
+                    const OcsMap map(e->Normal, e->Center.Z);
+                    return Make<CircleEntity>(src, nullptr, map.Point(e->Center.X, e->Center.Y), e->Radius);
+                }
 
                 if (auto* e = dynamic_cast<const Dwg::Ellipse*>(&src))
                 {
@@ -2318,9 +2438,12 @@ namespace MiniCAD
                     const double a  = std::hypot(mx, my);
                     if (a < 1e-12)
                         return nullptr;
+                    // 中心与长轴本来是 WCS；法向 -Z 时短轴反向，参数区间镜像成 (−e, −s)
+                    const bool flipped = IsFlippedNormal(e->Normal);
+                    const double s = flipped ? -e->EndParameter : e->StartParameter;
+                    const double t = flipped ? -e->StartParameter : e->EndParameter;
                     return Make<EllipseEntity>(src, nullptr,
-                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx),
-                                e->StartParameter, e->EndParameter));
+                        Ellipse(ToPoint(e->Center), a, a * e->RadiusRatio, std::atan2(my, mx), s, t));
                 }
 
                 if (auto* e = dynamic_cast<const Dwg::Point*>(&src))
@@ -2561,7 +2684,7 @@ namespace MiniCAD
                     // 组码 12（InsertionPoint）是标注匿名块的**平移量**：
                     // 匿名几何建在世界坐标上，AutoCAD 靠 `local = worldGeom + code12`
                     // 把它挪回该出现的位置。写死 (0,0,0) 会把整条标注画在匿名块自身的
-                    // 坐标上（实测《总说明.dwg》：实绘宽度 910056 而非 7525，错位 92 万单位）。
+                    // 坐标上（实测：实绘宽度 910056 而非 7525，错位 92 万单位）。
                     const Math::Point3 insPoint = ToPoint(e->InsertionPoint);
                     return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(it->second),
                                               blk ? blk->GetName() : std::string(), insPoint);
@@ -2577,7 +2700,7 @@ namespace MiniCAD
                     //    DCS 相对 WCS 旋转了 +TwistAngle，必须反向旋转 -Twist
                     //    才是模型里的真实位置。直接当 WCS 用时，Twist≠0 的
                     //    视口内容会被画到几十万单位外 —— 视口是空框
-                    //    （实测 `01-曲陵路.dwg` 5 个 Twist=95.7° 的浮动视口）。
+                    //    （实测 5 个 Twist=95.7° 的浮动视口）。
                     // ⚠ DCS 的原点是视图目标点（组码 17/27/37），要加回去。
                     //    多数视口目标点是原点；经 DVIEW / 动态观察过的视口目标点在模型上、
                     //    12/22 只是相对它的小偏移（实测总平面样图 B 的视口 effb9：
@@ -3152,12 +3275,12 @@ namespace MiniCAD
                 const double yScale = o.MirrorY() ? -depth : depth;
                 insert.SetScale({o.MirrorX() ? -o.Width : o.Width, yScale, o.Width});
                 insert.SetRotation(o.Angle);
-                if (o.Type != Tch::TchOpening::Kind::Door || !hasWall || o.InGroup || (o.Flags & 0x600) == 0)
+                const bool sill = o.Type == Tch::TchOpening::Kind::Door && hasWall && !o.InGroup && (o.Flags & 0x600) != 0;
+                const bool labelled = !o.InGroup && !o.Label.empty();
+                if (!sill && !labelled)
                     return result;
 
                 const double ux = std::cos(o.Angle), uy = std::sin(o.Angle);
-                const double wl = std::hypot(wall.End.X - wall.Start.X, wall.End.Y - wall.Start.Y);
-                const double wallLeftX = -(wall.End.Y - wall.Start.Y) / wl, wallLeftY = (wall.End.X - wall.Start.X) / wl;
                 const double hw = o.Width / 2;
                 std::string name = "*U_TCH_OPENING_" + std::to_string(src.ObjectHandle);
                 while (m_scene.GetBlockTable().Get(name)) name += "_";
@@ -3166,9 +3289,26 @@ namespace MiniCAD
                 group->SetFlags(BlockEntity::Anonymous);
                 m_scene.ResolveInsert(insert);
                 group->AddEntity(std::move(result));
+                if (labelled)
+                {
+                    double angle = std::remainder(o.Angle, 2 * std::numbers::pi);
+                    if (angle > std::numbers::pi / 2 + 1e-6) angle -= std::numbers::pi;
+                    else if (angle <= -std::numbers::pi / 2 + 1e-6) angle += std::numbers::pi;
+                    const double nominal = o.LabelHeight * o.Scale;
+                    Tch::TchGraphics label;
+                    Tch::Detail::AddRuns(label, o.Label, nominal, o.LabelX + std::sin(angle) * 0.425 * nominal,
+                                         o.LabelY - std::cos(angle) * 0.425 * nominal, angle, 1, 256, 1);
+                    if (auto text = MakeTchGraphics(src, label, LookupStyle(o.Style), std::nullopt, o.LabelLayer))
+                    {
+                        m_scene.ResolveInsert(static_cast<InsertEntity&>(*text));
+                        group->AddEntity(std::move(text));
+                    }
+                }
                 for (const auto [flag, leaf] : {std::pair{0x200, 1.0}, std::pair{0x400, -1.0}})
                 {
-                    if ((o.Flags & flag) == 0) continue;
+                    if (!sill || (o.Flags & flag) == 0) continue;
+                    const double wl = std::hypot(wall.End.X - wall.Start.X, wall.End.Y - wall.Start.Y);
+                    const double wallLeftX = -(wall.End.Y - wall.Start.Y) / wl, wallLeftY = (wall.End.X - wall.Start.X) / wl;
                     const double side = (yScale > 0 ? 1.0 : -1.0) * leaf;     // 门图块 +y 为门扇
                     const double ox = -uy * side, oy = ux * side;              // 门槛线所在一侧的法向
                     const double face = (ox * wallLeftX + oy * wallLeftY) > 0 ? wall.LeftWidth : wall.RightWidth;
@@ -3196,10 +3336,14 @@ namespace MiniCAD
                 // 此前只取 `ConstantWidth`（组码 43）⇒ 这些宽度整批丢失，整条多段线画成等宽。
                 std::vector<double>       startW;
                 std::vector<double>       endW;
+                // 法向 -Z：顶点 OCS → WCS、凸度取反，按 +Z 存（同 ARC）
+                const bool flipped = IsFlippedNormal(e.Normal);
+                const OcsMap map(e.Normal, e.Elevation);
                 for (const auto& v : e.Vertices)
                 {
-                    pts.push_back({ v.Location.X, v.Location.Y, e.Elevation });
-                    bulges.push_back(v.Bulge);
+                    pts.push_back(flipped ? map.Point(v.Location.X, v.Location.Y)
+                                          : Math::Point3{ v.Location.X, v.Location.Y, e.Elevation });
+                    bulges.push_back(flipped ? -v.Bulge : v.Bulge);
                     startW.push_back(v.StartWidth);
                     endW.push_back(v.EndWidth);
                 }
@@ -3208,7 +3352,7 @@ namespace MiniCAD
                     pts.push_back(pts.front());   // 闭合：末点回到起点，最后一个 bulge 属于闭合段
                 else
                     bulges.pop_back();
-                auto ent = Make<PolylineEntity>(e, &e.Normal, std::move(pts), std::move(bulges));
+                auto ent = Make<PolylineEntity>(e, flipped ? nullptr : &e.Normal, std::move(pts), std::move(bulges));
                 auto& pl = static_cast<PolylineEntity&>(*ent);
                 pl.SetWidth(e.ConstantWidth);
 
@@ -3255,6 +3399,28 @@ namespace MiniCAD
                 auto& hatch = static_cast<HatchEntity&>(*ent);
                 hatch.SetScale(scale);
                 hatch.SetAngle(angleDeg);
+
+                // 渐变填充（组码 450～470）
+                if (h.GradientColor.Enabled)
+                {
+                    HatchGradient grad;
+                    grad.Enabled    = true;
+                    grad.Name       = h.GradientColor.Name.empty() ? std::string("LINEAR") : h.GradientColor.Name;
+                    grad.Type       = HatchGradient::ParseType(grad.Name);
+                    grad.Angle      = h.GradientColor.Angle;
+                    grad.Shift      = h.GradientColor.Shift;
+                    grad.SingleColor = h.GradientColor.IsSingleColorGradient;
+                    grad.ColorTint  = h.GradientColor.ColorTint;
+                    for (const auto& c : h.GradientColor.Colors)
+                        grad.Stops.push_back({ c.Value, LayerColorToColor4(c.Color) });
+                    // 停靠点必须按 Value 升序，Sample 的区间查找依赖这个顺序
+                    std::sort(grad.Stops.begin(), grad.Stops.end(),
+                              [](const GradientStop& a, const GradientStop& b) { return a.Value < b.Value; });
+                    if (grad.Stops.empty())
+                        grad.Enabled = false;   // 没有颜色信息的渐变按普通实心填充走
+                    else
+                        hatch.SetGradient(std::move(grad));
+                }
                 return ent;
             }
 
@@ -3625,7 +3791,7 @@ namespace MiniCAD
             //
             // 此前**完全没有映射**，落到 Skip() 被整体丢弃 ⇒ 图上一个多重引线都不显示。
             //
-            // 关键几何（实测 `1#、2#厂房电气_t3.dwg` 20 个，全部是**单点引线**）：
+            // 关键几何（实测 20 个多重引线，全部是**单点引线**）：
             //   · 引线两端**分存两处**：`LEADER_LINE{(10 …)}` 只有**箭头端**，
             //     内容连接端在 `LEADER{(10 …)}` 即 root.ConnectionPoint
             //     （与 AutoCAD entget 逐位对照过）。
@@ -3804,6 +3970,8 @@ namespace MiniCAD
             std::map<Dwg::Handle, LayerID>     m_layers;
             std::map<Dwg::Handle, LineTypeID>  m_lineTypes;
             std::map<Dwg::Handle, TextStyleID> m_styles;
+            std::optional<Tch::ProxyGraphicsContext> m_proxyContext;
+            std::optional<Dwg::AcisDataStore>  m_acisStore;
             std::map<Dwg::Handle, MLineStyleID> m_mlineStyles;   // MLINESTYLE 句柄 → 样式表 ID
             std::map<Dwg::Handle, BlockID>     m_blocks;
             // 转换进度：已转换 / 全部块与模型空间的实体数
@@ -3825,6 +3993,9 @@ namespace MiniCAD
             int m_tianzhengWalls = 0;
             Tch::TchConfig m_tchConfig;                     
             std::map<std::string, int> m_tchConverted;
+            std::map<std::string, int> m_proxyConverted;
+            std::map<std::string, int> m_acisWireOnly;
+            std::map<std::string, int> m_acisPartial;
             std::map<std::string, std::map<std::string, std::set<Dwg::Handle>>> m_tchFailures;   // 类型 → 原因 → 句柄
             bool m_tchContinuous = false;                  // MakeTchGraphics 组装符号标注时线按实线（MakeTchSymbol 设）
             std::string                  m_namePrefix;
@@ -3921,7 +4092,7 @@ namespace MiniCAD
                 for (const auto& [name, count] : m_skipped)
                     LOG_WARN_TR("DWG/DXF 导出：不支持的实体 {0} × {1} 已跳过", name.c_str(), count);
                 if (m_solidNoMesh > 0)
-                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体没有网格数据（早期版本保存），已跳过", m_solidNoMesh);
+                    LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体没有网格数据（早期版本保存，或导入时只建出边线），已跳过", m_solidNoMesh);
                 if (m_solidTooLarge > 0)
                     LOG_WARN_TR("DWG/DXF 导出：{0} 个三维实体的网格超过 32767 个顶点或面，已跳过", m_solidTooLarge);
             }
@@ -4902,7 +5073,7 @@ namespace MiniCAD
                     d->Tag    = s->GetTag();
                     d->Prompt = s->GetPrompt();
                     d->Flags  = static_cast<Dwg::AttributeFlags>(s->GetFlags());
-                    d->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                    d->StyleHandle = StyleHandle(s->GetStyleId());   // 与 ATTRIB 同理：跟实体样式走
                     d->Normal = NormalOf(e);
                     return Finish(e, std::move(d));
                 }
@@ -4979,25 +5150,35 @@ namespace MiniCAD
                         att->Value = a->GetValue();
                         att->Tag   = a->GetTag();
                         att->Flags = static_cast<Dwg::AttributeFlags>(a->GetFlags());
-                        att->StyleHandle = StyleHandle(TextStyleTable::StandardID);
+                        att->StyleHandle = StyleHandle(a->GetStyleId());
                         att->Normal = NormalOf(*a);
                         ApplyAttr(*a, *att);
                         if (Dwg::AttributeEntity* added = m_db.Add(std::move(att)))
                             d->Attributes.push_back(added->ObjectHandle);
                     }
 
-                    // 块裁剪（XCLIP）：边界是**块坐标**，SPATIAL_FILTER 里要**世界坐标**，
-                    // 所以先经插入变换映射。句柄此时还没有（Add 时才分配），
+                    // 块裁剪（XCLIP）：SPATIAL_FILTER 里要**世界坐标**。
+                    // 方案 A 下边界是 WCS 固定窗口，直接用 ClipFrameWorld()（块移动后仍写回原位），
+                    // 旧路径才把块坐标经插入变换映射。句柄此时还没有（Add 时才分配），
                     // 先记下待挂接项，实体入库后再建对象链。
                     if (s->HasClipBoundary() && s->GetClipBoundary().size() >= 3)
                     {
                         PendingClip pending;
                         pending.BlockToWorld = s->CellMatrix(0, 0);
-                        pending.World.reserve(s->GetClipBoundary().size());
-                        for (const auto& p : s->GetClipBoundary())
+                        if (s->HasClipFrameWorld())
                         {
-                            const Math::Point3 w = pending.BlockToWorld * p;
-                            pending.World.push_back({ w.x, w.y });
+                            pending.World.reserve(s->ClipFrameWorld().size());
+                            for (const auto& w : s->ClipFrameWorld())
+                                pending.World.push_back({ w.x, w.y });
+                        }
+                        else
+                        {
+                            pending.World.reserve(s->GetClipBoundary().size());
+                            for (const auto& p : s->GetClipBoundary())
+                            {
+                                const Math::Point3 w = pending.BlockToWorld * p;
+                                pending.World.push_back({ w.x, w.y });
+                            }
                         }
                         m_pendingClips.push_back(std::move(pending));
                     }
@@ -5121,7 +5302,7 @@ namespace MiniCAD
             // 看得见引线，一旦存盘引线就整批消失（同细分网格的教训）。
             //
             // 这是导入 ConvertMLeader 的严格逆映射，公式来自同一份实测
-            // （`1#、2#厂房电气_t3.dwg` 20/20，误差 0.000000）：
+            // （20/20 个多重引线，误差 0.000000）：
             //   landing(外端)   = ConnectionPoint + Direction × LandingDistance
             //   ContentBasePoint = 文字块左下角
             //   TextLocation     = ConnectionPoint + Direction × (LD + LandingGap) + (0, 1.2×字高)
@@ -5514,6 +5695,25 @@ namespace MiniCAD
                         d->Pattern.Lines.push_back(std::move(line));
                     }
                 }
+
+                // 渐变填充：把 HatchGradient 写回组码 450～470，另存为 DWG / DXF 后仍能读回来
+                if (const HatchGradient& grad = h.GetGradient(); grad.Enabled && !grad.Stops.empty())
+                {
+                    Dwg::HatchGradientPattern& g = d->GradientColor;
+                    g.Enabled    = true;
+                    g.Name       = grad.Name.empty() ? std::string(HatchGradient::TypeName(grad.Type)) : grad.Name;
+                    g.Angle      = grad.Angle;
+                    g.Shift      = grad.Shift;
+                    g.ColorTint  = grad.ColorTint;
+                    g.IsSingleColorGradient = grad.SingleColor;
+                    for (const GradientStop& stop : grad.Stops)
+                    {
+                        Dwg::GradientColor c;
+                        c.Value = stop.Value;
+                        c.Color = FromColor4(stop.Color);
+                        g.Colors.push_back(c);
+                    }
+                }
                 return Finish(e, std::move(d));
             }
 
@@ -5737,6 +5937,8 @@ namespace MiniCAD
         if (ext == ".dxf") return CadFileKind::Dxf;
         return CadFileKind::None;
     }
+
+    void SetCadImportSolidKernel(Solid::ISolidKernel* kernel) { g_importKernel.store(kernel); }
 
     bool ImportCad(const std::vector<std::uint8_t>& data, Scene& scene, std::string* error, CadSaveVersion* version,
                    std::shared_ptr<const CadSource>* source, const ImportProgress& progress, const std::string& sourcePath)

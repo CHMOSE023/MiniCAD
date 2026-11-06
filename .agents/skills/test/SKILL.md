@@ -32,7 +32,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .agents/skills/test/run.ps1 all   
 - 界面改动（`MiniCADWin` 只编译）：需要时 `out/debug/MiniCADWin/MiniCADWin.exe --selftest`，或实际运行看；核对显示效果用 `--bench 图纸` 加 `MINICAD_BENCH_SHOT=目录` 离屏截图，不要截整个屏幕
 - 改了控件外观或界面后端（`D3D11Backend` / `D3D12Backend`）：再跑 `MiniGUIGolden`（CI 不跑它；D3D11、D3D12 的结果都与软件光栅比较，`--warp` 用 WARP，`--no-d3d12` 跳过 D3D12；`--update` 更新基准，检查图片后再提交）
 - 网页版行为：`build_wasm.bat serve` 后在浏览器里看
-- Linux 宿主（`apps/Linux`）与 `src/UI/Platform/SDL` 在 Windows 上不编译，本脚本也不挑它们：改了要到 Linux 上编译运行（见 README 的 Linux 构建说明）
+- Linux 宿主（`apps/Linux`）与 `src/UI/Platform/Linux` 在 Windows 上不编译，本脚本也不挑它们：改了要到 Linux 上编译运行（见 README 的 Linux 构建说明）
 
 ## 新增测试或测试程序
 

@@ -34,6 +34,8 @@ namespace MiniCAD
         void SetFontSystem(FontSystem* fontSystem);
         // OLE 对象快照的光栅化回调（见 Editor::SetOleRasterizer）：给现有的与之后新建的每个编辑器
         void SetOleRasterizer(Editor::OleRasterizer rasterizer);
+        // 十字光标大小与拾取框（见 Editor::SetCursorStyle）：同上，所有编辑器共用一套
+        void SetCursorStyle(float cursorSize, float pickBox);
 
         std::vector<std::unique_ptr<Document>>& GetAll();
 

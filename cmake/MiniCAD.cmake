@@ -55,6 +55,7 @@ set(MINICAD_SERIALIZATION_SOURCES
 set(MINICAD_IMPORT_SOURCES
     "${MINICAD_SRC}/Import/CadExchange.cpp"
     "${MINICAD_SRC}/Import/CadTextFile.cpp"
+    "${MINICAD_SRC}/Import/AcisReader.cpp"
 )
 
 # ── Editor ──────────────────────────────────────────────────────────
@@ -83,7 +84,6 @@ set(MINICAD_TEXT_SOURCES
     "${MINICAD_SRC}/Text/Font/TTFFont.cpp"
     "${MINICAD_SRC}/Core/Image/ImageLibrary.cpp"
     "${MINICAD_SRC}/Core/Ole/OleObject.cpp"
-    "${MINICAD_SRC}/Text/Font/EncodingGBK.cpp"
     "${MINICAD_SRC}/Text/Layout/TextLayoutEngine.cpp"
     "${MINICAD_SRC}/Text/Parser/SHXParser.cpp"
     "${MINICAD_SRC}/Text/Parser/SHXVM.cpp"

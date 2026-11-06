@@ -50,9 +50,16 @@ namespace MiniCAD
             const auto& center = m_circle.Center;
             const double r    = m_circle.Radius;
 
+            std::vector<Math::Point3> pts;
+            pts.reserve(kSegments + 1);
             SampleCurve(sink, 0.0, Math::TwoPI, kSegments, r,
                         [&](double a) { return Math::Point3{ center.x + r * std::cos(a), center.y + r * std::sin(a), center.z }; },
-                        [&](const Math::Point3& p0, const Math::Point3& p1) { sink.DrawLine(p0, p1, color, false); });
+                        [&](const Math::Point3& p0, const Math::Point3& p1)
+                        {
+                            if (pts.empty()) pts.push_back(p0);
+                            pts.push_back(p1);
+                        });
+            sink.DrawPath(pts, color, true);
         }
 
         DECLARE_RUNTIME_TYPE(CircleEntity, Entity)

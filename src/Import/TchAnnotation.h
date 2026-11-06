@@ -22,7 +22,7 @@ namespace MiniCAD::Tch
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
             if (entity.Raw.DxfName != dxf || !SupportedVersion(data)) return false;
-            return ReadTchSymbolBase(r, symbol);
+            return ReadTchSymbolBase(r, symbol, &data);
         }
     }
 
@@ -596,7 +596,7 @@ namespace MiniCAD::Tch
         if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 2) return fail("unsupported native north thumb version");
         TchNorthThumb n;
@@ -694,7 +694,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for cut line");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native cut line version");
         r.ReadByte();
         const int count = r.ReadBitShort();
@@ -791,7 +791,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for symmetry");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native symmetry version");
         TchSymmetry m;
         m.Scale = base.Scale;

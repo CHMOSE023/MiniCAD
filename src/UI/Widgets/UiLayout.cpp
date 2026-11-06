@@ -32,7 +32,7 @@ namespace MiniGUI
             {
                 "type", "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight",
                 "grow", "shrink", "gap", "padding", "align", "justify", "background", "visible", "comment",
-                "position", "left", "top", "right", "bottom", "passThrough",
+                "position", "left", "top", "right", "bottom", "passThrough", "card", "variants",
             };
             return keys;
         }
@@ -228,7 +228,7 @@ namespace MiniGUI
         }
 
         // ── 命令覆盖（只由生成默认布局的那个负责）───────────────────
-        if (m_layoutName.empty())
+        if (m_ownsCommands)
         {
             RestoreCommandDefaults();
             m_commands.ApplyOverrides(doc["commands"], m_warnings);
@@ -358,17 +358,47 @@ namespace MiniGUI
                 m_warnings.push_back(Tr("background 只能用于 row / column / toolbar"));
         }
 
+        // card：卡片（圆角、边框）。row / column / 宿主面板（Panel）画成卡片，没写背景时用面板色；功能区默认就是卡片，false 时方角贴边
+        if (const JsonValue* v = desc.Find("card"))
+        {
+            const bool card = v->AsBool(false);
+            if (auto* panel = dynamic_cast<Panel*>(node))
+            {
+                if (card && panel->GetBackground() == ColorRef(Colors::Transparent))
+                    panel->SetBackground(Theme::Panel);
+                panel->SetRounding(card ? Theme::RadiusLg : 0.0f);
+                panel->SetBorder(card ? ColorRef(Theme::BorderSubtle) : ColorRef(Colors::Transparent));
+            }
+            else if (auto* ribbon = dynamic_cast<Ribbon*>(node))
+                ribbon->SetCard(card);
+            else
+                m_warnings.push_back(Tr("card 只能用于 row / column / 宿主面板 / ribbon"));
+        }
+
         if (const JsonValue* v = desc.Find("visible"))
             node->SetVisible(v->AsBool(true));
     }
 
-    std::unique_ptr<Node> UiLayout::BuildNode(const JsonValue& desc, const JsonValue& doc, bool parentIsRow, BuildState& st)
+    std::unique_ptr<Node> UiLayout::BuildNode(const JsonValue& source, const JsonValue& doc, bool parentIsRow, BuildState& st)
     {
-        if (!desc.IsObject())
+        if (!source.IsObject())
         {
             m_warnings.push_back(TrF("{0}：布局节点应为对象 { \"type\": … }", st.path));
             return nullptr;
         }
+        // 选了变体（SetVariant）时，节点 "variants" 里同名的一段覆盖节点自己的属性
+        JsonValue merged;
+        const JsonValue* use = &source;
+        if (const JsonValue* variants = source.Find("variants"); variants && !variants->IsObject())
+            m_warnings.push_back(TrF("{0}：variants 应为对象 { \"变体名\": { 属性… } }", st.path));
+        else if (const JsonValue* v = m_variant.empty() || !variants ? nullptr : variants->Find(m_variant); v && v->IsObject())
+        {
+            merged = source;
+            for (const auto& [key, value] : v->GetObject())
+                merged.Set(key, value);
+            use = &merged;
+        }
+        const JsonValue& desc = *use;
         const std::string& type = desc["type"].AsString();
         const std::string  where = TrF("{0}（{1}）", st.path, type.empty() ? std::string("?") : type);
 

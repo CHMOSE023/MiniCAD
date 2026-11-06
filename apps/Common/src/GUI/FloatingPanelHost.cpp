@@ -1,4 +1,5 @@
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/Language.h"
 #include "Core/Log.h"
 #include "Core/UIContext.h"
 #include "Widgets/FloatingPanel.h"
@@ -97,6 +98,7 @@ namespace MiniCAD
         UIContext& ui = e->window->GetUI();
         if (!m_platform.LoadUiFonts(ui.GetTextSystem()))
             LOG_WARN_TR("浮动窗口：没有找到界面字体");
+        ApplyLanguageFonts(m_platform, ui.GetTextSystem());
         ui.SetTheme(m_mainUi.GetTheme());
         // 主窗口开着对话框时不接受指针（按下只把主窗口置前），按键与文字转给对话框
         ui.SetModalOwner(&m_mainUi, [this] { m_platform.ActivateMainWindow(); });
@@ -290,5 +292,11 @@ namespace MiniCAD
     {
         for (auto& [id, e] : m_windows)
             e->window->GetUI().SetTheme(theme);
+    }
+
+    void FloatingPanelHost::ForEachUi(const std::function<void(UIContext&)>& f)
+    {
+        for (auto& [id, e] : m_windows)
+            f(e->window->GetUI());
     }
 }

@@ -266,7 +266,7 @@ namespace MiniCAD::Tch
         {
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
-            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
             if (r.ReadByte() >= 2) return fail("unsupported native pipe prototype version");
             p.Scale = base.Scale;
             r.ReadByte(); r.ReadByte(); r.ReadByte();
@@ -392,7 +392,7 @@ namespace MiniCAD::Tch
         }
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         int handles = 0, texts = 0;
         if (!Detail::ReadPipeNode(r, handles, texts)) return fail("unsupported native pipe node layout");
         if (r.ReadByte() >= 2) return fail("unsupported native pipe fitting version");
@@ -447,7 +447,7 @@ namespace MiniCAD::Tch
         {
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
-            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
             int handles = 0, texts = 0;
             if (!Detail::ReadEquipment(r, base, b, handles, texts, well)) return fail("unsupported native equipment layout");
             if (well)
@@ -515,7 +515,7 @@ namespace MiniCAD::Tch
         {
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
-            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
             if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
             r.ReadByte();
             at = Detail::Read3(r);
@@ -687,7 +687,7 @@ namespace MiniCAD::Tch
         {
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
-            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
             if (r.ReadByte() >= 2) return fail("unsupported native pipe attachment version");
             r.ReadByte();
             at = Detail::Read3(r);
@@ -1055,7 +1055,7 @@ namespace MiniCAD::Tch
         {
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
-            if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
             if (r.ReadByte() >= 2) return fail("unsupported native pipe node layout");
             r.ReadByte();
             const int count = r.ReadByte();

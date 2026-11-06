@@ -26,7 +26,8 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | `TchText.h` | TCH文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | TCH矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管与管件 |
-| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀；代理图形记录 |
+| `TchBlockInsert.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同） |
+| `TchProxyGraphics.h` | 天正这一侧的代理图形入口：`Tch::DecodeProxyGraphics` 是通用解码器 `Proxy::Decode`（`src/Import/ProxyGraphics.h`）的薄封装，只做类型别名与转发。代理图形本身与厂商无关（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理） |
 
 ## 约束
 
@@ -34,6 +35,8 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **TCH表格**：`Tch::DecodeSheet` / `Tch::BuildSheet`；读完子对象要恢复外层状态（`Tch::Detail::CipherLayer`）；文字放不放得下按TCH步进估宽（`Tch::Detail::SheetTextWidth`）。未处理：格线的颜色与线型、单元格里的图块、主样式与标题样式以外的单元格文字样式、多行单元格里的上标
 - **内视符号**：`Tch::DecodeInSight` / `Tch::BuildInSight`；编号大小取对象的比例，为 0 时取 `TchConfig::IndexTextRatio` / `TchConfig::IndexTextMode`；实心区域经 `TchGraphics::Fills` 画成 SOLID 填充（`Importer::MakeTchGraphics`）。未做：遮罩、视图翻转时上下文字对调
 - **新版（T30，TCH基类版本 9～14）**：各类的版本号与明文版本的对应写在 `Read*Fields` / `Decode*Cipher` 上方的注释里。自带 RC 版本与密钥、第二个密钥为 0 的子层用 `Tch::Detail::CipherLayer`（表格子对象、屋顶基类、管线接口、标注样式、管件基类的列表）。TCH基类里的属性包值与文字方向记在 `Tch::Detail::CipherReader::FieldStrings` / `Tch::Detail::CipherReader::FieldNumbers` / `Tch::Detail::CipherReader::Angle`（立管、多管标注要用）。机电：管线节点基类没有加密层（`Tch::Detail::ReadCipherPipeNode`）；属性表移进了TCH基类（`Tch::Detail::CipherReader::XData`），管线基类版本 4 在末尾另存 Start、End（`Tch::Detail::ReadCipherPipeBase`）
+- **DWG2004**：没有单独的文字流，GUID、属性名与密文都是主数据流里的 GBK 文字；密文字符在 GBK 里有的存为双字节，没有的写成 `\U+XXXX`，`Tch::Detail::CipherReader` 取各字符的低字节解密，与 2007 起 UTF-16 的做法相同。实物图纸（中望看图另存）里坐标标注读出的格式 48、方向 3 超出已核对的范围，仍跳过
+- **TCH基类版本7**（ZW看图另存为2018格式）：`ReadTchBase` 在版本 5 的字段后读属性表（键在文字流、值在主数据流，`Tch::Detail::SkipXDataMap`），两个句柄个数分别多存了 5、3；之后接旧版明文的各类字段（柱 6、门窗 5 等）。属性表要从头读文字流，所以 `ReadTchBase` 要传 `data`，只适用于对象自身的基类（组合门窗的子门窗不传，版本 7 按不支持）。墙版本 10（`Tch::Detail::DecodeWallFields`）：受保护几何同标记 7 先互换半字节再异或密钥，墙高在左右宽之前，结尾标记后多 13 个 0 位（含义未核对，只接受不超过 16 位且全为 0）。坐标标注版本 6（格式 48、方向 3）仍跳过
 - **新版未核对**（只有合成样例，没有实物图纸对照）：屋顶、曲线楼梯、剖切线、双跑楼梯、阳台；自动扶梯（第三方查看器画两道、MiniCAD 一道）；设备 / 井 / 水泵的图块、多管标注、版本 4 的桥架与风管、桥架配件与风管管件（井标注能显示井的标高，说明井按新版布局读对了）。未支持：带形窗（与转角窗同为 `TCH_CORNER_WINDOW`）；修订标记另存的多段线不画
 - **剖切符号**：旧样式 `Tch::BuildSection`，新国标样式 `Tch::BuildSectionNewStyle`；样式开关在 `Tch::Detail::CipherReader::XData` 里，旧版明文对象一律旧样式
 - **柱、幕墙**：柱 `Tch::Detail::DecodeColumnCipher`（版本 7～10，版本 ≥ 9 的出图比例取对象自己的）；矩形 `Tch::Detail::DecodeRectCipher`（版本 3）；幕墙在 `Tch::Detail::DecodeWallCipher` 的墙字段之后读幕墙版本 3，分格列表是否存在看墙标志 0x100 / 0x10000（旧版明文同样，样例两位都有，没有实物核对）
@@ -42,7 +45,9 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **符号类**（坐标、箭头、剖切、引出标注、标高等）的线一律按实线组装，不用对象自身的线型
 - **TCH文字**：显示宽度因子写在多行文字上（`MTextEntity::SetWidthFactor`），不派生文字样式；不限宽的居中 / 右对齐按实际排版宽度（`IDrawSink::MeasureMTextWidth`）定起点。中西文混排拆段（`Tch::Detail::AddRuns`），各段起点与画出的宽度都取TCH步进，按实际显示的字体（`Detail::DisplayExtent`）反算宽度因子
 - **上标** `^U…^U`：字高为本段一半、抬高 0.5 × 名义字高、每字步进 0.35 × 西文步进；TrueType 样式未核对
-- **墙**（`TchWall::Connections`）：门窗断口两侧封口；同材料相接处不封口，材料不同的一端画分界线；两端连接句柄都为空的自由端画端线（只在读到了连接时，`TchWall::HasConnections`）；断口与墙线端点比较用 1e-6 容差
+- **墙**（`TchWall::Connections`）：门窗断口两侧封口；一端相接的墙里有同材料的就不封口（十字交叉处两段钢筋混凝土墙斜接、砖墙接上，三者之间都不画线），全是别的材料时画分界线；两端连接句柄都为空的自由端画端线（只在读到了连接时，`TchWall::HasConnections`）；断口与墙线端点比较用 1e-6 容差
+- **连接量**（`TchWall::Joins`：左起、左终、右起、右终，正为缩进、负为伸出）：直墙沿墙线方向；弧墙是沿该侧圆弧的弧长（与天正显示核对）
+- **门窗编号**（`TchOpening::Label`）：普通门窗与组合门窗、带形窗一样画编号；文字中心在 `TchOpening::LabelX` / `TchOpening::LabelY`，字高按 `TchOpening::LabelHeight` × 出图比例，沿门窗方向并转成正读（-90°～90°），放在对象引用的编号图层（`TchOpening::LabelLayer`）上、随层（与天正显示核对）。组合门窗的子门窗不画
 - **幕墙**：非玻璃幕墙画法同墙；玻璃幕墙沿墙厚三等分画 4 条线，两端按连接量缩进或伸出，方头一端封口、与相邻幕墙斜接的一端不封口
 - **墙柱填充**（`Importer::MakeTchHatch`）：图纸设置（`Tch::DecodeConfig`）的填充开关打开时才填；按材料码（`TchWall::Material`、`TchColumn::Material`）取图案，出图比例小于详图比例时用详图图案；图案经 `HatchPatternLibrary::FindTianzheng` 取，找不到就不画；填充放 `PUB_HATCH` 图层、随层
 - **尺寸标注**：有拖动过的文字位置（`TchDimension::TextPositions`，文字中心）就用；竖直方向带误差时按自下而上读（`Detail::Upright`）

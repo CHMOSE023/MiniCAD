@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 界面全部由 MiniGUI 绘制：不要系统的标题栏，窗口底色与界面背景相同（启动时不闪白） -->
+    <style name="Theme.MiniCAD" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">false</item>
+    </style>
+</resources>

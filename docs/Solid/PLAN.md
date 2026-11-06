@@ -16,7 +16,7 @@
 - **内核可替换**：上层只依赖 `ISolidKernel`
 
 ### 非目标（至少在第一版之前）
-- **不与 AutoCAD 互通三维实体**：DWG 的 3DSOLID 存的是 ACIS（SAT/SAB）数据，SMLib 读写不了。DWG 里已有的三维实体仍由 MiniDWG 原样保留，不转成可编辑的实体；MiniCAD 建的实体导出 DWG 时只能退化为网格 / 3DFACE
+- **不写出 ACIS**：MiniCAD 建的实体导出 DWG 时只能退化为网格 / 3DFACE。读取方向已做（第 16 节）：DWG / DXF 的 3DSOLID、REGION、BODY 与各类曲面经自己的 ACIS 读取器转成 `Solid3DEntity`；未改动的原图实体另存为同格式同版本时仍原样写回
 - 不做 STEP / IGES 交换（SMLib 没有，需要时考虑 OCCT）
 - 不做参数化（特征树、约束），见第 9 节，作为独立模块另做
 - 网页版也带（`MINICAD_WITH_SOLID` 默认开）：Emscripten 下同样编入 SMLib，`WebApp::GetSolidKernel` 第一次请求时创建；实测 `.wasm` 从 3.65 MB 增到 9.89 MB，需要更小的网页版可配置 `-DMINICAD_WITH_SOLID=OFF`
@@ -66,7 +66,8 @@ SM_API → SMLib
 | `src/Solid/ISolidKernel.h` | 接口，属于核心库，只用 MiniCAD 的类型（`Point3`、`Vec3`、`Mat4`、`AABB`） |
 | `src/Solid/SMLib/SMLibKernel.h/.cpp` | SMLib 实现与工厂 `CreateSMLibKernel()`；目标 `MiniCADSolid`（`cmake/MiniCAD.cmake`），私有链接 `SM_API`。单独成库是因为核心库定义了 `UNICODE`，SMLib 按它切换宽字符文件名 |
 | `src/Solid/NurbsCurve.h` | 空间 NURBS 曲线数据（M7）：求值、采样、仿射变换、直线 / 圆弧段 → 二次有理曲线，不依赖内核 |
-| `tests/Solid/SolidKernelTests.cpp` | 接口测试（123 项，其中 M7 的曲线与曲面 54 项），只经接口调用，换内核实现时应原样通过 |
+| `tests/Solid/SolidKernelTests.cpp` | 接口测试（132 项，其中 M7 的曲线与曲面 54 项、`FromBrep` 9 项），只经接口调用，换内核实现时应原样通过 |
+| `src/Solid/BrepData.h` | 中性 B-rep（面的曲面类型、裁剪环、NURBS 曲面），外部数据经 `FromBrep` 建体（第 16 节） |
 
 - `BodyPtr = shared_ptr<const IBody>`：实体不可变，所有运算返回新实体、输入不变，可在撤销栈、剪贴板间共享
 - 创建：`Box`、`Cylinder`、`Sphere`、`Extrude`（轮廓沿 ±Z）、`Revolve`、`Sweep`（M5，轮廓沿 `SweepPath` 扫掠）
@@ -97,7 +98,7 @@ SM_API → SMLib
 `src/Core/Entity/Solid3DEntity.hpp`（纯头文件，核心库）。命名：MiniCAD 已有 `SolidEntity`（二维填充，DXF 的 SOLID），三维实体用 `Solid3DEntity`（对应 DXF 3DSOLID）。
 
 - **几何 = 共享数据 + 变换矩阵**：内核数据（`Save` 的字节）与局部坐标下的线框在 `Create(id, kernel, body)` 时一次求出、之后不变，克隆之间共享（`shared_ptr`）；变换矩阵 `Mat4`（局部 → 世界，行向量约定）每个实体一份
-- **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（默认构建的网页版）也能显示、移动、原样保存
+- **核心库不依赖内核实现**：实体只用 `ISolidKernel` 接口；需要内核实体时 `GetBody(kernel)` 从字节懒加载、`GetWorldBody(kernel)` 再施加变换。没有内核（配置了 `-DMINICAD_WITH_SOLID=OFF` 的构建）也能显示、移动、原样保存
 - **显示**（第一期）：世界坐标线框 = 实体所有边的折线，经 `IDrawSink::DrawLine` 输出。暂不画曲面轮廓线（球只显示接缝和赤道）
 - **包围盒**：创建时由内核求出局部坐标下的精确包围盒（`GetLocalBounds`，与字节一起保存），变换后取 8 个角点；只用线框会偏小（球的线框只覆盖半个球），影响缩放到全图、空间索引和夹点位置
 - **变换只改矩阵**：`TranslateEntityInPlace` / `Rotate` / `Mirror` / `Scale` 各加一个分支（复制、阵列、缩放工具经它们生效）；移动 / 旋转 / 镜像命令的 `MoveEntityEntry` 与夹点的 `DragEntityEntry` 增加 `Kind::Transform`，保存前后矩阵用于撤销
@@ -124,7 +125,7 @@ SM_API → SMLib
 - **相机**（`Viewport/Camera`）：视线方向用方位角 / 仰角表示（`CameraState::Azimuth` / `Elevation`，度，从目标看向眼睛），俯视为 (−90°, 90°)。**俯视（`IsPlanView()`）时矩阵与换算和二维版本完全相同**，二维图纸的显示、拾取、捕捉不受影响。三维视图仍是正交投影：视图矩阵 = 平移到目标点 + 转到 (屏幕右, 屏幕上, 视线)；`ScreenToWorld` 把屏幕点沿视线投到 z = 0 平面（构造平面），视线与 XY 平面夹角小于约 3°（前视等）时改为过目标点、垂直于视线的平面；`Pan` 沿屏幕方向移动目标点；`ZoomToBounds(AABB)` 按视图方向投影后容纳三维范围。视图方向随文档保存（`.mcad` / JSON 的 `camera.azimuth` / `elevation`，旧文件为俯视）
 - **命令**：标准视图 `ViewTop` / `ViewBottom` / `ViewFront` / `ViewBack` / `ViewLeft` / `ViewRight` / `ViewSWIso` / `ViewSEIso` / `ViewNEIso` / `ViewNWIso`（`PLAN` = 俯视），切换后缩放到全图，经 `ZoomViewCommand` 可撤销；**Shift + 中键拖动环绕**（绕目标点，左右改方位角、上下改仰角）；视觉样式 `Shade`（着色，默认）/ `Wireframe`（线框），别名 SHADE / WIREFRAME。菜单“视图 > 三维视图 / 视觉样式”
 - **视图方块**（`apps/Common/src/GUI/ViewCube`，MiniGUI 控件，绝对定位叠在绘图区右上角，桌面版与网页版共用）：按当前视线方向画出立方体和指南针圆环（东 = +X、南 = −Y、西 = −X、北 = +Y）。立方体按 3×3×3 分块（6 个面中央、12 条棱中间、8 个角），点哪一块就从那个方向看（面 → 正视，棱 → 两面之间 45°，角 → 等轴测），点东南西北从那个方向看（仰角不变）；经 `Editor::SetViewDirection` 切换并缩放到全图、可撤销。悬停时整块高亮（角块亮三个面、棱块亮两个面）；面上的字（上 / 下 / 前 / 后 / 左 / 右）先排版再经 `MiniGUI::DrawList::TransformVertices` 变换到面上，跟着面一起转；在方块上拖动即环绕。显示 / 隐藏：“视图 > 显示视图方块”、方块的右键菜单（常用视图与“隐藏视图方块”）、命令行 `NAVVCUBE` / `VIEWCUBE`（不带选项切换，`ON` / `OFF` 指定，同 AutoCAD），开关保存在用户布局文件 `layout.json` 的 `viewCube` 里；桌面版自测经 `UIContext` 的指针入口点击、拖动验证，并验证三种显示 / 隐藏方式
-- **着色面**（`Editor::UpdateShadedVertices`）：取 `Solid3DEntity` 保存的网格（网页版没有内核也能显示），每个三角形角的法线由 `BuildCornerNormals` 求出（按“同一个面内部的边”连成光滑扇区，曲面光滑、棱边锐利）；**明暗在 CPU 上按视线方向算好写进顶点颜色**（光源跟着相机，亮度最高 0.8，边画在面上看得清），所以沿用 `Vertex_P3_C4` 与现有着色器，没有新增带法线的顶点格式和光照着色器。视线方向、视觉样式或场景变化时重建，平移、缩放不重建；三角形从远到近排序（俯视时着色面不做深度测试，按绘制顺序叠放）
+- **着色面**（`Editor::UpdateShadedVertices`）：取 `Solid3DEntity` 保存的网格（没有内核也能显示），每个三角形角的法线由 `BuildCornerNormals` 求出（按“同一个面内部的边”连成光滑扇区，曲面光滑、棱边锐利）；**明暗在 CPU 上按视线方向算好写进顶点颜色**（光源跟着相机，亮度最高 0.8，边画在面上看得清），所以沿用 `Vertex_P3_C4` 与现有着色器，没有新增带法线的顶点格式和光照着色器。视线方向、视觉样式或场景变化时重建，平移、缩放不重建；三角形从远到近排序（俯视时着色面不做深度测试，按绘制顺序叠放）
 - **深度**：两个渲染器的渲染目标增加深度缓冲（D3D11 `D32_FLOAT`，GL `DEPTH_COMPONENT24`），每帧清除。俯视时深度仍统一取 0.5、只按绘制顺序；三维视图按场景范围（`ViewState::SceneBounds`，按场景版本缓存）把沿视线的距离映射到 [0, 1]（两侧留余量，构造线、叠加层不被裁剪），着色面写深度，线、填充、文字只测试不写。线向眼睛拉近约 1.5 像素（轮廓线 6 像素：旁边的三角形几乎平行于视线）——偏移按像素而不是按图纸范围取，否则图纸很大时紧挨在面后面的边会透出来
 - **轮廓线**：面内部的网格边两侧三角形一个朝向眼睛、一个背向眼睛的，就是这个视角下的轮廓线（圆柱、球的外轮廓）；在 CPU 上从网格求出，不需要内核，与着色面一起随视图重建，两种视觉样式都画。为此 `SMLibKernel::Tessellate` 改为在同一个原始面里按位置合并顶点（SMLib 给相邻面片各建顶点对象，原来按对象合并时曲面法线只在每个面片内平均，面内的边也没被标记），M4 的多面网格导出也因此少了曲面上多余的可见边
 - **网格与坐标轴**：俯视时仍按屏幕坐标生成；三维视图里画在 z = 0 平面上（`Grid::BuildGrid3D`：屏幕四角投到平面上的范围，限制在目标点外 4 倍视图高度以内，间距约 60 像素、每 5 格加深；视线接近水平时不画），坐标轴（`Axis::BuildAxis3D`）画 +X 红、+Y 绿、+Z 蓝三条正半轴；用场景矩阵绘制、画在着色面之后，被实体挡住的部分不显示
@@ -344,3 +345,23 @@ Emscripten 默认 64 KB 的栈会让 SMLib 在建模时溢出，`apps/Web/CMakeL
 | `MeshEntity` | 继承 `Solid3DEntity`，没有内核数据（`GetBytes` 为空），只有局部网格与变换 | 线框为全部网格边；导出多面网格时全部边可见；`ImportCad` 把多面网格（POLYLINE，AcDbPolyFaceMesh）映射为它（四边形面拆成两个三角形）；实体布尔命令跳过它 |
 
 测试在 `NodeSolidTests` 的 `TestN9Meshes`。
+
+## 16. 读取 ACIS（DWG / DXF 的三维实体与曲面）
+
+DWG / DXF 里的 3DSOLID、REGION、BODY 与各类曲面（类名以 `SURFACE` 结尾）存的是 ACIS 数据。导入时：
+
+1. MiniDWG 取出数据（`Dwg::DecodeAcisData`，`src/Serialization/Database/UnknownObjects.h`）：
+   - DWG 实体主数据里的 ACIS：版本 1 为若干 {长度, 字节} 块、字节 c > 32 按 159 − c 解密（SAT 文本）；版本 2（R2010）直接是 SAB
+   - R2013 起数据在数据存储段 `AcDb:AcDsPrototype_1b`，按实体句柄查（`Dwg::ReadAcisDataStore`）；大块分页（blob01）未支持
+   - DXF（R2010 及以前）：组码 1 / 3 的文本，同样解密
+2. `Import::ReadAcis`（`src/Import/AcisReader.h`）读 SAT / SAB，得到中性 B-rep（`Solid::BrepModel`）与边线框：
+   - 版本 ≥ 700 的记录在类型之后多一个历史指针；400 版的边不带参数范围，按顶点投影求参数
+   - 曲面：平面、圆锥 / 圆柱（cos < 0 时面反向）、球、圆环、样条（取第一个 nubs / nurbs 近似；400 版的 rotsur / sumsur 没有近似，按轮廓重建旋转 / 拉伸面）；`ref N` 引用前文第 N 个子类型
+   - 曲线：直线、椭圆（≤ 90° 一段的有理二次）、样条（`NurbsCurve::Sub` 截到边的参数范围）
+   - 体的变换（缩放 + 平移）作用到面与线框
+3. `ISolidKernel::FromBrep` 建体：先在整个模型范围内找出边界曲线穿过圆锥 / 球 / 圆环接缝（局部 XZ 半平面）的点，所有面的曲线都在这些点处打断（相邻面的顶点要一致才能缝合），再逐面裁剪、缝合；建不出的面计入 `skippedFaces`
+4. `CadExchange` 的 `ConvertAcis` 生成 `Solid3DEntity`；没有内核（`SetCadImportSolidKernel` 未设；`MainFrame::InitDocument` 设为平台的内核）或建体失败时，只用边线框（无内核数据的 `Solid3DEntity`），导入后统计并提示
+
+已知限制：椭圆锥（比值 ≠ 1）、周期 B 样条、R2013 起的 DXF（ACDSDATA 段）、AcDs 大块分页；导入的实体修改后导出为多面网格。
+
+测试在 `tests/Solid/AcisImportTests.cpp`（合成的 SAT / SAB、DWG 加密块与 AcDs、经 `ImportCad` 读 DXF）。开发时设环境变量 `MINICAD_ACIS_DIR=<目录>` 运行它，会逐个读取目录里的 `.sat` / `.sab` / `.dwg` / `.dxf` 并输出统计（`MINICAD_ACIS_FACES=1` 时列出建不出的面）。

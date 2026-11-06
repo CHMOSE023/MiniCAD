@@ -135,11 +135,26 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 - 值为空串表示还没翻译，显示原文
 - 翻译文件写错（JSON 格式错误）时退回中文，日志里报出错的行号（阶段 0 只进日志；以后可以像界面描述文件那样显示在状态栏）
 
+**复数形式**（gettext 的 `ngettext` / `Plural-Forms`）：带数量的句子写 `TrN("…", n)` / `TrNF("{0} 个对象", n, n)`（第二个参数是选形式用的数量，之后是占位参数）。
+翻译文件的 `"plural"` 是 gettext 的复数表达式（`"n != 1"`，也可以照抄 `"nplurals=2; plural=(n != 1);"`；中文、日文、韩文是 `"0"`），
+`"plurals"` 里每条一个数组，按表达式算出的下标取：
+
+```jsonc
+"plural": "n != 1",
+"plurals": { "{0} 个对象": [ "{0} object", "{0} objects" ] }
+```
+
+表达式支持 `?:`、`||`、`&&`、比较、`+ - * / %`、括号（`MiniI18n::EvalPlural`）；`plurals` 里没有或都为空时用 `messages` 里的译文，再没有就是原文。
+提取工具按语言的默认规则（`DEFAULT_PLURAL`）填好 `"plural"`，`--check` 检查数组长度与规则的形式数一致。
+
+**待复核（fuzzy，同 gettext 的 msgmerge）**：原文改了一点时，提取工具在旧条目（移进 `obsolete` 的）里找相似度 ≥ 0.75 的，把旧译文放进 `"fuzzy"`（键是新原文），
+程序不读它、照样显示原文；译者核对后把它移到 `messages`。`--check` 列出待复核的条数（只警告）。
+
 ### 3.5 提取与检查工具 `tools/i18n_extract.py`
 
-- **提取**：扫描 `src/`、`apps/` 里 `Tr` / `TrC` / `TrF` / `N_` 的字面量与 `minicad_ui.json` 的文字字段，更新每个翻译文件：
+- **提取**：扫描 `src/`、`apps/` 里 `Tr` / `TrC` / `TrF` / `TrN` / `TrNF` / `N_` 的字面量与 `minicad_ui.json` 的文字字段，更新每个翻译文件：
   节点的显示文字 `NN_("…")` 归上下文"节点"（阶段 3）；节点示例索引 `assets/nodes/examples/examples.json` 的 `name` / `description` 也提取；
-  新条目加进 `messages`（值为空），代码里没有了的移进 `obsolete`；输出各语言的完成度
+  新条目加进 `messages`（值为空；`TrN` / `TrNF` 的进 `plurals`，原来有 `messages` 译文的拿来作各形式的初值），代码里没有了的移进 `obsolete`、与新原文相近的旧译文放进 `fuzzy`（3.4）；输出各语言的完成度与待复核条数
 - **检查**（`--check`，进 CI 的 Windows 任务）：
   - 占位符一致：译文里的 `{n}` 与原文相同
   - 命令行选项字母一致：原文 `[闭合(C)/放弃(U)]` 里括号中的字母，译文里也要有（英文可写成 `[Close(C)/Undo(U)]`）——选项靠按键，字母错了按了没反应
@@ -377,11 +392,15 @@ include 根目录：`src/I18n` 下只有 `MiniI18n/` 一个子目录，`MiniI18n
 
 - 英文：现有字体都覆盖，不用改。可以评估英文下桌面版主字体换 Segoe UI、微软雅黑作后备（拉丁字形更好看），不是必需
 - 中文界面文字（图层名、文件名）在英文界面下照样要显示，所以中文字体不能去掉
-- 繁体 / 日文：微软雅黑与 Noto Sans SC 都有假名和繁体字（字形按简体中文的写法）；网页字体子集收进了翻译文件里出现的字和全部假名（`tools/make_web_font.py`）
-- 韩文：微软雅黑与 Noto Sans SC 都没有。桌面版加 Malgun Gothic（`malgun.ttf`）作后备（`src/UI/Platform/Win32/Win32Fonts.cpp`）；
-  网页版与 Linux 版带 `assets/fonts/NotoSansKR-UI.otf`（`tools/make_web_font.py` 从 Noto Sans CJK KR 取 KS X 1001 的韩文音节与翻译里的韩文），
-  放在主字体旁边由 `LoadWebUIFonts` / `LoadSDLUIFonts` 作后备加载
-- 以后可以按界面语言换主字体（日文用 Yu Gothic UI、繁体用微软正黑），让汉字按当地写法显示
+- 按界面语言优先的字体：`AppPlatform::LoadLanguageUiFonts` 给出当前语言的字体，`ApplyLanguageFonts`（`apps/Common/src/GUI/Language.cpp`）经 `MiniGUI::TextSystem::SetPreferredFonts` 放在默认字体前面，
+  只用于汉字、假名、韩文等（`ResolveGlyph`），拉丁字母仍用主字体。日文界面的汉字按日本写法、繁体界面按台湾写法显示。
+  桌面版：日文 Yu Gothic UI / Meiryo UI / MS UI Gothic，韩文 Malgun Gothic / Gulim，繁体微软正黑 / 细明体；
+  Linux 版与安卓版先找系统的 Noto Sans CJK（`.ttc` 按面序号：JP 0、KR 1、SC 2、TC 3，`MiniGUI::NotoCjkFaceForLanguage`），没有时用自带子集（`MiniGUI::BundledUiFontForLanguage`）；
+  切换语言（`MainFrame::Retranslate`）、新开浮动窗口与文档窗口时都重新设。同一个字体文件经 `MiniGUI::Font::LoadShared` 只读一份
+- 自带的界面字体子集（`tools/make_web_font.py` 生成）：`NotoSansSC-UI.ttf`（GB2312 全部字符）、`NotoSansKR-UI.otf`（KS X 1001 的韩文音节）在 `assets/fonts/`；
+  `NotoSansTC-UI.otf`（Big5 常用字）、`NotoSansJP-UI.otf`（JIS 第一水准）在 `apps/Web/fonts/`，网页版不打进虚拟文件系统、放在页面旁按需下载（`WebApp::FetchLazyFont`：切换到该语言、打开图纸时），
+  下载后 `MainFrame::OnFontsAdded` 加进界面字体并让 CAD 文字的回退链重新找（`FontEngine::RescanFallbacks`）。各子集都含 ASCII 与翻译文件里出现的字
+- 各平台的最后后备：桌面版主字体缺汉字时加宋体 / 微软正黑；Linux 版自带的 KR / TC / JP 子集存在时都作后备
 
 ### 5.7 其他
 

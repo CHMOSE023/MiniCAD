@@ -17,6 +17,7 @@
 #include <SmApiSurfaces.h>
 #include <SmApiTrimmedSurfaces.h>
 #include <SmBSplineSurface.h>
+#include <SmTrimmingTools.h>
 
 #include <array>
 #include <atomic>
@@ -1422,6 +1423,47 @@ namespace MiniCAD::Solid
             return Finish(std::move(brep));
         }
 
+        BodyPtr FromBrep(const BrepModel& model, double tolerance, int* skippedFaces) override
+        {
+            const auto lock = Begin();
+            if (skippedFaces)
+                *skippedFaces = 0;
+            if (model.Faces.empty())
+                return Fail(Tr("B-rep: 没有面"));
+            const double tol = tolerance > 0.0 ? tolerance : 1e-6;
+            const BrepModel split = SplitAtSeams(model, tol);
+            BrepPtr brep(new (*SmApiGetOrCreateContext()) SmBrep());
+            int made = 0, skipped = 0;
+            std::string firstError;
+            for (size_t i = 0; i < split.Faces.size(); ++i)
+            {
+                t_lastError.clear();
+                if (AddBrepFace(*brep, split.Faces[i], tol))
+                    ++made;
+                else
+                {
+                    ++skipped;
+                    if (firstError.empty())
+                        firstError = TrF("第 {0} 个面: {1}", i + 1, t_lastError);
+                }
+            }
+            if (skippedFaces)
+                *skippedFaces = skipped;
+            if (made == 0)
+                return Fail(firstError);
+            SmBoolean solid = FALSE;
+            ULONG stitched = 0;
+            double vertexGap = 0.0, edgeGap = 0.0;
+            SmApiStitchIntoSolid(brep.get(), solid, stitched, vertexGap, edgeGap);
+            if (!solid)
+            {
+                ULONG lamina = 0;
+                SmApiStitchAdvanced(brep.get(), tol, FALSE, FALSE, TRUE, FALSE, stitched, lamina, vertexGap, edgeGap);
+            }
+            t_lastError = firstError;
+            return Finish(std::move(brep));
+        }
+
         BodyPtr CapPlanarHoles(const BodyPtr& body) override
         {
             const auto lock = Begin();
@@ -1731,6 +1773,316 @@ namespace MiniCAD::Solid
                 return nullptr;
             }
             return copy;
+        }
+
+        static void DeleteCurves(SmTArray<SmCurve*>& curves)
+        {
+            for (ULONG k = 0; k < curves.GetSize(); ++k)
+                delete curves[k];
+            curves.RemoveAll();
+        }
+
+        static std::vector<Math::Point3> LoopSamples(const BrepFace& face)
+        {
+            std::vector<Math::Point3> pts(face.PointLoops.begin(), face.PointLoops.end());
+            for (const auto& loop : face.Loops)
+                for (const auto& c : loop)
+                {
+                    const auto s = c.Sample(8);
+                    pts.insert(pts.end(), s.begin(), s.end());
+                }
+            return pts;
+        }
+
+        static void Split(const std::vector<double>& full, SmTArray<double>& knots, SmTArray<ULONG>& mult)
+        {
+            const double range = std::max(std::abs(full.back() - full.front()), 1e-300);
+            for (double k : full)
+            {
+                if (knots.GetSize() > 0 && std::abs(k - knots[knots.GetSize() - 1]) <= range * 1e-12)
+                    mult[mult.GetSize() - 1] += 1;
+                else
+                {
+                    knots.Add(k);
+                    mult.Add(1);
+                }
+            }
+        }
+
+        SurfacePtr MakeBrepSurface(const BrepFace& face, double tol)
+        {
+            const SmContext&   ctx = *SmApiGetOrCreateContext();
+            const BrepSurface& s   = face.Surface;
+            const Math::Vec3   z   = s.Normal.Normalized();
+            const Math::Vec3   x   = s.XAxis.Normalized();
+            const Math::Vec3   y   = Math::Vec3{ z.y * x.z - z.z * x.y, z.z * x.x - z.x * x.z, z.x * x.y - z.y * x.x };
+            switch (s.Type)
+            {
+            case BrepSurfaceType::Sphere:
+            {
+                SmSphere* raw = nullptr;
+                if (SmSphere::CreateCanonical(ctx, SmAxis2Placement(ToSm(s.Origin), ToSm(x), ToSm(y)), s.Radius, raw) != SM_SUCCESS)
+                    return Fail("SmSphere::CreateCanonical");
+                return SurfacePtr(raw);
+            }
+            case BrepSurfaceType::Torus:
+            {
+                SmTorus* raw = nullptr;
+                if (SmTorus::CreateCanonical(ctx, SmAxis2Placement(ToSm(s.Origin), ToSm(x), ToSm(y)), s.Radius, s.MinorRadius, raw) != SM_SUCCESS)
+                    return Fail("SmTorus::CreateCanonical");
+                return SurfacePtr(raw);
+            }
+            case BrepSurfaceType::Cone:
+            {
+                const auto pts = LoopSamples(face);
+                if (pts.empty())
+                    return Fail(Tr("圆锥面没有边界"));
+                double h0 = 1e300, h1 = -1e300;
+                for (const auto& p : pts)
+                {
+                    const Math::Vec3 d = p - s.Origin;
+                    const double     h = d.x * z.x + d.y * z.y + d.z * z.z;
+                    h0 = std::min(h0, h);
+                    h1 = std::max(h1, h);
+                }
+                const double margin = std::max((h1 - h0) * 1e-3, tol * 10.0);
+                h0 -= margin;
+                h1 += margin;
+                const double slope = s.CosHalfAngle != 0.0 ? s.SinHalfAngle / s.CosHalfAngle : 0.0;
+                if (std::abs(slope) < 1e-12)
+                {
+                    const Math::Point3 base = s.Origin + z * h0;
+                    auto* cyl = new (ctx) SmCylinder(ToSm(base), ToSm(x), ToSm(y), s.Radius, 0.0, 360.0, h1 - h0, FALSE, FALSE, FALSE, &ctx);
+                    return SurfacePtr(cyl);
+                }
+                const double apex = -s.Radius / slope;
+                if (slope > 0.0)
+                    h0 = std::max(h0, apex);
+                else
+                    h1 = std::min(h1, apex);
+                double r0 = std::max(0.0, s.Radius + slope * h0), r1 = std::max(0.0, s.Radius + slope * h1);
+                Math::Point3 base = s.Origin + z * h0;
+                Math::Vec3   axis = z, xa = x;
+                if (r0 > r1)
+                {
+                    std::swap(r0, r1);
+                    base = s.Origin + z * h1;
+                    axis = z * -1.0;
+                    xa   = x;
+                }
+                const Math::Vec3 ya{ axis.y * xa.z - axis.z * xa.y, axis.z * xa.x - axis.x * xa.z, axis.x * xa.y - axis.y * xa.x };
+                SmCone* raw = nullptr;
+                if (SmCone::CreateCanonical(ctx, SmAxis2Placement(ToSm(base), ToSm(xa), ToSm(ya)), r0, r1, h1 - h0, raw) != SM_SUCCESS || !raw)
+                    return Fail("SmCone::CreateCanonical");
+                return SurfacePtr(raw);
+            }
+            case BrepSurfaceType::Nurbs:
+            {
+                const NurbsSurface& n = s.Nurbs;
+                if (!n.IsValid())
+                    return Fail(Tr("NURBS 曲面数据无效"));
+                SmTArray<SmPoint3d> points;
+                for (const auto& p : n.ControlPoints)
+                    points.Add(ToSm(p));
+                SmTArray<double> uk, vk, weights;
+                SmTArray<ULONG>  um, vm;
+                Split(n.KnotsU, uk, um);
+                Split(n.KnotsV, vk, vm);
+                for (double w : n.Weights)
+                    weights.Add(w);
+                SmBSplineSurface* raw = nullptr;
+                const SmStatus status = SmBSplineSurface::CreateCanonical(ctx, n.DegreeU, n.DegreeV, points, SM_SF_UNSPECIFIED, um, vm, uk, vk,
+                                                                          SM_KT_UNSPECIFIED, n.Weights.empty() ? nullptr : &weights, nullptr, raw);
+                if (status != SM_SUCCESS || !raw)
+                    return Fail("SmBSplineSurface::CreateCanonical", status);
+                return SurfacePtr(raw);
+            }
+            case BrepSurfaceType::Plane:
+                break;
+            }
+            return Fail(Tr("平面面没有边界"));
+        }
+
+        // 圆锥 / 球 / 圆环的接缝在 XAxis 方向的半平面上（同 MakeBrepSurface 的放置）。边界曲线在中途跨过接缝时
+        // TrimSurfaceWithModelSpaceCurves 失败（如整圆从接缝对面起始），要在接缝处切开；缝合又要求相邻面的同一条边
+        // 端点一致，所以先求出所有跨接缝的点，再把经过这些点的曲线（不论哪个面）都在那里切开
+        static BrepModel SplitAtSeams(const BrepModel& model, double tol)
+        {
+            std::vector<Math::Point3> cuts;
+            for (const auto& f : model.Faces)
+                for (const auto& loop : f.Loops)
+                    for (const auto& c : loop)
+                        SeamCrossings(f.Surface, c, tol, cuts);
+            if (cuts.empty())
+                return model;
+            BrepModel out = model;
+            for (auto& f : out.Faces)
+                for (auto& loop : f.Loops)
+                {
+                    std::vector<NurbsCurve> pieces;
+                    for (const auto& c : loop)
+                        SplitAtPoints(c, cuts, tol, pieces);
+                    loop = std::move(pieces);
+                }
+            return out;
+        }
+
+        static void SplitAtPoints(const NurbsCurve& c, const std::vector<Math::Point3>& points, double tol, std::vector<NurbsCurve>& out)
+        {
+            const double a = c.StartParam(), b = c.EndParam();
+            const double near = std::max(tol * 100.0, c.BoundsSize() * 1e-7);
+            std::vector<double> ts;
+            for (const auto& p : points)
+            {
+                const double t = c.ClosestParam(p);
+                if ((c.PointAt(t) - p).Length() > near)
+                    continue;
+                if ((c.PointAt(a) - p).Length() <= near || (c.PointAt(b) - p).Length() <= near)
+                    continue;
+                ts.push_back(t);
+            }
+            std::sort(ts.begin(), ts.end());
+            const size_t first = out.size();
+            double prev = a;
+            ts.push_back(b);
+            for (double t : ts)
+            {
+                if (t - prev <= (b - a) * 1e-9)
+                    continue;
+                NurbsCurve piece = c.Sub(prev, t);
+                if (!piece.IsValid())
+                {
+                    out.resize(first);
+                    out.push_back(c);
+                    return;
+                }
+                out.push_back(std::move(piece));
+                prev = t;
+            }
+        }
+
+        static void SeamCrossings(const BrepSurface& s, const NurbsCurve& c, double tol, std::vector<Math::Point3>& out)
+        {
+            if (s.Type != BrepSurfaceType::Cone && s.Type != BrepSurfaceType::Sphere && s.Type != BrepSurfaceType::Torus)
+                return;
+            if (!c.IsValid())
+                return;
+            const Math::Vec3 z = s.Normal.Normalized(), x = s.XAxis.Normalized();
+            const Math::Vec3 y{ z.y * x.z - z.z * x.y, z.z * x.x - z.x * x.z, z.x * x.y - z.y * x.x };
+            auto at = [&](double t) {
+                const Math::Vec3 d = c.PointAt(t) - s.Origin;
+                return std::pair{ d.x * x.x + d.y * x.y + d.z * x.z, d.x * y.x + d.y * y.y + d.z * y.z };
+            };
+            const double a = c.StartParam(), b = c.EndParam();
+            const int    N = 256;
+            double tPrev = a;
+            auto [xPrev, yPrev] = at(a);
+            bool havePrev = std::abs(yPrev) > tol;
+            for (int i = 1; i <= N; ++i)
+            {
+                const double t = a + (b - a) * i / N;
+                const auto [xc, yc] = at(t);
+                if (std::abs(yc) <= tol)
+                    continue;
+                if (havePrev && (yPrev < 0) != (yc < 0) && xPrev + xc > 0)
+                {
+                    double lo = tPrev, hi = t;
+                    for (int it = 0; it < 60; ++it)
+                    {
+                        const double m = (lo + hi) / 2;
+                        ((at(m).second < 0) == (yPrev < 0) ? lo : hi) = m;
+                    }
+                    const double tc = (lo + hi) / 2;
+                    if (tc - a > (b - a) * 1e-6 && b - tc > (b - a) * 1e-6)
+                        out.push_back(c.PointAt(tc));
+                }
+                tPrev = t;
+                xPrev = xc;
+                yPrev = yc;
+                havePrev = true;
+            }
+        }
+
+        bool AddBrepFace(SmBrep& brep, const BrepFace& face, double tol)
+        {
+            std::vector<size_t> order(face.Loops.size());
+            std::vector<double> sizes(face.Loops.size(), 0.0);
+            for (size_t i = 0; i < face.Loops.size(); ++i)
+            {
+                order[i] = i;
+                AABB box = AABB::Empty();
+                for (const auto& c : face.Loops[i])
+                    for (const auto& p : c.ControlPoints)
+                        box.Expand(p);
+                sizes[i] = face.Loops[i].empty() ? 0.0 : (box.Max - box.Min).Length();
+            }
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return sizes[a] > sizes[b]; });
+
+            SmTArray<ULONG>        counts;
+            SmTArray<SmCurve*>     curves;
+            SmTArray<SmOrientType> orients;
+            for (size_t i : order)
+            {
+                ULONG n = 0;
+                for (const auto& c : face.Loops[i])
+                {
+                    SmCurvePtr sc = ToSmCurve(c);
+                    if (!sc)
+                    {
+                        DeleteCurves(curves);
+                        Fail(Tr("边界曲线无效"));
+                        return false;
+                    }
+                    curves.Add(sc.release());
+                    orients.Add(SM_OT_SAME);
+                    ++n;
+                }
+                if (n > 0)
+                    counts.Add(n);
+            }
+
+            if (face.Surface.Type == BrepSurfaceType::Plane)
+            {
+                if (curves.GetSize() == 0)
+                {
+                    Fail(Tr("平面面没有边界"));
+                    return false;
+                }
+                SmTArray<SmFace*> faces;
+                const SmStatus status = brep.CreatePlanarFacesWith3DCurves(brep.GetInfiniteRegion(), curves, tol, faces);
+                if (status != SM_SUCCESS || faces.GetSize() == 0)
+                {
+                    if (status != SM_SUCCESS)
+                        DeleteCurves(curves);
+                    Fail("SmBrep::CreatePlanarFacesWith3DCurves", status);
+                    return false;
+                }
+                return true;
+            }
+
+            SurfacePtr surface = MakeBrepSurface(face, tol);
+            if (!surface)
+            {
+                DeleteCurves(curves);
+                return false;
+            }
+            if (curves.GetSize() == 0)
+                return AddSurfaceFaces(brep, std::move(surface), N_("B-rep"));
+
+            SmTArray<SmPoint3d> loopPoints;
+            for (const auto& p : face.PointLoops)
+                loopPoints.Add(ToSm(p));
+            const SmExtent2d  domain = surface->GetNaturalUVDomain();
+            SmTArray<SmFace*> newFaces;
+            const SmStatus status = SmTrimmingTools::TrimSurfaceWithModelSpaceCurves(
+                *SmApiGetOrCreateContext(), brep.GetInfiniteRegion(), tol, counts, curves, orients, loopPoints, surface.release(), domain,
+                face.Reversed ? SM_OT_OPPOSITE : SM_OT_SAME, TRUE, TRUE, TRUE, &newFaces);
+            if (status != SM_SUCCESS)
+            {
+                Fail("SmTrimmingTools::TrimSurfaceWithModelSpaceCurves", status);
+                return false;
+            }
+            return true;
         }
 
         // 圆角 / 倒角：截面类型 0 = 平面，1 = 圆形；半径为滚球半径

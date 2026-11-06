@@ -6,6 +6,7 @@
 #include "Core/Object/Object.hpp"
 #include "Core/Entity/EntityAttr.hpp"
 #include "Core/Math/Point2.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -95,6 +96,12 @@ namespace MiniCAD
         // 禁用后不再做悬停命中测试（省去每次鼠标移动的扫描），并清空当前悬停。
         bool IsHoverEnabled() const { return m_hoverEnabled; }
         void SetHoverEnabled(bool enabled);
+        // 拾取框半边长（像素）：悬停的命中半径等于它，点选的小 1 像素（都至少 1）；默认 6 即 HOVER_THRESH / PICK_THRESH
+        void SetPickBox(float px)
+        {
+            m_hoverThresh = std::max(px, 1.0f);
+            m_pickThresh  = std::max(px - 1.0f, 1.0f);
+        }
         // 换视口（文档拖出成独立窗口 / 拖回）：空间索引与选择集都在世界坐标里，不用重建
         void SetViewport(Viewport& viewport) { m_viewport = &viewport; }
 
@@ -142,7 +149,7 @@ namespace MiniCAD
         AABB ScreenRectToWorldAABB(double x0, double y0, double x1, double y1) const;
 
     public:
-        // 像素阈值：悬停 / 点选的命中半径（屏幕空间）。测试与诊断要用，故公开。
+        // 像素阈值：悬停 / 点选的命中半径（屏幕空间）的默认值，随拾取框改变（SetPickBox）。测试与诊断要用，故公开。
         // 悬停略大于点选，更容易"扫到"；点选略小，避免"看起来没选中却点中了"。
         static constexpr float HOVER_THRESH = 6.0f;
         static constexpr float PICK_THRESH  = 5.0f;
@@ -169,6 +176,8 @@ namespace MiniCAD
         bool m_dirty = false;
 
         bool m_hoverEnabled = false;   // 悬停高亮开关
+        float m_hoverThresh = HOVER_THRESH;
+        float m_pickThresh  = PICK_THRESH;
 
         // 布局过滤（布局页）：非空时 IsPickable 先用它排除不属于当前布局的图纸空间实体，
         // 与渲染侧的 Document::IsVisibleInActiveLayout 保持同一口径

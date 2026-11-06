@@ -4,6 +4,9 @@
 #include "Document/Document.h"
 #include "Viewport/Viewport.h"
 #include "Core/Entity/Solid3DEntity.hpp"
+#include "Core/Entity/InsertEntity.hpp"
+#include "Core/Entity/LineEntity.hpp"
+#include "Document/Command/ChangeAttrCommand.h"
 #include "Solid/SMLib/SMLibKernel.h"
 #include <algorithm>
 #include <chrono>
@@ -332,6 +335,64 @@ namespace
         Check(f.editor.GetShadedVertices().empty(), "shading: solids on a hidden layer are not shaded");
     }
 
+    void TestShadingInBlocks(Solid::ISolidKernel& k)
+    {
+        Fixture f(&k);
+        f.camera().ZoomToBounds(-50, -50, 250, 250);
+        BlockTable& blocks = f.scene().GetBlockTable();
+        auto insertOf = [&](BlockID id, const Point3& at) {
+            auto ins = std::make_unique<InsertEntity>(f.scene().NextObjectID(), id, blocks.Find(id)->GetName(), at);
+            ins->SetBlock(blocks.Find(id));
+            return ins;
+        };
+        const BlockID inner = blocks.Create("SV_INNER", Point3{ 0, 0, 0 });
+        auto box = Solid3DEntity::Create(f.scene().NextObjectID(), k, k.Box({ 0, 0, 0 }, 10, 10, 10));
+        const size_t corners = box->GetLocalMesh().Indices.size();
+        blocks.Find(inner)->AddEntity(std::move(box));
+        const BlockID outer = blocks.Create("SV_OUTER", Point3{ 0, 0, 0 });
+        blocks.Find(outer)->AddEntity(insertOf(inner, { 0, 0, 50 }));
+
+        auto ins = insertOf(outer, { 100, 0, 0 });
+        ins->SetArray(2, 1, 50, 0);
+        const auto insId = f.Add(std::move(ins));
+        f.editor.Render();
+        const auto& vs = f.editor.GetShadedVertices();
+        float minX = 1e30f, maxX = -1e30f, minZ = 1e30f;
+        for (const auto& v : vs)
+        {
+            minX = std::min(minX, v.pos.x);
+            maxX = std::max(maxX, v.pos.x);
+            minZ = std::min(minZ, v.pos.z);
+        }
+        Check(vs.size() == corners * 2 && Near(minX, 100, 1e-4) && Near(maxX, 160, 1e-4) && Near(minZ, 50, 1e-4),
+              "shading: solids inside (nested, arrayed) block references are shaded at the inserted position");
+
+        // 块参照改图层：块内 0 层的实体随之换图层（颜色跟着变）
+        LayerManager& lm = f.scene().GetLayerManager();
+        const LayerID red = lm.AddLayer("SV_RED");
+        lm.GetLayer(red)->SetColor({ 1.0, 0.0, 0.0, 1.0 });
+        AttrChange change;
+        change.Layer = red;
+        Check(f.doc.GetCommandStack().Execute(std::make_unique<ChangeAttrCommand>(std::vector<Object::ObjectID>{ insId }, change), f.scene()),
+              "block reference: layer changed by ChangeAttrCommand");
+        f.editor.Render();
+        bool allRed = !f.editor.GetShadedVertices().empty();
+        for (const auto& v : f.editor.GetShadedVertices())
+            allRed = allRed && v.color.r > 0 && v.color.g == 0 && v.color.b == 0;
+        Check(allRed, "block reference: solids on layer 0 inside follow the reference's new layer");
+        f.doc.GetCommandStack().Undo(f.scene());
+        f.editor.Render();
+        Check(!f.editor.GetShadedVertices().empty() && f.editor.GetShadedVertices()[0].color.g > 0,
+              "block reference: undo restores the old layer's color");
+
+        const BlockID lines = blocks.Create("SV_LINES", Point3{ 0, 0, 0 });
+        blocks.Find(lines)->AddEntity(std::make_unique<LineEntity>(f.scene().NextObjectID(), Point3{ 0, 0, 0 }, Point3{ 1, 1, 0 }));
+        f.Add(insertOf(lines, { 0, 0, 0 }));
+        f.scene().MarkDirty();
+        f.editor.Render();
+        Check(f.editor.GetShadedVertices().size() == corners * 2, "shading: blocks without solids add nothing");
+    }
+
     void TestSilhouettes(Solid::ISolidKernel& k)
     {
         Fixture f(&k);
@@ -458,6 +519,7 @@ int main()
     TestDocumentViewRoundTrip();
     TestCornerNormals(*kernel);
     TestShading(*kernel);
+    TestShadingInBlocks(*kernel);
     TestSilhouettes(*kernel);
     TestViewportDepth(*kernel);
     TestPickingIn3D(*kernel);

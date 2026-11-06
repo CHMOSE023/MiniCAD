@@ -367,8 +367,8 @@ namespace MiniCAD
         cs.position = PositionType::Absolute;
         cs.right    = 6.0f;
         cs.top      = 6.0f;
-        cs.width    = 140.0f;
-        cs.height   = 140.0f;
+        cs.width    = kCubeSize;
+        cs.height   = kCubeSize;
         cube->SetLayoutStyle(cs);
         cube->SetVisible(m_viewCubeVisible);
         // 右键：常用视图与隐藏（隐藏后经“视图 > 显示视图方块”或命令 NAVVCUBE 再显示）
@@ -398,7 +398,7 @@ namespace MiniCAD
             rs.position  = PositionType::Absolute;
             rs.left      = 0.0f;
             rs.right     = 0.0f;
-            rs.bottom    = 0.0f;
+            rs.bottom    = CommandLineBottom();
             rs.direction = FlexDirection::Row;
             rs.justify   = Justify::Center;
             rs.padding   = Edges::Make(8.0f, 0.0f, 8.0f, 0.0f);
@@ -421,7 +421,7 @@ namespace MiniCAD
             // 卡片高度随内容：平时只有一行输入，展开历史时回显区向上长出
             c.console->GetLogView()->EditLayoutStyle().height = 96.0f;
             c.console->SetLogExpanded(false);
-            card->SetVisible(m_commandLineVisible);
+            card->SetVisible(m_commandLineVisible && !m_compact);
             c.cmdCard = card;
         }
 
@@ -620,7 +620,7 @@ namespace MiniCAD
         P.bindings.BindLabel(count, [this, doc]
         {
             const size_t n = doc() ? SelectionInfo(doc()).count : 0;
-            return n == 0 ? Tr("未选择") : TrF("{0} 个对象", n);
+            return n == 0 ? Tr("未选择") : TrNF("{0} 个对象", n, n);
         });
         auto* selLayer = grid->AddProperty<ComboBox>(sel, std::string());
         rowName(selLayer, NC_("特性面板", "图层"), "特性面板");   // i18n: 上下文
@@ -939,9 +939,55 @@ namespace MiniCAD
         Retranslate();
     }
 
+    void MainFrame::SetFlushLayout(bool flush)
+    {
+        if (flush == m_flushLayout)
+            return;
+        m_flushLayout = flush;
+        if (m_useUserLayout && !m_platform->WriteUserSetting(kLayoutSettingKey, flush ? "compact" : "floating"))
+            LOG_WARN_TR("无法保存界面布局的设置");
+        const std::string variant = flush ? "flush" : "";
+        m_layout->SetVariant(variant);
+        for (auto& w : m_docWindows)
+            w->layout->SetVariant(variant);
+        // 代码里建的命令行卡片不在界面描述里：直接改它离状态栏的距离
+        ForEachChrome([this](ViewChrome& c)
+        {
+            if (MiniGUI::Node* row = c.cmdCard ? c.cmdCard->GetParent() : nullptr)
+                row->EditLayoutStyle().bottom = CommandLineBottom();
+        });
+        Retranslate();      // 按变体整体重建界面描述生成的部分，停靠布局照旧
+    }
+
+    void MainFrame::OnFontsAdded()
+    {
+        auto reload = [this](MiniGUI::UIContext& ui)
+        {
+            m_platform->LoadUiFonts(ui.GetTextSystem());
+            ApplyLanguageFonts(*m_platform, ui.GetTextSystem());
+        };
+        reload(*m_ui);
+        for (auto& w : m_docWindows)
+            reload(w->window->GetUI());
+        if (m_floatHost)
+            m_floatHost->ForEachUi(reload);
+        m_fontSystem.GetFontEngine().RescanFallbacks();
+        for (auto& doc : m_docManager.GetAll())
+            doc->GetScene().MarkDirty();        // 已经画成方块的字重新细分
+        m_ui->Update();
+        RequestRenderAll();
+    }
+
     void MainFrame::Retranslate()
     {
         using namespace MiniGUI;
+        auto applyFonts = [this](UIContext& ui) { ApplyLanguageFonts(*m_platform, ui.GetTextSystem()); };
+        applyFonts(*m_ui);
+        for (auto& w : m_docWindows)
+            applyFonts(w->window->GetUI());
+        if (m_floatHost)
+            m_floatHost->ForEachUi(applyFonts);
+
         // 重新应用界面描述文件会回到文件里的默认停靠布局（浮出的面板窗口也会关掉）：先记下各窗口当前的，重建后恢复
         std::vector<std::pair<UiLayout*, JsonValue>> docks;
         auto remember = [&docks](UiLayout& layout)
@@ -1073,7 +1119,7 @@ namespace MiniCAD
         if (c.navBar)
             c.navBar->SetVisible(doc != nullptr && c.navFits);
         if (c.cmdCard)
-            c.cmdCard->SetVisible(m_commandLineVisible && doc);
+            c.cmdCard->SetVisible(m_commandLineVisible && doc && !m_compact);    // 只浏览没有命令行
     }
 
     void MainFrame::SaveUserLayout()

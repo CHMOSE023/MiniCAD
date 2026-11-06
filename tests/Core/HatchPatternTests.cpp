@@ -323,5 +323,222 @@ int RunHatchPatternTests()
               "连续线、无错位的线族不写 dx / dashes（与旧格式一致）");
     }
 
+    // ── 8. 渐变填充 ────────────────────────────────────────────────────────
+    {
+        // 8.1 类型名称解析（大小写不敏感；未知名称按线性兜底）
+        Check(HatchGradient::ParseType("LINEAR")      == GradientType::Linear,       "类型名称解析：LINEAR");
+        Check(HatchGradient::ParseType("SPHERICAL")   == GradientType::Spherical,    "类型名称解析：SPHERICAL");
+        Check(HatchGradient::ParseType("spherical")   == GradientType::Spherical,    "类型名称大小写不敏感");
+        Check(HatchGradient::ParseType("INVCYLINDER") == GradientType::InvCylinder,  "类型名称解析：INVCYLINDER");
+        Check(HatchGradient::ParseType("BOGUS")       == GradientType::Linear,       "未知名称按线性处理（与 AutoCAD 一致）");
+        Check(std::string(HatchGradient::TypeName(GradientType::InvHemispherical)) == "INVHEMISPHERICAL",
+              "类型 → 名称（写 DXF 时用）");
+
+        // 8.2 单色渐变的两端补色：tint > 0 提亮、tint < 0 压暗
+        const Math::Color4 mid{ 0.5, 0.25, 0.75, 1.0 };
+        const Math::Color4 up = HatchGradient::TintedColor(mid,  0.5);
+        const Math::Color4 dn = HatchGradient::TintedColor(mid, -0.5);
+        Check(up.r > mid.r && up.g > mid.g && up.b > mid.b, "单色渐变 ColorTint > 0：向白色提亮");
+        Check(dn.r < mid.r && dn.g < mid.g && dn.b < mid.b, "单色渐变 ColorTint < 0：向黑色压暗");
+        Check(HatchGradient::TintedColor(mid,  1.0) == Math::Color4(1, 1, 1, 1), "tint = 1 到达纯白");
+        Check(HatchGradient::TintedColor(mid, -1.0) == Math::Color4(0, 0, 0, 1), "tint = -1 到达纯黑");
+        const Math::Color4 clamped = HatchGradient::TintedColor(mid, 9.0);
+        Check(clamped.r <= 1.0 && clamped.g <= 1.0 && clamped.b <= 1.0, "tint 超范围时夹到 0~1");
+
+        // 8.3 Sample：双色分段、单色单边、越界钳到端点
+        {
+            HatchGradient g;
+            g.Enabled = true;
+            g.Stops.push_back({ 0.0, Math::Color4(1, 0, 0, 1) });   // 红
+            g.Stops.push_back({ 1.0, Math::Color4(0, 0, 1, 1) });   // 蓝
+            Math::Color4 a, b;
+            double t = 0.0;
+            g.Sample(0.0, a, b, t);
+            Check(a == Math::Color4(1, 0, 0, 1) && t == 0.0, "Sample 起点：v=0 取左端红");
+            g.Sample(1.0, a, b, t);
+            Check(b == Math::Color4(0, 0, 1, 1) && t == 0.0, "Sample 终点：v=1 取右端蓝");
+            g.Sample(0.25, a, b, t);
+            Check(a == Math::Color4(1, 0, 0, 1) && b == Math::Color4(0, 0, 1, 1) && std::abs(t - 0.25) < 1e-12,
+                  "Sample 段内：v=0.25 结束 t=0.25");
+            g.Sample(-5.0, a, b, t);
+            Check(a == Math::Color4(1, 0, 0, 1), "Sample 越界：v < 0 钳到左端点");
+            g.Sample(99.0, a, b, t);
+            Check(b == Math::Color4(0, 0, 1, 1), "Sample 越界：v > 1 钳到右端点");
+        }
+        {
+            // 单色：只有一个停靠点，另一端按 ColorTint 补出来
+            HatchGradient sg; sg.Enabled = true; sg.ColorTint = -1.0;
+            sg.Stops.push_back({ 0.5, Math::Color4(1, 1, 1, 1) });
+            Math::Color4 a, b; double t = 0.0;
+            sg.Sample(0.0, a, b, t);
+            Check(a == Math::Color4(1, 1, 1, 1) && b == Math::Color4(0, 0, 0, 1),
+                  "单色 Sample：v=0 在色门口，右端用 ColorTint 补成黑色");
+            sg.Sample(1.0, a, b, t);
+            Check(a == Math::Color4(1, 1, 1, 1) && b == Math::Color4(0, 0, 0, 1) && t == 1.0,
+                  "单色 Sample：v=1 时 t=1，插值后取到 tinted 端（黑）");
+        }
+
+        // 8.4 SetGradient 把图案自动改成实心并清空线族
+        {
+            HatchEntity h(91, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            Check(!h.IsGradient(), "空壳时不是渐变填充");
+            HatchGradient g;
+            g.Enabled = true;
+            g.Stops.push_back({ 0.0, Math::Color4(0, 0, 1, 1) });
+            g.Stops.push_back({ 1.0, Math::Color4(1, 1, 0, 1) });
+            h.SetGradient(g);
+            Check(h.IsGradient() && h.GetPattern().Solid && h.GetPattern().Families.empty(),
+                  "SetGradient：图案自动改成实心并清空线族");
+            h.ClearGradient();
+            Check(!h.IsGradient(), "ClearGradient 回到空壳");
+            // 空 Stops 的梯度不算人：防止上游给了一个 IsValid() 为假的渐变
+            HatchGradient empty;
+            empty.Enabled = true;
+            HatchEntity h2(92, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            h2.SetGradient(empty);
+            Check(!h2.IsGradient(), "空 Stops 的梯度不算人（IsValid 为假）");
+        }
+
+        // 8.5 渐变渲染：线性只切 2 个三角形且顶点异色；球面要网格细分
+        {
+            class TriSink : public IDrawSink
+            {
+            public:
+                struct Tri { Math::Point3 a, b, c; Math::Color4 ca, cb, cc; bool plain; };
+                std::vector<Tri> tris;
+                void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+                void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4&) override
+                { tris.push_back({ a, b, c, {}, {}, {}, true }); }
+                void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                         const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+                { tris.push_back({ a, b, c, ca, cb, cc, false }); }
+            };
+
+            HatchEntity h(93, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            HatchGradient g;
+            g.Enabled = true;
+            g.Type = GradientType::Linear;
+            g.Angle = 0.0;                          // 从左到右
+            g.Stops.push_back({ 0.0, Math::Color4(0, 0, 1, 1) });   // 蓝
+            g.Stops.push_back({ 1.0, Math::Color4(1, 1, 0, 1) });   // 黄
+            h.SetGradient(g);
+
+            TriSink sink;
+            h.Draw(sink, false, false);
+            Check(sink.tris.size() == 2, "矩形渐变：只切出 2 个三角形（上下两条带）");
+            bool allColored = !sink.tris.empty();
+            bool anyDiff = false;
+            for (const auto& tr : sink.tris)
+            {
+                allColored = allColored && !tr.plain;
+                anyDiff = anyDiff || !(tr.ca == tr.cc);
+            }
+            Check(allColored, "矩形渐变：进来的是 FillTriangleColored");
+            Check(anyDiff, "矩形渐变：顶点确实异色（左蓝右黄）");
+
+            // 非线性：SPHERICAL 按 24×16 网格切分，矩形上就不会只切 2 个三角形
+            TriSink sphere;
+            HatchGradient sg = g;
+            sg.Type = GradientType::Spherical;
+            HatchEntity hs(94, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            hs.SetGradient(sg);
+            hs.Draw(sphere, false, false);
+            Check(sphere.tris.size() > 100, "球面渐变：按网格细分，不是 2 个三角形");
+            bool sphereAnyDiff = false;
+            for (const auto& tr : sphere.tris)
+                sphereAnyDiff = sphereAnyDiff || !(tr.ca == tr.cc);
+            Check(sphereAnyDiff, "球面渐变：周边边顶点确实异色");
+
+            // 选中状态：换成高亮色实心填充（与其它实体一致）
+            TriSink sel;
+            h.Draw(sel, true, false);
+            bool selPlain = !sel.tris.empty();
+            for (const auto& tr : sel.tris)
+                selPlain = selPlain && tr.plain;
+            Check(selPlain, "选中状态的渐变换成高亮色实心填充（不过 FillTriangleColored）");
+        }
+
+        // 8.6 序列化往返：JSON / .mcad 保存后可读回
+        {
+            HatchEntity h(95, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            HatchGradient g;
+            g.Enabled = true;
+            g.Name = "SPHERICAL";
+            g.Type = GradientType::Spherical;
+            g.Angle = 30.0;
+            g.Shift = 0.25;
+            g.ColorTint = -0.5;
+            g.SingleColor = true;
+            g.Stops.push_back({ 0.0, Math::Color4(0.1, 0.2, 0.3, 1.0) });
+            h.SetGradient(g);
+
+            JsonSerializer w;
+            EntityIO::Write(w, h);
+            const std::string text = w.Dump();
+            Check(text.find("\"gradient\"") != std::string::npos, "序列化写入 gradient 键");
+            Check(text.find("SPHERICAL") != std::string::npos, "序列化写入类型名 SPHERICAL");
+
+            JsonSerializer r;
+            auto back = r.Parse(text) ? EntityIO::Read(r) : nullptr;
+            const auto* hb = back && back->IsKindOf<HatchEntity>() ? static_cast<HatchEntity*>(back.get()) : nullptr;
+            bool same = hb && hb->IsGradient();
+            if (same)
+            {
+                const auto& gg = hb->GetGradient();
+                same = same && gg.Type == GradientType::Spherical
+                            && std::abs(gg.Angle - 30.0) < 1e-12
+                            && std::abs(gg.Shift - 0.25) < 1e-12
+                            && std::abs(gg.ColorTint + 0.5) < 1e-12
+                            && gg.SingleColor
+                            && gg.Stops.size() == 1
+                            && gg.Stops[0].Color == Math::Color4(0.1, 0.2, 0.3, 1.0);
+            }
+            Check(same, "渐变 JSON 往返：类型、角度、位移、色调、单色开关、停靠点颜色全保留");
+        }
+
+        // 8.7 渐变和图案填充互不干扰
+        {
+            HatchEntity h(97, Polyline({ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 }, { 0, 0, 0 } }));
+            Check(!h.IsGradient(), "有图案时不是渐变");
+            HatchGradient g;
+            g.Enabled = true;
+            g.Stops.push_back({ 0.0, Math::Color4(0, 0, 1, 1) });
+            h.SetGradient(g);
+            Check(h.IsGradient() && h.GetPattern().Solid, "同时带图案和渐变；实心标记仍为真");
+            h.SetPattern(*lib.Find("ANSI31"));
+            Check(h.GetPattern().Name == "ANSI31", "SetPattern 只改图案不影响渐变");
+        }
+
+        // 8.8 极窄竖长条：扫描线恰好压在边界的极值 v 上时，不能画出「整条边界」。
+        // 句柄 3539（ANSI37，x 宽 250、y 高 27400）：
+        // 线族 a=90° 的 v = -x，v 跨度只有 250 < 间距 625 ⇒ 只有一条扫描线，
+        // 且它正好等于左边界 x=x0 的 v 值，求交退化成沿整条左边界的线段。
+        // CAD 不会把贴着边界的扫描线画成图案线（那条线是 HATCH 自己的边界环）。
+        {
+            const double x0 = 293339, x1 = 293589, y0 = 379766, y1 = 407166;
+            HatchPattern pat;
+            pat.Name  = "ANSI37";
+            pat.Solid = false;
+            pat.Families.push_back({ 90.0,  625.0, x0, y0, 0.0 });
+            pat.Families.push_back({ 180.0, 625.0, x0, y0, 0.0 });
+            HatchEntity h(98, Polyline({ { x0, y0, 0 }, { x1, y0, 0 }, { x1, y1, 0 }, { x0, y1, 0 }, { x0, y0, 0 } }), pat);
+            RecordingSink sink;
+            h.Draw(sink, false, false);
+
+            // 找出「整条贴着某条边界」的线：端点都在同一条边上，且长度等于该边长
+            int boundaryLines = 0;
+            for (const auto& s : sink.segs)
+            {
+                const bool onLeft   = std::abs(s.a.x - x0) < 1e-6 && std::abs(s.b.x - x0) < 1e-6 && Len(s) > 1000;
+                const bool onRight  = std::abs(s.a.x - x1) < 1e-6 && std::abs(s.b.x - x1) < 1e-6 && Len(s) > 1000;
+                const bool onBottom = std::abs(s.a.y - y0) < 1e-6 && std::abs(s.b.y - y0) < 1e-6 && Len(s) > 1000;
+                const bool onTop    = std::abs(s.a.y - y1) < 1e-6 && std::abs(s.b.y - y1) < 1e-6 && Len(s) > 1000;
+                if (onLeft || onRight || onBottom || onTop) ++boundaryLines;
+            }
+            std::printf("    极窄竖条：线段 %zu，贴边整线 %d\n", sink.segs.size(), boundaryLines);
+            Check(boundaryLines == 0, "极窄竖条：不把贴着 HATCH 边界的扫描线画成整条图案线");
+            Check(sink.segs.size() > 20, "极窄竖条：其它正常图案线照常出图");
+        }
+    }
     return g_failures;
 }

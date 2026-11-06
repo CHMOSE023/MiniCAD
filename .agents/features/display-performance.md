@@ -19,6 +19,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 - 随视图变化的实体（按像素等宽的线宽、按像素画的点样式、按屏幕大小的文字）绘制时调用 `IDrawSink::MarkViewDependent()`，线与填充进**动态流**；其余进**静态流**
 - 滚轮缩放只重建动态流（`Editor::RebuildDynamicStream`），静态流不重新拼接、不重新上传
 - 虚线的几何在世界坐标里（线型的"点"笔划走点流，恒定 1 像素）；不超过 200 个周期的虚线不随缩放重建。更长的（`DrawContext::kStaticMaxDashes`）"延迟铺设"（`DeferredDash`：细分时只记下端点、颜色、线型，实体本身仍进静态流；`Editor::EmitDeferredDashes` 按当前缩放铺进动态流，一个周期不足 4px 时画成实线）。带文字 / 形符号的复杂线型不延迟也不按像素取舍（符号是世界坐标的字形实例，`Editor::RebuildDynamicStream` 不动字形实例流），超过 `DrawContext::kMaxDashes` 个周期时画成实线、不画符号
+- 曲线（圆 / 圆弧 / 椭圆 / 多段线）的虚线走 `IDrawSink::DrawPath`，`DrawContext::DrawPath` 按整条路径累计相位（逐段 `DrawLine` 每段从相位 0 起，周期大于小段长度时画成实线）；带宽度的多段线走逐点宽度的重载（`DrawContext::EmitSolidTapered`），隐藏线宽时一并归零。`ClipDrawSink` / `TransformDrawSink` 要转发 `DrawPath`；裁剪后的各段相位各自从 0 起。按像素退化与 `DrawContext::EmitStyled` 一致：只有整条超过 `DrawContext::kStaticMaxDashes` 个周期时才在一个周期不足 4px 时画实线，且按整条判断（逐段判断时每段周期数达不到阈值，缩小后 dash 不到 1 像素、显示成断续）
 - 拼接后的静态流上传 GPU 后即释放（`Viewport::SceneUploaded` → `Editor::ReleaseUploadedSceneStreams`），CPU 端只留逐实体缓存；需要时（渲染器 `ReleaseCachedResources` 后 `RequestSceneRestitch`、修改 / 删除实体）从缓存重新拼接，不重新细分
 - 拼接流释放后的增量更新（`Editor::UpdateSceneIncremental`）：后端能接追加段、原地改写（`IRenderer::SupportsCachedAppend`，D3D11 / D3D12 支持；宿主在 `MainFrame::InitDocument` 里 `Editor::SetSceneAppendOnGpu`）时，脏实体只细分自己，不从逐实体缓存重新拼接整张图
   - 新实体：静态顶点放进追加段（`ViewState::SceneAppendActive`），`Viewport::Render` 经 `IRenderer::AppendCached` 接到 (slot, 基础版本) 缓冲末尾并升级版本——放得下就写到末尾，放不下就新建多留 1/8 容量的缓冲在 GPU 内复制
@@ -28,7 +29,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
   - 效果用 `--bench` 的"新增直线""移动""夹点拖动""删除""撤销"几项看：3000 万顶点的图纸，画一条直线的下一帧从 345 ms 降到 27 ms，移动 / 删除 / 撤销 / 夹点拖起与放下从 400～460 ms 降到与新画一条线相同（同一次运行里都是 60 ms 上下），剩下的是缓存层重画；第一次追加要新建缓冲、GPU 内复制，多 10 ms 左右。Vulkan / GLES3 / WebGPU 后端还没实现追加与改写，仍是全量拼接
 - 顶点颜色为 RGBA8（`Vertex_P3_C4` 16 字节）；D3D11 的大缓冲（≥ 4 MB）用 DEFAULT 用途按实际大小创建，避免 WRITE_DISCARD 重命名造成的内存抖动。NVIDIA 驱动会为上传的顶点缓冲在进程里留一份同样大小的系统内存，GPU 数据量直接计入私有内存（D3D11 与 D3D12 都是：默认堆的缓冲多少 MB，私有内存就涨多少 MB）
 - D3D12（`D3D12Renderer` / `D3D12Backend`，共用 `MiniGUI::D3D12Context`）：缓存提交放在默认堆的缓冲里，规则同 D3D11（小的按 1.5 倍预留，≥ 4 MB 按实际大小）；数据经上传页复制（`D3D12Context::AllocateUpload`：默认 1 MB 一页，GPU 用完（围栏）后整页复用，空闲 60 帧归还）。超过 4 MB 的上传单独建页，`D3D12Context::UploadBuffer` 录完复制就提交并等 GPU，暂存区与换下的旧缓冲当场释放——否则换图纸、切回文档的那一帧会同时留着新旧两份加暂存区，私有内存比 D3D11 多出几十 MB。换下的缓冲、纹理一律 `D3D12Context::Defer`，执行完已录制的命令再释放；常量用根常量，没有常量缓冲
-- 多窗口：停靠面板拖出的独立窗口各有一个 `IWindowSurface`（`IGraphicsDevice::CreateWindowSurface`）——D3D11 再建一个 `SwapChain`，D3D12 的交换链抽成了 `D3D12WindowSurface`（主窗口也用它），每个窗口的一帧是一次完整的 BeginPass → 界面 Render → Present（D3D12 即一次提交与 EndFrame）。Vulkan / GLES3 / WebGPU 不支持，返回 nullptr，面板退回窗口内浮动
+- 多窗口：停靠面板拖出的独立窗口各有一个 `IWindowSurface`（`IGraphicsDevice::CreateWindowSurface`）——D3D11 再建一个 `SwapChain`，D3D12 的交换链抽成了 `D3D12WindowSurface`（主窗口也用它），每个窗口的一帧是一次完整的 BeginPass → 界面 Render → Present（D3D12 即一次提交与 EndFrame）。Vulkan 每个窗口一个 `MiniGUI::VulkanSwapchain`（浮动窗口优先 MAILBOX / IMMEDIATE，不轮流等垂直同步），GLES3 在宿主给了 `NativeWindow::glMakeCurrent` / `glSwapBuffers` 时（Linux 的 EGL，同一个上下文、各自的表面）支持，呈现后切回主窗口的表面；WebGPU 与网页的 GLES3 不支持，返回 nullptr，面板退回窗口内浮动
 - Vulkan（Linux，`VulkanRenderer` / `VulkanBackend`，共用 `MiniGUI::VulkanContext`）：缓存提交放在显存的缓冲里，规则同 D3D12；帧内数据走 1 MB 的上传页（主机可见，直接当顶点 / 索引缓冲用），超过 1 MB 的单独建页，超过 4 MB 的与换下的大缓冲在帧末等 GPU 执行完就释放。复制、布局转换要先结束动态渲染（`VulkanContext::EndRendering`），所以一帧里上传越少、渲染被打断得越少
 - WebGPU（网页）：缓冲写入在提交前统一生效，一帧里同一块缓冲不能写两次——矩阵占帧内 uniform 环形缓冲的一段，不缓存的顶点写帧内流缓冲的不同区段，缓存槽在一帧里只按一个版本上传；换下来的资源提交后再销毁（`WebGPUCommon::RetireList`）。见 `docs/Render/PLAN.md` 阶段 5
 
@@ -65,6 +66,8 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 
 - 同一块定义插入多次时只细分一次（`BlockTessCache`，`src/Document/BlockTessCache.hpp`）：`InsertEntity::Draw` 画每个阵列单元前问 `IDrawSink::BeginBlockInstance`（`TransformDrawSink` 把自己的变换接上再转发），`DrawContext` 命中就把记下的结果经平移、旋转接上，不再逐个画块内子实体，也不再为它克隆块内容（`InsertEntity::EnsureResolved`）
 - 键（`BlockTessKey`）：块定义；块参照的颜色、线型、线宽、图层（块内 ByBlock 与 0 层随它）；插入变换去掉旋转、平移后剩下的部分（缩放、镜像、错切——线型在变换之后按世界长度铺，见 `DrawContext::EmitStyled`，缩放不同的插入不能共用）；外层的顶层实体是否在锁定图层上（整块淡显，`BlockTessKey::faded`）。只缓存 XY 平面里的变换
+- 块内实体与属性 ATTRIB 在图层 0 上时随插入所在图层、ByBlock 的颜色 / 线宽 / 线型随块参照：块成员在 `InsertEntity::EnsureResolved`，属性在 `InsertEntity::Draw`（画前把解析后的属性临时写回实体，画完还原；细分须保持单线程）
+- 块参照所在图层关闭时不整块跳过：`Editor::isShown` 对 `InsertEntity` 走 `InsertEntity::HasVisibleContentOnAnyLayer`（递归查嵌套块与属性），块内具名图层上的实体按自己的开关
 - 记录：记录期间 `DrawContext` 的输出（`DrawContext::PutLine` 等）同时按世界坐标双精度记一份，画完按这次插入的旋转、平移换回去存下；接上时换到新位置再落成 float，与逐个细分只差双精度的舍入。区域覆盖记下出现时各流的位置，接上时在同一位置调用 `Wipe`，裁剪范围不变。电气大样图 / 暖通大样图的截图与不缓存时逐字节相同；线顶点只差几个（线长正好是线型周期的整数倍时末尾那段零长度的虚线有没有，取决于舍入），另有 Z 的 ±0 之差
 - 不记：按像素烘焙的（像素线宽、`MarkViewDependent`）、纹理文字、图像、绝对角度的线型符号、分段细分停在块中间的、一次超过 `DrawContext::kMaxBlockRecord` 个顶点的；只展开一次的块（如整张底图作为一个块插入）不记——第一次要判断时由 `Editor::CountBlockUses` 数一遍，数不到的块（天正对象、标注里引用的）第二次遇到才记；总量超过 `BlockTessCache::kMaxVertices` 后不再记新的
 - 裁剪框（XCLIP，`ClipDrawSink`）里：`BeginBlockInstance` 经过时加上本层裁剪框（`BlockClipChain`）。条目记着块内输入（线端点、三角形顶点、文字锚点等）在块坐标里的范围，`ClipDrawSink::Classify` 判断它整个在框内、整个在框外还是跨边：

@@ -403,6 +403,9 @@ namespace MiniCAD
         // but only for those extrema that actually lie within the arc sweep.
         static void ExpandArcExtrema(const ArcGeom& arc, std::function<void(double, double, double)> expand)
         {
+            // 两端重合的凸度段：ComputeArc 返回半径 0、圆心在原点的空圆弧，不能把原点并进范围
+            if (arc.Radius <= 0.0)
+                return;
             const double cardinals[4] = { 0.0,  Math::PI / 2.0,   Math::PI, 3.0 * Math::PI / 2.0 };
             for (double a : cardinals)
             {

@@ -1,5 +1,5 @@
 ---
-covers: src/Core/Entity/BlockEntity.hpp, src/Core/Entity/InsertEntity.hpp, tests/Core/CadXrefTests.cpp, apps/Web/src/Host/WebApp.*, tests/Web/FolderPickerTests.cjs
+covers: src/Core/Entity/BlockEntity.hpp, src/Core/Entity/InsertEntity.hpp, tests/Core/CadXrefTests.cpp, apps/Web/src/Host/WebApp.*, apps/Common/src/GUI/AppPlatform.h, tests/Web/FolderPickerTests.cjs, tests/Web/RemoteOpenTests.cjs
 ---
 
 # 外部参照（XREF）
@@ -33,13 +33,16 @@ covers: src/Core/Entity/BlockEntity.hpp, src/Core/Entity/InsertEntity.hpp, tests
 
 ## 界面（`apps/Common/src/GUI`）
 
-- 打开一批图纸后 `MainFrame::PromptMissingXrefs` 提示找不到的参照，可"选择文件夹…"
+- 打开一批图纸后 `MainFrame::PromptMissingXrefs` 先交给平台自动找（`MainFrame::AutoLocateXrefs`）：逐个图纸调 `AppPlatform::FindXrefsForDrawing(图纸路径, 需要的文件名, 回调)`，平台受理时回调给出放参照文件的目录，作为搜索目录 `ReloadUnresolvedXrefs`；全部回调完，读入了的在命令行报个数（`MainFrame::OnXrefsLoaded`），仍找不到的再提示（`MainFrame::ShowMissingXrefs`），可"选择文件夹…"。默认实现不受理（桌面版、Linux、安卓直接提示）
 - `MainFrame::LocateXrefs` → `AppPlatform::PickFolder(需要的文件名, 回调)` → `ReloadUnresolvedXrefs`；仍有找不到的再提示。命令 `xref.locate`（"文件 > 查找外部参照"），命令行 `XREF` / `XR`
 - 桌面版 `PickFolder`：系统的文件夹对话框（`IFileOpenDialog`）
 - 网页版 `PickFolder`：上传的图纸在 `/upload/<请求号>/<序号>/`，旁边没有参照文件。有 `showDirectoryPicker`（Chromium 系）时经目录授权逐级遍历，没有时用 `<input webkitdirectory>`；都只读取需要的文件名，按原子目录写进 `/xref/<请求号>/`，再作为搜索目录。参照文件里的嵌套参照要再执行一次查找
+- 网页版 `FindXrefsForDrawing`：只受理从网址打开（`?open=`，见 [main-window](main-window.md) 的网页版宿主）的图纸，并且嵌入它的网页提供了 `window.MiniCADHost.findXrefs({ drawingUrl, names })`（返回 Promise，值为找到的 `[{ name, url }]`）。图纸网址取自 `WebApp` 记下的 `/remote/...` 路径 → 来源网址；找到的逐个取回（有 `MiniCADHost.fetch` 时经它，否则同源带 Cookie）写进 `/xref/<请求号>/`。怎么找由网页决定（例如问自己的服务器），MiniCAD 不关心；没有这个钩子时照旧提示用户选文件夹
 
 ## 测试与排查
 
 - `MiniCADTests` 的 `CadXrefTests.cpp`：不依赖本机图纸的部分在临时目录里现做宿主与参照；本机有 `tests/Data/Xref.dwg`（相对路径参照 `Xref-A.dwg` / `Xref-B.dwg`）时再核对依赖图层复用、天正符号等
 - `tests/Web/FolderPickerTests.cjs`：网页版选文件夹的 JS
+- `tests/Web/RemoteOpenTests.cjs`：网页版 `?open=` 取图纸与 `MiniCADHost.findXrefs` 的 JS（先按 C 编译器的规则处理转义再运行，见下）
+- 网页版 JS 写在 `EM_JS` 里，会被做成 C 字符串再编译：字符串引号以外的反斜杠转义按 C 处理（`\\` 变成 `\`，`\.` 变成 `.`，编译只给警告），正则要避开反斜杠（用 `[.]`、`[*]`），正则里的引号写成 `\x22` / `\x27`
 - 日志：找不到时 `LOG_WARN`「外部参照 X：找不到文件 …（已在 … 下查找）」，读入时 `LOG_INFO`「从 … 读入 N 个实体」

@@ -20,7 +20,7 @@ namespace MiniCAD::Tch
     {
         using namespace MiniDWG;
         const auto& raw = entity.Raw.Dwg;
-        if (entity.Raw.DxfName != "TCH_BLOCK_INSERT" || raw.Version < CadVersion::AC1015 ||
+        if ((entity.Raw.DxfName != "TCH_BLOCK_INSERT" && entity.Raw.DxfName != "SWR_BLOCK_INSERT") || raw.Version < CadVersion::AC1015 ||
             raw.Version > CadVersion::AC1032 || raw.MainBits > raw.Main.size() * 8ULL ||
             raw.HandleBits > raw.Handles.size() * 8ULL || raw.HandleBits < 8)
             return false;

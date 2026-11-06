@@ -60,6 +60,37 @@ namespace MiniCAD
             m_target.FillTriangle(m_xform * a, m_xform * b, m_xform * c, color);
         }
 
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            m_target.FillTriangleColored(m_xform * a, m_xform * b, m_xform * c, ca, cb, cc);
+        }
+
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            std::vector<Math::Point3> out;
+            out.reserve(points.size());
+            for (const auto& q : points) out.push_back(m_xform * q);
+            m_target.DrawPath(out, color, closed);
+        }
+
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            std::vector<Math::Point3> out;
+            out.reserve(points.size());
+            for (const auto& q : points) out.push_back(m_xform * q);
+            if (widths.size() != points.size())
+            {
+                m_target.DrawPath(out, color, closed);
+                return;
+            }
+            std::vector<double> outW;
+            outW.reserve(widths.size());
+            for (double w : widths) outW.push_back(w * m_scale);
+            m_target.DrawPath(out, outW, color, closed);
+        }
+
         // 块内的区域覆盖：边界同样经插入变换
         void Wipe(const std::vector<Math::Point3>& polygon) override
         {

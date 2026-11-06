@@ -28,7 +28,7 @@ function Invoke-DocCheck {
 # 按顺序匹配，一个文件可命中多条。'MiniCADWin' 只编译不运行；'js' 表示运行 tests/Web/*.cjs
 $tch = 'MiniCADTchImportTests','MiniCADTchOpeningTests','MiniCADTchDimensionTests','MiniCADTchSymbolTests','MiniCADTchCipherTests','MiniCADTchSheetTests',
        'MiniCADTchStairTests','MiniCADTchPathArrayTests','MiniCADTchGeometryTests','MiniCADTianzhengTests'
-$solid = 'SolidKernelTests','Solid3DEntityTests','SolidToolTests','SolidDrawingTests','SolidViewTests'
+$solid = 'SolidKernelTests','AcisImportTests','Solid3DEntityTests','SolidToolTests','SolidDrawingTests','SolidViewTests'
 $rules = @(
     @('^tests/Solid/(\w+)\.cpp$',                         '$1'),
     @('^tests/NodeGraph/NodeSolid',                       'NodeSolidTests'),
@@ -39,10 +39,11 @@ $rules = @(
     @('^tests/Core/TianzhengWallTests',                   'MiniCADTianzhengTests'),
     @('^tests/Core/(TchBlockInsert|TchProxyGraphics)Tests', 'MiniCADTchImportTests'),
     @('^tests/Core/TchCipherWriter',                    'MiniCADTchCipherTests','MiniCADTchSheetTests'),
-    @('^tests/Core/(Tch\w+|CadPreserve|DrawingOpen|Face3D)Tests\.cpp$', 'MiniCAD$1Tests'),
+    @('^tests/Core/(?!TchBlockInsertTests|TchProxyGraphicsTests)(Tch\w+|CadPreserve|DrawingOpen|Face3D)Tests\.cpp$', 'MiniCAD$1Tests'),
     @('^tests/Core/(?!Tch|Tianzheng|CadPreserve|DrawingOpen|Face3D)', 'MiniCADTests'),
     @('^src/Serialization/(Codec|Database|Dwg|Dxf)/',     'MiniDWGTests','MiniCADTests'),
     @('^src/Import/Tch',                                  ($tch + 'MiniCADTests')),
+    @('^src/Import/Acis',                                 'AcisImportTests'),
     @('^src/Import/',                                     'MiniCADTests','MiniCADCadPreserveTests','MiniCADDrawingOpenTests'),
     @('^src/Document/(Document|DocumentManager)\.',       'MiniCADDrawingOpenTests'),
     @('^src/Core/Entity/Face3D',                          'MiniCADFace3DTests'),

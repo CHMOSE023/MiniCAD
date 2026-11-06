@@ -24,6 +24,8 @@ namespace MiniGUI
         // faceIndex 用于 .ttc 字体集合（例如 msyh.ttc：0 = 微软雅黑，1 = 微软雅黑 UI）
         static std::shared_ptr<Font> LoadFromFile  (const std::string& utf8Path, int faceIndex = 0);
         static std::shared_ptr<Font> LoadFromMemory(std::vector<uint8_t> data, int faceIndex = 0);
+        // 同一个文件、同一个字体序号只读一次，各窗口的 TextSystem 共用（中日韩字体一个十几到二十几 MB）
+        static std::shared_ptr<Font> LoadShared(const std::string& utf8Path, int faceIndex = 0);
 
         ~Font();
 

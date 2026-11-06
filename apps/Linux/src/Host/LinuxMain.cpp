@@ -1,6 +1,6 @@
-// MiniCADLinux：MiniCAD Linux 版入口（界面由 MiniGUI 绘制，SDL3 窗口 + Vulkan，不行时 OpenGL ES 3）
+// MiniCADLinux：MiniCAD Linux 版入口（界面由 MiniGUI 绘制，X11 / Wayland 窗口 + Vulkan，不行时 OpenGL ES 3）
 // 用法：MiniCADLinux [--gpu vulkan|gl] [--ui 界面描述文件.json] [--lang en|zh-CN|qps] [--] [图纸路径 ...]
-// 图形后端也可以用环境变量 MINICAD_GPU 指定、界面语言用 MINICAD_LANG 指定（命令行优先）
+// 图形后端也可以用环境变量 MINICAD_GPU 指定、界面语言用 MINICAD_LANG 指定（命令行优先）；MINICAD_WINDOWING=x11|wayland 指定窗口系统
 #include "Host/LinuxApp.h"
 #include "GUI/Language.h"
 #include <cstdlib>
@@ -16,6 +16,7 @@ int main(int argc, char** argv)
 
     const char* envGpu  = std::getenv("MINICAD_GPU");
     const char* envLang = std::getenv("MINICAD_LANG");
+    const char* envWin  = std::getenv("MINICAD_WINDOWING");
     std::string gpu     = envGpu ? envGpu : "";
     std::string lang    = envLang ? envLang : "";
     std::vector<std::string> drawingPaths;
@@ -38,7 +39,7 @@ int main(int argc, char** argv)
     }
 
     InitLanguage(app, lang);    // 在创建图形设备之前：它的出错信息也要翻译
-    if (!app.Initialize("MiniCAD", 1280, 800, gpu))
+    if (!app.Initialize("MiniCAD", 1280, 800, gpu, envWin ? envWin : ""))
         return 2;
     if (!drawingPaths.empty())
         frame.OpenDrawings(drawingPaths);

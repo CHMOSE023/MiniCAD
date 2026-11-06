@@ -2,6 +2,7 @@
 #include "IDrawSink.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace MiniCAD
@@ -13,6 +14,7 @@ namespace MiniCAD
     class ClipDrawSink : public IDrawSink
     {
     public:
+        struct ColoredVertex { Math::Point3 p; Math::Color4 c; };
         ClipDrawSink(IDrawSink& target, const std::vector<Math::Point3>& polygon)
             : m_target(target)
             , m_poly(polygon)
@@ -116,60 +118,20 @@ namespace MiniCAD
 
         void DrawLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4& color, bool isOverlay) override
         {
-            if (std::max(a.x, b.x) < m_minX || std::min(a.x, b.x) > m_maxX || std::max(a.y, b.y) < m_minY || std::min(a.y, b.y) > m_maxY)
+            const auto ranges = ClipSegmentToRanges(a, b);
+            if (ranges.empty())
             {
                 NoteAltered();
                 return;
             }
-            // 与各边的交点参数，排序后逐段按中点取舍
-            double ts[64];
-            std::vector<double> more;
-            int n = 0;
-            const double rx = b.x - a.x, ry = b.y - a.y;
-            const size_t m = m_poly.size();
-            for (size_t i = 0; i < m; ++i)
+            if (ranges.size() == 1 && ranges[0].first <= 0.0 && ranges[0].second >= 1.0)
             {
-                const auto& p = m_poly[i];
-                const auto& q = m_poly[(i + 1) % m];
-                const double sx = q.x - p.x, sy = q.y - p.y;
-                const double den = rx * sy - ry * sx;
-                if (std::abs(den) < 1e-18) continue;
-                const double qpx = p.x - a.x, qpy = p.y - a.y;
-                const double t = (qpx * sy - qpy * sx) / den;
-                const double u = (qpx * ry - qpy * rx) / den;
-                if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0)
-                {
-                    if (n < 64) ts[n++] = t;
-                    else more.push_back(t);
-                }
-            }
-            if (n == 0)
-            {
-                if (Contains((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)) m_target.DrawLine(a, b, color, isOverlay);
-                else NoteAltered();
+                m_target.DrawLine(a, b, color, isOverlay);   // 整条都在框内，原样转发
                 return;
             }
             NoteAltered();
-            std::vector<double> all(ts, ts + n);
-            all.insert(all.end(), more.begin(), more.end());
-            all.push_back(0.0);
-            all.push_back(1.0);
-            std::sort(all.begin(), all.end());
-            auto at = [&](double t) { return Math::Point3{ a.x + rx * t, a.y + ry * t, a.z + (b.z - a.z) * t }; };
-            // 相邻的保留段合并为一条
-            double start = -1;
-            for (size_t k = 0; k + 1 < all.size(); ++k)
-            {
-                const double t0 = all[k], t1 = all[k + 1];
-                const bool in = t1 - t0 > 1e-12 && Contains(a.x + rx * (t0 + t1) * 0.5, a.y + ry * (t0 + t1) * 0.5);
-                if (in && start < 0) start = t0;
-                if (!in && start >= 0 && t1 - t0 > 1e-12)
-                {
-                    m_target.DrawLine(at(start), at(t0), color, isOverlay);
-                    start = -1;
-                }
-            }
-            if (start >= 0) m_target.DrawLine(at(start), b, color, isOverlay);
+            for (const auto& [t0, t1] : ranges)
+                m_target.DrawLine(Lerp(a, b, t0), Lerp(a, b, t1), color, isOverlay);
         }
 
         void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) override
@@ -192,24 +154,143 @@ namespace MiniCAD
             FillSubdivided(a, b, c, color, 5);
         }
 
-        // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
-        void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
-                            const Math::Color4& color, double width) override
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
         {
-            if (std::max(a.x, b.x) < m_minX || std::min(a.x, b.x) > m_maxX ||
-                std::max(a.y, b.y) < m_minY || std::min(a.y, b.y) > m_maxY)
+            if (std::max({a.x, b.x, c.x}) < m_minX || std::min({a.x, b.x, c.x}) > m_maxX ||
+                std::max({a.y, b.y, c.y}) < m_minY || std::min({a.y, b.y, c.y}) > m_maxY)
             {
                 NoteAltered();
                 return;
             }
-            if (Contains((a.x + b.x) * 0.5, (a.y + b.y) * 0.5))
+            if (m_convex)
             {
-                m_target.DrawStyledLine(a, b, color, width);
+                const auto out = ClipConvexColored({ { a, ca }, { b, cb }, { c, cc } }, m_poly);
+                for (size_t i = 1; i + 1 < out.size(); ++i)
+                    m_target.FillTriangleColored(out[0].p, out[i].p, out[i + 1].p,
+                                                 out[0].c, out[i].c, out[i + 1].c);
                 return;
             }
-            // 不完全在内：退化为普通线段裁剪（宽度对裁剪边界的取舍影响可忽略）
+            // 凹多边形：按重心取舍，取平均色
+            const Math::Color4 avg{ (ca.r + cb.r + cc.r) / 3.0, (ca.g + cb.g + cc.g) / 3.0,
+                                    (ca.b + cb.b + cc.b) / 3.0, (ca.a + cb.a + cc.a) / 3.0 };
+            FillSubdivided(a, b, c, avg, 5);
+        }
+
+        // 按段中点切成框内的连续子路径再转发，子路径的相位各自从 0 起
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const size_t n = points.size();
+            // 全部顶点都在框内（凸多边形时等价于整条路径都在内）：原样转发，保留 closed 标志
+            bool allIn = true;
+            for (const auto& q : points)
+                if (!Contains(q.x, q.y)) { allIn = false; break; }
+            if (allIn && m_convex) { m_target.DrawPath(points, color, closed); return; }
+            // 逐段用精确交点截断（原来按线段中点取舍会把跨边界线的框外半段整段画出来）
+            std::vector<Math::Point3> run;
+            bool altered = false;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2) m_target.DrawPath(run, color, false);
+                run.clear();
+            };
+            const size_t segs = closed ? n : n - 1;
+            for (size_t i = 0; i < segs; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[(i + 1) % n];
+                const auto ranges = ClipSegmentToRanges(a, b);
+                if (ranges.empty()) { flush(); altered = true; continue; }
+                if (ranges.size() == 1 && ranges[0].first <= 0.0 && ranges[0].second >= 1.0)
+                {
+                    if (run.empty()) run.push_back(a);
+                    run.push_back(b);
+                    continue;
+                }
+                altered = true;
+                for (const auto& [t0, t1] : ranges)
+                {
+                    flush();
+                    run.push_back(Lerp(a, b, t0));
+                    run.push_back(Lerp(a, b, t1));
+                }
+                flush();
+            }
+            flush();
+            if (altered) NoteAltered();
+        }
+
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            if (points.size() < 2) return;
+            const bool hasW = (widths.size() == points.size());
+            const size_t n = points.size();
+            bool allIn = true;
+            for (const auto& q : points)
+                if (!Contains(q.x, q.y)) { allIn = false; break; }
+            if (allIn && m_convex) { m_target.DrawPath(points, widths, color, closed); return; }
+            std::vector<Math::Point3> run;
+            std::vector<double>       runW;
+            bool altered = false;
+            auto flush = [&]()
+            {
+                if (run.size() >= 2) m_target.DrawPath(run, runW, color, false);
+                run.clear(); runW.clear();
+            };
+            const size_t segs = closed ? n : n - 1;
+            for (size_t i = 0; i < segs; ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[(i + 1) % n];
+                const auto ranges = ClipSegmentToRanges(a, b);
+                if (ranges.empty()) { flush(); altered = true; continue; }
+                if (ranges.size() == 1 && ranges[0].first <= 0.0 && ranges[0].second >= 1.0)
+                {
+                    if (run.empty())
+                    {
+                        run.push_back(a);
+                        if (hasW) runW.push_back(widths[i]);
+                    }
+                    run.push_back(b);
+                    if (hasW) runW.push_back(widths[(i + 1) % n]);
+                    continue;
+                }
+                altered = true;
+                for (const auto& [t0, t1] : ranges)
+                {
+                    flush();
+                    run.push_back(Lerp(a, b, t0));
+                    run.push_back(Lerp(a, b, t1));
+                    if (hasW)
+                    {
+                        const double wa = widths[i], wb = widths[(i + 1) % n];
+                        runW.push_back(wa + (wb - wa) * t0);
+                        runW.push_back(wa + (wb - wa) * t1);
+                    }
+                }
+                flush();
+            }
+            flush();
+            if (altered) NoteAltered();
+        }
+
+        // 有宽度的线段按线型铺设：与 DrawLine 同样按裁剪多边形截断，每段保留原宽度
+        void DrawStyledLine(const Math::Point3& a, const Math::Point3& b,
+                            const Math::Color4& color, double width) override
+        {
+            const auto ranges = ClipSegmentToRanges(a, b);
+            if (ranges.empty()) { NoteAltered(); return; }
+            if (ranges.size() == 1 && ranges[0].first <= 0.0 && ranges[0].second >= 1.0)
+            {
+                m_target.DrawStyledLine(a, b, color, width);   // 整条都在框内
+                return;
+            }
+            // 跨边界：按精确交点截断成若干段，每段仍是原来的有宽度线型
             NoteAltered();
-            DrawLine(a, b, color, false);
+            for (const auto& [t0, t1] : ranges)
+                m_target.DrawStyledLine(Lerp(a, b, t0), Lerp(a, b, t1), color, width);
         }
 
         bool IsCurrentLinetypeDashed() const override { return m_target.IsCurrentLinetypeDashed(); }
@@ -265,6 +346,56 @@ namespace MiniCAD
             else NoteAltered();
         }
 
+        // 线段 a→b 落在裁剪多边形内的参数区间 [t0,t1]（0..1），按 t 升序。
+        // 用与各边的精确交点分段，避免「按中点取舍」把跨边界线的框外半段整段画出来。
+        // 返回空 = 整条都在框外。
+        std::vector<std::pair<double, double>> ClipSegmentToRanges(const Math::Point3& a, const Math::Point3& b) const
+        {
+            std::vector<std::pair<double, double>> ranges;
+            if (std::max(a.x, b.x) < m_minX || std::min(a.x, b.x) > m_maxX ||
+                std::max(a.y, b.y) < m_minY || std::min(a.y, b.y) > m_maxY)
+                return ranges;
+            const double rx = b.x - a.x, ry = b.y - a.y;
+            std::vector<double> ts;
+            const size_t m = m_poly.size();
+            for (size_t i = 0; i < m; ++i)
+            {
+                const auto& p = m_poly[i];
+                const auto& q = m_poly[(i + 1) % m];
+                const double sx = q.x - p.x, sy = q.y - p.y;
+                const double den = rx * sy - ry * sx;
+                if (std::abs(den) < 1e-18) continue;
+                const double qpx = p.x - a.x, qpy = p.y - a.y;
+                const double t = (qpx * sy - qpy * sx) / den;
+                const double u = (qpx * ry - qpy * rx) / den;
+                if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0)
+                    ts.push_back(t);
+            }
+            ts.push_back(0.0);
+            ts.push_back(1.0);
+            std::sort(ts.begin(), ts.end());
+            double start = -1.0;
+            for (size_t k = 0; k + 1 < ts.size(); ++k)
+            {
+                const double t0 = ts[k], t1 = ts[k + 1];
+                const bool in = t1 - t0 > 1e-12 &&
+                    Contains(a.x + rx * (t0 + t1) * 0.5, a.y + ry * (t0 + t1) * 0.5);
+                if (in && start < 0.0) start = t0;
+                if (!in && start >= 0.0)
+                {
+                    ranges.push_back({ start, t0 });
+                    start = -1.0;
+                }
+            }
+            if (start >= 0.0) ranges.push_back({ start, 1.0 });
+            return ranges;
+        }
+
+        static Math::Point3 Lerp(const Math::Point3& a, const Math::Point3& b, double t)
+        {
+            return { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t };
+        }
+
         // 偶奇规则的点在多边形内判定
         bool Contains(double x, double y) const
         {
@@ -304,6 +435,42 @@ namespace MiniCAD
                 else if (s != sign) return false;
             }
             return true;
+        }
+
+        // 同 ClipConvex，颜色随顶点插值
+        static std::vector<ColoredVertex> ClipConvexColored(std::vector<ColoredVertex> subject, const std::vector<Math::Point3>& clipper)
+        {
+            const size_t m = clipper.size();
+            std::vector<ColoredVertex> input;
+            for (size_t i = 0; i < m && !subject.empty(); ++i)
+            {
+                const auto& p = clipper[i];
+                const auto& q = clipper[(i + 1) % m];
+                auto side = [&](const Math::Point3& v) { return (q.x - p.x) * (v.y - p.y) - (q.y - p.y) * (v.x - p.x); };
+                input.swap(subject);
+                subject.clear();
+                for (size_t k = 0, n = input.size(); k < n; ++k)
+                {
+                    const ColoredVertex& cur = input[k];
+                    const ColoredVertex& prev = input[(k + n - 1) % n];
+                    const double sc = side(cur.p), sp = side(prev.p);
+                    if ((sc >= 0) != (sp >= 0))
+                    {
+                        const double t = sp / (sp - sc);
+                        ColoredVertex nv;
+                        nv.p = { prev.p.x + (cur.p.x - prev.p.x) * t,
+                                 prev.p.y + (cur.p.y - prev.p.y) * t,
+                                 prev.p.z + (cur.p.z - prev.p.z) * t };
+                        nv.c = { prev.c.r + (cur.c.r - prev.c.r) * t,
+                                 prev.c.g + (cur.c.g - prev.c.g) * t,
+                                 prev.c.b + (cur.c.b - prev.c.b) * t,
+                                 prev.c.a + (cur.c.a - prev.c.a) * t };
+                        subject.push_back(nv);
+                    }
+                    if (sc >= 0) subject.push_back(cur);
+                }
+            }
+            return subject;
         }
 
         // Sutherland–Hodgman：subject 按逆时针凸多边形 clipper 裁剪（z 线性插值）

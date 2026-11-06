@@ -197,6 +197,7 @@ namespace MiniCAD
         {
             FlushWipes();
             m_curAttr = attr;
+            m_colorIsAci7 = attr && IsAci7Color(attr->Color);
             m_lockedTop = m_locked = OnLockedLayer(attr);   // 块参照在锁定图层上时整块淡显
             if (attr)
             {
@@ -215,6 +216,7 @@ namespace MiniCAD
         void SetEntityContext(const EntityAttr* attr) override
         {
             m_curAttr = attr;
+            m_colorIsAci7 = attr && IsAci7Color(attr->Color);
             m_locked  = m_lockedTop || OnLockedLayer(attr);     // 块里锁定图层上的子实体同样淡显
         }
 
@@ -582,6 +584,132 @@ namespace MiniCAD
             return rec != nullptr && !rec->IsContinuous();
         }
 
+        // 曲线离散段的连续虚线（见 IDrawSink::DrawPath）：相位跨段累计，
+        // dash / gap 在整条曲线上连续铺开，不会在小段边界重置。
+        void DrawPath(const std::vector<Math::Point3>& points, const Math::Color4& color, bool closed) override
+        {
+            DrawPathImpl(points, nullptr, color, closed);
+        }
+
+        // 有宽度的曲线（粗多段线）：逐点宽度，段内按两端线性插值（锥形段）。
+        void DrawPath(const std::vector<Math::Point3>& points, const std::vector<double>& widths,
+                      const Math::Color4& color, bool closed) override
+        {
+            DrawPathImpl(points, (widths.size() == points.size()) ? &widths : nullptr, color, closed);
+        }
+
+    private:
+        // widths 为 nullptr：宽度取图层线宽（细线/等宽实体）；非空：逐点宽度（模型单位）
+        void DrawPathImpl(const std::vector<Math::Point3>& points, const std::vector<double>* widths,
+                          const Math::Color4& color, bool closed)
+        {
+            if (points.size() < 2) return;
+            for (const auto& q : points) NoteInput(q);
+
+            if (!m_curAttr)   // 无实体上下文：1px 实线，同 DrawLine
+            {
+                const VertexColor c = ToColor(color);
+                for (size_t i = 0; i + 1 < points.size(); ++i)
+                { PutLine(points[i], c); PutLine(points[i + 1], c); }
+                return;
+            }
+
+            const LineTypeRecord* rec = CurrentLineType();
+            const Layer* layer = m_layerManager.GetLayer(m_curAttr->LayerId);
+            // 逐点宽度（粗多段线）优先；否则用图层/实体线宽
+            const double width = widths ? 0.0 : ResolveWidthWorld(layer);
+            // 隐藏线宽时逐点宽度一并归零
+            const std::vector<double>* effWidths =
+                (widths && m_thinLines) ? nullptr : widths;
+            auto widthAt = [&](size_t i)
+            {
+                if (!effWidths) return width;
+                return (*effWidths)[i];
+            };
+            // 有线宽（几何宽度或图层线宽）时输出的是加宽几何，不能记进块定义级缓存
+            //（宽度按像素烘焙，随缩放变化）。细线曲线照旧可以记。
+            bool anyWidth = width > 0.0;
+            if (effWidths)
+            {
+                anyWidth = false;
+                for (double w : *effWidths)
+                    if (w > 0.0) { anyWidth = true; break; }
+            }
+            if (anyWidth) DropBlockRecords();
+            const double entityScale = (m_curAttr->LinetypeScale > 0.0) ? m_curAttr->LinetypeScale : 1.0;
+            const double scale = entityScale * m_lineTypeScale;
+
+            const bool continuous = !rec || rec->IsContinuous() || rec->PatternLength * scale <= 1e-12;
+            auto dist = [](const Math::Point3& a, const Math::Point3& b)
+            { return std::sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) + (b.z - a.z) * (b.z - a.z)); };
+            double total = 0.0;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+                total += dist(points[i], points[i + 1]);
+            if (closed && points.size() >= 2)
+                total += dist(points.back(), points.front());
+            const double cycle = rec ? rec->PatternLength * scale : 0.0;
+
+            // 同 EmitStyled：只有整条超过 kStaticMaxDashes 个周期才按像素退化（4px 按整条判断）
+            const bool tooManyCycles = (cycle > 1e-12) && (total / cycle > kStaticMaxDashes);
+            const bool cycleTooSmallPx = tooManyCycles && m_worldPerPixel > 0.0 && cycle / m_worldPerPixel < 4.0;
+            if (continuous || total / cycle > kMaxDashes || cycleTooSmallPx)
+            {
+                if (!effWidths)
+                {
+                    for (size_t i = 0; i + 1 < points.size(); ++i)
+                        EmitStyled(points[i], points[i + 1], color, rec, width);
+                }
+                else
+                {
+                    // 有逐点宽度时不能走 EmitStyled（它只认单一 width）：按实线铺成加宽段
+                    for (size_t i = 0; i + 1 < points.size(); ++i)
+                        EmitSolidTapered(points[i], points[i + 1], color, widthAt(i), widthAt(i + 1));
+                }
+                return;
+            }
+            if (tooManyCycles)
+                MarkViewDependent();   // 按像素取舍了，缩放时要重铺
+
+            const bool dotAsSegment = (effWidths ? anyWidth : (width > 0.0)) || m_dotsAsSegments;
+            double dotLen = effWidths ? 0.0 : width;
+            if (dotAsSegment && dotLen <= 0.0)
+            {
+                dotLen = m_worldPerPixel > 0.0 ? m_worldPerPixel * 1.5 : 0.0;
+                MarkViewDependent();
+            }
+
+            // 相位沿曲线累计：每小段用「该段起点落在图案里的相位」铺设，铺完的长度即下一段相位
+            double phase = 0.0;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
+            {
+                const Math::Point3& a = points[i];
+                const Math::Point3& b = points[i + 1];
+                const double segLen = dist(a, b);
+                // 段内宽度：把铺出的点按沿线比例投影回本段，做线性插值（锥形段）
+                const double wa = widthAt(i), wb = widthAt(i + 1);
+                auto emit = [&](const Math::Point3& p, const Math::Point3& q)
+                {
+                    if (!effWidths) { EmitSolid(p, q, color, width); return; }
+                    if (segLen < 1e-12) { EmitSolidTapered(p, q, color, wa, wb); return; }
+                    const double t0 = std::clamp(dist(a, p) / segLen, 0.0, 1.0);
+                    const double t1 = std::clamp(dist(a, q) / segLen, 0.0, 1.0);
+                    EmitSolidTapered(p, q, color, wa + (wb - wa) * t0, wa + (wb - wa) * t1);
+                };
+                LayPattern(a, b, *rec, scale, dotAsSegment ? dotLen : 0.0, emit,
+                           [&](const Math::Point3& p)
+                           {
+                               if (!effWidths) { PutPoint(p, ToColor(color)); return; }
+                               const double t = segLen < 1e-12 ? 0.0 : std::clamp(dist(a, p) / segLen, 0.0, 1.0);
+                               EmitSolidTapered(p, p, color, wa + (wb - wa) * t, wa + (wb - wa) * t);
+                           },
+                           phase,
+                           [&](size_t, double) {});
+                phase = std::fmod(phase + segLen, cycle);
+            }
+        }
+
+    public:
+
         // --- 填充三角形（线宽 > 1 的实体）---
 
         void FillTriangle(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c, const Math::Color4& color) override
@@ -593,6 +721,18 @@ namespace MiniCAD
             PutFill(a, vc);
             PutFill(b, vc);
             PutFill(c, vc);
+        }
+        // 逐顶点着色的三角形（渐变填充）：顶点格式本来就有逐顶点颜色，
+        // TRIANGLELIST 缓冲按顶点插值，所以不必新增顶点流，只是不再三顶点同色
+        void FillTriangleColored(const Math::Point3& a, const Math::Point3& b, const Math::Point3& c,
+                                 const Math::Color4& ca, const Math::Color4& cb, const Math::Color4& cc) override
+        {
+            NoteInput(a);
+            NoteInput(b);
+            NoteInput(c);
+            PutFill(a, ToColor(ca));
+            PutFill(b, ToColor(cb));
+            PutFill(c, ToColor(cc));
         }
 
         // --- 纹理文字（WebFontAtlas 路径）---
@@ -1154,6 +1294,51 @@ namespace MiniCAD
 
     private:
 
+        // 锥形段：两端宽度不同的加宽线段（DXF 顶点组码 40/41 的逐段宽度）。
+        // 两半宽相同时退化为矩形，与 EmitSolid 的几何完全一致。
+        void EmitSolidTapered(const Math::Point3& a, const Math::Point3& b,
+                              const Math::Color4& color, double wa, double wb)
+        {
+            const VertexColor c = ToColor(color);
+            if (wa <= 0.0 && wb <= 0.0)
+            {
+                PutLine(a, c);
+                PutLine(b, c);
+                return;
+            }
+
+            double dx = b.x - a.x, dy = b.y - a.y;
+            double len = std::sqrt(dx * dx + dy * dy);
+            if (len < 1e-12)
+            {
+                // 零长度段（点笔划）：按较宽者画一个小方/线段
+                const double d = std::max(wa, wb);
+                Math::Point3 p0{ a.x - d * 0.5, a.y, a.z };
+                Math::Point3 p1{ a.x + d * 0.5, a.y, a.z };
+                PutLine(p0, c);
+                PutLine(p1, c);
+                return;
+            }
+            const double ux = dx / len, uy = dy / len;
+            const double nx = -uy, ny = ux;          // 单位法向
+            const double ha = wa * 0.5, hb = wb * 0.5;
+
+            const Math::Point3 p0{ a.x + nx * ha, a.y + ny * ha, a.z };
+            const Math::Point3 p1{ b.x + nx * hb, b.y + ny * hb, b.z };
+            const Math::Point3 p2{ b.x - nx * hb, b.y - ny * hb, b.z };
+            const Math::Point3 p3{ a.x - nx * ha, a.y - ny * ha, a.z };
+
+            PutFill(p0, c);
+            PutFill(p1, c);
+            PutFill(p2, c);
+            PutFill(p0, c);
+            PutFill(p2, c);
+            PutFill(p3, c);
+
+            m_viewDependent = true;
+            ++m_wideCount;
+        }
+
         void EmitSolid(const Math::Point3& a, const Math::Point3& b,
                        const Math::Color4& color, double width)
         {
@@ -1210,12 +1395,27 @@ namespace MiniCAD
         {
             return { ToRenderFloat3(pt, origin), ToVertexColor(col) };
         }
+        // 7 号色（白/黑自适应）的顶点标记：编码在 alpha 低位，见 ToColor。
+        // 只有「颜色语义是 ACI 7」的实体才打标记；真彩 RGB（如代理图形的黑底框）不打，
+        // 否则 shader 的 MapColor 会把纯黑/纯白真彩误当成 7 号色反转。
+        static constexpr float kAci7Tag = 253.0f / 255.0f;
+        // 只有「颜色语义是 7 号色」才打标记，真彩 RGB（如代理图形的纯黑底框）不打。
+        // 判定放在 EntityColor.hpp 的自由函数 IsAci7Color()，供渲染与测试共用。
         static VertexColor ToVertexColor(const Math::Color4& c)
         {
             return { static_cast<float>(c.r), static_cast<float>(c.g), static_cast<float>(c.b), static_cast<float>(c.a) };
         }
-        // 当前画的部分的顶点颜色：在锁定图层上时淡显
-        VertexColor ToColor(const Math::Color4& c) const { return ToVertexColor(Faded(c)); }
+        // 当前画的部分的顶点颜色：在锁定图层上时淡显；7 号色顶点打标记供 shader 反色。
+        // 标记只在颜色是纯黑或纯白时才有意义（7 号色只会呈现这两种），其它颜色即使打了
+        // 标记 shader 也不会反转，所以直接按 m_colorIsAci7 编码即可。
+        VertexColor ToColor(const Math::Color4& c) const
+        {
+            Math::Color4 f = Faded(c);
+            // 7 号色顶点打标记（未被淡显时）：shader 的 MapColor 只反转带标记的顶点，
+            // 这样真彩的纯黑/纯白（如代理图形的黑底框）不会再被误反转成背景色。
+            if (m_colorIsAci7 && !m_locked) f.a = kAci7Tag;
+            return ToVertexColor(f);
+        }
         Math::Color4 Faded(const Math::Color4& c) const
         {
             if (!m_locked) return c;
@@ -1412,7 +1612,10 @@ namespace MiniCAD
         {
             // 逐个画时每个子实体画完都清掉实体上下文（InsertEntity::Draw）
             if (e.direct > 0)
+            {
                 m_curAttr = nullptr;
+                m_colorIsAci7 = false;
+            }
             // 分段细分：序号与进度跳过这个块里的子实体
             if (m_leafDepth == 0)
             {
@@ -1462,6 +1665,7 @@ namespace MiniCAD
         Math::Point3                   m_origin;               // 渲染原点（SetRenderOrigin）
         CurveRefinement                m_refine;               // 曲线加密（SetCurveRefinement）
         const EntityAttr*              m_curAttr       = nullptr;
+        bool                           m_colorIsAci7   = false;    // 当前实体是否 7 号色（供顶点打标记）
         bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
         bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）
         bool                           m_viewDependent = false;

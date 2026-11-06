@@ -4,7 +4,7 @@
 //  ②「文字位置和 CAD 出入较大」   → 文字画在 TextLocation 上，而 AutoCAD 的
 //                                   文字块左下角是 ContentBasePoint（组码 10）
 //
-// 关键几何（实测 `1#、2#厂房电气_t3.dwg` 20/20，误差 0.000000）：
+// 关键几何（实测 20/20 个多重引线，误差 0.000000）：
 //   doglegEnd(landing) = ConnectionPoint + Direction × LandingDistance
 //   TextLocation       = ConnectionPoint + Direction × (LD + LandingGap)
 //                                                      + (0, 1.2 × 字高)
@@ -432,7 +432,7 @@ int RunMLeaderImportTests()
     // 用户第三次报：「多重引线的横线，还是没到文字的外侧，需修正。」
     //
     // 根因不在宽度度量（第 14 节那条已经修好了），而在**横线该画到哪一端**：
-    // `1#、2#厂房电气_t3.dwg` 20/20 条的 context 组码
+    // 20/20 个多重引线的 context 组码
     //     174 = 175 = 6 = TextAttachmentType::BottomOfTopLineUnderlineBottomLine
     // 属**下划线族**（5=BottomLine；6/7/8 名字里都含 Underline）。
     // AutoCAD 把 landing 这条横线当**文字的下划线**画：横穿整个文字，

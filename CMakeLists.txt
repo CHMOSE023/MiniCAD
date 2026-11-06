@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # 版本号的唯一来源：发布时只改这里（MiniCADVersion.h 由它生成，见 apps/Common：exe 版本信息、关于对话框、状态栏）
-set(MINICAD_VERSION 0.7.0)
+set(MINICAD_VERSION 0.8.1)
 
 project(MiniCAD VERSION ${MINICAD_VERSION} LANGUAGES CXX)
 
@@ -66,8 +66,10 @@ if(WIN32 AND NOT EMSCRIPTEN)
     add_subdirectory("apps/Win32")
 endif()
 
-if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    add_subdirectory("apps/Linux")  # SDL3 宿主 + OpenGL ES 3（docs/Render/PLAN.md 阶段 2）
+if(ANDROID)
+    add_subdirectory("apps/Android")    # GameActivity 宿主，由 apps/Android 的 Gradle 工程调用（docs/Android/PLAN.md）
+elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    add_subdirectory("apps/Linux")  # X11 / Wayland 宿主 + Vulkan / OpenGL ES 3（docs/Render/PLAN.md）
 endif()
 
 if(EMSCRIPTEN)
@@ -80,7 +82,7 @@ endif()
 
 # ── 测试（桌面端）：tests/Core、tests/UI、tests/Serialization ─────────
 option(MINICAD_BUILD_TESTS "Build MiniCAD tests" ON)
-if(MINICAD_BUILD_TESTS AND NOT EMSCRIPTEN)
+if(MINICAD_BUILD_TESTS AND NOT EMSCRIPTEN AND NOT ANDROID)
     enable_testing()
     add_subdirectory(tests)
 endif()

@@ -23,7 +23,7 @@
 
 // 三维实体建模工具（开发计划 docs/Solid/PLAN.md）：长方体、圆柱、球、拉伸（M3）；截面、平面投影（M4）；
 // 旋转、扫掠、圆角边、倒角边（M5）。
-// 内核由宿主经 Editor::SetSolidKernel 提供；没有内核（网页版）时这些命令不启动。
+// 内核由宿主经 Editor::SetSolidKernel 提供；没有内核（-DMINICAD_WITH_SOLID=OFF）时这些命令不启动。
 // 视图是俯视的二维视图：底面在光标点所在的水平面上，高度沿 +Z（负数沿 −Z），键入数值或用两点距离给出。
 namespace MiniCAD
 {
@@ -229,7 +229,7 @@ namespace MiniCAD
                 env.picking.MarkDirty();
                 env.cmdStack.Execute(std::make_unique<GeometryEditCommand>(what, std::move(items)), scene);
             }
-            std::string msg = TrF("{0}：已创建 {1} 个实体", OpName(what), created);
+            std::string msg = TrNF("{0}：已创建 {1} 个实体", created, OpName(what), created);
             if (skipped > 0) msg += TrF("，{0} 个对象不是闭合的平面对象（圆、闭合多段线、矩形），已忽略", skipped);
             if (failed > 0)  msg += TrF("，{0} 个失败（{1}）", failed, error);
             env.echo(msg);
@@ -728,7 +728,7 @@ namespace MiniCAD
             }
             const size_t count = out.Count();
             out.Commit();
-            std::string msg = count > 0 ? TrF("截面：生成 {0} 条曲线", count) : Tr("截面：截平面与所选实体不相交");
+            std::string msg = count > 0 ? TrNF("截面：生成 {0} 条曲线", count, count) : Tr("截面：截平面与所选实体不相交");
             if (others > 0) msg += TrF("，{0} 个对象不是三维实体，已忽略", others);
             if (failed > 0) msg += TrF("，{0} 个实体失败（{1}）", failed, m_env.kernel.LastError());
             m_env.echo(msg);

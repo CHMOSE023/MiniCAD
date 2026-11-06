@@ -122,7 +122,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native dimension version");
         Detail::TextStream text(data, r);
         for (int i = 0; i < base.TextCount; ++i) text.Next();
@@ -257,7 +257,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native axis label");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         const int version = r.ReadByte();
         if (version < 1 || version > 6) return fail("unsupported native axis label version");
         Detail::TextStream text(data, r);
@@ -386,7 +386,7 @@ namespace MiniCAD::Tch
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native radius dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
-        if (!ReadTchBase(r, base)) return fail("unsupported Tianzheng base layout");
+        if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
         if (r.ReadByte() != 1) return fail("unsupported native radius dimension version");
         Detail::TextStream text(data, r);
         for (int i = 0; i < base.TextCount; ++i) text.Next();

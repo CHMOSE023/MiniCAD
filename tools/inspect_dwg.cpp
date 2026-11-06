@@ -27,6 +27,7 @@
 #include "Import/CadExchange.h"
 #include "Import/TchOpening.h"
 #include "Import/TchWall.h"
+#include "Import/TchBlockInsert.h"
 #include "Import/TchText.h"
 #include "Import/TchElec.h"
 #undef far
@@ -57,6 +58,19 @@ int CountSceneFaces(const MiniCAD::Scene& scene)
 int wmain(int argc, wchar_t** argv)
 {
     if (argc < 2) { std::fprintf(stderr, "Usage: MiniCADDwgInspect <dwg> [dump-directory]\n"); return 2; }
+    // --convert 输入 输出：按 MiniCAD 打开再另存（格式按输出的扩展名，DWG 存 2004 版），tools/make_font_sample.py 用它把 DXF 存成 DWG
+    if (argc >= 4 && std::wstring(argv[1]) == L"--convert")
+    {
+        const auto in = std::filesystem::path(argv[2]).u8string();
+        const auto outPath = std::filesystem::path(argv[3]).u8string();
+        MiniCAD::Document doc;
+        std::string error;
+        if (!doc.LoadFromFile(std::string(in.begin(), in.end()), &error)) { std::printf("load failed: %s\n", error.c_str()); return 1; }
+        doc.SetCadSaveVersion(MiniCAD::CadSaveVersion::R2004);
+        const bool saved = doc.SaveToFile(std::string(outPath.begin(), outPath.end()));
+        std::printf("%s: %d entities\n", saved ? "saved" : "save failed", doc.GetScene().EntityCount());
+        return saved ? 0 : 1;
+    }
     // --advances 字体文件：打印 MiniCAD 排版用的字符步进（字高 1）
     if (argc >= 3 && std::wstring(argv[1]) == L"--advances")
     {
@@ -120,6 +134,19 @@ int wmain(int argc, wchar_t** argv)
     std::printf("TIME ReadDwg %.1f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tRead0).count());
     if (!db) { std::printf("DWG parse failed\n"); return 1; }
     std::printf("Classes: %zu; objects: %zu; model entities: %zu\n", db->Classes.size(), db->Objects().size(), db->ModelSpace() ? db->ModelSpace()->Entities.size() : 0);
+    if (const char* dir = std::getenv("MINICAD_DUMP_SECTIONS"))
+        for (const auto& s : db->RawSections)
+        {
+            std::string name = s.Name;
+            std::replace(name.begin(), name.end(), ':', '_');
+            const std::filesystem::path out = std::filesystem::path(dir) / (name + ".bin");
+            std::error_code ec;
+            std::filesystem::create_directories(out.parent_path(), ec);
+            std::ofstream file(out, std::ios::binary);
+            file.write(reinterpret_cast<const char*>(s.Data.data()), static_cast<std::streamsize>(s.Data.size()));
+            file.close();
+            std::printf("SECTION %s %zu bytes%s\n", s.Name.c_str(), s.Data.size(), file ? "" : " (write failed)");
+        }
     // MINICAD_TABLES=1：打印 DWG 的 STYLE / LTYPE 表、布局与图纸空间块记录（导入后再打印场景里的两张表）
     if (std::getenv("MINICAD_TABLES"))
     {
@@ -470,6 +497,9 @@ int wmain(int argc, wchar_t** argv)
                     std::printf("OPENING %llx type=%d width=%.17g mirror=%d wall=%llx flags=0x%x display=0x%x at=%.17g,%.17g angle=%.4f\n", (unsigned long long)handle,
                                 static_cast<int>(o.Type), o.Width, o.Mirror, (unsigned long long)o.Wall, o.Flags, static_cast<unsigned>(o.DisplayFlags),
                                 o.Position.X, o.Position.Y, o.Angle);
+                if (!o.Label.empty())
+                    std::printf("  label=\"%s\" at=%.6f,%.6f height=%g scale=%g style=%llx\n", o.Label.c_str(), o.LabelX, o.LabelY,
+                                o.LabelHeight, o.Scale, (unsigned long long)o.Style);
                 // 门扇在所在墙的哪一侧（+1 左侧、-1 右侧）：门图块的 +Y 为门扇，Y 镜像时翻到另一侧
                 MiniCAD::Tch::TchWall w;
                 if (const auto* host = db->FindAs<MiniDWG::UnknownEntity>(o.Wall); host && MiniCAD::Tch::DecodeWall(*host, w))
@@ -559,13 +589,14 @@ int wmain(int argc, wchar_t** argv)
                 }
                 std::printf("\n");
             }
-    // MINICAD_PROXYEXT=类型：打印该类未建模实体的所有者、代理图形的记录类型与范围、私有数据大小
+    // MINICAD_PROXYEXT=类型（以 * 结尾时按前缀）：打印该类未建模实体的所有者、代理图形的记录类型与范围、私有数据大小
     if (const char* pt = std::getenv("MINICAD_PROXYEXT"))
         for (const auto& [handle, object] : db->Objects())
-            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == pt)
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get());
+                u && (u->Raw.DxfName == pt || (std::string_view(pt).ends_with('*') && u->Raw.DxfName.starts_with(std::string_view(pt).substr(0, std::strlen(pt) - 1)))))
             {
                 const auto* owner = db->FindAs<MiniDWG::BlockRecord>(u->OwnerHandle);
-                std::printf("PX %llx owner=%s proxy=%zu main_bits=%llu refs=%zu records:", (unsigned long long)handle, owner ? owner->Name.c_str() : "?",
+                std::printf("PX %s %llx owner=%s proxy=%zu main_bits=%llu refs=%zu records:", u->Raw.DxfName.c_str(), (unsigned long long)handle, owner ? owner->Name.c_str() : "?",
                             u->ProxyGraphics.size(), (unsigned long long)u->Raw.Dwg.MainBits, u->Raw.Dwg.References.size());
                 const auto& b = u->ProxyGraphics;
                 auto rd32 = [&](std::size_t o) { std::uint32_t v = 0; for (int i = 0; i < 4; ++i) v |= std::uint32_t(b[o + i]) << (8 * i); return v; };
@@ -577,6 +608,8 @@ int wmain(int argc, wchar_t** argv)
                     std::printf(" %u", type);
                     if (type == 1 && size == 56)
                         std::printf("(%.0f,%.0f)-(%.0f,%.0f)", rdd(o + 8), rdd(o + 16), rdd(o + 32), rdd(o + 40));
+                    if (type == 5 && size >= 80)
+                        std::printf("(%.0f,%.0f;%.0f,%.0f;%.0f,%.0f)", rdd(o + 8), rdd(o + 16), rdd(o + 32), rdd(o + 40), rdd(o + 56), rdd(o + 64));
                     o += size;
                 }
                 if (MiniCAD::Tch::TchText t; u->Raw.DxfName == "TCH_MTEXT" || u->Raw.DxfName == "TCH_TEXT")
@@ -587,6 +620,12 @@ int wmain(int argc, wchar_t** argv)
                                 t.Scale, t.Rotation, t.Attachment, t.BoxWidth, t.LineSpacing, t.Value.c_str());
                     std::printf(" hex=");
                     for (unsigned char ch : t.Value) std::printf("%02x", ch);
+                }
+                if (MiniCAD::Tch::TchBlockInsert bi; MiniCAD::Tch::DecodeBlockInsert(*u, bi))
+                {
+                    const auto* block = db->FindAs<MiniDWG::BlockRecord>(bi.BlockHandle);
+                    std::printf(" INSERT %s at=(%.1f,%.1f,%.1f) scale=(%g,%g,%g) rot=%g normal=(%g,%g,%g)", block ? block->Name.c_str() : "?",
+                                bi.Point.X, bi.Point.Y, bi.Point.Z, bi.XScale, bi.YScale, bi.ZScale, bi.Rotation, bi.Normal.X, bi.Normal.Y, bi.Normal.Z);
                 }
                 if (MiniCAD::Tch::TchWall w; MiniCAD::Tch::DecodeWallPrefix(*u, w))
                     std::printf(" WALL (%.1f,%.1f)-(%.1f,%.1f) angle=%g L=%g R=%g flags=%x", w.Start.X, w.Start.Y, w.End.X, w.End.Y, w.Angle, w.LeftWidth, w.RightWidth, w.Flags);

@@ -33,5 +33,9 @@ namespace MiniCAD::Math
         {
             return { 1.0, 0.0, 0.0, 1.0 };
         }
+
+        // 逐通道比较（double 精确相等）。用于停靠点序列化往返、单元测试等
+        // 需要「颜色完全相同」的场合；渲染前请用 ToVertexColor 转成 float。
+        bool operator==(const Color4&) const = default;
     };
 }

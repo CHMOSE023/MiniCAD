@@ -1,4 +1,5 @@
-// 检查更新：GitHub Release 的最新版本比当前新时，标题栏版本号旁显示提示，点开可直接下载本平台的发布包。
+// 检查更新：GitHub Release 的最新版本比当前新时，标题栏版本号旁显示提示，点开可直接下载本平台的发布包；
+// AppPlatform::PromptsForUpdates 的平台（安卓）启动时直接弹出提示，可以忽略这个版本。
 // 请求经 AppPlatform::HttpGet 在后台线程完成；网页版不支持（部署的总是最新版）
 #include "GUI/MainFrame.h"
 #include "MiniI18n/I18n.h"
@@ -10,6 +11,7 @@
 #include "Widgets/Dialog.h"
 #include "Widgets/Label.h"
 #include "Widgets/ScrollView.h"
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -19,6 +21,7 @@ namespace MiniCAD
     namespace
     {
         constexpr const char* kLatestReleaseApi = "https://api.github.com/repos/CHMOSE023/MiniCAD/releases/latest";
+        constexpr const char* kIgnoredUpdateKey = "ignoredUpdate";     // 用户设置：启动提示里点了"忽略"的版本，之后不再提示它
 
         std::vector<int> ParseVersion(std::string_view text)
         {
@@ -181,15 +184,21 @@ namespace MiniCAD
                     BuildAppBar();
                 if (manual)
                     ShowUpdateDialog();
+                else if (m_platform->PromptsForUpdates() && m_platform->ReadUserSetting(kIgnoredUpdateKey) != latest)
+                    ShowUpdateDialog(true);
                 m_platform->RequestRedraw();
             });
     }
 
-    void MainFrame::ShowUpdateDialog()
+    void MainFrame::ShowUpdateDialog(bool prompt)
     {
         using namespace MiniGUI;
         if (m_update.version.empty())
             return;
+        // 手机竖屏放不下 480 宽的说明
+        const Vec2  display = m_ui->GetDisplaySize();
+        const float notesW  = std::clamp(display.x - 96.0f, 200.0f, 480.0f);
+        const float notesH  = std::clamp(display.y * 0.4f, 100.0f, 260.0f);
         auto dialog = std::make_unique<Dialog>(Tr("发现新版本"));
         Node* body = dialog->GetBody();
         {
@@ -206,13 +215,13 @@ namespace MiniCAD
         {
             auto* scroll = body->AddChild<ScrollView>();
             scroll->SetScrollAxes(false, true);
-            scroll->EditLayoutStyle().width  = 480.0f;
-            scroll->EditLayoutStyle().height = 260.0f;
+            scroll->EditLayoutStyle().width  = notesW;
+            scroll->EditLayoutStyle().height = notesH;
             auto* col = scroll->SetContent<Node>();
             {
                 LayoutStyle& cs = col->EditLayoutStyle();
                 cs.direction = FlexDirection::Column;
-                cs.width     = 464.0f;
+                cs.width     = notesW - 16.0f;
                 cs.gap       = 3.0f;
             }
             for (const std::string& line : lines)
@@ -226,6 +235,16 @@ namespace MiniCAD
         AppPlatform* platform = m_platform;
         const std::string download = m_update.downloadUrl, page = m_update.pageUrl;
         raw->AddButton(Tr("下载"), [raw, platform, download] { platform->OpenUrl(download); raw->Close(); }, DialogButtonRole::Default);
+        if (prompt)
+        {
+            raw->AddButton(Tr("忽略此版本"), [raw, platform, version = m_update.version]
+            {
+                platform->WriteUserSetting(kIgnoredUpdateKey, version);
+                raw->Close();
+            }, DialogButtonRole::Cancel);
+            m_ui->OpenPopup(std::move(dialog));
+            return;
+        }
         if (!page.empty() && page != download)
             raw->AddButton(Tr("发布页"), [platform, page] { platform->OpenUrl(page); });
         raw->AddButton(Tr("稍后"), [raw] { raw->Close(); }, DialogButtonRole::Cancel);

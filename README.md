@@ -10,12 +10,13 @@
 
 <p align="center">
   <strong>An open-source 2D/3D CAD application written in C++20.</strong><br />
-  Runs on Windows, Linux and in the browser. Built on the SMLib solid kernel, with node-based 3D modeling, <strong>compatible with DWG and TCH drawings</strong>.
+  Runs on Windows, Linux, Android and in the browser. Built on the SMLib solid kernel, with node-based 3D modeling, <strong>compatible with DWG and TCH drawings</strong>.
 </p>
 
 <p align="center">
   <a href="https://minicad.bimhub.top">Web app</a> ·
-  <a href="https://github.com/CHMOSE023/MiniCAD/releases">Desktop downloads</a>
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases">Desktop downloads</a> ·
+  <a href="https://github.com/CHMOSE023/MiniCAD/releases/latest">Android</a>
 </p>
 
 <p align="center">
@@ -67,14 +68,13 @@ The web version uses the browser's WebGPU by default and falls back to WebGL2 wh
 
 ## Building on Linux
 
-The releases page has a prebuilt `MiniCAD-<version>-linux-x64.tar.gz` (built on Ubuntu 24.04, SDL3 linked in): extract it and run `./MiniCADLinux`. It needs Mesa's EGL / OpenGL ES and the Vulkan loader (`libegl1`, `libgles2`, `libvulkan1` on Ubuntu). To build it yourself:
+The releases page has a prebuilt `MiniCAD-<version>-linux-x64.tar.gz` (built on Ubuntu 24.04): extract it and run `./MiniCADLinux`. It needs Mesa's EGL / OpenGL ES and the Vulkan loader (`libegl1`, `libgles2`, `libvulkan1` on Ubuntu); the X11, Wayland, xkbcommon and D-Bus runtime libraries come with every desktop system. To build it yourself:
 
-Requires CMake 3.20+, Ninja, GCC 13+ or Clang (C++20), the OpenGL ES 3 / EGL development packages and [SDL3](https://github.com/libsdl-org/SDL). On Ubuntu / Debian:
+Requires CMake 3.20+, Ninja, GCC 13+ or Clang (C++20), the OpenGL ES 3 / EGL development packages and the X11 and/or Wayland development packages. On Ubuntu / Debian:
 
 ```bash
 sudo apt install build-essential cmake ninja-build pkg-config libegl-dev libgles-dev \
-    libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
-    libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev libudev-dev
+    libx11-dev libxcursor-dev libxext-dev libxkbcommon-dev libwayland-dev wayland-protocols libdbus-1-dev
 ```
 
 The Vulkan backend (optional; preferred by default, with automatic fallback to OpenGL ES 3) also needs the headers and the shader compiler:
@@ -83,22 +83,28 @@ The Vulkan backend (optional; preferred by default, with automatic fallback to O
 sudo apt install libvulkan-dev glslang-tools mesa-vulkan-drivers
 ```
 
-SDL3: from Ubuntu 25.04 / Debian 13 on, `sudo apt install libsdl3-dev`; on older distributions build and install it from source (for example into `~/sdl3`):
+Build MiniCAD:
 
 ```bash
-cmake -S SDL3-3.4.18 -B sdl3-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/sdl3 -DSDL_TESTS=OFF
-cmake --build sdl3-build && cmake --install sdl3-build
-```
-
-Build MiniCAD (drop `CMAKE_PREFIX_PATH` if SDL3 is installed in a system directory):
-
-```bash
-cmake -S . -B out/linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$HOME/sdl3
+cmake -S . -B out/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build out/linux
 out/linux/MiniCADLinux/MiniCADLinux [drawing ...]
 ```
 
-Without SDL3 or OpenGL ES 3 only the core libraries and tests are built (`ctest --test-dir out/linux`); without the Vulkan development files or glslangValidator only OpenGL ES 3 is used. At run time, `--gpu vulkan` / `--gpu gl` (or the `MINICAD_GPU` environment variable) selects the graphics backend. The open / save dialogs need xdg-desktop-portal or zenity; without them, drag drawings into the window or pass them on the command line.
+Without OpenGL ES 3 / EGL, or with neither the X11 nor the Wayland development packages, only the core libraries and tests are built (`ctest --test-dir out/linux`); with only one of them only that window system is supported; without the Vulkan development files or glslangValidator only OpenGL ES 3 is used. At run time Wayland is used when `WAYLAND_DISPLAY` is set, X11 otherwise; `MINICAD_WINDOWING=x11` / `wayland` forces one. `--gpu vulkan` / `--gpu gl` (or the `MINICAD_GPU` environment variable) selects the graphics backend. The title bar is drawn by MiniCAD (on X11, and on Wayland compositors that do not provide decorations, such as GNOME); set `MINICAD_X11_DECORATIONS=system` to get the window manager's title bar on X11. The open / save dialogs use xdg-desktop-portal, or zenity without it; without either, drag drawings into the window or pass them on the command line.
+
+## Android
+
+The releases page has a prebuilt `MiniCAD-<version>-android-arm64.apk` for arm64 devices running Android 10 (API 29) or later; download and install it (allow "Install unknown apps"). Phones get a simplified view-only interface: open DWG / DXF drawings (from Files or another app), drag to pan, zoom, and view full screen; annotations will come later. Tablets and devices with a mouse and keyboard get the full interface.
+
+To build it yourself you need JDK 17+ (21 recommended) and these Android SDK packages (install them with Android Studio's SDK Manager or the command-line tools' `sdkmanager`): Platform API 36, Build-Tools 36.1.0, NDK 29.0.14206865, CMake 3.31.6. Set the `ANDROID_HOME` environment variable (or write `sdk.dir=<SDK path>` in `apps/Android/local.properties`), then:
+
+```bat
+cd apps\Android
+gradlew assembleDebug
+```
+
+The APK is written to `out/android/app/outputs/apk/debug/` (debug builds also include x86_64 for the emulator). `gradlew installDebug` builds and installs it on a connected device (enable USB debugging on the phone); view the log with `adb logcat -s MiniCAD`. For a release build run `gradlew assembleRelease` (arm64 only); point the `MINICAD_KEYSTORE`, `MINICAD_KEYSTORE_PASSWORD`, `MINICAD_KEY_ALIAS` and `MINICAD_KEY_PASSWORD` environment variables at your keystore, otherwise the local debug key is used.
 
 ## Tests
 
@@ -113,7 +119,7 @@ run_tests.bat
 - Image loading: [stb_image](https://github.com/nothings/stb/blob/master/stb_image.h)
 - Font rendering: [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h)
 - Web UI font: [Noto Sans SC](https://github.com/notofonts/noto-cjk)
-- Linux windowing and input: [SDL3](https://github.com/libsdl-org/SDL) (zlib license)
+- Strokes of the single-line `minicad_*.shx` fonts: [Make Me a Hanzi](https://github.com/skishore/makemeahanzi) (Arphic PL), [KanjiVG](https://kanjivg.tagaini.net) (CC BY-SA 3.0)
 - Test fonts: `GB2312.ttf` `simplex.shx` `TSSDCHN.SHX` `tssdeng.shx`
 
 ## Tutorial
