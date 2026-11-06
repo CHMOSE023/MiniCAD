@@ -508,6 +508,37 @@ int RunHatchPatternTests()
             h.SetPattern(*lib.Find("ANSI31"));
             Check(h.GetPattern().Name == "ANSI31", "SetPattern 只改图案不影响渐变");
         }
+
+        // 8.8 极窄竖长条：扫描线恰好压在边界的极值 v 上时，不能画出「整条边界」。
+        // 练习-施工图.dwg 句柄 3539（ANSI37，x 宽 250、y 高 27400）：
+        // 线族 a=90° 的 v = -x，v 跨度只有 250 < 间距 625 ⇒ 只有一条扫描线，
+        // 且它正好等于左边界 x=x0 的 v 值，求交退化成沿整条左边界的线段。
+        // CAD 不会把贴着边界的扫描线画成图案线（那条线是 HATCH 自己的边界环）。
+        {
+            const double x0 = 293339, x1 = 293589, y0 = 379766, y1 = 407166;
+            HatchPattern pat;
+            pat.Name  = "ANSI37";
+            pat.Solid = false;
+            pat.Families.push_back({ 90.0,  625.0, x0, y0, 0.0 });
+            pat.Families.push_back({ 180.0, 625.0, x0, y0, 0.0 });
+            HatchEntity h(98, Polyline({ { x0, y0, 0 }, { x1, y0, 0 }, { x1, y1, 0 }, { x0, y1, 0 }, { x0, y0, 0 } }), pat);
+            RecordingSink sink;
+            h.Draw(sink, false, false);
+
+            // 找出「整条贴着某条边界」的线：端点都在同一条边上，且长度等于该边长
+            int boundaryLines = 0;
+            for (const auto& s : sink.segs)
+            {
+                const bool onLeft   = std::abs(s.a.x - x0) < 1e-6 && std::abs(s.b.x - x0) < 1e-6 && Len(s) > 1000;
+                const bool onRight  = std::abs(s.a.x - x1) < 1e-6 && std::abs(s.b.x - x1) < 1e-6 && Len(s) > 1000;
+                const bool onBottom = std::abs(s.a.y - y0) < 1e-6 && std::abs(s.b.y - y0) < 1e-6 && Len(s) > 1000;
+                const bool onTop    = std::abs(s.a.y - y1) < 1e-6 && std::abs(s.b.y - y1) < 1e-6 && Len(s) > 1000;
+                if (onLeft || onRight || onBottom || onTop) ++boundaryLines;
+            }
+            std::printf("    极窄竖条：线段 %zu，贴边整线 %d\n", sink.segs.size(), boundaryLines);
+            Check(boundaryLines == 0, "极窄竖条：不把贴着 HATCH 边界的扫描线画成整条图案线");
+            Check(sink.segs.size() > 20, "极窄竖条：其它正常图案线照常出图");
+        }
     }
     return g_failures;
 }

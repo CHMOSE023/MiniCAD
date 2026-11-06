@@ -103,4 +103,23 @@ namespace MiniCAD
         // 隐式:当 Color4 使用 → 返回已解析的 RGBA,保持旧的读取调用。
         constexpr operator Math::Color4() const { return Rgba; }
     };
+
+    // 该实体的颜色语义是否是「7 号色」（白/黑随背景自适应）。
+    //   · ByAci(7)：明确的 7 号色
+    //   · ByLayer：图层只存 Color4、丢失了 ACI 语义；图层色解析成纯黑/纯白时按 7 号色处理
+    //     （ACI 7 图层存成 White，靠 GPU shader 反转实现随背景变色）
+    //   · ByRgb / ByBlock：不是 7 号色。特别是真彩纯黑/纯白（如代理图形的黑底框）绝不能
+    //     被当成 7 号色反转，否则深色背景下纯黑会被翻成白，出现「白底白字」。
+    inline bool IsAci7Color(const EntityColor& c)
+    {
+        if (c.Method == ColorMethod::ByAci) return c.Aci == 7;
+        if (c.Method == ColorMethod::ByLayer)
+        {
+            const auto closeTo = [](double v, double t) { double d = v - t; return d > -0.004 && d < 0.004; };
+            const bool black = closeTo(c.Rgba.r, 0.0) && closeTo(c.Rgba.g, 0.0) && closeTo(c.Rgba.b, 0.0);
+            const bool white = closeTo(c.Rgba.r, 1.0) && closeTo(c.Rgba.g, 1.0) && closeTo(c.Rgba.b, 1.0);
+            return black || white;
+        }
+        return false;
+    }
 }

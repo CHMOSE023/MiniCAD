@@ -10,13 +10,17 @@ layout(push_constant) uniform Constants
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec4 aColor;
 layout(location = 0) out vec4 vColor;
-
-// 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+// 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白。
+// 只反转带 7 号色标记的顶点（DrawContext 把 alpha 编成 253/255）；真彩 RGB 不反转。
 vec4 MapColor(vec4 c)
 {
-    vec3 d = abs(c.rgb - vec3(pc.options.x > 0.5 ? 1.0 : 0.0));
-    if (max(d.x, max(d.y, d.z)) < 0.004)
-        c.rgb = 1.0 - c.rgb;
+    bool isAci7 = c.a > 0.988 && c.a < 0.999;
+    if (isAci7)
+    {
+        vec3 d = abs(c.rgb - vec3(pc.options.x > 0.5 ? 1.0 : 0.0));
+        if (max(d.x, max(d.y, d.z)) < 0.004)
+            c.rgb = 1.0 - c.rgb;
+    }
     return c;
 }
 

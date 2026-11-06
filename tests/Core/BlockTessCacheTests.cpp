@@ -305,12 +305,14 @@ int RunBlockTessCacheTests()
     // ── 锁定图层淡显（DrawContext::kLockedFade）：锁定图层上的块参照整块淡显，块里锁定图层上的子实体也淡显 ─────
     {
         layers.GetLayer(red)->SetLocked(true);
-        // 不透明度只有 128（淡显）与 255 两种，别的算作淡显的反例
+        // 不透明度：128 = 淡显、255 = 不透明、253 = 7 号色顶点标记（视觉上不透明，
+        // 见 DrawContext::kAci7Tag）；别的算反例。7 号色标记不影响淡显判定，归入 opaque。
+        // 以前只认 128/255，加了 7 号色顶点标记后 253 也是合法值。
         auto alphas = [](const Output& o, int& faded, int& opaque)
         {
             faded = opaque = 0;
             int other = 0;
-            auto count = [&](const VertexColor& c) { ++(c.a == 128 ? faded : c.a == 255 ? opaque : other); };
+            auto count = [&](const VertexColor& c) { ++(c.a == 128 ? faded : (c.a == 255 || c.a == 253) ? opaque : other); };
             for (const auto& v : o.lines)  count(v.color);
             for (const auto& v : o.fills)  count(v.color);
             for (const auto& g : o.glyphs) count(g.color);

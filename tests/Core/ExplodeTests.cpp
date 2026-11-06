@@ -252,6 +252,57 @@ int RunExplodeTests()
         rect.FillTriangle({ -10, -10, 0 }, { 30, -10, 0 }, { -10, 30, 0 }, Math::Color4::White());
         rect.Wipe({ { 2, 2, 0 }, { 8, 2, 0 }, { 8, 8, 0 }, { 2, 8, 0 } });
         Check(std::abs(s3.Area - 16.0 - 4.0) < 1e-9 && s3.Wipes == 1, "凸裁剪边界：三角形与区域覆盖精确裁剪");
+
+        // ── 跨边界的线必须精确截断到边界上（不能按中点取舍把框外半段整段画出）──
+        {
+            ClipSink s4;
+            ClipDrawSink c4(s4, { { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 } });
+            // 一条横跨边界的线：x 从 -5 到 15，y=5；应只保留 x∈[0,10]
+            c4.DrawLine({ -5, 5, 0 }, { 15, 5, 0 }, Math::Color4::White(), false);
+            Check(s4.Lines.size() == 1 && Near(s4.Lines[0].first.x, 0.0) && Near(s4.Lines[0].second.x, 10.0),
+                  "XCLIP：跨边界的直线精确截断在 x=0 / x=10");
+            // 多段线（DrawPath）同样精确截断，不能整段保留
+            ClipSink s5;
+            ClipDrawSink c5(s5, { { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 } });
+            c5.DrawPath({ { -5, 5, 0 }, { 15, 5, 0 }, { 15, 15, 0 } }, Math::Color4::White(), false);
+            bool allInside = !s5.Lines.empty();
+            for (const auto& l : s5.Lines)
+                if (l.first.x < -1e-9 || l.first.x > 10 + 1e-9 || l.second.x < -1e-9 || l.second.x > 10 + 1e-9)
+                    allInside = false;
+            Check(allInside, "XCLIP：跨边界的多段线被精确截断，框外没有残留线段");
+        }
+
+        // ── 方案 A：XCLIP 是 WCS 固定的取景窗口，移动块时框不动 ──
+        {
+            BlockEntity block(80, "F", { 0, 0, 0 });
+            block.AddEntity(std::make_unique<LineEntity>(81, Math::Point3{ -5, 2, 0 }, Math::Point3{ 15, 2, 0 }));
+            InsertEntity ins(82, 80, "F", { 0, 0, 0 });
+            ins.SetBlock(&block);
+            ins.SetClipBoundary({ { 0, 0, 0 }, { 4, 0, 0 }, { 4, 4, 0 }, { 0, 4, 0 } });
+            Check(ins.HasClipFrameWorld() && Near(ins.ClipFrameWorld()[0].x, 0.0) && Near(ins.ClipFrameWorld()[2].x, 4.0),
+                  "XCLIP WCS：设置边界时记下世界坐标（0..4）");
+            // 把块整体右移 10：边界的世界坐标必须仍在 0..4（框不动）
+            ins.SetPosition({ 10, 0, 0 });
+            Check(ins.HasClipFrameWorld() && Near(ins.ClipFrameWorld()[0].x, 0.0) && Near(ins.ClipFrameWorld()[2].x, 4.0),
+                  "XCLIP WCS：块移动后裁剪框仍停在世界原位（AutoCAD 语义）");
+            // 当前块坐标下的等效边界应变成 -10..-6（因为块右移了 10）
+            const auto eff = ins.EffectiveClipBoundary();
+            Check(Near(eff[0].x, -10.0) && Near(eff[2].x, -6.0),
+                  "XCLIP WCS：等效块坐标边界随块移动反向补偿");
+            // 实际渲染：块内线在 x=-5..15（块坐标），框在 WCS 0..4。
+            // 块右移 10 后线到 WCS 5..25，已完全滑出固定窗口 ⇒ 框内应无内容。
+            ClipSink s6;
+            ins.Draw(s6, false, false);
+            Check(s6.Lines.empty(), "XCLIP WCS：块移出固定窗口后框内无内容（框不随块走）");
+            // 把块移回原点，内容重新出现在框内（WCS 0..4 那一段）
+            ins.SetPosition({ 0, 0, 0 });
+            ClipSink s7;
+            ins.Draw(s7, false, false);
+            bool back = !s7.Lines.empty();
+            for (const auto& l : s7.Lines)
+                if (l.first.x < -1e-9 || l.second.x > 4 + 1e-9) back = false;
+            Check(back, "XCLIP WCS：块移回后固定窗口重新框住内容");
+        }
     }
 
     // ── 不可分解 ─────────────────────────────────────────────

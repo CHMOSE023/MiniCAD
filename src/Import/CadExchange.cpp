@@ -5157,18 +5157,28 @@ namespace MiniCAD
                             d->Attributes.push_back(added->ObjectHandle);
                     }
 
-                    // 块裁剪（XCLIP）：边界是**块坐标**，SPATIAL_FILTER 里要**世界坐标**，
-                    // 所以先经插入变换映射。句柄此时还没有（Add 时才分配），
+                    // 块裁剪（XCLIP）：SPATIAL_FILTER 里要**世界坐标**。
+                    // 方案 A 下边界是 WCS 固定窗口，直接用 ClipFrameWorld()（块移动后仍写回原位），
+                    // 旧路径才把块坐标经插入变换映射。句柄此时还没有（Add 时才分配），
                     // 先记下待挂接项，实体入库后再建对象链。
                     if (s->HasClipBoundary() && s->GetClipBoundary().size() >= 3)
                     {
                         PendingClip pending;
                         pending.BlockToWorld = s->CellMatrix(0, 0);
-                        pending.World.reserve(s->GetClipBoundary().size());
-                        for (const auto& p : s->GetClipBoundary())
+                        if (s->HasClipFrameWorld())
                         {
-                            const Math::Point3 w = pending.BlockToWorld * p;
-                            pending.World.push_back({ w.x, w.y });
+                            pending.World.reserve(s->ClipFrameWorld().size());
+                            for (const auto& w : s->ClipFrameWorld())
+                                pending.World.push_back({ w.x, w.y });
+                        }
+                        else
+                        {
+                            pending.World.reserve(s->GetClipBoundary().size());
+                            for (const auto& p : s->GetClipBoundary())
+                            {
+                                const Math::Point3 w = pending.BlockToWorld * p;
+                                pending.World.push_back({ w.x, w.y });
+                            }
                         }
                         m_pendingClips.push_back(std::move(pending));
                     }

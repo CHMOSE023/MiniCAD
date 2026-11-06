@@ -23,10 +23,12 @@ namespace MiniCAD
             @group(1) @binding(0) var tex  : texture_2d<f32>;
             @group(1) @binding(1) var samp : sampler;
 
-            // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白
+            // 7 号色语义：浅色背景时纯白 → 纯黑，深色背景时纯黑 → 纯白。
+            // 只反转带标记的顶点（DrawContext 把 alpha 编成 253/255）；真彩 RGB 不反转。
             fn MapColor(c : vec4<f32>) -> vec4<f32>
             {
-                if (u.light >= 0.0)
+                let isAci7 = c.a > 0.988 && c.a < 0.999;
+                if (u.light >= 0.0 && isAci7)
                 {
                     let d = abs(c.rgb - vec3<f32>(u.light));
                     if (max(d.x, max(d.y, d.z)) < 0.004)

@@ -199,7 +199,7 @@ int RunBlockFixTests()
               std::abs(p2[1].y - (beforeP1.y - 20)) < 1e-9,
               "裁剪块：边夹点整条边平移（两端点一起移动）");
 
-        // 拖基点期间按**整块**绘制（临时忽略裁剪）
+        // 方案 A：XCLIP 是 WCS 固定的取景窗口，拖基点期间也照常裁剪（不再临时画整块）
         RecSink clipped, whole;
         ins->Draw(clipped, false, false);
         ins->SetShowWholeWhileDraggingBase(true);
@@ -212,9 +212,10 @@ int RunBlockFixTests()
         for (const auto& l : whole.lines)
         { wx0 = std::min({ wx0, l.first.x, l.second.x }); wx1 = std::max({ wx1, l.first.x, l.second.x }); }
 
-        std::printf("    裁剪后 X=[%.1f, %.1f]，整块 X=[%.1f, %.1f]\n", cx0, cx1, wx0, wx1);
+        std::printf("    裁剪后 X=[%.1f, %.1f]，拖基点时 X=[%.1f, %.1f]\n", cx0, cx1, wx0, wx1);
         Check(cx1 - cx0 < 200.0, "裁剪块：平时按裁剪后绘制（X 跨度收敛到边界内）");
-        Check(wx1 - wx0 > 900.0, "裁剪块：拖基点期间按整块绘制（临时忽略裁剪）");
+        Check(std::abs(wx1 - wx0 - (cx1 - cx0)) < 1e-6 && whole.lines.size() == clipped.lines.size(),
+              "XCLIP WCS：拖基点期间照常裁剪，不再临时画整块（与 CAD 一致）");
     }
 
     // ══ ④ 文字强行换行：词边界折行 ═══════════════════════════════════════
@@ -355,15 +356,20 @@ int RunBlockFixTests()
         Check(std::abs(poly[0].x + 60) < 1e-9 && std::abs(poly[0].y + 60) < 1e-9,
               "裁剪坐标系：MoveClipBoundaryPoint 按块坐标写入");
 
-        // 拖基点后，块坐标边界不变（边界天然随块走），但世界位置随之平移
+        // 方案 A：XCLIP 边界是 WCS 固定窗口。块坐标 m_clip 不变（公开语义），
+        // 但边界的世界坐标停在原处，不随块平移。
         raw->SetPosition(Math::Point3{ 1500, 2500, 0 });
         const auto& poly2 = raw->GetClipBoundary();
         Check(std::abs(poly2[0].x + 60) < 1e-9,
-              "裁剪坐标系：拖基点不改边界（边界是块坐标，天然随块走）");
-        const Math::Mat4 m2 = raw->CellMatrix(0, 0);
-        const Math::Point3 corner2 = m2 * Math::Point3{ -60, -60, 0 };
-        Check(std::abs(corner2.x - 1380.0) < 1e-6 && std::abs(corner2.y - 2380.0) < 1e-6,
-              "裁剪坐标系：块移动后边界的世界位置同步平移（夹点不会停在旧位置）");
+              "裁剪坐标系：拖基点不改块坐标边界（公开语义保持）");
+        Check(raw->HasClipFrameWorld() &&
+              std::abs(raw->ClipFrameWorld()[0].x - 880.0) < 1e-6 &&
+              std::abs(raw->ClipFrameWorld()[0].y - 1880.0) < 1e-6,
+              "XCLIP WCS：块移动后边界的世界位置不变（固定取景窗口）");
+        // 等效块坐标：WCS(880,1880) 经当前逆变换（块在 1500,2500、缩放 2）→ (-310,-310)
+        const auto eff = raw->EffectiveClipBoundary();
+        Check(std::abs(eff[0].x - (-310.0)) < 1e-6,
+              "XCLIP WCS：等效块坐标边界补偿了块的位移");
     }
 
     // ══ ⑦ 裁剪边框开关随文档保存 ═════════════════════════════════════════
