@@ -42,11 +42,12 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
-        inline bool CheckPayload(const MiniDWG::UnknownEntity& entity, std::string_view name, const char*& why)
+        inline bool CheckPayload(const MiniDWG::UnknownEntity& entity, std::string_view name, const char*& why, bool inlineText = false)
         {
             const auto& data = entity.Raw.Dwg;
             if (entity.Raw.DxfName != name) return false;
-            if (data.Version < MiniDWG::CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
+            const auto minVersion = inlineText ? MiniDWG::CadVersion::AC1018 : MiniDWG::CadVersion::AC1021;
+            if (data.Version < minVersion || data.Main.size() < (data.MainBits + 7) / 8)
             {
                 why = "unsupported DWG version for native pipe object";
                 return false;
@@ -58,6 +59,8 @@ namespace MiniCAD::Tch
 
         inline bool ReadPipeNode(MiniDWG::DwgBitReader& r, int& handles, int& texts)
         {
+            const bool inlineText = InlineText(r);
+            auto text = [&] { if (inlineText) r.ReadVariableText(); else ++texts; };
             if (r.ReadByte() >= 2) return false;
             r.ReadByte();
             const int count = r.ReadByte();
@@ -65,10 +68,10 @@ namespace MiniCAD::Tch
             {
                 if (r.ReadByte() >= 2) return false;
                 for (int k = 0; k < 4; ++k) r.ReadByte();
-                ++texts; ++handles;
+                text(); ++handles;
                 Read3(r); Read3(r);
             }
-            ++texts;
+            text();
             return !r.Failed();
         }
          
@@ -253,7 +256,7 @@ namespace MiniCAD::Tch
         const char* why = nullptr;
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
         const bool doubleLine = entity.Raw.DxfName == "TCH_DOUBLELINEPIPE";
-        if (!Detail::CheckPayload(entity, doubleLine ? "TCH_DOUBLELINEPIPE" : "TCH_PIPE", why)) return why ? fail(why) : false;
+        if (!Detail::CheckPayload(entity, doubleLine ? "TCH_DOUBLELINEPIPE" : "TCH_PIPE", why, true)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         TchPipe p;
         if (Detail::IsCipherObject(data))
@@ -267,12 +270,14 @@ namespace MiniCAD::Tch
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             TchBase base;
             if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
+            const bool inlineText = Detail::InlineText(r);
             if (r.ReadByte() >= 2) return fail("unsupported native pipe prototype version");
             p.Scale = base.Scale;
             r.ReadByte(); r.ReadByte(); r.ReadByte();
             p.Start = Detail::Read3(r);
             p.End = Detail::Read3(r);
             p.Sweep = r.ReadBitDouble();
+            if (inlineText) r.ReadVariableText();
             int handles = 2;                                    // 两端连接的管件
             r.ReadByte(); r.ReadByte();
             handles += r.ReadByte();
@@ -289,9 +294,14 @@ namespace MiniCAD::Tch
             p.Diameter = r.ReadBitDouble();
             r.ReadBitDouble();
             r.ReadBitShort();
+            if (inlineText) p.LabelPrefix = r.ReadVariableText();
             p.VisibleMiddle = r.ReadBitDouble();
             p.VisibleLength = r.ReadBitDouble();
-            if (version > 1) r.ReadBitDouble();
+            if (version > 1)
+            {
+                r.ReadBitDouble();
+                if (inlineText) p.LabelSuffix = r.ReadVariableText();
+            }
             int doubleVersion = 0;
             if (doubleLine)
             {
@@ -307,12 +317,15 @@ namespace MiniCAD::Tch
             if (r.Failed() || r.PositionInBits() != data.MainBits)
                 return fail("native pipe fields do not consume the payload exactly");
 
-            // 文字流：基类之后为原型的字符串、管线的标注前缀，版本 ≥ 2 时还有后缀
-            Detail::TextStream stream(data, r);
-            for (int i = 0; i < base.TextCount + 1; ++i) stream.Next();
-            p.LabelPrefix = stream.Next();
-            if (version > 1) p.LabelSuffix = stream.Next();
-            if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            // 文字流：基类之后为原型的字符串、管线的标注前缀，版本 ≥ 2 时还有后缀；R2004 及更早已就地读掉
+            if (!inlineText)
+            {
+                Detail::TextStream stream(data, r);
+                for (int i = 0; i < base.TextCount + 1; ++i) stream.Next();
+                p.LabelPrefix = stream.Next();
+                if (version > 1) p.LabelSuffix = stream.Next();
+                if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            }
             const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + handles, doubleVersion >= 2 ? 3 : 2);
             if (hs.size() < 2) return fail("native pipe handle stream is incomplete");
             p.LabelStyle = hs[0];
@@ -376,7 +389,7 @@ namespace MiniCAD::Tch
         using namespace MiniDWG;
         const char* why = nullptr;
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
-        if (!Detail::CheckPayload(entity, "TCH_PIPEFITTING", why)) return why ? fail(why) : false;
+        if (!Detail::CheckPayload(entity, "TCH_PIPEFITTING", why, true)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         if (Detail::IsCipherObject(data))
         {
@@ -667,7 +680,7 @@ namespace MiniCAD::Tch
         using namespace MiniDWG;
         const char* why = nullptr;
         auto fail = [&](const char* w) { if (diagnostic) *diagnostic = w; return false; };
-        if (!Detail::CheckPayload(entity, "TCH_PIPETEXT", why)) return why ? fail(why) : false;
+        if (!Detail::CheckPayload(entity, "TCH_PIPETEXT", why, true)) return why ? fail(why) : false;
         const auto& data = entity.Raw.Dwg;
         TchPipeText t;
         XYZ at, dir;
@@ -696,13 +709,18 @@ namespace MiniCAD::Tch
             t.Height = r.ReadBitDouble();
             r.ReadBitDouble();
             if (r.ReadByte() >= 2) return fail("unsupported native pipe text version");
+            const bool inlineText = Detail::InlineText(r);
+            if (inlineText) t.Value = r.ReadVariableText();
             if (r.Failed() || r.PositionInBits() != data.MainBits)
                 return fail("native pipe text fields do not consume the payload exactly");
             t.Scale = base.Scale;
-            Detail::TextStream stream(data, r);
-            for (int i = 0; i < base.TextCount; ++i) stream.Next();
-            t.Value = stream.Next();
-            if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            if (!inlineText)
+            {
+                Detail::TextStream stream(data, r);
+                for (int i = 0; i < base.TextCount; ++i) stream.Next();
+                t.Value = stream.Next();
+                if (stream.Reader.Failed()) return fail("native pipe text stream is incomplete");
+            }
             const auto hs = Detail::ReadBlockHandles(entity, base.HandleCount + 1, 1);
             if (hs.empty()) return fail("native pipe text handle stream is incomplete");
             t.Style = hs[0];

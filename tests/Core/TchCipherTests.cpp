@@ -939,6 +939,7 @@ namespace
         if (n == "TCH_EFITTING") return run(Tch::DecodeCableFitting, Tch::TchCableFitting{});
         if (n == "TCH_DBHVACDUCT") return run(Tch::DecodeHvacDuct, Tch::TchHvacDuct{});
         if (n == "TCH_DBHFITTING") return run(Tch::DecodeHvacFitting, Tch::TchHvacFitting{});
+        if (n == "TCH_HVACDIMENSION") return run(Tch::DecodeHvacDimension, Tch::TchHvacDimension{});
         return -1;
     }
 }
@@ -1286,6 +1287,73 @@ int main()
             Check(ductElbow.Type == Tch::TchHvacFitting::Kind::Elbow && Near(ductElbow.Width0, 400) && Near(ductElbow.Pt2.Y, 1000), "duct elbow ends and width");
     }
 
+    // 风管标注、乙字弯、弧形三通的图形
+    {
+        auto hasPoint = [](const Tch::TchGraphics& g, double x, double y, double tol = 0.5) {
+            for (const auto& p : g.Paths)
+                for (const auto& q : p.Points)
+                    if (std::hypot(q.P.X - x, q.P.Y - y) <= tol) return true;
+            for (const auto& l : g.Lines)
+                if (std::hypot(l.A.X - x, l.A.Y - y) <= tol || std::hypot(l.B.X - x, l.B.Y - y) <= tol) return true;
+            return false;
+        };
+        Tch::TchHvacDimension label;
+        label.Anchor = {100, 200, 0};
+        label.Angle = 3 * std::numbers::pi / 2;
+        label.Values = {"100\xc3\x97" "100", "", "", ""};
+        const auto single = Tch::BuildHvacDimension(label, {});
+        Check(!single.Texts.empty() && Near(single.Texts[0].Rotation, std::numbers::pi / 2, 1e-9), "duct size label is turned upright");
+
+        Tch::TchHvacDimension table;
+        table.Style = 4;
+        table.Anchor = {0, 0, 0};
+        table.Corner = {-1000, 500, 0};
+        table.Angle = std::numbers::pi;
+        table.Values = {"A", "100X100", "1", "200"};
+        const auto t = Tch::BuildHvacDimension(table, {});
+        bool leader = false, rows = false;
+        for (const auto& l : t.Lines) leader = leader || (Near(l.A.X, 0) && Near(l.B.X, -1000) && Near(l.B.Y, 500));
+        for (const auto& p : t.Paths)
+            for (const auto& q : p.Points) rows = rows || (Near(q.P.X, -1000) && Near(q.P.Y, 980));
+        Check(leader && rows && t.Texts.size() == 4 && t.Texts[0].Center.X < t.Texts[1].Center.X && Near(t.Texts[0].Center.Y, 740) &&
+                  Near(t.Texts[2].Center.Y, 260),
+              "duct table: leader to the corner, two rows 1.6 x text height, extends to the left when the angle points left");
+
+        Tch::TchHvacFitting offset;
+        offset.Type = Tch::TchHvacFitting::Kind::Offset;
+        offset.Width0 = offset.Width2 = 250;
+        offset.Width3 = 160;
+        offset.Bend = std::numbers::pi / 3;
+        offset.Rise = 300;
+        offset.Pt2 = {100 + 600 * std::sin(std::numbers::pi / 3), 300, 0};
+        offset.Axis = {-1, 0, 0};
+        const auto o = Tch::BuildHvacFitting(offset);
+        Check(hasPoint(o, 50, 125) && hasPoint(o, 50 + 300 * std::sin(std::numbers::pi / 3), 150, 0.1) &&
+                  hasPoint(o, offset.Pt2.X - 50, 300 - 125),
+              "duct offset: two 60-degree arcs with radius equal to the offset and 50 straight at both ends");
+
+        Tch::TchHvacFitting rise = offset;
+        rise.Pt0 = {0, 0, 3000};
+        rise.Pt2 = {-1200, 0, 2600};
+        rise.Axis = {1, 0, 0};
+        rise.Width3 = 1200;
+        const auto r = Tch::BuildHvacFitting(rise);
+        Check(hasPoint(r, -300, 200, 0.1) && hasPoint(r, -900, -200, 0.1) && hasPoint(r, -800, -186.83, 0.1) && hasPoint(r, -1200, 600),
+              "vertical duct offset: straight duct with the Z mark (third of the half width, tick leaning in when it drops)");
+
+        Tch::TchHvacFitting tee;
+        tee.Type = Tch::TchHvacFitting::Kind::Tee;
+        tee.TeeStyle = 3;
+        tee.Pt2 = {-600, 0, 0};
+        tee.Pt3 = {-300, -400, 0};
+        tee.Width0 = tee.Width2 = 400;
+        tee.Width3 = 200;
+        const auto c = Tch::BuildHvacFitting(tee);
+        Check(hasPoint(c, -50, -200) && hasPoint(c, -200, -350) && hasPoint(c, -400, -350) && hasPoint(c, -366.23, -200, 0.3) &&
+                  hasPoint(c, -600, -200) && hasPoint(c, -600, 200),
+              "curved-branch duct tee: inner quarter arc after the 50 straight, outer arc back to the main edge");
+    }
+
     {
         CadDatabase db;
         db.SetVersion(CadVersion::AC1024);
@@ -1498,6 +1566,39 @@ int main()
             Check(configured && !config.Fill && Near(config.DetailScale, 100) && Near(config.IndexTextRatio, 0.6) && config.IndexTextMode == 0 &&
                   config.Standard[6] == "SOLID" && config.Detail[4] == "普通砖",   // i18n: 数据
                   "tianzheng2.dwg: drawing settings version 11 read through the insight number settings");
+        }
+    }
+
+    {
+#ifdef _WIN32
+        const wchar_t* wide = _wgetenv(L"MINICAD_HVAC_SAMPLE");
+        const std::u8string u8 = wide ? std::filesystem::path(wide).u8string() : std::u8string{};
+        const std::string file(u8.begin(), u8.end());
+#else
+        const char* env = std::getenv("MINICAD_HVAC_SAMPLE");
+        const std::string file = env ? env : "";
+#endif
+        const auto data = file.empty() ? std::vector<std::uint8_t>{} : ReadFile(file);
+        if (data.empty()) std::printf("[SKIP] MINICAD_HVAC_SAMPLE\n");
+        else if (const auto db = ReadDwg(data); !db) Check(false, "R2004 HVAC sample reads");
+        else
+        {
+            std::map<std::string, std::pair<int, int>> counts;
+            for (const auto& [handle, object] : db->Objects())
+            {
+                const auto* e = dynamic_cast<const UnknownEntity*>(object.get());
+                if (!e || (e->Raw.DxfName != "TCH_PIPE" && e->Raw.DxfName != "TCH_PIPEFITTING" && e->Raw.DxfName != "TCH_PIPETEXT" &&
+                           e->Raw.DxfName != "TCH_HVACDIMENSION" && e->Raw.DxfName != "TCH_DBHFITTING"))
+                    continue;
+                std::string why;
+                const int r = DecodeByType(*e, why);
+                ++counts[e->Raw.DxfName].first;
+                counts[e->Raw.DxfName].second += r > 0;
+                if (r <= 0) std::printf("  %llx %s: %s\n", static_cast<unsigned long long>(handle), e->Raw.DxfName.c_str(), why.c_str());
+            }
+            bool all = counts.size() == 5;
+            for (const auto& [name, c] : counts) all = all && c.first > 0 && c.second == c.first;
+            Check(all, "R2004 HVAC sample: pipes, pipe fittings, pipe texts, duct dimensions and all duct fitting kinds decode");
         }
     }
 

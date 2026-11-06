@@ -3084,6 +3084,11 @@ namespace MiniCAD
                     const TextStyleID style = LookupStyle(t.Style);
                     return MakeTchGraphics(src, Tch::BuildPipeText(t, rule(t.Style, style)), style);
                 }
+                if (Tch::TchHvacDimension d; Tch::DecodeHvacDimension(unknown, d, &reason))
+                {
+                    const TextStyleID style = LookupStyle(d.TextStyle);
+                    return MakeTchGraphics(src, Tch::BuildHvacDimension(d, rule(d.TextStyle, style)), style);
+                }
                 if (Tch::TchVPipeDim d; Tch::DecodeVPipeDim(unknown, d, &reason))
                 {
                     const TextStyleID style = LookupStyle(d.Style);

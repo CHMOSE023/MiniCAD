@@ -286,11 +286,24 @@ namespace MiniCAD::Tch
         if (r.ReadBitShort() != 1) return fail("unsupported cable tray fitting version");
         ++handles;                                                 
         if (!Detail::ReadXDataMap(r, *text, map, handles)) return fail("invalid cable tray fitting property map"); 
-        const int list1 = r.ReadBitLong(), list2 = r.ReadBitLong();
-        if (r.ReadBitShort() > 1) return fail("unsupported cable tray fitting class version");
+        const int edges = r.ReadBitLong();
+        if (edges < 0 || edges > 1024) return fail("invalid cable tray fitting edge count");
+        for (int i = 0; i < edges && !r.Failed(); ++i)
+        {
+            const int segments = r.ReadBitLong();
+            if (segments < 0 || segments > 4096) return fail("invalid cable tray fitting edge");
+            for (int k = 0; k < segments && !r.Failed(); ++k)
+            {
+                for (int j = 0; j < 3; ++j) r.Read3BitDouble();
+                r.ReadBitShort(); r.ReadBitLong(); r.ReadBitDouble();
+            }
+        }
+        const int links = r.ReadBitLong();
+        if (links < 0 || links > 4096) return fail("invalid cable tray fitting link count");
+        if (r.ReadBitShort() > (entity.Raw.DxfName == "TCH_DBHFITTING" ? 2 : 1)) return fail("unsupported cable tray fitting class version");
         if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail(("native cable tray fitting fields do not consume the payload exactly (lists " + std::to_string(list1) + ", " +
-                         std::to_string(list2) + ", bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits) + ")").c_str());
+            return fail(("native cable tray fitting fields do not consume the payload exactly (bit " + std::to_string(r.PositionInBits()) +
+                         " of " + std::to_string(data.MainBits) + ")").c_str());
         if (baseOut) *baseOut = base;
         return true;
     }

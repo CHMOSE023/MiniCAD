@@ -589,6 +589,36 @@ int wmain(int argc, wchar_t** argv)
                 }
                 std::printf("\n");
             }
+    if (const char* probe = std::getenv("MINICAD_XMAP"))
+        for (const auto& [handle, object] : db->Objects())
+            if (const auto* u = dynamic_cast<const MiniDWG::UnknownEntity*>(object.get()); u && u->Raw.DxfName == probe)
+            {
+                const auto& data = u->Raw.Dwg;
+                MiniDWG::DwgBitReader r(data.Main, data.Version, MiniDWG::Codec::CodePage::Gbk);
+                MiniCAD::Tch::TchBase base;
+                const bool ok = MiniCAD::Tch::ReadTchBase(r, base, &data);
+                std::printf("XMAP %llx base=%d v%d scale=%g h=%d t=%d pos=%llu of %llu\n", (unsigned long long)handle, ok, base.Version, base.Scale,
+                            base.HandleCount, base.TextCount, (unsigned long long)r.PositionInBits(), (unsigned long long)data.MainBits);
+                const int ver = r.ReadBitShort();
+                MiniCAD::Tch::Detail::TextStream text(data, r);
+                MiniCAD::Tch::TchXDataMap map;
+                int handles = 0;
+                const bool mok = MiniCAD::Tch::Detail::ReadXDataMap(r, text, map, handles);
+                std::printf("  ver=%d map=%d handles=%d:", ver, mok, handles);
+                for (const auto& [k, v] : map.Items)
+                {
+                    std::printf(" %s=", k.c_str());
+                    if (v.Type == 3 || v.Type == 5) std::printf("%.10g", v.Number);
+                    else if (v.Type >= 0x4005 && v.Type <= 0x4008) std::printf("(%.10g,%.10g,%.10g)", v.Point.X, v.Point.Y, v.Point.Z);
+                    else if (v.HandleIndex >= 0) std::printf("#%llx", (unsigned long long)MiniCAD::Tch::Detail::HandleAt(*u, v.HandleIndex));
+                    else std::printf("[%s]", v.Text.c_str());
+                }
+                std::printf("\n  pos=%llu\n", (unsigned long long)r.PositionInBits());
+                const auto start = r.PositionInBits();
+                std::string bits;
+                for (auto i = start; i < data.MainBits && i < start + 1200; ++i) bits += r.ReadBit() ? '1' : '0';
+                std::printf("  bits %s\n", bits.c_str());
+            }
     // MINICAD_PROXYEXT=类型（以 * 结尾时按前缀）：打印该类未建模实体的所有者、代理图形的记录类型与范围、私有数据大小
     if (const char* pt = std::getenv("MINICAD_PROXYEXT"))
         for (const auto& [handle, object] : db->Objects())
