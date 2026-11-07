@@ -37,7 +37,7 @@ namespace MiniCAD
 
     // 文字附着点(DXF MULTILEADER context 组码 171)：1=左, 2=中, 3=右。
     //
-    // 注意：**绘制不依赖它**。实测 20/20（`1#、2#厂房电气_t3.dwg`）发现
+    // 注意：**绘制不依赖它**。实测 20/20 个多重引线发现
     // `ContentBasePoint`（组码 10）**恒为文字块的左下角**，与附着点无关：
     //   171=3(Right) 时 CBP.x = TextLocation.x − 字宽
     //   171=1(Left)  时 CBP.x = TextLocation.x − LandingGap
@@ -115,7 +115,7 @@ namespace MiniCAD
 
         // ── 文字块左下角（AutoCAD 的 ContentBasePoint，组码 10）──────────
         // **绘制就用它**，不需要量字宽：
-        //   实测 20/20（`1#、2#厂房电气_t3.dwg`）ContentBasePoint 恒为文字块的
+        //   实测 20/20 个多重引线，ContentBasePoint 恒为文字块的
         //   左下角，且 .y 恒等于引线的 ConnectionPoint.y（即 dogleg 所在的水平线）：
         //     171=1(Left)  时 CBP.x = doglegEnd.x                （文字向右展开）
         //     171=3(Right) 时 CBP.x = doglegEnd.x − 字宽          （文字向左展开）

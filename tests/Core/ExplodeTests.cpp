@@ -252,6 +252,65 @@ int RunExplodeTests()
         rect.FillTriangle({ -10, -10, 0 }, { 30, -10, 0 }, { -10, 30, 0 }, Math::Color4::White());
         rect.Wipe({ { 2, 2, 0 }, { 8, 2, 0 }, { 8, 8, 0 }, { 2, 8, 0 } });
         Check(std::abs(s3.Area - 16.0 - 4.0) < 1e-9 && s3.Wipes == 1, "凸裁剪边界：三角形与区域覆盖精确裁剪");
+
+        struct PathSink : IDrawSink
+        {
+            struct Path { std::vector<Math::Point3> pts; std::vector<double> widths; bool closed; };
+            std::vector<Path> Paths;
+            std::vector<std::pair<double, double>> Styled;   // 截出的有宽度线段：x 范围
+            double StyledWidth = 0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void DrawPath(const std::vector<Math::Point3>& p, const Math::Color4&, bool closed) override { Paths.push_back({ p, {}, closed }); }
+            void DrawPath(const std::vector<Math::Point3>& p, const std::vector<double>& w, const Math::Color4&, bool closed) override { Paths.push_back({ p, w, closed }); }
+            void DrawStyledLine(const Math::Point3& a, const Math::Point3& b, const Math::Color4&, double width) override
+            {
+                Styled.push_back({ std::min(a.x, b.x), std::max(a.x, b.x) });
+                StyledWidth = width;
+            }
+        };
+        const std::vector<Math::Point3> square{ { 0, 0, 0 }, { 10, 0, 0 }, { 10, 10, 0 }, { 0, 10, 0 } };
+        {
+            PathSink s;
+            ClipDrawSink c(s, square);
+            c.DrawPath({ { 2, 5, 0 }, { 15, 5, 0 }, { 15, 8, 0 } }, Math::Color4::White(), false);
+            Check(s.Paths.size() == 1 && s.Paths[0].pts.size() == 2 && Near(s.Paths[0].pts[1].x, 10),
+                  "多段线跨出裁剪框：截在交点 x = 10，框外的半段不画");
+        }
+        {
+            PathSink s;
+            ClipDrawSink c(s, square);
+            c.DrawPath({ { 2, 2, 0 }, { 8, 2, 0 }, { 8, 8, 0 }, { 2, 8, 0 } }, Math::Color4::White(), true);
+            Check(s.Paths.size() == 1 && s.Paths[0].closed && s.Paths[0].pts.size() == 4, "整条在框内的闭合多段线原样转发");
+        }
+        {
+            PathSink s;
+            ClipDrawSink c(s, square);
+            c.DrawPath({ { 5, 5, 0 }, { 15, 5, 0 }, { 15, 15, 0 }, { 5, 15, 0 } }, Math::Color4::White(), true);
+            bool ok = s.Paths.size() == 1 && !s.Paths[0].closed && s.Paths[0].pts.size() == 3;
+            if (ok)
+            {
+                const auto& p = s.Paths[0].pts;
+                ok = Near(p[0].x, 5) && Near(p[0].y, 10) && Near(p[1].x, 5) && Near(p[1].y, 5) && Near(p[2].x, 10) && Near(p[2].y, 5);
+            }
+            Check(ok, "部分在框内的闭合多段线：闭合段也裁剪，首尾在顶点 0 处拼成一条");
+        }
+        {
+            PathSink s;
+            ClipDrawSink c(s, ell);
+            c.DrawPath({ { 2, 6, 0 }, { 8, 2, 0 }, { 8, 8, 0 } }, { 1, 3, 5 }, Math::Color4::White(), false);
+            bool ok = !s.Paths.empty();
+            for (const auto& p : s.Paths)
+                for (size_t i = 0; i < p.pts.size(); ++i)
+                    ok = ok && p.widths.size() == p.pts.size() && !(p.pts[i].x > 4 + 1e-9 && p.pts[i].y > 4 + 1e-9);
+            Check(ok, "凹裁剪框：顶点都在框内、线段穿过缺口时同样截断，逐点宽度随之插值");
+        }
+        {
+            PathSink s;
+            ClipDrawSink c(s, square);
+            c.DrawStyledLine({ -5, 5, 0 }, { 15, 5, 0 }, Math::Color4::White(), 0.7);
+            Check(s.Styled.size() == 1 && Near(s.Styled[0].first, 0) && Near(s.Styled[0].second, 10) && s.StyledWidth == 0.7,
+                  "有宽度的线段跨出裁剪框：截在交点、保留宽度");
+        }
     }
 
     // ── 不可分解 ─────────────────────────────────────────────

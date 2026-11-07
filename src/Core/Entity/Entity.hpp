@@ -35,7 +35,7 @@ namespace MiniCAD
 		{
 			return (m_attr.Color.Method == ColorMethod::ByLayer)
 				? sink.GetLayerColor(m_attr.LayerId)
-				: static_cast<Math::Color4>(m_attr.Color);
+				: m_attr.Color.DrawRgba();
 		}
 
 		virtual AABB      GetBoundingBox() const= 0;

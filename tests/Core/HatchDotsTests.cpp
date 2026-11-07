@@ -296,32 +296,16 @@ int RunHatchDotsTests()
         Check(!s.segs.empty(), "混合图案在只收线段的 sink 下能收到实线段");
     }
 
-    // ── 11. 扫描线与边界重合时也要出图 ──────────────────────────
-    //
-    // 相交判定原来是 `v <= lo || v >= hi`（两端都开），扫描线正好落在边的
-    // 端点上时该边被整条跳过 ⇒ 与填充边界重合的扫描线不出图。
-    // 实测：20×20、间距 2 的连续线填充只有 9 条，应为 11 条。
-    // （这与点/线无关，是扫描线算法固有的边界缺陷。）
+    // ── 11. 压在边界上的扫描线不画（AutoCAD 2020 实测：20×20、间距 2 只有 y = 2…18 九条）──
     {
-        // 间距 2、范围 20×20 ⇒ 扫描线 v = 0,2,...,20 共 11 条
-        //（nFirst=0、nLast=floor(20/2)=10；v=0 撞底边、v=20 撞顶边，
-        //  修前两条都被漏掉，只剩 9 条）
         Sink s;
         Render(MakeDots(2.0), 1.0, s, 0.0, 0.0, 20.0, 20.0);
-
-        // 11 条扫描线 × 每条 10 个点（间距 2、跨度 20）= 110 个点
         std::printf("    20×20 间距 2：点数 %zu\n", s.points.size());
-        Check(s.points.size() == 110, "撞边界的扫描线也出图（11 条线 × 10 点 = 110）");
-
-        // v = 0 与 v = 20 两条都必须有点 —— 这是修复的核心
-        bool hasBottom = false, hasTop = false;
+        Check(s.points.size() == 90, "压边的扫描线不画（9 条线 × 10 点 = 90）");
+        bool onEdge = false;
         for (const auto& p : s.points)
-        {
-            if (Near(p.y, 0.0, 1e-9))  hasBottom = true;
-            if (Near(p.y, 20.0, 1e-9)) hasTop    = true;
-        }
-        Check(hasBottom, "y = 0（撞底边）的扫描线出图");
-        Check(hasTop,    "y = 20（撞顶边）的扫描线出图");
+            onEdge = onEdge || Near(p.y, 0.0, 1e-9) || Near(p.y, 20.0, 1e-9);
+        Check(!onEdge, "y = 0、y = 20（压在上下边上）没有点");
     }
     {
         // 对照：连续线（无 dash）同样受益
@@ -336,8 +320,7 @@ int RunHatchDotsTests()
         Sink s;
         Render(p, 1.0, s, 0.0, 0.0, 20.0, 20.0);
         std::printf("    20×20 间距 2 连续线：线段 %zu\n", s.segs.size());
-        // v = 0,2,...,20 共 11 条完整横线（修前 9 条，两端都漏）
-        Check(s.segs.size() == 11, "连续线：撞边界的扫描线也出图（11 条，修前 9 条）");
+        Check(s.segs.size() == 9, "连续线：y = 2…18 九条，压在上下边上的不画");
     }
     {
         // 扫描线正好穿过"经过型"顶点（边界在此从下穿到上）时只能算 1 个交点。
@@ -361,7 +344,7 @@ int RunHatchDotsTests()
                 mid = true;
         std::printf("    经过型顶点：线段 %zu\n", s.segs.size());
         Check(mid, "扫描线穿过经过型顶点：y = 2 画出 x 2～10 的一整段");
-        Check(s.segs.size() == 5, "经过型顶点：y = 0～4 共 5 条线，没有多余的线段");
+        Check(s.segs.size() == 3, "经过型顶点：y = 1～3 共 3 条线（y = 0、4 压在边上），没有多余的线段");
     }
 
     const int n = g_failures - before;

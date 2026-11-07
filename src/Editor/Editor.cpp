@@ -3468,7 +3468,7 @@ namespace MiniCAD
                * Mat4::Scale(Vec3{ s, s, 1.0 });
         // ⚠ 内容旋转用 **R(+Twist)**，不是 R(-Twist)。
         //
-        // 依据（实测 `01-曲陵路.dwg`，5 个 Twist=95.69° 的浮动视口）：
+        // 依据（实测 5 个 Twist=95.69° 的浮动视口）：
         //   这 5 个视口在纸面上并排一行（Center.x 步长 +420），各看模型里
         //   195 宽的一条带（scale=2，195×2=390=框宽）。把 ViewCenter 按
         //   DCS→WCS 的 R(-Twist) 转过之后，相邻 WCS 位移单位向量恒等于

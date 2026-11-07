@@ -26,7 +26,7 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | `TchText.h` | TCH文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | TCH矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管、管件（法兰、变径、弯头、三通、四通、乙字弯）与风管标注 |
-| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理） |
+| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理；不支持或数据不合理的记录只跳过那一条，裁剪 / 变换矩阵记录整个放弃） |
 
 ## 约束
 

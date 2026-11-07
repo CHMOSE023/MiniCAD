@@ -241,10 +241,8 @@ int RunHatchPatternTests()
         const auto segs = Render(*lib.Find("LINE"), 1.0, 0.0, 0, 0, 100, 100);
         bool horizontal = true;
         for (const auto& s : segs) horizontal = horizontal && std::abs(s.a.y - s.b.y) < 1e-9 && std::abs(Len(s) - 100.0) < 1e-6;
-        // 32 条：v = 0, 3.175, ..., 98.425（nFirst=0 起、nLast=floor(100/3.175)=31）。
-        // v = 0 撞底边，修好后也出图（原来是两端都开的区间判定，这条被漏掉，
-        // 那时是 31 条 —— 缺陷不是特性）。
-        Check(segs.size() == 32 && horizontal, "LINE：100×100 区域内 32 条完整水平线（间距 3.175）");
+        // v = 3.175 … 98.425 共 31 条；v = 0 压在底边上，AutoCAD 2020 不画
+        Check(segs.size() == 31 && horizontal, "LINE：100×100 区域内 31 条完整水平线（间距 3.175，压边的不画）");
 
         const auto rot = Render(*lib.Find("ANSI31"), 1.0, 45.0, 0, 0, 100, 100);
         bool vertical = !rot.empty();
@@ -252,15 +250,14 @@ int RunHatchPatternTests()
         Check(vertical, "ANSI31 旋转 45° 后为竖线");
 
         const auto scaled = Render(*lib.Find("LINE"), 2.0, 0.0, 0, 0, 100, 100);
-        Check(scaled.size() == 16, "比例 2：间距加倍，条数减半（32 → 16）");
+        Check(scaled.size() == 15, "比例 2：间距加倍（v = 6.35 … 95.25，15 条）");
     }
 
     // ── 4. 虚线：实线占比 ────────────────────────────────────────
     {
         const auto dash = Render(*lib.Find("DASH"), 1.0, 0.0, 0, 0, 127, 127);      // 127 = 20 个周期
-        // 41 条：v = 0, 3.175, ..., 127（nFirst=0、nLast=floor(127/3.175)=40）。
-        // v = 0 撞底边、v = 127 撞顶边，两端都出图（修前 39 条，两端都漏）。
-        const double full = 41.0 * 127.0;
+        // v = 3.175 … 123.825 共 39 条；v = 0、v = 127 压在上下边上不画
+        const double full = 39.0 * 127.0;
         Check(std::abs(TotalLen(dash) / full - 0.5) < 0.01, "DASH：实线占一半");
 
         bool inside = true;
@@ -508,6 +505,51 @@ int RunHatchPatternTests()
             h.SetPattern(*lib.Find("ANSI31"));
             Check(h.GetPattern().Name == "ANSI31", "SetPattern 只改图案不影响渐变");
         }
+    }
+
+    // ── 9. 压在边界上的扫描线（与 AutoCAD 2020 分解填充的结果对照）─────────────
+    {
+        auto userPattern = [](double spacing, bool doubled)
+        {
+            HatchPattern p;
+            p.Name = "_USER";
+            p.Solid = false;
+            p.Families.push_back({ 0.0, spacing, 0, 0, 0, {} });
+            if (doubled) p.Families.push_back({ 90.0, spacing, 0, 0, 0, {} });
+            return p;
+        };
+        auto draw = [](const HatchPattern& p, std::vector<Math::Point3> ring)
+        {
+            HatchEntity h(1, Polyline(std::move(ring)), p);
+            RecordingSink sink;
+            h.Draw(sink, false, false);
+            return sink.segs;
+        };
+        auto onBoundary = [](const std::vector<Seg>& segs, double x0, double y0, double x1, double y1)
+        {
+            int n = 0;
+            for (const auto& s : segs)
+                if ((std::abs(s.a.x - s.b.x) < 1e-6 && (std::abs(s.a.x - x0) < 1e-6 || std::abs(s.a.x - x1) < 1e-6)) ||
+                    (std::abs(s.a.y - s.b.y) < 1e-6 && (std::abs(s.a.y - y0) < 1e-6 || std::abs(s.a.y - y1) < 1e-6)))
+                    ++n;
+            return n;
+        };
+        const std::vector<Math::Point3> square{ { 0, 0, 0 }, { 20, 0, 0 }, { 20, 20, 0 }, { 0, 20, 0 }, { 0, 0, 0 } };
+
+        const auto single = draw(userPattern(2, false), square);
+        Check(single.size() == 9 && onBoundary(single, 0, 0, 20, 20) == 0, "20×20、间距 2：y = 2…18 九条，上下边上不画");
+
+        const auto doubled = draw(userPattern(2, true), square);
+        Check(doubled.size() == 18 && onBoundary(doubled, 0, 0, 20, 20) == 0, "双向：横竖各 9 条，四条边上都不画");
+
+        const auto strip = draw(userPattern(625, true), { { 0, 0, 0 }, { 250, 0, 0 }, { 250, 27400, 0 }, { 0, 27400, 0 }, { 0, 0, 0 } });        Check(strip.size() == 43 && onBoundary(strip, 0, 0, 250, 27400) == 0, "窄长条：只有 43 条横线，贴着左边的竖线不画");
+
+        const auto step = draw(userPattern(2, false), { { 0, 0, 0 }, { 20, 0, 0 }, { 20, 10, 0 }, { 10, 10, 0 }, { 10, 20, 0 }, { 0, 20, 0 }, { 0, 0, 0 } });
+        bool stepOk = step.size() == 9;
+        for (const auto& s : step)
+            if (std::abs(s.a.y - 10.0) < 1e-6)
+                stepOk = stepOk && std::abs(std::min(s.a.x, s.b.x)) < 1e-6 && std::abs(std::max(s.a.x, s.b.x) - 10.0) < 1e-6;
+        Check(stepOk, "台阶形：y = 10 只画在内的 0…10，压在台阶上的 10…20 不画");
     }
     return g_failures;
 }

@@ -920,7 +920,7 @@ namespace MiniCAD
             // 做法：边的下端点（lo）总计入；上端点（hi）只在边界越过该顶点后
             // （跳过与扫描线等高的水平边）**不再向上**时计入 —— 向上时
             // 这个交点已由上面那条边的下端点计过。
-            // 这样与填充边界重合的首末扫描线（矩形的底边、顶边）也都出图。
+            // 压在边界上的扫描线由此配出的那段，再减去与它共线的边界边（flats）。
             //
             // 边按 lo 排序，扫描线由低到高推进时只看活动边表里的边（lo ≤ v ≤ hi）：
             // 原来每条扫描线遍历全部边，边界点数上万、扫描线又多时是 O(扫描线数 × 边数)
@@ -930,6 +930,11 @@ namespace MiniCAD
                 size_t poly, i;
                 int    hiCounts = -1;      // 扫描线正好过上端点时是否计入：-1 未判定，0 不计，1 计入
             };
+            // 与扫描线平行的边界边（v, u0, u1）：扫描线压在边界上的部分不画（AutoCAD 2020 实测：
+            // 20×20、间距 2 只出 y = 2…18 九条；台阶形边界上一半在内、一半压边的扫描线只画在内的那半）
+            struct FlatEdge { double v, u0, u1; };
+            std::vector<FlatEdge> flats;
+            const double flatTol = 1e-9 * std::max({ 1.0, std::abs(vmin), std::abs(vmax) });
             std::vector<ScanEdge> edges;
             for (size_t pi = 0; pi < polys.size(); ++pi)
             {
@@ -940,6 +945,11 @@ namespace MiniCAD
                     const double vb = toV(poly[i + 1].x, poly[i + 1].y);
                     // 水平边（va == vb）与扫描线平行（重合），不产生交点；
                     // 留着的话 (v - va) / (vb - va) 是 0/0 = NaN ⇒ 交点污染整条扫描线
+                    if (std::abs(vb - va) < flatTol)
+                    {
+                        const double ua = toU(poly[i].x, poly[i].y), ub = toU(poly[i + 1].x, poly[i + 1].y);
+                        flats.push_back({ (va + vb) * 0.5, std::min(ua, ub), std::max(ua, ub) });
+                    }
                     if (std::abs(vb - va) < 1e-12) continue;
                     edges.push_back({ va, vb, toU(poly[i].x, poly[i].y), toU(poly[i + 1].x, poly[i + 1].y),
                                       std::min(va, vb), std::max(va, vb), pi, i });
@@ -968,6 +978,9 @@ namespace MiniCAD
                 return e.hiCounts == 1;
             };
 
+            std::sort(flats.begin(), flats.end(), [](const FlatEdge& a, const FlatEdge& b) { return a.v < b.v; });
+            std::vector<std::pair<double, double>> cuts;
+
             std::vector<size_t> active;
             size_t nextEdge = 0;
             std::vector<double> us;
@@ -992,10 +1005,9 @@ namespace MiniCAD
 
                 std::sort(us.begin(), us.end());
                 const double phase = uO + n * dx * (dashed ? 1.0 : 0.0);
-                for (size_t k = 0; k + 1 < us.size() && budget > 0; k += 2)
+                auto drawSpan = [&](double a, double b)
                 {
-                    const double a = us[k], b = us[k + 1];
-                    if (!dashed) { emit(a, b, v); continue; }
+                    if (!dashed) { emit(a, b, v); return; }
 
                     // 从覆盖 a 的那个周期开始，逐项输出落在 [a, b] 内的实线 / 点
                     if ((b - a) / period > static_cast<double>(budget) * 4.0) { budget = 0; return; }
@@ -1014,7 +1026,7 @@ namespace MiniCAD
                             }
                             s += period;
                         }
-                        continue;
+                        return;
                     }
 
                     // 按 dash 序列的**下标**走，而不是每次重放整个序列：
@@ -1056,6 +1068,25 @@ namespace MiniCAD
                             s += len;      // 空白段
                         }
                     }
+                };
+
+                cuts.clear();
+                for (auto it = std::lower_bound(flats.begin(), flats.end(), v - flatTol,
+                                                [](const FlatEdge& f, double x) { return f.v < x; });
+                     it != flats.end() && it->v <= v + flatTol; ++it)
+                    cuts.push_back({ it->u0, it->u1 });
+                std::sort(cuts.begin(), cuts.end());
+                for (size_t k = 0; k + 1 < us.size() && budget > 0; k += 2)
+                {
+                    double a = us[k];
+                    const double b = us[k + 1];
+                    for (const auto& [c0, c1] : cuts)
+                    {
+                        if (c1 <= a + flatTol || c0 >= b - flatTol) continue;
+                        if (c0 > a + flatTol) drawSpan(a, c0);
+                        a = std::max(a, c1);
+                    }
+                    if (b - a > flatTol) drawSpan(a, b);
                 }
             }
         }

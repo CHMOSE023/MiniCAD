@@ -137,11 +137,9 @@ int RunTchProxyImportTests()
             }
             check(preserved, "opaque native data and proxy stream survive DWG reader/writer");
             MiniCAD::Scene scene;
-            check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) &&
-                scene.EntityCount() == (unsupported ? 0 : 1),
-                unsupported ? "unknown proxy record rejects complete scene preview" :
+            check(!bytes.empty() && MiniCAD::ImportCad(bytes, scene) && scene.EntityCount() == 1,
+                unsupported ? "unknown proxy record is skipped, the circle before it still imports" :
                     "TCH class without native decoder imports proxy through full DWG path");
-            if (unsupported) continue;
             int matches = 0;
             scene.ForEachObject([&](const MiniCAD::Object& object) {
                 const auto* geometry = dynamic_cast<const MiniCAD::InsertEntity*>(&object);

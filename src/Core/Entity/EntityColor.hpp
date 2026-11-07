@@ -102,5 +102,21 @@ namespace MiniCAD
 
         // 隐式:当 Color4 使用 → 返回已解析的 RGBA,保持旧的读取调用。
         constexpr operator Math::Color4() const { return Rgba; }
+
+        // 绘制用的颜色。渲染器把纯白 / 纯黑当 7 号色随背景翻转（MapColor），而 AutoCAD 里真彩的
+        // 纯黑、纯白不随背景变：真彩时往里收 kTrueColorInset，避开翻转判定（顶点色是 8 位，差 1/255 不够）
+        static constexpr double kTrueColorInset = 2.0 / 255.0;
+        Math::Color4 DrawRgba() const
+        {
+            if (Method != ColorMethod::ByRgb) return Rgba;
+            auto pure = [](const Math::Color4& c, double v)
+            {
+                auto near = [v](double x) { return x > v - 0.004 && x < v + 0.004; };
+                return near(c.r) && near(c.g) && near(c.b);
+            };
+            if (pure(Rgba, 1.0)) return { 1.0 - kTrueColorInset, 1.0 - kTrueColorInset, 1.0 - kTrueColorInset, Rgba.a };
+            if (pure(Rgba, 0.0)) return { kTrueColorInset, kTrueColorInset, kTrueColorInset, Rgba.a };
+            return Rgba;
+        }
     };
 }

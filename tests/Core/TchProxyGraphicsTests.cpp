@@ -1,4 +1,5 @@
 #include "Import/TchProxyGraphics.h"
+#include "Dwg/Write/DwgBitWriter.h"
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -59,11 +60,19 @@ int RunTchProxyGraphicsTests()
     check(result.Entities.size() == 2 && result.Entities[0]->Color.Index() == 3,
         "later attributes do not mutate preceding primitives");
     auto good = source.ProxyGraphics;
-    for (std::uint32_t unsupported : {29u,27u,10u,16u,18u,999u})
+    for (std::uint32_t transform : {27u,29u,31u})
+    {
+        source.ProxyGraphics = good; Record(source.ProxyGraphics,transform,{});
+        check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty() && error.find(std::to_string(transform)) != std::string::npos,
+            "clip / transform commands reject the whole preview with record type diagnostics");
+    }
+    for (std::uint32_t unsupported : {10u,16u,18u,999u})
     {
         source.ProxyGraphics = good; Record(source.ProxyGraphics,unsupported,{});
-        check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty() && error.find(std::to_string(unsupported)) != std::string::npos,
-            "unsupported commands reject the whole preview with record type diagnostics");
+        Record(source.ProxyGraphics,2,CircleBytes());
+        check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 3 && result.Skipped == 1 &&
+            error.find(std::to_string(unsupported)) != std::string::npos,
+            "unsupported or malformed record is skipped, records around it still decode");
     }
     source.ProxyGraphics = good; source.ProxyGraphics.pop_back();
     check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty(),"truncated final record discards preceding shapes");
@@ -126,7 +135,8 @@ int RunTchProxyGraphicsTests()
             t->StyleHandle == 77 && t->LayerHandle == 13 && t->LineTypeHandle == 22,"text2 decodes code page, size, direction, font style, layer and linetype");
         check(ok && result.Entities[1]->LayerHandle == 13 && result.Entities[1]->LineTypeHandle == 21,"linetype ByLayer index and layer persist to later records");
         source.ProxyGraphics.assign(8,0); value.clear(); U32(value,3); Record(source.ProxyGraphics,16,value); Record(source.ProxyGraphics,2,CircleBytes());
-        check(!DecodeProxyGraphics(source,result,&error,&context),"layer index outside the table is rejected");
+        check(DecodeProxyGraphics(source,result,&error,&context) && result.Skipped == 1 && result.Entities.size() == 1 &&
+            result.Entities[0]->LayerHandle == source.LayerHandle,"layer index outside the table is skipped, layer stays unchanged");
         source.ProxyGraphics.assign(8,0);
         value.clear(); U32(value,2); Record(source.ProxyGraphics,16,value);
         value.clear(); U32(value,1); Record(source.ProxyGraphics,18,value);
@@ -137,7 +147,62 @@ int RunTchProxyGraphicsTests()
             "layer and linetype index -1 fall back to the object's own");
     }
     source.ProxyGraphics.assign(8,0); value.clear(); U32(value,212); Record(source.ProxyGraphics,23,value); Record(source.ProxyGraphics,2,CircleBytes());
-    check(!DecodeProxyGraphics(source,result,&error),"invalid lineweight rejected");
+    check(DecodeProxyGraphics(source,result,&error) && result.Skipped == 1 && result.Entities.size() == 1 &&
+        result.Entities[0]->LineWeight == LineWeightType::W50,"invalid lineweight is skipped, lineweight stays unchanged");
+    {
+        struct Case { std::uint32_t raw; bool trueColor; std::uint32_t expected; const char* message; };
+        const Case cases[] = {
+            {0x070000c3u, false, 7, "raw color [c3 00 00 07] is ACI 7"},
+            {0xc3000007u, false, 7, "raw color [07 00 00 c3] (little-endian, method in the high byte) is ACI 7"},
+            {0xc30000c1u, false, 193, "little-endian ACI 193 is not mistaken for ByBlock"},
+            {0x000000c2u, true, 0x000000, "raw color [c2 00 00 00] is true-color black"},
+            {0x563412c2u, true, 0x123456, "raw color [c2 12 34 56] is true color 0x123456"},
+        };
+        for (const auto& c : cases)
+        {
+            source.ProxyGraphics.assign(8,0); value.clear(); U32(value,c.raw); Record(source.ProxyGraphics,22,value);
+            Record(source.ProxyGraphics,2,CircleBytes());
+            const bool ok = DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1;
+            const auto& color = ok ? result.Entities[0]->Color : Color();
+            check(ok && (c.trueColor ? color.IsTrueColor() && color.TrueColor() == c.expected
+                                     : !color.IsTrueColor() && color.Index() == static_cast<std::int16_t>(c.expected)), c.message);
+        }
+    }
+    source.ProxyGraphics.assign(8,0); value.clear(); F64(value,250); Record(source.ProxyGraphics,25,value); Record(source.ProxyGraphics,2,CircleBytes());
+    check(DecodeProxyGraphics(source,result,&error) && result.Skipped == 0 && result.Entities.size() == 1,"nonzero thickness is ignored for the plan view");
+    {
+        auto lwpolyline = [](std::int16_t flags, const std::vector<XY>& points, const std::vector<double>& bulges)
+        {
+            DwgBitWriter w(CadVersion::AC1024, Codec::CodePage::Windows1252);
+            w.WriteBitShort(flags);
+            if (flags & 0x8) w.WriteBitDouble(7.5);
+            w.WriteBitLong(static_cast<std::int32_t>(points.size()));
+            if (flags & 0x10) w.WriteBitLong(static_cast<std::int32_t>(bulges.size()));
+            if (flags & 0x20) w.WriteBitLong(1);
+            w.Write2RawDouble(points[0]);
+            for (std::size_t i = 1; i < points.size(); ++i) w.Write2BitDoubleWithDefault(points[i - 1], points[i]);
+            for (double b : bulges) w.WriteBitDouble(b);
+            if (flags & 0x20) { w.WriteBitDouble(1.5); w.WriteBitDouble(2.5); }
+            const auto& bits = w.Data();
+            Bytes payload; U32(payload,static_cast<std::uint32_t>(bits.size()));
+            payload.insert(payload.end(),bits.begin(),bits.end());
+            while (payload.size() % 4) payload.push_back(0);
+            return payload;
+        };
+        const std::vector<XY> pts{{-148976.25,43026.5},{-149096.25,42906.5},{-149216.25,43026.5}};
+        source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,33,lwpolyline(0x8 | 0x10 | 0x20,pts,{0,0.5,0}));
+        const bool ok = DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1;
+        auto* pl = ok ? dynamic_cast<LwPolyline*>(result.Entities[0].get()) : nullptr;
+        check(pl && pl->Vertices.size() == 3 && pl->Vertices[2].Location.X == -149216.25 && pl->Vertices[1].Location.Y == 42906.5 &&
+            pl->Vertices[1].Bulge == 0.5 && pl->Vertices[0].StartWidth == 1.5 && pl->Vertices[0].EndWidth == 2.5 && pl->Elevation == 7.5,
+            "lwpolyline record decodes the DWG bit stream (points, bulges, widths, elevation)");
+        source.ProxyGraphics.assign(8,0); value.clear(); U32(value,1); Record(source.ProxyGraphics,20,value);
+        Record(source.ProxyGraphics,33,lwpolyline(0x200,pts,{}));
+        check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 && dynamic_cast<Hatch*>(result.Entities[0].get()),
+            "filled closed lwpolyline becomes a solid hatch");
+        source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,33,lwpolyline(0,{{1e300,0},{0,0}},{}));
+        check(!DecodeProxyGraphics(source,result,&error) && result.Skipped == 1,"lwpolyline with out-of-range coordinates is skipped");
+    }
     source.ProxyGraphics.assign(8,0); Bytes arc = CircleBytes(); WritePoint(arc,0,1,0); F64(arc,kPi/2); Record(source.ProxyGraphics,4,arc);
     check(DecodeProxyGraphics(source,result,&error),"planar arc accepted");
     auto* a = result.Entities.empty() ? nullptr : dynamic_cast<Arc*>(result.Entities[0].get());

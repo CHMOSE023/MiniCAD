@@ -18,7 +18,7 @@ covers: src/Viewport/Camera.*, src/Viewport/ViewState.h, apps/Common/src/GUI/Vie
 
 ## 背景深浅
 
-`IRenderer::SetLightBackground`（7 号色语义）：浅色背景时纯白顶点画成纯黑、深色背景时纯黑画成纯白，在两个渲染器的顶点着色器里处理（光栅图像不变）。`MainFrame::RenderFrame` 每帧按界面主题设置 `Viewport::SetLightBackground`；图层颜色块在 `LayerPanels.cpp` 的 `SwatchColor` 里做同样的反转。
+`IRenderer::SetLightBackground`（7 号色语义）：浅色背景时纯白顶点画成纯黑、深色背景时纯黑画成纯白，在两个渲染器的顶点着色器里处理（光栅图像不变）。只有 7 号色该翻转：真彩的纯白 / 纯黑（AutoCAD 里不随背景变）由 `EntityColor::DrawRgba` 往里收 2/255，`Entity::ResolveDrawColor` 经它取色，避开着色器的判定（顶点色是 8 位，差 1/255 仍会被当成纯白）；图层只存 `Color4`，图层的真彩纯白仍会翻转。`MainFrame::RenderFrame` 每帧按界面主题设置 `Viewport::SetLightBackground`；图层颜色块在 `LayerPanels.cpp` 的 `SwatchColor` 里做同样的反转。
 
 ## 测试
 

@@ -640,6 +640,12 @@ int wmain(int argc, wchar_t** argv)
                         std::printf("(%.0f,%.0f)-(%.0f,%.0f)", rdd(o + 8), rdd(o + 16), rdd(o + 32), rdd(o + 40));
                     if (type == 5 && size >= 80)
                         std::printf("(%.0f,%.0f;%.0f,%.0f;%.0f,%.0f)", rdd(o + 8), rdd(o + 16), rdd(o + 32), rdd(o + 40), rdd(o + 56), rdd(o + 64));
+                    if (type == 22 || type == 33)
+                    {
+                        std::printf("[");
+                        for (std::size_t i = 8; i < size && i < 24; ++i) std::printf("%02x", b[o + i]);
+                        std::printf("]");
+                    }
                     o += size;
                 }
                 if (MiniCAD::Tch::TchText t; u->Raw.DxfName == "TCH_MTEXT" || u->Raw.DxfName == "TCH_TEXT")

@@ -2684,7 +2684,7 @@ namespace MiniCAD
                     // 组码 12（InsertionPoint）是标注匿名块的**平移量**：
                     // 匿名几何建在世界坐标上，AutoCAD 靠 `local = worldGeom + code12`
                     // 把它挪回该出现的位置。写死 (0,0,0) 会把整条标注画在匿名块自身的
-                    // 坐标上（实测《总说明.dwg》：实绘宽度 910056 而非 7525，错位 92 万单位）。
+                    // 坐标上（实测：实绘宽度 910056 而非 7525，错位 92 万单位）。
                     const Math::Point3 insPoint = ToPoint(e->InsertionPoint);
                     return Make<InsertEntity>(src, nullptr, static_cast<InsertEntity::BlockID>(it->second),
                                               blk ? blk->GetName() : std::string(), insPoint);
@@ -2700,7 +2700,7 @@ namespace MiniCAD
                     //    DCS 相对 WCS 旋转了 +TwistAngle，必须反向旋转 -Twist
                     //    才是模型里的真实位置。直接当 WCS 用时，Twist≠0 的
                     //    视口内容会被画到几十万单位外 —— 视口是空框
-                    //    （实测 `01-曲陵路.dwg` 5 个 Twist=95.7° 的浮动视口）。
+                    //    （实测 5 个 Twist=95.7° 的浮动视口）。
                     // ⚠ DCS 的原点是视图目标点（组码 17/27/37），要加回去。
                     //    多数视口目标点是原点；经 DVIEW / 动态观察过的视口目标点在模型上、
                     //    12/22 只是相对它的小偏移（实测总平面样图 B 的视口 effb9：
@@ -3796,7 +3796,7 @@ namespace MiniCAD
             //
             // 此前**完全没有映射**，落到 Skip() 被整体丢弃 ⇒ 图上一个多重引线都不显示。
             //
-            // 关键几何（实测 `1#、2#厂房电气_t3.dwg` 20 个，全部是**单点引线**）：
+            // 关键几何（实测 20 个多重引线，全部是**单点引线**）：
             //   · 引线两端**分存两处**：`LEADER_LINE{(10 …)}` 只有**箭头端**，
             //     内容连接端在 `LEADER{(10 …)}` 即 root.ConnectionPoint
             //     （与 AutoCAD entget 逐位对照过）。
@@ -5297,7 +5297,7 @@ namespace MiniCAD
             // 看得见引线，一旦存盘引线就整批消失（同细分网格的教训）。
             //
             // 这是导入 ConvertMLeader 的严格逆映射，公式来自同一份实测
-            // （`1#、2#厂房电气_t3.dwg` 20/20，误差 0.000000）：
+            // （20/20 个多重引线，误差 0.000000）：
             //   landing(外端)   = ConnectionPoint + Direction × LandingDistance
             //   ContentBasePoint = 文字块左下角
             //   TextLocation     = ConnectionPoint + Direction × (LD + LandingGap) + (0, 1.2×字高)

@@ -138,5 +138,35 @@ int RunChangeAttrTests()
         Check(Attr(scene, c).LayerId == wall && Attr(scene, c).Color.Aci == 3 && Attr(scene, c).Lineweight == Lineweight::W070, "目标对象的属性与源一致");
     }
 
+    // ── 绘制色：渲染器把纯白 / 纯黑当 7 号色随背景翻转，真彩的纯白 / 纯黑不能被当成 7 号色 ──
+    {
+        struct ColorSink : IDrawSink
+        {
+            Math::Color4 last;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4& c, bool) override { last = c; }
+        };
+        auto drawn = [](const EntityColor& color)
+        {
+            LineEntity line(1, { 0, 0, 0 }, { 1, 0, 0 });
+            line.GetAttr().Color = color;
+            ColorSink sink;
+            line.Draw(sink, false, false);
+            return sink.last;
+        };
+        auto pure = [](const Math::Color4& c, double v)
+        {
+            auto byte = [](double x) { return static_cast<int>(std::lround(x * 255.0)); };
+            return byte(c.r) == byte(v) && byte(c.g) == byte(v) && byte(c.b) == byte(v);
+        };
+        Check(pure(drawn(EntityColor::FromAci(7)), 1.0), "7 号色画成纯白（交给渲染器随背景翻转）");
+        const auto white = drawn(EntityColor::FromRgb(1, 1, 1)), black = drawn(EntityColor::FromRgb(0, 0, 0));
+        Check(!pure(white, 1.0) && white.r > 0.99, "真彩纯白：顶点色离开纯白（不随背景翻转），看起来仍是白");
+        Check(!pure(black, 0.0) && black.r < 0.01, "真彩纯黑：顶点色离开纯黑（不随背景翻转），看起来仍是黑");
+        const auto red = drawn(EntityColor::FromRgb(0.8, 0, 0));
+        Check(red.r == 0.8 && red.g == 0.0, "其他真彩原样");
+        EntityColor whiteRgb = EntityColor::FromRgb(1, 1, 1);
+        Check(static_cast<Math::Color4>(whiteRgb).r == 1.0, "颜色数据本身不变（另存、特性面板照旧是 255,255,255）");
+    }
+
     return g_failures;
 }
