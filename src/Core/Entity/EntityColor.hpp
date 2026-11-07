@@ -111,8 +111,9 @@ namespace MiniCAD
             if (Method != ColorMethod::ByRgb) return Rgba;
             auto pure = [](const Math::Color4& c, double v)
             {
-                auto near = [v](double x) { return x > v - 0.004 && x < v + 0.004; };
-                return near(c.r) && near(c.g) && near(c.b);
+                // 变量不能叫 near：Windows 头文件里有同名宏，包含它之后会被展开成语法错误
+                auto isClose = [v](double x) { return x > v - 0.004 && x < v + 0.004; };
+                return isClose(c.r) && isClose(c.g) && isClose(c.b);
             };
             if (pure(Rgba, 1.0)) return { 1.0 - kTrueColorInset, 1.0 - kTrueColorInset, 1.0 - kTrueColorInset, Rgba.a };
             if (pure(Rgba, 0.0)) return { kTrueColorInset, kTrueColorInset, kTrueColorInset, Rgba.a };
