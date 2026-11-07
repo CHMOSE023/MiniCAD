@@ -50,7 +50,7 @@ namespace MiniCAD::Tch
         {
             for (auto& b : bytes)
             {
-                if (mark == 7 || mark == 10) b = static_cast<std::uint8_t>((b << 4) | (b >> 4));
+                if (mark == 7 || mark == 10 || mark == 11) b = static_cast<std::uint8_t>((b << 4) | (b >> 4));
                 b ^= key;
             }
         }
@@ -102,8 +102,7 @@ namespace MiniCAD::Tch
     {
         inline const char* CheckWall(const TchWall& w, double height, double insulation)
         {
-            const std::array<double, 10> values{w.Start.X, w.Start.Y, w.Start.Z, w.End.X, w.End.Y, w.End.Z, w.LeftWidth, w.RightWidth, height, insulation};
-            for (double value : values)
+            const std::array<double, 10> values{w.Start.X, w.Start.Y, w.Start.Z, w.End.X, w.End.Y, w.End.Z, w.LeftWidth, w.RightWidth, height, insulation};            for (double value : values)
                 if (!std::isfinite(value) || std::abs(value) > 1e12) return "nonfinite native wall geometry";
             const double length = std::hypot(w.End.X - w.Start.X, w.End.Y - w.Start.Y);
             if (!std::isfinite(w.Angle) || std::abs(w.Angle) >= 2 * 3.14159265358979 - 1e-6) return "invalid native wall arc angle"; 
@@ -115,8 +114,42 @@ namespace MiniCAD::Tch
                 if (!std::isfinite(join) || std::abs(join) >= joinLimit) return "invalid native wall join";
             return nullptr;
         }
-
         
+        // 早期天正（基类 2/3/4）的墙几何是明文的位级 BD 字段，没有受保护块。
+        // 起点/终点/墙宽/墙高按实测相对位偏移读取，并用 CheckWall 做数值校验兜底，
+        // 读不出合理几何就安全跳过（不画错）。
+        inline bool DecodeOldWall(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic)
+        {
+            using namespace MiniDWG;
+            auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
+            const auto& data = entity.Raw.Dwg;
+            if (!SupportedVersion(data) || data.Main.size() < (data.MainBits + 7) / 8)
+                return fail("unsupported DWG version for old native wall");
+            DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
+            TchBase base;
+            if (!ReadTchBase(r, base, &data)) return fail("unsupported old wall base layout");
+            const auto geoStart = r.PositionInBits() + 8;
+            if (geoStart + 7 * 66 > data.MainBits) return fail("old wall geometry is incomplete");
+            r.SetPositionInBits(geoStart);
+            TchWall result;
+            result.Start = r.Read3BitDouble();
+            result.End = r.Read3BitDouble();
+            result.Angle = r.ReadBitDouble();          // 曲线参数，直墙为 0
+            const auto geoEnd = r.PositionInBits();
+            // 左右墙宽与墙高是明文 RD，偏移在三个旧版本里一致
+            if (geoEnd + 144 + 64 > data.MainBits) return fail("old wall widths are incomplete");
+            r.SetPositionInBits(geoEnd + 12);  result.LeftWidth = r.ReadRawDouble();
+            r.SetPositionInBits(geoEnd + 78);  result.RightWidth = r.ReadRawDouble();
+            const double height = (r.SetPositionInBits(geoEnd + 144), r.ReadRawDouble());
+            const double insulation = 0;
+            if (r.Failed()) return fail("old wall geometry is incomplete");
+            result.Scale = base.Scale;
+            if (const char* why = CheckWall(result, height, insulation)) return fail(why);
+            wall = result;
+            if (diagnostic) diagnostic->clear();
+            return true;
+        }
+
         inline bool DecodeWallCipher(const MiniDWG::UnknownEntity& entity, TchWall& wall, std::string* diagnostic, bool curtain)
         {
             auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
@@ -172,30 +205,37 @@ namespace MiniCAD::Tch
             using namespace MiniDWG;
             const auto& data = entity.Raw.Dwg;
             if (IsCipherObject(data)) return DecodeWallCipher(entity, wall, diagnostic, curtain);
+            // 早期天正（基类 2/3/4，t5/t6/t7）的墙：几何是主数据流里的明文 BD 字段，
+            // 没有受保护的 84 字节块。字段实测在 t5/t6/t7 三个版本里相对偏移一致：
+            //   ReadTchBase 后 +8 位：7 个 BD（起点 XYZ、终点 XYZ、曲线参数）
+            //   之后 +12 / +78 位：两个 RD（左右墙宽），+144 位：墙高。
+            if (!data.Main.empty() && data.Main[0] >= 2 && data.Main[0] <= 4)
+                return DecodeOldWall(entity, wall, diagnostic);
             if (diagnostic) *diagnostic = "native wall fields do not match verified schema-5 straight-wall layout";
-            const bool base7 = !data.Main.empty() && data.Main[0] == 7;
+            // T20 系列（基类版本 6 / 7 / 8）的墙数据布局相同，首字节只是版本号不同
+            const bool t20Base = !data.Main.empty() && data.Main[0] >= 6 && data.Main[0] <= 8;
             const std::uint64_t maxBits = 1173 + (curtain ? 4 * 8 + (6 + 2 * 255) * 66 : 0);
-            if (!base7 && (data.MainBits < 773 || data.MainBits > maxBits))
+            if (!t20Base && (data.MainBits < 773 || data.MainBits > maxBits))
             {
                 if (diagnostic) *diagnostic = "unsupported native wall layout: " + std::to_string(data.MainBits) +
                     " bits; verified range is 773.." + std::to_string(maxBits);
                 return false;
             }
             if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027 &&
-                 !(base7 && data.Version == CadVersion::AC1032)) || data.Main.size() < (data.MainBits + 7) / 8)
+                 !(t20Base && data.Version == CadVersion::AC1032)) || data.Main.size() < (data.MainBits + 7) / 8)
                 return false;
             auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };
             DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
             double scale = 0;
             int rc8 = 0, baseHandles = 0;
-            if (base7)
+            if (t20Base)
             {
                 TchBase base;
                 if (!ReadTchBase(r, base, &data)) return fail("unsupported native wall base layout");
                 scale = base.Scale;
                 baseHandles = base.HandleCount;
                 rc8 = r.ReadByte();
-                if (!std::isfinite(scale) || scale <= 0 || rc8 != 10)
+                if (!std::isfinite(scale) || scale <= 0 || (rc8 != 9 && rc8 != 10 && rc8 != 11))
                     return fail("native wall header mismatch: scale=" + std::to_string(scale) + " rc8=" + std::to_string(rc8));
             }
             else
@@ -217,11 +257,17 @@ namespace MiniCAD::Tch
             result.End   = geometry.Read3RawDouble();
             const double curveParameter = geometry.ReadRawDouble();
             const auto flags    = geometry.ReadRawLong();
-            double height       = rc8 == 10 ? geometry.ReadRawDouble() : 0;
+            // 墙类版本 9（T20 V2~V5）的受保护几何只异或、不换半字节，墙高在左右宽之后；
+            // 10/11（T20 V6/V7、中望另存）先换半字节，墙高在左右宽之前。
+            const bool heightFirst = (rc8 == 10 || rc8 == 11);
+            double height       = heightFirst ? geometry.ReadRawDouble() : 0;
             result.LeftWidth    = geometry.ReadRawDouble();
             result.RightWidth   = geometry.ReadRawDouble();
-            if (rc8 != 10) height = geometry.ReadRawDouble();
+            if (!heightFirst) height = geometry.ReadRawDouble();
           
+            // 墙类版本 11（T20 V7，基类 8）在受保护几何之后、门窗段之前多 4 个字节
+            // （实测为 76 36 76 76 一类的标记），跳过它门窗前缀才读得到 0。
+            if (rc8 == 11) r.ReadBytes(4);
             if (r.ReadByte() != 0) return fail("native wall opening prefix mismatch");
             const int openings = r.ReadBitShort();
             if (openings < 0 || openings > 1024) return fail("invalid native wall opening count");
@@ -236,7 +282,7 @@ namespace MiniCAD::Tch
             const bool signature = r.ReadByte() == 0 && r.Read3Bits() == 2;
             if (data.Version < CadVersion::AC1021) r.ReadVariableText();
             if (!signature) return fail("native wall trailing signature mismatch");
-            if (rc8 == 10 && !curtain)
+            if ((rc8 == 10 || rc8 == 11) && !curtain)
             {
                 // 墙版本 10 在结尾标记后多出的位：样例为 13 个 0，含义未核对
                 const auto tail = data.MainBits - r.PositionInBits();
@@ -254,8 +300,17 @@ namespace MiniCAD::Tch
                 if (!(flags & 0x10000)) for (int i = 0; i < columns && !r.Failed(); ++i) r.ReadBitDouble();
                 if (version > 2) return fail("unsupported native curtain wall version " + std::to_string(version));
             }
-            if (r.Failed() || geometry.Failed() || r.PositionInBits() != data.MainBits)
-                return fail("native wall fields end at bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits));
+            if (r.Failed() || geometry.Failed())
+                return fail("native wall fields are incomplete");
+            if (r.PositionInBits() != data.MainBits)
+            {
+                // rc8=9（T20 V2~V5）部分墙在收尾标记后还有 8 位：只接受全零的尾部
+                const auto tail = data.MainBits - r.PositionInBits();
+                if (data.MainBits < r.PositionInBits() || tail > 16 || rc8 != 9)
+                    return fail("native wall fields end at bit " + std::to_string(r.PositionInBits()) + " of " + std::to_string(data.MainBits));
+                for (std::uint64_t i = 0; i < tail; ++i)
+                    if (r.ReadBit()) return fail("native wall trailing bits are not zero");
+            }
             if ((flags & (curtain ? ~0x3FFFF : ~0x7FFF)) != 0)
                 return fail("unsupported native wall flags " + std::to_string(flags));
             result.Flags = static_cast<std::uint32_t>(flags);

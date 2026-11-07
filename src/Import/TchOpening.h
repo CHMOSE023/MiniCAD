@@ -94,27 +94,34 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 版本 1～5 为旧版明文；版本 7（中望看图另存的 2018 格式）在版本 5 之后加了属性表，句柄个数分别多存了 5、3，要传 data
+    // 版本 1～5 为旧版明文；版本 6～8（天正 T20 系列，按 t20V2~V7 的图纸核对）在
+    // 版本 5 之后加了属性表，要传 data。三者骨架相同，差别见 bias 与版本 8 的 GUID。
     inline bool ReadTchBase(MiniDWG::DwgBitReader& r, TchBase& base, const MiniDWG::RawDwgData* data = nullptr)
     {
         base = {};
         base.Version = r.ReadByte();
-        if (base.Version < 1 || base.Version > 7 || base.Version == 6 || (base.Version == 7 && !data))
+        const bool t20 = base.Version >= 6 && base.Version <= 8;
+        if (base.Version < 1 || base.Version > 8 || (t20 && !data))
             return false;
         if (base.Version > 1) base.Scale = r.ReadBitDouble();
         if (base.Version > 2) r.ReadBitDouble();
         if (base.Version > 3)
         {
             const int flags = r.ReadByte();
-            const int bias = base.Version == 7 ? 5 : 0;
+            // 句柄个数的偏移：版本 6 不减、7/8 各减 5（T20 系列，按 t20V2~V7 核对）。
+            // 版本 6 若也减 5 会得到负数句柄数，柱 / 墙等带句柄的类整个解码失败。
+            const int bias = base.Version >= 7 ? 5 : 0;
             if (flags & 1) base.HandleCount += r.ReadByte() - bias;
             if (flags & 2) base.HandleCount += r.ReadByte() - (bias ? 3 : 0);
             if (base.HandleCount < 0) return false;
         }
         if (base.Version > 4 && !Detail::SkipPropertyBag(r, base.TextCount, base.HandleCount))
             return false;
-        if (base.Version == 7 && !Detail::SkipXDataMap(r, *data, base))
+        if (t20 && !Detail::SkipXDataMap(r, *data, base))
             return false;
+        // 版本 8（T20 V7）在属性表之后多存一个 GUID 字符串（内联的变长文本）
+        if (base.Version == 8)
+            r.ReadVariableText();
         return !r.Failed();
     }
 
@@ -296,7 +303,7 @@ namespace MiniCAD::Tch
                 for (const char* c = kPrefix; *c; ++c)
                     if (r.ReadBit() != (*c == '1')) return fail("unsupported group opening part header");
                 TchBase partBase;
-                if (!ReadTchBase(r, partBase)) return fail("unsupported group opening part base layout");
+                if (!ReadTchBase(r, partBase, &data)) return fail("unsupported group opening part base layout");
                 for (int k = 0; k < partBase.TextCount; ++k) text.Next();
                 TchOpening part;
                 int partKind = 0;

@@ -130,7 +130,7 @@ namespace MiniCAD::Tch
         const int stairBase = r.ReadByte();
         if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
         const int version = r.ReadByte();
-        if (version != 4) return fail("unsupported native stair version");
+        if (version < 1 || version > 6) return fail("unsupported native stair version");
         TchRectStair s;
         s.Scale = base.Scale;
         s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
@@ -145,27 +145,47 @@ namespace MiniCAD::Tch
         r.ReadBitDouble();                                  // 扶手高
         s.Floor = r.ReadByte();
         const int mirror = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailOffset = r.ReadBitDouble();
-        const auto flags = static_cast<std::uint32_t>(r.ReadBitLong());
-        for (int i = 0; i < 3; ++i) r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();  // 版本 ≥ 3：不影响平面显示
-        s.RailExtTop = r.ReadBitDouble();
-        s.RailExtBottom = r.ReadBitDouble();
-        s.CutHeight = r.ReadBitDouble();
-        s.CutAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        for (int i = 0; i < 4; ++i) r.ReadBitDouble();      // 平台相关的 4 个长度，矩形平台下不影响显示
+        std::uint32_t flags = 0;
+        // 类版本 1（早期 T5，基类 2）没有额外的 L148 字节，尾部是「1 字节 + 1 个 BD + 2 位」；
+        // 版本 3（T6/T7）读到「版本 ≥ 3」的 2 BD + 字节为止；版本 4 起才读完整字段。
+        if (version <= 1)
+        {
+            r.ReadByte();
+            r.ReadBitDouble();
+            r.Read2Bits();                                  // 版本 1 末尾的 2 位标志
+        }
+        else
+        {
+            r.ReadByte();                                       // 版本 ≥ 2 的额外字节
+            s.RailWidth = r.ReadBitDouble();
+            s.RailOffset = r.ReadBitDouble();
+            flags = static_cast<std::uint32_t>(r.ReadBitLong());
+            for (int i = 0; i < 3; ++i) r.ReadBitDouble();
+            r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();  // 版本 ≥ 3：不影响平面显示
+            if (version >= 4)
+            {
+                s.RailExtTop = r.ReadBitDouble();
+                s.RailExtBottom = r.ReadBitDouble();
+                s.CutHeight = r.ReadBitDouble();
+                s.CutAngle = r.ReadBitDouble();
+                s.TextHeight = r.ReadBitDouble();
+                for (int i = 0; i < 4; ++i) r.ReadBitDouble();      // 平台相关的 4 个长度
+                if (version >= 5) r.ReadBitShort();
+            }
+        }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native stair fields do not consume the payload exactly");
         if (const char* why = Detail::FinishRectStair(s, flags, mirror)) return fail(why);
 
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount + 1 + 4 + 1; ++i) handles.ReadHandle(entity.ObjectHandle);   // 楼梯基类、扶手与栏杆图层等、文字图层
-        s.TextStyle = handles.ReadHandle(entity.ObjectHandle);
-        s.ArrowLayer = handles.ReadHandle(entity.ObjectHandle);
-        if (handles.Failed() || handles.PositionInBits() > data.HandleBits) return fail("stair handle stream is incomplete");
+        // 旧版（类版本 1/3）句柄流更短，按实际需要的个数读；填满即止，避免越过 HandleBits。
+        const int lead = version <= 3 ? base.HandleCount + 1 : base.HandleCount + 1 + 4 + 1;
+        for (int i = 0; i < lead && !handles.Failed(); ++i) handles.ReadHandle(entity.ObjectHandle);
+        s.TextStyle = handles.Failed() ? MiniDWG::kNullHandle : handles.ReadHandle(entity.ObjectHandle);
+        s.ArrowLayer = handles.Failed() ? MiniDWG::kNullHandle : handles.ReadHandle(entity.ObjectHandle);
+        // 旧版句柄不足属正常，只要几何字段已完整消费、楼梯参数通过校验即可显示。
+        if (version >= 4 && (handles.Failed() || handles.PositionInBits() > data.HandleBits))
+            return fail("stair handle stream is incomplete");
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;

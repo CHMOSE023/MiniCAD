@@ -593,7 +593,7 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_NORTHTHUMB") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeNorthThumbCipher(entity, north, diagnostic);
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
+        if (data.Version < CadVersion::AC1018 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
@@ -611,7 +611,16 @@ namespace MiniCAD::Tch
             n.Color = r.ReadBitShort();
             r.ReadRawDouble(); r.ReadRawDouble();
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native north thumb fields do not consume the payload exactly");
+        // 部分 T20 版本（V2~V7 / t10）在末尾补了若干 0 位（≤ 34 位），与 t8 的布局相同，
+        // 只是主数据流多了一段全零填充。允许这段尾部，其余字段已全部读出。
+        if (r.Failed()) return fail("native north thumb fields are incomplete");
+        if (r.PositionInBits() != data.MainBits)
+        {
+            const auto start = r.PositionInBits();
+            if (data.MainBits < start || data.MainBits - start > 64) return fail("native north thumb fields do not consume the payload exactly");
+            for (auto i = start; i < data.MainBits; ++i)
+                if (r.ReadBit()) return fail("native north thumb trailing bits are not zero");
+        }
         if (const char* why = Detail::CheckNorthThumb(n)) return fail(why);
         if (version > 1)
         {

@@ -28,7 +28,13 @@ covers: src/Import/CadExchange.*, src/Import/AcisReader.*, src/Serialization/Dwg
 - 3DSOLID / REGION / BODY / 各类曲面（`Dwg::IsAcisEntity`）：`Importer::ConvertAcis` 经 `Dwg::DecodeAcisData` 取出 ACIS（R2013 起查 `Dwg::ReadAcisDataStore`），`Import::ReadAcis` 读成 B-rep，用 `SetCadImportSolidKernel` 设的内核 `FromBrep` 建成 `Solid3DEntity`；没有内核或建不出时只显示边线框，结束时按类型 `LOG_WARN`。格式与限制见 `docs/Solid/PLAN.md` 第 16 节。导出：`Solid3DEntity` 写成多面网格（只有边线、没有网格的跳过并提示）；原图未改动的实体在同格式同版本另存时原样写回
 - 不支持的类型跳过并按类型统计，导入结束时 `LOG_WARN`（读入 `m_skipped`；导出时不能写的实体经 `Skip` 同样统计）。改映射前先用 skill `drawing-debug` 看原图里有哪些类型
 - OLE2FRAME（嵌入的 Word / Excel 等）只导入显示：MiniDWG 原样保留，`Dwg::DecodeOle2Frame` 解出数据，`src/Core/Ole/OleObject` 解析 AutoCAD 头与 OLE 复合文档里的展示图（WMF / EMF / DIB），显示为 `OleFrameEntity`；图元文件经 `AppPlatform::RasterizeOle` 光栅化（桌面版 GDI，网页版只画边框）
-- 其他软件的自定义实体（`SWR_*`）没有专门适配：带代理图形的经 `Tch::DecodeProxyGraphics` 按代理图形显示（图层 / 线型序号与文字字体经 `Importer::ProxyContext` 映射，格式与支持的记录见 `docs/evidence/Tch-proxy-graphics.md`），结束时按类型 `LOG_WARN` "显示为普通几何"；`SWR_BLOCK_INSERT` 的代理为空，按块参照前缀解（`Tch::DecodeBlockInsert`）。代理图形里不支持或数据不合理的记录只跳过那一条（`TchProxyGraphics::Skipped`），记录头损坏、有裁剪 / 变换矩阵记录或一个图元都没有时整个对象不显示，看 `m_tchFailures` 打出的原因；`MINICAD_PROXYEXT=SWR_*` 列出各对象用到的记录类型
+- 其他软件的自定义实体（`SWR_*`）没有专门适配：带代理图形的经 `Proxy::Decode`（`src/Import/ProxyGraphics.h`，命名空间 `MiniCAD::Proxy`）按代理图形显示（图层 / 线型序号与文字字体经 `Proxy::ProxyGraphicsContext` 映射，格式与支持的记录见 `docs/evidence/Tch-proxy-graphics.md`），结束时按类型 `LOG_WARN` "显示为普通几何"；`SWR_BLOCK_INSERT` 的代理为空，按块参照前缀解（`Tch::DecodeBlockInsert`）。`MINICAD_PROXYEXT=SWR_*` 列出各对象用到的记录类型
+  - 代理图形解码器是**厂商无关**的：只解记录流，不看对象类名。天正、斯维尔、浩辰、建筑结构设计工具（`ASDT_*`）等写进来的都是同一套记录格式，因此走同一个函数
+  - **容错按「能解多少算多少」**：不认识的记录、数值不合理的记录只**跳过该条**（`ProxyGraphics::Skipped` 计数），其它已识别的记录照常输出，不再整份放弃；坐标超出 `|v| < 1e12` 的图元直接丢弃（`Discarded` 计数），防止少量脏数据把包围盒撑到 1e70 量级、导致"全部显示"时整张图缩成一个点。一条都解不出时才返回 false，看 `m_tchFailures` 打出的原因（含跳过 / 丢弃条数）
+  - 支持记录类型：`1`（包围盒）`2/3`（圆）`4/5`（弧）`6/7/32`（折线 / 多边形 / 带法向）`9`（shell）`10/11/36/38`（文字）`14/16/18/19/20/22/23/24/25`（颜色 / 图层 / 线型 / 标记 / 填充 / 线宽 / 线型比例 / 厚度）`33`（内嵌 LWPOLYLINE，位字段编码，payload 前 4 字节是长度前缀）
+  - **位流的位序是 MSB-first**（先取字节最高位）；用 LSB-first 解 `33` 会得到 `flags=0x1FE4` 这类垃圾值，进而算出天文数字坐标。`DD`（带默认值的 double）是**字节差分编码**（`00` 用默认值、`01` 覆盖低 4 字节、`10` 覆盖偏移 4-5 加低 4 字节、`11` 完整 8 字节），不是"沿用旧值"
+  - `22` 颜色记录的 4 字节按 **[method, r, g, b]** 存放，不是小端 u32：实测句柄 `368F5` 的 `c2 00 00 00` = 真彩 RGB(0,0,0) 黑框、`c3 00 00 07` = ACI 7 白字。按 `value >> 24` 取 method 会得到 0，两条都落进 ByLayer 兜底，黑框就画成了背景色（浅色主题下是白块）盖住文字
+  - `fill`（记录 `20`，`1` = 总是填充、`2` = 从不）作用在闭合图元上时，**既出实心填充、也出轮廓线**。只出填充不加轮廓，会让文字的背景框渲染成一个没有边框的纯色块
 - 天正对象见 [tianzheng](tianzheng.md)，外部参照见 [xref](xref.md)，图纸空间视口见 [layout-viewport](layout-viewport.md)
 
 ## 以原图为底另存（`CadSource`）

@@ -47,7 +47,9 @@ namespace MiniCAD::Tch
             if (entity.Raw.DxfName == "TCH_MTEXTNEW") return fail("unsupported native multiline text layout");
             CipherReader f(entity);
             if (!f.ReadBase()) return fail("unsupported Tianzheng base layout");
-            if (f.Main.ReadByte() != 4) return fail("unsupported native text version");
+            // 类版本 3（T20 V8）的句柄流只有 TextStyle 一个；版本 4 起末尾另有两个句柄
+            const int tv = f.Main.ReadByte();
+            if (tv < 3 || tv > 4) return fail("unsupported native text version");
             f.ReadKey();
             TchText t;
             t.Scale = f.Scale;
@@ -59,7 +61,7 @@ namespace MiniCAD::Tch
             t.Rotation = f.Double();
             t.Attachment = TextAttachment(f.Byte());
             f.Byte();
-            f.Handle(); f.Handle();
+            if (tv >= 4) { f.Handle(); f.Handle(); }
             if (entity.Raw.DxfName == "TCH_MTEXT")
             {
                 if (f.Main.ReadByte() != 2) return fail("unsupported native multiline text version");

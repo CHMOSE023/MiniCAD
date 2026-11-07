@@ -175,7 +175,7 @@ namespace MiniCAD::Tch
         else
         {
             TchBase base;
-            if (!Detail::SupportedVersion(data) || !ReadTchBase(f.Main, base)) return fail("unsupported Tianzheng base layout");
+            if (!Detail::SupportedVersion(data) || !ReadTchBase(f.Main, base, &data)) return fail("unsupported Tianzheng base layout");
             f.SkipBase(base.TextCount, base.HandleCount);
             t.Scale = base.Scale;
         }

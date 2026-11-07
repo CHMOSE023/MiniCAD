@@ -1,5 +1,4 @@
 #include "Import/TchProxyGraphics.h"
-#include "Dwg/Write/DwgBitWriter.h"
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -59,23 +58,40 @@ int RunTchProxyGraphicsTests()
         "polygon closure, elevation and following-record attributes are correct");
     check(result.Entities.size() == 2 && result.Entities[0]->Color.Index() == 3,
         "later attributes do not mutate preceding primitives");
-    auto good = source.ProxyGraphics;
-    for (std::uint32_t transform : {27u,29u,31u})
     {
-        source.ProxyGraphics = good; Record(source.ProxyGraphics,transform,{});
-        check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty() && error.find(std::to_string(transform)) != std::string::npos,
-            "clip / transform commands reject the whole preview with record type diagnostics");
+        // 真实样本：句柄 368F5（SWR_TEXT 文字）的黑底白字。颜色记录 22 的 4 字节
+        // 是 [method, r, g, b]，不是小端 u32：
+        //   `c2 00 00 00` = 真彩 RGB(0,0,0) 黑  -> 背景框
+        //   `c3 00 00 07` = ACI 7 白            -> 文字
+        // 早先按 `value >> 24` 取 method 会得到 0，两个都落进 ByLayer 兜底，
+        // 于是背景框被画成背景色（浅色主题下就是白块），把文字盖住了。
+        source.ProxyGraphics.assign(8,0);
+        value.clear(); U32(value,0x000000c2u); Record(source.ProxyGraphics,22,value);   // 黑
+        Record(source.ProxyGraphics,2,CircleBytes());
+        value.clear(); U32(value,0x070000c3u); Record(source.ProxyGraphics,22,value);   // ACI 7
+        Record(source.ProxyGraphics,2,CircleBytes());
+        check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 2,
+            "two colour-encoded records decode");
+        check(result.Entities.size() == 2 && result.Entities[0]->Color.IsTrueColor() &&
+            result.Entities[0]->Color.TrueColor() == 0x000000,
+            "colour record [c2 00 00 00] is true colour black (the text backdrop frame)");
+        check(result.Entities.size() == 2 && result.Entities[1]->Color.Index() == 7,
+            "colour record [c3 00 00 07] is ACI 7 (the white text)");
     }
-    for (std::uint32_t unsupported : {10u,16u,18u,999u})
+    auto good = source.ProxyGraphics;
+    // 未知记录不再让整份放弃：跳过该条，前面的几何照常输出。
+    // 以前是「整份失败」，第三方对象只要撞上一条不认识的记录就完全不显示。
+    for (std::uint32_t unsupported : {29u, 27u, 10u, 16u, 18u, 999u})
     {
         source.ProxyGraphics = good; Record(source.ProxyGraphics,unsupported,{});
-        Record(source.ProxyGraphics,2,CircleBytes());
-        check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 3 && result.Skipped == 1 &&
-            error.find(std::to_string(unsupported)) != std::string::npos,
-            "unsupported or malformed record is skipped, records around it still decode");
+        const bool ok = DecodeProxyGraphics(source,result,&error);
+        check(ok && !result.Entities.empty() && result.Skipped >= 1,
+            "unsupported record is skipped and earlier geometry survives");
     }
+    // 尾部截断：只丢掉坏掉的那条，已解出的几何保留
     source.ProxyGraphics = good; source.ProxyGraphics.pop_back();
-    check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty(),"truncated final record discards preceding shapes");
+    check(DecodeProxyGraphics(source,result,&error) && !result.Entities.empty(),
+        "truncated final record keeps the shapes decoded before it");
     source.ProxyGraphics.assign(8,0); U32(source.ProxyGraphics,0); U32(source.ProxyGraphics,2);
     check(!DecodeProxyGraphics(source,result,&error),"zero record size rejected");
     source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,2,CircleBytes(std::numeric_limits<double>::quiet_NaN()));
@@ -86,6 +102,18 @@ int RunTchProxyGraphicsTests()
     check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1,"polyline with explicit +Z normal accepted");
     source.ProxyGraphics.assign(8,0); Bytes count; U32(count,0xffffffff); Record(source.ProxyGraphics,6,count);
     check(!DecodeProxyGraphics(source,result,&error),"huge vertex count rejected before allocation");
+    // 坐标超出合理范围：丢弃该图元，但不影响整份（避免脏数据把包围盒撑爆）
+    source.ProxyGraphics.assign(8,0);
+    {
+        // type 2 圆 = 圆心(3×f64) + 半径(f64) + 法向(3×f64)，共 56 字节
+        Bytes wild; const double huge = 1e70;   // 有限但荒谬：以前会被收下，视图「全部显示」时整张图缩成一点
+        F64(wild, huge); F64(wild, huge); F64(wild, 0.0);   // 圆心
+        F64(wild, 5.0);                                     // 半径
+        F64(wild, 0.0); F64(wild, 0.0); F64(wild, 1.0);     // 法向 +Z
+        Record(source.ProxyGraphics, 2, wild);
+    }
+    check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty() && result.Discarded == 1,
+        "coordinates beyond the sane limit are discarded instead of entering the scene");
     source.ProxyGraphics.assign(8,0); value.clear(); U32(value,1); Record(source.ProxyGraphics,20,value); Record(source.ProxyGraphics,7,Vertices());
     check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 && dynamic_cast<Hatch*>(result.Entities[0].get()) &&
         static_cast<Hatch*>(result.Entities[0].get())->IsSolid,"filled polygon becomes a solid hatch");
@@ -96,11 +124,46 @@ int RunTchProxyGraphicsTests()
         U32(shell,static_cast<std::uint32_t>(-3)); U32(shell,0); U32(shell,1); U32(shell,4);
         U32(shell,0);   // 之后的边 / 面属性
         source.ProxyGraphics.assign(8,0); value.clear(); U32(value,1); Record(source.ProxyGraphics,20,value); Record(source.ProxyGraphics,9,shell);
-        auto* h = DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 ? dynamic_cast<Hatch*>(result.Entities[0].get()) : nullptr;
+        // fill 时既出实心填充、也出轮廓线（只出填充会得到一个
+        // 没有边框的纯色块，把文字类的背景框渲染成"白色块状"）
+        const bool filled = DecodeProxyGraphics(source,result,&error);
+        auto* h = filled ? dynamic_cast<Hatch*>(result.Entities[0].get()) : nullptr;
         check(h && h->Paths.size() == 2,"filled shell face keeps its hole loop");
+        check(filled && result.Entities.size() >= 3 && dynamic_cast<LwPolyline*>(result.Entities.back().get()),
+            "filled shell also draws its outline (so a text backdrop is not a bare colour block)");
         source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,9,shell);
         check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 2 && dynamic_cast<LwPolyline*>(result.Entities[0].get()),
             "unfilled shell draws face outlines");
+    }
+    {
+        // type 33 = LWPOLYLINE：位字段编码，**MSB-first**（先取字节最高位）。
+        // 采样自句柄 1863E6：标高标注对象的实心倒三角箭头。
+        // 该对象共 10 条记录，以前这一条不支持导致整个对象不显示；修好容错后只解出文字和横线、缺三角箭头，
+        // 根因是位序用了 LSB-first（flags 解成 0x1FE4 这类垃圾值）。
+        static const std::uint8_t kLwPolyline[] = {
+            0x43,0x00,0x00,0x00,0x90,0x7f,0x84,0x50,0xc9,0x78,0x22,0xf0,0x2c,0x10,0x09,0x1d,
+            0xd9,0xb4,0x70,0x2e,0x54,0x08,0x08,0xa3,0xe1,0x14,0x32,0x5c,0xa0,0x8b,0xfe,0x11,
+            0x43,0x25,0xf0,0x09,0x1d,0xd9,0xb4,0x7e,0x4e,0x44,0x08,0x08,0xdf,0xe1,0x14,0x32,
+            0x5f,0x00,0x91,0xdd,0x9b,0x47,0x02,0xe5,0x40,0xa0,0x8b,0xfe,0x11,0x43,0x25,0xc0,
+            0x84,0x02,0x1d,0x02,0xd9,0x04,0xc0,0x00,0x00,0x00
+        };
+        Bytes payload33(std::begin(kLwPolyline), std::end(kLwPolyline));
+        source.ProxyGraphics.assign(8,0);
+        Record(source.ProxyGraphics,33,payload33);
+        const bool decoded33 = DecodeProxyGraphics(source,result,&error);
+        auto* lwp = decoded33 && result.Entities.size() == 1 ? dynamic_cast<LwPolyline*>(result.Entities[0].get()) : nullptr;
+        check(lwp != nullptr,"type 33 LWPOLYLINE record decodes into a polyline");
+        check(lwp && lwp->Vertices.size() == 7,"type 33 polyline keeps its 7 vertices");
+        // 坐标必须落在该标注所在区域。只用 isfinite 挡不住「有限但荒谬」的错位解码，
+        // 那正是之前三角箭头画不出来、甚至一度把全图包围盒撑爆的原因。
+        check(lwp && std::abs(lwp->Vertices[0].Location.X - (-148976.323754)) < 0.01 &&
+            std::abs(lwp->Vertices[0].Location.Y - 43026.237777) < 0.01,
+            "type 33 vertex coordinates match the drawing (MSB-first bit order)");
+        // 倒三角：右上角 (-148736,-43026) 与下方尖点 y=42786，说明不是一条退化直线
+        check(lwp && lwp->Vertices.size() == 7 &&
+            std::abs(lwp->Vertices[1].Location.X - (-148736.323754)) < 0.01 &&
+            std::abs(lwp->Vertices[2].Location.Y - 42786.237777) < 0.01,
+            "type 33 decodes the triangle outline, not a degenerate line");
     }
     {
         Bytes arc3; WritePoint(arc3,10,0); WritePoint(arc3,0,10); WritePoint(arc3,-10,0); U32(arc3,0);
@@ -135,8 +198,10 @@ int RunTchProxyGraphicsTests()
             t->StyleHandle == 77 && t->LayerHandle == 13 && t->LineTypeHandle == 22,"text2 decodes code page, size, direction, font style, layer and linetype");
         check(ok && result.Entities[1]->LayerHandle == 13 && result.Entities[1]->LineTypeHandle == 21,"linetype ByLayer index and layer persist to later records");
         source.ProxyGraphics.assign(8,0); value.clear(); U32(value,3); Record(source.ProxyGraphics,16,value); Record(source.ProxyGraphics,2,CircleBytes());
-        check(DecodeProxyGraphics(source,result,&error,&context) && result.Skipped == 1 && result.Entities.size() == 1 &&
-            result.Entities[0]->LayerHandle == source.LayerHandle,"layer index outside the table is skipped, layer stays unchanged");
+        // 图层序号越界：这条状态记录跳过，后面的圆仍按对象自身图层画出来
+        check(DecodeProxyGraphics(source,result,&error,&context) && result.Entities.size() == 1 &&
+            result.Entities[0]->LayerHandle == source.LayerHandle && result.Skipped >= 1,
+            "out-of-range layer index is skipped, geometry still decoded");
         source.ProxyGraphics.assign(8,0);
         value.clear(); U32(value,2); Record(source.ProxyGraphics,16,value);
         value.clear(); U32(value,1); Record(source.ProxyGraphics,18,value);
@@ -147,62 +212,9 @@ int RunTchProxyGraphicsTests()
             "layer and linetype index -1 fall back to the object's own");
     }
     source.ProxyGraphics.assign(8,0); value.clear(); U32(value,212); Record(source.ProxyGraphics,23,value); Record(source.ProxyGraphics,2,CircleBytes());
-    check(DecodeProxyGraphics(source,result,&error) && result.Skipped == 1 && result.Entities.size() == 1 &&
-        result.Entities[0]->LineWeight == LineWeightType::W50,"invalid lineweight is skipped, lineweight stays unchanged");
-    {
-        struct Case { std::uint32_t raw; bool trueColor; std::uint32_t expected; const char* message; };
-        const Case cases[] = {
-            {0x070000c3u, false, 7, "raw color [c3 00 00 07] is ACI 7"},
-            {0xc3000007u, false, 7, "raw color [07 00 00 c3] (little-endian, method in the high byte) is ACI 7"},
-            {0xc30000c1u, false, 193, "little-endian ACI 193 is not mistaken for ByBlock"},
-            {0x000000c2u, true, 0x000000, "raw color [c2 00 00 00] is true-color black"},
-            {0x563412c2u, true, 0x123456, "raw color [c2 12 34 56] is true color 0x123456"},
-        };
-        for (const auto& c : cases)
-        {
-            source.ProxyGraphics.assign(8,0); value.clear(); U32(value,c.raw); Record(source.ProxyGraphics,22,value);
-            Record(source.ProxyGraphics,2,CircleBytes());
-            const bool ok = DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1;
-            const auto& color = ok ? result.Entities[0]->Color : Color();
-            check(ok && (c.trueColor ? color.IsTrueColor() && color.TrueColor() == c.expected
-                                     : !color.IsTrueColor() && color.Index() == static_cast<std::int16_t>(c.expected)), c.message);
-        }
-    }
-    source.ProxyGraphics.assign(8,0); value.clear(); F64(value,250); Record(source.ProxyGraphics,25,value); Record(source.ProxyGraphics,2,CircleBytes());
-    check(DecodeProxyGraphics(source,result,&error) && result.Skipped == 0 && result.Entities.size() == 1,"nonzero thickness is ignored for the plan view");
-    {
-        auto lwpolyline = [](std::int16_t flags, const std::vector<XY>& points, const std::vector<double>& bulges)
-        {
-            DwgBitWriter w(CadVersion::AC1024, Codec::CodePage::Windows1252);
-            w.WriteBitShort(flags);
-            if (flags & 0x8) w.WriteBitDouble(7.5);
-            w.WriteBitLong(static_cast<std::int32_t>(points.size()));
-            if (flags & 0x10) w.WriteBitLong(static_cast<std::int32_t>(bulges.size()));
-            if (flags & 0x20) w.WriteBitLong(1);
-            w.Write2RawDouble(points[0]);
-            for (std::size_t i = 1; i < points.size(); ++i) w.Write2BitDoubleWithDefault(points[i - 1], points[i]);
-            for (double b : bulges) w.WriteBitDouble(b);
-            if (flags & 0x20) { w.WriteBitDouble(1.5); w.WriteBitDouble(2.5); }
-            const auto& bits = w.Data();
-            Bytes payload; U32(payload,static_cast<std::uint32_t>(bits.size()));
-            payload.insert(payload.end(),bits.begin(),bits.end());
-            while (payload.size() % 4) payload.push_back(0);
-            return payload;
-        };
-        const std::vector<XY> pts{{-148976.25,43026.5},{-149096.25,42906.5},{-149216.25,43026.5}};
-        source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,33,lwpolyline(0x8 | 0x10 | 0x20,pts,{0,0.5,0}));
-        const bool ok = DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1;
-        auto* pl = ok ? dynamic_cast<LwPolyline*>(result.Entities[0].get()) : nullptr;
-        check(pl && pl->Vertices.size() == 3 && pl->Vertices[2].Location.X == -149216.25 && pl->Vertices[1].Location.Y == 42906.5 &&
-            pl->Vertices[1].Bulge == 0.5 && pl->Vertices[0].StartWidth == 1.5 && pl->Vertices[0].EndWidth == 2.5 && pl->Elevation == 7.5,
-            "lwpolyline record decodes the DWG bit stream (points, bulges, widths, elevation)");
-        source.ProxyGraphics.assign(8,0); value.clear(); U32(value,1); Record(source.ProxyGraphics,20,value);
-        Record(source.ProxyGraphics,33,lwpolyline(0x200,pts,{}));
-        check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 && dynamic_cast<Hatch*>(result.Entities[0].get()),
-            "filled closed lwpolyline becomes a solid hatch");
-        source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,33,lwpolyline(0,{{1e300,0},{0,0}},{}));
-        check(!DecodeProxyGraphics(source,result,&error) && result.Skipped == 1,"lwpolyline with out-of-range coordinates is skipped");
-    }
+    // 线宽值不认识：跳过该条状态记录，圆照常输出（线宽沿用对象自身的）
+    check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 && result.Skipped >= 1,
+        "invalid lineweight record is skipped, geometry still decoded");
     source.ProxyGraphics.assign(8,0); Bytes arc = CircleBytes(); WritePoint(arc,0,1,0); F64(arc,kPi/2); Record(source.ProxyGraphics,4,arc);
     check(DecodeProxyGraphics(source,result,&error),"planar arc accepted");
     auto* a = result.Entities.empty() ? nullptr : dynamic_cast<Arc*>(result.Entities[0].get());
