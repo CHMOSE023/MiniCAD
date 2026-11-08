@@ -26,7 +26,9 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 | `TchText.h` | TCH文字的样式规则（文字样式上 `_TCH` 扩展数据给出西文字高与宽度系数） |
 | `TchShape.h`、`TchPathArray.h` | TCH矩形；线图案（沿路径重复排列图案块） |
 | `TchPipe.h`、`TchElec.h`、`TchHvac.h` | 给排水管线；电气桥架与配件、折断线；暖通风管、管件（法兰、变径、弯头、三通、四通、乙字弯）与风管标注 |
-| `TchBlockInsert.h`、`TchProxyGraphics.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同）；代理图形记录（也用于其他带代理图形的自定义实体，见 `docs/evidence/Tch-proxy-graphics.md`；TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理；不支持或数据不合理的记录只跳过那一条，裁剪 / 变换矩阵记录整个放弃） |
+| `TchDormer.h`、`TchSpace.h`、`TchCurveMesh.h` | 老虎窗、房间轮廓、曲面网格（代理图形为空，几何只能从私有数据解） |
+| `TchBlockInsert.h` | TCH块参照的标准几何前缀（`SWR_BLOCK_INSERT` 布局相同） |
+| `TchProxyGraphics.h` | 代理图形解码在厂商无关的 `Proxy::Decode`（`src/Import/ProxyGraphics.h`，见 [cad-exchange](cad-exchange.md)），这里只是 `Tch::DecodeProxyGraphics` 等别名。TCH另存为代理实体的图纸里图层、线型序号多为 -1，按对象自身的处理 |
 
 ## 约束
 
@@ -36,7 +38,11 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **新版（T30，TCH基类版本 9～14）**：各类的版本号与明文版本的对应写在 `Read*Fields` / `Decode*Cipher` 上方的注释里。自带 RC 版本与密钥、第二个密钥为 0 的子层用 `Tch::Detail::CipherLayer`（表格子对象、屋顶基类、管线接口、标注样式、管件基类的列表）。TCH基类里的属性包值与文字方向记在 `Tch::Detail::CipherReader::FieldStrings` / `Tch::Detail::CipherReader::FieldNumbers` / `Tch::Detail::CipherReader::Angle`（立管、多管标注要用）。机电：管线节点基类没有加密层（`Tch::Detail::ReadCipherPipeNode`）；属性表移进了TCH基类（`Tch::Detail::CipherReader::XData`），管线基类版本 4 在末尾另存 Start、End（`Tch::Detail::ReadCipherPipeBase`）
 - **DWG2004**：没有单独的文字流，GUID、属性名与密文都是主数据流里的 GBK 文字；密文字符在 GBK 里有的存为双字节，没有的写成 `\U+XXXX`，`Tch::Detail::CipherReader` 取各字符的低字节解密，与 2007 起 UTF-16 的做法相同。实物图纸（中望看图另存）里坐标标注读出的格式 48、方向 3 超出已核对的范围，仍跳过。明文机电对象里只有管线、管件、管线文字（`Tch::DecodePipe`、`Tch::DecodePipeFitting`、`Tch::DecodePipeText`，`Tch::Detail::CheckPayload` 的 `inlineText`）按内嵌字符串读 2004 格式，其余给排水类仍要求 2007 起
 - **暖通**：风管与管件的几何都在属性表里（`Tch::ReadCableTrayMap` / `Tch::ReadCableFittingMap`，明文管件的属性表后是边界列表（每条带若干段）与连接数，与风管相同）。管件按属性表的键分类型（`Tch::DecodeHvacFitting`）：三通 I4 为支管样式（1 直、3 弧形、5 Y 形、7 Y 形而对侧为直边），四通有 Pt4 / Pt5，乙字弯有 R28、R34 而无 Vt6（R2 为偏移，竖向偏移画直管加 Z 形符号），分节弯头的节数 I5 ≥ 2 时取 I5、否则 I4 − 1。风管标注 `TCH_HVACDIMENSION` 是TCH基类 + BS 版本 1 + 属性表（`Tch::DecodeHvacDimension`）：S1 为“|”分隔的显示文字，I4 = 0 时文字居中在 Pt6，I4 = 4 时引线到 Pt7 再画两行两列的表格；天正按字形实际宽度定列宽，这里是估算（误差约 1 个字宽）。以上对照 2004 格式图纸的天正分解核对；分解结果会被重叠对象裁掉一部分，比对时只看“参照有而 MiniCAD 没有”的部分
-- **TCH基类版本7**（ZW看图另存为2018格式）：`ReadTchBase` 在版本 5 的字段后读属性表（键在文字流、值在主数据流，`Tch::Detail::SkipXDataMap`），两个句柄个数分别多存了 5、3；之后接旧版明文的各类字段（柱 6、门窗 5 等）。属性表要从头读文字流，所以 `ReadTchBase` 要传 `data`，只适用于对象自身的基类（组合门窗的子门窗不传，版本 7 按不支持）。墙版本 10（`Tch::Detail::DecodeWallFields`）：受保护几何同标记 7 先互换半字节再异或密钥，墙高在左右宽之前，结尾标记后多 13 个 0 位（含义未核对，只接受不超过 16 位且全为 0）。坐标标注版本 6（格式 48、方向 3）仍跳过
+- **TCH基类版本 6～8**（天正 T20 各版另存，版本 7 也见于中望看图另存的 2018 格式）：`ReadTchBase` 在版本 5 的字段后读属性表（键在文字流、值在主数据流，`Tch::Detail::SkipXDataMap`），之后接旧版明文的各类字段（柱 6、门窗 5 等）；要传 `data`（组合门窗的子门窗、`Tch::DecodeSheet` 也传）。句柄个数：版本 6 不减，7 / 8 分别减 5、3；版本 8 在属性表后多一段内联 GUID 文字。墙（`Tch::Detail::DecodeWallFields`）的受保护几何类版本随基类为 9 / 10 / 11：9 只异或密钥、墙高在左右宽之后，结尾标记后可有不超过 16 个全 0 位；10 / 11 同标记 7 先互换半字节再异或、墙高在左右宽之前，结尾多 13 个 0 位（含义未核对）；11 在受保护几何后、门窗段前多 4 字节
+- **各类随 T20 增加的类版本**：坐标标注 `TCH_COORD` 1 只有点与值、2 加引线点、3 加一字节、4 加 `TextGap`、5 加 `LineLength`、6 再加字节 + 二维点 + 内联文字（与 `DecodeCoordCipher` 尾部一致）；版本 1 没有引线点，`BuildCoord` 按 (-4.2894, 4.5069) × 字高缩放补出（取自存了引线点的同位置标注）。箭头 `TCH_ARROW` 2 在 `ArrowLength` 后结束、3 加 Head、4 / 5 完整。矩形楼梯 `TCH_RECTSTAIR` 1 尾部为字节 + BD + 2 位、3 读到 2 BD + 字节、4 起完整、5 / 6 末尾多一个 BS；版本 ≤ 3 的句柄流更短。索引符号 `TCH_INDEXPOINTER` 在 AC1018 下文字内联在主数据流，4 段文字后 1 / 2 即结束（2 多 2 字节），3 / 4 再接字符串表、多段线与收尾文字。指北针部分版本主数据流末尾补不超过 64 个全 0 位。加密版 `TCH_TEXT` / `TCH_MTEXT` 类版本 3 句柄流只有文字样式，4 起另有两个句柄。旧类 `TCH_DIMENSION` 与 `TCH_DIMENSION2` 字段相同、类版本为 3
+- **旧版墙**（基类 2～4）：没有受保护块，`Tch::Detail::DecodeOldWall` 在 `ReadTchBase` 后 +8 位读 7 个 BD（起点、终点、曲线参数），再按相对 +12 / +78 / +144 位读左宽、右宽、墙高三个 RD；偏移是实测的，靠 `Tch::Detail::CheckWall` 兜底
+- **代理图形为空、靠私有数据的对象**（与上面"不要猜字段"不同，这几类是按特征定位的，含义未逐项核对）：老虎窗 `Tch::DecodeDormer` 明文为基类 + 版本 + BS + 10 个 BD 参数 + 插入点 + 屋面法向，加密为 `ReadBase` + 版本 + 密钥 + 11 个 Double + 两个 P3；平面朝向取法向在 XY 的方位角。房间 `Tch::DecodeSpace`（只支持加密版）在密钥后逐位扫描，找末尾正好对齐主数据流的顶点数组（每点两个 RD），只画轮廓。曲面网格 `Tch::DecodeCurveMesh` 找最长的一段合理 BD 三点组，按顺序连成折线
+- **半径 / 直径标注**（`Tch::BuildRadiusDim`）：`Flags & 0x10` 为直径：直径线穿过圆心、两端箭头指向圆周，文字 `⌀` + 两倍半径放在圆心上方；否则按半径画
 - **新版未核对**（只有合成样例，没有实物图纸对照）：屋顶、曲线楼梯、剖切线、双跑楼梯、阳台；自动扶梯（第三方查看器画两道、MiniCAD 一道）；设备 / 井 / 水泵的图块、多管标注、版本 4 的桥架与风管、桥架配件与风管管件（井标注能显示井的标高，说明井按新版布局读对了）。未支持：带形窗（与转角窗同为 `TCH_CORNER_WINDOW`）；修订标记另存的多段线不画
 - **剖切符号**：旧样式 `Tch::BuildSection`，新国标样式 `Tch::BuildSectionNewStyle`；样式开关在 `Tch::Detail::CipherReader::XData` 里，旧版明文对象一律旧样式
 - **柱、幕墙**：柱 `Tch::Detail::DecodeColumnCipher`（版本 7～10，版本 ≥ 9 的出图比例取对象自己的）；矩形 `Tch::Detail::DecodeRectCipher`（版本 3）；幕墙在 `Tch::Detail::DecodeWallCipher` 的墙字段之后读幕墙版本 3，分格列表是否存在看墙标志 0x100 / 0x10000（旧版明文同样，样例两位都有，没有实物核对）

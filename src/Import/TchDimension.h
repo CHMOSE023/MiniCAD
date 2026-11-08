@@ -116,14 +116,17 @@ namespace MiniCAD::Tch
     {
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
-        if (entity.Raw.DxfName != "TCH_DIMENSION2") return false;
+        if (entity.Raw.DxfName != "TCH_DIMENSION2" && entity.Raw.DxfName != "TCH_DIMENSION") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeDimensionCipher(entity, dimension, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for native dimension");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
-        if (r.ReadByte() != 1) return fail("unsupported native dimension version");
+        const bool oldClass = entity.Raw.DxfName == "TCH_DIMENSION";
+        const int dimVersion = r.ReadByte();
+        if (oldClass ? (dimVersion != 3) : (dimVersion != 1))
+            return fail("unsupported native dimension version");
         Detail::TextStream text(data, r);
         for (int i = 0; i < base.TextCount; ++i) text.Next();
 
@@ -583,13 +586,38 @@ namespace MiniCAD::Tch
         const P tip{d.TipX, d.TipY};
         auto at = [&](double t, double o) { return P{tip.X + ux * t - uy * o, tip.Y + uy * t + ux * o}; };
         const double arrow = std::min(2 * style.ArrowSize * s, length);
+
+        const bool isDiameter = (d.Flags & 0x10) != 0;
+        const double height = style.TextHeight * 0.85 * s;
+        if (isDiameter)
+        {
+            const P cx{d.Center.X, d.Center.Y};
+            auto along = [&](double t, double o) { return P{cx.X + ux * t - uy * o, cx.Y + uy * t + ux * o}; };
+            const P end1 = along(radius, 0), end2 = along(-radius, 0);
+            const double rArrow = std::min(2 * style.ArrowSize * s, radius);
+            if (2 * radius > 2 * rArrow) g.Lines.push_back({along(-radius + rArrow, 0), along(radius - rArrow, 0)});
+            if (rArrow > 0)
+            {
+                g.Arrows.push_back({along(radius - rArrow, 0.165 * rArrow), along(radius - rArrow, -0.165 * rArrow), end1});
+                g.Arrows.push_back({along(-radius + rArrow, 0.165 * rArrow), along(-radius + rArrow, -0.165 * rArrow), end2});
+            }
+            std::string value = (d.Flags & 4) ? d.TextOverride
+                                              : std::string("\xE2\x8C\x80") + Detail::FormatNumber(2 * radius, style.Decimals);
+            if (d.HasTextPosition)
+                g.Texts.push_back({{d.TextX, d.TextY}, height, 0, std::move(value), 5, 0, style.TextColor});
+            else
+            {
+                const double lift = height / 2 + style.Gap * s;
+                g.Texts.push_back({{cx.X, cx.Y + lift}, height, 0, std::move(value), 5, 0, style.TextColor});
+            }
+            return g;
+        }
+
         if (length > arrow) g.Lines.push_back({at(arrow, 0), at(length, 0)});
         if (arrow > 0) g.Arrows.push_back({at(arrow, 0.165 * arrow), at(arrow, -0.165 * arrow), tip});
-
         std::string value = (d.Flags & 4) ? d.TextOverride : "R" + Detail::FormatNumber(radius, style.Decimals);
         double rotation = std::atan2(uy, ux);
         const bool flipped = Detail::Upright(rotation);
-        const double height = style.TextHeight * 0.85 * s;
         if (d.HasTextPosition)
             g.Texts.push_back({{d.TextX, d.TextY}, height, rotation, std::move(value), 5, 0, style.TextColor});
         else

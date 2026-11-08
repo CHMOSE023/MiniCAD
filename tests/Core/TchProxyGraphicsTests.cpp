@@ -86,6 +86,12 @@ int RunTchProxyGraphicsTests()
     check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1,"polyline with explicit +Z normal accepted");
     source.ProxyGraphics.assign(8,0); Bytes count; U32(count,0xffffffff); Record(source.ProxyGraphics,6,count);
     check(!DecodeProxyGraphics(source,result,&error),"huge vertex count rejected before allocation");
+    {
+        Bytes wild; WritePoint(wild,1e70,1e70); F64(wild,5); WritePoint(wild,0,0,1);
+        source.ProxyGraphics.assign(8,0); Record(source.ProxyGraphics,2,wild);
+        check(!DecodeProxyGraphics(source,result,&error) && result.Entities.empty() && result.Skipped == 1,
+            "finite but absurd circle center is skipped instead of entering the scene");
+    }
     source.ProxyGraphics.assign(8,0); value.clear(); U32(value,1); Record(source.ProxyGraphics,20,value); Record(source.ProxyGraphics,7,Vertices());
     check(DecodeProxyGraphics(source,result,&error) && result.Entities.size() == 1 && dynamic_cast<Hatch*>(result.Entities[0].get()) &&
         static_cast<Hatch*>(result.Entities[0].get())->IsSolid,"filled polygon becomes a solid hatch");

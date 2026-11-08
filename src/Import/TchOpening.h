@@ -94,27 +94,30 @@ namespace MiniCAD::Tch
         }
     }
 
-    // 版本 1～5 为旧版明文；版本 7（中望看图另存的 2018 格式）在版本 5 之后加了属性表，句柄个数分别多存了 5、3，要传 data
+    // 版本 1～5 旧版明文；6～8（T20）在版本 5 后加属性表，要传 data
     inline bool ReadTchBase(MiniDWG::DwgBitReader& r, TchBase& base, const MiniDWG::RawDwgData* data = nullptr)
     {
         base = {};
         base.Version = r.ReadByte();
-        if (base.Version < 1 || base.Version > 7 || base.Version == 6 || (base.Version == 7 && !data))
+        const bool t20 = base.Version >= 6 && base.Version <= 8;
+        if (base.Version < 1 || base.Version > 8 || (t20 && !data))
             return false;
         if (base.Version > 1) base.Scale = r.ReadBitDouble();
         if (base.Version > 2) r.ReadBitDouble();
         if (base.Version > 3)
         {
             const int flags = r.ReadByte();
-            const int bias = base.Version == 7 ? 5 : 0;
+            const int bias = base.Version >= 7 ? 5 : 0;
             if (flags & 1) base.HandleCount += r.ReadByte() - bias;
             if (flags & 2) base.HandleCount += r.ReadByte() - (bias ? 3 : 0);
             if (base.HandleCount < 0) return false;
         }
         if (base.Version > 4 && !Detail::SkipPropertyBag(r, base.TextCount, base.HandleCount))
             return false;
-        if (base.Version == 7 && !Detail::SkipXDataMap(r, *data, base))
+        if (t20 && !Detail::SkipXDataMap(r, *data, base))
             return false;
+        if (base.Version == 8)
+            r.ReadVariableText();
         return !r.Failed();
     }
 
@@ -296,7 +299,7 @@ namespace MiniCAD::Tch
                 for (const char* c = kPrefix; *c; ++c)
                     if (r.ReadBit() != (*c == '1')) return fail("unsupported group opening part header");
                 TchBase partBase;
-                if (!ReadTchBase(r, partBase)) return fail("unsupported group opening part base layout");
+                if (!ReadTchBase(r, partBase, &data)) return fail("unsupported group opening part base layout");
                 for (int k = 0; k < partBase.TextCount; ++k) text.Next();
                 TchOpening part;
                 int partKind = 0;

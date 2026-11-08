@@ -336,7 +336,7 @@ namespace MiniCAD::Tch
         TchSymbolBase symbol;
         if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         const int version = r.ReadByte();
-        if (version < 4 || version > 5) return fail("unsupported native coordinate version");
+        if (version < 1 || version > 6) return fail("unsupported native coordinate version");
         TchCoord c;
         c.Scale = symbol.Base.Scale;
         c.TextHeight = symbol.TextHeight;
@@ -344,10 +344,17 @@ namespace MiniCAD::Tch
         c.Side = r.ReadByte();
         c.PointX = r.ReadRawDouble(); c.PointY = r.ReadRawDouble();
         c.ValueX = r.ReadRawDouble(); c.ValueY = r.ReadRawDouble();
-        c.LeaderX = r.ReadRawDouble(); c.LeaderY = r.ReadRawDouble();
-        r.ReadByte();
-        c.TextGap = r.ReadBitDouble();
+        if (version >= 2) { c.LeaderX = r.ReadRawDouble(); c.LeaderY = r.ReadRawDouble(); }
+        if (version >= 3) r.ReadByte();
+        if (version >= 4) c.TextGap = r.ReadBitDouble();
         if (version >= 5) c.LineLength = r.ReadBitDouble();
+        if (version >= 6)
+        {
+            r.ReadByte();
+            r.Read2RawDouble();
+            Detail::TextStream text(data, r);
+            text.Next();
+        }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native coordinate fields do not consume the payload exactly");
         if (const char* why = Detail::CheckCoord(c)) return fail(why);
@@ -417,7 +424,7 @@ namespace MiniCAD::Tch
         Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         const int version = r.ReadByte();
-        if (version < 4 || version > 5) return fail("unsupported native arrow version");
+        if (version < 2 || version > 5) return fail("unsupported native arrow version");
         TchArrow a;
         a.Scale = symbol.Base.Scale;
         a.TextHeight = symbol.TextHeight;
@@ -427,11 +434,14 @@ namespace MiniCAD::Tch
         bool closed = false;
         if (!Detail::ReadPoly2D(r, closed, &a.Vertices)) return fail("invalid arrow vertex count");
         a.ArrowLength = r.ReadBitDouble();
-        a.Head = r.ReadByte();
-        r.ReadBitDouble();
-        a.HasText2 = r.ReadBit() != 0;
-        a.Text2 = text.Next();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
+        if (version >= 3) a.Head = r.ReadByte();
+        if (version >= 4)
+        {
+            r.ReadBitDouble();
+            a.HasText2 = r.ReadBit() != 0;
+            a.Text2 = text.Next();
+            r.ReadBitDouble(); r.ReadBitDouble(); r.ReadBitDouble();
+        }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native arrow fields do not consume the payload exactly");
         if (const char* why = Detail::FinishArrow(a, closed)) return fail(why);
@@ -600,13 +610,13 @@ namespace MiniCAD::Tch
         if (entity.Raw.DxfName != "TCH_INDEXPOINTER") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeIndexPointerCipher(entity, pointer, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8)
+        if (data.Version < CadVersion::AC1018 || data.Main.size() < (data.MainBits + 7) / 8)
             return fail("unsupported DWG version for native index symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;
         if (!ReadTchSymbolBase(r, symbol, &data)) return fail("unsupported Tianzheng symbol base layout");
         const int version = r.ReadByte();
-        if (version < 3 || version > 4) return fail("unsupported native index symbol version");
+        if (version < 1 || version > 4) return fail("unsupported native index symbol version");
         TchIndexPointer p;
         p.Scale = symbol.Base.Scale;
         p.TextHeight = symbol.TextHeight;
@@ -616,23 +626,25 @@ namespace MiniCAD::Tch
         p.Radius = r.ReadBitDouble();
         p.Run = r.ReadBitDouble();
         p.Mark = r.ReadBitDouble();
-        // 文字流：编号、图号、上旁注、下旁注
-        const int list1 = r.ReadByte();
-        const int list2 = r.ReadByte();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();
-        r.ReadByte();                                           // 多段线：闭合标志
-        const int vertices = r.ReadBitShort();
-        if (vertices < 0 || vertices > 4096) return fail("invalid index symbol polyline");
-        for (int i = 0; i < vertices && !r.Failed(); ++i) { r.ReadRawDouble(); r.ReadRawDouble(); r.ReadBitDouble(); }
-        r.ReadBitDouble();
-        // 文字流：一个字符串；版本 > 3 句柄流再一个句柄
-        if (r.Failed() || r.PositionInBits() != data.MainBits)
-            return fail("native index symbol fields do not consume the payload exactly");
-        if (const char* why = Detail::CheckIndexPointer(p)) return fail(why);
         Detail::TextStream text(data, r);
         for (int i = 0; i < symbol.Base.TextCount; ++i) text.Next();
         p.Number = text.Next(); p.Sheet = text.Next(); p.Above = text.Next(); p.Below = text.Next();
-        for (int i = 0; i < list1 + list2 + 1; ++i) text.Next();
+        if (version == 2) { r.ReadByte(); r.ReadByte(); }
+        if (version > 2)
+        {
+            const int list1 = r.ReadByte(), list2 = r.ReadByte();
+            for (int i = 0; i < list1 + list2; ++i) text.Next();
+            r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();
+            r.ReadByte();                                           // 多段线：闭合标志
+            const int vertices = r.ReadBitShort();
+            if (vertices < 0 || vertices > 4096) return fail("invalid index symbol polyline");
+            for (int i = 0; i < vertices && !r.Failed(); ++i) { r.ReadRawDouble(); r.ReadRawDouble(); r.ReadBitDouble(); }
+            r.ReadBitDouble();
+            text.Next();
+        }
+        if (r.Failed() || r.PositionInBits() != data.MainBits)
+            return fail("native index symbol fields do not consume the payload exactly");
+        if (const char* why = Detail::CheckIndexPointer(p)) return fail(why);
         if (text.Reader.Failed()) return fail("index symbol text stream is incomplete");
         if (!Detail::ReadSymbolHandles(entity, symbol, p.TextStyle)) return fail("index symbol handle stream is incomplete");
         // 旁注样式：属性包中的句柄（排在天正基类句柄的最后）；没有时与圆圈文字相同
@@ -897,8 +909,11 @@ namespace MiniCAD::Tch
         const double length = c.LineLength < 99999 ? c.LineLength * c.Scale : std::max(1.1 * width, 11 * c.Scale);
         const double gap = c.TextGap > -999 ? c.TextGap * nominal : 0.3 * nominal;
         const double dir = c.Side == 1 ? -1.0 : 1.0;
-        const P leader{c.LeaderX, c.LeaderY}, end{c.LeaderX + dir * length, c.LeaderY};
-        if (std::hypot(c.LeaderX - c.PointX, c.LeaderY - c.PointY) > 1e-9)
+        const bool hasLeader = std::hypot(c.LeaderX, c.LeaderY) > 1e-9;
+        const double baseX = hasLeader ? c.LeaderX : c.PointX + dir * 4.2894 * nominal;
+        const double baseY = hasLeader ? c.LeaderY : c.PointY + 4.5069 * nominal;
+        const P leader{baseX, baseY}, end{baseX + dir * length, baseY};
+        if (std::hypot(baseX - c.PointX, baseY - c.PointY) > 1e-9)
             g.Lines.push_back({{c.PointX, c.PointY}, leader});
         g.Lines.push_back({leader, end});
         const int attach = dir > 0 ? 6 : 4;     // 右中 / 左中

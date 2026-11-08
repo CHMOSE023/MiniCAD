@@ -13,6 +13,9 @@
 #include "Import/TchAnnotation.h"
 #include "Import/TchSheet.h"
 #include "Import/TchShape.h"
+#include "Import/TchDormer.h"
+#include "Import/TchSpace.h"
+#include "Import/TchCurveMesh.h"
 #include "Import/TchMultiStair.h"
 #include "Import/TchSymbol.h"
 #include "Import/TchPipe.h"
@@ -1798,6 +1801,24 @@ namespace MiniCAD
                     {
                         ++m_tchConverted[unknown->Raw.DxfName];
                         return MakeTchGraphics(src, Tch::BuildRect(tchRect), TextStyleTable::StandardID);
+                    }
+                    Tch::TchDormer dormer;
+                    if (Tch::DecodeDormer(*unknown, dormer, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildDormer(dormer), TextStyleTable::StandardID);
+                    }
+                    Tch::TchSpace tchSpace;
+                    if (Tch::DecodeSpace(*unknown, tchSpace, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildSpace(tchSpace), TextStyleTable::StandardID);
+                    }
+                    Tch::TchCurveMesh curveMesh;
+                    if (Tch::DecodeCurveMesh(*unknown, curveMesh, &nativeReason))
+                    {
+                        ++m_tchConverted[unknown->Raw.DxfName];
+                        return MakeTchGraphics(src, Tch::BuildCurveMesh(curveMesh), TextStyleTable::StandardID);
                     }
                     Tch::TchSlab slab;
                     if (Tch::DecodeSlab(*unknown, slab, &nativeReason))

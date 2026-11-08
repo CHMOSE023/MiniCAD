@@ -593,7 +593,7 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_NORTHTHUMB") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeNorthThumbCipher(entity, north, diagnostic);
-        if (data.Version < CadVersion::AC1021 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
+        if (data.Version < CadVersion::AC1018 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");
@@ -611,7 +611,14 @@ namespace MiniCAD::Tch
             n.Color = r.ReadBitShort();
             r.ReadRawDouble(); r.ReadRawDouble();
         }
-        if (r.Failed() || r.PositionInBits() != data.MainBits) return fail("native north thumb fields do not consume the payload exactly");
+        if (r.Failed()) return fail("native north thumb fields are incomplete");
+        if (r.PositionInBits() != data.MainBits)
+        {
+            const auto start = r.PositionInBits();
+            if (data.MainBits < start || data.MainBits - start > 64) return fail("native north thumb fields do not consume the payload exactly");
+            for (auto i = start; i < data.MainBits; ++i)
+                if (r.ReadBit()) return fail("native north thumb trailing bits are not zero");
+        }
         if (const char* why = Detail::CheckNorthThumb(n)) return fail(why);
         if (version > 1)
         {

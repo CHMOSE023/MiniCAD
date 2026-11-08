@@ -130,7 +130,7 @@ namespace MiniCAD::Tch
         const int stairBase = r.ReadByte();
         if (stairBase < 1 || stairBase > 2) return fail("unsupported stair base version");
         const int version = r.ReadByte();
-        if (version != 4) return fail("unsupported native stair version");
+        if (version < 1 || version > 6) return fail("unsupported native stair version");
         TchRectStair s;
         s.Scale = base.Scale;
         s.X = r.ReadBitDouble(); s.Y = r.ReadBitDouble(); r.ReadBitDouble();
@@ -145,27 +145,43 @@ namespace MiniCAD::Tch
         r.ReadBitDouble();                                  // 扶手高
         s.Floor = r.ReadByte();
         const int mirror = r.ReadByte();
-        r.ReadByte();
-        s.RailWidth = r.ReadBitDouble();
-        s.RailOffset = r.ReadBitDouble();
-        const auto flags = static_cast<std::uint32_t>(r.ReadBitLong());
-        for (int i = 0; i < 3; ++i) r.ReadBitDouble();
-        r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();  // 版本 ≥ 3：不影响平面显示
-        s.RailExtTop = r.ReadBitDouble();
-        s.RailExtBottom = r.ReadBitDouble();
-        s.CutHeight = r.ReadBitDouble();
-        s.CutAngle = r.ReadBitDouble();
-        s.TextHeight = r.ReadBitDouble();
-        for (int i = 0; i < 4; ++i) r.ReadBitDouble();      // 平台相关的 4 个长度，矩形平台下不影响显示
+        std::uint32_t flags = 0;
+        if (version <= 1)
+        {
+            r.ReadByte();
+            r.ReadBitDouble();
+            r.Read2Bits();
+        }
+        else
+        {
+            r.ReadByte();
+            s.RailWidth = r.ReadBitDouble();
+            s.RailOffset = r.ReadBitDouble();
+            flags = static_cast<std::uint32_t>(r.ReadBitLong());
+            for (int i = 0; i < 3; ++i) r.ReadBitDouble();
+            r.ReadBitDouble(); r.ReadBitDouble(); r.ReadByte();  // 版本 ≥ 3：不影响平面显示
+            if (version >= 4)
+            {
+                s.RailExtTop = r.ReadBitDouble();
+                s.RailExtBottom = r.ReadBitDouble();
+                s.CutHeight = r.ReadBitDouble();
+                s.CutAngle = r.ReadBitDouble();
+                s.TextHeight = r.ReadBitDouble();
+                for (int i = 0; i < 4; ++i) r.ReadBitDouble();      // 平台相关的 4 个长度，矩形平台下不影响显示
+                if (version >= 5) r.ReadBitShort();
+            }
+        }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native stair fields do not consume the payload exactly");
         if (const char* why = Detail::FinishRectStair(s, flags, mirror)) return fail(why);
 
         DwgBitReader handles(data.Handles, data.Version, Codec::CodePage::Gbk);
-        for (int i = 0; i < base.HandleCount + 1 + 4 + 1; ++i) handles.ReadHandle(entity.ObjectHandle);   // 楼梯基类、扶手与栏杆图层等、文字图层
-        s.TextStyle = handles.ReadHandle(entity.ObjectHandle);
-        s.ArrowLayer = handles.ReadHandle(entity.ObjectHandle);
-        if (handles.Failed() || handles.PositionInBits() > data.HandleBits) return fail("stair handle stream is incomplete");
+        const int lead = version <= 3 ? base.HandleCount + 1 : base.HandleCount + 1 + 4 + 1;
+        for (int i = 0; i < lead && !handles.Failed(); ++i) handles.ReadHandle(entity.ObjectHandle);
+        s.TextStyle = handles.Failed() ? MiniDWG::kNullHandle : handles.ReadHandle(entity.ObjectHandle);
+        s.ArrowLayer = handles.Failed() ? MiniDWG::kNullHandle : handles.ReadHandle(entity.ObjectHandle);
+        if (version >= 4 && (handles.Failed() || handles.PositionInBits() > data.HandleBits))
+            return fail("stair handle stream is incomplete");
         stair = s;
         if (diagnostic) diagnostic->clear();
         return true;
