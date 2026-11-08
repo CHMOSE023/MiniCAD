@@ -60,22 +60,37 @@ namespace
         r.WriteBitDouble(s.FlightWidth); r.WriteBitDouble(s.LandingWidth);
         r.WriteByte(static_cast<std::uint8_t>(s.Steps1)); r.WriteByte(static_cast<std::uint8_t>(s.Steps2));
         r.WriteBitDouble(s.TotalWidth); r.WriteBitDouble(900);
-        r.WriteByte(static_cast<std::uint8_t>(s.Floor)); r.WriteByte(static_cast<std::uint8_t>(s.Mirror)); r.WriteByte(2);
-        r.WriteBitDouble(s.RailWidth); r.WriteBitDouble(s.RailOffset);
-        r.WriteBitLong(static_cast<std::int32_t>(s.Flags));
-        r.WriteBitDouble(200); r.WriteBitDouble(120); r.WriteBitDouble(120);
-        r.WriteBitDouble(477.73865802687783); r.WriteBitDouble(872.2613419731222); r.WriteByte(0);
-        r.WriteBitDouble(s.ExtTop); r.WriteBitDouble(s.ExtBottom); r.WriteBitDouble(s.CutHeight); r.WriteBitDouble(s.CutAngle);
-        r.WriteBitDouble(s.TextHeight);
-        for (int i = 0; i < 4; ++i) r.WriteBitDouble(1200);
+        r.WriteByte(static_cast<std::uint8_t>(s.Floor)); r.WriteByte(static_cast<std::uint8_t>(s.Mirror));
+        if (s.Version <= 1)
+        {
+            r.WriteByte(0); r.WriteBitDouble(0); r.Write2Bits(0);
+        }
+        else
+        {
+            r.WriteByte(2);
+            r.WriteBitDouble(s.RailWidth); r.WriteBitDouble(s.RailOffset);
+            r.WriteBitLong(static_cast<std::int32_t>(s.Flags));
+            r.WriteBitDouble(200); r.WriteBitDouble(120); r.WriteBitDouble(120);
+            r.WriteBitDouble(477.73865802687783); r.WriteBitDouble(872.2613419731222); r.WriteByte(0);
+            if (s.Version >= 4)
+            {
+                r.WriteBitDouble(s.ExtTop); r.WriteBitDouble(s.ExtBottom); r.WriteBitDouble(s.CutHeight); r.WriteBitDouble(s.CutAngle);
+                r.WriteBitDouble(s.TextHeight);
+                for (int i = 0; i < 4; ++i) r.WriteBitDouble(1200);
+                if (s.Version >= 5) r.WriteBitShort(0);
+            }
+        }
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         raw.TextBits = 0;
         r.WriteHandle(DwgRef::SoftPointer, 0);
-        r.WriteHandle(DwgRef::HardPointer, 0x369);
-        r.WriteHandle(DwgRef::HardPointer, 0);
-        r.WriteHandle(DwgRef::HardPointer, 0);
-        r.WriteHandle(DwgRef::HardPointer, 0x36a);
-        r.WriteHandle(DwgRef::HardPointer, 0x366);
+        if (s.Version >= 4)
+        {
+            r.WriteHandle(DwgRef::HardPointer, 0x369);
+            r.WriteHandle(DwgRef::HardPointer, 0);
+            r.WriteHandle(DwgRef::HardPointer, 0);
+            r.WriteHandle(DwgRef::HardPointer, 0x36a);
+            r.WriteHandle(DwgRef::HardPointer, 0x366);
+        }
         r.WriteHandle(DwgRef::HardPointer, 0x294);
         r.WriteHandle(DwgRef::HardPointer, 0x367);
         raw.HandleBits = r.PositionInBits(); raw.Handles = r.Take();
@@ -321,8 +336,22 @@ int main()
         }
         StairSpec floor3; floor3.Floor = 3;
         Check(!DecodeRectStair(*StairObject(floor3), s), "unverified floor type 3 is not drawn");
-        StairSpec version5; version5.Version = 5;
-        Check(!DecodeRectStair(*StairObject(version5), s), "stair version 5 is not guessed");
+        for (int version : {5, 6})
+        {
+            StairSpec later; later.Version = version;
+            Check(DecodeRectStair(*StairObject(later), s, &why) && s.TextStyle == 0x294,
+                  "stair versions 5 / 6 read the trailing BitShort after the full version-4 fields");
+        }
+        StairSpec version7; version7.Version = 7;
+        Check(!DecodeRectStair(*StairObject(version7), s), "stair version 7 is not guessed");
+        for (int version : {1, 3})
+        {
+            StairSpec old; old.Version = version;
+            const bool ok = DecodeRectStair(*StairObject(old), s, &why);
+            Check(ok && Near(s.X, old.X) && Near(s.TotalWidth, old.TotalWidth) && s.Steps1 == old.Steps1 && s.TextStyle == 0x294 &&
+                  (version == 1 ? !s.ShowArrows : s.ShowArrows),
+                  version == 1 ? "stair class version 1 ends after a byte, a BD and two bits" : "stair class version 3 stops before the rail extensions");
+        }
         // 剖断中心高于第一跑顶 − T/2：天正会重算剖切位置与角度（6 跑、剖切高 900、踏步高 175、宽 300）
         StairSpec high; high.Steps1 = 6; high.Steps2 = 7; high.TreadWidth = 300; high.StepHeight = 175; high.CutHeight = 900;
         Check(!DecodeRectStair(*StairObject(high), s), "a cut above the first flight is not drawn");

@@ -149,25 +149,29 @@ namespace
         return e;
     }
      
-    void Base7(DwgBitWriter& r, DwgBitWriter& text, bool endMarker = true)
+    // T20 基类 6～8：版本 6 句柄个数不减偏量，7 / 8 两组分别减 5、3；8 在属性表后多一段内联 GUID
+    void BaseT20(DwgBitWriter& r, DwgBitWriter& text, int version = 7, bool endMarker = true)
     {
-        r.WriteByte(7); r.WriteBitDouble(100); r.WriteBitDouble(0); r.WriteByte(3); r.WriteByte(5); r.WriteByte(3);
+        r.WriteByte(static_cast<std::uint8_t>(version)); r.WriteBitDouble(100); r.WriteBitDouble(0); r.WriteByte(3);
+        r.WriteByte(version >= 7 ? 5 : 0); r.WriteByte(version >= 7 ? 3 : 0);
         r.WriteBitLong(0);
         text.WriteVariableText("TDBXDATAMAP_BLOCK_BEGIN_");
         text.WriteVariableText("T20b0"); r.WriteBitLong(3); r.WriteBitLong(0);
         text.WriteVariableText("T20s1"); r.WriteBitLong(8); text.WriteVariableText("C30");
         text.WriteVariableText("T20s4"); r.WriteBitLong(5); r.WriteBitDouble(100);
         if (endMarker) text.WriteVariableText("TDBXDATAMAP_BLOCK_END_");
+        if (version == 8) r.WriteVariableText("{0A1B2C3D-0000-4000-8000-000000000000}");
     }
+    void Base7(DwgBitWriter& r, DwgBitWriter& text, bool endMarker = true) { BaseT20(r, text, 7, endMarker); }
 
-    std::unique_ptr<UnknownEntity> Column7(bool endMarker = true)
+    std::unique_ptr<UnknownEntity> Column7(bool endMarker = true, int baseVersion = 7)
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_COLUMN";
         auto& raw = e->Raw.Dwg;
         raw.Version = CadVersion::AC1032;
         DwgBitWriter r(raw.Version, Codec::CodePage::Gbk), text(raw.Version, Codec::CodePage::Gbk);
-        Base7(r, text, endMarker);
+        BaseT20(r, text, baseVersion, endMarker);
         r.WriteByte(6);
         r.WriteBitDouble(1300); r.WriteBitDouble(1300); r.WriteBitDouble(0);
         r.WriteByte(1);
@@ -181,30 +185,60 @@ namespace
         return e;
     }
      
-    std::unique_ptr<UnknownEntity> Wall10(bool tailBit = false)
+    // 墙类版本 9（基类 6）：只异或、墙高在左右宽之后，尾部可有 ≤16 个 0 位；10（基类 7）/ 11（基类 8）：
+    // 先换半字节再异或、墙高在前，尾部 13 个 0 位；11 在受保护几何后多 4 字节
+    std::unique_ptr<UnknownEntity> WallT20(int wallVersion, bool tailBit = false, int tailBits = -1)
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_WALL";
         auto& raw = e->Raw.Dwg;
         raw.Version = CadVersion::AC1032;
+        const bool swap = wallVersion != 9;
         DwgBitWriter g(raw.Version, Codec::CodePage::Gbk);
         g.Write3RawDouble({1000, 2000, 0}); g.Write3RawDouble({5000, 2000, 0});
         g.WriteRawDouble(0); g.WriteRawLong(0);
-        g.WriteRawDouble(3000); g.WriteRawDouble(100); g.WriteRawDouble(140);
+        if (swap) { g.WriteRawDouble(3000); g.WriteRawDouble(100); g.WriteRawDouble(140); }
+        else { g.WriteRawDouble(100); g.WriteRawDouble(140); g.WriteRawDouble(3000); }
         auto protectedData = g.Take();
-        for (auto& b : protectedData) { b ^= 0x2a; b = static_cast<std::uint8_t>((b << 4) | (b >> 4)); }
+        for (auto& b : protectedData) { b ^= 0x2a; if (swap) b = static_cast<std::uint8_t>((b << 4) | (b >> 4)); }
         DwgBitWriter r(raw.Version, Codec::CodePage::Gbk), text(raw.Version, Codec::CodePage::Gbk);
-        Base7(r, text);
-        r.WriteByte(10); r.WriteByte(0x2a);
+        BaseT20(r, text, wallVersion - 3);
+        r.WriteByte(static_cast<std::uint8_t>(wallVersion)); r.WriteByte(0x2a);
         r.WriteBytes(protectedData);
+        if (wallVersion == 11) r.WriteBytes(std::vector<std::uint8_t>{0x76, 0x36, 0x76, 0x76});
         r.WriteByte(0); r.WriteBitShort(0);
         r.WriteByte(40); r.WriteByte(0);
         r.WriteBitDouble(0);
         for (int i = 0; i < 4; ++i) r.WriteBitDouble(0);
         r.WriteByte(0); r.Write3Bits(2);
-        for (int i = 0; i < 13; ++i) r.WriteBit(tailBit && i == 12);
+        const int tail = tailBits >= 0 ? tailBits : (swap ? 13 : 0);
+        for (int i = 0; i < tail; ++i) r.WriteBit(tailBit && i == tail - 1);
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         raw.TextBits = text.PositionInBits(); raw.Text = text.Take();
+        return e;
+    }
+    std::unique_ptr<UnknownEntity> Wall10(bool tailBit = false) { return WallT20(10, tailBit); }
+
+    // 旧版墙（基类 2～4）：基类后 1 字节、7 个 BD（起点、终点、曲线参数），再按 +12 / +78 / +144 位三个 RD
+    std::unique_ptr<UnknownEntity> OldWall(int baseVersion, double left = 120, double right = 120, double height = 3000)
+    {
+        auto e = std::make_unique<UnknownEntity>();
+        e->Raw.DxfName = "TCH_WALL";
+        auto& raw = e->Raw.Dwg;
+        raw.Version = CadVersion::AC1018;
+        DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
+        r.WriteByte(static_cast<std::uint8_t>(baseVersion));
+        if (baseVersion > 1) r.WriteBitDouble(100);
+        if (baseVersion > 2) r.WriteBitDouble(0);
+        if (baseVersion > 3) { r.WriteByte(0); }
+        r.WriteByte(0);
+        r.Write3BitDouble({1000, 2000, 0}); r.Write3BitDouble({5000, 2000, 0}); r.WriteBitDouble(0);
+        for (int i = 0; i < 12; ++i) r.WriteBit(false);
+        r.WriteRawDouble(left); r.Write2Bits(0);
+        r.WriteRawDouble(right); r.Write2Bits(0);
+        r.WriteRawDouble(height);
+        for (int i = 0; i < 8; ++i) r.WriteBit(false);
+        raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
         return e;
     }
 
@@ -372,6 +406,39 @@ int main()
           Near(wall10.LeftWidth, 100) && Near(wall10.RightWidth, 140) && wall10.Material == 40,
           "wall version 10 unprotects with swapped nibbles and reads height before the widths");
     Check(!MiniCAD::Tch::DecodeWall(*Wall10(true), wall10), "wall version 10 with a nonzero tail bit is rejected");
+
+    // ── T20：基类 6 / 8，墙类版本 9 / 11，旧版墙 ──
+    for (int baseVersion : {6, 8})
+    {
+        MiniCAD::Tch::TchColumn c;
+        Check(MiniCAD::Tch::DecodeColumn(*Column7(true, baseVersion), c, &why) && c.Outline.size() == 4 && Near(c.Height, 3000),
+              baseVersion == 6 ? "base version 6 keeps handle counts without bias" : "base version 8 skips the inline GUID after the xdata map");
+    }
+    {
+        auto e = Column7(true, 8);
+        e->Raw.Dwg.Main[0] = 7;
+        MiniCAD::Tch::TchColumn c;
+        Check(!MiniCAD::Tch::DecodeColumn(*e, c), "base version 7 does not skip the GUID that only version 8 has");
+    }
+    MiniCAD::Tch::TchWall wallT20;
+    Check(MiniCAD::Tch::DecodeWall(*WallT20(9), wallT20, &why) && Near(wallT20.LeftWidth, 100) && Near(wallT20.RightWidth, 140) &&
+          Near(wallT20.End.X, 5000), "wall version 9 xors without swapping nibbles and reads height after the widths");
+    Check(MiniCAD::Tch::DecodeWall(*WallT20(9, false, 8), wallT20), "wall version 9 accepts a short all-zero tail");
+    Check(!MiniCAD::Tch::DecodeWall(*WallT20(9, true, 8), wallT20), "wall version 9 rejects a tail with a set bit");
+    Check(!MiniCAD::Tch::DecodeWall(*WallT20(9, false, 24), wallT20), "wall version 9 rejects a zero tail longer than 16 bits");
+    Check(MiniCAD::Tch::DecodeWall(*WallT20(11), wallT20, &why) && Near(wallT20.LeftWidth, 100) && Near(wallT20.RightWidth, 140),
+          "wall version 11 skips the 4 bytes after the protected geometry");
+    for (int baseVersion : {2, 3, 4})
+    {
+        MiniCAD::Tch::TchWall w;
+        Check(MiniCAD::Tch::DecodeWall(*OldWall(baseVersion, 100, 140, 2800), w, &why) && Near(w.Start.X, 1000) && Near(w.End.X, 5000) &&
+              Near(w.LeftWidth, 100) && Near(w.RightWidth, 140), "old plain wall (base 2..4) reads its geometry fields");
+    }
+    {
+        MiniCAD::Tch::TchWall w;
+        Check(!MiniCAD::Tch::DecodeWall(*OldWall(4, -5, 140, 2800), w), "old plain wall with a negative width is rejected");
+        Check(!MiniCAD::Tch::DecodeWall(*OldWall(4, 100, 140, 0), w), "old plain wall with zero height is rejected");
+    }
 
     // ── 端到端：墙 + 门 + 门图块 → DWG → Scene ──
     CadDatabase db;

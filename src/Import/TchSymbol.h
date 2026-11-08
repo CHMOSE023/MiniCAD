@@ -354,6 +354,7 @@ namespace MiniCAD::Tch
             r.Read2RawDouble();
             Detail::TextStream text(data, r);
             text.Next();
+            if (text.Reader.Failed()) return fail("coordinate text stream is incomplete");
         }
         if (r.Failed() || r.PositionInBits() != data.MainBits)
             return fail("native coordinate fields do not consume the payload exactly");

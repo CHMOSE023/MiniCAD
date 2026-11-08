@@ -39,8 +39,8 @@ namespace MiniCAD::Tch
                     const double y = r.ReadBitDouble();
                     const double z = r.ReadBitDouble();
                     if (r.Failed()) break;
-                    const bool ok = std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
-                                    std::abs(x) < 1e6 && std::abs(y) < 1e6 && std::abs(z) < 1e6 &&
+                    auto plausible = [](double v) { return v == 0 || (std::isfinite(v) && std::abs(v) >= 1e-3 && std::abs(v) < 1e6); };
+                    const bool ok = plausible(x) && plausible(y) && plausible(z) &&
                                     (std::abs(x) > 1000 || std::abs(y) > 1000);
                     if (!ok)
                     {

@@ -13,12 +13,23 @@ namespace MiniCAD::Tch
 
     namespace Detail
     {
+        inline bool PlausibleCoordinate(double v)
+        {
+            return v == 0 || (std::isfinite(v) && std::abs(v) >= 1e-3 && std::abs(v) < 1e9);
+        }
+
         inline bool CheckSpace(const TchSpace& s)
         {
             if (s.Outline.size() < 3 || s.Outline.size() > 4096) return false;
-            for (const auto& p : s.Outline)
-                if (!std::isfinite(p.X) || !std::isfinite(p.Y) || std::abs(p.X) > 1e9 || std::abs(p.Y) > 1e9) return false;
-            return true;
+            double area = 0;
+            for (std::size_t i = 0; i < s.Outline.size(); ++i)
+            {
+                const auto& p = s.Outline[i];
+                const auto& q = s.Outline[(i + 1) % s.Outline.size()];
+                if (!PlausibleCoordinate(p.X) || !PlausibleCoordinate(p.Y)) return false;
+                area += p.X * q.Y - q.X * p.Y;
+            }
+            return std::abs(area) > 1e-6;
         }
     }
 
@@ -55,8 +66,7 @@ namespace MiniCAD::Tch
                 v.SetPositionInBits(first + step * static_cast<unsigned long long>(i));
                 const double x = v.ReadRawDouble();
                 const double y = v.ReadRawDouble();
-                if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > 1e9 || std::abs(y) > 1e9 ||
-                    (std::abs(x) < 1e-6 && std::abs(y) < 1e-6))
+                if (!Detail::PlausibleCoordinate(x) || !Detail::PlausibleCoordinate(y) || (x == 0 && y == 0))
                 {
                     ok = false;
                     break;
@@ -66,7 +76,10 @@ namespace MiniCAD::Tch
             if (!ok) continue;
             const auto endBit = first + step * static_cast<unsigned long long>(n - 1) + 128;
             if (endBit + 8 < data.MainBits) continue;
-            s.Outline = std::move(pts);
+            TchSpace candidate;
+            candidate.Outline = std::move(pts);
+            if (!Detail::CheckSpace(candidate)) continue;
+            s.Outline = std::move(candidate.Outline);
             found = true;
             break;
         }

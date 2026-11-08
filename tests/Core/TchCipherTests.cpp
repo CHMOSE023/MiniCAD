@@ -1,6 +1,10 @@
 #include "TchCipherWriter.h"
 #include "Import/TchAnnotation.h"
 #include "Import/TchColumn.h"
+#include "Import/TchCurveMesh.h"
+#include "Import/TchDormer.h"
+#include "Import/TchSpace.h"
+#include "Import/TchText.h"
 #include "Import/TchElec.h"
 #include "Import/TchHvac.h"
 #include "Import/TchMultiStair.h"
@@ -575,6 +579,86 @@ namespace
         w.Text.WriteVariableText("R1000");
         w.Point2(ox + 1500, oy + 200);
         return Finish(w, extraBit, "TCH_RADIUSDIM");
+    }
+
+    // 文字类版本 3 句柄流只有文字样式，4 起末尾另有两个句柄
+    std::unique_ptr<UnknownEntity> TextObject(int version, int handles, bool extraBit = false)
+    {
+        CipherWriter w;
+        w.Base(0x12, 94, 100, 94);
+        w.Layer(version, 0x12);
+        w.Handle(0x2d0);
+        w.Text.WriteVariableText("ABC");
+        w.Point3(100, 200, 0);
+        w.Double(3.5); w.Double(0); w.Byte(7); w.Byte(0);
+        for (int i = 1; i < handles; ++i) w.Handle(0);
+        return Finish(w, extraBit, "TCH_TEXT");
+    }
+
+    std::unique_ptr<UnknownEntity> DormerObject(int key, double nx = -0.7656, double ny = 0, bool extraBit = false)
+    {
+        CipherWriter w;
+        w.Base(key, 94, 100, 94);
+        w.Layer(3, key);
+        w.Double(1);
+        for (double p : {200.0, 200.0, 0.5, 450.0, 200.0, 1500.0, 180.0, 1800.0, 1300.0, 1400.0}) w.Double(p);
+        w.Point3(5000, 3000, 750);
+        w.Point3(nx, ny, std::sqrt(std::max(0.0, 1 - nx * nx - ny * ny)));
+        return Finish(w, extraBit, "TCH_DORMER");
+    }
+
+    std::unique_ptr<UnknownEntity> PlainDormerObject()
+    {
+        CipherWriter w;
+        w.PlainBase(100);
+        w.Main.WriteByte(2); w.Main.WriteBitShort(1);
+        for (double p : {200.0, 200.0, 0.5, 450.0, 200.0, 1500.0, 180.0, 1800.0, 1300.0, 1400.0}) w.Main.WriteBitDouble(p);
+        for (double v : {5000.0, 3000.0, 750.0, 0.0, 1.0, 0.0}) w.Main.WriteBitDouble(v);
+        return w.Take("TCH_DORMER");
+    }
+
+    // 房间：密钥后若干字段，再 BS 顶点数与顶点数组（每点两个 RD，点间 2 位），数组末尾与主数据流末尾对齐
+    std::unique_ptr<UnknownEntity> SpaceObject(std::initializer_list<std::pair<double, double>> points, int tailBits = 0)
+    {
+        CipherWriter w;
+        w.Base(0x12, 94, 100, 94);
+        w.Layer(2, 0x12);
+        w.Double(3.5);
+        w.Main.WriteBitDouble(2800); w.Main.WriteByte(1);
+        w.Main.WriteBitShort(static_cast<std::int16_t>(points.size()));
+        std::size_t i = 0;
+        for (const auto& [x, y] : points)
+        {
+            w.Main.WriteRawDouble(x); w.Main.WriteRawDouble(y);
+            if (++i < points.size()) w.Main.Write2Bits(0);
+        }
+        for (int k = 0; k < tailBits; ++k) w.Main.WriteBit(false);
+        return w.Take("TCH_SPACE");
+    }
+
+    std::unique_ptr<UnknownEntity> CurveMeshObject(bool plain, std::initializer_list<MiniDWG::XYZ> points)
+    {
+        CipherWriter w;
+        if (plain) { w.PlainBase(100); w.Main.WriteByte(1); }
+        else { w.Base(0x12, 94, 100, 94); w.Layer(1, 0x12); }
+        for (const auto& p : points) w.Main.Write3BitDouble(p);
+        w.Main.Write3BitDouble({0, 0, 0});
+        w.Main.WriteBitShort(0);
+        return w.Take("TCH_CURVEMESH2");
+    }
+
+    // 合法的天正基类与版本 / 密钥之后接随机位：解析器不能从里面"扫"出几何
+    std::unique_ptr<UnknownEntity> NoiseObject(const char* dxf, bool plain, std::uint64_t& seed, int bits)
+    {
+        CipherWriter w;
+        if (plain) { w.PlainBase(100); w.Main.WriteByte(1); }
+        else { w.Base(0x12, 94, 100, 94); w.Layer(1, 0x12); }
+        for (int i = 0; i < bits; ++i)
+        {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+            w.Main.WriteBit((seed >> 33) & 1);
+        }
+        return w.Take(dxf);
     }
 
     // 自带密钥、第二个密钥为 0 的子层（管线接口、标注样式）：写完恢复外层密钥
@@ -1215,6 +1299,68 @@ int main()
         Tch::TchRadiusDim radius;
         if (DecodesExactly("encrypted radius dimension decodes", Tch::DecodeRadiusDim, [](bool x) { return RadiusDimObject(0x12, x); }, radius))
             Check(radius.TextOverride == "R1000" && radius.HasTextPosition && Near(radius.TipX, 1000) && radius.DimStyle == 0x2d0, "radius dimension text and tip");
+
+        Tch::TchText text;
+        if (DecodesExactly("encrypted text class version 3 (one handle) decodes", Tch::DecodeText, [](bool x) { return TextObject(3, 1, x); }, text))
+            Check(text.Value == "ABC" && Near(text.X, 100) && text.Style == 0x2d0 && text.Attachment == 7, "text version 3 fields");
+        DecodesExactly("encrypted text class version 4 (three handles) decodes", Tch::DecodeText, [](bool x) { return TextObject(4, 3, x); }, text);
+        Check(!Tch::DecodeText(*TextObject(4, 1), text), "text class version 4 needs its two extra handles");
+        Check(!Tch::DecodeText(*TextObject(5, 3), text), "text class version 5 is not guessed");
+
+        std::string why;
+        Tch::TchDormer dormer;
+        Check(Tch::DecodeDormer(*DormerObject(0x12), dormer, &why) && Near(dormer.X, 5000) && Near(dormer.Y, 3000) &&
+              Near(dormer.Width, 1800) && Near(dormer.Depth, 1400) && Near(std::abs(dormer.Rotation), std::numbers::pi),
+              "encrypted dormer: parameters, insertion point, rotation from the roof normal azimuth");
+        Check(Tch::DecodeDormer(*DormerObject(0x13, 0, -0.6), dormer) && Near(dormer.Rotation, -std::numbers::pi / 2) && Near(dormer.Z, 750),
+              "encrypted dormer with key >= 17 reorders the points");
+        Check(Tch::DecodeDormer(*PlainDormerObject(), dormer, &why) && Near(dormer.X, 5000) && Near(dormer.Rotation, std::numbers::pi / 2) &&
+              Near(dormer.Width, 1800), "plain dormer reads BS + 10 BD parameters + insertion point + normal");
+        {
+            const auto g = Tch::BuildDormer(dormer);
+            Check(g.Paths.size() == 4 && g.Paths[0].Points.size() == 5, "dormer draws the window outline, ridge and two slope lines");
+        }
+        {
+            auto bad = PlainDormerObject();
+            bad->Raw.Dwg.MainBits -= 40; bad->Raw.Dwg.Main.resize((bad->Raw.Dwg.MainBits + 7) / 8);
+            Check(!Tch::DecodeDormer(*bad, dormer), "truncated plain dormer is rejected");
+        }
+
+        Tch::TchSpace space;
+        Check(Tch::DecodeSpace(*SpaceObject({{1000, 1000}, {5000, 1000}, {5000, 4000}, {1000, 4000}}), space, &why) &&
+              space.Outline.size() == 4 && Near(space.Outline[2].X, 5000) && Near(space.Outline[2].Y, 4000),
+              "space outline is the vertex array that ends at the end of the main stream");
+        Check(Tch::DecodeSpace(*SpaceObject({{0, 500}, {3000, 0}, {3000, 2000}}, 6), space) && space.Outline.size() == 3,
+              "space outline may end up to 8 bits before the stream end and have a zero coordinate");
+        Check(!Tch::DecodeSpace(*SpaceObject({{1000, 1000}, {5000, 1000}, {5000, 4000}}, 20), space),
+              "space vertex array that does not reach the stream end is not taken");
+        Check(!Tch::DecodeSpace(*SpaceObject({{1000, 1000}, {2000, 1000}, {3000, 1000}}), space), "collinear (zero area) outline is rejected");
+        Check(!Tch::DecodeSpace(*SpaceObject({{1000, 1000}, {1e-200, 1000}, {3000, 4000}}), space), "denormal-scale coordinates are rejected");
+        {
+            const auto g = Tch::BuildSpace(space.Outline.empty() ? Tch::TchSpace{} : space);
+            Check(!g.Paths.empty(), "space builds a closed outline path");
+        }
+
+        Tch::TchCurveMesh mesh;
+        Check(Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 300}, {13000, 5200, 600}, {13500, 5400, 300}}), mesh, &why) &&
+              mesh.Points.size() == 4 && Near(mesh.Points[3].X, 13500),
+              "encrypted curve mesh takes the longest run of plausible BD points");
+        Check(Tch::DecodeCurveMesh(*CurveMeshObject(true, {{0, 8000, 0}, {2000, 8000, 0}, {4000, 9000, 0}}), mesh, &why) && mesh.Points.size() == 3,
+              "plain curve mesh (base 2..8) allows a zero X on the boundary");
+        Check(!Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 0}}), mesh), "two points are not a mesh");
+
+        int falseSpaces = 0, falseMeshes = 0, falsePlainMeshes = 0;
+        std::uint64_t seed = 0x9e3779b97f4a7c15ull;
+        for (int trial = 0; trial < 400; ++trial)
+        {
+            const int bits = 200 + trial * 7;
+            falseSpaces += Tch::DecodeSpace(*NoiseObject("TCH_SPACE", false, seed, bits), space) ? 1 : 0;
+            falseMeshes += Tch::DecodeCurveMesh(*NoiseObject("TCH_CURVEMESH2", false, seed, bits), mesh) ? 1 : 0;
+            falsePlainMeshes += Tch::DecodeCurveMesh(*NoiseObject("TCH_CURVEMESH2", true, seed, bits), mesh) ? 1 : 0;
+        }
+        std::printf("noise: %d spaces, %d meshes, %d plain meshes recognised\n", falseSpaces, falseMeshes, falsePlainMeshes);
+        Check(falseSpaces == 0, "random payloads after a valid header are never taken as a space outline");
+        Check(falseMeshes == 0 && falsePlainMeshes == 0, "random payloads after a valid header are never taken as a curve mesh");
 
         Tch::TchPipe pipe;
         if (DecodesExactly("encrypted pipe decodes", Tch::DecodePipe, [](bool x) { return PipeObject(0x12, false, x); }, pipe))

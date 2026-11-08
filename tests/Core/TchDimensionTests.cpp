@@ -352,6 +352,38 @@ int main()
         }
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeRadiusDim(e, o, w); }, rd) == 0,
               "every truncated radius dimension payload is rejected");
+
+        RadiusSpec diameter; diameter.Flags = 0x10;
+        if (DecodeRadiusDim(*RadiusObject(diameter), rd, &why))
+        {
+            g = BuildRadiusDim(rd, arrowStyle);
+            const double radius = std::hypot(rd.TipX - rd.Center.X, rd.TipY - rd.Center.Y);
+            const bool through = g.Lines.size() == 1 &&
+                std::abs(std::hypot(g.Lines[0].A.X - rd.Center.X, g.Lines[0].A.Y - rd.Center.Y) -
+                         std::hypot(g.Lines[0].B.X - rd.Center.X, g.Lines[0].B.Y - rd.Center.Y)) < 1e-6;
+            const bool tips = g.Arrows.size() == 2 &&
+                Near(std::hypot(g.Arrows[0].C.X - rd.Center.X, g.Arrows[0].C.Y - rd.Center.Y), radius) &&
+                Near(std::hypot(g.Arrows[1].C.X - rd.Center.X, g.Arrows[1].C.Y - rd.Center.Y), radius) &&
+                Near(g.Arrows[0].C.X + g.Arrows[1].C.X, 2 * rd.Center.X) && Near(g.Arrows[0].C.Y + g.Arrows[1].C.Y, 2 * rd.Center.Y);
+            Check(through && tips && g.Texts.size() == 1 && g.Texts[0].Value == "\xE2\x8C\x80" "1892" && g.Texts[0].Rotation == 0 &&
+                  g.Texts[0].Center.Y > rd.Center.Y,
+                  "flag 0x10 draws a diameter: line through the centre, two arrows on the circle, horizontal diameter text above");
+        }
+        else Check(false, ("diameter dimension decodes: " + why).c_str());
+    }
+
+    {
+        DimSpec old = Horizontal(); old.Version = 3;
+        auto e = DimObject(old);
+        e->Raw.DxfName = "TCH_DIMENSION";
+        Check(DecodeDimension(*e, d, &why) && d.Spans.size() == 1 && Near(d.Spans[0], 6000),
+              "old class TCH_DIMENSION uses the TCH_DIMENSION2 fields with class version 3");
+        DimSpec oldV1 = Horizontal();
+        e = DimObject(oldV1);
+        e->Raw.DxfName = "TCH_DIMENSION";
+        Check(!DecodeDimension(*e, d), "old class TCH_DIMENSION only accepts class version 3");
+        DimSpec newV3 = Horizontal(); newV3.Version = 3;
+        Check(!DecodeDimension(*DimObject(newV3), d), "TCH_DIMENSION2 still rejects class version 3");
     }
 
     // ── 端到端：DWG → Scene → 普通几何 DWG/DXF ──

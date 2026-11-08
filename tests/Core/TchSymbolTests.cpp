@@ -1,6 +1,7 @@
 // 天正坐标标注（TCH_COORD）与箭头（TCH_ARROW）：私有布局解码与显示
 // 合成对象的数值取自真实样例与用 MiniCADTchPatch 构造的变体，期望的图元取自天正 2014 的分解结果（docs/Tch-compatibility.md）
 #include "Import/TchSymbol.h"
+#include "Import/TchAnnotation.h"
 #include "Import/CadExchange.h"
 #include "Dwg/Write/DwgBitWriter.h"
 #include "Dwg/Write/DwgWriter.h"
@@ -66,10 +67,17 @@ namespace
         r.WriteByte(static_cast<std::uint8_t>(s.Format)); r.WriteByte(static_cast<std::uint8_t>(s.Side));
         r.WriteRawDouble(58892.01696736875); r.WriteRawDouble(20742.289172312478);
         r.WriteRawDouble(s.ValueX); r.WriteRawDouble(s.ValueY);
-        r.WriteRawDouble(s.LeaderX); r.WriteRawDouble(s.LeaderY);
-        r.WriteByte(0); r.WriteBitDouble(s.Gap);
+        if (s.Version >= 2) { r.WriteRawDouble(s.LeaderX); r.WriteRawDouble(s.LeaderY); }
+        if (s.Version >= 3) r.WriteByte(0);
+        if (s.Version >= 4) r.WriteBitDouble(s.Gap);
         if (s.Version >= 5) r.WriteBitDouble(s.Length);
+        if (s.Version >= 6) { r.WriteByte(0); r.WriteRawDouble(0); r.WriteRawDouble(0); }
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+        if (s.Version >= 6)
+        {
+            r.WriteVariableText("");
+            raw.TextBits = r.PositionInBits(); raw.Text = r.Take();
+        }
         SymbolHandles(r, raw, style);
         return e;
     }
@@ -81,6 +89,7 @@ namespace
         double TailX = 63021.56436710451;
         std::string Text1 = "上", Text2 = "下";
         bool HasText2 = true;       // 样例为 1；为 0 时天正不画第二个文字
+        int Version = 5;
     };
 
     // 版本 5；样例 371（749 位）：三个顶点，末端为箭头
@@ -92,16 +101,21 @@ namespace
         raw.Version = CadVersion::AC1027;
         DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
         SymbolBase(r, s.Height);
-        r.WriteByte(5); r.WriteByte(static_cast<std::uint8_t>(s.Mode));
+        r.WriteByte(static_cast<std::uint8_t>(s.Version)); r.WriteByte(static_cast<std::uint8_t>(s.Mode));
         r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteBitDouble(0);
         r.WriteByte(0); r.WriteBitShort(3);
         const double v[3][2] = {{s.TailX, 18688.228029981386}, {61322.95742863529, 18688.228029981386}, {60560.109991518184, 19735.59585386717}};
         for (const auto& p : v) { r.WriteRawDouble(p[0]); r.WriteRawDouble(p[1]); r.WriteBitDouble(0); }
-        r.WriteBitDouble(s.Length); r.WriteByte(0);
-        r.WriteBitDouble(-1000); r.WriteBit(s.HasText2);
-        r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteBitDouble(0);
+        r.WriteBitDouble(s.Length);
+        if (s.Version >= 3) r.WriteByte(0);
+        if (s.Version >= 4)
+        {
+            r.WriteBitDouble(-1000); r.WriteBit(s.HasText2);
+            r.WriteBitDouble(0); r.WriteBitDouble(0); r.WriteBitDouble(0);
+        }
         raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
-        r.WriteVariableText(s.Text1); r.WriteVariableText(s.Text2);
+        r.WriteVariableText(s.Text1);
+        if (s.Version >= 4) r.WriteVariableText(s.Text2);
         raw.TextBits = r.PositionInBits(); raw.Text = r.Take();
         SymbolHandles(r, raw, style);
         return e;
@@ -306,7 +320,9 @@ int main()
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeCoord(e, o, w); }, c) == 0,
               "every truncated coordinate payload is rejected");
         CoordSpec v6; v6.Version = 6;
-        Check(!DecodeCoord(*CoordObject(v6), c), "coordinate version 6 (extra text and point) is not guessed");
+        auto v6Short = CoordObject(v6);
+        v6Short->Raw.Dwg.Text.clear(); v6Short->Raw.Dwg.TextBits = 0;
+        Check(!DecodeCoord(*v6Short, c), "coordinate version 6 without its trailing text is rejected");
     }
 
     // ── 箭头：样例与变体 ──
@@ -524,6 +540,91 @@ int main()
         else Check(false, "double underline mode 0 decodes");
         Check(AcceptedTruncations(*sample, [](auto& e, auto& o, std::string* w) { return DecodeDrawingName(e, o, w); }, dn) == 0,
               "every truncated drawing name payload is rejected");
+    }
+
+    // ── 旧版与 T20 的类版本 ──
+    {
+        TchCoord c;
+        for (int version : {1, 2, 3, 4, 6})
+        {
+            CoordSpec s; s.Version = version;
+            const std::string label = "coordinate class version " + std::to_string(version) + " consumes exactly its fields";
+            Check(DecodeCoord(*CoordObject(s), c, &why) && Near(c.ValueX, s.ValueX) && Near(c.PointX, 58892.01696736875), label.c_str());
+        }
+        CoordSpec v7; v7.Version = 7;
+        Check(!DecodeCoord(*CoordObject(v7), c), "coordinate class version 7 is not guessed");
+        CoordSpec v1; v1.Version = 1;
+        if (DecodeCoord(*CoordObject(v1), c))
+        {
+            const TchGraphics g = BuildCoord(c);
+            const double nominal = c.TextHeight * c.Scale;
+            Check(g.Lines.size() == 2 && Near(g.Lines[0].A, c.PointX, c.PointY) &&
+                  Near(g.Lines[0].B, c.PointX + 4.2894 * nominal, c.PointY + 4.5069 * nominal, 0.01),
+                  "coordinate version 1 has no leader point: the leader is placed from the text height");
+            CoordSpec v1Left = v1; v1Left.Side = 1;
+            DecodeCoord(*CoordObject(v1Left), c);
+            const TchGraphics left = BuildCoord(c);
+            Check(left.Lines.size() == 2 && Near(left.Lines[0].B, c.PointX - 4.2894 * nominal, c.PointY + 4.5069 * nominal, 0.01),
+                  "coordinate version 1 mirrors the default leader with side 1");
+        }
+        else Check(false, "coordinate version 1 decodes");
+
+        TchArrow a;
+        ArrowSpec v2; v2.Version = 2;
+        Check(DecodeArrow(*ArrowObject(v2), a, &why) && a.Text1 == "上" && a.Text2.empty() && a.Vertices.size() == 3,
+              "arrow class version 2 ends after the arrow length");
+        ArrowSpec v3; v3.Version = 3;
+        Check(DecodeArrow(*ArrowObject(v3), a, &why) && a.Vertices.size() == 3 && a.Text2.empty(),
+              "arrow class version 3 adds only the head style byte");
+        ArrowSpec v1a; v1a.Version = 1;
+        Check(!DecodeArrow(*ArrowObject(v1a), a), "arrow class version 1 is not guessed");
+    }
+    {
+        auto indexOld = [](int version, bool extraBytes)
+        {
+            auto e = std::make_unique<UnknownEntity>();
+            e->Raw.DxfName = "TCH_INDEXPOINTER";
+            auto& raw = e->Raw.Dwg;
+            raw.Version = CadVersion::AC1018;
+            DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
+            SymbolBase(r, 3.5);
+            r.WriteByte(static_cast<std::uint8_t>(version)); r.WriteByte(1);
+            r.WriteRawDouble(1000); r.WriteRawDouble(2000); r.WriteRawDouble(2500); r.WriteRawDouble(2000);
+            r.WriteBitDouble(5); r.WriteBitDouble(12); r.WriteBitDouble(-5);
+            for (const char* t : {"3", "A-1", "", ""}) r.WriteVariableText(t);
+            if (extraBytes) { r.WriteByte(0); r.WriteByte(0); }
+            raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+            SymbolHandles(r, raw, 0x294);
+            return e;
+        };
+        TchIndexPointer p;
+        Check(DecodeIndexPointer(*indexOld(1, false), p, &why) && p.Number == "3" && p.Sheet == "A-1" && Near(p.CornerX, 2500),
+              "DWG 2004 index symbol version 1 reads its texts inline in the main stream");
+        Check(DecodeIndexPointer(*indexOld(2, true), p, &why) && p.Number == "3",
+              "DWG 2004 index symbol version 2 has two bytes after the texts");
+        Check(!DecodeIndexPointer(*indexOld(1, true), p), "index symbol version 1 does not accept the version-2 bytes");
+        Check(!DecodeIndexPointer(*indexOld(2, false), p), "index symbol version 2 requires its two bytes");
+    }
+    {
+        auto north = [](int tailBits, bool setBit)
+        {
+            auto e = std::make_unique<UnknownEntity>();
+            e->Raw.DxfName = "TCH_NORTHTHUMB";
+            auto& raw = e->Raw.Dwg;
+            raw.Version = CadVersion::AC1018;
+            DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
+            r.WriteByte(5); r.WriteBitDouble(100); r.WriteBitDouble(0); r.WriteByte(0); r.WriteBitLong(0);
+            r.WriteByte(1);
+            r.WriteRawDouble(3000); r.WriteRawDouble(4000); r.WriteBitDouble(12); r.WriteBitDouble(1.5);
+            for (int i = 0; i < tailBits; ++i) r.WriteBit(setBit && i == tailBits - 1);
+            raw.MainBits = r.PositionInBits(); raw.Main = r.Take();
+            return e;
+        };
+        TchNorthThumb n;
+        Check(DecodeNorthThumb(*north(0, false), n, &why) && Near(n.X, 3000) && Near(n.Radius, 12), "DWG 2004 north thumb version 1 decodes");
+        Check(DecodeNorthThumb(*north(34, false), n), "north thumb accepts an all-zero padding tail");
+        Check(!DecodeNorthThumb(*north(34, true), n), "north thumb rejects a padding tail with a set bit");
+        Check(!DecodeNorthThumb(*north(72, false), n), "north thumb rejects a zero tail longer than 64 bits");
     }
 
     // ── 端到端：DWG → Scene → 普通几何 DWG/DXF ──
