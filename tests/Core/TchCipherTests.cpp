@@ -618,11 +618,17 @@ namespace
         return w.Take("TCH_DORMER");
     }
 
-    // 房间：密钥后若干字段，再 BS 顶点数与顶点数组（每点两个 RD，点间 2 位），数组末尾与主数据流末尾对齐
-    std::unique_ptr<UnknownEntity> SpaceObject(std::initializer_list<std::pair<double, double>> points, int tailBits = 0)
+    // 房间：密钥后若干字段，再 BS 顶点数与顶点数组（每点两个 RD，点间 2 位），数组末尾与主数据流末尾对齐。
+    // withName：模拟加密对象——ReadBase 之后文本流里依次是编号、房间名的明文 UTF-16 串。
+    std::unique_ptr<UnknownEntity> SpaceObject(std::initializer_list<std::pair<double, double>> points, int tailBits = 0, bool withName = false)
     {
         CipherWriter w;
         w.Base(0x12, 94, 100, 94);
+        if (withName)
+        {
+            w.Strings().WriteVariableText("1001");
+            w.Strings().WriteVariableText("房间");   // 通用中文名（房间名提取按 CJK 判定）
+        }
         w.Layer(2, 0x12);
         w.Double(3.5);
         w.Main.WriteBitDouble(2800); w.Main.WriteByte(1);
@@ -637,14 +643,29 @@ namespace
         return w.Take("TCH_SPACE");
     }
 
+    // 新版加密 TCH_CURVEMESH2 = 天正曲线 版本 1：base → version/key → count(BS)
+    // → count × [Point3 + bulge(BD)] → closed(B) → normal(P3)；句柄在句柄流，不占主数据流。
+    // 旧版明文分支仍是"一串 BitDouble 三元组"，靠盲扫找最长合理段。
     std::unique_ptr<UnknownEntity> CurveMeshObject(bool plain, std::initializer_list<MiniDWG::XYZ> points)
     {
         CipherWriter w;
-        if (plain) { w.PlainBase(100); w.Main.WriteByte(1); }
-        else { w.Base(0x12, 94, 100, 94); w.Layer(1, 0x12); }
-        for (const auto& p : points) w.Main.Write3BitDouble(p);
-        w.Main.Write3BitDouble({0, 0, 0});
-        w.Main.WriteBitShort(0);
+        if (plain)
+        {
+            w.PlainBase(100); w.Main.WriteByte(1);
+            for (const auto& p : points) w.Main.Write3BitDouble(p);
+            w.Main.Write3BitDouble({0, 0, 0});
+            w.Main.WriteBitShort(0);
+        }
+        else
+        {
+            w.Base(0x12, 94, 100, 94);
+            w.Layer(1, 0x12);
+            w.Handle(0);
+            w.Short(static_cast<int>(points.size()));
+            for (const auto& p : points) { w.Point3(p.X, p.Y, p.Z); w.Double(0); }
+            w.Bool(false);
+            w.Point3(0, 0, 1);
+        }
         return w.Take("TCH_CURVEMESH2");
     }
 
@@ -1354,14 +1375,37 @@ int main()
             const auto g = Tch::BuildSpace(space.Outline.empty() ? Tch::TchSpace{} : space);
             Check(!g.Paths.empty(), "space builds a closed outline path");
         }
+        // 房间名从加密文本流里的 CJK 明文串提取；面积按轮廓多边形算（mm² → m²），画成两行居中文字。
+        {
+            Tch::TchSpace named;
+            const bool ok = Tch::DecodeSpace(*SpaceObject({{1000, 1000}, {5000, 1000}, {5000, 4000}, {1000, 4000}}, 0, true), named, &why);
+            Check(ok && named.Name == "房间", "space name is the plain CJK string in the text stream");
+            const auto g = Tch::BuildSpace(named);
+            const bool twoLines = g.Texts.size() == 2 && g.Texts[0].Value == "房间" &&
+                                  g.Texts[1].Value.find("12.00m") != std::string::npos;
+            Check(twoLines, "space draws the name and the area as two centered lines");
+        }
 
         Tch::TchCurveMesh mesh;
         Check(Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 300}, {13000, 5200, 600}, {13500, 5400, 300}}), mesh, &why) &&
-              mesh.Points.size() == 4 && Near(mesh.Points[3].X, 13500),
-              "encrypted curve mesh takes the longest run of plausible BD points");
+              mesh.Points.size() == 4 && Near(mesh.Points[3].X, 13500) && Near(mesh.Points[3].Y, 5400),
+              "encrypted curve mesh reads count + Point3/bulge vertices through CipherReader");
         Check(Tch::DecodeCurveMesh(*CurveMeshObject(true, {{0, 8000, 0}, {2000, 8000, 0}, {4000, 9000, 0}}), mesh, &why) && mesh.Points.size() == 3,
               "plain curve mesh (base 2..8) allows a zero X on the boundary");
         Check(!Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 0}}), mesh), "two points are not a mesh");
+        // 结构化解析保留真实 XY 坐标，画成闭合轮廓（不再被盲扫读成错位的 (X,0,Z)）。
+        {
+            Tch::TchCurveMesh m;
+            const bool ok = Tch::DecodeCurveMesh(*CurveMeshObject(false,
+                {{1000, 2000, 0}, {3000, 2000, 0}, {3000, 4000, 0}, {1000, 4000, 0}}), m, &why);
+            Check(ok && m.Points.size() == 4 && Near(m.Points[0].X, 1000) && Near(m.Points[0].Y, 2000),
+                  "structured curve mesh keeps the real XY coordinates");
+            const auto g = Tch::BuildCurveMesh(m);
+            const bool drawn = g.Paths.size() == 1 && g.Paths[0].Points.size() == 5 &&
+                               Near(g.Paths[0].Points.front().P.X, g.Paths[0].Points.back().P.X) &&
+                               Near(g.Paths[0].Points.front().P.Y, g.Paths[0].Points.back().P.Y);
+            Check(drawn, "curve mesh draws a closed XY outline");
+        }
 
         int falseSpaces = 0, falseMeshes = 0, falsePlainMeshes = 0;
         std::uint64_t seed = 0x9e3779b97f4a7c15ull;
