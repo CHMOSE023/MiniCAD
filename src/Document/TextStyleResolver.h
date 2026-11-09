@@ -3,6 +3,8 @@
 #include "Scene/TextStyleTable.h"
 #include "Text/FontSystem.h"
 #include "Core/Math/Constants.hpp"
+#include "Text/Font/FontEngine.h"
+#include <cctype>
 
 namespace MiniCAD
 {
@@ -26,6 +28,40 @@ namespace MiniCAD
             rs.WidthFactor = rec.WidthFactor > 0.0 ? rec.WidthFactor : 1.0;
             rs.Oblique     = rec.ObliqueDeg * Math::PI / 180.0;
             return rs;
+        };
+    }
+
+    // 多行文字内联字体（\f 族名、\F 字体文件）→ 字体。与文字样式同一套查找与缓存（缓存键同 MakeTextStyleResolver）
+    inline InlineFontResolver MakeInlineFontResolver(FontSystem* fontSystem)
+    {
+        if (!fontSystem || !fontSystem->IsReady())
+            return nullptr;
+
+        return [fontSystem](const MTextFont& f) -> IFont*
+        {
+            auto hasExt = [](const std::string& name) { return name.find('.') != std::string::npos; };
+            auto lowerExt = [](const std::string& name)
+            {
+                const size_t dot = name.find_last_of('.');
+                std::string ext = dot == std::string::npos ? std::string() : name.substr(dot);
+                for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return ext;
+            };
+            FontStyle fs;
+            if (!f.family.empty())
+                fs.fontFile = FontEngine::TrueTypeFileOf(f.family);
+            else if (!f.file.empty())
+            {
+                const std::string ext = lowerExt(f.file);
+                fs.isShx    = ext.empty() || ext == ".shx";
+                fs.fontFile = hasExt(f.file) ? f.file : f.file + ".shx";
+                if (fs.isShx && !f.bigFont.empty())
+                    fs.bigFontFile = hasExt(f.bigFont) ? f.bigFont : f.bigFont + ".shx";
+            }
+            else
+                return nullptr;
+            fs.name = fs.fontFile + "+" + fs.bigFontFile;
+            return &fontSystem->ResolveFont(fs);
         };
     }
 

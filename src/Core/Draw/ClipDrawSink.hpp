@@ -108,8 +108,9 @@ namespace MiniCAD
         double MeasureMTextWidth(const std::string& text, uint32_t styleId,
                                  double height, double boxWidth) override
         { return m_target.MeasureMTextWidth(text, styleId, height, boxWidth); }
-        void SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
-        void ToggleTextMirror() override           { m_target.ToggleTextMirror(); }
+        bool MeasureRichMText(const MTextBlock& block, double& width, double& height) override
+        { return m_target.MeasureRichMText(block, width, height); }
+        void ToggleTextMirror() override          { m_target.ToggleTextMirror(); }
 
         bool MeasureMTextInkBounds(const std::string& text, uint32_t styleId,
                                    double height, double boxWidth,
@@ -241,6 +242,12 @@ namespace MiniCAD
         void EmitMText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation, double boxWidth, const Math::Color4& color) override
         {
             if (Contains(pos.x, pos.y)) m_target.EmitMText(pos, utf8Text, styleId, height, rotation, boxWidth, color);
+            else NoteAltered();
+        }
+
+        void EmitRichMText(const Math::Point3& pos, const MTextBlock& block, double rotation, const Math::Color4& color) override
+        {
+            if (Contains(pos.x, pos.y)) m_target.EmitRichMText(pos, block, rotation, color);
             else NoteAltered();
         }
 

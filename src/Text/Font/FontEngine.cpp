@@ -90,6 +90,42 @@ namespace MiniCAD
         return CjkScript::Simplified;
     }
 
+    std::string FontEngine::TrueTypeFileOf(const std::string& family)
+    {
+        static const std::pair<const char*, const char*> kFiles[] = {
+            // i18n: 数据（图纸里的字体名）
+            { "simsun", "simsun.ttc" }, { "宋体", "simsun.ttc" }, { "nsimsun", "simsun.ttc" }, { "新宋体", "simsun.ttc" },
+            { "simhei", "simhei.ttf" }, { "黑体", "simhei.ttf" },
+            { "kaiti", "simkai.ttf" }, { "kaiti_gb2312", "simkai.ttf" }, { "楷体", "simkai.ttf" }, { "楷体_gb2312", "simkai.ttf" },
+            { "fangsong", "simfang.ttf" }, { "fangsong_gb2312", "simfang.ttf" }, { "仿宋", "simfang.ttf" }, { "仿宋_gb2312", "simfang.ttf" },
+            { "microsoft yahei", "msyh.ttc" }, { "微软雅黑", "msyh.ttc" }, { "youyuan", "SIMYOU.TTF" }, { "幼圆", "SIMYOU.TTF" },
+            { "lisu", "SIMLI.TTF" }, { "隶书", "SIMLI.TTF" },
+            { "arial", "arial.ttf" }, { "times new roman", "times.ttf" }, { "courier new", "cour.ttf" },
+            { "calibri", "calibri.ttf" }, { "tahoma", "tahoma.ttf" }, { "verdana", "verdana.ttf" },
+            { "sthupo", "STHUPO.TTF" }, { "stkaiti", "STKAITI.TTF" }, { "stsong", "STSONG.TTF" }, { "stfangsong", "STFANGSO.TTF" },
+            { "stxihei", "STXIHEI.TTF" }, { "stzhongsong", "STZHONGS.TTF" }, { "stxingkai", "STXINGKA.TTF" }, { "stliti", "STLITI.TTF" },
+            { "fzshuti", "FZSTK.TTF" }, { "fzyaoti", "FZYTK.TTF" },
+            { "pmingliu", "mingliu.ttc" }, { "mingliu", "mingliu.ttc" }, { "新細明體", "mingliu.ttc" }, { "細明體", "mingliu.ttc" },
+            { "dfkai-sb", "kaiu.ttf" }, { "標楷體", "kaiu.ttf" },
+            { "microsoft jhenghei", "msjh.ttc" }, { "microsoft jhenghei ui", "msjh.ttc" }, { "微軟正黑體", "msjh.ttc" },
+            { "ms gothic", "msgothic.ttc" }, { "ms pgothic", "msgothic.ttc" }, { "ms ui gothic", "msgothic.ttc" },
+            { "ＭＳ ゴシック", "msgothic.ttc" }, { "ＭＳ Ｐゴシック", "msgothic.ttc" },
+            { "ms mincho", "msmincho.ttc" }, { "ms pmincho", "msmincho.ttc" }, { "ＭＳ 明朝", "msmincho.ttc" }, { "ＭＳ Ｐ明朝", "msmincho.ttc" },
+            { "meiryo", "meiryo.ttc" }, { "メイリオ", "meiryo.ttc" }, { "meiryo ui", "meiryo.ttc" },
+            { "yu gothic", "YuGothM.ttc" }, { "游ゴシック", "YuGothM.ttc" }, { "yu mincho", "yumin.ttf" }, { "游明朝", "yumin.ttf" },
+            { "gulim", "gulim.ttc" }, { "굴림", "gulim.ttc" }, { "gulimche", "gulim.ttc" }, { "굴림체", "gulim.ttc" },
+            { "dotum", "gulim.ttc" }, { "돋움", "gulim.ttc" }, { "dotumche", "gulim.ttc" }, { "돋움체", "gulim.ttc" },
+            { "batang", "batang.ttc" }, { "바탕", "batang.ttc" }, { "batangche", "batang.ttc" }, { "바탕체", "batang.ttc" },
+            { "gungsuh", "batang.ttc" }, { "궁서", "batang.ttc" },
+            { "malgun gothic", "malgun.ttf" }, { "맑은 고딕", "malgun.ttf" },
+        };
+        if (family.empty()) return {};
+        const std::string key = LowerAscii(family);
+        for (const auto& [name, file] : kFiles)
+            if (key == name) return file;
+        return family + ".ttf";
+    }
+
     // 依次试原名、全小写、全大写（网页版的虚拟文件系统区分大小写），先在字体目录、再到额外目录（系统字体目录）找；没有返回空串
     std::string FontEngine::FindExisting(const std::string& fontFile) const
     {

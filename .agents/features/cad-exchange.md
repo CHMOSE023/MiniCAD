@@ -1,5 +1,5 @@
 ---
-covers: src/Import/CadExchange.*, src/Import/ProxyGraphics.h, src/Import/AcisReader.*, src/Serialization/Dwg/*, src/Serialization/Dxf/*, src/Serialization/Database/*, src/Core/Ole/*, src/Document/Document.*
+covers: src/Import/CadExchange.*, src/Import/ProxyGraphics.h, src/Import/AcisReader.*, src/Serialization/Dwg/*, src/Serialization/Dxf/*, src/Serialization/Database/*, src/Core/Ole/*, src/Document/Document.*, src/Core/MTextFormat.h
 ---
 
 # DWG/DXF 交换
@@ -43,7 +43,13 @@ covers: src/Import/CadExchange.*, src/Import/ProxyGraphics.h, src/Import/AcisRea
 - 属性 ATTDEF / ATTRIB 的文字样式按自己的组码 7（`AttribBase::GetStyleId`），导入、序列化、导出都带上
 - 文字内容里的 `\U+XXXX`（代码页外的字符，旧版 DXF 或其他软件转出的图纸里整段中文都可能这样存）读入时保留原文、另存原样写回，显示时还原（`src/Core/TextCodes.h`）：多行文字在 `MTextEntity::StripInlineCodes`，单行文字与属性在 `TextLayoutEngine::DecodeLine`。漏掉会画出 `+8D1F+4E00…`（`\U` 被当作未知格式码丢掉）
 - 镜像的块参照（负比例、法向朝 -Z，插入变换在 XY 平面的行列式为负）里的文字与 AutoCAD 一样画成镜像：`TransformDrawSink` 按变换求文字基线的真实方向（`TextRotation`，沿 X 轴镜像时 30° 画成 -30°），转发文字前后各调一次 `IDrawSink::ToggleTextMirror`，`DrawContext` 据此把字形、下划线沿基线上下翻转；两层镜像相互抵消。新写的转发型 sink 要转发它（`ClipDrawSink` 已转发），否则镜像块里的字画成正的。块定义级缓存的键已含镜像，镜像与不镜像的插入不共用
-- 下划线 / 上划线 / 删除线：多行文字的 `\L` `\O` `\K`（按 `{}` 分组恢复）由 `StripInlineCodes(text, true)` 换成排版流里的开关字符，单行文字的 `%%u` `%%o` 由 `DecodeLine` 解析成同样的开关；`TextLayoutEngine::Layout` 输出 `DecorationLine`，`DrawContext` 画成直线。位置按 AutoCAD 2020 用 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高（TrueType 与 SHX、单行与多行相同），横向从开处的步进位置到关处。`GetPlainText` 与度量不含开关
+- 多行文字的内联格式码：`ParseMTextFormat`（`src/Core/MTextFormat.h`）把内容切成段（`MTextRun`：字体 `\f` `\F`、字高 `\H`、宽度 `\W`、倾斜 `\Q`、字间距 `\T`、颜色 `\C` `\c`、装饰线、段落 `\p`、竖向对齐 `\A`、堆叠 `\S`），`MTextEntity::Draw` 打包成 `MTextBlock` 经 `IDrawSink::EmitRichMText` 交出，下 / 中附着与不限宽的居中先经 `IDrawSink::MeasureRichMText` 量出宽高；`DrawContext` 按段解析字体（内联字体经 `DrawContext::SetInlineFontResolver`，`MakeInlineFontResolver` 与文字样式同一套查找与缓存）后交 `TextLayoutEngine::LayoutRich` 折行、缩进、对齐、堆叠。新写的转发型 sink 要转发这两个（`TransformDrawSink`、`ClipDrawSink` 已转发），默认实现退回 `EmitMText` 画纯文本。以前只认开头的 `\W`，其余格式码整段丢掉（`{\fSimSun;…}` 画成样式的 SHX 字体、`m\S2^;` 只剩 m）
+- 多行文字的排版规则（AutoCAD 2020 炸开多行文字、读 TEXT 插入点实测，`out/acad` 下的探测图纸不入库）：
+  - 行距：组码 44（比例）/ 73（至少 / 精确）读进 `MTextEntity::SetLineSpacing`、另存写回；公式在 `MTextLinePitch`。"至少"不是 5/3 × 最高的字：相邻基线 = 上一行下沉 + 本行上升 + 字高 / 3，比例不为 1 时再加 (比例-1)·(4/3·上一行字高 + 字高 / 3)；下沉是该行最大字高的 1/3，有堆叠的行改为堆叠下半基线在行基线下的深度（底对齐时为 0）；上升 SHX 按名义字高，TrueType 按字形实际顶边（宋体汉字约 1.16 倍字高）。"精确"是 5/3 × 字高 × 比例。首行基线 = 文字框顶 - 首行上升；下附着时末行基线落在插入点。TrueType 的字高是大写 H 的高度，以前行距固定一个字高时汉字行行压叠（issue #40）
+  - 堆叠 `\S上/下;`、`\S上^下;`：两半都用当前字高 h（编辑器里的 70% 是另写的 `\H0.7x;`），默认底对齐：下半坐在基线上，上半基线 = (下半非空 ? h : 0) + h/3，分数横线在上半基线下 h/6；`\S上#下;` 上半基线 h、下半右移上半的宽度，中间一条斜线（`DecorationLine::m_rise`）
+  - `\A1;` 居中：堆叠的横线处、较小的字的中线对准该行最大字高的一半；`\A2;` 顶对齐
+  - `\pxi…,l…;` 的缩进是字高的倍数（编辑器写的都带 x），不带 x 的 `\pi` 是绝对长度
+- 下划线 / 上划线 / 删除线：多行文字的 `\L` `\O` `\K`（按 `{}` 分组恢复）由 `StripInlineCodes(text, true)` 换成排版流里的开关字符，单行文字的 `%%u` `%%o` 由 `DecodeLine` 解析成同样的开关；`TextLayoutEngine::Layout` / `TextLayoutEngine::LayoutRich` 输出 `DecorationLine`，`DrawContext` 画成直线。位置按 AutoCAD 2020 用 TXTEXP 分解量得：基线下 0.2、上 1.2、上 0.5 倍字高（TrueType 与 SHX、单行与多行相同），横向从开处的步进位置到关处。`GetPlainText` 与度量不含开关
 - 含形 / 文字的复杂线型：每个元素的长度进 `LineTypeRecord::Pattern`，文字 / 形段另记在 `LineTypeRecord::Symbols`（组码 9 / 75 / 340 / 46 / 50 / 44 / 45，导出写回）。绘制时 `DrawContext::LayPattern` 在该段**末尾**落符号，文字走排版，形段按 `LineTypeSymbol::ShapeFont`（组码 340 所指 STYLE 的字体文件，如 `ltypeshp.shx`）经 `ShapeFontResolver` 取 SHX 字形，只描边不填充；符号是世界坐标的字形实例，不随缩放重铺；一段超过 `DrawContext::kMaxDashes` 个周期时与普通虚线一样画成实线、不画符号。界面里的线型预览只画占位标记（`apps/Common/src/GUI/LinetypePreview.h`）
 - `$PSLTSCALE` 读写（`Scene::GetPaperSpaceLineTypeScaling`），用法见 [layout-viewport](layout-viewport.md)
 - 字体查找：先 `fonts/`，再 `AppPlatform::GetSystemFontDirs()`（桌面版 `%WINDIR%\Fonts` 与当前用户安装的字体），都没有才用自带字体代替

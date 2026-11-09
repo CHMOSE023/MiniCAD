@@ -49,7 +49,7 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **影响显示的开关**（新旧版同读）：折断线按 `TchRupture::Count` 等分、0 不画；扶手 `TchHandRail::Align` 为 1 / 2 时路径是一侧边线，`TchHandRail::Draw2d` 为假不画；阳台 `TchBalcony::NoRailEdges` 置位的段（靠墙）不画，内缘在该段不偏移（`Tch::Detail::OffsetPathEdges`）；转角窗两段各按 `TchCornerWindow::Thickness` / `TchCornerWindow::Thickness2` 向自身方向右侧偏移；自动扶梯与多跑梯标志位 10 清零时不画箭头（`TchAutoStair::Flags`）；设备 Y 比例、阀门 Y 比例与象限（1 X 向镜像、2 两向、3 Y 向镜像），Y 比例近 0 时取 X 比例。读了仍没用的：修订版次文字、柱标注文字与保温层、双线管法兰、弧形平台与外侧栏杆、幕墙分格线、设备系统图块、转角窗文字转角
 - **对称轴**：`Tch::BuildSymmetry`，两端各两条横线，距端点 Gap、Gap + Spacing（乘比例）
 - **符号类**（坐标、箭头、剖切、引出标注、标高等）的线一律按实线组装，不用对象自身的线型
-- **TCH文字**：显示宽度因子写在多行文字上（`MTextEntity::SetWidthFactor`），不派生文字样式；不限宽的居中 / 右对齐按实际排版宽度（`IDrawSink::MeasureMTextWidth`）定起点。中西文混排拆段（`Tch::Detail::AddRuns`），各段起点与画出的宽度都取TCH步进，按实际显示的字体（`Detail::DisplayExtent`）反算宽度因子
+- **TCH文字**：显示宽度因子写在多行文字上（`MTextEntity::SetWidthFactor`），不派生文字样式；不限宽的居中 / 右对齐按实际排版宽度（`IDrawSink::MeasureRichMText`）定起点。中西文混排拆段（`Tch::Detail::AddRuns`），各段起点与画出的宽度都取TCH步进，按实际显示的字体（`Detail::DisplayExtent`）反算宽度因子
 - **上标** `^U…^U`：字高为本段一半、抬高 0.5 × 名义字高、每字步进 0.35 × 西文步进；TrueType 样式未核对
 - **墙**（`TchWall::Connections`）：门窗断口两侧封口；一端相接的墙里有同材料的就不封口（十字交叉处两段钢筋混凝土墙斜接、砖墙接上，三者之间都不画线），全是别的材料时画分界线；两端连接句柄都为空的自由端画端线（只在读到了连接时，`TchWall::HasConnections`）；断口与墙线端点比较用 1e-6 容差
 - **连接量**（`TchWall::Joins`：左起、左终、右起、右终，正为缩进、负为伸出）：直墙沿墙线方向；弧墙是沿该侧圆弧的弧长（与天正显示核对）

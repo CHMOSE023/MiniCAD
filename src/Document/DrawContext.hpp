@@ -48,6 +48,9 @@ namespace MiniCAD
     // 的组码 3 定位形文件；文字样式表里没有这一项，所以单独走一条解析路径。
     using ShapeFontResolver = std::function<IFont*(const std::string& fontFile)>;
 
+    // 多行文字内联字体解析回调（\fSimSun|b0|i0; → 宋体，\Fsimplex8,hzdx; → SHX 主字体 + 大字体）；找不到返回空
+    using InlineFontResolver = std::function<IFont*(const MTextFont& font)>;
+
     // 形段（组码 75）只用折线描边，不补实心三角形。
     //
     // 曾经按「AutoCAD 把闭合形画成实心」的假设给闭合轮廓补过三角面，实测推翻：
@@ -127,7 +130,6 @@ namespace MiniCAD
             if (m_worldPerPixel > 0.0) m_viewDependent = true;
             DropBlockRecords();   // 按当前缩放烘焙的几何不能记进块定义级缓存
         }
-        void SetTextWidthFactor(double widthFactor) override { m_textWidthFactor = widthFactor > 0.0 ? widthFactor : 0.0; }
         void ToggleTextMirror() override { m_textMirror = !m_textMirror; }
         // 视口像素高度：$PDSIZE<=0（视口高度百分比）换算世界尺寸时必需。
         // Editor 逐实体细分前设置；为 0 表示未知（点退化成 1 像素小点）。
@@ -141,6 +143,9 @@ namespace MiniCAD
         // 形字体解析回调（复杂线型的形段用）。不设置则形段不画——
         // 总比拿文字样式的字体乱找形号要好。
         void SetShapeFontResolver(ShapeFontResolver r) { m_shapeFontResolver = std::move(r); }
+
+        // 多行文字格式码里的字体（\f \F）。不设置时按文字样式的字体画
+        void SetInlineFontResolver(InlineFontResolver r) { m_inlineFontResolver = std::move(r); }
 
         // 全局线型比例（Scene 的 $LTSCALE）。与实体级组码 48 相乘得到虚线实际周期。
         void SetLineTypeScale(double s) { m_lineTypeScale = (s > 0.0 ? s : 1.0); }
@@ -804,8 +809,6 @@ namespace MiniCAD
             ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return 0.0;
-            if (m_textWidthFactor > 0.0)
-                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureWidth(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth);
@@ -825,8 +828,6 @@ namespace MiniCAD
             ResolvedTextStyle rs = m_fontResolver(styleId);
             if (!rs.Font)
                 return false;
-            if (m_textWidthFactor > 0.0)
-                rs.WidthFactor = m_textWidthFactor;
 
             TextLayoutEngine layout;
             return layout.MeasureInkBounds(utf8Text, rs.Font, height, rs.WidthFactor, boxWidth,
@@ -843,6 +844,34 @@ namespace MiniCAD
         {
             NoteInput(pos);
             EmitLaidOutText(pos, utf8Text, styleId, height, rotation, boxWidth, TextLayoutEngine::HAlign::Left, 0.0, 0.0, color);
+        }
+
+        void EmitRichMText(const Math::Point3& pos, const MTextBlock& block, double rotation, const Math::Color4& color) override
+        {
+            NoteInput(pos);
+            TextLayoutEngine::LayoutResult result;
+            if (!LayoutRichBlock(block, result)) return;
+            const VertexColor entity = ToColor(color);
+            if (!block.runColors)
+            {
+                EmitLayout(pos, result, rotation, 0.0, [entity](int) { return entity; });
+                return;
+            }
+            const auto& runs = block.content->runs;
+            std::vector<VertexColor> colors(runs.size(), entity);
+            for (size_t r = 0; r < runs.size(); ++r)
+                if (runs[r].colorKind == MTextRun::Color::Rgb) colors[r] = ToColor(runs[r].color);
+                else if (runs[r].colorKind == MTextRun::Color::ByLayer) colors[r] = ToColor(block.layerColor);
+            EmitLayout(pos, result, rotation, 0.0, [&](int r) { return r >= 0 && size_t(r) < colors.size() ? colors[size_t(r)] : entity; });
+        }
+
+        bool MeasureRichMText(const MTextBlock& block, double& width, double& height) override
+        {
+            TextLayoutEngine::LayoutResult result;
+            if (!LayoutRichBlock(block, result)) return false;
+            width  = result.m_width;
+            height = result.m_height;
+            return true;
         }
 
         // 单行文字按对齐点：水平按排版宽度居中 / 右对齐；竖直以字高（大写字母高）为准，
@@ -868,25 +897,66 @@ namespace MiniCAD
             if (!rs.Font) return;
             if (widthFactor > 0.0)
                 rs.WidthFactor = widthFactor;
-            else if (m_textWidthFactor > 0.0)
-                rs.WidthFactor = m_textWidthFactor;      // 多行文字实体自己的宽度因子（SetTextWidthFactor）
 
             TextLayoutEngine layout;
             auto result = layout.Layout(utf8Text, rs.Font, height, rs.WidthFactor, rotation, boxWidth, align);
             const double shear = std::tan(rs.Oblique);     // 倾斜：字形 x 随高度错切
+            for (auto& g : result.m_glyphs) g.m_shear = shear;
+            const VertexColor c4 = ToColor(color);
+            EmitLayout(pos, result, rotation, baseline, [c4](int) { return c4; });
+        }
 
+        // 多行文字各段的字体与字形变换：格式码的字体经 InlineFontResolver，宽度因子 = 格式码的，或（实体的，没有时样式的）× 相对的 \W
+        bool LayoutRichBlock(const MTextBlock& block, TextLayoutEngine::LayoutResult& result)
+        {
+            if (!block.content || !m_fontResolver) return false;
+            const ResolvedTextStyle rs = m_fontResolver(block.styleId);
+            if (!rs.Font) return false;
+            const MTextContent& content = *block.content;
+            const double baseWidth = block.widthFactor > 0.0 ? block.widthFactor : rs.WidthFactor;
+
+            std::vector<IFont*> inlineFonts(content.fonts.size(), nullptr);
+            for (size_t f = 0; f < content.fonts.size() && m_inlineFontResolver; ++f)
+                inlineFonts[f] = m_inlineFontResolver(content.fonts[f]);
+
+            std::vector<TextLayoutEngine::RunStyle> styles(content.runs.size());
+            for (size_t r = 0; r < content.runs.size(); ++r)
+            {
+                const MTextRun& run = content.runs[r];
+                auto& st = styles[r];
+                st.font        = run.font >= 0 && size_t(run.font) < inlineFonts.size() && inlineFonts[size_t(run.font)] ? inlineFonts[size_t(run.font)] : rs.Font;
+                st.widthFactor = run.widthFactor > 0.0 ? run.widthFactor : baseWidth * run.widthScale;
+                st.shear       = std::tan(run.hasOblique ? run.obliqueDeg * 3.14159265358979323846 / 180.0 : rs.Oblique);
+            }
+
+            TextLayoutEngine::RichOptions options;
+            options.height    = block.height;
+            options.boxWidth  = block.boxWidth;
+            options.lineSpacing = block.lineSpacing;
+            options.exact     = block.exactSpacing;
+            options.justify   = block.justify == 1 ? TextLayoutEngine::HAlign::Center
+                              : block.justify == 2 ? TextLayoutEngine::HAlign::Right : TextLayoutEngine::HAlign::Left;
+            TextLayoutEngine layout;
+            result = layout.LayoutRich(content, styles, options);
+            return true;
+        }
+
+        // 输出排好的字形与装饰线；baseline 为基线相对 pos 的局部 y 偏移（随文字旋转），colorOf(段下标) 给出颜色
+        template <class ColorOf>
+        void EmitLayout(const Math::Point3& pos, const TextLayoutEngine::LayoutResult& result, double rotation, double baseline, ColorOf colorOf)
+        {
             // 排版坐标的 x 沿基线方向 u，y 沿 v：v 是 u 逆时针转 90°；镜像的块参照里（ToggleTextMirror）取反，字沿基线上下翻转
             const double ux = std::cos(rotation), uy = std::sin(rotation);
             const double up = m_textMirror ? -1.0 : 1.0;
             const double vx = -uy * up, vy = ux * up;
 
-            const VertexColor c4 = ToColor(color);
-
             for (const auto& inst : result.m_glyphs)
             {
+                const VertexColor c4 = colorOf(inst.m_run);
+                const double wf = inst.m_widthFactor, shear = inst.m_shear;
                 auto xform = [&](const Math::Point3& lp) -> Math::Point3
                 {
-                    double x = (lp.x * rs.WidthFactor + lp.y * shear) * inst.m_scale + inst.m_position.x;
+                    double x = (lp.x * wf + lp.y * shear) * inst.m_scale + inst.m_position.x;
                     double y = lp.y * inst.m_scale + inst.m_position.y + baseline;
                     return { pos.x + x * ux + y * vx, pos.y + x * uy + y * vy, pos.z };
                 };
@@ -899,7 +969,7 @@ namespace MiniCAD
                     if (!m_glyphLib->Register(glyph, mesh)) continue;
                     const double s  = inst.m_scale;
                     const double ox = inst.m_position.x, oy = inst.m_position.y + baseline;
-                    PutGlyph({ rs.WidthFactor * s * ux, rs.WidthFactor * s * uy,
+                    PutGlyph({ wf * s * ux, wf * s * uy,
                                shear * s * ux + s * vx, shear * s * uy + s * vy,
                                pos.x + ox * ux + oy * vx, pos.y + ox * uy + oy * vy, pos.z, c4, mesh });
                     continue;
@@ -923,12 +993,13 @@ namespace MiniCAD
                 }
             }
 
-            // 下划线 / 上划线 / 删除线：水平线段，随文字旋转、镜像，不随倾斜错切
+            // 下划线 / 上划线 / 删除线、分数线：随文字旋转、镜像，不随倾斜错切
             for (const auto& d : result.m_decorations)
             {
-                const double y = d.m_y + baseline;
-                PutLine({ pos.x + d.m_x0 * ux + y * vx, pos.y + d.m_x0 * uy + y * vy, pos.z }, c4);
-                PutLine({ pos.x + d.m_x1 * ux + y * vx, pos.y + d.m_x1 * uy + y * vy, pos.z }, c4);
+                const VertexColor c4 = colorOf(d.m_run);
+                const double y0 = d.m_y + baseline, y1 = y0 + d.m_rise;
+                PutLine({ pos.x + d.m_x0 * ux + y0 * vx, pos.y + d.m_x0 * uy + y0 * vy, pos.z }, c4);
+                PutLine({ pos.x + d.m_x1 * ux + y1 * vx, pos.y + d.m_x1 * uy + y1 * vy, pos.z }, c4);
             }
         }
 
@@ -1648,7 +1719,6 @@ namespace MiniCAD
         bool                           m_lockedTop     = false;    // 当前顶层实体在锁定图层上
         bool                           m_locked        = false;    // 当前画的部分淡显（顶层实体或块内子实体在锁定图层上）
         bool                           m_viewDependent = false;
-        double                         m_textWidthFactor = 0.0;   // 当前实体的多行文字宽度因子（0 = 按样式）
         bool                           m_textMirror      = false; // 文字沿基线上下翻转（镜像的块参照里，见 ToggleTextMirror）
         bool                           m_dotsAsSegments = false;   // 线型的点笔划画成小段（选中流）
         bool                           m_deferLongDashes = false;  // 长虚线段延迟铺设（见 EmitStyled）
@@ -1673,6 +1743,7 @@ namespace MiniCAD
         const TextStyleTable*          m_textStyles = nullptr;   // 复杂线型文字段的字高解析
         // 复杂线型形段的形文件解析（组码 75 的形号 → SHX 形文件 → 字形）
         ShapeFontResolver              m_shapeFontResolver;
+        InlineFontResolver             m_inlineFontResolver;
         // 分段细分块参照（BeginChunk）
         struct Chunk
         {

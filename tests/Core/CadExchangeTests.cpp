@@ -89,7 +89,9 @@ namespace
         text->SetAlignment(1, 2);   // 居中、竖直居中：位置为对齐点
         text->SetWidthFactor(0.55); // 文字自身的宽度因子（与样式不同）
         scene.AddEntity(std::move(text));
-        scene.AddEntity(std::make_unique<MTextEntity>(scene.NextObjectID(), 0u, "line1\Pline2", Math::Point3{ 5, 5, 0 }, 3.0, 0.0, 40.0));
+        auto mt = std::make_unique<MTextEntity>(scene.NextObjectID(), 0u, "line1\Pline2", Math::Point3{ 5, 5, 0 }, 3.0, 0.0, 40.0);
+        mt->SetLineSpacing(MTextLineSpacing::Exact, 1.5);
+        scene.AddEntity(std::move(mt));
 
         // 闭合多段线（末点 = 起点）+ 圆弧段
         auto pl = std::make_unique<PolylineEntity>(scene.NextObjectID(),
@@ -158,6 +160,8 @@ namespace
 
         const auto* mtext = FindOne<MTextEntity>(dst);
         Check(mtext && mtext->GetText() == "line1\Pline2" && Near(mtext->GetBoxWidth(), 40.0), "多行文字一致");
+        Check(mtext && Near(mtext->GetLineSpacingFactor(), 1.5) && mtext->GetLineSpacingStyle() == MTextLineSpacing::Exact,
+              "多行文字的行距系数（组码 44）与行距样式（组码 73）一致");
 
         const auto* pl = FindOne<PolylineEntity>(dst);
         Check(pl && pl->GetPolyline().Points.size() == 4 && Near(pl->GetPolyline().Bulges[1], 0.5), "闭合多段线（含弧段）一致");

@@ -11,6 +11,23 @@ namespace MiniCAD
     struct EntityAttr;
     namespace Math { struct Mat4; }
     class ClipDrawSink;
+    struct MTextContent;
+
+    // 带格式的多行文字（IDrawSink::EmitRichMText）：字高、栏宽是世界单位，块参照转发时一起缩放；格式码里的字高、缩进是基准字高的倍数
+    struct MTextBlock
+    {
+        const MTextContent* content = nullptr;
+        std::string  plain;                // 不支持分段排版的 sink 用：去码后的文字（含装饰线开关）
+        uint32_t     styleId      = 0;
+        double       height       = 1.0;
+        double       boxWidth     = 0.0;   // 0 = 不限宽
+        double       widthFactor  = 0.0;   // 实体的宽度因子，0 = 按样式
+        double       lineSpacing  = 1.0;   // 行距比例（组码 44），行距规则见 MTextLinePitch
+        bool         exactSpacing = false;
+        int          justify      = 0;     // 段落默认对齐（按附着点）：0 左、1 中、2 右
+        bool         runColors    = true;  // false：整段用传入的颜色（选中 / 悬停高亮）
+        Math::Color4 layerColor{};         // \C256（随层）
+    };
 
     // 块参照所在的各层裁剪框（IDrawSink::BeginBlockInstance 经过 ClipDrawSink 时逐层加上）：块定义级缓存命中时据此判断
     // 记下的内容整个在框内（原样接上）、整个在框外（什么都不画）还是跨在边上（逐个画）
@@ -110,8 +127,6 @@ namespace MiniCAD
             (void)a; (void)b; (void)sagitta; (void)reach;
             return false;
         }
-        // 之后的 EmitMText / MeasureMText* 用这个宽度因子代替样式的（> 0 时；0 = 按样式）。
-        virtual void SetTextWidthFactor(double widthFactor) { (void)widthFactor; }
         // 之后的文字沿基线上下翻转 / 翻回：镜像的块参照（插入变换行列式为负）里的文字与 AutoCAD 一样画成镜像。
         // TransformDrawSink 在转发文字前后各调用一次；转发型 sink 原样转发，两层镜像相互抵消
         virtual void ToggleTextMirror() {}
@@ -178,6 +193,15 @@ namespace MiniCAD
         // styleId: FontStyle ID（由 DocumentManager 管理）
         // boxWidth: 自动换行宽度，0 = 不限宽
         virtual void EmitMText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation, double boxWidth, const Math::Color4& color) {}
+
+        // 带格式的多行文字（MTextEntity）：各段字体、字高、宽度、颜色不同，按段落缩进、对齐，分数堆叠。
+        // pos 与 EmitMText 相同（首行"基准字高的顶"下一个基准字高处）。默认按去码后的文字交给 EmitMText；转发型 sink 要转发
+        virtual void EmitRichMText(const Math::Point3& pos, const MTextBlock& block, double rotation, const Math::Color4& color)
+        {
+            EmitMText(pos, block.plain, block.styleId, block.height, rotation, block.boxWidth, color);
+        }
+        // 量 EmitRichMText 排出来的宽（最宽一行的右端）与高（首行顶到末行基线）；false = 量不了（调用方按估算）
+        virtual bool MeasureRichMText(const MTextBlock& /*block*/, double& /*width*/, double& /*height*/) { return false; }
 
         // 单行文字（TEXT）按对齐点输出：hAlign 0 左 / 1 中 / 2 右（按实际字宽），vAlign 0 基线 / 1 底 / 2 中 / 3 上。
         // widthFactor > 0 时代替样式的宽度因子（TEXT 自身的组码 41），0 = 用样式的。

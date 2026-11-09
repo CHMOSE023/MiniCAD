@@ -43,6 +43,7 @@
 #include "Core/Entity/PolylineEntity.hpp"
 #include "Core/Entity/RectangleEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
+#include "Text/Font/FontEngine.h"
 #include "Core/Entity/SolidEntity.hpp"
 #include "Core/Entity/SplineEntity.hpp"
 #include "Core/Entity/RayEntity.hpp"
@@ -882,43 +883,8 @@ namespace MiniCAD
                 return {};
             }
 
-            // TrueType 字体族名 → Windows 字体目录里的文件名（SimSun → simsun.ttc 等）。样式对话框里能看出是什么字体，
-            // 桌面版也能从系统字体目录找到它（AppPlatform::GetSystemFontDirs）；不认识的族名按 "<族名>.ttf"
-            static std::string TrueTypeFontFile(const std::string& typeface)
-            {
-                static const std::pair<const char*, const char*> kFiles[] = {
-                    // i18n: 数据（图纸里的字体名）
-            { "simsun", "simsun.ttc" }, { "宋体", "simsun.ttc" }, { "nsimsun", "simsun.ttc" }, { "新宋体", "simsun.ttc" },
-                    { "simhei", "simhei.ttf" }, { "黑体", "simhei.ttf" },
-                    { "kaiti", "simkai.ttf" }, { "kaiti_gb2312", "simkai.ttf" }, { "楷体", "simkai.ttf" }, { "楷体_gb2312", "simkai.ttf" },
-                    { "fangsong", "simfang.ttf" }, { "fangsong_gb2312", "simfang.ttf" }, { "仿宋", "simfang.ttf" }, { "仿宋_gb2312", "simfang.ttf" },
-                    { "microsoft yahei", "msyh.ttc" }, { "微软雅黑", "msyh.ttc" }, { "youyuan", "SIMYOU.TTF" }, { "幼圆", "SIMYOU.TTF" },
-                    { "lisu", "SIMLI.TTF" }, { "隶书", "SIMLI.TTF" },
-                    { "arial", "arial.ttf" }, { "times new roman", "times.ttf" }, { "courier new", "cour.ttf" },
-                    { "calibri", "calibri.ttf" }, { "tahoma", "tahoma.ttf" }, { "verdana", "verdana.ttf" },
-                    { "sthupo", "STHUPO.TTF" }, { "stkaiti", "STKAITI.TTF" }, { "stsong", "STSONG.TTF" }, { "stfangsong", "STFANGSO.TTF" },
-                    { "stxihei", "STXIHEI.TTF" }, { "stzhongsong", "STZHONGS.TTF" }, { "stxingkai", "STXINGKA.TTF" }, { "stliti", "STLITI.TTF" },
-                    { "fzshuti", "FZSTK.TTF" }, { "fzyaoti", "FZYTK.TTF" },
-                    { "pmingliu", "mingliu.ttc" }, { "mingliu", "mingliu.ttc" }, { "新細明體", "mingliu.ttc" }, { "細明體", "mingliu.ttc" },
-                    { "dfkai-sb", "kaiu.ttf" }, { "標楷體", "kaiu.ttf" },
-                    { "microsoft jhenghei", "msjh.ttc" }, { "microsoft jhenghei ui", "msjh.ttc" }, { "微軟正黑體", "msjh.ttc" },
-                    { "ms gothic", "msgothic.ttc" }, { "ms pgothic", "msgothic.ttc" }, { "ms ui gothic", "msgothic.ttc" },
-                    { "ＭＳ ゴシック", "msgothic.ttc" }, { "ＭＳ Ｐゴシック", "msgothic.ttc" },
-                    { "ms mincho", "msmincho.ttc" }, { "ms pmincho", "msmincho.ttc" }, { "ＭＳ 明朝", "msmincho.ttc" }, { "ＭＳ Ｐ明朝", "msmincho.ttc" },
-                    { "meiryo", "meiryo.ttc" }, { "メイリオ", "meiryo.ttc" }, { "meiryo ui", "meiryo.ttc" },
-                    { "yu gothic", "YuGothM.ttc" }, { "游ゴシック", "YuGothM.ttc" }, { "yu mincho", "yumin.ttf" }, { "游明朝", "yumin.ttf" },
-                    { "gulim", "gulim.ttc" }, { "굴림", "gulim.ttc" }, { "gulimche", "gulim.ttc" }, { "굴림체", "gulim.ttc" },
-                    { "dotum", "gulim.ttc" }, { "돋움", "gulim.ttc" }, { "dotumche", "gulim.ttc" }, { "돋움체", "gulim.ttc" },
-                    { "batang", "batang.ttc" }, { "바탕", "batang.ttc" }, { "batangche", "batang.ttc" }, { "바탕체", "batang.ttc" },
-                    { "gungsuh", "batang.ttc" }, { "궁서", "batang.ttc" },
-                    { "malgun gothic", "malgun.ttf" }, { "맑은 고딕", "malgun.ttf" },
-                };
-                if (typeface.empty()) return {};
-                const std::string key = Lower(typeface);
-                for (const auto& [name, file] : kFiles)
-                    if (key == name) return file;
-                return typeface + ".ttf";
-            }
+            // TrueType 字体族名 → 文件名：样式对话框里能看出是什么字体，桌面版也能从系统字体目录找到它（AppPlatform::GetSystemFontDirs）
+            static std::string TrueTypeFontFile(const std::string& typeface) { return FontEngine::TrueTypeFileOf(typeface); }
 
             const Tch::ProxyGraphicsContext& ProxyContext()
             {
@@ -2631,6 +2597,8 @@ namespace MiniCAD
                     const int att = static_cast<int>(e->AttachmentPoint);
                     if (att >= 1 && att <= 9)
                         mt.SetAttachment(static_cast<MTextAttachment>(att));
+                    mt.SetLineSpacing(e->LineSpacingStyle == Dwg::LineSpacingStyleType::Exact ? MTextLineSpacing::Exact : MTextLineSpacing::AtLeast,
+                                      e->LineSpacing > 0.0 ? e->LineSpacing : 1.0);
                     if (const std::string& v = e->Value; v.size() > 3 && v[0] == '\\' && v[1] == 'W')
                         if (const size_t semi = v.find(';'); semi != std::string::npos)
                         {
@@ -5140,6 +5108,9 @@ namespace MiniCAD
                     d->RectangleWidth = s->GetBoxWidth();
                     d->AlignmentPoint = { std::cos(s->GetRotation()), std::sin(s->GetRotation()), 0.0 };
                     d->AttachmentPoint = static_cast<Dwg::AttachmentPointType>(static_cast<int>(s->GetAttachment()));
+                    d->LineSpacing      = s->GetLineSpacingFactor() > 0.0 ? s->GetLineSpacingFactor() : 1.0;
+                    d->LineSpacingStyle = s->GetLineSpacingStyle() == MTextLineSpacing::Exact ? Dwg::LineSpacingStyleType::Exact
+                                                                                              : Dwg::LineSpacingStyleType::AtLeast;
                     d->StyleHandle    = StyleHandle(s->GetStyleId());
                     d->Normal         = NormalOf(e);
                     return Finish(e, std::move(d));

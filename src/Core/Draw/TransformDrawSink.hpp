@@ -114,6 +114,28 @@ namespace MiniCAD
             if (m_mirrored) m_target.ToggleTextMirror();
         }
 
+        void EmitRichMText(const Math::Point3& pos, const MTextBlock& block, double rotation, const Math::Color4& color) override
+        {
+            MTextBlock scaled = block;
+            scaled.height   *= m_scale;
+            scaled.boxWidth *= m_scale;
+            if (m_mirrored) m_target.ToggleTextMirror();
+            m_target.EmitRichMText(m_xform * pos, scaled, TextRotation(rotation), color);
+            if (m_mirrored) m_target.ToggleTextMirror();
+        }
+
+        bool MeasureRichMText(const MTextBlock& block, double& width, double& height) override
+        {
+            if (m_scale <= 0.0) return false;
+            MTextBlock scaled = block;
+            scaled.height   *= m_scale;
+            scaled.boxWidth *= m_scale;
+            if (!m_target.MeasureRichMText(scaled, width, height)) return false;
+            width  /= m_scale;
+            height /= m_scale;
+            return true;
+        }
+
         void EmitAlignedText(const Math::Point3& pos, const std::string& utf8Text, uint32_t styleId, double height, double rotation,
                              int hAlign, int vAlign, double widthFactor, const Math::Color4& color) override
         {
@@ -181,8 +203,7 @@ namespace MiniCAD
         {
             return m_target.RefineCurveSegment(m_xform * a, m_xform * b, sagitta * m_maxScale, reach * m_maxScale);
         }
-        void   SetTextWidthFactor(double f) override { m_target.SetTextWidthFactor(f); }
-        void   ToggleTextMirror() override           { m_target.ToggleTextMirror(); }
+        void   ToggleTextMirror() override          { m_target.ToggleTextMirror(); }
 
     private:
         // 文字基线方向 (cos r, sin r) 经变换后的角度。镜像时不是"文字角度 + 块的转角"：

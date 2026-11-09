@@ -5,6 +5,7 @@
 #include "Core/GeomKernel/AABB.hpp"
 #include "Core/Object/Object.hpp"
 #include "Core/TextCodes.h"
+#include "Core/MTextFormat.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -47,7 +48,7 @@ namespace MiniCAD
     };
 
     // 多行矢量文字实体（纯数据层）。
-    // 字形解析与排版在 Document 层的 DrawContext::EmitMText() 中完成。
+    // 格式码在 ParseMTextFormat（Core/MTextFormat.h）切成段，字形解析与排版在 DrawContext::EmitRichMText 中完成。
     // m_text 保留含内联格式码的原始内容以保证 DXF 往返无损;度量时用去码后的纯文本。
     class MTextEntity : public Entity
     {
@@ -116,7 +117,7 @@ namespace MiniCAD
         // 去除 MTEXT 内联格式码,返回用于度量/纯文本提取的内容。处理:
         //   \P 段落换行 → '\n';\~ 不换行空格 → ' ';\\ \{ \} 转义字符;{ } 分组;
         //   带参数(以 ';' 结束)的码:\f \F(字体) \H(字高) \C \c(颜色) \W(宽度因子)
-        //                          \Q(倾斜) \T(字间距) \A(对齐) \p(段落) \S(堆叠);
+        //                          \Q(倾斜) \T(字间距) \A(对齐) \p(段落);\S(堆叠)留下内容;
         //   开关码(无参数):\L \l \O \o \K \k \N;\U+XXXX 还原为对应字符。
         // keepDecorations:下划线 \L、上划线 \O、删除线 \K 换成排版流里的开关字符(Core/TextCodes.h),
         //   按 { } 分组恢复,只在状态变化处写;绘制时用,度量/纯文本不用。
@@ -161,9 +162,27 @@ namespace MiniCAD
                     case '{':           put('{');  i += 2; continue;
                     case '}':           put('}');  i += 2; continue;
 
+                    // 堆叠（分数、上下标）：留下内容，写成 上/下（上下对齐的写成 上 下）
+                    case 'S':
+                    {
+                        i += 2;
+                        std::string top, bottom, *part = &top;
+                        char type = 0;
+                        while (i < s.size() && s[i] != ';')
+                        {
+                            if (s[i] == '\\' && i + 1 < s.size()) { *part += s[i + 1]; i += 2; continue; }
+                            if (!type && (s[i] == '/' || s[i] == '#' || s[i] == '^')) { type = s[i++]; part = &bottom; continue; }
+                            *part += s[i++];
+                        }
+                        if (i < s.size()) ++i;
+                        const std::string shown = top.empty() || bottom.empty() ? top + bottom : top + (type == '^' ? " " : "/") + bottom;
+                        for (char b : shown) put(b);
+                        continue;
+                    }
+
                     // 带参数:跳到分号(含)为止
                     case 'f': case 'F': case 'H': case 'C': case 'c':
-                    case 'W': case 'Q': case 'T': case 'A': case 'p': case 'S':
+                    case 'W': case 'Q': case 'T': case 'A': case 'p':
                     {
                         i += 2;
                         while (i < s.size() && s[i] != ';') ++i;
@@ -259,21 +278,38 @@ namespace MiniCAD
                               : isHovered  ? IDrawSink::kHoverColor
                               : ResolveDrawColor(sink);
 
+            const MTextContent content = ParseMTextFormat(m_text, m_height);
             double w = 0.0, h = 0.0;
-            MeasureBlock(w, h);
+            MeasureBlock(content, w, h);
 
-            // 排版层不解析内联格式码,故送入去码后的纯文本(\P → '\n' 等),只留下划线等装饰的开关。
-            const std::string shown = StripInlineCodes(m_text, true);
-            if (m_widthFactor > 0.0) sink.SetTextWidthFactor(m_widthFactor);
-            // 不限宽的居中 / 右对齐：按实际排版的宽度定起点。估算宽度不含字体的字宽与宽度因子，
-            if (m_boxWidth <= 0.0 && m_columnType == MTextColumnType::None && !IsLeftAttachment())
-                if (const double measured = sink.MeasureMTextWidth(shown, m_styleId, m_height, 0.0); measured > 0.0) w = measured;
+            MTextBlock block;
+            block.content      = &content;
+            block.plain        = StripInlineCodes(m_text, true);
+            block.styleId      = m_styleId;
+            block.height       = m_height;
+            block.boxWidth     = m_boxWidth;
+            block.widthFactor  = m_widthFactor;
+            block.lineSpacing  = LineSpacing();
+            block.exactSpacing = m_lineSpacingStyle == MTextLineSpacing::Exact;
+            block.justify      = IsLeftAttachment() ? 0 : IsRightAttachment() ? 2 : 1;
+            block.runColors    = !isSelected && !isHovered;
+            block.layerColor   = sink.GetLayerColor(GetAttr().LayerId);
+
+            // 不限宽的居中 / 右对齐按实际排版的宽度、中 / 下附着按实际的高度定起点：估算不含字体的字宽，也不知道折成几行
+            const bool needWidth  = m_boxWidth <= 0.0 && !IsLeftAttachment();
+            const bool needHeight = !IsTopAttachment();
+            if (m_columnType == MTextColumnType::None && (needWidth || needHeight))
+                if (double mw = 0.0, mh = 0.0; sink.MeasureRichMText(block, mw, mh))
+                {
+                    if (needWidth && mw > 0.0) w = mw;
+                    if (mh > 0.0) h = mh;
+                }
             if (w <= 0.0) w = m_height;
             if (h <= 0.0) h = m_height;
-            const Math::Point3 drawPos = DrawOrigin(w, h);
-            sink.EmitMText(drawPos, shown, m_styleId, m_height, m_rotation, m_boxWidth, color);
-            if (m_widthFactor > 0.0) sink.SetTextWidthFactor(0.0);
+            sink.EmitRichMText(DrawOrigin(w, h), block, m_rotation, color);
         }
+
+        double LineSpacing() const { return m_lineSpacingFactor > 0.0 ? m_lineSpacingFactor : 1.0; }
 
         std::unique_ptr<Entity> Clone(ObjectID newId) const override
         {
@@ -302,66 +338,74 @@ namespace MiniCAD
         DECLARE_RUNTIME_TYPE(MTextEntity, Entity)
 
     private:
-        // 估算一段纯文本的显示宽度(WCS):按 UTF-8 码点计数,
-        // ASCII 计 0.6 字高,多字节字符(CJK 等)计 1.0 字高。
-        double EstimateSegWidth(const char* s, const char* e) const
+        // 估算一段文字的宽度（字高的倍数）：按 UTF-8 码点计数，ASCII 计 0.6，多字节字符（CJK 等）计 1.0
+        static double EstimateWidth(const std::string& text)
         {
             double w = 0.0;
-            while (s < e)
+            for (size_t i = 0; i < text.size(); )
             {
-                const unsigned char c = static_cast<unsigned char>(*s);
-                int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2 : ((c >> 4) == 0xE) ? 3
-                        : ((c >> 3) == 0x1E) ? 4 : 1;
-                w += (len == 1 ? 0.6 : 1.0) * m_height;
-                s += len;
+                const unsigned char c = static_cast<unsigned char>(text[i]);
+                const int len = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2 : ((c >> 4) == 0xE) ? 3 : ((c >> 3) == 0x1E) ? 4 : 1;
+                w += len == 1 ? 0.6 : 1.0;
+                i += static_cast<size_t>(len);
             }
             return w;
         }
 
-        // 估算文字块宽 w 与总高 h(均为 WCS 单位,未含旋转)。
-        void MeasureBlock(double& w, double& h) const
+        void MeasureBlock(double& w, double& h) const { MeasureBlock(ParseMTextFormat(m_text, m_height), w, h); }
+
+        // 估算文字块宽 w 与总高 h（首行顶到末行基线，WCS 单位，未含旋转）。各段按自己的字高、宽度因子，
+        // 行距按 MTextLinePitch（与 TextLayoutEngine::LayoutRich 同一规则，堆叠按底对齐）；放不下时按宽度比估算折成几行
+        void MeasureBlock(const MTextContent& content, double& w, double& h) const
         {
-            const double lineH = m_height * (m_lineSpacingFactor > 0.0 ? m_lineSpacingFactor : 1.0);
-            const std::string plain = StripInlineCodes(m_text);
+            const bool   exact    = m_lineSpacingStyle == MTextLineSpacing::Exact;
+            const double entityWf = m_widthFactor > 0.0 ? m_widthFactor : 1.0;
 
             int    totalLines = 0;
-            double maxW       = 0.0;
-
-            const char* p    = plain.c_str();
-            const char* pEnd = p + plain.size();
-            const char* seg  = p;
-
-            auto processSeg = [&](const char* s, const char* e)
+            double maxW = 0.0, singleH = 0.0, prevH = 0.0, prevDescent = 0.0;
+            auto addLine = [&](double lineH, double ascent, double descent)
             {
-                const double segW = EstimateSegWidth(s, e);
-                if (m_boxWidth > 0.0 && segW > m_boxWidth)
-                    totalLines += static_cast<int>(std::ceil(segW / m_boxWidth));   // 自动折行(保守上界)
-                else
-                {
-                    totalLines += 1;
-                    if (segW > maxW) maxW = segW;
-                }
+                singleH += totalLines == 0 ? (exact ? m_height : ascent)
+                                           : MTextLinePitch(m_height, LineSpacing(), exact, prevH, prevDescent, ascent);
+                prevH = lineH;
+                prevDescent = descent;
+                ++totalLines;
             };
 
-            if (plain.empty())
+            const auto& runs = content.runs;
+            size_t r = 0;
+            while (r < runs.size())
             {
-                totalLines = 0;
-            }
-            else
-            {
-                for (const char* c = p; c <= pEnd; ++c)
+                const MTextRun& head = runs[r];
+                const double indent = (head.indentLeft + std::max(0.0, head.indentFirst)) * m_height;
+                double segW = 0.0, paraH = 0.0, stackTop = 0.0;
+                bool   hasStack = false;
+                for (; r < runs.size() && runs[r].kind != MTextRun::Kind::Break; ++r)
                 {
-                    if (c == pEnd || *c == '\n')
+                    const MTextRun& run = runs[r];
+                    const double wf = (run.widthFactor > 0.0 ? run.widthFactor : entityWf * run.widthScale) * run.tracking;
+                    double est = EstimateWidth(run.text);
+                    if (run.kind == MTextRun::Kind::Stack)
                     {
-                        processSeg(seg, c);
-                        seg = c + 1;
+                        est = run.stackType == '#' ? est + EstimateWidth(run.bottom) : std::max(est, EstimateWidth(run.bottom));
+                        stackTop = std::max(stackTop, (run.bottom.empty() ? 0.0 : run.height) + run.height / 3.0 + (run.text.empty() ? 0.0 : run.height));
+                        hasStack = true;
                     }
+                    segW  += est * run.height * m_height * wf;
+                    paraH  = std::max(paraH, run.height);
                 }
+                if (paraH <= 0.0) paraH = head.height;
+                const double lineH = paraH * m_height;
+                const double avail = m_boxWidth - indent;
+                const int    count = m_boxWidth > 0.0 && avail > 0.0 && segW > avail ? static_cast<int>(std::ceil(segW / avail)) : 1;
+                for (int k = 0; k < count; ++k)
+                    addLine(lineH, std::max(lineH, stackTop * m_height), hasStack ? 0.0 : lineH / 3.0);
+                if (count == 1) maxW = std::max(maxW, indent + segW);
+                if (r < runs.size()) ++r;   // 跳过换段
             }
 
             // 单栏宽:有参考宽度用之,否则取最长行。
             double singleW = (m_boxWidth > 0.0) ? m_boxWidth : maxW;
-            double singleH = totalLines * lineH;
 
             // 分栏:宽度为各栏并排 + 栏间距;高度取栏高(若给定)或单栏估算高。
             if (m_columnType != MTextColumnType::None && m_columnCount > 1 && m_columnWidth > 0.0)
@@ -381,6 +425,14 @@ namespace MiniCAD
         bool IsLeftAttachment() const
         {
             return m_attach == MTextAttachment::TopLeft || m_attach == MTextAttachment::MiddleLeft || m_attach == MTextAttachment::BottomLeft;
+        }
+        bool IsRightAttachment() const
+        {
+            return m_attach == MTextAttachment::TopRight || m_attach == MTextAttachment::MiddleRight || m_attach == MTextAttachment::BottomRight;
+        }
+        bool IsTopAttachment() const
+        {
+            return m_attach == MTextAttachment::TopLeft || m_attach == MTextAttachment::TopCenter || m_attach == MTextAttachment::TopRight;
         }
 
         // 由附着点求文字块左上角(WCS,旋转前)。

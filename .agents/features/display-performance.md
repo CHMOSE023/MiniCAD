@@ -82,7 +82,7 @@ covers: src/Editor/Editor.*, src/Viewport/Viewport.*, src/Document/DrawContext.h
 
 ## 文字
 
-矢量文字按字形实例化：`DrawContext` 把每个字输出为一条 `GlyphInstance`（36 字节，局部 → 世界的仿射变换 + 颜色），字形网格在 `GlyphMeshLibrary` 里每个字形只存一份；实例流按网格排序分批，用 `DrawInstanced` / `drawArraysInstanced` 绘制（字形三角形画在填充之后、线之前，轮廓线画在线之后）。被区域覆盖盖到的实例由 `WipeClip::Batch::ClipGlyphs` 展开成顶点再裁剪；选中流仍按顶点展开。
+矢量文字按字形实例化：`DrawContext` 把每个字输出为一条 `GlyphInstance`（36 字节，局部 → 世界的仿射变换 + 颜色），字形网格在 `GlyphMeshLibrary` 里每个字形只存一份；实例流按网格排序分批，用 `DrawInstanced` / `drawArraysInstanced` 绘制（字形三角形画在填充之后、线之前，轮廓线画在线之后）。被区域覆盖盖到的实例由 `WipeClip::Batch::ClipGlyphs` 展开成顶点再裁剪；选中流仍按顶点展开。带格式的多行文字（`IDrawSink::EmitRichMText`）同样走 `DrawContext::EmitLayout` 输出实例，每个实例带自己段的宽度因子、倾斜与颜色。
 
 ## 选择集与夹点
 

@@ -261,10 +261,9 @@ int RunTextStyleTests()
         struct MeasureSink : IDrawSink
         {
             Math::Point3 pos{};
-            double widthFactor = 0.0, measuredFactor = 0.0;
+            double measuredFactor = 0.0;
             void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
-            void SetTextWidthFactor(double f) override { widthFactor = f; }
-            double MeasureMTextWidth(const std::string&, uint32_t, double height, double) override { measuredFactor = widthFactor; return 2.0 * height; }
+            bool MeasureRichMText(const MTextBlock& b, double& w, double& h) override { measuredFactor = b.widthFactor; w = 2.0 * b.height; h = b.height; return true; }
             void EmitMText(const Math::Point3& p, const std::string&, uint32_t, double, double, double, const Math::Color4&) override { pos = p; }
             Math::Color4 GetLayerColor(LayerID) const override { return Math::Color4::White(); }
             bool IsLayerVisible(LayerID) const override { return true; }
@@ -432,6 +431,167 @@ int RunTextStyleTests()
         r = engine.Layout("%%oAB%%o" + K + "C", &font, 10.0, 1.0, 0.0, 0.0, TextLayoutEngine::HAlign::Right);
         Check(r.m_glyphs.size() == 3 && r.m_decorations.size() == 2 && seg(r.m_decorations[0], -30.0, -10.0, 12.0) && seg(r.m_decorations[1], -10.0, 0.0, 5.0),
               "排版：单行文字的 %%o 上划线在基线上 1.2 倍字高，删除线 0.5 倍；右对齐时开关不计入行宽");
+
+        // ── 9c. 带格式的多行文字排版（LayoutRich）─────────
+        auto rich = [&](const std::string& text, TextLayoutEngine::RichOptions o, const std::vector<double>& widths = {})
+        {
+            const MTextContent c = ParseMTextFormat(text, o.height);
+            std::vector<TextLayoutEngine::RunStyle> styles(c.runs.size());
+            for (size_t k = 0; k < styles.size(); ++k)
+                styles[k] = { &font, k < widths.size() ? widths[k] : 1.0, 0.0 };
+            return engine.LayoutRich(c, styles, o);
+        };
+        TextLayoutEngine::RichOptions o;
+        o.height = 10.0;
+        r = rich("A\\PB\\H2x;C", o);
+        Check(r.m_glyphs.size() == 3 && near(r.m_glyphs[0].m_position.y, 0.0) && near(r.m_glyphs[1].m_position.y, -80.0 / 3.0) &&
+              near(r.m_glyphs[2].m_scale, 20.0) && near(r.m_height, 10.0 + 80.0 / 3.0),
+              "带格式排版：行距\"至少\" = 上一行下沉（字高 / 3）+ 本行上升（最高的字 20）+ 字高 / 3，\\H2x; 的字两倍高");
+        o.exact = true;
+        r = rich("A\\PB\\H2x;C", o);
+        Check(near(r.m_glyphs[1].m_position.y, -50.0 / 3.0), "带格式排版：精确行距按基准字高，不随大字增大");
+        o.exact = false;
+        r = rich("{\\H2x;A}\\PB", o);
+        Check(near(r.m_glyphs[0].m_position.y, -10.0) && near(r.m_glyphs[1].m_position.y, -30.0),
+              "带格式排版：首行有大字时整体下移，字顶仍在原来的首行顶；大字行下沉也大（20 / 3）");
+        o.lineSpacing = 1.5;
+        r = rich("A\\P{\\H1.5x;B}\\PC", o);
+        Check(near(r.m_glyphs[1].m_position.y, -30.0) && near(r.m_glyphs[2].m_position.y, -60.0),
+              "带格式排版：行距比例 1.5 时混合字高的行距与 AutoCAD 炸开量得的一致（30、30）");
+        o.lineSpacing = 1.0;
+        {
+            struct TallFont : FixedFont { Glyph tall; TallFont() { tall.Filled = true; tall.MaxY = 1.2; } const Glyph& GetGlyph(uint32_t) override { return tall; } } tallFont;
+            const MTextContent c = ParseMTextFormat("A\\PB", 10.0);
+            const auto t = engine.LayoutRich(c, std::vector<TextLayoutEngine::RunStyle>(c.runs.size(), { &tallFont, 1.0, 0.0 }), o);
+            Check(t.m_glyphs.size() == 2 && near(t.m_glyphs[0].m_position.y, -2.0) && near(t.m_glyphs[1].m_position.y, -2.0 - 56.0 / 3.0),
+                  "带格式排版：TrueType 字形顶高出字高时，行的上升按字形顶（12），下沉仍是字高 / 3");
+        }
+        r = rich("A\\S1/2;\\PB", o);
+        Check(near(r.m_glyphs[0].m_position.y, -40.0 / 3.0) && near(r.m_glyphs[3].m_position.y, -80.0 / 3.0),
+              "带格式排版：首行有分数时按分子顶定首行基线；有堆叠的行不算下沉");
+        o.boxWidth = 50.0;
+        r = rich("\\pxi-1,l1;AAA BBB", o);
+        Check(r.m_glyphs.size() == 7 && near(r.m_glyphs[0].m_position.x, 0.0) && near(r.m_glyphs[4].m_position.x, 10.0) &&
+              near(r.m_glyphs[4].m_position.y, -50.0 / 3.0),
+              "带格式排版：悬挂缩进（\\pxi-1,l1;）首行顶格、折下来的行缩进 1 个字高，折在空格处");
+        o.boxWidth = 0.0;
+        o.justify = TextLayoutEngine::HAlign::Center;
+        r = rich("A\\PBBB\\P\\pql;C", o);
+        Check(near(r.m_glyphs[0].m_position.x, 10.0) && near(r.m_glyphs[1].m_position.x, 0.0) && near(r.m_glyphs[4].m_position.x, 0.0) &&
+              near(r.m_width, 30.0),
+              "带格式排版：居中附着的各行在块宽内居中，\\pql; 的段落靠左");
+        o.justify = TextLayoutEngine::HAlign::Left;
+        r = rich("1\\S2/3;", o);
+        Check(r.m_glyphs.size() == 3 && near(r.m_glyphs[1].m_scale, 10.0) && near(r.m_glyphs[1].m_position.x, 10.0) &&
+              near(r.m_glyphs[0].m_position.y, -40.0 / 3.0) && near(r.m_glyphs[1].m_position.y, 0.0) && near(r.m_glyphs[2].m_position.y, -40.0 / 3.0) &&
+              r.m_decorations.size() == 1 && seg(r.m_decorations[0], 10.0, 20.0, -5.0 / 3.0),
+              "带格式排版：分数 \\S2/3; 两半用当前字高，分母坐在基线上，分子基线高 4/3 字高，横线高 7/6 字高");
+        r = rich("m\\S2^;", o);
+        Check(r.m_glyphs.size() == 2 && near(r.m_glyphs[1].m_position.y - r.m_glyphs[0].m_position.y, 10.0 / 3.0),
+              "带格式排版：上标 \\S2^; 抬高 1/3 字高");
+        r = rich("\\S3#4;", o);
+        Check(r.m_glyphs.size() == 2 && near(r.m_glyphs[0].m_position.x, 0.0) && near(r.m_glyphs[1].m_position.x, 10.0) &&
+              near(r.m_glyphs[0].m_position.y - r.m_glyphs[1].m_position.y, 10.0) && r.m_decorations.size() == 1 &&
+              near(r.m_decorations[0].m_rise, 16.4),
+              "带格式排版：斜线分数 \\S3#4; 分子在左上、分母在右下，中间一条斜线");
+        r = rich("\\A1;A\\S1/2;", o);
+        Check(r.m_glyphs.size() == 3 && near(r.m_glyphs[1].m_position.y - r.m_glyphs[0].m_position.y, 20.0 / 3.0) &&
+              near(r.m_glyphs[2].m_position.y - r.m_glyphs[0].m_position.y, -20.0 / 3.0) && near(r.m_decorations[0].m_y - r.m_glyphs[0].m_position.y, 5.0),
+              "带格式排版：\\A1; 居中时分数横线对准行中线");
+        r = rich("{\\W0.5;AB}C", o, { 0.5, 1.0 });
+        Check(r.m_glyphs.size() == 3 && near(r.m_glyphs[1].m_position.x, 5.0) && near(r.m_glyphs[2].m_position.x, 10.0) &&
+              near(r.m_glyphs[0].m_widthFactor, 0.5) && r.m_glyphs[2].m_run == 1,
+              "带格式排版：各段按自己的宽度因子步进，字形记下所属的段");
+    }
+
+    // ── 9d. 多行文字格式码解析（以前 {\W0.7;…} 只认开头的 \W，\f \H \S 等整段丢掉）─────────
+    {
+        const MTextContent a = ParseMTextFormat("{\\fSimSun|b0|i0|c134|p2;\\W0.7;\\C1;AB}C", 10.0);
+        Check(a.runs.size() == 2 && a.runs[0].text == "AB" && a.runs[0].font == 0 && Near(a.runs[0].widthFactor, 0.7) &&
+              a.runs[0].colorKind == MTextRun::Color::Rgb && Near(a.runs[0].color.r, 1.0) && a.runs[1].text == "C" && a.runs[1].font == -1 &&
+              a.runs[1].widthFactor == 0.0 && a.runs[1].colorKind == MTextRun::Color::Entity && a.fonts.size() == 1 && a.fonts[0].family == "SimSun",
+              "格式码：组里的 \\f 族名、\\W、\\C 只作用到组内");
+        const MTextContent b = ParseMTextFormat("\\H2.5;X\\H0.5x;Y\\Fsimplex8,hzdx|c134;Z\\c255;R\\C256;L", 10.0);
+        Check(b.runs.size() == 5 && Near(b.runs[0].height, 0.25) && Near(b.runs[1].height, 0.125) && b.fonts.size() == 1 &&
+              b.fonts[0].file == "simplex8" && b.fonts[0].bigFont == "hzdx" && b.runs[2].font == 0 && Near(b.runs[3].color.r, 1.0) &&
+              Near(b.runs[3].color.b, 0.0) && b.runs[4].colorKind == MTextRun::Color::ByLayer,
+              "格式码：\\H 绝对 / 相对字高，\\F 主字体与大字体，\\c 真彩低字节是红，\\C256 随层");
+        const MTextContent c = ParseMTextFormat("m\\S2^;\\P\\pxi-3,l3;1.A", 10.0);
+        Check(c.runs.size() == 4 && c.runs[1].kind == MTextRun::Kind::Stack && c.runs[1].text == "2" && c.runs[1].stackType == '^' &&
+              c.runs[2].kind == MTextRun::Kind::Break && Near(c.runs[3].indentFirst, -3.0) && Near(c.runs[3].indentLeft, 3.0) &&
+              c.PlainText() == "m2\n1.A",
+              "格式码：\\S2^; 上标、\\px 段落缩进是字高的倍数");
+        const MTextContent d = ParseMTextFormat("\\pi2;A{\\A1;B}C", 10.0);
+        Check(d.runs.size() == 3 && Near(d.runs[0].indentFirst, 0.2) && d.runs[0].valign == 0 && d.runs[1].valign == 1 && d.runs[2].valign == 0,
+              "格式码：不带 x 的 \\pi 是绝对长度；\\A 竖向对齐只作用到组内");
+        Check(MTextEntity::StripInlineCodes("m\\S2^;") == "m2" && MTextEntity::StripInlineCodes("\\S1/2;") == "1/2",
+              "纯文本：堆叠留下内容（以前 m\\S2^; 只剩 m）");
+    }
+
+    // ── 9e. 多行文字交给绘图接口：行距（issue #40：单倍是 5/3 个字高，再乘组码 44）、附着点定段落对齐、选中时不用段的颜色、按量得的高定下附着 ─────────
+    {
+        struct BlockSink : IDrawSink
+        {
+            MTextBlock   last;
+            Math::Point3 pos{};
+            double       measuredH = 0.0;
+            void DrawLine(const Math::Point3&, const Math::Point3&, const Math::Color4&, bool) override {}
+            void EmitRichMText(const Math::Point3& p, const MTextBlock& b, double, const Math::Color4&) override { last = b; pos = p; }
+            bool MeasureRichMText(const MTextBlock&, double& w, double& h) override
+            {
+                if (measuredH <= 0.0) return false;
+                w = 30.0; h = measuredH; return true;
+            }
+            Math::Color4 GetLayerColor(LayerID) const override { return Math::Color4::White(); }
+            bool IsLayerVisible(LayerID) const override { return true; }
+        };
+        BlockSink sink;
+        MTextEntity single(1, 0, "A\\PB\\PC", Math::Point3(0, 0, 0), 10.0, 0.0, 0.0);
+        single.Draw(sink, false, false);
+        const bool byDefault = Near(sink.last.lineSpacing, 1.0) && sink.last.justify == 0 && sink.last.runColors && sink.last.plain == "A\nB\nC";
+        const AABB box1 = single.GetBoundingBox();
+        MTextEntity wide(2, 0, "A\\PB\\PC", Math::Point3(0, 0, 0), 10.0, 0.0, 0.0);
+        wide.SetLineSpacing(MTextLineSpacing::AtLeast, 1.5);
+        wide.SetAttachment(MTextAttachment::TopCenter);
+        wide.Draw(sink, true, false);
+        const AABB box2 = wide.GetBoundingBox();
+        Check(byDefault && Near(sink.last.lineSpacing, 1.5) && sink.last.justify == 1 && !sink.last.runColors &&
+              Near(box1.Max.y - box1.Min.y, 10.0 + 2 * 50.0 / 3.0) && Near(box2.Max.y - box2.Min.y, 60.0),
+              "多行文字：行距 = 5/3 × 字高 × 行距系数，居中附着时段落居中，选中时整段同色；包围盒高 = 字高 + 其余各行行距");
+
+        MTextEntity big(3, 0, "A\\P\\H2x;B", Math::Point3(0, 0, 0), 10.0, 0.0, 0.0);
+        const AABB box3 = big.GetBoundingBox();
+        MTextEntity bottom(4, 0, "A\\PB", Math::Point3(0, 0, 0), 10.0, 0.0, 0.0);
+        bottom.SetAttachment(MTextAttachment::BottomLeft);
+        sink.measuredH = 50.0;
+        bottom.Draw(sink, false, false);
+        Check(Near(box3.Max.y - box3.Min.y, 10.0 + 80.0 / 3.0) && Near(sink.pos.y, 40.0),
+              "多行文字：包围盒按大字的行距估算；下附着按排版量得的高（50）定首行基线");
+    }
+
+    // ── 9f. DrawContext 画带格式的多行文字：内联字体经 InlineFontResolver，段的颜色（随层取图层色）─────────
+    {
+        Scene s;
+        StrokeFont font;
+        struct WideFont : StrokeFont { double GetAdvance(uint32_t) override { return 3.0; } uint64_t GetFontId() const override { return 9998; } } wide;
+        std::vector<Vertex_P3_C4> lines, fills;
+        std::vector<Vertex_P3_C4_UV> tex;
+        Overlay ov;
+        FontResolver resolver = [&](uint32_t) { return ResolvedTextStyle{ &font, 1.0, 0.0 }; };
+        DrawContext ctx(lines, fills, tex, ov, s.GetLayerManager(), s.GetLineTypeTable(), 0.0, nullptr, resolver);
+        std::string asked;
+        ctx.SetInlineFontResolver([&](const MTextFont& f) -> IFont* { asked = f.family; return &wide; });
+        MTextEntity e(1, 0, "{\\fArial|b0;\\C1;A}B{\\C256;C}", Math::Point3(0, 0, 0), 10.0, 0.0, 0.0);
+        e.SetAttr([] { EntityAttr a; a.Color = EntityColor::FromAci(3); return a; }());
+        e.Draw(ctx, false, false);
+        bool ok = lines.size() == 6;
+        if (ok)
+        {
+            ok = asked == "Arial" && Near(lines[2].pos.x, 30.0) && Near(lines[4].pos.x, 40.0);   // A 用宽字体步进 30
+            const VertexColor red = lines[0].color, green = lines[2].color, layer = lines[4].color;
+            ok = ok && red.r == 255 && red.g == 0 && green.g == 255 && green.r == 0 && layer.r == 255 && layer.g == 255 && layer.b == 255;
+        }
+        Check(ok, "DrawContext：\\f 字体经内联字体解析、按它步进；\\C1 红色、其余实体色（绿）、\\C256 取图层色");
     }
 
 #ifdef MINICAD_ASSET_DIR

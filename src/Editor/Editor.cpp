@@ -4141,6 +4141,7 @@ namespace MiniCAD
         // 复杂线型形段（组码 75）的字形来自 SHX 形文件（ltypeshp.shx），
         // 与文字样式表无关，单独一条解析路径
         ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
+        ctx.SetInlineFontResolver(MakeInlineFontResolver(m_doc->GetFontSystem()));
         // 局部显示不用块定义级缓存：曲线只在范围里加密，记下的结果接到别处的插入上不对
         if (s_blockCacheEnabled && !m_local.active)
             ctx.SetBlockCache(&m_blockTessCache);
@@ -4910,6 +4911,7 @@ namespace MiniCAD
             ctx.SetTextStyleTable(&scene.GetTextStyleTable());
             // 形段同上：选中前后线型的符号必须完全一致
             ctx.SetShapeFontResolver(MakeShapeFontResolver(m_doc));
+            ctx.SetInlineFontResolver(MakeInlineFontResolver(m_doc->GetFontSystem()));
             // 选中流没有点流一路：线型的点笔划画成 1.5px 小段（随缩放重建）
             ctx.SetLineTypeDotsAsSegments(true);
             // 点样式同理：不设置时按默认 $PDMODE=0 画成点图元，⊕ 等图形选中后不显示

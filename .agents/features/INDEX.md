@@ -8,7 +8,7 @@ covers: .agents/features/*.md
 
 | 指南 | 内容 | 主要代码 | 测试 |
 |---|---|---|---|
-| [cad-exchange](cad-exchange.md) | DWG/DXF 读写：写出版本、已映射的实体、以原图为底另存、文字样式与线型（字体族名、缺字回退链、SHX 大字体代码页、单线字体回退 minicad_*.shx）、OLE 对象、三维实体与曲面（ACIS） | `src/Import/CadExchange.*`、`src/Import/ProxyGraphics.h`、`src/Import/AcisReader.*`、`src/Serialization/Dwg|Dxf` | `MiniCADTests`、`MiniCADCadPreserveTests`、`MiniDWGTests`、`AcisImportTests` |
+| [cad-exchange](cad-exchange.md) | DWG/DXF 读写：写出版本、已映射的实体、以原图为底另存、文字样式与线型（字体族名、缺字回退链、SHX 大字体代码页、单线字体回退 minicad_*.shx）、多行文字格式码与行距（按 AutoCAD 实测）、OLE 对象、三维实体与曲面（ACIS） | `src/Import/CadExchange.*`、`src/Import/ProxyGraphics.h`、`src/Import/AcisReader.*`、`src/Core/MTextFormat.h`、`src/Serialization/Dwg|Dxf` | `MiniCADTests`、`MiniCADCadPreserveTests`、`MiniDWGTests`、`AcisImportTests` |
 | [xref](xref.md) | 外部参照：读入、查找文件、未加载时显示路径、平台自动找（网页版问嵌入它的网页）、选文件夹再找（含网页版） | `CadExchange.cpp` 的 `Importer::LoadXref` / `ResolveXrefPath`、`MainFrame::LocateXrefs` | `MiniCADTests`（`CadXrefTests.cpp`）、`tests/Web/FolderPickerTests.cjs`、`tests/Web/RemoteOpenTests.cjs` |
 | [layout-viewport](layout-viewport.md) | 布局页与图纸空间视口：视图中心换算、冻结图层、模型内容合成、`$PSLTSCALE` | `ViewportEntity`、`Editor::ComposeModelIntoViewport` | `MiniCADTests`（`LayoutTests.cpp`、`OleFrameTests.cpp`） |
 | [tch](tch.md) | `TCH_*`的解析与显示适配 | `src/Import/Tch*.h` | `MiniCADTch*Tests`、`MiniCADTianzhengTests` |

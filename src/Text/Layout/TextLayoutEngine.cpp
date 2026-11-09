@@ -1,5 +1,6 @@
 #include "TextLayoutEngine.h"
 #include "Core/TextCodes.h"
+#include <algorithm>
 #include <cmath>
 
 namespace MiniCAD
@@ -99,6 +100,7 @@ namespace MiniCAD
                 instance.m_glyph = &font->GetGlyph(cp);
                 instance.m_scale = scale;
                 instance.m_rotation = rotation;
+                instance.m_widthFactor = widthFactor;
                 instance.m_position = Math::Point3(cursorX, cursorY, 0.0);
 
                 result.m_glyphs.push_back(instance);
@@ -111,6 +113,296 @@ namespace MiniCAD
             cursorY -= lineHeight;
         }
 
+        return result;
+    }
+
+    namespace
+    {
+        bool IsCjkBreakable(uint32_t cp)
+        {
+            return (cp >= 0x2E80 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFF00 && cp <= 0xFF60);
+        }
+        uint32_t GlyphCodeOf(uint32_t cp) { return cp == 0xA0 ? uint32_t(' ') : cp; }   // 不换行空格按空格画
+
+        // 堆叠的竖向位置（AutoCAD 2020 炸开实测），以下半基线为 0、两半都用当前字高 h：
+        // 上半基线 = (下半非空 ? h : 0) + h/3，横线在上半基线下 h/6；斜线分数上半基线 = h，上下两半左右错开
+        struct StackGeometry
+        {
+            double top = 0.0;      // 上半基线
+            double anchor = 0.0;   // \A1 居中时对准行中线的位置（横线处）
+            double ascent = 0.0;   // 顶：上半为空时就是上半基线
+        };
+        StackGeometry StackGeometryOf(const MTextRun& run, double h)
+        {
+            StackGeometry g;
+            g.top    = run.stackType == '#' ? h : (run.bottom.empty() ? 0.0 : h) + h / 3.0;
+            g.anchor = g.top - h / 6.0;
+            g.ascent = g.top + (run.text.empty() ? 0.0 : h);
+            return g;
+        }
+    }
+
+    TextLayoutEngine::LayoutResult TextLayoutEngine::LayoutRich(const MTextContent& content, const std::vector<RunStyle>& styles,
+                                                                const RichOptions& o)
+    {
+        LayoutResult result;
+        const auto& runs = content.runs;
+        const double base = o.height > 0.0 ? o.height : 1.0;
+
+        struct Item { uint32_t cp = 0; int run = -1; double adv = 0.0; bool stack = false; double shift = 0.0; };
+        struct Line
+        {
+            size_t begin = 0, end = 0; int para = -1; double width = 0.0, maxH = 0.0, indent = 0.0;
+            double ascent = 0.0, descent = 0.0;
+        };
+        std::vector<Item> items;
+        std::vector<Line> lines;
+
+        auto usable = [&](size_t r) { return r < styles.size() && styles[r].font; };
+        auto scaleOf = [&](size_t r, double h)
+        {
+            const double fh = styles[r].font->GetHeight();
+            return h / (fh > 0.0 ? fh : 1.0);
+        };
+        auto advanceOf = [&](size_t r, uint32_t cp, double h)
+        {
+            return styles[r].font->GetAdvance(GlyphCodeOf(cp)) * scaleOf(r, h) * styles[r].widthFactor * runs[r].tracking;
+        };
+        auto textWidth = [&](size_t r, const std::string& t, double h)
+        {
+            double w = 0.0;
+            for (uint32_t cp : DecodeLine(t))
+                if (!IsDecorationToggle(cp)) w += advanceOf(r, cp, h);
+            return w;
+        };
+        auto isSpace = [](uint32_t cp) { return cp == ' ' || cp == '\t'; };
+
+        // 一段（两个换段之间）的字符折成行：与 BreakLines 同样只在词边界、汉字之间折，放不下的长词溢出栏宽
+        auto wrap = [&](size_t pb, size_t pe, int para)
+        {
+            const MTextRun* pr = para >= 0 ? &runs[para] : nullptr;
+            const double indFirst = pr ? (pr->indentLeft + pr->indentFirst) * base : 0.0;
+            const double indRest  = pr ? pr->indentLeft * base : 0.0;
+            const double paraH    = pr ? pr->height * base : base;
+            if (pb == pe)
+            {
+                lines.push_back({ pb, pe, para, 0.0, paraH, indFirst });
+                return;
+            }
+            bool first = true;
+            for (size_t start = pb; start < pe; first = false)
+            {
+                const double indent = first ? indFirst : indRest;
+                const double avail  = o.boxWidth > 0.0 ? o.boxWidth - indent : 0.0;
+                double w = 0.0;
+                size_t end = start;
+                for (; end < pe; ++end)
+                {
+                    if (avail > 0.0 && end > start && w + items[end].adv > avail)
+                    {
+                        size_t brk = 0;
+                        for (size_t q = end; q > start && !brk; --q)
+                        {
+                            const Item& prev = items[q - 1];
+                            if (!prev.stack && (isSpace(prev.cp) || prev.cp == '-')) brk = q;
+                            else if (!items[q].stack && IsCjkBreakable(items[q].cp)) brk = q;
+                        }
+                        if (brk > start) { end = brk; break; }
+                    }
+                    w += items[end].adv;
+                }
+                Line line{ start, end, para, 0.0, 0.0, indent };
+                size_t visible = end;
+                if (end < pe)
+                    while (visible > start && !items[visible - 1].stack && isSpace(items[visible - 1].cp)) --visible;
+                for (size_t k = start; k < visible; ++k) line.width += items[k].adv;
+                for (size_t k = start; k < end; ++k) line.maxH = std::max(line.maxH, runs[items[k].run].height * base);
+                if (line.maxH <= 0.0) line.maxH = paraH;
+                lines.push_back(line);
+                start = end;
+                if (end < pe)
+                    while (start < pe && !items[start].stack && isSpace(items[start].cp)) ++start;
+            }
+        };
+
+        size_t paraBegin = 0;
+        int    paraRun   = -1;
+        for (size_t r = 0; r < runs.size(); ++r)
+        {
+            const MTextRun& run = runs[r];
+            if (paraRun < 0) paraRun = static_cast<int>(r);
+            if (run.kind == MTextRun::Kind::Break)
+            {
+                wrap(paraBegin, items.size(), paraRun);
+                paraBegin = items.size();
+                paraRun   = -1;
+                continue;
+            }
+            if (!usable(r)) continue;
+            const double h = run.height * base;
+            if (run.kind == MTextRun::Kind::Stack)
+            {
+                const double topW = textWidth(r, run.text, h), botW = textWidth(r, run.bottom, h);
+                items.push_back({ 0, static_cast<int>(r), run.stackType == '#' ? topW + botW : std::max(topW, botW), true });
+                continue;
+            }
+            for (uint32_t cp : DecodeLine(run.text))
+                if (!IsDecorationToggle(cp))
+                    items.push_back({ cp, static_cast<int>(r), advanceOf(r, cp, h), false });
+        }
+        if (paraBegin < items.size() || paraRun >= 0 || lines.empty())
+            wrap(paraBegin, items.size(), paraRun);
+
+        // 字顶：SHX 按名义字高；TrueType 按字形的实际顶边（宋体的汉字约高出 16%），不低于名义字高
+        auto topOf = [&](size_t r, uint32_t cp, double h)
+        {
+            const Glyph& gl = styles[r].font->GetGlyph(GlyphCodeOf(cp));
+            return gl.Filled ? std::max(h, gl.MaxY * scaleOf(r, h)) : h;
+        };
+        auto textTop = [&](size_t r, const std::string& t, double h)
+        {
+            double top = 0.0;
+            for (uint32_t cp : DecodeLine(t))
+                if (!IsDecorationToggle(cp)) top = std::max(top, topOf(r, cp, h));
+            return top;
+        };
+
+        // 各字相对行基线的竖向偏移（\A），以及每行的上升、下沉
+        for (Line& line : lines)
+        {
+            bool hasStack = false;
+            line.ascent  = line.begin == line.end ? line.maxH : 0.0;
+            line.descent = 0.0;
+            for (size_t k = line.begin; k < line.end; ++k)
+            {
+                Item&           it  = items[k];
+                const MTextRun& run = runs[static_cast<size_t>(it.run)];
+                const double    h   = run.height * base;
+                if (it.stack)
+                {
+                    const StackGeometry g = StackGeometryOf(run, h);
+                    it.shift = run.valign == 1 ? line.maxH * 0.5 - g.anchor : run.valign == 2 ? line.maxH - g.ascent : 0.0;
+                    line.ascent  = std::max(line.ascent, it.shift + g.top + (run.text.empty() ? 0.0 : textTop(static_cast<size_t>(it.run), run.text, h)));
+                    line.descent = hasStack ? std::max(line.descent, -it.shift) : -it.shift;
+                    hasStack = true;
+                }
+                else
+                {
+                    it.shift = run.valign == 1 ? (line.maxH - h) * 0.5 : run.valign == 2 ? line.maxH - h : 0.0;
+                    line.ascent = std::max(line.ascent, it.shift + topOf(static_cast<size_t>(it.run), it.cp, h));
+                }
+            }
+            if (!hasStack) line.descent = line.maxH / 3.0;
+        }
+
+        double blockW = 0.0;
+        for (const Line& line : lines) blockW = std::max(blockW, line.indent + line.width);
+        result.m_width = blockW;
+        if (o.boxWidth > 0.0) blockW = o.boxWidth;
+
+        auto placeText = [&](size_t r, const std::string& t, double h, double x, double y)
+        {
+            const double s = scaleOf(r, h);
+            for (uint32_t cp : DecodeLine(t))
+            {
+                if (IsDecorationToggle(cp)) continue;
+                GlyphInstance g;
+                g.m_glyph       = &styles[r].font->GetGlyph(GlyphCodeOf(cp));
+                g.m_scale       = s;
+                g.m_position    = Math::Point3(x, y, 0.0);
+                g.m_widthFactor = styles[r].widthFactor;
+                g.m_shear       = styles[r].shear;
+                g.m_run         = static_cast<int>(r);
+                result.m_glyphs.push_back(g);
+                x += advanceOf(r, cp, h);
+            }
+        };
+
+        const double spacing = o.lineSpacing > 0.0 ? o.lineSpacing : 1.0;
+        double y = 0.0;
+        for (size_t li = 0; li < lines.size(); ++li)
+        {
+            const Line& line = lines[li];
+            if (li == 0)
+            {
+                const double ascent = o.exact ? base : line.ascent;
+                y = base - ascent;
+                result.m_height = ascent;
+            }
+            else
+            {
+                const Line&  prev  = lines[li - 1];
+                const double pitch = MTextLinePitch(base, spacing, o.exact, prev.maxH, prev.descent, line.ascent);
+                y -= pitch;
+                result.m_height += pitch;
+            }
+
+            const int    paraAlign = line.para >= 0 ? runs[line.para].align : -1;
+            const HAlign align = paraAlign == 1 ? HAlign::Center : paraAlign == 2 ? HAlign::Right : paraAlign == 0 ? HAlign::Left : o.justify;
+            const double slack = blockW - line.indent - line.width;
+            double x = line.indent + (align == HAlign::Center ? slack * 0.5 : align == HAlign::Right ? slack : 0.0);
+
+            int lastDecor[3] = { -1, -1, -1 };
+            for (size_t k = line.begin; k < line.end; ++k)
+            {
+                const Item&     it  = items[k];
+                const size_t    r   = static_cast<size_t>(it.run);
+                const MTextRun& run = runs[r];
+                const double    h   = run.height * base;
+                const double    yb  = y + it.shift;
+                if (it.stack)
+                {
+                    const StackGeometry g = StackGeometryOf(run, h);
+                    const double topW = textWidth(r, run.text, h), botW = textWidth(r, run.bottom, h);
+                    if (run.stackType == '#')
+                    {
+                        placeText(r, run.text, h, x, yb + g.top);
+                        placeText(r, run.bottom, h, x + topW, yb);
+                        if (!run.text.empty() && !run.bottom.empty())
+                            result.m_decorations.push_back({ x + 0.26 * h, x + topW + 0.41 * h, yb + 0.18 * h, static_cast<int>(r), 1.64 * h });
+                    }
+                    else
+                    {
+                        const bool tol = run.stackType == '^';
+                        placeText(r, run.text, h, tol ? x : x + (it.adv - topW) * 0.5, yb + g.top);
+                        placeText(r, run.bottom, h, tol ? x : x + (it.adv - botW) * 0.5, yb);
+                        if (run.stackType == '/' && !run.text.empty() && !run.bottom.empty())
+                            result.m_decorations.push_back({ x, x + it.adv, yb + g.anchor, static_cast<int>(r) });
+                    }
+                }
+                else
+                {
+                    GlyphInstance g;
+                    g.m_glyph       = &styles[r].font->GetGlyph(GlyphCodeOf(it.cp));
+                    g.m_scale       = scaleOf(r, h);
+                    g.m_position    = Math::Point3(x, yb, 0.0);
+                    g.m_widthFactor = styles[r].widthFactor;
+                    g.m_shear       = styles[r].shear;
+                    g.m_run         = static_cast<int>(r);
+                    result.m_glyphs.push_back(g);
+                }
+                // 下划线 / 上划线 / 删除线：与 Layout 同样在基线下 0.2、上 1.2、上 0.5 倍字高；首尾相接、同一段的连成一条
+                const bool on[3] = { run.underline, run.overline, run.strike };
+                static constexpr double kDecorationY[3] = { -0.2, 1.2, 0.5 };
+                for (int d = 0; d < 3; ++d)
+                {
+                    if (!on[d]) { lastDecor[d] = -1; continue; }
+                    const double dy = yb + kDecorationY[d] * h;
+                    if (lastDecor[d] >= 0)
+                    {
+                        DecorationLine& prev = result.m_decorations[static_cast<size_t>(lastDecor[d])];
+                        if (prev.m_run == it.run && std::abs(prev.m_y - dy) < 1e-12 && std::abs(prev.m_x1 - x) < 1e-9 * (1.0 + std::abs(x)))
+                        {
+                            prev.m_x1 = x + it.adv;
+                            continue;
+                        }
+                    }
+                    result.m_decorations.push_back({ x, x + it.adv, dy, it.run });
+                    lastDecor[d] = static_cast<int>(result.m_decorations.size() - 1);
+                }
+                x += it.adv;
+            }
+        }
         return result;
     }
 

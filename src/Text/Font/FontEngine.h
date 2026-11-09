@@ -53,6 +53,9 @@ namespace MiniCAD
         // 按字体文件名或族名猜它是哪种文字（新細明體、MS Gothic、Gulim ……）；看不出来时是简体
         static CjkScript ScriptOfFont(const std::string& fontFile);
 
+        // TrueType 族名 → Windows 字体目录里的文件名（SimSun / 宋体 → simsun.ttc 等）；不认识的族名按 "<族名>.ttf"
+        static std::string TrueTypeFileOf(const std::string& family);
+
     private:
         std::string BuildKey(const FontStyle& style) const;
         std::string ResolvePath(const std::string& fontFile) const;
