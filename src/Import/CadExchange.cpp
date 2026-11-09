@@ -463,10 +463,10 @@ namespace MiniCAD
                 m_namePrefix  = std::move(namePrefix);
                 m_targetBlock = &target;
                 m_xref        = std::move(ctx);
+                ImportTextStyles();      // 先于线型：复杂线型文字段要按 340 找到样式
                 ImportLineTypes();
                 ImportMLineStyles();
                 ImportLayers();
-                ImportTextStyles();
                 ForEachEntry<Dwg::BlockRecord>(m_db.BlockRecords(), [&](const Dwg::BlockRecord& rec) { CollectOpenings(rec); });
                 if (const Dwg::BlockRecord* model = m_db.ModelSpace())
                     CollectOpenings(*model);
@@ -563,10 +563,12 @@ namespace MiniCAD
 
             void Run()
             {
+                // 文字样式先于线型：复杂线型的文字/形段用组码 340 引用 STYLE，
+                // ImportLineTypes 里 LookupStyle 要能查到它，否则退回 Standard 会按错的字高/字体画符号。
+                ImportTextStyles();
                 ImportLineTypes();
                 ImportMLineStyles();     // 多线样式（MLINE 的组码 340 引用它）
                 ImportLayers();
-                ImportTextStyles();
                 ImportPaperSpaceLineTypeScaling();
                 ImportPointStyle();
                 ImportLineTypeScale(); 

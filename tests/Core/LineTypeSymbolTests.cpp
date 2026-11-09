@@ -938,6 +938,86 @@ namespace
     }
 }
 
+    // 短线 + 大 $LTSCALE：线长小于一个图案周期时，符号段还没进入循环线就结束了。
+    // AutoCAD 的语义是这种线不画符号（第一个 dash 都没走完）；在线尾强行补符号会
+    // 比 CAD 多画出符号，属于过度绘制，必须不画。
+    void TestShortLineSymbol()
+    {
+        Scene s;
+        LineTypeTable& t = s.GetLineTypeTable();
+        LineTypeRecord rec;
+        rec.Name          = "MARK";
+        rec.Pattern       = { 4.0, 0.0, -0.6 };   // 4 实线 / 符号段(0 长) / 空白
+        rec.PatternLength = 4.6;
+        LineTypeSymbol sym;
+        sym.PatternIndex = 1;
+        sym.Text         = "SP";
+        sym.Scale        = 0.1;
+        rec.Symbols.push_back(sym);
+        const LineTypeID lt = t.Add(rec);
+
+        std::vector<Vertex_P3_C4>    verts, fills;
+        std::vector<Vertex_P3_C4_UV> texts;
+        Overlay                      overlay;
+        StrokeFont font;
+        int fontCalls = 0;
+        FontResolver resolver = [&font, &fontCalls](uint32_t)
+        {
+            ++fontCalls;
+            return ResolvedTextStyle{ &font, 1.0, 0.0 };
+        };
+        DrawContext ctx(verts, fills, texts, overlay, s.GetLayerManager(), t,
+                        1.0, nullptr, std::move(resolver));
+        ctx.SetLineTypeScale(1000.0);              // 周期 4600，远大于下面的线长
+        ctx.SetTextStyleTable(&s.GetTextStyleTable());
+        EntityAttr a;
+        a.LayerId  = 0;
+        a.LineType = lt;
+        ctx.BeginEntity(&a);
+        ctx.DrawLine({ 0, 0, 0 }, { 200.0, 0, 0 }, Math::Color4::White(), false);
+        Check(fontCalls == 0, "短线（长度 < 一个周期）不铺符号，与 AutoCAD 一致");
+    }
+
+    // DrawPath（曲线 / 多段线的连续虚线）以前传空的 emitSym，复杂线型只铺 dash/gap、
+    // 文字/形符号整条丢掉，表现为带符号的线型在曲线与多段线上不显示符号。
+    void TestDrawPathSymbol()
+    {
+        Scene s;
+        LineTypeTable& t = s.GetLineTypeTable();
+        LineTypeRecord rec;
+        rec.Name          = "PATHMARK";
+        rec.Pattern       = { 4.0, 0.0, -0.6 };
+        rec.PatternLength = 4.6;
+        LineTypeSymbol sym;
+        sym.PatternIndex = 1;
+        sym.Text         = "SP";
+        sym.Scale        = 0.1;
+        rec.Symbols.push_back(sym);
+        const LineTypeID lt = t.Add(rec);
+
+        std::vector<Vertex_P3_C4>    verts, fills;
+        std::vector<Vertex_P3_C4_UV> texts;
+        Overlay                      overlay;
+        StrokeFont font;
+        int fontCalls = 0;
+        FontResolver resolver = [&font, &fontCalls](uint32_t)
+        {
+            ++fontCalls;
+            return ResolvedTextStyle{ &font, 1.0, 0.0 };
+        };
+        DrawContext ctx(verts, fills, texts, overlay, s.GetLayerManager(), t,
+                        1.0, nullptr, std::move(resolver));
+        ctx.SetLineTypeScale(1.0);
+        ctx.SetTextStyleTable(&s.GetTextStyleTable());
+        EntityAttr a;
+        a.LayerId  = 0;
+        a.LineType = lt;
+        ctx.BeginEntity(&a);
+        ctx.DrawPath(std::vector<Math::Point3>{ {0, 0, 0}, {10.0, 0, 0} }, Math::Color4::White(), false);
+        // 10 / 4.6 ≈ 2 个周期，每个周期一个符号 ⇒ 至少 2 次
+        Check(fontCalls >= 2, "DrawPath 的复杂线型按周期铺出文字/符号（不再被空 lambda 丢弃）");
+    }
+
 int RunLineTypeSymbolTests()
 {
     g_failures = 0;
@@ -953,6 +1033,8 @@ int RunLineTypeSymbolTests()
     TestRealSampleRender();
     TestFontDirRecovery();
     TestSymbolAnchorAtSegmentStart();
+    TestShortLineSymbol();
+    TestDrawPathSymbol();
     const int n = g_failures - before;
     std::printf("复杂线型用例失败：%d\n", n);
     return n;
