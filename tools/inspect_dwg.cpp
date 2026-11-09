@@ -201,7 +201,9 @@ int wmain(int argc, wchar_t** argv)
                     const auto* lt = db->FindAs<MiniDWG::LineType>(l->LineTypeHandle);
                     std::printf("DWGLAYER %llx [%s] flags=%d color=%d ltype=[%s]\n", static_cast<unsigned long long>(h), l->Name.c_str(), int(l->Flags), int(l->Color.Index()), lt ? lt->Name.c_str() : "?");
                 }
-        std::printf("DWGHEADER ltscale=%g psltscale=%d celtscale=%g\n", db->Header.LineTypeScale, int(db->Header.PaperSpaceLineTypeScaling), db->Header.CurrentEntityLinetypeScale);
+        std::printf("DWGHEADER ltscale=%g psltscale=%d celtscale=%g extmin=(%.3f,%.3f) extmax=(%.3f,%.3f)\n", db->Header.LineTypeScale,
+                    int(db->Header.PaperSpaceLineTypeScaling), db->Header.CurrentEntityLinetypeScale, db->Header.ModelSpaceExtMin.X,
+                    db->Header.ModelSpaceExtMin.Y, db->Header.ModelSpaceExtMax.X, db->Header.ModelSpaceExtMax.Y);
         // MINICAD_ALLBLOCKS=1 时再列出模型空间实体（INSERT 带所引用块的句柄与名称）
         if (std::getenv("MINICAD_ALLBLOCKS") && db->ModelSpace())
             for (MiniDWG::Handle h : db->ModelSpace()->Entities)

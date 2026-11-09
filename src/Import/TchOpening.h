@@ -32,7 +32,7 @@ namespace MiniCAD::Tch
 
         inline bool SupportedVersion(const MiniDWG::RawDwgData& data)
         {
-            return data.Version >= MiniDWG::CadVersion::AC1018 && data.Main.size() >= (data.MainBits + 7) / 8;
+            return data.Version >= MiniDWG::CadVersion::AC1015 && data.Main.size() >= (data.MainBits + 7) / 8;
         }
 
         inline bool SkipPropertyBag(MiniDWG::DwgBitReader& r, int& texts, int& handles, int depth = 0)

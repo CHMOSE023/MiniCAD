@@ -593,7 +593,7 @@ namespace MiniCAD::Tch
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
         if (entity.Raw.DxfName != "TCH_NORTHTHUMB") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeNorthThumbCipher(entity, north, diagnostic);
-        if (data.Version < CadVersion::AC1018 || data.Main.size() < (data.MainBits + 7) / 8) return fail("unsupported DWG version for north thumb");
+        if (!Detail::SupportedVersion(data)) return fail("unsupported DWG version for north thumb");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchBase base;
         if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng base layout");

@@ -220,12 +220,13 @@ namespace
     std::unique_ptr<UnknownEntity> Wall10(bool tailBit = false) { return WallT20(10, tailBit); }
 
     // 旧版墙（基类 2～4）：基类后 1 字节、7 个 BD（起点、终点、曲线参数），再按 +12 / +78 / +144 位三个 RD
-    std::unique_ptr<UnknownEntity> OldWall(int baseVersion, double left = 120, double right = 120, double height = 3000)
+    std::unique_ptr<UnknownEntity> OldWall(int baseVersion, double left = 120, double right = 120, double height = 3000,
+                                           CadVersion version = CadVersion::AC1018)
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_WALL";
         auto& raw = e->Raw.Dwg;
-        raw.Version = CadVersion::AC1018;
+        raw.Version = version;
         DwgBitWriter r(raw.Version, Codec::CodePage::Gbk);
         r.WriteByte(static_cast<std::uint8_t>(baseVersion));
         if (baseVersion > 1) r.WriteBitDouble(100);
@@ -433,6 +434,12 @@ int main()
         MiniCAD::Tch::TchWall w;
         Check(MiniCAD::Tch::DecodeWall(*OldWall(baseVersion, 100, 140, 2800), w, &why) && Near(w.Start.X, 1000) && Near(w.End.X, 5000) &&
               Near(w.LeftWidth, 100) && Near(w.RightWidth, 140), "old plain wall (base 2..4) reads its geometry fields");
+        Check(MiniCAD::Tch::DecodeWall(*OldWall(baseVersion, 100, 140, 2800, CadVersion::AC1015), w, &why) && Near(w.Start.X, 1000) &&
+              Near(w.End.X, 5000) && Near(w.LeftWidth, 100) && Near(w.RightWidth, 140), "old plain wall in an AC1015 (R2000) drawing reads the same fields");
+    }
+    {
+        MiniCAD::Tch::TchWall w;
+        Check(!MiniCAD::Tch::DecodeWall(*OldWall(4, 100, 140, 2800, CadVersion::AC1014), w), "old plain wall in an R14 drawing is not guessed");
     }
     {
         MiniCAD::Tch::TchWall w;

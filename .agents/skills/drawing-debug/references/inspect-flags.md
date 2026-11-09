@@ -23,7 +23,7 @@
 | `MINICAD_GREPTEXT=子串` | 原文含该子串的 TEXT / ATTRIB / ATTDEF / MTEXT（句柄、类型、所有者、插入点（块内的是块坐标）、字高、文字样式及字体、未经处理的原始内容，格式码与 `\U+XXXX` 都原样打印） |
 | `MINICAD_BLOCK=块名子串` | 名称含该子串的块里的文字（位置、字高、宽度因子、内容）；多段线的图层、颜色（方式 / ACI）与顶点 |
 | `MINICAD_GLYPHS` | 按文字样式解析字体，列出字体里没有字形的字符（需在有 `fonts` 目录的工作目录下运行） |
-| `MINICAD_TABLES=1` | DWG 的 STYLE / LTYPE 表、布局与图纸空间块记录，导入后再打印场景里的两张表 |
+| `MINICAD_TABLES=1` | DWG 的 STYLE / LTYPE 表、布局与图纸空间块记录，导入后再打印场景里的两张表；`DWGHEADER` 行带原图记录的模型空间范围 `extmin` / `extmax`（与输出末尾 MiniCAD 算的 `Bounds` 对照，判断全部显示的范围偏大是不是原图本来如此） |
 | `MINICAD_LAYERS=子串` | 名称含该子串的图层的标志（1 冻结、4 锁定）、开关与颜色 |
 | `MINICAD_HATCH` | 按所有者块 / 图层 / 图案统计 HATCH；`HATCHSKIP` 行列出边界没有边、或非实心又没存图案线的填充（读入时会跳过）。其余被跳过的是缺口过大、整条丢弃的边界路径（AutoCAD 也不画），用 `MINICAD_H` 看它的路径 |
 | `MINICAD_HATCHPATHS` | 模型空间里每个 HATCH 的全部边界路径（标志、逐条边；多段线边逐顶点）——填充画成大块实心、范围不对时看各段是否相接 |

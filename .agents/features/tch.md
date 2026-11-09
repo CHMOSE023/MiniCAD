@@ -15,7 +15,7 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 
 | 文件 | 对象 |
 |---|---|
-| `TchOpening.h` | TCH基类（`TCH_Base`）的私有布局（R2007 起字符串在文字流，R2004 及更早嵌在主数据流）、门窗 |
+| `TchOpening.h` | TCH基类（`TCH_Base`）的私有布局（R2007 起字符串在文字流，R2004 及更早嵌在主数据流）、门窗；`Tch::Detail::SupportedVersion` 是明文对象共用的最低版本（R2000） |
 | `TchCipher.h` | `Tch::Detail::CipherReader`：新版对象的读取；各类的头文件有 `Decode*Cipher` 分支或 `Read*Fields` 模板（`Tch::Detail::PlainFields` / `Tch::Detail::CipherFields` 两种读法共用一份字段顺序）。也能读旧版明文对象；属性表 `TchXDataMap` 也在这里 |
 | `TchSheet.h` | TCH表格（`TCH_SHEET`）：`Tch::DecodeSheet` 读出行、列、合并区、单元格与标题，`Tch::BuildSheet` 画格线与文字 |
 | `TchWall.h` | 墙、幕墙（`Tch::DecodeCurtainWall` 读出与墙相同的字段；读不出时 `Tch::DecodeWallPrefix` 只取轴线与墙厚） |
@@ -36,6 +36,7 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 - **TCH表格**：`Tch::DecodeSheet` / `Tch::BuildSheet`；读完子对象要恢复外层状态（`Tch::Detail::CipherLayer`）；文字放不放得下按TCH步进估宽（`Tch::Detail::SheetTextWidth`）。未处理：格线的颜色与线型、单元格里的图块、主样式与标题样式以外的单元格文字样式、多行单元格里的上标
 - **内视符号**：`Tch::DecodeInSight` / `Tch::BuildInSight`；编号大小取对象的比例，为 0 时取 `TchConfig::IndexTextRatio` / `TchConfig::IndexTextMode`；实心区域经 `TchGraphics::Fills` 画成 SOLID 填充（`Importer::MakeTchGraphics`）。未做：遮罩、视图翻转时上下文字对调
 - **新版（T30，TCH基类版本 9～14）**：各类的版本号与明文版本的对应写在 `Read*Fields` / `Decode*Cipher` 上方的注释里。自带 RC 版本与密钥、第二个密钥为 0 的子层用 `Tch::Detail::CipherLayer`（表格子对象、屋顶基类、管线接口、标注样式、管件基类的列表）。TCH基类里的属性包值与文字方向记在 `Tch::Detail::CipherReader::FieldStrings` / `Tch::Detail::CipherReader::FieldNumbers` / `Tch::Detail::CipherReader::Angle`（立管、多管标注要用）。机电：管线节点基类没有加密层（`Tch::Detail::ReadCipherPipeNode`）；属性表移进了TCH基类（`Tch::Detail::CipherReader::XData`），管线基类版本 4 在末尾另存 Start、End（`Tch::Detail::ReadCipherPipeBase`）
+- **DWG2000（AC1015）**：对象编码与 2004 相同（字符串同样内嵌），明文对象按 2004 的读法读，版本门槛统一经 `Tch::Detail::SupportedVersion`，墙的版本白名单另含 AC1015；R14 及更早不读。已用 2000 格式的实物图纸核对显示位置；读不完主数据流的照旧跳过。按位置跳过字符串的给排水类（井、设备、水泵、阀门、法兰、立管 / 井 / 多管标注，`Tch::Detail::CheckPayload` 不带 `inlineText` 的）与 2004 一样仍不支持
 - **DWG2004**：没有单独的文字流，GUID、属性名与密文都是主数据流里的 GBK 文字；密文字符在 GBK 里有的存为双字节，没有的写成 `\U+XXXX`，`Tch::Detail::CipherReader` 取各字符的低字节解密，与 2007 起 UTF-16 的做法相同。实物图纸（中望看图另存）里坐标标注读出的格式 48、方向 3 超出已核对的范围，仍跳过。明文机电对象里只有管线、管件、管线文字（`Tch::DecodePipe`、`Tch::DecodePipeFitting`、`Tch::DecodePipeText`，`Tch::Detail::CheckPayload` 的 `inlineText`）按内嵌字符串读 2004 格式，其余给排水类仍要求 2007 起
 - **暖通**：风管与管件的几何都在属性表里（`Tch::ReadCableTrayMap` / `Tch::ReadCableFittingMap`，明文管件的属性表后是边界列表（每条带若干段）与连接数，与风管相同）。管件按属性表的键分类型（`Tch::DecodeHvacFitting`）：三通 I4 为支管样式（1 直、3 弧形、5 Y 形、7 Y 形而对侧为直边），四通有 Pt4 / Pt5，乙字弯有 R28、R34 而无 Vt6（R2 为偏移，竖向偏移画直管加 Z 形符号），分节弯头的节数 I5 ≥ 2 时取 I5、否则 I4 − 1。风管标注 `TCH_HVACDIMENSION` 是TCH基类 + BS 版本 1 + 属性表（`Tch::DecodeHvacDimension`）：S1 为“|”分隔的显示文字，I4 = 0 时文字居中在 Pt6，I4 = 4 时引线到 Pt7 再画两行两列的表格；天正按字形实际宽度定列宽，这里是估算（误差约 1 个字宽）。以上对照 2004 格式图纸的天正分解核对；分解结果会被重叠对象裁掉一部分，比对时只看“参照有而 MiniCAD 没有”的部分
 - **TCH基类版本 6～8**（天正 T20 各版另存，版本 7 也见于中望看图另存的 2018 格式）：`ReadTchBase` 在版本 5 的字段后读属性表（键在文字流、值在主数据流，`Tch::Detail::SkipXDataMap`），之后接旧版明文的各类字段（柱 6、门窗 5 等）；要传 `data`（组合门窗的子门窗、`Tch::DecodeSheet` 也传）。句柄个数：版本 6 不减偏量，7 / 8 的两组分别减 5、3；版本 8 在属性表后多一段内联 GUID 文字。墙（`Tch::Detail::DecodeWallFields`）的受保护几何类版本随基类为 9 / 10 / 11：9 只异或密钥、墙高在左右宽之后，结尾标记后可有不超过 16 个全 0 位；10 / 11 同标记 7 先互换半字节再异或、墙高在左右宽之前，结尾多 13 个 0 位（含义未核对）；11 在受保护几何后、门窗段前多 4 字节
@@ -64,5 +65,5 @@ covers: src/Import/Tch*, tests/Core/Tch*, tests/Core/TianzhengWallTests.cpp
 
 ## 测试与排查
 
-- 按对象分的测试程序：`MiniCADTianzhengTests`（墙）、`MiniCADTchImportTests`、`MiniCADTchOpeningTests`（含 T20 基类 6～8、墙类版本 9～11、旧版明文墙）、`MiniCADTchDimensionTests`、`MiniCADTchSymbolTests`、`MiniCADTchCipherTests`（新版对象：合成对象往返与写成 DWG 再读回、内视符号与剖切符号新国标样式、图纸设置、老虎窗 / 房间 / 曲面网格与随机数据误认核对；设 `MINICAD_TCH_SAMPLE=<路径>` 时把合成的建筑、楼梯、屋顶、符号与给排水、电气、暖通对象写成 R2010 图纸，可用第三方查看器对照；设 `MINICAD_HVAC_SAMPLE=<路径>` 时检查该暖通图纸的管线、风管标注与风管管件都能解码）、`MiniCADTchSheetTests`（TCH表格：合成的新旧版表格、格线与文字位置）、`MiniCADTchStairTests`、`MiniCADTchPathArrayTests`、`MiniCADTchGeometryTests`；样例图纸多在本机 `tests/Data`，不存在时跳过
+- 按对象分的测试程序：`MiniCADTianzhengTests`（墙）、`MiniCADTchImportTests`、`MiniCADTchOpeningTests`（含 T20 基类 6～8、墙类版本 9～11、旧版明文墙）、`MiniCADTchDimensionTests`、`MiniCADTchSymbolTests`、`MiniCADTchCipherTests`（新版对象：合成对象往返与写成 DWG 再读回、内视符号与剖切符号新国标样式、图纸设置、老虎窗 / 房间 / 曲面网格与随机数据误认核对；设 `MINICAD_TCH_SAMPLE=<路径>` 时把合成的建筑、楼梯、屋顶、符号与给排水、电气、暖通对象写成 R2010 图纸，可用第三方查看器对照；设 `MINICAD_HVAC_SAMPLE=<路径>` 时检查该暖通图纸的管线、风管标注与风管管件都能解码；设 `MINICAD_R2000_SAMPLE=<路径>` 时检查该 2000 格式图纸里有解码函数的TCH对象全部解出）、`MiniCADTchSheetTests`（TCH表格：合成的新旧版表格、格线与文字位置）、`MiniCADTchStairTests`、`MiniCADTchPathArrayTests`、`MiniCADTchGeometryTests`；样例图纸多在本机 `tests/Data`，不存在时跳过
 - `MiniCADDwgInspect` 加 `MINICAD_GEOM=1` 输出TCH对象生成的几何（与TCH分解结果比对），`MINICAD_RAWOBJ=<DXF 名>` 导出某类对象的原始数据流，`MINICAD_H=<句柄>` 查看指定对象，`DIMSTYLE` 行打印 `azin`、`clrt` / `clrd` / `clre`；详见 skill `drawing-debug`

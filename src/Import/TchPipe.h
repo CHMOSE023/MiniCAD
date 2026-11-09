@@ -46,7 +46,7 @@ namespace MiniCAD::Tch
         {
             const auto& data = entity.Raw.Dwg;
             if (entity.Raw.DxfName != name) return false;
-            const auto minVersion = inlineText ? MiniDWG::CadVersion::AC1018 : MiniDWG::CadVersion::AC1021;
+            const auto minVersion = inlineText ? MiniDWG::CadVersion::AC1015 : MiniDWG::CadVersion::AC1021;
             if (data.Version < minVersion || data.Main.size() < (data.MainBits + 7) / 8)
             {
                 why = "unsupported DWG version for native pipe object";

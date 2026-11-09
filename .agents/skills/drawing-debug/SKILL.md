@@ -34,6 +34,7 @@ $env:TEMP='D:\MiniCAD\out\tmp'; $env:TMP=$env:TEMP
 | 文字 / 字体 | `MINICAD_GREPTEXT=子串`（按原文找 TEXT / MTEXT，看格式码与转义）、`MINICAD_FINDTEXT=内容`、`MINICAD_BLOCK=块名子串`、`MINICAD_GLYPHS`（字体缺哪些字形）、`MINICAD_TABLES=1`（文字样式 / 线型表） |
 | 天正对象 | `MINICAD_GEOM=1`（生成的几何，与天正分解结果比对）、`MINICAD_RAWOBJ=DXF 名`（原始数据流）、`MINICAD_MLEADER`、`MINICAD_EMAP`、`MINICAD_WALLRAW`（墙的材料码与连接量、门窗标志与编号、图纸的墙柱填充设置） |
 | 布局页 / 视口 | `MINICAD_VIEWPORTS=1`、`MINICAD_LAYERS=子串`（冻结 / 关闭的图层） |
+| 全部显示范围不对 | `MINICAD_TABLES=1` 的 `DWGHEADER` 行（原图记录的 `extmin` / `extmax`）对照末尾的 `Bounds`；再用 `MINICAD_GEOM=1` 找坐标离群的TCH对象 |
 | 遮挡 / 裁剪 | `MINICAD_WIPEOUT`、`MINICAD_WIPECHECK`、`MINICAD_XCLIP` |
 | OLE 对象 | `MINICAD_OLEDIR=目录`（导出原始数据） |
 | 三维实体 / 曲面只有边线或缺面 | 看导入日志的"只显示边线" / "缺面"统计；`MINICAD_DUMP_SECTIONS=目录`（R2013 起的 ACIS 数据存储段）；`AcisImportTests` 带 `MINICAD_ACIS_DIR=目录`、`MINICAD_ACIS_FACES=1` 列出建不出的面（见 `docs/Solid/PLAN.md` 第 16 节） |

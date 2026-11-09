@@ -611,7 +611,7 @@ namespace MiniCAD::Tch
         if (entity.Raw.DxfName != "TCH_INDEXPOINTER") return false;
         if (Detail::IsCipherObject(data)) return Detail::DecodeIndexPointerCipher(entity, pointer, diagnostic);
         auto fail = [&](const char* why) { if (diagnostic) *diagnostic = why; return false; };
-        if (data.Version < CadVersion::AC1018 || data.Main.size() < (data.MainBits + 7) / 8)
+        if (!Detail::SupportedVersion(data))
             return fail("unsupported DWG version for native index symbol");
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
         TchSymbolBase symbol;

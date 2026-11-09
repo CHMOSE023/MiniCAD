@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -956,6 +957,19 @@ namespace
 
     bool NearPoint(const Tch::TchGraphics::Point& p, double x, double y, double tol = 1e-6) { return Near(p.X, x, tol) && Near(p.Y, y, tol); }
 
+    std::string EnvPath(const char* name)
+    {
+#ifdef _WIN32
+        const std::wstring wname(name, name + std::strlen(name));
+        const wchar_t* wide = _wgetenv(wname.c_str());
+        const std::u8string u8 = wide ? std::filesystem::path(wide).u8string() : std::u8string{};
+        return {u8.begin(), u8.end()};
+#else
+        const char* env = std::getenv(name);
+        return env ? env : "";
+#endif
+    }
+
     std::vector<std::uint8_t> ReadFile(const std::string& path)
     {
         const std::u8string u8(path.begin(), path.end());      // 路径可能含中文，按 UTF-8 解释
@@ -1715,15 +1729,33 @@ int main()
         }
     }
 
+    // MINICAD_R2000_SAMPLE=<路径>：R2000 图纸里有解码函数的TCH对象全部解出
     {
-#ifdef _WIN32
-        const wchar_t* wide = _wgetenv(L"MINICAD_HVAC_SAMPLE");
-        const std::u8string u8 = wide ? std::filesystem::path(wide).u8string() : std::u8string{};
-        const std::string file(u8.begin(), u8.end());
-#else
-        const char* env = std::getenv("MINICAD_HVAC_SAMPLE");
-        const std::string file = env ? env : "";
-#endif
+        const std::string file = EnvPath("MINICAD_R2000_SAMPLE");
+        const auto data = file.empty() ? std::vector<std::uint8_t>{} : ReadFile(file);
+        if (data.empty()) std::printf("[SKIP] MINICAD_R2000_SAMPLE\n");
+        else if (const auto db = ReadDwg(data); !db || db->GetVersion() != CadVersion::AC1015) Check(false, "R2000 sample reads as AC1015");
+        else
+        {
+            int total = 0, decoded = 0;
+            for (const auto& [handle, object] : db->Objects())
+            {
+                const auto* e = dynamic_cast<const UnknownEntity*>(object.get());
+                if (!e || e->Raw.DxfName.rfind("TCH_", 0) != 0) continue;
+                std::string why;
+                const int r = DecodeByType(*e, why);
+                if (r < 0) continue;
+                ++total;
+                decoded += r;
+                if (r == 0) std::printf("  %s: %s\n", e->Raw.DxfName.c_str(), why.c_str());
+            }
+            Check(total > 0 && decoded == total,
+                  ("R2000 sample: " + std::to_string(decoded) + " of " + std::to_string(total) + " Tianzheng objects decode").c_str());
+        }
+    }
+
+    {
+        const std::string file = EnvPath("MINICAD_HVAC_SAMPLE");
         const auto data = file.empty() ? std::vector<std::uint8_t>{} : ReadFile(file);
         if (data.empty()) std::printf("[SKIP] MINICAD_HVAC_SAMPLE\n");
         else if (const auto db = ReadDwg(data); !db) Check(false, "R2004 HVAC sample reads");

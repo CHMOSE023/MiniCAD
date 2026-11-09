@@ -45,7 +45,7 @@ namespace MiniCAD::Tch::Detail
 { 
     inline bool IsCipherObject(const MiniDWG::RawDwgData& data)
     {
-        return data.Version >= MiniDWG::CadVersion::AC1018 && data.MainBits >= 16 && data.Main.size() >= (data.MainBits + 7) / 8 &&
+        return data.Version >= MiniDWG::CadVersion::AC1015 && data.MainBits >= 16 && data.Main.size() >= (data.MainBits + 7) / 8 &&
                data.Main[0] >= 9 && data.Main[0] <= 14;
     }
      

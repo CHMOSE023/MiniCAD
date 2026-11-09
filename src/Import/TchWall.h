@@ -63,7 +63,7 @@ namespace MiniCAD::Tch
         using namespace MiniDWG;
         const auto& data = entity.Raw.Dwg;
         if (entity.Raw.DxfName != "TCH_WALL" && entity.Raw.DxfName != "TCH_CURTAIN_WALL") return false;
-        if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8 ||
+        if ((data.Version != CadVersion::AC1015 && data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027) || data.Main.size() < (data.MainBits + 7) / 8 ||
             data.MainBits < 773)
             return false;
         DwgBitReader r(data.Main, data.Version, Codec::CodePage::Gbk);
@@ -213,7 +213,7 @@ namespace MiniCAD::Tch
                     " bits; verified range is 773.." + std::to_string(maxBits);
                 return false;
             }
-            if ((data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027 &&
+            if ((data.Version != CadVersion::AC1015 && data.Version != CadVersion::AC1018 && data.Version != CadVersion::AC1024 && data.Version != CadVersion::AC1027 &&
                  !(t20Base && data.Version == CadVersion::AC1032)) || data.Main.size() < (data.MainBits + 7) / 8)
                 return false;
             auto fail = [&](const std::string& why) { if (diagnostic) *diagnostic = why; return false; };

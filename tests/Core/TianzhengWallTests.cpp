@@ -17,18 +17,19 @@
 using namespace MiniDWG;
 namespace {
     std::unique_ptr<UnknownEntity> Fixture(double radius = 0, double width = 120, double x = 1000, bool compressed = false,
-                                         std::uint8_t protectionKey = 0xeb, std::int16_t openings = 0)
+                                         std::uint8_t protectionKey = 0xeb, std::int16_t openings = 0,
+                                         CadVersion version = CadVersion::AC1027)
     {
         auto e = std::make_unique<UnknownEntity>();
         e->Raw.DxfName = "TCH_WALL";
-        e->Raw.Dwg.Version = CadVersion::AC1027;
-        DwgBitWriter g(CadVersion::AC1027, Codec::CodePage::Gbk);
+        e->Raw.Dwg.Version = version;
+        DwgBitWriter g(version, Codec::CodePage::Gbk);
         g.Write3RawDouble({x, 2000, 0}); g.Write3RawDouble({5000, 2000, 0});
         g.WriteRawDouble(radius); g.WriteRawLong(0);
         g.WriteRawDouble(width); g.WriteRawDouble(120); g.WriteRawDouble(3000);
         auto protectedData = g.Take();
         for (auto& byte : protectedData) byte ^= protectionKey;
-        DwgBitWriter r(CadVersion::AC1027, Codec::CodePage::Gbk);
+        DwgBitWriter r(version, Codec::CodePage::Gbk);
         r.WriteByte(5); r.WriteBitDouble(compressed ? 1 : 100); r.WriteBitShort(0); r.WriteByte(3);
         r.Write2Bits(0); r.WriteRawShort(512); r.WriteByte(8); r.WriteByte(protectionKey);
         r.WriteBytes(protectedData);
@@ -37,6 +38,7 @@ namespace {
         r.WriteBitDouble(compressed ? 0 : 80.08);
         for (double join : {10.0, 20.0, -10.0, -20.0}) r.WriteBitDouble(compressed ? 0 : join);
         r.WriteByte(0); r.Write3Bits(2);
+        if (version < CadVersion::AC1021) r.WriteVariableText("");
         e->Raw.Dwg.MainBits = r.PositionInBits(); e->Raw.Dwg.Main = r.Take();
         return e;
     }
@@ -139,6 +141,15 @@ int main()
     check(!MiniCAD::Tch::DecodeWall(*wrong, wall), "unverified DWG version rejected");
     auto v2010 = Fixture(); v2010->Raw.Dwg.Version = CadVersion::AC1024;
     check(MiniCAD::Tch::DecodeWall(*v2010, wall) && wall.Start.X == 1000, "AC1024 (2010) drawing uses the same layout");
+    for (const auto version : {CadVersion::AC1015, CadVersion::AC1018})
+    {
+        auto inlineText = Fixture(0, 120, 1000, false, 0xeb, 0, version);
+        check(MiniCAD::Tch::DecodeWall(*inlineText, wall) && wall.Start.X == 1000 && wall.End.X == 5000 && wall.LeftWidth == 120,
+              version == CadVersion::AC1015 ? "AC1015 (R2000) wall reads the trailing string inline" : "AC1018 (R2004) wall reads the trailing string inline");
+        MiniCAD::Tch::TchWall prefix;
+        check(MiniCAD::Tch::DecodeWallPrefix(*inlineText, prefix) && prefix.Start.X == 1000 && prefix.LeftWidth == 120,
+              "wall prefix (curtain-wall fallback) accepts the same DWG version");
+    }
     check(MiniCAD::Tch::DecodeWall(*Fixture(0, 0), wall) && wall.LeftWidth == 0 && wall.RightWidth == 120,
         "wall with one zero-width side (axis on wall face) decodes");
     wrong = Fixture(); wrong->Raw.DxfName = "TCH_COLUMN";
