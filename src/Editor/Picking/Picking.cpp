@@ -41,6 +41,41 @@ namespace MiniCAD
         // Sink、再在屏幕空间统一做距离 / 区域命中测试来支持拾取。
         // (XLine / Ray 已单独特化,见 AsXLineGeometry / ParamLineClipBox2。)
         // 这样组合型实体(标注、块引用展开的子实体)无需在拾取里重复其几何构造逻辑。
+        // 文字的屏幕外框（凸四边形）：多行文字按实际文字的旋转矩形，单行文字按包围盒
+        bool TextScreenQuad(const Object& obj, const Camera& camera, std::array<Math::Point2, 4>& q)
+        {
+            std::array<Math::Point3, 4> w;
+            if (obj.IsKindOf<MTextEntity>())
+                w = static_cast<const MTextEntity&>(obj).GetTextFrame();
+            else if (obj.IsKindOf<TextEntity>())
+            {
+                const auto b = static_cast<const TextEntity&>(obj).GetBoundingBox();
+                w = { Math::Point3{ b.Min.x, b.Max.y, b.Min.z }, Math::Point3{ b.Max.x, b.Max.y, b.Min.z },
+                      Math::Point3{ b.Max.x, b.Min.y, b.Min.z }, Math::Point3{ b.Min.x, b.Min.y, b.Min.z } };
+            }
+            else
+                return false;
+            for (size_t i = 0; i < 4; ++i)
+                q[i] = camera.WorldToScreen(w[i]);
+            return true;
+        }
+
+        bool PointInConvexQuad(const Math::Point2& p, const std::array<Math::Point2, 4>& q)
+        {
+            int sign = 0;
+            for (size_t i = 0; i < 4; ++i)
+            {
+                const auto& a = q[i];
+                const auto& b = q[(i + 1) % 4];
+                const double c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+                if (std::abs(c) < 1e-12) continue;
+                const int sc = c > 0.0 ? 1 : -1;
+                if (sign == 0) sign = sc;
+                else if (sc != sign) return false;
+            }
+            return true;
+        }
+
         class PickCollectSink : public IDrawSink
         {
         public:
@@ -548,32 +583,20 @@ namespace MiniCAD
                 }
 
                 // ── TextEntity / MTextEntity 点选 ────────────────────────────────────
-                // 区域型实体：点在包围盒屏幕投影内即命中，用点到中心距离竞争
+                // 区域型实体：点在文字外框的屏幕投影内（外扩 thresh 像素）即命中，用点到中心距离竞争
+                if (std::array<Math::Point2, 4> q; TextScreenQuad(obj, camera, q))
                 {
-                    const Entity* textEnt = nullptr;
-                    if      (obj.IsKindOf<TextEntity>())  textEnt = static_cast<const TextEntity*>(&obj);
-                    else if (obj.IsKindOf<MTextEntity>()) textEnt = static_cast<const MTextEntity*>(&obj);
-
-                    if (textEnt)
+                    bool inside = PointInConvexQuad(pt, q);
+                    for (size_t i = 0; i < 4 && !inside; ++i)
+                        inside = Math::Distance(pt, Math::ClosestPointOnSegment(pt, q[i], q[(i + 1) % 4])) <= thresh;
+                    if (inside)
                     {
-                        auto bbox  = textEnt->GetBoundingBox();
-                        auto ss_bl = camera.WorldToScreen({ bbox.Min.x, bbox.Min.y, bbox.Min.z });
-                        auto ss_tr = camera.WorldToScreen({ bbox.Max.x, bbox.Max.y, bbox.Max.z });
-
-                        double sx0 = std::min(ss_bl.x, ss_tr.x), sy0 = std::min(ss_bl.y, ss_tr.y);
-                        double sx1 = std::max(ss_bl.x, ss_tr.x), sy1 = std::max(ss_bl.y, ss_tr.y);
-
-                        // 扩展 thresh 像素，与线段类实体手感一致
-                        if (pt.x >= sx0 - thresh && pt.x <= sx1 + thresh &&
-                            pt.y >= sy0 - thresh && pt.y <= sy1 + thresh)
+                        const Math::Point2 center = { (q[0].x + q[2].x) * 0.5, (q[0].y + q[2].y) * 0.5 };
+                        const double d = Math::Distance(pt, center);
+                        if (d < bestDist)
                         {
-                            Math::Point2 center = { (sx0 + sx1) * 0.5, (sy0 + sy1) * 0.5 };
-                            double d = Math::Distance(pt, center);
-                            if (d < bestDist)
-                            {
-                                bestDist = d;
-                                best     = obj.GetID();
-                            }
+                            bestDist = d;
+                            best     = obj.GetID();
                         }
                     }
                 }
@@ -1133,39 +1156,20 @@ namespace MiniCAD
                 }
 
                 // ── TextEntity / MTextEntity 框选 ────────────────────────────────────
+                if (std::array<Math::Point2, 4> corners; TextScreenQuad(obj, camera, corners))
                 {
-                    const Entity* textEnt = nullptr;
-                    if      (obj.IsKindOf<TextEntity>())  textEnt = static_cast<const TextEntity*>(&obj);
-                    else if (obj.IsKindOf<MTextEntity>()) textEnt = static_cast<const MTextEntity*>(&obj);
-
-                    if (textEnt)
+                    bool hit = false;
+                    if (fullyContain)
+                        hit = Math::AllPointsInBox2(corners.data(), 4, box);
+                    else
                     {
-                        auto bbox  = textEnt->GetBoundingBox();
-                        // 包围盒4角（世界→屏幕）
-                        Math::Point2 corners[4] = {
-                            camera.WorldToScreen({ bbox.Min.x, bbox.Min.y, bbox.Min.z }),
-                            camera.WorldToScreen({ bbox.Max.x, bbox.Min.y, bbox.Min.z }),
-                            camera.WorldToScreen({ bbox.Max.x, bbox.Max.y, bbox.Min.z }),
-                            camera.WorldToScreen({ bbox.Min.x, bbox.Max.y, bbox.Min.z }),
-                        };
-
-                        bool hit = false;
-                        if (fullyContain)
-                        {
-                            hit = Math::AllPointsInBox2(corners, 4, box);
-                        }
-                        else
-                        {
-                            hit = Math::AnyPointsInBox2(corners, 4, box)         ||
-                                  Math::SegmentIntersectsBox2(corners[0], corners[1], box) ||
-                                  Math::SegmentIntersectsBox2(corners[1], corners[2], box) ||
-                                  Math::SegmentIntersectsBox2(corners[2], corners[3], box) ||
-                                  Math::SegmentIntersectsBox2(corners[3], corners[0], box);
-                        }
-
-                        if (hit)
-                            result.insert(obj.GetID());
+                        hit = Math::AnyPointsInBox2(corners.data(), 4, box)
+                           || PointInConvexQuad({ (box.Min.x + box.Max.x) * 0.5, (box.Min.y + box.Max.y) * 0.5 }, corners);
+                        for (size_t i = 0; i < 4 && !hit; ++i)
+                            hit = Math::SegmentIntersectsBox2(corners[i], corners[(i + 1) % 4], box);
                     }
+                    if (hit)
+                        result.insert(obj.GetID());
                 }
 
                 // ── XLineEntity / RayEntity 框选 ─────────────────────────────────────

@@ -255,12 +255,16 @@ namespace MiniCAD
         Math::Point3 insert;
         double       height = 2.5, boxWidth = 0.0;
         std::string  initial;
+        bool         editText = false;
         if (multiline)
         {
             const auto& r = editor.GetMTextInputRequest();
             insert = r.InsertPos; height = r.Height; boxWidth = r.BoxWidth;
             if (r.EditTargetId != Object::InvalidID)
-                initial = r.InitialText;
+            {
+                initial  = r.DisplayText;
+                editText = r.EditRow < 0;
+            }
         }
         else
         {
@@ -300,8 +304,10 @@ namespace MiniCAD
         ts.borderFocus = Colors::Transparent;
         box->SetStyle(ts);
         const float minWidth = fontSize * (multiline ? 16.0f : 8.0f);
+        const float maxWidth = std::max((vb.max.x - vb.min.x) / m_dpiScale - 24.0f, fontSize * 6.0f);
         const float fixedWidth = multiline && boxWidth > 0.0 ? static_cast<float>(boxWidth * ppu) / m_dpiScale : 0.0f;
-        box->EditLayoutStyle().width = std::max(fixedWidth > 0.0f ? fixedWidth : minWidth, fontSize * 6.0f);
+        const float wanted = fixedWidth <= 0.0f ? minWidth : editText ? std::max(fixedWidth, minWidth) : fixedWidth;
+        box->EditLayoutStyle().width = std::clamp(wanted, fontSize * 6.0f, maxWidth);
         if (multiline)
         {
             box->SetMultiline(true);

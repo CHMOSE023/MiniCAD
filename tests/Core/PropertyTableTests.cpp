@@ -170,6 +170,9 @@ int RunPropertyTableTests()
         Check(h && Near(Num(*h, "高度"), 5.0), "多行文字：改高度");
         auto t = ApplyProperty(mt, "内容", PropValue(std::string("abc")));
         Check(t && static_cast<MTextEntity&>(*t).GetText() == "abc", "多行文字：改内容");
+        MTextEntity fmt(27, 0, "{\\fArial|b0;12.50m}", { 0, 0, 0 }, 2.5);
+        auto f = ApplyProperty(fmt, "内容", PropValue(std::string("13.60m")));
+        Check(f && static_cast<MTextEntity&>(*f).GetText() == "{\\fArial|b0;13.60m}", "多行文字：内容显示去码的文字，改了之后外层的格式码保留");
         auto bw = ApplyProperty(mt, "框宽度", PropValue(0.0));
         Check(bw && Near(Num(*bw, "框宽度"), 0.0), "多行文字：框宽度可以是 0（不限宽）");
         Check(!ApplyProperty(mt, "框宽度", PropValue(-1.0)), "多行文字：框宽度不能为负");

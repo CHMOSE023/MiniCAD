@@ -2,13 +2,16 @@
 #include "Core/Entity/DimensionEntity.hpp"
 #include "Core/Entity/MTextEntity.hpp"
 #include "Core/Entity/TextEntity.hpp"
+#include "Core/Math/Constants.hpp"
 #include "Document/DrawContext.hpp"
+#include "Editor/Picking/Picking.h"
 #include "Scene/Scene.h"
 #include "Scene/TextStyleTable.h"
 #include "Serialization/JsonSerializer.h"
 #include "Text/Font/FontEngine.h"
 #include "Text/Font/TTFFont.h"
 #include "Text/Layout/TextLayoutEngine.h"
+#include "Viewport/Viewport.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -670,6 +673,44 @@ int RunTextStyleTests()
               "钢筋符号 %%130：字体里没有时从单线字体取；线型的形文件缺形不回退");
     }
 #endif
+
+    {
+        Scene scene;
+        const auto id = scene.NextObjectID();
+        auto mt = std::make_unique<MTextEntity>(id, 0, "AB", Math::Point3{ 0, 0, 0 }, 10.0, Math::PI / 2, 1000.0);
+        mt->SetAttachment(MTextAttachment::TopRight);
+        const AABB bb = mt->GetBoundingBox();
+        Check(Near(bb.Min.x, 0.0) && Near(bb.Max.x, 10.0) && Near(bb.Min.y, -12.0) && Near(bb.Max.y, 0.0),
+              "多行文字包围盒：参考框比文字宽很多、右上附着、旋转 90° 时只包住文字本身");
+        scene.AddEntity(std::move(mt));
+
+        Viewport viewport(800.f, 600.f);
+        viewport.GetCamera().ZoomToBounds(-60, -60, 60, 60);
+        Picking picking;
+        picking.Bind(scene, viewport);
+        auto at = [&](double x, double y) { return viewport.GetCamera().WorldToScreen({ x, y, 0 }); };
+        Check(picking.HitTest(at(5, -6), 5.0) == id, "多行文字点选：点在文字上命中");
+        Check(picking.HitTest(at(5, -40), 5.0) == Object::InvalidID, "多行文字点选：点在参考框里、文字外面不命中");
+        const auto a = at(2, -3), b = at(8, -9);
+        Check(picking.BoxSelect(b, a).count(id) == 1, "多行文字框选：交叉框整个落在文字里也选中");
+    }
+
+    {
+        const std::string raw = "{\\fArial|b0|i0|c0|p34;12.50m}";
+        Check(MTextEntity::StripInlineCodes(raw) == "12.50m", "原位编辑：编辑框显示去掉格式码的文字");
+        Check(MTextEntity::ApplyPlainEdit(raw, "12.50m") == raw, "原位编辑：没改文字时原文不变");
+        Check(MTextEntity::ApplyPlainEdit(raw, "13.60m") == "{\\fArial|b0|i0|c0|p34;13.60m}", "原位编辑：改了文字，外层的字体格式保留");
+        Check(MTextEntity::ApplyPlainEdit(raw, "标高 12.50m") == "{\\fArial|b0|i0|c0|p34;标高 12.50m}", "原位编辑：在开头插入的文字落在格式组里");
+        Check(MTextEntity::ApplyPlainEdit(raw, "12.50m\n{a}\\") == "{\\fArial|b0|i0|c0|p34;12.50m\\P\\{a\\}\\\\}",
+              "原位编辑：换行写成 \\P，花括号、反斜杠转义");
+
+        const std::string mixed = "{\\fA;ab}{\\H2x;cd}\\S1/2;";
+        Check(MTextEntity::StripInlineCodes(mixed) == "abcd1/2", "原位编辑：多段格式与堆叠的去码文字");
+        Check(MTextEntity::ApplyPlainEdit(mixed, "aXd1/2") == "{\\fA;aX}{\\H2x;d}\\S1/2;", "原位编辑：跨两个格式组改字，两组的格式码与括号都保留");
+        Check(MTextEntity::ApplyPlainEdit(mixed, "abcd1/3") == "{\\fA;ab}{\\H2x;cd}1/3", "原位编辑：改到堆叠时整个堆叠换成新文字");
+        Check(MTextEntity::ApplyPlainEdit("中文", "中央") == "中央" && MTextEntity::ApplyPlainEdit("\\U+4E2D文", "中央") == "\\U+4E2D央",
+              "原位编辑：按整字替换，\\U+ 转义的字不拆开");
+    }
 
     return g_failures;
 }

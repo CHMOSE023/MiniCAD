@@ -1280,9 +1280,10 @@ namespace MiniCAD
             const auto col = static_cast<size_t>(m_mtextRequest.EditCol);
             m_mtextRequest.EditTargetId = Object::InvalidID;
             m_mtextRequest.EditRow = m_mtextRequest.EditCol = -1;
-            if (utf8Text != m_mtextRequest.InitialText)
+            const std::string after = MTextEntity::ApplyPlainEdit(m_mtextRequest.InitialText, utf8Text);
+            if (after != m_mtextRequest.InitialText)
                 m_doc->GetCommandStack().Execute(
-                    std::make_unique<EditTableCellCommand>(id, row, col, m_mtextRequest.InitialText, utf8Text), scene);
+                    std::make_unique<EditTableCellCommand>(id, row, col, m_mtextRequest.InitialText, after), scene);
             return;
         }
 
@@ -1297,11 +1298,9 @@ namespace MiniCAD
 
         if (m_mtextRequest.EditTargetId != Object::InvalidID)
         {
-            auto cmd = std::make_unique<EditMTextCommand>(
-                m_mtextRequest.EditTargetId,
-                m_mtextRequest.InitialText,
-                utf8Text);
-            cmdStack.Execute(std::move(cmd), scene);
+            const std::string after = MTextEntity::ApplyPlainEdit(m_mtextRequest.InitialText, utf8Text);
+            if (after != m_mtextRequest.InitialText)
+                cmdStack.Execute(std::make_unique<EditMTextCommand>(m_mtextRequest.EditTargetId, m_mtextRequest.InitialText, after), scene);
             m_mtextRequest.EditTargetId = Object::InvalidID;
             LOG_DEBUG("[MTextEdit] modified: %s", utf8Text.c_str());
             return;
@@ -2540,9 +2539,12 @@ namespace MiniCAD
                     if (obj && obj->IsKindOf<TextEntity>())
                     {
                         auto* te = static_cast<TextEntity*>(obj);
+                        const AABB bb = te->GetBoundingBox();
                         m_textRequest.Active       = true;
                         m_textRequest.EditTargetId = hit;
                         m_textRequest.InitialText  = te->GetText();
+                        m_textRequest.InsertPos    = { bb.Min.x, bb.Min.y, bb.Min.z };
+                        m_textRequest.Height       = te->GetHeight();
                         LOG_DEBUG("[Editor] edit text id=%u", static_cast<int>(hit));
 #ifdef MINICAD_WEB
                         EM_ASM({
@@ -2566,6 +2568,7 @@ namespace MiniCAD
                             m_mtextRequest.EditRow      = static_cast<int>(row);
                             m_mtextRequest.EditCol      = static_cast<int>(col);
                             m_mtextRequest.InitialText  = te->Cell(row, col).Text;
+                            m_mtextRequest.DisplayText  = MTextEntity::StripInlineCodes(m_mtextRequest.InitialText);
                             m_mtextRequest.Height       = te->GetHeight();
                             m_mtextRequest.BoxWidth     = te->CellTextWidth(col);
                             const Math::Point3 tl       = te->CellTopLeft(row, col);
@@ -2577,16 +2580,22 @@ namespace MiniCAD
                     if (obj && obj->IsKindOf<MTextEntity>())
                     {
                         auto* me = static_cast<MTextEntity*>(obj);
+                        const AABB bb = me->GetBoundingBox();
+                        m_mtextRequest = {};
                         m_mtextRequest.Active       = true;
                         m_mtextRequest.EditTargetId = hit;
                         m_mtextRequest.InitialText  = me->GetText();
+                        m_mtextRequest.DisplayText  = me->GetPlainText();
+                        m_mtextRequest.InsertPos    = { bb.Min.x, bb.Max.y, bb.Min.z };
+                        m_mtextRequest.Height       = me->GetHeight();
+                        m_mtextRequest.BoxWidth     = bb.Max.x - bb.Min.x;
                         LOG_DEBUG("[Editor] edit mtext id=%u", static_cast<int>(hit));
 #ifdef MINICAD_WEB
                         EM_ASM({
                             var t = UTF8ToString($0);
                             if (typeof window._minicadShowMTextEdit === 'function')
                                 window._minicadShowMTextEdit(t);
-                        }, me->GetText().c_str());
+                        }, m_mtextRequest.DisplayText.c_str());
 #endif
                         return true;
                     }

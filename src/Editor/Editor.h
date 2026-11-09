@@ -326,6 +326,7 @@ namespace MiniCAD
             double           BoxWidth     = 0.0;
             Object::ObjectID EditTargetId = Object::InvalidID;
             std::string      InitialText;
+            std::string      DisplayText;            // 编辑框里显示的去码文字，提交时经 MTextEntity::ApplyPlainEdit 对回 InitialText
             int              EditRow      = -1;      // EditTargetId 是表格时：正在编辑的单元格
             int              EditCol      = -1;
         };

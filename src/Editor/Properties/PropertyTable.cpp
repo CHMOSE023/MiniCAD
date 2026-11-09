@@ -287,12 +287,13 @@ namespace MiniCAD
             using T = MTextEntity;
             return {
                 { N_("内容"), PropKind::String,
-                  [](const Entity& e) -> PropValue { return static_cast<const T&>(e).GetText(); },
+                  [](const Entity& e) -> PropValue { return static_cast<const T&>(e).GetPlainText(); },
                   [](Entity& e, const PropValue& v)
                   {
                       const auto& s = std::get<std::string>(v);
                       if (s.empty()) return false;
-                      static_cast<T&>(e).SetText(s);
+                      auto& m = static_cast<T&>(e);
+                      m.SetText(T::ApplyPlainEdit(m.GetText(), s));
                       return true;
                   } },
                 Coord<T>(N_("位置 X"), [](const T& e) { return e.GetPosition().x; }, [](T& e, double v) { auto p = e.GetPosition(); p.x = v; e.SetPosition(p); }),

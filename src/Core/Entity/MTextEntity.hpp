@@ -7,6 +7,7 @@
 #include "Core/TextCodes.h"
 #include "Core/MTextFormat.h"
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -121,10 +122,21 @@ namespace MiniCAD
         //   开关码(无参数):\L \l \O \o \K \k \N;\U+XXXX 还原为对应字符。
         // keepDecorations:下划线 \L、上划线 \O、删除线 \K 换成排版流里的开关字符(Core/TextCodes.h),
         //   按 { } 分组恢复,只在状态变化处写;绘制时用,度量/纯文本不用。
-        static std::string StripInlineCodes(const std::string& s, bool keepDecorations = false)
+        // spans：每个可见片段在结果与原文里的范围（原位编辑按它把改动对回原文）
+        struct PlainSpan { size_t plainBegin, plainEnd, rawBegin, rawEnd; };
+
+        static std::string StripInlineCodes(const std::string& s, bool keepDecorations = false, std::vector<PlainSpan>* spans = nullptr)
         {
             std::string out;
             out.reserve(s.size());
+            size_t i = 0, i0 = 0, o0 = 0;
+            auto flush = [&]
+            {
+                if (spans && out.size() > o0)
+                    spans->push_back({ o0, out.size(), i0, i });
+                i0 = i;
+                o0 = out.size();
+            };
 
             struct Decor { bool under = false, over = false, strike = false; };
             Decor cur, shown;
@@ -141,8 +153,9 @@ namespace MiniCAD
                 out.push_back(ch);
             };
 
-            for (size_t i = 0; i < s.size(); )
+            for (; i < s.size(); )
             {
+                flush();
                 const char ch = s[i];
                 if (ch == '{') { groups.push_back(cur); ++i; continue; }   // 分组:格式只在组内有效
                 if (ch == '}')
@@ -218,56 +231,106 @@ namespace MiniCAD
                 put(ch);
                 ++i;
             }
+            flush();
+            return out;
+        }
+
+        // 原位编辑：编辑框里显示去码的文字（StripInlineCodes），改完按与原文字的差异只替换改动的那段，
+        // 改动之外的格式码、分组照旧；新写入的反斜杠、花括号转义，换行写成 \P
+        static std::string ApplyPlainEdit(const std::string& raw, const std::string& edited)
+        {
+            std::vector<PlainSpan> spans;
+            const std::string old = StripInlineCodes(raw, false, &spans);
+            if (old == edited)
+                return raw;
+
+            size_t p = 0;
+            while (p < old.size() && p < edited.size() && old[p] == edited[p]) ++p;
+            size_t q = 0;
+            while (q < old.size() - p && q < edited.size() - p && old[old.size() - 1 - q] == edited[edited.size() - 1 - q]) ++q;
+
+            auto cont = [](const std::string& t, size_t k) { return k < t.size() && (static_cast<unsigned char>(t[k]) & 0xC0) == 0x80; };
+            size_t a = p, b = old.size() - q;
+            while (a > 0 && cont(old, a)) --a;
+            while (cont(old, b)) ++b;
+            for (const auto& sp : spans)
+            {
+                if (sp.plainBegin < a && a < sp.plainEnd) a = sp.plainBegin;
+                if (sp.plainBegin < b && b < sp.plainEnd) b = sp.plainEnd;
+            }
+            const size_t nb = edited.size() - (old.size() - b);
+
+            std::string ins;
+            for (size_t k = a; k < nb; ++k)
+            {
+                const char c = edited[k];
+                if      (c == '\\') ins += "\\\\";
+                else if (c == '{')  ins += "\\{";
+                else if (c == '}')  ins += "\\}";
+                else if (c == '\n') ins += "\\P";
+                else if (c != '\r') ins += c;
+            }
+
+            std::string out;
+            size_t rawPos = 0;
+            bool   placed = false;
+            for (const auto& sp : spans)
+            {
+                if (sp.plainEnd <= a || sp.plainBegin >= b)
+                    continue;
+                out.append(raw, rawPos, sp.rawBegin - rawPos);
+                if (!placed) { out += ins; placed = true; }
+                rawPos = sp.rawEnd;
+            }
+            if (!placed)
+            {
+                size_t at = raw.size();
+                for (const auto& sp : spans)
+                {
+                    if (a > 0 && sp.plainEnd == a) { at = sp.rawEnd; break; }
+                    if (a == 0) { at = sp.rawBegin; break; }
+                }
+                return raw.substr(0, at) + ins + raw.substr(at);
+            }
+            out.append(raw, rawPos, std::string::npos);
             return out;
         }
 
         // --- Entity 接口 ---
 
-        // 近似包围盒:按附着点放置文字块。宽高由去码后的纯文本估算。
-        // 宽度估算:按 UTF-8 码点计数,ASCII 0.6 字高、多字节(CJK)1.0 字高。
-        // 有旋转时从绘制原点(首行底部,与 EmitMText 一致)按文字方向排开四角后取轴对齐盒。
-        AABB GetBoundingBox() const override
+        // 文字实际占的矩形（不是参考框）：左上、右上、右下、左下，已按附着点放置并绕插入点旋转。
+        // 宽度按估算的最长行；有行折行或分栏时取参考框宽；在参考框内按对齐方式摆放
+        std::array<Math::Point3, 4> GetTextFrame() const
         {
-            double w = 0.0, h = 0.0;
-            MeasureBlock(w, h);
-
-            // 空文字块给一个最小尺寸,避免退化为零面积。
+            double w = 0.0, h = 0.0, tw = 0.0;
+            MeasureBlock(ParseMTextFormat(m_text, m_height), w, h, &tw);
             if (w <= 0.0) w = m_height;
             if (h <= 0.0) h = m_height;
+            if (tw <= 0.0 || tw > w) tw = w;
 
-            if (std::abs(m_rotation) < 1e-12)
+            const Math::Point3 tl = AnchorTopLeft(w, h);
+            const double off = IsLeftAttachment() ? 0.0 : IsRightAttachment() ? w - tw : (w - tw) * 0.5;
+            const double x0 = tl.x + off, x1 = x0 + tw, y0 = tl.y - h, y1 = tl.y;
+            const double c = std::cos(m_rotation), s = std::sin(m_rotation);
+            auto rot = [&](double x, double y) -> Math::Point3
             {
-                const Math::Point3 tl = AnchorTopLeft(w, h);
-                return AABB(
-                    { tl.x,     tl.y - h, tl.z },
-                    { tl.x + w, tl.y,     tl.z }
-                );
+                const double dx = x - m_position.x, dy = y - m_position.y;
+                return { m_position.x + dx * c - dy * s, m_position.y + dx * s + dy * c, m_position.z };
+            };
+            return { rot(x0, y1), rot(x1, y1), rot(x1, y0), rot(x0, y0) };
+        }
+
+        // 近似包围盒：GetTextFrame 四角的轴对齐盒（宽度估算：ASCII 0.6 字高、多字节 1.0 字高）
+        AABB GetBoundingBox() const override
+        {
+            const auto f = GetTextFrame();
+            Math::Point3 lo = f[0], hi = f[0];
+            for (const auto& p : f)
+            {
+                lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y);
+                hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y);
             }
-
-            // 基准 = Draw 传给 EmitMText 的原点
-            const Math::Point3 pivot = DrawOrigin(w, h);
-            const double c = std::cos(m_rotation);
-            const double s = std::sin(m_rotation);
-
-            // 文字块矩形相对 pivot:x∈[0,w],y∈[m_height-h, m_height]
-            const double xs[2] = { 0.0, w };
-            const double ys[2] = { m_height - h, m_height };
-
-            double minX =  1e300, minY =  1e300;
-            double maxX = -1e300, maxY = -1e300;
-            for (double x : xs)
-                for (double y : ys)
-                {
-                    const double rx = x * c - y * s;
-                    const double ry = x * s + y * c;
-                    minX = std::min(minX, rx); maxX = std::max(maxX, rx);
-                    minY = std::min(minY, ry); maxY = std::max(maxY, ry);
-                }
-
-            return AABB(
-                { pivot.x + minX, pivot.y + minY, pivot.z },
-                { pivot.x + maxX, pivot.y + maxY, pivot.z }
-            );
+            return AABB(lo, hi);
         }
 
         void Draw(IDrawSink& sink, bool isSelected, bool isHovered) const override
@@ -352,16 +415,15 @@ namespace MiniCAD
             return w;
         }
 
-        void MeasureBlock(double& w, double& h) const { MeasureBlock(ParseMTextFormat(m_text, m_height), w, h); }
-
         // 估算文字块宽 w 与总高 h（首行顶到末行基线，WCS 单位，未含旋转）。各段按自己的字高、宽度因子，
         // 行距按 MTextLinePitch（与 TextLayoutEngine::LayoutRich 同一规则，堆叠按底对齐）；放不下时按宽度比估算折成几行
-        void MeasureBlock(const MTextContent& content, double& w, double& h) const
+        void MeasureBlock(const MTextContent& content, double& w, double& h, double* textW = nullptr) const
         {
             const bool   exact    = m_lineSpacingStyle == MTextLineSpacing::Exact;
             const double entityWf = m_widthFactor > 0.0 ? m_widthFactor : 1.0;
 
             int    totalLines = 0;
+            bool   wrapped    = false;
             double maxW = 0.0, singleH = 0.0, prevH = 0.0, prevDescent = 0.0;
             auto addLine = [&](double lineH, double ascent, double descent)
             {
@@ -401,6 +463,7 @@ namespace MiniCAD
                 for (int k = 0; k < count; ++k)
                     addLine(lineH, std::max(lineH, stackTop * m_height), hasStack ? 0.0 : lineH / 3.0);
                 if (count == 1) maxW = std::max(maxW, indent + segW);
+                else            wrapped = true;
                 if (r < runs.size()) ++r;   // 跳过换段
             }
 
@@ -414,11 +477,13 @@ namespace MiniCAD
                 double colH = 0.0;
                 for (double ch : m_columnHeights) colH = std::max(colH, ch);
                 h = colH > 0.0 ? colH : singleH;
+                if (textW) *textW = w;
             }
             else
             {
                 w = singleW;
                 h = singleH;
+                if (textW) *textW = wrapped ? singleW : maxW;
             }
         }
 
