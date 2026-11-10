@@ -643,18 +643,26 @@ namespace
         return w.Take("TCH_SPACE");
     }
 
-    // 新版加密 TCH_CURVEMESH2 = 天正曲线 版本 1：base → version/key → count(BS)
-    // → count × [Point3 + bulge(BD)] → closed(B) → normal(P3)；句柄在句柄流，不占主数据流。
-    // 旧版明文分支仍是"一串 BitDouble 三元组"，靠盲扫找最长合理段。
-    std::unique_ptr<UnknownEntity> CurveMeshObject(bool plain, std::initializer_list<MiniDWG::XYZ> points)
+    // TCH_CURVEMESH2：版本 → (加密版另有密钥) → BS 点数 → 每点 3BD + 凸度 BD → 闭合位 → 法向 3BD
+    // bareRun：没有点数、只有一串 3BD 的数据，走盲扫兜底
+    std::unique_ptr<UnknownEntity> CurveMeshObject(bool plain, std::initializer_list<MiniDWG::XYZ> points,
+                                                   bool closed = false, bool bareRun = false)
     {
         CipherWriter w;
-        if (plain)
+        if (plain && bareRun)
         {
             w.PlainBase(100); w.Main.WriteByte(1);
             for (const auto& p : points) w.Main.Write3BitDouble(p);
             w.Main.Write3BitDouble({0, 0, 0});
             w.Main.WriteBitShort(0);
+        }
+        else if (plain)
+        {
+            w.PlainBase(100); w.Main.WriteByte(0);
+            w.Main.WriteBitShort(static_cast<short>(points.size()));
+            for (const auto& p : points) { w.Main.Write3BitDouble(p); w.Main.WriteBitDouble(0); }
+            w.Main.WriteBit(closed);
+            w.Main.Write3BitDouble({0, 0, 1});
         }
         else
         {
@@ -663,7 +671,7 @@ namespace
             w.Handle(0);
             w.Short(static_cast<int>(points.size()));
             for (const auto& p : points) { w.Point3(p.X, p.Y, p.Z); w.Double(0); }
-            w.Bool(false);
+            w.Bool(closed);
             w.Point3(0, 0, 1);
         }
         return w.Take("TCH_CURVEMESH2");
@@ -1390,21 +1398,29 @@ int main()
         Check(Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 300}, {13000, 5200, 600}, {13500, 5400, 300}}), mesh, &why) &&
               mesh.Points.size() == 4 && Near(mesh.Points[3].X, 13500) && Near(mesh.Points[3].Y, 5400),
               "encrypted curve mesh reads count + Point3/bulge vertices through CipherReader");
-        Check(Tch::DecodeCurveMesh(*CurveMeshObject(true, {{0, 8000, 0}, {2000, 8000, 0}, {4000, 9000, 0}}), mesh, &why) && mesh.Points.size() == 3,
-              "plain curve mesh (base 2..8) allows a zero X on the boundary");
+        Check(Tch::DecodeCurveMesh(*CurveMeshObject(true, {{0, 8000, 0}, {2000, 8000, 0}, {4000, 9000, 0}}, false, true), mesh, &why) && mesh.Points.size() == 3,
+              "plain curve mesh without a vertex count falls back to the BD run scan");
         Check(!Tch::DecodeCurveMesh(*CurveMeshObject(false, {{12000, 5000, 0}, {12500, 5000, 0}}), mesh), "two points are not a mesh");
-        // 结构化解析保留真实 XY 坐标，画成闭合轮廓（不再被盲扫读成错位的 (X,0,Z)）。
         {
             Tch::TchCurveMesh m;
             const bool ok = Tch::DecodeCurveMesh(*CurveMeshObject(false,
-                {{1000, 2000, 0}, {3000, 2000, 0}, {3000, 4000, 0}, {1000, 4000, 0}}), m, &why);
-            Check(ok && m.Points.size() == 4 && Near(m.Points[0].X, 1000) && Near(m.Points[0].Y, 2000),
-                  "structured curve mesh keeps the real XY coordinates");
+                {{1000, 2000, 0}, {3000, 2000, 0}, {3000, 4000, 0}, {1000, 4000, 0}}, true), m, &why);
+            Check(ok && m.Points.size() == 4 && m.Closed && Near(m.Points[0].X, 1000) && Near(m.Points[0].Y, 2000),
+                  "structured curve mesh keeps the real XY coordinates and the closed flag");
             const auto g = Tch::BuildCurveMesh(m);
             const bool drawn = g.Paths.size() == 1 && g.Paths[0].Points.size() == 5 &&
                                Near(g.Paths[0].Points.front().P.X, g.Paths[0].Points.back().P.X) &&
                                Near(g.Paths[0].Points.front().P.Y, g.Paths[0].Points.back().P.Y);
-            Check(drawn, "curve mesh draws a closed XY outline");
+            Check(drawn, "closed curve mesh draws a closed XY outline");
+        }
+        {
+            Tch::TchCurveMesh m;
+            const bool ok = Tch::DecodeCurveMesh(*CurveMeshObject(true,
+                {{66355, 34804, 0}, {63903, 34804, 0}, {63903, 44464, 0}, {70383, 44464, 0}, {70383, 34804, 0}, {67255, 34804, 0}}), m, &why);
+            Check(ok && m.Points.size() == 6 && !m.Closed && Near(m.Points[0].X, 66355) && Near(m.Points[5].X, 67255),
+                  "plain curve mesh reads the vertex count, vertices and closed flag");
+            const auto g = Tch::BuildCurveMesh(m);
+            Check(g.Paths.size() == 1 && g.Paths[0].Points.size() == 6, "open curve mesh keeps the gap between its ends");
         }
 
         int falseSpaces = 0, falseMeshes = 0, falsePlainMeshes = 0;

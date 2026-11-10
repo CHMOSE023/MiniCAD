@@ -24,8 +24,6 @@ namespace MiniCAD::Tch
             return true;
         }
 
-        // 旧版（明文）TCH_CURVEMESH2：主数据流里直接是 BitDouble 的 (X,Y,Z) 点数组，
-        // 没有点数前缀，只能盲扫出最长的一段合理三元组。
         inline std::vector<MiniDWG::XYZ> ScanMeshVertices(const MiniDWG::RawDwgData& data,
                                                           unsigned long long scanFrom,
                                                           unsigned long long scanWindow)
@@ -100,7 +98,23 @@ namespace MiniCAD::Tch
             m.Version = r.ReadByte();
             const auto scanFrom = r.PositionInBits();
             if (scanFrom + 192 > data.MainBits) return fail("curve mesh payload is incomplete");
-            m.Points = Detail::ScanMeshVertices(data, scanFrom, 640);
+            const int count = r.ReadBitShort();
+            if (count >= 3 && count <= 100000)
+            {
+                for (int i = 0; i < count && !r.Failed(); ++i)
+                {
+                    m.Points.push_back(r.Read3BitDouble());
+                    m.Bulges.push_back(r.ReadBitDouble());
+                }
+                m.Closed = r.ReadBit();
+                r.Read3BitDouble();
+            }
+            if (r.Failed() || r.PositionInBits() > data.MainBits || !Detail::CheckCurveMesh(m))
+            {
+                m.Points = Detail::ScanMeshVertices(data, scanFrom, 640);
+                m.Bulges.clear();
+                m.Closed = false;
+            }
         }
         if (!Detail::CheckCurveMesh(m)) return fail("invalid native curve mesh");
         if (m.Bulges.empty()) m.Bulges.assign(m.Points.size(), 0.0);
@@ -118,15 +132,13 @@ namespace MiniCAD::Tch
             const auto& pt = m.Points[i];
             p.Points.push_back({{pt.X, pt.Y}, i < m.Bulges.size() ? m.Bulges[i] : 0.0});
         }
-        // PolylineEntity 靠"首尾点重复"闭合：末尾追加首点（ bulge 用第一段或 0）。
-        // 曲线网格是墙/山墙的闭合轮廓，Closed 或首尾重合时都要闭合。
         if (p.Points.size() >= 3)
         {
-            const auto& a = p.Points.front().P;
-            const auto& b = p.Points.back().P;
+            const TchGraphics::Point a = p.Points.front().P;
+            const TchGraphics::Point b = p.Points.back().P;
             const bool coincide = std::abs(a.X - b.X) < 1e-6 && std::abs(a.Y - b.Y) < 1e-6;
-            if (coincide) p.Points.pop_back();   // 去掉数据里已有的重复末点，再统一补
-            if (m.Closed || coincide || p.Points.size() >= 3)
+            if (coincide) p.Points.pop_back();
+            if (m.Closed || coincide)
                 p.Points.push_back({{a.X, a.Y}, 0.0});
         }
         if (p.Points.size() >= 2) g.Paths.push_back(std::move(p));
