@@ -8,6 +8,8 @@ namespace MiniCAD::Tch
     struct TchCurveMesh
     {
         std::vector<MiniDWG::XYZ> Points;
+        std::vector<double> Bulges;   // 与 Points 等长：顶点凸度（曲线网格的圆弧段）
+        bool Closed = false;
         int Version = 0;
     };
 
@@ -22,6 +24,8 @@ namespace MiniCAD::Tch
             return true;
         }
 
+        // 旧版（明文）TCH_CURVEMESH2：主数据流里直接是 BitDouble 的 (X,Y,Z) 点数组，
+        // 没有点数前缀，只能盲扫出最长的一段合理三元组。
         inline std::vector<MiniDWG::XYZ> ScanMeshVertices(const MiniDWG::RawDwgData& data,
                                                           unsigned long long scanFrom,
                                                           unsigned long long scanWindow)
@@ -64,14 +68,28 @@ namespace MiniCAD::Tch
         if (data.Main.empty() || data.Main.size() < (data.MainBits + 7) / 8)
             return fail("unsupported TCH_CURVEMESH2 layout");
         TchCurveMesh m;
-        unsigned long long scanFrom = 0;
         if (Detail::IsCipherObject(data))
         {
+            // 新版（加密）TCH_CURVEMESH2 = 天正曲线 版本 1：
+            //   ReadBase → version(1) → key → count(BS) → count × [Point3 + bulge(BD)] → closed(B) → normal(P3)
+            // 盲扫会把加密的 Point3（Key>=17 时分量交换）读成 (X,0,Z) 的错位三元组，
+            // 画到远离图纸主体的空区域，表现为"未显示"。这里按真实布局结构化解析。
             Detail::CipherReader f(entity);
             if (!f.ReadBase()) return fail("unsupported Tianzheng curve mesh base layout");
-            m.Version = f.Main.ReadByte();
+            if (f.Main.ReadByte() != 1) return fail("unsupported native curve mesh version");
             f.ReadKey();
-            scanFrom = f.Main.PositionInBits();
+            const int count = f.Short();
+            if (count < 3 || count > 100000) return fail("invalid native curve mesh vertex count");
+            m.Version = 1;
+            for (int i = 0; i < count && f.Ok(); ++i)
+            {
+                const auto p = f.Point3();
+                m.Points.push_back(p);
+                m.Bulges.push_back(f.Double());
+            }
+            m.Closed = f.Bool();
+            f.Point3();   // normal
+            if (!f.Ok()) return fail("native curve mesh vertices are not recognized");
         }
         else
         {
@@ -80,13 +98,12 @@ namespace MiniCAD::Tch
             TchBase base;
             if (!ReadTchBase(r, base, &data)) return fail("unsupported Tianzheng curve mesh base layout");
             m.Version = r.ReadByte();
-            scanFrom = r.PositionInBits();
+            const auto scanFrom = r.PositionInBits();
+            if (scanFrom + 192 > data.MainBits) return fail("curve mesh payload is incomplete");
+            m.Points = Detail::ScanMeshVertices(data, scanFrom, 640);
         }
-        if (scanFrom + 192 > data.MainBits) return fail("curve mesh payload is incomplete");
-        auto pts = Detail::ScanMeshVertices(data, scanFrom, 640);
-        if (pts.size() < 3) return fail("native curve mesh vertices are not recognized");
-        m.Points = std::move(pts);
         if (!Detail::CheckCurveMesh(m)) return fail("invalid native curve mesh");
+        if (m.Bulges.empty()) m.Bulges.assign(m.Points.size(), 0.0);
         mesh = std::move(m);
         if (diagnostic) diagnostic->clear();
         return true;
@@ -96,7 +113,22 @@ namespace MiniCAD::Tch
     {
         TchGraphics g;
         TchGraphics::Path p;
-        for (const auto& pt : m.Points) p.Points.push_back({pt.X, pt.Y});
+        for (std::size_t i = 0; i < m.Points.size(); ++i)
+        {
+            const auto& pt = m.Points[i];
+            p.Points.push_back({{pt.X, pt.Y}, i < m.Bulges.size() ? m.Bulges[i] : 0.0});
+        }
+        // PolylineEntity 靠"首尾点重复"闭合：末尾追加首点（ bulge 用第一段或 0）。
+        // 曲线网格是墙/山墙的闭合轮廓，Closed 或首尾重合时都要闭合。
+        if (p.Points.size() >= 3)
+        {
+            const auto& a = p.Points.front().P;
+            const auto& b = p.Points.back().P;
+            const bool coincide = std::abs(a.X - b.X) < 1e-6 && std::abs(a.Y - b.Y) < 1e-6;
+            if (coincide) p.Points.pop_back();   // 去掉数据里已有的重复末点，再统一补
+            if (m.Closed || coincide || p.Points.size() >= 3)
+                p.Points.push_back({{a.X, a.Y}, 0.0});
+        }
         if (p.Points.size() >= 2) g.Paths.push_back(std::move(p));
         return g;
     }
