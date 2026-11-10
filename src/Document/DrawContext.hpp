@@ -681,6 +681,17 @@ namespace MiniCAD
                 MarkViewDependent();
             }
 
+            // 复杂线型：文字/形段按 (patternIndex, symbolIndex) 归组，与单段 EmitStyled 一样铺。
+            // 以前这里传空 emitSym，曲线/多段线的复杂线型只铺 dash/gap、符号全丢，
+            // 表现为带文字/形符号的线型在曲线与多段线上不显示符号。
+            std::vector<std::pair<size_t, size_t>> order;
+            if (rec->HasSymbols())
+            {
+                for (size_t k = 0; k < rec->Symbols.size(); ++k)
+                    if (rec->Symbols[k].PatternIndex < rec->Pattern.size())
+                        order.emplace_back(rec->Symbols[k].PatternIndex, k);
+                std::sort(order.begin(), order.end());
+            }
             // 相位沿曲线累计：每小段用「该段起点落在图案里的相位」铺设，铺完的长度即下一段相位
             double phase = 0.0;
             for (size_t i = 0; i + 1 < points.size(); ++i)
@@ -688,6 +699,9 @@ namespace MiniCAD
                 const Math::Point3& a = points[i];
                 const Math::Point3& b = points[i + 1];
                 const double segLen = dist(a, b);
+                const double ux = segLen > 1e-12 ? (b.x - a.x) / segLen : 1.0;
+                const double uy = segLen > 1e-12 ? (b.y - a.y) / segLen : 0.0;
+                const double uz = segLen > 1e-12 ? (b.z - a.z) / segLen : 0.0;
                 // 段内宽度：把铺出的点按沿线比例投影回本段，做线性插值（锥形段）
                 const double wa = widthAt(i), wb = widthAt(i + 1);
                 auto emit = [&](const Math::Point3& p, const Math::Point3& q)
@@ -706,7 +720,13 @@ namespace MiniCAD
                                EmitSolidTapered(p, p, color, wa + (wb - wa) * t, wa + (wb - wa) * t);
                            },
                            phase,
-                           [&](size_t, double) {});
+                           [&](size_t pat, double at)
+                           {
+                               Math::Point3 p{ a.x + ux * at, a.y + uy * at, a.z + uz * at };
+                               for (const auto& o : order)
+                                   if (o.first == pat)
+                                       EmitLineTypeSymbol(p, ux, uy, uz, rec->Symbols[o.second], scale, color);
+                           });
                 phase = std::fmod(phase + segLen, cycle);
             }
         }
