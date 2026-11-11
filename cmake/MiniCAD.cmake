@@ -56,6 +56,9 @@ set(MINICAD_IMPORT_SOURCES
     "${MINICAD_SRC}/Import/CadExchange.cpp"
     "${MINICAD_SRC}/Import/CadTextFile.cpp"
     "${MINICAD_SRC}/Import/AcisReader.cpp"
+    "${MINICAD_SRC}/Import/Exb/ExbContainer.cpp"
+    "${MINICAD_SRC}/Import/Exb/ExbGeometry.cpp"
+    "${MINICAD_SRC}/Import/Exb/ExbReader.cpp"
 )
 
 # ── Editor ──────────────────────────────────────────────────────────

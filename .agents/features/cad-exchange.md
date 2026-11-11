@@ -8,6 +8,8 @@ covers: src/Import/CadExchange.*, src/Import/ProxyGraphics.h, src/Import/AcisRea
 
 `src/Import/CadExchange.*` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转：`ImportCad`（读）、`ExportCad`（写）。`Document::LoadFromFile` / `SaveToFile` 按扩展名 `.dwg` / `.dxf` 分派，DXF 写 ASCII。核心库的公开头文件不暴露 MiniDWG 类型，映射代码只在 `CadExchange.cpp` 里。
 
+`.exb` 走另一条只读通道（见 [exb](exb.md)）：`Document::LoadFromFile` 在 `CadKindFromPath` 之外单独判 `Exb::IsExbPath`，调 `Exb::ImportExb`；`Document::SaveToFile` 对 `.exb` 直接返回 false，防止 JSON 文本覆盖原图。`CadFileKind` 仍只有 None、Dwg、Dxf，不要把只读格式放进去。
+
 ## 写出版本
 
 - `CadSaveVersion`：2018（AC1032）、2013（AC1027，AutoCAD 2013～2017 共用，界面上标为"2013/2014"）、2010、2007、2004、2000；新建文档默认 2004（`kDefaultCadSaveVersion`）

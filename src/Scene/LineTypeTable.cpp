@@ -39,6 +39,21 @@ namespace MiniCAD
         return static_cast<LineTypeID>(m_records.size() - 1);
     }
 
+    LineTypeID LineTypeTable::AddOrReplace(LineTypeRecord rec)
+    {
+        const std::string key = ToLower(rec.Name);
+        for (size_t i = 0; i < m_records.size(); ++i)
+        {
+            if (ToLower(m_records[i].Name) != key) continue;
+            // 三个保留 ID 的名字/语义不能改，图案本身就是空的(连续线)
+            if (i <= ContinuousID) return static_cast<LineTypeID>(i);
+            m_records[i] = std::move(rec);
+            return static_cast<LineTypeID>(i);
+        }
+        m_records.push_back(std::move(rec));
+        return static_cast<LineTypeID>(m_records.size() - 1);
+    }
+
     const LineTypeRecord* LineTypeTable::Find(LineTypeID id) const
     {
         if (id < m_records.size()) return &m_records[id];

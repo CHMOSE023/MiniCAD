@@ -639,7 +639,7 @@ namespace MiniCAD
         }, {} };
         const char* accept = kind == FileKind::Image ? ".png,.jpg,.jpeg,.bmp,.tga,.gif"
                            : kind == FileKind::NodeGraph ? ".mcnode,.json"
-                           : ".mcad,.dwg,.dxf,.json";
+                           : ".mcad,.dwg,.dxf,.exb,.json";
         MiniCADWeb_PickFile(id, accept, 0);
     }
 
@@ -650,7 +650,7 @@ namespace MiniCAD
             FetchLazyFont(name);
         const int id = m_nextPickId++;
         m_pickRequests[id] = { std::move(done), {} };
-        MiniCADWeb_PickFile(id, ".mcad,.dwg,.dxf,.json", 1);
+        MiniCADWeb_PickFile(id, ".mcad,.dwg,.dxf,.exb,.json", 1);
     }
 
     void WebApp::OnFilePicked(int requestId, const char* path)

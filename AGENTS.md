@@ -60,6 +60,7 @@ C++20 2D/3D CAD 编辑器，几何内核 `3rd/SMLib`，Win32、Web 与 Linux 用
 - **渲染**：`Viewport`（相机、分两层绘制：缓存层 + 每帧的动态内容）；渲染器实现 `IRenderer`。CAD 视口由 CAD 渲染器绘制，界面由 MiniGUI 后端绘制，两者不是一回事。GL 的纹理 / 帧缓冲名按值放在 `void*` 里传递（见 `GLRenderTarget`）
 - **序列化**（`src/Serialization/`）：`ISerializer`，`JsonSerializer` / `BinarySerializer`（键值树，缺少的键取默认值，可以加字段而不破坏旧文件），`EntityIO` 负责实体映射。`.mcad`（不区分大小写）→ 二进制，其余 → JSON
 - **DWG/DXF 交换**（`src/Import/CadExchange.*`）：`ImportCad` / `ExportCad` 经 MiniDWG 的 `CadDatabase` 与 `Scene` 互转，`Document` 按扩展名分派。打开时保留原图（`CadSource`），另存为同格式同版本时只改写变化的部分；TCH对象的适配在 `src/Import/Tch*.h`
+- **EXB 只读导入**（`src/Import/Exb/`）：独立通道，不进 `CadFileKind`。`Document::LoadFromFile` 单独判 `Exb::IsExbPath` 后调 `ImportExb`，`SaveToFile` 拒绝写 `.exb`。CFB 容器、分块 zlib 信封、按类标识逐条解码的记录层（图层 / 线型 / 块定义与大部分二维实体，标注和表格展开成普通图形）；还缺的见 `.agents/features/exb.md`。自带 DEFLATE 解码器，可在后台线程调用；字段布局参照 ezexb（MIT）
 - **文字**（`src/Text/`）：`FontSystem` / `FontEngine`（SHX 与 TTF），`TextLayoutEngine`；字体先在资源目录（`AppPlatform::GetResourceDir`）的 `fonts/` 找（`MainFrame::Initialize` 设定，与启动时的当前目录无关），再到 `AppPlatform::GetSystemFontDirs()`；TrueType 缺的字按字体所属的文字体系（简 / 繁 / 日 / 韩）经 `TTFFallbackChain` 回退；SHX 大字体按自己的代码页查字，缺的字只回退到单线字体 `minicad_*.shx`（`SHXFallbackChain`），不混用 TrueType
 - **几何内核**（`src/Core/GeomKernel/`）：`Point3`、`ICurve`、`CurveIntersect`、向量 / 矩阵。`Mat4` 为行向量约定（P' = P · M）
 

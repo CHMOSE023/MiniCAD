@@ -68,6 +68,11 @@ namespace MiniCAD
 
         // 追加/查找。名称不区分大小写。
         LineTypeID                         Add(LineTypeRecord rec);
+        // 导入用：同名已存在时**用文件里的定义覆盖**它，否则追加。
+        // Add() 命中同名会直接复用，构造函数预置的 DASHED 是占位值 (0.5, −0.25)，
+        // 导入 CAXA/DWG 图纸时真正的 DASHED 是 (12.7, −6.35) —— 差一个数量级，
+        // 落进场景就是「细到看不见的碎虚线」。导入路径一律走这个。
+        LineTypeID                         AddOrReplace(LineTypeRecord rec);
         const LineTypeRecord*              Find(LineTypeID id) const;
         LineTypeID                         FindByName(const std::string& name) const; // 未找到返回 ContinuousID
         const std::vector<LineTypeRecord>& Records() const { return m_records; }

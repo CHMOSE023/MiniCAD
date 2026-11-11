@@ -3,6 +3,7 @@
 #include "Core/Log.h"
 #include "MiniI18n/I18n.h"
 #include "Import/CadExchange.h"
+#include "Import/Exb/ExbReader.h"
 #include <algorithm>
 #include <utility>
 #include <memory>
@@ -795,7 +796,8 @@ namespace MiniCAD
         EnsureEditor(*d, proto);
         PlaceNewDocument(*d);   // 放进新文档的窗格并在那里显示（保存原显示文档的相机）
         m_active = d;
-        if (m_viewport && CadKindFromPath(m_active->GetPath()) != CadFileKind::None)
+        if (m_viewport && (CadKindFromPath(m_active->GetPath()) != CadFileKind::None
+                           || Exb::IsExbPath(m_active->GetPath())))
             ZoomAll(false);   // 外来图纸的坐标可能离原点很远；初始视图不进撤销栈
 
         return m_active;

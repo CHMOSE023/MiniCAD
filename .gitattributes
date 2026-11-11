@@ -5,3 +5,5 @@
 # 样例图纸按原字节保存：ASCII DXF 是 CRLF 换行，转换换行会改变内容
 *.dwg binary
 *.dxf binary
+# EXB 是 OLE2 复合文档，同样必须按原字节保存
+*.exb binary

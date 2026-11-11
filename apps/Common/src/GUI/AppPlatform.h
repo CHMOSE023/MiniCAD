@@ -29,7 +29,7 @@ namespace MiniCAD
     // 选择文件的用途（决定筛选的扩展名）
     enum class FileKind
     {
-        Drawing,    // .mcad / .dwg / .dxf / .json
+        Drawing,    // .mcad / .dwg / .dxf / .exb / .json（.exb 只读）
         Image,      // .png / .jpg / .bmp / .tga / .gif
         NodeGraph,  // .mcnode（节点图，JSON 文本）/ .json
     };

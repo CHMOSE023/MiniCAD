@@ -136,10 +136,11 @@ namespace MiniCAD
         };
         constexpr FilterSpec kDrawingFilters[] =
         {
-            { N_("所有支持的文件"),           "mcad;dwg;dxf;json" },
+            { N_("所有支持的文件"),           "mcad;dwg;dxf;exb;json" },
             { N_("MiniCAD 文档 (*.mcad)"),    "mcad" },
             { N_("AutoCAD 图形 (*.dwg)"),     "dwg" },
             { N_("AutoCAD 交换文件 (*.dxf)"), "dxf" },
+            { N_("EXB 电子图板 (*.exb)"),     "exb" },
             { N_("JSON 文件 (*.json)"),       "json" },
             { N_("所有文件"),                 "*" },
         };

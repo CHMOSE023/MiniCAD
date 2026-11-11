@@ -57,3 +57,11 @@ SHX 文字缺字时回退用的单线字体 `assets/fonts/minicad_sc.shx`、`min
 - 来源：KanjiVG（https://kanjivg.tagaini.net），Copyright (C) 2009-2013 Ulrich Apel
 - 许可证：Creative Commons Attribution-Share Alike 3.0（https://creativecommons.org/licenses/by-sa/3.0/）；
   生成的 `minicad_jp.shx` 同样按 CC BY-SA 3.0 发布，字体信息里注明了来源
+
+## ezexb
+
+EXB 导入（`src/Import/Exb/ExbGeometry.cpp`）里记录的切分、扩展属性、记录版本 3 的扩展段，以及椭圆、样条、填充、标注、
+块参照、文字、图层状态等正文的字段布局，参照 ezexb 的源码写成（没有复制它的代码，也不依赖它）。
+
+- 来源：https://github.com/monozukuri-ai/ezexb
+- 许可证：MIT License，Copyright (c) 2026 neka-nat

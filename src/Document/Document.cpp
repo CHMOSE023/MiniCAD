@@ -3,6 +3,7 @@
 #include "MiniI18n/I18n.h"
 #include "Document/DimAssoc.h"
 #include "Import/CadExchange.h"
+#include "Import/Exb/ExbReader.h"
 #include "NodeGraph/Graph.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/BinarySerializer.h"
@@ -115,6 +116,14 @@ namespace MiniCAD
         if (path.empty())
             return false;
 
+        // EXB 目前只读。若不拦截，SaveToString 会按「其余扩展名 → JSON 文本」把 JSON
+        // 写进 .exb，直接覆盖并破坏用户打开的原图。
+        if (Exb::IsExbPath(path))
+        {
+            LOG_ERROR("Save failed, EXB is read-only: %s", path.c_str());
+            return false;
+        }
+
         // .dwg / .dxf → 经 MiniDWG 导出(只保留 MiniCAD 支持的实体类型)
         if (const CadFileKind kind = CadKindFromPath(path); kind != CadFileKind::None)
         {
@@ -219,7 +228,10 @@ namespace MiniCAD
             return fail(Tr("无法读取文件，请检查文件是否存在及访问权限"));
         }
 
-        if (CadKindFromPath(path) != CadFileKind::None)
+        // EXB 走独立导入通道，与 CadFileKind 分开：那一套枚举与 CadSaveVersion /
+        // ExportCad / 界面另存表绑定的是「可写出」格式，EXB 目前只读。
+        const bool isExb = Exb::IsExbPath(path);
+        if (CadKindFromPath(path) != CadFileKind::None || isExb)
         {
             // CAD 直接读入字节缓冲，避免同时持有流缓冲、字符串和字节数组三份文件内容。
             file.seekg(0, std::ios::end);
@@ -238,6 +250,24 @@ namespace MiniCAD
                 return fail(Tr("无法完整读取图纸文件"));
             }
             std::string err;
+            if (isExb)
+            {
+                if (Exb::IsLegacyExbData(bytes.data(), bytes.size()))
+                    return fail(Tr("这是旧版 CAXA 电子图板格式（CaxaEbForWindows），暂不支持；请在 CAXA 里另存为新版 EXB 或 DWG 后再打开"));
+                Exb::ExbImportResult result;
+                if (!Exb::ImportExb(bytes, m_scene, &err, &result, progress, path))
+                    return fail(err.empty() ? Tr("图纸已损坏或版本不受支持") : err);
+                m_dirty = false;
+                SetPath(path);
+                LOG_INFO("EXB container imported: %s (%zu streams, %zu decoded)",
+                         path.c_str(), result.Report.Streams.size(), result.Report.DecodedStreamCount);
+                for (const auto& [name, count] : result.Unsupported)
+                    LOG_WARN_TR("EXB 导入：不支持的对象 {0} × {1} 已跳过", name.c_str(), count);
+                // 空图纸（新建的 blank 类文件）合法，不算失败，但要让用户知道为什么是空白。
+                if (result.EntityCount == 0)
+                    LOG_WARN_TR("EXB 图纸已识别，但其中没有可解析的实体，当前显示空图纸");
+                return true;
+            }
             if (!ImportCad(bytes, m_scene, &err, &m_cadVersion, &m_cadSource, progress, path))
             {
                 return fail(err.empty() ? Tr("图纸已损坏或版本不受支持") : err);

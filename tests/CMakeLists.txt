@@ -18,6 +18,25 @@ if(MSVC)
 endif()
 add_test(NAME MiniCADTianzhengTests COMMAND MiniCADTianzhengTests)
 
+# EXB 容器层：样例图纸不入库，用命令行参数或 MINICAD_EXB_SAMPLE 指向真实 .exb；
+# 没有样例时测试打印跳过并通过（与 tests/Data 的其他私有图纸一致）
+add_executable(MiniCADExbTests "Core/ExbContainerTests.cpp")
+target_link_libraries(MiniCADExbTests PRIVATE MiniCAD)
+if(MSVC)
+    target_compile_options(MiniCADExbTests PRIVATE /utf-8)
+endif()
+add_test(NAME MiniCADExbTests COMMAND MiniCADExbTests)
+
+# EXB 几何层：纯函数（去格式码 / UTF-16 / 图层归属）无需样例即会执行；
+# 传样例路径或设 MINICAD_EXB_SAMPLE 时再跑容器 → 样式流 → 块流 → Scene 的端到端校验。
+add_executable(MiniCADExbGeometryTests "Core/ExbGeometryTests.cpp")
+target_link_libraries(MiniCADExbGeometryTests PRIVATE MiniCAD)
+if(MSVC)
+    target_compile_options(MiniCADExbGeometryTests PRIVATE /utf-8)
+endif()
+target_compile_definitions(MiniCADExbGeometryTests PRIVATE MINICAD_TEST_DATA_DIR="${MINICAD_TEST_DATA_DIR}")
+add_test(NAME MiniCADExbGeometryTests COMMAND MiniCADExbGeometryTests)
+
 add_executable(MiniCADTchImportTests "Core/TchBlockInsertTests.cpp" "Core/TchProxyGraphicsTests.cpp")
 target_link_libraries(MiniCADTchImportTests PRIVATE MiniCAD MiniDWG)
 if(MSVC)
