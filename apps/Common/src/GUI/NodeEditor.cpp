@@ -1905,7 +1905,9 @@ namespace MiniCAD
                     {
                         MiniGUI::TextParams vp = tp;
                         text.Draw(dl, Rect{ fr.min.x + 6, fr.min.y, fr.max.x - 14, fr.max.y }, TrNode(spec.Choices[i]), vp);
-                        text.Draw(dl, Rect{ fr.max.x - 14, fr.min.y, fr.max.x - 2, fr.max.y }, "▾", vp);
+                        // 下拉箭头画三角形：网页版字体没有“▾”（U+25BE），会显示成方框
+                        const float ax = fr.max.x - 8.0f, ay = std::round((fr.min.y + fr.max.y) * 0.5f);
+                        dl.AddTriangleFilled({ ax - 3.5f, ay - 1.5f }, { ax + 3.5f, ay - 1.5f }, { ax, ay + 2.5f }, vp.color);
                     }
                     break;
                 }

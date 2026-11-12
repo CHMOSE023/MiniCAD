@@ -43,6 +43,22 @@ namespace MiniGUI
             return p;
         }
 
+        // 标题后的下拉箭头：画三角形，不用“▾”字符（网页版的 Noto Sans 没有 U+25BE，会显示成方框）
+        constexpr float kArrowW   = 7.0f;
+        constexpr float kArrowGap = 4.0f;
+
+        // 居中画“标题 + 下拉箭头”
+        void DrawTitleWithArrow(TextSystem& text, DrawList& dl, const Rect& box, const std::string& title, const TextParams& params)
+        {
+            const Vec2  size  = text.Measure(title, params);
+            const float total = size.x + kArrowGap + kArrowW;
+            const float x0    = std::round(box.Center().x - total * 0.5f);
+            text.Draw(dl, Rect{ x0, box.min.y, x0 + size.x, box.max.y }, title, params);
+            const float ax = x0 + size.x + kArrowGap;
+            const float cy = std::round(params.vAlign == TextAlign::Start ? box.min.y + size.y * 0.5f : box.Center().y) + 1.0f;
+            dl.AddTriangleFilled({ ax, cy - 2.0f }, { ax + kArrowW, cy - 2.0f }, { ax + kArrowW * 0.5f, cy + 2.0f }, params.color);
+        }
+
         // 第一个字符（UTF-8）：没有图标的命令画一个字块代替
         std::string FirstChar(const std::string& s)
         {
@@ -246,7 +262,7 @@ namespace MiniGUI
             std::function<bool()> m_collapsed;
         };
 
-        // 折叠的组：组里第一个命令的图标 + 组名 + ▾，点击列出全组命令
+        // 折叠的组：组里第一个命令的图标 + 组名 + 下拉箭头，点击列出全组命令
         class CollapsedButton : public Button
         {
         public:
@@ -278,7 +294,7 @@ namespace MiniGUI
                     ctx->GetTextSystem().Draw(dl, icon, FirstChar(m_title), Params(13.0f, Theme::Text));
                 }
                 const Rect label{ r.min.x + 2.0f, icon.max.y + 4.0f, r.max.x - 2.0f, icon.max.y + 22.0f };
-                ctx->GetTextSystem().Draw(dl, label, m_title + " ▾", Params(kLabelSize, Theme::Text));
+                DrawTitleWithArrow(ctx->GetTextSystem(), dl, label, m_title, Params(kLabelSize, Theme::Text));
             }
 
         private:
@@ -623,7 +639,7 @@ namespace MiniGUI
     float Ribbon::PanelTitleMinW(const Panel& p) const
     {
         UIContext* ctx = GetContext();
-        const float w = ctx ? ctx->GetTextSystem().Measure(p.title + " ▾", Params(kSectionSz, Theme::TextDim)).x : 40.0f;
+        const float w = ctx ? ctx->GetTextSystem().Measure(p.title, Params(kSectionSz, Theme::TextDim)).x + kArrowGap + kArrowW : 40.0f;
         return std::ceil(w) + 16.0f;
     }
 
@@ -825,7 +841,10 @@ namespace MiniGUI
                 const Rect title{ r.min.x + p.x0 + 2.0f, sectionTop, r.min.x + p.x1 - 2.0f, sectionTop + kSectionH - 2.0f };
                 if (static_cast<int>(i) == m_hoverTitle)
                     dl.AddRectFilled(title, ColorRef(ThemeColor::Outline, 16), Theme::RadiusSm);
-                ctx->GetTextSystem().Draw(dl, title, HasOverflow(p) ? p.title + " ▾" : p.title, Params(kSectionSz, Theme::TextDim));
+                if (HasOverflow(p))
+                    DrawTitleWithArrow(ctx->GetTextSystem(), dl, title, p.title, Params(kSectionSz, Theme::TextDim));
+                else
+                    ctx->GetTextSystem().Draw(dl, title, p.title, Params(kSectionSz, Theme::TextDim));
             }
             if (i + 1 < tab.panels.size())
             {
