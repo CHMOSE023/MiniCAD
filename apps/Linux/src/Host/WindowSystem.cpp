@@ -104,6 +104,7 @@ namespace MiniCAD
         static const char* const kMove[]   = { "move", "fleur", "all-scroll", nullptr };
         static const char* const kGrab[]   = { "grab", "openhand", "fleur", nullptr };
         static const char* const kNo[]     = { "not-allowed", "crossed_circle", "X_cursor", nullptr };
+        static const char* const kCross[]  = { "crosshair", "cross", "tcross", nullptr };
         switch (shape)
         {
         case CursorShape::IBeam:      return kText;
@@ -115,6 +116,7 @@ namespace MiniCAD
         case CursorShape::SizeAll:    return kMove;
         case CursorShape::Grab:       return kGrab;
         case CursorShape::NotAllowed: return kNo;
+        case CursorShape::Crosshair:  return kCross;
         default:                      return kArrow;
         }
     }

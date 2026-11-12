@@ -52,6 +52,7 @@ target_link_options(MiniGUIWebGallery PRIVATE
 add_executable(MiniCADWeb
     src/Host/WebMain.cpp
     src/Host/WebApp.cpp
+    src/Host/WebEmbed.cpp
 )
 target_include_directories(MiniCADWeb PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

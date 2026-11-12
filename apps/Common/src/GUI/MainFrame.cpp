@@ -1,6 +1,7 @@
 // ── MiniCAD 主窗口（MiniGUI 版）：初始化、文档、视口输入与渲染（平台相关部分见 AppPlatform）─────────
 #include "GUI/MainFrame.h"
 #include "GUI/FloatingPanelHost.h"
+#include "GUI/MarkupLayer.h"
 #include "GUI/Language.h"
 #include "MiniI18n/I18n.h"
 #include "Editor/Input/InputEvent.h"
@@ -213,6 +214,18 @@ namespace MiniCAD
         if (!InitDocument(static_cast<int>(width * pixelScale), static_cast<int>(height * pixelScale)))
             return false;
 
+        // 嵌入网页的批注层（平时为空，不画任何东西）：批注变了重绘主视口
+        m_markupLayer = std::make_unique<MarkupLayer>();
+        // 开始 / 结束画批注时光标立即切换（十字 / 箭头），不等下一帧
+        m_markupLayer->onChanged = [this]
+        {
+            if (!m_viewport)
+                return;
+            if (m_ui && m_main.statusBar)
+                UpdateStatus();
+            m_viewport->Invalidate();
+        };
+
         m_compact = WantsCompactLayout(width, height);
         InitUI();
         OnResize(width, height, pixelScale);
@@ -371,6 +384,8 @@ namespace MiniCAD
 
     bool MainFrame::WantsCompactLayout(float width, float height) const
     {
+        if (m_platform && m_platform->ForcesCompactLayout())
+            return true;
         if (!m_platform || !m_platform->SupportsCompactLayout())
             return false;
         // 进出的阈值不同：在临界尺寸上旋转、调整时不来回切换
@@ -728,7 +743,8 @@ namespace MiniCAD
     void MainFrame::OnXrefsLoaded(const std::vector<Document*>& docs, int loaded)
     {
         // 宿主里常常只有参照：读入前范围只是几个插入点，读入后按全图重新缩放
-        if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end())
+        // 嵌入网页时宿主已经定位到某个视图（如打开意见）：不再缩放到全图
+        if (std::find(docs.begin(), docs.end(), m_docManager.GetActive()) != docs.end() && m_docManager.GetActive() != m_embedViewDoc)
             m_docManager.ZoomAll(false);
         if (m_docManager.GetActive())
             m_docManager.GetEditor().GetCmdLine().Echo(TrF("外部参照：读入 {0} 个", loaded));
@@ -1391,6 +1407,9 @@ namespace MiniCAD
             m_viewport->Invalidate();       // 更新状态栏坐标
             return;
         }
+        // 嵌入网页的批注层先处理：画批注时吃掉左键，点在批注上回调宿主
+        if (m_markupLayer && m_docManager.GetMainDocument() && m_markupLayer->OnPointer(e, m_docManager.GetMainViewport().GetCamera()))
+            return;
         if (Document* doc = m_docManager.GetMainDocument())
             RouteViewportPointer(e, doc, m_mainInput, *m_viewport);
     }
@@ -1486,6 +1505,13 @@ namespace MiniCAD
     bool MainFrame::OnViewportKey(const MiniGUI::KeyEvent& e)
     {
 const KeyCode code = ToKeyCode(e.key);
+        // 嵌入网页时正在画批注：Esc 取消
+        if (code == KeyCode::Escape && m_markupLayer && m_markupLayer->IsDrawing())
+        {
+            if (e.type == MiniGUI::KeyEventType::Down)
+                m_markupLayer->Cancel();
+            return true;
+        }
         if (code == KeyCode::Unknown || !m_docManager.GetActive() || m_compact)
             return false;       // 只浏览：键盘不进命令行、不执行快捷键
         // Tab 只交给进行中的工具（如圆角边切换重叠的边），工具不处理时仍留给界面切换焦点
@@ -1643,10 +1669,20 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
     void MainFrame::UpdateStatus()
     {
         m_main.statusBar->Refresh();
-        // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标
+        // 视口平时隐藏系统光标、自己画十字光标；平移工具改用手形光标。
+        // 紧凑布局（只浏览）不画十字光标：用系统箭头，嵌入网页画批注时用系统十字光标
         if (m_viewport)
-            m_viewport->SetCursor(m_docManager.GetMainDocument() && m_docManager.GetMainEditor().HidesCrosshair()
-                                  ? MiniGUI::CursorShape::Grab : MiniGUI::CursorShape::Hidden);
+        {
+            using MiniGUI::CursorShape;
+            CursorShape cursor = CursorShape::Hidden;
+            if (m_markupLayer && m_markupLayer->IsDrawing())
+                cursor = m_compact ? CursorShape::Crosshair : CursorShape::Hidden;
+            else if (m_compact)
+                cursor = CursorShape::Arrow;
+            else if (m_docManager.GetMainDocument() && m_docManager.GetMainEditor().HidesCrosshair())
+                cursor = CursorShape::Grab;
+            m_viewport->SetCursor(cursor);
+        }
         for (auto& w : m_docWindows)
         {
             Document* shown = m_docManager.GetShownDocument(w->pane);
@@ -1710,6 +1746,7 @@ renderer.BeginFrame(target, ViewportDesc{ .width = static_cast<float>(pixelWidth
         m_timing.layout  = ms(t);
         t = NowTicks();
         m_timing.viewportRendered = m_viewport->IsVisible() && m_viewport->RenderContent();
+        SyncEmbedState();       // 嵌入网页：视图变了通知宿主、批注高亮动画
         if (m_syncGpu)
             m_platform->WaitForGpu();
         m_timing.viewport = ms(t);

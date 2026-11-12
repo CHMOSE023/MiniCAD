@@ -1,5 +1,6 @@
 // ── MiniCAD 网页版宿主：图形设备、浏览器文件选择与下载、从网址打开、页面关闭提示 ─────────
 #include "Host/WebApp.h"
+#include "Host/WebEmbed.h"
 #include "Core/Log.h"
 #include "MiniI18n/I18n.h"
 #include "Core/UIContext.h"
@@ -176,9 +177,15 @@ namespace MiniCAD
     // 值是图纸路径的查询参数（如 ?path=项目/一层平面.dwg）。失败时 status 为 HTTP 状态码，-1 为不是本网站的网址，0 为网络错误。
     // EM_JS 的代码经 C 预处理器变成 C 字符串再编译：字符串引号以外不能写反斜杠转义（\\ 会变成 \，\. 变成 .），
     // 引号要成对。所以正则不用反斜杠（用 [.] [*]），里面的引号写成 \x22 / \x27（编译后正好是引号）。
-    EM_JS(int, MiniCADWeb_OpenUrls, (int requestId), {
+    // urlsJson 不为空时打开它列出的网址（JSON 数组，嵌入网页的 window.MiniCAD.open），否则用网址的 ?open=；
+    // 全部处理完后还会通知 Module.miniCADEmbed.opened(请求号)（有桥接接口时）
+    EM_JS(int, MiniCADWeb_OpenUrls, (int requestId, const char* urlsJson), {
         let urls;
-        try { urls = new URLSearchParams(location.search).getAll("open").filter(s => s.length > 0); } catch (e) { urls = []; }
+        try {
+            const given = urlsJson ? UTF8ToString(urlsJson) : "";
+            urls = given ? JSON.parse(given).map(String) : new URLSearchParams(location.search).getAll("open");
+            urls = urls.filter(s => s.length > 0);
+        } catch (e) { urls = []; }
         if (urls.length === 0) return 0;
         const host = window.MiniCADHost;
         const hostFetch = !!host && typeof host.fetch === "function";
@@ -235,6 +242,7 @@ namespace MiniCAD
                 }
             }
             _MiniCADWeb_OnRemoteCompleted(requestId);
+            if (Module.miniCADEmbed) Module.miniCADEmbed.opened(requestId);
         })();
         return urls.length;
     });
@@ -474,6 +482,7 @@ namespace MiniCAD
     bool WebApp::Initialize()
     {
         OnLanguageChanged(InitLanguage(*this, TakeJsString(MiniCADWeb_UrlLanguage())));    // 在请求图形设备之前：它的出错信息也要翻译
+        m_embed = IsWebEmbedRequested();
         if (!m_host.Initialize())
             return false;
         if (MiniCADWeb_PreferWebGL())
@@ -534,6 +543,8 @@ namespace MiniCAD
         m_host.SetOnFrame ([this] { m_main.RenderFrame(); });
         MiniCADWeb_InstallUnloadGuard();
         m_uiReady = true;
+        if (m_embed)
+            InstallWebEmbed(*this);     // window.MiniCAD：界面就绪后才导出，网页据此判断可以调用
         m_host.RequestFrame();
         OpenStartupUrls();
         return true;
@@ -720,7 +731,7 @@ namespace MiniCAD
     {
         const int id = m_nextPickId++;
         m_remoteRequests[id] = {};
-        if (MiniCADWeb_OpenUrls(id) == 0)
+        if (MiniCADWeb_OpenUrls(id, nullptr) == 0)
         {
             m_remoteRequests.erase(id);
             return;
@@ -728,6 +739,30 @@ namespace MiniCAD
         // 图纸里可能有繁体、日文：取文件、读图纸的同时下载（同 PickDrawingFiles）
         for (const char* name : MiniGUI::kWebLazyFontNames)
             FetchLazyFont(name);
+    }
+
+    void WebApp::SetEmbedCompact(bool compact)
+    {
+        if (m_embedCompact == compact)
+            return;
+        m_embedCompact = compact;
+        if (m_uiReady)      // 按当前尺寸重新选布局（MainFrame::WantsCompactLayout 先看 ForcesCompactLayout）
+            m_main.OnResize(m_host.GetLogicalWidth(), m_host.GetLogicalHeight(), m_host.GetPixelScale());
+        m_host.RequestFrame();
+    }
+
+    int WebApp::OpenUrls(const std::string& urlsJson)
+    {
+        const int id = m_nextPickId++;
+        m_remoteRequests[id] = {};
+        if (MiniCADWeb_OpenUrls(id, urlsJson.c_str()) == 0)
+        {
+            m_remoteRequests.erase(id);
+            return 0;
+        }
+        for (const char* name : MiniGUI::kWebLazyFontNames)
+            FetchLazyFont(name);
+        return id;
     }
 
     void WebApp::OnRemoteFetched(int requestId, const char* path, const char* url)

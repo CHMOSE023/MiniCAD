@@ -29,6 +29,7 @@
 #include "Widgets/TitleBar.h"
 #include "Widgets/UiLayout.h"
 #include "Widgets/ViewportHost.h"
+#include "Paint/DrawList.h"
 #include "GUI/ViewCube.h"
 #include <algorithm>
 #include <filesystem>
@@ -310,10 +311,33 @@ namespace MiniCAD
     // 绘图区（面板 "canvas"）：所有文档共用一个视口，切换标签时换相机状态。
     // 界面描述文件把它铺满标题栏以下的整个窗口（照 SolidCraft），功能区、停靠面板、状态栏都浮在它上面
     // =========================================================
+    namespace
+    {
+        // 主视口：CAD 画面之上再叠画一层（嵌入网页时的批注），浮在视口上的子节点（视图方块等）仍在最上面
+        class OverlayViewportHost : public MiniGUI::ViewportHost
+        {
+        public:
+            std::function<void(MiniGUI::DrawList&, const MiniGUI::Rect&)> overlay;
+
+        protected:
+            void OnPaint(MiniGUI::DrawList& dl, const MiniGUI::Rect& screenRect) override
+            {
+                ViewportHost::OnPaint(dl, screenRect);
+                if (overlay)
+                {
+                    dl.PushClipRect(screenRect);
+                    overlay(dl, screenRect);
+                    dl.PopClipRect();
+                }
+            }
+        };
+    }
+
     std::unique_ptr<MiniGUI::Node> MainFrame::CreateCanvas()
     {
         using namespace MiniGUI;
-        auto vp = std::make_unique<ViewportHost>();
+        auto vp = std::make_unique<OverlayViewportHost>();
+        vp->overlay = [this](DrawList& dl, const Rect& screen) { PaintMarkups(dl, screen); };
         vp->SetCursor(CursorShape::Hidden);       // 视口自己绘制十字光标
         vp->SetOnRender ([this](int w, int h) { RenderViewport(w, h); });
         vp->SetOnPointer([this](const ViewportPointerEvent& e) { OnViewportPointer(e); });

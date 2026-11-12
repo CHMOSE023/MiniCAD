@@ -59,6 +59,7 @@ namespace MiniCAD
     class StatusBarView;
     class NodeEditorView;
     class FloatingPanelHost;
+    class MarkupLayer;
     struct EntityAttr;
     class DynamicInputBox;
 
@@ -117,6 +118,28 @@ namespace MiniCAD
         const std::string&  GetUiPath() const { return m_uiPath; }
         MiniGUI::UIContext& GetUI() const { return *m_ui; }
         MiniGUI::TitleBar*  GetTitleBar() const;
+
+        // ── 嵌入网页（协作批注，宿主的桥接接口用；只针对主视口里的文档）────────
+        // 批注层：叠在主视口上显示宿主交来的批注、画新批注（MarkupLayer.h）
+        MarkupLayer& GetMarkupLayer() { return *m_markupLayer; }
+        // 视图：布局名（数据，不翻译）、是否俯视（二维）、视图中心（世界坐标）、视口高度对应的世界长度
+        struct EmbedView
+        {
+            std::string layout;
+            bool        plan       = true;
+            double      center[3]  = { 0.0, 0.0, 0.0 };
+            double      viewHeight = 0.0;
+        };
+        bool GetEmbedView(EmbedView& out) const;            // 没有文档时返回 false
+        // 按名称切换布局（找不到时留在当前布局），再恢复中心与缩放。图纸还没读完时先记下，读完后再恢复；
+        // 之后外部参照读入也不再缩放到全图（宿主要的是这个视图）
+        bool SetEmbedView(const EmbedView& view);
+        void ZoomAllMain();                                 // 主视口缩放到全图
+        MiniGUI::Rect GetMainViewportRect() const;          // 主视口没被状态栏挡住的部分在窗口里的矩形（逻辑像素），截图用
+        float         GetPixelScale() const { return m_dpiScale; }
+        // 视图或布局变了（每帧比较，变了才回调）：宿主据此通知网页
+        std::function<void()> onEmbedViewChanged;
+        std::function<void()> onEmbedLayoutChanged;
 
         // 单调时钟（统计帧耗时、输入延迟）
         static int64_t NowTicks();
@@ -314,6 +337,9 @@ namespace MiniCAD
         void LayerChanged();                    // 图层特性改了：重建场景显示、刷新面板、重绘视口
 
         void RenderViewport(int pixelWidth, int pixelHeight);
+        // 嵌入网页（MainEmbed.cpp）：主视口画面上叠画批注；每帧比较视图，变了回调宿主
+        void PaintMarkups(MiniGUI::DrawList& dl, const MiniGUI::Rect& screen);
+        void SyncEmbedState();
         void UpdateStatus();
         void UpdateAppBarVisibility();      // 窗口变窄、文档标签放不下时隐藏标题栏右侧的按钮，让给文档标签
 
@@ -465,6 +491,11 @@ namespace MiniCAD
         std::unique_ptr<FloatingPanelHost>     m_floatHost;              // 浮出的停靠面板的独立窗口；先于 m_ui 声明：停靠区销毁时还要经它取回内容
         std::unique_ptr<MiniGUI::UIContext>    m_ui;
         MiniGUI::ViewportHost*                 m_viewport   = nullptr;
+        std::unique_ptr<MarkupLayer>           m_markupLayer;            // 嵌入网页时的批注层（主视口）
+        EmbedView                              m_lastEmbedView;          // 上一帧的视图：变了才回调 onEmbedViewChanged
+        bool                                   m_hasLastEmbedView = false;
+        std::optional<EmbedView>               m_pendingEmbedView;       // 图纸读完前宿主要的视图
+        const Document*                        m_embedViewDoc = nullptr; // 宿主设过视图的文档：外部参照读入后不再缩放到全图
         MiniGUI::TabView*                      m_docTabs    = nullptr;
         ViewChrome                             m_main{ .main = true, .pane = DocumentManager::kMainPane };   // 主窗口的视图方块、导航条、命令行、状态栏
         MiniGUI::Node*                         m_startPage   = nullptr;  // 起始页（StartPage.cpp，界面描述文件里的面板 "start"）

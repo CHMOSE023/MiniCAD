@@ -265,6 +265,7 @@ namespace MiniGUI
         case CursorShape::SizeNESW:   id = IDC_SIZENESW; break;
         case CursorShape::SizeAll:    id = IDC_SIZEALL;  break;
         case CursorShape::NotAllowed: id = IDC_NO;       break;
+        case CursorShape::Crosshair:  id = IDC_CROSS;    break;
         case CursorShape::Hidden:     SetCursor(nullptr); return;
         case CursorShape::Grab:       SetCursor(GrabCursor()); return;
         default:                                         break;

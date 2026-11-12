@@ -307,6 +307,7 @@ namespace MiniGUI
         case CursorShape::Grab:       css = "grab";        break;
         case CursorShape::NotAllowed: css = "not-allowed"; break;
         case CursorShape::Hidden:     css = "none";        break;
+        case CursorShape::Crosshair:  css = "crosshair";   break;
         default:                                           break;
         }
         MiniGUIWeb_SetCursor(css);

@@ -28,6 +28,7 @@ namespace MiniCAD
     //   - 保存：写到内存文件系统后由浏览器下载到本机（另存为默认 .mcad，打开的 .dwg / .dxf 按原格式保存）
     //   - 资源（字体、图标、填充图案、界面描述文件）打包在虚拟文件系统根目录下
     //   - 有未保存的文档时，关闭或刷新页面前浏览器会询问
+    //   - 嵌入别的网页（?embed=1）：紧凑布局，导出桥接接口 window.MiniCAD（批注、视图、截图，见 WebEmbed.cpp）
     class WebApp : public AppPlatform
     {
     public:
@@ -50,6 +51,8 @@ namespace MiniCAD
         void OnRemoteCompleted(int requestId);
         void OnXrefsFetched(int requestId, const char* dir, const char* error);
         bool HasUnsavedDocuments() const;
+        // 嵌入网页的 window.MiniCAD.open：取回这些网址（JSON 数组）后打开，返回请求号（0 = 没有网址）
+        int  OpenUrls(const std::string& urlsJson);
 
         // ── AppPlatform ─────────────────────────────────────────
         MiniGUI::IRenderBackend& GetUiBackend() override;
@@ -65,6 +68,10 @@ namespace MiniCAD
 
         void SetTitle(const std::string& utf8) override;
         bool HasWindowControls() const override { return false; }
+        bool ForcesCompactLayout() const override { return m_embed && m_embedCompact; }  // ?embed=1：嵌在别的网页里
+        // 嵌入时切换紧凑 / 完整布局（window.MiniCAD.setCompact）
+        void SetEmbedCompact(bool compact);
+        bool IsEmbedCompact() const { return m_embedCompact; }
         void CloseWindow() override;
         void Quit() override;
 
@@ -122,5 +129,7 @@ namespace MiniCAD
         int m_nextPickId = 1;
         std::unordered_set<std::string> m_fontRequests;
         bool m_uiReady = false;
+        bool m_embed   = false;     // 网址带 ?embed=1：紧凑布局，导出 window.MiniCAD（WebEmbed.cpp）
+        bool m_embedCompact = true; // 嵌入时页面可以切到完整布局
     };
 }

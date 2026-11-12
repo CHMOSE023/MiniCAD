@@ -164,6 +164,8 @@ namespace MiniCAD
         // 屏幕小时（手机）改用只浏览的紧凑布局（minicad_ui.json 的 layouts.compact，docs/Android/PLAN.md §4.5）；
         // 桌面窗口拉窄不切换
         virtual bool SupportsCompactLayout() const { return false; }
+        // 总是用紧凑布局（不论窗口大小）：网页版嵌入别的网页时（网址带 ?embed=1），页面自己提供工具，看图器只留看图
+        virtual bool ForcesCompactLayout() const { return false; }
         // 全屏：隐藏系统的状态栏、导航栏（安卓；返回手势先退出全屏）。不支持的平台命令 view.fullScreen 不可用
         virtual bool SupportsFullScreen() const { return false; }
         virtual bool IsFullScreen() const { return false; }
